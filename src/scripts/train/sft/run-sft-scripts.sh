@@ -22,14 +22,9 @@ gantry run \
     --weka=oe-training-default:/weka/oe-training-default \
     --env-secret HF_TOKEN=HF_TOKEN \
     -- /root/.local/bin/uv run python scripts/data/convert_sft_data_for_olmocore.py \
-        --dataset_mixer_list ai2-adapt-dev/oasst1_converted 1.0 \
-            ai2-adapt-dev/flan_v2_converted 1.0 \
-            allenai/hardcoded-integration-tests 1.0 \
-            ai2-adapt-dev/no_robots_converted 1.0 \
+        --dataset_mixer_list allenai/hardcoded-integration-tests 1.0 \
             jacobmorrison/wildchat_perturbed_6000_replaced_no_keyword 1.0 \
             ai2-adapt-dev/tulu_v3.9_open_math_2_gsm8k_50k 1.0 \
-            ai2-adapt-dev/numinamath_tir_math_decontaminated 1.0 \
-            ai2-adapt-dev/personahub_code_v2_34999 1.0 \
             ai2-adapt-dev/evol_codealpaca_heval_decontaminated 1.0 \
             saumyamalik/tulu-3-sft-coconot-regenerated 1.0 \
             ai2-adapt-dev/tulu_v3.9_wildjailbreak_decontaminated_50k 1.0 \
@@ -37,22 +32,24 @@ gantry run \
             ai2-adapt-dev/tulu_v3.9_sciriff_10k 1.0 \
             ai2-adapt-dev/tulu_v3.9_table_gpt_5k 1.0 \
             ai2-adapt-dev/tulu_v3.9_aya_100k 1.0 \
-            finbarr/tulu-3-sft-personas-instruction-following-o3 1.0 \
-            finbarr/tulu-3-sft-personas-math-o3 1.0 \
-            finbarr/tulu-3-sft-personas-math-grade-o3 1.0 \
-            finbarr/tulu-3-sft-personas-algebra-o3 1.0 \
             VGraf/toolu-sft-mix-T2-system-prompt 0.3 \
+            jacobmorrison/verifiable-tasks-o3-7500 1.0 \
+            jacobmorrison/OpenThoughts3-456k-no-cot 1.0 \
+            allenai/IF_sft_data_verified 1.0 \
             saurabh5/rlvr-code-data-python-sft 1.0 \
             saurabh5/llama-nemotron-rlvr-code-stdio-sft 1.0 \
-            allenai/IF_sft_data_verified 1.0 \
-            jacobmorrison/OpenThoughts3-456k-no-cot 1.0 \
-            jacobmorrison/verifiable-tasks-o3-7500 1.0 \
         --tokenizer_name_or_path /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_final_anneal/step11921-hf \
-        --output_dir /weka/oe-training-default/ai2-llm/jacobm/data/sft/usable-tulu-16k/tulu3-olmo2-mix-remov_replac-100k_toolu-fae_ver-sau_code-val_if-ot3_456k \
+        --output_dir /weka/oe-training-default/ai2-llm/jacobm/data/sft/usable-tulu-16k/tulu3-olmo2-mix-remov_replac-100k_toolu-fae_ver-sau_code-val_if-ot3_456k-remove-personas-andtheother3 \
         --visualize True \
         --chat_template_name olmo \
         --max_seq_length 16384
         
+            ai2-adapt-dev/personahub_code_v2_34999 1.0 \
+            finbarr/tulu-3-sft-personas-instruction-following-o3 1.0 \
+            finbarr/tulu-3-sft-personas-math-o3 1.0 \
+            finbarr/tulu-3-sft-personas-math-grade-o3 1.0 \
+            finbarr/tulu-3-sft-personas-algebra-o3 1.0 \
+
 
 saurabh5/rlvr-code-data-python-sft 1.0 \
 saurabh5/llama-nemotron-rlvr-code-stdio-sft 1.0 \
@@ -144,8 +141,8 @@ python src/scripts/train/sft/OLMo2-7B-sft.py launch \
     --num_nodes=4 \
     --launch.priority=urgent
 
-INPUT_PATH=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmo2-7B-sft/olmo2-7B-lc-tulu3-olmo2-mix/step1484
-MODEL_NAME=olmo2-7B-lc-tulu3-olmo2-mix
+INPUT_PATH=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmo2-7B-sft/olmo2-7B-lc-OpenThoughts3-456k-no-cot-olmo-chat-template/step744
+MODEL_NAME=olmo2-7B-lc-OpenThoughts3-456k-no-cot-olmo-chat-template
 gantry run --cluster ai2/saturn-cirrascale --timeout -1 -y --budget ai2/oe-adapt --workspace ai2/olmo-instruct \
         --install "curl -LsSf https://astral.sh/uv/install.sh | sh && /root/.local/bin/uv sync --all-extras" \
         --weka=oe-adapt-default:/weka/oe-adapt-default \
@@ -154,7 +151,7 @@ gantry run --cluster ai2/saturn-cirrascale --timeout -1 -y --budget ai2/oe-adapt
         --gpus 1 \
         -- /root/.local/bin/uv run python src/examples/huggingface/convert_checkpoint_to_hf.py \
             -i $INPUT_PATH \
-            -o /weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft/usable-tulu/$MODEL_NAME \
+            -o /weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft/rl-sft/$MODEL_NAME \
             --max-sequence-length 65536
 
 olmo2-7B-lc-openthoughts3-456k/step42798
@@ -164,7 +161,7 @@ olmo2-7B-lc-openthoughts3-456k-no-cot/step2742
 cp /weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft-tokenizer-olmo_thinker-chat-template/* \
     <OUTPUT_DIR>
 
-find /weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft/usable-tulu/ -maxdepth 1 -type d -name "olmo2-7B-lc-tulu3-olmo2-mix-remov_replac*" -exec cp /weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft-tokenizer-olmo-chat-template/tokenizer_config.json {} \;
+find /weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft/usable-tulu/ -maxdepth 1 -type d -name "olmo2-7B-lc-tulu3-olmo2-mix*" -exec cp /weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft-tokenizer-olmo-chat-template/* {} \;
 
 #### USABLE:
 cp /weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft-tokenizer-olmo-chat-template/* \
@@ -199,14 +196,16 @@ python scripts/submit_eval_jobs.py \
         --process_output r1_style \
         --skip_oi_evals 
 
+
+    # "olmo2-7B-lc-tulu3-olmo2-mix-remov_replac"
+    # "olmo2-7B-lc-tulu3-olmo2-mix-remov_replac-100k_toolu-faeze_verifiable"
+    # "olmo2-7B-lc-tulu3-olmo2-mix-remov_replac-100k_toolu-val_if"
+    # "olmo2-7B-lc-tulu3-olmo2-mix-remov_replac-100k_toolu"
+    # "olmo2-7B-lc-tulu3-olmo2-mix-remov_replac-100k_toolu-ot3_456k"
+    # "olmo2-7B-lc-tulu3-olmo2-mix-remov_replac-100k_toolu-fae_ver-sau_code-val_if-ot3_456k"
+    # "olmo2-7B-lc-tulu3-olmo2-mix-remov_replac-100k_toolu-saurabh_code"
 MODEL_NAMES=(
-    "olmo2-7B-lc-tulu3-olmo2-mix-remov_replac"
-    "olmo2-7B-lc-tulu3-olmo2-mix-remov_replac-100k_toolu-faeze_verifiable"
-    "olmo2-7B-lc-tulu3-olmo2-mix-remov_replac-100k_toolu-val_if"
-    "olmo2-7B-lc-tulu3-olmo2-mix-remov_replac-100k_toolu"
-    "olmo2-7B-lc-tulu3-olmo2-mix-remov_replac-100k_toolu-ot3_456k"
-    "olmo2-7B-lc-tulu3-olmo2-mix-remov_replac-100k_toolu-fae_ver-sau_code-val_if-ot3_456k"
-    "olmo2-7B-lc-tulu3-olmo2-mix-remov_replac-100k_toolu-saurabh_code"
+    "olmo2-7B-lc-tulu3-olmo2-mix"
 )
 
 for MODEL_NAME in "${MODEL_NAMES[@]}"; do
