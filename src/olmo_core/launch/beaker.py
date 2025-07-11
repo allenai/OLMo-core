@@ -404,12 +404,15 @@ class BeakerLaunchConfig(Config):
 
         entrypoint_dataset = self._create_script_dataset("entrypoint.sh", entrypoint_script)
 
-        host_name_constraints = get_host_name_constraints(
-            self.num_nodes,
-            min(32, self.num_nodes),
-            1)
-        assert len(host_name_constraints) == 1 and len(host_name_constraints[0]) >= self.num_nodes
-        task_host_name_constraints = host_name_constraints[0]
+        if len(self.clusters) == 1 and "augusta" in self.clusters[0]:
+            host_name_constraints = get_host_name_constraints(
+                self.num_nodes,
+                min(32, self.num_nodes),
+                1)
+            assert len(host_name_constraints) == 1 and len(host_name_constraints[0]) >= self.num_nodes
+            constraints_kwargs = {"hostname": host_name_constraints[0]}
+        else:
+            constraints_kwargs = {"cluster": self.clusters}
 
         task_spec = (
             TaskSpec.new(
@@ -436,7 +439,7 @@ class BeakerLaunchConfig(Config):
                 result_path=self.result_dir,
             )
             .with_dataset("/olmo-core", beaker=entrypoint_dataset.id)
-            .with_constraint(hostname=task_host_name_constraints)
+            .with_constraint(**constraints_kwargs)
             .with_env_var(GIT_REPO_URL_ENV_VAR, self.git.repo_url)
             .with_env_var(GIT_REF_ENV_VAR, self.git.ref)
         )
