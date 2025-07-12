@@ -1,10 +1,12 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
+from transformers import AutoTokenizer
 
 from ..config import Config, StrEnum
 
 __all__ = [
     "TokenizerConfig",
+    "ByteTokenizerConfig",
     "TokenizerName",
 ]
 
@@ -130,4 +132,30 @@ class TokenizerConfig(Config):
             pad_token_id=config.get("pad_token_id", config["eos_token_id"]),
             bos_token_id=config.get("bos_token_id"),
             identifier=identifier,
+        )
+
+
+@dataclass
+class ByteTokenizerConfig(TokenizerConfig):
+    special_tokens: list[str] = field(default_factory=lambda: [])
+    original_identifier: Optional[str] = None
+
+    @classmethod
+    def from_tokenizer_config(cls, tokenizer_config):
+        hf_tokenizer = AutoTokenizer.from_pretrained(tokenizer_config.identifier)
+
+        # all_special_tokens does not contain added special tokens (e.g. <|endofprompt|> for OLMo-2)
+        # this is an attempt to include all of them, but it may not be exhaustive.
+        special_tokens = sorted(set(
+            hf_tokenizer.all_special_tokens
+            + list(hf_tokenizer.get_added_vocab().keys())  # type: ignore
+        ))
+
+        return cls(
+            vocab_size=256 + len(special_tokens),
+            special_tokens=special_tokens,
+            # convention: 256 bytes first, then special tokens, and no bos (as in OLMo)
+            pad_token_id=256 + special_tokens.index(hf_tokenizer.pad_token),
+            eos_token_id=256 + special_tokens.index(hf_tokenizer.eos_token),
+            original_identifier=tokenizer_config.identifier,
         )

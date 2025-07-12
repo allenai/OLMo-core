@@ -25,6 +25,7 @@ from .numpy_dataset import (
     InstanceFilterConfig,
     NumpyDatasetBase,
     NumpyDatasetConfig,
+    NumpyByteFSLDataset,
     NumpyFSLDataset,
     NumpyFSLDatasetBase,
     NumpyPackedFSLDataset,
@@ -38,13 +39,14 @@ from .numpy_dataset import (
     VSLGrowthCurriculum,
     VSLNaturalCurriculum,
 )
-from .tokenizer import TokenizerConfig, TokenizerName
+from .tokenizer import ByteTokenizerConfig, TokenizerConfig, TokenizerName
 from .types import LongDocStrategy, NumpyDatasetDType, NumpyDatasetType
 
 __all__ = [
     "NumpyDatasetBase",
     "NumpyFSLDatasetBase",
     "NumpyFSLDataset",
+    "NumpyByteFSLDataset",
     "NumpyPaddedFSLDataset",
     "NumpyPackedFSLDataset",
     "NumpyVSLDataset",
@@ -60,6 +62,7 @@ __all__ = [
     "VSLCurriculumConfig",
     "NumpyDatasetDType",
     "TokenizerConfig",
+    "ByteTokenizerConfig",
     "TokenizerName",
     "DataMixBase",
     "DataMix",

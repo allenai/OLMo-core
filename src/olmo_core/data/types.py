@@ -37,6 +37,10 @@ class NumpyDatasetType(StrEnum):
     Variable sequenced length ➡️ :class:`NumpyVSLDataset`.
     """
 
+    byte_fsl = "byte_fsl"
+    """
+    Byte detokenized FSL dataset ➡️ :class:`NumpyByteFSLDataset`.
+    """
 
 class LongDocStrategy(StrEnum):
     """

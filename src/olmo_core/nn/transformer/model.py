@@ -305,12 +305,13 @@ class Transformer(nn.Module):
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         return_logits: Optional[bool] = None,
         **kwargs,
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any], Dict[str, Any]]:
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
         # NOTE: with pipeline parallelism input_ids might actually be an intermediate output,
         # so we have to be careful here.
         B, S = input_ids.shape[:2]
 
         block_kwargs: Dict[str, Any] = {}
+        encoder_decoder_kwargs: Dict[str, Any] = {}
 
         lm_head_kwargs: Dict[str, Any] = dict(
             ignore_index=ignore_index,
@@ -403,11 +404,20 @@ class Transformer(nn.Module):
             block_kwargs["max_doc_len"] = max_doc_len
             block_kwargs["cu_doc_lens"] = move_to_device(cu_doc_lens, self.device)
 
+        patch_lens: Optional[torch.Tensor] = None
+
+        if (patch_lens := kwargs.pop("patch_lens", None)) is not None:
+            # TODO: make cumulative?
+            patch_lens = patch_lens
+
+        encoder_decoder_kwargs["patch_lens"] = patch_lens
+
         return (
             input_ids,
             labels,
             block_kwargs,
             lm_head_kwargs,
+            encoder_decoder_kwargs,
         )
 
     def forward(
@@ -429,7 +439,7 @@ class Transformer(nn.Module):
 
         :returns: The logits if ``labels`` is ``None`` or the losses if ``labels`` is not ``None``.
         """
-        input_ids, labels, block_kwargs, lm_head_kwargs = self._prepare_inputs(
+        input_ids, labels, block_kwargs, lm_head_kwargs, encoder_decoder_kwargs = self._prepare_inputs(
             input_ids,
             labels,
             ignore_index=ignore_index,

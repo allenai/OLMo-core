@@ -27,6 +27,7 @@ from .collator import DataCollator
 from .numpy_dataset import (
     NumpyDatasetBase,
     NumpyDatasetType,
+    NumpyByteFSLDataset,
     NumpyFSLDatasetBase,
     NumpyVSLDataset,
 )
@@ -543,6 +544,24 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
                 [splits, self.dataset.max_sequence_length - splits], dim=1
             )
             out["max_doc_lens"] = torch.max(out["doc_lens"], dim=-1).values.tolist()
+        if isinstance(self.dataset, NumpyByteFSLDataset):
+            # small random lengths for debugging
+            patch_lengths = torch.randint(2, 8, input_ids.shape, device=input_ids.device)
+            patch_lengths = torch.where(
+                torch.cumsum(patch_lengths, dim=-1) > self.dataset.max_sequence_length,
+                torch.zeros_like(patch_lengths),
+                patch_lengths,
+            )
+            patch_lengths = patch_lengths[:, :(patch_lengths > 0).sum(-1).max().item()]
+
+            out["patch_lens"] = patch_lengths
+            out["original_input_ids"] = torch.randint(
+                0,
+                100_000,
+                patch_lengths.shape,
+                device=input_ids.device,
+            )
+
         return out
 
     def _iter_batches(self) -> Iterable[Dict[str, Any]]:
