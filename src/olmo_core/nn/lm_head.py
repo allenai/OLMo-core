@@ -227,7 +227,7 @@ class LMHead(nn.Module):
         loss: torch.Tensor
         ce_loss: torch.Tensor
         z_loss: Optional[torch.Tensor]
-        if self.loss_implementation == LMLossImplementation.default:
+        if self.loss_implementation == LMLossImplementation.default or not torch.is_grad_enabled():
             logits = self.w_out(h)
             assert logits is not None
             ce_loss, z_loss = cross_entropy_loss(

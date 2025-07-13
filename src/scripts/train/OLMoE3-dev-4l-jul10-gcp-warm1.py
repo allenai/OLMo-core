@@ -53,7 +53,7 @@ GLOBAL_BATCH_SIZE = (
     (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
 )  
 MAX_DURATION = int(1000e9)  # int(6e12), don't forget to adjust the LR when you increase this
-EVAL_INTERVAL = 40
+EVAL_INTERVAL = 50
 LR= 5e-5
 
 NUM_EXPERTS = 64
@@ -69,7 +69,7 @@ EP_DIM=1
 PP_DIM=1
 SPLIT_POINTS = None
             
-TAG=f'dev1'
+TAG=f'dev3'
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     d_model = D_MODEL
