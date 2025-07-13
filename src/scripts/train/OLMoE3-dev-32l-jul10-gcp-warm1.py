@@ -211,8 +211,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             WandBCallback(
                 name=common.run_name,
                 entity="ai2-llm",
-                project="tianhua-moe",
-                # project="olmo3",
+                # project="tianhua-moe",
+                project="olmo3",
                 enabled=True,
                 cancel_check_interval=cancel_check_interval,
             ),

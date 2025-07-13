@@ -69,7 +69,7 @@ EP_DIM=1
 PP_DIM=1
 SPLIT_POINTS = None
             
-TAG=f'dev6'
+TAG=f'dev1'
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     d_model = D_MODEL
