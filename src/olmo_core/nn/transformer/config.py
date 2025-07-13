@@ -124,6 +124,11 @@ class TransformerBlockType(StrEnum):
     ➡️ :class:`MoEHybridReorderedNormTransformerBlock`
     """
 
+    default_scaled = "default_scaled"
+    """
+    ➡️ :class:`LayerNormScaledTransformerBlock` (applies LayerNorm Scaling)
+    """
+
 
 @dataclass
 class TransformerBlockConfig(Config):
@@ -156,12 +161,6 @@ class TransformerBlockConfig(Config):
     Dropout probability.
     """
 
-    # LayerNorm Scaling (LNS)
-    use_lns: bool = True
-    """
-    Whether to apply LayerNorm Scaling (LNS). Only applies when ``name`` is ``default``.
-    """
-
     def build(
         self,
         *,
@@ -179,6 +178,7 @@ class TransformerBlockConfig(Config):
             NormalizedTransformerBlock,
             ReorderedNormTransformerBlock,
             TransformerBlock,
+            LayerNormScaledTransformerBlock,
         )
 
         kwargs = self.as_dict(exclude_none=True, recurse=False)
@@ -194,6 +194,8 @@ class TransformerBlockConfig(Config):
         try:
             if self.name == TransformerBlockType.default:
                 return TransformerBlock(**kwargs)
+            elif self.name == TransformerBlockType.default_scaled:
+                return LayerNormScaledTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.reordered_norm:
                 return ReorderedNormTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.normalized:

@@ -103,7 +103,6 @@ class TransformerBlock(TransformerBlockBase):
         dropout: float = 0.0,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
-        use_lns: bool = True,
     ):
         super().__init__(n_layers=n_layers)
         self.d_model = d_model
@@ -115,11 +114,6 @@ class TransformerBlock(TransformerBlockBase):
         self.feed_forward = feed_forward.build(d_model=d_model, init_device=init_device)
         self.feed_forward_norm = layer_norm.build(d_model, init_device=init_device)
         self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
-        # LayerNorm Scaling (LNS): scale factor 1/sqrt(layer_id)
-        # If disabled, the scale factor is 1.0
-        ln_scale_value = 1.0 / math.sqrt(block_idx + 1) if use_lns else 1.0
-        # layer_id is 1-based as per the LNS paper, while block_idx is 0-based
-        self.register_buffer("ln_scale", torch.tensor(ln_scale_value, dtype=torch.float32))
 
     def forward(
         self,
@@ -129,10 +123,8 @@ class TransformerBlock(TransformerBlockBase):
         **kwargs,
     ) -> torch.Tensor:
         del loss_div_factor
-        # Apply LayerNorm Scaling (multiply by ln_scale) after each LayerNorm
-        scale = self.ln_scale.to(dtype=x.dtype, device=x.device)
-        h = x + self.dropout(self.attention(self.attention_norm(x) * scale, **kwargs))
-        return h + self.dropout(self.feed_forward(self.feed_forward_norm(h) * scale))
+        h = x + self.dropout(self.attention(self.attention_norm(x), **kwargs))
+        return h + self.dropout(self.feed_forward(self.feed_forward_norm(h)))
 
     def apply_tp(
         self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
@@ -190,6 +182,58 @@ class TransformerBlock(TransformerBlockBase):
                 fsdp_att.set_modules_to_forward_prefetch([fsdp_mlp])
         else:
             fully_shard(self, mesh=dp_mesh, **fsdp_kwargs)
+
+
+class LayerNormScaledTransformerBlock(TransformerBlock):
+    """
+    A variant of ``TransformerBlock`` that applies LayerNorm Scaling (LNS).
+
+    Each LayerNorm output is multiplied by ``1 / sqrt(layer_id)`` where ``layer_id`` is the
+    1-based position of the block inside the transformer. Keeping this logic in a dedicated
+    subclass ensures that the vanilla ``TransformerBlock`` remains simple and easy to reason
+    about.
+    """
+
+    def __init__(
+        self,
+        *,
+        d_model: int,
+        block_idx: int,
+        n_layers: int,
+        attention: AttentionConfig,
+        feed_forward: FeedForwardConfig,
+        layer_norm: LayerNormConfig,
+        dropout: float = 0.0,
+        init_device: str = "cpu",
+        cache: Optional[BufferCache] = None,
+    ):
+        super().__init__(
+            d_model=d_model,
+            block_idx=block_idx,
+            n_layers=n_layers,
+            attention=attention,
+            feed_forward=feed_forward,
+            layer_norm=layer_norm,
+            dropout=dropout,
+            init_device=init_device,
+            cache=cache,
+        )
+
+        # LayerNorm scaling factor 1/sqrt(layer_id), where layer_id is 1-based.
+        ln_scale_value = 1.0 / math.sqrt(block_idx + 1)
+        self.register_buffer("ln_scale", torch.tensor(ln_scale_value, dtype=torch.float32))
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        del loss_div_factor
+        scale = self.ln_scale.to(dtype=x.dtype, device=x.device)
+        h = x + self.dropout(self.attention(self.attention_norm(x) * scale, **kwargs))
+        return h + self.dropout(self.feed_forward(self.feed_forward_norm(h) * scale))
 
 
 class ReorderedNormTransformerBlock(TransformerBlock):
@@ -868,7 +912,7 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         )
 
         # Compute feed-forward while all-to-all is in progress.
-        h = h + self.dropout(self.feed_forward(self.feed_forward_norm(h)))
+        h = h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
 
         handle.wait()
         x_moe = self.experts.unpermute(

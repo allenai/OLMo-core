@@ -29,6 +29,7 @@ from olmo_core.data import (
 )
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.nn.transformer import TransformerConfig
+from olmo_core.nn.transformer import TransformerBlockType
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
 from olmo_core.train import (
     Duration,
@@ -91,8 +92,8 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         vocab_size=tokenizer_config.padded_vocab_size(),  # a little bigger than actual vocab size to make it a multiple of 128
     )
 
-    # Explicitly enable LayerNorm Scaling.
-    model_config.block.use_lns = True
+    # Select the LayerNorm-Scaled transformer block implementation.
+    model_config.block.name = TransformerBlockType.default_scaled
 
     dataset_config = NumpyDatasetConfig(
         paths=DATA_PATHS,
