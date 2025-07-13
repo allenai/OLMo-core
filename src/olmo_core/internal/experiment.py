@@ -103,6 +103,9 @@ class SubCmd(StrEnum):
         elif self == SubCmd.train:
             try:
                 train(config)
+            except Exception as e:
+                log.error(f"Training failed with error: {e}")
+                raise
             finally:
                 teardown_training_environment()
         elif self == SubCmd.train_single:
