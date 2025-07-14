@@ -198,7 +198,7 @@ class TransformerTrainModule(TrainModule):
     @property
     def eval_batch_spec(self) -> EvalBatchSpec:
         return EvalBatchSpec(
-            max(self.rank_microbatch_size // 2, 1),
+            max(self.rank_microbatch_size // 2, 1 * self.max_sequence_length),
             max_sequence_length=self.max_sequence_length,
             #  fixed_sequence_length=self.tp_enabled,
         )
@@ -467,6 +467,30 @@ class TransformerTrainModule(TrainModule):
             )
             if isinstance(self.optim, SkipStepOptimizer):
                 self.optim.latest_grad_norm = grad_norm
+
+        # calculate per layer grad norm
+        per_layer_norms = []
+        for layer_idx, layer in enumerate(self.model.blocks.values()):
+            layer_grads = [p.grad for p in layer.parameters() if p.grad is not None]
+            if layer_grads:
+                per_layer_norm = nn.utils.get_total_norm(
+                    layer_grads, norm_type=2.0, error_if_nonfinite=False, foreach=None
+                )
+                if isinstance(per_layer_norm, DTensor):
+                    # If per_layer_norm is a DTensor, we need to reduce it to get the correct value.
+                    per_layer_norm = per_layer_norm.full_tensor()
+                per_layer_norms.append(per_layer_norm)
+            else:
+                per_layer_norms.append(torch.tensor(0.0, device=self.device)) 
+                
+            self.trainer.record_metric(
+                f"clipped grad norm (layer {layer_idx})", per_layer_norms[layer_idx], reduce_type=None, namespace="optim"
+            )
+            
+            del layer_grads
+            
+        del per_layer_norms
+
 
         # Maybe adjust learning rate.
         if self.scheduler is not None:
