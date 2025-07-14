@@ -136,6 +136,7 @@ class LcContTrain(Config):
         tokenizer_config = TokenizerConfig.llama3()
 
 
+        print(overrides)
         return LcContTrain(
             run_name=run_name,
             load_path=load_path,
@@ -145,6 +146,7 @@ class LcContTrain(Config):
                 cmd=[script, cmd, run_name, cluster, *overrides],
                 cluster=cluster,
                 nccl_debug=False,
+                workspace="ai2/long-contexts"
             ),
             train_module = TransformerTrainModuleConfig(
                 rank_microbatch_size= 1 * CONTEXT_LENGTH,
