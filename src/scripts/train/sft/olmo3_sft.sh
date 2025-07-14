@@ -12,6 +12,7 @@ python src/scripts/train/sft/OLMo2-7B-sft.py launch \
     --seq_len=16384 \
     --launch.num_gpus=8 \
     --num_nodes=4 \
+    --model_name olmo3-7b \
     --launch.priority=urgent
 
 
@@ -29,4 +30,5 @@ python src/scripts/train/sft/OLMo2-7B-sft.py launch \
     --seq_len=16384 \
     --launch.num_gpus=8 \
     --num_nodes=4 \
+    --model_name olmo3-7b \
     --launch.priority=urgent

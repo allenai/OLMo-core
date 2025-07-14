@@ -447,7 +447,7 @@ Examples:
         default=64 * DEFAULT_SEQUENCE_LENGTH,
     )
     parser.add_argument(
-        "model_name", help="The name of the model architecture to use."
+        "--model_name", help="The name of the model architecture to use."
     )
 
     # Parse known args to get positional arguments and cmd
