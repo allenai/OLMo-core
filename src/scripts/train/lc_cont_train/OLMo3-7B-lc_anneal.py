@@ -310,7 +310,7 @@ $ [i]python {sys.argv[0]} launch run01  --launch.num_nodes=2[/]
     model_config.block.attention.rope = RoPEConfig(
         theta= 0.5 * 10 ** 6,
         scaling = YaRNRoPEScalingConfig(
-            old_context_len=8192
+            original_max_position_embeddings=8192
         )
     )
 
