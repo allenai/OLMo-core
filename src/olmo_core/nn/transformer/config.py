@@ -809,8 +809,7 @@ class TransformerConfig(Config):
             hidden_size_multiplier=1.3,
             hidden_size_multiple_of=1024,
             rope_scaling=RoPEScalingConfig(factor=8.0, low_freq_factor=1.0, \
-                high_freq_factor=4.0, old_context_len=8192, \
-                attention_factor=1.0),
+                high_freq_factor=4.0, old_context_len=8192),
             **kwargs,
         )
 

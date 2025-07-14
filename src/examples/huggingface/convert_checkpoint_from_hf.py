@@ -58,7 +58,7 @@ def _get_transformer_config(model_arch: str, vocab_size: int) -> TransformerConf
         "llama2_70b": TransformerConfig.llama2_70B,
         "llama3_1b": TransformerConfig.llama3_1B,
         "llama3_8b": TransformerConfig.llama3_8B,
-        "marin_8b": TransformerConfig.marin_8b,
+        "marin_8b": TransformerConfig.marin_8B,
         "llama3_70b": TransformerConfig.llama3_70B,
         "llama3_405b": TransformerConfig.llama3_405B,
     }
