@@ -7,7 +7,10 @@ from olmo_core.aliases import PathOrStr
 from olmo_core.data import NumpyDataLoaderBase
 from olmo_core.distributed.utils import get_rank
 
+from .beaker import BeakerCallback
 from .callback import Callback
+from .comet import CometCallback
+from .wandb import WandBCallback
 
 log = logging.getLogger(__name__)
 
@@ -17,14 +20,39 @@ DEFAULT_DATA_PATHS_FNAME = "data_paths.txt"
 @dataclass
 class ConfigSaverCallback(Callback):
     """
-    A callback that writes an arbitrary JSON-serializable config dictionary to every checkpoint
-    directory written during training.
+    A callback that writes an arbitrary JSON-serializable config dictionary (:data:`config`) to every checkpoint
+    directory written during training. It will also set the config to save for other callbacks, including
+    the :class:`WandBCallback`, :class:`CometCallback`, and others, if not already set.
+
+    .. important:: The :data:`config` should be set *after* initializing the trainer and attaching all
+        other callbacks.
     """
 
-    config: Optional[Dict[str, Any]] = None
     fname: str = "config.json"
     save_data_paths: Optional[bool] = None
     data_paths_fname: Optional[str] = None
+
+    _config: Optional[Dict[str, Any]] = None
+
+    @property
+    def config(self) -> Optional[Dict[str, Any]]:
+        """
+        The JSON config dictionary to record.
+        """
+        return self._config
+
+    @config.setter
+    def config(self, config: Dict[str, Any]):
+        self._config = config
+        for callback_name, callback in self.trainer.callbacks.items():
+            if (
+                isinstance(callback, (WandBCallback, CometCallback, BeakerCallback))
+                and callback.config is None
+            ):
+                log.info(
+                    f"Setting config for '{callback_name}' callback of type '{callback.__class__.__name__}'"
+                )
+                callback.config = config
 
     def post_checkpoint_saved(self, path: PathOrStr):
         if get_rank() != 0:

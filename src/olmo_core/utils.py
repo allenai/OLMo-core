@@ -318,7 +318,7 @@ def setup_logging(
 
     if filter is not None:
         handler.addFilter(filter)  # type: ignore
-    logging.basicConfig(handlers=[handler], level=logging.INFO)
+    logging.basicConfig(handlers=[handler], level=logging.INFO, force=True)
 
     logging.captureWarnings(True)
     logging.getLogger("urllib3").setLevel(logging.ERROR)

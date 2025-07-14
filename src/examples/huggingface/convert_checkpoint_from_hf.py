@@ -41,6 +41,7 @@ def _get_transformer_config(model_arch: str, vocab_size: int) -> TransformerConf
         "olmo2_600m": TransformerConfig.olmo2_600M,
         "olmo2_760m": TransformerConfig.olmo2_760M,
         "olmo2_1b": TransformerConfig.olmo2_1B,
+        "olmo2_1b_v2": TransformerConfig.olmo2_1B_v2,
         "olmo2_3b": TransformerConfig.olmo2_3B,
         "olmo2_7b": TransformerConfig.olmo2_7B,
         "olmo2_13b": TransformerConfig.olmo2_13B,
@@ -57,6 +58,7 @@ def _get_transformer_config(model_arch: str, vocab_size: int) -> TransformerConf
         "llama2_70b": TransformerConfig.llama2_70B,
         "llama3_1b": TransformerConfig.llama3_1B,
         "llama3_8b": TransformerConfig.llama3_8B,
+        "marin_8b": TransformerConfig.marin_8B,
         "llama3_70b": TransformerConfig.llama3_70B,
         "llama3_405b": TransformerConfig.llama3_405B,
     }
@@ -69,6 +71,7 @@ def _get_tokenizer_config(tokenizer_id: str) -> TokenizerConfig:
         "dolma2": TokenizerConfig.dolma2,
         "gpt_neox_olmo_dolma_v1_5": TokenizerConfig.gpt_neox_olmo_dolma_v1_5,
         "gpt2": TokenizerConfig.gpt2,
+        "llama3": TokenizerConfig.llama3,
     }
 
     return tokenizer_configs[tokenizer_id.lower()]()
@@ -80,6 +83,7 @@ def convert_checkpoint_from_hf(
     transformer_config_dict: Dict[str, Any],
     tokenizer_config_dict: Dict[str, Any],
     *,
+    hf_revision: str = "main",
     model_id: str | None = None,
     max_sequence_length: int = -1,
     validate: bool = True,
@@ -120,10 +124,11 @@ def convert_checkpoint_from_hf(
     tokenizer_config = TokenizerConfig.from_dict(tokenizer_config_dict)
 
     with TemporaryDirectory() as work_dir:
-        log.info(f"Loading HF checkpoint from '{hf_checkpoint_path}'")
+        log.info(f"Loading HF checkpoint from '{hf_checkpoint_path}' (revision '{hf_revision}')")
         load_hf_model(
             hf_checkpoint_path,
             model_state_dict,
+            revision=hf_revision,
             model_id=model_id,
             work_dir=work_dir,
             num_embeddings=model.vocab_size,
@@ -155,6 +160,7 @@ def convert_checkpoint_from_hf(
             hf_checkpoint_path,
             model,
             tokenizer_config.vocab_size,
+            hf_revision=hf_revision,
             model_id=model_id,
             debug=debug,
             device=device,
@@ -200,6 +206,7 @@ def validate_conversion(
     hf_path: str | Path,
     model: Transformer,
     vocab_size: int,
+    hf_revision: str = "main",
     model_id: str | None = None,
     debug: bool = False,
     device: torch.device | None = None,
@@ -213,7 +220,7 @@ def validate_conversion(
     input_ids = torch.randint(0, vocab_size, (B, T)).to(device)
 
     log.info("Loading converted checkpoint for validation...")
-    hf_model = AutoModelForCausalLM.from_pretrained(hf_path).to(device).eval()
+    hf_model = AutoModelForCausalLM.from_pretrained(hf_path, revision=hf_revision).to(device).eval()
 
     olmo_core_state, hf_state = {}, {}
     state_mapping = None
@@ -252,13 +259,10 @@ def validate_conversion(
             .replace(".weight", ""): mapping.dest_keys[0]
             .replace(".weight", "")
             for mapping in state_mapping
-            if len(mapping.source_keys) == 1
-            and len(mapping.dest_keys) == 1
-            and mapping.source_keys[0].endswith(".weight")
-            and mapping.dest_keys[0].endswith(".weight")
+            if len(mapping.source_keys) == 1 and len(mapping.dest_keys) == 1
         }
 
-        log.info(f"mapping: {simple_key_mapping}")
+        log.info(f"simple mapping: {simple_key_mapping}")
         log.info(f"hf_state keys: {hf_state.keys()}")
         log.info(f"olmo_core_state keys: {olmo_core_state.keys()}")
 
@@ -277,9 +281,20 @@ def validate_conversion(
                 log.info(
                     f"{hf_state_name}, {olmo_core_state_name} shape mismatch: {hf_tensor.shape} {olmo_core_tensor.shape}"
                 )
-            else:
+            if olmo_core_tensor.dtype != hf_tensor.dtype:
                 log.info(
-                    f"{hf_state_name}, {olmo_core_state_name} norm diff: {torch.norm(olmo_core_tensor - hf_tensor)}"
+                    f"{hf_state_name}, {olmo_core_state_name} dtype mismatch: {hf_tensor.dtype} {olmo_core_tensor.dtype}"
+                )
+            if len(olmo_core_tensor.shape) == len(hf_tensor.shape):
+                common_shape = tuple(
+                    min(olmo_core_dim, hf_dim)
+                    for olmo_core_dim, hf_dim in zip(olmo_core_tensor.shape, hf_tensor.shape)
+                )
+                for i, dim in enumerate(common_shape):
+                    olmo_core_tensor = olmo_core_tensor.narrow(i, 0, dim)
+                    hf_tensor = hf_tensor.narrow(i, 0, dim)
+                log.info(
+                    f"{hf_state_name}, {olmo_core_state_name} element diff abs mean: {(olmo_core_tensor - hf_tensor).float().abs().mean()}"
                 )
 
     torch.testing.assert_close(hf_logits[..., :vocab_size], logits[..., :vocab_size])
@@ -310,6 +325,13 @@ def parse_args():
         type=str,
         required=True,
         help="Local or remote directory containing the HF checkpoint, or the model id of a HF Hub repo.",
+    )
+    parser.add_argument(
+        "-r",
+        "--revision",
+        type=str,
+        default="main",
+        help="The revision of the HF model, if the input path is the model id of a HF Hub repo.",
     )
 
     parser.add_argument(
@@ -392,6 +414,7 @@ def main():
 
     convert_checkpoint_from_hf(
         hf_checkpoint_path=args.checkpoint_input_path,
+        hf_revision=args.revision,
         output_path=args.output_dir,
         transformer_config_dict=transformer_config_dict,
         tokenizer_config_dict=tokenizer_config_dict,

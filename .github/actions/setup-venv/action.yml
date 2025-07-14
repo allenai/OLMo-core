@@ -19,7 +19,7 @@ inputs:
   channel:
     description: The channel to install from
     required: false
-    default: 'whl/test/cpu'
+    default: 'whl/cpu'
 runs:
   using: composite
   steps:

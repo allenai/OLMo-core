@@ -28,7 +28,6 @@ from olmo_core.train import (
 from olmo_core.train.callbacks import (
     BeakerCallback,
     Callback,
-    CometCallback,
     ConfigSaverCallback,
     DownstreamEvaluatorCallbackConfig,
     GarbageCollectorCallback,
@@ -36,7 +35,6 @@ from olmo_core.train.callbacks import (
     LMEvaluatorCallbackConfig,
     ProfilerCallback,
     SlackNotifierCallback,
-    WandBCallback,
 )
 from olmo_core.train.train_module import TransformerTrainModuleConfig
 from olmo_core.utils import prepare_cli_environment, seed_all
@@ -144,6 +142,7 @@ def build_common_components(
     include_instance_filter: bool = False,
     beaker_image: str = OLMoCoreBeakerImage.stable,
     num_nodes: int = 1,
+    beaker_workspace: str = "ai2/OLMo-core",
 ) -> CommonComponents:
     root_dir = get_root_dir(cluster)
 
@@ -162,6 +161,7 @@ def build_common_components(
             nccl_debug=False,
             beaker_image=beaker_image,
             num_nodes=num_nodes,
+            workspace=beaker_workspace,
         )
 
     tokenizer_config = TokenizerConfig.dolma2()
@@ -312,8 +312,6 @@ def train(config: ExperimentConfig):
 
     # Record the config to W&B/Comet and each checkpoint dir.
     config_dict = config.as_config_dict()
-    cast(CometCallback, trainer.callbacks["comet"]).config = config_dict
-    cast(WandBCallback, trainer.callbacks["wandb"]).config = config_dict
     cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
 
     # Train.
@@ -333,6 +331,7 @@ def main(
     include_instance_filter: bool = False,
     beaker_image: str = OLMoCoreBeakerImage.stable,
     num_nodes: int = 1,
+    beaker_workspace: str = "ai2/OLMo-core",
 ):
     usage = f"""
 [yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]{'|'.join(SubCmd)}[/] [i b]RUN_NAME CLUSTER[/] [i][OVERRIDES...][/]
@@ -378,6 +377,7 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/pluto-cirrascale --launch.nu
         include_instance_filter=include_instance_filter,
         beaker_image=beaker_image,
         num_nodes=num_nodes,
+        beaker_workspace=beaker_workspace,
     )
 
     cmd.run(config)

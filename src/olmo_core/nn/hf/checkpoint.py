@@ -10,6 +10,7 @@ from torch.distributed.tensor import DTensor, distribute_tensor
 from transformers import AutoModelForCausalLM
 
 from olmo_core.aliases import PathOrStr
+from olmo_core.config import DType
 from olmo_core.distributed.utils import barrier, get_fs_local_rank, get_full_tensor
 from olmo_core.doc_utils import beta_feature
 from olmo_core.io import clear_directory, copy_dir, file_exists, is_url, upload
@@ -35,6 +36,7 @@ def load_hf_model(
     model_name_or_path: PathOrStr,
     model_state_dict: Dict[str, Any],
     *,
+    revision: str = "main",
     model_id: Optional[str] = None,
     num_embeddings: Optional[int] = None,
     process_group: Optional[dist.ProcessGroup] = None,
@@ -45,6 +47,8 @@ def load_hf_model(
 
     :param model_name_or_path: The name of a model in HF Hub or the path to a model saved in HF format.
     :param model_state_dict: The OLMo Core model state dict in which to load HF state.
+    :param revision: If ``model_name_or_path`` is the id of a model in HF Hub, then this is the revision
+        (branch) of that model. Defaults to "main".
     :param model_id: If ``model_name_or_path`` is a local or remote path, this is the id of the model
         in HF Hub that the model corresponds to.
     :param num_embeddings: The number of embeddings in the OLMo Core model being loaded into,
@@ -87,11 +91,11 @@ def load_hf_model(
 
     # Warm up the HF local cache by downloading the model on just local rank 0
     if get_fs_local_rank() == 0:
-        hf_model = AutoModelForCausalLM.from_pretrained(model_name_or_path)
+        hf_model = AutoModelForCausalLM.from_pretrained(model_name_or_path, revision=revision)
         del hf_model
     barrier(group=process_group)
 
-    hf_model = AutoModelForCausalLM.from_pretrained(model_name_or_path)
+    hf_model = AutoModelForCausalLM.from_pretrained(model_name_or_path, revision=revision)
     log.info(f"Loaded hf model: {hf_model}")
     hf_model.resize_token_embeddings(num_embeddings)
 
@@ -121,6 +125,7 @@ def save_hf_model(
     model_state_dict: Dict[str, Any],
     model: Transformer,
     *,
+    dtype: Optional[DType] = None,
     vocab_size: Optional[int] = None,
     process_group: Optional[dist.ProcessGroup] = None,
     work_dir: Optional[PathOrStr] = None,
@@ -131,6 +136,7 @@ def save_hf_model(
 
     :param save_dir: Directory in which to save model.
     :param model_state_dict: The OLMo Core model state dict being saved in HF format.
+    :param dtype: The torch dtype that model weights should be saved as.
     :param vocab_size: The size of the vocab, defaults to the number of embeddings in the OLMo Core model.
     :param process_group: The process group to use for distributed communication.
     :param work_dir: A local directory that can be used for holding temporary state. Required when
@@ -141,6 +147,11 @@ def save_hf_model(
     hf_config = get_hf_config(model)
 
     model_state_dict = {key: get_full_tensor(state) for key, state in model_state_dict.items()}
+    if dtype is not None:
+        model_state_dict = {
+            key: state.to(dtype=dtype.as_pt()) for key, state in model_state_dict.items()
+        }
+
     hf_state_dict: Dict[str, torch.Tensor] = convert_state_to_hf(hf_config, model_state_dict)
 
     # model.save_pretrained fails says `tensor.reshape()` should be used instead of `tensor.view()`

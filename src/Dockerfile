@@ -1,7 +1,7 @@
 ARG UBUNTU_VERSION=22.04
 ARG TARGET_PLATFORM=x86_64
-ARG CUDA_VERSION=12.6.3
-ARG CUDA_VERSION_PATH=cu126
+ARG CUDA_VERSION=12.8.1
+ARG CUDA_VERSION_PATH=cu128
 ARG PYTHON_VERSION=3.11
 ARG BASE_IMAGE=ubuntu:${UBUNTU_VERSION}
 ARG DEVEL_BASE_IMAGE=nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION}
@@ -43,8 +43,8 @@ RUN chmod +x ~/miniconda.sh && \
 
 # Install PyTorch core ecosystem.
 ARG CUDA_VERSION_PATH
-ARG TORCH_VERSION=2.7.0
-ARG INSTALL_CHANNEL=whl/test
+ARG TORCH_VERSION=2.7.1
+ARG INSTALL_CHANNEL=whl
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/${INSTALL_CHANNEL}/${CUDA_VERSION_PATH}/ \
     torch==${TORCH_VERSION} torchao torchvision torchaudio
 
@@ -62,11 +62,11 @@ ARG FLASH_ATTN_VERSION=2.7.4.post1
 RUN pip install --no-build-isolation --no-cache-dir flash-attn==${FLASH_ATTN_VERSION}
 
 # Install ring-flash-attn.
-ARG RING_FLASH_ATTN_VERSION=0.1.4
+ARG RING_FLASH_ATTN_VERSION=0.1.5
 RUN pip install --no-build-isolation --no-cache-dir ring-flash-attn==${RING_FLASH_ATTN_VERSION}
 
 # Install liger-kernel.
-ARG LIGER_KERNEL_VERSION=0.5.4
+ARG LIGER_KERNEL_VERSION=0.5.10
 RUN pip install --no-build-isolation --no-cache-dir liger-kernel==${LIGER_KERNEL_VERSION}
 
 # Install direct dependencies, but not source code.

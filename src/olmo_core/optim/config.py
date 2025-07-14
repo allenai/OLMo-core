@@ -34,6 +34,9 @@ log = logging.getLogger(__name__)
 
 Opt = TypeVar("Opt", bound=torch.optim.Optimizer)
 
+LR_FIELD = "lr"
+INITIAL_LR_FIELD = "initial_lr"
+
 
 @dataclass
 class OptimGroupOverride(Config):
@@ -70,7 +73,7 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
         due to the LR being restored to a float instead of a tensor.
     """
 
-    fixed_fields: Tuple[str, ...] = ("initial_lr",)
+    fixed_fields: Tuple[str, ...] = (INITIAL_LR_FIELD,)
     """
     These are fields that should not be overridden by the value in a checkpoint after
     loading optimizer state.
@@ -176,18 +179,18 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
         fixed_fields_per_group: List[Dict[str, Any]] = [{} for _ in optim.param_groups]
         for fixed_fields, group in zip(fixed_fields_per_group, optim.param_groups):
             lr: Optional[float] = None
-            if "lr" in group:
-                lr = group["lr"]
-            elif hasattr(self, "lr"):
-                lr = getattr(self, "lr")
+            if LR_FIELD in group:
+                lr = group[LR_FIELD]
+            elif hasattr(self, LR_FIELD):
+                lr = getattr(self, LR_FIELD)
 
             if lr is not None:
                 if self.compile:
                     # 'lr' should be a tensor.
-                    group["lr"] = move_to_device(torch.tensor(lr), self.device)
+                    group[LR_FIELD] = move_to_device(torch.tensor(lr), self.device)
                 else:
-                    group["lr"] = lr
-                group.setdefault("initial_lr", lr)
+                    group[LR_FIELD] = lr
+                group.setdefault(INITIAL_LR_FIELD, lr)
 
             for k in self.fixed_fields:
                 if k in group:

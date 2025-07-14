@@ -16,17 +16,18 @@ on:
 
 env:
   # Change this to invalidate existing cache.
-  CACHE_PREFIX: v0
+  CACHE_PREFIX: v1
   PYTHONPATH: ./src/
   AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
   BEAKER_TOKEN: ${{ secrets.BEAKER_TOKEN }}
+  GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
 
 jobs:
   checks:
     name: ${{ matrix.task.name }}
     runs-on: [ubuntu-latest]
-    timeout-minutes: 8
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -37,8 +38,9 @@ jobs:
 
           - name: Test
             run: |
-              pytest -v --color=yes --durations=3 src/test/ \
-                --ignore-glob='src/test/distributed/checkpoint*'
+              pytest -v --color=yes --durations=3 -n auto --dist=loadfile \
+                --ignore-glob='src/test/distributed/checkpoint*' \
+                src/test/
 
           - name: Test checkpoint
             run: |
@@ -71,6 +73,12 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
           cache-prefix: ${{ env.CACHE_PREFIX }}
+
+      - name: Setup Google credentials
+        run: |
+          mkdir -p $HOME/.google
+          printenv GOOGLE_CREDENTIALS > $HOME/.google/credentials.json
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$HOME/.google/credentials.json" >> $GITHUB_ENV
 
       - name: Restore mypy cache
         if: matrix.task.name == 'Type check'
@@ -109,7 +117,7 @@ jobs:
       matrix:
         task:
           - name: Test (GPU)
-            image: olmo-core-tch270cu126
+            image: petew/olmo-core-tch270cu128-2025-05-16
             gpus: 2
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
@@ -119,21 +127,21 @@ jobs:
                 src/test/
 
           - name: Test checkpoint (GPU)
-            image: olmo-core-tch270cu126
+            image: petew/olmo-core-tch270cu128-2025-05-16
             gpus: 2
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
                 src/test/distributed/checkpoint*
 
           - name: Test transformer (GPU)
-            image: olmo-core-tch270cu126
+            image: petew/olmo-core-tch270cu128-2025-05-16
             gpus: 2
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
                 src/test/nn/transformer*
 
           - name: Test MoE (GPU)
-            image: olmo-core-tch270cu126
+            image: petew/olmo-core-tch270cu128-2025-05-16
             gpus: 2
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
@@ -166,11 +174,6 @@ jobs:
           token: ${{ env.BEAKER_TOKEN }}
           workspace: ${{ env.BEAKER_WORKSPACE }}
 
-      - name: Get full image name
-        if: env.BEAKER_TOKEN != ''
-        run:
-          echo "BEAKER_IMAGE=$(make get-full-beaker-image-name IMAGE_NAME=${{ matrix.task.image }})" >> $GITHUB_ENV
-
       - name: GPU Tests
         uses: allenai/beaker-run-action@v1.2
         if: env.BEAKER_TOKEN != ''
@@ -182,7 +185,7 @@ jobs:
             tasks:
               - name: tests
                 image:
-                  beaker: ${{ env.BEAKER_IMAGE }}
+                  beaker: ${{ matrix.task.image }}
                 context:
                   priority: normal
                   preemptible: true
@@ -208,6 +211,12 @@ jobs:
                     secret: AWS_ACCESS_KEY_ID
                   - name: AWS_SECRET_ACCESS_KEY
                     secret: AWS_SECRET_ACCESS_KEY
+                  - name: GOOGLE_APPLICATION_CREDENTIALS
+                    value: "/.google/credentials.json"
+                datasets:
+                  - mountPath:  "/.google/credentials.json"
+                    source:
+                      secret: GOOGLE_CREDENTIALS
                 command:
                   - "bash"
                   - "-c"

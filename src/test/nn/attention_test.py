@@ -44,6 +44,7 @@ from olmo_core.testing import (
         pytest.param({"rope": RoPEConfig()}, id="rope"),
         pytest.param({"rope": RoPEConfig(name=RoPEType.complex)}, id="complex-rope"),
         pytest.param({"qk_norm": LayerNormConfig()}, id="qk-norm"),
+        pytest.param({"qk_norm": LayerNormConfig(), "use_head_qk_norm": True}, id="head-qk-norm"),
     ],
 )
 def test_attention(
@@ -208,10 +209,10 @@ def test_attention_with_intra_document_masking():
         ),
     ],
 )
-def test_attention_buidler_config(attn_config: AttentionConfig):
+def test_attention_builder_config(attn_config: AttentionConfig):
     d_model = 64
 
-    attn = attn_config.build(d_model)
+    attn = attn_config.build(d_model, layer_idx=0, n_layers=1)
 
     # Make sure the estimated number of params matches the actual number of params.
     n_params = sum(p.numel() for p in attn.parameters())

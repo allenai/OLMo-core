@@ -793,6 +793,28 @@ class TransformerConfig(Config):
             **kwargs,
         )
 
+
+    @classmethod
+    def marin_8B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        An 8B Marin-like model config. The only difference from Llama3 is the positional embeddings
+        """
+        return cls.llama_like(
+            d_model=4096,
+            vocab_size=vocab_size,
+            n_layers=kwargs.pop("n_layers", 32),
+            n_heads=kwargs.pop("n_heads", 32),
+            n_kv_heads=kwargs.pop("n_kv_heads", 8),
+            rope_theta=kwargs.pop("rope_theta", 500_000),
+            hidden_size_multiplier=1.3,
+            hidden_size_multiple_of=1024,
+            rope_scaling=RoPEScalingConfig(factor=8.0, low_freq_factor=1.0, \
+                high_freq_factor=4.0, old_context_len=8192),
+            **kwargs,
+        )
+
+
+
     @classmethod
     def llama3_8B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """

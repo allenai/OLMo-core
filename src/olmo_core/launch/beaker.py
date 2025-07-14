@@ -7,6 +7,7 @@ import logging
 import tempfile
 import time
 from dataclasses import dataclass, field
+from datetime import timedelta
 from pathlib import Path
 from typing import List, Optional, Set, Tuple
 
@@ -29,6 +30,7 @@ from rich.prompt import Confirm
 from ..config import Config, StrEnum
 from ..distributed.utils import OLMO_SHARED_FS_ENV_VAR
 from ..exceptions import BeakerExperimentFailedError, OLMoConfigurationError
+from ..train.callbacks.beaker import BEAKER_RESULT_DIR
 from ..utils import LOG_FILTER_TYPE_ENV_VAR, LogFilterType
 from ..version import VERSION
 from .utils import GIT_BRANCH_ENV_VAR, GIT_REF_ENV_VAR, GIT_REPO_URL_ENV_VAR, GitConfig
@@ -49,7 +51,7 @@ __all__ = [
 BeakerPriority = Priority
 
 _DEFAULT_TORCH = "2.7.0".replace(".", "")
-_DEFAULT_CUDA = "12.6".replace(".", "")
+_DEFAULT_CUDA = "12.8".replace(".", "")
 
 
 class OLMoCoreBeakerImage(StrEnum):
@@ -61,17 +63,19 @@ class OLMoCoreBeakerImage(StrEnum):
     includes *versioned* images that are published with each release of the OLMo-core package.
     """
 
-    stable = f"olmo-core-tch{_DEFAULT_TORCH}cu{_DEFAULT_CUDA}"
+    # NOTE: when updating default images here, should also update images used in tests at .github/workflows/main.yml
+
+    stable = f"olmo-core-tch{_DEFAULT_TORCH}cu{_DEFAULT_CUDA}-2025-05-16"
     """
     Built with the latest compatible stable version of PyTorch.
     """
 
-    stable_cu126 = f"olmo-core-tch{_DEFAULT_TORCH}cu126"
+    stable_cu126 = f"olmo-core-tch{_DEFAULT_TORCH}cu126-2025-05-16"
     """
     The stable image with CUDA pinned to 12.6.
     """
 
-    stable_cu128 = f"olmo-core-tch{_DEFAULT_TORCH}cu128"
+    stable_cu128 = f"olmo-core-tch{_DEFAULT_TORCH}cu128-2025-05-16"
     """
     The stable image with CUDA pinned to 12.8.
     """
@@ -230,6 +234,11 @@ class BeakerLaunchConfig(Config):
     """
     Git configuration, specifies where to clone your source code from and which commit to check out.
     If not set, this will be initialized automatically from your working directory.
+    """
+
+    result_dir: str = BEAKER_RESULT_DIR
+    """
+    The directory of the Beaker results dataset.
     """
 
     # NOTE: don't assign a type here because omegaconf can't validate arbitrary classes
@@ -415,6 +424,7 @@ class BeakerLaunchConfig(Config):
                 propagate_preemption=True if self.num_nodes > 1 else None,
                 synchronized_start_timeout="90m" if self.num_nodes > 1 else None,
                 resources=TaskResources(gpu_count=self.num_gpus, shared_memory=self.shared_memory),
+                result_path=self.result_dir,
             )
             .with_dataset("/olmo-core", beaker=entrypoint_dataset.id)
             .with_constraint(cluster=self.clusters)
@@ -488,7 +498,7 @@ class BeakerLaunchConfig(Config):
         return experiment
 
 
-def follow_experiment(beaker: Beaker, experiment: Experiment, tail_lines: Optional[int] = None):
+def follow_experiment(beaker: Beaker, experiment: Experiment, tail: bool = False):
     # Wait for job to start...
     job: Optional[Job] = beaker.experiment.tasks(experiment.id)[0].latest_job  # type: ignore
     if job is None:
@@ -517,9 +527,15 @@ def follow_experiment(beaker: Beaker, experiment: Experiment, tail_lines: Option
     # Stream logs...
     log.info("Showing logs:")
     print()
-    time.sleep(2.0)  # wait a moment to make sure logs are available before experiment finishes
-    for job_log in beaker.job.follow_structured(job, tail_lines=tail_lines):
-        print(job_log.message)
+    for line_bytes in beaker.job.follow(
+        job,
+        include_timestamps=False,
+        since=None if not tail else timedelta(seconds=10),
+    ):
+        line = line_bytes.decode(errors="ignore")
+        if line.endswith("\n"):
+            line = line[:-1]
+        print(line)
     print()
     log.info("End logs")
 

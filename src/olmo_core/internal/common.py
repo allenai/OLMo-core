@@ -3,8 +3,10 @@ from functools import lru_cache
 from typing import List, Optional
 
 import torch
-from beaker import Beaker, BeakerError
+from beaker import Beaker, BeakerError, SecretNotFound
 
+from olmo_core.distributed.utils import is_distributed
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.io import is_url
 from olmo_core.launch.beaker import (
     BeakerEnvSecret,
@@ -32,6 +34,36 @@ def get_beaker_username() -> Optional[str]:
     if beaker is not None:
         return beaker.account.whoami().name
     else:
+        return None
+
+
+def beaker_secret_exists(secret: str, workspace: Optional[str] = None) -> bool:
+    beaker = get_beaker_client()
+    if beaker is None:
+        raise RuntimeError(
+            "Environment not configured correctly for Beaker, you may be missing the BEAKER_TOKEN env var."
+        )
+
+    try:
+        beaker.secret.get(secret, workspace=workspace)
+        return True
+    except SecretNotFound:
+        return False
+
+
+def _to_beaker_env_secret(
+    name: str, secret: str, *, workspace: Optional[str] = None, required: bool = True
+) -> Optional[BeakerEnvSecret]:
+    # Assume beaker secret exists if we are in a distributed setting (e.g., during a training job)
+    # so that we don't DOS beaker.
+    if is_distributed() or beaker_secret_exists(secret, workspace=workspace):
+        return BeakerEnvSecret(name=name, secret=secret)
+    elif required:
+        raise OLMoConfigurationError(
+            f"Secret {secret} not configured in beaker workspace {workspace}"
+        )
+    else:
+        log.info(f"Secret {secret} not configured in beaker workspace {workspace}")
         return None
 
 
@@ -78,7 +110,57 @@ def build_launch_config(
             "Environment not configured correctly for Beaker, you may be missing the BEAKER_TOKEN env var."
         )
 
-    return BeakerLaunchConfig(
+    google_creds = (
+        _to_beaker_env_secret(
+            name="GOOGLE_CREDENTIALS",
+            secret="GOOGLE_CREDENTIALS",
+            required=False,
+            workspace=workspace,
+        )
+        if "google" not in cluster
+        else None
+    )
+    env_secrets = [
+        _to_beaker_env_secret(
+            name="BEAKER_TOKEN", secret=f"{beaker_user}_BEAKER_TOKEN", workspace=workspace
+        ),
+        _to_beaker_env_secret(
+            name="WANDB_API_KEY",
+            secret=f"{beaker_user}_WANDB_API_KEY",
+            required=False,
+            workspace=workspace,
+        ),
+        _to_beaker_env_secret(
+            name="COMET_API_KEY",
+            secret=f"{beaker_user}_COMET_API_KEY",
+            required=False,
+            workspace=workspace,
+        ),
+        _to_beaker_env_secret(
+            name="AWS_CONFIG", secret=f"{beaker_user}_AWS_CONFIG", workspace=workspace
+        ),
+        _to_beaker_env_secret(
+            name="AWS_CREDENTIALS", secret=f"{beaker_user}_AWS_CREDENTIALS", workspace=workspace
+        ),
+        _to_beaker_env_secret(
+            name="R2_ENDPOINT_URL", secret="R2_ENDPOINT_URL", required=False, workspace=workspace
+        ),
+        _to_beaker_env_secret(
+            name="WEKA_ENDPOINT_URL",
+            secret="WEKA_ENDPOINT_URL",
+            required=False,
+            workspace=workspace,
+        ),
+        _to_beaker_env_secret(
+            name="SLACK_WEBHOOK_URL",
+            secret="SLACK_WEBHOOK_URL",
+            required=False,
+            workspace=workspace,
+        ),
+        google_creds,
+    ]
+
+    launch_config = BeakerLaunchConfig(
         name=f"{name}-{generate_uuid()[:8]}",
         budget=budget,
         cmd=cmd,
@@ -121,6 +203,15 @@ def build_launch_config(
             "printenv AWS_CREDENTIALS > ~/.aws/credentials",
         ],
     )
+
+    if google_creds:
+        launch_config.setup_steps += [
+            "mkdir -p ~/.google",
+            f"printenv {google_creds.name} > ~/.google/credentials.json",
+            "export GOOGLE_APPLICATION_CREDENTIALS=$HOME/.google/credentials.json",
+        ]
+
+    return launch_config
 
 
 CLUSTER_TO_GPU_TYPE = {

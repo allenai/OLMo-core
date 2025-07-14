@@ -2,6 +2,7 @@
 Trainer :class:`Callback` implementations.
 """
 
+from .batch_size_scheduler import BatchSizeSchedulerCallback
 from .beaker import BeakerCallback
 from .callback import Callback, CallbackConfig
 from .checkpointer import CheckpointerCallback, CheckpointRemovalStrategy
@@ -42,6 +43,7 @@ __all__ = [
     "SpeedMonitorCallback",
     "WandBCallback",
     "BeakerCallback",
+    "BatchSizeSchedulerCallback",
 ]
 
 __doc__ += "\n"

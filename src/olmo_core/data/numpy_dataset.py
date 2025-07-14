@@ -109,6 +109,7 @@ class NumpyDatasetBase(ABC):
         eos_token_id: int,
         vocab_size: int,
         dtype: NumpyUIntTypes = np.uint16,
+        bos_token_id: Optional[int] = None,
     ):
         if not paths:
             raise OLMoConfigurationError("At least one path is required")
@@ -116,6 +117,7 @@ class NumpyDatasetBase(ABC):
         self._array_paths = tuple(paths)
         self._pad_token_id = pad_token_id
         self._eos_token_id = eos_token_id
+        self._bos_token_id = bos_token_id
         self._vocab_size = vocab_size
         self._dtype = dtype
         self._fs_local_rank = get_fs_local_rank()
@@ -156,6 +158,10 @@ class NumpyDatasetBase(ABC):
         return self._eos_token_id
 
     @property
+    def bos_token_id(self) -> Optional[int]:
+        return self._bos_token_id
+
+    @property
     def vocab_size(self) -> int:
         return self._vocab_size
 
@@ -180,7 +186,7 @@ class NumpyDatasetBase(ABC):
         """
         Extra values to include when calculating the data contents :data:`fingerprint`.
         """
-        return ("vocab_size", "pad_token_id", "eos_token_id", "dtype")
+        return ("vocab_size", "pad_token_id", "eos_token_id", "dtype", "bos_token_id")
 
     @property
     def fingerprint(self) -> str:
@@ -356,6 +362,7 @@ class NumpyFSLDatasetBase(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         metadata: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None,
         include_instance_metadata: Optional[bool] = None,
         generate_doc_lengths: bool = False,
+        bos_token_id: Optional[int] = None,
         instance_filter_config: Optional[InstanceFilterConfig] = None,
         label_mask_paths: Optional[List[PathOrStr]] = None,
     ):
@@ -381,6 +388,7 @@ class NumpyFSLDatasetBase(NumpyDatasetBase, Dataset[Dict[str, Any]]):
             eos_token_id=eos_token_id,
             vocab_size=vocab_size,
             dtype=dtype,
+            bos_token_id=bos_token_id,
         )
         self._metadata = tuple(metadata)
         self._sequence_length = sequence_length
@@ -465,6 +473,7 @@ class NumpyFSLDataset(NumpyFSLDatasetBase):
         metadata: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None,
         include_instance_metadata: Optional[bool] = None,
         generate_doc_lengths: bool = False,
+        bos_token_id: Optional[int] = None,
         max_target_sequence_length: Optional[int] = None,
         instance_filter_config: Optional[InstanceFilterConfig] = None,
         label_mask_paths: Optional[List[PathOrStr]] = None,
@@ -479,6 +488,7 @@ class NumpyFSLDataset(NumpyFSLDatasetBase):
             metadata=metadata,
             include_instance_metadata=include_instance_metadata,
             generate_doc_lengths=generate_doc_lengths,
+            bos_token_id=bos_token_id,
             instance_filter_config=instance_filter_config,
             label_mask_paths=label_mask_paths,
         )
@@ -497,7 +507,14 @@ class NumpyFSLDataset(NumpyFSLDatasetBase):
 
     @property
     def fingerprint_fields(self) -> Tuple[str, ...]:
-        return ("vocab_size", "pad_token_id", "eos_token_id", "dtype", "max_target_sequence_length")
+        return (
+            "vocab_size",
+            "pad_token_id",
+            "eos_token_id",
+            "dtype",
+            "max_target_sequence_length",
+            "bos_token_id",
+        )
 
     @property
     def num_tokens(self) -> int:
@@ -576,7 +593,9 @@ class NumpyFSLDataset(NumpyFSLDatasetBase):
             out["metadata"] = deepcopy(metadata)
 
         if self._generate_doc_lengths:
-            out["doc_lens"] = get_document_lengths(input_ids, self.eos_token_id)
+            out["doc_lens"] = get_document_lengths(
+                input_ids, self.eos_token_id, bos_token_id=self.bos_token_id
+            )
 
         return out
 
@@ -665,6 +684,7 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
         metadata: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None,
         include_instance_metadata: Optional[bool] = None,
         generate_doc_lengths: bool = False,
+        bos_token_id: Optional[int] = None,
         max_target_sequence_length: Optional[int] = None,
         instance_filter_config: Optional[InstanceFilterConfig] = None,
     ):
@@ -697,6 +717,7 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
             metadata=metadata,
             include_instance_metadata=include_instance_metadata,
             generate_doc_lengths=generate_doc_lengths,
+            bos_token_id=bos_token_id,
             max_target_sequence_length=max_target_sequence_length,
         )
         self._metadata = tuple(metadata)
@@ -824,6 +845,7 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
         eos_token_id: int,
         vocab_size: int,
         dtype: NumpyUIntTypes = np.uint16,
+        bos_token_id: Optional[int] = None,
         metadata: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None,
         include_instance_metadata: Optional[bool] = None,
         instance_filter_config: Optional[InstanceFilterConfig] = None,
@@ -838,10 +860,23 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
             dtype=dtype,
             metadata=metadata,
             include_instance_metadata=include_instance_metadata,
+            bos_token_id=bos_token_id,
             instance_filter_config=instance_filter_config,
             label_mask_paths=label_mask_paths,
         )
         self._array_instance_offsets: Optional[Tuple[Tuple[int, int], ...]] = None
+
+    @property
+    def fingerprint_fields(self) -> Tuple[str, ...]:
+        return (
+            "vocab_size",
+            "pad_token_id",
+            "eos_token_id",
+            "dtype",
+            "max_target_sequence_length",
+            "bos_token_id",
+            "sequence_length",
+        )
 
     @property
     def offsets(self) -> Tuple[Tuple[int, int], ...]:
@@ -957,6 +992,7 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
         metadata: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None,
         include_instance_metadata: Optional[bool] = None,
         generate_doc_lengths: bool = False,
+        bos_token_id: Optional[int] = None,
         instance_filter_config: Optional[InstanceFilterConfig] = None,
         label_mask_paths: Optional[List[PathOrStr]] = None,
         long_doc_strategy: LongDocStrategy = LongDocStrategy.truncate,
@@ -971,6 +1007,7 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
             metadata=metadata,
             include_instance_metadata=include_instance_metadata,
             generate_doc_lengths=generate_doc_lengths,
+            bos_token_id=bos_token_id,
             instance_filter_config=instance_filter_config,
         )
 
@@ -992,7 +1029,15 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
 
     @property
     def fingerprint_fields(self) -> Tuple[str, ...]:
-        return ("vocab_size", "pad_token_id", "eos_token_id", "dtype", "long_doc_strategy")
+        return (
+            "vocab_size",
+            "pad_token_id",
+            "eos_token_id",
+            "dtype",
+            "long_doc_strategy",
+            "bos_token_id",
+            "sequence_length",
+        )
 
     @property
     def long_doc_strategy(self) -> LongDocStrategy:
@@ -1113,7 +1158,9 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
             metadata = self._metadata[array_index]
             out["metadata"] = deepcopy(metadata)
         if self._generate_doc_lengths:
-            out["doc_lens"] = get_document_lengths(input_ids, self.eos_token_id)
+            out["doc_lens"] = get_document_lengths(
+                input_ids, self.eos_token_id, bos_token_id=self.bos_token_id
+            )
         return out
 
     def _get_document_indices_path(self, source_path: PathOrStr) -> Path:
@@ -1248,6 +1295,10 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
             eos_token_id=eos_token_id,
             vocab_size=vocab_size,
             dtype=dtype,
+<<<<<<< HEAD
+=======
+            bos_token_id=bos_token_id,
+>>>>>>> 739bb3a8c4db23a6f0f6b03579e48c3768364607
             metadata=metadata,
             include_instance_metadata=include_instance_metadata,
             instance_filter_config=instance_filter_config,
@@ -1256,7 +1307,10 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
         self._docs_per_instance = docs_per_instance
         self._chunks_per_doc = chunks_per_doc
         self._seed = seed
+<<<<<<< HEAD
         self._bos_token_id = bos_token_id
+=======
+>>>>>>> 739bb3a8c4db23a6f0f6b03579e48c3768364607
         self._interleaving_exempt_paths = interleaving_exempt_paths
         self._num_interleaving_exempt_instances = None
         self._num_interleavable_instances = None
@@ -1268,10 +1322,19 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
             "pad_token_id",
             "eos_token_id",
             "dtype",
+<<<<<<< HEAD
             "_bos_token_id",
             "_docs_per_instance",
             "_seed",
             "_interleaving_exempt_paths",
+=======
+            "_docs_per_instance",
+            "_seed",
+            "_interleaving_exempt_paths",
+            "max_target_sequence_length",
+            "bos_token_id",
+            "sequence_length",
+>>>>>>> 739bb3a8c4db23a6f0f6b03579e48c3768364607
         )
 
     def __len__(self) -> int:
@@ -1421,10 +1484,17 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
                 doc["input_ids"] == self.pad_token_id,
                 doc["input_ids"] == self.eos_token_id,
             )
+<<<<<<< HEAD
             if self._bos_token_id is not None:
                 special_tokens_mask = torch.logical_or(
                     special_tokens_mask,
                     doc["input_ids"] == self._bos_token_id,
+=======
+            if self.bos_token_id is not None:
+                special_tokens_mask = torch.logical_or(
+                    special_tokens_mask,
+                    doc["input_ids"] == self.bos_token_id,
+>>>>>>> 739bb3a8c4db23a6f0f6b03579e48c3768364607
                 )
 
             non_special_token_indices = torch.nonzero(
@@ -1441,8 +1511,13 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
         )
 
         # Add bos and tokens if there is space after interleaving.
+<<<<<<< HEAD
         if self._bos_token_id is not None and len(item["input_ids"]) < self.sequence_length:
             item["input_ids"] = F.pad(item["input_ids"], (1, 0), value=self._bos_token_id)
+=======
+        if self.bos_token_id is not None and len(item["input_ids"]) < self.sequence_length:
+            item["input_ids"] = F.pad(item["input_ids"], (1, 0), value=self.bos_token_id)
+>>>>>>> 739bb3a8c4db23a6f0f6b03579e48c3768364607
             item["label_mask"] = F.pad(item["label_mask"], (1, 0), value=True)
         if len(item["input_ids"]) < self.sequence_length:
             item["input_ids"] = F.pad(item["input_ids"], (0, 1), value=self.eos_token_id)
@@ -1480,6 +1555,7 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
         return (
             self.work_dir / f"dataset-{self.fingerprint}" / "interleaving-exempt-docs-indices.npy"
         )
+<<<<<<< HEAD
     
 
 class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
@@ -1920,6 +1996,8 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
             self._write_docs_interleaving_indices()
         barrier()
         len(self)
+=======
+>>>>>>> 739bb3a8c4db23a6f0f6b03579e48c3768364607
 
 
 @dataclass
@@ -2686,7 +2764,11 @@ class NumpyDatasetConfig(Config):
     """
     The number of documents to interleave per instance in
     :class:`NumpyInterleavedFSLDataset`.
+<<<<<<< HEAD
     
+=======
+
+>>>>>>> 739bb3a8c4db23a6f0f6b03579e48c3768364607
     Dataset document are truncated down to length ``sequence_length // docs_per_instance``, so
     that the overall sequence length after interleaving is up to ``sequence_length``.
     """
@@ -2704,6 +2786,7 @@ class NumpyDatasetConfig(Config):
     """
     A list of paths that are exempt from interleaving in :class:`NumpyInterleavedFSLDataset`.
     """
+<<<<<<< HEAD
     exclude_interleaved: bool = False
     """
     Take interleavable paths out of the non-interleaving data pool in :class:`NumpyPackedInterleavedFSLDataset`.
@@ -2712,6 +2795,8 @@ class NumpyDatasetConfig(Config):
     """
     A list of paths that will be used for interleaving in :class:`NumpyPackedInterleavedFSLDataset`.
     """
+=======
+>>>>>>> 739bb3a8c4db23a6f0f6b03579e48c3768364607
     expand_glob: bool = False
     """
     Treat the :data:`paths` as globs.
@@ -2923,6 +3008,7 @@ class NumpyDatasetConfig(Config):
                     metadata=self.metadata,
                     include_instance_metadata=self.include_instance_metadata,
                     generate_doc_lengths=self.generate_doc_lengths,
+                    bos_token_id=self.tokenizer.bos_token_id,
                     path_offset_index=mixture.to_index(),
                     instance_filter_config=self.instance_filter_config,
                 )
@@ -2938,6 +3024,7 @@ class NumpyDatasetConfig(Config):
                     metadata=metadata,
                     include_instance_metadata=self.include_instance_metadata,
                     generate_doc_lengths=self.generate_doc_lengths,
+                    bos_token_id=self.tokenizer.bos_token_id,
                     instance_filter_config=self.instance_filter_config,
                     label_mask_paths=label_mask_paths,
                 )
@@ -2995,6 +3082,7 @@ class NumpyDatasetConfig(Config):
                 eos_token_id=self.tokenizer.eos_token_id,
                 vocab_size=self.tokenizer.vocab_size,
                 dtype=self.get_dtype(),
+                bos_token_id=self.tokenizer.bos_token_id,
                 metadata=metadata,
                 include_instance_metadata=self.include_instance_metadata,
                 instance_filter_config=self.instance_filter_config,
@@ -3049,6 +3137,7 @@ class NumpyDatasetConfig(Config):
                 metadata=metadata,
                 include_instance_metadata=self.include_instance_metadata,
                 generate_doc_lengths=self.generate_doc_lengths,
+                bos_token_id=self.tokenizer.bos_token_id,
                 instance_filter_config=self.instance_filter_config,
                 long_doc_strategy=self.long_doc_strategy or LongDocStrategy.truncate,
                 label_mask_paths=label_mask_paths,
@@ -3120,6 +3209,7 @@ class NumpyDatasetConfig(Config):
                 bos_token_id=self.tokenizer.bos_token_id,
                 interleaving_exempt_paths=interleaving_exempt_paths,
             )
+<<<<<<< HEAD
         elif self.name == NumpyDatasetType.packed_interleaved_fsl:
             if self.sequence_length is None:
                 raise OLMoConfigurationError(
@@ -3184,6 +3274,8 @@ class NumpyDatasetConfig(Config):
                 interleavable_paths=interleavable_paths,
                 exclude_interleaved=self.exclude_interleaved,
             )
+=======
+>>>>>>> 739bb3a8c4db23a6f0f6b03579e48c3768364607
         elif self.name == NumpyDatasetType.vsl:
             if self.max_sequence_length is None:
                 raise OLMoConfigurationError("'max_sequence_length' is required for VSL datasets")
@@ -3217,6 +3309,13 @@ class NumpyDatasetConfig(Config):
                 raise OLMoConfigurationError(
                     "'interleaving_exempt_paths' is only valid for the interleaved FSL dataset"
                 )
+<<<<<<< HEAD
+=======
+            if self.tokenizer.bos_token_id is not None:
+                raise OLMoConfigurationError(
+                    "'bos_token_id' is not yet supported for the VSL dataset"
+                )
+>>>>>>> 739bb3a8c4db23a6f0f6b03579e48c3768364607
             dataset = NumpyVSLDataset(
                 *paths,
                 max_sequence_length=self.max_sequence_length,

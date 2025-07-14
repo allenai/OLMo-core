@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass, fields, is_dataclass, replace
 from enum import Enum
 from typing import (
@@ -14,10 +15,12 @@ from typing import (
 )
 
 import torch
+from cached_path import cached_path
 from omegaconf import OmegaConf as om
 from omegaconf.errors import OmegaConfBaseException
 from typing_extensions import Self
 
+from .aliases import PathOrStr
 from .exceptions import OLMoConfigurationError
 
 
@@ -256,6 +259,12 @@ class Config:
         except OmegaConfBaseException as e:
             raise OLMoConfigurationError(str(e))
 
+    @classmethod
+    def from_file(cls: Type[C], path: PathOrStr, overrides: Optional[List[str]] = None) -> C:
+        with cached_path(path).open() as f:
+            config_dict = json.load(f)
+        return cls.from_dict(config_dict, overrides=overrides)
+
 
 def _clean_opts(opts: List[str]) -> List[str]:
     return [_clean_opt(s) for s in opts]
@@ -276,6 +285,7 @@ class DType(StrEnum):
 
     float32 = "float32"
     bfloat16 = "bfloat16"
+    float16 = "float16"
 
     @classmethod
     def from_pt(cls, dtype: torch.dtype) -> "DType":
@@ -283,6 +293,8 @@ class DType(StrEnum):
             return DType.float32
         elif dtype == torch.bfloat16:
             return DType.bfloat16
+        elif dtype == torch.float16:
+            return DType.float16
         else:
             raise NotImplementedError(dtype)
 
