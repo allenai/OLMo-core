@@ -196,8 +196,8 @@ python src/scripts/train/sft/OLMo2-7B-sft.py launch \
     --num_nodes=4 \
     --launch.priority=urgent
 
-INPUT_PATH=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmo2-7B-sft/olmo2-7B-lc-OpenThoughts3-1.2M/step34084
-MODEL_NAME=olmo2-7B-lc-OpenThoughts3-1.2M
+INPUT_PATH=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmo2-7B-sft/olmo2-7B-lc-OpenThoughts3-full-regenerations/step45870
+MODEL_NAME=olmo2-7B-lc-OpenThoughts3-full-regenerations
 gantry run --cluster ai2/saturn-cirrascale --timeout -1 -y --budget ai2/oe-adapt --workspace ai2/olmo-instruct \
         --install "curl -LsSf https://astral.sh/uv/install.sh | sh && /root/.local/bin/uv sync --all-extras" \
         --weka=oe-adapt-default:/weka/oe-adapt-default \
@@ -265,18 +265,21 @@ python scripts/submit_eval_jobs.py \
 # RL
 # "olmo2-7B-lc-OT3-456-subsample_10k"
 # "olmo2-7B-lc-OpenThoughts3-456k"
+# "olmo2-7B-lc-OpenThoughts3-456k-gpt4.1-cot"
+# "olmo2-7B-lc-OT3-456-subsample_250k"
+# "olmo2-7B-lc-OT3-456-subsample_100k"
+    # "olmo2-7B-lc-OpenThoughts3-1.2M"
 MODEL_NAMES=(
-"olmo2-7B-lc-OpenThoughts3-456k-gpt4.1-cot"
-"olmo2-7B-lc-OT3-456-subsample_250k"
-"olmo2-7B-lc-OT3-456-subsample_100k"
+    "olmo2-7B-lc-OT3-456k-R1_wildchat_p1_2_oasst"
+    "olmo2-7B-lc-OpenThoughts3-full-regenerations"
 )
 for MODEL_NAME in "${MODEL_NAMES[@]}"; do
     RL_LENGTH=32768
     MODEL_PATH=/weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft/rl-sft/$MODEL_NAME
     WANDB_RUN=placeholder
     python scripts/submit_eval_jobs.py \
-            --model_name qwen-2.5-7b-openthoughts-3-1.2m \
-            --location /weka/oe-adapt-default/jacobm/rl-sft/checkpoints/qwen_2p5_7b-open_thoughts_3__8__1751916783 \
+            --model_name $MODEL_NAME \
+            --location $MODEL_PATH \
             --cluster ai2/saturn-cirrascale ai2/jupiter-cirrascale-2 ai2/ceres-cirrascale \
             --is_tuned \
             --priority high \
