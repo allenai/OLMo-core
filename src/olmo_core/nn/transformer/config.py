@@ -14,6 +14,7 @@ from ..feed_forward import FeedForwardConfig, FeedForwardType
 from ..layer_norm import LayerNormConfig, LayerNormType
 from ..lm_head import LMHeadConfig, LMHeadType
 from ..moe import MoEConfig, MoERouterConfig, MoEType
+from ..blt import LocalEncoderConfig, LocalDecoderConfig
 from ..rope import RoPEConfig, RoPEScalingConfig, RoPEType
 from .init import InitMethod
 
@@ -81,6 +82,11 @@ class TransformerType(StrEnum):
     moe = "moe"
     """
     ➡️ :class:`MoETransformer`
+    """
+
+    blt = "blt"
+    """
+    ➡️ :class:`BLTTransformer`
     """
 
 
@@ -264,6 +270,8 @@ class TransformerConfig(Config):
     init_std: float = 0.02
     freeze_params: Optional[List[str]] = None
     block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None
+    local_encoder: Optional[LocalEncoderConfig] = None
+    local_decoder: Optional[LocalDecoderConfig] = None
 
     def build(
         self,
@@ -276,7 +284,7 @@ class TransformerConfig(Config):
         :param init_device: The device to put the parameters on during initialization. In a
             distributed setting it usually makes sense to set this to "meta".
         """
-        from .model import MoETransformer, NormalizedTransformer, Transformer
+        from .model import MoETransformer, NormalizedTransformer, Transformer, BLTTransformer
 
         log.info(
             f"Building transformer with {self.num_params:,d} total params, "
@@ -324,6 +332,27 @@ class TransformerConfig(Config):
                 init_seed=self.init_seed,
                 init_std=self.init_std,
                 block_overrides=self.block_overrides,
+            )
+        elif self.name == TransformerType.blt:
+            if self.local_encoder is None or self.local_decoder is None:
+                raise OLMoConfigurationError(
+                    f"Both local_encoder and local_decoder must be specified for BLTTransformer, got {self.local_encoder} and {self.local_decoder}"
+                )
+
+            model = BLTTransformer(
+                d_model=self.d_model,
+                vocab_size=self.vocab_size,
+                n_layers=self.n_layers,
+                block=self.block,
+                lm_head=self.lm_head,
+                dtype=self.dtype.as_pt(),
+                init_method=self.init_method,
+                init_device=init_device,
+                init_seed=self.init_seed,
+                init_std=self.init_std,
+                block_overrides=self.block_overrides,
+                local_encoder=self.local_encoder,
+                local_decoder=self.local_decoder,
             )
         else:
             raise NotImplementedError(self.name)
@@ -851,6 +880,20 @@ class TransformerConfig(Config):
         )
 
     @classmethod
+    def blt_1b(cls, **kwargs):
+        return cls.blt_like(
+            d_model=2048,
+            vocab_size=260,
+            n_layers=25,
+            n_heads=16,
+            local_encoder_n_layers=1,
+            local_decoder_n_layers=9,
+            local_d_model=1024,
+            local_attn_n_heads=16,
+            local_cross_attn_n_heads=16,
+        )
+
+    @classmethod
     def llama_like(
         cls,
         *,
@@ -938,13 +981,18 @@ class TransformerConfig(Config):
         )
 
     @classmethod
-    def llama_like_blt(
+    def blt_like(
         cls,
         *,
         d_model: int,
         vocab_size: int,
         n_layers: int,
         n_heads: int,
+        local_encoder_n_layers: int,
+        local_decoder_n_layers: int,
+        local_d_model: int,
+        local_attn_n_heads: int,
+        local_cross_attn_n_heads: int,
         n_kv_heads: Optional[int] = None,
         qk_norm: bool = False,
         layer_norm_eps: float = 1e-5,
@@ -1008,12 +1056,38 @@ class TransformerConfig(Config):
             layer_norm=layer_norm,
         )
 
+        local_hidden_size = int(8 * local_d_model / 3)
+        if hidden_size_multiplier is not None:
+            local_hidden_size = int(hidden_size_multiplier * local_hidden_size)
+        local_hidden_size = ensure_multiple_of(local_hidden_size, hidden_size_multiple_of)
+
+        # local encoder / decode setup
+        local_encoder = LocalEncoderConfig(
+            hash_byte_group_size=[3, 4, 5, 6, 7, 8],
+            hash_byte_group_vocab=500_002,
+            hash_byte_group_nb_functions=1,
+            sliding_window_size=512,
+            d_model=local_d_model,
+            n_layers=local_encoder_n_layers,
+            cross_attn_n_heads=local_cross_attn_n_heads,
+            block_config=block.replace(
+                attention=block.attention.replace(n_heads=local_attn_n_heads),
+                feed_forward=FeedForwardConfig(hidden_size=local_hidden_size, bias=False, dtype=dtype),
+            ),
+        )
+        # TODO
+        local_decoder = LocalDecoderConfig()
+
+
         return cls(
+            name=TransformerType.blt,
             d_model=d_model,
             vocab_size=vocab_size,
             n_layers=n_layers,
             block=block,
             lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype),
+            local_encoder=local_encoder,
+            local_decoder=local_decoder,
             dtype=dtype,
             **kwargs,
         )

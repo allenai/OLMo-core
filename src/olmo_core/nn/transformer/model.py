@@ -15,6 +15,7 @@ from typing import (
 
 import torch
 import torch.nn as nn
+from torch.nn.attention.flex_attention import BlockMask
 from torch.distributed import DeviceMesh
 from torch.distributed.fsdp import FSDPModule, MixedPrecisionPolicy, fully_shard
 from torch.distributed.tensor import Replicate, Shard
@@ -38,6 +39,7 @@ from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
 from ..lm_head import LMHeadConfig, LMOutputWithLoss
 from ..moe import MoEBase
+from ..blt import LocalEncoderConfig, LocalDecoderConfig, utils as blt_utils
 from ..rope import RoPEBuffers, RotaryEmbeddingBase
 from ..utils import selective_checkpointing_context_fn
 from .block import (
@@ -305,7 +307,7 @@ class Transformer(nn.Module):
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         return_logits: Optional[bool] = None,
         **kwargs,
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any], Dict[str, Any]]:
         # NOTE: with pipeline parallelism input_ids might actually be an intermediate output,
         # so we have to be careful here.
         B, S = input_ids.shape[:2]
@@ -404,20 +406,11 @@ class Transformer(nn.Module):
             block_kwargs["max_doc_len"] = max_doc_len
             block_kwargs["cu_doc_lens"] = move_to_device(cu_doc_lens, self.device)
 
-        patch_lens: Optional[torch.Tensor] = None
-
-        if (patch_lens := kwargs.pop("patch_lens", None)) is not None:
-            # TODO: make cumulative?
-            patch_lens = patch_lens
-
-        encoder_decoder_kwargs["patch_lens"] = patch_lens
-
         return (
             input_ids,
             labels,
             block_kwargs,
             lm_head_kwargs,
-            encoder_decoder_kwargs,
         )
 
     def forward(
@@ -439,7 +432,7 @@ class Transformer(nn.Module):
 
         :returns: The logits if ``labels`` is ``None`` or the losses if ``labels`` is not ``None``.
         """
-        input_ids, labels, block_kwargs, lm_head_kwargs, encoder_decoder_kwargs = self._prepare_inputs(
+        input_ids, labels, block_kwargs, lm_head_kwargs = self._prepare_inputs(
             input_ids,
             labels,
             ignore_index=ignore_index,
@@ -1010,3 +1003,152 @@ def _unhide_cpu_inputs_from_torch(m, args, kwargs) -> Optional[Tuple[Any, Dict[s
     if (doc_lens := kwargs.get("doc_lens")) is not None:
         kwargs["doc_lens"] = unhide_from_torch(doc_lens)
     return (args, kwargs)
+
+
+class BLTTransformer(Transformer):
+    def __init__(
+        self,
+        *,
+        d_model: int,
+        vocab_size: int,
+        n_layers: int,
+        block: TransformerBlockConfig,
+        local_encoder: LocalEncoderConfig,
+        local_decoder: LocalDecoderConfig,
+        lm_head: LMHeadConfig,
+        dtype: torch.dtype = torch.float32,
+        init_method: InitMethod = InitMethod.normal,
+        init_device: str = "cpu",
+        init_seed: int = 0,
+        init_std: float = 0.02,
+        block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None,
+    ):
+        super().__init__(
+            d_model=d_model,
+            vocab_size=vocab_size,
+            n_layers=n_layers,
+            block=block,
+            lm_head=lm_head,
+            dtype=dtype,
+            init_method=init_method,
+            init_device=init_device,
+            init_seed=init_seed,
+            init_std=init_std,
+            block_overrides=block_overrides,
+        )
+
+        self.local_encoder = local_encoder.build(vocab_size)
+        self.local_decoder = local_decoder.build()
+
+    def _prepare_inputs(  # type: ignore[override]
+        self,
+        input_ids: torch.Tensor,
+        labels: Optional[torch.Tensor] = None,
+        *,
+        ignore_index: int = -100,
+        loss_reduction: Literal["mean", "sum", "none"] = "mean",
+        z_loss_multiplier: Optional[float] = None,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        return_logits: Optional[bool] = None,
+        **kwargs,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
+        input_ids, labels, block_kwargs, lm_head_kwargs = super()._prepare_inputs(
+            input_ids,
+            labels,
+            ignore_index=ignore_index,
+            loss_reduction=loss_reduction,
+            z_loss_multiplier=z_loss_multiplier,
+            loss_div_factor=loss_div_factor,
+            return_logits=return_logits,
+            **kwargs,
+        )
+
+        encoder_decoder_kwargs = {}
+
+        patch_lens: Optional[torch.Tensor] = None
+        patch_ids: Optional[torch.Tensor] = None
+        encoder_cross_attn_mask: Optional[BlockMask] = None
+
+        if (patch_lens := kwargs.pop("patch_lens", None)) is not None:
+            # TODO: make cumulative?
+            patch_lens = patch_lens
+            patch_ids = blt_utils.lengths_to_ids(patch_lens, input_ids.shape[-1])
+
+            encoder_cross_attn_mask = blt_utils.cross_attn_mask(
+                patch_ids,
+                patch_lens,
+                patches_as_queries=True,
+                cross_attn_k=2, # TODO: config
+                block_mask=True,
+            )
+
+        encoder_decoder_kwargs["patch_lens"] = patch_lens
+        encoder_decoder_kwargs["patch_ids"] = patch_ids
+        encoder_decoder_kwargs["cross_attn_mask"] = encoder_cross_attn_mask
+
+        return (
+            input_ids,
+            labels,
+            block_kwargs,
+            lm_head_kwargs,
+            encoder_decoder_kwargs,
+        )
+
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        *,
+        labels: Optional[torch.Tensor] = None,
+        ignore_index: int = -100,
+        loss_reduction: Literal["mean", "sum", "none"] = "mean",
+        z_loss_multiplier: Optional[float] = None,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        return_logits: Optional[bool] = None,
+        **kwargs,
+    ) -> Union[torch.Tensor, LMOutputWithLoss]:
+        """
+        Run the transformer on the token input IDs.
+
+        :param input_ids: The token input IDs, shape ``(batch_size, seq_len)``.
+
+        :returns: The logits if ``labels`` is ``None`` or the losses if ``labels`` is not ``None``.
+        """
+        input_ids, labels, block_kwargs, lm_head_kwargs, encoder_decoder_kwargs = self._prepare_inputs(
+            input_ids,
+            labels,
+            ignore_index=ignore_index,
+            loss_reduction=loss_reduction,
+            z_loss_multiplier=z_loss_multiplier,
+            loss_div_factor=loss_div_factor,
+            return_logits=return_logits,
+            **kwargs,
+        )
+
+        h = self.local_encoder(input_ids, **encoder_decoder_kwargs)
+
+        raise NotImplementedError()
+
+        # Get embeddings but pass-through for non-existent layers to allow easy
+        # pipeline parallel configuration.
+        h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
+
+        # Run each block.
+        for block in self.blocks.values():
+            # Mark sizes as dynamic for torch.compile().
+            if self.compile_enabled:
+                mark_dynamic(h, (0, 1), strict=False)
+            h = block(h, **block_kwargs)
+
+        # Get final logits but again pass-through in case of pipeline parallelism.
+        if self.lm_head is not None:
+            if self.compile_enabled:
+                mark_dynamic(h, (0, 1), strict=False)
+                if labels is not None:
+                    mark_dynamic(labels, (0, 1), strict=False)
+            # NOTE: When TP is active we can't pass 'labels=None' or the hook from 'PrepareModuleInput'
+            # will throw an exception.
+            if labels is not None:
+                lm_head_kwargs["labels"] = labels
+            return self.lm_head(h, **lm_head_kwargs)
+        else:
+            return h

@@ -1,3 +1,7 @@
+import torch
+from torch.nn.attention.flex_attention import create_block_mask
+
+
 # Source: https://github.com/openai/gpt-2/blob/master/src/encoder.py#L9
 # Also implemented in https://docs.rs/tokenizers/latest/src/tokenizers/pre_tokenizers/byte_level.rs.html#13-39
 _CHARS_TO_BYTES = {
@@ -44,3 +48,100 @@ def bytes_to_chars(byte_sequence: bytes) -> str:
 
 def chars_to_bytes(char_sequence: str) -> list:
     return list(bytes(_CHARS_TO_BYTES[char] for char in char_sequence))
+
+# adapted from BLT's patch_ids_from_lengths
+def lengths_to_ids(lengths, total_len):
+    bs = lengths.shape[0]
+    # Create a tensor of cumulative sums of the lengths
+    cum_d = torch.cat(
+        [
+            torch.zeros(bs, 1, dtype=lengths.dtype, device=lengths.device),
+            lengths.cumsum(dim=-1),
+        ],
+        dim=-1,
+    )
+    # FIXME: this seems slow since we broadcast to num_lengths x total_len? 
+    # how precisely does this broadcast? seems unsqueeze missing from arange.
+    patch_ids = (cum_d.unsqueeze(-1) <= torch.arange(total_len, device=cum_d.device)).sum(
+        dim=-2
+    ) - 1
+    # FIXME: get rid of assertions?
+    assert not (
+        torch.max(patch_ids) > lengths.shape[-1] or torch.min(patch_ids) < 0
+    ), f"{torch.max(patch_ids)} > {lengths.shape[-1]} or {torch.min(patch_ids)} < 0"
+    return patch_ids
+
+
+# from BLT's create_patch_mask_from_ids, `window` removed.
+def _create_patch_mask_from_ids(
+    patch_ids, num_patches, patches_as_queries=False
+):
+    """
+    Creates a tensor of shape [bs, byte_seq_len, patch_seq_len] where each element at position (i, j, k)
+    is True if the patch id at position (i, j) is less than or equal to k.
+    Args:
+        patch_ids (torch.Tensor): Tensor of shape [bs, byte_seq_len] containing patch ids.
+        num_patches (int): Total number of patches.
+        patches_as_queries (bool): If True, the patches are used as queries
+    Returns:
+        torch.Tensor: Tensor of shape [bs, q_len, kv_len] with the desired mask.
+    """
+    bs, seq_len = patch_ids.shape
+    if not patches_as_queries:
+        q_ids = patch_ids.unsqueeze(-1).expand(bs, seq_len, num_patches)
+        kv_ids = (
+            torch.arange(num_patches, device=patch_ids.device)
+            .unsqueeze(0)
+            .unsqueeze(0)
+            .expand(bs, seq_len, num_patches)
+        )
+    else:
+        kv_ids = patch_ids.unsqueeze(1).expand(bs, num_patches, seq_len)
+        q_ids = (
+            torch.arange(num_patches, device=patch_ids.device)
+            .unsqueeze(0)
+            .unsqueeze(-1)
+            .expand(bs, num_patches, seq_len)
+        )
+    mask = q_ids == kv_ids
+    return mask
+
+
+# from BLT's cross_attn_mask, `window` removed, `N` removed.
+def cross_attn_mask(
+    patch_ids,
+    patch_lengths,
+    patches_as_queries=False,
+    cross_attn_k=1,
+    block_mask=True,
+):
+    bs = patch_ids.shape[0]
+    with torch.no_grad():
+        # Create the patch mask
+        # FIXME: this seems problematic, is there a way to avoid materializing the full [bs, byte_seq_len, patch_seq_len] mask?
+        cross_mask = _create_patch_mask_from_ids(
+            patch_ids,
+            patch_lengths.shape[1],
+            patches_as_queries=patches_as_queries,
+        ).repeat_interleave(cross_attn_k, dim=1 if patches_as_queries else -1)
+        q_len = patch_lengths.shape[1] * cross_attn_k if patches_as_queries else patch_ids.shape[1]
+        kv_len = patch_ids.shape[1] if patches_as_queries else patch_lengths.shape[1] * cross_attn_k
+        assert cross_mask.shape == (
+            bs,
+            q_len,
+            kv_len,
+        ), f"{cross_mask.shape} != {(bs, q_len, kv_len)}"
+
+        def patch_mask(b, h, q_idx, kv_idx):
+            return cross_mask[b, q_idx, kv_idx]
+
+        block_mask = create_block_mask(
+            patch_mask,
+            B=bs,
+            H=None,
+            Q_LEN=q_len,
+            KV_LEN=kv_len,
+            _compile=False,
+            device=patch_ids.device,
+        )
+        return block_mask

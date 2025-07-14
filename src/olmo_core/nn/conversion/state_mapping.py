@@ -15,6 +15,12 @@ class TemplatePlaceholder(StrEnum):
     EXPERT = "[expert]"
     """"""
 
+    LOCAL_ENCODER_LAYER = "[local_encoder_layer]"
+    """"""
+
+    LOCAL_DECODER_LAYER = "[local_decoder_layer]"
+    """"""
+
 
 @dataclass
 class StateMappingTemplate:
