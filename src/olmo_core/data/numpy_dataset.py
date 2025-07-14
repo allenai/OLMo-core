@@ -1295,10 +1295,6 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
             eos_token_id=eos_token_id,
             vocab_size=vocab_size,
             dtype=dtype,
-<<<<<<< HEAD
-=======
-            bos_token_id=bos_token_id,
->>>>>>> 739bb3a8c4db23a6f0f6b03579e48c3768364607
             metadata=metadata,
             include_instance_metadata=include_instance_metadata,
             instance_filter_config=instance_filter_config,
@@ -1307,10 +1303,7 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
         self._docs_per_instance = docs_per_instance
         self._chunks_per_doc = chunks_per_doc
         self._seed = seed
-<<<<<<< HEAD
         self._bos_token_id = bos_token_id
-=======
->>>>>>> 739bb3a8c4db23a6f0f6b03579e48c3768364607
         self._interleaving_exempt_paths = interleaving_exempt_paths
         self._num_interleaving_exempt_instances = None
         self._num_interleavable_instances = None
@@ -1322,19 +1315,10 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
             "pad_token_id",
             "eos_token_id",
             "dtype",
-<<<<<<< HEAD
             "_bos_token_id",
             "_docs_per_instance",
             "_seed",
             "_interleaving_exempt_paths",
-=======
-            "_docs_per_instance",
-            "_seed",
-            "_interleaving_exempt_paths",
-            "max_target_sequence_length",
-            "bos_token_id",
-            "sequence_length",
->>>>>>> 739bb3a8c4db23a6f0f6b03579e48c3768364607
         )
 
     def __len__(self) -> int:
@@ -1484,17 +1468,10 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
                 doc["input_ids"] == self.pad_token_id,
                 doc["input_ids"] == self.eos_token_id,
             )
-<<<<<<< HEAD
             if self._bos_token_id is not None:
                 special_tokens_mask = torch.logical_or(
                     special_tokens_mask,
                     doc["input_ids"] == self._bos_token_id,
-=======
-            if self.bos_token_id is not None:
-                special_tokens_mask = torch.logical_or(
-                    special_tokens_mask,
-                    doc["input_ids"] == self.bos_token_id,
->>>>>>> 739bb3a8c4db23a6f0f6b03579e48c3768364607
                 )
 
             non_special_token_indices = torch.nonzero(
@@ -1511,13 +1488,8 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
         )
 
         # Add bos and tokens if there is space after interleaving.
-<<<<<<< HEAD
         if self._bos_token_id is not None and len(item["input_ids"]) < self.sequence_length:
             item["input_ids"] = F.pad(item["input_ids"], (1, 0), value=self._bos_token_id)
-=======
-        if self.bos_token_id is not None and len(item["input_ids"]) < self.sequence_length:
-            item["input_ids"] = F.pad(item["input_ids"], (1, 0), value=self.bos_token_id)
->>>>>>> 739bb3a8c4db23a6f0f6b03579e48c3768364607
             item["label_mask"] = F.pad(item["label_mask"], (1, 0), value=True)
         if len(item["input_ids"]) < self.sequence_length:
             item["input_ids"] = F.pad(item["input_ids"], (0, 1), value=self.eos_token_id)
@@ -1555,7 +1527,6 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
         return (
             self.work_dir / f"dataset-{self.fingerprint}" / "interleaving-exempt-docs-indices.npy"
         )
-<<<<<<< HEAD
     
 
 class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
@@ -1996,8 +1967,6 @@ class NumpyPackedInterleavedFSLDataset(NumpyFSLDataset):
             self._write_docs_interleaving_indices()
         barrier()
         len(self)
-=======
->>>>>>> 739bb3a8c4db23a6f0f6b03579e48c3768364607
 
 
 @dataclass
@@ -2786,7 +2755,6 @@ class NumpyDatasetConfig(Config):
     """
     A list of paths that are exempt from interleaving in :class:`NumpyInterleavedFSLDataset`.
     """
-<<<<<<< HEAD
     exclude_interleaved: bool = False
     """
     Take interleavable paths out of the non-interleaving data pool in :class:`NumpyPackedInterleavedFSLDataset`.
@@ -2795,8 +2763,6 @@ class NumpyDatasetConfig(Config):
     """
     A list of paths that will be used for interleaving in :class:`NumpyPackedInterleavedFSLDataset`.
     """
-=======
->>>>>>> 739bb3a8c4db23a6f0f6b03579e48c3768364607
     expand_glob: bool = False
     """
     Treat the :data:`paths` as globs.
@@ -3209,7 +3175,6 @@ class NumpyDatasetConfig(Config):
                 bos_token_id=self.tokenizer.bos_token_id,
                 interleaving_exempt_paths=interleaving_exempt_paths,
             )
-<<<<<<< HEAD
         elif self.name == NumpyDatasetType.packed_interleaved_fsl:
             if self.sequence_length is None:
                 raise OLMoConfigurationError(
@@ -3274,8 +3239,6 @@ class NumpyDatasetConfig(Config):
                 interleavable_paths=interleavable_paths,
                 exclude_interleaved=self.exclude_interleaved,
             )
-=======
->>>>>>> 739bb3a8c4db23a6f0f6b03579e48c3768364607
         elif self.name == NumpyDatasetType.vsl:
             if self.max_sequence_length is None:
                 raise OLMoConfigurationError("'max_sequence_length' is required for VSL datasets")
@@ -3309,13 +3272,6 @@ class NumpyDatasetConfig(Config):
                 raise OLMoConfigurationError(
                     "'interleaving_exempt_paths' is only valid for the interleaved FSL dataset"
                 )
-<<<<<<< HEAD
-=======
-            if self.tokenizer.bos_token_id is not None:
-                raise OLMoConfigurationError(
-                    "'bos_token_id' is not yet supported for the VSL dataset"
-                )
->>>>>>> 739bb3a8c4db23a6f0f6b03579e48c3768364607
             dataset = NumpyVSLDataset(
                 *paths,
                 max_sequence_length=self.max_sequence_length,
