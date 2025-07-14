@@ -1,10 +1,10 @@
-from transformers import Olmo2Config, Olmoe2Config, Olmo3Config, PretrainedConfig
+from transformers import Olmo2Config, Olmo3Config, Olmoe2Config, PretrainedConfig
 
 from olmo_core.doc_utils import beta_feature
 from olmo_core.nn.attention import Attention
-from olmo_core.nn.moe.mlp import MoEMLP
+from olmo_core.nn.moe import MoEMLP, MoERouterGatingFunction
 from olmo_core.nn.transformer.block import (
-    MoEReorderedNormTransformerBlock,
+    MoEHybridReorderedNormTransformerBlock,
     ReorderedNormTransformerBlock,
 )
 from olmo_core.nn.transformer.model import (
@@ -15,52 +15,94 @@ from olmo_core.nn.transformer.model import (
 
 
 def _get_moe_hf_config(model: MoETransformer) -> PretrainedConfig:
-    block = next(iter(model.blocks.values()))
-    if not isinstance(block, MoEReorderedNormTransformerBlock):
-        raise NotImplementedError(
-            f"Block is not a {MoEReorderedNormTransformerBlock.__name__}, unable to build HF config for {model.__class__.__name__}"
+    moe_block_keys: list[str] = []
+    regular_blocks_keys: list[str] = []
+    for key, block in model.blocks.items():
+        if isinstance(block, MoEHybridReorderedNormTransformerBlock):
+            moe_block_keys.append(key)
+        elif isinstance(block, ReorderedNormTransformerBlock):
+            regular_blocks_keys.append(key)
+        else:
+            raise NotImplementedError(
+                f"Block is not a {MoEHybridReorderedNormTransformerBlock.__name__} or {ReorderedNormTransformerBlock.__name__}, unable to build HF config for {model.__class__.__name__}"
+            )
+
+    for block in model.blocks.values():
+        assert isinstance(
+            block, (MoEHybridReorderedNormTransformerBlock, ReorderedNormTransformerBlock)
         )
 
-    if not isinstance(block.experts.mlp, MoEMLP):
-        raise NotImplementedError(
-            f"MoE mlp is not a {MoEMLP.__name__}, unable to build HF config for {model.__class__.__name__}"
-        )
+        if not isinstance(block.attention, Attention):
+            raise NotImplementedError(
+                f"Attention is not a {Attention.__name__}, unable to build HF config for {model.__class__.__name__}"
+            )
 
-    if not isinstance(block.attention, Attention):
-        raise NotImplementedError(
-            f"Attention is not a {Attention.__name__}, unable to build HF config for {model.__class__.__name__}"
-        )
-    if block.attention.rope is None:
-        raise NotImplementedError(
-            f"Attention does not use rope, unable to build HF config for {model.__class__.__name__}"
-        )
+        if block.attention.rope is None:
+            raise NotImplementedError(
+                f"Attention does not use rope, unable to build HF config for {model.__class__.__name__}"
+            )
 
-    if block.router.normalize_expert_weights is not None:
-        raise NotImplementedError(
-            f"Expert weight normalization is not supported, unable to build HF config for {model.__class__.__name__}"
-        )
+        if not block.attention.use_head_qk_norm:
+            raise NotImplementedError(
+                f"Head qk norm is not enabled, unable to build HF config for {model.__class__.__name__}"
+            )
+
+    for key in moe_block_keys:
+        block = model.blocks[key]
+        assert isinstance(block, MoEHybridReorderedNormTransformerBlock)
+
+        if not isinstance(block.experts.mlp, MoEMLP):
+            raise NotImplementedError(
+                f"MoE mlp is not a {MoEMLP.__name__}, unable to build HF config for {model.__class__.__name__}"
+            )
+
+        if block.router.normalize_expert_weights is not None:
+            raise NotImplementedError(
+                f"Expert weight normalization is not supported, unable to build HF config for {model.__class__.__name__}"
+            )
+
+        if block.router.gating_function != MoERouterGatingFunction.sigmoid:
+            raise NotImplementedError(
+                f"Only sigmoid gating function is supported for MoE router, unable to build HF config for {model.__class__.__name__}"
+            )
+
+    moe_block = model.blocks[moe_block_keys[0]]
+    assert isinstance(moe_block, MoEHybridReorderedNormTransformerBlock)
+    assert isinstance(moe_block.attention, Attention)
+
+    if len(regular_blocks_keys) > 0:
+        regular_block = model.blocks[regular_blocks_keys[0]]
+        assert isinstance(regular_block, ReorderedNormTransformerBlock)
+        intermediate_size = regular_block.feed_forward.hidden_size
+    else:
+        intermediate_size = moe_block.feed_forward.hidden_size
 
     return Olmoe2Config(
         vocab_size=model.vocab_size,
         hidden_size=model.d_model,
-        intermediate_size=block.feed_forward_moe.experts.mlp.hidden_size,
+        intermediate_size=intermediate_size,
         num_hidden_layers=model.n_layers,
-        num_attention_heads=block.attention.n_heads,
-        num_key_value_heads=block.attention.n_kv_heads,
+        num_attention_heads=moe_block.attention.n_heads,
+        num_key_value_heads=moe_block.attention.n_kv_heads,
         hidden_act="silu",
         max_position_embeddings=-1,
-        attention_bias=block.attention.w_out.bias is not None,
-        rope_theta=block.attention.rope.theta,
+        attention_bias=moe_block.attention.w_out.bias is not None,
+        rope_theta=moe_block.attention.rope.theta,
         pad_token_id=None,  # type: ignore
         bos_token_id=None,
         eos_token_id=None,  # type: ignore
-        rms_norm_eps=block.feed_forward_norm.eps,
-        num_experts_per_tok=block.feed_forward_moe.router.top_k,
-        num_experts=block.feed_forward_moe.router.num_experts,
+        rms_norm_eps=moe_block.feed_forward_norm.eps,
+        num_experts_per_tok=moe_block.feed_forward_moe.router.top_k,
+        num_experts=moe_block.feed_forward_moe.router.num_experts,
         tie_word_embeddings=False,
-        shared_mlp_intermediate_size=block.feed_forward_moe.shared_mlp.hidden_size
-        if block.feed_forward_moe.shared_mlp is not None
-        else None,
+        moe_intermediate_size=moe_block.feed_forward_moe.experts.mlp.hidden_size,
+        shared_mlp_intermediate_size=moe_block.feed_forward.hidden_size,
+        mlp_only_layers=sorted([int(key) for key in regular_blocks_keys]),
+        sliding_window=max(block.attention.window_size[0] + 1 for block in model.blocks.values()),
+        layer_types=[
+            "sliding_attention" if block.attention.window_size != (-1, -1) else "full_attention"
+            for block in model.blocks.values()
+        ],
     )
 
 
