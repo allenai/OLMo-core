@@ -27,6 +27,7 @@ from olmo_core.internal.common import (
     get_work_dir,
 )
 from olmo_core.launch.beaker import BeakerLaunchConfig
+from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import LinearWithWarmup, SkipStepAdamWConfig
 from olmo_core.train import (
@@ -223,6 +224,7 @@ class SFTConfig(Config):
         checkpoint: str,
         cluster: str,
         overrides: List[str],
+        model_name: str = "olmo2-7b",
     ) -> "SFTConfig":
         root_dir = get_root_dir(cluster)
         user_name = get_beaker_username()
@@ -244,6 +246,31 @@ class SFTConfig(Config):
         dp_shard_degree = GPUS_PER_NODE // (bs_config.cp_degree or 1)
         if not dp_shard_degree > 0:
             raise OLMoConfigurationError(f"dp_shard_degree ({dp_shard_degree}) must be positive.")
+
+        if model_name == "olmo2-7b":
+            model = TransformerConfig.olmo2_7B(  # Based on https://github.com/allenai/OLMo-core/blob/dustins/anneal-repro/src/scripts/train/lc_cont_train/OLMo2-7B-lc_anneal_tp4.py
+                vocab_size=tokenizer_config.padded_vocab_size(),
+                use_flash=True,
+                rope_theta=8 * 10**6,
+            )
+        elif model_name == "olmo3-7b":
+            model = TransformerConfig.olmo2_7B(  # Based on https://github.com/allenai/OLMo-core/pull/310/files#diff-03f6a1f5db18fc4be7a243d8168698ae674cd50b2866253bcdadba5d48590b3dR48
+                vocab_size=tokenizer_config.padded_vocab_size(),
+                n_kv_heads=8,
+                hidden_size_multiplier=1.2,
+                hidden_size_multiple_of=1024,
+            )
+            #  config.block.name = TransformerBlockType.default
+            #  config.block.attention.qk_norm = None
+            model.block.attention.sliding_window = SlidingWindowAttentionConfig(
+                force_full_attention_on_first_layer=False,
+                force_full_attention_on_last_layer=True,
+                pattern=[4096, 4096, 4096, -1],
+            )
+            model.block.attention.use_flash = True
+            model.block.attention.use_head_qk_norm = True
+
+
 
         config = SFTConfig(
             run_name=run_name,
@@ -267,11 +294,7 @@ class SFTConfig(Config):
                 budget="ai2/oe-adapt",
                 workspace="ai2/olmo-instruct",
             ),
-            model=TransformerConfig.olmo2_7B(  # Based on https://github.com/allenai/OLMo-core/blob/dustins/anneal-repro/src/scripts/train/lc_cont_train/OLMo2-7B-lc_anneal_tp4.py
-                vocab_size=tokenizer_config.padded_vocab_size(),
-                use_flash=True,
-                rope_theta=8 * 10**6,
-            ),
+            model=model,
             dataset=dataset_config,
             data_loader=NumpyDataLoaderConfig(
                 global_batch_size=bs_config.global_batch_size_tokens, seed=34521, num_workers=4
@@ -423,6 +446,9 @@ Examples:
         help="The global batch size in tokens.",
         default=64 * DEFAULT_SEQUENCE_LENGTH,
     )
+    parser.add_argument(
+        "model_name", help="The name of the model architecture to use."
+    )
 
     # Parse known args to get positional arguments and cmd
     args, overrides = parser.parse_known_args()
@@ -447,6 +473,7 @@ Examples:
         num_nodes=args.num_nodes,
         global_batch_size=args.global_batch_size,
         overrides=overrides,
+        model_name=args.model_name
     )
 
     # Print the config for debugging and then execute the command.
