@@ -269,6 +269,8 @@ class SFTConfig(Config):
             )
             model.block.attention.use_flash = True
             model.block.attention.use_head_qk_norm = True
+        else:
+            raise OLMoConfigurationError(f"Must set a valid model_name: {model_name}")
 
 
 
