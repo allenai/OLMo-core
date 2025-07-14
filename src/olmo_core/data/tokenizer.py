@@ -30,7 +30,6 @@ class TokenizerName(StrEnum):
     """
     llama3 = "llama3"
 
-    llama3 = "llama3"
 
 @dataclass
 class TokenizerConfig(Config):
