@@ -156,7 +156,7 @@ class LcContTrain(Config):
                     group_overrides=[
                         OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0)),
                         OptimGroupOverride(params=[f"blocks.{i}._checkpoint_wrapped_module.feed_forward_norm.weight" for i in range(32)], opts=dict(weight_decay=0.0)), # also don't weight decay layernorms
-                         OptimGroupOverride(params=[f"blocks.{i}._checkpoint_wrapped_module.attention_norm.weight" for i in range(32)], opts=dict(weight_decay=0.0)), # also don't weight decay layernorms
+                        OptimGroupOverride(params=[f"blocks.{i}._checkpoint_wrapped_module.attention_norm.weight" for i in range(32)], opts=dict(weight_decay=0.0)), # also don't weight decay layernorms
                     ],
                     fused=True,
                 ),

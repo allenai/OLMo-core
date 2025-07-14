@@ -133,8 +133,6 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
             else:
                 frozen_params.add(n)
 
-        print(all_params)
-        print(all_params.keys())
         group_overrides = [
             self._expand_param_globs(go, all_params, frozen_params, g_idx, strict=strict)
             for g_idx, go in enumerate(self.group_overrides or [])
