@@ -156,7 +156,7 @@ class LcContTrain(Config):
                     betas=(0.9, 0.95),
                     group_overrides=[
                         OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0)),
-                        OptimGroupOverride(params=["attention_norm.weight", "feed_forward_norm.weight"], opts=dict(weight_decay=0.0)) # also don't weight decay layernorms
+                        OptimGroupOverride(params=["attention_norm", "feed_forward_norm"], opts=dict(weight_decay=0.0)) # also don't weight decay layernorms
                     ],
                     fused=True,
                 ),
