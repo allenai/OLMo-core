@@ -61,11 +61,11 @@ class CrossAttention(nn.Module):
         bsz, q_len, _ = q.shape
         _, kv_len, _ = kv.shape
         q_norm = self.q_norm(q)
-        kv = self.kv_norm(kv)
+        kv_norm = self.kv_norm(kv)
 
         q = self.w_q(q_norm)
-        k = self.w_k(kv)
-        v = self.w_v(kv)
+        k = self.w_k(kv_norm)
+        v = self.w_v(kv_norm)
 
         output_shape = q.shape
         # B S D -> B H S D
@@ -126,6 +126,7 @@ class LocalEncoder(nn.Module):
             d_model,
             d_model * 2,  # TODO: argument for upsampling factor?
             device=init_device,
+            bias=False,
         )
 
         self.cross_attention = CrossAttention(d_model, cross_attn_n_heads, init_device=init_device)
@@ -166,7 +167,8 @@ class LocalEncoder(nn.Module):
         )
 
         # residual connection + reshape back into patch length (from patch_length * k)
-        patch_embedding = (patch_embedding_init + residual).reshape(
+        # NOTE: BLT applies the residual connection two times (presumably on accident), so we have to 2x here.
+        patch_embedding = (patch_embedding_init * 2 + residual).reshape(
             reduced_h.shape[0], reduced_h.shape[1], -1
         )
 

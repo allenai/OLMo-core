@@ -21,32 +21,50 @@ from olmo_core.utils import get_default_device, prepare_cli_environment
 log = logging.getLogger(__name__)
 
 EXPERT = TemplatePlaceholder.EXPERT
+LAYER = TemplatePlaceholder.LAYER
 LOCAL_ENCODER_LAYER = TemplatePlaceholder.LOCAL_ENCODER_LAYER
 LOCAL_DECODER_LAYER = TemplatePlaceholder.LOCAL_DECODER_LAYER
 
 
 BLT_TO_OLMO_CORE_MAPPINGS: Dict[str, str] = {
+    ## LOCAL ENCODER
+    # Embeddings.
     "local_encoder.tok_embeddings.weight": "local_encoder.embedding.weight",
     f"encoder_hash_tok_embedding.{EXPERT}.weight": f"local_encoder.hash_embeddings.{EXPERT}.weight",
-    # local encoder (patch -> byte) cross attention
+    # Patch projection.
+    "local_encoder.patch_embedding_projection.weight": "local_encoder.patch_embedding_projection.weight",
+    # Patch -> Byte cross attention.
     "local_encoder.cross_attn_layers.0.cross_attn_norm_q.weight": f"local_encoder.cross_attention.q_norm.weight",
     "local_encoder.cross_attn_layers.0.cross_attn_norm_kv.weight": f"local_encoder.cross_attention.kv_norm.weight",
     "local_encoder.cross_attn_layers.0.wq.weight": f"local_encoder.cross_attention.w_q.weight",
     "local_encoder.cross_attn_layers.0.wk.weight": f"local_encoder.cross_attention.w_k.weight",
     "local_encoder.cross_attn_layers.0.wv.weight": f"local_encoder.cross_attention.w_v.weight",
     "local_encoder.cross_attn_layers.0.wo.weight": f"local_encoder.cross_attention.w_out.weight",
-    # local encoder transformer attention
+    # Self-Attention.
     f"local_encoder.layers.{LOCAL_ENCODER_LAYER}.attention.wq.weight": f"local_encoder.blocks.{LOCAL_ENCODER_LAYER}.attention.w_q.weight",
     f"local_encoder.layers.{LOCAL_ENCODER_LAYER}.attention.wk.weight": f"local_encoder.blocks.{LOCAL_ENCODER_LAYER}.attention.w_k.weight",
     f"local_encoder.layers.{LOCAL_ENCODER_LAYER}.attention.wv.weight": f"local_encoder.blocks.{LOCAL_ENCODER_LAYER}.attention.w_v.weight",
     f"local_encoder.layers.{LOCAL_ENCODER_LAYER}.attention.wo.weight": f"local_encoder.blocks.{LOCAL_ENCODER_LAYER}.attention.w_out.weight",
-    # local encoder transformer mlp
+    # MLP.
     f"local_encoder.layers.{LOCAL_ENCODER_LAYER}.feed_forward.w1.weight": f"local_encoder.blocks.{LOCAL_ENCODER_LAYER}.feed_forward.w1.weight",
     f"local_encoder.layers.{LOCAL_ENCODER_LAYER}.feed_forward.w2.weight": f"local_encoder.blocks.{LOCAL_ENCODER_LAYER}.feed_forward.w2.weight",
     f"local_encoder.layers.{LOCAL_ENCODER_LAYER}.feed_forward.w3.weight": f"local_encoder.blocks.{LOCAL_ENCODER_LAYER}.feed_forward.w3.weight",
-    # local encoder layer norms
+    # Layer Norms.
     f"local_encoder.layers.{LOCAL_ENCODER_LAYER}.attention_norm.weight": f"local_encoder.blocks.{LOCAL_ENCODER_LAYER}.attention_norm.weight",
     f"local_encoder.layers.{LOCAL_ENCODER_LAYER}.ffn_norm.weight": f"local_encoder.blocks.{LOCAL_ENCODER_LAYER}.feed_forward_norm.weight",
+    ## GLOBAL (LATENT) TRANSFORMER
+    # Self-Attention.
+    f"global_transformer.layers.{LAYER}.attention.wq.weight": f"blocks.{LAYER}.attention.w_q.weight",
+    f"global_transformer.layers.{LAYER}.attention.wk.weight": f"blocks.{LAYER}.attention.w_k.weight",
+    f"global_transformer.layers.{LAYER}.attention.wv.weight": f"blocks.{LAYER}.attention.w_v.weight",
+    f"global_transformer.layers.{LAYER}.attention.wo.weight": f"blocks.{LAYER}.attention.w_out.weight",
+    # MLP.
+    f"global_transformer.layers.{LAYER}.feed_forward.w1.weight": f"blocks.{LAYER}.feed_forward.w1.weight",
+    f"global_transformer.layers.{LAYER}.feed_forward.w2.weight": f"blocks.{LAYER}.feed_forward.w2.weight",
+    f"global_transformer.layers.{LAYER}.feed_forward.w3.weight": f"blocks.{LAYER}.feed_forward.w3.weight",
+    # Layer Norms.
+    f"global_transformer.layers.{LAYER}.attention_norm.weight": f"blocks.{LAYER}.attention_norm.weight",
+    f"global_transformer.layers.{LAYER}.ffn_norm.weight": f"blocks.{LAYER}.feed_forward_norm.weight",
 }
 
 

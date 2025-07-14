@@ -1029,10 +1029,7 @@ class TransformerConfig(Config):
         # Decide on attention/rope implementations.
         att_type = AttentionType.default
         if rope_type is None:
-            rope_type = RoPEType.default
-            if fused_ops and n_kv_heads is None:  # fused attention not compatible with MQA/GQA.
-                att_type = AttentionType.fused
-                rope_type = RoPEType.fused
+            rope_type = RoPEType.complex # BLT different from Llama
 
         # Feed-forward.
         if feed_forward is None and feed_forward_moe is None:

@@ -1067,12 +1067,15 @@ class BLTTransformer(Transformer):
 
         patch_lens: Optional[torch.Tensor] = None
         patch_ids: Optional[torch.Tensor] = None
+        decoder_patch_ids: Optional[torch.Tensor] = None
         encoder_cross_attn_mask: Optional[BlockMask] = None
+        decoder_cross_attn_mask: Optional[BlockMask] = None
 
         if (patch_lens := kwargs.pop("patch_lens", None)) is not None:
             # TODO: make cumulative?
             patch_lens = patch_lens
             patch_ids = blt_utils.lengths_to_ids(patch_lens, input_ids.shape[-1])
+            decoder_patch_ids = blt_utils.lengths_to_ids(patch_lens[:, 1:], input_ids.shape[-1])
 
             encoder_cross_attn_mask = blt_utils.cross_attn_mask(
                 patch_ids,
@@ -1081,10 +1084,20 @@ class BLTTransformer(Transformer):
                 cross_attn_k=2, # TODO: config
                 block_mask=True,
             )
+            decoder_cross_attn_mask = blt_utils.cross_attn_mask(
+                decoder_patch_ids,
+                patch_lens,
+                patches_as_queries=False,
+                cross_attn_k=2, # TODO: config
+                block_mask=True,
+            )
+
 
         encoder_decoder_kwargs["patch_lens"] = patch_lens
         encoder_decoder_kwargs["patch_ids"] = patch_ids
-        encoder_decoder_kwargs["cross_attn_mask"] = encoder_cross_attn_mask
+        encoder_decoder_kwargs["decoder_patch_ids"] = decoder_patch_ids
+        encoder_decoder_kwargs["encoder_cross_attn_mask"] = encoder_cross_attn_mask
+        encoder_decoder_kwargs["decoder_cross_attn_mask"] = decoder_cross_attn_mask
 
         return (
             input_ids,
@@ -1123,14 +1136,10 @@ class BLTTransformer(Transformer):
             return_logits=return_logits,
             **kwargs,
         )
+        encoder_cross_attn_mask = encoder_decoder_kwargs.pop("encoder_cross_attn_mask")
+        decoder_cross_attn_mask = encoder_decoder_kwargs.pop("decoder_cross_attn_mask")
 
-        h = self.local_encoder(input_ids, **encoder_decoder_kwargs)
-
-        raise NotImplementedError()
-
-        # Get embeddings but pass-through for non-existent layers to allow easy
-        # pipeline parallel configuration.
-        h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
+        h = self.local_encoder(input_ids, cross_attn_mask=encoder_cross_attn_mask, **encoder_decoder_kwargs)
 
         # Run each block.
         for block in self.blocks.values():
@@ -1138,6 +1147,9 @@ class BLTTransformer(Transformer):
             if self.compile_enabled:
                 mark_dynamic(h, (0, 1), strict=False)
             h = block(h, **block_kwargs)
+
+
+        raise NotImplementedError()
 
         # Get final logits but again pass-through in case of pipeline parallelism.
         if self.lm_head is not None:
