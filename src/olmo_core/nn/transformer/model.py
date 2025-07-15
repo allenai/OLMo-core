@@ -97,7 +97,7 @@ class Transformer(nn.Module):
         init_device: str = "cpu",
         init_seed: int = 0,
         init_std: float = 0.02,
-        block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None,
+        block_overrides: Optional[Dict[str, TransformerBlockConfig]] = None,
     ):
         super().__init__()
 
@@ -113,8 +113,8 @@ class Transformer(nn.Module):
         self.blocks = nn.ModuleDict()
         for block_idx in range(n_layers):
             block_config = block
-            if block_overrides is not None and block_idx in block_overrides:
-                block_config = block_overrides[block_idx]
+            if block_overrides is not None and str(block_idx) in block_overrides:
+                block_config = block_overrides[str(block_idx)]
             self.blocks[str(block_idx)] = self._validate_block(
                 block_config.build(
                     d_model=d_model,
@@ -862,7 +862,7 @@ class NormalizedTransformer(Transformer):
         init_device: str = "cpu",
         init_seed: int = 0,
         init_std: float = 0.02,
-        block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None,
+        block_overrides: Optional[Dict[str, TransformerBlockConfig]] = None,
     ):
         super().__init__(
             d_model=d_model,
@@ -941,12 +941,12 @@ class MoETransformer(Transformer):
     def is_moe(self) -> bool:
         return True
 
-    def _validate_block(self, block: TransformerBlockBase) -> TransformerBlockBase:
-        if not isinstance(block, MoETransformerBlock):
-            raise OLMoConfigurationError(
-                f"'{self.__class__.__name__}' requires a '{MoETransformerBlock.__name__}' block"
-            )
-        return block
+    # def _validate_block(self, block: TransformerBlockBase) -> TransformerBlockBase:
+    #     if not isinstance(block, MoETransformerBlock):
+    #         raise OLMoConfigurationError(
+    #             f"'{self.__class__.__name__}' requires a '{MoETransformerBlock.__name__}' block"
+    #         )
+    #     return block
 
     def compute_auxiliary_metrics(
         self, reset: bool = True
