@@ -644,7 +644,7 @@ class Attention(AttentionBase):
         )
 
         # shape: (batch_size, seq_len, d_model)
-        att = att.view(B, T, -1)
+        att = att.reshape(B, T, -1)
 
         # shape: (batch_size, seq_len, d_model)
         return self.w_out(att)
