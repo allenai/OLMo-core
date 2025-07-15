@@ -285,7 +285,6 @@ def test_generation_module_distributed(tmp_path: Path, dp_enabled: bool, tp_enab
     )
 
     # Save checkpoint
-
     checkpoint_dir = tmp_path / "checkpoint"
     save_model_and_optim_state(checkpoint_dir, generation_module.model)
 

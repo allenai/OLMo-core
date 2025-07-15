@@ -23,7 +23,6 @@ from olmo_core.distributed.checkpoint import (
     get_checkpoint_metadata,
     load_state_dict,
 )
-from olmo_core.distributed.checkpoint.metadata import Metadata
 from olmo_core.distributed.parallel import (
     build_world_mesh,
     get_dp_process_group,
