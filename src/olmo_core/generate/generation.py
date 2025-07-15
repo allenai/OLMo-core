@@ -6,9 +6,8 @@ import tempfile
 from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass, field
 from functools import cached_property
-from os import PathLike
 from pathlib import Path
-from typing import Any, Dict, Generator, Optional, Union, cast
+from typing import Any, Dict, Generator, Optional, cast
 
 import torch
 import torch.distributed as dist
@@ -305,6 +304,7 @@ class TransformerGenerationModule(GenerationModule):
         transformer_config: Optional[TransformerConfig] = None,
         generation_config: Optional[GenerationConfig] = None,
         process_group: Optional[ProcessGroup] = None,
+        work_dir: Optional[PathOrStr] = None,
         pre_download: bool = True,
         load_thread_count: Optional[int] = None,
         **kwargs,
@@ -343,7 +343,9 @@ class TransformerGenerationModule(GenerationModule):
             transformer_config = experiment_config.model
 
         # Create work directory on rank 0
-        work_dir = Path(tempfile.mkdtemp()) if get_rank(process_group) == 0 else Path("/tmp")
+        work_dir = Path(
+            work_dir or (tempfile.mkdtemp() if get_rank(process_group) == 0 else "/tmp")
+        )
 
         # Broadcast config and work_dir to all ranks
         transformer_config = scatter_object(transformer_config)
@@ -393,19 +395,20 @@ class TransformerGenerationModuleConfig(Config):
 
     def build(
         self,
-        checkpoint_dir: Optional[PathOrStr] = None,
+        checkpoint_dir: PathOrStr,
+        transformer_config: Optional[TransformerConfig] = None,
         device: Optional[torch.device] = None,
         process_group: Optional[dist.ProcessGroup] = None,
-        work_dir: Optional[Path] = None,
+        work_dir: Optional[PathOrStr] = None,
         pre_download: bool = True,
         load_thread_count: Optional[int] = None,
     ) -> "TransformerGenerationModule":
         """
         Build the corresponding :class:`TransformerGenerationModule`.
 
-        :param model: The :class:`~olmo_core.nn.transformer.Transformer` model to use for generation.
+        :param checkpoint_dir: Checkpoint directory to load from.
+        :param transformer_config: The :class:`~olmo_core.nn.transformer.TransformerConfig` to use for generation.
         :param device: The device to use for generation.
-        :param checkpoint_dir: Optional checkpoint directory to load from.
         :param process_group: The process group for distributed loading.
         :param work_dir: Working directory for temporary files during loading.
         :param pre_download: Whether to pre-download remote checkpoints.
@@ -421,6 +424,8 @@ class TransformerGenerationModuleConfig(Config):
 
         return TransformerGenerationModule.from_checkpoint(
             checkpoint_dir=checkpoint_dir,
+            transformer_config=transformer_config,
+            device=device,
             process_group=process_group,
             work_dir=work_dir,
             pre_download=pre_download,

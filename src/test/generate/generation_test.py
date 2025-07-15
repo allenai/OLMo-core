@@ -15,7 +15,7 @@ from olmo_core.generate.generation import (
     TransformerGenerationModuleConfig,
 )
 from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.testing import requires_gpu, requires_multi_gpu, run_distributed_test
+from olmo_core.testing import requires_multi_gpu, run_distributed_test
 from olmo_core.train.train_module.transformer.config import (
     TransformerDataParallelConfig,
     TransformerTensorParallelConfig,
@@ -23,16 +23,21 @@ from olmo_core.train.train_module.transformer.config import (
 from olmo_core.utils import seed_all
 
 
-@requires_gpu
 @pytest.mark.parametrize("temperature", [0.0, 0.7, 1.0])
 @pytest.mark.parametrize("compile_model", [False, True])
 @pytest.mark.parametrize("dtype", [DType.float32, DType.bfloat16])
-def test_generation_module_basic(temperature: float, compile_model: bool, dtype: DType):
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+def test_generation_module_basic(
+    temperature: float, compile_model: bool, dtype: DType, device: str
+):
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+
     seed_all(42)
 
     # Create a small transformer config
     transformer_config = TransformerConfig.llama_like(
-        d_model=128, n_heads=4, n_layers=2, vocab_size=1000, max_position_embeddings=256
+        d_model=128, n_heads=4, n_layers=2, vocab_size=1000
     )
 
     # Create generation config
@@ -47,13 +52,13 @@ def test_generation_module_basic(temperature: float, compile_model: bool, dtype:
         generation_config=generation_config,
         compile_model=compile_model,
         autocast_precision=dtype.as_pt() if dtype != DType.float32 else None,
-        device=torch.device("cuda"),
+        device=torch.device(device),
     )
 
     # Create input
     batch_size = 2
     seq_len = 8
-    input_ids = torch.randint(1, 100, (batch_size, seq_len), device="cuda")
+    input_ids = torch.randint(1, 100, (batch_size, seq_len), device=device)
 
     # Generate
     output = generation_module.generate_batch(input_ids)
@@ -75,12 +80,15 @@ def test_generation_module_basic(temperature: float, compile_model: bool, dtype:
                 assert torch.all(seq[first_eos + 1 :] == generation_config.pad_token_id)
 
 
-@requires_gpu
-def test_generation_module_state_dict():
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+def test_generation_module_state_dict(device: str):
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+
     seed_all(42)
 
     transformer_config = TransformerConfig.llama_like(
-        d_model=128, n_heads=4, n_layers=2, vocab_size=1000, max_position_embeddings=256
+        d_model=128, n_heads=4, n_layers=2, vocab_size=1000
     )
 
     generation_config = GenerationConfig(max_length=16)
@@ -90,7 +98,7 @@ def test_generation_module_state_dict():
     module1 = TransformerGenerationModule(
         model=model1,
         generation_config=generation_config,
-        device=torch.device("cuda"),
+        device=torch.device(device),
     )
 
     # Get state dict
@@ -102,31 +110,34 @@ def test_generation_module_state_dict():
     module2 = TransformerGenerationModule(
         model=model2,
         generation_config=generation_config,
-        device=torch.device("cuda"),
+        device=torch.device(device),
     )
     module2.load_state_dict(state_dict)
 
     # Verify they produce same output
-    input_ids = torch.randint(1, 100, (1, 4), device="cuda")
+    input_ids = torch.randint(1, 100, (1, 4), device=device)
     output1 = module1.generate_batch(input_ids)
     output2 = module2.generate_batch(input_ids)
     torch.testing.assert_close(output1, output2)
 
 
-@requires_gpu
-def test_generation_module_from_checkpoint(tmp_path: Path):
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+def test_generation_module_from_checkpoint(tmp_path: Path, device: str):
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+
     seed_all(42)
 
     # Create and save a model
     transformer_config = TransformerConfig.llama_like(
-        d_model=128, n_heads=4, n_layers=2, vocab_size=1000, max_position_embeddings=256
+        d_model=128, n_heads=4, n_layers=2, vocab_size=1000
     )
 
     model = transformer_config.build()
     generation_module = TransformerGenerationModule(
         model=model,
         generation_config=GenerationConfig(),
-        device=torch.device("cuda"),
+        device=torch.device(device),
     )
 
     # Save checkpoint
@@ -141,21 +152,24 @@ def test_generation_module_from_checkpoint(tmp_path: Path):
     )
 
     # Verify generation works
-    input_ids = torch.randint(1, 100, (2, 4), device="cuda")
+    input_ids = torch.randint(1, 100, (2, 4), device=device)
     output = generation_module2.generate_batch(input_ids)
     assert output.shape[0] == 2
     assert output.shape[1] >= 4
     assert output.shape[1] <= 20
 
 
-@requires_gpu
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
 @pytest.mark.parametrize("max_length", [16, 32, 64])
 @pytest.mark.parametrize("eos_token_id", [None, 2])
-def test_generation_config_overrides(max_length: int, eos_token_id: Optional[int]):
+def test_generation_config_overrides(device: str, max_length: int, eos_token_id: Optional[int]):
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+
     seed_all(42)
 
     transformer_config = TransformerConfig.llama_like(
-        d_model=128, n_heads=4, n_layers=2, vocab_size=1000, max_position_embeddings=256
+        d_model=128, n_heads=4, n_layers=2, vocab_size=1000
     )
 
     # Create module with default config
@@ -170,11 +184,11 @@ def test_generation_config_overrides(max_length: int, eos_token_id: Optional[int
     generation_module = TransformerGenerationModule(
         model=model,
         generation_config=generation_config,
-        device=torch.device("cuda"),
+        device=torch.device(device),
     )
 
     # Generate with overrides
-    input_ids = torch.randint(1, 50, (1, 4), device="cuda")
+    input_ids = torch.randint(1, 50, (1, 4), device=device)
     output = generation_module.generate_batch(
         input_ids,
         max_length=max_length,
@@ -247,7 +261,7 @@ def test_generation_module_distributed(tmp_path: Path, dp_enabled: bool, tp_enab
 
     # Create and save a model on single device first
     transformer_config = TransformerConfig.llama_like(
-        d_model=128, n_heads=4, n_layers=2, vocab_size=1000, max_position_embeddings=256
+        d_model=128, n_heads=4, n_layers=2, vocab_size=1000
     )
 
     model = transformer_config.build()
@@ -294,20 +308,23 @@ def test_generation_module_distributed(tmp_path: Path, dp_enabled: bool, tp_enab
     )
 
 
-@requires_gpu
-def test_generation_module_config_build(tmp_path: Path):
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+def test_generation_module_config_build(tmp_path: Path, device: str):
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+
     seed_all(42)
 
     # Create and save a model
     transformer_config = TransformerConfig.llama_like(
-        d_model=128, n_heads=4, n_layers=2, vocab_size=1000, max_position_embeddings=256
+        d_model=128, n_heads=4, n_layers=2, vocab_size=1000
     )
 
     model = transformer_config.build()
     generation_module = TransformerGenerationModule(
         model=model,
         generation_config=GenerationConfig(),
-        device=torch.device("cuda"),
+        device=torch.device(device),
     )
 
     checkpoint_dir = tmp_path / "checkpoint"
@@ -321,11 +338,13 @@ def test_generation_module_config_build(tmp_path: Path):
 
     generation_module2 = config.build(
         checkpoint_dir=checkpoint_dir,
+        transformer_config=transformer_config,
         work_dir=tmp_path / "work",
+        device=torch.device(device),
     )
 
     # Verify it works
-    input_ids = torch.randint(1, 100, (2, 4), device="cuda")
+    input_ids = torch.randint(1, 100, (2, 4), device=device)
     output = generation_module2.generate_batch(input_ids)
     assert output.shape[0] == 2
     assert output.shape[1] <= 24
