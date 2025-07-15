@@ -10,7 +10,9 @@ from olmo_core.config import Config, DType
 from olmo_core.doc_utils import beta_feature
 from olmo_core.float8 import Float8Config
 from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.train.train_module.transformer.config import TransformerDataParallelConfig
+from olmo_core.train.train_module.transformer.config import (
+    TransformerDataParallelConfig,
+)
 
 if TYPE_CHECKING:
     from .generation import TransformerGenerationModule

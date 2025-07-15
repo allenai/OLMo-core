@@ -8,7 +8,10 @@ import torch.distributed as dist
 from olmo_core.distributed.checkpoint import save_model_and_optim_state
 from olmo_core.distributed.parallel.data_parallel import DataParallelType
 from olmo_core.distributed.utils import get_world_size
-from olmo_core.generate.config import GenerationConfig, TransformerGenerationModuleConfig
+from olmo_core.generate.config import (
+    GenerationConfig,
+    TransformerGenerationModuleConfig,
+)
 from olmo_core.generate.generation import TransformerGenerationModule
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.testing import requires_multi_gpu, run_distributed_test
@@ -21,8 +24,7 @@ from olmo_core.utils import seed_all
 
 @pytest.fixture
 def transformer_config():
-    """Common transformer config for tests."""
-    return TransformerConfig.llama_like(d_model=128, n_heads=4, n_layers=2, vocab_size=1000)
+    return TransformerConfig.llama_like(d_model=128, n_heads=4, n_layers=2, vocab_size=512)
 
 
 @pytest.mark.parametrize("temperature", [0.0, 0.7, 1.0])
