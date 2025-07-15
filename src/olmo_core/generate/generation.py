@@ -3,7 +3,7 @@ import logging
 import tempfile
 from abc import ABCMeta, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, Generator, Optional
+from typing import Any, Dict, Generator, Optional, Tuple, Union
 
 import torch
 import torch.distributed as dist
@@ -82,7 +82,6 @@ class TransformerGenerationModule(GenerationModule):
         self.world_mesh: Optional[DeviceMesh] = None
         if is_distributed():
             self.world_mesh = build_world_mesh(dp=dp_config, device_type=self.device.type)
-            log.info(f"Data parallel world size = {get_world_size(self.dp_process_group):,d}")
         elif dp_config is not None:
             raise OLMoConfigurationError(
                 "Training parallelism configs are only valid for distributed training"
@@ -142,31 +141,36 @@ class TransformerGenerationModule(GenerationModule):
     def generate_batch(
         self,
         input_ids: torch.Tensor,
+        return_logits: bool = False,
+        completions_only: bool = False,
         **generation_kwargs,
-    ) -> torch.Tensor:
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
         Generate text using greedy decoding.
 
         Args:
             input_ids: Input token IDs of shape (batch_size, seq_len)
-            **generation_kwargs: Generation c onfiguration overrides
+            return_logits: If True, return logits along with generated tokens
+            completions_only: If True, return only the completions, not the entire sequence
+            **generation_kwargs: Generation configuration overrides
         Returns:
-            Generated token IDs of shape (batch_size, output_length)
+            If return_logits and return_past are False:
+                Generated token IDs of shape (batch_size, output_length)
+            Otherwise:
+                Tuple containing generated tokens and requested additional outputs
         """
         self.model.eval()
 
         # Move input_ids to the right device.
         input_ids = move_to_device(input_ids, self.device)
 
+        # Replace generation config with any overrides.
         generation_config = self._generation_config.replace(**generation_kwargs)
 
         batch_size = input_ids.shape[0]
         device = input_ids.device
 
-        # Track which sequences are finished
         finished = torch.zeros(batch_size, dtype=torch.bool, device=device)
-
-        # Start with the input
         generated = input_ids
 
         while generated.shape[1] < generation_config.max_length:
@@ -194,7 +198,18 @@ class TransformerGenerationModule(GenerationModule):
             if generation_config.eos_token_id is not None and finished.all():
                 break
 
-        return generated
+        logits = None
+        if return_logits:
+            # Compute logits for the complete generated sequence (only if needed)
+            logits = self.model_forward(generated)
+
+        if completions_only:
+            # Slice out the input_ids and their logits
+            generated = generated[:, input_ids.shape[1] :]
+            if logits is not None:
+                logits = logits[:, input_ids.shape[1] :, :]
+
+        return generated, logits
 
     def load_checkpoint(
         self,

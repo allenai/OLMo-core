@@ -32,7 +32,7 @@ def transformer_config():
 @pytest.mark.parametrize(
     "dtype",
     [
-        pytest.param(torch.float16, id="dtype=float16"),
+        pytest.param(torch.float32, id="dtype=float32"),
         pytest.param(torch.bfloat16, id="dtype=bfloat16", marks=GPU_MARKS),
     ],
 )
@@ -65,26 +65,29 @@ def test_generation_module_basic(
     seq_len = 8
     input_ids = torch.randint(1, 100, (batch_size, seq_len), device=device)
 
-    output1 = generation_module.generate_batch(input_ids)
+    output_ids, output_logits = generation_module.generate_batch(
+        input_ids, return_logits=True, completions_only=False
+    )
 
     # TODO: test to make sure the model is compiled exactly once if compile_model is True
     # We do not want to accidentally compile the model each time the sequence length changes.
 
     # Verify output shape and properties
-    output = output1 if compile_model else output1
-    assert output.shape[0] == batch_size
-    assert output.shape[1] <= generation_config.max_length
-    assert output.shape[1] >= seq_len + 1
-    assert torch.all(output[:, :seq_len] == input_ids)
+    assert output_ids.shape[0] == batch_size
+    assert output_ids.shape[1] <= generation_config.max_length
+    assert output_ids.shape[1] >= seq_len + 1
+    assert torch.all(output_ids[:, :seq_len] == input_ids)
+    assert isinstance(output_logits, torch.Tensor)
+    assert output_logits.shape == (batch_size, output_ids.shape[1], transformer_config.vocab_size)
 
     # Check that generation stopped at EOS or max_length
     for i in range(batch_size):
-        seq = output[i]
+        seq = output_ids[i]
         eos_positions = (seq == generation_config.eos_token_id).nonzero(as_tuple=True)[0]
         if len(eos_positions) > 0:
             # If EOS found, check padding after it
             first_eos = eos_positions[0].item()
-            if first_eos < output.shape[1] - 1:
+            if first_eos < output_ids.shape[1] - 1:
                 assert torch.all(seq[first_eos + 1 :] == generation_config.pad_token_id)
 
 
@@ -117,9 +120,9 @@ def test_generation_module_state_dict(transformer_config: TransformerConfig, dev
 
     # Verify they produce same output
     input_ids = torch.randint(1, 100, (1, 4), device=device)
-    output1 = module1.generate_batch(input_ids)
-    output2 = module2.generate_batch(input_ids)
-    torch.testing.assert_close(output1, output2)
+    output_ids1, _ = module1.generate_batch(input_ids, return_logits=False)
+    output_ids2, _ = module2.generate_batch(input_ids, return_logits=False)
+    torch.testing.assert_close(output_ids1, output_ids2)
 
 
 @requires_gpu
@@ -150,22 +153,22 @@ def test_generation_config_overrides(
 
     # Generate with overrides
     input_ids = torch.randint(1, 50, (1, 4), device=device)
-    output = generation_module.generate_batch(
+    output_ids, _ = generation_module.generate_batch(
         input_ids,
         max_length=max_length,
         eos_token_id=eos_token_id,
         temperature=0.8,
     )
 
-    assert output.shape[1] <= max_length
+    assert output_ids.shape[1] <= max_length
 
     # Check EOS behavior
-    eos_positions = (output == eos_token_id).nonzero(as_tuple=True)
+    eos_positions = (output_ids == eos_token_id).nonzero(as_tuple=True)
     if len(eos_positions[0]) > 0:
         # Should have padding after EOS
         first_eos_idx = eos_positions[1][0].item()
-        if first_eos_idx < output.shape[1] - 1:
-            assert torch.all(output[0, first_eos_idx + 1 :] == generation_config.pad_token_id)
+        if first_eos_idx < output_ids.shape[1] - 1:
+            assert torch.all(output_ids[0, first_eos_idx + 1 :] == generation_config.pad_token_id)
 
 
 @pytest.mark.parametrize("device", DEVICES)
@@ -178,14 +181,12 @@ def test_generation_module_config_build(
     generation_config = GenerationConfig(max_length=24, temperature=0.0)
     model = transformer_config.build()
     generation_module = TransformerGenerationModule(
-        model=model,
-        generation_config=generation_config,
-        device=device,
+        model=model, generation_config=generation_config, device=device
     )
 
     # Generate output before saving
     input_ids = torch.randint(1, 100, (2, 4), device=device)
-    output_before = generation_module.generate_batch(input_ids)
+    output_before, _ = generation_module.generate_batch(input_ids)
 
     checkpoint_dir = tmp_path / "checkpoint"
     save_model_and_optim_state(checkpoint_dir, generation_module.model)
@@ -200,7 +201,7 @@ def test_generation_module_config_build(
     )
 
     # Generate output after loading from checkpoint
-    output_after = generation_module2.generate_batch(input_ids)
+    output_after, _ = generation_module2.generate_batch(input_ids)
 
     # Verify predictions are the same before and after saving
     torch.testing.assert_close(output_before, output_after)
@@ -231,16 +232,18 @@ def run_distributed_generation(
     input_ids = input_ids.to(device)
 
     # Generate
-    output = generation_module.generate_batch(input_ids)
+    output_ids, _ = generation_module.generate_batch(input_ids, completions_only=False)
 
     # Basic checks
-    assert output.shape == expected_shape
-    assert output.device == device
+    assert output_ids.shape == expected_shape, (
+        f"output_ids.shape: {output_ids.shape}, expected_shape: {expected_shape}"
+    )
+    assert output_ids.device == device
 
     # Verify all ranks got same result using FSDP
     if dp_config is not None and get_world_size() > 1:
-        output_list = [torch.zeros_like(output) for _ in range(get_world_size())]
-        dist.all_gather(output_list, output)
+        output_list = [torch.zeros_like(output_ids) for _ in range(get_world_size())]
+        dist.all_gather(output_list, output_ids)
         for i in range(1, len(output_list)):
             torch.testing.assert_close(output_list[0], output_list[i])
 
@@ -265,10 +268,7 @@ def test_generation_module_distributed_fsdp(transformer_config: TransformerConfi
     dp_config = TransformerDataParallelConfig(name=DataParallelType.fsdp)
 
     generation_config = GenerationConfig(
-        max_length=16,
-        temperature=0.0,
-        eos_token_id=2,
-        pad_token_id=0,
+        max_length=16, temperature=0.0, eos_token_id=2, pad_token_id=0
     )
 
     # Create test input
