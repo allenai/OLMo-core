@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, cast
+from typing import TYPE_CHECKING, Any, Dict, Optional, cast
 
 import torch
 import torch.distributed as dist
@@ -9,9 +9,11 @@ from olmo_core.aliases import PathOrStr
 from olmo_core.config import Config, DType
 from olmo_core.doc_utils import beta_feature
 from olmo_core.float8 import Float8Config
-from olmo_core.generate.generation import TransformerGenerationModule
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.train.train_module.transformer.config import TransformerDataParallelConfig
+
+if TYPE_CHECKING:
+    from .generation import TransformerGenerationModule
 
 
 @dataclass
@@ -74,6 +76,8 @@ class TransformerGenerationModuleConfig(Config):
         :param pre_download: Whether to pre-download remote checkpoints.
         :param load_thread_count: Number of threads to use for loading.
         """
+        from olmo_core.generate.generation import TransformerGenerationModule
+
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         if (autocast_precision := kwargs.pop("autocast_precision", None)) is not None:
             kwargs["autocast_precision"] = cast(DType, autocast_precision).as_pt()
