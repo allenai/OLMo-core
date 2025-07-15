@@ -116,8 +116,8 @@ MAX_LENGTH=16384
 
 # USABLE!!!!!
 python src/scripts/train/sft/OLMo2-7B-sft.py launch \
-    olmo2-7B-lc-tulu3-olmo2-mix-num_13-add_oasst_100k_toolu \
-        tulu3-olmo2-mix-num_13-add_oasst_100k_toolu \
+    olmo2-7B-lc-tulu3-olmo2-mix-num_13-add_oasst_336k_toolu \
+        tulu3-olmo2-mix-num_13-add_oasst_336k_toolu \
         /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_4K_20B/step33379 \
         ai2/jupiter-cirrascale-2 \
     --trainer.callbacks.wandb.enabled=True \
@@ -126,6 +126,7 @@ python src/scripts/train/sft/OLMo2-7B-sft.py launch \
     --seq_len=16384 \
     --launch.num_gpus=8 \
     --num_nodes=2 \
+    --model_name olmo2-7b \
     --launch.priority=urgent
 
 INPUT_PATH=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmo2-7B-sft/olmo2-7B-lc-tulu3-olmo2-mix-remov_replac-100k_toolu-fae_ver-sau_code-val_if-ot3_456k-remove-personas-and-numinamath/step1946
@@ -142,6 +143,23 @@ gantry run --cluster ai2/saturn-cirrascale --timeout -1 -y --budget ai2/oe-adapt
             --max-sequence-length 65536
 
 find /weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft/usable-tulu/ -maxdepth 1 -type d -name "olmo2-7B-lc*" -exec cp /weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft-tokenizer-olmo-chat-template/* {} \;
+
+#### CONVERT TO OLMO CORE:
+INPUT_PATH=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmo2-7B-sft/olmo2-7B-lc-tulu3-olmo2-mix-remov_replac-100k_toolu-fae_ver-sau_code-val_if-ot3_456k-remove-personas-and-numinamath/step1946
+MODEL_NAME=olmo2-7B-lc-tulu3-olmo2-mix-remov_replac-100k_toolu-fae_ver-sau_code-val_if-ot3_456k-remove-personas-and-numinamath
+
+gantry run --cluster ai2/saturn-cirrascale --timeout -1 -y --budget ai2/oe-adapt --workspace ai2/olmo-instruct \
+        --install "curl -LsSf https://astral.sh/uv/install.sh | sh && /root/.local/bin/uv sync --all-extras" \
+        --weka=oe-adapt-default:/weka/oe-adapt-default \
+        --weka=oe-training-default:/weka/oe-training-default \
+        --priority urgent \
+        --gpus 1 \
+        -- /root/.local/bin/uv run python src/examples/huggingface/convert_checkpoint_from_hf.py \
+            -i /weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft/usable-tulu/olmo2-7B-lc-tulu3-olmo2-mix-dpo/ \
+            -o /weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmo2-7B-sft/olmo2-7B-lc-tulu3-olmo2-mix-dpo \
+            --model-arch olmo2_7b \
+            --max-sequence-length 65536
+
 
 
     # "olmo2-7B-lc-tulu3-olmo2-mix-remov_replac-100k_toolu-fae_ver-sau_code-val_if-ot3_456k-remove-personas-and-flan"
