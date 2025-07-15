@@ -13,14 +13,8 @@ from torch.distributed.checkpoint.metadata import Metadata
 from torch.distributed.checkpoint.stateful import Stateful
 
 from olmo_core.aliases import PathOrStr
-from olmo_core.distributed.checkpoint import (
-    get_checkpoint_metadata,
-    load_state_dict,
-)
-from olmo_core.distributed.parallel import (
-    build_world_mesh,
-    get_dp_process_group,
-)
+from olmo_core.distributed.checkpoint import get_checkpoint_metadata, load_state_dict
+from olmo_core.distributed.parallel import build_world_mesh, get_dp_process_group
 from olmo_core.distributed.utils import (
     get_fs_local_rank,
     get_rank,
