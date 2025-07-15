@@ -81,7 +81,12 @@ def convert_checkpoint_to_hf(
     model_config = TransformerConfig.from_dict(transformer_config_dict)
 
     # Check if validation is being performed and flash attn is requested but cannot run.
-    if validate and (flash_attn is None or device != torch.device("cuda")):
+    device = device or get_default_device()
+    if (
+        validate
+        and device != torch.device("cuda")
+        and (attention := transformer_config_dict.get("block", {}).get("attention")) is not None
+    ):
         if model_config.block.attention.name == AttentionType.fused:
             log.warning(
                 "Running conversion without cuda or flash attention on a model requiring flash attention, validation would fail so we are disabling it."
@@ -94,7 +99,6 @@ def convert_checkpoint_to_hf(
             attention["use_flash"] = False
             attention["use_flex_attn"] = True
 
-    model_config = TransformerConfig.from_dict(transformer_config_dict)
     model = model_config.build()
     model.to_empty(device=device or torch.device("cpu"))
 
@@ -173,7 +177,7 @@ def _register_debug_hooks(hf_model: torch.nn.Module, model: Transformer):
             # Special casing for HF moe mlp
             assert isinstance(output[0], torch.Tensor), (name, output)
             output = output[0]
-        if model_type == "hf" and re.match(r"model.layers.\d+.mlp.gate", name):
+        if model_type == "hf" and re.match(r"model.layers.\d+.block_sparse_moe.gate", name):
             # Special casing for HF moe router
             assert isinstance(output, torch.Tensor), (name, output)
             router_logits = output.detach().clone()
@@ -251,6 +255,7 @@ def validate_conversion(
         .to(device)
         .eval()
     )
+    hf_config = hf_model.config
 
     olmo_core_state, hf_state = {}, {}
     if debug:
@@ -265,7 +270,7 @@ def validate_conversion(
                 torch.nn.attention.sdpa_kernel(torch.nn.attention.SDPBackend.MATH)
             )
 
-        hf_logits, *_ = hf_model(input_ids=input_ids, return_dict=False)
+        hf_logits = hf_model(input_ids=input_ids).logits
 
     del hf_model
 
