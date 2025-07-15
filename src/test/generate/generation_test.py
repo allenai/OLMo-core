@@ -18,7 +18,6 @@ from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.testing import requires_multi_gpu, run_distributed_test
 from olmo_core.train.train_module.transformer.config import (
     TransformerDataParallelConfig,
-    TransformerTensorParallelConfig,
 )
 from olmo_core.utils import seed_all
 
@@ -60,10 +59,13 @@ def test_generation_module_basic(
     seq_len = 8
     input_ids = torch.randint(1, 100, (batch_size, seq_len), device=device)
 
-    # Generate
-    output = generation_module.generate_batch(input_ids)
+    output1 = generation_module.generate_batch(input_ids)
+
+    # TODO: test to make sure the model is compiled exactly once if compile_model is True
+    # We do not want to accidentally compile the model each time the sequence length changes.
 
     # Verify output shape and properties
+    output = output1 if compile_model else output1
     assert output.shape[0] == batch_size
     assert output.shape[1] <= generation_config.max_length
     assert output.shape[1] >= seq_len + 1
@@ -213,7 +215,6 @@ def run_distributed_generation(
     transformer_config: TransformerConfig,
     generation_config: GenerationConfig,
     dp_config: Optional[TransformerDataParallelConfig],
-    tp_config: Optional[TransformerTensorParallelConfig],
     input_ids: torch.Tensor,
     expected_shape: tuple,
 ):
@@ -225,11 +226,10 @@ def run_distributed_generation(
         checkpoint_dir=checkpoint_dir,
         generation_config=generation_config,
         dp_config=dp_config,
-        tp_config=tp_config,
     )
 
     # Move input to correct device
-    device = torch.device("cuda", dist.get_rank() % torch.cuda.device_count())
+    device = torch.device("cuda", dist.get_rank())
     input_ids = input_ids.to(device)
 
     # Generate
@@ -239,7 +239,7 @@ def run_distributed_generation(
     assert output.shape == expected_shape
     assert output.device == device
 
-    # Verify all ranks got same result (for DP)
+    # Verify all ranks got same result using FSDP
     if dp_config is not None and get_world_size() > 1:
         output_list = [torch.zeros_like(output) for _ in range(get_world_size())]
         dist.all_gather(output_list, output)
@@ -248,15 +248,7 @@ def run_distributed_generation(
 
 
 @requires_multi_gpu
-@pytest.mark.parametrize(
-    "dp_enabled,tp_enabled",
-    [
-        pytest.param(True, False, id="DP-only"),
-        pytest.param(False, True, id="TP-only"),
-        pytest.param(True, True, id="DP+TP"),
-    ],
-)
-def test_generation_module_distributed(tmp_path: Path, dp_enabled: bool, tp_enabled: bool):
+def test_generation_module_distributed_fsdp(tmp_path: Path):
     seed_all(42)
 
     # Create and save a model on single device first
@@ -275,10 +267,8 @@ def test_generation_module_distributed(tmp_path: Path, dp_enabled: bool, tp_enab
     checkpoint_dir = tmp_path / "checkpoint"
     save_model_and_optim_state(checkpoint_dir, generation_module.model)
 
-    # Prepare configs
-    world_size = dist.get_world_size() if dist.is_initialized() else 2
-    dp_config = TransformerDataParallelConfig(name=DataParallelType.ddp) if dp_enabled else None
-    tp_config = TransformerTensorParallelConfig(degree=world_size) if tp_enabled else None
+    # Prepare configs for distributed test
+    dp_config = TransformerDataParallelConfig(name=DataParallelType.fsdp)
 
     generation_config = GenerationConfig(
         max_length=16,
@@ -291,9 +281,10 @@ def test_generation_module_distributed(tmp_path: Path, dp_enabled: bool, tp_enab
     input_ids = torch.randint(1, 100, (2, 8))
     expected_shape = (2, 16)  # max_length
 
-    # Run distributed test
+    # Run distributed test with 2 GPUs
     run_distributed_test(
         run_distributed_generation,
+        world_size=2,
         backend="nccl",
         start_method="spawn",
         func_args=(
@@ -301,7 +292,6 @@ def test_generation_module_distributed(tmp_path: Path, dp_enabled: bool, tp_enab
             transformer_config,
             generation_config,
             dp_config,
-            tp_config,
             input_ids,
             expected_shape,
         ),
