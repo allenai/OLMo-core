@@ -26,27 +26,18 @@ from olmo_core.utils import seed_all
 @requires_gpu
 @pytest.mark.parametrize("temperature", [0.0, 0.7, 1.0])
 @pytest.mark.parametrize("compile_model", [False, True])
-@pytest.mark.parametrize(
-    "dtype", [pytest.param(torch.float32, id="FP32"), pytest.param(torch.bfloat16, id="BF16")]
-)
-def test_generation_module_basic(temperature: float, compile_model: bool, dtype: torch.dtype):
+@pytest.mark.parametrize("dtype", [DType.float32, DType.bfloat16])
+def test_generation_module_basic(temperature: float, compile_model: bool, dtype: DType):
     seed_all(42)
 
     # Create a small transformer config
-    transformer_config = TransformerConfig.olmo2_190M(
-        d_model=128,
-        n_heads=4,
-        n_layers=2,
-        vocab_size=1000,
-        max_position_embeddings=256,
+    transformer_config = TransformerConfig.llama_like(
+        d_model=128, n_heads=4, n_layers=2, vocab_size=1000, max_position_embeddings=256
     )
 
     # Create generation config
     generation_config = GenerationConfig(
-        max_length=32,
-        temperature=temperature,
-        eos_token_id=2,
-        pad_token_id=0,
+        max_length=32, temperature=temperature, eos_token_id=2, pad_token_id=0
     )
 
     # Build generation module
@@ -55,7 +46,7 @@ def test_generation_module_basic(temperature: float, compile_model: bool, dtype:
         model=model,
         generation_config=generation_config,
         compile_model=compile_model,
-        autocast_precision=dtype if dtype != torch.float32 else None,
+        autocast_precision=dtype.as_pt() if dtype != DType.float32 else None,
         device=torch.device("cuda"),
     )
 
@@ -70,7 +61,7 @@ def test_generation_module_basic(temperature: float, compile_model: bool, dtype:
     # Verify output shape and properties
     assert output.shape[0] == batch_size
     assert output.shape[1] <= generation_config.max_length
-    assert output.shape[1] >= seq_len
+    assert output.shape[1] >= seq_len + 1
     assert torch.all(output[:, :seq_len] == input_ids)
 
     # Check that generation stopped at EOS or max_length
@@ -88,12 +79,8 @@ def test_generation_module_basic(temperature: float, compile_model: bool, dtype:
 def test_generation_module_state_dict():
     seed_all(42)
 
-    transformer_config = TransformerConfig.olmo2_190M(
-        d_model=128,
-        n_heads=4,
-        n_layers=2,
-        vocab_size=1000,
-        max_position_embeddings=256,
+    transformer_config = TransformerConfig.llama_like(
+        d_model=128, n_heads=4, n_layers=2, vocab_size=1000, max_position_embeddings=256
     )
 
     generation_config = GenerationConfig(max_length=16)
@@ -131,12 +118,8 @@ def test_generation_module_from_checkpoint(tmp_path: Path):
     seed_all(42)
 
     # Create and save a model
-    transformer_config = TransformerConfig.olmo2_190M(
-        d_model=128,
-        n_heads=4,
-        n_layers=2,
-        vocab_size=1000,
-        max_position_embeddings=256,
+    transformer_config = TransformerConfig.llama_like(
+        d_model=128, n_heads=4, n_layers=2, vocab_size=1000, max_position_embeddings=256
     )
 
     model = transformer_config.build()
@@ -147,8 +130,6 @@ def test_generation_module_from_checkpoint(tmp_path: Path):
     )
 
     # Save checkpoint
-    from olmo_core.distributed.checkpoint import save_model_and_optim_state
-
     checkpoint_dir = tmp_path / "checkpoint"
     save_model_and_optim_state(checkpoint_dir, generation_module.model)
 
@@ -173,12 +154,8 @@ def test_generation_module_from_checkpoint(tmp_path: Path):
 def test_generation_config_overrides(max_length: int, eos_token_id: Optional[int]):
     seed_all(42)
 
-    transformer_config = TransformerConfig.olmo2_190M(
-        d_model=128,
-        n_heads=4,
-        n_layers=2,
-        vocab_size=1000,
-        max_position_embeddings=256,
+    transformer_config = TransformerConfig.llama_like(
+        d_model=128, n_heads=4, n_layers=2, vocab_size=1000, max_position_embeddings=256
     )
 
     # Create module with default config
@@ -269,12 +246,8 @@ def test_generation_module_distributed(tmp_path: Path, dp_enabled: bool, tp_enab
     seed_all(42)
 
     # Create and save a model on single device first
-    transformer_config = TransformerConfig.olmo2_190M(
-        d_model=128,
-        n_heads=4,
-        n_layers=2,
-        vocab_size=1000,
-        max_position_embeddings=256,
+    transformer_config = TransformerConfig.llama_like(
+        d_model=128, n_heads=4, n_layers=2, vocab_size=1000, max_position_embeddings=256
     )
 
     model = transformer_config.build()
@@ -322,50 +295,12 @@ def test_generation_module_distributed(tmp_path: Path, dp_enabled: bool, tp_enab
 
 
 @requires_gpu
-def test_generation_module_config_build():
-    seed_all(42)
-
-    transformer_config = TransformerConfig.olmo2_190M(
-        d_model=128,
-        n_heads=4,
-        n_layers=2,
-        vocab_size=1000,
-        max_position_embeddings=256,
-    )
-
-    # Test building without checkpoint
-    config = TransformerGenerationModuleConfig(
-        generation_config=GenerationConfig(max_length=32, temperature=0.7),
-        compile_model=True,
-        autocast_precision=DType.bfloat16,
-    )
-
-    generation_module = config.build(
-        transformer_config=transformer_config,
-        device=torch.device("cuda"),
-    )
-
-    assert generation_module.generation_config.max_length == 32
-    assert generation_module.generation_config.temperature == 0.7
-    assert generation_module.autocast_precision == torch.bfloat16
-
-    # Test generation
-    input_ids = torch.randint(1, 100, (1, 4), device="cuda")
-    output = generation_module.generate_batch(input_ids)
-    assert output.shape[1] <= 32
-
-
-@requires_gpu
-def test_generation_module_config_build_with_checkpoint(tmp_path: Path):
+def test_generation_module_config_build(tmp_path: Path):
     seed_all(42)
 
     # Create and save a model
-    transformer_config = TransformerConfig.olmo2_190M(
-        d_model=128,
-        n_heads=4,
-        n_layers=2,
-        vocab_size=1000,
-        max_position_embeddings=256,
+    transformer_config = TransformerConfig.llama_like(
+        d_model=128, n_heads=4, n_layers=2, vocab_size=1000, max_position_embeddings=256
     )
 
     model = transformer_config.build()
@@ -385,7 +320,6 @@ def test_generation_module_config_build_with_checkpoint(tmp_path: Path):
     )
 
     generation_module2 = config.build(
-        transformer_config=transformer_config,
         checkpoint_dir=checkpoint_dir,
         work_dir=tmp_path / "work",
     )

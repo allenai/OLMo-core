@@ -38,6 +38,7 @@ from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
 from olmo_core.generate.selection import temperature_sampling
+from olmo_core.internal.experiment import ExperimentConfig
 from olmo_core.io import is_url, normalize_path
 from olmo_core.nn.transformer import Transformer, TransformerConfig
 from olmo_core.train.train_module.transformer.common import parallelize_model
@@ -299,8 +300,9 @@ class TransformerGenerationModule(GenerationModule):
     @classmethod
     def from_checkpoint(
         cls,
-        transformer_config: TransformerConfig,
-        checkpoint_dir: Union[str, PathLike],
+        checkpoint_dir: PathOrStr,
+        *,
+        transformer_config: Optional[TransformerConfig] = None,
         generation_config: Optional[GenerationConfig] = None,
         process_group: Optional[ProcessGroup] = None,
         pre_download: bool = True,
@@ -313,29 +315,48 @@ class TransformerGenerationModule(GenerationModule):
         This is a convenience method that combines model initialization and checkpoint loading.
 
         Args:
-            transformer_config: Configuration for the transformer model
-            checkpoint_dir: Path to checkpoint directory
-            generation_config: Configuration for generation
-            process_group: Process group for distributed checkpoint loading
-            pre_download: Whether to pre-download remote checkpoints
+            checkpoint_dir: Path to checkpoint directory.
+            transformer_config: Configuration for the transformer model. If not provided,
+                will be loaded from the checkpoint's config.json file.
+            generation_config: Configuration for generation. If not provided, uses default
+                GenerationConfig.
+            process_group: Process group for distributed checkpoint loading.
+            pre_download: Whether to pre-download remote checkpoints.
+            load_thread_count: Number of threads to use for loading checkpoint.
+            **kwargs: Additional keyword arguments passed to the TransformerGenerationModule
+                constructor.
 
         Returns:
-            GenerationModule instance with loaded checkpoint
+            TransformerGenerationModule instance with loaded checkpoint.
 
         Raises:
-            FileNotFoundError: If checkpoint directory doesn't exist
-            RuntimeError: If checkpoint loading fails
+            FileNotFoundError: If checkpoint directory doesn't exist.
+            OLMoConfigurationError: If transformer config cannot be determined.
+            RuntimeError: If checkpoint loading fails.
         """
+        checkpoint_dir = Path(normalize_path(checkpoint_dir))
         generation_config = generation_config or GenerationConfig()
+
+        # Load transformer config from checkpoint if not provided
+        if transformer_config is None and get_rank(process_group) == 0:
+            experiment_config = ExperimentConfig.from_file(checkpoint_dir / "config.json")
+            transformer_config = experiment_config.model
+
+        # Create work directory on rank 0
+        work_dir = Path(tempfile.mkdtemp()) if get_rank(process_group) == 0 else Path("/tmp")
+
+        # Broadcast config and work_dir to all ranks
+        transformer_config = scatter_object(transformer_config)
+        work_dir = scatter_object(work_dir)
+
+        if transformer_config is None:
+            raise OLMoConfigurationError("Transformer config is required")
+
+        # Build model and generation module
         model = transformer_config.build()
         generation_module = cls(model, generation_config, **kwargs)
 
-        if get_rank(process_group) == 0:
-            work_dir = Path(tempfile.mkdtemp())
-        else:
-            work_dir = Path("/tmp")  # will be overwritten by scatter_object
-        work_dir = scatter_object(work_dir)
-
+        # Load checkpoint
         generation_module.load_checkpoint(
             checkpoint_dir=checkpoint_dir,
             process_group=process_group,
@@ -372,9 +393,8 @@ class TransformerGenerationModuleConfig(Config):
 
     def build(
         self,
-        transformer_config: TransformerConfig,
-        device: Optional[torch.device] = None,
         checkpoint_dir: Optional[PathOrStr] = None,
+        device: Optional[torch.device] = None,
         process_group: Optional[dist.ProcessGroup] = None,
         work_dir: Optional[Path] = None,
         pre_download: bool = True,
@@ -399,20 +419,11 @@ class TransformerGenerationModuleConfig(Config):
         if (state_dict_load_opts := kwargs.pop("state_dict_load_opts", None)) is not None:
             kwargs["state_dict_load_opts"] = dist_cp_sd.StateDictOptions(**state_dict_load_opts)
 
-        if checkpoint_dir is not None:
-            return TransformerGenerationModule.from_checkpoint(
-                transformer_config=transformer_config,
-                checkpoint_dir=checkpoint_dir,
-                process_group=process_group,
-                work_dir=work_dir,
-                pre_download=pre_download,
-                load_thread_count=load_thread_count,
-                **kwargs,
-            )
-        else:
-            model = transformer_config.build()
-            return TransformerGenerationModule(
-                model=model,
-                device=device,
-                **kwargs,
-            )
+        return TransformerGenerationModule.from_checkpoint(
+            checkpoint_dir=checkpoint_dir,
+            process_group=process_group,
+            work_dir=work_dir,
+            pre_download=pre_download,
+            load_thread_count=load_thread_count,
+            **kwargs,
+        )
