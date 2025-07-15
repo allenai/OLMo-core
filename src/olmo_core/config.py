@@ -283,12 +283,15 @@ class DType(StrEnum):
     An enumeration of supported PyTorch data types.
     """
 
+    float64 = "float64"
     float32 = "float32"
     bfloat16 = "bfloat16"
     float16 = "float16"
 
     @classmethod
     def from_pt(cls, dtype: torch.dtype) -> "DType":
+        if dtype == torch.float64:
+            return DType.float64
         if dtype == torch.float32:
             return DType.float32
         elif dtype == torch.bfloat16:

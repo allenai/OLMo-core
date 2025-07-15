@@ -168,15 +168,18 @@ def save_hf_model(
     hf_model.config.vocab_size = vocab_size or model.vocab_size
     hf_model.resize_token_embeddings(hf_model.config.vocab_size)
 
+    def _save_generation_config(hf_model, dir):
+        hf_model.save_pretrained(dir)
+        hf_model.generation_config.save_pretrained(dir)
+
     if get_fs_local_rank(process_group) == 0:
         if is_url(save_dir):
             assert work_dir is not None
-            hf_model.save_pretrained(work_dir)
-
+            _save_generation_config(hf_model, work_dir)
             upload(work_dir, str(save_dir), save_overwrite=save_overwrite)
         else:
             target = Path(save_dir)
             if target.is_dir() and not save_overwrite:
                 raise FileExistsError(target)
             target.parent.mkdir(exist_ok=True, parents=True)
-            hf_model.save_pretrained(target)
+            _save_generation_config(hf_model, target)
