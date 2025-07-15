@@ -17,6 +17,8 @@ from olmo_core.train.train_module import (
     TransformerTrainModuleConfig,
 )
 
+from olmo_core.nn.rope import RoPEScalingConfig
+
 SEQUENCE_LENGTH = 4096 * 2
 GLOBAL_BATCH_SIZE = 1024 * SEQUENCE_LENGTH
 
@@ -28,8 +30,11 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         force_full_attention_on_last_layer=True,
         pattern=[4096, 4096, 4096, -1],
     )
-    # TODO: What about Rope extension?
     config.block.attention.use_flash = True
+    config.block.attention.rope.scaling = RoPEScalingConfig(
+        old_context_len=4096,
+        factor=2
+    )
 
     # We cannot use headwise QK norm or GQA, because those can't be retrofit.
 
