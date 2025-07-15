@@ -1023,6 +1023,10 @@ class BLTTransformer(Transformer):
         init_std: float = 0.02,
         block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None,
     ):
+        # accessed in super() so we need a placeholder
+        self.num_non_embedding_params = -1
+        self.num_params = -1
+
         super().__init__(
             d_model=d_model,
             vocab_size=vocab_size,
@@ -1037,8 +1041,31 @@ class BLTTransformer(Transformer):
             block_overrides=block_overrides,
         )
 
+        del self.num_non_embedding_params
+        del self.num_params
+
+        # replaced by local encoder and decoder
+        del self.embeddings
+        del self.lm_head
+
         self.local_encoder = local_encoder.build(vocab_size)
-        self.local_decoder = local_decoder.build()
+        self.local_decoder = local_decoder.build(vocab_size, d_global_model=d_model)
+
+    @cached_property
+    def num_params(self) -> int:
+        return sum(p.numel() for p in self.parameters())
+
+    @property
+    def num_trainable_params(self) -> int:
+        return sum(p.numel() for p in self.parameters() if p.requires_grad)
+
+    @cached_property
+    def num_non_embedding_params(self) -> int:
+        num_embeddings = 0
+        for embedding_module in [self.local_encoder.embedding] + list(self.local_encoder.hash_embeddings):  # type: ignore[attr-defined]
+            num_embeddings += embedding_module.weight.numel()   # type: ignore[attr-defined]
+
+        return self.num_params - num_embeddings
 
     def _prepare_inputs(  # type: ignore[override]
         self,
@@ -1051,7 +1078,7 @@ class BLTTransformer(Transformer):
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         return_logits: Optional[bool] = None,
         **kwargs,
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any], Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
         input_ids, labels, block_kwargs, lm_head_kwargs = super()._prepare_inputs(
             input_ids,
             labels,
@@ -1063,19 +1090,17 @@ class BLTTransformer(Transformer):
             **kwargs,
         )
 
-        encoder_decoder_kwargs = {}
+        local_encoder_kwargs = {}
+        local_decoder_kwargs = {}
 
         patch_lens: Optional[torch.Tensor] = None
         patch_ids: Optional[torch.Tensor] = None
-        decoder_patch_ids: Optional[torch.Tensor] = None
         encoder_cross_attn_mask: Optional[BlockMask] = None
         decoder_cross_attn_mask: Optional[BlockMask] = None
 
         if (patch_lens := kwargs.pop("patch_lens", None)) is not None:
-            # TODO: make cumulative?
             patch_lens = patch_lens
             patch_ids = blt_utils.lengths_to_ids(patch_lens, input_ids.shape[-1])
-            decoder_patch_ids = blt_utils.lengths_to_ids(patch_lens[:, 1:], input_ids.shape[-1])
 
             encoder_cross_attn_mask = blt_utils.cross_attn_mask(
                 patch_ids,
@@ -1084,27 +1109,28 @@ class BLTTransformer(Transformer):
                 cross_attn_k=2, # TODO: config
                 block_mask=True,
             )
+
+            _decoder_patch_ids = blt_utils.lengths_to_ids(patch_lens[:, 1:], input_ids.shape[-1])
             decoder_cross_attn_mask = blt_utils.cross_attn_mask(
-                decoder_patch_ids,
+                _decoder_patch_ids,
                 patch_lens,
                 patches_as_queries=False,
                 cross_attn_k=2, # TODO: config
                 block_mask=True,
             )
 
-
-        encoder_decoder_kwargs["patch_lens"] = patch_lens
-        encoder_decoder_kwargs["patch_ids"] = patch_ids
-        encoder_decoder_kwargs["decoder_patch_ids"] = decoder_patch_ids
-        encoder_decoder_kwargs["encoder_cross_attn_mask"] = encoder_cross_attn_mask
-        encoder_decoder_kwargs["decoder_cross_attn_mask"] = decoder_cross_attn_mask
+        local_encoder_kwargs["patch_lens"] = patch_lens
+        local_encoder_kwargs["patch_ids"] = patch_ids
+        local_encoder_kwargs["cross_attn_mask"] = encoder_cross_attn_mask
+        local_decoder_kwargs["cross_attn_mask"] = decoder_cross_attn_mask
 
         return (
             input_ids,
             labels,
             block_kwargs,
             lm_head_kwargs,
-            encoder_decoder_kwargs,
+            local_encoder_kwargs,
+            local_decoder_kwargs,
         )
 
     def forward(
@@ -1126,7 +1152,7 @@ class BLTTransformer(Transformer):
 
         :returns: The logits if ``labels`` is ``None`` or the losses if ``labels`` is not ``None``.
         """
-        input_ids, labels, block_kwargs, lm_head_kwargs, encoder_decoder_kwargs = self._prepare_inputs(
+        input_ids, labels, block_kwargs, lm_head_kwargs, local_encoder_kwargs, local_decoder_kwargs = self._prepare_inputs(
             input_ids,
             labels,
             ignore_index=ignore_index,
@@ -1136,31 +1162,20 @@ class BLTTransformer(Transformer):
             return_logits=return_logits,
             **kwargs,
         )
-        encoder_cross_attn_mask = encoder_decoder_kwargs.pop("encoder_cross_attn_mask")
-        decoder_cross_attn_mask = encoder_decoder_kwargs.pop("decoder_cross_attn_mask")
 
-        h = self.local_encoder(input_ids, cross_attn_mask=encoder_cross_attn_mask, **encoder_decoder_kwargs)
+        h_byte, h_patch = self.local_encoder(input_ids, **local_encoder_kwargs)
 
         # Run each block.
         for block in self.blocks.values():
             # Mark sizes as dynamic for torch.compile().
             if self.compile_enabled:
-                mark_dynamic(h, (0, 1), strict=False)
-            h = block(h, **block_kwargs)
+                mark_dynamic(h_patch, (0, 1), strict=False)
+            h_patch = block(h_patch, **block_kwargs)
 
+        logits = self.local_decoder(
+            embeds=h_byte,
+            patch_embeds=h_patch,
+            **local_decoder_kwargs,
+        )
 
-        raise NotImplementedError()
-
-        # Get final logits but again pass-through in case of pipeline parallelism.
-        if self.lm_head is not None:
-            if self.compile_enabled:
-                mark_dynamic(h, (0, 1), strict=False)
-                if labels is not None:
-                    mark_dynamic(labels, (0, 1), strict=False)
-            # NOTE: When TP is active we can't pass 'labels=None' or the hook from 'PrepareModuleInput'
-            # will throw an exception.
-            if labels is not None:
-                lm_head_kwargs["labels"] = labels
-            return self.lm_head(h, **lm_head_kwargs)
-        else:
-            return h
+        return logits

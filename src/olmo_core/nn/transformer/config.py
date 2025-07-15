@@ -286,10 +286,13 @@ class TransformerConfig(Config):
         """
         from .model import MoETransformer, NormalizedTransformer, Transformer, BLTTransformer
 
-        log.info(
-            f"Building transformer with {self.num_params:,d} total params, "
-            f"{self.num_non_embedding_params:,d} non-embedding params"
-        )
+        if self.name != TransformerType.blt:
+            # not implemented for BLTTransformer
+            log.info(
+                f"Building transformer with {self.num_params:,d} total params, "
+                f"{self.num_non_embedding_params:,d} non-embedding params"
+            )
+
         model: Transformer
         if self.name == TransformerType.default:
             model = Transformer(
@@ -382,6 +385,9 @@ class TransformerConfig(Config):
         """
         The total number of parameters that a model from this config would have.
         """
+        if self.name == TransformerType.blt:
+            raise NotImplementedError("BLTTransformer config does not support num_params")
+
         num_params = 0
 
         # Embedding params.
@@ -408,6 +414,9 @@ class TransformerConfig(Config):
         """
         The total number of active parameters that a model from this config would have.
         """
+        if self.name == TransformerType.blt:
+            raise NotImplementedError("BLTTransformer config does not support num_active_params")
+
         num_active_params = 0
 
         # Embedding params.
@@ -434,6 +443,9 @@ class TransformerConfig(Config):
         """
         The number of parameters excluding embedding parameters.
         """
+        if self.name == TransformerType.blt:
+            raise NotImplementedError("BLTTransformer config does not support num_non_embedding_params")
+
         return self.num_params - self.d_model * self.vocab_size
 
     @property
@@ -441,6 +453,9 @@ class TransformerConfig(Config):
         """
         The number of active parameters excluding embedding parameters.
         """
+        if self.name == TransformerType.blt:
+            raise NotImplementedError("BLTTransformer config does not support num_active_non_embedding_params")
+
         return self.num_active_params - self.d_model * self.vocab_size
 
     def num_flops_per_token(self, seq_len: int) -> int:
@@ -1053,12 +1068,18 @@ class TransformerConfig(Config):
             layer_norm=layer_norm,
         )
 
+        # local encoder / decoder setup
         local_hidden_size = int(8 * local_d_model / 3)
         if hidden_size_multiplier is not None:
             local_hidden_size = int(hidden_size_multiplier * local_hidden_size)
         local_hidden_size = ensure_multiple_of(local_hidden_size, hidden_size_multiple_of)
 
-        # local encoder / decode setup
+        local_block = block.replace(
+            attention=block.attention.replace(n_heads=local_attn_n_heads),
+            feed_forward=FeedForwardConfig(hidden_size=local_hidden_size, bias=False, dtype=dtype),
+        )
+        
+
         local_encoder = LocalEncoderConfig(
             hash_byte_group_size=[3, 4, 5, 6, 7, 8],
             hash_byte_group_vocab=500_002,
@@ -1067,14 +1088,15 @@ class TransformerConfig(Config):
             d_model=local_d_model,
             n_layers=local_encoder_n_layers,
             cross_attn_n_heads=local_cross_attn_n_heads,
-            block_config=block.replace(
-                attention=block.attention.replace(n_heads=local_attn_n_heads),
-                feed_forward=FeedForwardConfig(hidden_size=local_hidden_size, bias=False, dtype=dtype),
-            ),
+            block_config=local_block,
         )
-        # TODO
-        local_decoder = LocalDecoderConfig()
-
+        local_decoder = LocalDecoderConfig(
+            sliding_window_size=512,
+            d_model=local_d_model,
+            n_layers=local_decoder_n_layers,
+            cross_attn_n_heads=local_cross_attn_n_heads,
+            block_config=local_block,
+        )
 
         return cls(
             name=TransformerType.blt,

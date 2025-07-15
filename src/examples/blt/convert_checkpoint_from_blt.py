@@ -65,6 +65,31 @@ BLT_TO_OLMO_CORE_MAPPINGS: Dict[str, str] = {
     # Layer Norms.
     f"global_transformer.layers.{LAYER}.attention_norm.weight": f"blocks.{LAYER}.attention_norm.weight",
     f"global_transformer.layers.{LAYER}.ffn_norm.weight": f"blocks.{LAYER}.feed_forward_norm.weight",
+    ## LOCAL DECODER
+    # Patch projection.
+    "local_decoder.patch_embedding_projection.weight": "local_decoder.patch_embedding_projection.weight",
+    # Cross Attention.
+    f"local_decoder.cross_attn_layers.{LOCAL_DECODER_LAYER}.cross_attn_norm_q.weight": f"local_decoder.cross_attentions.{LOCAL_DECODER_LAYER}.q_norm.weight",
+    f"local_decoder.cross_attn_layers.{LOCAL_DECODER_LAYER}.cross_attn_norm_kv.weight": f"local_decoder.cross_attentions.{LOCAL_DECODER_LAYER}.kv_norm.weight",
+    f"local_decoder.cross_attn_layers.{LOCAL_DECODER_LAYER}.wq.weight": f"local_decoder.cross_attentions.{LOCAL_DECODER_LAYER}.w_q.weight",
+    f"local_decoder.cross_attn_layers.{LOCAL_DECODER_LAYER}.wk.weight": f"local_decoder.cross_attentions.{LOCAL_DECODER_LAYER}.w_k.weight",
+    f"local_decoder.cross_attn_layers.{LOCAL_DECODER_LAYER}.wv.weight": f"local_decoder.cross_attentions.{LOCAL_DECODER_LAYER}.w_v.weight",
+    f"local_decoder.cross_attn_layers.{LOCAL_DECODER_LAYER}.wo.weight": f"local_decoder.cross_attentions.{LOCAL_DECODER_LAYER}.w_out.weight",
+    # Self-Attention.
+    f"local_decoder.layers.{LOCAL_DECODER_LAYER}.attention.wq.weight": f"local_decoder.blocks.{LOCAL_DECODER_LAYER}.attention.w_q.weight",
+    f"local_decoder.layers.{LOCAL_DECODER_LAYER}.attention.wk.weight": f"local_decoder.blocks.{LOCAL_DECODER_LAYER}.attention.w_k.weight",
+    f"local_decoder.layers.{LOCAL_DECODER_LAYER}.attention.wv.weight": f"local_decoder.blocks.{LOCAL_DECODER_LAYER}.attention.w_v.weight",
+    f"local_decoder.layers.{LOCAL_DECODER_LAYER}.attention.wo.weight": f"local_decoder.blocks.{LOCAL_DECODER_LAYER}.attention.w_out.weight",
+    # MLP.
+    f"local_decoder.layers.{LOCAL_DECODER_LAYER}.feed_forward.w1.weight": f"local_decoder.blocks.{LOCAL_DECODER_LAYER}.feed_forward.w1.weight",
+    f"local_decoder.layers.{LOCAL_DECODER_LAYER}.feed_forward.w2.weight": f"local_decoder.blocks.{LOCAL_DECODER_LAYER}.feed_forward.w2.weight",
+    f"local_decoder.layers.{LOCAL_DECODER_LAYER}.feed_forward.w3.weight": f"local_decoder.blocks.{LOCAL_DECODER_LAYER}.feed_forward.w3.weight",
+    # Layer Norms.
+    f"local_decoder.layers.{LOCAL_DECODER_LAYER}.attention_norm.weight": f"local_decoder.blocks.{LOCAL_DECODER_LAYER}.attention_norm.weight",
+    f"local_decoder.layers.{LOCAL_DECODER_LAYER}.ffn_norm.weight": f"local_decoder.blocks.{LOCAL_DECODER_LAYER}.feed_forward_norm.weight",
+    # Final layer norm and lm head.
+    "local_decoder.norm.weight": "local_decoder.final_norm.weight",
+    "local_decoder.output.weight": "local_decoder.lm_head.weight",
 }
 
 
@@ -96,7 +121,7 @@ def _load_blt_model(
             * transformer_config_dict["local_encoder"]["hash_byte_group_nb_functions"]
         ),
         TemplatePlaceholder.LOCAL_ENCODER_LAYER: transformer_config_dict["local_encoder"]["n_layers"],
-        #TemplatePlaceholder.LOCAL_DECODER_LAYER: transformer_config_dict["local_decoder"]["n_layers"],
+        TemplatePlaceholder.LOCAL_DECODER_LAYER: transformer_config_dict["local_decoder"]["n_layers"],
     }
 
     converted_state_dict = converter.convert(blt_state_dict, placeholder_bounds)

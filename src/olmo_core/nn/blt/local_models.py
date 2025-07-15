@@ -35,8 +35,22 @@ class LocalEncoderConfig(Config):
 
 @dataclass
 class LocalDecoderConfig(Config):
-    def build(self) -> nn.Module:
-        return LocalDecoder()
+    sliding_window_size: int
+    d_model: int
+    n_layers: int
+    cross_attn_n_heads: int
+    block_config: Config
+
+    def build(self, vocab_size: int, d_global_model: int) -> nn.Module:
+        return LocalDecoder(
+            vocab_size=vocab_size,
+            sliding_window_size=self.sliding_window_size,
+            d_model=self.d_model,
+            d_global_model=d_global_model,
+            n_layers=self.n_layers,
+            cross_attn_n_heads=self.cross_attn_n_heads,
+            block_config=self.block_config,
+        )
 
 
 class CrossAttention(nn.Module):
@@ -167,7 +181,7 @@ class LocalEncoder(nn.Module):
         )
 
         # residual connection + reshape back into patch length (from patch_length * k)
-        # NOTE: BLT applies the residual connection two times (presumably on accident), so we have to 2x here.
+        # NOTE: BLT applies the residual connection two times (presumably on accident?), so we have to 2x here.
         patch_embedding = (patch_embedding_init * 2 + residual).reshape(
             reduced_h.shape[0], reduced_h.shape[1], -1
         )
@@ -180,7 +194,7 @@ class LocalEncoder(nn.Module):
         patch_lens: torch.Tensor,
         patch_ids: torch.Tensor,
         cross_attn_mask: BlockMask,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         embeddings = self.embedding(tokens)
         embeddings = add_hash_embeddings(
             embeddings,
@@ -209,8 +223,77 @@ class LocalEncoder(nn.Module):
             cross_attn_mask=cross_attn_mask,
         )
 
-        return patch_embeddings
+        return h, patch_embeddings
+
 
 class LocalDecoder(nn.Module):
-    def __init__(self):
+    def __init__(
+        self,
+        vocab_size: int,
+        sliding_window_size: int,
+        d_model: int,
+        d_global_model: int,
+        n_layers: int,
+        cross_attn_n_heads: int,
+        block_config,
+        init_device: str = "cpu",
+    ):
         super().__init__()
+        self.sliding_window_size = sliding_window_size
+        self.d_model = d_model
+        self.n_layers = n_layers
+
+        self.patch_embedding_projection = nn.Linear(
+            d_global_model,
+            d_model * 2,  # TODO: argument for upsampling factor?
+            device=init_device,
+            bias=False,
+        )
+
+        cache = BufferCache()
+        self.blocks = nn.ModuleDict()
+        self.cross_attentions = nn.ModuleDict()
+
+        for block_idx in range(n_layers):
+            self.blocks[str(block_idx)] = block_config.build(
+                d_model=d_model,
+                block_idx=block_idx,
+                n_layers=n_layers,
+                init_device=init_device,
+                cache=cache,
+            )
+            self.cross_attentions[str(block_idx)] = CrossAttention(d_model, cross_attn_n_heads, init_device=init_device)
+
+        # TODO(benjaminm): Convention for final norm in OLMo codebase? does it exist?
+        # TODO(benjaminm): make 1e-5 arg
+        self.final_norm = nn.RMSNorm(d_model, eps=1e-5, device=init_device)
+        self.lm_head = nn.Linear(d_model, vocab_size, bias=False, device=init_device)
+
+    def forward(
+        self,
+        embeds: torch.Tensor,
+        patch_embeds: torch.Tensor,
+        cross_attn_mask: BlockMask,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        # expand seq length by a factor of k (k=2 in BLT released checkpoints)
+        patch_embeds_projected = self.patch_embedding_projection(patch_embeds).reshape(
+            patch_embeds.shape[0], patch_embeds.shape[1] * 2, embeds.shape[2]
+        )
+
+        h = embeds
+
+        for block_idx in range(self.n_layers):
+            cross_attn = self.cross_attentions[str(block_idx)]
+            block = self.blocks[str(block_idx)]
+
+            # TODO(benjaminm): do we need mark_dynamic here / in general?
+            # NOTE: What about LN before/after cross attn?
+            h_cross = cross_attn(q=h, kv=patch_embeds_projected, mask=cross_attn_mask)
+            # NOTE: same thing, BLT applies the residual connection two times (presumably on accident?), so we have to 2x here.
+            h = h * 2 + h_cross
+            h = block(h)
+
+        h = self.final_norm(h)
+        logits = self.lm_head(h)
+
+        return logits
