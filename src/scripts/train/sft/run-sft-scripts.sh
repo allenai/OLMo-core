@@ -116,8 +116,8 @@ MAX_LENGTH=16384
 
 # USABLE!!!!!
 python src/scripts/train/sft/OLMo2-7B-sft.py launch \
-    olmo2-7B-lc-tulu3-olmo2-mix-remov_replac-100k_toolu-fae_ver-sau_code-val_if-ot3_456k-remove-personas-andtheother3 \
-        tulu3-olmo2-mix-remov_replac-100k_toolu-fae_ver-sau_code-val_if-ot3_456k-remove-personas-andtheother3 \
+    olmo2-7B-lc-tulu3-olmo2-mix-num_13-add_oasst_100k_toolu \
+        tulu3-olmo2-mix-num_13-add_oasst_100k_toolu \
         /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_4K_20B/step33379 \
         ai2/jupiter-cirrascale-2 \
     --trainer.callbacks.wandb.enabled=True \
@@ -125,7 +125,7 @@ python src/scripts/train/sft/OLMo2-7B-sft.py launch \
     --train_module.optim.lr=5e-5 \
     --seq_len=16384 \
     --launch.num_gpus=8 \
-    --num_nodes=1 \
+    --num_nodes=2 \
     --launch.priority=urgent
 
 INPUT_PATH=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmo2-7B-sft/olmo2-7B-lc-tulu3-olmo2-mix-remov_replac-100k_toolu-fae_ver-sau_code-val_if-ot3_456k-remove-personas-and-numinamath/step1946
