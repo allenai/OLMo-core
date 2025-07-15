@@ -32,14 +32,15 @@ gantry run \
             ai2-adapt-dev/tulu_v3.9_sciriff_10k 1.0 \
             ai2-adapt-dev/tulu_v3.9_table_gpt_5k 1.0 \
             ai2-adapt-dev/tulu_v3.9_aya_100k 1.0 \
-            VGraf/toolu-sft-mix-T2-system-prompt 0.3 \
             jacobmorrison/verifiable-tasks-o3-7500 1.0 \
             jacobmorrison/OpenThoughts3-456k-no-cot 1.0 \
             allenai/IF_sft_data_verified_permissive 1.0 \
             saurabh5/rlvr-code-data-python-sft 1.0 \
             saurabh5/llama-nemotron-rlvr-code-stdio-sft 1.0 \
+            ai2-adapt-dev/oasst1_converted 1.0 \
+            VGraf/toolu-sft-mix-T2-system-prompt 1.0 \
         --tokenizer_name_or_path /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_final_anneal/step11921-hf \
-        --output_dir /weka/oe-training-default/ai2-llm/jacobm/data/sft/usable-tulu-16k/tulu3-olmo2-mix-remov_replac-100k_toolu-fae_ver-sau_code-val_if-ot3_456k-remove-personas-andtheother3 \
+        --output_dir /weka/oe-training-default/ai2-llm/jacobm/data/sft/usable-tulu-16k/tulu3-olmo2-mix-num_13-add_oasst_336k_toolu \
         --visualize True \
         --chat_template_name olmo \
         --max_seq_length 16384
@@ -53,7 +54,7 @@ gantry run \
 
 saurabh5/rlvr-code-data-python-sft 1.0 \
 saurabh5/llama-nemotron-rlvr-code-stdio-sft 1.0 \
-allenai/IF_sft_data_verified 1.0 \
+allenai/IF_sft_data_verified_permissive 1.0 \
 jacobmorrison/OpenThoughts3-456k-no-cot 1.0 \
 jacobmorrison/verifiable-tasks-o3-7500 1.0 \
 
