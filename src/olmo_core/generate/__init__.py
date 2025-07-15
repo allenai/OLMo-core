@@ -1,5 +1,12 @@
-"""Inference utilities for OLMo models."""
+from .config import GenerationConfig, TransformerGenerationModuleConfig
+from .generation import (
+    GenerationModule,
+    TransformerGenerationModule,
+)
 
-from .generation import GenerationConfig, GenerationModule
-
-__all__ = ["GenerationConfig", "GenerationModule"]
+__all__ = [
+    "GenerationConfig",
+    "GenerationModule",
+    "TransformerGenerationModule",
+    "TransformerGenerationModuleConfig",
+]
