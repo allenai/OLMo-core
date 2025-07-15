@@ -5,7 +5,6 @@ import pytest
 import torch
 import torch.distributed as dist
 
-from olmo_core.config import DType
 from olmo_core.distributed.checkpoint import save_model_and_optim_state
 from olmo_core.distributed.parallel.data_parallel import DataParallelType
 from olmo_core.distributed.utils import get_world_size
@@ -13,30 +12,38 @@ from olmo_core.generate.config import GenerationConfig, TransformerGenerationMod
 from olmo_core.generate.generation import TransformerGenerationModule
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.testing import requires_multi_gpu, run_distributed_test
+from olmo_core.testing.utils import DEVICES, GPU_MARKS, requires_gpu
 from olmo_core.train.train_module.transformer.config import (
     TransformerDataParallelConfig,
 )
 from olmo_core.utils import seed_all
 
 
+@pytest.fixture
+def transformer_config():
+    """Common transformer config for tests."""
+    return TransformerConfig.llama_like(d_model=128, n_heads=4, n_layers=2, vocab_size=1000)
+
+
 @pytest.mark.parametrize("temperature", [0.0, 0.7, 1.0])
 @pytest.mark.parametrize("compile_model", [False, True])
-@pytest.mark.parametrize("dtype", [DType.float32, DType.bfloat16])
-@pytest.mark.parametrize("device", ["cpu", "cuda"])
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        pytest.param(torch.float16, id="dtype=float16"),
+        pytest.param(torch.bfloat16, id="dtype=bfloat16", marks=GPU_MARKS),
+    ],
+)
+@pytest.mark.parametrize("device", DEVICES)
 def test_generation_module_basic(
-    temperature: float, compile_model: bool, dtype: DType, device: str
+    transformer_config: TransformerConfig,
+    temperature: float,
+    compile_model: bool,
+    dtype: torch.dtype,
+    device: torch.device,
 ):
-    if device == "cuda" and not torch.cuda.is_available():
-        pytest.skip("CUDA not available")
-
     seed_all(42)
 
-    # Create a small transformer config
-    transformer_config = TransformerConfig.llama_like(
-        d_model=128, n_heads=4, n_layers=2, vocab_size=1000
-    )
-
-    # Create generation config
     generation_config = GenerationConfig(
         max_length=32, temperature=temperature, eos_token_id=2, pad_token_id=0
     )
@@ -47,11 +54,11 @@ def test_generation_module_basic(
         model=model,
         generation_config=generation_config,
         compile_model=compile_model,
-        autocast_precision=dtype.as_pt() if dtype != DType.float32 else None,
-        device=torch.device(device),
+        autocast_precision=dtype if dtype != torch.float32 else None,
+        device=device,
     )
 
-    # Create input
+    # Create test input
     batch_size = 2
     seq_len = 8
     input_ids = torch.randint(1, 100, (batch_size, seq_len), device=device)
@@ -79,37 +86,30 @@ def test_generation_module_basic(
                 assert torch.all(seq[first_eos + 1 :] == generation_config.pad_token_id)
 
 
-@pytest.mark.parametrize("device", ["cpu", "cuda"])
-def test_generation_module_state_dict(device: str):
-    if device == "cuda" and not torch.cuda.is_available():
-        pytest.skip("CUDA not available")
-
+@pytest.mark.parametrize("device", DEVICES)
+def test_generation_module_state_dict(transformer_config: TransformerConfig, device: torch.device):
     seed_all(42)
-
-    transformer_config = TransformerConfig.llama_like(
-        d_model=128, n_heads=4, n_layers=2, vocab_size=1000
-    )
 
     generation_config = GenerationConfig(max_length=16)
 
-    # Create first module
+    # Create first generation module
     model1 = transformer_config.build()
     module1 = TransformerGenerationModule(
         model=model1,
         generation_config=generation_config,
-        device=torch.device(device),
+        device=device,
     )
 
     # Get state dict
     state_dict = module1.state_dict()
     assert "model" in state_dict
 
-    # Create second module and load state dict
+    # Create second generation module and load state dict
     model2 = transformer_config.build()
     module2 = TransformerGenerationModule(
         model=model2,
         generation_config=generation_config,
-        device=torch.device(device),
+        device=device,
     )
     module2.load_state_dict(state_dict)
 
@@ -120,58 +120,18 @@ def test_generation_module_state_dict(device: str):
     torch.testing.assert_close(output1, output2)
 
 
-@pytest.mark.parametrize("device", ["cpu", "cuda"])
-def test_generation_module_from_checkpoint(tmp_path: Path, device: str):
-    if device == "cuda" and not torch.cuda.is_available():
-        pytest.skip("CUDA not available")
-
+@requires_gpu
+@pytest.mark.parametrize("max_length", [16, 64])
+@pytest.mark.parametrize("eos_token_id", [1, 2])
+def test_generation_config_overrides(
+    transformer_config: TransformerConfig,
+    max_length: int,
+    eos_token_id: Optional[int],
+    device: torch.device = torch.device("cuda"),
+):
     seed_all(42)
 
-    # Create and save a model
-    transformer_config = TransformerConfig.llama_like(
-        d_model=128, n_heads=4, n_layers=2, vocab_size=1000
-    )
-
-    model = transformer_config.build()
-    generation_module = TransformerGenerationModule(
-        model=model,
-        generation_config=GenerationConfig(),
-        device=torch.device(device),
-    )
-
-    # Save checkpoint
-    checkpoint_dir = tmp_path / "checkpoint"
-    save_model_and_optim_state(checkpoint_dir, generation_module.model)
-
-    # Load from checkpoint
-    generation_module2 = TransformerGenerationModule.from_checkpoint(
-        transformer_config=transformer_config,
-        checkpoint_dir=checkpoint_dir,
-        generation_config=GenerationConfig(max_length=20, temperature=0.5),
-    )
-
-    # Verify generation works
-    input_ids = torch.randint(1, 100, (2, 4), device=device)
-    output = generation_module2.generate_batch(input_ids)
-    assert output.shape[0] == 2
-    assert output.shape[1] >= 4
-    assert output.shape[1] <= 20
-
-
-@pytest.mark.parametrize("device", ["cpu", "cuda"])
-@pytest.mark.parametrize("max_length", [16, 32, 64])
-@pytest.mark.parametrize("eos_token_id", [None, 2])
-def test_generation_config_overrides(device: str, max_length: int, eos_token_id: Optional[int]):
-    if device == "cuda" and not torch.cuda.is_available():
-        pytest.skip("CUDA not available")
-
-    seed_all(42)
-
-    transformer_config = TransformerConfig.llama_like(
-        d_model=128, n_heads=4, n_layers=2, vocab_size=1000
-    )
-
-    # Create module with default config
+    # Create generation module with default config
     generation_config = GenerationConfig(
         max_length=128,
         eos_token_id=1,
@@ -183,7 +143,7 @@ def test_generation_config_overrides(device: str, max_length: int, eos_token_id:
     generation_module = TransformerGenerationModule(
         model=model,
         generation_config=generation_config,
-        device=torch.device(device),
+        device=device,
     )
 
     # Generate with overrides
@@ -198,13 +158,52 @@ def test_generation_config_overrides(device: str, max_length: int, eos_token_id:
     assert output.shape[1] <= max_length
 
     # Check EOS behavior
-    if eos_token_id is not None:
-        eos_positions = (output == eos_token_id).nonzero(as_tuple=True)
-        if len(eos_positions[0]) > 0:
-            # Should have padding after EOS
-            first_eos_idx = eos_positions[1][0].item()
-            if first_eos_idx < output.shape[1] - 1:
-                assert torch.all(output[0, first_eos_idx + 1 :] == generation_config.pad_token_id)
+    eos_positions = (output == eos_token_id).nonzero(as_tuple=True)
+    if len(eos_positions[0]) > 0:
+        # Should have padding after EOS
+        first_eos_idx = eos_positions[1][0].item()
+        if first_eos_idx < output.shape[1] - 1:
+            assert torch.all(output[0, first_eos_idx + 1 :] == generation_config.pad_token_id)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_generation_module_config_build(
+    transformer_config: TransformerConfig, tmp_path: Path, device: torch.device
+):
+    seed_all(42)
+
+    # Create and save a generation module
+    generation_config = GenerationConfig(max_length=24, temperature=0.0)
+    model = transformer_config.build()
+    generation_module = TransformerGenerationModule(
+        model=model,
+        generation_config=generation_config,
+        device=device,
+    )
+
+    # Generate output before saving
+    input_ids = torch.randint(1, 100, (2, 4), device=device)
+    output_before = generation_module.generate_batch(input_ids)
+
+    checkpoint_dir = tmp_path / "checkpoint"
+    save_model_and_optim_state(checkpoint_dir, generation_module.model)
+
+    # Build from config with checkpoint
+    config = TransformerGenerationModuleConfig(generation_config=generation_config)
+    generation_module2 = config.build(
+        checkpoint_dir=checkpoint_dir,
+        transformer_config=transformer_config,
+        work_dir=tmp_path / "work",
+        device=device,
+    )
+
+    # Generate output after loading from checkpoint
+    output_after = generation_module2.generate_batch(input_ids)
+
+    # Verify predictions are the same before and after saving
+    torch.testing.assert_close(output_before, output_after)
+    assert output_after.shape[0] == 2
+    assert output_after.shape[1] <= 24
 
 
 def run_distributed_generation(
@@ -217,7 +216,7 @@ def run_distributed_generation(
 ):
     seed_all(42)
 
-    # Create generation module with parallelism configs
+    # Create generation module with parallelism config
     generation_module = TransformerGenerationModule.from_checkpoint(
         transformer_config=transformer_config,
         checkpoint_dir=checkpoint_dir,
@@ -245,14 +244,10 @@ def run_distributed_generation(
 
 
 @requires_multi_gpu
-def test_generation_module_distributed_fsdp(tmp_path: Path):
+def test_generation_module_distributed_fsdp(transformer_config: TransformerConfig, tmp_path: Path):
     seed_all(42)
 
-    # Create and save a model on single device first
-    transformer_config = TransformerConfig.llama_like(
-        d_model=128, n_heads=4, n_layers=2, vocab_size=1000
-    )
-
+    # Create and save a generation module on single device first
     model = transformer_config.build()
     generation_module = TransformerGenerationModule(
         model=model,
@@ -293,45 +288,3 @@ def test_generation_module_distributed_fsdp(tmp_path: Path):
             expected_shape,
         ),
     )
-
-
-@pytest.mark.parametrize("device", ["cpu", "cuda"])
-def test_generation_module_config_build(tmp_path: Path, device: str):
-    if device == "cuda" and not torch.cuda.is_available():
-        pytest.skip("CUDA not available")
-
-    seed_all(42)
-
-    # Create and save a model
-    transformer_config = TransformerConfig.llama_like(
-        d_model=128, n_heads=4, n_layers=2, vocab_size=1000
-    )
-
-    model = transformer_config.build()
-    generation_module = TransformerGenerationModule(
-        model=model,
-        generation_config=GenerationConfig(),
-        device=torch.device(device),
-    )
-
-    checkpoint_dir = tmp_path / "checkpoint"
-    save_model_and_optim_state(checkpoint_dir, generation_module.model)
-
-    # Build from config with checkpoint
-    config = TransformerGenerationModuleConfig(
-        generation_config=GenerationConfig(max_length=24),
-        float8_config=None,
-    )
-
-    generation_module2 = config.build(
-        checkpoint_dir=checkpoint_dir,
-        transformer_config=transformer_config,
-        work_dir=tmp_path / "work",
-        device=torch.device(device),
-    )
-
-    # Verify it works
-    input_ids = torch.randint(1, 100, (2, 4), device=device)
-    output = generation_module2.generate_batch(input_ids)
-    assert output.shape[0] == 2
-    assert output.shape[1] <= 24
