@@ -3,7 +3,7 @@ import logging
 import tempfile
 from abc import ABCMeta, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, Generator, Optional, Tuple, Union
+from typing import Any, Dict, Generator, Optional, Tuple
 
 import torch
 import torch.distributed as dist
