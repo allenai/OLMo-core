@@ -234,7 +234,9 @@ class AttentionConfig(Config):
             if self.name == "default":
                 return Attention(**kwargs)
             elif self.name == "fused":
-                kwargs.pop("use_flash", None)
+                unsupported_params = ["use_flash", "n_kv_heads", "qk_norm", "use_head_qk_norm"]
+                for param in unsupported_params:
+                    kwargs.pop(param, None)
                 if "window_size" in kwargs:
                     raise OLMoConfigurationError(
                         "'window_size' is not supported with fused attention"
@@ -775,7 +777,7 @@ class NormalizedAttention(Attention):
     def _normalize_matrix(self, w: torch.Tensor, dim: int = -1):
         w.copy_(l2_normalize(w, dim=dim))
 
-
+@dataclass
 class FusedAttention(AttentionBase):
     """
     An "fused" implementation of multi-head self-attention.

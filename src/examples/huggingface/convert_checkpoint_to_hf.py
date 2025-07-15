@@ -1,10 +1,3 @@
-"""
-Example script to convert a OLMo Core model checkpoint to a HuggingFace model checkpoint.
-
-Note that this script is architecture-dependent, meaning it may only work for OLMo Core model
-architectures that have support in the `transformers` library.
-"""
-
 import json
 import logging
 from argparse import ArgumentParser
@@ -14,7 +7,7 @@ from tempfile import TemporaryDirectory
 from typing import Any, Dict, Optional, Tuple
 
 try:
-    import flash_attn  # type: ignore
+    import flash_attn 
 except ImportError:
     flash_attn = None
 
@@ -38,6 +31,146 @@ from olmo_core.utils import get_default_device, prepare_cli_environment
 log = logging.getLogger(__name__)
 
 
+def create_old_olmo_to_olmo_core_mapping(n_layers: int) -> Dict[str, str]:
+    mapping = {}
+    
+    mapping["embeddings.weight"] = "transformer.wte.weight"
+    
+    for layer_idx in range(n_layers):
+        mapping[f"blocks.{layer_idx}.attention.w_q.weight"] = f"transformer.blocks.{layer_idx}.att_proj.weight"
+        mapping[f"blocks.{layer_idx}.attention.w_k.weight"] = f"transformer.blocks.{layer_idx}.att_proj.weight"
+        mapping[f"blocks.{layer_idx}.attention.w_v.weight"] = f"transformer.blocks.{layer_idx}.att_proj.weight"
+        mapping[f"blocks.{layer_idx}.attention.w_out.weight"] = f"transformer.blocks.{layer_idx}.attn_out.weight"
+ 
+        mapping[f"blocks.{layer_idx}.feed_forward.w1.weight"] = f"transformer.blocks.{layer_idx}.ff_proj.weight"
+        mapping[f"blocks.{layer_idx}.feed_forward.w3.weight"] = f"transformer.blocks.{layer_idx}.ff_proj.weight"
+        mapping[f"blocks.{layer_idx}.feed_forward.w2.weight"] = f"transformer.blocks.{layer_idx}.ff_out.weight"
+        
+        mapping[f"blocks.{layer_idx}.attention_norm.weight"] = f"transformer.blocks.{layer_idx}.attn_norm.weight"
+        mapping[f"blocks.{layer_idx}.feed_forward_norm.weight"] = f"transformer.blocks.{layer_idx}.ff_norm.weight"
+        
+        mapping[f"blocks.{layer_idx}.attention.q_norm.weight"] = f"transformer.blocks.{layer_idx}.q_norm.weight"
+        mapping[f"blocks.{layer_idx}.attention.k_norm.weight"] = f"transformer.blocks.{layer_idx}.k_norm.weight"
+    
+    mapping["lm_head.norm.weight"] = "transformer.ln_f.weight"
+    mapping["lm_head.w_out.weight"] = "transformer.wte.weight" 
+    
+    return mapping
+
+
+def load_and_convert_old_checkpoint(checkpoint_dir: str, model, work_dir: str):
+    """Load old OLMo checkpoint and convert fused weights to split weights."""
+    import torch
+    import os
+    import pickle
+    
+    log.info("Loading old OLMo checkpoint with custom weight conversion")
+    
+    state_dict = {}
+    checkpoint_extensions = ['.distcp', '.pt', '.pth', '.bin']
+    checkpoint_files = []
+    
+    for ext in checkpoint_extensions:
+        files = [f for f in os.listdir(checkpoint_dir) if f.endswith(ext)]
+        if files:
+            checkpoint_files = files
+            log.info(f"Found {len(files)} checkpoint files with extension {ext}")
+            break
+    
+    if not checkpoint_files:
+        all_files = os.listdir(checkpoint_dir)
+        log.info(f"Available files in {checkpoint_dir}: {all_files}")
+        raise ValueError(f"No checkpoint files found in {checkpoint_dir}")
+    
+    for checkpoint_file in checkpoint_files:
+        file_path = os.path.join(checkpoint_dir, checkpoint_file)
+        try:
+            with open(file_path, 'rb') as f:
+                shard_data = torch.load(f, map_location='cpu', weights_only=False)
+                if isinstance(shard_data, dict):
+                    for key, value in shard_data.items():
+                        if isinstance(value, torch.Tensor):
+                            if any(pattern in key for pattern in ["model.", "transformer.", "blocks.", "att_proj", "attn_out"]):
+                                state_dict[key] = value
+                            elif any(pattern in key for pattern in ["blocks.", "att_proj", "attn_out", "wte.", "ln_f"]):
+                                state_dict[f"model.{key}"] = value
+        except Exception as e:
+            log.warning(f"Failed to load {checkpoint_file}: {e}")
+            continue
+    
+    if not state_dict:
+        log.warning("Checking first checkpoint file for available keys...")
+        if checkpoint_files:
+            try:
+                with open(os.path.join(checkpoint_dir, checkpoint_files[0]), 'rb') as f:
+                    sample_data = torch.load(f, map_location='cpu', weights_only=False)
+                    if isinstance(sample_data, dict):
+                        log.warning(f"Available keys in checkpoint: {list(sample_data.keys())[:10]}...")
+            except Exception as e:
+                log.warning(f"Failed to inspect checkpoint: {e}")
+        raise ValueError("No model weights found in checkpoint files")
+    
+    model_state_dict = model.state_dict()
+    converted_state_dict = {}
+    
+    if "model.transformer.wte.weight" in state_dict:
+        converted_state_dict["embeddings.weight"] = state_dict["model.transformer.wte.weight"]
+    
+    if "model.transformer.ln_f.weight" in state_dict:
+        converted_state_dict["lm_head.norm.weight"] = state_dict["model.transformer.ln_f.weight"]
+    if "model.transformer.wte.weight" in state_dict:
+        converted_state_dict["lm_head.w_out.weight"] = state_dict["model.transformer.wte.weight"]
+    
+    for layer_idx in range(16): 
+        prefix = f"model.transformer.blocks.{layer_idx}"
+        
+        if f"{prefix}.att_proj.weight" in state_dict:
+            fused_weight = state_dict[f"{prefix}.att_proj.weight"]  # [6144, 2048]
+            hidden_size = fused_weight.shape[1]  # 2048
+            
+            q_weight = fused_weight[:hidden_size, :]  # [2048, 2048]
+            k_weight = fused_weight[hidden_size:2*hidden_size, :]  # [2048, 2048]
+            v_weight = fused_weight[2*hidden_size:3*hidden_size, :]  # [2048, 2048]
+            
+            converted_state_dict[f"blocks.{layer_idx}.attention.w_q.weight"] = q_weight
+            converted_state_dict[f"blocks.{layer_idx}.attention.w_k.weight"] = k_weight
+            converted_state_dict[f"blocks.{layer_idx}.attention.w_v.weight"] = v_weight
+        
+        if f"{prefix}.attn_out.weight" in state_dict:
+            converted_state_dict[f"blocks.{layer_idx}.attention.w_out.weight"] = state_dict[f"{prefix}.attn_out.weight"]
+        
+        if f"{prefix}.ff_proj.weight" in state_dict:
+            ff_weight = state_dict[f"{prefix}.ff_proj.weight"]
+            if ff_weight.shape[0] > 43690: 
+                mid = ff_weight.shape[0] // 2
+                converted_state_dict[f"blocks.{layer_idx}.feed_forward.w1.weight"] = ff_weight[:mid, :]
+                converted_state_dict[f"blocks.{layer_idx}.feed_forward.w3.weight"] = ff_weight[mid:, :]
+            else:
+                converted_state_dict[f"blocks.{layer_idx}.feed_forward.w1.weight"] = ff_weight
+                converted_state_dict[f"blocks.{layer_idx}.feed_forward.w3.weight"] = ff_weight
+        
+        if f"{prefix}.ff_out.weight" in state_dict:
+            converted_state_dict[f"blocks.{layer_idx}.feed_forward.w2.weight"] = state_dict[f"{prefix}.ff_out.weight"]
+        
+        if f"{prefix}.attn_norm.weight" in state_dict:
+            converted_state_dict[f"blocks.{layer_idx}.attention_norm.weight"] = state_dict[f"{prefix}.attn_norm.weight"]
+        if f"{prefix}.ff_norm.weight" in state_dict:
+            converted_state_dict[f"blocks.{layer_idx}.feed_forward_norm.weight"] = state_dict[f"{prefix}.ff_norm.weight"]
+        
+        if f"{prefix}.q_norm.weight" in state_dict:
+            converted_state_dict[f"blocks.{layer_idx}.attention.q_norm.weight"] = state_dict[f"{prefix}.q_norm.weight"]
+        if f"{prefix}.k_norm.weight" in state_dict:
+            converted_state_dict[f"blocks.{layer_idx}.attention.k_norm.weight"] = state_dict[f"{prefix}.k_norm.weight"]
+    
+    missing_keys, unexpected_keys = model.load_state_dict(converted_state_dict, strict=False)
+    if missing_keys:
+        log.warning(f"Missing keys: {missing_keys}")
+    if unexpected_keys:
+        log.warning(f"Unexpected keys: {unexpected_keys}")
+    
+    log.info("Successfully loaded and converted old checkpoint")
+
+
 def convert_checkpoint_to_hf(
     original_checkpoint_path: str | Path,
     output_path: str | Path,
@@ -49,21 +182,21 @@ def convert_checkpoint_to_hf(
     validate: bool = True,
     debug: bool = False,
     device: torch.device | None = None,
+    auto_map_old_params: bool = True,
 ) -> None:
     """
-    Convert a checkpoint to a different OLMo core compatible format.
+    Convert a checkpoint to HuggingFace format with parameter name mapping support.
 
     Args:
         original_checkpoint_path: Path to the original checkpoint
-        output_format: Format of converted checkpoint
         output_path: Where to save the converted model
         transformer_config_dict: Dictionary form of OLMo core model config
         tokenizer_config_dict: Dictionary form of OLMo core tokenizer config
+        auto_map_old_params: If True, automatically map old OLMo parameter names
     """
     if max_sequence_length <= 0:
         raise ValueError(f"Missing or invalid sequence length: {max_sequence_length}")
 
-    # Remove deprecated transformer config options
     if "compile" in transformer_config_dict:
         del transformer_config_dict["compile"]
     if "dp_config" in transformer_config_dict:
@@ -73,7 +206,6 @@ def convert_checkpoint_to_hf(
     if "float8_config" in transformer_config_dict:
         del transformer_config_dict["float8_config"]
 
-    # Check if validation is being performed and flash attn is requested but cannot run.
     device = device or get_default_device()
     if (
         validate
@@ -85,7 +217,7 @@ def convert_checkpoint_to_hf(
                 "Running conversion without cuda or flash attention on a model requiring flash attention, validation would fail so we are disabling it."
             )
             validate = False
-        elif attention["use_flash"]:
+        elif attention.get("use_flash"):
             log.info(
                 "Flash attention or cuda is unavailable, turning off flash attention to stop validation from failing."
             )
@@ -97,15 +229,28 @@ def convert_checkpoint_to_hf(
     tokenizer_config = TokenizerConfig.from_dict(tokenizer_config_dict)
     vocab_size = tokenizer_config.vocab_size
 
+    key_mapping = None
+    if auto_map_old_params:
+        n_layers = transformer_config_dict["n_layers"]
+        key_mapping = create_old_olmo_to_olmo_core_mapping(n_layers)
+
     with TemporaryDirectory() as work_dir:
         model_and_optim_dir = join_path(original_checkpoint_path, "model_and_optim")
-        log.info(f"Loading checkpoint from '{model_and_optim_dir}'")
-        load_model_and_optim_state(
-            model_and_optim_dir,
-            model,
-            work_dir=work_dir,
-        )
-        log.info(f"Saving checkpoint to '{output_path}'")
+        
+        try:
+            load_and_convert_old_checkpoint(model_and_optim_dir, model, work_dir)
+        except Exception as e:
+            log.error(f"Failed to load with custom converter: {e}")
+            
+            try:
+                load_model_and_optim_state(
+                    model_and_optim_dir,
+                    model,
+                    work_dir=work_dir,
+                )
+            except Exception as e2:
+                raise RuntimeError(e2)
+        
         state_dict_options = dist_cp_sd.StateDictOptions(
             flatten_optimizer_state_dict=True, cpu_offload=True
         )
@@ -120,24 +265,18 @@ def convert_checkpoint_to_hf(
             work_dir=work_dir,
             save_overwrite=True,
         )
-        # checkpointer.save(output_path, train_module, train_state={}, format=output_format)
-        log.info(f"Successfully saved converted model to '{output_path}'")
 
-    log.info("Fixing HF config using tokenizer config data and script arguments")
     huggingface_config = AutoConfig.from_pretrained(output_path)
     huggingface_config.max_position_embeddings = max_sequence_length
     huggingface_config.pad_token_id = tokenizer_config.pad_token_id
     huggingface_config.bos_token_id = tokenizer_config.bos_token_id
     huggingface_config.eos_token_id = tokenizer_config.eos_token_id
     huggingface_config.save_pretrained(output_path)
-    log.info("Successfully fixed config using tokenizer config data and script arguments")
 
     if validate:
-        log.info("Validating converted model")
         validate_conversion(
             output_path, model, tokenizer_config.vocab_size, debug=debug, dtype=dtype, device=device
         )
-        log.info("Validation completed successful")
 
 
 def _register_debug_hooks(hf_model: torch.nn.Module, model: Transformer):
@@ -190,7 +329,6 @@ def validate_conversion(
     B, T = 1, 120
     input_ids = torch.randint(0, vocab_size, (B, T)).to(device)
 
-    log.info("Loading converted checkpoint for validation...")
     hf_model = AutoModelForCausalLM.from_pretrained(hf_path, torch_dtype="auto").to(device).eval()
 
     olmo_core_state, hf_state = {}, {}
@@ -212,7 +350,6 @@ def validate_conversion(
 
         state_mapping = state_converter.get_mappings(model.state_dict(), placeholder_bounds)
 
-    log.info("Running OLMo core and HF models for validation...")
     with torch.no_grad():
         hf_logits, *_ = hf_model(input_ids=input_ids, return_dict=False)
 
@@ -339,6 +476,12 @@ def parse_args():
         type=DType,
         default=DType.bfloat16,
     )
+    parser.add_argument(
+        "--no-auto-map",
+        dest="auto_map_old_params",
+        action="store_false",
+        help="If set, disable automatic mapping of old OLMo parameter names to new OLMo Core names.",
+    )
     return parser.parse_args()
 
 
@@ -365,6 +508,7 @@ def main():
         validate=args.validate,
         debug=args.debug,
         device=args.device,
+        auto_map_old_params=args.auto_map_old_params,
     )
 
 
