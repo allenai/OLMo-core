@@ -235,9 +235,9 @@ def run_distributed_generation(
     output_ids, _ = generation_module.generate_batch(input_ids, completions_only=False)
 
     # Basic checks
-    assert output_ids.shape == expected_shape, (
-        f"output_ids.shape: {output_ids.shape}, expected_shape: {expected_shape}"
-    )
+    assert (
+        output_ids.shape == expected_shape
+    ), f"output_ids.shape: {output_ids.shape}, expected_shape: {expected_shape}"
     assert output_ids.device == device
 
     # Verify all ranks got same result using FSDP
