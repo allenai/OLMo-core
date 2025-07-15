@@ -31,9 +31,12 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         pattern=[4096, 4096, 4096, -1],
     )
     config.block.attention.use_flash = True
+
+    # RoPE scaling
+    OLD_SEQUENCE_LENGTH = 4096
     config.block.attention.rope.scaling = RoPEScalingConfig(
-        old_context_len=4096,
-        factor=2
+        old_context_len=OLD_SEQUENCE_LENGTH,
+        factor=SEQUENCE_LENGTH / OLD_SEQUENCE_LENGTH
     )
 
     # We cannot use headwise QK norm or GQA, because those can't be retrofit.
