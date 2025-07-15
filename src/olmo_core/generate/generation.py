@@ -43,7 +43,6 @@ from olmo_core.nn.transformer import Transformer, TransformerConfig
 from olmo_core.train.train_module.transformer.common import parallelize_model
 from olmo_core.train.train_module.transformer.config import (
     TransformerDataParallelConfig,
-    TransformerTensorParallelConfig,
 )
 from olmo_core.utils import get_default_device, move_to_device
 
@@ -98,7 +97,6 @@ class TransformerGenerationModule(GenerationModule):
         compile_model: bool = False,
         float8_config: Optional[Float8Config] = None,
         dp_config: Optional[TransformerDataParallelConfig] = None,
-        tp_config: Optional[TransformerTensorParallelConfig] = None,
         autocast_precision: Optional[torch.dtype] = None,
         device: Optional[torch.device] = None,
         state_dict_load_opts: Optional[dist_cp_sd.StateDictOptions] = None,
@@ -111,11 +109,9 @@ class TransformerGenerationModule(GenerationModule):
         self.device = device or get_default_device()
         self.world_mesh: Optional[DeviceMesh] = None
         if is_distributed():
-            self.world_mesh = build_world_mesh(
-                dp=dp_config, tp=tp_config, device_type=self.device.type
-            )
+            self.world_mesh = build_world_mesh(dp=dp_config, device_type=self.device.type)
             log.info(f"Data parallel world size = {get_world_size(self.dp_process_group):,d}")
-        elif dp_config is not None or tp_config is not None:
+        elif dp_config is not None:
             raise OLMoConfigurationError(
                 "Training parallelism configs are only valid for distributed training"
             )
@@ -128,26 +124,20 @@ class TransformerGenerationModule(GenerationModule):
             compile_model=compile_model,
             float8_config=float8_config,
             dp_config=dp_config,
-            tp_config=tp_config,
         )
 
         self._dp_config = dp_config
-        self._tp_config = tp_config
         self.autocast_precision = autocast_precision
         self.state_dict_save_opts = state_dict_save_opts or dist_cp_sd.StateDictOptions(strict=True)
         self.state_dict_load_opts = state_dict_load_opts or dist_cp_sd.StateDictOptions(strict=True)
         self.load_key_mapping = load_key_mapping
-        self.generation_config = generation_config
+        self._generation_config = generation_config
 
     @property
     def dp_process_group(self) -> Optional[dist.ProcessGroup]:
         return None if self.world_mesh is None else get_dp_process_group(self.world_mesh)
 
     @property
-    def tp_enabled(self) -> bool:
-        return self._tp_config is not None
-
-    @cached_property
     def world_size(self) -> int:
         return get_world_size()
 
@@ -196,7 +186,7 @@ class TransformerGenerationModule(GenerationModule):
         # Move input_ids to the right device.
         input_ids = move_to_device(input_ids, self.device)
 
-        generation_config = self.generation_config.replace(**generation_kwargs)
+        generation_config = self._generation_config.replace(**generation_kwargs)
 
         batch_size = input_ids.shape[0]
         device = input_ids.device
@@ -212,7 +202,7 @@ class TransformerGenerationModule(GenerationModule):
             next_token_logits = logits[:, -1, :]  # (batch_size, vocab_size)
 
             next_tokens = temperature_sampling(  # TODO: make this modular
-                next_token_logits, temperature=self.generation_config.temperature
+                next_token_logits, temperature=generation_config.temperature
             )
 
             # Handle finished sequences
@@ -223,11 +213,7 @@ class TransformerGenerationModule(GenerationModule):
 
                 # Replace tokens for finished sequences with padding
                 if generation_config.pad_token_id is not None:
-                    next_tokens = torch.where(
-                        finished,
-                        generation_config.pad_token_id,
-                        next_tokens,
-                    )
+                    next_tokens = torch.where(finished, generation_config.pad_token_id, next_tokens)
 
             # Append next tokens
             generated = torch.cat([generated, next_tokens.unsqueeze(-1)], dim=1)
@@ -384,7 +370,6 @@ class TransformerGenerationModuleConfig(Config):
     compile_model: bool = False
     float8_config: Optional[Float8Config] = None
     dp_config: Optional[TransformerDataParallelConfig] = None
-    tp_config: Optional[TransformerTensorParallelConfig] = None
 
     # Checkpoint settings.
     state_dict_load_opts: Optional[Dict[str, Any]] = None
