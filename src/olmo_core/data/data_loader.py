@@ -545,14 +545,20 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
             )
             out["max_doc_lens"] = torch.max(out["doc_lens"], dim=-1).values.tolist()
         if isinstance(self.dataset, NumpyByteFSLDataset):
-            # small random lengths for debugging
-            patch_lengths = torch.randint(2, 8, input_ids.shape, device=input_ids.device)
+            byte_to_patch_ratio = self.dataset.sequence_length // self.dataset.patch_sequence_length
+
+            # random lengths for debugging,
+            patch_lengths = torch.randint(
+                int(byte_to_patch_ratio * 0.5),
+                int(byte_to_patch_ratio * 1.5),
+                (input_ids.shape[0], self.dataset.patch_sequence_length),
+                device=input_ids.device
+            )
             patch_lengths = torch.where(
-                torch.cumsum(patch_lengths, dim=-1) > self.dataset.max_sequence_length,
+                (torch.cumsum(patch_lengths, dim=-1) - patch_lengths) > self.dataset.max_sequence_length,
                 torch.zeros_like(patch_lengths),
                 patch_lengths,
             )
-            patch_lengths = patch_lengths[:, :(patch_lengths > 0).sum(-1).max().item()]
 
             out["patch_lens"] = patch_lengths
             out["original_input_ids"] = torch.randint(

@@ -17,19 +17,10 @@ primes = [
 
 
 def rolling_polynomial_hash(t, hash_func_nb: int = 0):
-    prime = torch.tensor(primes[hash_func_nb], dtype=torch.int64, device=t.device)
-    prime_powers = torch.stack([prime**i for i in range(t.shape[-1])])
+    # DIVERGENCE FROM BLT: avoid sync
+    prime_powers = primes[hash_func_nb] ** torch.arange(t.shape[-1], dtype=torch.int64, device=t.device)
     return torch.sum(t * prime_powers, dim=-1)
 
-
-def get_rolling_polynomial_hash_fn(hash_func_nb: int = 0, group_size: int = 2):
-    prime = torch.tensor(primes[hash_func_nb], dtype=torch.int64)
-    prime_powers = torch.stack([prime**i for i in range(group_size)])
-
-    def rolling_polynomial_hash_fn(t):
-        return torch.sum(t * prime_powers, dim=-1)
-
-    return rolling_polynomial_hash_fn
 
 def byte_group_hash_function(
     x: torch.Tensor, group_size: int = 2, hash_func_nb: int = 0, max_hash: int = 30000

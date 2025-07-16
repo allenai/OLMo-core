@@ -88,8 +88,8 @@ BLT_TO_OLMO_CORE_MAPPINGS: Dict[str, str] = {
     f"local_decoder.layers.{LOCAL_DECODER_LAYER}.attention_norm.weight": f"local_decoder.blocks.{LOCAL_DECODER_LAYER}.attention_norm.weight",
     f"local_decoder.layers.{LOCAL_DECODER_LAYER}.ffn_norm.weight": f"local_decoder.blocks.{LOCAL_DECODER_LAYER}.feed_forward_norm.weight",
     # Final layer norm and lm head.
-    "local_decoder.norm.weight": "local_decoder.final_norm.weight",
-    "local_decoder.output.weight": "local_decoder.lm_head.weight",
+    "local_decoder.norm.weight": "lm_head.norm.weight",
+    "local_decoder.output.weight": "lm_head.w_out.weight",
 }
 
 

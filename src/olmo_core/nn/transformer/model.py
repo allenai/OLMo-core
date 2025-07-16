@@ -1044,9 +1044,12 @@ class BLTTransformer(Transformer):
         del self.num_non_embedding_params
         del self.num_params
 
-        # replaced by local encoder and decoder
-        del self.embeddings
-        del self.lm_head
+        # replaced by local encoder, maybe move local encoder embeddings outside?
+        self.embeddings = None
+        # need local dimension, not global dimension as in super()
+        self.lm_head = lm_head.build(
+            d_model=local_decoder.d_model, vocab_size=vocab_size, init_device=init_device
+        )
 
         self.local_encoder = local_encoder.build(vocab_size)
         self.local_decoder = local_decoder.build(vocab_size, d_global_model=d_model)
@@ -1172,10 +1175,12 @@ class BLTTransformer(Transformer):
                 mark_dynamic(h_patch, (0, 1), strict=False)
             h_patch = block(h_patch, **block_kwargs)
 
-        logits = self.local_decoder(
+        h_out = self.local_decoder(
             embeds=h_byte,
             patch_embeds=h_patch,
             **local_decoder_kwargs,
         )
 
-        return logits
+        if labels is not None:
+            lm_head_kwargs["labels"] = labels
+        return self.lm_head(h_out, **lm_head_kwargs)

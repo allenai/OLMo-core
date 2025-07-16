@@ -895,10 +895,10 @@ class TransformerConfig(Config):
         )
 
     @classmethod
-    def blt_1b(cls, **kwargs):
+    def blt_1b(cls, vocab_size=260, **kwargs):
         return cls.blt_like(
             d_model=2048,
-            vocab_size=260,
+            vocab_size=vocab_size,
             n_layers=25,
             n_heads=16,
             local_encoder_n_layers=1,

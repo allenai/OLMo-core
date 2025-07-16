@@ -151,11 +151,37 @@ class ByteTokenizerConfig(TokenizerConfig):
             + list(hf_tokenizer.get_added_vocab().keys())  # type: ignore
         ))
 
+        # enforce special token
+        bos_token = hf_tokenizer.bos_token if hf_tokenizer.bos_token is not None else "<|bos|>"
+
+        if bos_token not in special_tokens:
+            special_tokens.insert(0, bos_token)
+
         return cls(
-            vocab_size=256 + len(special_tokens),
+            vocab_size=len(special_tokens) + 256,
             special_tokens=special_tokens,
-            # convention: 256 bytes first, then special tokens, and no bos (as in OLMo)
-            pad_token_id=256 + special_tokens.index(hf_tokenizer.pad_token),
-            eos_token_id=256 + special_tokens.index(hf_tokenizer.eos_token),
+            # convention: special tokens first, then 256 bytes (as in BLT)
+            bos_token_id=special_tokens.index(bos_token),
+            pad_token_id=special_tokens.index(hf_tokenizer.pad_token),
+            eos_token_id=special_tokens.index(hf_tokenizer.eos_token),
             original_identifier=tokenizer_config.identifier,
+        )
+
+    @classmethod
+    def blt(cls) -> "ByteTokenizerConfig":
+        special_tokens = [
+            "<pad>",
+            "<bos>",
+            "<eos>",
+            "<bpe_token_end>", # reserved in BLT tokenizer, but unused in released checkpoints
+        ]
+
+        return cls(
+            vocab_size=len(special_tokens) + 256,
+            special_tokens=special_tokens,
+            bos_token_id=special_tokens.index("<bos>"),
+            pad_token_id=special_tokens.index("<pad>"),
+            eos_token_id=special_tokens.index("<eos>"),
+            # slightly hacky, but this must match the dataset tokenizer, so dolma2
+            original_identifier=TokenizerConfig.dolma2().identifier,
         )

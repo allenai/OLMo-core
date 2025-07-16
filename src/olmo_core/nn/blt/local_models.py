@@ -52,6 +52,8 @@ class LocalDecoderConfig(Config):
             block_config=self.block_config,
         )
 
+# matching BLT, seems necessary but why?
+flex_attention_comp = torch.compile(flex_attention)
 
 class CrossAttention(nn.Module):
     # TODO(benjaminm): make norm_eps config arg without default?
@@ -87,8 +89,7 @@ class CrossAttention(nn.Module):
         k = k.view(bsz, kv_len, self.n_heads, self.head_dim).transpose(1, 2)
         v = v.view(bsz, kv_len, self.n_heads, self.head_dim).transpose(1, 2)
     
-        # TODO: flex_attention is wrapped in torch.compile in BLT. do the same?
-        output = flex_attention(q, k, v, block_mask=mask)
+        output = flex_attention_comp(q, k, v, block_mask=mask)
         # B H S D -> B S H D
         output = output.transpose(1, 2).contiguous()  # type: ignore
 
@@ -154,10 +155,10 @@ class LocalEncoder(nn.Module):
         reduction: str = "amax",
     ):
         # downsample h
+        # DIVERGENCE FROM BLT: + 1 for padding
         reduced_h = torch.zeros(
-            (h.shape[0], patch_lens.shape[-1], h.shape[-1]), dtype=h.dtype, device=h.device
+            (h.shape[0], patch_lens.shape[-1] + 1, h.shape[-1]), dtype=h.dtype, device=h.device
         )
-        # NOTE: this seems slow? particularly due to `.expand(-1, -1, h.shape[-1])`
         reduced_h = reduced_h.scatter_reduce(
             src=h,
             dim=1,
@@ -165,6 +166,7 @@ class LocalEncoder(nn.Module):
             reduce=reduction,
             include_self=False,
         )
+        reduced_h = reduced_h[:, :-1, :]  # DIVERGENCE FROM BLT: remove padding
 
         # expand seq length by a factor of k (k=2 in BLT released checkpoints)
         # i.e. per patch, conduct k cross attentions (each with h heads)
@@ -274,7 +276,7 @@ class LocalDecoder(nn.Module):
         embeds: torch.Tensor,
         patch_embeds: torch.Tensor,
         cross_attn_mask: BlockMask,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> torch.Tensor:
         # expand seq length by a factor of k (k=2 in BLT released checkpoints)
         patch_embeds_projected = self.patch_embedding_projection(patch_embeds).reshape(
             patch_embeds.shape[0], patch_embeds.shape[1] * 2, embeds.shape[2]
@@ -293,7 +295,4 @@ class LocalDecoder(nn.Module):
             h = h * 2 + h_cross
             h = block(h)
 
-        h = self.final_norm(h)
-        logits = self.lm_head(h)
-
-        return logits
+        return h

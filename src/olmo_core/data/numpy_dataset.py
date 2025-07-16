@@ -679,21 +679,23 @@ class NumpyByteFSLDataset(NumpyFSLDataset):
         )
         self.byte_sequences = {}
     
+        offset = len(self.tokenizer_config.special_tokens)
+
         for key, value in hf_tokenizer.get_vocab().items():
             if key in self.tokenizer_config.special_tokens:
-                byte_sequence = [256 + self.tokenizer_config.special_tokens.index(key)]
+                byte_sequence = [self.tokenizer_config.special_tokens.index(key)]
             else:
-                byte_sequence = blt_utils.chars_to_bytes(key)
+                byte_sequence = [offset + i for i in blt_utils.chars_to_bytes(key)]
 
             assert self.byte_sequences.get(value) is None
             self.byte_sequences[value] = byte_sequence
 
     def _read_chunk_from_array(self, path: PathOrStr, index: int, dtype=None) -> torch.Tensor:
-        start_idx = index * super().sequence_length # subword sequence length
+        start_idx = index * self.patch_sequence_length # patch <-> sub/superword sequence length
         return load_array_slice_into_tensor(
             path,
             start_idx,
-            start_idx + super().sequence_length,
+            start_idx + self.patch_sequence_length,
             dtype or self.dtype,
         )
 
@@ -701,8 +703,12 @@ class NumpyByteFSLDataset(NumpyFSLDataset):
         item = super().__getitem__(index)
         original_input_ids = item["input_ids"]
 
-        byte_tokens = []
-        patch_lengths = []
+        if self.tokenizer_config.bos_token_id is not None:
+            byte_tokens = [self.tokenizer_config.bos_token_id]
+            patch_lengths = [1]
+        else:
+            byte_tokens = []
+            patch_lengths = []
 
         for token in original_input_ids:
             token_byte_tokens = self.byte_sequences[int(token)]
@@ -728,11 +734,15 @@ class NumpyByteFSLDataset(NumpyFSLDataset):
                 value=self.pad_token_id,
             )
 
-        item["original_input_ids"] = torch.tensor(original_input_ids, dtype=torch.int32)
+        item["original_input_ids"] = original_input_ids
         item["input_ids"] = new_input_ids
-        item["byte_lengths"] = patch_lengths
+        item["patch_lens"] = patch_lengths
 
         return item
+
+    @property
+    def patch_sequence_length(self) -> int:
+        return super().sequence_length
 
     @property
     def sequence_length(self) -> int:

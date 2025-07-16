@@ -61,14 +61,13 @@ def lengths_to_ids(lengths, total_len):
         dim=-1,
     )
     # FIXME: this seems slow since we broadcast to num_lengths x total_len? 
-    # how precisely does this broadcast? seems unsqueeze missing from arange.
-    patch_ids = (cum_d.unsqueeze(-1) <= torch.arange(total_len, device=cum_d.device)).sum(
+    patch_ids = (cum_d.unsqueeze(-1) <= torch.arange(total_len, device=cum_d.device)[None]).sum(
         dim=-2
     ) - 1
-    # FIXME: get rid of assertions?
-    assert not (
-        torch.max(patch_ids) > lengths.shape[-1] or torch.min(patch_ids) < 0
-    ), f"{torch.max(patch_ids)} > {lengths.shape[-1]} or {torch.min(patch_ids)} < 0"
+    # commented so we don't need to synchronize
+    # assert not (
+    #     torch.max(patch_ids) > lengths.shape[-1] or torch.min(patch_ids) < 0
+    # ), f"{torch.max(patch_ids)} > {lengths.shape[-1]} or {torch.min(patch_ids)} < 0"
     return patch_ids
 
 
@@ -141,7 +140,7 @@ def cross_attn_mask(
             H=None,
             Q_LEN=q_len,
             KV_LEN=kv_len,
-            _compile=False,
+            _compile=True,
             device=patch_ids.device,
         )
         return block_mask

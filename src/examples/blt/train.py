@@ -47,6 +47,7 @@ from olmo_core.train.callbacks import (
     ProfilerCallback,
     WandBCallback,
 )
+from olmo_core.train.common import LoadStrategy
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerTrainModuleConfig,
@@ -70,7 +71,7 @@ class ByteDataCollator(DataCollator):
         batch = super().__call__(items)
 
         all_original_input_ids = []
-        all_byte_lengths = []
+        all_patch_lengths = []
 
         max_original_len = max(
             len(x["original_input_ids"]) if isinstance(x, dict) and "original_input_ids" in x else math.nan for x in items
@@ -78,11 +79,11 @@ class ByteDataCollator(DataCollator):
 
         for x in items:
             original_input_ids = x.get("original_input_ids") if isinstance(x, dict) else None
-            byte_lengths = x.get("byte_lengths") if isinstance(x, dict) else None
+            patch_lengths = x.get("patch_lens") if isinstance(x, dict) else None
 
             if original_input_ids is not None:
                 # both or neither
-                assert byte_lengths is not None
+                assert patch_lengths is not None
 
                 max_original_len = int(max_original_len)
 
@@ -101,9 +102,9 @@ class ByteDataCollator(DataCollator):
                     )
                 )
                 # Pad byte lengths.
-                all_byte_lengths.append(
+                all_patch_lengths.append(
                     F.pad(
-                        byte_lengths.to(dtype=torch.long),
+                        patch_lengths.to(dtype=torch.long),
                         pad_shape,
                         value=0,
                     )
@@ -111,8 +112,8 @@ class ByteDataCollator(DataCollator):
 
         if all_original_input_ids:
             batch["original_input_ids"] = torch.stack(all_original_input_ids, dim=0)
-        if all_byte_lengths:
-            batch["byte_lengths"] = torch.stack(all_byte_lengths, dim=0)
+        if all_patch_lengths:
+            batch["patch_lens"] = torch.stack(all_patch_lengths, dim=0)
 
         return batch
 
@@ -128,12 +129,17 @@ class ExperimentConfig(Config):
 
 
 def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
-    tokenizer_config = ByteTokenizerConfig.from_tokenizer_config(
-        TokenizerConfig.dolma2(),
-    )
+    tokenizer_config = ByteTokenizerConfig.blt()
 
-    model_config = TransformerConfig.llama2_271M(
-        vocab_size=tokenizer_config.padded_vocab_size(),  # a little bigger than actual vocab size to make it a multiple of 128
+    model_config = TransformerConfig.blt_1b(
+        vocab_size=260#tokenizer_config.padded_vocab_size(),  # a little bigger than actual vocab size to make it a multiple of 128
+    )
+    # save on hash embeddings for now to reduce gpu memory
+    model_config = model_config.replace(
+        local_encoder=model_config.local_encoder.replace(  # type: ignore
+            hash_byte_group_size=[3],
+            hash_byte_group_nb_functions=1,
+        )
     )
 
     dataset_config = NumpyDatasetConfig(
@@ -146,21 +152,21 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     )
 
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=16 * SEQUENCE_LENGTH * BYTE_EXPANSION_FACTOR, # DEBUG (bs was 256)
+        global_batch_size=4 * SEQUENCE_LENGTH * BYTE_EXPANSION_FACTOR, # DEBUG (bs was 256)
         seed=0,
         num_workers=0, # DEBUG
     )
 
     train_module_config = TransformerTrainModuleConfig(
-        rank_microbatch_size=4 * SEQUENCE_LENGTH * BYTE_EXPANSION_FACTOR,
+        rank_microbatch_size=1 * SEQUENCE_LENGTH * BYTE_EXPANSION_FACTOR,
         max_sequence_length=dataset_config.effective_sequence_length,
         optim=AdamWConfig(
             lr=1e-3,
             group_overrides=[
-                OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
+                OptimGroupOverride(params=["local_encoder.embedding.weight", "local_encoder.hash_embeddings.*.weight"], opts=dict(weight_decay=0.0))
             ],
         ),
-        compile_model=False, # DEBUG
+        compile_model=True,
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
         ),
@@ -172,14 +178,16 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         TrainerConfig(
             save_folder=f"/tmp/{run_name}",
             save_overwrite=True,
+            load_strategy=LoadStrategy.never,
             metrics_collect_interval=5,
             cancel_check_interval=5,
-            max_duration=Duration.steps(1000), # DEBUG
+            max_duration=Duration.steps(10), # DEBUG
         )
         .with_callback("gpu_monitor", GPUMemoryMonitorCallback())
         .with_callback(
             "checkpointer",
             CheckpointerCallback(
+                pre_train_checkpoint=False,
                 save_interval=1000,
                 ephemeral_save_interval=100,
                 save_async=True,
