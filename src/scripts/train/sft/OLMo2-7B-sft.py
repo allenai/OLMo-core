@@ -161,7 +161,8 @@ def build_sft_dataset(
         if dataset_path.startswith("gs://"):
             contents = list_directory(dataset_path)
             print("expanded directory!")
-            print(contents)
+            for elem in contents:
+                print(elem)
             expand_glob = False
             quit()
         else:
