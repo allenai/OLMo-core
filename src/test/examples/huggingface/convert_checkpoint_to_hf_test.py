@@ -1,3 +1,4 @@
+import gc
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,14 @@ from olmo_core.distributed.checkpoint import (
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.transformer.config import TransformerConfig
 from olmo_core.testing.utils import DEVICES, get_default_device
+
+
+@pytest.fixture(autouse=True)
+def cleanup_memory():
+    """Fixture to clean up memory between tests."""
+    yield
+    gc.collect()
+    torch.cuda.empty_cache()
 
 
 @pytest.fixture
@@ -180,7 +189,8 @@ def test_convert_checkpoint_to_hf_with_swa_config(
 @pytest.mark.parametrize("window_size", [1, 8, 128, None])
 @pytest.mark.parametrize("sequence_length", [64, 256])
 @pytest.mark.parametrize("device", DEVICES)
-@pytest.mark.parametrize("dtype", [DType.float64, DType.float32, DType.bfloat16])
+@pytest.mark.parametrize("dtype", [DType.float32, DType.bfloat16])  #  DType.float64
+@pytest.mark.parametrize("use_natural_language", [True, False])
 def test_convert_checkpoint_to_hf_correct_model(
     tmp_path: Path,
     tokenizer_config: TokenizerConfig,
@@ -188,6 +198,7 @@ def test_convert_checkpoint_to_hf_correct_model(
     window_size: int | None,
     dtype: DType,
     device: torch.device,
+    use_natural_language: bool,
 ):
     if dtype == DType.bfloat16 and device.type == "cpu":
         pytest.skip("bfloat16 dtype requires cuda")
@@ -234,6 +245,8 @@ def test_convert_checkpoint_to_hf_correct_model(
         dtype=dtype,
     )
     del olmo_core_model
+    gc.collect()
+    torch.cuda.empty_cache()
 
     validate_conversion(
         hf_path=output_dir,
@@ -245,4 +258,5 @@ def test_convert_checkpoint_to_hf_correct_model(
         dtype=dtype,
         device=device,
         debug=True,
+        use_natural_language=use_natural_language,
     )

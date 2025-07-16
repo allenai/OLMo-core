@@ -5,6 +5,7 @@ Note that this script is architecture-dependent, meaning it may only work for OL
 architectures that have support in the `transformers` library.
 """
 
+import gc
 import json
 import logging
 from argparse import ArgumentParser
@@ -21,7 +22,7 @@ except ImportError:
 import torch
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 from cached_path import cached_path
-from transformers import AutoConfig, AutoModelForCausalLM
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import DType
@@ -239,6 +240,7 @@ def validate_conversion(
     dtype: DType | None = None,
     device: torch.device | None = None,
     debug: bool = False,
+    use_natural_language: bool = False,
 ):
     """
     Validate the conversion by comparing outputs between the original OLMo Core model and the
@@ -267,9 +269,32 @@ def validate_conversion(
     device = device or get_default_device()
     log.info(f"Using device: {device}")
 
-    # Prepare some random input for the forward pass
-    input_ids = torch.randint(0, vocab_size, (batch_size, sequence_length)).to(device)
-    log.info(f"Generated random input_ids with shape {input_ids.shape} and vocab size {vocab_size}")
+    # Prepare input for the forward pass
+    if use_natural_language:
+        # Use natural language text with HuggingFace tokenizer
+        tokenizer = AutoTokenizer.from_pretrained("allenai/dolma2-tokenizer")
+
+        # Natural language prompt
+        prompt = "The advancement of artificial intelligence has revolutionized many fields including healthcare, transportation, and communication. Machine learning models are now capable of understanding and generating human-like text with remarkable accuracy."
+
+        # Tokenize the prompt for each item in the batch
+        tokens = tokenizer(
+            [prompt] * batch_size,
+            max_length=sequence_length,
+            padding="max_length",
+            truncation=True,
+            return_tensors="pt",
+        )
+        input_ids = tokens["input_ids"].to(device)
+        log.info(
+            f"Generated natural language input_ids with shape {input_ids.shape} using dolma2-tokenizer"
+        )
+    else:
+        # Use random input ids
+        input_ids = torch.randint(0, vocab_size, (batch_size, sequence_length)).to(device)
+        log.info(
+            f"Generated random input_ids with shape {input_ids.shape} and vocab size {vocab_size}"
+        )
 
     # ------------------------------------------------------------------ #
     # Work out which attention backend we should use for *validation*.
@@ -392,12 +417,16 @@ def validate_conversion(
 
     log.info(f"HF model output shape: {hf_logits.shape}")
     del hf_model  # free memory
+    gc.collect()
+    torch.cuda.empty_cache()
 
     log.info("Running OLMo Core model")
     with torch.no_grad():
         logits = olmo_core_model(input_ids=input_ids)
     log.info(f"OLMo Core model output shape: {logits.shape}")
     del olmo_core_model  # free memory
+    gc.collect()
+    torch.cuda.empty_cache()
 
     # ------------------------------------------------------------------ #
     # Detailed debugging information (optional)
