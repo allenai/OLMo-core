@@ -129,18 +129,24 @@ class TransformerGenerationModule(GenerationModule):
                 stack.enter_context(torch.autocast(self.device.type, dtype=self.autocast_precision))
             yield
 
-    def model_forward(self, input_ids: torch.Tensor, **kwargs) -> torch.Tensor:
+    def model_forward(
+        self, input_ids: torch.Tensor, *, attention_mask: Optional[torch.Tensor] = None, **kwargs
+    ) -> torch.Tensor:
         """
         Run a forward pass on a micro-batch, returning the logits.
         """
         with self._model_forward_context():
-            logits = self.model(input_ids, **kwargs)
+            logits = self.model(  # (batch_size, seq_len, vocab_size)
+                input_ids, attention_mask=attention_mask, **kwargs
+            )
             return logits
 
     @torch.no_grad()
     def generate_batch(
         self,
         input_ids: torch.Tensor,
+        *,
+        attention_mask: Optional[torch.Tensor] = None,
         return_logits: bool = False,
         completions_only: bool = False,
         **generation_kwargs,
@@ -168,13 +174,22 @@ class TransformerGenerationModule(GenerationModule):
         generation_config = self._generation_config.replace(**generation_kwargs)
 
         batch_size = input_ids.shape[0]
-        device = input_ids.device
 
-        finished = torch.zeros(batch_size, dtype=torch.bool, device=device)
+        finished = torch.zeros(batch_size, dtype=torch.bool, device=self.device)
         generated = input_ids
 
+        # Pre-convert stop sequences to tensors
+        stop_sequence_tensors = None
+        if generation_config.stop_sequences is not None:
+            stop_sequence_tensors = [
+                torch.tensor(stop_seq, device=self.device)
+                for stop_seq in generation_config.stop_sequences
+            ]
+
         while generated.shape[1] < generation_config.max_length:
-            logits = self.model_forward(generated)  # (batch_size, seq_len, vocab_size)
+            logits = self.model_forward(  # (batch_size, seq_len, vocab_size)
+                generated, attention_mask=attention_mask
+            )
             next_token_logits = logits[:, -1, :]  # (batch_size, vocab_size)
 
             next_tokens = temperature_sampling(  # TODO: make this modular
@@ -182,26 +197,45 @@ class TransformerGenerationModule(GenerationModule):
             )
 
             # Handle finished sequences
-            if generation_config.eos_token_id is not None:
-                # Check which sequences have generated EOS
-                just_finished = next_tokens == generation_config.eos_token_id
-                finished = finished | just_finished
+            # - Check which sequences have generated EOS
+            just_finished = next_tokens == generation_config.eos_token_id
 
-                # Replace tokens for finished sequences with padding
-                if generation_config.pad_token_id is not None:
-                    next_tokens = torch.where(finished, generation_config.pad_token_id, next_tokens)
+            # - Check which sequences have generated stop sequences
+            if stop_sequence_tensors is not None:
+                for stop_sequence in stop_sequence_tensors:
+                    stop_seq_len = stop_sequence.shape[0]
+                    if generated.shape[1] >= stop_seq_len:
+                        # Get the last len(stop_sequence) tokens from generated (including the new token)
+                        generated_with_next = torch.cat(
+                            [generated, next_tokens.unsqueeze(-1)], dim=1
+                        )
+                        last_tokens = generated_with_next[:, -stop_seq_len:]
 
-            # Append next tokens
+                        # Check if any sequence ends with the stop sequence
+                        matches_stop = (last_tokens == stop_sequence.unsqueeze(0)).all(dim=1)
+                        just_finished = just_finished | matches_stop
+
+            prev_finished = finished.clone()
+            finished = prev_finished | just_finished
+            next_tokens = torch.where(prev_finished, generation_config.pad_token_id, next_tokens)
+
+            # - Append next tokens
             generated = torch.cat([generated, next_tokens.unsqueeze(-1)], dim=1)
 
-            # Stop if all sequences are finished
-            if generation_config.eos_token_id is not None and finished.all():
+            # - Update attention mask if provided
+            if attention_mask is not None:
+                # For finished sequences, mask out padding tokens (0), otherwise attend to new token (1)
+                new_token_mask = (~prev_finished).to(attention_mask.dtype)
+                attention_mask = torch.cat([attention_mask, new_token_mask.unsqueeze(-1)], dim=1)
+
+            # - Stop if all sequences are finished
+            if finished.all():
                 break
 
         logits = None
         if return_logits:
             # Compute logits for the complete generated sequence (only if needed)
-            logits = self.model_forward(generated)
+            logits = self.model_forward(generated, attention_mask=attention_mask)
 
         if completions_only:
             # Slice out the input_ids and their logits
