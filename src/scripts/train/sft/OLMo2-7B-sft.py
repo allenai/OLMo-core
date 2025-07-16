@@ -465,6 +465,9 @@ Examples:
         "--model_name", help="The name of the model architecture to use."
     )
     parser.add_argument(
+        "--budget", help="The beaker budget to use."
+    )
+    parser.add_argument(
         "--workspace", help="The workspace to run in."
     )
     parser.add_argument(
