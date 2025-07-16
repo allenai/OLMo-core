@@ -494,6 +494,7 @@ Examples:
         num_nodes=args.num_nodes,
         global_batch_size=args.global_batch_size,
         overrides=overrides,
+        budget=args.budget,
         workspace=args.workspace,
         model_name=args.model_name,
         dataset_path=args.dataset_path,
