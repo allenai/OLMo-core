@@ -297,6 +297,7 @@ class SFTConfig(Config):
                     f"--num_nodes={num_nodes}",
                     f"--global_batch_size={global_batch_size}",
                     f"--model_name={model_name}",
+                    f"--dataset_path={dataset_path}"
                     *overrides,
                 ],
                 cluster=cluster,
