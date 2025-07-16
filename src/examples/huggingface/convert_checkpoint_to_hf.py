@@ -80,24 +80,27 @@ def convert_checkpoint_to_hf(
 
     model_config = TransformerConfig.from_dict(transformer_config_dict)
 
-    # Check if validation is being performed and flash attn is requested but cannot run.
     device = device or get_default_device()
-    if (
-        validate
-        and device != torch.device("cuda")
-        and (attention := transformer_config_dict.get("block", {}).get("attention")) is not None
-    ):
+
+    # Check if validation is being performed and flash attn is requested but cannot run.
+    if validate and device != torch.device("cuda"):
         if model_config.block.attention.name == AttentionType.fused:
             log.warning(
                 "Running conversion without cuda or flash attention on a model requiring flash attention, validation would fail so we are disabling it."
             )
             validate = False
-        elif model_config.block.attention.use_flash:
+
+    if validate:
+        if model_config.block.attention.use_flash:
             log.info(
-                "Flash attention or cuda is unavailable, switching to flex attention to stop validation from failing."
+                "Flash attention can cause minor changes in outputs, switching to SDPA to stop validation from failing."
             )
-            attention["use_flash"] = False
-            attention["use_flex_attn"] = True
+            model_config.block.attention.use_flash = False
+        if model_config.block.attention.use_flex_attn:
+            log.info(
+                "Flex attention can cause minor changes in outputs, switching to SDPA to stop validation from failing."
+            )
+            model_config.block.attention.use_flex_attn = False
 
     model = model_config.build()
     model.to_empty(device=device or torch.device("cpu"))
@@ -171,10 +174,10 @@ def _register_debug_hooks(hf_model: torch.nn.Module, model: Transformer):
     ):
         if (
             model_type == "hf"
-            and re.match(r"model.layers.\d+.mlp", name)
+            and re.match(r"model.layers.\d+.block_sparse_moe$", name)
             and isinstance(output, tuple)
         ):
-            # Special casing for HF moe mlp
+            # Special casing for HF moe
             assert isinstance(output[0], torch.Tensor), (name, output)
             output = output[0]
         if model_type == "hf" and re.match(r"model.layers.\d+.block_sparse_moe.gate", name):
@@ -226,6 +229,7 @@ def validate_conversion(
         torch.cuda.init()
 
     device = device or get_default_device()
+    log.info(f"Running validation on {device}")
 
     B, T = 1, 60
     input_ids = torch.randint(0, vocab_size, (B, T)).to(device)
@@ -266,9 +270,7 @@ def validate_conversion(
         stack.enter_context(torch.no_grad())
         # Flex attention matches SDPA maths backend
         if use_flex_attn:
-            stack.enter_context(
-                torch.nn.attention.sdpa_kernel(torch.nn.attention.SDPBackend.MATH)
-            )
+            stack.enter_context(torch.nn.attention.sdpa_kernel(torch.nn.attention.SDPBackend.MATH))
 
         hf_logits = hf_model(input_ids=input_ids).logits
 
