@@ -282,7 +282,8 @@ class SFTConfig(Config):
         else:
             raise OLMoConfigurationError(f"Must set a valid model_name: {model_name}")
 
-
+        print("overrides here:")
+        print(overrides)
 
         config = SFTConfig(
             run_name=run_name,
