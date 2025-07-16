@@ -161,10 +161,14 @@ def build_sft_dataset(
         if dataset_path.startswith("gs://"):
             contents = list_directory(dataset_path)
             print("expanded directory!")
+            token_id_paths = []
+            label_mask_paths = []
             for elem in contents:
-                print(elem)
+                if "token_ids_part" in elem:
+                    token_id_paths.append(elem)
+                if "labels_mask" in elem:
+                    label_mask_paths.append(elem)
             expand_glob = False
-            quit()
         else:
             print("did not expand directory!")
             token_id_paths = [f"{clean_path}/token_ids_part_*.npy"]
