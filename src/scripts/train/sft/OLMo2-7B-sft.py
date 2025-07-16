@@ -158,10 +158,9 @@ def build_sft_dataset(
     if dataset_path is not None:
         print("globbing dataset paths")
         dataset_path_object = Path(dataset_path)
-        if not dataset_path_object.exists():
-            raise OLMoConfigurationError(f"Dataset '{dataset_path}' not found.")
-        token_id_paths = list(dataset_path_object.glob("token_ids_part_*.npy"))
-        label_mask_paths = list(dataset_path_object.glob("labels_mask_*.npy"))
+        token_id_paths = dataset_path_object.glob("token_ids_part_*.npy")
+        label_mask_paths = dataset_path_object.glob("labels_mask_*.npy")
+        expand_glob = True
     else:
         # NOTE: dataset path can be configured relative to root_dir
         # root_dir is /weka/oe-training-default/ai2-llm or gs://ai2-llm depending on the cluster
@@ -182,6 +181,7 @@ def build_sft_dataset(
         for label_mask_file in dataset_config["label_mask"]:
             label_mask_path = dataset_dir / label_mask_file
             label_mask_paths.append(root_dir + "/" + str(label_mask_path))
+        expand_glob = False
 
     dataset = NumpyDatasetConfig(
         # general config
@@ -189,6 +189,7 @@ def build_sft_dataset(
         mix_base_dir=root_dir,
         work_dir=get_work_dir(root_dir),
         paths=token_id_paths,
+        expand_glob=expand_glob,
         label_mask_paths=label_mask_paths,
         name=NumpyDatasetType.packed_fsl,  # concatenated short docs into a single sequence... (see also "padded_fsl")
         generate_doc_lengths=True,  # ...and mask attention so that they don't attend to each other
@@ -232,7 +233,9 @@ class SFTConfig(Config):
         checkpoint: str,
         cluster: str,
         overrides: List[str],
-        model_name: str = "olmo2-7b",
+        workspace: str,
+        budget: str,
+        model_name: str,
         dataset_path: Optional[str],
     ) -> "SFTConfig":
         root_dir = get_root_dir(cluster)
@@ -296,14 +299,15 @@ class SFTConfig(Config):
                     f"--seq_len={seq_len}",
                     f"--num_nodes={num_nodes}",
                     f"--global_batch_size={global_batch_size}",
+                    f"--workspace={workspace}",
                     f"--model_name={model_name}",
                     f"--dataset_path={dataset_path}"
                     *overrides,
                 ],
                 cluster=cluster,
                 num_nodes=num_nodes,
-                budget="ai2/oe-adapt",
-                workspace="ai2/olmo-instruct",
+                budget=budget,
+                workspace=workspace,
             ),
             model=model,
             dataset=dataset_config,
@@ -461,6 +465,9 @@ Examples:
         "--model_name", help="The name of the model architecture to use."
     )
     parser.add_argument(
+        "--workspace", help="The workspace to run in."
+    )
+    parser.add_argument(
         "--dataset_path", help="The path to the pre-tokenized SFT dataset."
     )
 
@@ -487,6 +494,7 @@ Examples:
         num_nodes=args.num_nodes,
         global_batch_size=args.global_batch_size,
         overrides=overrides,
+        workspace=args.workspace,
         model_name=args.model_name,
         dataset_path=args.dataset_path,
     )
