@@ -895,7 +895,7 @@ class TransformerConfig(Config):
         )
 
     @classmethod
-    def blt_1b(cls, vocab_size=260, **kwargs):
+    def blt_1b(cls, vocab_size=260, skip_local_encoder_decoder=False, **kwargs):
         return cls.blt_like(
             d_model=2048,
             vocab_size=vocab_size,
@@ -906,6 +906,7 @@ class TransformerConfig(Config):
             local_d_model=1024,
             local_attn_n_heads=16,
             local_cross_attn_n_heads=16,
+            skip_local_encoder_decoder=skip_local_encoder_decoder,
         )
 
     @classmethod
@@ -1022,6 +1023,7 @@ class TransformerConfig(Config):
         rope_scaling: Optional[RoPEScalingConfig] = None,
         feed_forward: Optional[FeedForwardConfig] = None,
         feed_forward_moe: Optional[MoEConfig] = None,
+        skip_local_encoder_decoder: bool = False,
         **kwargs,
     ) -> "TransformerConfig":
         """
@@ -1098,18 +1100,30 @@ class TransformerConfig(Config):
             block_config=local_block,
         )
 
-        return cls(
-            name=TransformerType.blt,
-            d_model=d_model,
-            vocab_size=vocab_size,
-            n_layers=n_layers,
-            block=block,
-            lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype),
-            local_encoder=local_encoder,
-            local_decoder=local_decoder,
-            dtype=dtype,
-            **kwargs,
-        )
+        if skip_local_encoder_decoder:
+            return cls(
+                name=TransformerType.default,
+                d_model=d_model,
+                vocab_size=vocab_size,
+                n_layers=n_layers,
+                block=block,
+                lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype),
+                dtype=dtype,
+                **kwargs,
+            )
+        else:
+            return cls(
+                name=TransformerType.blt,
+                d_model=d_model,
+                vocab_size=vocab_size,
+                n_layers=n_layers,
+                block=block,
+                lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype),
+                local_encoder=local_encoder,
+                local_decoder=local_decoder,
+                dtype=dtype,
+                **kwargs,
+            )
 
 
     @classmethod
