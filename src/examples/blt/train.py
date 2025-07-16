@@ -22,6 +22,7 @@ from olmo_core.data import (
     NumpyDataLoaderConfig,
     NumpyDatasetConfig,
     NumpyDatasetType,
+    NumpyByteFSLDataset,
     ByteTokenizerConfig,
     TokenizerConfig,
     DataCollator,
@@ -273,7 +274,7 @@ def main(run_name: str, overrides: List[str]):
     dataset = config.dataset.build()
     data_loader = config.data_loader.build(
         dataset,
-        collator=ByteDataCollator(pad_token_id=dataset.pad_token_id),
+        collator=ByteDataCollator(pad_token_id=dataset.pad_token_id) if isinstance(dataset, NumpyByteFSLDataset) else None,
         dp_process_group=train_module.dp_process_group
     )
     trainer = config.trainer.build(train_module, data_loader)
