@@ -168,7 +168,6 @@ def save_hf_model(
     hf_model.config.vocab_size = vocab_size or model.vocab_size
     hf_model.resize_token_embeddings(hf_model.config.vocab_size)
 
-    # TODO: make this generalizable
     hf_model.generation_config.eos_token_id = [
         100265, # <|im_end|>
         100257  # <|endoftext|>
