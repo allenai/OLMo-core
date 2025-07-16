@@ -44,6 +44,19 @@ gantry run \
         --visualize True \
         --chat_template_name olmo \
         --max_seq_length 16384
+
+    gantry run --cluster ai2/neptune-cirrascale --timeout -1 -y --budget ai2/oe-training --workspace ai2/jacobm \
+        --install "curl -LsSf https://astral.sh/uv/install.sh | sh && /root/.local/bin/uv sync" \
+        --weka=oe-training-default:/weka/oe-training-default \
+        --env-secret HF_TOKEN=HF_TOKEN \
+        --gpus 1 \
+        -- /root/.local/bin/uv run python scripts/data/convert_sft_data_for_olmocore.py \
+        --dataset_mixer_list allenai/tulu-3-sft-olmo-2-mixture 0.1 \
+        --tokenizer_name_or_path allenai/dolma2-tokenizer \
+        --output_dir /weka/oe-training-default/ai2-llm/jacobm/data/sft/usable-tulu-16k/test-olmo2-tokenization \
+        --visualize True \
+        --chat_template_name olmo \
+        --max_seq_length 16384
         
             ai2-adapt-dev/personahub_code_v2_34999 1.0 \
             finbarr/tulu-3-sft-personas-instruction-following-o3 1.0 \
@@ -92,7 +105,6 @@ gantry run \
         --visualize True \
         --chat_template_name olmo_thinker \
         --max_seq_length 32768
-
 
 python src/scripts/train/sft/OLMo2-7B-sft.py launch \
     olmo2-7B-sft-8gpu-tulu-3-sft-16k tulu-3-sft-olmo-2 /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_final_anneal/step11921 ai2/titan-cirrascale \
@@ -153,11 +165,11 @@ gantry run --cluster ai2/saturn-cirrascale --timeout -1 -y --budget ai2/oe-adapt
         --weka=oe-adapt-default:/weka/oe-adapt-default \
         --weka=oe-training-default:/weka/oe-training-default \
         --priority urgent \
-        --gpus 1 \
         -- /root/.local/bin/uv run python src/examples/huggingface/convert_checkpoint_from_hf.py \
             -i /weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft/usable-tulu/olmo2-7B-lc-tulu3-olmo2-mix-dpo/ \
             -o /weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmo2-7B-sft/olmo2-7B-lc-tulu3-olmo2-mix-dpo \
-            --model-arch olmo2_7b \
+            --model-arch olmo2_7b_lc \
+            --device cpu \
             --max-sequence-length 65536
 
 
@@ -168,16 +180,9 @@ gantry run --cluster ai2/saturn-cirrascale --timeout -1 -y --budget ai2/oe-adapt
     # "olmo2-7B-lc-tulu3-olmo2-mix-remov_replac-100k_toolu-fae_ver-sau_code-val_if-ot3_456k-remove-personas-and-numinamath"
     # "olmo2-7B-lc-tulu3-olmo2-mix-remov_replac-100k_toolu-fae_ver-sau_code-val_if-ot3_456k-remove-personas"
 MODEL_NAMES=(
-    "olmo2-7B-lc-tulu3-olmo2-mix-num_8-dpo"
-    "olmo2-7B-lc-tulu3-olmo2-mix-num_9-dpo"
-    "olmo2-7B-lc-tulu3-olmo2-mix-num_10-dpo"
-    "olmo2-7B-lc-tulu3-olmo2-mix-num_11-dpo"
-    "olmo2-7B-lc-tulu3-olmo2-mix-num_12-dpo"
-    "olmo2-7B-lc-tulu3-olmo2-mix-num_13-dpo"
-    "olmo2-7B-lc-tulu3-olmo2-mix-dpo-32b-5-pct-perturbed"
-    "olmo2-7B-lc-tulu3-olmo2-mix-dpo-32b-20-pct-perturbed"
-    "olmo2-7B-lc-tulu3-olmo2-mix-dpo-32b-50-pct-perturbed"
-    "olmo2-7B-lc-tulu3-olmo2-mix-dpo-32b-100-pct-perturbed"
+    "olmo2-7B-lc-tulu3-olmo2-mix-num_13-add_oasst_100k_toolu"
+    "olmo2-7B-lc-tulu3-olmo2-mix-num_13-add_oasst_200k_toolu"
+    "olmo2-7B-lc-tulu3-olmo2-mix-num_13-add_oasst_336k_toolu"
 )
 
 for MODEL_NAME in "${MODEL_NAMES[@]}"; do
@@ -215,8 +220,23 @@ python src/scripts/train/sft/OLMo2-7B-sft.py launch \
     --num_nodes=4 \
     --launch.priority=urgent
 
-INPUT_PATH=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmo2-7B-sft/olmo2-7B-lc-OpenThoughts3-full-regenerations/step45870
-MODEL_NAME=olmo2-7B-lc-OpenThoughts3-full-regenerations
+# REASONING from olmo instruct
+python src/scripts/train/sft/OLMo2-7B-sft.py launch \
+    olmo2-7B-lc-instruct-OpenThoughts3-456k \
+        OpenThoughts3-456k \
+        /weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmo2-7B-sft/olmo2-7B-lc-tulu3-olmo2-mix-dpo/model_and_optim \
+        ai2/titan-cirrascale \
+    --trainer.callbacks.wandb.enabled=True \
+    --trainer.max_duration.value=2 \
+    --train_module.optim.lr=5e-5 \
+    --seq_len=32768 \
+    --launch.num_gpus=8 \
+    --num_nodes=2 \
+    --model_name olmo2-7b \
+    --launch.priority=urgent
+
+INPUT_PATH=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmo2-7B-sft/olmo2-7B-lc-tulu3-olmo2-mix-num_13-add_oasst_100k_toolu/step1878
+MODEL_NAME=olmo2-7B-lc-tulu3-olmo2-mix-num_13-add_oasst_100k_toolu
 gantry run --cluster ai2/saturn-cirrascale --timeout -1 -y --budget ai2/oe-adapt --workspace ai2/olmo-instruct \
         --install "curl -LsSf https://astral.sh/uv/install.sh | sh && /root/.local/bin/uv sync --all-extras" \
         --weka=oe-adapt-default:/weka/oe-adapt-default \
