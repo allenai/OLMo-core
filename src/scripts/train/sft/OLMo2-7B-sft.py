@@ -213,7 +213,7 @@ class SFTConfig(Config):
 
     launch: BeakerLaunchConfig
     model: TransformerConfig
-    dataset: NumpyDatasetConfig
+    dataset: Optional[NumpyDatasetConfig]
     data_loader: NumpyDataLoaderConfig
     train_module: TransformerTrainModuleConfig
     trainer: TrainerConfig
