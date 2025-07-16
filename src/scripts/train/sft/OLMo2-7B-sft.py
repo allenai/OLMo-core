@@ -383,9 +383,6 @@ class SFTConfig(Config):
                 ),
             ),
         )
-        print(config)
-        quit()
-        #.merge(overrides)
 
         return config
 
