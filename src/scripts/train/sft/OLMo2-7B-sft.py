@@ -153,35 +153,43 @@ def build_sft_dataset(
     root_dir: str,
     tokenizer_config: TokenizerConfig,
     sequence_length: int,
+    dataset_path: Optional[str],
 ) -> NumpyDatasetConfig:
-    # NOTE: dataset path can be configured relative to root_dir
-    # root_dir is /weka/oe-training-default/ai2-llm or gs://ai2-llm depending on the cluster
-    sft_datasets_file = Path(__file__).parent / "sft_datasets.yaml"
-    with open(sft_datasets_file, "r") as f:
-        sft_datasets_config = yaml.safe_load(f)
+    if dataset_path is not None:
+        print("globbing dataset paths")
+        dataset_path_object = Path(dataset_path)
+        if not dataset_path_object.exists():
+            raise OLMoConfigurationError(f"Dataset '{dataset_path}' not found.")
+        token_id_paths = list(dataset_path_object.glob("token_ids_part_*.npy"))
+        label_mask_paths = list(dataset_path_object.glob("labels_mask_*.npy"))
+    else:
+        # NOTE: dataset path can be configured relative to root_dir
+        # root_dir is /weka/oe-training-default/ai2-llm or gs://ai2-llm depending on the cluster
+        sft_datasets_file = Path(__file__).parent / "sft_datasets.yaml"
+        with open(sft_datasets_file, "r") as f:
+            sft_datasets_config = yaml.safe_load(f)
 
-    if dataset_name not in sft_datasets_config["datasets"]:
-        raise OLMoConfigurationError(f"Dataset '{dataset_name}' not found in sft_datasets.yaml")
+        if dataset_name not in sft_datasets_config["datasets"]:
+            raise OLMoConfigurationError(f"Dataset '{dataset_name}' not found in sft_datasets.yaml")
 
-    dataset_config = sft_datasets_config["datasets"][dataset_name]
-    dataset_dir = Path(dataset_config["base_dir"])
+        dataset_config = sft_datasets_config["datasets"][dataset_name]
+        dataset_dir = Path(dataset_config["base_dir"])
 
-    paths, label_mask_paths = [], []
-    for token_file in dataset_config["token_ids"]:
-        token_path = dataset_dir / token_file
-        paths.append(root_dir + "/" + str(token_path))
-    for label_mask_file in dataset_config["label_mask"]:
-        label_mask_path = dataset_dir / label_mask_file
-        label_mask_paths.append(root_dir + "/" + str(label_mask_path))
+        token_id_paths, label_mask_paths = [], []
+        for token_file in dataset_config["token_ids"]:
+            token_path = dataset_dir / token_file
+            token_id_paths.append(root_dir + "/" + str(token_path))
+        for label_mask_file in dataset_config["label_mask"]:
+            label_mask_path = dataset_dir / label_mask_file
+            label_mask_paths.append(root_dir + "/" + str(label_mask_path))
 
     dataset = NumpyDatasetConfig(
         # general config
         tokenizer=tokenizer_config,
         mix_base_dir=root_dir,
         work_dir=get_work_dir(root_dir),
-        paths=paths,
+        paths=token_id_paths,
         label_mask_paths=label_mask_paths,
-        # how to handle long docs?
         name=NumpyDatasetType.packed_fsl,  # concatenated short docs into a single sequence... (see also "padded_fsl")
         generate_doc_lengths=True,  # ...and mask attention so that they don't attend to each other
         long_doc_strategy=LongDocStrategy.truncate,  # truncate docs...
@@ -225,12 +233,13 @@ class SFTConfig(Config):
         cluster: str,
         overrides: List[str],
         model_name: str = "olmo2-7b",
+        dataset_path: Optional[str],
     ) -> "SFTConfig":
         root_dir = get_root_dir(cluster)
         user_name = get_beaker_username()
 
         tokenizer_config = TokenizerConfig.dolma2()
-        dataset_config = build_sft_dataset(dataset_name, root_dir, tokenizer_config, seq_len)
+        dataset_config = build_sft_dataset(dataset_name, root_dir, tokenizer_config, seq_len, dataset_path)
         gpu_type = CLUSTER_TO_GPU_TYPE[cluster]
 
         bs_config = BatchSizeConfig(
@@ -260,8 +269,6 @@ class SFTConfig(Config):
                 hidden_size_multiplier=1.2,
                 hidden_size_multiple_of=1024,
             )
-            #  config.block.name = TransformerBlockType.default
-            #  config.block.attention.qk_norm = None
             model.block.attention.sliding_window = SlidingWindowAttentionConfig(
                 force_full_attention_on_first_layer=False,
                 force_full_attention_on_last_layer=True,
@@ -452,6 +459,9 @@ Examples:
     parser.add_argument(
         "--model_name", help="The name of the model architecture to use."
     )
+    parser.add_argument(
+        "--dataset_path", help="The path to the pre-tokenized SFT dataset."
+    )
 
     # Parse known args to get positional arguments and cmd
     args, overrides = parser.parse_known_args()
@@ -476,7 +486,8 @@ Examples:
         num_nodes=args.num_nodes,
         global_batch_size=args.global_batch_size,
         overrides=overrides,
-        model_name=args.model_name
+        model_name=args.model_name,
+        dataset_path=args.dataset_path,
     )
 
     # Print the config for debugging and then execute the command.
