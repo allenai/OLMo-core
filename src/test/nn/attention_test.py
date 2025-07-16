@@ -36,6 +36,7 @@ def scaled_dot_product_attention(
     use_math_backend: bool = False,
     use_flash_backend: bool = False,
     use_efficient_backend: bool = False,
+    use_any_backend: bool = False,
 ) -> torch.Tensor:
     # PyTorch's SDPA expects the head dimension to come before the sequence dimension.
     # shape: (batch_size, n_heads, seq_len, head_dim),
@@ -54,6 +55,8 @@ def scaled_dot_product_attention(
             stack.enter_context(
                 torch.nn.attention.sdpa_kernel(torch.nn.attention.SDPBackend.EFFICIENT_ATTENTION)
             )
+        elif use_any_backend:
+            pass
         else:
             raise ValueError("Either math or flash backend is expected (to make testing clearer).")
 
@@ -233,14 +236,11 @@ def test_sdpa(
     window_size: Optional[int],
     intra_doc_masking: bool,
 ):
-    if not use_flex_attn and dtype == torch.float32:
-        pytest.skip("low precision dtype is required unless flex attention is used")
+    if use_flash and dtype == torch.float32:
+        pytest.skip("low precision dtype is required when flash attention is used")
 
     if use_flash and device.type == "cpu":
         pytest.skip("flash requires gpu")
-
-    if not use_flash and not use_flex_attn and window_size is not None:
-        pytest.skip("sliding window attention is not supported by torch SDPA")
 
     if not use_flash and not use_flex_attn and intra_doc_masking:
         pytest.skip("intra-document masking is not supported by torch SDPA")
@@ -311,16 +311,20 @@ def test_sdpa(
                 ),
             )
 
-        if window_size is None and not intra_doc_masking:
-            attn_mask = None
-            is_causal = True
-
         # Flex attention matches torch SDPA with the math backend
         use_math_backend = use_flex_attn
         # Flash attention matches torch SDPA with non-math backends, but flash backend cannot be used
         # with attention masks
-        use_flash_backend = not use_math_backend and attn_mask is None
-        use_efficient_backend = not use_math_backend and not use_flash_backend
+        use_flash_backend = not use_math_backend and attn_mask is None and dtype != torch.float32
+        use_efficient_backend = (
+            not use_math_backend
+            and not use_flash_backend
+            and device.type == "cuda"
+            and dtype != torch.float32
+        )
+        use_any_backend = (
+            not use_math_backend and not use_flash_backend and not use_efficient_backend
+        )
         y1 = scaled_dot_product_attention(
             q.view(q.shape[0] * q.shape[1] // mask_len, mask_len, *q.shape[2:]),
             k.view(k.shape[0] * k.shape[1] // mask_len, mask_len, *k.shape[2:]),
@@ -330,9 +334,16 @@ def test_sdpa(
             use_math_backend=use_math_backend,
             use_flash_backend=use_flash_backend,
             use_efficient_backend=use_efficient_backend,
+            use_any_backend=use_any_backend,
         )
         y2 = attention.sdpa(
-            q, k, v, max_doc_len=max_doc_len, cu_doc_lens=cu_doc_lens, block_mask=block_mask
+            q,
+            k,
+            v,
+            max_doc_len=max_doc_len,
+            cu_doc_lens=cu_doc_lens,
+            block_mask=block_mask,
+            attn_mask=attn_mask,
         ).view_as(y1)
 
     torch.testing.assert_close(y1, y2)

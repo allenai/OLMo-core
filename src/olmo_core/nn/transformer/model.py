@@ -362,6 +362,9 @@ class Transformer(nn.Module):
         # Prepare block mask
         block_masks = self._get_flex_attn_block_masks(S, self.device, doc_lens)
         block_kwargs["block_masks"] = block_masks
+        block_kwargs["attn_masks"] = [
+            block_mask.to_dense() if block_mask is not None else None for block_mask in block_masks
+        ]
 
         # Shard inputs and RoPE buffers on sequence dimension if using context parallelism.
         if (cp_load_balancer := self._cp_load_balancer) is not None:

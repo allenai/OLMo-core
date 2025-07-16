@@ -384,10 +384,6 @@ class Attention(AttentionBase):
 
         # Translate window size so that we only look left, not right.
         if window_size is not None:
-            if not use_flash and not use_flex_attn:
-                raise OLMoConfigurationError(
-                    "'window_size' is only supported with 'use_flash=True' or 'use_flex_attn=True'"
-                )
             if window_size <= 0:
                 raise OLMoConfigurationError(f"'window_size' must be positive (got {window_size})")
             self.window_size = (window_size, 0)
@@ -416,6 +412,7 @@ class Attention(AttentionBase):
         local_k_slice: Optional[slice] = None,
         scale: Optional[float] = None,
         block_mask: Optional[BlockMask] = None,
+        attn_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         att: torch.Tensor
         if self.cp_enabled:
@@ -541,7 +538,13 @@ class Attention(AttentionBase):
 
             # shape: (batch_size, n_heads, seq_len, head_dim)
             att = F.scaled_dot_product_attention(
-                q, k, v, dropout_p=self.dropout_p, is_causal=True, scale=scale
+                q,
+                k,
+                v,
+                dropout_p=self.dropout_p,
+                is_causal=attn_mask is None,
+                attn_mask=attn_mask,
+                scale=scale,
             )
 
             # shape: (batch_size, seq_len, n_heads, head_dim)
@@ -563,6 +566,7 @@ class Attention(AttentionBase):
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
         block_masks: Optional[List[Optional[BlockMask]]] = None,
+        attn_masks: Optional[List[Optional[torch.Tensor]]] = None,
     ) -> torch.Tensor:
         """
         Apply attention to the input.
@@ -628,6 +632,10 @@ class Attention(AttentionBase):
             block_mask = block_masks[self.layer_idx]
             assert block_mask is not None, "Block mask cannot be null for flex attention layer"
 
+        attn_mask = None
+        if self.layer_idx is not None and attn_masks is not None:
+            attn_mask = attn_masks[self.layer_idx]
+
         # shape: (batch_size, seq_len, n_heads, head_dim)
         att = self.sdpa(
             q,
@@ -641,6 +649,7 @@ class Attention(AttentionBase):
             max_doc_len_k=max_doc_len_k,
             local_k_slice=local_k_slice,
             block_mask=block_mask,
+            attn_mask=attn_mask,
         )
 
         # shape: (batch_size, seq_len, d_model)
