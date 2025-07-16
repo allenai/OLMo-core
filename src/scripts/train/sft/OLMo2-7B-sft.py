@@ -282,6 +282,9 @@ class SFTConfig(Config):
         else:
             raise OLMoConfigurationError(f"Must set a valid model_name: {model_name}")
 
+        print("overrides here:")
+        print(overrides)
+
         config = SFTConfig(
             run_name=run_name,
             launch=build_launch_config(
@@ -308,7 +311,7 @@ class SFTConfig(Config):
                 workspace=workspace,
             ),
             model=model,
-            dataset=dataset_config,
+            dataset=None,
             data_loader=NumpyDataLoaderConfig(
                 global_batch_size=bs_config.global_batch_size_tokens, seed=34521, num_workers=4
             ),
@@ -379,7 +382,11 @@ class SFTConfig(Config):
                     cancel_check_interval=10,
                 ),
             ),
-        )
+        ).merge(overrides)
+
+        config.dataset = dataset_config
+
+        print(config)
 
         return config
 
