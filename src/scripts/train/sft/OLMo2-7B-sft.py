@@ -382,7 +382,10 @@ class SFTConfig(Config):
                     cancel_check_interval=10,
                 ),
             ),
-        ).merge(overrides)
+        )
+        print(config)
+        quit()
+        #.merge(overrides)
 
         return config
 
