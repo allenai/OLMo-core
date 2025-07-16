@@ -156,8 +156,9 @@ def build_sft_dataset(
     dataset_path: Optional[str],
 ) -> NumpyDatasetConfig:
     if dataset_path is not None:
-        token_id_paths = [str(Path(dataset_path) / "token_ids_part_*.npy")]
-        label_mask_paths = [str(Path(dataset_path) / "labels_mask_*.npy")]
+        clean_path = dataset_path.rstrip('/')
+        token_id_paths = [f"{clean_path}/token_ids_part_*.npy"]
+        label_mask_paths = [f"{clean_path}/labels_mask_*.npy"]
         expand_glob = True
     else:
         # NOTE: dataset path can be configured relative to root_dir
