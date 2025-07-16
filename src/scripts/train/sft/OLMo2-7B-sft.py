@@ -301,7 +301,7 @@ class SFTConfig(Config):
                     f"--global_batch_size={global_batch_size}",
                     f"--workspace={workspace}",
                     f"--model_name={model_name}",
-                    f"--dataset_path={dataset_path}"
+                    f"--dataset_path={dataset_path}",
                     *overrides,
                 ],
                 cluster=cluster,
