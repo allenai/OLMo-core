@@ -160,8 +160,8 @@ def build_sft_dataset(
         dataset_path_object = Path(dataset_path)
         # token_id_paths = dataset_path_object.glob("token_ids_part_*.npy")
         # label_mask_paths = dataset_path_object.glob("labels_mask_*.npy")
-        token_id_paths = str(dataset_path_object / "token_ids_part_*.npy")
-        label_mask_paths = str(dataset_path_object / "labels_mask_*.npy")
+        token_id_paths = [str(dataset_path_object / "token_ids_part_*.npy")]
+        label_mask_paths = [str(dataset_path_object / "labels_mask_*.npy")]
         expand_glob = True
     else:
         # NOTE: dataset path can be configured relative to root_dir
