@@ -237,7 +237,7 @@ class AllToAllOp(torch.autograd.Function):
         ctx.group = group
         handle = dist.all_to_all_single(
             out,
-            x,
+            x.contiguous(),
             output_split_sizes=output_split_sizes,
             input_split_sizes=input_split_sizes,
             group=group,
@@ -255,7 +255,7 @@ class AllToAllOp(torch.autograd.Function):
             )
             dist.all_to_all_single(
                 out,
-                grad,
+                grad.contiguous(),
                 output_split_sizes=ctx.input_split_sizes,
                 input_split_sizes=ctx.output_split_sizes,
                 group=ctx.group,

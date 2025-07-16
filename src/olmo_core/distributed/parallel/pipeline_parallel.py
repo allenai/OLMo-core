@@ -40,10 +40,17 @@ class PipelineScheduleType(StrEnum):
     looped_bfs = "LoopedBFS"
     interleaved_zero_bubble = "InterleavedZeroBubble"
     zbv_zero_bubble = "ZBVZeroBubble"
+    custom_1F1B = "Custom1F1B"
+    custom_interleaved_1F1B = "CustomInterleaved1F1B"
 
     @property
     def is_single_stage(self) -> bool:
         try:
+            if self.startswith("Custom"):
+                if self == self.custom_1F1B:
+                    return True
+                elif self == self.custom_interleaved_1F1B:
+                    return False
             return issubclass(get_schedule_class(self), PipelineScheduleSingle)
         except ValueError as e:
             raise OLMoConfigurationError(f"Invalid pipeline schedule '{self}'") from e
@@ -159,7 +166,22 @@ class PipelineSchedule:
         self.loss_fn = loss_fn
 
         try:
-            schedule_class = get_schedule_class(schedule_name)
+            if schedule_name.startswith("Custom"):
+                if schedule_name == PipelineScheduleType.custom_1F1B:
+                    # Custom 1F1B schedule
+                    from olmo_core.train.train_module.transformer.pipeline_schedule import (
+                        CustomSchedule1F1B,
+                    )
+                    schedule_class = CustomSchedule1F1B
+                elif schedule_name == PipelineScheduleType.custom_interleaved_1F1B:
+                    # Custom interleaved 1F1B schedule
+                    from olmo_core.train.train_module.transformer.pipeline_schedule import (
+                        CustomScheduleInterleaved1F1B,
+                    )
+                    schedule_class = CustomScheduleInterleaved1F1B
+            else:
+                # pytorch native PP schedule
+                schedule_class = get_schedule_class(schedule_name)
         except ValueError as e:
             raise OLMoConfigurationError(f"Invalid pipeline schedule name '{schedule_name}'") from e
 
@@ -216,6 +238,9 @@ class PipelineSchedule:
             losses = []
         else:
             target = None
+
+        if not self.has_first_stage:
+            args = () # If there is no first stage, we need to provide an empty tuple for single_1F1B
 
         output = self.base_schedule.step(*args, target=target, losses=losses, **kwargs)
         return output, None if losses is None else torch.stack(losses)

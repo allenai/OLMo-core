@@ -1,6 +1,7 @@
 import logging
 from contextlib import ExitStack
 from dataclasses import dataclass
+import torch
 
 from olmo_core.distributed.parallel import (
     get_cp_mesh,
@@ -186,3 +187,42 @@ class ProfilerCallback(Callback):
         prof.export_chrome_trace(str(trace_path))
         final_path = self.trainer.persist_working_file(trace_path)
         log.info(f"Chrome trace saved to '{final_path}'")
+
+
+@dataclass
+class NvidiaProfilerCallback(Callback):
+    """
+    Enables the NVIDIA profiler for PyTorch training.
+    It only needs to be called at `pre_load_batch` and `post_train_batch`.
+    """
+    
+    start: int = 10
+    """
+    The step at which to start profiling.
+    """
+    end: int = 12
+    """
+    the step at which to stop profiling.
+    """
+    enabled: bool = True
+    """
+    Set to ``False`` to disable profiling.
+    """
+    profile_ranks: list[int] = None
+    """
+    The ranks to profile.
+    """
+    
+    def pre_load_batch(self):
+        if self.enabled and get_rank() in self.profile_ranks:
+            if self.step == self.start:
+                print(f'Starting NVIDIA profiler at rank={get_rank()} step={self.step}...')
+                torch.cuda.cudart().cudaProfilerStart()
+                torch.autograd.profiler.emit_nvtx(record_shapes=True).__enter__()
+
+    def post_train_batch(self):
+        if self.enabled and get_rank() in self.profile_ranks:
+            if self.step == self.end:
+                torch.cuda.cudart().cudaProfilerStop()
+                print(f'Stopping NVIDIA profiler at rank={get_rank()} step={self.step}...')
+                

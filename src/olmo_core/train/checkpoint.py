@@ -427,3 +427,143 @@ class Checkpointer:
         barrier()
 
         self._teardown_tmp_dir(dir, tmp_dir)
+        
+class UpcycleCheckpointer(Checkpointer):
+    """
+    Checkpointer that is used for MoE upcycling.
+    It overrides the save() and load() methods to skip saving and loading extra state other than the model.
+    
+    The save() method should be called by a standalone script that performs upcycling, not by the trainer.
+    The load() method should be called by the trainer (from a CheckpointerCallback).
+    """
+
+    def save_upcycled_model(self, dir: PathOrStr, model_state_dict):
+        """
+        Save model, optim, and other training state to a local or remote directory.
+        """
+        dir = normalize_path(dir)
+        with self._temporary_wd(dir) as wd:
+
+            # Save model and optim state.
+            train_module_dir = f"{dir}/upcycling" if is_url(dir) else wd / "upcycling"
+            save_state_dict(
+                train_module_dir,
+                model_state_dict,
+                process_group=self.process_group,
+                save_overwrite=self.save_overwrite,
+                thread_count=self.save_thread_count,
+                throttle_uploads=self.throttle_uploads,
+            )
+
+        self._save_metadata(dir, CheckpointMetadata())
+
+    def load_upcycled_model(
+        self,
+        dir: PathOrStr,
+        train_module: TrainModule,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Load model, optim, and other training state from a local or remote checkpoint directory
+        created via :meth:`save()` or :meth:`save_async()`.
+        """
+        dir = normalize_path(dir)
+
+        trainer_state: Optional[Dict[str, Any]] = None
+
+        # Load train module state.
+        model_module_dir = f"{dir}/upcycling"
+        metadata: Optional[Metadata] = None
+        if get_rank(self.process_group) == 0:
+            try:
+                metadata = get_checkpoint_metadata(model_module_dir)
+            except FileNotFoundError:
+                # Try base directory, which could be the case if user is trying to load model weights
+                # (possibly with optimizer state), and not an actual train checkpoint.
+                if trainer_state is None:
+                    metadata = get_checkpoint_metadata(dir)
+                    model_module_dir = dir
+                else:
+                    raise
+
+        model_module_dir = scatter_object(model_module_dir)
+        if metadata is None:
+            metadata = get_checkpoint_metadata(model_module_dir)
+
+        model_module=train_module.model
+
+        # model_state_dict = train_module.state_dict_to_load(metadata, optim=False)
+        model_state_dict = model_module.state_dict()
+        load_state_dict(
+            model_module_dir,
+            model_state_dict,
+            process_group=self.process_group,
+            pre_download=is_url(dir) and self.pre_download,
+            work_dir=self.work_dir,
+            thread_count=self.load_thread_count,
+        )
+        model_module.load_state_dict(model_state_dict) # don't need this line?
+
+        return trainer_state
+
+
+class CompactablityCheckpointer(Checkpointer):
+    
+    def load(
+        self,
+        dir: PathOrStr,
+        train_module: TrainModule,
+        *,
+        load_trainer_state: Optional[bool] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Load model, optim, and other training state from a local or remote checkpoint directory
+        created via :meth:`save()` or :meth:`save_async()`.
+        """
+        dir = normalize_path(dir)
+
+        # Maybe load trainer state.
+        trainer_state: Optional[Dict[str, Any]] = None
+        if load_trainer_state is not False:
+            # Try loading the given rank's state first, then fall back to rank 0 train state if it
+            # doesn't exist, which can happen when we're restoring a checkpoint with a different world size.
+            for path in (f"{dir}/train/rank{get_rank()}.pt", f"{dir}/train/rank0.pt"):
+                try:
+                    trainer_state = torch.load(cached_path(path, quiet=True), weights_only=False)
+                    break
+                except FileNotFoundError:
+                    pass
+
+            if load_trainer_state is True and trainer_state is None:
+                raise FileNotFoundError(f"Missing trainer state in checkpoint dir '{dir}'")
+
+        # Load train module state.
+        train_module_dir = f"{dir}/model"
+        metadata: Optional[Metadata] = None
+        if get_rank(self.process_group) == 0:
+            try:
+                metadata = get_checkpoint_metadata(train_module_dir)
+            except FileNotFoundError:
+                # Try base directory, which could be the case if user is trying to load model weights
+                # (possibly with optimizer state), and not an actual train checkpoint.
+                if trainer_state is None:
+                    metadata = get_checkpoint_metadata(dir)
+                    train_module_dir = dir
+                else:
+                    raise
+
+        train_module_dir = scatter_object(train_module_dir)
+        if metadata is None:
+            metadata = get_checkpoint_metadata(train_module_dir)
+
+        state_dict = train_module.state_dict_to_load(metadata)
+        load_state_dict(
+            train_module_dir,
+            state_dict,
+            process_group=self.process_group,
+            pre_download=is_url(dir) and self.pre_download,
+            work_dir=self.work_dir,
+            thread_count=self.load_thread_count,
+        )
+        train_module.load_state_dict(state_dict)
+
+        return trainer_state

@@ -8,6 +8,7 @@ from olmo_core.distributed.utils import get_world_size
 
 from ..common import ReduceType
 from ..train_module import TransformerTrainModule
+from ..train_module import TransformerPipelineTrainModule
 from .callback import Callback
 
 
@@ -51,8 +52,8 @@ class SpeedMonitorCallback(Callback):
             return self.num_flops_per_token
         elif isinstance(self.trainer.train_module, TransformerTrainModule):
             return self.trainer.train_module.num_flops_per_token(seq_len)
-        else:
-            return None
+        else: # pipeline module
+            return self.trainer.train_module.num_flops_per_token(seq_len)
 
     def pre_train(self):
         self._first_step = True
@@ -65,25 +66,28 @@ class SpeedMonitorCallback(Callback):
         if (
             self.device_peak_flops is None
             and self.trainer.device.type == "cuda"
-            and isinstance(self.trainer.train_module, TransformerTrainModule)
+            and (
+                isinstance(self.trainer.train_module, TransformerTrainModule)
+                or isinstance(self.trainer.train_module, TransformerPipelineTrainModule)
+            )
         ):
             device_name = torch.cuda.get_device_name(self.trainer.device)
-            if self.trainer.train_module.autocast_precision == torch.bfloat16:
-                if "A100" in device_name:
-                    self.device_peak_flops = int(312e12)
-                elif "H100" in device_name:
-                    # data from https://www.nvidia.com/en-us/data-center/h100/
-                    # NOTE: Specifications are one-half lower without sparsity.
-                    if "NVL" in device_name:
-                        self.device_peak_flops = int(1979e12)
-                    elif "PCIe" in device_name:
-                        self.device_peak_flops = int(756e12)
-                    else:  # for SXM and other variants
-                        self.device_peak_flops = int(989e12)
-                elif "B200" in device_name:
-                    self.device_peak_flops = int(2200e12)
-                else:  # for other GPU types, assume A100
-                    self.device_peak_flops = int(312e12)
+            # if self.trainer.train_module.autocast_precision == torch.bfloat16:
+            if "A100" in device_name:
+                self.device_peak_flops = int(312e12)
+            elif "H100" in device_name:
+                # data from https://www.nvidia.com/en-us/data-center/h100/
+                # NOTE: Specifications are one-half lower without sparsity.
+                if "NVL" in device_name:
+                    self.device_peak_flops = int(1979e12)
+                elif "PCIe" in device_name:
+                    self.device_peak_flops = int(756e12)
+                else:  # for SXM and other variants
+                    self.device_peak_flops = int(989e12)
+            elif "B200" in device_name:
+                self.device_peak_flops = int(2200e12)
+            else:  # for other GPU types, assume A100
+                self.device_peak_flops = int(312e12)
 
     def pre_load_batch(self):
         self._batch_load_start = time.perf_counter()
@@ -156,5 +160,10 @@ class SpeedMonitorCallback(Callback):
             # https://arxiv.org/abs/2204.02311
             mfu = 100 * num_flops_per_token * tps / self.device_peak_flops
             mfu_avg = 100 * num_flops_per_token * tps_avg / self.device_peak_flops
+            tflops_per_gpu = num_flops_per_token * tps / 1e12
             self.trainer.record_metric("throughput/device/MFU", mfu)
             self.trainer.record_metric("throughput/device/MFU (actual avg)", mfu_avg)
+            self.trainer.record_metric("throughput/device/TFLOPs_per_GPU", tflops_per_gpu)
+            self.trainer.record_metric(
+                "throughput/total flops", self.trainer.global_train_tokens_seen * num_flops_per_token
+            )

@@ -51,8 +51,10 @@ from .block import (
 from .config import (
     TransformerActivationCheckpointingMode,
     TransformerBlockConfig,
+    TransformerConfig,
     TransformerDataParallelWrappingStrategy,
 )
+from .flops import num_floating_point_operations_for_logits
 from .init import InitMethod
 
 if TYPE_CHECKING:
@@ -149,6 +151,8 @@ class Transformer(nn.Module):
         # later, like for pipeline parallelism.
         self.num_params
         self.num_non_embedding_params
+
+        self.config: Optional[TransformerConfig] = None
 
     def _validate_block(self, block: TransformerBlockBase) -> TransformerBlockBase:
         return block
@@ -649,21 +653,23 @@ class Transformer(nn.Module):
                 log.info(f"Wrapped '{name}' for activation checkpointing")
                 wrapped_modules.add(name)
         else:
-            for block_idx, block in enumerate(self.blocks.values()):
+            for local_block_idx, (block_idx, block) in enumerate(self.blocks.items()):
                 if mode == TransformerActivationCheckpointingMode.selected_blocks:
                     assert block_interval is not None
-                    if block_idx % block_interval == 0:
+                    if local_block_idx % block_interval == 0:
                         if isinstance(block, MoETransformerBlock):
                             raise OLMoConfigurationError(
                                 "Wrapping MoE blocks for activation checkpointing is not supported."
                             )
                         block = ptd_checkpoint_wrapper(block, preserve_rng_state=preserve_rng_state)
                 elif mode == TransformerActivationCheckpointingMode.full:
-                    if isinstance(block, MoETransformerBlock):
-                        raise OLMoConfigurationError(
-                            "Wrapping MoE blocks for activation checkpointing is not supported."
-                        )
+                    # if isinstance(block, MoETransformerBlock):
+                    #     raise OLMoConfigurationError(
+                    #         "Wrapping MoE blocks for activation checkpointing is not supported."
+                    #     )
                     block = ptd_checkpoint_wrapper(block, preserve_rng_state=preserve_rng_state)
+                    # BUG: when using full AC + fsdp, should not wrap the whole block with checkpoint_wrapper as it will cause error inside _assert_all_fsdp_modules
+                    # should use apply_activation_checkpointing ?
                 elif mode == TransformerActivationCheckpointingMode.selected_ops:
                     block = ptd_checkpoint_wrapper(
                         block,
@@ -671,7 +677,7 @@ class Transformer(nn.Module):
                         preserve_rng_state=preserve_rng_state,
                     )
 
-                self.blocks.register_module(str(block_idx), block)
+                self.blocks.register_module(block_idx, block)
 
     def apply_compile(self):
         """
@@ -723,7 +729,11 @@ class Transformer(nn.Module):
         # which can be expensive and non-overlapped
         reshard_after_forward = False if pp_enabled else True
 
-        for block in self.blocks.values():
+        for block_idx, block in enumerate(self.blocks.values()):
+            # if block_idx % 2 == 0:
+            #     reshard_after_forward = True
+            # else:
+            #     reshard_after_forward = False
             block = cast(TransformerBlockBase, block)
             block.apply_fsdp(
                 dp_mesh=dp_mesh,
@@ -787,7 +797,9 @@ class Transformer(nn.Module):
                 torch._dynamo.config.optimize_ddp = "python_reducer_without_compiled_forward"  # type: ignore
             else:
                 torch._dynamo.config.optimize_ddp = "ddp_optimizer"  # type: ignore
-
+                
+        self.to(torch.bfloat16) # HACK, need fix
+        
         replicate(self, device_mesh=dp_mesh, bucket_cap_mb=100)
         # Some inputs need to be on CPU initially, but DDP will move everything to model's
         # device if we don't hide it.
@@ -809,25 +821,19 @@ class Transformer(nn.Module):
         return self.num_params - self.embeddings.weight.numel()
 
     def num_flops_per_token(self, seq_len: int) -> int:
-        """
-        Get the approximate number of flops per token.
-        """
-        n, h, q, t = (
-            self.n_layers,
-            self.n_attn_heads,
-            self.d_model // self.n_attn_heads,
-            seq_len,
-        )
+        flops = []
 
-        # Reasoning behind the factor of 12 for the self-attention part of the formula:
-        # 1. each self-attention has 2 matmul in the forward and 4 in the backward (6)
-        # 2. the flash attention does 1 more matmul recomputation in the backward
-        #    but recomputation should not be counted in calculating MFU           (+0)
-        # 3. each matmul performs 1 multiplication and 1 addition                 (*2)
-        # 4. we follow the convention and do not account for sparsity in causal attention
-        flop_per_token = 6 * self.num_non_embedding_params + 12 * n * h * q * t
+        # calculate flops for each block (each block might have different config)
+        for block_idx in range(self.n_layers):
+            block_config = self.config.block
+            if self.config.block_overrides is not None and block_idx in self.config.block_overrides:
+                block_config = self.config.block_overrides[block_idx]
 
-        return flop_per_token
+            flops.append(block_config.flops_per_token(self.d_model, seq_len))
+
+        flops.append(num_floating_point_operations_for_logits(self.config, seq_len) / seq_len)
+
+        return sum(flops)
 
     def post_batch(self, dry_run: bool = False):
         """
@@ -944,13 +950,6 @@ class MoETransformer(Transformer):
     def is_moe(self) -> bool:
         return True
 
-    # def _validate_block(self, block: TransformerBlockBase) -> TransformerBlockBase:
-    #     if not isinstance(block, MoETransformerBlock):
-    #         raise OLMoConfigurationError(
-    #             f"'{self.__class__.__name__}' requires a '{MoETransformerBlock.__name__}' block"
-    #         )
-    #     return block
-
     def compute_auxiliary_metrics(
         self, reset: bool = True
     ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
@@ -963,6 +962,8 @@ class MoETransformer(Transformer):
 
         out: Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]] = {}
         for block_idx, block in self.blocks.items():
+            if not block.is_moe:
+                continue
             block = cast(MoETransformerBlock, block)
             block_metrics = block.compute_metrics(reset=reset)
             for metric_name, (metric_val, reduce_type) in block_metrics.items():
@@ -986,10 +987,14 @@ class MoETransformer(Transformer):
 
     def reset_auxiliary_metrics(self):
         for block in self.blocks.values():
+            if not block.is_moe:
+                continue
             cast(MoETransformerBlock, block).reset_metrics()
 
     def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
         for block in self.blocks.values():
+            if not block.is_moe:
+                continue
             block = cast(MoETransformerBlock, block)
             block.apply_ep(ep_mesh, **kwargs)
 
@@ -1001,22 +1006,36 @@ class MoETransformer(Transformer):
         pp_enabled: bool = False,
     ):
         for block in self.blocks.values():
-            cast(MoETransformerBlock, block).feed_forward_moe.prepare_experts_for_fsdp(
+            if not block.is_moe:
+                continue
+            block = cast(MoETransformerBlock, block)
+            # if block.block_idx < 8:
+            #     reshard_after_forward = True # for the first x blocks, reshard to reduce memory pressure
+            # else:
+            #     reshard_after_forward = False
+            reshard_after_forward = True
+            if pp_enabled or block.ep_enabled or block.tp_enabled:
+                reshard_after_forward = False
+            block.feed_forward_moe.prepare_experts_for_fsdp(
                 world_mesh=world_mesh,
                 mp_policy=MixedPrecisionPolicy(
                     param_dtype=param_dtype or self.dtype, reduce_dtype=reduce_dtype
                 ),
-                reshard_after_forward=not pp_enabled,
+                reshard_after_forward=reshard_after_forward,
             )
 
     def prepare_experts_for_ddp(self, world_mesh: DeviceMesh):
         for block in self.blocks.values():
+            if not block.is_moe:
+                continue
             cast(MoETransformerBlock, block).feed_forward_moe.prepare_experts_for_ddp(
                 world_mesh=world_mesh,
             )
 
     def post_batch(self, dry_run: bool = False):
         for block in self.blocks.values():
+            if not block.is_moe:
+                continue
             block = cast(MoETransformerBlock, block)
             block.feed_forward_moe.post_batch(dry_run=dry_run)
 

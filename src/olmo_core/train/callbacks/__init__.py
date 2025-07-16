@@ -5,7 +5,7 @@ Trainer :class:`Callback` implementations.
 from .batch_size_scheduler import BatchSizeSchedulerCallback
 from .beaker import BeakerCallback
 from .callback import Callback, CallbackConfig
-from .checkpointer import CheckpointerCallback, CheckpointRemovalStrategy
+from .checkpointer import CheckpointerCallback, CheckpointRemovalStrategy, UpcycleCheckpointerCallback
 from .comet import CometCallback, CometNotificationSetting
 from .config_saver import ConfigSaverCallback
 from .console_logger import ConsoleLoggerCallback
@@ -16,7 +16,7 @@ from .evaluator_callback import (
 )
 from .garbage_collector import GarbageCollectorCallback
 from .gpu_memory_monitor import GPUMemoryMonitorCallback
-from .profiler import ProfilerCallback
+from .profiler import ProfilerCallback, NvidiaProfilerCallback
 from .sequence_length_scheduler import SequenceLengthSchedulerCallback
 from .slack_notifier import SlackNotificationSetting, SlackNotifierCallback
 from .speed_monitor import SpeedMonitorCallback
@@ -26,6 +26,7 @@ __all__ = [
     "Callback",
     "CallbackConfig",
     "CheckpointerCallback",
+    "UpcycleCheckpointerCallback"
     "CheckpointRemovalStrategy",
     "CometCallback",
     "CometNotificationSetting",
@@ -37,6 +38,7 @@ __all__ = [
     "GarbageCollectorCallback",
     "GPUMemoryMonitorCallback",
     "ProfilerCallback",
+    "NvidiaProfilerCallback"
     "SlackNotifierCallback",
     "SlackNotificationSetting",
     "SequenceLengthSchedulerCallback",

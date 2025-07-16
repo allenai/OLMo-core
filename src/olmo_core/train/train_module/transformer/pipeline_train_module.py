@@ -152,7 +152,7 @@ class TransformerPipelineTrainModule(TrainModule):
         self.pp_final_stage_rank = self._pp_config.final_stage_rank()
 
         # Split model into pipeline stages.
-        stages, model_parts = pp_config.split_model(model, pp_mesh=self.pp_mesh, device=self.device)
+        stages, model_parts = pp_config.split_model(model, pp_mesh=self.pp_mesh, device=self.device, use_ddp=(self.dp_world_size > 1 and dp_config.name == "ddp"))
         self._pp_stages = stages
         log.info(
             f"Applied pipeline parallelism to the model with {get_device_mesh_info(self.pp_mesh)}"
@@ -197,7 +197,7 @@ class TransformerPipelineTrainModule(TrainModule):
         # Build optimizer(s).
         log.info("Building optimizer(s)...")
         self.optimizers: List[Optimizer] = [
-            optim.build(model, strict=False) for model in self.model_parts
+            optim.build(model, self, strict=False) for model in self.model_parts
         ]
 
     @property
@@ -583,7 +583,7 @@ class TransformerPipelineTrainModule(TrainModule):
         return ce_batch_loss, z_batch_loss
 
     def num_flops_per_token(self, seq_len: int) -> int:
-        return self.model_parts[0].num_flops_per_token(seq_len)
+        return self.model_parts[0].num_flops_per_token(seq_len) # each model part will use the config to calculate flops for the whole model before PP split, so any model part will do
 
     @contextlib.contextmanager
     def _model_forward_context(self) -> Generator[None, None, None]:

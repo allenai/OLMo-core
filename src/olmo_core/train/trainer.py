@@ -658,6 +658,8 @@ class Trainer:
                 self._fit_epoch()
         except BaseException as exc:
             log.error(f"Training failed due to:\n{exc}")
+            orig = exc.__cause__
+            log.error(f"Cause:\n{type(orig)} = {orig}")
             for callback in self._iter_callbacks():
                 callback.on_error(exc)
             raise

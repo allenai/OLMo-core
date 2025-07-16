@@ -65,6 +65,7 @@ class ExperimentConfig(Config):
     train_module: TransformerTrainModuleConfig
     trainer: TrainerConfig
     init_seed: int = 12536
+    backend: Optional[str] = "cpu:gloo,cuda:nccl"
 
 
 class SubCmd(StrEnum):
@@ -74,12 +75,13 @@ class SubCmd(StrEnum):
     prep = "prep"
     launch_prep = "launch_prep"
     dry_run = "dry_run"
+    utils = "utils"
 
-    def prepare_environment(self):
+    def prepare_environment(self, config: ExperimentConfig):
         if self in (SubCmd.launch, SubCmd.dry_run, SubCmd.prep, SubCmd.launch_prep):
             prepare_cli_environment()
         elif self == SubCmd.train:
-            prepare_training_environment()
+            prepare_training_environment(backend=config.backend)
         elif self == SubCmd.train_single:
             prepare_training_environment(backend=None)
         else:
@@ -101,6 +103,9 @@ class SubCmd(StrEnum):
         elif self == SubCmd.train:
             try:
                 train(config)
+            except Exception as e:
+                log.error(f"Training failed with error: {e}")
+                raise
             finally:
                 teardown_training_environment()
         elif self == SubCmd.train_single:
@@ -358,7 +363,6 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/pluto-cirrascale --launch.nu
     script, cmd, run_name, cluster, *overrides = sys.argv
 
     cmd = SubCmd(cmd)
-    cmd.prepare_environment()
 
     config = build_config(
         script,
@@ -380,4 +384,5 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/pluto-cirrascale --launch.nu
         beaker_workspace=beaker_workspace,
     )
 
+    cmd.prepare_environment(config)
     cmd.run(config)

@@ -11,6 +11,7 @@ from .router import (
     MoERouterConfig,
     MoERouterGatingFunction,
     MoERouterType,
+    MoEOrthogonalRouter,
 )
 
 __all__ = [
@@ -26,4 +27,5 @@ __all__ = [
     "MoERouterType",
     "MoERouterGatingFunction",
     "MoELoadBalancingLossGranularity",
+    "MoEOrthogonalRouter",
 ]

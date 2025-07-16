@@ -8,6 +8,7 @@ import torch.nn.functional as F
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor.parallel import parallelize_module
 from torch.distributed.tensor.placement_types import Placement, Replicate
+import nvtx
 
 from ..config import Config, DType, StrEnum
 from ..doc_utils import beta_feature
@@ -32,6 +33,8 @@ class FeedForwardType(StrEnum):
     """
     ➡️ :class:`NormalizedFeedForward`
     """
+    
+    dense_moe = "dense_moe"
 
 
 @dataclass
@@ -96,8 +99,56 @@ class FeedForwardConfig(Config):
             raise OLMoConfigurationError(
                 f"invalid options for '{self.name}' {self.__class__.__name__}, {e}"
             ) from e
+            
+@dataclass
+class DenseMoEFeedForwardConfig(FeedForwardConfig):
+    
+    name: FeedForwardType = FeedForwardType.dense_moe
+    
+    def num_params(self, d_model: int) -> int:
+        """
+        The number of params that the module will have once built.
 
+        :param d_model: The model dimensionality.
+        """
+        bias = self.bias if self.bias is not None else self.name != FeedForwardType.normalized
 
+        params = 0
+
+        params += 4 * d_model * self.hidden_size # w1, w2, w3, w_r
+        if bias:
+            params += 2 * self.hidden_size + d_model
+
+        return params
+
+    def build(
+        self, d_model: int, *, dtype: Optional[torch.dtype] = None, init_device: str = "cpu"
+    ) -> "FeedForward":
+        """
+        Build the corresponding feed-forward module.
+
+        :param d_model: The model dimensionality.
+        :param init_device: The device initialize the parameters on, e.g. "cpu", "meta".
+        """
+        kwargs = self.as_dict(exclude_none=True)
+        kwargs.pop("name")
+        kwargs.update(d_model=d_model, init_device=init_device)
+        if self.dtype is not None:
+            kwargs["dtype"] = self.dtype.as_pt()
+        elif dtype is not None:
+            kwargs["dtype"] = dtype
+
+        try:
+            if self.name == FeedForwardType.dense_moe:
+                return DenseMoEFeedForward(**kwargs)
+            else:
+                raise NotImplementedError(self.name)
+        except TypeError as e:
+            raise OLMoConfigurationError(
+                f"invalid options for '{self.name}' {self.__class__.__name__}, {e}"
+            ) from e
+    
+    
 class FeedForward(nn.Module):
     """
     Basic feed-forward module with SwiGLU activation.
@@ -119,6 +170,7 @@ class FeedForward(nn.Module):
         self.w2 = nn.Linear(hidden_size, d_model, bias=bias, dtype=dtype, device=init_device)
         self.w3 = nn.Linear(d_model, hidden_size, bias=bias, dtype=dtype, device=init_device)
 
+    @nvtx.annotate("FeedForward.forward", color='blue')
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Run the feed-forward on the input ``x``.
@@ -160,6 +212,74 @@ class FeedForward(nn.Module):
             },
         )
 
+
+class DenseMoEFeedForward(FeedForward):
+    """
+    Basic feed-forward module with SwiGLU activation.
+    """
+
+    def __init__(
+        self,
+        *,
+        d_model: int,
+        hidden_size: int,
+        bias: bool = True,
+        dtype: torch.dtype = torch.float32,
+        init_device: str = "cpu",
+    ):
+        super().__init__(
+            d_model=d_model,
+            hidden_size=hidden_size,
+            bias=bias,
+            dtype=dtype,
+            init_device=init_device,
+        )
+        self.w_r = nn.Linear(d_model, hidden_size, bias=bias, dtype=dtype, device=init_device)
+
+    @nvtx.annotate("FeedForward.forward", color='blue')
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Run the feed-forward on the input ``x``.
+
+        :param x: The input of shape ``(*, d_model)``.
+        """
+        router_logits = self.w_r(x) # [B, seqlen, inter_dim]
+        r = torch.softmax(router_logits, dim=-1) * self.hidden_size
+        return self.w2(F.silu(self.w1(x)) * self.w3(x) * r)
+
+    def apply_tp(
+        self,
+        tp_mesh: DeviceMesh,
+        input_layout: Optional[Placement] = None,
+        output_layout: Optional[Placement] = None,
+        use_local_output: bool = True,
+        float8_enabled: bool = False,
+    ):
+        rowwise_parallel, colwise_parallel, prepare_module_input = get_tp_wrappers(
+            float8_enabled=float8_enabled
+        )
+
+        parallelize_module(
+            module=self,
+            device_mesh=tp_mesh,
+            parallelize_plan=prepare_module_input(
+                input_layouts=None if input_layout is None else (input_layout,),
+                desired_input_layouts=(Replicate(),),
+            ),
+        )
+
+        parallelize_module(
+            module=self,
+            device_mesh=tp_mesh,
+            parallelize_plan={
+                "w1": colwise_parallel(),
+                "w2": rowwise_parallel(
+                    output_layouts=output_layout, use_local_output=use_local_output
+                ),
+                "w3": colwise_parallel(),
+                "w_r": colwise_parallel(),
+            },
+        )
 
 @beta_feature
 class NormalizedFeedForward(FeedForward):

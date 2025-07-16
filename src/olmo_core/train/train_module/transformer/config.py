@@ -27,6 +27,7 @@ from olmo_core.nn.transformer import (
 )
 from olmo_core.optim import OptimConfig
 from olmo_core.optim.scheduler import Scheduler
+from .pipeline_schedule import CustomPipelineStage
 
 if TYPE_CHECKING:
     from .pipeline_train_module import TransformerPipelineTrainModule
@@ -40,6 +41,12 @@ log = logging.getLogger(__name__)
 class TransformerPipelineParallelConfig(PipelineParallelConfig):
     """
     Transformer-specific pipeline parallel config.
+    """
+
+    use_custom_stage_implementation: bool = False
+    """ 
+    False -> use pytorch's PipelineStage implementation.
+    True -> use a custom implementation that re-uses receive buffers across micro-batches.
     """
 
     split_points: Optional[List[int]] = None
@@ -85,7 +92,7 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
         return splits
 
     def split_model(
-        self, model: Transformer, *, pp_mesh: DeviceMesh, device: torch.device
+        self, model: Transformer, *, pp_mesh: DeviceMesh, device: torch.device, use_ddp: bool = False
     ) -> Tuple[List[PipelineStage], List[Transformer]]:
         split_points = self.get_split_points(model.n_layers)
         pp_rank = pp_mesh.get_local_rank()
@@ -114,13 +121,26 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
             if not is_last:
                 model_chunk.lm_head = None  # type: ignore
 
-            stage = PipelineStage(
-                model_chunk,
-                stage_idx,
-                num_stages,
-                device,
-                group=pp_mesh.get_group("pp"),
-            )
+            if self.use_custom_stage_implementation:
+
+                # Use custom stage implementation that re-uses receive buffers across micro-batches
+                stage = CustomPipelineStage(
+                    model_chunk,
+                    stage_idx,
+                    num_stages,
+                    device,
+                    is_rddp=use_ddp,
+                    buffer_pool_size=1, # 2 for interleaved?, 1 for 1f1b?
+                    group=pp_mesh.get_group("pp"),
+                )
+            else:
+                stage = PipelineStage(
+                    model_chunk,
+                    stage_idx,
+                    num_stages,
+                    device,
+                    group=pp_mesh.get_group("pp"),
+                )
             return stage, model_chunk
 
         num_stages = len(split_points) + 1
@@ -162,6 +182,8 @@ class TransformerDataParallelConfig(DataParallelConfig):
     """
 
     prefetch_factor: int = 0
+    
+    only_allreduce_last_microbatch: bool = True
 
 
 @dataclass

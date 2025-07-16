@@ -10,12 +10,13 @@ from olmo_core.utils import ensure_multiple_of
 
 from ..attention import AttentionConfig, AttentionType
 from ..buffer_cache import BufferCache
-from ..feed_forward import FeedForwardConfig, FeedForwardType
+from ..feed_forward import FeedForwardConfig, FeedForwardType, DenseMoEFeedForwardConfig
 from ..layer_norm import LayerNormConfig, LayerNormType
 from ..lm_head import LMHeadConfig, LMHeadType
 from ..moe import MoEConfig, MoERouterConfig, MoEType
 from ..rope import RoPEConfig, RoPEScalingConfig, RoPEType
 from .init import InitMethod
+from .flops import num_floating_point_operations_for_single_layer, num_floating_point_operations_for_logits
 
 if TYPE_CHECKING:
     from .block import TransformerBlockBase
@@ -135,9 +136,13 @@ class TransformerBlockConfig(Config):
     """
     The attention config.
     """
-    layer_norm: Optional[LayerNormConfig] = None
+    attention_norm: Optional[LayerNormConfig] = None
     """
-    The layer norm config.
+    The attention layer norm config.
+    """
+    feed_forward_norm: Optional[LayerNormConfig] = None
+    """
+    The feed forward layer norm config.
     """
     feed_forward: Optional[FeedForwardConfig] = None
     """
@@ -216,18 +221,18 @@ class TransformerBlockConfig(Config):
 
         # Block attention params.
         block_params += self.attention.num_params(d_model)
-        if self.layer_norm is not None:
-            block_params += self.layer_norm.num_params(d_model)
+        if self.attention_norm is not None:
+            block_params += self.attention_norm.num_params(d_model)
 
         # Block feed forward (dense and/or sparse).
         if self.feed_forward is not None:
             block_params += self.feed_forward.num_params(d_model)
-            if self.layer_norm is not None:
-                block_params += self.layer_norm.num_params(d_model)
+            if self.feed_forward_norm is not None:
+                block_params += self.feed_forward_norm.num_params(d_model)
         if self.feed_forward_moe is not None:
             block_params += self.feed_forward_moe.num_params(d_model)
-            if self.layer_norm is not None:
-                block_params += self.layer_norm.num_params(d_model)
+            if self.feed_forward_norm is not None:
+                block_params += self.feed_forward_norm.num_params(d_model)
 
         return block_params
 
@@ -240,6 +245,75 @@ class TransformerBlockConfig(Config):
             d_model
         ) - self.feed_forward_moe.num_active_params(d_model)
         return num_params - num_inactive_params
+    
+    def flops_per_seq(self, d_model: int, seqlen: int) -> int:
+        import argparse
+        args = argparse.Namespace()
+        
+        # MTP parameters (not supported)
+        args.mtp_num_layers = None # set to None for non-MTP models
+        from olmo_core.nn.attention import MultiheadLatentAttentionConfig, AttentionConfig
+        
+        # MLA parameters 
+        if isinstance(self.attention, MultiheadLatentAttentionConfig):
+            args.multi_latent_attention = True
+            
+            raise NotImplementedError("MLA flops not supported")
+        else:
+            args.multi_latent_attention = False
+            args.q_lora_rank = None # set to None for non-MLA models
+            args.kv_lora_rank = None
+            args.qk_pos_emb_head_dim = None
+            args.qk_head_dim = None
+            args.v_head_dim = None
+        
+        # regular mlp
+        if self.feed_forward is not None:
+           args.ffn_hidden_size = self.feed_forward.hidden_size
+           if isinstance(self.feed_forward, DenseMoEFeedForwardConfig):
+               args.dense_moe_mlp = True
+           else:
+                args.dense_moe_mlp = False
+        else:
+            args.ffn_hidden_size = None
+            args.dense_moe_mlp = False
+       
+        # MoE parameters
+        if self.feed_forward_moe is not None:
+            # routed experts
+            args.moe_ffn_hidden_size = self.feed_forward_moe.hidden_size
+            args.moe_router_topk = self.feed_forward_moe.router.top_k
+            args.num_experts = self.feed_forward_moe.num_experts
+            # shared MLP
+            if self.feed_forward_moe.shared_mlp is not None:
+                args.moe_shared_expert_intermediate_size = self.feed_forward_moe.shared_mlp.hidden_size
+                args.shared_expert_count = 1
+            else:
+                args.moe_shared_expert_intermediate_size = None
+                args.shared_expert_count = 0
+                
+        else:
+            args.moe_ffn_hidden_size = None
+            args.moe_router_topk = None
+            args.num_experts = None
+            args.moe_shared_expert_intermediate_size = None
+            args.shared_expert_count = 0
+            
+
+        args.swiglu = True
+        
+        args.seq_length = seqlen
+        args.d_model = d_model
+        args.num_attention_heads = self.attention.n_heads
+        args.num_query_groups = self.attention.n_kv_heads if self.attention.n_kv_heads is not None else args.num_attention_heads # default to n_heads if n_kv_heads is not set
+        
+
+        per_seq_flops = num_floating_point_operations_for_single_layer(args, 1) # flops for a batch size of 1
+        
+        return per_seq_flops
+        
+    def flops_per_token(self, d_model, seq_len: int) -> int:
+        return self.flops_per_seq(d_model, seq_len) // seq_len
 
 
 @dataclass
@@ -345,7 +419,7 @@ class TransformerConfig(Config):
             f"- {model.num_non_embedding_params:,d} non-embedding params\n"
             f"- {model.num_trainable_params:,d} trainable params"
         )
-
+        model.config = self
         return model
 
     @property
@@ -924,7 +998,8 @@ class TransformerConfig(Config):
             ),
             feed_forward=feed_forward,
             feed_forward_moe=feed_forward_moe,
-            layer_norm=layer_norm,
+            feed_forward_norm=layer_norm,
+            attention_norm=layer_norm,
         )
 
         return cls(
