@@ -27,6 +27,7 @@ from olmo_core.internal.common import (
     get_work_dir,
 )
 from olmo_core.launch.beaker import BeakerLaunchConfig
+from olmo_core.io import list_directory
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import LinearWithWarmup, SkipStepAdamWConfig
@@ -157,9 +158,17 @@ def build_sft_dataset(
 ) -> NumpyDatasetConfig:
     if dataset_path is not None:
         clean_path = dataset_path.rstrip('/')
-        token_id_paths = [f"{clean_path}/token_ids_part_*.npy"]
-        label_mask_paths = [f"{clean_path}/labels_mask_*.npy"]
-        expand_glob = True
+        if dataset_path.startswith("gs://"):
+            contents = list_directory(dataset_path)
+            print("expanded directory!")
+            print(contents)
+            expand_glob = False
+            quit()
+        else:
+            print("did not expand directory!")
+            token_id_paths = [f"{clean_path}/token_ids_part_*.npy"]
+            label_mask_paths = [f"{clean_path}/labels_mask_*.npy"]
+            expand_glob = True
     else:
         # NOTE: dataset path can be configured relative to root_dir
         # root_dir is /weka/oe-training-default/ai2-llm or gs://ai2-llm depending on the cluster
