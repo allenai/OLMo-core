@@ -1,5 +1,5 @@
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, Optional, cast
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
 
 import torch
 import torch.distributed as dist
@@ -22,17 +22,21 @@ if TYPE_CHECKING:
 class GenerationConfig(Config):
     """Configuration for text generation."""
 
+    pad_token_id: int
+    """Padding token ID."""
+
+    eos_token_id: int
+    """End of sequence token ID."""
+
     max_length: int = 8192
     """Maximum length of generated sequences."""
 
-    pad_token_id: Optional[int] = None
-    """Padding token ID."""
-
-    eos_token_id: Optional[int] = None
-    """End of sequence token ID."""
-
     temperature: float = 0.0
     """Temperature for sampling. If 0, this is equivalent to greedy selection."""
+
+    stop_sequences: Optional[List[List[int]]] = None
+    """Stop sequences. If provided, generation will stop when any of these sequences of tokens
+    are generated (in addition to the EOS token)."""
 
 
 @beta_feature
@@ -43,7 +47,7 @@ class TransformerGenerationModuleConfig(Config):
     """
 
     # Generation settings.
-    generation_config: GenerationConfig = field(default_factory=lambda: GenerationConfig())
+    generation_config: GenerationConfig
 
     # Model settings.
     compile_model: bool = False

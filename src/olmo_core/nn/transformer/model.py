@@ -299,6 +299,7 @@ class Transformer(nn.Module):
         input_ids: torch.Tensor,
         labels: Optional[torch.Tensor] = None,
         *,
+        attention_mask: Optional[torch.Tensor] = None,
         ignore_index: int = -100,
         loss_reduction: Literal["mean", "sum", "none"] = "mean",
         z_loss_multiplier: Optional[float] = None,
@@ -365,6 +366,12 @@ class Transformer(nn.Module):
                 pad_values.append(ignore_index)
                 keys.append("labels")
 
+            if attention_mask is not None:
+                inputs.append(attention_mask)
+                seq_dims.append(1)
+                pad_values.append(0.0)
+                keys.append("attention_mask")
+
             if cu_doc_lens is not None:
                 # NOTE: Can only shard properly here if 'input_ids' is flat, i.e. a single instance.
                 # TODO: (epwalsh) We could just flatten all of the inputs here, but then we risk going
@@ -397,11 +404,17 @@ class Transformer(nn.Module):
 
             input_ids = block_kwargs.pop("input_ids")
             labels = block_kwargs.pop("labels", None)
+            attention_mask = block_kwargs.pop("attention_mask", None)
         else:
             input_ids = move_to_device(input_ids, self.device)
             labels = move_to_device(labels, self.device)
+            attention_mask = move_to_device(attention_mask, self.device)
             block_kwargs["max_doc_len"] = max_doc_len
             block_kwargs["cu_doc_lens"] = move_to_device(cu_doc_lens, self.device)
+
+        # Add attention mask to block kwargs if provided
+        if attention_mask is not None:
+            block_kwargs["attention_mask"] = attention_mask
 
         return (
             input_ids,
@@ -415,6 +428,7 @@ class Transformer(nn.Module):
         input_ids: torch.Tensor,
         *,
         labels: Optional[torch.Tensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
         ignore_index: int = -100,
         loss_reduction: Literal["mean", "sum", "none"] = "mean",
         z_loss_multiplier: Optional[float] = None,
@@ -426,12 +440,16 @@ class Transformer(nn.Module):
         Run the transformer on the token input IDs.
 
         :param input_ids: The token input IDs, shape ``(batch_size, seq_len)``.
+        :param labels: The token labels, shape ``(batch_size, seq_len)``.
+        :param attention_mask: The attention mask, shape ``(batch_size, seq_len)``. If provided,
+            it will be added to the block kwargs and passed to the attention module.
 
         :returns: The logits if ``labels`` is ``None`` or the losses if ``labels`` is not ``None``.
         """
         input_ids, labels, block_kwargs, lm_head_kwargs = self._prepare_inputs(
             input_ids,
             labels,
+            attention_mask=attention_mask,
             ignore_index=ignore_index,
             loss_reduction=loss_reduction,
             z_loss_multiplier=z_loss_multiplier,

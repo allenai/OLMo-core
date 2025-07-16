@@ -7,7 +7,7 @@ import torch.distributed as dist
 
 from olmo_core.distributed.checkpoint import save_model_and_optim_state
 from olmo_core.distributed.parallel.data_parallel import DataParallelType
-from olmo_core.distributed.utils import get_world_size
+from olmo_core.distributed.utils import get_rank, get_world_size
 from olmo_core.generate.config import (
     GenerationConfig,
     TransformerGenerationModuleConfig,
@@ -95,7 +95,7 @@ def test_generation_module_basic(
 def test_generation_module_state_dict(transformer_config: TransformerConfig, device: torch.device):
     seed_all(42)
 
-    generation_config = GenerationConfig(max_length=16)
+    generation_config = GenerationConfig(max_length=16, pad_token_id=0, eos_token_id=2)
 
     # Create first generation module
     model1 = transformer_config.build()
@@ -178,7 +178,9 @@ def test_generation_module_config_build(
     seed_all(42)
 
     # Create and save a generation module
-    generation_config = GenerationConfig(max_length=24, temperature=0.0)
+    generation_config = GenerationConfig(
+        max_length=24, temperature=0.0, pad_token_id=0, eos_token_id=2
+    )
     model = transformer_config.build()
     generation_module = TransformerGenerationModule(
         model=model, generation_config=generation_config, device=device
@@ -209,6 +211,105 @@ def test_generation_module_config_build(
     assert output_after.shape[1] <= 24
 
 
+@requires_gpu
+def test_generation_module_stop_sequences(transformer_config: TransformerConfig):
+    seed_all(42)
+    device = torch.device("cuda")
+
+    # Create generation config with stop sequences
+    generation_config = GenerationConfig(
+        max_length=50,
+        temperature=0.0,
+        pad_token_id=0,
+        eos_token_id=2,
+        stop_sequences=[[10, 20], [30, 40, 50]],
+    )
+
+    # Create model
+    model = transformer_config.build()
+    generation_module = TransformerGenerationModule(
+        model=model,
+        generation_config=generation_config,
+        device=device,
+    )
+
+    def create_mock_forward(tokens_to_generate):
+        def mock_forward(
+            input_ids: torch.Tensor, *, attention_mask: Optional[torch.Tensor] = None, **kwargs
+        ):
+            seq_len = input_ids.shape[1] - 3  # Subtract initial input length
+            if seq_len < len(tokens_to_generate):
+                token = tokens_to_generate[seq_len]
+            else:
+                token = 99  # Default token after sequence
+            batch_size = input_ids.shape[0]
+            logits = torch.zeros(
+                batch_size, input_ids.shape[1], transformer_config.vocab_size, device=device
+            )
+            logits[:, -1, token] = 100.0  # High logit for desired token
+            return logits
+
+        return mock_forward
+
+    # Stop at first stop sequence [10, 20]
+    input_ids = torch.tensor([[1, 5, 7]], dtype=torch.long, device=device)
+    generation_module.model_forward = create_mock_forward([8, 9, 10, 20, 99])
+    output, _ = generation_module.generate_batch(input_ids, completions_only=False)
+    assert torch.equal(output, torch.tensor([[1, 5, 7, 8, 9, 10, 20]], device=device))
+
+    # Stop at second stop sequence [30, 40, 50]
+    input_ids = torch.tensor([[2, 4, 6]], dtype=torch.long, device=device)
+    generation_module.model_forward = create_mock_forward([25, 30, 40, 50, 99])
+    output, _ = generation_module.generate_batch(input_ids, completions_only=False)
+    assert torch.equal(output, torch.tensor([[2, 4, 6, 25, 30, 40, 50]], device=device))
+
+    # Stop at EOS token (not stop sequence)
+    input_ids = torch.tensor([[3, 5, 7]], dtype=torch.long, device=device)
+    generation_module.model_forward = create_mock_forward([60, 70, 2, 99])
+    output, _ = generation_module.generate_batch(input_ids, completions_only=False)
+    assert torch.equal(output, torch.tensor([[3, 5, 7, 60, 70, 2]], device=device))
+
+    # No stop sequences - only stops at EOS
+    generation_module._generation_config = GenerationConfig(
+        max_length=20, temperature=0.0, pad_token_id=0, eos_token_id=2, stop_sequences=None
+    )
+    input_ids = torch.tensor([[1, 2, 3]], dtype=torch.long, device=device)
+    generation_module.model_forward = create_mock_forward([10, 20, 30, 40, 50, 2])
+    output, _ = generation_module.generate_batch(input_ids, completions_only=False)
+    assert torch.equal(output, torch.tensor([[1, 2, 3, 10, 20, 30, 40, 50, 2]], device=device))
+
+
+def test_generation_with_attention_mask(transformer_config: TransformerConfig):
+    """Test that attention masks are properly used during generation."""
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    pad = 0
+    generation_config = GenerationConfig(
+        max_length=20, temperature=0.0, pad_token_id=pad, eos_token_id=2
+    )
+
+    model = transformer_config.build()
+    generation_module = TransformerGenerationModule(
+        model=model,
+        generation_config=generation_config,
+        device=device,
+    )
+    input_ids = torch.tensor([[pad, pad, 1, 5, 7]], dtype=torch.long, device=device)  # left-padded
+    attention_mask = (input_ids != pad).to(torch.bool)
+
+    output_with_mask, _ = generation_module.generate_batch(
+        input_ids, attention_mask=attention_mask, completions_only=False
+    )
+    output_without_mask, _ = generation_module.generate_batch(
+        input_ids, attention_mask=None, completions_only=False
+    )
+
+    # The outputs should be different because attention mask affects how the model
+    # processes the padded positions
+    assert not torch.equal(output_with_mask, output_without_mask), (
+        "Attention mask should affect generation output"
+    )
+
+
 def run_distributed_generation(
     checkpoint_dir: Path,
     transformer_config: TransformerConfig,
@@ -235,9 +336,9 @@ def run_distributed_generation(
     output_ids, _ = generation_module.generate_batch(input_ids, completions_only=False)
 
     # Basic checks
-    assert (
-        output_ids.shape == expected_shape
-    ), f"output_ids.shape: {output_ids.shape}, expected_shape: {expected_shape}"
+    assert output_ids.shape == expected_shape, (
+        f"output_ids.shape: {output_ids.shape}, expected_shape: {expected_shape}"
+    )
     assert output_ids.device == device
 
     # Verify all ranks got same result using FSDP
@@ -253,10 +354,13 @@ def test_generation_module_distributed_fsdp(transformer_config: TransformerConfi
     seed_all(42)
 
     # Create and save a generation module on single device first
+    generation_config = GenerationConfig(
+        max_length=16, temperature=0.0, pad_token_id=0, eos_token_id=2
+    )
     model = transformer_config.build()
     generation_module = TransformerGenerationModule(
         model=model,
-        generation_config=GenerationConfig(),
+        generation_config=generation_config,
         device=torch.device("cuda"),
     )
 
@@ -266,10 +370,6 @@ def test_generation_module_distributed_fsdp(transformer_config: TransformerConfi
 
     # Prepare configs for distributed test
     dp_config = TransformerDataParallelConfig(name=DataParallelType.fsdp)
-
-    generation_config = GenerationConfig(
-        max_length=16, temperature=0.0, eos_token_id=2, pad_token_id=0
-    )
 
     # Create test input
     input_ids = torch.randint(1, 100, (2, 8))

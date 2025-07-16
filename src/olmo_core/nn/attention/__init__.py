@@ -386,6 +386,7 @@ class Attention(AttentionBase):
         q: torch.Tensor,
         k: torch.Tensor,
         v: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
         cu_doc_lens_q: Optional[torch.Tensor] = None,
         cu_doc_lens_k: Optional[torch.Tensor] = None,
@@ -402,6 +403,8 @@ class Attention(AttentionBase):
                 raise RuntimeError(
                     f"'{self.__class__.__name__}' requires flash (use_flash=True) for context parallelism"
                 )
+            if attention_mask is not None:
+                raise RuntimeError(f"'{self.__class__.__name__}' does not support attention masks")
             att = dispatch_ring_flash_attn(
                 q,
                 k,
@@ -422,6 +425,8 @@ class Attention(AttentionBase):
                 window_size=self.window_size,
             )
         elif self.use_flash:
+            if attention_mask is not None:
+                raise RuntimeError(f"'{self.__class__.__name__}' does not support attention masks")
             att = dispatch_flash_attn(
                 q,
                 k,
@@ -467,7 +472,13 @@ class Attention(AttentionBase):
 
             # shape: (batch_size, n_heads, seq_len, head_dim)
             att = F.scaled_dot_product_attention(
-                q, k, v, dropout_p=self.dropout_p, is_causal=True, scale=scale
+                q,
+                k,
+                v,
+                attn_mask=attention_mask,
+                dropout_p=self.dropout_p,
+                is_causal=True,
+                scale=scale,
             )
 
             # shape: (batch_size, seq_len, n_heads, head_dim)
@@ -478,6 +489,7 @@ class Attention(AttentionBase):
     def forward(
         self,
         x: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
         cu_doc_lens_q: Optional[torch.Tensor] = None,
         cu_doc_lens_k: Optional[torch.Tensor] = None,
@@ -493,6 +505,8 @@ class Attention(AttentionBase):
         Apply attention to the input.
 
         :param x: The input of shape ``(batch_size, seq_len, d_model)``.
+        :param attention_mask: The attention mask, shape ``(batch_size, seq_len)``. If provided,
+            it will be added to the block kwargs and passed to the attention module.
         :param cu_doc_lens: Cumulative document lengths in the input ``x``, a 1D
             :class:`torch.int32` tensor that should always have one more element than there
             are documents (the first element in the tensor should always be ``0``).
@@ -551,6 +565,7 @@ class Attention(AttentionBase):
             q,
             k,
             v,
+            attention_mask=attention_mask,
             cu_doc_lens=cu_doc_lens,
             cu_doc_lens_q=cu_doc_lens_q,
             cu_doc_lens_k=cu_doc_lens_k,
