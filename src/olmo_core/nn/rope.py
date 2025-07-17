@@ -46,8 +46,51 @@ class RoPEType(StrEnum):
     """
 
 
-@dataclass
 class RoPEScalingConfig(Config):
+    """
+    Base class for RoPE scaling config.    
+    """
+
+    attention_factor: float = 1.0
+
+    @abstractmethod
+    def compute_scaled_inv_freq(
+        self,
+        dim: int,
+        theta: int,
+        device: torch.device
+    ) -> tuple["torch.Tensor", float]: 
+        raise NotImplementedError
+    
+    @classmethod
+    def compute_inv_freqs(cls, theta, dim, device):
+        inv_freq = 1.0 / (
+        theta
+        ** (torch.arange(0, dim, 2, device=device, dtype=torch.float) / dim)
+        )
+        return inv_freq
+
+@dataclass
+class ABFRoPEScalingConfig(RoPEScalingConfig):
+    """
+    Defines how to scale RoPE to longer sequences with a change to RoPE base.
+    """
+
+    new_theta: int = 8_000_000
+
+    def compute_scaled_inv_freq(
+        self,
+        dim: int,
+        theta: int,
+        device: torch.device
+    ) -> tuple["torch.Tensor", float]:
+        
+        inv_freq = self.compute_inv_freqs(self.new_theta, dim, device)
+        return inv_freq, self.attention_factor
+
+
+@dataclass
+class LLama3RoPEScalingConfig(RoPEScalingConfig):
     """
     Defines how to scale RoPE to longer sequence lengths in the manner of Llama3.1.
     """
@@ -55,15 +98,20 @@ class RoPEScalingConfig(Config):
     factor: float = 8.0
     low_freq_factor: float = 1.0
     high_freq_factor: float = 4.0
-    old_context_len: int = 4096
+    old_context_len: int = 8192
     attention_factor: float = 1.0
 
-    def scale_inv_freq(
+    def compute_scaled_inv_freq(
         self,
-        inv_freq: torch.Tensor,
-    ) -> tuple["torch.Tensor", float]:
+        dim: int,
+        theta: int,
+        device: torch.device
+        ) -> tuple["torch.Tensor", float]:
+
         low_freq_wavelen = self.old_context_len / self.low_freq_factor
         high_freq_wavelen = self.old_context_len / self.high_freq_factor
+
+        inv_freq = self.compute_inv_freqs(theta, dim, device)
 
         wavelen = 2 * math.pi / inv_freq
         # wavelen < high_freq_wavelen: do nothing
@@ -89,14 +137,14 @@ class YaRNRoPEScalingConfig(RoPEScalingConfig):
     beta_fast: int = 32
     beta_slow: int = 1
     attention_factor: float = 1.0
-    base: int = 500_000
-    n_heads: int = 32 
     original_max_position_embeddings: int = 4096
     
 
-    def scale_inv_freq(
+    def compute_scaled_inv_freq(
         self,
-        inv_freq: torch.Tensor,
+        theta: int,
+        device: torch.device,
+        dim: int
     ) -> tuple["torch.Tensor", float]:
 
 
@@ -125,17 +173,16 @@ class YaRNRoPEScalingConfig(RoPEScalingConfig):
 
         attention_factor = get_mscale(self.factor)
 
-        device = inv_freq.device
         # Note on variable naming: "interpolation" comes from the original technique, where we interpolate the position IDs
         # to expand the possible context length. In other words, interpolation = apply scaling factor.
-        pos_freqs = self.base ** (torch.arange(0, self.n_heads, 2, device=device) / self.n_heads)
+        pos_freqs = theta ** (torch.arange(0, dim , 2, device=device) / dim)
         inv_freq_extrapolation = 1.0 / pos_freqs
         inv_freq_interpolation = 1.0 / (self.factor * pos_freqs)
 
-        low, high = find_correction_range(self.beta_fast, self.beta_slow, self.n_heads, self.base, self.original_max_position_embeddings)
+        low, high = find_correction_range(self.beta_fast, self.beta_slow, dim, theta, self.original_max_position_embeddings)
 
         # Get n-dimensional rotational scaling corrected for extrapolation
-        inv_freq_extrapolation_factor = 1 - linear_ramp_factor(low, high, self.n_heads // 2)
+        inv_freq_extrapolation_factor = 1 - linear_ramp_factor(low, high, dim // 2)
         inv_freq = (
             inv_freq_interpolation * (1 - inv_freq_extrapolation_factor)
             + inv_freq_extrapolation * inv_freq_extrapolation_factor
@@ -272,18 +319,20 @@ class RotaryEmbedding(RotaryEmbeddingBase):
             return pos_sin[:seq_len, :], pos_cos[:seq_len, :]
 
         with torch.autocast(device.type, enabled=False):
-            inv_freq = 1.0 / (
-                self.theta
-                ** (torch.arange(0, self.dim, 2, device=device, dtype=torch.float) / self.dim)
-            )
-            if self.scaling is not None:
-                inv_freq, attention_factor = self.scaling.scale_inv_freq(inv_freq)
+            if self.scaling is None:
+                inv_freq = 1.0 / (
+                    self.theta
+                    ** (torch.arange(0, self.dim, 2, device=device, dtype=torch.float) / self.dim)
+                )
+                attention_factor = 1.0
+            else:
+                inv_freq, attention_factor = self.scaling.compute_scaled_inv_freq(device=device, dim=self.dim, theta=self.theta)
             seq = torch.arange(seq_len, device=device, dtype=torch.float)
             freqs = torch.einsum("i , j -> i j", seq, inv_freq)
             positions = torch.cat((freqs, freqs), dim=-1)
             pos_sin, pos_cos = positions.sin(), positions.cos()
 
-        if self.scaling is not None:
+        if attention_factor > 1.0:
             self._cache["rope_pos_sin"] = pos_sin * attention_factor
             self._cache["rope_pos_cos"] = pos_cos * attention_factor
         else:
