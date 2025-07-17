@@ -1,4 +1,5 @@
 from datetime import datetime
+from math import ceil
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
@@ -76,7 +77,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         scheduler=WSD(
             units=SchedulerUnits.steps,
             warmup=2000,
-            decay=0,
+            decay=ceil(10e9 / GLOBAL_BATCH_SIZE),
             decay_fraction=None
         ),
     )
@@ -97,7 +98,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=cancel_check_interval,
-            max_duration=Duration.tokens(int(50e9)),
+            max_duration=Duration.tokens(int(60e9)),
             load_path="gs://ai2-llm/checkpoints/shanea/OLMo-medium/peteish7/step928646/model_and_optim/",
             load_strategy=LoadStrategy.always
         )
