@@ -271,7 +271,7 @@ class MoEBase(nn.Module):
                 shared_out = self.shared_expert_norm(shared_out)
         
         # routed experts
-        out = self.experts(x, expert_weights, expert_indices, batch_size_per_expert)
+        out = self.experts(x, expert_weights, expert_indices, batch_size_per_expert, batch_size_per_expert.cpu())
         if self.routed_expert_norm is not None:
             out = self.routed_expert_norm(out)
             

@@ -664,7 +664,7 @@ class ParallelDroplessMLP(ParallelMLPBase):
         batch_size_per_expert: torch.Tensor,
         batch_size_per_expert_cpu: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        assert False, "This function Not Used"
+        # assert False, "This function Not Used"
         """
         :param x: The input of shape ``(N, d_model)``.
         :param expert_weights: Expert weights of shape ``(N, top_k)``.

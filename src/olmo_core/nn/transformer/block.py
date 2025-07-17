@@ -239,28 +239,9 @@ class ReorderedNormTransformerBlock(TransformerBlock):
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         **kwargs,
     ) -> torch.Tensor:
-        DENSE_LAYER_USE_RECOMPUTE = True # BUG;HACK;NOTE: change this later
-        
-        @torch.compile
-        def custom_forward(
-            x: torch.Tensor,
-            *,
-            loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
-            **kwargs,
-        ):  
-            del loss_div_factor
-            h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
-            return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
-        
-        if DENSE_LAYER_USE_RECOMPUTE:
-        
-            return checkpoint(
-                custom_forward, x, use_reentrant=False, loss_div_factor=loss_div_factor, **kwargs
-            )
-        else:
-            return custom_forward(
-                x, loss_div_factor=loss_div_factor, **kwargs
-            )
+        del loss_div_factor
+        h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
+        return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
 
 
 @beta_feature
@@ -902,6 +883,17 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
     def get_dense_stream(self) -> torch.cuda.Stream:
         return get_or_init_stream(id=2, priority=20)
 
+    def dense_forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+        h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
+        return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
+
+    def sparse_forward(
+        self, x: torch.Tensor, *, loss_div_factor: Optional[Union[torch.Tensor, float]] = None
+    ) -> torch.Tensor:
+        return self.dropout(
+            self.feed_forward_moe_norm(self.feed_forward_moe(x, loss_div_factor=loss_div_factor))
+        )
+
     def forward(
         self,
         x: torch.Tensor,
@@ -909,15 +901,21 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         **kwargs,
     ) -> torch.Tensor:
-        MOE_LAYER_USE_RECOMPUTE = False 
-        if MOE_LAYER_USE_RECOMPUTE:
-            # NOTE: this is the same as the MoEHybridTransformerBlock, but with recompute
-            # on the dense forward pass.
-            return checkpoint(
-                self.combined_forward, x, use_reentrant=False, loss_div_factor=loss_div_factor, **kwargs
+        if not self.use_combined_forward:
+            return self.sparse_forward(x, loss_div_factor=loss_div_factor) + self.dense_forward(
+                x, **kwargs
             )
         else:
-            # always use combined forward    
+            # NOTE: alternatively could do something like this, but even with an extra stream it's
+            # not as fast as the hand-crafted 'combined_forward()'.
+            # stream = get_or_init_stream()
+            # stream.wait_stream(torch.cuda.default_stream())
+            # h_sparse = self._fwd_sparse(x)
+            # with torch.cuda.stream(stream):
+            #     h_dense = self._fwd_dense(x, **kwargs)
+            # torch.cuda.default_stream().wait_stream(stream)
+            # return h_sparse + h_dense
+
             return cast(MoEHybridReorderedNormTransformerBlock, self).combined_forward(x, loss_div_factor=loss_div_factor, **kwargs)
 
     @torch.compile

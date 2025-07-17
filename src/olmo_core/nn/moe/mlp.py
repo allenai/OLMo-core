@@ -263,10 +263,10 @@ class DroplessMoEMLP(MoEMLPBase):
             # grouped-gemm only accepts BF16
             return self._gmm(x.to(torch.bfloat16), w.to(torch.bfloat16), batch_sizes, trans_b=trans_b)  # type: ignore
         else:
-            raise RuntimeError(
-                "Grouped GEMM is not available, so the MoE will be substantially slower. "
-                "Please install with 'pip install git+https://github.com/fanshiqing/grouped_gemm@v1.1.4' if possible.\n"
-            )
+            # raise RuntimeError(
+            #     "Grouped GEMM is not available, so the MoE will be substantially slower. "
+            #     "Please install with 'pip install git+https://github.com/fanshiqing/grouped_gemm@v1.1.4' if possible.\n"
+            # )
             out = []
             start = 0
             for i, size in enumerate(batch_sizes.cpu().numpy()):
@@ -276,7 +276,7 @@ class DroplessMoEMLP(MoEMLPBase):
             return torch.cat(out)
 
     @nvtx.annotate("DroplessMoEMLP.forward", color="blue")
-    def forward(self, x: torch.Tensor, batch_size_per_expert: List) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, batch_size_per_expert) -> torch.Tensor:
         """
         Compute the expert outputs.
 
@@ -294,16 +294,19 @@ class DroplessMoEMLP(MoEMLPBase):
         # assert batch_size_per_expert.device == torch.device("cpu"), "batch_size_per_expert must be on CPU for grouped_gemm"
         # batch_size_per_expert = batch_size_per_expert.cpu() # NOTE: even though it's on CPU, this line is still needed, otherwise it will cause "not batch_size.is_cpu()" error in gmm() backward recompute, if we use activation checkpointing. No idea why.
         
-        assert isinstance(batch_size_per_expert, List), "only accept List for batch_size_per_expert"
-        batch_size_per_expert_tensor = torch.tensor(
-            batch_size_per_expert, 
-            device='cpu', 
-            dtype=torch.int64,  # NOTE: int64 required for grouped_gemm
-        )
+        if isinstance(batch_size_per_expert, List):
+            batch_size_per_expert_tensor = torch.tensor(
+                batch_size_per_expert, 
+                device='cpu', 
+                dtype=torch.int64,  # NOTE: int64 required for grouped_gemm
+            )
+        elif isinstance(batch_size_per_expert, torch.Tensor):
+            batch_size_per_expert_tensor = batch_size_per_expert.cpu()
+        else:
+            raise NotImplementedError(f"{type(batch_size_per_expert)}")
         # batch_size_per_expert = batch_size_per_expert.cpu()
         # Compute the MLP.
 
-        
         # print(f"before MLP rank {dist.get_rank()} x shape {x.shape}")
 
         if x.numel() == 0:
