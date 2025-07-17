@@ -2,7 +2,7 @@ from transformers import Olmo2Config, Olmo3Config, Olmoe2Config, PretrainedConfi
 
 from olmo_core.doc_utils import beta_feature
 from olmo_core.nn.attention import Attention
-from olmo_core.nn.moe import MoEMLP, MoERouterGatingFunction
+from olmo_core.nn.moe import DroplessMoEMLP, MoERouterGatingFunction
 from olmo_core.nn.transformer.block import (
     MoEHybridReorderedNormTransformerBlock,
     ReorderedNormTransformerBlock,
@@ -51,9 +51,9 @@ def _get_moe_hf_config(model: MoETransformer) -> PretrainedConfig:
         block = model.blocks[key]
         assert isinstance(block, MoEHybridReorderedNormTransformerBlock)
 
-        if not isinstance(block.experts.mlp, MoEMLP):
+        if not isinstance(block.experts.mlp, DroplessMoEMLP):
             raise NotImplementedError(
-                f"MoE mlp is not a {MoEMLP.__name__}, unable to build HF config for {model.__class__.__name__}"
+                f"MoE mlp is not a {DroplessMoEMLP.__name__}, unable to build HF config for {model.__class__.__name__}"
             )
 
         if block.router.normalize_expert_weights is not None:
@@ -61,9 +61,12 @@ def _get_moe_hf_config(model: MoETransformer) -> PretrainedConfig:
                 f"Expert weight normalization is not supported, unable to build HF config for {model.__class__.__name__}"
             )
 
-        if block.router.gating_function != MoERouterGatingFunction.sigmoid:
+        if block.router.gating_function not in (
+            MoERouterGatingFunction.sigmoid,
+            MoERouterGatingFunction.softmax,
+        ):
             raise NotImplementedError(
-                f"Only sigmoid gating function is supported for MoE router, unable to build HF config for {model.__class__.__name__}"
+                f"Only sigmoid and softmax gating functions are supported for MoE router, unable to build HF config for {model.__class__.__name__}"
             )
 
     moe_block = model.blocks[moe_block_keys[0]]
@@ -98,6 +101,7 @@ def _get_moe_hf_config(model: MoETransformer) -> PretrainedConfig:
         moe_intermediate_size=moe_block.feed_forward_moe.experts.mlp.hidden_size,
         shared_mlp_intermediate_size=moe_block.feed_forward.hidden_size,
         mlp_only_layers=sorted([int(key) for key in regular_blocks_keys]),
+        router_normalization_func=str(moe_block.router.gating_function),
         sliding_window=max(block.attention.window_size[0] + 1 for block in model.blocks.values()),
         layer_types=[
             "sliding_attention" if block.attention.window_size != (-1, -1) else "full_attention"
