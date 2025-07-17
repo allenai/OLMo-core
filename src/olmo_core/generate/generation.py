@@ -27,7 +27,7 @@ from olmo_core.float8 import Float8Config
 from olmo_core.generate.config import GenerationConfig
 from olmo_core.generate.selection import temperature_sampling
 from olmo_core.internal.experiment import ExperimentConfig
-from olmo_core.io import is_url, normalize_path
+from olmo_core.io import is_url, join_path, normalize_path
 from olmo_core.nn.transformer import Transformer, TransformerConfig
 from olmo_core.train.train_module.transformer.common import parallelize_model
 from olmo_core.train.train_module.transformer.config import (
@@ -269,11 +269,10 @@ class TransformerGenerationModule(GenerationModule):
         """
         work_dir = Path(work_dir)
         if get_fs_local_rank() == 0:
-            work_dir.mkdir(exist_ok=True, parents=True)
+            work_dir.mkdir(parents=True, exist_ok=True)
 
         checkpoint_dir = normalize_path(checkpoint_dir)
-
-        train_module_dir = f"{checkpoint_dir}/model_and_optim"
+        train_module_dir = join_path(checkpoint_dir, "model_and_optim")
         metadata: Optional[Metadata] = None
         if get_rank(process_group) == 0:
             try:
@@ -341,12 +340,11 @@ class TransformerGenerationModule(GenerationModule):
             OLMoConfigurationError: If transformer config cannot be determined.
             RuntimeError: If checkpoint loading fails.
         """
-        checkpoint_dir = Path(normalize_path(checkpoint_dir))
-        generation_config = generation_config or GenerationConfig()
+        checkpoint_dir = normalize_path(checkpoint_dir)
 
         # Load transformer config from checkpoint if not provided
         if transformer_config is None and get_rank(process_group) == 0:
-            experiment_config = ExperimentConfig.from_file(checkpoint_dir / "config.json")
+            experiment_config = ExperimentConfig.from_file(join_path(checkpoint_dir, "config.json"))
             transformer_config = experiment_config.model
 
         # Create work directory on rank 0
@@ -360,6 +358,16 @@ class TransformerGenerationModule(GenerationModule):
 
         if transformer_config is None:
             raise OLMoConfigurationError("Transformer config is required")
+
+        if generation_config is None:
+            generation_config = GenerationConfig(
+                pad_token_id=experiment_config.dataset.tokenizer.pad_token_id,
+                eos_token_id=experiment_config.dataset.tokenizer.eos_token_id,
+                max_length=experiment_config.dataset.effective_sequence_length,
+            )
+            log.info(
+                f"No generation config provided, using defaults from checkpoint config: {generation_config}",
+            )
 
         # Build model and generation module
         model = transformer_config.build()
