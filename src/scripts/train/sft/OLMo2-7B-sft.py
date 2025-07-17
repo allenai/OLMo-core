@@ -165,9 +165,9 @@ def build_sft_dataset(
             token_id_paths = []
             label_mask_paths = []
             for elem in contents:
-                if "token_ids_part" in elem:
+                if "token_ids_part" in elem and elem.endswith(".npy"):
                     token_id_paths.append(elem)
-                if "labels_mask" in elem:
+                if "labels_mask" in elem and elem.endswith(".npy"):
                     label_mask_paths.append(elem)
             expand_glob = False
         else:
