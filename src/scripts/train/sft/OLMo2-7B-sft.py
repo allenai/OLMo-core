@@ -150,51 +150,28 @@ class BatchSizeConfig:
 
 
 def build_sft_dataset(
-    dataset_name: str,
     root_dir: str,
     tokenizer_config: TokenizerConfig,
     sequence_length: int,
     dataset_path: Optional[str],
 ) -> NumpyDatasetConfig:
-    if dataset_path is not None:
-        clean_path = dataset_path.rstrip('/')
-        if dataset_path.startswith("gs://"):
-            contents = list_directory(dataset_path)
-            # TODO: This does not work yet! GCS support is an active work in progress, nearly complete
-            print("GCS support not working yet!")
-            token_id_paths = []
-            label_mask_paths = []
-            for elem in contents:
-                if "token_ids_part" in elem and elem.endswith(".npy"):
-                    token_id_paths.append(elem)
-                if "labels_mask" in elem and elem.endswith(".npy"):
-                    label_mask_paths.append(elem)
-            expand_glob = False
-        else:
-            token_id_paths = [f"{clean_path}/token_ids_part_*.npy"]
-            label_mask_paths = [f"{clean_path}/labels_mask_*.npy"]
-            expand_glob = True
-    else:
-        # NOTE: dataset path can be configured relative to root_dir
-        # root_dir is /weka/oe-training-default/ai2-llm or gs://ai2-llm depending on the cluster
-        sft_datasets_file = Path(__file__).parent / "sft_datasets.yaml"
-        with open(sft_datasets_file, "r") as f:
-            sft_datasets_config = yaml.safe_load(f)
-
-        if dataset_name not in sft_datasets_config["datasets"]:
-            raise OLMoConfigurationError(f"Dataset '{dataset_name}' not found in sft_datasets.yaml")
-
-        dataset_config = sft_datasets_config["datasets"][dataset_name]
-        dataset_dir = Path(dataset_config["base_dir"])
-
-        token_id_paths, label_mask_paths = [], []
-        for token_file in dataset_config["token_ids"]:
-            token_path = dataset_dir / token_file
-            token_id_paths.append(root_dir + "/" + str(token_path))
-        for label_mask_file in dataset_config["label_mask"]:
-            label_mask_path = dataset_dir / label_mask_file
-            label_mask_paths.append(root_dir + "/" + str(label_mask_path))
+    clean_path = dataset_path.rstrip('/')
+    if dataset_path.startswith("gs://"):
+        contents = list_directory(dataset_path)
+        # TODO: This does not work yet! GCS support is an active work in progress, nearly complete
+        print("GCS support not working yet!")
+        token_id_paths = []
+        label_mask_paths = []
+        for elem in contents:
+            if "token_ids_part" in elem and elem.endswith(".npy"):
+                token_id_paths.append(elem)
+            if "labels_mask" in elem and elem.endswith(".npy"):
+                label_mask_paths.append(elem)
         expand_glob = False
+    else:
+        token_id_paths = [f"{clean_path}/token_ids_part_*.npy"]
+        label_mask_paths = [f"{clean_path}/labels_mask_*.npy"]
+        expand_glob = True
 
     dataset = NumpyDatasetConfig(
         # general config
@@ -239,7 +216,6 @@ class SFTConfig(Config):
         script: str,
         cmd: str,
         run_name: str,
-        dataset_name: str,
         seq_len: int,
         num_nodes: int,
         global_batch_size: int,
@@ -255,7 +231,7 @@ class SFTConfig(Config):
         user_name = get_beaker_username()
 
         tokenizer_config = TokenizerConfig.dolma2()
-        dataset_config = build_sft_dataset(dataset_name, root_dir, tokenizer_config, seq_len, dataset_path)
+        dataset_config = build_sft_dataset(root_dir, tokenizer_config, seq_len, dataset_path)
         gpu_type = CLUSTER_TO_GPU_TYPE[cluster]
 
         bs_config = BatchSizeConfig(
@@ -307,7 +283,6 @@ class SFTConfig(Config):
                     script,
                     cmd,
                     run_name,
-                    dataset_name,
                     checkpoint,
                     cluster,
                     f"--seq_len={seq_len}",
@@ -458,9 +433,6 @@ Examples:
         "run_name",
         help="The name of the run. Used for the run name in W&B/Comet and the checkpoint dir.",
     )
-    parser.add_argument(
-        "dataset_name", help="The name of the dataset to use. Must be defined in sft_datasets.yaml."
-    )
     parser.add_argument("pretrain_checkpoint", help="Path to the pretraining checkpoint to load.")
     parser.add_argument(
         "cluster", help="The Beaker cluster to use (e.g., 'ai2/jupiter-cirrascale-2')."
@@ -509,7 +481,6 @@ Examples:
         script=sys.argv[0],
         cmd="train",
         run_name=args.run_name,
-        dataset_name=args.dataset_name,
         checkpoint=args.pretrain_checkpoint,
         cluster=args.cluster,
         seq_len=args.seq_len,
