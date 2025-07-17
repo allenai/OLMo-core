@@ -24,7 +24,7 @@ from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
-from olmo_core.nn.rope import RoPEConfig, RoPEScalingConfig, YaRNRoPEScalingConfig
+from olmo_core.nn.rope import RoPEConfig, ABFRoPEScalingConfig, LLama3RoPEScalingConfig, YaRNRoPEScalingConfig
 from olmo_core.nn.transformer import (
     TransformerBlockType,
     TransformerConfig,
@@ -308,9 +308,9 @@ $ [i]python {sys.argv[0]} launch run01  --launch.num_nodes=2[/]
     
     
     model_config.block.attention.rope = RoPEConfig(
-        theta= 0.5 * 10 ** 6,
-        scaling = YaRNRoPEScalingConfig(
-            original_max_position_embeddings=8192
+        theta= 500_000,
+        scaling = ABFRoPEScalingConfig(
+            new_theta = 8_000_000
         )
     )
 
