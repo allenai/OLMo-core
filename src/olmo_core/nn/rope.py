@@ -18,7 +18,7 @@ log = logging.getLogger(__name__)
 __all__ = [
     "RoPEType",
     "RoPEConfig",
-    "RoPEScalingConfigBase",
+    "RoPEScalingConfig",
     "ABFRoPEScalingConfig",
     "LLama3RoPEScalingConfig",
     "YaRNRoPEScalingConfig"
@@ -48,7 +48,7 @@ class RoPEType(StrEnum):
     """
 
 
-class RoPEScalingConfigBase(Config):
+class RoPEScalingConfig(Config):
     """
     Base class for RoPE scaling config.    
     """
@@ -73,7 +73,7 @@ class RoPEScalingConfigBase(Config):
         return inv_freq
 
 @dataclass
-class ABFRoPEScalingConfig(RoPEScalingConfigBase):
+class ABFRoPEScalingConfig(RoPEScalingConfig):
     """
     Defines how to scale RoPE to longer sequences with a change to RoPE base.
     """
@@ -92,7 +92,7 @@ class ABFRoPEScalingConfig(RoPEScalingConfigBase):
 
 
 @dataclass
-class LLama3RoPEScalingConfig(RoPEScalingConfigBase):
+class LLama3RoPEScalingConfig(RoPEScalingConfig):
     """
     Defines how to scale RoPE to longer sequence lengths in the manner of Llama3.1.
     """
@@ -128,7 +128,7 @@ class LLama3RoPEScalingConfig(RoPEScalingConfigBase):
 
 
 @dataclass
-class YaRNRoPEScalingConfig(RoPEScalingConfigBase):
+class YaRNRoPEScalingConfig(RoPEScalingConfig):
     """
     Defines how to scale RoPE using the YaRN method
     [original paper](https://huggingface.co/papers/2309.00071)
