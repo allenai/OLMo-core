@@ -348,15 +348,16 @@ class TransformerGenerationModule(GenerationModule):
         checkpoint_dir = normalize_path(checkpoint_dir)
 
         # Load transformer config from checkpoint if not provided
+        tokenizer_config = None
         if transformer_config is None and get_rank(process_group) == 0:
             config_path = join_path(checkpoint_dir, "config.json")
             with cached_path(config_path).open() as f:
                 config_dict = json.load(f)
             try:
+                # Avoid loading the entire experiment config b/c we don't care about validation outside
+                # of the transformer config and the tokenizer config
                 transformer_config = TransformerConfig.from_dict(config_dict["model"])
-                # Avoid loading dataset_config b/c we dont care about validation here as long as the tokenizer is valid
-                dataset_config = config_dict["dataset"]
-                tokenizer_config = TokenizerConfig.from_dict(dataset_config["tokenizer"])
+                tokenizer_config = TokenizerConfig.from_dict(config_dict["dataset"]["tokenizer"])
             except KeyError as e:
                 raise OLMoConfigurationError(
                     f"Failed to load config from checkpoint at {config_path}: missing required field {e}"
@@ -368,14 +369,22 @@ class TransformerGenerationModule(GenerationModule):
         )
 
         # Broadcast config and work_dir to all ranks
-        transformer_config = scatter_object(transformer_config)
-        tokenizer_config = scatter_object(tokenizer_config)
-        work_dir = scatter_object(work_dir)
+        transformer_config, work_dir, tokenizer_config = scatter_object(
+            (transformer_config, work_dir, tokenizer_config)
+        )
 
         if transformer_config is None:
-            raise OLMoConfigurationError("Transformer config is required")
+            raise OLMoConfigurationError(
+                "Transformer config is required. Either provide a transformer config or a "
+                "checkpoint with a transformer config."
+            )
 
         if generation_config is None:
+            if tokenizer_config is None:
+                raise OLMoConfigurationError(
+                    "Tokenizer config is required to build generation config. Either provide a "
+                    "generation config or a checkpoint with a tokenizer config."
+                )
             generation_config = GenerationConfig(
                 pad_token_id=tokenizer_config.pad_token_id,
                 eos_token_id=tokenizer_config.eos_token_id,

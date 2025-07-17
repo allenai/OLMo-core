@@ -27,7 +27,16 @@ def transformer_config():
     return TransformerConfig.llama_like(d_model=128, n_heads=4, n_layers=2, vocab_size=512)
 
 
-@pytest.mark.parametrize("temperature", [0.0, 0.7, 1.0])
+@pytest.mark.parametrize(
+    "temperature,top_p,top_k",
+    [
+        (0.0, 1.0, -1),  # Greedy
+        (0.7, 1.0, -1),  # Temperature only
+        (1.0, 0.9, -1),  # Temperature + top_p
+        (1.0, 1.0, 50),  # Temperature + top_k
+        (0.8, 0.95, 100),  # All three
+    ],
+)
 @pytest.mark.parametrize("compile_model", [False, True])
 @pytest.mark.parametrize(
     "dtype",
@@ -40,6 +49,8 @@ def transformer_config():
 def test_generation_module_basic(
     transformer_config: TransformerConfig,
     temperature: float,
+    top_p: float,
+    top_k: int,
     compile_model: bool,
     dtype: torch.dtype,
     device: torch.device,
@@ -47,7 +58,12 @@ def test_generation_module_basic(
     seed_all(42)
 
     generation_config = GenerationConfig(
-        max_length=32, temperature=temperature, eos_token_id=2, pad_token_id=0
+        max_length=32,
+        temperature=temperature,
+        eos_token_id=2,
+        pad_token_id=0,
+        top_p=top_p,
+        top_k=top_k,
     )
 
     # Build generation module
