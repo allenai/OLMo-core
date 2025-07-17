@@ -16,6 +16,7 @@ import traceback
 import math
 from transformers import PreTrainedTokenizerBase, AutoTokenizer
 from torch.nn import functional as F
+from functools import partial
 
 from olmo_core.config import Config, DType
 from olmo_core.data import (
@@ -24,12 +25,14 @@ from olmo_core.data import (
     NumpyDatasetType,
     NumpyByteFSLDataset,
     ByteTokenizerConfig,
+    ByteTokenizer,
     TokenizerConfig,
     DataCollator,
     PaddingDirection,
 )
 from olmo_core.nn.blt import utils as blt_utils
 from olmo_core.distributed.parallel import DataParallelType
+from olmo_core.distributed.checkpoint import load_model_and_optim_state
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
 from olmo_core.train import (
@@ -62,6 +65,102 @@ USE_BASELINE = False # whether to use baseline (subword) model or BLT
 DATA_PATTERN = "/weka/oe-training-default/ai2-llm/preprocessed/dclm/baseline_type_topic_classified_20pct/allenai/dolma2-tokenizer/**/**/part-00-00000.npy"
 DATA_PATHS = sorted(glob.glob(DATA_PATTERN, recursive=True))
 DATA_WORK_DIR = "/tmp/dataset-cache"
+
+
+def _pad_right(
+    tensors: List[torch.Tensor],
+):
+    max_len = max(t.size(0) for t in tensors)
+    padded = []
+    for t in tensors:
+        pad_shape = (0, max_len - t.size(0))
+        padded.append(F.pad(t, pad_shape, value=0))
+    return torch.stack(padded, dim=0)
+
+
+def _prepare_batch_patch(
+    batch: Dict[str, Any],
+    labels: Optional[torch.Tensor] = None,
+    byte_tokenizer=None,
+):
+    assert isinstance(byte_tokenizer, ByteTokenizer)
+
+    # this has had the byte collator + ByteFSLDataset applied, no need to patch
+    if "patch_lens" in batch:
+        input_ids = batch.pop("input_ids")
+        labels = labels if labels is not None else batch.pop("labels", None)
+
+        return input_ids, labels, batch
+    else:
+        # this hasn't, so it's an eval batch, we need to manually convert to bytes.
+        # assumes ICLMultiChoiceTaskDataset collation
+        all_input_ids = []
+        all_patch_lens = []
+        all_dc_input_ids = []
+        all_ctx = []
+        all_continuation = []
+
+        all_ctx_len = []
+        all_dc_len = []
+        all_cont_len = []
+
+        for idx in range(len(batch["input_ids"])):
+            prev_ctx_len = batch["ctx_len"][idx].item()
+            prev_dc_len = batch["dc_len"][idx].item()
+            prev_cont_len = batch["cont_len"][idx].item()
+
+            # there is at least one case where ctx_len + cont_len > input_ids length on hellaswag
+            # ctx: `"High jump: We see a black opening screen. We see a blue track with people running on it. We`
+            # cont: ` then see a man do a high jump at 5\'9 ".`
+            # input ids: `"High jump: We see a black opening screen. We see a blue track with people running on it. We then see a man do a high jump at 5\'9` (missing the final `".`)
+            # so reconstruct input ids from ctx + cont.
+            input_ids, patch_lens = byte_tokenizer.get_tokens_and_patch_lengths(
+                batch["ctx"][idx].tolist()[:prev_ctx_len] + batch["continuation"][idx].tolist()[:prev_cont_len], add_bos=True
+            )
+            dc_input_ids, _ = byte_tokenizer.get_tokens_and_patch_lengths(
+                batch["dc_input_ids"][idx].tolist()[:prev_dc_len], add_bos=True
+            )
+            ctx, _ = byte_tokenizer.get_tokens_and_patch_lengths(
+                batch["ctx"][idx].tolist()[:prev_ctx_len], add_bos=True
+            )
+            continuation, _ = byte_tokenizer.get_tokens_and_patch_lengths(
+                batch["continuation"][idx].tolist()[:prev_cont_len], add_bos=False
+            )
+            assert len(input_ids) == len(ctx) + len(continuation)
+            assert len(continuation) > 0
+
+            ctx_len = len(ctx)
+            dc_len = len(dc_input_ids)
+            cont_len = len(continuation)
+
+            all_input_ids.append(torch.tensor(input_ids, dtype=torch.long))
+            all_patch_lens.append(torch.tensor(patch_lens, dtype=torch.long))
+            all_dc_input_ids.append(torch.tensor(dc_input_ids, dtype=torch.long))
+            all_ctx.append(torch.tensor(ctx, dtype=torch.long))
+            all_continuation.append(torch.tensor(continuation, dtype=torch.long))
+            all_ctx_len.append(ctx_len)
+            all_dc_len.append(dc_len)
+            all_cont_len.append(cont_len)
+
+        device = batch["input_ids"].device
+
+        batch["input_ids"] = _pad_right(all_input_ids).to(device)
+        batch["patch_lens"] = _pad_right(all_patch_lens).to(device)
+        batch["dc_input_ids"] = _pad_right(all_dc_input_ids).to(device)
+        batch["ctx"] = _pad_right(all_ctx).to(device)
+        batch["continuation"] = _pad_right(all_continuation).to(device)
+        batch["ctx_len"] = torch.tensor(all_ctx_len, dtype=torch.long).to(device)
+        batch["dc_len"] = torch.tensor(all_dc_len, dtype=torch.long).to(device)
+        batch["cont_len"] = torch.tensor(all_cont_len, dtype=torch.long).to(device)
+
+        input_ids = batch.pop("input_ids")
+        # not ideal to hardcode but we are specializing to ICLMultiChoiceTaskDataset anyway..
+        labels = F.pad(
+            input_ids[..., 1:], (0, 1, 0, 0), value=-100
+        )
+
+        return input_ids, labels, batch
+
 
 
 @dataclass
@@ -164,12 +263,12 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             vocab_size=260
         )
         # save on hash embeddings for now to reduce gpu memory
-        model_config = model_config.replace(
-            local_encoder=model_config.local_encoder.replace(  # type: ignore
-                hash_byte_group_size=[3],
-                hash_byte_group_nb_functions=1,
-            )
-        )
+        # model_config = model_config.replace(
+        #     local_encoder=model_config.local_encoder.replace(  # type: ignore
+        #         hash_byte_group_size=[3],
+        #         hash_byte_group_nb_functions=1,
+        #     )
+        # )
 
         dataset_config = NumpyDatasetConfig(
             paths=DATA_PATHS,
@@ -243,14 +342,15 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         .with_callback("config_saver", ConfigSaverCallback())
         .with_callback("profiler", ProfilerCallback(enabled=False))
         #  FIXME: make byte tokenizer work for eval
-        # .with_callback(
-        #     "downstream_evaluator",
-        #     DownstreamEvaluatorCallbackConfig(
-        #         tasks=["hellaswag"],
-        #         tokenizer=tokenizer_config,
-        #         eval_interval=250,
-        #     ),
-        # )
+        .with_callback(
+            "downstream_evaluator",
+            DownstreamEvaluatorCallbackConfig(
+                tasks=["arc_easy"],
+                tokenizer=tokenizer_config,
+                eval_interval=250,
+                eval_on_startup=True,
+            ),
+        )
     )
 
     return ExperimentConfig(
@@ -271,6 +371,14 @@ def main(run_name: str, overrides: List[str]):
     # Build components.
     model = config.model.build(init_device="meta")
     train_module = config.train_module.build(model)
+
+    # data is passed through the ByteCollator + ByteFSLDataset only for training batches, so for eval we patch _prepare_batch
+    # this is VERY HACKY though.
+    if not USE_BASELINE:
+        byte_tokenizer = config.dataset.tokenizer.build()  # type: ignore
+
+        train_module._prepare_batch = partial(_prepare_batch_patch, byte_tokenizer=byte_tokenizer)
+
     dataset = config.dataset.build()
     data_loader = config.data_loader.build(
         dataset,
@@ -282,6 +390,8 @@ def main(run_name: str, overrides: List[str]):
     # Save config to W&B and each checkpoint dir.
     config_dict = config.as_config_dict()
     cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
+
+    load_model_and_optim_state("/tmp/blt_export/model_and_optim/", model)
 
     # Train.
     trainer.fit()

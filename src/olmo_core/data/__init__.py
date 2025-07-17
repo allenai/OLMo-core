@@ -39,7 +39,7 @@ from .numpy_dataset import (
     VSLGrowthCurriculum,
     VSLNaturalCurriculum,
 )
-from .tokenizer import ByteTokenizerConfig, TokenizerConfig, TokenizerName
+from .tokenizer import ByteTokenizerConfig, ByteTokenizer, TokenizerConfig, TokenizerName
 from .types import LongDocStrategy, NumpyDatasetDType, NumpyDatasetType
 
 __all__ = [
@@ -63,6 +63,7 @@ __all__ = [
     "NumpyDatasetDType",
     "TokenizerConfig",
     "ByteTokenizerConfig",
+    "ByteTokenizer",
     "TokenizerName",
     "DataMixBase",
     "DataMix",

@@ -89,6 +89,7 @@ class CrossAttention(nn.Module):
         k = k.view(bsz, kv_len, self.n_heads, self.head_dim).transpose(1, 2)
         v = v.view(bsz, kv_len, self.n_heads, self.head_dim).transpose(1, 2)
     
+        # TODO(benjaminm): somehow export needs flex_attention instead of flex_attention_comp? why?
         output = flex_attention_comp(q, k, v, block_mask=mask)
         # B H S D -> B S H D
         output = output.transpose(1, 2).contiguous()  # type: ignore
@@ -265,11 +266,6 @@ class LocalDecoder(nn.Module):
                 cache=cache,
             )
             self.cross_attentions[str(block_idx)] = CrossAttention(d_model, cross_attn_n_heads, init_device=init_device)
-
-        # TODO(benjaminm): Convention for final norm in OLMo codebase? does it exist?
-        # TODO(benjaminm): make 1e-5 arg
-        self.final_norm = nn.RMSNorm(d_model, eps=1e-5, device=init_device)
-        self.lm_head = nn.Linear(d_model, vocab_size, bias=False, device=init_device)
 
     def forward(
         self,

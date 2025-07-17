@@ -671,24 +671,8 @@ class NumpyFSLDataset(NumpyFSLDatasetBase):
 class NumpyByteFSLDataset(NumpyFSLDataset):
     def __init__(self, *args, tokenizer_config: ByteTokenizerConfig, byte_sequence_length: int, **kwargs):
         super().__init__(*args, **kwargs)
-        self.tokenizer_config = tokenizer_config
+        self.tokenizer = tokenizer_config.build()
         self.byte_sequence_length = byte_sequence_length
-
-        hf_tokenizer = AutoTokenizer.from_pretrained(
-            tokenizer_config.original_identifier
-        )
-        self.byte_sequences = {}
-    
-        offset = len(self.tokenizer_config.special_tokens)
-
-        for key, value in hf_tokenizer.get_vocab().items():
-            if key in self.tokenizer_config.special_tokens:
-                byte_sequence = [self.tokenizer_config.special_tokens.index(key)]
-            else:
-                byte_sequence = [offset + i for i in blt_utils.chars_to_bytes(key)]
-
-            assert self.byte_sequences.get(value) is None
-            self.byte_sequences[value] = byte_sequence
 
     def _read_chunk_from_array(self, path: PathOrStr, index: int, dtype=None) -> torch.Tensor:
         start_idx = index * self.patch_sequence_length # patch <-> sub/superword sequence length
@@ -703,17 +687,7 @@ class NumpyByteFSLDataset(NumpyFSLDataset):
         item = super().__getitem__(index)
         original_input_ids = item["input_ids"]
 
-        if self.tokenizer_config.bos_token_id is not None:
-            byte_tokens = [self.tokenizer_config.bos_token_id]
-            patch_lengths = [1]
-        else:
-            byte_tokens = []
-            patch_lengths = []
-
-        for token in original_input_ids:
-            token_byte_tokens = self.byte_sequences[int(token)]
-            patch_lengths.append(len(token_byte_tokens))
-            byte_tokens.extend(token_byte_tokens)
+        byte_tokens, patch_lengths = self.tokenizer.get_tokens_and_patch_lengths(original_input_ids, add_bos=True)
 
         new_input_ids = torch.tensor(byte_tokens, dtype=torch.int32)
         patch_lengths = torch.tensor(patch_lengths, dtype=torch.int32)

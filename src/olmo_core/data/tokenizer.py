@@ -3,10 +3,12 @@ from typing import Optional
 from transformers import AutoTokenizer
 
 from ..config import Config, StrEnum
+from ..nn.blt import utils as blt_utils
 
 __all__ = [
     "TokenizerConfig",
     "ByteTokenizerConfig",
+    "ByteTokenizer",
     "TokenizerName",
 ]
 
@@ -185,3 +187,67 @@ class ByteTokenizerConfig(TokenizerConfig):
             # slightly hacky, but this must match the dataset tokenizer, so dolma2
             original_identifier=TokenizerConfig.dolma2().identifier,
         )
+    
+    def build(self):
+        return ByteTokenizer(self)
+
+
+class ByteTokenizer:
+    def __init__(self, tokenizer_config: ByteTokenizerConfig):
+        self.config = tokenizer_config
+        self.hf_tokenizer = AutoTokenizer.from_pretrained(tokenizer_config.original_identifier)
+        self.offset = len(tokenizer_config.special_tokens)
+
+        self.byte_sequences = {}
+    
+        for key, value in self.hf_tokenizer.get_vocab().items():
+            if key in self.config.special_tokens:
+                byte_sequence = [self.config.special_tokens.index(key)]
+            else:
+                byte_sequence = [self.offset + i for i in blt_utils.chars_to_bytes(key)]
+
+            assert self.byte_sequences.get(value) is None
+            self.byte_sequences[value] = byte_sequence
+
+    @property
+    def bos_token_id(self):
+        return self.config.bos_token_id
+
+    @property
+    def eos_token_id(self):
+        return self.config.eos_token_id
+    
+    @property
+    def pad_token_id(self):
+        return self.config.pad_token_id
+
+    def patch_ids_to_byte_ids(self, input_ids: list[int]):
+        return [byte_token_id for token_id in input_ids for byte_token_id in self.byte_sequences[token_id]]
+
+    def encode(self, string: str, add_special_tokens=False):
+        input_ids = self.hf_tokenizer.encode(string, add_special_tokens=add_special_tokens)
+        return self.patch_ids_to_byte_ids(input_ids)
+
+    def decode(self, tokens: list[int]) -> str:
+        utf8_bytes = [tokens - self.offset for tokens in tokens if tokens >= self.offset]
+        return bytes(utf8_bytes).decode("utf-8", errors="replace")
+
+    def get_tokens_and_patch_lengths(self, original_input_ids: list[int], add_bos=True, strip_pad=False):
+        if add_bos and self.bos_token_id is not None:
+            byte_tokens = [self.bos_token_id]
+            patch_lengths = [1]
+        else:
+            byte_tokens = []
+            patch_lengths = []
+
+        for token in original_input_ids:
+            token_byte_tokens = self.patch_ids_to_byte_ids([int(token)])
+
+            if strip_pad and all(t == self.pad_token_id for t in token_byte_tokens):
+                # skip padding tokens
+                continue
+
+            patch_lengths.append(len(token_byte_tokens))
+            byte_tokens.extend(token_byte_tokens)
+
+        return byte_tokens, patch_lengths

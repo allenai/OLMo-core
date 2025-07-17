@@ -171,19 +171,6 @@ def convert_checkpoint_from_blt(
 
     model.load_state_dict(model_state_dict)
 
-    # DEBUG validation
-    test_input_ids = torch.tensor(
-        [[  1,  69,  36,  70,  80,  88,  36, 109, 119,  36]],
-        dtype=torch.long,
-        device=model.device,
-    )
-    test_patch_lens = torch.tensor(
-        [[1, 1, 1, 1, 1, 2, 4]],
-        dtype=torch.long,
-        device=model.device,
-    )
-    model(test_input_ids, patch_lens=test_patch_lens)
-
     model_and_optim_dir = join_path(output_path, "model_and_optim")
     log.info(f"Saving OLMo core checkpoint to '{model_and_optim_dir}'")
     save_model_and_optim_state(model_and_optim_dir, model, save_overwrite=True)

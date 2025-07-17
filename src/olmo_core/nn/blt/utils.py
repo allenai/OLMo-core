@@ -140,7 +140,7 @@ def cross_attn_mask(
             H=None,
             Q_LEN=q_len,
             KV_LEN=kv_len,
-            _compile=True,
+            _compile=False,  # TODO(benjaminm): _compile=True causes failures in eval, why? and how large is the speed diff?
             device=patch_ids.device,
         )
         return block_mask

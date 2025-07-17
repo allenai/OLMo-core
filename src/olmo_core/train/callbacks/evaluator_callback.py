@@ -12,6 +12,7 @@ from olmo_core.data import (
     NumpyPaddedFSLDataset,
     TextDataLoaderBase,
     TokenizerConfig,
+    ByteTokenizerConfig,
 )
 from olmo_core.data.utils import get_labels
 from olmo_core.distributed.utils import get_rank, get_world_size, is_distributed
@@ -397,13 +398,23 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
 
         from olmo_eval import HFTokenizer
 
-        if self.tokenizer.identifier is None:
-            raise OLMoConfigurationError(
-                "Tokenizer 'identifier' required to build a concrete tokenizer"
-            )
+        if isinstance(self.tokenizer, ByteTokenizerConfig):
+            if self.tokenizer.original_identifier is None:
+                raise OLMoConfigurationError(
+                    "ByteTokenizer 'original_identifier' required to build a concrete tokenizer"
+                )
+
+            identifier = self.tokenizer.original_identifier
+        else:
+            if self.tokenizer.identifier is None:
+                raise OLMoConfigurationError(
+                    "Tokenizer 'identifier' required to build a concrete tokenizer"
+                )
+
+            identifier = self.tokenizer.identifier
 
         tokenizer = HFTokenizer(
-            self.tokenizer.identifier,
+            identifier,
             pad_token_id=self.tokenizer.pad_token_id,
             eos_token_id=self.tokenizer.eos_token_id,
             bos_token_id=self.tokenizer.bos_token_id,
