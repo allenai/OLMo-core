@@ -18,7 +18,9 @@ log = logging.getLogger(__name__)
 __all__ = [
     "RoPEType",
     "RoPEConfig",
-    "RoPEScalingConfig",
+    "RoPEScalingConfigBase",
+    "ABFRoPEScalingConfig",
+    "LLama3RoPEScalingConfig",
     "YaRNRoPEScalingConfig"
     "RotaryEmbeddingBase",
     "RotaryEmbedding",
@@ -46,7 +48,7 @@ class RoPEType(StrEnum):
     """
 
 
-class RoPEScalingConfig(Config):
+class RoPEScalingConfigBase(Config):
     """
     Base class for RoPE scaling config.    
     """
@@ -71,7 +73,7 @@ class RoPEScalingConfig(Config):
         return inv_freq
 
 @dataclass
-class ABFRoPEScalingConfig(RoPEScalingConfig):
+class ABFRoPEScalingConfig(RoPEScalingConfigBase):
     """
     Defines how to scale RoPE to longer sequences with a change to RoPE base.
     """
@@ -90,7 +92,7 @@ class ABFRoPEScalingConfig(RoPEScalingConfig):
 
 
 @dataclass
-class LLama3RoPEScalingConfig(RoPEScalingConfig):
+class LLama3RoPEScalingConfig(RoPEScalingConfigBase):
     """
     Defines how to scale RoPE to longer sequence lengths in the manner of Llama3.1.
     """
@@ -99,7 +101,6 @@ class LLama3RoPEScalingConfig(RoPEScalingConfig):
     low_freq_factor: float = 1.0
     high_freq_factor: float = 4.0
     old_context_len: int = 8192
-    attention_factor: float = 1.0
 
     def compute_scaled_inv_freq(
         self,
@@ -127,7 +128,7 @@ class LLama3RoPEScalingConfig(RoPEScalingConfig):
 
 
 @dataclass
-class YaRNRoPEScalingConfig(RoPEScalingConfig):
+class YaRNRoPEScalingConfig(RoPEScalingConfigBase):
     """
     Defines how to scale RoPE using the YaRN method
     [original paper](https://huggingface.co/papers/2309.00071)
@@ -136,10 +137,8 @@ class YaRNRoPEScalingConfig(RoPEScalingConfig):
     factor: float = 8.0
     beta_fast: int = 32
     beta_slow: int = 1
-    attention_factor: float = 1.0
-    original_max_position_embeddings: int = 4096
+    original_max_position_embeddings: int = 8192
     
-
     def compute_scaled_inv_freq(
         self,
         theta: int,
