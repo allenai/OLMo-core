@@ -28,8 +28,7 @@ from olmo_core.distributed.utils import (
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
 from olmo_core.generate.config import GenerationConfig
-from olmo_core.generate.selection import temperature_sampling
-from olmo_core.internal.experiment import ExperimentConfig
+from olmo_core.generate.selection import select_next_token
 from olmo_core.io import is_url, join_path, normalize_path
 from olmo_core.nn.transformer import Transformer, TransformerConfig
 from olmo_core.train.train_module.transformer.common import parallelize_model
@@ -195,8 +194,11 @@ class TransformerGenerationModule(GenerationModule):
             )
             next_token_logits = logits[:, -1, :]  # (batch_size, vocab_size)
 
-            next_tokens = temperature_sampling(  # TODO: make this modular
-                next_token_logits, temperature=generation_config.temperature
+            next_tokens = select_next_token(
+                next_token_logits,
+                temperature=generation_config.temperature,
+                top_k=generation_config.top_k,
+                top_p=generation_config.top_p,
             )
 
             # Handle finished sequences
