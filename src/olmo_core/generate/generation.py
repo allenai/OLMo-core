@@ -1,4 +1,5 @@
 import contextlib
+import json
 import logging
 import tempfile
 from abc import ABCMeta, abstractmethod
@@ -8,11 +9,13 @@ from typing import Any, Dict, Generator, Optional, Tuple
 import torch
 import torch.distributed as dist
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
+from cached_path import cached_path
 from torch.distributed import DeviceMesh, ProcessGroup
 from torch.distributed.checkpoint.metadata import Metadata
 from torch.distributed.checkpoint.stateful import Stateful
 
 from olmo_core.aliases import PathOrStr
+from olmo_core.data.tokenizer import TokenizerConfig
 from olmo_core.distributed.checkpoint import get_checkpoint_metadata, load_state_dict
 from olmo_core.distributed.parallel import build_world_mesh, get_dp_process_group
 from olmo_core.distributed.utils import (
@@ -344,8 +347,18 @@ class TransformerGenerationModule(GenerationModule):
 
         # Load transformer config from checkpoint if not provided
         if transformer_config is None and get_rank(process_group) == 0:
-            experiment_config = ExperimentConfig.from_file(join_path(checkpoint_dir, "config.json"))
-            transformer_config = experiment_config.model
+            config_path = join_path(checkpoint_dir, "config.json")
+            with cached_path(config_path).open() as f:
+                config_dict = json.load(f)
+            try:
+                transformer_config = TransformerConfig.from_dict(config_dict["model"])
+                # Avoid loading dataset_config b/c we dont care about validation here as long as the tokenizer is valid
+                dataset_config = config_dict["dataset"]
+                tokenizer_config = TokenizerConfig.from_dict(dataset_config["tokenizer"])
+            except KeyError as e:
+                raise OLMoConfigurationError(
+                    f"Failed to load config from checkpoint at {config_path}: missing required field {e}"
+                ) from e
 
         # Create work directory on rank 0
         work_dir = Path(
@@ -354,6 +367,7 @@ class TransformerGenerationModule(GenerationModule):
 
         # Broadcast config and work_dir to all ranks
         transformer_config = scatter_object(transformer_config)
+        tokenizer_config = scatter_object(tokenizer_config)
         work_dir = scatter_object(work_dir)
 
         if transformer_config is None:
@@ -361,9 +375,9 @@ class TransformerGenerationModule(GenerationModule):
 
         if generation_config is None:
             generation_config = GenerationConfig(
-                pad_token_id=experiment_config.dataset.tokenizer.pad_token_id,
-                eos_token_id=experiment_config.dataset.tokenizer.eos_token_id,
-                max_length=experiment_config.dataset.effective_sequence_length,
+                pad_token_id=tokenizer_config.pad_token_id,
+                eos_token_id=tokenizer_config.eos_token_id,
+                max_length=dataset_config.effective_sequence_length,
             )
             log.info(
                 f"No generation config provided, using defaults from checkpoint config: {generation_config}",
