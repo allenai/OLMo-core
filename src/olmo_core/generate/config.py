@@ -34,9 +34,33 @@ class GenerationConfig(Config):
     temperature: float = 0.0
     """Temperature for sampling. If 0, this is equivalent to greedy selection."""
 
+    top_k: int = -1
+    """Top-k sampling. Only consider the top k tokens with the highest probabilities. -1 means no filtering."""
+
+    top_p: float = 1.0
+    """Top-p (nucleus) sampling. Only consider the smallest set of tokens whose cumulative probability exceeds this threshold. 1.0 means no filtering."""
+
     stop_sequences: Optional[List[List[int]]] = None
     """Stop sequences. If provided, generation will stop when any of these sequences of tokens
     are generated (in addition to the EOS token)."""
+
+    def __post_init__(self):
+        self.validate()
+
+    def validate(self):
+        """Validate the generation configuration."""
+        if self.pad_token_id < 0:
+            raise ValueError(f"pad_token_id must be non-negative, got {self.pad_token_id}")
+        if self.eos_token_id < 0:
+            raise ValueError(f"eos_token_id must be non-negative, got {self.eos_token_id}")
+        if self.max_length <= 0:
+            raise ValueError(f"max_length must be positive, got {self.max_length}")
+        if self.temperature < 0:
+            raise ValueError(f"temperature must be non-negative, got {self.temperature}")
+        if self.top_k <= 0 and self.top_k != -1:
+            raise ValueError(f"top_k must be positive or -1, got {self.top_k}")
+        if self.top_p <= 0.0 or self.top_p > 1.0:
+            raise ValueError(f"top_p must be in (0, 1], got {self.top_p}")
 
 
 @beta_feature
