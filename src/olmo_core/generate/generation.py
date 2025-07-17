@@ -388,7 +388,6 @@ class TransformerGenerationModule(GenerationModule):
             generation_config = GenerationConfig(
                 pad_token_id=tokenizer_config.pad_token_id,
                 eos_token_id=tokenizer_config.eos_token_id,
-                max_length=dataset_config.effective_sequence_length,
             )
             log.info(
                 f"No generation config provided, using defaults from checkpoint config: {generation_config}",
