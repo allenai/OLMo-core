@@ -62,14 +62,14 @@ D_MODEL=1536
 MOE_HIDDEN_SIZE = 1536
 SHARED_MLP_HIDDEN_SIZE = 2048  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
-MICRO_BSZ = 8
+MICRO_BSZ = 16
 NUM_LAYERS=16
 DP_DIM=8
 EP_DIM=1
 PP_DIM=1
 SPLIT_POINTS = None
             
-TAG=f'LR4e-4'
+TAG=f'abl'
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     d_model = D_MODEL
@@ -201,7 +201,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "checkpointer",
             CheckpointerCallback(
                 save_interval=1000,
-                ephemeral_save_interval=200,
+                ephemeral_save_interval=500,
                 save_async=True,
                 pre_train_checkpoint=True,
             ),

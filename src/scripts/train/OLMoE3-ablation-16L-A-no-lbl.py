@@ -92,7 +92,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
             hidden_size=MOE_HIDDEN_SIZE,
             # capacity_factor=1.0,
             router=MoERouterConfig(top_k=TOP_K, gating_function=MoERouterGatingFunction.sigmoid, uniform_expert_assignment=False),
-            lb_loss_weight=0.05,
+            lb_loss_weight=0.0,
             z_loss_weight=None,
             lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
             scale_loss_by_num_layers=False,
@@ -133,8 +133,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             weight_decay=0.1,
             betas=(0.9, 0.95),
             group_overrides=[
-                OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0)),
-                OptimGroupOverride(params=["*.feed_forward_moe.experts.mlp.*"], opts=dict(lr=LR * math.sqrt(TOP_K/NUM_EXPERTS))),
+                OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
             ],
             # fused=True,
             compile=False,

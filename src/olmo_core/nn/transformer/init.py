@@ -197,15 +197,15 @@ class InitMethod(StrEnum):
                 generator=generator,
             )
         elif isinstance(m.router, MoEOrthogonalRouter):
-            _apply_init(
-                nn.init.trunc_normal_,
-                cast(MoEOrthogonalRouter, m.router).weight,
-                mean=0.0,
-                std=std,
-                a=-3 * std,
-                b=3 * std,
-                generator=generator,
-            )
+            # _apply_init(
+            #     nn.init.trunc_normal_,
+            #     cast(MoEOrthogonalRouter, m.router).weight,
+            #     mean=0.0,
+            #     std=std,
+            #     a=-3 * std,
+            #     b=3 * std,
+            #     generator=generator,
+            # )
             _apply_init(
                 nn.init.orthogonal_,
                 cast(MoEOrthogonalRouter, m.router).weight,

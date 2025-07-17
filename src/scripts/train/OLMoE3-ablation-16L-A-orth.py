@@ -62,7 +62,7 @@ D_MODEL=1536
 MOE_HIDDEN_SIZE = 1536
 SHARED_MLP_HIDDEN_SIZE = 2048  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
-MICRO_BSZ = 16
+MICRO_BSZ = 8
 NUM_LAYERS=16
 DP_DIM=8
 EP_DIM=1
@@ -72,6 +72,7 @@ SPLIT_POINTS = None
 TAG=f'abl'
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
+    from olmo_core.nn.moe import MoERouterType, MoERouterGatingFunction
     d_model = D_MODEL
 
     config = TransformerConfig.llama_like(
@@ -91,9 +92,12 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
             num_experts=NUM_EXPERTS,
             hidden_size=MOE_HIDDEN_SIZE,
             # capacity_factor=1.0,
-            router=MoERouterConfig(top_k=TOP_K, gating_function=MoERouterGatingFunction.sigmoid, uniform_expert_assignment=False),
-            lb_loss_weight=0.05,
+            router=MoERouterConfig(
+                name=MoERouterType.orthogonal,
+                top_k=TOP_K, gating_function=MoERouterGatingFunction.sigmoid, uniform_expert_assignment=False),
+            lb_loss_weight=0.00,
             z_loss_weight=None,
+            orth_loss_weight=1.0,
             lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
             scale_loss_by_num_layers=False,
         ),
@@ -133,8 +137,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             weight_decay=0.1,
             betas=(0.9, 0.95),
             group_overrides=[
-                OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0)),
-                OptimGroupOverride(params=["*.feed_forward_moe.experts.mlp.*"], opts=dict(lr=LR * math.sqrt(TOP_K/NUM_EXPERTS))),
+                OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
             ],
             # fused=True,
             compile=False,

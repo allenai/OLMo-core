@@ -145,7 +145,8 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
         default_override = OptimGroupOverride(
             [name for name in all_params.keys() if name not in overriden_param_names], {}
         )
-        group_overrides.append(default_override)
+        # group_overrides.append(default_override)
+        group_overrides.insert(0, default_override) # to ensure default is first
 
         return [
             {"params": [all_params[param_name] for param_name in go.params], **go.opts}

@@ -69,7 +69,7 @@ EP_DIM=1
 PP_DIM=1
 SPLIT_POINTS = None
             
-TAG=f'LR1e-4'
+TAG=f'abl'
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     d_model = D_MODEL
@@ -201,7 +201,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "checkpointer",
             CheckpointerCallback(
                 save_interval=1000,
-                ephemeral_save_interval=200,
+                ephemeral_save_interval=500,
                 save_async=True,
                 pre_train_checkpoint=True,
             ),
