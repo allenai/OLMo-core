@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from typing import Any, Dict, Sequence, Union
 
 import torch
@@ -155,3 +156,58 @@ class DataCollator:
             out["metadata"] = all_metadata
 
         return out
+
+
+@dataclass
+class ByteDataCollator(DataCollator):
+    def __call__(
+        self, items: Union[Sequence[Dict[str, Any]], Sequence[torch.Tensor]]
+    ) -> Dict[str, Any]:
+        batch = super().__call__(items)
+
+        all_original_input_ids = []
+        all_patch_lengths = []
+
+        max_original_len = max(
+            len(x["original_input_ids"]) if isinstance(x, dict) and "original_input_ids" in x else math.nan for x in items
+        )
+
+        for x in items:
+            original_input_ids = x.get("original_input_ids") if isinstance(x, dict) else None
+            patch_lengths = x.get("patch_lens") if isinstance(x, dict) else None
+
+            if original_input_ids is not None:
+                # both or neither
+                assert patch_lengths is not None
+
+                max_original_len = int(max_original_len)
+
+                pad_shape = (
+                    (max_original_len - len(original_input_ids), 0)
+                    if self.pad_direction == PaddingDirection.left
+                    else (0, max_original_len - len(original_input_ids))
+                )
+
+                # Pad input IDs.
+                all_original_input_ids.append(
+                    F.pad(
+                        original_input_ids.to(dtype=torch.long),
+                        pad_shape,
+                        value=self.pad_token_id,
+                    )
+                )
+                # Pad byte lengths.
+                all_patch_lengths.append(
+                    F.pad(
+                        patch_lengths.to(dtype=torch.long),
+                        pad_shape,
+                        value=0,
+                    )
+                )
+
+        if all_original_input_ids:
+            batch["original_input_ids"] = torch.stack(all_original_input_ids, dim=0)
+        if all_patch_lengths:
+            batch["patch_lens"] = torch.stack(all_patch_lengths, dim=0)
+
+        return batch

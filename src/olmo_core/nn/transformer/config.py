@@ -270,8 +270,14 @@ class TransformerConfig(Config):
     init_std: float = 0.02
     freeze_params: Optional[List[str]] = None
     block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None
+    # BLT config
     local_encoder: Optional[LocalEncoderConfig] = None
     local_decoder: Optional[LocalDecoderConfig] = None
+    # custom boundary predictor extension to BLT
+    add_boundary_predictor: bool = False
+    # teacher config for distillation
+    teacher_config: "TransformerConfig | None" = None
+    share_blocks_between_teacher_and_student: bool = False
 
     def build(
         self,
@@ -284,7 +290,7 @@ class TransformerConfig(Config):
         :param init_device: The device to put the parameters on during initialization. In a
             distributed setting it usually makes sense to set this to "meta".
         """
-        from .model import MoETransformer, NormalizedTransformer, Transformer, BLTTransformer
+        from .model import MoETransformer, NormalizedTransformer, Transformer, BLTTransformer, BLTDistillTransformer
 
         if self.name != TransformerType.blt:
             # not implemented for BLTTransformer
@@ -342,7 +348,17 @@ class TransformerConfig(Config):
                     f"Both local_encoder and local_decoder must be specified for BLTTransformer, got {self.local_encoder} and {self.local_decoder}"
                 )
 
-            model = BLTTransformer(
+            if self.teacher_config is not None:
+                cls = BLTDistillTransformer
+                kwargs = {
+                    "teacher": self.teacher_config.build(init_device=init_device),
+                    "share_blocks": self.share_blocks_between_teacher_and_student,
+                }
+            else:
+                cls = BLTTransformer
+                kwargs = {}
+
+            model = cls(
                 d_model=self.d_model,
                 vocab_size=self.vocab_size,
                 n_layers=self.n_layers,
@@ -356,6 +372,8 @@ class TransformerConfig(Config):
                 block_overrides=self.block_overrides,
                 local_encoder=self.local_encoder,
                 local_decoder=self.local_decoder,
+                add_boundary_predictor=self.add_boundary_predictor,
+                **kwargs,
             )
         else:
             raise NotImplementedError(self.name)

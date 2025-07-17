@@ -11,7 +11,7 @@ builder, build your data loader with the :class:`~olmo_core.data.data_loader.Num
 builder, and pass it to :meth:`TrainerConfig.build() <olmo_core.train.TrainerConfig.build>`.
 """
 
-from .collator import DataCollator, PaddingDirection
+from .collator import DataCollator, PaddingDirection, ByteDataCollator
 from .data_loader import (
     DataLoaderBase,
     NumpyDataLoaderBase,
@@ -62,6 +62,7 @@ __all__ = [
     "VSLCurriculumConfig",
     "NumpyDatasetDType",
     "TokenizerConfig",
+    "ByteDataCollator",
     "ByteTokenizerConfig",
     "ByteTokenizer",
     "TokenizerName",

@@ -1,6 +1,6 @@
 import copy
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union, cast
 
 import torch
@@ -9,6 +9,7 @@ from torch.distributed import DeviceMesh
 from torch.distributed.pipelining import PipelineStage
 
 from olmo_core.config import Config, DType
+from olmo_core.data import ByteTokenizerConfig
 from olmo_core.distributed.parallel import (
     ContextParallelConfig,
     DataParallelConfig,
@@ -25,12 +26,14 @@ from olmo_core.nn.transformer import (
     TransformerActivationCheckpointingMode,
     TransformerDataParallelWrappingStrategy,
 )
+from olmo_core.nn.blt.config import BLTConfig
 from olmo_core.optim import OptimConfig
 from olmo_core.optim.scheduler import Scheduler
 
 if TYPE_CHECKING:
     from .pipeline_train_module import TransformerPipelineTrainModule
     from .train_module import TransformerTrainModule
+    from .blt_train_module import TransformerBLTTrainModule
 
 log = logging.getLogger(__name__)
 
@@ -279,6 +282,7 @@ class TransformerTrainModuleConfig(Config):
 
     # Loss function settings.
 
+    blt_config: Optional[BLTConfig] = None
     z_loss_multiplier: Optional[float] = None
 
     # Checkpoint settings.
@@ -296,7 +300,7 @@ class TransformerTrainModuleConfig(Config):
         self,
         model: Transformer,
         device: Optional[torch.device] = None,
-    ) -> Union["TransformerTrainModule", "TransformerPipelineTrainModule"]:
+    ) -> Union["TransformerTrainModule", "TransformerPipelineTrainModule", "TransformerBLTTrainModule"]:
         """
         Build the corresponding :class:`TransformerTrainModule` or :class:`TransformerPipelineTrainModule.
 
@@ -305,6 +309,7 @@ class TransformerTrainModuleConfig(Config):
         """
         from .pipeline_train_module import TransformerPipelineTrainModule
         from .train_module import TransformerTrainModule
+        from .blt_train_module import TransformerBLTTrainModule
 
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         if (autocast_precision := kwargs.pop("autocast_precision", None)) is not None:
@@ -314,6 +319,16 @@ class TransformerTrainModuleConfig(Config):
         if (state_dict_load_opts := kwargs.pop("state_dict_load_opts", None)) is not None:
             kwargs["state_dict_load_opts"] = dist_cp_sd.StateDictOptions(**state_dict_load_opts)
 
+        if self.blt_config is not None:
+            if self.pp_config is not None:
+                raise OLMoConfigurationError(
+                    "BLT training/distillation is not supported with pipeline parallelism"
+                )
+            return TransformerBLTTrainModule(
+                model=model,
+                device=device,
+                **kwargs,
+            )
         if self.pp_config is not None:
             return TransformerPipelineTrainModule(
                 model=model,

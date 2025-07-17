@@ -27,7 +27,9 @@ from olmo_core.data import (
 )
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.checkpoint import load_model_and_optim_state
-from olmo_core.nn.transformer import TransformerConfig
+from olmo_core.nn.transformer import TransformerConfig, TransformerType
+from olmo_core.nn.feed_forward import FeedForwardConfig
+from olmo_core.nn.blt import LocalEncoderConfig, LocalDecoderConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
 from olmo_core.train import (
     Duration,
@@ -53,8 +55,8 @@ from olmo_core.train.train_module import (
 )
 from olmo_core.utils import seed_all
 
+
 SEQUENCE_LENGTH = 1024
-USE_BASELINE = False # whether to use baseline (subword) model or BLT
 
 # DEBUG: replaced 0* with 00
 DATA_PATTERN = "/weka/oe-training-default/ai2-llm/preprocessed/dclm/baseline_type_topic_classified_20pct/allenai/dolma2-tokenizer/**/**/part-00-00000.npy"
@@ -73,74 +75,82 @@ class ExperimentConfig(Config):
 
 
 def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
-    if USE_BASELINE:
-        BYTE_EXPANSION_FACTOR = 1  # no expansion
+    BYTE_EXPANSION_FACTOR = 8  # default (max) expansion factor
 
-        tokenizer_config = TokenizerConfig.dolma2()
-        model_config = TransformerConfig.blt_1b(
-            vocab_size=tokenizer_config.padded_vocab_size(),
-            skip_local_encoder_decoder=True, # no local encoder/decoder for subword model
-        )
+    byte_tokenizer_config = ByteTokenizerConfig.blt()
+    subword_tokenizer_config = TokenizerConfig.dolma2()
 
-        dataset_config = NumpyDatasetConfig(
-            paths=DATA_PATHS,
-            name=NumpyDatasetType.fsl,
-            sequence_length=SEQUENCE_LENGTH, # subword sequence length
-            tokenizer=tokenizer_config,
-            work_dir=DATA_WORK_DIR,
-        )
 
-        blt_config = None
+    teacher_model_config = TransformerConfig.olmo2_190M( # DEBUG, switch to olmo2_1b_v2 later
+        vocab_size=subword_tokenizer_config.padded_vocab_size()
+    )
 
-        optim = AdamWConfig(
-            lr=1e-3,
-            group_overrides=[
-                OptimGroupOverride(
-                    params=["embeddings.weight"],
-                    opts=dict(weight_decay=0.0)
-                )
-            ],
-        )
-    else:
-        BYTE_EXPANSION_FACTOR = 8  # default (max) expansion factor
+    local_d_model = 384 # DEBUG, switch to 1024 later
+    local_encoder_n_layers = 1
+    local_decoder_n_layers = 9
+    local_attn_n_heads = 16
+    local_cross_attn_n_heads = 16
+    local_block = teacher_model_config.block.replace(
+        attention=teacher_model_config.block.attention.replace(n_heads=local_attn_n_heads),
+        feed_forward=FeedForwardConfig(hidden_size=local_d_model, bias=False),
+    )
 
-        tokenizer_config = ByteTokenizerConfig.blt()
-        model_config = TransformerConfig.blt_1b(
-            vocab_size=260
-        )
-        # save on hash embeddings for now to reduce gpu memory
-        model_config = model_config.replace(
-            local_encoder=model_config.local_encoder.replace(  # type: ignore
-                hash_byte_group_size=[3],
-                hash_byte_group_nb_functions=1,
+    local_encoder = LocalEncoderConfig(
+        hash_byte_group_size=[3, 4, 5, 6, 7, 8],
+        hash_byte_group_vocab=500_002,
+        hash_byte_group_nb_functions=1,
+        sliding_window_size=512,
+        d_model=local_d_model,
+        n_layers=local_encoder_n_layers,
+        cross_attn_n_heads=local_cross_attn_n_heads,
+        block_config=local_block,
+    )
+    local_decoder = LocalDecoderConfig(
+        sliding_window_size=512,
+        d_model=local_d_model,
+        n_layers=local_decoder_n_layers,
+        cross_attn_n_heads=local_cross_attn_n_heads,
+        block_config=local_block,
+    )
+    model_config = teacher_model_config.replace(
+        name=TransformerType.blt,
+        vocab_size=byte_tokenizer_config.padded_vocab_size(),
+        local_encoder=local_encoder,
+        local_decoder=local_decoder,
+        teacher_config=teacher_model_config,
+        share_blocks_between_teacher_and_student=True,
+        add_boundary_predictor=True,
+    )
+
+    # save on hash embeddings for now to reduce gpu memory
+    # model_config = model_config.replace(
+    #     local_encoder=model_config.local_encoder.replace(  # type: ignore
+    #         hash_byte_group_size=[3],
+    #         hash_byte_group_nb_functions=1,
+    #     )
+    # )
+
+    dataset_config = NumpyDatasetConfig(
+        paths=DATA_PATHS,
+        name=NumpyDatasetType.byte_fsl,
+        sequence_length=SEQUENCE_LENGTH, # subword sequence length
+        max_sequence_length=SEQUENCE_LENGTH * BYTE_EXPANSION_FACTOR, # max. length of the byte sequence
+        tokenizer=byte_tokenizer_config,
+        work_dir=DATA_WORK_DIR,
+    )
+
+    optim = AdamWConfig(
+        lr=1e-3,
+        group_overrides=[
+            OptimGroupOverride(
+                params=[
+                    "local_encoder.embedding.weight",
+                    "local_encoder.hash_embeddings.*.weight"
+                ],
+                opts=dict(weight_decay=0.0)
             )
-        )
-
-        dataset_config = NumpyDatasetConfig(
-            paths=DATA_PATHS,
-            name=NumpyDatasetType.byte_fsl,
-            sequence_length=SEQUENCE_LENGTH, # subword sequence length
-            max_sequence_length=SEQUENCE_LENGTH * BYTE_EXPANSION_FACTOR, # max. length of the byte sequence
-            tokenizer=tokenizer_config,
-            work_dir=DATA_WORK_DIR,
-        )
-
-        blt_config = BLTConfig(
-            tokenizer=tokenizer_config,
-        )
-
-        optim = AdamWConfig(
-            lr=1e-3,
-            group_overrides=[
-                OptimGroupOverride(
-                    params=[
-                        "local_encoder.embedding.weight",
-                        "local_encoder.hash_embeddings.*.weight"
-                    ],
-                    opts=dict(weight_decay=0.0)
-                )
-            ],
-        )
+        ],
+    )
 
     data_loader_config = NumpyDataLoaderConfig(
         global_batch_size=4 * SEQUENCE_LENGTH * BYTE_EXPANSION_FACTOR, # DEBUG (bs was 256)
@@ -153,7 +163,9 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         max_sequence_length=dataset_config.effective_sequence_length,
         optim=optim,
         compile_model=True,
-        blt_config=blt_config,
+        blt_config=BLTConfig(
+            tokenizer=byte_tokenizer_config,
+        ),
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
         ),
@@ -197,7 +209,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             "downstream_evaluator",
             DownstreamEvaluatorCallbackConfig(
                 tasks=["arc_easy"],
-                tokenizer=tokenizer_config,
+                tokenizer=byte_tokenizer_config,
                 eval_interval=250,
                 eval_on_startup=False,
             ),
@@ -205,7 +217,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     )
 
     return ExperimentConfig(
-        model=model_config,
+        model=model_config,  # type: ignore
         dataset=dataset_config,  # type: ignore
         data_loader=data_loader_config,
         train_module=train_module_config,

@@ -554,6 +554,9 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
                 (input_ids.shape[0], self.dataset.patch_sequence_length),
                 device=input_ids.device
             )
+            # first patch must be length 1 (<bos>)
+            patch_lengths[:, 0] = 1
+
             patch_lengths = torch.where(
                 (torch.cumsum(patch_lengths, dim=-1) - patch_lengths) > self.dataset.max_sequence_length,
                 torch.zeros_like(patch_lengths),
