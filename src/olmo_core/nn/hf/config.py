@@ -1,4 +1,10 @@
-from transformers import Olmo2Config, Olmo3Config, Olmoe2Config, PretrainedConfig
+from transformers import (
+    Olmo2Config,
+    Olmo2RetrofitConfig,
+    Olmo3Config,
+    Olmoe2Config,
+    PretrainedConfig,
+)
 
 from olmo_core.doc_utils import beta_feature
 from olmo_core.nn.attention import Attention
@@ -131,6 +137,16 @@ def get_hf_config(model: Transformer) -> PretrainedConfig:
             f"Attention does not use rope, unable to build HF config for {model.__class__.__name__}"
         )
 
+    rope_scaling = None
+    if blocks[0].attention.rope.scaling is not None:
+        rope_scaling = {
+            "rope_type": "llama3",
+            "factor": blocks[0].attention.rope.scaling.factor,
+            "original_max_position_embeddings": blocks[0].attention.rope.scaling.old_context_len,
+            "low_freq_factor": blocks[0].attention.rope.scaling.low_freq_factor,
+            "high_freq_factor": blocks[0].attention.rope.scaling.high_freq_factor,
+        }
+
     if blocks[0].attention.use_head_qk_norm:
         return Olmo3Config(
             vocab_size=model.vocab_size,
@@ -143,6 +159,7 @@ def get_hf_config(model: Transformer) -> PretrainedConfig:
             max_position_embeddings=-1,
             attention_bias=blocks[0].attention.w_out.bias is not None,
             rope_theta=blocks[0].attention.rope.theta,
+            rope_scaling=rope_scaling,
             pad_token_id=None,  # type: ignore
             bos_token_id=None,
             eos_token_id=None,  # type: ignore
@@ -156,8 +173,35 @@ def get_hf_config(model: Transformer) -> PretrainedConfig:
         )
     else:
         if any(block.attention.window_size != (-1, -1) for block in blocks):
+            return Olmo2RetrofitConfig(
+                vocab_size=model.vocab_size,
+                hidden_size=model.d_model,
+                intermediate_size=blocks[0].feed_forward.hidden_size,
+                num_hidden_layers=model.n_layers,
+                num_attention_heads=blocks[0].attention.n_heads,
+                num_key_value_heads=blocks[0].attention.n_kv_heads,
+                hidden_act="silu",
+                max_position_embeddings=-1,
+                attention_bias=blocks[0].attention.w_out.bias is not None,
+                rope_theta=blocks[0].attention.rope.theta,
+                rope_scaling=rope_scaling,
+                pad_token_id=None,  # type: ignore
+                bos_token_id=None,
+                eos_token_id=None,  # type: ignore
+                rms_norm_eps=blocks[0].feed_forward_norm.eps,
+                tie_word_embeddings=False,
+                sliding_window=max(block.attention.window_size[0] + 1 for block in blocks),
+                layer_types=[
+                    "sliding_attention"
+                    if block.attention.window_size != (-1, -1)
+                    else "full_attention"
+                    for block in blocks
+                ],
+            )
+
+        if rope_scaling is not None:
             raise NotImplementedError(
-                f"Sliding window attention is not supported without head qk norm, unable to build HF config for {model.__class__.__name__}"
+                f"OLMo 2 does not support Llama3 RoPE, unable to build HF config for {model.__class__.__name__}"
             )
 
         return Olmo2Config(
