@@ -160,7 +160,8 @@ def build_sft_dataset(
         clean_path = dataset_path.rstrip('/')
         if dataset_path.startswith("gs://"):
             contents = list_directory(dataset_path)
-            print("expanded directory!")
+            # TODO: This does not work yet! GCS support is an active work in progress, nearly complete
+            print("GCS support not working yet!")
             token_id_paths = []
             label_mask_paths = []
             for elem in contents:
@@ -170,7 +171,6 @@ def build_sft_dataset(
                     label_mask_paths.append(elem)
             expand_glob = False
         else:
-            print("did not expand directory!")
             token_id_paths = [f"{clean_path}/token_ids_part_*.npy"]
             label_mask_paths = [f"{clean_path}/labels_mask_*.npy"]
             expand_glob = True
