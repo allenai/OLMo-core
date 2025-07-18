@@ -2,6 +2,7 @@ import contextlib
 import json
 import logging
 import tempfile
+import time
 from abc import ABCMeta, abstractmethod
 from pathlib import Path
 from typing import Any, Dict, Generator, Optional, Tuple
@@ -168,6 +169,7 @@ class TransformerGenerationModule(GenerationModule):
         return_logits: bool = False,
         return_logprobs: bool = False,
         completions_only: bool = False,
+        log_timing: bool = False,
         **generation_kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
         """
@@ -212,7 +214,15 @@ class TransformerGenerationModule(GenerationModule):
         all_logits = [] if return_logits else None
         all_logprobs = [] if return_logprobs else None
 
+        # Timing stats
+        start_time = time.perf_counter()
+        time_to_first_token = None
+        token_times = []
+        tokens_generated = 0
+
         while generated.shape[1] <= generation_config.max_length:
+            token_start_time = time.perf_counter()
+
             if generated.shape[1] == prompt_len:
                 # First forward: compute all prompt logits if needed for scoring
                 logits_to_keep = 0 if (return_logits or return_logprobs) else 1
@@ -282,6 +292,14 @@ class TransformerGenerationModule(GenerationModule):
                 new_token_mask = torch.ones_like(prev_finished, dtype=attention_mask.dtype)
                 attention_mask = torch.cat([attention_mask, new_token_mask.unsqueeze(-1)], dim=1)
 
+            # Track timing
+            token_end_time = time.perf_counter()
+            if time_to_first_token is None:
+                time_to_first_token = token_end_time - start_time
+            else:
+                token_times.append(token_end_time - token_start_time)
+            tokens_generated += 1
+
         logits = None
         if return_logits and all_logits:
             logits = torch.cat(all_logits, dim=1)
@@ -302,6 +320,20 @@ class TransformerGenerationModule(GenerationModule):
             if logprobs is not None:
                 # Slice out prompt logprobs to only keep completion logprobs
                 logprobs = logprobs[:, prompt_len - 1 :]
+
+        total_time = time.perf_counter() - start_time
+        if log_timing:
+            log.info("Generation stats:")
+            log.info(f"  Batch size: {batch_size}  Prompt length: {prompt_len}")
+            log.info(
+                f"  Tokens generated: {tokens_generated} ({tokens_generated / total_time:.1f} tokens/s)"
+            )
+            log.info(f"  Total generation time: {total_time:.3f}s")
+            if time_to_first_token is not None:
+                log.info(f"  Time to first token: {time_to_first_token:.3f}s")
+            if token_times:
+                avg_time_per_token = sum(token_times) / len(token_times)
+                log.info(f"  Average inter-token latency: {avg_time_per_token * 1000:.1f}ms")
 
         return generated, logits, logprobs
 
