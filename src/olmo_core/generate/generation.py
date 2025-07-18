@@ -183,7 +183,7 @@ class TransformerGenerationModule(GenerationModule):
             Tuple of (generated_ids, logits, logprobs) where:
                 - generated_ids: Generated token IDs of shape (batch_size, output_length)
                 - logits: Full logits if return_logits=True, else None. Shape: (batch_size, output_length, vocab_size)
-                - logprobs: Log probabilities of tokens if return_logprobs=True, else None. 
+                - logprobs: Log probabilities of tokens if return_logprobs=True, else None.
                   Shape: (batch_size, output_length - 1). Note: log probabilities are only computed
                   for positions 1 to N since the first token has no previous context.
         """
@@ -279,8 +279,7 @@ class TransformerGenerationModule(GenerationModule):
 
             # - Update attention mask if provided
             if attention_mask is not None:
-                # For finished sequences, mask out padding tokens (0), otherwise attend to new token (1)
-                new_token_mask = (~prev_finished).to(attention_mask.dtype)
+                new_token_mask = torch.ones_like(prev_finished, dtype=attention_mask.dtype)
                 attention_mask = torch.cat([attention_mask, new_token_mask.unsqueeze(-1)], dim=1)
 
         logits = None
