@@ -15,6 +15,7 @@ from rich import print
 from torch.distributed import DeviceMesh, ProcessGroup
 from torch.distributed.checkpoint.metadata import Metadata
 from torch.distributed.checkpoint.stateful import Stateful
+from tqdm import tqdm
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import DType
@@ -93,16 +94,42 @@ class TransformerGenerationModule(GenerationModule):
             )
 
         if not torch.cuda.is_available():
-            import subprocess
+            # Print detailed CUDA availability information
+            print("CUDA is not available. Diagnostic information:")
+            print(f"  - torch.cuda.is_available(): {torch.cuda.is_available()}")
+            print(f"  - torch.cuda.device_count(): {torch.cuda.device_count()}")
+            print(f"  - torch version: {torch.__version__}")
+            print(f"  - CUDA build: {torch.version.cuda}")
 
+            # Check if CUDA runtime is accessible
             try:
+                import subprocess
+
                 result = subprocess.run(["nvidia-smi"], capture_output=True, text=True)
-                print(result.stdout)
+                if result.returncode == 0:
+                    print("\nnvidia-smi output:")
+                    print(result.stdout)
+                else:
+                    print(f"\nnvidia-smi failed with return code: {result.returncode}")
+                    print(f"stderr: {result.stderr}")
             except FileNotFoundError:
-                print("nvidia-smi not found")
+                print("\nnvidia-smi not found - NVIDIA drivers may not be installed")
+            except Exception as e:
+                print(f"\nError running nvidia-smi: {e}")
+
+            # Additional PyTorch CUDA diagnostics
+            if hasattr(torch.cuda, "is_initialized"):
+                print(f"\n  - torch.cuda.is_initialized(): {torch.cuda.is_initialized()}")
+
+            # Check environment variables
+            import os
+
+            cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "not set")
+            print(f"\n  - CUDA_VISIBLE_DEVICES: {cuda_visible_devices}")
+
             import sys
 
-            sys.exit(0)
+            sys.exit(1)
 
         # Parallelize model.
         self.model = parallelize_model(
@@ -178,7 +205,7 @@ class TransformerGenerationModule(GenerationModule):
         return_logits: bool = False,
         return_logprobs: bool = False,
         completions_only: bool = False,
-        log_timing: bool = False,
+        log_timing: bool = True,
         **generation_kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
         """
@@ -229,6 +256,8 @@ class TransformerGenerationModule(GenerationModule):
         token_times = []
         tokens_generated = 0
 
+        pbar = tqdm(desc="Generating tokens", disable=not log_timing)
+
         while generated.shape[1] <= generation_config.max_length:
             token_start_time = time.perf_counter()
 
@@ -259,6 +288,7 @@ class TransformerGenerationModule(GenerationModule):
                     all_logprobs.append(last_token_log_prob.unsqueeze(1))
 
             # Check if we should stop before generating more tokens
+            pbar.update(1)
             if generated.shape[1] >= generation_config.max_length or finished.all():
                 break
 
