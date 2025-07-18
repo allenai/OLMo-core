@@ -410,6 +410,13 @@ class MoERouter(nn.Module):
             batch_size_per_expert.max() / batch_size_per_expert.mean(dtype=torch.float),
             ReduceType.max,
         )
+        
+        # record the number of tokens routed to each expert.
+        for i in range(self.num_experts):
+            out[f"expert {i} assigned tokens"] = (
+                self.batch_size_per_expert[i],
+                ReduceType.mean,
+            )
 
         # Load balancing loss.
         if self.lb_loss_weight is not None:
