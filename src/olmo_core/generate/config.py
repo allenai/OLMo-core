@@ -108,13 +108,17 @@ class TransformerGenerationModuleConfig(Config):
         """
         from olmo_core.generate.generation import TransformerGenerationModule
 
-        kwargs = self.as_dict(exclude_none=True, recurse=False)
-        if (autocast_precision := kwargs.pop("autocast_precision", None)) is not None:
-            kwargs["autocast_precision"] = cast(DType, autocast_precision).as_pt()
-        if (state_dict_save_opts := kwargs.pop("state_dict_save_opts", None)) is not None:
-            kwargs["state_dict_save_opts"] = dist_cp_sd.StateDictOptions(**state_dict_save_opts)
-        if (state_dict_load_opts := kwargs.pop("state_dict_load_opts", None)) is not None:
-            kwargs["state_dict_load_opts"] = dist_cp_sd.StateDictOptions(**state_dict_load_opts)
+        config_dict = self.as_dict(exclude_none=True, recurse=False)
+        if (dtype := config_dict.pop("dtype", None)) is not None:
+            config_dict["dtype"] = cast(DType, dtype).as_pt()
+        if (state_dict_save_opts := config_dict.pop("state_dict_save_opts", None)) is not None:
+            config_dict["state_dict_save_opts"] = dist_cp_sd.StateDictOptions(
+                **state_dict_save_opts
+            )
+        if (state_dict_load_opts := config_dict.pop("state_dict_load_opts", None)) is not None:
+            config_dict["state_dict_load_opts"] = dist_cp_sd.StateDictOptions(
+                **state_dict_load_opts
+            )
 
         return TransformerGenerationModule.from_checkpoint(
             checkpoint_dir=checkpoint_dir,
@@ -124,5 +128,5 @@ class TransformerGenerationModuleConfig(Config):
             work_dir=work_dir,
             pre_download=pre_download,
             load_thread_count=load_thread_count,
-            **kwargs,
+            **config_dict,
         )
