@@ -182,8 +182,10 @@ class TransformerGenerationModule(GenerationModule):
         Returns:
             Tuple of (generated_ids, logits, logprobs) where:
                 - generated_ids: Generated token IDs of shape (batch_size, output_length)
-                - logits: Full logits if return_logits=True, else None
-                - logprobs: Log probabilities of generated tokens if return_logprobs=True, else None
+                - logits: Full logits if return_logits=True, else None. Shape: (batch_size, output_length, vocab_size)
+                - logprobs: Log probabilities of tokens if return_logprobs=True, else None. 
+                  Shape: (batch_size, output_length - 1). Note: log probabilities are only computed
+                  for positions 1 to N since the first token has no previous context.
         """
         self.model.eval()
 
@@ -224,18 +226,18 @@ class TransformerGenerationModule(GenerationModule):
             next_token_logits = logits[:, -1, :] if logits.dim() == 3 else logits.squeeze(1)
 
             if all_logits is not None:
-                all_logits.append(logits.cpu())
+                all_logits.append(logits)
 
             # Calculate log probabilities for tokens in the sequence
             if all_logprobs is not None:
                 if generated.shape[1] == prompt_len and prompt_len > 1:
                     # For the prompt, calculate log probs for all positions
                     prompt_log_probs = selective_log_softmax(logits[:, :-1, :], generated[:, 1:])
-                    all_logprobs.append(prompt_log_probs.cpu())
+                    all_logprobs.append(prompt_log_probs)
                 elif generated.shape[1] > prompt_len:
                     # For generated tokens, get the log prob of the last token
                     last_token_log_prob = selective_log_softmax(next_token_logits, generated[:, -1])
-                    all_logprobs.append(last_token_log_prob.cpu())
+                    all_logprobs.append(last_token_log_prob.unsqueeze(1))
 
             # Check if we should stop before generating more tokens
             if generated.shape[1] >= generation_config.max_length or finished.all():
@@ -289,8 +291,9 @@ class TransformerGenerationModule(GenerationModule):
 
         logprobs = None
         if return_logprobs and all_logprobs:
-            logprobs = torch.stack(all_logprobs, dim=1)
-            padding_mask = generated == generation_config.pad_token_id
+            logprobs = torch.cat(all_logprobs, dim=1)
+            # Create padding mask for logprobs (excluding the first token which has no logprob)
+            padding_mask = generated[:, 1:] == generation_config.pad_token_id
             logprobs = logprobs.masked_fill(padding_mask, float("-inf"))
 
         if completions_only:
