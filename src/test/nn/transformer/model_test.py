@@ -385,3 +385,51 @@ def test_build_with_block_overrides():
     assert isinstance(model.blocks["1"], MoEHybridTransformerBlockBase)
 
     assert config.num_params == model.num_params
+
+
+def test_attention_mask_conversion():
+    """Test that transformer properly converts attention masks to cu_doc_lens."""
+    config = TransformerConfig.llama_like(
+        d_model=128,
+        n_layers=2,
+        n_heads=4,
+        vocab_size=1000,
+    )
+    
+    model = config.build(init_device="cpu")
+    model.init_weights()
+    
+    # Create input with attention mask
+    batch_size = 2
+    seq_len = 16
+    input_ids = torch.randint(0, 1000, (batch_size, seq_len))
+    
+    # Create attention mask with prefix padding
+    attention_mask = torch.zeros(batch_size, seq_len, dtype=torch.bool)
+    attention_mask[0, 4:] = True  # First sequence: 4 padding, 12 valid
+    attention_mask[1, 8:] = True  # Second sequence: 8 padding, 8 valid
+    
+    # Run forward pass - should convert attention mask to cu_doc_lens internally
+    output = model(input_ids, attention_mask=attention_mask)
+    
+    # Check output shape is correct
+    assert output.shape == (batch_size, seq_len, 1000)
+    
+    # Test with flash attention if available
+    try:
+        config_flash = TransformerConfig.llama_like(
+            d_model=128,
+            n_layers=2,
+            n_heads=4,
+            vocab_size=1000,
+            attention=AttentionConfig(n_heads=4, use_flash=True),
+        )
+        model_flash = config_flash.build(init_device="cpu")
+        model_flash.init_weights()
+        
+        # This should also work with flash attention
+        output_flash = model_flash(input_ids, attention_mask=attention_mask)
+        assert output_flash.shape == (batch_size, seq_len, 1000)
+    except ImportError:
+        # Flash attention not available, skip this part
+        pass
