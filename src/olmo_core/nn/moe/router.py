@@ -212,6 +212,7 @@ class MoERouter(nn.Module):
         self.group: Optional[dist.ProcessGroup] = None
         self.cp_mesh: Optional[dist.DeviceMesh] = None
         self.tp_mesh: Optional[dist.DeviceMesh] = None
+        self.record_routing_batch_size = record_routing_batch_size
 
         if self.bias_gamma is not None:
             assert self.bias_gamma > 0
