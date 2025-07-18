@@ -5,6 +5,7 @@ import torch
 from olmo_core.data.utils import (
     InstancePacker,
     SegmentTree,
+    attention_mask_to_cu_doc_lens,
     bucket_documents,
     get_cumulative_document_lengths,
     get_document_lengths,
@@ -245,3 +246,77 @@ def test_pack_documents_into_instances(tmp_path):
     assert instances == [[0], [1], [2], [3, 4]]
     assert document_indices[0].tolist() == [0, 8]
     assert total_tokens == len(data)
+
+
+@pytest.mark.parametrize(
+    "attention_mask_data,expected_doc_lens,expected_cu_doc_lens,expected_max_doc_len",
+    [
+        # Test case 1: Mixed padding lengths
+        (
+            {"shape": (2, 10), "valid_starts": [3, 5]},
+            [7, 5],
+            [0, 7, 12],
+            7,
+        ),
+        # Test case 2: No padding (all valid tokens)
+        (
+            {"shape": (2, 8), "valid_starts": [0, 0]},
+            [8, 8],
+            [0, 8, 16],
+            8,
+        ),
+        # Test case 3: Different sequence lengths with padding
+        (
+            {"shape": (3, 12), "valid_starts": [2, 4, 7]},
+            [10, 8, 5],
+            [0, 10, 18, 23],
+            10,
+        ),
+        # Test case 4: Single sequence
+        (
+            {"shape": (1, 15), "valid_starts": [5]},
+            [10],
+            [0, 10],
+            10,
+        ),
+        # Test case 5: All padding except last token
+        (
+            {"shape": (2, 20), "valid_starts": [19, 18]},
+            [1, 2],
+            [0, 1, 3],
+            2,
+        ),
+    ],
+)
+def test_attention_mask_to_cu_doc_lens_valid_cases(
+    attention_mask_data, expected_doc_lens, expected_cu_doc_lens, expected_max_doc_len
+):
+    batch_size, seq_len = attention_mask_data["shape"]
+    valid_starts = attention_mask_data["valid_starts"]
+
+    # Create attention mask with prefix padding
+    attention_mask = torch.zeros(batch_size, seq_len, dtype=torch.bool)
+    for i, start in enumerate(valid_starts):
+        attention_mask[i, start:] = True
+
+    doc_lens, cu_doc_lens, max_doc_len = attention_mask_to_cu_doc_lens(attention_mask)
+
+    assert doc_lens.tolist() == expected_doc_lens
+    assert cu_doc_lens.tolist() == expected_cu_doc_lens
+    assert max_doc_len == expected_max_doc_len
+
+
+@pytest.mark.parametrize(
+    "invalid_mask,error_match",
+    [
+        # Invalid mask: not prefix padding (has gaps)
+        (torch.tensor([[1, 0, 1, 1, 1], [1, 1, 0, 1, 1]], dtype=torch.bool), "prefix padding"),
+        # Invalid mask: alternating pattern
+        (torch.tensor([[0, 1, 0, 1, 0], [1, 0, 1, 0, 1]], dtype=torch.bool), "prefix padding"),
+        # Invalid mask: valid tokens before padding
+        (torch.tensor([[1, 1, 0, 0, 0], [1, 0, 0, 0, 0]], dtype=torch.bool), "prefix padding"),
+    ],
+)
+def test_attention_mask_to_cu_doc_lens_invalid_masks(invalid_mask, error_match):
+    with pytest.raises(ValueError, match=error_match):
+        attention_mask_to_cu_doc_lens(invalid_mask)
