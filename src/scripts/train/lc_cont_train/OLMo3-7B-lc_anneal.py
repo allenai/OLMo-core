@@ -307,10 +307,17 @@ $ [i]python {sys.argv[0]} launch run01  --launch.num_nodes=2[/]
     )
     
     
+    # model_config.block.attention.rope = RoPEConfig(
+    #     theta= 500_000,
+    #     scaling = ABFRoPEScalingConfig(
+    #         new_theta = 8_000_000
+    #     )
+    # )
+
     model_config.block.attention.rope = RoPEConfig(
         theta= 500_000,
-        scaling = ABFRoPEScalingConfig(
-            new_theta = 8_000_000
+        scaling = LLama3RoPEScalingConfig(
+            factor = 8.0
         )
     )
 
