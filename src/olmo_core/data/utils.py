@@ -396,7 +396,7 @@ def memmap_to_write(
     file until the context exists successfully.
     """
     path.parent.mkdir(exist_ok=True, parents=True)
-    tmp_path = path.with_suffix(f".{random.randint(0,2**32)}.npy.tmp")
+    tmp_path = path.with_suffix(f".{random.randint(0, 2**32)}.npy.tmp")
     mmap = np.memmap(tmp_path, dtype=dtype, mode="w+", shape=shape)
     try:
         yield mmap
@@ -865,3 +865,43 @@ def pack_documents_into_instances(
     # Pack documents into instances.
     instance_packer = InstancePacker(max_sequence_length)
     return instance_packer.pack_documents(document_indices)
+
+
+def attention_mask_to_cu_doc_lens(
+    attention_mask: torch.Tensor,
+) -> Tuple[torch.Tensor, torch.Tensor, int]:
+    """Convert a left-padding attention mask into *varlen* inputs for Flash-Attention.
+
+    The mask is expected to be a boolean or 0/1 tensor of shape ``(batch, seq_len)`` where
+    ``True``/1 indicates a *valid* token and the padding is on the **left** side of the
+    sequence (i.e. all padding tokens come *before* all valid tokens).
+
+    It returns three things that can be fed to :pyfunc:`flash_attn.flash_attn_varlen_func`:
+
+    1. ``doc_lens`` – lengths of each sequence (``(batch,)`` int32).
+    2. ``cu_doc_lens`` – cumulative sequence lengths (``(batch + 1,)`` int32) starting with 0.
+    3. ``max_doc_len`` – maximum sequence length (``int``).
+
+    If the mask contains a pattern other than *prefix padding* it raises ``ValueError``.
+    """
+    if attention_mask.ndim != 2:
+        raise ValueError(
+            f"expected 2-D attention_mask (batch, seq_len), got shape {attention_mask.shape}"
+        )
+    if attention_mask.dtype != torch.bool:
+        attention_mask = attention_mask != 0
+
+    # Verify prefix-padding property
+    # Check that once we see a valid token (True), we don't see any padding tokens (False) after it
+    prefix_ok = (attention_mask.cummax(dim=1).values & ~attention_mask).any().item() is False
+    if not prefix_ok:
+        raise ValueError(
+            "attention_mask must represent *prefix padding* (all padding tokens precede valid tokens) "
+            "for conversion to flash attention varlen inputs."
+        )
+
+    doc_lens = attention_mask.sum(dim=1, dtype=torch.int32)
+    max_doc_len = int(doc_lens.max().item())
+    cu_doc_lens = get_cumulative_document_lengths(doc_lens)
+
+    return doc_lens, cu_doc_lens, max_doc_len

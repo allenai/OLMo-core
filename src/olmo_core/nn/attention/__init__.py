@@ -404,7 +404,9 @@ class Attention(AttentionBase):
                     f"'{self.__class__.__name__}' requires flash (use_flash=True) for context parallelism"
                 )
             if attention_mask is not None:
-                raise RuntimeError(f"'{self.__class__.__name__}' does not support attention masks")
+                raise RuntimeError(
+                    f"'{self.__class__.__name__}' does not support attention masks with context parallelism"
+                )
             att = dispatch_ring_flash_attn(
                 q,
                 k,
@@ -426,7 +428,9 @@ class Attention(AttentionBase):
             )
         elif self.use_flash:
             if attention_mask is not None:
-                raise RuntimeError(f"'{self.__class__.__name__}' does not support attention masks")
+                raise RuntimeError(
+                    f"'{self.__class__.__name__}' does not support attention masks with flash attention"
+                )
             att = dispatch_flash_attn(
                 q,
                 k,

@@ -20,7 +20,7 @@ from torch.distributed.fsdp import FSDPModule, MixedPrecisionPolicy, fully_shard
 from torch.distributed.tensor import Replicate, Shard
 from torch.distributed.tensor.parallel import RowwiseParallel, parallelize_module
 
-from olmo_core.data.utils import get_cumulative_document_lengths
+from olmo_core.data.utils import attention_mask_to_cu_doc_lens, get_cumulative_document_lengths
 from olmo_core.distributed.parallel import get_pp_mesh
 from olmo_core.distributed.utils import hide_from_torch, unhide_from_torch
 from olmo_core.doc_utils import beta_feature
@@ -328,7 +328,20 @@ class Transformer(nn.Module):
         # Prepare document length inputs.
         max_doc_len: Optional[int] = None
         cu_doc_lens: Optional[torch.Tensor] = None
-        if (doc_lens := kwargs.pop("doc_lens", None)) is not None and (
+        doc_lens: Optional[torch.Tensor] = None
+        
+        # Convert attention mask to cu_doc_lens if provided
+        if attention_mask is not None and cu_doc_lens is None:
+            try:
+                doc_lens_from_mask, cu_doc_lens, max_doc_len = attention_mask_to_cu_doc_lens(attention_mask)
+                # Store doc_lens for later use if needed
+                doc_lens = doc_lens_from_mask
+                # Clear attention_mask since we've converted it
+                attention_mask = None
+            except ValueError:
+                # If conversion fails (e.g., not prefix padding), keep attention_mask as is
+                pass
+        elif (doc_lens := kwargs.pop("doc_lens", None)) is not None and (
             max_doc_lens := kwargs.pop("max_doc_lens", None)
         ) is not None:
             max_doc_len = max(max_doc_lens)
