@@ -492,6 +492,45 @@ class TransformerTrainModule(TrainModule):
             
         del per_layer_norms
 
+        # embedding layer grad norm
+        embedding_grads = [p.grad for p in self.model.embeddings.parameters() if p.grad is not None]
+        if embedding_grads:
+            embedding_grad_norm = nn.utils.get_total_norm(
+                embedding_grads, norm_type=2.0, error_if_nonfinite=False, foreach=None
+            )
+            if isinstance(embedding_grad_norm, DTensor):
+                # If embedding_grad_norm is a DTensor, we need to reduce it to get the correct value.
+                embedding_grad_norm = embedding_grad_norm.full_tensor()
+        else:
+            embedding_grad_norm = torch.tensor(0.0, device=self.device) 
+        self.trainer.record_metric(
+            "clipped grad norm (embedding)",
+            embedding_grad_norm,
+            reduce_type=None,
+            namespace="optim",
+        )  
+        
+        del embedding_grads
+        
+        # lm head grad norm
+        lm_head_grads = [p.grad for p in self.model.lm_head.parameters() if p.grad is not None]
+        if lm_head_grads:
+            lm_head_grad_norm = nn.utils.get_total_norm(
+                lm_head_grads, norm_type=2.0, error_if_nonfinite=False, foreach=None
+            )
+            if isinstance(lm_head_grad_norm, DTensor):
+                # If lm_head_grad_norm is a DTensor, we need to reduce it to get the correct value.
+                lm_head_grad_norm = lm_head_grad_norm.full_tensor()
+        else:
+            lm_head_grad_norm = torch.tensor(0.0, device=self.device)
+        self.trainer.record_metric(
+            "clipped grad norm (lm head)",
+            lm_head_grad_norm,
+            reduce_type=None,
+            namespace="optim",
+        )       
+        del lm_head_grads
+        
 
         # Maybe adjust learning rate.
         if self.scheduler is not None:

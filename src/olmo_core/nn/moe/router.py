@@ -555,9 +555,9 @@ class MoERouter(nn.Module):
                         raise NotImplementedError(
                             "Orthogonal loss requires a loss_div_factor to be set."
                         )
-                    orth_loss_factor = (logits.size(0) * logits.size(1)) / loss_div_factor  # --> divide by num_micro_batches
+                    # orth_loss_factor = (logits.size(0) * logits.size(1)) / loss_div_factor  # --> divide by num_micro_batches
                     # or 
-                    # orth_loss_factor = 1 / loss_div_factor  # --> divide by num_tokens in micro batch
+                    orth_loss_factor = 1 / loss_div_factor  # --> divide by num_tokens in micro batch
                     
                     orth_loss = self.compute_orthogonal_loss() * orth_loss_factor
                     
