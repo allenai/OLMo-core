@@ -71,7 +71,7 @@ class TransformerGenerationModule(GenerationModule):
         compile_model: bool = False,
         float8_config: Optional[Float8Config] = None,
         dp_config: Optional[TransformerDataParallelConfig] = None,
-        autocast_precision: Optional[torch.dtype] = None,
+        dtype: Optional[torch.dtype] = None,  # TODO: dont keep a backup set of params
         device: Optional[torch.device] = None,
         state_dict_load_opts: Optional[dist_cp_sd.StateDictOptions] = None,
         state_dict_save_opts: Optional[dist_cp_sd.StateDictOptions] = None,
@@ -98,9 +98,10 @@ class TransformerGenerationModule(GenerationModule):
             float8_config=float8_config,
             dp_config=dp_config,
         )
+        self.model.to(self.device)
 
         self._dp_config = dp_config
-        self.autocast_precision = autocast_precision
+        self.dtype = dtype or torch.float32
         self.state_dict_save_opts = state_dict_save_opts or dist_cp_sd.StateDictOptions(strict=True)
         self.state_dict_load_opts = state_dict_load_opts or dist_cp_sd.StateDictOptions(strict=True)
         self.load_key_mapping = load_key_mapping
