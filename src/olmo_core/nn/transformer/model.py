@@ -305,6 +305,7 @@ class Transformer(nn.Module):
         z_loss_multiplier: Optional[float] = None,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         return_logits: Optional[bool] = None,
+        logits_to_keep: Union[int, torch.Tensor] = 0,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any], Dict[str, Any]]:
         # NOTE: with pipeline parallelism input_ids might actually be an intermediate output,
@@ -318,6 +319,7 @@ class Transformer(nn.Module):
             loss_reduction=loss_reduction,
             z_loss_multiplier=z_loss_multiplier,
             return_logits=return_logits,
+            logits_to_keep=logits_to_keep,
         )
 
         if loss_div_factor is not None:
@@ -329,11 +331,13 @@ class Transformer(nn.Module):
         max_doc_len: Optional[int] = None
         cu_doc_lens: Optional[torch.Tensor] = None
         doc_lens: Optional[torch.Tensor] = None
-        
+
         # Convert attention mask to cu_doc_lens if provided
         if attention_mask is not None and cu_doc_lens is None:
             try:
-                doc_lens_from_mask, cu_doc_lens, max_doc_len = attention_mask_to_cu_doc_lens(attention_mask)
+                doc_lens_from_mask, cu_doc_lens, max_doc_len = attention_mask_to_cu_doc_lens(
+                    attention_mask
+                )
                 # Store doc_lens for later use if needed
                 doc_lens = doc_lens_from_mask
                 # Clear attention_mask since we've converted it
@@ -447,6 +451,7 @@ class Transformer(nn.Module):
         z_loss_multiplier: Optional[float] = None,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         return_logits: Optional[bool] = None,
+        logits_to_keep: Union[int, torch.Tensor] = 0,
         **kwargs,
     ) -> Union[torch.Tensor, LMOutputWithLoss]:
         """
@@ -456,6 +461,13 @@ class Transformer(nn.Module):
         :param labels: The token labels, shape ``(batch_size, seq_len)``.
         :param attention_mask: The attention mask, shape ``(batch_size, seq_len)``. If provided,
             it will be added to the block kwargs and passed to the attention module.
+        :param ignore_index: The index to ignore in the loss computation. Default is -100.
+        :param loss_reduction: The reduction method for the loss. Can be "mean", "sum", or "none".
+        :param z_loss_multiplier: Optional multiplier for the z-loss regularization term.
+        :param loss_div_factor: Optional divisor for the loss, can be a scalar or tensor.
+        :param return_logits: Whether to return logits along with the loss when labels are provided.
+        :param logits_to_keep: Number of positions to keep from the end of the sequence (if int),
+            or tensor specifying which positions to keep. Default is 0 (keep all).
 
         :returns: The logits if ``labels`` is ``None`` or the losses if ``labels`` is not ``None``.
         """
@@ -468,6 +480,7 @@ class Transformer(nn.Module):
             z_loss_multiplier=z_loss_multiplier,
             loss_div_factor=loss_div_factor,
             return_logits=return_logits,
+            logits_to_keep=logits_to_keep,
             **kwargs,
         )
 
