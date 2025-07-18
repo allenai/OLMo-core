@@ -206,7 +206,7 @@ class LcContTrain(Config):
                 load_path=load_path,
                 metrics_collect_interval=10,
                 cancel_check_interval=10,
-                max_duration=Duration.tokens(int(50e9)),
+                max_duration=Duration.tokens(int(10e9)),
                 # max_duration=Duration.steps(22),
             )
             .with_callback(
@@ -307,19 +307,19 @@ $ [i]python {sys.argv[0]} launch run01  --launch.num_nodes=2[/]
     )
     
     
-    # model_config.block.attention.rope = RoPEConfig(
-    #     theta= 500_000,
-    #     scaling = ABFRoPEScalingConfig(
-    #         new_theta = 8_000_000
-    #     )
-    # )
-
     model_config.block.attention.rope = RoPEConfig(
         theta= 500_000,
-        scaling = YaRNRoPEScalingConfig(
-            factor = 8.0
+        scaling = ABFRoPEScalingConfig(
+            new_theta = 8_000_000
         )
     )
+
+    # model_config.block.attention.rope = RoPEConfig(
+    #     theta= 500_000,
+    #     scaling = YaRNRoPEScalingConfig(
+    #         factor = 8.0
+    #     )
+    # )
 
     # Print the config for debugging and then execute the command.
     if get_local_rank() == 0:
