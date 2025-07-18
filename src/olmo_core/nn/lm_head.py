@@ -208,6 +208,7 @@ class LMHead(nn.Module):
         z_loss_multiplier: Optional[float] = None,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         return_logits: Optional[bool] = None,
+        logits_to_keep: Union[int, torch.Tensor] = 0,
     ) -> Union[torch.Tensor, LMOutputWithLoss]:
         """
         Apply the LM head to the hidden state ``x`` with shape ``(B, S, D)``..
@@ -217,6 +218,18 @@ class LMHead(nn.Module):
         B = x.shape[0]
 
         h = self.norm(x) if self.norm is not None else x
+
+        if logits_to_keep != 0:
+            if isinstance(logits_to_keep, int):
+                # Keep only the last logits_to_keep positions
+                h = h[:, -logits_to_keep:, :]
+                if labels is not None:
+                    labels = labels[:, -logits_to_keep:]
+            else:
+                # logits_to_keep is a tensor specifying positions to keep
+                h = h.gather(1, logits_to_keep.unsqueeze(-1).expand(-1, -1, h.size(-1)))
+                if labels is not None:
+                    labels = labels.gather(1, logits_to_keep)
 
         if labels is None:
             if return_logits is False:
@@ -441,8 +454,21 @@ class NormalizedLMHead(LMHead):
         z_loss_multiplier: Optional[float] = None,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         return_logits: Optional[bool] = None,
+        logits_to_keep: Union[int, torch.Tensor] = 0,
     ) -> Union[torch.Tensor, LMOutputWithLoss]:
         B = x.shape[0]
+
+        if logits_to_keep != 0:
+            if isinstance(logits_to_keep, int):
+                # Keep only the last logits_to_keep positions
+                x = x[:, -logits_to_keep:, :]
+                if labels is not None:
+                    labels = labels[:, -logits_to_keep:]
+            else:
+                # logits_to_keep is a tensor specifying positions to keep
+                x = x.gather(1, logits_to_keep.unsqueeze(-1).expand(-1, -1, x.size(-1)))
+                if labels is not None:
+                    labels = labels.gather(1, logits_to_keep)
 
         sz = self.sz * (self.sz_init_value / self.sz_init_scaling)
         logits = sz * self.w_out(x)
