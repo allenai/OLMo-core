@@ -8,7 +8,7 @@ from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import ensure_multiple_of
 
-from ..attention import AttentionConfig, AttentionType
+from ..attention import AttentionConfig, AttentionType, SlidingWindowAttentionConfig
 from ..buffer_cache import BufferCache
 from ..feed_forward import FeedForwardConfig, FeedForwardType
 from ..layer_norm import LayerNormConfig, LayerNormType
@@ -590,6 +590,53 @@ class TransformerConfig(Config):
             layer_norm_eps=1e-6,
             **kwargs,
         )
+
+    @classmethod
+    def olmo3_1B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 1B OLMo model config.
+        """
+        config = cls.olmo2_1B(
+            vocab_size,
+            block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
+            qk_norm=kwargs.pop("qk_norm", True),
+            rope_theta=kwargs.pop("rope_theta", 500_000),
+            layer_norm_eps=1e-6,
+            hidden_size_multiplier=1.5,
+            **kwargs,
+        )
+        config.block.attention.sliding_window = SlidingWindowAttentionConfig(
+            force_full_attention_on_first_layer=False,
+            force_full_attention_on_last_layer=True,
+            pattern=[4096, 4096, 4096, -1]
+        )
+        config.block.attention.use_flash = True
+        config.block.attention.use_head_qk_norm = True
+        
+        return config
+    
+    @classmethod
+    def olmo3_7B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 7B OLMo model config.
+        """
+        config = cls.olmo2_7B(
+            vocab_size=vocab_size,
+            n_kv_heads=kwargs.pop("n_kv_heads", 8),
+            hidden_size_multiplier=kwargs.pop("hidden_size_multiplier", 1.2),
+            hidden_size_multiple_of=kwargs.pop("hidden_size_multiple_of", 1024),
+            **kwargs,
+        )
+        
+        config.block.attention.sliding_window = SlidingWindowAttentionConfig(
+            force_full_attention_on_first_layer=False,
+            force_full_attention_on_last_layer=True,
+            pattern=[4096, 4096, 4096, -1]
+        )
+        config.block.attention.use_flash = True
+        config.block.attention.use_head_qk_norm = True
+        
+        return config
 
     @classmethod
     def smallmoe(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
