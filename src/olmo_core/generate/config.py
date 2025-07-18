@@ -110,7 +110,7 @@ class TransformerGenerationModuleConfig(Config):
 
         config_dict = self.as_dict(exclude_none=True, recurse=False)
         if (dtype := config_dict.pop("dtype", None)) is not None:
-            config_dict["dtype"] = DType(dtype).as_pt()
+            dtype = DType(dtype)
         if (state_dict_save_opts := config_dict.pop("state_dict_save_opts", None)) is not None:
             config_dict["state_dict_save_opts"] = dist_cp_sd.StateDictOptions(
                 **state_dict_save_opts
@@ -129,5 +129,6 @@ class TransformerGenerationModuleConfig(Config):
             work_dir=work_dir,
             pre_download=pre_download,
             load_thread_count=load_thread_count,
+            dtype=dtype,
             **config_dict,
         )

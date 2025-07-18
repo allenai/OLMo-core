@@ -17,6 +17,7 @@ from torch.distributed.checkpoint.metadata import Metadata
 from torch.distributed.checkpoint.stateful import Stateful
 
 from olmo_core.aliases import PathOrStr
+from olmo_core.config import DType
 from olmo_core.data.tokenizer import TokenizerConfig
 from olmo_core.distributed.checkpoint import get_checkpoint_metadata, load_state_dict
 from olmo_core.distributed.parallel import build_world_mesh, get_dp_process_group
@@ -74,7 +75,6 @@ class TransformerGenerationModule(GenerationModule):
         compile_model: bool = False,
         float8_config: Optional[Float8Config] = None,
         dp_config: Optional[TransformerDataParallelConfig] = None,
-        dtype: Optional[torch.dtype] = None,
         device: Optional[torch.device] = None,
         state_dict_load_opts: Optional[dist_cp_sd.StateDictOptions] = None,
         state_dict_save_opts: Optional[dist_cp_sd.StateDictOptions] = None,
@@ -92,6 +92,18 @@ class TransformerGenerationModule(GenerationModule):
                 "Training parallelism configs are only valid for distributed training"
             )
 
+        if not torch.cuda.is_available():
+            import subprocess
+
+            try:
+                result = subprocess.run(["nvidia-smi"], capture_output=True, text=True)
+                print(result.stdout)
+            except FileNotFoundError:
+                print("nvidia-smi not found")
+            import sys
+
+            sys.exit(0)
+
         # Parallelize model.
         self.model = parallelize_model(
             model,
@@ -101,9 +113,6 @@ class TransformerGenerationModule(GenerationModule):
             float8_config=float8_config,
             dp_config=dp_config,
         )
-        if dtype is not None:
-            log.info(f"Casting model to dtype {dtype}")
-            self.model.to(dtype)
 
         self._dp_config = dp_config
         self.state_dict_save_opts = state_dict_save_opts or dist_cp_sd.StateDictOptions(strict=True)
@@ -405,6 +414,7 @@ class TransformerGenerationModule(GenerationModule):
         work_dir: Optional[PathOrStr] = None,
         pre_download: bool = True,
         load_thread_count: Optional[int] = None,
+        dtype: Optional[DType] = None,
         **kwargs,
     ) -> "TransformerGenerationModule":
         """
@@ -421,6 +431,7 @@ class TransformerGenerationModule(GenerationModule):
             process_group: Process group for distributed checkpoint loading.
             pre_download: Whether to pre-download remote checkpoints.
             load_thread_count: Number of threads to use for loading checkpoint.
+            dtype: If provided, build the model with this dtype.
             **kwargs: Additional keyword arguments passed to the TransformerGenerationModule
                 constructor.
 
@@ -481,9 +492,14 @@ class TransformerGenerationModule(GenerationModule):
             )
 
         # Build model and generation module
+        if dtype is not None:
+            dtype = DType(dtype)
+            transformer_config.apply(
+                lambda c: setattr(c, "dtype", dtype) if hasattr(c, "dtype") else None
+            )
         print(transformer_config)
-        model = transformer_config.build()
         print(generation_config)
+        model = transformer_config.build()
         generation_module = cls(model, generation_config, **kwargs)
 
         # Load checkpoint
