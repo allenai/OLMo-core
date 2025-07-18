@@ -30,6 +30,7 @@ from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
 from olmo_core.generate.config import GenerationConfig
 from olmo_core.generate.selection import select_next_token
+from olmo_core.generate.utils import selective_log_softmax
 from olmo_core.io import is_url, join_path, normalize_path
 from olmo_core.nn.transformer import Transformer, TransformerConfig
 from olmo_core.train.train_module.transformer.common import parallelize_model
@@ -136,14 +137,25 @@ class TransformerGenerationModule(GenerationModule):
         #     yield
 
     def model_forward(
-        self, input_ids: torch.Tensor, *, attention_mask: Optional[torch.Tensor] = None, **kwargs
+        self,
+        input_ids: torch.Tensor,
+        *,
+        attention_mask: Optional[torch.Tensor] = None,
+        logits_to_keep: int = 0,
+        **kwargs,
     ) -> torch.Tensor:
         """
         Run a forward pass on a micro-batch, returning the logits.
+
+        Args:
+            input_ids: Input token IDs
+            attention_mask: Optional attention mask
+            logits_to_keep: Number of positions to keep from the end (0 = keep all)
+            **kwargs: Additional arguments passed to the model
         """
         with self._model_forward_context():
             logits = self.model(  # (batch_size, seq_len, vocab_size)
-                input_ids, attention_mask=attention_mask, **kwargs
+                input_ids, attention_mask=attention_mask, logits_to_keep=logits_to_keep, **kwargs
             )
             return logits
 
@@ -154,22 +166,24 @@ class TransformerGenerationModule(GenerationModule):
         *,
         attention_mask: Optional[torch.Tensor] = None,
         return_logits: bool = False,
+        return_logprobs: bool = False,
         completions_only: bool = False,
         **generation_kwargs,
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
         """
         Generate text using greedy decoding.
 
         Args:
             input_ids: Input token IDs of shape (batch_size, seq_len)
             return_logits: If True, return logits along with generated tokens
+            return_logprobs: If True, return log probabilities of generated tokens
             completions_only: If True, return only the completions, not the entire sequence
             **generation_kwargs: Generation configuration overrides
         Returns:
-            If return_logits and return_past are False:
-                Generated token IDs of shape (batch_size, output_length)
-            Otherwise:
-                Tuple containing generated tokens and requested additional outputs
+            Tuple of (generated_ids, logits, logprobs) where:
+                - generated_ids: Generated token IDs of shape (batch_size, output_length)
+                - logits: Full logits if return_logits=True, else None
+                - logprobs: Log probabilities of generated tokens if return_logprobs=True, else None
         """
         self.model.eval()
 
@@ -182,6 +196,7 @@ class TransformerGenerationModule(GenerationModule):
         batch_size = input_ids.shape[0]
 
         finished = torch.zeros(batch_size, dtype=torch.bool, device=self.device)
+        prompt_len = input_ids.shape[1]
         generated = input_ids
 
         # Pre-convert stop sequences to tensors
@@ -192,12 +207,41 @@ class TransformerGenerationModule(GenerationModule):
                 for stop_seq in generation_config.stop_sequences
             ]
 
-        while generated.shape[1] < generation_config.max_length:
-            logits = self.model_forward(  # (batch_size, seq_len, vocab_size)
-                generated, attention_mask=attention_mask
-            )
-            next_token_logits = logits[:, -1, :]  # (batch_size, vocab_size)
+        all_logits = [] if return_logits else None
+        all_logprobs = [] if return_logprobs else None
 
+        while generated.shape[1] <= generation_config.max_length:
+            if generated.shape[1] == prompt_len:
+                # First forward: compute all prompt logits if needed for scoring
+                logits_to_keep = 0 if (return_logits or return_logprobs) else 1
+            else:
+                # Subsequent forwards: only compute the last position's logits
+                logits_to_keep = 1
+
+            logits = self.model_forward(
+                generated, attention_mask=attention_mask, logits_to_keep=logits_to_keep
+            )
+            next_token_logits = logits[:, -1, :] if logits.dim() == 3 else logits.squeeze(1)
+
+            if all_logits is not None:
+                all_logits.append(logits.cpu())
+
+            # Calculate log probabilities for tokens in the sequence
+            if all_logprobs is not None:
+                if generated.shape[1] == prompt_len and prompt_len > 1:
+                    # For the prompt, calculate log probs for all positions
+                    prompt_log_probs = selective_log_softmax(logits[:, :-1, :], generated[:, 1:])
+                    all_logprobs.append(prompt_log_probs.cpu())
+                elif generated.shape[1] > prompt_len:
+                    # For generated tokens, get the log prob of the last token
+                    last_token_log_prob = selective_log_softmax(next_token_logits, generated[:, -1])
+                    all_logprobs.append(last_token_log_prob.cpu())
+
+            # Check if we should stop before generating more tokens
+            if generated.shape[1] >= generation_config.max_length or finished.all():
+                break
+
+            # Select next tokens
             next_tokens = select_next_token(
                 next_token_logits,
                 temperature=generation_config.temperature,
@@ -237,22 +281,27 @@ class TransformerGenerationModule(GenerationModule):
                 new_token_mask = (~prev_finished).to(attention_mask.dtype)
                 attention_mask = torch.cat([attention_mask, new_token_mask.unsqueeze(-1)], dim=1)
 
-            # - Stop if all sequences are finished
-            if finished.all():
-                break
-
         logits = None
-        if return_logits:
-            # Compute logits for the complete generated sequence (only if needed)
-            logits = self.model_forward(generated, attention_mask=attention_mask)
+        if return_logits and all_logits:
+            logits = torch.cat(all_logits, dim=1)
+            padding_mask = generated == generation_config.pad_token_id
+            logits = logits.masked_fill(padding_mask.unsqueeze(-1), float("-inf"))
+
+        logprobs = None
+        if return_logprobs and all_logprobs:
+            logprobs = torch.stack(all_logprobs, dim=1)
+            padding_mask = generated == generation_config.pad_token_id
+            logprobs = logprobs.masked_fill(padding_mask, float("-inf"))
 
         if completions_only:
-            # Slice out the input_ids and their logits
-            generated = generated[:, input_ids.shape[1] :]
+            generated = generated[:, prompt_len:]
             if logits is not None:
-                logits = logits[:, input_ids.shape[1] :, :]
+                logits = logits[:, prompt_len:, :]
+            if logprobs is not None:
+                # Slice out prompt logprobs to only keep completion logprobs
+                logprobs = logprobs[:, prompt_len - 1 :]
 
-        return generated, logits
+        return generated, logits, logprobs
 
     def load_checkpoint(
         self,
