@@ -83,7 +83,7 @@ class TransformerGenerationModuleConfig(Config):
     load_key_mapping: Optional[Dict[str, str]] = None
 
     # Other settings.
-    autocast_precision: Optional[DType] = None
+    dtype: Optional[DType] = None
 
     def build(
         self,
