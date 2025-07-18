@@ -101,7 +101,7 @@ class TransformerGenerationModule(GenerationModule):
         self.model.to(self.device)
 
         self._dp_config = dp_config
-        self.dtype = dtype or torch.float32
+        self.dtype = autocast_precision or torch.float32
         self.state_dict_save_opts = state_dict_save_opts or dist_cp_sd.StateDictOptions(strict=True)
         self.state_dict_load_opts = state_dict_load_opts or dist_cp_sd.StateDictOptions(strict=True)
         self.load_key_mapping = load_key_mapping
