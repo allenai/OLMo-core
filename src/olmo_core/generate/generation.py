@@ -127,10 +127,11 @@ class TransformerGenerationModule(GenerationModule):
 
     @contextlib.contextmanager
     def _model_forward_context(self) -> Generator[None, None, None]:
-        with contextlib.ExitStack() as stack:
-            if self.autocast_precision is not None:
-                stack.enter_context(torch.autocast(self.device.type, dtype=self.autocast_precision))
-            yield
+        yield
+        # with contextlib.ExitStack() as stack:
+        #     if self.autocast_precision is not None:
+        #         stack.enter_context(torch.autocast(self.device.type, dtype=self.autocast_precision))
+        #     yield
 
     def model_forward(
         self, input_ids: torch.Tensor, *, attention_mask: Optional[torch.Tensor] = None, **kwargs
