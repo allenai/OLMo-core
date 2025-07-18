@@ -10,6 +10,7 @@ import torch
 import torch.distributed as dist
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 from cached_path import cached_path
+from rich import print
 from torch.distributed import DeviceMesh, ProcessGroup
 from torch.distributed.checkpoint.metadata import Metadata
 from torch.distributed.checkpoint.stateful import Stateful
@@ -71,7 +72,7 @@ class TransformerGenerationModule(GenerationModule):
         compile_model: bool = False,
         float8_config: Optional[Float8Config] = None,
         dp_config: Optional[TransformerDataParallelConfig] = None,
-        dtype: Optional[torch.dtype] = None,  # TODO: dont keep a backup set of params
+        dtype: Optional[torch.dtype] = None,
         device: Optional[torch.device] = None,
         state_dict_load_opts: Optional[dist_cp_sd.StateDictOptions] = None,
         state_dict_save_opts: Optional[dist_cp_sd.StateDictOptions] = None,
@@ -98,10 +99,11 @@ class TransformerGenerationModule(GenerationModule):
             float8_config=float8_config,
             dp_config=dp_config,
         )
-        self.model.to(self.device)
+        if dtype is not None:
+            log.info(f"Casting model to dtype {dtype}")
+            self.model.to(dtype)
 
         self._dp_config = dp_config
-        self.dtype = dtype or torch.float32
         self.state_dict_save_opts = state_dict_save_opts or dist_cp_sd.StateDictOptions(strict=True)
         self.state_dict_load_opts = state_dict_load_opts or dist_cp_sd.StateDictOptions(strict=True)
         self.load_key_mapping = load_key_mapping
@@ -396,7 +398,9 @@ class TransformerGenerationModule(GenerationModule):
             )
 
         # Build model and generation module
+        print(transformer_config)
         model = transformer_config.build()
+        print(generation_config)
         generation_module = cls(model, generation_config, **kwargs)
 
         # Load checkpoint

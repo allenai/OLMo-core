@@ -119,6 +119,7 @@ class TransformerGenerationModuleConfig(Config):
             config_dict["state_dict_load_opts"] = dist_cp_sd.StateDictOptions(
                 **state_dict_load_opts
             )
+        print(config_dict)
 
         return TransformerGenerationModule.from_checkpoint(
             checkpoint_dir=checkpoint_dir,
