@@ -334,17 +334,9 @@ class Transformer(nn.Module):
 
         # Convert attention mask to cu_doc_lens if provided
         if attention_mask is not None and cu_doc_lens is None:
-            try:
-                doc_lens_from_mask, cu_doc_lens, max_doc_len = attention_mask_to_cu_doc_lens(
-                    attention_mask
-                )
-                # Store doc_lens for later use if needed
-                doc_lens = doc_lens_from_mask
-                # Clear attention_mask since we've converted it
-                attention_mask = None
-            except ValueError:
-                # If conversion fails (e.g., not prefix padding), keep attention_mask as is
-                pass
+            doc_lens, cu_doc_lens, max_doc_len = attention_mask_to_cu_doc_lens(attention_mask)
+            attention_mask = None
+            # If conversion fails (e.g., not prefix padding), keep attention_mask as is
         elif (doc_lens := kwargs.pop("doc_lens", None)) is not None and (
             max_doc_lens := kwargs.pop("max_doc_lens", None)
         ) is not None:
