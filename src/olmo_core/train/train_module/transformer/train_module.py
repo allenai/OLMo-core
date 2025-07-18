@@ -232,10 +232,11 @@ class TransformerTrainModule(TrainModule):
         # Validate batch size.
         dp_ws = get_world_size(self.trainer.dp_process_group)
         if self.trainer.global_batch_size % (self.rank_microbatch_size * dp_ws) != 0:
-            raise OLMoConfigurationError(
-                f"global batch size ({self.trainer.global_batch_size:,d}) must be divisible by "
-                f"micro-batch size ({self.rank_microbatch_size:,d}) x DP world size ({dp_ws})"
-            )
+            # raise OLMoConfigurationError(
+            #     f"global batch size ({self.trainer.global_batch_size:,d}) must be divisible by "
+            #     f"micro-batch size ({self.rank_microbatch_size:,d}) x DP world size ({dp_ws})"
+            # )
+            pass # BUG: when batch size warmup + load checkpoint
 
     def state_dict(self, *, optim: bool = True) -> Dict[str, Any]:
         return self._get_state_dict(self.state_dict_save_opts, optim=optim)

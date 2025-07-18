@@ -94,7 +94,9 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
             # capacity_factor=1.0,
             router=MoERouterConfig(
                 name=MoERouterType.orthogonal,
-                top_k=TOP_K, gating_function=MoERouterGatingFunction.sigmoid, uniform_expert_assignment=False),
+                top_k=TOP_K, gating_function=MoERouterGatingFunction.sigmoid, 
+                record_routing_batch_size=True,
+                uniform_expert_assignment=False),
             lb_loss_weight=0.00,
             z_loss_weight=None,
             orth_loss_weight=1.0,

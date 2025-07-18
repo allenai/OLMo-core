@@ -96,6 +96,7 @@ class MoERouterConfig(Config):
     bias_gamma: Optional[float] = None
     gating_function: MoERouterGatingFunction = MoERouterGatingFunction.softmax
     dtype: Optional[DType] = None
+    record_routing_batch_size: bool = False
 
     def num_params(self, d_model: int, num_experts: int) -> int:
         """
@@ -193,6 +194,7 @@ class MoERouter(nn.Module):
         z_loss_weight: Optional[float] = None,
         orth_loss_weight: Optional[float] = None,
         init_device: str = "cpu",
+        record_routing_batch_size: bool = False,
     ):
         super().__init__()
         self.d_model = d_model
@@ -210,6 +212,7 @@ class MoERouter(nn.Module):
         self.group: Optional[dist.ProcessGroup] = None
         self.cp_mesh: Optional[dist.DeviceMesh] = None
         self.tp_mesh: Optional[dist.DeviceMesh] = None
+        self.record_routing_batch_size = record_routing_batch_size
 
         if self.bias_gamma is not None:
             assert self.bias_gamma > 0
@@ -412,11 +415,12 @@ class MoERouter(nn.Module):
         )
         
         # record the number of tokens routed to each expert.
-        for i in range(self.num_experts):
-            out[f"expert {i} assigned tokens"] = (
-                self.batch_size_per_expert[i],
-                ReduceType.mean,
-            )
+        if self.record_routing_batch_size:
+            for i in range(self.num_experts):
+                out[f"expert {i} assigned tokens"] = (
+                    self.batch_size_per_expert[i],
+                    ReduceType.mean,
+                )
 
         # Load balancing loss.
         if self.lb_loss_weight is not None:

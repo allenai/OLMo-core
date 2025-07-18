@@ -49,23 +49,22 @@ log = logging.getLogger(__name__)
 
 SEQUENCE_LENGTH = 8192
 GLOBAL_BATCH_SIZE_SEQ=512
-# GLOBAL_BATCH_SIZE_SEQ=4096
 GLOBAL_BATCH_SIZE = (
     (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
 )  
 MAX_DURATION = int(1000e9)  # int(6e12), don't forget to adjust the LR when you increase this
 EVAL_INTERVAL = 1000
-LR= 5e-5
+LR= 3e-5
 
 NUM_EXPERTS = 64
 TOP_K = 4
 D_MODEL=2048
-MOE_HIDDEN_SIZE = 1024 + 1024 + 512
-SHARED_MLP_HIDDEN_SIZE = 2560  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
+MOE_HIDDEN_SIZE = 1024 + 1024
+SHARED_MLP_HIDDEN_SIZE = 4096  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
 MICRO_BSZ = 4
-NUM_LAYERS=32
-DP_DIM=64
+NUM_LAYERS=48
+DP_DIM=32
 EP_DIM=1
 PP_DIM=1
 SPLIT_POINTS = None
@@ -193,6 +192,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     return (
         TrainerConfig(
             save_folder=f'{common.save_folder}/{common.run_name}_{D_MODEL}d_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K_{TAG}',
+            load_path='gs://ai2-llm/checkpoints/OLMo3-moe-integrationtest-5-48L/OLMo3-moe-integrationtest-5-48L_2048d_48L2048M4096S_64E4K_dev/step17000',
             save_overwrite=True,
             metrics_collect_interval=5,
             cancel_check_interval=cancel_check_interval,
@@ -221,12 +221,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         .with_callback(
             "batchwup",
             BatchSizeSchedulerCallback(
-                batch_sizes=[
-                            GLOBAL_BATCH_SIZE , 
-                             GLOBAL_BATCH_SIZE * 2, 
-                             GLOBAL_BATCH_SIZE * 4, 
-                             GLOBAL_BATCH_SIZE * 8, 
-                             ],
+                batch_sizes=[GLOBAL_BATCH_SIZE, GLOBAL_BATCH_SIZE * 2, GLOBAL_BATCH_SIZE * 4, GLOBAL_BATCH_SIZE * 8, ],
                 schedule=[
                     Duration.tokens(0),
                     Duration.tokens(167_772_160_000),
