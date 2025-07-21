@@ -121,7 +121,7 @@ class WandBCallback(Callback):
                 notes=self.notes,
                 config=self.config,
             )
-            self.wandb.log_code()  # type: ignore
+            self.run.log_code()
             self._run_path = self.run.path  # type: ignore
 
     def log_metrics(self, step: int, metrics: Dict[str, float]):
