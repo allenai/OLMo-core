@@ -16,11 +16,11 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
     return BeakerLaunchConfig(
         name=f"olmo-core-test-{generate_uuid()[:8]}",
         budget="ai2/oe-training",
-        cmd=["src/examples/llama/train.py", run_name, *overrides],
+        cmd=["src/examples/blt/distill.py", run_name, *overrides],
         task_name="train",
         workspace="ai2/OLMo-core",
         description="Testing OLMo-core launch utilities",
-        clusters=["ai2/saturn-cirrascale"],
+        clusters=["ai2/jupiter-cirrascale"],
         num_nodes=1,
         num_gpus=4,
         shared_filesystem=True,

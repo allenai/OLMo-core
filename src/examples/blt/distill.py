@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from typing import List, cast
 import glob
 import traceback
-from torch.nn import functional as F
 
 from olmo_core.config import Config, DType
 from olmo_core.data import (
@@ -62,6 +61,7 @@ LOCAL_BATCH_SIZE = 32
 OLMO_1B_CKPT_PATH = "/weka/oe-training-default/benjaminm/checkpoints/olmo2_1b/model_and_optim"
 
 # DEBUG: replaced 0* with 00
+# DATA_PATTERN = "/weka/oe-training-default/ai2-llm/preprocessed/dclm/baseline_topic_classified_sample/**/**/part-*-00000.npy"
 DATA_PATTERN = "/weka/oe-training-default/ai2-llm/preprocessed/dclm/baseline_type_topic_classified_20pct/allenai/dolma2-tokenizer/**/**/part-00-00000.npy"
 DATA_PATHS = sorted(glob.glob(DATA_PATTERN, recursive=True))
 DATA_WORK_DIR = "/tmp/dataset-cache"
@@ -201,15 +201,15 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             load_strategy=LoadStrategy.never,
             metrics_collect_interval=5,
             cancel_check_interval=5,
-            max_duration=Duration.steps(100), # DEBUG
+            max_duration=Duration.steps(10000),
         )
         .with_callback("gpu_monitor", GPUMemoryMonitorCallback())
         .with_callback(
             "checkpointer",
             CheckpointerCallback(
                 pre_train_checkpoint=False,
-                save_interval=1000,
-                ephemeral_save_interval=100,
+                save_interval=10000,
+                ephemeral_save_interval=1000,
                 save_async=True,
             ),
         )
@@ -282,6 +282,8 @@ def main(run_name: str, overrides: List[str]):
 
     for missing_key in incompatible_keys.missing_keys:
         log.info(f"Key {missing_key} was not found in checkpoint, is randomly initialized (this is expected for local encoder/decoder and student lm head).")
+
+    model.fix_init()  # type: ignore
 
     # Train.
     trainer.fit()

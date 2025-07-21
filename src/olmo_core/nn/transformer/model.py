@@ -1290,6 +1290,10 @@ class BLTDistillTransformer(BLTTransformer):
             return h, h_emb
 
 
+    def fix_init(self, *args, **kwargs):
+        self.local_encoder.rescale_to(self.teacher.embeddings.weight)  # type: ignore
+
+
     def forward(
         self,
         input_ids: torch.Tensor,
