@@ -13,7 +13,7 @@ from olmo_core.nn.attention import (
     SlidingWindowAttentionConfig,
 )
 from olmo_core.nn.layer_norm import LayerNormConfig
-from olmo_core.nn.mup import MuPConfig, MuPScalingStrategy
+from olmo_core.nn.mup import MuPConfig, MuPOptimizerType, MuPScalingStrategy
 from olmo_core.nn.rope import RoPEConfig, RoPEType
 from olmo_core.testing import (
     DEVICES,
@@ -392,13 +392,13 @@ def test_attention_mup_no_width_scaling_same_output(mup_scaling_strategy):
 
     attn_config = AttentionConfig(name=AttentionType.default, n_heads=8, n_kv_heads=2)
 
-    mup_config = MuPConfig(scaling_strategy=mup_scaling_strategy)
+    mup_config = MuPConfig(optimizer=MuPOptimizerType.adam, scaling_strategy=mup_scaling_strategy)
     mup_attn_config = AttentionConfig(
         name=AttentionType.default, n_heads=8, n_kv_heads=2, mup=mup_config
     )
 
-    attn = attn_config.build(d_model)
-    mup_attn = mup_attn_config.build(d_model)
+    attn = attn_config.build(d_model, layer_idx=0, n_layers=2)
+    mup_attn = mup_attn_config.build(d_model, layer_idx=0, n_layers=2)
 
     assert isinstance(attn, Attention)
     assert isinstance(mup_attn, Attention)

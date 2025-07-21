@@ -6,7 +6,12 @@ import torch
 from olmo_core.nn.attention import Attention, AttentionConfig
 from olmo_core.nn.feed_forward import FeedForwardConfig
 from olmo_core.nn.lm_head import LMHeadConfig
-from olmo_core.nn.mup import MuPConfig, MuPHyperParam, MuPScalingStrategy
+from olmo_core.nn.mup import (
+    MuPConfig,
+    MuPHyperParam,
+    MuPOptimizerType,
+    MuPScalingStrategy,
+)
 from olmo_core.nn.transformer.config import TransformerBlockType, TransformerConfig
 from olmo_core.nn.transformer.init import InitMethod
 
@@ -125,6 +130,7 @@ def test_feed_forward_mup_scaling_init_std(mup_scaling_strategy):
     feed_forward = FeedForwardConfig(hidden_size, bias=False).build(d_model)
 
     mup_config = MuPConfig(
+        optimizer=MuPOptimizerType.adam,
         scaling_strategy=mup_scaling_strategy,
         width_scalings={
             MuPHyperParam.d_model: d_model_multiplier,
@@ -161,9 +167,10 @@ def test_attention_mup_scaling_init_std(mup_scaling_strategy):
     d_model = 8 * d_model_multiplier
     n_heads = 32
 
-    attention = AttentionConfig(n_heads=n_heads, bias=False).build(d_model)
+    attention = AttentionConfig(n_heads=n_heads, bias=False).build(d_model, layer_idx=0, n_layers=2)
 
     mup_config = MuPConfig(
+        optimizer=MuPOptimizerType.adam,
         scaling_strategy=mup_scaling_strategy,
         width_scalings={
             MuPHyperParam.d_model: d_model_multiplier,
@@ -171,7 +178,9 @@ def test_attention_mup_scaling_init_std(mup_scaling_strategy):
             MuPHyperParam.head_dim: d_model_multiplier,
         },
     )
-    mup_attention = AttentionConfig(n_heads=n_heads, bias=False, mup=mup_config).build(d_model)
+    mup_attention = AttentionConfig(n_heads=n_heads, bias=False, mup=mup_config).build(
+        d_model, layer_idx=0, n_layers=2
+    )
     assert isinstance(mup_attention, Attention)
 
     init = InitMethod.normal
@@ -204,6 +213,7 @@ def test_lm_head_mup_scaling_init_std(mup_scaling_strategy):
     lm_head = LMHeadConfig().build(d_model=d_model, vocab_size=vocab_size)
 
     mup_config = MuPConfig(
+        optimizer=MuPOptimizerType.adam,
         scaling_strategy=mup_scaling_strategy,
         width_scalings={
             MuPHyperParam.d_model: d_model_multiplier,
