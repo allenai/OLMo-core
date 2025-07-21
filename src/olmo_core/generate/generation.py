@@ -214,7 +214,9 @@ class TransformerGenerationModule(GenerationModule):
         Args:
             input_ids: Input token IDs of shape (batch_size, seq_len)
             return_logits: If True, return logits along with generated tokens
-            return_logprobs: If True, return log probabilities of generated tokens
+            return_logprobs: If True, return log probabilities of generated tokens. If logits are
+                only required for the purpose of computing logprobs, then use this option instead
+                of return_logits - it is more memory efficient.
             completions_only: If True, return only the completions, not the entire sequence
             **generation_kwargs: Generation configuration overrides
         Returns:
@@ -365,14 +367,16 @@ class TransformerGenerationModule(GenerationModule):
             log.info("Generation stats:")
             log.info(f"  Batch size: {batch_size}  Prompt length: {prompt_len}")
             log.info(
-                f"  Tokens generated: {tokens_generated} ({tokens_generated / total_time:.1f} tokens/s)"
+                f"  Tokens generated: {tokens_generated * batch_size} ({tokens_generated} per sequence, "
+                f"{tokens_generated * batch_size / total_time:.1f} tokens/s)"
             )
+            log.info(f"  Sequence length extended: {prompt_len} → {prompt_len + tokens_generated}")
             log.info(f"  Total generation time: {total_time:.3f}s")
             if time_to_first_token is not None:
                 log.info(f"  Time to first token: {time_to_first_token:.3f}s")
             if token_times:
-                avg_time_per_token = sum(token_times) / len(token_times)
-                log.info(f"  Average inter-token latency: {avg_time_per_token * 1000:.1f}ms")
+                avg_inter_token_latency = sum(token_times) / len(token_times)
+                log.info(f"  Average inter-token latency: {avg_inter_token_latency * 1000:.1f}ms")
 
         return generated, logits, logprobs
 

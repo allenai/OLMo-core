@@ -15,6 +15,7 @@ from olmo_core.config import Config, DType, StrEnum
 from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.nn.attention.kv_cache import write_kvcache, write_kvcache_
 
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
@@ -29,6 +30,7 @@ from ..utils import get_tp_wrappers
 from .flash_attn_api import (
     dispatch_flash_attn,
     dispatch_flash_attn_qkvpacked,
+    dispatch_flash_attn_with_kvcache,
     dispatch_ring_flash_attn,
     dispatch_ring_flash_attn_qkvpacked,
 )
@@ -395,9 +397,38 @@ class Attention(AttentionBase):
         max_doc_len_k: Optional[int] = None,
         local_k_slice: Optional[slice] = None,
         scale: Optional[float] = None,
+        # Inference only:
+        k_cache: Optional[torch.Tensor] = None,
+        v_cache: Optional[torch.Tensor] = None,
+        cache_seqlens: Optional[torch.Tensor] = None,
+        prefill_kv_cache: bool = False,
     ) -> torch.Tensor:
         att: torch.Tensor
-        if self.cp_enabled:
+
+        # If KV cache is provided and we're in decoding mode (not prefilling)
+        if k_cache is not None and v_cache is not None and not prefill_kv_cache:
+            if not self.use_flash:
+                raise RuntimeError(
+                    f"'{self.__class__.__name__}' requires flash (use_flash=True) for KV caching"
+                )
+            if self.cp_enabled:
+                raise RuntimeError(
+                    f"'{self.__class__.__name__}' does not support KV caching with context parallelism"
+                )
+            att = dispatch_flash_attn_with_kvcache(
+                q,
+                k_cache,  # updated in-place
+                v_cache,  # updated in-place
+                k=k,
+                v=v,
+                cache_seqlens=cache_seqlens,
+                cache_leftpad=None,
+                block_table=None,
+                softmax_scale=scale,
+                causal=True,
+                window_size=self.window_size,
+            )
+        elif self.cp_enabled:
             assert self._cp_pg is not None and self._cp_load_balancer is not None
             if not self.use_flash:
                 raise RuntimeError(
@@ -504,6 +535,11 @@ class Attention(AttentionBase):
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
+        # Inference only:
+        k_cache: Optional[torch.Tensor] = None,
+        v_cache: Optional[torch.Tensor] = None,
+        cache_seqlens: Optional[torch.Tensor] = None,
+        prefill_kv_cache: bool = False,
     ) -> torch.Tensor:
         """
         Apply attention to the input.
@@ -517,6 +553,11 @@ class Attention(AttentionBase):
             Required together with ``max_doc_len`` when using intra-document masking.
         :param max_doc_len: The maximum document length in the input ``x``.
             Required together with ``cu_doc_lens`` when using intra-document masking.
+        :param k_cache: Pre-allocated KV cache for keys, shape ``(batch_size, max_seq_len, n_kv_heads, head_dim)``.
+        :param v_cache: Pre-allocated KV cache for values, shape ``(batch_size, max_seq_len, n_kv_heads, head_dim)``.
+        :param cache_seqlens: Current sequence lengths in the cache, shape ``(batch_size,)``.
+        :param prefill_kv_cache: If True and k_cache/v_cache are provided, process the prompt normally
+            and populate the cache. If False, use flash_attn_with_kvcache for incremental decoding.
 
         :returns: The output of attention with shape ``(batch_size, seq_len, d_model)``.
         """
@@ -564,6 +605,11 @@ class Attention(AttentionBase):
                 q, k, head_first=False, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis
             )
 
+        if prefill_kv_cache and k_cache is not None and v_cache is not None:
+            if cache_seqlens is None:
+                raise ValueError("cache_seqlens is required when prefilling KV cache")
+            write_kvcache_(k_cache, v_cache, cache_seqlens, k, v, T)
+
         # shape: (batch_size, seq_len, n_heads, head_dim)
         att = self.sdpa(
             q,
@@ -577,6 +623,10 @@ class Attention(AttentionBase):
             max_doc_len_q=max_doc_len_q,
             max_doc_len_k=max_doc_len_k,
             local_k_slice=local_k_slice,
+            k_cache=k_cache,
+            v_cache=v_cache,
+            cache_seqlens=cache_seqlens,
+            prefill_kv_cache=prefill_kv_cache,
         )
 
         # shape: (batch_size, seq_len, d_model)
