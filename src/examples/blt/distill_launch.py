@@ -7,25 +7,51 @@ Run this with:
 
 import sys
 from typing import List
+import os
 
-from olmo_core.launch.beaker import BeakerLaunchConfig
+from olmo_core.launch.beaker import BeakerLaunchConfig, BeakerEnvVar, BeakerWekaBucket, BeakerEnvSecret
+from olmo_core.internal.common import get_beaker_username
 from olmo_core.utils import generate_uuid, prepare_cli_environment
 
 
 def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
+    cluster = os.environ.get("BEAKER_CLUSTER", "ai2/jupiter-cirrascale-2")
+
+    env_vars = []
+    shared_filesystem = False
+
+    if cluster != "ai2/augusta-google-1":
+        env_vars.append(BeakerEnvVar(name="HAS_WEKA", value="1"))
+        shared_filesystem = True
+
+    beaker_username = get_beaker_username()
+
     return BeakerLaunchConfig(
         name=f"olmo-core-test-{generate_uuid()[:8]}",
         budget="ai2/oe-training",
         cmd=["src/examples/blt/distill.py", run_name, *overrides],
         task_name="train",
-        workspace="ai2/OLMo-core",
-        description="Testing OLMo-core launch utilities",
-        clusters=["ai2/jupiter-cirrascale"],
+        workspace="ai2/benjaminm",
+        description="Distilling OLMo from and to BLT.",
+        clusters=[cluster],
+        env_vars=env_vars,
         num_nodes=1,
-        num_gpus=4,
-        shared_filesystem=True,
-        nfs=True,
+        num_gpus=1,
+        shared_filesystem=shared_filesystem,
         allow_dirty=True,
+        beaker_image="ai2/cuda12.1-cudnn8-dev-ubuntu20.04",
+        weka_buckets=[
+            BeakerWekaBucket(
+                bucket="oe-training-default",
+                mount="/weka/oe-training-default",
+            )
+        ],
+        env_secrets=[
+            BeakerEnvSecret(
+                name="WANDB_API_KEY",
+                secret=f"{beaker_username}_WANDB_API_KEY",
+            ),
+        ]
     )
 
 

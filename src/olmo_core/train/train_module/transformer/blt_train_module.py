@@ -198,3 +198,11 @@ class TransformerBLTTrainModule(TransformerTrainModule):
                 reduction,
                 namespace="train",
             )
+
+        # epoch
+        if self.trainer.steps_per_epoch is not None:
+            self.record_metric(
+                "epoch",
+                self.trainer.global_step / self.trainer.steps_per_epoch,
+                ReduceType.mean,
+            )

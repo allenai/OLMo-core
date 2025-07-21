@@ -7,11 +7,13 @@ Launch this with torchrun:
 """
 
 import logging
+import os
 import sys
 from dataclasses import dataclass
 from typing import List, cast
 import glob
 import traceback
+from pathlib import Path
 
 from olmo_core.config import Config, DType
 from olmo_core.data import (
@@ -53,17 +55,21 @@ from olmo_core.train.train_module import (
 )
 from olmo_core.utils import seed_all
 
-
+NUM_WORKERS = 16
 SEQUENCE_LENGTH = 1024
 QUICK_DEBUG = False
 GLOBAL_BATCH_SIZE = 32
 LOCAL_BATCH_SIZE = 32
-OLMO_1B_CKPT_PATH = "/weka/oe-training-default/benjaminm/checkpoints/olmo2_1b/model_and_optim"
 
-# DEBUG: replaced 0* with 00
-# DATA_PATTERN = "/weka/oe-training-default/ai2-llm/preprocessed/dclm/baseline_topic_classified_sample/**/**/part-*-00000.npy"
-DATA_PATTERN = "/weka/oe-training-default/ai2-llm/preprocessed/dclm/baseline_type_topic_classified_20pct/allenai/dolma2-tokenizer/**/**/part-00-00000.npy"
-DATA_PATHS = sorted(glob.glob(DATA_PATTERN, recursive=True))
+_DATA_SOURCES = open(Path(__file__).parent / "data_sources.txt").read().strip().splitlines()
+
+if os.environ.get("HAS_WEKA"):
+    OLMO_1B_CKPT_PATH = "/weka/oe-training-default/benjaminm/checkpoints/olmo2_1b/model_and_optim"
+    DATA_PATHS = ["/weka/oe-training-default/" + x for x in _DATA_SOURCES]
+else:
+    OLMO_1B_CKPT_PATH = "gs://allennlp-benjaminm/checkpoints/olmo2_1b/model_and_optim"
+    DATA_PATHS = ["gs://" + x for x in _DATA_SOURCES]
+
 DATA_WORK_DIR = "/tmp/dataset-cache"
 
 log = logging.getLogger(__name__)
@@ -170,9 +176,9 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     )
 
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=LOCAL_BATCH_SIZE * SEQUENCE_LENGTH * BYTE_EXPANSION_FACTOR, # DEBUG (bs was 256)
+        global_batch_size=LOCAL_BATCH_SIZE * SEQUENCE_LENGTH * BYTE_EXPANSION_FACTOR,
         seed=0,
-        num_workers=0, # DEBUG
+        num_workers=NUM_WORKERS if not QUICK_DEBUG else 0,
     )
 
     train_module_config = TransformerTrainModuleConfig(
