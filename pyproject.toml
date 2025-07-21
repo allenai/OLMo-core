@@ -13,7 +13,10 @@ authors = [
 requires-python = ">=3.9"
 license = { file = "LICENSE" }
 dependencies = [
-    "numpy<2.0",
+    "numpy<3.0",
+    "torch>=2.4,<=2.6.0.dev20241009",
+    "cached-path",
+    "numpy<3.0",
     "torch>=2.6.0",
     "cached-path>=1.7.2",
     "requests",
