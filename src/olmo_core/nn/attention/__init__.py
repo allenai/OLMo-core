@@ -56,21 +56,60 @@ __all__ = [
 
 @dataclass
 class SlidingWindowAttentionConfig(Config):
-    pattern: List[bool]
-    window_size: int = 4096
-    force_first: bool = True
-    force_last: bool = True
+    pattern: List[int]
+    """
+    The pattern of window sizes to use for attention, repeated to cover all layers.
+    A value of -1 indicates full attention. For example, a pattern of ``[4096, 4096, 4096, -1]``
+    means that for each set of 4 layers, the first 3 will use a window size of 4096,
+    and the last layer will use full attention.
+    """
+
+    force_full_attention_on_first_layer: bool = True
+    """
+    If `True`, the first transformer layer will always use full attention, regardless of the pattern.
+    """
+
+    force_full_attention_on_last_layer: bool = True
+    """
+    If `True`, the last transformer layer will always use full attention, regardless of the pattern.
+    """
+
+    def _get_window_size(self, layer_idx: int, n_layers: int) -> int:
+        """
+        Get the window size for a given layer, returning -1 for full attention.
+        """
+        if self.force_full_attention_on_first_layer and layer_idx == 0:
+            return -1
+        if self.force_full_attention_on_last_layer and layer_idx == (n_layers - 1):
+            return -1
+
+        # Adjust the layer index if the first layer is special-cased to full attention
+        # (in which case the pattern is applied starting from the second layer)
+        effective_layer_idx = layer_idx
+        if self.force_full_attention_on_first_layer:
+            effective_layer_idx -= 1
+
+        window_size = self.pattern[effective_layer_idx % len(self.pattern)]
+        if window_size <= 0 and window_size != -1:
+            raise OLMoConfigurationError(
+                f"Sliding window size must be positive or -1 (got {window_size})"
+            )
+        return window_size
 
     def should_use_swa(self, layer_idx: int, n_layers: int) -> bool:
-        if self.force_first:
-            if layer_idx == 0:
-                return True
-            layer_idx -= 1
-            n_layers -= 1
-        if self.force_last:
-            if layer_idx == n_layers - 1:
-                return True
-        return self.pattern[layer_idx % len(self.pattern)]
+        """
+        Returns `True` if the given layer uses sliding window attention.
+        """
+        return self._get_window_size(layer_idx, n_layers) != -1
+
+    def get_window_size(self, layer_idx: int, n_layers: int) -> int:
+        """
+        Get the sliding window size for a given layer.
+        """
+        window_size = self._get_window_size(layer_idx, n_layers)
+        if window_size == -1:
+            raise ValueError(f"Layer {layer_idx} is not configured for sliding window attention.")
+        return window_size
 
 
 class AttentionType(StrEnum):
@@ -184,7 +223,7 @@ class AttentionConfig(Config):
         if sliding_window_config is not None and sliding_window_config.should_use_swa(
             layer_idx, n_layers
         ):
-            kwargs["window_size"] = sliding_window_config.window_size
+            kwargs["window_size"] = sliding_window_config.get_window_size(layer_idx, n_layers)
 
         kwargs.update(
             dtype=kwargs.pop("dtype").as_pt(),

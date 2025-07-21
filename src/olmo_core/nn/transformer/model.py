@@ -21,7 +21,8 @@ from torch.distributed.tensor import Replicate, Shard
 from torch.distributed.tensor.parallel import RowwiseParallel, parallelize_module
 
 from olmo_core.data.utils import get_cumulative_document_lengths
-from olmo_core.distributed.utils import get_rank, hide_from_torch, unhide_from_torch
+from olmo_core.distributed.parallel import get_pp_mesh
+from olmo_core.distributed.utils import hide_from_torch, unhide_from_torch
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
@@ -212,6 +213,7 @@ class Transformer(nn.Module):
         max_seq_len: Optional[int] = None,
         max_local_microbatch_size: Optional[int] = None,
         device: Optional[torch.device] = None,
+        world_mesh: Optional[DeviceMesh] = None,
     ) -> torch.Generator:
         """
         Initialize the model weights.
@@ -229,7 +231,10 @@ class Transformer(nn.Module):
             if hasattr(module, "reset_parameters"):
                 module.reset_parameters()  # type: ignore
 
-        seed = self.init_seed + get_rank()
+        seed = self.init_seed
+        if world_mesh is not None and self.pp_enabled:
+            seed += get_pp_mesh(world_mesh).get_local_rank()
+
         generator = torch.Generator(device).manual_seed(seed)
 
         if self.embeddings is not None:
@@ -546,6 +551,7 @@ class Transformer(nn.Module):
         mode: TransformerActivationCheckpointingMode,
         block_interval: Optional[int] = None,
         modules: Optional[List[str]] = None,
+        activation_memory_budget: Optional[float] = None,
     ):
         """
         Apply activation checkpointing to the model.
@@ -555,7 +561,20 @@ class Transformer(nn.Module):
             which blocks are wrapped.
         :param modules: Required when :data:`mode` is "selected_modules". A list of modules names
             to wrap for activation checkpointing. Globs are supported.
+        :param activation_memory_budget: The memory budget for activation checkpointing in the range
+            [0, 1]. 0 corresponds to the memory usage when recomputing all activations, and 1
+            corresponds to the memory usage when recomputing no activations (which is the default).
+            Requires compilation to be enabled.
         """
+
+        if mode == TransformerActivationCheckpointingMode.budget:
+            if activation_memory_budget is None:
+                raise ValueError("'activation_memory_budget' is required for 'budget' mode")
+            if activation_memory_budget < 0 or activation_memory_budget > 1:
+                raise ValueError("'activation_memory_budget' must be in the range [0, 1]")
+            torch._functorch.config.activation_memory_budget = activation_memory_budget
+            return
+
         from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
             checkpoint_wrapper as ptd_checkpoint_wrapper,
         )
@@ -718,6 +737,7 @@ class Transformer(nn.Module):
     def apply_ddp(
         self,
         dp_mesh: Optional[DeviceMesh] = None,
+        param_dtype: Optional[torch.dtype] = None,
         compile_enabled: bool = False,
         autograd_compile_enabled: bool = False,
     ):
@@ -725,6 +745,11 @@ class Transformer(nn.Module):
         Apply DDP to the model.
         """
         from torch.distributed._composable.replicate import replicate
+
+        # Cast model explicitly to the specified dtype before applying DDP
+        target_dtype = param_dtype or self.dtype
+        if target_dtype != self.dtype:
+            self.to(dtype=target_dtype)
 
         # Adapted from
         # https://github.com/pytorch/torchtitan/blob/90c889e972b56b9faadebbb78fc985dedc537ed9/torchtitan/parallelisms/parallelize_llama.py#L328
@@ -835,13 +860,8 @@ class NormalizedTransformer(Transformer):
         return block
 
     @torch.no_grad()
-    def init_weights(
-        self,
-        *,
-        max_seq_len: Optional[int] = None,
-        device: Optional[torch.device] = None,
-    ) -> torch.Generator:
-        generator = super().init_weights(max_seq_len=max_seq_len, device=device)
+    def init_weights(self, *args, **kwargs) -> torch.Generator:
+        generator = super().init_weights(*args, **kwargs)
         self.normalize_matrices()
         return generator
 

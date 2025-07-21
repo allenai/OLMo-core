@@ -61,6 +61,8 @@ class TransformerActivationCheckpointingMode(StrEnum):
     """Checkpoint only selected modules."""
     selected_ops = "selected_ops"
     """Checkpoint only a specific set of operations."""
+    budget = "budget"
+    """Checkpoint based on a budget."""
 
 
 class TransformerType(StrEnum):

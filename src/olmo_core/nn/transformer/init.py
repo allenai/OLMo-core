@@ -2,13 +2,28 @@ from typing import Dict, Optional, Union, cast
 
 import torch
 import torch.nn as nn
+from torch.distributed.tensor import DTensor
 
 from olmo_core.config import StrEnum
+from olmo_core.distributed.utils import distribute_like, get_local_tensor
 
 from ..attention import Attention, AttentionBase, FusedAttention
 from ..feed_forward import FeedForward
 from ..moe import DroplessMoEMLP, MoEBase, MoELinearRouter, MoEMLP
 from ..mup import MuP
+
+
+def _apply_init(init_fun, x: torch.Tensor, *args, **kwargs):
+    if not isinstance(x, DTensor):
+        init_fun(x, *args, **kwargs)
+
+    # Initialize full version of x locally, then apply init to that.
+    full_x = torch.zeros(x.shape, dtype=x.dtype, device=x.device)
+    init_fun(full_x, *args, **kwargs)
+    full_x = distribute_like(x, full_x)
+
+    # Now copy over the corresponding shard of `full_x` into `x`.
+    get_local_tensor(x).copy_(get_local_tensor(full_x))
 
 
 class InitMethod(StrEnum):
@@ -44,7 +59,8 @@ class InitMethod(StrEnum):
         mup: Optional[MuP] = None,
     ):
         std = MuP.scale_init_std(mup, std)
-        nn.init.trunc_normal_(
+        _apply_init(
+            nn.init.trunc_normal_,
             weight,
             mean=0.0,
             std=std,
@@ -75,12 +91,18 @@ class InitMethod(StrEnum):
         generator: Optional[torch.Generator] = None,
     ):
         if self in (InitMethod.llama, InitMethod.llama_depth):
-            nn.init.normal_(m.weight, generator=generator)
+            _apply_init(nn.init.normal_, m.weight, generator=generator)
         elif self == InitMethod.normalized:
-            nn.init.normal_(m.weight, std=d_model**-0.5)
+            _apply_init(nn.init.normal_, m.weight, generator=generator, std=d_model**-0.5)
         else:
-            nn.init.trunc_normal_(
-                m.weight, mean=0.0, std=std, a=-3 * std, b=3 * std, generator=generator
+            _apply_init(
+                nn.init.trunc_normal_,
+                m.weight,
+                mean=0.0,
+                std=std,
+                a=-3 * std,
+                b=3 * std,
+                generator=generator,
             )
 
     def init_final_w_out(
