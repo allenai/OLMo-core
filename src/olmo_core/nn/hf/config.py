@@ -9,6 +9,7 @@ from transformers import (
 from olmo_core.doc_utils import beta_feature
 from olmo_core.nn.attention import Attention
 from olmo_core.nn.moe import MoEMLP, MoERouterGatingFunction
+from olmo_core.nn.rope import RoPEScalingConfig
 from olmo_core.nn.transformer.block import (
     MoEHybridReorderedNormTransformerBlock,
     ReorderedNormTransformerBlock,
@@ -138,13 +139,21 @@ def get_hf_config(model: Transformer) -> PretrainedConfig:
         )
 
     rope_scaling = None
-    if blocks[0].attention.rope.scaling is not None:
+    if any(block.attention.rope.scaling is not None for block in blocks):
+        rope_scaling_configs: list[RoPEScalingConfig] = [
+            block.attention.rope.scaling
+            for block in blocks
+            if block.attention.rope.scaling is not None
+        ]
+        assert len(rope_scaling_configs) > 0
+        rope_scaling_config = rope_scaling_configs[0]
+
         rope_scaling = {
             "rope_type": "llama3",
-            "factor": blocks[0].attention.rope.scaling.factor,
-            "original_max_position_embeddings": blocks[0].attention.rope.scaling.old_context_len,
-            "low_freq_factor": blocks[0].attention.rope.scaling.low_freq_factor,
-            "high_freq_factor": blocks[0].attention.rope.scaling.high_freq_factor,
+            "factor": rope_scaling_config.factor,
+            "original_max_position_embeddings": rope_scaling_config.old_context_len,
+            "low_freq_factor": rope_scaling_config.low_freq_factor,
+            "high_freq_factor": rope_scaling_config.high_freq_factor,
         }
 
     if blocks[0].attention.use_head_qk_norm:
