@@ -60,9 +60,9 @@ from olmo_core.utils import seed_all
 NUM_WORKERS = 16
 SEQUENCE_LENGTH = 1024
 QUICK_DEBUG = False
-GLOBAL_BATCH_SIZE = 32
-LOCAL_BATCH_SIZE = 32
-EVAL_BATCH_SIZE = 4
+GLOBAL_BATCH_SIZE = 64
+LOCAL_BATCH_SIZE = 64
+EVAL_BATCH_SIZE = 16
 
 _DATA_SOURCES = open(Path(__file__).parent / "data_sources.txt").read().strip().splitlines()
 
@@ -251,7 +251,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
                 names=eval_names,
                 batch_kwargs=eval_batch_kwargs,
                 tokenizer=byte_tokenizer_config,
-                eval_interval=250,
+                eval_interval=2500,
                 eval_on_startup=True,
                 batch_size=EVAL_BATCH_SIZE * SEQUENCE_LENGTH, # these are subword tokens, so no expansion factor
             ),
