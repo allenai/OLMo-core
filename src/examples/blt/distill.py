@@ -6,14 +6,13 @@ Launch this with torchrun:
     torchrun --nproc-per-node=4 src/examples/llama/train.py run_name [OVERRIDES...]
 """
 
-import os
+import logging
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, cast
 import glob
 import traceback
 from torch.nn import functional as F
-from functools import partial
 
 from olmo_core.config import Config, DType
 from olmo_core.data import (
@@ -57,12 +56,17 @@ from olmo_core.utils import seed_all
 
 
 SEQUENCE_LENGTH = 1024
+QUICK_DEBUG = False
+GLOBAL_BATCH_SIZE = 32
+LOCAL_BATCH_SIZE = 32
+OLMO_1B_CKPT_PATH = "/weka/oe-training-default/benjaminm/checkpoints/olmo2_1b/model_and_optim"
 
 # DEBUG: replaced 0* with 00
 DATA_PATTERN = "/weka/oe-training-default/ai2-llm/preprocessed/dclm/baseline_type_topic_classified_20pct/allenai/dolma2-tokenizer/**/**/part-00-00000.npy"
 DATA_PATHS = sorted(glob.glob(DATA_PATTERN, recursive=True))
 DATA_WORK_DIR = "/tmp/dataset-cache"
 
+log = logging.getLogger(__name__)
 
 @dataclass
 class ExperimentConfig(Config):
@@ -80,12 +84,21 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     byte_tokenizer_config = ByteTokenizerConfig.blt()
     subword_tokenizer_config = TokenizerConfig.dolma2()
 
+    if QUICK_DEBUG:
+        teacher_model_config = TransformerConfig.olmo2_190M(
+            vocab_size=subword_tokenizer_config.padded_vocab_size()
+        )
+        local_d_model = 384
+    else:
+        teacher_model_config = TransformerConfig.olmo2_1B_v2(
+            vocab_size=subword_tokenizer_config.padded_vocab_size()
+        )
+        local_d_model = 1024
 
-    teacher_model_config = TransformerConfig.olmo2_190M( # DEBUG, switch to olmo2_1b_v2 later
-        vocab_size=subword_tokenizer_config.padded_vocab_size()
+    teacher_model_config = teacher_model_config.replace(
+        freeze_params=["*"] # don't train teacher
     )
 
-    local_d_model = 384 # DEBUG, switch to 1024 later
     local_encoder_n_layers = 1
     local_decoder_n_layers = 9
     local_attn_n_heads = 16
@@ -97,7 +110,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
 
     local_encoder = LocalEncoderConfig(
         hash_byte_group_size=[3, 4, 5, 6, 7, 8],
-        hash_byte_group_vocab=500_002,
+        hash_byte_group_vocab=100_002,
         hash_byte_group_nb_functions=1,
         sliding_window_size=512,
         d_model=local_d_model,
@@ -120,15 +133,19 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         teacher_config=teacher_model_config,
         share_blocks_between_teacher_and_student=True,
         add_boundary_predictor=True,
+        freeze_params=[
+            "blocks*" # freeze inner transformer layers
+        ]
     )
 
-    # save on hash embeddings for now to reduce gpu memory
-    # model_config = model_config.replace(
-    #     local_encoder=model_config.local_encoder.replace(  # type: ignore
-    #         hash_byte_group_size=[3],
-    #         hash_byte_group_nb_functions=1,
-    #     )
-    # )
+    if QUICK_DEBUG:
+        # save on hash embeddings to reduce gpu memory
+        model_config = model_config.replace(
+            local_encoder=model_config.local_encoder.replace(  # type: ignore
+                hash_byte_group_size=[3],
+                hash_byte_group_nb_functions=1,
+            )
+        )
 
     dataset_config = NumpyDatasetConfig(
         paths=DATA_PATHS,
@@ -153,19 +170,23 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     )
 
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=4 * SEQUENCE_LENGTH * BYTE_EXPANSION_FACTOR, # DEBUG (bs was 256)
+        global_batch_size=LOCAL_BATCH_SIZE * SEQUENCE_LENGTH * BYTE_EXPANSION_FACTOR, # DEBUG (bs was 256)
         seed=0,
         num_workers=0, # DEBUG
     )
 
     train_module_config = TransformerTrainModuleConfig(
-        rank_microbatch_size=1 * SEQUENCE_LENGTH * BYTE_EXPANSION_FACTOR,
+        rank_microbatch_size=LOCAL_BATCH_SIZE * SEQUENCE_LENGTH * BYTE_EXPANSION_FACTOR,
         max_sequence_length=dataset_config.effective_sequence_length,
         optim=optim,
         compile_model=True,
         blt_config=BLTConfig(
             tokenizer=byte_tokenizer_config,
-        ),
+            losses=["local_encoder"],
+            loss_weights=[1.0],
+            skip_blocks=True,
+            skip_teacher=False,
+        ),  
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
         ),
@@ -180,7 +201,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             load_strategy=LoadStrategy.never,
             metrics_collect_interval=5,
             cancel_check_interval=5,
-            max_duration=Duration.steps(10), # DEBUG
+            max_duration=Duration.steps(100), # DEBUG
         )
         .with_callback("gpu_monitor", GPUMemoryMonitorCallback())
         .with_callback(
@@ -247,7 +268,20 @@ def main(run_name: str, overrides: List[str]):
     config_dict = config.as_config_dict()
     cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
 
-    #load_model_and_optim_state("/tmp/blt_export/model_and_optim/", model)
+    # assume share_blocks=True, so we don't have to map/duplicate block weights
+    random_init_keys = {"local_encoder", "boundary_predictor", "local_decoder"}
+    key_mapping = {
+        key: None for key in model.state_dict().keys() if any(key.startswith(x) for x in random_init_keys)
+    } | {
+        f"teacher.{key}": key for key in model.teacher.state_dict().keys()  # type: ignore
+    }
+    incompatible_keys = load_model_and_optim_state(OLMO_1B_CKPT_PATH, model, key_mapping=key_mapping, strict=False)
+
+    if len(incompatible_keys.unexpected_keys) > 0:
+        raise ValueError(f"Unexpected keys when loading checkpoint: {incompatible_keys.unexpected_keys} (assume we use all teacher weights)")
+
+    for missing_key in incompatible_keys.missing_keys:
+        log.info(f"Key {missing_key} was not found in checkpoint, is randomly initialized (this is expected for local encoder/decoder and student lm head).")
 
     # Train.
     trainer.fit()

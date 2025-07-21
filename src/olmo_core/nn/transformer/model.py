@@ -31,6 +31,7 @@ from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
 from olmo_core.utils import get_default_device, mark_dynamic, move_to_device
 from olmo_core.nn.blt.config import BLTConfig
+from olmo_core.nn.functional.cross_entropy_loss import cross_entropy_loss
 
 from ..attention import (
     Attention,
@@ -1232,8 +1233,9 @@ class BLTDistillTransformer(BLTTransformer):
         z_loss_multiplier: Optional[float] = None,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         return_logits: Optional[bool] = None,
+        skip_blocks: bool = False,
         **kwargs,
-    ) -> Tuple[Union[torch.Tensor, LMOutputWithLoss], torch.Tensor]:
+    ) -> Tuple[Union[torch.Tensor, LMOutputWithLoss, None], torch.Tensor]:
         """
         Run the transformer on the token input IDs.
 
@@ -1255,6 +1257,9 @@ class BLTDistillTransformer(BLTTransformer):
         # Get embeddings but pass-through for non-existent layers to allow easy
         # pipeline parallel configuration.
         h_emb = self.teacher.embeddings(input_ids) if self.teacher.embeddings is not None else input_ids
+
+        if skip_blocks:
+            return None, h_emb
 
         if self.share_blocks:
             blocks = self.blocks
@@ -1297,7 +1302,7 @@ class BLTDistillTransformer(BLTTransformer):
         return_logits: Optional[bool] = None,
         blt_config: Optional[BLTConfig] = None,
         **kwargs,
-    ): 
+    ):
         input_ids, labels, block_kwargs, lm_head_kwargs, local_encoder_kwargs, local_decoder_kwargs, extra_kwargs = self._prepare_inputs(
             input_ids,
             labels,
@@ -1311,35 +1316,60 @@ class BLTDistillTransformer(BLTTransformer):
 
         h_byte, h_patch = self.local_encoder(input_ids, **local_encoder_kwargs)
 
+        skip_blocks = blt_config is None or blt_config.skip_blocks
+        skip_teacher = blt_config is None or blt_config.skip_teacher
+
         # Run each block.
-        for block in self.blocks.values():
-            # Mark sizes as dynamic for torch.compile().
-            if self.compile_enabled:
-                mark_dynamic(h_patch, (0, 1), strict=False)
-            h_patch = block(h_patch, **block_kwargs)
+        if not skip_blocks:
+            for block in self.blocks.values():
+                # Mark sizes as dynamic for torch.compile().
+                if self.compile_enabled:
+                    mark_dynamic(h_patch, (0, 1), strict=False)
+                h_patch = block(h_patch, **block_kwargs)
 
-        h_out = self.local_decoder(
-            embeds=h_byte,
-            patch_embeds=h_patch,
-            **local_decoder_kwargs,
-        )
-        boundary_preds = self.boundary_predictor(h_out).squeeze(-1) if self.boundary_predictor is not None else None
-        logits = self.lm_head(h_out, **lm_head_kwargs)
-        logprobs = F.log_softmax(logits.float(), dim=-1)
-        main_path_logprobs = torch.gather(logprobs[:, :-1], -1, input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
+            h_out = self.local_decoder(
+                embeds=h_byte,
+                patch_embeds=h_patch,
+                **local_decoder_kwargs,
+            )
+            boundary_preds = self.boundary_predictor(h_out).squeeze(-1) if self.boundary_predictor is not None else None
+            logits = self.lm_head(h_out, **lm_head_kwargs)
+            logprobs = F.log_softmax(logits.float(), dim=-1)
+            main_path_logprobs = torch.gather(logprobs[:, :-1], -1, input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
+        else:
+            h_out = None,
+            boundary_preds = None
+            logits = None
+            logprobs = None
+            main_path_logprobs = None
 
-        # distill
+        # losses (incl. distillation losses)
         metrics = {}
 
-        with torch.no_grad():
-            teacher_logits, teacher_embeds = self._teacher_forward(
-                extra_kwargs["original_input_ids"],
-                labels=None, # we will compute loss ourselves
-                return_logits=True,
-                **kwargs,
-            )
-            teacher_logprobs = F.log_softmax(teacher_logits.float(), dim=-1) # type: ignore
-            teacher_main_path_logprobs = torch.gather(teacher_logprobs[:, :-1], -1, extra_kwargs["original_input_ids"][:, 1:].unsqueeze(-1)).squeeze(-1)
+        # compute CE to start with
+        if not skip_blocks:
+            ce_loss, _ = cross_entropy_loss(logits.view(-1, logits.shape[-1]), labels.view(-1))  # type: ignore
+            metrics["blt/ce_loss"] = ce_loss
+        else:
+            ce_loss = torch.nan
+
+        if not skip_teacher:
+            with torch.no_grad():
+                teacher_logits, teacher_embeds = self._teacher_forward(
+                    extra_kwargs["original_input_ids"],
+                    labels=None, # we will compute loss ourselves
+                    return_logits=True,
+                    skip_blocks=skip_blocks,
+                    **kwargs,
+                )
+                if teacher_logits is not None:
+                    _teacher_logprobs = F.log_softmax(teacher_logits.float(), dim=-1) # type: ignore
+                    teacher_main_path_logprobs = torch.gather(_teacher_logprobs[:, :-1], -1, extra_kwargs["original_input_ids"][:, 1:].unsqueeze(-1)).squeeze(-1)
+                else:
+                    teacher_main_path_logprobs = None
+        else:
+            teacher_embeds = None
+            teacher_main_path_logprobs = None
 
         if blt_config is None:
             raise ValueError("`blt_config` must be provided for distillation")
@@ -1351,62 +1381,108 @@ class BLTDistillTransformer(BLTTransformer):
         else:
             raise ValueError(f"Unknown distillation rep_compare_fn '{blt_config.rep_compare_fn}'")
 
-        # the offset is OLMo specific: we use a <bos> token, but OLMo doesn't so shift by one.
-        local_encoder_loss = rep_compare_fn(
-            h_patch[:, 1:],
-            teacher_embeds[:, :-1],
-        )
-        metrics["distill/local_encoder_loss"] = local_encoder_loss
+        if not skip_teacher:
+            assert teacher_embeds is not None
 
-        main_path_patch_logprobs = torch.zeros((teacher_embeds.shape[0], teacher_embeds.shape[1]), device=logprobs.device, dtype=logprobs.dtype)
-        main_path_patch_logprobs = main_path_patch_logprobs.scatter_reduce(
-            src=main_path_logprobs,
-            dim=1,
-            index=local_encoder_kwargs["patch_ids"][:, 1:] - 1,
-            reduce="sum",
-            include_self=False,
-        )
-
-        # `main_path_patch_logprobs` are at this point probabilities for the first regular token onwards (since byte-level input ids include <bos>)
-        # the last position is written to by padding tokens (those with patch_ids == seq_length), so we need to disregard those.
-        # also `teacher_main_path_logprobs` contains the prediction starting from the *second* token (since the teacher does not use <bos>).
-        # so we need to shift appropriately.
-        y_hat = main_path_patch_logprobs[:, 1:-1]
-        # the teacher has had one more id passed to it (since we reduced seq length of the student by one to make room for <bos>).
-        # so we need to truncate by an extra position here.
-        y_true = teacher_main_path_logprobs[:, :-1]
-
-        # now we still need to add the boundary logprobs...
-        if boundary_preds is not None:
-            boundary_logprobs = F.logsigmoid(boundary_preds.float())
-            shift_cum_patch_lens = torch.cumsum(local_encoder_kwargs["patch_lens"][:, 1:], dim=1) - 1
-            import ipdb; ipdb.set_trace()
-            # TODO(benjaminm): make sure there are no off-by-ones here, and double check causality (in general)
-            y_hat = y_hat + torch.gather(boundary_logprobs[:, 1:], -1, shift_cum_patch_lens[:, :-1])
-
-        if blt_config.div_fn == "kl":
-            def kl_div_fn(log_y_true, log_y_pred):
-                log_y_true = (log_y_true.float() / blt_config.binarization_temp) - blt_config.epsilon
-                log_y_pred = (log_y_pred.float() / blt_config.binarization_temp) - blt_config.epsilon
-
-                return -(
-                    torch.exp(log_y_true) * log_y_pred
-                    + (-torch.expm1(log_y_true) * log1mexp(log_y_pred))
-                )
-
-            div_fn = kl_div_fn
-        elif blt_config.div_fn == "tvd":
-            def tvd_div_fn(log_y_true, log_y_pred):
-                log_y_true = (log_y_true.float() / blt_config.binarization_temp) - blt_config.epsilon
-                log_y_pred = (log_y_pred.float() / blt_config.binarization_temp) - blt_config.epsilon
-
-                return torch.abs(torch.exp(log_y_true) - torch.exp(log_y_pred))
-
-            div_fn = tvd_div_fn
+            # the offset is OLMo specific: we use a <bos> token, but OLMo doesn't so shift by one.
+            local_encoder_loss = rep_compare_fn(
+                h_patch[:, 1:],
+                teacher_embeds[:, :-1],
+            )
+            metrics["blt/local_encoder_loss"] = local_encoder_loss
+            metrics["blt/local_encoder_cos_sim"] = F.cosine_similarity(
+                h_patch[:, 1:].float(),
+                teacher_embeds[:, :-1].float(),
+                dim=-1,
+            ).mean()
         else:
-            raise ValueError(f"Unknown distillation div_fn '{blt_config.div_fn}'")
+            local_encoder_loss = torch.nan
 
-        local_decoder_loss = div_fn(y_true, y_hat)
-        metrics["distill/local_decoder_loss"] = local_decoder_loss
+        if not skip_blocks and not skip_teacher:
+            assert logprobs is not None
+            assert main_path_logprobs is not None
+            assert teacher_main_path_logprobs is not None
+            assert teacher_embeds is not None
 
-        import ipdb; ipdb.set_trace()
+            main_path_patch_logprobs = torch.zeros((teacher_embeds.shape[0], teacher_embeds.shape[1]), device=logprobs.device, dtype=logprobs.dtype)
+            main_path_patch_logprobs = main_path_patch_logprobs.scatter_reduce(
+                src=main_path_logprobs,
+                dim=1,
+                index=local_encoder_kwargs["patch_ids"][:, 1:] - 1,
+                reduce="sum",
+                include_self=False,
+            )
+
+            # `main_path_patch_logprobs` are at this point probabilities for the first regular token onwards (since byte-level input ids include <bos>)
+            # the last position is written to by padding tokens (those with patch_ids == seq_length), so we need to disregard those.
+            # also `teacher_main_path_logprobs` contains the prediction starting from the *second* token (since the teacher does not use <bos>).
+            # so we need to shift appropriately.
+            y_hat = main_path_patch_logprobs[:, 1:-1]
+            # the teacher has had one more id passed to it (since we reduced seq length of the student by one to make room for <bos>).
+            # so we need to truncate by an extra position here.
+            y_true = teacher_main_path_logprobs[:, :-1]
+
+            # now we still need to add the boundary logprobs...
+            if boundary_preds is not None:
+                boundary_logprobs = F.logsigmoid(boundary_preds.float())
+                shift_cum_patch_lens = torch.cumsum(local_encoder_kwargs["patch_lens"][:, 1:], dim=1) - 1
+                # TODO(benjaminm): make sure there are no off-by-ones here, and double check causality (in general)
+                y_hat = y_hat + torch.gather(boundary_logprobs[:, 1:], -1, shift_cum_patch_lens[:, :-1])
+
+                boundary_labels = torch.zeros_like(boundary_preds, device=boundary_preds.device, dtype=boundary_preds.dtype)
+                boundary_labels.scatter_(1, shift_cum_patch_lens[:, :-1], 1.0)
+
+                boundary_loss = F.binary_cross_entropy_with_logits(
+                    boundary_preds[:, 1:].float(),
+                    boundary_labels[:, :-1].float(),
+                )
+                boundary_acc = ((boundary_preds[:, 1:] > 0) == (boundary_labels[:, :-1] > 0)).float().mean()
+                metrics["blt/boundary_loss"] = boundary_loss
+                metrics["blt/boundary_acc"] = boundary_acc
+            else:
+                boundary_loss = torch.nan
+
+            if blt_config.div_fn == "kl":
+                def kl_div_fn(log_y_true, log_y_pred):
+                    log_y_true = (log_y_true.float() / blt_config.binarization_temp) - blt_config.epsilon
+                    log_y_pred = (log_y_pred.float() / blt_config.binarization_temp) - blt_config.epsilon
+
+                    return -(
+                        torch.exp(log_y_true) * log_y_pred
+                        + (-torch.expm1(log_y_true) * log1mexp(log_y_pred))
+                    )
+
+                div_fn = kl_div_fn
+            elif blt_config.div_fn == "tvd":
+                def tvd_div_fn(log_y_true, log_y_pred):
+                    log_y_true = (log_y_true.float() / blt_config.binarization_temp) - blt_config.epsilon
+                    log_y_pred = (log_y_pred.float() / blt_config.binarization_temp) - blt_config.epsilon
+
+                    return torch.abs(torch.exp(log_y_true) - torch.exp(log_y_pred))
+
+                div_fn = tvd_div_fn
+            else:
+                raise ValueError(f"Unknown distillation div_fn '{blt_config.div_fn}'")
+
+            local_decoder_loss = div_fn(y_true, y_hat).mean()
+            metrics["blt/local_decoder_loss"] = local_decoder_loss
+        else:
+            local_decoder_loss = torch.nan
+            boundary_loss = torch.nan
+
+        loss = 0.0
+        for loss_name, loss_weight in zip(blt_config.losses, blt_config.loss_weights):
+            if loss_weight == 0.0:
+                continue
+            if loss_name == "ce":
+                loss = loss + ce_loss * loss_weight
+            elif loss_name == "local_encoder":
+                loss = loss + local_encoder_loss * loss_weight
+            elif loss_name == "local_decoder":
+                loss = loss + local_decoder_loss * loss_weight
+            elif loss_name == "boundary" and boundary_loss is not None:
+                loss = loss + boundary_loss * loss_weight
+            else:
+                raise ValueError(f"Unknown distillation loss '{loss_name}'")
+
+        return loss, metrics

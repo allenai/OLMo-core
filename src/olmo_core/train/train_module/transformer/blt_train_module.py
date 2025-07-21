@@ -135,12 +135,6 @@ class TransformerBLTTrainModule(TransformerTrainModule):
             (batch["labels"] != self.label_ignore_index).sum(), self.device
         )
 
-        # Batch losses to record.
-        ce_batch_loss = move_to_device(torch.tensor(0.0), self.device)
-        z_batch_loss: Optional[torch.Tensor] = None
-        if self.z_loss_multiplier is not None:
-            z_batch_loss = move_to_device(torch.tensor(0.0), self.device)
-
         # Split into micro-batches.
         if self.rank_microbatch_size < (seq_len := batch["input_ids"].shape[1]):
             raise RuntimeError(
@@ -149,13 +143,15 @@ class TransformerBLTTrainModule(TransformerTrainModule):
         micro_batches = split_batch(batch, self.rank_microbatch_size // seq_len)
         num_micro_batches = len(micro_batches)
 
+        batch_metrics = {}
+
         # Train one micro-batch at a time.
         for micro_batch_idx, micro_batch in enumerate(micro_batches):
             with self._train_microbatch_context(micro_batch_idx, num_micro_batches):
                 input_ids, labels, model_kwargs = self._prepare_batch(micro_batch)
 
                 # Run forward pass, get losses.
-                _, loss, ce_loss, z_loss = self.model_forward(
+                loss, metrics = self.model_forward(  # type: ignore
                     input_ids,
                     labels=labels,
                     ignore_index=self.label_ignore_index,
@@ -166,16 +162,11 @@ class TransformerBLTTrainModule(TransformerTrainModule):
                     **model_kwargs,
                 )
 
-                # Update total batch CE and Z loss.
-                ce_batch_loss += get_local_tensor(ce_loss.detach())
-                del ce_loss
-                if z_batch_loss is not None:
-                    assert z_loss is not None
-                    z_batch_loss += get_local_tensor(z_loss.detach())
-                    del z_loss
+                for key, value in metrics.items():  # type: ignore
+                    batch_metrics[key] = batch_metrics.get(key, 0.0) + get_local_tensor(value.detach())
 
                 # Run backward pass.
-                loss.backward()
+                loss.backward()  # type: ignore
 
         del batch  # In case this helps with memory utilization.
 
@@ -187,27 +178,12 @@ class TransformerBLTTrainModule(TransformerTrainModule):
 
         # Record loss metrics.
         if isinstance(self.optim, SkipStepOptimizer):
-            # Need to reduce the loss right away for the SkipStepOptimizer.
-            if is_distributed():
-                ce_batch_loss.div_(self._reduce_divide_factor)
-                dist.all_reduce(ce_batch_loss)
-                ce_batch_loss.div_(self.world_size)
-                ce_batch_loss.mul_(self._reduce_divide_factor)
-            self.record_ce_loss(ce_batch_loss)
-            self.optim.latest_loss = ce_batch_loss
-        else:
-            self.record_ce_loss(ce_batch_loss, ReduceType.mean)
-        if z_batch_loss is not None:
-            assert self.z_loss_multiplier is not None
+            raise NotImplementedError("SkipStepOptimizer not implemented for BLTTrainModule")
+
+        for key, value in batch_metrics.items():
             self.record_metric(
-                "Z loss",
-                z_batch_loss,
-                ReduceType.mean,
-                namespace="train",
-            )
-            self.record_metric(
-                "Z loss unscaled",
-                z_batch_loss / self.z_loss_multiplier,
+                key,
+                value,
                 ReduceType.mean,
                 namespace="train",
             )

@@ -14,3 +14,5 @@ class BLTConfig(Config):
     div_fn: str = "kl"
     rep_compare_fn: str = "l2"
     epsilon: float = 1e-6
+    skip_blocks: bool = False
+    skip_teacher: bool = False
