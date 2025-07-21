@@ -46,7 +46,7 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
         num_gpus=1,
         shared_filesystem=shared_filesystem,
         allow_dirty=True,
-        beaker_image="ai2/cuda12.1-cudnn8-dev-ubuntu20.04",
+        beaker_image="ai2/cuda12.8-ubuntu22.04-torch2.7.0",
         weka_buckets=weka_buckets,
         env_secrets=[
             BeakerEnvSecret(

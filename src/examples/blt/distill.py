@@ -200,7 +200,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
         ),
         max_grad_norm=1.0,
-        scheduler=CosWithWarmup(warmup_steps=100),
+        scheduler=CosWithWarmup(warmup=1000),
     )
 
     eval_tasks = [
