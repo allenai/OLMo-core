@@ -18,10 +18,17 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
     cluster = os.environ.get("BEAKER_CLUSTER", "ai2/jupiter-cirrascale-2")
 
     env_vars = []
+    weka_buckets = []
     shared_filesystem = False
 
     if cluster != "ai2/augusta-google-1":
         env_vars.append(BeakerEnvVar(name="HAS_WEKA", value="1"))
+        weka_buckets = [
+            BeakerWekaBucket(
+                bucket="oe-training-default",
+                mount="/weka/oe-training-default",
+            )
+        ]
         shared_filesystem = True
 
     beaker_username = get_beaker_username()
@@ -40,12 +47,7 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
         shared_filesystem=shared_filesystem,
         allow_dirty=True,
         beaker_image="ai2/cuda12.1-cudnn8-dev-ubuntu20.04",
-        weka_buckets=[
-            BeakerWekaBucket(
-                bucket="oe-training-default",
-                mount="/weka/oe-training-default",
-            )
-        ],
+        weka_buckets=weka_buckets,
         env_secrets=[
             BeakerEnvSecret(
                 name="WANDB_API_KEY",

@@ -23,7 +23,7 @@ from torch.distributed.fsdp import FSDPModule, MixedPrecisionPolicy, fully_shard
 from torch.distributed.tensor import Replicate, Shard
 from torch.distributed.tensor.parallel import RowwiseParallel, parallelize_module
 
-from olmo_core.data.utils import get_cumulative_document_lengths
+from olmo_core.data.utils import get_cumulative_document_lengths, get_labels
 from olmo_core.distributed.parallel import get_pp_mesh
 from olmo_core.distributed.utils import hide_from_torch, unhide_from_torch
 from olmo_core.doc_utils import beta_feature
@@ -1226,6 +1226,7 @@ class BLTDistillTransformer(BLTTransformer):
     def _teacher_forward(
         self,
         input_ids: torch.Tensor,
+        inputs_embeds: Optional[torch.Tensor] = None,
         *,
         labels: Optional[torch.Tensor] = None,
         ignore_index: int = -100,
@@ -1256,7 +1257,11 @@ class BLTDistillTransformer(BLTTransformer):
 
         # Get embeddings but pass-through for non-existent layers to allow easy
         # pipeline parallel configuration.
-        h_emb = self.teacher.embeddings(input_ids) if self.teacher.embeddings is not None else input_ids
+        if inputs_embeds is not None:
+            h_emb = inputs_embeds
+        else:
+            h_emb = self.teacher.embeddings(input_ids) if self.teacher.embeddings is not None else input_ids
+
 
         if skip_blocks:
             return None, h_emb
@@ -1489,4 +1494,56 @@ class BLTDistillTransformer(BLTTransformer):
             else:
                 raise ValueError(f"Unknown distillation loss '{loss_name}'")
 
-        return loss, metrics
+        output = LMOutputWithLoss(
+            logits=logits,
+            loss=loss,  # type: ignore
+            ce_loss=ce_loss,  # type: ignore
+            z_loss=None,
+        )
+
+        return output, metrics
+
+    def original_head_forward(
+        self,
+        input_ids: torch.Tensor,
+        *,
+        labels: Optional[torch.Tensor] = None,
+        ignore_index: int = -100,
+        loss_reduction: Literal["mean", "sum", "none"] = "mean",
+        z_loss_multiplier: Optional[float] = None,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        return_logits: Optional[bool] = None,
+        blt_config: Optional[BLTConfig] = None,
+        **kwargs,
+    ):
+        input_ids, labels, block_kwargs, lm_head_kwargs, local_encoder_kwargs, local_decoder_kwargs, extra_kwargs = self._prepare_inputs(
+            input_ids,
+            labels,
+            ignore_index=ignore_index,
+            loss_reduction=loss_reduction,
+            z_loss_multiplier=z_loss_multiplier,
+            loss_div_factor=loss_div_factor,
+            return_logits=True,  # needed for distillation
+            **kwargs,
+        )
+
+        h_byte, h_patch = self.local_encoder(input_ids, **local_encoder_kwargs)
+
+        teacher_logits: torch.Tensor
+        teacher_logits, teacher_embeds = self._teacher_forward(  # type: ignore
+            extra_kwargs["original_input_ids"],
+            inputs_embeds=h_patch,
+            labels=None, # we will compute loss ourselves
+            return_logits=True,
+            skip_blocks=False,
+            **kwargs,
+        )
+        teacher_labels = get_labels({"input_ids": extra_kwargs["original_input_ids"]}, label_ignore_index=ignore_index)
+        ce_loss, _ = cross_entropy_loss(teacher_logits.view(-1, teacher_logits.shape[-1]), teacher_labels.view(-1))
+
+        return LMOutputWithLoss(
+            logits=teacher_logits,
+            loss=ce_loss,
+            ce_loss=ce_loss,
+            z_loss=None,
+        ), {}

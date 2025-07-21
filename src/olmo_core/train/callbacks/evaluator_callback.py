@@ -1,6 +1,6 @@
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import torch
@@ -287,6 +287,7 @@ class DownstreamEvaluator(Evaluator):
         tokenizer: "HFTokenizer",
         device: Optional[torch.device] = None,
         dp_process_group: Optional[dist.ProcessGroup] = None,
+        batch_kwargs: Optional[Dict[str, Any]] = None,
     ):
         from olmo_eval import ICLMetric, ICLMultiChoiceTaskDataset, build_task
 
@@ -363,6 +364,14 @@ class DownstreamEvaluator(Evaluator):
 
         super().__init__(name=name, batches=data_loader, device=device)
 
+        self.batch_kwargs = batch_kwargs or {}
+
+    def __iter__(self):
+        for batch in super().__iter__():
+            batch = batch | self.batch_kwargs
+
+            yield batch
+
     def update_metrics(
         self, batch: Dict[str, Any], ce_loss: Optional[torch.Tensor], logits: Optional[torch.Tensor]
     ) -> None:
@@ -391,6 +400,9 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
     cancel_after_first_eval: bool = False
     log_interval: int = 5
     enabled: bool = True
+    batch_size: Optional[int] = None
+    names: Optional[List[str]] = None
+    batch_kwargs: Optional[List[Dict[str, Any]]] = None
 
     def build(self, trainer: "Trainer") -> Optional[Callback]:
         if not self.enabled:
@@ -420,16 +432,21 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
             bos_token_id=self.tokenizer.bos_token_id,
         )
 
+        batch_spec = trainer.train_module.eval_batch_spec
+        if self.batch_size is not None:
+            batch_spec = replace(batch_spec, rank_batch_size=self.batch_size)
+
         evaluators: List[Evaluator] = []
-        for task in sorted(self.tasks):
+        for task_idx, task in enumerate(self.tasks):
             evaluators.append(
                 DownstreamEvaluator(
-                    name="downstream",
+                    name="downstream" if self.names is None else self.names[task_idx],
                     task=task,
-                    batch_spec=trainer.train_module.eval_batch_spec,
+                    batch_spec=batch_spec,
                     tokenizer=tokenizer,
                     device=trainer.device,
                     dp_process_group=trainer.dp_process_group,
+                    batch_kwargs=self.batch_kwargs[task_idx] if self.batch_kwargs else None,
                 )
             )
 

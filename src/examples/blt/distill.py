@@ -15,6 +15,8 @@ import glob
 import traceback
 from pathlib import Path
 
+from torch.distributed.fsdp import register_fsdp_forward_method
+
 from olmo_core.config import Config, DType
 from olmo_core.data import (
     NumpyDataLoaderConfig,
@@ -60,6 +62,7 @@ SEQUENCE_LENGTH = 1024
 QUICK_DEBUG = False
 GLOBAL_BATCH_SIZE = 32
 LOCAL_BATCH_SIZE = 32
+EVAL_BATCH_SIZE = 4
 
 _DATA_SOURCES = open(Path(__file__).parent / "data_sources.txt").read().strip().splitlines()
 
@@ -200,6 +203,15 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         scheduler=CosWithWarmup(warmup_steps=100),
     )
 
+    eval_tasks = [
+        "mmlu_stem_test_rc_5shot",
+        "mmlu_humanities_test_rc_5shot",
+        "mmlu_social_sciences_test_rc_5shot",
+        "mmlu_other_test_rc_5shot",
+    ]
+    eval_names = [f"downstream_orig_head" for _ in eval_tasks]
+    eval_batch_kwargs = [{"use_orig_head": True} for _ in eval_tasks]
+
     trainer_config = (
         TrainerConfig(
             save_folder=f"/tmp/{run_name}",
@@ -235,10 +247,13 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         .with_callback(
             "downstream_evaluator",
             DownstreamEvaluatorCallbackConfig(
-                tasks=["arc_easy"],
+                tasks=eval_tasks,
+                names=eval_names,
+                batch_kwargs=eval_batch_kwargs,
                 tokenizer=byte_tokenizer_config,
                 eval_interval=250,
-                eval_on_startup=False,
+                eval_on_startup=True,
+                batch_size=EVAL_BATCH_SIZE * SEQUENCE_LENGTH, # these are subword tokens, so no expansion factor
             ),
         )
     )
@@ -274,22 +289,27 @@ def main(run_name: str, overrides: List[str]):
     config_dict = config.as_config_dict()
     cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
 
-    # assume share_blocks=True, so we don't have to map/duplicate block weights
-    random_init_keys = {"local_encoder", "boundary_predictor", "local_decoder"}
-    key_mapping = {
-        key: None for key in model.state_dict().keys() if any(key.startswith(x) for x in random_init_keys)
-    } | {
-        f"teacher.{key}": key for key in model.teacher.state_dict().keys()  # type: ignore
-    }
-    incompatible_keys = load_model_and_optim_state(OLMO_1B_CKPT_PATH, model, key_mapping=key_mapping, strict=False)
+    if not QUICK_DEBUG:
+        # Load OLMo 1B checkpoint.
+        # assume share_blocks=True, so we don't have to map/duplicate block weights
+        random_init_keys = {"local_encoder", "boundary_predictor", "local_decoder"}
+        key_mapping = {
+            key: None for key in model.state_dict().keys() if any(key.startswith(x) for x in random_init_keys)
+        } | {
+            f"teacher.{key}": key for key in model.teacher.state_dict().keys()  # type: ignore
+        }
+        incompatible_keys = load_model_and_optim_state(OLMO_1B_CKPT_PATH, model, key_mapping=key_mapping, strict=False)
 
-    if len(incompatible_keys.unexpected_keys) > 0:
-        raise ValueError(f"Unexpected keys when loading checkpoint: {incompatible_keys.unexpected_keys} (assume we use all teacher weights)")
+        if len(incompatible_keys.unexpected_keys) > 0:
+            raise ValueError(f"Unexpected keys when loading checkpoint: {incompatible_keys.unexpected_keys} (assume we use all teacher weights)")
 
-    for missing_key in incompatible_keys.missing_keys:
-        log.info(f"Key {missing_key} was not found in checkpoint, is randomly initialized (this is expected for local encoder/decoder and student lm head).")
+        for missing_key in incompatible_keys.missing_keys:
+            log.info(f"Key {missing_key} was not found in checkpoint, is randomly initialized (this is expected for local encoder/decoder and student lm head).")
 
-    model.fix_init()  # type: ignore
+        model.fix_init()  # type: ignore
+
+    # TODO(benjaminm): this is not a nice place?
+    register_fsdp_forward_method(model, "original_head_forward")
 
     # Train.
     trainer.fit()

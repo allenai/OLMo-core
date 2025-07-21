@@ -1,4 +1,5 @@
 from typing import Any, Dict, Optional, Tuple, List
+import copy
 import torch
 import torch.distributed as dist
 from torch.nn import functional as F
@@ -15,8 +16,12 @@ from .train_module import TransformerTrainModule
 
 def _pad_right(
     tensors: List[torch.Tensor],
+    multiple_of: int = 128
 ):
     max_len = max(t.size(0) for t in tensors)
+    if multiple_of > 1:
+        # Round up max_len to the nearest multiple_of
+        max_len = ((max_len + multiple_of - 1) // multiple_of) * multiple_of
     padded = []
     for t in tensors:
         pad_shape = (0, max_len - t.size(0))
@@ -49,6 +54,7 @@ class TransformerBLTTrainModule(TransformerTrainModule):
         else:
             # this hasn't, so it's an eval batch, we need to manually convert to bytes.
             # assumes ICLMultiChoiceTaskDataset collation
+            all_original_input_ids = []
             all_input_ids = []
             all_patch_lens = []
             all_dc_input_ids = []
@@ -58,6 +64,8 @@ class TransformerBLTTrainModule(TransformerTrainModule):
             all_ctx_len = []
             all_dc_len = []
             all_cont_len = []
+
+            device = batch["input_ids"].device
 
             for idx in range(len(batch["input_ids"])):
                 prev_ctx_len = batch["ctx_len"][idx].item()
@@ -69,8 +77,10 @@ class TransformerBLTTrainModule(TransformerTrainModule):
                 # cont: ` then see a man do a high jump at 5\'9 ".`
                 # input ids: `"High jump: We see a black opening screen. We see a blue track with people running on it. We then see a man do a high jump at 5\'9` (missing the final `".`)
                 # so reconstruct input ids from ctx + cont.
+                # + [0] since skip_last=True
+                original_input_ids = batch["ctx"][idx].tolist()[:prev_ctx_len] + batch["continuation"][idx].tolist()[:prev_cont_len] + [0]
                 input_ids, patch_lens = self.tokenizer.get_tokens_and_patch_lengths(
-                    batch["ctx"][idx].tolist()[:prev_ctx_len] + batch["continuation"][idx].tolist()[:prev_cont_len], add_bos=True
+                    original_input_ids, add_bos=True, skip_last=True,
                 )
                 dc_input_ids, _ = self.tokenizer.get_tokens_and_patch_lengths(
                     batch["dc_input_ids"][idx].tolist()[:prev_dc_len], add_bos=True
@@ -88,6 +98,7 @@ class TransformerBLTTrainModule(TransformerTrainModule):
                 dc_len = len(dc_input_ids)
                 cont_len = len(continuation)
 
+                all_original_input_ids.append(torch.tensor(original_input_ids, dtype=torch.long))
                 all_input_ids.append(torch.tensor(input_ids, dtype=torch.long))
                 all_patch_lens.append(torch.tensor(patch_lens, dtype=torch.long))
                 all_dc_input_ids.append(torch.tensor(dc_input_ids, dtype=torch.long))
@@ -97,8 +108,7 @@ class TransformerBLTTrainModule(TransformerTrainModule):
                 all_dc_len.append(dc_len)
                 all_cont_len.append(cont_len)
 
-            device = batch["input_ids"].device
-
+            batch["original_input_ids"] = _pad_right(all_original_input_ids).to(device)
             batch["input_ids"] = _pad_right(all_input_ids).to(device)
             batch["patch_lens"] = _pad_right(all_patch_lens).to(device)
             batch["dc_input_ids"] = _pad_right(all_dc_input_ids).to(device)
@@ -151,7 +161,7 @@ class TransformerBLTTrainModule(TransformerTrainModule):
                 input_ids, labels, model_kwargs = self._prepare_batch(micro_batch)
 
                 # Run forward pass, get losses.
-                loss, metrics = self.model_forward(  # type: ignore
+                out, metrics = self.model_forward(  # type: ignore
                     input_ids,
                     labels=labels,
                     ignore_index=self.label_ignore_index,
@@ -166,7 +176,7 @@ class TransformerBLTTrainModule(TransformerTrainModule):
                     batch_metrics[key] = batch_metrics.get(key, 0.0) + get_local_tensor(value.detach())
 
                 # Run backward pass.
-                loss.backward()  # type: ignore
+                out.loss.backward()  # type: ignore
 
         del batch  # In case this helps with memory utilization.
 
@@ -206,3 +216,55 @@ class TransformerBLTTrainModule(TransformerTrainModule):
                 self.trainer.global_step / self.trainer.steps_per_epoch,
                 ReduceType.mean,
             )
+
+    def eval_batch(
+        self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
+    ):
+        # TODO: (epwalsh) Currently all of our evaluators require the full logits locally,
+        # but when we're using CP/TP we usually can't materialize the full logits locally (due to OOMs).
+        # However we could at least support in-loop PPL evals with a little work in the evaluator
+        # code to handle the sharded logits.
+        if self.cp_enabled:
+            raise RuntimeError(
+                f"{self.__class__.__name__}.eval_batch() does not support context parallelism yet, "
+                "please disable in-loop evals"
+            )
+        if self.tp_enabled:
+            raise RuntimeError(
+                f"{self.__class__.__name__}.eval_batch() does not support tensor parallelism yet, "
+                "please disable in-loop evals"
+            )
+
+        orig_batch = copy.deepcopy(batch)
+        input_ids, labels, model_kwargs = self._prepare_batch(batch, labels)
+
+        self.model.eval()
+
+        with self._eval_batch_context():
+            if model_kwargs.pop("use_orig_head", False):
+                with self._model_forward_context():
+                    out, _ = self.model.original_head_forward(  # type: ignore
+                        input_ids,
+                        labels=labels,
+                        ignore_index=self.label_ignore_index,
+                        loss_reduction="none",
+                        return_logits=True,
+                        **model_kwargs,
+                    )
+                # original_head_forward gives us logits over the original (Dolma2) tokens.
+                # so we need to change the batch tokens / token info back to subword token space from byte space.
+                batch["input_ids"] = batch["original_input_ids"]
+                batch["ctx"] = orig_batch["ctx"]
+                batch["continuation"] = orig_batch["continuation"]
+                batch["ctx_len"] = orig_batch["ctx_len"]
+                batch["cont_len"] = orig_batch["cont_len"]
+            else:
+                out, _ = self.model_forward(  # type: ignore
+                    input_ids,
+                    labels=labels,
+                    ignore_index=self.label_ignore_index,
+                    loss_reduction="none",
+                    return_logits=True,
+                    **model_kwargs,
+                )
+            return out
