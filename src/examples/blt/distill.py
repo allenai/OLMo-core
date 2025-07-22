@@ -204,6 +204,12 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     )
 
     eval_tasks = [
+        "arc_challenge_test_rc_5shot",
+        "arc_easy_test_rc_5shot",
+        "hellaswag_rc_5shot",  # 1K subset of HellaSwag
+        "winogrande_val_rc_5shot",  # Helpful after 750M-5xC scale
+        "csqa_val_rc_5shot",
+        "piqa_val_rc_5shot",
         "mmlu_stem_test_rc_5shot",
         "mmlu_humanities_test_rc_5shot",
         "mmlu_social_sciences_test_rc_5shot",
