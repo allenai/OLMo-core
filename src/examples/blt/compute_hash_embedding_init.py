@@ -23,7 +23,7 @@ DATA_PATHS = ["/weka/oe-training-default/" + x for x in _DATA_SOURCES]
 SEQUENCE_LENGTH = 1024
 BATCH_SIZE = 1024
 N_BATCHES_TO_USE_FOR_ESTIMATE = 10000
-NUM_WORKERS = 16
+NUM_WORKERS = 128
 DATA_WORK_DIR = "/tmp/dataset-cache"
 
 def parse_args():
@@ -71,7 +71,7 @@ class CountCollator(DataCollator):
         input_ids = [x["input_ids"] if isinstance(x, dict) else x for x in items]
         flat_input_ids = [item for sublist in input_ids for item in sublist.tolist()]
 
-        return Counter(flat_input_ids)
+        return dict(Counter(flat_input_ids))
 
 def populate_embedding_matrix(
     embedding_matrix: torch.Tensor,
@@ -107,7 +107,7 @@ def main():
         work_dir=DATA_WORK_DIR,
     ).build()
     data_loader = NumpyDataLoaderConfig(
-        global_batch_size=BATCH_SIZE,
+        global_batch_size=BATCH_SIZE * SEQUENCE_LENGTH,
         seed=0,
         num_workers=NUM_WORKERS,
     ).build(dset, collator=CountCollator(pad_token_id=tokenizer_config.pad_token_id))
