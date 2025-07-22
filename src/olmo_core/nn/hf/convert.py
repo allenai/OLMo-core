@@ -14,15 +14,15 @@ LAYER = TemplatePlaceholder.LAYER
 EXPERT = TemplatePlaceholder.EXPERT
 
 
-#: Map of Hugging Face keys to OLMo Core keys, that is used to determine how HF state
+#: Map of Hugging Face weight keys to OLMo Core weight keys, that is used to determine how HF state
 #: maps to OLMo Core state. Different HF models may use different names for a given OLMo
 #: Core state. You may configure this to change how HF state maps to OLMo Core state.
 #:
 #: This map only captures one-to-one mappings from HF to OLMo Core. For many-to-many mappings
 #: or mappings that require additional manipulation of state, see
 #: :data:`HF_TO_OLMO_CORE_TEMPLATE_MAPPINGS`. If a given HF key can refer to different OLMo Core
-#: states depending on the HF model, see :data:`MODEL_SPECIFIC_HF_TO_OLMO_CORE_MAPPINGS`.
-HF_TO_OLMO_CORE_MAPPINGS: Dict[str, str] = {
+#: states depending on the HF model, see :data:`MODEL_SPECIFIC_HF_TO_OLMO_CORE_WEIGHT_MAPPINGS`.
+HF_TO_OLMO_CORE_WEIGHT_MAPPINGS: Dict[str, str] = {
     "model.embed_tokens.weight": "embeddings.weight",
     "model.norm.weight": "lm_head.norm.weight",
     "lm_head.weight": "lm_head.w_out.weight",
@@ -52,16 +52,67 @@ HF_TO_OLMO_CORE_MAPPINGS: Dict[str, str] = {
 }
 
 
-#: Map of Hugging Face keys to OLMo Core keys. This map captures overrides of the standard
+#: Map of Hugging Face module keys to OLMo Core module keys, that is used to determine how HF state
+#: maps to OLMo Core state. Different HF models may use different names for a given OLMo
+#: Core state. You may configure this to change how HF state maps to OLMo Core state.
+#:
+#: This map only captures one-to-one mappings from HF to OLMo Core. For many-to-many mappings
+#: or mappings that require additional manipulation of state, see
+#: :data:`HF_TO_OLMO_CORE_TEMPLATE_MAPPINGS`. If a given HF key can refer to different OLMo Core
+#: states depending on the HF model, see :data:`MODEL_SPECIFIC_HF_TO_OLMO_CORE_MODULE_MAPPINGS`.
+HF_TO_OLMO_CORE_MODULE_MAPPINGS: Dict[str, str] = {
+    "model.embed_tokens": "embeddings",
+    "model.norm": "lm_head.norm",
+    "lm_head": "lm_head.w_out",
+    # Attention.
+    f"model.layers.{LAYER}.self_attn.q_proj": f"blocks.{LAYER}.attention.w_q",
+    f"model.layers.{LAYER}.self_attn.k_proj": f"blocks.{LAYER}.attention.w_k",
+    f"model.layers.{LAYER}.self_attn.v_proj": f"blocks.{LAYER}.attention.w_v",
+    f"model.layers.{LAYER}.self_attn.o_proj": f"blocks.{LAYER}.attention.w_out",
+    # MLP.
+    f"model.layers.{LAYER}.mlp.gate_proj": f"blocks.{LAYER}.feed_forward.w1",
+    f"model.layers.{LAYER}.mlp.down_proj": f"blocks.{LAYER}.feed_forward.w2",
+    f"model.layers.{LAYER}.mlp.up_proj": f"blocks.{LAYER}.feed_forward.w3",
+    # Layer norms.
+    f"model.layers.{LAYER}.input_layernorm": f"blocks.{LAYER}.attention_norm",
+    f"model.layers.{LAYER}.post_attention_layernorm": f"blocks.{LAYER}.attention_norm",
+    f"model.layers.{LAYER}.post_feedforward_layernorm": f"blocks.{LAYER}.feed_forward_norm",
+    f"model.layers.{LAYER}.self_attn.q_norm": f"blocks.{LAYER}.attention.q_norm",
+    f"model.layers.{LAYER}.self_attn.k_norm": f"blocks.{LAYER}.attention.k_norm",
+    # MoEMLP.
+    f"model.layers.{LAYER}.block_sparse_moe": f"blocks.{LAYER}.feed_forward_moe",
+    f"model.layers.{LAYER}.post_moe_norm": f"blocks.{LAYER}.feed_forward_moe_norm",
+    f"model.layers.{LAYER}.block_sparse_moe.gate": f"blocks.{LAYER}.feed_forward_moe.router",
+    f"model.layers.{LAYER}.block_sparse_moe.shared_mlp": f"blocks.{LAYER}.feed_forward_moe.shared_mlp",
+    f"model.layers.{LAYER}.block_sparse_moe.shared_mlp.gate_proj": f"blocks.{LAYER}.feed_forward_moe.shared_mlp.w1",
+    f"model.layers.{LAYER}.block_sparse_moe.shared_mlp.down_proj": f"blocks.{LAYER}.feed_forward_moe.shared_mlp.w2",
+    f"model.layers.{LAYER}.block_sparse_moe.shared_mlp.up_proj": f"blocks.{LAYER}.feed_forward_moe.shared_mlp.w3",
+}
+
+
+#: Map of Hugging Face weight keys to OLMo Core weight keys. This map captures overrides of the standard
 #: one-to-one mappings in :data:`HF_TO_OLMO_CORE_MAPPINGS`, in case a given HF key can refer to
 #: different OLMo Core states depending on the HF model. You may configure this to change
 #: how HF state maps to OLMo Core state.
-MODEL_SPECIFIC_HF_TO_OLMO_CORE_MAPPINGS: Dict[str, Dict[str, str]] = {
+MODEL_SPECIFIC_HF_TO_OLMO_CORE_WEIGHT_MAPPINGS: Dict[str, Dict[str, str]] = {
     "meta-llama/Llama-3.2-1B": {
         f"model.layers.{LAYER}.post_attention_layernorm.weight": f"blocks.{LAYER}.feed_forward_norm.weight"
     },
     "meta-llama/Meta-Llama-3-8B-Instruct": {
         f"model.layers.{LAYER}.post_attention_layernorm.weight": f"blocks.{LAYER}.feed_forward_norm.weight"
+    },
+}
+
+#: Map of Hugging Face module keys to OLMo Core module keys. This map captures overrides of the standard
+#: one-to-one mappings in :data:`HF_TO_OLMO_CORE_MAPPINGS`, in case a given HF key can refer to
+#: different OLMo Core states depending on the HF model. You may configure this to change
+#: how HF state maps to OLMo Core state.
+MODEL_SPECIFIC_HF_TO_OLMO_CORE_MODULE_MAPPINGS: Dict[str, Dict[str, str]] = {
+    "meta-llama/Llama-3.2-1B": {
+        f"model.layers.{LAYER}.post_attention_layernorm": f"blocks.{LAYER}.feed_forward_norm"
+    },
+    "meta-llama/Meta-Llama-3-8B-Instruct": {
+        f"model.layers.{LAYER}.post_attention_layernorm": f"blocks.{LAYER}.feed_forward_norm"
     },
 }
 
@@ -218,13 +269,24 @@ def _get_hf_model_to_olmo_core_one_to_one_templates(
     model_id: str | None = None,
 ) -> List[StateMappingTemplate]:
     mapping_templates = {
-        hf_key: StateMappingTemplate(hf_key, olmo_core_key)
-        for hf_key, olmo_core_key in HF_TO_OLMO_CORE_MAPPINGS.items()
+        hf_key: StateMappingTemplate(hf_key, olmo_core_key, state_type=StateType.weight)
+        for hf_key, olmo_core_key in HF_TO_OLMO_CORE_WEIGHT_MAPPINGS.items()
     }
-    if model_id in MODEL_SPECIFIC_HF_TO_OLMO_CORE_MAPPINGS:
+
+    for hf_key, olmo_core_key in HF_TO_OLMO_CORE_MODULE_MAPPINGS.items():
+        mapping_templates[hf_key] = StateMappingTemplate(hf_key, olmo_core_key, state_type=StateType.module)
+
+    if model_id in MODEL_SPECIFIC_HF_TO_OLMO_CORE_WEIGHT_MAPPINGS:
         model_specific_mapping_templates = {
-            hf_key: StateMappingTemplate(hf_key, olmo_core_key)
-            for hf_key, olmo_core_key in MODEL_SPECIFIC_HF_TO_OLMO_CORE_MAPPINGS[model_id].items()
+            hf_key: StateMappingTemplate(hf_key, olmo_core_key, state_type=StateType.weight)
+            for hf_key, olmo_core_key in MODEL_SPECIFIC_HF_TO_OLMO_CORE_WEIGHT_MAPPINGS[model_id].items()
+        }
+        mapping_templates.update(model_specific_mapping_templates)
+
+    if model_id in MODEL_SPECIFIC_HF_TO_OLMO_CORE_MODULE_MAPPINGS:
+        model_specific_mapping_templates = {
+            hf_key: StateMappingTemplate(hf_key, olmo_core_key, state_type=StateType.module)
+            for hf_key, olmo_core_key in MODEL_SPECIFIC_HF_TO_OLMO_CORE_MODULE_MAPPINGS[model_id].items()
         }
         mapping_templates.update(model_specific_mapping_templates)
 
