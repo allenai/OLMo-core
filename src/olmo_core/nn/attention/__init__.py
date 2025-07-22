@@ -595,39 +595,45 @@ class Attention(AttentionBase):
                 k = self.k_norm(k)
 
         if self.rope is not None:
-            if self.cp_enabled and pos_sin is None and pos_cos is None and freqs_cis is None:
+            # ------------------------------------------------------------------
+            # Decide the absolute position for the *first* query token.
+            # This is only needed during single-token decode with an active
+            # KV cache.  For pre-fill / training we leave it as ``None`` so the
+            # RoPE implementation falls back to the bulk path.
+            # ------------------------------------------------------------------
+            start_pos: Optional[int] = None
+            if (
+                k_cache is not None
+                and v_cache is not None
+                and not prefill_kv_cache
+                and cache_seqlens is not None
+            ):
+                start_pos = int(cache_seqlens.max().item()) if cache_seqlens.numel() > 0 else 0
+
+            # In context-parallel mode we must be given pre-sharded buffers
+            # unless we're in the single-token path (which sets ``start_pos``).
+            if (
+                self.cp_enabled
+                and start_pos is None
+                and pos_sin is None
+                and pos_cos is None
+                and freqs_cis is None
+            ):
                 raise RuntimeError(
                     "RoPE buffers must be passed through to attention after being properly "
                     "sharded by the context parallel load balancer"
                 )
 
-            # Check if we're in KV cache decode mode
-            if k_cache is not None and v_cache is not None and not prefill_kv_cache and cache_seqlens is not None:
-                # For decode, we need to apply RoPE at the correct position
-                # Get the current position from cache_seqlens
-                current_pos = int(cache_seqlens.max().item()) if cache_seqlens.numel() > 0 else 0
-                
-                # Get RoPE embeddings for positions up to current_pos + 1
-                rope_buffers = self.rope.get_buffers(current_pos + 1, q.device)
-                if rope_buffers.pos_sin is not None and rope_buffers.pos_cos is not None:
-                    # Extract embeddings for the specific position
-                    decode_pos_sin = rope_buffers.pos_sin[current_pos:current_pos+1, :]
-                    decode_pos_cos = rope_buffers.pos_cos[current_pos:current_pos+1, :]
-                    
-                    # Apply RoPE with the position-specific embeddings
-                    q, k = self.rope(
-                        q, k, head_first=False, pos_sin=decode_pos_sin, pos_cos=decode_pos_cos
-                    )
-                else:
-                    # Fallback if we can't get position-specific embeddings
-                    q, k = self.rope(
-                        q, k, head_first=False, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis
-                    )
-            else:
-                # Normal RoPE application for prefill or non-cache mode
-                q, k = self.rope(
-                    q, k, head_first=False, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis
-                )
+            # Single, unified call into RoPE
+            q, k = self.rope(
+                q,
+                k,
+                head_first=False,
+                pos_sin=pos_sin,
+                pos_cos=pos_cos,
+                freqs_cis=freqs_cis,
+                start_pos=start_pos,
+            )
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
         att = self.sdpa(
