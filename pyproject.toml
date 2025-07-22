@@ -24,6 +24,7 @@ dependencies = [
     "safetensors",
     "importlib_resources",
     "ai2-olmo-eval==0.8.4",
+    "transformers",
 ]
 
 [project.urls]
@@ -160,3 +161,6 @@ filterwarnings = [
     'ignore::UserWarning:torch\.distributed\.checkpoint\.state_dict_saver',
     'ignore::UserWarning:torch\.distributed\.checkpoint\.state_dict_loader',
 ]
+
+[tool.uv.sources]
+transformers = { git = "https://github.com/2015aroras/transformers.git", rev = "4f2fbde7eaa7253b1ca977e294da6c9fcddfa345" }
