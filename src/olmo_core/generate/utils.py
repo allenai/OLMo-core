@@ -5,7 +5,7 @@ import torch
 def selective_log_softmax(logits: torch.Tensor, index: torch.Tensor) -> torch.Tensor:
     """Compute log softmax probabilities for selected tokens.
 
-    NOTE: Compiling this function reduces the required memory by 1/2, which can be significant
+    NOTE: Compiling this function reduces the required memory by 50%, which can be significant
        when working with large vocabularies and/or long sequences.
 
     Args:

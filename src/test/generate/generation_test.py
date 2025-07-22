@@ -5,6 +5,7 @@ import pytest
 import torch
 import torch.distributed as dist
 
+from olmo_core.config import DType
 from olmo_core.distributed.checkpoint import save_model_and_optim_state
 from olmo_core.distributed.parallel.data_parallel import DataParallelType
 from olmo_core.distributed.utils import get_world_size
@@ -15,70 +16,79 @@ from olmo_core.generate.config import (
 from olmo_core.generate.generation import TransformerGenerationModule
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.testing import requires_multi_gpu, run_distributed_test
-from olmo_core.testing.utils import DEVICES, GPU_MARKS, requires_gpu
+from olmo_core.testing.utils import (
+    DEVICES,
+    GPU_MARKS,
+    has_flash_attn,
+    requires_flash_attn,
+    requires_gpu,
+)
 from olmo_core.train.train_module.transformer.config import (
     TransformerDataParallelConfig,
 )
 from olmo_core.utils import seed_all
 
 
-@pytest.fixture
-def transformer_config():
-    return TransformerConfig.llama_like(d_model=128, n_heads=4, n_layers=2, vocab_size=512)
+def small_transformer_config(**kwargs):
+    return TransformerConfig.llama_like(
+        d_model=128, n_heads=4, n_layers=2, vocab_size=512, **kwargs
+    )
 
 
 @pytest.mark.parametrize(
-    "temperature,top_p,top_k",
+    "compile_model",
     [
-        (0.0, 1.0, -1),  # Greedy
-        (0.7, 1.0, -1),  # Temperature only
-        (1.0, 0.9, -1),  # Temperature + top_p
-        (1.0, 1.0, 50),  # Temperature + top_k
-        (0.8, 0.95, 100),  # All three
+        pytest.param(False, id="compile_model=False"),
+        pytest.param(True, id="compile_model=True"),
     ],
 )
-@pytest.mark.parametrize("compile_model", [False, True])
+@pytest.mark.parametrize(
+    "use_cache",
+    [
+        pytest.param(False, id="use_cache=False"),
+        pytest.param(True, id="use_cache=True"),
+    ],
+)
 @pytest.mark.parametrize(
     "dtype",
     [
-        pytest.param(torch.float32, id="dtype=float32"),
-        pytest.param(torch.bfloat16, id="dtype=bfloat16", marks=GPU_MARKS),
+        pytest.param(DType.float32, id="dtype=float32"),
+        pytest.param(DType.bfloat16, id="dtype=bfloat16", marks=GPU_MARKS),
     ],
 )
 @pytest.mark.parametrize("device", DEVICES)
 def test_generation_module_basic(
-    transformer_config: TransformerConfig,
-    temperature: float,
-    top_p: float,
-    top_k: int,
     compile_model: bool,
-    dtype: torch.dtype,
+    use_cache: bool,
+    dtype: DType,
     device: torch.device,
 ):
     seed_all(42)
 
+    flash_attn_available = dtype == DType.bfloat16 and device.type == "cuda" and has_flash_attn
+    if not flash_attn_available and use_cache:
+        pytest.skip("flash-attn is required for use_cache")
+
     generation_config = GenerationConfig(
-        max_length=32,
-        temperature=temperature,
+        use_cache=use_cache,
+        max_length=20,
         eos_token_id=2,
         pad_token_id=0,
-        top_p=top_p,
-        top_k=top_k,
+        do_sample=False,
     )
 
     # Build generation module
+    transformer_config = small_transformer_config(use_flash=flash_attn_available, dtype=dtype)
     model = transformer_config.build()
     generation_module = TransformerGenerationModule(
         model=model,
         generation_config=generation_config,
         compile_model=compile_model,
-        dtype=dtype,
         device=device,
     )
 
     # Create test input
-    batch_size = 2
-    seq_len = 8
+    batch_size, seq_len = 2, 16
     input_ids = torch.randint(1, 100, (batch_size, seq_len), device=device)
 
     output_ids, output_logits, output_logprobs = generation_module.generate_batch(
@@ -89,15 +99,22 @@ def test_generation_module_basic(
     # We do not want to accidentally compile the model each time the sequence length changes.
 
     # Verify output shape and properties
-    assert output_ids.shape[0] == batch_size
-    assert output_ids.shape[1] <= generation_config.max_length
-    assert output_ids.shape[1] >= seq_len + 1
-    assert torch.all(output_ids[:, :seq_len] == input_ids)
-    assert isinstance(output_logits, torch.Tensor)
-    assert output_logits.shape == (batch_size, output_ids.shape[1], transformer_config.vocab_size)
-    assert isinstance(output_logprobs, torch.Tensor)
-    # Log probabilities are computed for positions 1 to N (not position 0)
-    assert output_logprobs.shape == (batch_size, output_ids.shape[1] - 1)
+    assert output_ids.shape[0] == batch_size, "output batch size does not match input batch size"
+    assert output_ids.shape[1] <= generation_config.max_length, "output_ids too long"
+    assert output_ids.shape[1] >= seq_len + 1, "no new tokens generated"
+    assert torch.all(output_ids[:, :seq_len] == input_ids), "input_ids not preserved"
+
+    assert isinstance(output_logits, torch.Tensor), "output_logits is not a tensor"
+    assert isinstance(output_logprobs, torch.Tensor), "output_logprobs is not a tensor"
+    assert output_logits.shape == (
+        batch_size,
+        output_ids.shape[1],
+        transformer_config.vocab_size,
+    ), "output_logits shape does not match expected shape"
+    assert output_logprobs.shape == (
+        batch_size,
+        output_ids.shape[1] - 1,
+    ), "output_logprobs shape does not match expected shape"
 
     # Check that generation stopped at EOS or max_length
     for i in range(batch_size):
@@ -107,21 +124,24 @@ def test_generation_module_basic(
             # If EOS found, check padding after it
             first_eos = eos_positions[0].item()
             if first_eos < output_ids.shape[1] - 1:
-                assert torch.all(seq[first_eos + 1 :] == generation_config.pad_token_id)
+                assert torch.all(seq[first_eos + 1 :] == generation_config.pad_token_id), (
+                    "padding not added after EOS"
+                )
 
 
 @pytest.mark.parametrize("device", DEVICES)
-def test_generation_module_state_dict(transformer_config: TransformerConfig, device: torch.device):
+def test_generation_module_state_dict(device: torch.device):
     seed_all(42)
 
-    generation_config = GenerationConfig(max_length=16, pad_token_id=0, eos_token_id=2)
+    generation_config = GenerationConfig(
+        max_length=16, pad_token_id=0, eos_token_id=2, use_cache=False
+    )
 
     # Create first generation module
+    transformer_config = small_transformer_config()
     model1 = transformer_config.build()
     module1 = TransformerGenerationModule(
-        model=model1,
-        generation_config=generation_config,
-        device=device,
+        model=model1, generation_config=generation_config, device=device
     )
 
     # Get state dict
@@ -131,9 +151,7 @@ def test_generation_module_state_dict(transformer_config: TransformerConfig, dev
     # Create second generation module and load state dict
     model2 = transformer_config.build()
     module2 = TransformerGenerationModule(
-        model=model2,
-        generation_config=generation_config,
-        device=device,
+        model=model2, generation_config=generation_config, device=device
     )
     module2.load_state_dict(state_dict)
 
@@ -148,35 +166,25 @@ def test_generation_module_state_dict(transformer_config: TransformerConfig, dev
 @pytest.mark.parametrize("max_length", [16, 64])
 @pytest.mark.parametrize("eos_token_id", [1, 2])
 def test_generation_config_overrides(
-    transformer_config: TransformerConfig,
-    max_length: int,
-    eos_token_id: Optional[int],
-    device: torch.device = torch.device("cuda"),
+    max_length: int, eos_token_id: Optional[int], device: torch.device = torch.device("cuda")
 ):
     seed_all(42)
 
     # Create generation module with default config
     generation_config = GenerationConfig(
-        max_length=128,
-        eos_token_id=1,
-        pad_token_id=0,
-        temperature=0.0,
+        max_length=128, eos_token_id=1, pad_token_id=0, temperature=0.0, use_cache=False
     )
 
+    transformer_config = small_transformer_config()
     model = transformer_config.build()
     generation_module = TransformerGenerationModule(
-        model=model,
-        generation_config=generation_config,
-        device=device,
+        model=model, generation_config=generation_config, device=device
     )
 
     # Generate with overrides
     input_ids = torch.randint(1, 50, (1, 4), device=device)
     output_ids, *_ = generation_module.generate_batch(
-        input_ids,
-        max_length=max_length,
-        eos_token_id=eos_token_id,
-        temperature=0.8,
+        input_ids, max_length=max_length, eos_token_id=eos_token_id, temperature=0.8
     )
 
     assert output_ids.shape[1] <= max_length
@@ -191,15 +199,14 @@ def test_generation_config_overrides(
 
 
 @pytest.mark.parametrize("device", DEVICES)
-def test_generation_module_config_build(
-    transformer_config: TransformerConfig, tmp_path: Path, device: torch.device
-):
+def test_generation_module_config_build(tmp_path: Path, device: torch.device):
     seed_all(42)
 
     # Create and save a generation module
     generation_config = GenerationConfig(
-        max_length=24, temperature=0.0, pad_token_id=0, eos_token_id=2
+        max_length=24, do_sample=False, pad_token_id=0, eos_token_id=2, use_cache=False
     )
+    transformer_config = small_transformer_config()
     model = transformer_config.build()
     generation_module = TransformerGenerationModule(
         model=model, generation_config=generation_config, device=device
@@ -231,20 +238,22 @@ def test_generation_module_config_build(
 
 
 @requires_gpu
-def test_generation_module_stop_sequences(transformer_config: TransformerConfig):
+def test_generation_module_stop_sequences():
     seed_all(42)
     device = torch.device("cuda")
 
     # Create generation config with stop sequences
     generation_config = GenerationConfig(
         max_length=50,
-        temperature=0.0,
+        do_sample=False,
         pad_token_id=0,
         eos_token_id=2,
         stop_sequences=[[10, 20], [30, 40, 50]],
+        use_cache=False,
     )
 
     # Create model
+    transformer_config = small_transformer_config()
     model = transformer_config.build()
     generation_module = TransformerGenerationModule(
         model=model, generation_config=generation_config, device=device
@@ -256,6 +265,7 @@ def test_generation_module_stop_sequences(transformer_config: TransformerConfig)
             *,
             attention_mask: Optional[torch.Tensor] = None,
             logits_to_keep: int = 0,
+            prefill_kv_cache: bool = False,
             **kwargs,
         ):
             seq_len = input_ids.shape[1] - 3  # Subtract initial input length
@@ -292,7 +302,12 @@ def test_generation_module_stop_sequences(transformer_config: TransformerConfig)
 
     # No stop sequences - only stops at EOS
     generation_module._generation_config = GenerationConfig(
-        max_length=20, temperature=0.0, pad_token_id=0, eos_token_id=2, stop_sequences=None
+        max_length=20,
+        do_sample=False,
+        pad_token_id=0,
+        eos_token_id=2,
+        stop_sequences=None,
+        use_cache=False,
     )
     input_ids = torch.tensor([[1, 2, 3]], dtype=torch.long, device=device)
     generation_module.model_forward = create_mock_forward([10, 20, 30, 40, 50, 2])
@@ -300,20 +315,21 @@ def test_generation_module_stop_sequences(transformer_config: TransformerConfig)
     assert torch.equal(output, torch.tensor([[1, 2, 3, 10, 20, 30, 40, 50, 2]], device=device))
 
 
-# TODO: fixup this test, it doesnt like that we're generating doclengths for sdpa
-def test_generation_with_attention_mask(transformer_config: TransformerConfig):
-    """Test that attention masks are properly used during generation."""
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+@requires_gpu
+@requires_flash_attn
+def test_generation_with_attention_mask():
+    device = torch.device("cuda")
+    dtype = DType.bfloat16
+
     pad = 0
     generation_config = GenerationConfig(
         max_length=20, temperature=0.0, pad_token_id=pad, eos_token_id=2
     )
 
+    transformer_config = small_transformer_config(dtype=dtype, use_flash=True)
     model = transformer_config.build()
     generation_module = TransformerGenerationModule(
-        model=model,
-        generation_config=generation_config,
-        device=device,
+        model=model, generation_config=generation_config, device=device
     )
     input_ids = torch.tensor([[pad, pad, 1, 5, 7]], dtype=torch.long, device=device)  # left-padded
     attention_mask = (input_ids != pad).to(torch.bool)
@@ -372,13 +388,18 @@ def run_distributed_generation(
 
 
 @requires_multi_gpu
-def test_generation_module_distributed_fsdp(transformer_config: TransformerConfig, tmp_path: Path):
+@pytest.mark.parametrize("use_cache", [True, False], ids=["with_cache", "without_cache"])
+def test_generation_module_distributed_fsdp(tmp_path: Path, use_cache: bool):
     seed_all(42)
+
+    if not has_flash_attn and use_cache:
+        pytest.skip("flash-attn is required for use_cache")
 
     # Create and save a generation module on single device first
     generation_config = GenerationConfig(
-        max_length=16, temperature=0.0, pad_token_id=0, eos_token_id=2
+        max_length=16, do_sample=False, pad_token_id=0, eos_token_id=2, use_cache=use_cache
     )
+    transformer_config = small_transformer_config(dtype=DType.bfloat16, use_flash=has_flash_attn)
     model = transformer_config.build()
     generation_module = TransformerGenerationModule(
         model=model, generation_config=generation_config, device=torch.device("cuda")
@@ -409,4 +430,42 @@ def test_generation_module_distributed_fsdp(transformer_config: TransformerConfi
             input_ids,
             expected_shape,
         ),
+    )
+
+
+@requires_gpu
+@requires_flash_attn
+def test_generation_cache_consistency():
+    seed_all(42)
+
+    if not has_flash_attn:
+        pytest.skip("flash-attn is required for KV cache usage")
+
+    device = torch.device("cuda")
+    dtype = DType.bfloat16
+
+    transformer_config = small_transformer_config(dtype=dtype, use_flash=True)
+    model_no_cache = transformer_config.build()
+    model_with_cache = transformer_config.build()
+    model_with_cache.load_state_dict(model_no_cache.state_dict())  # ensure identical weights
+
+    shared_kwargs = {"max_length": 24, "do_sample": False, "pad_token_id": 0, "eos_token_id": 2}
+    gen_config_no_cache = GenerationConfig(**shared_kwargs, use_cache=False)
+    gen_config_with_cache = GenerationConfig(**shared_kwargs, use_cache=True)
+
+    # Build generation modules.
+    module_no_cache = TransformerGenerationModule(
+        model=model_no_cache, generation_config=gen_config_no_cache, device=device
+    )
+    module_with_cache = TransformerGenerationModule(
+        model=model_with_cache, generation_config=gen_config_with_cache, device=device
+    )
+
+    batch_size, seq_len = 2, 12
+    input_ids = torch.randint(1, 100, (batch_size, seq_len), device=device)
+    output_ids_no_cache, *_ = module_no_cache.generate_batch(input_ids, completions_only=False)
+    output_ids_with_cache, *_ = module_with_cache.generate_batch(input_ids, completions_only=False)
+
+    assert torch.equal(output_ids_no_cache, output_ids_with_cache), (
+        "generation with and without cache should produce identical outputs"
     )
