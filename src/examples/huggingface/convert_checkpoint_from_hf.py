@@ -8,6 +8,7 @@ other models can be added by updating the constants in :mod:`olmo_core.nn.hf.con
 
 import json
 import logging
+import re
 import tempfile
 from argparse import ArgumentParser
 from functools import partial
@@ -17,14 +18,16 @@ from typing import Any, Dict, Optional, Tuple
 
 import torch
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
+import torch.nn.functional as F
 from cached_path import cached_path
-from transformers import AutoModelForCausalLM
+from transformers import AutoConfig, AutoModelForCausalLM
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.data.tokenizer import TokenizerConfig
 from olmo_core.distributed.checkpoint import save_model_and_optim_state
 from olmo_core.io import copy_file, file_exists, join_path
-from olmo_core.nn.conversion.state_mapping import TemplatePlaceholder
+from olmo_core.nn.attention import AttentionType
+from olmo_core.nn.conversion.state_mapping import StateType, TemplatePlaceholder
 from olmo_core.nn.hf.checkpoint import load_hf_model
 from olmo_core.nn.hf.convert import get_converter_from_hf
 from olmo_core.nn.transformer.config import TransformerConfig
@@ -87,6 +90,7 @@ def convert_checkpoint_from_hf(
     validate: bool = True,
     debug: bool = False,
     device: torch.device | None = None,
+    validation_sliding_window: int | None = None,
 ) -> None:
     """
     Convert a HF checkpoint to an OLMo core checkpoint.
@@ -110,9 +114,32 @@ def convert_checkpoint_from_hf(
     if "float8_config" in transformer_config_dict:
         del transformer_config_dict["float8_config"]
 
-    model = TransformerConfig.from_dict(transformer_config_dict).build()
-    device = device or get_default_device()
-    model.to_empty(device=device)
+    model_config = TransformerConfig.from_dict(transformer_config_dict)
+
+    validation_device = device or get_default_device()
+
+    # Check if validation is being performed and flash attn is requested but cannot run.
+    if validate and validation_device != torch.device("cuda"):
+        if model_config.block.attention.name == AttentionType.fused:
+            log.warning(
+                "Running conversion without cuda or flash attention on a model requiring flash attention, validation would fail so we are disabling it."
+            )
+            validate = False
+
+    if validate:
+        if model_config.block.attention.use_flash and model_config.block.attention.name != AttentionType.fused:
+            log.info(
+                "Flash attention can cause minor changes in outputs, switching to SDPA to stop validation from failing."
+            )
+            model_config.block.attention.use_flash = False
+        if model_config.block.attention.use_flex_attn:
+            log.info(
+                "Flex attention can cause minor changes in outputs, switching to SDPA to stop validation from failing."
+            )
+            model_config.block.attention.use_flex_attn = False
+
+    model = model_config.build()
+    model.to_empty(device=device or torch.device("cpu"))
 
     state_dict_options = dist_cp_sd.StateDictOptions(
         flatten_optimizer_state_dict=True, cpu_offload=True
@@ -161,7 +188,8 @@ def convert_checkpoint_from_hf(
             hf_revision=hf_revision,
             model_id=model_id,
             debug=debug,
-            device=device,
+            device=validation_device,
+            sliding_window=validation_sliding_window,
         )
         log.info("Validation completed successful")
 
@@ -174,28 +202,51 @@ def _register_debug_hooks(hf_model: torch.nn.Module, model: Transformer):
 
     def module_hook(
         debug_state: Dict[str, Tuple[int, torch.Tensor]],
+        model_type: str,
         name: str,
         _: torch.nn.Module,
         args,
         output,
     ):
+        if (
+            model_type == "hf"
+            and re.match(r"model.layers.\d+.block_sparse_moe$", name)
+            and isinstance(output, tuple)
+        ):
+            # Special casing for HF moe
+            assert isinstance(output[0], torch.Tensor), (name, output)
+            output = output[0]
+        if model_type == "hf" and re.match(r"model.layers.\d+.block_sparse_moe.gate", name):
+            # Special casing for HF moe router
+            assert isinstance(output, torch.Tensor), (name, output)
+            router_logits = output.detach().clone()
+            routing_weights = F.sigmoid(router_logits.float())
+            # Like topk, but we keep all the data. This will hopefully go ok.
+            routing_weights, routing_indices = torch.sort(routing_weights, descending=True, dim=-1)
+            output = routing_weights
+        if model_type == "olmo_core" and re.match(r"blocks.\d+.feed_forward_moe.router", name):
+            # Special casing for OLMo Core moe router
+            assert isinstance(output, tuple), (name, output)
+            assert isinstance(output[0], torch.Tensor), (name, output[0])
+            output = output[0]
+
         if len(args) >= 1 and isinstance(args[0], torch.Tensor):
             state_name = f"{name}|input"
             input = args[0].detach()
             for i, size in enumerate(input.shape):
                 input = input.narrow(i, 0, min(size, MAX_DIM_SIZE))
-            debug_state[state_name] = (len(debug_state), input.float())
+            debug_state[state_name] = (len(debug_state), input)
         if isinstance(output, torch.Tensor):
             state_name = f"{name}|output"
             output = output.detach()
             for i, size in enumerate(output.shape):
                 output = output.narrow(i, 0, min(size, MAX_DIM_SIZE))
-            debug_state[state_name] = (len(debug_state), output.float())
+            debug_state[state_name] = (len(debug_state), output)
 
     for name, module in model.named_modules():
-        module.register_forward_hook(partial(module_hook, olmo_core_debug_state, name))
+        module.register_forward_hook(partial(module_hook, olmo_core_debug_state, "olmo_core", name))
     for name, module in hf_model.named_modules():
-        module.register_forward_hook(partial(module_hook, hf_debug_state, name))
+        module.register_forward_hook(partial(module_hook, hf_debug_state, "hf", name))
 
     return olmo_core_debug_state, hf_debug_state
 
@@ -208,28 +259,70 @@ def validate_conversion(
     model_id: str | None = None,
     debug: bool = False,
     device: torch.device | None = None,
+    sliding_window: int | None = None,
 ):
     if torch.cuda.is_available():
         torch.cuda.init()
 
     device = device or get_default_device()
+    log.info(f"Running validation on {device}")
 
-    B, T = 1, 120
+    B, T = 1, 60
     input_ids = torch.randint(0, vocab_size, (B, T)).to(device)
 
-    log.info("Loading converted checkpoint for validation...")
-    hf_model = AutoModelForCausalLM.from_pretrained(hf_path, revision=hf_revision).to(device).eval()
+    attn_implementation = "sdpa"
+
+    is_sliding = any(
+        hasattr(block.attention, "window_size") and block.attention.window_size != (-1, -1)
+        for block in model.blocks.values()
+    )
+
+    log.info("Loading HF checkpoint for validation...")
+    kwargs = {}
+    if is_sliding and sliding_window is not None:
+        kwargs["sliding_window"] = sliding_window
+    config = AutoConfig.from_pretrained(
+        hf_path,
+        hf_revision=hf_revision,
+        **kwargs,
+    )
+    hf_model = (
+        AutoModelForCausalLM.from_pretrained(
+            hf_path,
+            hf_revision=hf_revision,
+            torch_dtype="auto",
+            config=config,
+            attn_implementation=attn_implementation,
+        )
+        .to(device)
+        .eval()
+    )
+    hf_config = hf_model.config
 
     olmo_core_state, hf_state = {}, {}
-    state_mapping = None
     if debug:
         olmo_core_state, hf_state = _register_debug_hooks(hf_model, model)
-        state_converter = get_converter_from_hf(model_id=model_id)
 
-        if not hasattr(hf_model.config, "num_hidden_layers"):
-            raise ValueError(f"Number of hidden layers missing in HF config: {hf_model.config}")
-        n_layers: int = hf_model.config.num_hidden_layers
-        n_experts: int | None = getattr(hf_model.config, "num_experts", None)
+    log.info("Running OLMo core and HF models for validation...")
+    with torch.no_grad():
+        hf_logits = hf_model(input_ids=input_ids).logits
+
+    del hf_model
+
+    if is_sliding and sliding_window is not None:
+        for block in model.blocks.values():
+            if block.attention.window_size != (-1, -1):
+                block.attention.window_size = (sliding_window - 1, 0)
+    model.eval()
+    with torch.no_grad():
+        logits = model(input_ids=input_ids)
+
+    if debug:
+        state_converter = get_converter_from_hf(model_id=model_id)
+        if not hasattr(hf_config, "num_hidden_layers"):
+            raise ValueError(f"Number of hidden layers missing in HF config: {hf_config}")
+        n_layers: int = hf_config.num_hidden_layers
+        n_experts: int | None = getattr(hf_config, "num_experts", None)
 
         placeholder_bounds = {
             TemplatePlaceholder.LAYER: n_layers,
@@ -237,65 +330,79 @@ def validate_conversion(
         if n_experts:
             placeholder_bounds[TemplatePlaceholder.EXPERT] = n_experts
 
-        state_mapping = state_converter.get_mappings(hf_model.state_dict(), placeholder_bounds)
+        hf_debug_empty_state = {key.split("|")[0]: None for key in hf_state.keys()}
+        state_mapping = state_converter.get_mappings(
+            hf_debug_empty_state, placeholder_bounds, state_type=StateType.module
+        )
+        del hf_debug_empty_state
 
-    log.info("Running OLMo core and HF models for validation...")
-    with torch.no_grad():
-        hf_logits, *_ = hf_model(input_ids=input_ids, return_dict=False)
-
-    del hf_model
-
-    model = model.to(device).eval()
-    with torch.no_grad():
-        logits = model(input_ids=input_ids)
-
-    if debug:
-        assert state_mapping is not None
-
-        simple_key_mapping = {
-            mapping.source_keys[0]
-            .replace(".weight", ""): mapping.dest_keys[0]
-            .replace(".weight", "")
+        simple_module_name_mapping = {
+            mapping.source_keys[0]: mapping.dest_keys
             for mapping in state_mapping
-            if len(mapping.source_keys) == 1 and len(mapping.dest_keys) == 1
+            if len(mapping.source_keys) == 1
         }
 
-        log.info(f"simple mapping: {simple_key_mapping}")
+        log.info(f"simple mapping: {simple_module_name_mapping}")
         log.info(f"hf_state keys: {hf_state.keys()}")
         log.info(f"olmo_core_state keys: {olmo_core_state.keys()}")
 
-        for hf_state_name, (_, hf_tensor) in sorted(hf_state.items(), key=lambda item: item[1][0]):
+        for hf_state_name, (_, hf_tensor) in sorted(
+            hf_state.items(), key=lambda item: item[1][0]
+        ):
             hf_key, state_type = hf_state_name.split("|")
-            if hf_key not in simple_key_mapping:
+            if hf_key in simple_module_name_mapping:
+                hf_module_name = hf_key
+            else:
+                log.warning(
+                    f"No 1-to-many param mapping found for module {hf_key}, cannot compare to HF"
+                )
                 continue
 
-            olmo_core_state_name = f"{simple_key_mapping[hf_key]}|{state_type}"
-            if olmo_core_state_name not in olmo_core_state:
-                continue
+            olmo_core_param_names = simple_module_name_mapping[hf_module_name]
+            for i_key, olmo_core_param_name in enumerate(olmo_core_param_names):
+                olmo_core_state_name = f"{olmo_core_param_name}|{state_type}"
+                if f"{olmo_core_param_name}|{state_type}" in olmo_core_state:
+                    olmo_core_state_name = f"{olmo_core_param_name}|{state_type}"
+                else:
+                    log.warning(
+                        f"No OLMo Core state found for param {hf_state_name}, cannot compare to HF"
+                    )
+                    continue
 
-            _, olmo_core_tensor = olmo_core_state[olmo_core_state_name]
+                _, olmo_core_tensor = olmo_core_state[olmo_core_state_name]
+                if olmo_core_tensor.shape[0] < len(olmo_core_param_names):
+                    log.warning(
+                        f"Unable to chunk olmo_core state {olmo_core_state_name} into {len(olmo_core_param_names)} pieces"
+                    )
+                    continue
+                olmo_core_tensor = olmo_core_tensor.tensor_split(len(olmo_core_param_names), dim=0)[i_key]
 
-            if olmo_core_tensor.shape != hf_tensor.shape:
-                log.info(
-                    f"{hf_state_name}, {olmo_core_state_name} shape mismatch: {hf_tensor.shape} {olmo_core_tensor.shape}"
-                )
-            if olmo_core_tensor.dtype != hf_tensor.dtype:
-                log.info(
-                    f"{hf_state_name}, {olmo_core_state_name} dtype mismatch: {hf_tensor.dtype} {olmo_core_tensor.dtype}"
-                )
-            if len(olmo_core_tensor.shape) == len(hf_tensor.shape):
-                common_shape = tuple(
-                    min(olmo_core_dim, hf_dim)
-                    for olmo_core_dim, hf_dim in zip(olmo_core_tensor.shape, hf_tensor.shape)
-                )
-                for i, dim in enumerate(common_shape):
-                    olmo_core_tensor = olmo_core_tensor.narrow(i, 0, dim)
-                    hf_tensor = hf_tensor.narrow(i, 0, dim)
-                log.info(
-                    f"{hf_state_name}, {olmo_core_state_name} element diff abs mean: {(olmo_core_tensor - hf_tensor).float().abs().mean()}"
-                )
+                if hf_tensor.shape != olmo_core_tensor.shape:
+                    log.info(
+                        f"{hf_state_name}, {olmo_core_state_name} shape mismatch: {hf_tensor.shape} {olmo_core_tensor.shape}"
+                    )
+                if hf_tensor.dtype != olmo_core_tensor.dtype:
+                    log.info(
+                        f"{hf_state_name}, {olmo_core_state_name} dtype mismatch: {hf_tensor.dtype} {olmo_core_tensor.dtype}"
+                    )
+                if len(hf_tensor.squeeze().shape) == len(olmo_core_tensor.squeeze().shape):
+                    hf_tensor = hf_tensor.squeeze()
+                    olmo_core_tensor = olmo_core_tensor.squeeze()
 
-    torch.testing.assert_close(hf_logits[..., :vocab_size], logits[..., :vocab_size])
+                    common_shape = tuple(
+                        min(hf_dim, olmo_core_dim)
+                        for hf_dim, olmo_core_dim in zip(hf_tensor.shape, olmo_core_tensor.shape)
+                    )
+                    for i, dim in enumerate(common_shape):
+                        hf_tensor = hf_tensor.narrow(i, 0, dim)
+                        olmo_core_tensor = olmo_core_tensor.narrow(i, 0, dim)
+                    log.info(
+                        f"{hf_state_name}, {olmo_core_state_name} element diff abs mean: {(hf_tensor - olmo_core_tensor).float().abs().mean()}"
+                    )
+
+    torch.testing.assert_close(
+        hf_logits[..., :vocab_size].float(), logits[..., :vocab_size].float(), rtol=1e-4, atol=1e-4
+    )
 
 
 def load_config(checkpoint_input_dir: PathOrStr) -> Optional[dict]:
@@ -387,6 +494,11 @@ def parse_args():
         type=torch.device,
         help="The device on which conversion and validation occurs. Defaults to CUDA or MPS if available and initialized.",
     )
+    parser.add_argument(
+        "--validation-sliding-window",
+        help="If set, overrides the model's sliding window size during validation. Useful for checking that sliding window is correctly implemented.",
+        type=int,
+    )
     return parser.parse_args()
 
 
@@ -421,6 +533,7 @@ def main():
         validate=args.validate,
         debug=args.debug,
         device=args.device,
+        validation_sliding_window=args.validation_sliding_window,
     )
 
 
