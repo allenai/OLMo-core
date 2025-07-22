@@ -283,13 +283,13 @@ def validate_conversion(
         kwargs["sliding_window"] = sliding_window
     config = AutoConfig.from_pretrained(
         hf_path,
-        hf_revision=hf_revision,
+        revision=hf_revision,
         **kwargs,
     )
     hf_model = (
         AutoModelForCausalLM.from_pretrained(
             hf_path,
-            hf_revision=hf_revision,
+            revision=hf_revision,
             torch_dtype="auto",
             config=config,
             attn_implementation=attn_implementation,
