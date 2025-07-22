@@ -467,6 +467,7 @@ def main():
         validate=args.validate,
         debug=args.debug,
         device=args.device,
+        validation_sliding_window=args.validation_sliding_window,
     )
 
 
