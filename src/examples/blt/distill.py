@@ -128,6 +128,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         n_layers=local_encoder_n_layers,
         cross_attn_n_heads=local_cross_attn_n_heads,
         block_config=local_block,
+        add_out_projection=True,
     )
     local_decoder = LocalDecoderConfig(
         sliding_window_size=512,
@@ -260,7 +261,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
                 batch_kwargs=eval_batch_kwargs,
                 tokenizer=byte_tokenizer_config,
                 eval_interval=2500,
-                eval_on_startup=True,
+                eval_on_startup=False,
                 batch_size=EVAL_BATCH_SIZE * SEQUENCE_LENGTH, # these are subword tokens, so no expansion factor
             ),
         )

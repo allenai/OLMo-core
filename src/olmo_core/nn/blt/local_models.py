@@ -21,6 +21,7 @@ class LocalEncoderConfig(Config):
     n_layers: int
     cross_attn_n_heads: int
     block_config: Config
+    add_out_projection: bool = False
 
     def build(self, vocab_size: int) -> nn.Module:
         return LocalEncoder(
@@ -33,6 +34,7 @@ class LocalEncoderConfig(Config):
             n_layers=self.n_layers,
             cross_attn_n_heads=self.cross_attn_n_heads,
             block_config=self.block_config,
+            add_out_projection=self.add_out_projection,
         )
 
 
@@ -113,6 +115,7 @@ class LocalEncoder(nn.Module):
             n_layers: int,
             cross_attn_n_heads: int,
             block_config,
+            add_out_projection: bool,
             init_device: str = "cpu",
     ):
         super().__init__()
@@ -125,6 +128,7 @@ class LocalEncoder(nn.Module):
         self.n_layers = n_layers
         self.cross_attn_n_heads = cross_attn_n_heads
         self.block_config = block_config
+        self.add_out_projection = add_out_projection
         self.init_device = init_device
 
         self.embedding = nn.Embedding(vocab_size, d_model, device=init_device)
@@ -154,79 +158,99 @@ class LocalEncoder(nn.Module):
 
         self.cross_attention = CrossAttention(d_model, cross_attn_n_heads, init_device=init_device)
 
+        if self.add_out_projection:
+            self.out_projection = nn.Linear(
+                d_model * 2,
+                d_model * 2,
+                device=init_device,
+                bias=True,
+            )
+        else:
+            self.out_projection = None
+
     def fix_init(self, embedding_init_path, target_embeddings, n_estimate=10_000):
         """Rescale such that the local encoder outputs (given random inputs) have the same mean and std as the provided embeddings."""
 
-        # load embedding inits (computed via compute_hash_embedding_init.py)
-        self.embedding.weight.data[:] = DTensor.from_local(
-            torch.load(Path(embedding_init_path) / "embedding_init.pth"),
-            device_mesh=self.embedding.weight.device_mesh,  # type: ignore
-            placements=self.embedding.weight.placements,  # type: ignore
+        if embedding_init_path is not None:
+            # load embedding inits (computed via compute_hash_embedding_init.py)
+            self.embedding.weight.data[:] = DTensor.from_local(
+                torch.load(Path(embedding_init_path) / "embedding_init.pth"),
+                device_mesh=self.embedding.weight.device_mesh,  # type: ignore
+                placements=self.embedding.weight.placements,  # type: ignore
+            )
+
+            for i, hash_embedding in enumerate(self.hash_embeddings):
+                hash_embedding.weight.data[:] = DTensor.from_local(  # type: ignore
+                    torch.load(Path(embedding_init_path) / f"hash_embedding_init_{i}.pth"),
+                    device_mesh=hash_embedding.weight.device_mesh,  # type: ignore
+                    placements=hash_embedding.weight.placements,  # type: ignore
+                )
+
+        # .std not supported for DTensor
+        te_mean = target_embeddings.mean(0)
+        te_std = target_embeddings.var(0).sqrt()
+
+        device = target_embeddings.device
+        dummy_input = torch.randint(0, self.embedding.weight.shape[0], (n_estimate,), device=device).unsqueeze(0)
+        patch_lens = torch.ones((1, n_estimate), dtype=torch.long, device=dummy_input.device)
+        patch_ids = torch.arange(n_estimate, device=dummy_input.device).unsqueeze(0)
+
+        # this is annoying but didn't find a better way to make it compatible with FSDP2
+        local_encoder_copy = LocalEncoder(
+            vocab_size=self.vocab_size,
+            hash_byte_group_size=self.hash_byte_group_size,
+            hash_byte_group_vocab=self.hash_byte_group_vocab,
+            hash_byte_group_nb_functions=self.hash_byte_group_nb_functions,
+            sliding_window_size=self.sliding_window_size,
+            d_model=self.d_model,
+            n_layers=self.n_layers,
+            cross_attn_n_heads=self.cross_attn_n_heads,
+            block_config=self.block_config,
+            add_out_projection=self.add_out_projection,
+            init_device=device,
+        )
+        local_encoder_copy.load_state_dict({
+            k: v.full_tensor() if isinstance(v, DTensor) else v for k, v in self.state_dict().items()
+        })
+
+        _, h_patch = local_encoder_copy(
+            tokens=dummy_input,
+            patch_lens=patch_lens,
+            patch_ids=patch_ids,
+            cross_attn_mask=None, # fine not to mask since mask does not change out magnitude
         )
 
-        for i, hash_embedding in enumerate(self.hash_embeddings):
-            hash_embedding.weight.data[:] = DTensor.from_local(  # type: ignore
-                torch.load(Path(embedding_init_path) / f"hash_embedding_init_{i}.pth"),
-                device_mesh=hash_embedding.weight.device_mesh,  # type: ignore
-                placements=hash_embedding.weight.placements,  # type: ignore
-            )
+        h_patch_mean = h_patch[0].mean(0)
+        h_patch_std = h_patch[0].var(0).sqrt()
+        h_patch_mean = DTensor.from_local(h_patch_mean, device_mesh=te_mean.device_mesh)
+        h_patch_std = DTensor.from_local(h_patch_std, device_mesh=te_std.device_mesh)
 
-        # fold target embeddings to local encoder dim
-        te_folded = torch.cat([target_embeddings[:, :self.d_model], target_embeddings[:, self.d_model:]], dim=0)
-        # .std not supported for DTensor
-        te_std = target_embeddings.var(0).sqrt()
-        te_folded_std = te_folded.var(0).sqrt()
+        if self.out_projection is None:
+            # NOTE: this does not match the output perfectly! should remove.
+            # fold target embeddings to local encoder dim
+            te_folded = torch.cat([target_embeddings[:, :self.d_model], target_embeddings[:, self.d_model:]], dim=0)
+            te_folded_std = te_folded.var(0).sqrt()
 
-        # then rescale the last linear layer to get right magnitude out
-        with torch.no_grad():
-            device = target_embeddings.device
-            dummy_input = torch.randint(0, self.embedding.weight.shape[0], (n_estimate,), device=device).unsqueeze(0)
-            patch_lens = torch.ones((1, n_estimate), dtype=torch.long, device=dummy_input.device)
-            patch_ids = torch.arange(n_estimate, device=dummy_input.device).unsqueeze(0)
+            h_patch_folded_std = h_patch.reshape(-1, self.d_model).var(0).sqrt()
+            h_patch_folded_std = DTensor.from_local(h_patch_folded_std, device_mesh=te_folded_std.device_mesh)
 
-            # this is annoying but didn't find a better way to make it compatible with FSDP2
-            local_encoder_copy = LocalEncoder(
-                vocab_size=self.vocab_size,
-                hash_byte_group_size=self.hash_byte_group_size,
-                hash_byte_group_vocab=self.hash_byte_group_vocab,
-                hash_byte_group_nb_functions=self.hash_byte_group_nb_functions,
-                sliding_window_size=self.sliding_window_size,
-                d_model=self.d_model,
-                n_layers=self.n_layers,
-                cross_attn_n_heads=self.cross_attn_n_heads,
-                block_config=self.block_config,
-                init_device=device,
-            )
-            local_encoder_copy.load_state_dict({
-                k: v.full_tensor() if isinstance(v, DTensor) else v for k, v in self.state_dict().items()
-            })
+            # then rescale the last linear layer to get right magnitude out
+            self.patch_embedding_projection.weight.data *= (te_folded_std / h_patch_folded_std).unsqueeze(0)
+            self.cross_attention.w_out.weight.data *= (te_folded_std / h_patch_folded_std).unsqueeze(0)
+        else:
+            self.out_projection.weight.data *= (te_std / h_patch_std).unsqueeze(0)
+            self.out_projection.bias.data[:] = te_mean - h_patch_mean * (te_std / h_patch_std)
 
-            _, h_patch = local_encoder_copy(
-                tokens=dummy_input,
-                patch_lens=patch_lens,
-                patch_ids=patch_ids,
-                cross_attn_mask=None, # fine not to mask since mask does not change out magnitude
-            )
-
-            h_patch_std = h_patch.reshape(-1, self.d_model).var(0).sqrt()
-            h_patch_std = DTensor.from_local(h_patch_std, device_mesh=te_folded_std.device_mesh)
-
-            self.patch_embedding_projection.weight.data *= (te_folded_std / h_patch_std).unsqueeze(0)
-            self.cross_attention.w_out.weight.data *= (te_folded_std / h_patch_std).unsqueeze(0)
-
-            # verify
-            # local_encoder_copy.load_state_dict({
-            #     k: v.full_tensor() if isinstance(v, DTensor) else v for k, v in self.state_dict().items()
-            # })
-            # _, h_patch_fixed = local_encoder_copy(
-            #     tokens=dummy_input,
-            #     patch_lens=patch_lens,
-            #     patch_ids=patch_ids,
-            #     cross_attn_mask=None, # fine not to mask since mask does not change out magnitude
-            # )
-            # TODO(benjaminm): potentially not quite correct?
-            # h_patch_fixed.var(1).sqrt().mean() = 0.1978
-            # te_std.mean() = 0.2377
+        # verify
+        # local_encoder_copy.load_state_dict({
+        #     k: v.full_tensor() if isinstance(v, DTensor) else v for k, v in self.state_dict().items()
+        # })
+        # _, h_patch_fixed = local_encoder_copy(
+        #     tokens=dummy_input,
+        #     patch_lens=patch_lens,
+        #     patch_ids=patch_ids,
+        #     cross_attn_mask=None, # fine not to mask since mask does not change out magnitude
+        # )
 
     def _cross_attention(
         self,
@@ -269,6 +293,9 @@ class LocalEncoder(nn.Module):
         patch_embedding = (patch_embedding_init * 2 + residual).reshape(
             reduced_h.shape[0], reduced_h.shape[1], -1
         )
+
+        if self.out_projection is not None:
+            patch_embedding = self.out_projection(patch_embedding)
 
         return patch_embedding
 

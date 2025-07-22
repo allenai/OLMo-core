@@ -34,7 +34,7 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
     beaker_username = get_beaker_username()
 
     return BeakerLaunchConfig(
-        name=f"olmo-core-test-{generate_uuid()[:8]}",
+        name=f"blt-distill-{generate_uuid()[:8]}",
         budget="ai2/oe-training",
         cmd=["src/examples/blt/distill.py", run_name, *overrides],
         task_name="train",
@@ -66,4 +66,4 @@ if __name__ == "__main__":
 
     prepare_cli_environment()
 
-    build_config(run_name, overrides).launch(follow=True)
+    build_config(run_name, overrides).launch(follow=False)
