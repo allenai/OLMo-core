@@ -124,6 +124,9 @@ def dispatch_flash_attn_with_kvcache(
     softmax_scale: Optional[float] = None,
     causal: bool = False,
     window_size: Tuple[int, int] = (-1, -1),
+    rotary_cos: Optional[torch.Tensor] = None,
+    rotary_sin: Optional[torch.Tensor] = None,
+    rotary_interleaved: bool = True,
 ) -> torch.Tensor:
     if flash_attn is None:
         raise RuntimeError("flash-attn is required!")
@@ -140,6 +143,9 @@ def dispatch_flash_attn_with_kvcache(
         softmax_scale=softmax_scale,
         causal=causal,
         window_size=window_size,
+        rotary_cos=rotary_cos,
+        rotary_sin=rotary_sin,
+        rotary_interleaved=rotary_interleaved,
     )
 
 
