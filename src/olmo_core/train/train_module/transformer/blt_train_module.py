@@ -1,3 +1,4 @@
+import time
 from typing import Any, Dict, Optional, Tuple, List
 import copy
 import torch
@@ -127,6 +128,8 @@ class TransformerBLTTrainModule(TransformerTrainModule):
             return input_ids, labels, batch
 
     def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
+        start_time = time.time()
+
         # Set model to train mode if it isn't already.
         self.model.train()
 
@@ -208,6 +211,13 @@ class TransformerBLTTrainModule(TransformerTrainModule):
                 reduction,
                 namespace="train",
             )
+
+        # time
+        self.record_metric(
+            "time_per_batch",
+            (time.time() - start_time),
+            ReduceType.mean,
+        )
 
         # epoch
         if self.trainer.steps_per_epoch is not None:
