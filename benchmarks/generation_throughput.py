@@ -20,7 +20,9 @@ def measure_throughput(
     batch_size: int,
     prompt_length: int,
     max_new_tokens: int,
+    total_sequences: int,
     vocab_size: int,
+    use_cache: bool,
     device: torch.device,
     dtype: torch.dtype = torch.long,
     warmup: bool = True,
@@ -32,42 +34,58 @@ def measure_throughput(
         batch_size: Number of sequences in the batch.
         prompt_length: Length of the prompt passed to the model.
         max_new_tokens: Number of tokens to generate (per sequence).
+        total_sequences: Total number of sequences to generate.
         vocab_size: Size of the vocabulary (upper-bound for random token generation).
         device: Target device for tensors.
         dtype: Data type of the generated token IDs tensor.
         warmup: If True, run one warm-up generation (not timed) to exclude compilation / cache building.
 
     Returns:
-        Throughput in tokens / second (including all sequences in the batch).
+        Throughput in tokens generated / second (including all sequences in the batch).
     """
-    # Build random prompt
-    prompt = torch.randint(
-        1, vocab_size - 1, (batch_size, prompt_length), dtype=dtype, device=device
-    )
-
-    # Warm-up run to trigger compilation / KV-cache allocation
+    # Warm-up to trigger compilation / graph building. Run at most one batch.
     if warmup:
+        warm_bs = min(batch_size, total_sequences)
+        warm_prompt = torch.randint(
+            1, vocab_size - 1, (warm_bs, prompt_length), dtype=dtype, device=device
+        )
+        generation_module.generate_batch(
+            warm_prompt,
+            max_length=prompt_length + max_new_tokens,
+            use_cache=use_cache,
+            log_timing=False,
+        )
+        if device.type == "cuda":
+            torch.cuda.synchronize(device)
+
+    # Benchmark loop – process exactly `total_sequences` sequences (possibly >1 batches).
+    seqs_remaining = total_sequences
+    tokens_generated_total = 0
+
+    start = time.perf_counter()
+
+    while seqs_remaining > 0:
+        cur_bs = min(batch_size, seqs_remaining)
+        prompt = torch.randint(
+            1, vocab_size - 1, (cur_bs, prompt_length), dtype=dtype, device=device
+        )
         generation_module.generate_batch(
             prompt,
             max_length=prompt_length + max_new_tokens,
-            use_cache=True,
+            use_cache=use_cache,
             log_timing=False,
         )
-        torch.cuda.synchronize(device) if device.type == "cuda" else None
 
-    start = time.perf_counter()
-    generation_module.generate_batch(
-        prompt,
-        max_length=prompt_length + max_new_tokens,
-        use_cache=True,
-        log_timing=False,
-    )
-    # Ensure all kernels have completed
-    torch.cuda.synchronize(device) if device.type == "cuda" else None
+        tokens_generated_total += cur_bs * max_new_tokens
+        seqs_remaining -= cur_bs
+
+    # Ensure all kernels have completed before timing stops
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+
     elapsed = time.perf_counter() - start
 
-    total_tokens_generated = batch_size * max_new_tokens
-    return total_tokens_generated / elapsed if elapsed > 0 else 0.0
+    return tokens_generated_total / elapsed if elapsed > 0 else 0.0
 
 
 def parse_args() -> argparse.Namespace:
@@ -84,11 +102,22 @@ def parse_args() -> argparse.Namespace:
         default=[4, 16, 64, 256],
         help="List of batch sizes to benchmark.",
     )
-    parser.add_argument("--prompt-length", type=int, default=32, help="Length of the input prompt.")
+    parser.add_argument(
+        "--total-sequences",
+        type=int,
+        default=1024,
+        help="Total number of sequences to generate.",
+    )
+    parser.add_argument(
+        "--prompt-length",
+        type=int,
+        default=32,
+        help="Length of the input prompt.",
+    )
     parser.add_argument(
         "--max-new-tokens",
         type=int,
-        default=32,
+        default=128,
         help="Number of tokens to generate for each sequence.",
     )
     parser.add_argument(
@@ -101,6 +130,11 @@ def parse_args() -> argparse.Namespace:
         "--compile",
         action="store_true",
         help="Compile the model with torch.compile() before benchmarking.",
+    )
+    parser.add_argument(
+        "--use-cache",
+        action="store_true",
+        help="Use the KV-cache for generation.",
     )
     parser.add_argument(
         "--seed",
@@ -130,7 +164,6 @@ def main():
         work_dir=Path("/tmp/olmo_generation_bench"),
         device=device,
         compile_model=args.compile,
-        load_thread_count=args.threads,
     )
 
     vocab_size = generation_module.model.vocab_size  # type: ignore[attr-defined]
@@ -138,11 +171,13 @@ def main():
     results: List[str] = []
     for bs in args.batch_sizes:
         throughput = measure_throughput(
-            generation_module,
+            generation_module=generation_module,
             batch_size=bs,
             prompt_length=args.prompt_length,
             max_new_tokens=args.max_new_tokens,
+            total_sequences=args.total_sequences,
             vocab_size=vocab_size,
+            use_cache=args.use_cache,
             device=device,
         )
         results.append(f"[bold cyan]Batch {bs:>4}[/]: {throughput:>8.1f} tokens/s")
