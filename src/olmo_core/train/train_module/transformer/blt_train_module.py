@@ -241,7 +241,9 @@ class TransformerBLTTrainModule(TransformerTrainModule):
         self.model.eval()
 
         with self._eval_batch_context():
-            if model_kwargs.pop("use_orig_head", False):
+            eval_mode = model_kwargs.get("eval_mode", None)
+
+            if eval_mode == "orig_head":
                 with self._model_forward_context():
                     out, _ = self.model.original_head_forward(  # type: ignore
                         input_ids,
@@ -258,6 +260,25 @@ class TransformerBLTTrainModule(TransformerTrainModule):
                 batch["continuation"] = orig_batch["continuation"]
                 batch["ctx_len"] = orig_batch["ctx_len"]
                 batch["cont_len"] = orig_batch["cont_len"]
+            elif eval_mode == "orig_trunk":
+                with self._model_forward_context():
+                    out, _ = self.model.original_trunk_forward(  # type: ignore
+                        input_ids,
+                        labels=labels,
+                        ignore_index=self.label_ignore_index,
+                        loss_reduction="none",
+                        return_logits=True,
+                        **model_kwargs,
+                    )
+                # original_trunk_forward gives us logits over the original (Dolma2) tokens.
+                # so we need to change the batch tokens / token info back to subword token space from byte space.
+                batch["input_ids"] = batch["original_input_ids"]
+                batch["ctx"] = orig_batch["ctx"]
+                batch["continuation"] = orig_batch["continuation"]
+                batch["ctx_len"] = orig_batch["ctx_len"]
+                batch["cont_len"] = orig_batch["cont_len"]
+            elif eval_mode is not None:
+                raise ValueError(f"Unknown eval_mode: {eval_mode}")
             else:
                 out, _ = self.model_forward(  # type: ignore
                     input_ids,

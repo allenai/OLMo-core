@@ -63,6 +63,7 @@ QUICK_DEBUG = False
 GLOBAL_BATCH_SIZE = 64
 LOCAL_BATCH_SIZE = 64
 EVAL_BATCH_SIZE = 16
+TRAIN_MODE = os.environ.get("TRAIN_MODE", "local_encoder_only")
 
 _DATA_SOURCES = open(Path(__file__).parent / "data_sources.txt").read().strip().splitlines()
 
@@ -193,6 +194,15 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         num_workers=NUM_WORKERS if not QUICK_DEBUG else 0,
     )
 
+    if TRAIN_MODE == "local_encoder_only":
+        losses = ["local_encoder"]
+        loss_weights = [1.0]
+    elif TRAIN_MODE == "local_decoder_only":
+        losses = ["local_decoder"]
+        loss_weights = [1.0]
+    else:
+        raise ValueError(f"Unknown TRAIN_MODE: {TRAIN_MODE}. Must be one of 'local_encoder_only', 'local_decoder_only'.")
+
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=LOCAL_BATCH_SIZE * SEQUENCE_LENGTH * BYTE_EXPANSION_FACTOR,
         max_sequence_length=dataset_config.effective_sequence_length,
@@ -200,10 +210,11 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         compile_model=True,
         blt_config=BLTConfig(
             tokenizer=byte_tokenizer_config,
-            losses=["local_encoder"],
-            loss_weights=[1.0],
-            skip_blocks=True,
+            losses=losses,
+            loss_weights=loss_weights,
+            skip_blocks=TRAIN_MODE == "local_encoder_only",
             skip_teacher=False,
+            use_oracle_patch_reps=TRAIN_MODE == "local_decoder_only",
         ),  
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
@@ -212,20 +223,32 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         scheduler=CosWithWarmup(warmup=1000),
     )
 
-    eval_tasks = [
-        "arc_challenge_test_rc_5shot",
-        "arc_easy_test_rc_5shot",
-        "hellaswag_rc_5shot",  # 1K subset of HellaSwag
-        "winogrande_val_rc_5shot",  # Helpful after 750M-5xC scale
-        "csqa_val_rc_5shot",
-        "piqa_val_rc_5shot",
-        "mmlu_stem_test_rc_5shot",
-        "mmlu_humanities_test_rc_5shot",
-        "mmlu_social_sciences_test_rc_5shot",
-        "mmlu_other_test_rc_5shot",
-    ]
-    eval_names = [f"downstream_orig_head" for _ in eval_tasks]
-    eval_batch_kwargs = [{"use_orig_head": True} for _ in eval_tasks]
+    if QUICK_DEBUG:
+        eval_tasks = [
+            "arc_challenge_test_rc_5shot",
+        ]
+    else:
+        eval_tasks = [
+            "arc_challenge_test_rc_5shot",
+            "arc_easy_test_rc_5shot",
+            "hellaswag_rc_5shot",  # 1K subset of HellaSwag
+            "winogrande_val_rc_5shot",  # Helpful after 750M-5xC scale
+            "csqa_val_rc_5shot",
+            "piqa_val_rc_5shot",
+            "mmlu_stem_test_rc_5shot",
+            "mmlu_humanities_test_rc_5shot",
+            "mmlu_social_sciences_test_rc_5shot",
+            "mmlu_other_test_rc_5shot",
+        ]
+    if TRAIN_MODE == "local_encoder_only":
+        eval_names = [f"downstream_orig_head" for _ in eval_tasks]
+        eval_batch_kwargs = [{"eval_mode": "orig_head"} for _ in eval_tasks]
+    elif TRAIN_MODE == "local_decoder_only":
+        eval_names = [f"downstream_orig_trunk" for _ in eval_tasks]
+        eval_batch_kwargs = [{"eval_mode": "orig_trunk"} for _ in eval_tasks]
+    else:
+        eval_names = [f"downstream" for _ in eval_tasks]
+        eval_batch_kwargs = [{} for _ in eval_tasks]
 
     trainer_config = (
         TrainerConfig(
@@ -326,6 +349,7 @@ def main(run_name: str, overrides: List[str]):
 
     # TODO(benjaminm): this is not a nice place?
     register_fsdp_forward_method(model, "original_head_forward")
+    register_fsdp_forward_method(model, "original_trunk_forward")
 
     # Train.
     trainer.fit()

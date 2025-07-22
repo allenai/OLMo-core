@@ -27,6 +27,9 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
     if "OLMO_CKPT_PATH" in os.environ:
         env_vars.append(BeakerEnvVar(name="OLMO_CKPT_PATH", value=os.environ["OLMO_CKPT_PATH"]))
 
+    if "TRAIN_MODE" in os.environ:
+        env_vars.append(BeakerEnvVar(name="TRAIN_MODE", value=os.environ["TRAIN_MODE"]))
+
     if cluster != "ai2/augusta-google-1":
         env_vars.append(BeakerEnvVar(name="HAS_WEKA", value="1"))
         weka_buckets = [
