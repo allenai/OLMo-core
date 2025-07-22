@@ -69,7 +69,7 @@ _DATA_SOURCES = open(Path(__file__).parent / "data_sources.txt").read().strip().
 if os.environ.get("HAS_WEKA"):
     OLMO_1B_CKPT_PATH = os.environ.get(
         "OLMO_CKPT_PATH",
-        "/weka/oe-training-default/benjaminm/olmo2_1b_v2/model_and_optim",
+        "/weka/oe-training-default/benjaminm/checkpoints/olmo2_1b/model_and_optim",
     )
     DATA_PATHS = ["/weka/oe-training-default/" + x for x in _DATA_SOURCES]
     EMBEDDING_INIT_PATH = os.environ.get(
