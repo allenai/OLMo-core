@@ -405,17 +405,17 @@ def validate_conversion(
     )
 
 
-def load_config(checkpoint_input_dir: PathOrStr) -> Optional[dict]:
-    if not file_exists(f"{checkpoint_input_dir}/config.json"):
-        log.warning(f"Config file not found at {checkpoint_input_dir}")
+def load_config(config_path: PathOrStr) -> Optional[dict]:
+    if not file_exists(config_path):
+        log.warning(f"Config file not found at {config_path}")
         return None
 
-    with cached_path(f"{checkpoint_input_dir}/config.json").open("r", encoding="utf-8") as f:
+    with cached_path(config_path).open("r", encoding="utf-8") as f:
         config_dict = json.load(f)
 
     if "model" not in config_dict:
         log.warning(
-            f"Config file at {checkpoint_input_dir} is not an OLMo core experiment config, ignoring"
+            f"Config file at {config_path} is not an OLMo core experiment config, ignoring"
         )
         return None
 
@@ -505,7 +505,7 @@ def parse_args():
 def main():
     args = parse_args()
 
-    experiment_config = load_config(args.config_path or args.checkpoint_input_path)
+    experiment_config = load_config(args.config_path or f"{args.checkpoint_input_path}/config.json")
     transformer_config_dict = None
     if experiment_config is not None:
         transformer_config_dict = experiment_config["model"]
