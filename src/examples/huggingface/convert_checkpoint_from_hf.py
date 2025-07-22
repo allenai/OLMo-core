@@ -313,6 +313,8 @@ def validate_conversion(
         for block in model.blocks.values():
             if block.attention.window_size != (-1, -1):
                 block.attention.window_size = (sliding_window - 1, 0)
+    dtype = getattr(hf_config, "torch_dtype", torch.float32)
+    model = model.to(dtype=dtype)
     model.eval()
     with torch.no_grad():
         logits = model(input_ids=input_ids)
