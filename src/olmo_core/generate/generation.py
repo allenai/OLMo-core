@@ -93,44 +93,6 @@ class TransformerGenerationModule(GenerationModule):
                 "Training parallelism configs are only valid for distributed training"
             )
 
-        if not torch.cuda.is_available():
-            # Print detailed CUDA availability information
-            print("CUDA is not available. Diagnostic information:")
-            print(f"  - torch.cuda.is_available(): {torch.cuda.is_available()}")
-            print(f"  - torch.cuda.device_count(): {torch.cuda.device_count()}")
-            print(f"  - torch version: {torch.__version__}")
-            print(f"  - CUDA build: {torch.version.cuda}")
-
-            # Check if CUDA runtime is accessible
-            try:
-                import subprocess
-
-                result = subprocess.run(["nvidia-smi"], capture_output=True, text=True)
-                if result.returncode == 0:
-                    print("\nnvidia-smi output:")
-                    print(result.stdout)
-                else:
-                    print(f"\nnvidia-smi failed with return code: {result.returncode}")
-                    print(f"stderr: {result.stderr}")
-            except FileNotFoundError:
-                print("\nnvidia-smi not found - NVIDIA drivers may not be installed")
-            except Exception as e:
-                print(f"\nError running nvidia-smi: {e}")
-
-            # Additional PyTorch CUDA diagnostics
-            if hasattr(torch.cuda, "is_initialized"):
-                print(f"\n  - torch.cuda.is_initialized(): {torch.cuda.is_initialized()}")
-
-            # Check environment variables
-            import os
-
-            cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "not set")
-            print(f"\n  - CUDA_VISIBLE_DEVICES: {cuda_visible_devices}")
-
-            import sys
-
-            sys.exit(1)
-
         # Parallelize model.
         self.model = parallelize_model(
             model,
@@ -179,6 +141,7 @@ class TransformerGenerationModule(GenerationModule):
         *,
         attention_mask: Optional[torch.Tensor] = None,
         logits_to_keep: int = 0,
+        prefill_kv_cache: bool = False,
         **kwargs,
     ) -> torch.Tensor:
         """
@@ -188,11 +151,17 @@ class TransformerGenerationModule(GenerationModule):
             input_ids: Input token IDs
             attention_mask: Optional attention mask
             logits_to_keep: Number of positions to keep from the end (0 = keep all)
+            prefill_kv_cache: Whether to prefill the KV cache. If True, the KV cache will be
+                prefilled with the input_ids.
             **kwargs: Additional arguments passed to the model
         """
         with self._model_forward_context():
             logits = self.model(  # (batch_size, seq_len, vocab_size)
-                input_ids, attention_mask=attention_mask, logits_to_keep=logits_to_keep, **kwargs
+                input_ids,
+                attention_mask=attention_mask,
+                logits_to_keep=logits_to_keep,
+                prefill_kv_cache=prefill_kv_cache,
+                **kwargs,
             )
             return logits
 
@@ -258,20 +227,39 @@ class TransformerGenerationModule(GenerationModule):
         token_times = []
         tokens_generated = 0
 
+        # Initialize/Reset the KV cache
+        for block in self.model.blocks.values():
+            if hasattr(block.attention, "reset_kv_cache"):
+                block.attention.reset_kv_cache(  # type: ignore
+                    use_cache=generation_config.use_cache,
+                    batch_size=batch_size,
+                    max_seq_len=generation_config.max_length,
+                    dtype=self.model.dtype,
+                )
+
         pbar = tqdm(desc="Generating tokens", disable=not log_timing)
 
         while generated.shape[1] <= generation_config.max_length:
             token_start_time = time.perf_counter()
 
             if generated.shape[1] == prompt_len:
-                # First forward: compute all prompt logits if needed for scoring
+                # First forward:
+                # - compute all prompt logits if needed for scoring
+                # - prefill the KV cache
                 logits_to_keep = 0 if (return_logits or return_logprobs) else 1
+                prefill_kv_cache = True
             else:
-                # Subsequent forwards: only compute the last position's logits
+                # Subsequent forwards:
+                # - only compute the last position's logits
+                # - use the kv cache from the previous forward passes for decoding
                 logits_to_keep = 1
+                prefill_kv_cache = False
 
             logits = self.model_forward(
-                generated, attention_mask=attention_mask, logits_to_keep=logits_to_keep
+                generated,
+                attention_mask=attention_mask,
+                logits_to_keep=logits_to_keep,
+                prefill_kv_cache=prefill_kv_cache,
             )
             next_token_logits = logits[:, -1, :] if logits.dim() == 3 else logits.squeeze(1)
 
@@ -297,6 +285,7 @@ class TransformerGenerationModule(GenerationModule):
             # Select next tokens
             next_tokens = select_next_token(
                 next_token_logits,
+                do_sample=generation_config.do_sample,
                 temperature=generation_config.temperature,
                 top_k=generation_config.top_k,
                 top_p=generation_config.top_p,

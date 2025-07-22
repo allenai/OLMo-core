@@ -61,7 +61,8 @@ def top_p_filtering(logits: torch.Tensor, top_p: float) -> torch.Tensor:
 @torch.compile(dynamic=True)
 def select_next_token(
     logits: torch.Tensor,
-    temperature: float = 1.0,
+    do_sample: bool = True,
+    temperature: float = 0.0,
     top_k: int = -1,
     top_p: float = 1.0,
 ) -> torch.Tensor:
@@ -70,6 +71,8 @@ def select_next_token(
 
     Args:
         logits: Logits tensor of shape (..., vocab_size)
+        do_sample: Whether to sample from the distribution. If False, uses greedy selection.
+                   If True, applies temperature scaling and optional top-k and top-p filtering.
         temperature: Temperature for scaling. Higher values increase randomness.
                     Values < 1.0 make the distribution sharper (more deterministic).
                     Values > 1.0 make the distribution flatter (more random).
@@ -81,7 +84,7 @@ def select_next_token(
     Returns:
         Sampled token indices of shape (...)
     """
-    if temperature == 0:
+    if not do_sample or temperature == 0:
         return greedy_selection(logits)
 
     scaled_logits = logits / temperature

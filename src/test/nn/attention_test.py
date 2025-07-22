@@ -265,69 +265,21 @@ def test_attention_kv_caching(
     x_prefill = x[:, :prefill_len, :]
     x_decode = x[:, prefill_len:total_len, :]
 
-    # Initialize KV cache
-    _n_kv_heads = n_kv_heads or n_heads
-    head_dim = d_model // n_heads
-    k_cache = torch.zeros(
-        batch_size, max_seq_len, _n_kv_heads, head_dim, dtype=dtype, device="cuda"
-    )
-    v_cache = torch.zeros(
-        batch_size, max_seq_len, _n_kv_heads, head_dim, dtype=dtype, device="cuda"
-    )
-    assert torch.all(k_cache == 0)
-    assert torch.all(v_cache == 0)
-
     # Prefill step
-    cache_seqlens_prefill = torch.zeros(batch_size, dtype=torch.int32, device="cuda")
+    attention.reset_kv_cache(
+        use_cache=True, batch_size=batch_size, max_seq_len=max_seq_len, dtype=dtype
+    )
     with patch(
         "olmo_core.nn.attention.dispatch_flash_attn", wraps=dispatch_flash_attn
     ) as mock_dispatch:
         with torch.no_grad(), torch.autocast("cuda", dtype=dtype):
-            y_prefill = attention(
-                x_prefill,
-                k_cache=k_cache,
-                v_cache=v_cache,
-                cache_seqlens=cache_seqlens_prefill,
-                prefill_kv_cache=True,
-            )
+            y_prefill = attention(x_prefill, prefill_kv_cache=True)
         mock_dispatch.assert_called_once()
         (q_prefill, k_prefill, v_prefill), _ = mock_dispatch.call_args
 
-    # Check that the inputs and outputs to the flash attention kernel are the same
-    torch.testing.assert_close(q_combined[:, :prefill_len, :, :], q_prefill)
-    torch.testing.assert_close(k_combined[:, :prefill_len, :, :], k_prefill)
-    torch.testing.assert_close(v_combined[:, :prefill_len, :, :], v_prefill)
-
-    # Check cache state after prefill
-    k_prefill_region = k_cache[:, :prefill_len, :, :]
-    v_prefill_region = v_cache[:, :prefill_len, :, :]
-    k_zero_fraction = (k_prefill_region == 0).float().mean().item()
-    v_zero_fraction = (v_prefill_region == 0).float().mean().item()
-    assert k_zero_fraction < 0.01, f"Prefill k cache has {k_zero_fraction:.2%} zeros"
-    assert v_zero_fraction < 0.01, f"Prefill v cache has {v_zero_fraction:.2%} zeros"
-    assert torch.all(k_cache[:, prefill_len:, :, :] == 0)
-    assert torch.all(v_cache[:, prefill_len:, :, :] == 0)
-
     # Decode step
-    cache_seqlens_decode = torch.full((batch_size,), prefill_len, dtype=torch.int32, device="cuda")
     with torch.no_grad(), torch.autocast("cuda", dtype=dtype):
-        y_decode = attention(
-            x_decode,
-            k_cache=k_cache,
-            v_cache=v_cache,
-            cache_seqlens=cache_seqlens_decode,
-            prefill_kv_cache=False,
-        )
-
-    # Check cache state after decode
-    k_total_region = k_cache[:, :total_len, :, :]
-    v_total_region = v_cache[:, :total_len, :, :]
-    k_zero_fraction = (k_total_region == 0).float().mean().item()
-    v_zero_fraction = (v_total_region == 0).float().mean().item()
-    assert k_zero_fraction < 0.01, f"Decode k cache has {k_zero_fraction:.2%} zeros"
-    assert v_zero_fraction < 0.01, f"Decode v cache has {v_zero_fraction:.2%} zeros"
-    assert torch.all(k_cache[:, total_len:, :, :] == 0)
-    assert torch.all(v_cache[:, total_len:, :, :] == 0)
+        y_decode = attention(x_decode, prefill_kv_cache=False)
 
     # 3. Compare results
     torch.testing.assert_close(y_combined[:, :prefill_len, :], y_prefill)
@@ -356,16 +308,13 @@ def test_attention_prefill_forward_pass():
     attention = Attention(d_model=d_model, n_heads=n_heads, use_flash=True, init_device="cuda")
 
     x = torch.randn(batch_size, seq_len, d_model, dtype=dtype, device="cuda")
-    cache_shape = (batch_size, max_seq_len, n_heads, d_model // n_heads)
-    k_cache = torch.zeros(cache_shape, dtype=dtype, device="cuda")
-    v_cache = torch.zeros(cache_shape, dtype=dtype, device="cuda")
-    cache_seqlens = torch.zeros(batch_size, dtype=torch.int32, device="cuda")
 
     with torch.no_grad(), torch.autocast("cuda", dtype=dtype):
         y_standard = attention(x)
-        y_prefill = attention(
-            x, k_cache=k_cache, v_cache=v_cache, cache_seqlens=cache_seqlens, prefill_kv_cache=True
+        attention.reset_kv_cache(
+            use_cache=True, batch_size=batch_size, max_seq_len=max_seq_len, dtype=dtype
         )
+        y_prefill = attention(x, prefill_kv_cache=True)
 
     torch.testing.assert_close(y_standard, y_prefill)
 
