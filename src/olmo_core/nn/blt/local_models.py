@@ -1,4 +1,6 @@
 from dataclasses import dataclass
+from pathlib import Path
+
 import torch
 import torch.nn as nn
 from torch.nn.attention.flex_attention import flex_attention, BlockMask
@@ -152,20 +154,28 @@ class LocalEncoder(nn.Module):
 
         self.cross_attention = CrossAttention(d_model, cross_attn_n_heads, init_device=init_device)
 
-    def rescale_to(self, target_embeddings, n_estimate=10_000):
+    def fix_init(self, embedding_init_path, target_embeddings, n_estimate=10_000):
         """Rescale such that the local encoder outputs (given random inputs) have the same mean and std as the provided embeddings."""
+
+        # load embedding inits (computed via compute_hash_embedding_init.py)
+        self.embedding.weight.data[:] = DTensor.from_local(
+            torch.load(Path(embedding_init_path) / "embedding_init.pth"),
+            device_mesh=self.embedding.weight.device_mesh,  # type: ignore
+            placements=self.embedding.weight.placements,  # type: ignore
+        )
+
+        for i, hash_embedding in enumerate(self.hash_embeddings):
+            hash_embedding.weight.data[:] = DTensor.from_local(  # type: ignore
+                torch.load(Path(embedding_init_path) / f"hash_embedding_init_{i}.pth"),
+                device_mesh=hash_embedding.weight.device_mesh,  # type: ignore
+                placements=hash_embedding.weight.placements,  # type: ignore
+            )
 
         # fold target embeddings to local encoder dim
         te_folded = torch.cat([target_embeddings[:, :self.d_model], target_embeddings[:, self.d_model:]], dim=0)
         # .std not supported for DTensor
         te_std = target_embeddings.var(0).sqrt()
         te_folded_std = te_folded.var(0).sqrt()
-        te_folded_mean = te_folded.mean(0)
-
-        # first rescale embeddings to get right magnitude inp
-        for weight in [self.embedding.weight] + [he.weight for he in self.hash_embeddings]:
-            weight.data *= (te_folded_std / weight.data.var(0).sqrt())  # type: ignore
-            weight.data += (te_folded_mean - weight.data.mean(0))
 
         # then rescale the last linear layer to get right magnitude out
         with torch.no_grad():

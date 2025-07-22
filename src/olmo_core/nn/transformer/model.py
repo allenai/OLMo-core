@@ -1295,8 +1295,8 @@ class BLTDistillTransformer(BLTTransformer):
             return h, h_emb
 
 
-    def fix_init(self, *args, **kwargs):
-        self.local_encoder.rescale_to(self.teacher.embeddings.weight)  # type: ignore
+    def fix_init(self, embedding_init_path: str):
+        self.local_encoder.fix_init(embedding_init_path, self.teacher.embeddings.weight)  # type: ignore
 
 
     def forward(

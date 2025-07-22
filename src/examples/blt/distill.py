@@ -69,9 +69,11 @@ _DATA_SOURCES = open(Path(__file__).parent / "data_sources.txt").read().strip().
 if os.environ.get("HAS_WEKA"):
     OLMO_1B_CKPT_PATH = "/weka/oe-training-default/benjaminm/checkpoints/olmo2_1b/model_and_optim"
     DATA_PATHS = ["/weka/oe-training-default/" + x for x in _DATA_SOURCES]
+    EMBEDDING_INIT_PATH = "/weka/oe-training-default/benjaminm/olmo_1b_blt_hash_embedding_init"
 else:
     OLMO_1B_CKPT_PATH = "gs://allennlp-benjaminm/checkpoints/olmo2_1b/model_and_optim"
     DATA_PATHS = ["gs://" + x for x in _DATA_SOURCES]
+    raise NotImplementedError()
 
 DATA_WORK_DIR = "/tmp/dataset-cache"
 
@@ -312,7 +314,8 @@ def main(run_name: str, overrides: List[str]):
         for missing_key in incompatible_keys.missing_keys:
             log.info(f"Key {missing_key} was not found in checkpoint, is randomly initialized (this is expected for local encoder/decoder and student lm head).")
 
-        model.fix_init()  # type: ignore
+        # init embeddings + scale appropriately
+        model.fix_init(EMBEDDING_INIT_PATH)  # type: ignore
 
     # TODO(benjaminm): this is not a nice place?
     register_fsdp_forward_method(model, "original_head_forward")
