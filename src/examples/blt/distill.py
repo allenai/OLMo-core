@@ -128,7 +128,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         n_layers=local_encoder_n_layers,
         cross_attn_n_heads=local_cross_attn_n_heads,
         block_config=local_block,
-        add_out_projection=True,
+        add_out_projection=False,
     )
     local_decoder = LocalDecoderConfig(
         sliding_window_size=512,
