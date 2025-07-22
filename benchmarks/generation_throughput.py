@@ -7,6 +7,8 @@ from typing import List
 import torch
 from rich import print
 
+from olmo_core.config import DType
+from olmo_core.generate.config import GenerationConfig, TransformerGenerationModuleConfig
 from olmo_core.generate.generation import TransformerGenerationModule
 from olmo_core.utils import get_default_device, seed_all
 
@@ -146,27 +148,43 @@ def parse_args() -> argparse.Namespace:
 
 
 def main():
+    print("\n[bold blue]🚀 OLMo Generation Throughput Benchmark 🚀[/]")
+    print("[dim]Measuring autoregressive generation performance...[/]\n")
+
     args = parse_args()
     seed_all(args.seed)
+
+    # Print benchmark conditions
+    print("[bold green]=== Benchmark Configuration ===")
+    print(f"[cyan]Checkpoint:[/] {args.checkpoint_dir}")
+    print(f"[cyan]Device:[/] {args.device or 'auto-detect'}")
+    print(f"[cyan]Batch sizes:[/] {args.batch_sizes}")
+    print(f"[cyan]Total sequences:[/] {args.total_sequences}")
+    print(f"[cyan]Prompt length:[/] {args.prompt_length}")
+    print(f"[cyan]Max new tokens:[/] {args.max_new_tokens}")
+    print(f"[cyan]Use cache:[/] {args.use_cache}")
+    print(f"[cyan]Compile model:[/] {args.compile}")
+    print(f"[cyan]Random seed:[/] {args.seed}")
+    print()
 
     # Resolve device
     if args.device is not None:
         device = torch.device(args.device)
     else:
         device = get_default_device()
-
     log.info(f"Using device: {device}")
 
     # Load generation module from checkpoint
-    log.info("Loading model from checkpoint ... this may take a while on first run.")
+    log.info("Loading model from checkpoint ...")
+    print("[bold green]Loading model from checkpoint ...[/]")
     generation_module = TransformerGenerationModule.from_checkpoint(
         checkpoint_dir=args.checkpoint_dir,
         work_dir=Path("/tmp/olmo_generation_bench"),
+        dtype=DType.bfloat16,
         device=device,
         compile_model=args.compile,
     )
-
-    vocab_size = generation_module.model.vocab_size  # type: ignore[attr-defined]
+    print("[bold green]Model loaded successfully![/]")
 
     results: List[str] = []
     for bs in args.batch_sizes:
@@ -176,7 +194,7 @@ def main():
             prompt_length=args.prompt_length,
             max_new_tokens=args.max_new_tokens,
             total_sequences=args.total_sequences,
-            vocab_size=vocab_size,
+            vocab_size=generation_module.model.vocab_size,
             use_cache=args.use_cache,
             device=device,
         )
