@@ -69,7 +69,7 @@ _DATA_SOURCES = open(Path(__file__).parent / "data_sources.txt").read().strip().
 if os.environ.get("HAS_WEKA"):
     OLMO_1B_CKPT_PATH = "/weka/oe-training-default/benjaminm/checkpoints/olmo2_1b/model_and_optim"
     DATA_PATHS = ["/weka/oe-training-default/" + x for x in _DATA_SOURCES]
-    EMBEDDING_INIT_PATH = "/weka/oe-training-default/benjaminm/olmo_1b_blt_hash_embedding_init"
+    EMBEDDING_INIT_PATH = "/weka/oe-training-default/benjaminm/olmo_1b_blt_hash_embedding_init_200k" # TODO(benjaminm): make this configurable!
 else:
     OLMO_1B_CKPT_PATH = "gs://allennlp-benjaminm/checkpoints/olmo2_1b/model_and_optim"
     DATA_PATHS = ["gs://" + x for x in _DATA_SOURCES]
