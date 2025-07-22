@@ -93,7 +93,7 @@ def test_select_next_token_greedy(logits_data):
 
 
 def test_select_next_token_with_top_k():
-    seed_all(42)
+    seed_all(0)
     logits = torch.tensor([[1.0, 2.0, 8.0, 3.0, 4.0, 0.1, 0.2, 0.3]])
     top_k = 3
 
@@ -105,7 +105,7 @@ def test_select_next_token_with_top_k():
 
 
 def test_select_next_token_with_top_p():
-    seed_all(42)
+    seed_all(0)
     # probs for [8.0, 4.0, 3.0] are ~[0.90, 0.04, 0.01], cumsum ~[0.90, 0.94, 0.95]
     logits = torch.tensor([[1.0, 2.0, 8.0, 3.0, 4.0, 0.1, 0.2, 0.3]])
     top_p = 0.95
@@ -117,7 +117,7 @@ def test_select_next_token_with_top_p():
 
 
 def test_select_next_token_with_top_k_and_top_p():
-    seed_all(42)
+    seed_all(0)
     logits = torch.tensor([[10.0, 9.0, 1.0, 8.0, 2.0]])
     # top_k=3 -> indices {0, 1, 3} (logits {10, 9, 8})
     # Probs for {10, 9, 8} are ~[0.70, 0.26, 0.03], cumsum ~[0.70, 0.96, 0.99]

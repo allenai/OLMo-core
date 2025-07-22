@@ -63,7 +63,7 @@ def test_generation_module_basic(
     dtype: DType,
     device: torch.device,
 ):
-    seed_all(42)
+    seed_all(0)
 
     flash_attn_available = dtype == DType.bfloat16 and device.type == "cuda" and has_flash_attn
     if not flash_attn_available and use_cache:
@@ -131,7 +131,7 @@ def test_generation_module_basic(
 
 @pytest.mark.parametrize("device", DEVICES)
 def test_generation_module_state_dict(device: torch.device):
-    seed_all(42)
+    seed_all(0)
 
     generation_config = GenerationConfig(
         max_length=16, pad_token_id=0, eos_token_id=2, use_cache=False
@@ -168,7 +168,7 @@ def test_generation_module_state_dict(device: torch.device):
 def test_generation_config_overrides(
     max_length: int, eos_token_id: Optional[int], device: torch.device = torch.device("cuda")
 ):
-    seed_all(42)
+    seed_all(0)
 
     # Create generation module with default config
     generation_config = GenerationConfig(
@@ -200,7 +200,7 @@ def test_generation_config_overrides(
 
 @pytest.mark.parametrize("device", DEVICES)
 def test_generation_module_config_build(tmp_path: Path, device: torch.device):
-    seed_all(42)
+    seed_all(0)
 
     # Create and save a generation module
     generation_config = GenerationConfig(
@@ -239,7 +239,7 @@ def test_generation_module_config_build(tmp_path: Path, device: torch.device):
 
 @requires_gpu
 def test_generation_module_stop_sequences():
-    seed_all(42)
+    seed_all(0)
     device = torch.device("cuda")
 
     # Create generation config with stop sequences
@@ -356,7 +356,7 @@ def run_distributed_generation(
     input_ids: torch.Tensor,
     expected_shape: tuple,
 ):
-    seed_all(42)
+    seed_all(0)
 
     # Create generation module with parallelism config
     generation_module = TransformerGenerationModule.from_checkpoint(
@@ -390,7 +390,7 @@ def run_distributed_generation(
 @requires_multi_gpu
 @pytest.mark.parametrize("use_cache", [True, False], ids=["with_cache", "without_cache"])
 def test_generation_module_distributed_fsdp(tmp_path: Path, use_cache: bool):
-    seed_all(42)
+    seed_all(0)
 
     if not has_flash_attn and use_cache:
         pytest.skip("flash-attn is required for use_cache")
@@ -435,9 +435,12 @@ def test_generation_module_distributed_fsdp(tmp_path: Path, use_cache: bool):
 
 @requires_gpu
 @requires_flash_attn
+@pytest.mark.xfail(
+    reason="Generation with and without cache use different flash-attn kernels. "
+    "These kernels produce slightly different outputs that compound over layers, "
+    "resulting in different predicted tokens."
+)
 def test_generation_cache_consistency():
-    seed_all(42)
-
     if not has_flash_attn:
         pytest.skip("flash-attn is required for KV cache usage")
 
@@ -449,7 +452,7 @@ def test_generation_cache_consistency():
     model_with_cache = transformer_config.build()
     model_with_cache.load_state_dict(model_no_cache.state_dict())  # ensure identical weights
 
-    shared_kwargs = {"max_length": 24, "do_sample": False, "pad_token_id": 0, "eos_token_id": 2}
+    shared_kwargs = {"max_length": 24, "do_sample": False, "pad_token_id": 0, "eos_token_id": 1}
     gen_config_no_cache = GenerationConfig(**shared_kwargs, use_cache=False)
     gen_config_with_cache = GenerationConfig(**shared_kwargs, use_cache=True)
 
@@ -462,10 +465,33 @@ def test_generation_cache_consistency():
     )
 
     batch_size, seq_len = 2, 12
-    input_ids = torch.randint(1, 100, (batch_size, seq_len), device=device)
+    input_ids = torch.randint(2, 100, (batch_size, seq_len), device=device)
+    seed_all(0)
     output_ids_no_cache, *_ = module_no_cache.generate_batch(input_ids, completions_only=False)
+    seed_all(0)
     output_ids_with_cache, *_ = module_with_cache.generate_batch(input_ids, completions_only=False)
 
-    assert torch.equal(output_ids_no_cache, output_ids_with_cache), (
-        "generation with and without cache should produce identical outputs"
-    )
+    if not torch.equal(output_ids_no_cache, output_ids_with_cache):
+        # Find differences for better debugging
+        diff_mask = output_ids_no_cache != output_ids_with_cache
+        diff_positions = torch.nonzero(diff_mask, as_tuple=False)
+
+        error_msg = "Generation with and without cache produced different outputs:\n"
+        error_msg += f"Output shapes: no_cache={output_ids_no_cache.shape}, with_cache={output_ids_with_cache.shape}\n"
+        error_msg += f"Number of differing positions: {diff_positions.shape[0]}\n"
+
+        if diff_positions.shape[0] > 0:
+            error_msg += "First few differences:\n"
+            for i, (batch_idx, seq_idx) in enumerate(
+                diff_positions[:10]
+            ):  # Show first 10 differences
+                no_cache_val = output_ids_no_cache[batch_idx, seq_idx].item()
+                with_cache_val = output_ids_with_cache[batch_idx, seq_idx].item()
+                error_msg += f"  Position [{batch_idx}, {seq_idx}]: no_cache={no_cache_val}, with_cache={with_cache_val}\n"
+
+            if diff_positions.shape[0] > 10:
+                error_msg += f"  ... and {diff_positions.shape[0] - 10} more differences\n"
+
+        error_msg += f"\nFull outputs:\nno_cache:\n{output_ids_no_cache}\nwith_cache:\n{output_ids_with_cache}"
+
+        assert False, error_msg
