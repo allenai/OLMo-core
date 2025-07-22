@@ -1159,6 +1159,25 @@ class BLTTransformer(Transformer):
             extra_kwargs,
         )
 
+    def apply_compile(self):
+        """
+        Apply ``torch.compile()`` to each transformer block, which makes compilation efficient
+        due to repeated structure.
+
+        .. warning::
+            This must be called after :meth:`apply_activation_checkpointing()` but
+            before :meth:`apply_fsdp()` or :meth:`apply_ddp()`.
+        """
+        super().apply_compile()
+
+        for block in self.local_encoder.blocks.values():  # type: ignore
+            block = cast(TransformerBlockBase, block)
+            block.apply_compile()
+
+        for block in self.local_decoder.blocks.values():  # type: ignore
+            block = cast(TransformerBlockBase, block)
+            block.apply_compile()
+
     def forward(
         self,
         input_ids: torch.Tensor,
@@ -1221,6 +1240,19 @@ class BLTDistillTransformer(BLTTransformer):
 
         if self.share_blocks:
             self.teacher.blocks.clear()
+
+    def apply_compile(self):
+        """
+        Apply ``torch.compile()`` to each transformer block, which makes compilation efficient
+        due to repeated structure.
+
+        .. warning::
+            This must be called after :meth:`apply_activation_checkpointing()` but
+            before :meth:`apply_fsdp()` or :meth:`apply_ddp()`.
+        """
+        super().apply_compile()
+
+        self.teacher.lm_head.compile(fullgraph=False)
 
     # teacher forward patched to (1) use the student blocks if blocks are shared, (2) return the required extra hidden state information
     def _teacher_forward(

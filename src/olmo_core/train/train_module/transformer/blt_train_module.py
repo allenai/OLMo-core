@@ -45,6 +45,7 @@ class TransformerBLTTrainModule(TransformerTrainModule):
         self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any]]:
         batch["blt_config"] = self.blt_config
+        batch["n_content_bytes"] = (batch["input_ids"] != self.tokenizer.pad_token_id).sum(1)
 
         # this has had the byte collator + ByteFSLDataset applied, no need to patch
         if "patch_lens" in batch:
@@ -174,6 +175,9 @@ class TransformerBLTTrainModule(TransformerTrainModule):
                     return_logits=False,
                     **model_kwargs,
                 )
+
+                metrics["mean_byte_len"] = model_kwargs["n_content_bytes"].to(torch.float32).mean()  # type: ignore
+                metrics["max_byte_len"] = model_kwargs["n_content_bytes"].max()  # type: ignore
 
                 for key, value in metrics.items():  # type: ignore
                     batch_metrics[key] = batch_metrics.get(key, 0.0) + get_local_tensor(value.detach())

@@ -28,6 +28,7 @@ from olmo_core.data import (
     ByteDataCollator,
 )
 from olmo_core.distributed.parallel import DataParallelType
+from olmo_core.distributed.utils import get_rank
 from olmo_core.distributed.checkpoint import load_model_and_optim_state
 from olmo_core.nn.transformer import TransformerConfig, TransformerType
 from olmo_core.nn.feed_forward import FeedForwardConfig
@@ -368,6 +369,7 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"An error occurred during training: {e}")
         traceback.print_exc()
-        import ipdb; ipdb.post_mortem()
+        if get_rank() == 0:
+            import ipdb; ipdb.post_mortem()
     finally:
         teardown_training_environment()

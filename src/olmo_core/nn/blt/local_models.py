@@ -4,7 +4,7 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 from torch.nn.attention.flex_attention import flex_attention, BlockMask
-from torch.distributed.tensor import DTensor
+from torch.distributed.tensor import DTensor, distribute_tensor
 
 from olmo_core.config import Config
 from olmo_core.nn.buffer_cache import BufferCache
@@ -173,14 +173,14 @@ class LocalEncoder(nn.Module):
 
         if embedding_init_path is not None:
             # load embedding inits (computed via compute_hash_embedding_init.py)
-            self.embedding.weight.data[:] = DTensor.from_local(
+            self.embedding.weight.data[:] = distribute_tensor(
                 torch.load(Path(embedding_init_path) / "embedding_init.pth"),
                 device_mesh=self.embedding.weight.device_mesh,  # type: ignore
                 placements=self.embedding.weight.placements,  # type: ignore
             )
 
             for i, hash_embedding in enumerate(self.hash_embeddings):
-                hash_embedding.weight.data[:] = DTensor.from_local(  # type: ignore
+                hash_embedding.weight.data[:] = distribute_tensor(  # type: ignore
                     torch.load(Path(embedding_init_path) / f"hash_embedding_init_{i}.pth"),
                     device_mesh=hash_embedding.weight.device_mesh,  # type: ignore
                     placements=hash_embedding.weight.placements,  # type: ignore
@@ -222,8 +222,8 @@ class LocalEncoder(nn.Module):
 
         h_patch_mean = h_patch[0].mean(0)
         h_patch_std = h_patch[0].var(0).sqrt()
-        h_patch_mean = DTensor.from_local(h_patch_mean, device_mesh=te_mean.device_mesh)
-        h_patch_std = DTensor.from_local(h_patch_std, device_mesh=te_std.device_mesh)
+        h_patch_mean = distribute_tensor(h_patch_mean.detach(), device_mesh=te_mean.device_mesh)
+        h_patch_std = distribute_tensor(h_patch_std.detach(), device_mesh=te_std.device_mesh)
 
         if self.out_projection is None:
             # NOTE: this does not match the output perfectly! should remove.
@@ -232,7 +232,7 @@ class LocalEncoder(nn.Module):
             te_folded_std = te_folded.var(0).sqrt()
 
             h_patch_folded_std = h_patch.reshape(-1, self.d_model).var(0).sqrt()
-            h_patch_folded_std = DTensor.from_local(h_patch_folded_std, device_mesh=te_folded_std.device_mesh)
+            h_patch_folded_std = distribute_tensor(h_patch_folded_std.detach(), device_mesh=te_folded_std.device_mesh)
 
             # then rescale the last linear layer to get right magnitude out
             self.patch_embedding_projection.weight.data *= (te_folded_std / h_patch_folded_std).unsqueeze(0)
