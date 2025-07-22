@@ -15,7 +15,7 @@ from olmo_core.config import Config, DType, StrEnum
 from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.nn.attention.kv_cache import write_kvcache, write_kvcache_
+from olmo_core.nn.attention.kv_cache import write_kvcache_
 
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
@@ -601,14 +601,33 @@ class Attention(AttentionBase):
                     "sharded by the context parallel load balancer"
                 )
 
-            q, k = self.rope(
-                q, k, head_first=False, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis
-            )
-
-        if prefill_kv_cache and k_cache is not None and v_cache is not None:
-            if cache_seqlens is None:
-                raise ValueError("cache_seqlens is required when prefilling KV cache")
-            write_kvcache_(k_cache, v_cache, cache_seqlens, k, v, T)
+            # Check if we're in KV cache decode mode
+            if k_cache is not None and v_cache is not None and not prefill_kv_cache and cache_seqlens is not None:
+                # For decode, we need to apply RoPE at the correct position
+                # Get the current position from cache_seqlens
+                current_pos = int(cache_seqlens.max().item()) if cache_seqlens.numel() > 0 else 0
+                
+                # Get RoPE embeddings for positions up to current_pos + 1
+                rope_buffers = self.rope.get_buffers(current_pos + 1, q.device)
+                if rope_buffers.pos_sin is not None and rope_buffers.pos_cos is not None:
+                    # Extract embeddings for the specific position
+                    decode_pos_sin = rope_buffers.pos_sin[current_pos:current_pos+1, :]
+                    decode_pos_cos = rope_buffers.pos_cos[current_pos:current_pos+1, :]
+                    
+                    # Apply RoPE with the position-specific embeddings
+                    q, k = self.rope(
+                        q, k, head_first=False, pos_sin=decode_pos_sin, pos_cos=decode_pos_cos
+                    )
+                else:
+                    # Fallback if we can't get position-specific embeddings
+                    q, k = self.rope(
+                        q, k, head_first=False, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis
+                    )
+            else:
+                # Normal RoPE application for prefill or non-cache mode
+                q, k = self.rope(
+                    q, k, head_first=False, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis
+                )
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
         att = self.sdpa(
@@ -628,6 +647,11 @@ class Attention(AttentionBase):
             cache_seqlens=cache_seqlens,
             prefill_kv_cache=prefill_kv_cache,
         )
+
+        if prefill_kv_cache and k_cache is not None and v_cache is not None:
+            if cache_seqlens is None:
+                raise ValueError("cache_seqlens is required when prefilling KV cache")
+            write_kvcache_(k_cache, v_cache, cache_seqlens, k, v, T)
 
         # shape: (batch_size, seq_len, d_model)
         att = att.view(B, T, -1)

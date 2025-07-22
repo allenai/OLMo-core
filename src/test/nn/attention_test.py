@@ -1,4 +1,5 @@
 from typing import Any, Dict, Optional
+from unittest.mock import patch
 
 import pytest
 import torch
@@ -11,6 +12,10 @@ from olmo_core.nn.attention import (
     FusedAttention,
     RingAttentionZigZagLoadBalancer,
     SlidingWindowAttentionConfig,
+)
+from olmo_core.nn.attention.flash_attn_api import (
+    dispatch_flash_attn,
+    dispatch_flash_attn_with_kvcache,
 )
 from olmo_core.nn.layer_norm import LayerNormConfig
 from olmo_core.nn.rope import RoPEConfig, RoPEType
@@ -199,6 +204,170 @@ def test_attention_with_intra_document_masking():
     torch.testing.assert_close(y1_fused, y2_fused)
     torch.testing.assert_close(y1, y1_fused)
     torch.testing.assert_close(y2, y2_fused)
+
+
+@requires_gpu
+@requires_flash_attn
+@pytest.mark.parametrize("dtype", [pytest.param(torch.bfloat16, id="bf16")])
+@pytest.mark.parametrize(
+    "n_kv_heads",
+    [pytest.param(None, id="MHA"), pytest.param(1, id="MQA"), pytest.param(2, id="GQA")],
+)
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        pytest.param({}, id="no-opts"),
+        pytest.param({"clip_qkv": 8.0}, id="QKV-clip"),
+        pytest.param({"rope": RoPEConfig()}, id="rope"),
+        pytest.param({"qk_norm": LayerNormConfig()}, id="qk-norm"),
+        pytest.param({"qk_norm": LayerNormConfig(), "use_head_qk_norm": True}, id="head-qk-norm"),
+    ],
+)
+def test_attention_kv_caching(
+    dtype: torch.dtype,
+    n_kv_heads: Optional[int],
+    kwargs: Dict[str, Any],
+):
+    torch.random.manual_seed(0)
+
+    d_model = 128
+    n_heads = 8
+    max_seq_len = 128
+    batch_size = 1
+    prefill_len = 63
+    decode_len = 1
+    total_len = prefill_len + decode_len
+    assert total_len <= max_seq_len
+
+    # Initialize attention module
+    attention = Attention(
+        d_model=d_model,
+        n_heads=n_heads,
+        n_kv_heads=n_kv_heads,
+        use_flash=True,
+        init_device="cuda",
+        **kwargs,
+    )
+
+    # Input tensor
+    x = torch.randn(batch_size, total_len, d_model, dtype=dtype, device="cuda")
+
+    # 1. Combined forward pass (for comparison)
+    with patch(
+        "olmo_core.nn.attention.dispatch_flash_attn", wraps=dispatch_flash_attn
+    ) as mock_dispatch:
+        with torch.no_grad(), torch.autocast("cuda", dtype=dtype):
+            y_combined = attention(x)
+        mock_dispatch.assert_called_once()
+        (q_combined, k_combined, v_combined), _ = mock_dispatch.call_args
+
+    # 2. Prefill + decode
+    x_prefill = x[:, :prefill_len, :]
+    x_decode = x[:, prefill_len:total_len, :]
+
+    # Initialize KV cache
+    _n_kv_heads = n_kv_heads or n_heads
+    head_dim = d_model // n_heads
+    k_cache = torch.zeros(
+        batch_size, max_seq_len, _n_kv_heads, head_dim, dtype=dtype, device="cuda"
+    )
+    v_cache = torch.zeros(
+        batch_size, max_seq_len, _n_kv_heads, head_dim, dtype=dtype, device="cuda"
+    )
+    assert torch.all(k_cache == 0)
+    assert torch.all(v_cache == 0)
+
+    # Prefill step
+    cache_seqlens_prefill = torch.zeros(batch_size, dtype=torch.int32, device="cuda")
+    with patch(
+        "olmo_core.nn.attention.dispatch_flash_attn", wraps=dispatch_flash_attn
+    ) as mock_dispatch:
+        with torch.no_grad(), torch.autocast("cuda", dtype=dtype):
+            y_prefill = attention(
+                x_prefill,
+                k_cache=k_cache,
+                v_cache=v_cache,
+                cache_seqlens=cache_seqlens_prefill,
+                prefill_kv_cache=True,
+            )
+        mock_dispatch.assert_called_once()
+        (q_prefill, k_prefill, v_prefill), _ = mock_dispatch.call_args
+
+    # Check that the inputs and outputs to the flash attention kernel are the same
+    torch.testing.assert_close(q_combined[:, :prefill_len, :, :], q_prefill)
+    torch.testing.assert_close(k_combined[:, :prefill_len, :, :], k_prefill)
+    torch.testing.assert_close(v_combined[:, :prefill_len, :, :], v_prefill)
+
+    # Check cache state after prefill
+    k_prefill_region = k_cache[:, :prefill_len, :, :]
+    v_prefill_region = v_cache[:, :prefill_len, :, :]
+    k_zero_fraction = (k_prefill_region == 0).float().mean().item()
+    v_zero_fraction = (v_prefill_region == 0).float().mean().item()
+    assert k_zero_fraction < 0.01, f"Prefill k cache has {k_zero_fraction:.2%} zeros"
+    assert v_zero_fraction < 0.01, f"Prefill v cache has {v_zero_fraction:.2%} zeros"
+    assert torch.all(k_cache[:, prefill_len:, :, :] == 0)
+    assert torch.all(v_cache[:, prefill_len:, :, :] == 0)
+
+    # Decode step
+    cache_seqlens_decode = torch.full((batch_size,), prefill_len, dtype=torch.int32, device="cuda")
+    with torch.no_grad(), torch.autocast("cuda", dtype=dtype):
+        y_decode = attention(
+            x_decode,
+            k_cache=k_cache,
+            v_cache=v_cache,
+            cache_seqlens=cache_seqlens_decode,
+            prefill_kv_cache=False,
+        )
+
+    # Check cache state after decode
+    k_total_region = k_cache[:, :total_len, :, :]
+    v_total_region = v_cache[:, :total_len, :, :]
+    k_zero_fraction = (k_total_region == 0).float().mean().item()
+    v_zero_fraction = (v_total_region == 0).float().mean().item()
+    assert k_zero_fraction < 0.01, f"Decode k cache has {k_zero_fraction:.2%} zeros"
+    assert v_zero_fraction < 0.01, f"Decode v cache has {v_zero_fraction:.2%} zeros"
+    assert torch.all(k_cache[:, total_len:, :, :] == 0)
+    assert torch.all(v_cache[:, total_len:, :, :] == 0)
+
+    # 3. Compare results
+    torch.testing.assert_close(y_combined[:, :prefill_len, :], y_prefill)
+
+    # Decode comparison needs looser tolerances due to different computation paths (and matmul shapes etc).
+    torch.testing.assert_close(
+        y_combined[:, prefill_len:total_len, :],
+        y_decode,
+        atol=1e-3,
+        rtol=0.015,
+    )
+
+
+@requires_gpu
+@requires_flash_attn
+def test_attention_prefill_forward_pass():
+    torch.random.manual_seed(0)
+
+    d_model = 64
+    n_heads = 4
+    max_seq_len = 64
+    batch_size = 2
+    seq_len = 32
+    dtype = torch.bfloat16
+
+    attention = Attention(d_model=d_model, n_heads=n_heads, use_flash=True, init_device="cuda")
+
+    x = torch.randn(batch_size, seq_len, d_model, dtype=dtype, device="cuda")
+    cache_shape = (batch_size, max_seq_len, n_heads, d_model // n_heads)
+    k_cache = torch.zeros(cache_shape, dtype=dtype, device="cuda")
+    v_cache = torch.zeros(cache_shape, dtype=dtype, device="cuda")
+    cache_seqlens = torch.zeros(batch_size, dtype=torch.int32, device="cuda")
+
+    with torch.no_grad(), torch.autocast("cuda", dtype=dtype):
+        y_standard = attention(x)
+        y_prefill = attention(
+            x, k_cache=k_cache, v_cache=v_cache, cache_seqlens=cache_seqlens, prefill_kv_cache=True
+        )
+
+    torch.testing.assert_close(y_standard, y_prefill)
 
 
 @pytest.mark.parametrize(
