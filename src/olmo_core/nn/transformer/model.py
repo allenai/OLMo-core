@@ -425,6 +425,10 @@ class Transformer(nn.Module):
         if attention_mask is not None:
             block_kwargs["attention_mask"] = attention_mask
 
+        # Add inference kwargs to block kwargs if provided
+        if (prefill_kv_cache := kwargs.get("prefill_kv_cache")) is not None:
+            block_kwargs["prefill_kv_cache"] = prefill_kv_cache
+
         return (
             input_ids,
             labels,

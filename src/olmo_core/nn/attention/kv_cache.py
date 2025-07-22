@@ -22,7 +22,9 @@ def write_kvcache_(
     Raises:
         ValueError: If writing would exceed the cache capacity
     """
-    seq_positions = cache_seqlens[:, None] + torch.arange(T, device=k.device)
+    seq_positions = cache_seqlens[:, None] + torch.arange(
+        T, device=k.device, dtype=cache_seqlens.dtype
+    )
     if (seq_positions >= k_cache.shape[1]).any():
         raise ValueError(
             f"KV cache overflow: max position {seq_positions.max().item()} >= "

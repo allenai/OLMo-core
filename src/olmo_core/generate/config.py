@@ -31,6 +31,9 @@ class GenerationConfig(Config):
     max_length: int = 8192
     """Maximum length of generated sequences."""
 
+    do_sample: bool = True
+    """Whether to use sampling for generation. If False, greedy decoding is used. This overrides temperature, top_k, and top_p."""
+
     temperature: float = 0.0
     """Temperature for sampling. If 0, this is equivalent to greedy selection."""
 
@@ -39,6 +42,9 @@ class GenerationConfig(Config):
 
     top_p: float = 1.0
     """Top-p (nucleus) sampling. Only consider the smallest set of tokens whose cumulative probability exceeds this threshold. 1.0 means no filtering."""
+
+    use_cache: bool = True
+    """Whether to use a kv-cache for generation. If True, the model will cache past key-value pairs to speed up generation."""
 
     stop_sequences: Optional[List[List[int]]] = None
     """Stop sequences. If provided, generation will stop when any of these sequences of tokens
