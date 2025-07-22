@@ -63,7 +63,7 @@ D_MODEL=2048
 MOE_HIDDEN_SIZE = 1024 + 1024 + 512
 SHARED_MLP_HIDDEN_SIZE = 2560  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
-MICRO_BSZ = 4
+MICRO_BSZ = 8
 NUM_LAYERS=32
 DP_DIM=64
 EP_DIM=1
