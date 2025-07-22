@@ -5,7 +5,6 @@ Note that this script is architecture-dependent, meaning it may only work for OL
 architectures that have support in the `transformers` library.
 """
 
-import contextlib
 import json
 import logging
 import re
@@ -80,10 +79,10 @@ def convert_checkpoint_to_hf(
 
     model_config = TransformerConfig.from_dict(transformer_config_dict)
 
-    device = device or get_default_device()
+    validation_device = device or get_default_device()
 
     # Check if validation is being performed and flash attn is requested but cannot run.
-    if validate and device != torch.device("cuda"):
+    if validate and validation_device != torch.device("cuda"):
         if model_config.block.attention.name == AttentionType.fused:
             log.warning(
                 "Running conversion without cuda or flash attention on a model requiring flash attention, validation would fail so we are disabling it."
@@ -91,7 +90,10 @@ def convert_checkpoint_to_hf(
             validate = False
 
     if validate:
-        if model_config.block.attention.use_flash:
+        if (
+            model_config.block.attention.use_flash
+            and model_config.block.attention.name != AttentionType.fused
+        ):
             log.info(
                 "Flash attention can cause minor changes in outputs, switching to SDPA to stop validation from failing."
             )
@@ -151,8 +153,7 @@ def convert_checkpoint_to_hf(
             tokenizer_config.vocab_size,
             debug=debug,
             dtype=dtype,
-            device=device,
-            use_flex_attn=model_config.block.attention.use_flex_attn or False,
+            device=validation_device,
             sliding_window=validation_sliding_window,
         )
         log.info("Validation completed successful")
@@ -222,7 +223,6 @@ def validate_conversion(
     debug: bool = False,
     dtype: DType | None = None,
     device: torch.device | None = None,
-    use_flex_attn: bool = False,
     sliding_window: int | None = None,
 ):
     if torch.cuda.is_available():
@@ -266,12 +266,7 @@ def validate_conversion(
         olmo_core_state, hf_state = _register_debug_hooks(hf_model, model)
 
     log.info("Running OLMo core and HF models for validation...")
-    with contextlib.ExitStack() as stack:
-        stack.enter_context(torch.no_grad())
-        # Flex attention matches SDPA maths backend
-        if use_flex_attn:
-            stack.enter_context(torch.nn.attention.sdpa_kernel(torch.nn.attention.SDPBackend.MATH))
-
+    with torch.no_grad():
         hf_logits = hf_model(input_ids=input_ids).logits
 
     del hf_model
