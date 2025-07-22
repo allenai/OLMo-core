@@ -86,7 +86,6 @@ def convert_checkpoint_from_hf(
     *,
     hf_revision: str = "main",
     model_id: str | None = None,
-    max_sequence_length: int = -1,
     validate: bool = True,
     debug: bool = False,
     device: torch.device | None = None,
@@ -101,9 +100,6 @@ def convert_checkpoint_from_hf(
         transformer_config_dict: Dictionary form of OLMo core model config
         tokenizer_config_dict: Dictionary form of OLMo core tokenizer config
     """
-    if max_sequence_length <= 0:
-        raise ValueError(f"Missing or invalid sequence length: {max_sequence_length}")
-
     # Remove deprecated transformer config options
     if "compile" in transformer_config_dict:
         del transformer_config_dict["compile"]
@@ -469,13 +465,6 @@ def parse_args():
         help="Local or remote directory where the converted checkpoint should be saved.",
     )
     parser.add_argument(
-        "-s",
-        "--max-sequence-length",
-        type=int,
-        required=True,
-        help="Max sequence length supported by the model.",
-    )
-    parser.add_argument(
         "--model-id",
         help="Model id of the HF Hub repo corresponding to the model. Use to get model specific mappings in :mod:`olmo_core.nn.hf.convert`",
     )
@@ -531,7 +520,6 @@ def main():
         transformer_config_dict=transformer_config_dict,
         tokenizer_config_dict=tokenizer_config_dict,
         model_id=args.model_id,
-        max_sequence_length=args.max_sequence_length,
         validate=args.validate,
         debug=args.debug,
         device=args.device,
