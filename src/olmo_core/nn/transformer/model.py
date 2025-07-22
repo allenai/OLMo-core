@@ -1255,13 +1255,11 @@ class BLTDistillTransformer(BLTTransformer):
             **kwargs,
         )
 
-        # Get embeddings but pass-through for non-existent layers to allow easy
-        # pipeline parallel configuration.
-        if inputs_embeds is not None:
-            h_emb = inputs_embeds
-        else:
-            h_emb = self.teacher.embeddings(input_ids) if self.teacher.embeddings is not None else input_ids
+        h_emb = self.teacher.embeddings(input_ids)
 
+        if inputs_embeds is not None:
+            # not ideal, to support <bos> difference
+            h_emb[:, :inputs_embeds.shape[1]] = inputs_embeds
 
         if skip_blocks:
             return None, h_emb
@@ -1532,7 +1530,9 @@ class BLTDistillTransformer(BLTTransformer):
         teacher_logits: torch.Tensor
         teacher_logits, teacher_embeds = self._teacher_forward(  # type: ignore
             extra_kwargs["original_input_ids"],
-            inputs_embeds=h_patch,
+            # this could leak information since we take the true last embedding
+            # but not a problem for log likelihood eval since last token logits are unused
+            inputs_embeds=h_patch[:, 1:],
             labels=None, # we will compute loss ourselves
             return_logits=True,
             skip_blocks=False,

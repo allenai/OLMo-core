@@ -21,6 +21,12 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
     weka_buckets = []
     shared_filesystem = False
 
+    if "EMBEDDING_INIT_PATH" in os.environ:
+        env_vars.append(BeakerEnvVar(name="EMBEDDING_INIT_PATH", value=os.environ["EMBEDDING_INIT_PATH"]))
+
+    if "OLMO_CKPT_PATH" in os.environ:
+        env_vars.append(BeakerEnvVar(name="OLMO_CKPT_PATH", value=os.environ["OLMO_CKPT_PATH"]))
+
     if cluster != "ai2/augusta-google-1":
         env_vars.append(BeakerEnvVar(name="HAS_WEKA", value="1"))
         weka_buckets = [
