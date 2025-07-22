@@ -242,22 +242,27 @@ class TransformerGenerationModule(GenerationModule):
         while generated.shape[1] <= generation_config.max_length:
             token_start_time = time.perf_counter()
 
-            if generated.shape[1] == prompt_len:
-                # First forward:
-                # - compute all prompt logits if needed for scoring
-                # - prefill the KV cache
-                logits_to_keep = 0 if (return_logits or return_logprobs) else 1
-                prefill_kv_cache = True
-            else:
-                # Subsequent forwards:
-                # - only compute the last position's logits
-                # - use the kv cache from the previous forward passes for decoding
+            is_first_forward = generated.shape[1] == prompt_len
+            is_using_cache = generation_config.use_cache and not is_first_forward
+
+            if is_using_cache:
+                # KV cache: only pass the last token
+                input_ids_for_model = generated[:, -1:]
+                attention_mask_for_model = None
                 logits_to_keep = 1
                 prefill_kv_cache = False
+            else:
+                # No cache or first forward: pass full sequence
+                input_ids_for_model = generated
+                attention_mask_for_model = attention_mask
+                logits_to_keep = (
+                    0 if (is_first_forward and (return_logits or return_logprobs)) else 1
+                )
+                prefill_kv_cache = is_first_forward
 
-            logits = self.model_forward(
-                generated,
-                attention_mask=attention_mask,
+            logits = self.model_forward(  # (batch_size, generated.shape[1], self.model.vocab_size)
+                input_ids_for_model,
+                attention_mask=attention_mask_for_model,
                 logits_to_keep=logits_to_keep,
                 prefill_kv_cache=prefill_kv_cache,
             )
@@ -350,6 +355,16 @@ class TransformerGenerationModule(GenerationModule):
             if logprobs is not None:
                 # Slice out prompt logprobs to only keep completion logprobs
                 logprobs = logprobs[:, prompt_len - 1 :]
+
+        # Initialize/Reset the KV cache
+        for block in self.model.blocks.values():
+            if hasattr(block.attention, "reset_kv_cache"):
+                block.attention.reset_kv_cache(  # type: ignore
+                    use_cache=False,
+                    batch_size=batch_size,
+                    max_seq_len=generation_config.max_length,
+                    dtype=self.model.dtype,
+                )
 
         total_time = time.perf_counter() - start_time
         if log_timing:
