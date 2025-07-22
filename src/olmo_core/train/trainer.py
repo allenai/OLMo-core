@@ -53,6 +53,7 @@ from .callbacks import (
 )
 from .checkpoint import Checkpointer
 from .common import (
+    SEQ_LEN_METRIC,
     TRAIN_CE_LOSS_METRIC,
     TRAIN_PPL_METRIC,
     Duration,
@@ -1205,6 +1206,8 @@ class Trainer:
             ) is not None:
                 self.global_train_tokens_seen += global_num_tokens
 
+            self.record_metric(SEQ_LEN_METRIC, float(batch["input_ids"].shape[1]))
+        
             for callback in self._iter_callbacks():
                 callback.pre_step(batch)
 

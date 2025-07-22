@@ -1,3 +1,4 @@
+import logging
 import math
 from abc import abstractmethod
 from dataclasses import dataclass
@@ -6,14 +7,21 @@ from typing import Optional, Tuple
 import torch
 import torch.nn as nn
 
+from olmo_core.utils import log_once
+
 from ..config import Config, StrEnum
 from ..exceptions import OLMoConfigurationError
 from .buffer_cache import BufferCache
+
+log = logging.getLogger(__name__)
 
 __all__ = [
     "RoPEType",
     "RoPEConfig",
     "RoPEScalingConfig",
+    "ABFRoPEScalingConfig",
+    "LLama3RoPEScalingConfig",
+    "YaRNRoPEScalingConfig"
     "RotaryEmbeddingBase",
     "RotaryEmbedding",
     "FusedRotaryEmbedding",
@@ -40,23 +48,71 @@ class RoPEType(StrEnum):
     """
 
 
-@dataclass
 class RoPEScalingConfig(Config):
     """
-    Defines how to scale RoPE to longer sequence lengths.
+    Base class for RoPE scaling config.    
     """
 
-    factor: float = 32.0
+    attention_factor: float = 1.0
+
+    @abstractmethod
+    def compute_scaled_inv_freq(
+        self,
+        dim: int,
+        theta: int,
+        device: torch.device
+    ) -> tuple["torch.Tensor", float]: 
+        raise NotImplementedError
+    
+    @classmethod
+    def compute_inv_freqs(cls, theta, dim, device):
+        inv_freq = 1.0 / (
+        theta
+        ** (torch.arange(0, dim, 2, device=device, dtype=torch.float) / dim)
+        )
+        return inv_freq
+
+@dataclass
+class ABFRoPEScalingConfig(RoPEScalingConfig):
+    """
+    Defines how to scale RoPE to longer sequences with a change to RoPE base.
+    """
+
+    new_theta: int = 8_000_000
+
+    def compute_scaled_inv_freq(
+        self,
+        dim: int,
+        theta: int,
+        device: torch.device
+    ) -> tuple["torch.Tensor", float]:
+        
+        inv_freq = self.compute_inv_freqs(self.new_theta, dim, device)
+        return inv_freq, self.attention_factor
+
+
+@dataclass
+class LLama3RoPEScalingConfig(RoPEScalingConfig):
+    """
+    Defines how to scale RoPE to longer sequence lengths in the manner of Llama3.1.
+    """
+
+    factor: float = 8.0
     low_freq_factor: float = 1.0
     high_freq_factor: float = 4.0
     old_context_len: int = 8192
 
-    def scale_inv_freq(
+    def compute_scaled_inv_freq(
         self,
-        inv_freq: torch.Tensor,
-    ) -> torch.Tensor:
+        dim: int,
+        theta: int,
+        device: torch.device
+        ) -> tuple["torch.Tensor", float]:
+
         low_freq_wavelen = self.old_context_len / self.low_freq_factor
         high_freq_wavelen = self.old_context_len / self.high_freq_factor
+
+        inv_freq = self.compute_inv_freqs(theta, dim, device)
 
         wavelen = 2 * math.pi / inv_freq
         # wavelen < high_freq_wavelen: do nothing
@@ -68,7 +124,70 @@ class RoPEScalingConfig(Config):
         )
         smoothed_inv_freq = (1 - smooth_factor) * inv_freq / self.factor + smooth_factor * inv_freq
         is_medium_freq = ~(wavelen < high_freq_wavelen) * ~(wavelen > low_freq_wavelen)
-        return torch.where(is_medium_freq, smoothed_inv_freq, inv_freq)
+        return torch.where(is_medium_freq, smoothed_inv_freq, inv_freq), self.attention_factor
+
+
+@dataclass
+class YaRNRoPEScalingConfig(RoPEScalingConfig):
+    """
+    Defines how to scale RoPE using the YaRN method
+    [original paper](https://huggingface.co/papers/2309.00071)
+    """
+
+    factor: float = 8.0
+    beta_fast: int = 32
+    beta_slow: int = 1
+    original_max_position_embeddings: int = 8192
+    
+    def compute_scaled_inv_freq(
+        self,
+        theta: int,
+        device: torch.device,
+        dim: int
+    ) -> tuple["torch.Tensor", float]:
+
+
+        def get_mscale(scale, mscale=1):
+            if scale <= 1:
+                return 1.0
+            return 0.1 * mscale * math.log(scale) + 1.0
+
+
+        def find_correction_dim(num_rotations, dim, base, max_position_embeddings):
+            """Inverse dimension formula to find the dimension based on the number of rotations"""
+            return (dim * math.log(max_position_embeddings / (num_rotations * 2 * math.pi))) / (2 * math.log(base))
+
+        def find_correction_range(low_rot, high_rot, dim, base, max_position_embeddings):
+            """Find dimension range bounds based on rotations"""
+            low = math.floor(find_correction_dim(low_rot, dim, base, max_position_embeddings))
+            high = math.ceil(find_correction_dim(high_rot, dim, base, max_position_embeddings))
+            return max(low, 0), min(high, dim - 1)
+
+        def linear_ramp_factor(min, max, dim):
+            if min == max:
+                max += 0.001  # Prevent singularity
+            linear_func = (torch.arange(dim, dtype=torch.float32, device=device) - min) / (max - min)
+            ramp_func = torch.clamp(linear_func, 0, 1)
+            return ramp_func
+
+        attention_factor = get_mscale(self.factor)
+
+        # Note on variable naming: "interpolation" comes from the original technique, where we interpolate the position IDs
+        # to expand the possible context length. In other words, interpolation = apply scaling factor.
+        pos_freqs = theta ** (torch.arange(0, dim , 2, device=device) / dim)
+        inv_freq_extrapolation = 1.0 / pos_freqs
+        inv_freq_interpolation = 1.0 / (self.factor * pos_freqs)
+
+        low, high = find_correction_range(self.beta_fast, self.beta_slow, dim, theta, self.original_max_position_embeddings)
+
+        # Get n-dimensional rotational scaling corrected for extrapolation
+        inv_freq_extrapolation_factor = 1 - linear_ramp_factor(low, high, dim // 2)
+        inv_freq = (
+            inv_freq_interpolation * (1 - inv_freq_extrapolation_factor)
+            + inv_freq_extrapolation * inv_freq_extrapolation_factor
+        )
+
+        return inv_freq, attention_factor
 
 
 @dataclass
@@ -199,19 +318,25 @@ class RotaryEmbedding(RotaryEmbeddingBase):
             return pos_sin[:seq_len, :], pos_cos[:seq_len, :]
 
         with torch.autocast(device.type, enabled=False):
-            inv_freq = 1.0 / (
-                self.theta
-                ** (torch.arange(0, self.dim, 2, device=device, dtype=torch.float) / self.dim)
-            )
-            if self.scaling is not None:
-                inv_freq = self.scaling.scale_inv_freq(inv_freq)
+            if self.scaling is None:
+                inv_freq = 1.0 / (
+                    self.theta
+                    ** (torch.arange(0, self.dim, 2, device=device, dtype=torch.float) / self.dim)
+                )
+                attention_factor = 1.0
+            else:
+                inv_freq, attention_factor = self.scaling.compute_scaled_inv_freq(device=device, dim=self.dim, theta=self.theta)
             seq = torch.arange(seq_len, device=device, dtype=torch.float)
             freqs = torch.einsum("i , j -> i j", seq, inv_freq)
             positions = torch.cat((freqs, freqs), dim=-1)
             pos_sin, pos_cos = positions.sin(), positions.cos()
 
-        self._cache["rope_pos_sin"] = pos_sin
-        self._cache["rope_pos_cos"] = pos_cos
+        if attention_factor > 1.0:
+            self._cache["rope_pos_sin"] = pos_sin * attention_factor
+            self._cache["rope_pos_cos"] = pos_cos * attention_factor
+        else:
+            self._cache["rope_pos_sin"] = pos_sin
+            self._cache["rope_pos_cos"] = pos_cos
 
         return pos_sin, pos_cos
 
@@ -267,6 +392,37 @@ class RotaryEmbedding(RotaryEmbeddingBase):
             if pos_sin is None or pos_cos is None:
                 pos_sin, pos_cos = self._get_rotary_embedding(k_len, q_.device)
             pos_sin, pos_cos = pos_sin.type_as(q_), pos_cos.type_as(q_)
+
+            # ------------------------------------------------------------------
+            # Handle cases where the model has been tensor-parallel sharded along
+            # the hidden dimension *after* the RoPE module was instantiated. In
+            # that situation the local head dimension will be smaller than the
+            # original `head_size` used to build this module. The RoPE buffers
+            # (`pos_sin`, `pos_cos`) were created using the original dimension,
+            # so they may be larger than what we now need.  Rather than
+            # rebuilding the buffers on every rank we simply slice them to the
+            # required size.  This is safe because each rank holds a contiguous
+            # shard of the query/key vectors produced by the col/row-wise
+            # parallel linear projections.
+            # ------------------------------------------------------------------
+            head_dim_local = q_.shape[-1]
+            if pos_sin.size(-1) != head_dim_local or pos_cos.size(-1) != head_dim_local:
+                if pos_sin.size(-1) < head_dim_local or pos_cos.size(-1) < head_dim_local:
+                    raise RuntimeError(
+                        "RoPE buffer dimension smaller than tensor dimension: "
+                        f"{pos_sin.size(-1)} vs {head_dim_local}"
+                    )
+                else:
+                    # TODO: this is a hack to avoid rebuilding the buffers on every rank.
+                    log_once(
+                        log,
+                        f"Slicing RoPE buffers to match local head dimension after tensor parallel sharding: "
+                        f"pos_sin shape {pos_sin.shape} -> {pos_sin.shape[:-1] + (head_dim_local,)}, "
+                        f"pos_cos shape {pos_cos.shape} -> {pos_cos.shape[:-1] + (head_dim_local,)} "
+                        f"(seq_len, head_dim: {pos_sin.size(-1)} -> {head_dim_local})",
+                    )
+                    pos_sin = pos_sin[..., :head_dim_local]
+                    pos_cos = pos_cos[..., :head_dim_local]
 
             if head_first:
                 q_ = self._apply_rotary_pos_emb(
