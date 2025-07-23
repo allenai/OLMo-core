@@ -104,7 +104,7 @@ class ExperimentConfig(Config):
 
 
 def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
-    BYTE_EXPANSION_FACTOR = 6  # default (max) expansion factor
+    BYTE_EXPANSION_FACTOR = int(os.environ.get("BYTE_EXPANSION_FACTOR", "6"))  # default (max) expansion factor
     SAVE_FOLDER = os.environ.get("SAVE_FOLDER", f"/tmp/{run_name}")
 
     byte_tokenizer_config = ByteTokenizerConfig.blt()

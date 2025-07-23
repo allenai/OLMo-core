@@ -27,6 +27,7 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
         "TRAIN_MODE",
         "DATA_SOURCE",
         "SAVE_FOLDER",
+        "BYTE_EXPANSION_FACTOR",
     ]:
         if transparent_env_var in os.environ:
             env_vars.append(BeakerEnvVar(name=transparent_env_var, value=os.environ[transparent_env_var]))
