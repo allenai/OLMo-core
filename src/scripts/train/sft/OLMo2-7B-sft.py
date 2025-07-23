@@ -26,8 +26,8 @@ from olmo_core.internal.common import (
     get_root_dir,
     get_work_dir,
 )
-from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.io import list_directory
+from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import LinearWithWarmup, SkipStepAdamWConfig
@@ -107,10 +107,10 @@ class BatchSizeConfig:
 
         # Calculate rank batch size and grad accum steps
         cp_factor = self.cp_degree if self.cp_degree is not None else 1
-        rank_batch_size_tokens = self.global_batch_size_tokens // (self.dp_world_size * cp_factor)
+        rank_batch_size_tokens = self.global_batch_size_tokens // (self.dp_world_size)
 
-        # Ensure rank_batch_size_tokens doesn't exceed max_tokens_per_rank
-        if rank_batch_size_tokens > max_tokens_per_rank:
+        # Ensure rank_batch_size_tokens doesn't exceed max_tokens_per_rank (adjusted by the cp_factor)
+        if rank_batch_size_tokens > max_tokens_per_rank * cp_factor:
             # Need gradient accumulation
             self.grad_accum_steps = 1
             while rank_batch_size_tokens // self.grad_accum_steps > max_tokens_per_rank:
@@ -127,24 +127,19 @@ class BatchSizeConfig:
             self.grad_accum_steps = 1
 
         # Validate that rank_microbatch_size_tokens is divisible by sequence_length
-        # assert self.rank_microbatch_size_tokens % self.sequence_length == 0, (
-        #     "rank_microbatch_size_tokens must be divisible by sequence_length (got "
-        #     f"{self.rank_microbatch_size_tokens} and {self.sequence_length})"
-        # )
+        assert self.rank_microbatch_size_tokens % self.sequence_length == 0, (
+            "rank_microbatch_size_tokens must be divisible by sequence_length (got "
+            f"{self.rank_microbatch_size_tokens} and {self.sequence_length})"
+        )
         self.rank_microbatch_size_sequences = (
             self.rank_microbatch_size_tokens // self.sequence_length
         )
 
         # Final validation
-        total_tokens = (
-            self.rank_microbatch_size_tokens
-            * self.dp_world_size
-            * cp_factor
-            * self.grad_accum_steps
-        )
+        total_tokens = self.rank_microbatch_size_tokens * self.dp_world_size * self.grad_accum_steps
         assert self.global_batch_size_tokens == total_tokens, (
             "global_batch_size_tokens must equal "
-            "(rank_microbatch_size_tokens * dp_world_size * cp_degree * grad_accum_steps) (got "
+            "(rank_microbatch_size_tokens * dp_world_size * grad_accum_steps) (got "
             f"{self.global_batch_size_tokens} and {total_tokens})"
         )
 
@@ -155,7 +150,7 @@ def build_sft_dataset(
     sequence_length: int,
     dataset_path: Optional[str],
 ) -> NumpyDatasetConfig:
-    clean_path = dataset_path.rstrip('/')
+    clean_path = dataset_path.rstrip("/")
     if dataset_path.startswith("gs://"):
         contents = list_directory(dataset_path)
         # TODO: This does not work yet! GCS support is an active work in progress, nearly complete
@@ -452,18 +447,10 @@ Examples:
         help="The global batch size in tokens.",
         default=64 * DEFAULT_SEQUENCE_LENGTH,
     )
-    parser.add_argument(
-        "--model_name", help="The name of the model architecture to use."
-    )
-    parser.add_argument(
-        "--budget", help="The beaker budget to use."
-    )
-    parser.add_argument(
-        "--workspace", help="The workspace to run in."
-    )
-    parser.add_argument(
-        "--dataset_path", help="The path to the pre-tokenized SFT dataset."
-    )
+    parser.add_argument("--model_name", help="The name of the model architecture to use.")
+    parser.add_argument("--budget", help="The beaker budget to use.")
+    parser.add_argument("--workspace", help="The workspace to run in.")
+    parser.add_argument("--dataset_path", help="The path to the pre-tokenized SFT dataset.")
 
     # Parse known args to get positional arguments and cmd
     args, overrides = parser.parse_known_args()
