@@ -101,7 +101,7 @@ def parse_args() -> argparse.Namespace:
         "--batch-sizes",
         type=int,
         nargs="+",
-        default=[4, 16, 64, 256],
+        default=[256, 512, 1024],
         help="List of batch sizes to benchmark.",
     )
     parser.add_argument(
