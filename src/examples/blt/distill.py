@@ -105,6 +105,7 @@ class ExperimentConfig(Config):
 
 def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     BYTE_EXPANSION_FACTOR = 8  # default (max) expansion factor
+    SAVE_FOLDER = os.environ.get("SAVE_FOLDER", f"/tmp/{run_name}")
 
     byte_tokenizer_config = ByteTokenizerConfig.blt()
     subword_tokenizer_config = TokenizerConfig.dolma2()
@@ -259,9 +260,9 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
 
     trainer_config = (
         TrainerConfig(
-            save_folder=f"/tmp/{run_name}",
+            save_folder=SAVE_FOLDER,
             save_overwrite=True,
-            load_strategy=LoadStrategy.never,
+            load_strategy=LoadStrategy.if_available,
             metrics_collect_interval=5,
             cancel_check_interval=5,
             max_duration=Duration.steps(10000),
@@ -272,7 +273,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             CheckpointerCallback(
                 pre_train_checkpoint=False,
                 save_interval=10000,
-                ephemeral_save_interval=1000,
+                ephemeral_save_interval=500,
                 save_async=True,
             ),
         )
