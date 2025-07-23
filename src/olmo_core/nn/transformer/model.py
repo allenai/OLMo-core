@@ -1348,10 +1348,12 @@ class BLTDistillTransformer(BLTTransformer):
         input_ids: torch.Tensor,
         *,
         labels: Optional[torch.Tensor] = None,
+        original_labels: Optional[torch.Tensor] = None,
         ignore_index: int = -100,
         loss_reduction: Literal["mean", "sum", "none"] = "mean",
         z_loss_multiplier: Optional[float] = None,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        patch_loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         return_logits: Optional[bool] = None,
         blt_config: Optional[BLTConfig] = None,
         **kwargs,
@@ -1390,6 +1392,10 @@ class BLTDistillTransformer(BLTTransformer):
             teacher_embeds = None
             last_hidden_state = None
             teacher_main_path_logprobs = None
+
+        # loss masks
+        byte_mask = labels != ignore_index
+        patch_mask = original_labels != ignore_index
 
         h_byte, h_patch = self.local_encoder(input_ids, **local_encoder_kwargs)
         boundary_preds = self.boundary_predictor(h_byte).squeeze(-1) if self.boundary_predictor is not None else None
@@ -1435,9 +1441,9 @@ class BLTDistillTransformer(BLTTransformer):
             raise ValueError("`blt_config` must be provided for distillation")
 
         if blt_config.rep_compare_fn == "l2":
-            rep_compare_fn = lambda x, y: torch.linalg.norm(x - y, dim=-1).mean() / math.sqrt(x.shape[-1])
+            rep_compare_fn = lambda x, y: torch.linalg.norm(x - y, dim=-1) / math.sqrt(x.shape[-1])
         elif blt_config.rep_compare_fn == "cos_dist":
-            rep_compare_fn = lambda x, y: (1 - F.cosine_similarity(x, y, dim=-1)).mean()
+            rep_compare_fn = lambda x, y: (1 - F.cosine_similarity(x, y, dim=-1))
         else:
             raise ValueError(f"Unknown distillation rep_compare_fn '{blt_config.rep_compare_fn}'")
 
@@ -1445,16 +1451,17 @@ class BLTDistillTransformer(BLTTransformer):
             assert teacher_embeds is not None
 
             # the offset is OLMo specific: we use a <bos> token, but OLMo doesn't so shift by one.
-            local_encoder_loss = rep_compare_fn(
+            elementwise_local_encoder_loss = rep_compare_fn(
                 h_patch[:, 1:],
                 teacher_embeds[:, :-1],
             )
-            metrics["blt/local_encoder_loss"] = local_encoder_loss
-            metrics["blt/local_encoder_cos_sim"] = F.cosine_similarity(
+            local_encoder_loss = (elementwise_local_encoder_loss * patch_mask[:, :-1].float()).mean()
+            metrics["blt/local_encoder_loss"] = local_encoder_loss / patch_mask[:, :-1].float().mean()
+            metrics["blt/local_encoder_cos_sim"] = (F.cosine_similarity(
                 h_patch[:, 1:].float(),
                 teacher_embeds[:, :-1].float(),
                 dim=-1,
-            ).mean()
+            ) * patch_mask[:, :-1].float()).mean() / patch_mask[:, :-1].float().mean()
         else:
             local_encoder_loss = torch.nan
 
@@ -1491,16 +1498,15 @@ class BLTDistillTransformer(BLTTransformer):
                 boundary_labels = torch.zeros_like(boundary_preds, device=boundary_preds.device, dtype=boundary_preds.dtype)
                 boundary_labels.scatter_(1, patch_end_indices, 1.0)
 
-                boundary_mask = labels != ignore_index
                 elementwise_boundary_loss = F.binary_cross_entropy_with_logits(
                     boundary_preds.float(),
                     boundary_labels.float(),
                     reduction="none",
                 )
-                boundary_loss = (elementwise_boundary_loss * boundary_mask).mean()
-                boundary_acc = (((boundary_preds > 0) == (boundary_labels > 0)) * boundary_mask).float().mean() / boundary_mask.float().mean()
-                metrics["blt/boundary_loss"] = boundary_loss
-                metrics["blt/boundary_acc"] = boundary_acc
+                boundary_loss = (elementwise_boundary_loss * byte_mask).mean()
+                boundary_acc = (((boundary_preds > 0) == (boundary_labels > 0)) * byte_mask).float().mean()
+                metrics["blt/boundary_loss"] = boundary_loss / byte_mask.float().mean()
+                metrics["blt/boundary_acc"] = boundary_acc / byte_mask.float().mean()
             else:
                 boundary_loss = torch.nan
 
@@ -1526,9 +1532,9 @@ class BLTDistillTransformer(BLTTransformer):
             else:
                 raise ValueError(f"Unknown distillation div_fn '{blt_config.div_fn}'")
 
-            local_decoder_loss = div_fn(y_true, y_hat).mean()
-            metrics["blt/local_decoder_loss"] = local_decoder_loss
-            metrics["blt/local_decoder_mae"] = torch.abs(y_true - y_hat).mean()
+            local_decoder_loss = (div_fn(y_true, y_hat) * patch_mask[:, 1:-1]).mean()
+            metrics["blt/local_decoder_loss"] = local_decoder_loss / patch_mask[:, 1:-1].float().mean()
+            metrics["blt/local_decoder_mae"] = (torch.abs(y_true - y_hat) * patch_mask[:, 1:-1]).mean() / patch_mask[:, 1:-1].float().mean()
         else:
             local_decoder_loss = torch.nan
             boundary_loss = torch.nan
@@ -1541,6 +1547,8 @@ class BLTDistillTransformer(BLTTransformer):
 
         ce_loss = self._finalize_loss(ce_loss, loss_div_factor=loss_div_factor)
         boundary_loss = self._finalize_loss(boundary_loss, loss_div_factor=loss_div_factor)
+        local_encoder_loss = self._finalize_loss(local_encoder_loss, loss_div_factor=patch_loss_div_factor)
+        local_decoder_loss = self._finalize_loss(local_decoder_loss, loss_div_factor=patch_loss_div_factor)
 
         loss = 0.0
         for loss_name, loss_weight in zip(blt_config.losses, blt_config.loss_weights):

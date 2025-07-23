@@ -10,6 +10,7 @@ from olmo_core.data.utils import get_labels, split_batch
 from olmo_core.utils import move_to_device
 from olmo_core.optim import OptimConfig, SkipStepOptimizer
 from olmo_core.nn.blt.config import BLTConfig
+from olmo_core.nn.blt.utils import get_original_labels
 
 from ...common import ReduceType
 from .train_module import TransformerTrainModule
@@ -45,7 +46,6 @@ class TransformerBLTTrainModule(TransformerTrainModule):
         self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any]]:
         batch["blt_config"] = self.blt_config
-        batch["n_content_bytes"] = (batch["input_ids"] != self.tokenizer.pad_token_id).sum(1)
 
         # this has had the byte collator + ByteFSLDataset applied, no need to patch
         if "patch_lens" in batch:
@@ -139,6 +139,9 @@ class TransformerBLTTrainModule(TransformerTrainModule):
         if "labels" not in batch:
             batch["labels"] = get_labels(batch, label_ignore_index=self.label_ignore_index)
 
+        if "original_labels" not in batch:
+            batch["original_labels"] = get_original_labels(batch, label_ignore_index=self.label_ignore_index)
+
         # Record how many instances are going to be skipped (masked out).
         if (instance_mask := batch.get("instance_mask")) is not None and not dry_run:
             self.record_metric(
@@ -148,6 +151,9 @@ class TransformerBLTTrainModule(TransformerTrainModule):
         # Calculate how many tokens are going to be used in the loss.
         batch_num_tokens_for_loss = move_to_device(
             (batch["labels"] != self.label_ignore_index).sum(), self.device
+        )
+        batch_num_patches_for_loss = move_to_device(
+            (batch["original_labels"] != self.label_ignore_index).sum(), self.device
         )
 
         # Split into micro-batches.
@@ -173,12 +179,15 @@ class TransformerBLTTrainModule(TransformerTrainModule):
                     loss_reduction="sum",
                     z_loss_multiplier=self.z_loss_multiplier,
                     loss_div_factor=batch_num_tokens_for_loss,
+                    patch_loss_div_factor=batch_num_patches_for_loss,
                     return_logits=False,
                     **model_kwargs,
                 )
 
-                metrics["mean_byte_len"] = model_kwargs["n_content_bytes"].to(torch.float32).mean()  # type: ignore
-                metrics["max_byte_len"] = model_kwargs["n_content_bytes"].max()  # type: ignore
+                metrics["mean_byte_len"] = (labels != self.label_ignore_index).float().mean()  # type: ignore
+                metrics["max_byte_len"] = (labels != self.label_ignore_index).float().max()  # type: ignore
+                metrics["mean_patch_len"] = (model_kwargs["original_labels"] != self.label_ignore_index).float().mean()  # type: ignore
+                metrics["max_patch_len"] = (model_kwargs["original_labels"] != self.label_ignore_index).float().max()  # type: ignore
 
                 for key, value in metrics.items():  # type: ignore
                     batch_metrics[key] = batch_metrics.get(key, 0.0) + get_local_tensor(value.detach())

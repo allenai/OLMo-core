@@ -1,4 +1,7 @@
+from typing import Dict, Any, List
+
 import torch
+from torch.nn import functional as F
 from torch.nn.attention.flex_attention import create_block_mask
 
 
@@ -144,3 +147,19 @@ def cross_attn_mask(
             device=patch_ids.device,
         )
         return block_mask
+
+def get_original_labels(batch: Dict[str, Any], label_ignore_index: int = -100) -> torch.Tensor:
+    max_byte_len = batch["input_ids"].shape[-1]
+
+    # Labels are just input IDs shifted to the left (first item is ignored).
+    labels, attention_mask, patch_lens = (
+        batch["original_input_ids"].clone(),
+        batch.get("original_attention_mask"),
+        batch.get("patch_lens"),
+    )
+    if attention_mask is not None:
+        labels.masked_fill_(attention_mask == 0.0, label_ignore_index)
+    if patch_lens is not None:
+        labels.masked_fill_(~patch_lens.cumsum(-1) > max_byte_len, value=label_ignore_index)
+    # Shift and pad.
+    return F.pad(labels[..., 1:], (0, 1, 0, 0), value=label_ignore_index)

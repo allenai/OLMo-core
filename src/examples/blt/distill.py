@@ -104,7 +104,7 @@ class ExperimentConfig(Config):
 
 
 def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
-    BYTE_EXPANSION_FACTOR = 8  # default (max) expansion factor
+    BYTE_EXPANSION_FACTOR = 6  # default (max) expansion factor
     SAVE_FOLDER = os.environ.get("SAVE_FOLDER", f"/tmp/{run_name}")
 
     byte_tokenizer_config = ByteTokenizerConfig.blt()
@@ -223,7 +223,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             skip_blocks=TRAIN_MODE == "local_encoder_only",
             skip_teacher=False,
             use_oracle_patch_reps=TRAIN_MODE == "local_decoder_only",
-        ),  
+        ),
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
         ),
