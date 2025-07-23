@@ -19,6 +19,7 @@ from torch.distributed import DeviceMesh
 from torch.distributed.fsdp import FSDPModule, MixedPrecisionPolicy, fully_shard
 from torch.distributed.tensor import Replicate, Shard
 from torch.distributed.tensor.parallel import RowwiseParallel, parallelize_module
+from torch.nn.attention.flex_attention import BlockMask
 
 from olmo_core.data.utils import get_cumulative_document_lengths
 from olmo_core.distributed.parallel import get_pp_mesh
@@ -33,6 +34,7 @@ from ..attention import (
     FusedAttention,
     RingAttentionLoadBalancer,
     RingAttentionLoadBalancerType,
+    get_flex_attn_causal_block_mask,
 )
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
@@ -206,6 +208,36 @@ class Transformer(nn.Module):
                 return rope.get_buffers(seq_len, device)
         return None
 
+    def _get_flex_attn_block_masks(
+        self,
+        seq_len: int,
+        device: Optional[torch.device] = None,
+        doc_lens: Optional[torch.Tensor] = None,
+    ) -> List[Optional[BlockMask]]:
+        if device is None:
+            device = self.device
+
+        block_masks_by_window_size = {}
+        block_masks = []
+        for block in self.blocks.values():
+            block = cast(TransformerBlock, block)
+            att = cast(Union[Attention, FusedAttention], block.attention)
+
+            block_mask = None
+            if att.use_flex_attn:
+                # Reuse block masks across layers with the same window size
+                window_size = getattr(att, "window_size", None)
+                if window_size not in block_masks_by_window_size:
+                    block_masks_by_window_size[window_size] = get_flex_attn_causal_block_mask(
+                        seq_len, device, window_size, doc_lens
+                    )
+
+                block_mask = block_masks_by_window_size[window_size]
+
+            block_masks.append(block_mask)
+
+        return block_masks
+
     @torch.no_grad()
     def init_weights(
         self,
@@ -333,6 +365,10 @@ class Transformer(nn.Module):
             max_doc_len = max(max_doc_lens)
             cu_doc_lens = get_cumulative_document_lengths(doc_lens)
 
+        # Prepare block mask
+        block_masks = self._get_flex_attn_block_masks(S, self.device, doc_lens)
+        block_kwargs["block_masks"] = block_masks
+
         # Shard inputs and RoPE buffers on sequence dimension if using context parallelism.
         if (cp_load_balancer := self._cp_load_balancer) is not None:
             inputs = [input_ids]
@@ -444,12 +480,19 @@ class Transformer(nn.Module):
         # pipeline parallel configuration.
         h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
 
+        block_mask_by_layer = block_kwargs.pop("block_masks", [None] * self.n_layers)
+
         # Run each block.
-        for block in self.blocks.values():
+        for key, block in self.blocks.items():
+            block_mask = block_mask_by_layer[int(key)]
+
             # Mark sizes as dynamic for torch.compile().
             if self.compile_enabled:
                 mark_dynamic(h, (0, 1), strict=False)
-            h = block(h, **block_kwargs)
+                if block_mask is not None:
+                    _mark_block_mask_dynamic(block_mask)
+
+            h = block(h, block_mask=block_mask, **block_kwargs)
 
         # Get final logits but again pass-through in case of pipeline parallelism.
         if self.lm_head is not None:
@@ -1000,3 +1043,20 @@ def _unhide_cpu_inputs_from_torch(m, args, kwargs) -> Optional[Tuple[Any, Dict[s
     if (doc_lens := kwargs.get("doc_lens")) is not None:
         kwargs["doc_lens"] = unhide_from_torch(doc_lens)
     return (args, kwargs)
+
+
+def _mark_block_mask_dynamic(block_mask: BlockMask):
+    mark_dynamic(block_mask.kv_num_blocks, 2)
+    mark_dynamic(block_mask.kv_indices, (2, 3))
+    if block_mask.full_kv_num_blocks is not None:
+        mark_dynamic(block_mask.full_kv_num_blocks, 2)
+    if block_mask.full_kv_indices is not None:
+        mark_dynamic(block_mask.full_kv_indices, (2, 3))
+    if block_mask.q_num_blocks is not None:
+        mark_dynamic(block_mask.q_num_blocks, 2)
+    if block_mask.q_indices is not None:
+        mark_dynamic(block_mask.q_indices, (2, 3))
+    if block_mask.full_q_num_blocks is not None:
+        mark_dynamic(block_mask.full_q_num_blocks, 2)
+    if block_mask.full_q_indices is not None:
+        mark_dynamic(block_mask.full_q_indices, (2, 3))
