@@ -44,7 +44,7 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
     beaker_username = get_beaker_username()
 
     return BeakerLaunchConfig(
-        name=f"blt-distill-{generate_uuid()[:8]}",
+        name=f"blt-distill-{run_name}-{generate_uuid()[:4]}",
         budget="ai2/oe-training",
         cmd=["src/examples/blt/distill.py", run_name, *overrides],
         task_name="train",
