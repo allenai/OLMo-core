@@ -1569,7 +1569,7 @@ class BLTDistillTransformer(BLTTransformer):
         h_byte, h_patch = self.local_encoder(input_ids, **local_encoder_kwargs)
 
         teacher_logits: torch.Tensor
-        teacher_logits, teacher_embeds = self._teacher_forward(  # type: ignore
+        teacher_logits, _, teacher_embeds = self._teacher_forward(  # type: ignore
             extra_kwargs["original_input_ids"],
             # this could leak information since we take the true last embedding
             # but not a problem for log likelihood eval since last token logits are unused
