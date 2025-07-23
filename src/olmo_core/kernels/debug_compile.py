@@ -49,26 +49,28 @@ torch.cuda.synchronize(device)
 
 
 # ----------------------------------------------------------------------
-# 5.  Find the Triton kernel and print it
+# 5.  Find the Triton kernel and FX graph and print it
 # ----------------------------------------------------------------------
-def find_triton_kernel(trace_root: Path):
-    """
-    Search `trace_root/**/output_code.py` for the first '@triton.jit' kernel.
-    Returns the path and the kernel's source code as a string.
-    """
-    for py_file in trace_root.glob("**/output_code.py"):
-        txt = py_file.read_text()
-        if "@triton.jit" in txt:  # Triton kernels are annotated this way
-            return py_file, txt
-    return None, None
+def first_file(root: Path, pattern: str):
+    for f in root.glob(pattern):
+        return f
+    return None
 
 
-kernel_path, kernel_src = find_triton_kernel(TRACE_DIR)
+kernel_file = first_file(TRACE_DIR, "**/output_code.py")
+fx_graph_file = first_file(TRACE_DIR, "**/fx_graph_transformed.py") or first_file(
+    TRACE_DIR, "**/fx_graph_runnable.py"
+)
 
-if kernel_src is None:
-    raise RuntimeError(
-        "No Triton kernel found – did the graph land on CPU or was Triton unavailable?"
-    )
+if kernel_file is None:
+    raise RuntimeError("No Triton kernel found – compilation may have fallen back to CPU.")
 
-print(f"\n--- Triton kernel found in: {kernel_path} ---\n")
-print(kernel_src)
+
+print(f"\n=== Triton kernel ({kernel_file}) ===\n")
+print(kernel_file.read_text())
+
+if fx_graph_file:
+    print(f"\n=== FX graph ({fx_graph_file}) ===\n")
+    print(fx_graph_file.read_text())
+else:
+    print("\n(No FX graph file found!)")
