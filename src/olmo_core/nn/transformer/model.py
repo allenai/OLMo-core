@@ -1558,7 +1558,10 @@ class BLTDistillTransformer(BLTTransformer):
         # NOTE: loss_div_factor is at *byte sequence level*.
         # We assume the sequence is full on the patch level (so no need for a div factor).
         if loss_div_factor is not None:
-            loss_div_factor = loss_div_factor / input_ids.numel()
+            loss_div_factor = loss_div_factor / (h_byte.shape[0] * h_byte.shape[1])
+        
+        if patch_loss_div_factor is not None:
+            patch_loss_div_factor = patch_loss_div_factor / (h_patch.shape[0] * h_patch.shape[1])
 
         ce_loss = self._finalize_loss(ce_loss, loss_div_factor=loss_div_factor)
         boundary_loss = self._finalize_loss(boundary_loss, loss_div_factor=loss_div_factor)
