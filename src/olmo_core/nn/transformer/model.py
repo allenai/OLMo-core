@@ -1223,9 +1223,6 @@ class BLTTransformer(Transformer):
             **local_decoder_kwargs,
         )
 
-        # not used here atm, used in BLTDistillTransformer
-        # boundary_preds = self.boundary_predictor(h_out).squeeze(-1) if self.boundary_predictor is not None else None
-
         if labels is not None:
             lm_head_kwargs["labels"] = labels
         return self.lm_head(h_out, **lm_head_kwargs)
@@ -1591,6 +1588,30 @@ class BLTDistillTransformer(BLTTransformer):
         )
 
         return output, metrics
+
+    def student_forward(
+        self,
+        input_ids: torch.Tensor,
+        *,
+        labels: Optional[torch.Tensor] = None,
+        ignore_index: int = -100,
+        loss_reduction: Literal["mean", "sum", "none"] = "mean",
+        z_loss_multiplier: Optional[float] = None,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        return_logits: Optional[bool] = None,
+        **kwargs,
+    ):
+        output = super().forward(
+            input_ids,
+            labels=labels,
+            ignore_index=ignore_index,
+            loss_reduction=loss_reduction,
+            z_loss_multiplier=z_loss_multiplier,
+            loss_div_factor=loss_div_factor,
+            return_logits=return_logits,
+            **kwargs,
+        )
+        return output, {}
 
     def original_head_forward(
         self,

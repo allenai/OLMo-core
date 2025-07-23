@@ -304,12 +304,13 @@ class TransformerBLTTrainModule(TransformerTrainModule):
             elif eval_mode is not None:
                 raise ValueError(f"Unknown eval_mode: {eval_mode}")
             else:
-                out, _ = self.model_forward(  # type: ignore
-                    input_ids,
-                    labels=labels,
-                    ignore_index=self.label_ignore_index,
-                    loss_reduction="none",
-                    return_logits=True,
-                    **model_kwargs,
-                )
+                with self._model_forward_context():
+                    out, _ = self.model.student_forward(  # type: ignore
+                        input_ids,
+                        labels=labels,
+                        ignore_index=self.label_ignore_index,
+                        loss_reduction="none",
+                        return_logits=True,
+                        **model_kwargs,
+                    )
             return out

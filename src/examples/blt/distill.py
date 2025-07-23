@@ -104,6 +104,8 @@ class ExperimentConfig(Config):
 
 
 def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
+    global NUM_WORKERS, GLOBAL_BATCH_SIZE, LOCAL_BATCH_SIZE
+
     BYTE_EXPANSION_FACTOR = int(os.environ.get("BYTE_EXPANSION_FACTOR", "6"))  # default (max) expansion factor
     SAVE_FOLDER = os.environ.get("SAVE_FOLDER", f"/tmp/{run_name}")
 
@@ -111,6 +113,9 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     subword_tokenizer_config = TokenizerConfig.dolma2()
 
     if QUICK_DEBUG:
+        NUM_WORKERS = 0
+        GLOBAL_BATCH_SIZE = 4
+        LOCAL_BATCH_SIZE = 4
         teacher_model_config = TransformerConfig.olmo2_190M(
             vocab_size=subword_tokenizer_config.padded_vocab_size()
         )
@@ -206,10 +211,13 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         losses = ["local_encoder"]
         loss_weights = [1.0]
     elif TRAIN_MODE == "local_decoder_only":
-        losses = ["local_decoder"]
+        losses = ["local_decoder","boundary"]
         loss_weights = [1.0]
+    elif TRAIN_MODE == "full_stage_1":
+        losses = ["local_encoder", "local_decoder", "boundary"]
+        loss_weights = [1.0, 1.0, 1.0]
     else:
-        raise ValueError(f"Unknown TRAIN_MODE: {TRAIN_MODE}. Must be one of 'local_encoder_only', 'local_decoder_only'.")
+        raise ValueError(f"Unknown TRAIN_MODE: {TRAIN_MODE}. Must be one of 'local_encoder_only', 'local_decoder_only', 'full_stage_1'.")
 
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=LOCAL_BATCH_SIZE * SEQUENCE_LENGTH * BYTE_EXPANSION_FACTOR,
@@ -248,15 +256,23 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             "mmlu_social_sciences_test_rc_5shot",
             "mmlu_other_test_rc_5shot",
         ]
-    if TRAIN_MODE == "local_encoder_only":
-        eval_names = [f"downstream_orig_head" for _ in eval_tasks]
-        eval_batch_kwargs = [{"eval_mode": "orig_head"} for _ in eval_tasks]
-    elif TRAIN_MODE == "local_decoder_only":
-        eval_names = [f"downstream_orig_trunk" for _ in eval_tasks]
-        eval_batch_kwargs = [{"eval_mode": "orig_trunk"} for _ in eval_tasks]
-    else:
-        eval_names = [f"downstream" for _ in eval_tasks]
-        eval_batch_kwargs = [{} for _ in eval_tasks]
+
+    all_eval_tasks = []
+    all_eval_names = []
+    all_eval_batch_kwargs = []
+
+    if TRAIN_MODE in {"local_encoder_only", "full_stage_1"}:
+        all_eval_tasks += eval_tasks
+        all_eval_names += [f"downstream_orig_head" for _ in eval_tasks]
+        all_eval_batch_kwargs += [{"eval_mode": "orig_head"} for _ in eval_tasks]
+    if TRAIN_MODE in {"local_decoder_only", "full_stage_1"}:
+        all_eval_tasks += eval_tasks
+        all_eval_names += [f"downstream_orig_trunk" for _ in eval_tasks]
+        all_eval_batch_kwargs += [{"eval_mode": "orig_trunk"} for _ in eval_tasks]
+    if TRAIN_MODE == "full_stage_1":
+        all_eval_tasks += eval_tasks
+        all_eval_names += [f"downstream" for _ in eval_tasks]
+        all_eval_batch_kwargs += [{} for _ in eval_tasks]
 
     trainer_config = (
         TrainerConfig(
@@ -293,9 +309,9 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         .with_callback(
             "downstream_evaluator",
             DownstreamEvaluatorCallbackConfig(
-                tasks=eval_tasks,
-                names=eval_names,
-                batch_kwargs=eval_batch_kwargs,
+                tasks=all_eval_tasks,
+                names=all_eval_names,
+                batch_kwargs=all_eval_batch_kwargs,
                 tokenizer=byte_tokenizer_config,
                 eval_interval=2500,
                 eval_on_startup=False,
@@ -356,6 +372,7 @@ def main(run_name: str, overrides: List[str]):
         model.fix_init(EMBEDDING_INIT_PATH)  # type: ignore
 
     # TODO(benjaminm): this is not a nice place?
+    register_fsdp_forward_method(model, "student_forward")
     register_fsdp_forward_method(model, "original_head_forward")
     register_fsdp_forward_method(model, "original_trunk_forward")
 
