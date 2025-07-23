@@ -8,7 +8,6 @@ import torch
 from rich import print
 
 from olmo_core.config import DType
-from olmo_core.generate.config import GenerationConfig, TransformerGenerationModuleConfig
 from olmo_core.generate.generation import TransformerGenerationModule
 from olmo_core.utils import get_default_device, seed_all
 
