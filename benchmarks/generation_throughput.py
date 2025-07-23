@@ -172,6 +172,8 @@ def main():
         device = torch.device(args.device)
         if device.type == "cuda":
             assert torch.cuda.is_available(), "CUDA is not available"
+            torch.cuda.init()
+            _ = torch.empty(0, device="cuda")
             assert torch.cuda.is_initialized(), "CUDA is not initialized"
     else:
         device = get_default_device()
