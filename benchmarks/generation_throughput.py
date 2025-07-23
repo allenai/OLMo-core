@@ -182,6 +182,7 @@ def main():
     # Load generation module from checkpoint
     log.info("Loading model from checkpoint ...")
     print("[bold green]Loading model from checkpoint ...[/]")
+    start_time = time.perf_counter()
     generation_module = TransformerGenerationModule.from_checkpoint(
         checkpoint_dir=args.checkpoint_dir,
         work_dir=Path("/tmp/olmo_generation_bench"),
@@ -189,7 +190,8 @@ def main():
         device=device,
         compile_model=args.compile,
     )
-    print("[bold green]Model loaded successfully![/]")
+    elapsed = time.perf_counter() - start_time
+    print(f"[bold green]Model loaded successfully in {elapsed:.2f}s![/]")
 
     # Print available memory
     if device.type == "cuda":
