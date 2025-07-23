@@ -107,7 +107,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--total-sequences",
         type=int,
-        default=1024,
+        default=128,
         help="Total number of sequences to generate.",
     )
     parser.add_argument(
@@ -170,6 +170,9 @@ def main():
     # Resolve device
     if args.device is not None:
         device = torch.device(args.device)
+        if device.type == "cuda":
+            assert torch.cuda.is_available(), "CUDA is not available"
+            assert torch.cuda.is_initialized(), "CUDA is not initialized"
     else:
         device = get_default_device()
     log.info(f"Using device: {device}")
@@ -186,6 +189,17 @@ def main():
     )
     print("[bold green]Model loaded successfully![/]")
 
+    # Print available memory
+    if device.type == "cuda":
+        memory_allocated = torch.cuda.memory_allocated(device) / 1024**3
+        memory_reserved = torch.cuda.memory_reserved(device) / 1024**3
+        memory_total = torch.cuda.get_device_properties(device).total_memory / 1024**3
+        memory_available = memory_total - memory_reserved
+        print(
+            f"[cyan]GPU Memory:[/] {memory_allocated:.1f}GB allocated, {memory_available:.1f}GB available, {memory_total:.1f}GB total"
+        )
+
+    print("[bold green]Running benchmark...[/]")
     results: List[str] = []
     for bs in args.batch_sizes:
         throughput = measure_throughput(
