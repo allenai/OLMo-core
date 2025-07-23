@@ -76,6 +76,7 @@ class TransformerGenerationModule(GenerationModule):
         compile_model: bool = False,
         float8_config: Optional[Float8Config] = None,
         dp_config: Optional[TransformerDataParallelConfig] = None,
+        autocast_precision: Optional[torch.dtype] = None,
         device: Optional[torch.device] = None,
         state_dict_load_opts: Optional[dist_cp_sd.StateDictOptions] = None,
         state_dict_save_opts: Optional[dist_cp_sd.StateDictOptions] = None,
@@ -104,6 +105,7 @@ class TransformerGenerationModule(GenerationModule):
         )
 
         self._dp_config = dp_config
+        self.autocast_precision = autocast_precision
         self.state_dict_save_opts = state_dict_save_opts or dist_cp_sd.StateDictOptions(strict=True)
         self.state_dict_load_opts = state_dict_load_opts or dist_cp_sd.StateDictOptions(strict=True)
         self.load_key_mapping = load_key_mapping
@@ -129,11 +131,10 @@ class TransformerGenerationModule(GenerationModule):
 
     @contextlib.contextmanager
     def _model_forward_context(self) -> Generator[None, None, None]:
-        yield
-        # with contextlib.ExitStack() as stack:
-        #     if self.autocast_precision is not None:
-        #         stack.enter_context(torch.autocast(self.device.type, dtype=self.autocast_precision))
-        #     yield
+        with contextlib.ExitStack() as stack:
+            if self.autocast_precision is not None:
+                stack.enter_context(torch.autocast(self.device.type, dtype=self.autocast_precision))
+            yield
 
     def model_forward(
         self,
@@ -165,7 +166,7 @@ class TransformerGenerationModule(GenerationModule):
             )
             return logits
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def generate_batch(
         self,
         input_ids: torch.Tensor,
@@ -234,7 +235,7 @@ class TransformerGenerationModule(GenerationModule):
                     use_cache=generation_config.use_cache,
                     batch_size=batch_size,
                     max_seq_len=generation_config.max_length,
-                    dtype=self.model.dtype,
+                    dtype=self.autocast_precision,
                 )
 
         pbar = tqdm(desc="Generating tokens", disable=not log_timing)
@@ -363,7 +364,7 @@ class TransformerGenerationModule(GenerationModule):
                     use_cache=False,
                     batch_size=batch_size,
                     max_seq_len=generation_config.max_length,
-                    dtype=self.model.dtype,
+                    dtype=self.autocast_precision,
                 )
 
         total_time = time.perf_counter() - start_time

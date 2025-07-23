@@ -90,6 +90,10 @@ class TransformerGenerationModuleConfig(Config):
 
     # Other settings.
     dtype: Optional[DType] = None
+    """The dtype to build the model in."""
+
+    autocast_precision: Optional[torch.dtype] = None
+    """The precision to autocast to during generation."""
 
     def build(
         self,
@@ -117,6 +121,8 @@ class TransformerGenerationModuleConfig(Config):
         config_dict = self.as_dict(exclude_none=True, recurse=False)
         if (dtype := config_dict.pop("dtype", None)) is not None:
             dtype = DType(dtype)
+        if (autocast_precision := config_dict.pop("autocast_precision", None)) is not None:
+            config_dict["autocast_precision"] = DType(autocast_precision).as_pt()
         if (state_dict_save_opts := config_dict.pop("state_dict_save_opts", None)) is not None:
             config_dict["state_dict_save_opts"] = dist_cp_sd.StateDictOptions(
                 **state_dict_save_opts
