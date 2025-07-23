@@ -118,12 +118,12 @@ class TransformerTrainModule(TrainModule):
     ):
         super().__init__()
 
-        # Validate some options.
-        if rank_microbatch_size % max_sequence_length != 0:
-            raise OLMoConfigurationError(
-                f"'rank_microbatch_size' ({rank_microbatch_size:,d} tokens) must be divisible by "
-                f"'max_sequence_length' ({max_sequence_length:,d} tokens)"
-            )
+        # # Validate some options.
+        # if rank_microbatch_size % max_sequence_length != 0:
+        #     raise OLMoConfigurationError(
+        #         f"'rank_microbatch_size' ({rank_microbatch_size:,d} tokens) must be divisible by "
+        #         f"'max_sequence_length' ({max_sequence_length:,d} tokens)"
+        #     )
 
         # Build world mesh.
         self.device = device or get_default_device()
