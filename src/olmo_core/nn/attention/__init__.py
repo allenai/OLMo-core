@@ -985,6 +985,7 @@ class FusedAttention(AttentionBase):
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
+        prefill_kv_cache: bool = False,
     ) -> torch.Tensor:
         """
         Apply attention to the input.
@@ -999,6 +1000,11 @@ class FusedAttention(AttentionBase):
 
         :returns: The output of attention with shape ``(batch_size, seq_len, d_model)``.
         """
+        if prefill_kv_cache:
+            raise NotImplementedError(
+                "Prefill KV cache is not supported yetfor the fused attention variant"
+            )
+
         B, T, _ = x.shape
 
         # shape: (batch_size, seq_len, 3, n_heads, head_dim)

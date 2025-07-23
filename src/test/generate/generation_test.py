@@ -37,17 +37,11 @@ def small_transformer_config(**kwargs):
 
 @pytest.mark.parametrize(
     "compile_model",
-    [
-        pytest.param(False, id="compile_model=False"),
-        pytest.param(True, id="compile_model=True"),
-    ],
+    [pytest.param(False, id="compile_model=False"), pytest.param(True, id="compile_model=True")],
 )
 @pytest.mark.parametrize(
     "use_cache",
-    [
-        pytest.param(False, id="use_cache=False"),
-        pytest.param(True, id="use_cache=True"),
-    ],
+    [pytest.param(False, id="use_cache=False"), pytest.param(True, id="use_cache=True")],
 )
 @pytest.mark.parametrize(
     "dtype",
@@ -56,11 +50,19 @@ def small_transformer_config(**kwargs):
         pytest.param(DType.bfloat16, id="dtype=bfloat16", marks=GPU_MARKS),
     ],
 )
+@pytest.mark.parametrize(
+    "autocast_precision",
+    [
+        pytest.param(DType.float32, id="autocast_precision=float32"),
+        pytest.param(DType.bfloat16, id="autocast_precision=bfloat16", marks=GPU_MARKS),
+    ],
+)
 @pytest.mark.parametrize("device", DEVICES)
 def test_generation_module_basic(
     compile_model: bool,
     use_cache: bool,
     dtype: DType,
+    autocast_precision: DType,
     device: torch.device,
 ):
     seed_all(0)
@@ -68,11 +70,13 @@ def test_generation_module_basic(
     flash_attn_available = dtype == DType.bfloat16 and device.type == "cuda" and has_flash_attn
     if not flash_attn_available and use_cache:
         pytest.skip("flash-attn is required for use_cache")
+    if flash_attn_available and autocast_precision != DType.bfloat16:
+        pytest.skip("flash-attn is only supported with bfloat16 autocast precision")
 
     generation_config = GenerationConfig(
         use_cache=use_cache,
         max_length=20,
-        eos_token_id=2,
+        eos_token_id=1,
         pad_token_id=0,
         do_sample=False,
     )
@@ -85,11 +89,12 @@ def test_generation_module_basic(
         generation_config=generation_config,
         compile_model=compile_model,
         device=device,
+        autocast_precision=autocast_precision.as_pt(),
     )
 
     # Create test input
     batch_size, seq_len = 2, 16
-    input_ids = torch.randint(1, 100, (batch_size, seq_len), device=device)
+    input_ids = torch.randint(2, 100, (batch_size, seq_len), device=device)
 
     output_ids, output_logits, output_logprobs = generation_module.generate_batch(
         input_ids, return_logits=True, return_logprobs=True, completions_only=False
@@ -125,7 +130,9 @@ def test_generation_module_basic(
             first_eos = eos_positions[0].item()
             if first_eos < output_ids.shape[1] - 1:
                 assert torch.all(seq[first_eos + 1 :] == generation_config.pad_token_id), (
-                    "padding not added after EOS"
+                    f"padding not added after EOS. Sequence {i}: {seq.tolist()}, "
+                    f"EOS at position {first_eos}, expected padding after position {first_eos}, "
+                    f"but found tokens: {seq[first_eos + 1 :].tolist()}"
                 )
 
 
@@ -247,7 +254,7 @@ def test_generation_module_stop_sequences():
         max_length=50,
         do_sample=False,
         pad_token_id=0,
-        eos_token_id=2,
+        eos_token_id=1,
         stop_sequences=[[10, 20], [30, 40, 50]],
         use_cache=False,
     )
@@ -283,10 +290,10 @@ def test_generation_module_stop_sequences():
         return mock_forward
 
     # Stop at first stop sequence [10, 20]
-    input_ids = torch.tensor([[1, 5, 7]], dtype=torch.long, device=device)
+    input_ids = torch.tensor([[3, 5, 7]], dtype=torch.long, device=device)
     generation_module.model_forward = create_mock_forward([8, 9, 10, 20, 99])
     output, *_ = generation_module.generate_batch(input_ids, completions_only=False)
-    assert torch.equal(output, torch.tensor([[1, 5, 7, 8, 9, 10, 20]], device=device))
+    assert torch.equal(output, torch.tensor([[3, 5, 7, 8, 9, 10, 20]], device=device))
 
     # Stop at second stop sequence [30, 40, 50]
     input_ids = torch.tensor([[2, 4, 6]], dtype=torch.long, device=device)
@@ -296,42 +303,43 @@ def test_generation_module_stop_sequences():
 
     # Stop at EOS token (not stop sequence)
     input_ids = torch.tensor([[3, 5, 7]], dtype=torch.long, device=device)
-    generation_module.model_forward = create_mock_forward([60, 70, 2, 99])
+    generation_module.model_forward = create_mock_forward([60, 70, 1, 99])
     output, *_ = generation_module.generate_batch(input_ids, completions_only=False)
-    assert torch.equal(output, torch.tensor([[3, 5, 7, 60, 70, 2]], device=device))
+    assert torch.equal(output, torch.tensor([[3, 5, 7, 60, 70, 1]], device=device))
 
     # No stop sequences - only stops at EOS
     generation_module._generation_config = GenerationConfig(
         max_length=20,
         do_sample=False,
         pad_token_id=0,
-        eos_token_id=2,
+        eos_token_id=1,
         stop_sequences=None,
         use_cache=False,
     )
-    input_ids = torch.tensor([[1, 2, 3]], dtype=torch.long, device=device)
-    generation_module.model_forward = create_mock_forward([10, 20, 30, 40, 50, 2])
+    input_ids = torch.tensor([[3, 5, 7]], dtype=torch.long, device=device)
+    generation_module.model_forward = create_mock_forward([10, 20, 30, 40, 50, 1])
     output, *_ = generation_module.generate_batch(input_ids, completions_only=False)
-    assert torch.equal(output, torch.tensor([[1, 2, 3, 10, 20, 30, 40, 50, 2]], device=device))
+    assert torch.equal(output, torch.tensor([[3, 5, 7, 10, 20, 30, 40, 50, 1]], device=device))
 
 
 @requires_gpu
 @requires_flash_attn
 def test_generation_with_attention_mask():
     device = torch.device("cuda")
-    dtype = DType.bfloat16
-
     pad = 0
     generation_config = GenerationConfig(
-        max_length=20, temperature=0.0, pad_token_id=pad, eos_token_id=2
+        max_length=20, temperature=0.0, pad_token_id=pad, eos_token_id=1
     )
 
-    transformer_config = small_transformer_config(dtype=dtype, use_flash=True)
+    transformer_config = small_transformer_config(use_flash=True)
     model = transformer_config.build()
     generation_module = TransformerGenerationModule(
-        model=model, generation_config=generation_config, device=device
+        model=model,
+        generation_config=generation_config,
+        device=device,
+        autocast_precision=DType.bfloat16.as_pt(),
     )
-    input_ids = torch.tensor([[pad, pad, 1, 5, 7]], dtype=torch.long, device=device)  # left-padded
+    input_ids = torch.tensor([[pad, pad, 3, 5, 7]], dtype=torch.long, device=device)  # left-padded
     attention_mask = (input_ids != pad).to(torch.bool)
 
     output_with_mask, *_ = generation_module.generate_batch(
@@ -353,6 +361,7 @@ def run_distributed_generation(
     transformer_config: TransformerConfig,
     generation_config: GenerationConfig,
     dp_config: Optional[TransformerDataParallelConfig],
+    autocast_precision: DType,
     input_ids: torch.Tensor,
     expected_shape: tuple,
 ):
@@ -364,6 +373,7 @@ def run_distributed_generation(
         checkpoint_dir=checkpoint_dir,
         generation_config=generation_config,
         dp_config=dp_config,
+        autocast_precision=autocast_precision.as_pt(),
     )
 
     # Move input to correct device
@@ -391,18 +401,23 @@ def run_distributed_generation(
 @pytest.mark.parametrize("use_cache", [True, False], ids=["with_cache", "without_cache"])
 def test_generation_module_distributed_fsdp(tmp_path: Path, use_cache: bool):
     seed_all(0)
+    dtype = DType.float32
+    autocast_precision = DType.bfloat16
 
     if not has_flash_attn and use_cache:
         pytest.skip("flash-attn is required for use_cache")
 
     # Create and save a generation module on single device first
     generation_config = GenerationConfig(
-        max_length=16, do_sample=False, pad_token_id=0, eos_token_id=2, use_cache=use_cache
+        max_length=16, do_sample=False, pad_token_id=0, eos_token_id=1, use_cache=use_cache
     )
-    transformer_config = small_transformer_config(dtype=DType.bfloat16, use_flash=has_flash_attn)
+    transformer_config = small_transformer_config(dtype=dtype, use_flash=has_flash_attn)
     model = transformer_config.build()
     generation_module = TransformerGenerationModule(
-        model=model, generation_config=generation_config, device=torch.device("cuda")
+        model=model,
+        generation_config=generation_config,
+        device=torch.device("cuda"),
+        autocast_precision=autocast_precision.as_pt(),
     )
 
     # Save checkpoint
@@ -413,7 +428,7 @@ def test_generation_module_distributed_fsdp(tmp_path: Path, use_cache: bool):
     dp_config = TransformerDataParallelConfig(name=DataParallelType.fsdp)
 
     # Create test input
-    input_ids = torch.randint(1, 100, (2, 8))
+    input_ids = torch.randint(2, 100, (2, 8))
     expected_shape = (2, 16)  # max_length
 
     # Run distributed test with 2 GPUs
@@ -427,6 +442,7 @@ def test_generation_module_distributed_fsdp(tmp_path: Path, use_cache: bool):
             transformer_config,
             generation_config,
             dp_config,
+            autocast_precision,
             input_ids,
             expected_shape,
         ),
