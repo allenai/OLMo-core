@@ -1241,6 +1241,20 @@ class BLTDistillTransformer(BLTTransformer):
         if self.share_blocks:
             self.teacher.blocks.clear()
 
+    # adapted from LMHead._finalize_loss
+    def _finalize_loss(self, loss: torch.Tensor | float, loss_div_factor: Optional[Union[torch.Tensor, float]] = None):
+        if self.lm_head.tp_enabled or self.lm_head.cp_enabled:
+            # would need extra adjustments as per LMHead._finalize_loss
+            raise NotImplementedError("Loss division is not implemented for TP or CP.")
+
+        if loss_div_factor is not None:
+            if isinstance(loss_div_factor, torch.Tensor):
+                loss = loss / loss_div_factor
+            else:
+                loss = loss / float(loss_div_factor)
+
+        return loss
+
     def apply_compile(self):
         """
         Apply ``torch.compile()`` to each transformer block, which makes compilation efficient
@@ -1378,6 +1392,7 @@ class BLTDistillTransformer(BLTTransformer):
             teacher_main_path_logprobs = None
 
         h_byte, h_patch = self.local_encoder(input_ids, **local_encoder_kwargs)
+        boundary_preds = self.boundary_predictor(h_byte).squeeze(-1) if self.boundary_predictor is not None else None
 
         # Run each block.
         if not skip_blocks:
@@ -1397,13 +1412,11 @@ class BLTDistillTransformer(BLTTransformer):
                 patch_embeds=h_patch,
                 **local_decoder_kwargs,
             )
-            boundary_preds = self.boundary_predictor(h_out).squeeze(-1) if self.boundary_predictor is not None else None
             logits = self.lm_head(h_out, **lm_head_kwargs)
             logprobs = F.log_softmax(logits.float(), dim=-1)
             main_path_logprobs = torch.gather(logprobs[:, :-1], -1, input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
         else:
-            h_out = None,
-            boundary_preds = None
+            h_out = None
             logits = None
             logprobs = None
             main_path_logprobs = None
@@ -1472,18 +1485,20 @@ class BLTDistillTransformer(BLTTransformer):
             # now we still need to add the boundary logprobs...
             if boundary_preds is not None:
                 boundary_logprobs = F.logsigmoid(boundary_preds.float())
-                shift_cum_patch_lens = torch.cumsum(local_encoder_kwargs["patch_lens"][:, 1:], dim=1) - 1
-                # TODO(benjaminm): make sure there are no off-by-ones here, and double check causality (in general)
-                y_hat = y_hat + torch.gather(boundary_logprobs[:, 1:], -1, shift_cum_patch_lens[:, :-1])
+                patch_end_indices = torch.cumsum(local_encoder_kwargs["patch_lens"], dim=1) - 1
+                y_hat = y_hat + torch.gather(boundary_logprobs, -1, patch_end_indices)[:, 1:-1]
 
                 boundary_labels = torch.zeros_like(boundary_preds, device=boundary_preds.device, dtype=boundary_preds.dtype)
-                boundary_labels.scatter_(1, shift_cum_patch_lens[:, :-1], 1.0)
+                boundary_labels.scatter_(1, patch_end_indices, 1.0)
 
-                boundary_loss = F.binary_cross_entropy_with_logits(
-                    boundary_preds[:, 1:].float(),
-                    boundary_labels[:, :-1].float(),
+                boundary_mask = labels != ignore_index
+                elementwise_boundary_loss = F.binary_cross_entropy_with_logits(
+                    boundary_preds.float(),
+                    boundary_labels.float(),
+                    reduction="none",
                 )
-                boundary_acc = ((boundary_preds[:, 1:] > 0) == (boundary_labels[:, :-1] > 0)).float().mean()
+                boundary_loss = (elementwise_boundary_loss * boundary_mask).mean()
+                boundary_acc = (((boundary_preds > 0) == (boundary_labels > 0)) * boundary_mask).float().mean() / boundary_mask.float().mean()
                 metrics["blt/boundary_loss"] = boundary_loss
                 metrics["blt/boundary_acc"] = boundary_acc
             else:
@@ -1517,6 +1532,15 @@ class BLTDistillTransformer(BLTTransformer):
         else:
             local_decoder_loss = torch.nan
             boundary_loss = torch.nan
+
+        # finalize losses
+        # NOTE: loss_div_factor is at *byte sequence level*.
+        # We assume the sequence is full on the patch level (so no need for a div factor).
+        if loss_div_factor is not None:
+            loss_div_factor = loss_div_factor / input_ids.numel()
+
+        ce_loss = self._finalize_loss(ce_loss, loss_div_factor=loss_div_factor)
+        boundary_loss = self._finalize_loss(boundary_loss, loss_div_factor=loss_div_factor)
 
         loss = 0.0
         for loss_name, loss_weight in zip(blt_config.losses, blt_config.loss_weights):

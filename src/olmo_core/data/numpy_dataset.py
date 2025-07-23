@@ -690,6 +690,7 @@ class NumpyByteFSLDataset(NumpyFSLDataset):
         byte_tokens, patch_lengths = self.tokenizer.get_tokens_and_patch_lengths(original_input_ids, add_bos=True, skip_last=True)
 
         new_input_ids = torch.tensor(byte_tokens, dtype=torch.int32)
+        new_attention_mask = torch.ones_like(new_input_ids, dtype=torch.bool)
         patch_lengths = torch.tensor(patch_lengths, dtype=torch.int32)
 
         # make sure lengths do not surpass byte_sequence_length
@@ -699,17 +700,25 @@ class NumpyByteFSLDataset(NumpyFSLDataset):
             patch_lengths,
         )
 
-        if item["input_ids"].shape[0] > self.byte_sequence_length:
-            item["input_ids"] = item["input_ids"][:self.byte_sequence_length]
-        elif item["input_ids"].shape[0] < self.byte_sequence_length:
+        if new_input_ids.shape[0] > self.byte_sequence_length:
+            new_input_ids = new_input_ids[:self.byte_sequence_length]
+            new_attention_mask = new_attention_mask[:self.byte_sequence_length]
+        elif new_input_ids.shape[0] < self.byte_sequence_length:
+            n_pad = self.byte_sequence_length - new_input_ids.shape[0]
             new_input_ids = F.pad(
                 new_input_ids,
-                (0, self.byte_sequence_length - new_input_ids.shape[0]),
+                (0, n_pad),
                 value=self.pad_token_id,
+            )
+            new_attention_mask = F.pad(
+                new_attention_mask,
+                (0, n_pad),
+                value=False,
             )
 
         item["original_input_ids"] = original_input_ids
         item["input_ids"] = new_input_ids
+        item["attention_mask"] = new_attention_mask
         item["patch_lens"] = patch_lengths
 
         return item

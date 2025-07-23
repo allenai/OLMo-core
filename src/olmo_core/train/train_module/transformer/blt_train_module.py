@@ -112,6 +112,7 @@ class TransformerBLTTrainModule(TransformerTrainModule):
 
             batch["original_input_ids"] = _pad_right(all_original_input_ids).to(device)
             batch["input_ids"] = _pad_right(all_input_ids).to(device)
+            batch["attention_mask"] = _pad_right([torch.ones_like(t) for t in all_input_ids]).to(device)
             batch["patch_lens"] = _pad_right(all_patch_lens).to(device)
             batch["dc_input_ids"] = _pad_right(all_dc_input_ids).to(device)
             batch["ctx"] = _pad_right(all_ctx).to(device)
