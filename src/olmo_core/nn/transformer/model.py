@@ -1441,9 +1441,24 @@ class BLTDistillTransformer(BLTTransformer):
             raise ValueError("`blt_config` must be provided for distillation")
 
         if blt_config.rep_compare_fn == "l2":
-            rep_compare_fn = lambda x, y: torch.linalg.norm(x - y, dim=-1) / math.sqrt(x.shape[-1])
+            def l2_compare_fn(x, y):
+                return torch.linalg.norm(x - y, dim=-1) / math.sqrt(x.shape[-1])
+
+            rep_compare_fn = l2_compare_fn
         elif blt_config.rep_compare_fn == "cos_dist":
-            rep_compare_fn = lambda x, y: (1 - F.cosine_similarity(x, y, dim=-1))
+            def cos_dist_compare_fn(x, y):
+                return 1 - F.cosine_similarity(x, y, dim=-1)
+
+            rep_compare_fn = cos_dist_compare_fn
+        elif blt_config.rep_compare_fn == "l2_rmsnorm":
+            def l2_rmsnorm_compare_fn(x, y):
+                uncentered_y_std = torch.sqrt(
+                    torch.mean(torch.square(y), dim=-1, keepdim=True).clip(blt_config.epsilon)
+                )
+
+                return torch.linalg.norm((x - y) / uncentered_y_std, dim=-1) / math.sqrt(x.shape[-1])
+
+            rep_compare_fn = l2_rmsnorm_compare_fn
         else:
             raise ValueError(f"Unknown distillation rep_compare_fn '{blt_config.rep_compare_fn}'")
 
