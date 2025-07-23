@@ -65,8 +65,14 @@ GLOBAL_BATCH_SIZE = 64
 LOCAL_BATCH_SIZE = 64
 EVAL_BATCH_SIZE = 16
 TRAIN_MODE = os.environ.get("TRAIN_MODE", "local_encoder_only")
+DATA_SOURCE = os.environ.get("DATA_SOURCE", "dclm")
 
-_DATA_SOURCES = open(Path(__file__).parent / "data_sources.txt").read().strip().splitlines()
+if DATA_SOURCE == "dclm":
+    _DATA_SOURCES = open(Path(__file__).parent / "data_sources.txt").read().strip().splitlines()
+elif DATA_SOURCE == "dolmino":
+    _DATA_SOURCES = open(Path(__file__).parent / "data_sources_dolmino.txt").read().strip().splitlines()
+else:
+    raise ValueError(f"Unknown DATA_SOURCE: {DATA_SOURCE}. Must be one of 'dclm', 'dolmino'.")
 
 if os.environ.get("HAS_WEKA"):
     OLMO_1B_CKPT_PATH = os.environ.get(

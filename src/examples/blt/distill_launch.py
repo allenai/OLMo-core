@@ -30,6 +30,9 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
     if "TRAIN_MODE" in os.environ:
         env_vars.append(BeakerEnvVar(name="TRAIN_MODE", value=os.environ["TRAIN_MODE"]))
 
+    if "DATA_SOURCE" in os.environ:
+        env_vars.append(BeakerEnvVar(name="DATA_SOURCE", value=os.environ["DATA_SOURCE"]))
+
     if cluster != "ai2/augusta-google-1":
         env_vars.append(BeakerEnvVar(name="HAS_WEKA", value="1"))
         weka_buckets = [
