@@ -1696,6 +1696,8 @@ class BLTDistillTransformer(BLTTransformer):
         assert last_hidden_state is not None, "Teacher forward must return last_hidden_state if skip_blocks=False"
 
         h_byte, h_patch = self.local_encoder(input_ids, **local_encoder_kwargs)
+        boundary_preds = self.boundary_predictor(h_byte).squeeze(-1) if self.boundary_predictor is not None else None
+
         h_patch[:, 1:] = last_hidden_state[:, :-1]
 
         h_out = self.local_decoder(
@@ -1703,7 +1705,6 @@ class BLTDistillTransformer(BLTTransformer):
             patch_embeds=h_patch,
             **local_decoder_kwargs,
         )
-        boundary_preds = self.boundary_predictor(h_out).squeeze(-1) if self.boundary_predictor is not None else None
         logits = self.lm_head(h_out, **lm_head_kwargs)
         logprobs = F.log_softmax(logits.float(), dim=-1)
         main_path_logprobs = torch.gather(logprobs[:, :-1], -1, input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
@@ -1720,9 +1721,8 @@ class BLTDistillTransformer(BLTTransformer):
 
         if boundary_preds is not None:
             boundary_logprobs = F.logsigmoid(boundary_preds.float())
-            shift_cum_patch_lens = torch.cumsum(local_encoder_kwargs["patch_lens"][:, 1:], dim=1) - 1
-            # TODO(benjaminm): make sure there are no off-by-ones here, and double check causality (in general)
-            y_hat = y_hat + torch.gather(boundary_logprobs[:, 1:], -1, shift_cum_patch_lens[:, :-1])
+            patch_end_indices = torch.cumsum(local_encoder_kwargs["patch_lens"], dim=1) - 1
+            y_hat = y_hat + torch.gather(boundary_logprobs, -1, patch_end_indices)[:, 1:-1]
 
         remaining_logpmass = log1mexp(y_hat)
         remaining_logp_uniform = remaining_logpmass - math.log(teacher_logits.shape[2] - 1)  # -1 to skip the main path token
