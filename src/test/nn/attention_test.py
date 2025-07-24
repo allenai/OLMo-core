@@ -246,7 +246,7 @@ def test_attention_kv_caching(n_kv_heads: Optional[int], kwargs: Dict[str, Any])
     )
 
     # Input tensor
-    x = torch.randn(batch_size, total_len, d_model, dtype=dtype, device="cuda")
+    x = torch.randn(batch_size, total_len, d_model, dtype=torch.bfloat16, device="cuda")
 
     # 1. Combined forward pass (for comparison)
     with patch(
@@ -261,7 +261,7 @@ def test_attention_kv_caching(n_kv_heads: Optional[int], kwargs: Dict[str, Any])
 
     # Prefill step
     attention.reset_kv_cache(
-        use_cache=True, batch_size=batch_size, max_seq_len=max_seq_len, dtype=dtype
+        use_cache=True, batch_size=batch_size, max_seq_len=max_seq_len, dtype=torch.bfloat16
     )
     with patch(
         "olmo_core.nn.attention.dispatch_flash_attn", wraps=dispatch_flash_attn
