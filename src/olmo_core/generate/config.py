@@ -46,10 +46,6 @@ class GenerationConfig(Config):
     use_cache: bool = True
     """Whether to use a kv-cache for generation. If True, the model will cache past key-value pairs to speed up generation."""
 
-    stop_sequences: Optional[List[List[int]]] = None
-    """Stop sequences. If provided, generation will stop when any of these sequences of tokens
-    are generated (in addition to the EOS token)."""
-
     def __post_init__(self):
         self.validate()
 
