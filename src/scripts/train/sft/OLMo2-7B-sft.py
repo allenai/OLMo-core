@@ -7,10 +7,8 @@ import argparse
 import logging
 import sys
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import List, Optional, cast
 
-import yaml
 from rich import print
 
 from olmo_core.config import Config, DType
@@ -112,7 +110,9 @@ class BatchSizeConfig:
         if rank_batch_size_tokens > max_tokens_per_rank * cp_factor:
             # Need gradient accumulation
             self.grad_accum_steps = 1
-            while rank_batch_size_tokens // self.grad_accum_steps > max_tokens_per_rank:
+            while rank_batch_size_tokens // self.grad_accum_steps > (
+                max_tokens_per_rank * cp_factor
+            ):
                 self.grad_accum_steps *= 2
 
             self.rank_microbatch_size_tokens = rank_batch_size_tokens // self.grad_accum_steps
@@ -125,11 +125,11 @@ class BatchSizeConfig:
             self.rank_microbatch_size_tokens = rank_batch_size_tokens
             self.grad_accum_steps = 1
 
-        # # Validate that rank_microbatch_size_tokens is divisible by sequence_length
-        # assert self.rank_microbatch_size_tokens % self.sequence_length == 0, (
-        #     "rank_microbatch_size_tokens must be divisible by sequence_length (got "
-        #     f"{self.rank_microbatch_size_tokens} and {self.sequence_length})"
-        # )
+        # Validate that rank_microbatch_size_tokens is divisible by sequence_length
+        assert self.rank_microbatch_size_tokens % self.sequence_length == 0, (
+            "rank_microbatch_size_tokens must be divisible by sequence_length (got "
+            f"{self.rank_microbatch_size_tokens} and {self.sequence_length})"
+        )
         self.rank_microbatch_size_sequences = (
             self.rank_microbatch_size_tokens // self.sequence_length
         )
