@@ -208,7 +208,6 @@ def test_attention_with_intra_document_masking():
 
 @requires_gpu
 @requires_flash_attn
-@pytest.mark.parametrize("dtype", [pytest.param(torch.bfloat16, id="bf16")])
 @pytest.mark.parametrize(
     "n_kv_heads",
     [pytest.param(None, id="MHA"), pytest.param(1, id="MQA"), pytest.param(2, id="GQA")],
@@ -223,20 +222,16 @@ def test_attention_with_intra_document_masking():
         pytest.param({"qk_norm": LayerNormConfig(), "use_head_qk_norm": True}, id="head-qk-norm"),
     ],
 )
-def test_attention_kv_caching(
-    dtype: torch.dtype,
-    n_kv_heads: Optional[int],
-    kwargs: Dict[str, Any],
-):
+def test_attention_kv_caching(n_kv_heads: Optional[int], kwargs: Dict[str, Any]):
     torch.random.manual_seed(0)
 
     d_model = 128
     n_heads = 8
     max_seq_len = 128
     batch_size = 1
-    prefill_len = 63
-    decode_len = 1
-    total_len = prefill_len + decode_len
+    prefill_len = 124
+    decode_steps = 2
+    total_len = prefill_len + decode_steps
     assert total_len <= max_seq_len
 
     # Initialize attention module
@@ -246,6 +241,7 @@ def test_attention_kv_caching(
         n_kv_heads=n_kv_heads,
         use_flash=True,
         init_device="cuda",
+        dtype=torch.float32,
         **kwargs,
     )
 
@@ -256,14 +252,12 @@ def test_attention_kv_caching(
     with patch(
         "olmo_core.nn.attention.dispatch_flash_attn", wraps=dispatch_flash_attn
     ) as mock_dispatch:
-        with torch.no_grad(), torch.autocast("cuda", dtype=dtype):
+        with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
             y_combined = attention(x)
         mock_dispatch.assert_called_once()
-        (q_combined, k_combined, v_combined), _ = mock_dispatch.call_args
 
-    # 2. Prefill + decode
+    # 2. Prefill + multiple decode steps
     x_prefill = x[:, :prefill_len, :]
-    x_decode = x[:, prefill_len:total_len, :]
 
     # Prefill step
     attention.reset_kv_cache(
@@ -272,24 +266,38 @@ def test_attention_kv_caching(
     with patch(
         "olmo_core.nn.attention.dispatch_flash_attn", wraps=dispatch_flash_attn
     ) as mock_dispatch:
-        with torch.no_grad(), torch.autocast("cuda", dtype=dtype):
+        with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
             y_prefill = attention(x_prefill, prefill_kv_cache=True)
         mock_dispatch.assert_called_once()
-        (q_prefill, k_prefill, v_prefill), _ = mock_dispatch.call_args
 
-    # Decode step
-    with torch.no_grad(), torch.autocast("cuda", dtype=dtype):
-        y_decode = attention(x_decode, prefill_kv_cache=False)
+    # Multiple decode steps
+    y_decode_steps = []
+    for step in range(decode_steps):
+        with patch(
+            "olmo_core.nn.attention.dispatch_flash_attn_with_kvcache",
+            wraps=dispatch_flash_attn_with_kvcache,
+        ) as mock_dispatch:
+            x_decode = x[:, prefill_len + step : prefill_len + step + 1, :]
+            with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
+                y_decode = attention(x_decode, prefill_kv_cache=False)  # (B, 1, D)
+            y_decode_steps.append(y_decode)
+            mock_dispatch.assert_called_once()
+
+    # Concatenate decode outputs
+    y_decode_combined = torch.cat(y_decode_steps, dim=1)  # (B, D_steps, D)
 
     # 3. Compare results
-    torch.testing.assert_close(y_combined[:, :prefill_len, :], y_prefill)
+    torch.testing.assert_close(
+        y_combined[:, :prefill_len, :], y_prefill, msg=lambda s: f"Prefill outputs don't match: {s}"
+    )
 
     # Decode comparison needs looser tolerances due to different computation paths (and matmul shapes etc).
     torch.testing.assert_close(
         y_combined[:, prefill_len:total_len, :],
-        y_decode,
-        atol=1e-3,
+        y_decode_combined,
+        atol=1e-4,
         rtol=0.015,
+        msg=lambda s: f"Outputs that leverage the KV-cache don't match: {s}",
     )
 
 
