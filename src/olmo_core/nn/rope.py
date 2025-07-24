@@ -231,6 +231,7 @@ class RotaryEmbedding(RotaryEmbeddingBase):
         q: torch.Tensor,
         k: torch.Tensor,
         head_first: bool = True,
+        start_pos: Optional[int] = None,
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
@@ -244,6 +245,8 @@ class RotaryEmbedding(RotaryEmbeddingBase):
             if ``head_first`` (the default) otherwise
             ``(batch_size, seq_len, num_kv_heads, head_size)``.
         :param head_first: If the head dim comes before the sequence dim.
+        :param start_pos: The absolute position of the first query token (eg for decoding
+            where the first query token is just the most recently decoded token).
 
         :returns: The query and key matrices after RoPE has been applied.
         """
@@ -263,28 +266,38 @@ class RotaryEmbedding(RotaryEmbeddingBase):
             q_, k_ = q, k
 
         with torch.autocast(q.device.type, enabled=False):
-            # shape: (seq_len, head_size), (seq_len, head_size)
+            # Decide how long the rotary tables must be.  When ``start_pos`` is
+            # provided we need embeddings up to that absolute position; otherwise
+            # we fall back to the original behaviour.
+            seq_len_needed = (start_pos + k_len) if start_pos is not None else k_len
+            # shape: (seq_len_needed, head_size)
             if pos_sin is None or pos_cos is None:
-                pos_sin, pos_cos = self._get_rotary_embedding(k_len, q_.device)
+                pos_sin, pos_cos = self._get_rotary_embedding(seq_len_needed, q_.device)
             pos_sin, pos_cos = pos_sin.type_as(q_), pos_cos.type_as(q_)
+            # Absolute position of the *first* query token
+            q_abs_start = start_pos if start_pos is not None else (k_len - q_len)
 
             if head_first:
                 q_ = self._apply_rotary_pos_emb(
-                    pos_sin[None, None, k_len - q_len : k_len, :],
-                    pos_cos[None, None, k_len - q_len : k_len, :],
+                    pos_sin[None, None, q_abs_start : q_abs_start + q_len, :],
+                    pos_cos[None, None, q_abs_start : q_abs_start + q_len, :],
                     q_,
                 )
                 k_ = self._apply_rotary_pos_emb(
-                    pos_sin[None, None, :, :], pos_cos[None, None, :, :], k_
+                    pos_sin[None, None, q_abs_start : q_abs_start + k_len, :],
+                    pos_cos[None, None, q_abs_start : q_abs_start + k_len, :],
+                    k_,
                 )
             else:
                 q_ = self._apply_rotary_pos_emb(
-                    pos_sin[None, k_len - q_len : k_len, None, :],
-                    pos_cos[None, k_len - q_len : k_len, None, :],
+                    pos_sin[None, q_abs_start : q_abs_start + q_len, None, :],
+                    pos_cos[None, q_abs_start : q_abs_start + q_len, None, :],
                     q_,
                 )
                 k_ = self._apply_rotary_pos_emb(
-                    pos_sin[None, :, None, :], pos_cos[None, :, None, :], k_
+                    pos_sin[None, q_abs_start : q_abs_start + k_len, None, :],
+                    pos_cos[None, q_abs_start : q_abs_start + k_len, None, :],
+                    k_,
                 )
 
         return q_.type_as(q), k_.type_as(k)
@@ -367,6 +380,7 @@ class FusedRotaryEmbedding(RotaryEmbeddingBase):
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
+        start_pos: Optional[int] = None,
     ) -> torch.Tensor:
         """
         Apply RoPE to ``qkv``.
@@ -377,9 +391,16 @@ class FusedRotaryEmbedding(RotaryEmbeddingBase):
 
         :param qkv: The query, key, and value matrix of shape
             ``(batch_size, seq_len, 3, n_heads, head_size)``.
+        :param start_pos: The absolute position of the first query token (eg for decoding
+            where the first query token is just the most recently decoded token).
         """
         if freqs_cis is not None:
             raise RuntimeError(f"'freqs_cis' is invalid for {self.__class__.__name__}")
+
+        if start_pos is not None:
+            raise NotImplementedError(
+                f"'start_pos' is not implemented for {self.__class__.__name__}"
+            )
 
         if self.full_precision:
             qkv_ = qkv.float()
@@ -459,6 +480,7 @@ class ComplexRotaryEmbedding(RotaryEmbeddingBase):
         q: torch.Tensor,
         k: torch.Tensor,
         head_first: bool = True,
+        start_pos: Optional[int] = None,
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
@@ -472,6 +494,8 @@ class ComplexRotaryEmbedding(RotaryEmbeddingBase):
             if ``head_first`` (the default) otherwise
             ``(batch_size, seq_len, num_kv_heads, head_size)``.
         :param head_first: If the head dim comes before the sequence dim.
+        :param start_pos: The absolute position of the first query token (eg for decoding
+            where the first query token is just the most recently decoded token).
 
         :returns: The query and key matrices after RoPE has been applied.
         """
@@ -498,21 +522,23 @@ class ComplexRotaryEmbedding(RotaryEmbeddingBase):
 
         with torch.autocast(q.device.type, enabled=False):
             # shape: (T, hs // 2)
+            seq_len_needed = (start_pos + k_len) if start_pos is not None else k_len
             if freqs_cis is None:
-                freqs_cis = self._get_rotary_embedding(k_len, q_.device)
+                freqs_cis = self._get_rotary_embedding(seq_len_needed, q_.device)
+            q_abs_start = start_pos if start_pos is not None else (k_len - q_len)
             if head_first:
-                # shape: (1, 1, T, hs // 2)
                 q_ = self._apply_rotary_pos_emb(
-                    freqs_cis[None, None, k_len - q_len : k_len, :],
-                    q_,
+                    freqs_cis[None, None, q_abs_start : q_abs_start + q_len, :], q_
                 )
-                k_ = self._apply_rotary_pos_emb(freqs_cis[None, None, :, :], k_)
+                k_ = self._apply_rotary_pos_emb(
+                    freqs_cis[None, None, q_abs_start : q_abs_start + k_len, :], k_
+                )
             else:
-                # shape: (1, T, 1, hs // 2)
                 q_ = self._apply_rotary_pos_emb(
-                    freqs_cis[None, k_len - q_len : k_len, None, :],
-                    q_,
+                    freqs_cis[None, q_abs_start : q_abs_start + q_len, None, :], q_
                 )
-                k_ = self._apply_rotary_pos_emb(freqs_cis[None, :, None, :], k_)
+                k_ = self._apply_rotary_pos_emb(
+                    freqs_cis[None, q_abs_start : q_abs_start + k_len, None, :], k_
+                )
 
         return q_.type_as(q), k_.type_as(k)

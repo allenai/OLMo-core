@@ -20,7 +20,7 @@ from torch.distributed.fsdp import FSDPModule, MixedPrecisionPolicy, fully_shard
 from torch.distributed.tensor import Replicate, Shard
 from torch.distributed.tensor.parallel import RowwiseParallel, parallelize_module
 
-from olmo_core.data.utils import get_cumulative_document_lengths
+from olmo_core.data.utils import attention_mask_to_cu_doc_lens, get_cumulative_document_lengths
 from olmo_core.distributed.parallel import get_pp_mesh
 from olmo_core.distributed.utils import hide_from_torch, unhide_from_torch
 from olmo_core.doc_utils import beta_feature
@@ -299,11 +299,13 @@ class Transformer(nn.Module):
         input_ids: torch.Tensor,
         labels: Optional[torch.Tensor] = None,
         *,
+        attention_mask: Optional[torch.Tensor] = None,
         ignore_index: int = -100,
         loss_reduction: Literal["mean", "sum", "none"] = "mean",
         z_loss_multiplier: Optional[float] = None,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         return_logits: Optional[bool] = None,
+        logits_to_keep: Union[int, torch.Tensor] = 0,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any], Dict[str, Any]]:
         # NOTE: with pipeline parallelism input_ids might actually be an intermediate output,
@@ -317,6 +319,7 @@ class Transformer(nn.Module):
             loss_reduction=loss_reduction,
             z_loss_multiplier=z_loss_multiplier,
             return_logits=return_logits,
+            logits_to_keep=logits_to_keep,
         )
 
         if loss_div_factor is not None:
@@ -327,7 +330,14 @@ class Transformer(nn.Module):
         # Prepare document length inputs.
         max_doc_len: Optional[int] = None
         cu_doc_lens: Optional[torch.Tensor] = None
-        if (doc_lens := kwargs.pop("doc_lens", None)) is not None and (
+        doc_lens: Optional[torch.Tensor] = None
+
+        # Convert attention mask to cu_doc_lens if provided
+        if attention_mask is not None and cu_doc_lens is None:
+            doc_lens, cu_doc_lens, max_doc_len = attention_mask_to_cu_doc_lens(attention_mask)
+            attention_mask = None
+            # If conversion fails (e.g., not prefix padding), keep attention_mask as is
+        elif (doc_lens := kwargs.pop("doc_lens", None)) is not None and (
             max_doc_lens := kwargs.pop("max_doc_lens", None)
         ) is not None:
             max_doc_len = max(max_doc_lens)
@@ -365,6 +375,12 @@ class Transformer(nn.Module):
                 pad_values.append(ignore_index)
                 keys.append("labels")
 
+            if attention_mask is not None:
+                inputs.append(attention_mask)
+                seq_dims.append(1)
+                pad_values.append(0.0)
+                keys.append("attention_mask")
+
             if cu_doc_lens is not None:
                 # NOTE: Can only shard properly here if 'input_ids' is flat, i.e. a single instance.
                 # TODO: (epwalsh) We could just flatten all of the inputs here, but then we risk going
@@ -397,11 +413,21 @@ class Transformer(nn.Module):
 
             input_ids = block_kwargs.pop("input_ids")
             labels = block_kwargs.pop("labels", None)
+            attention_mask = block_kwargs.pop("attention_mask", None)
         else:
             input_ids = move_to_device(input_ids, self.device)
             labels = move_to_device(labels, self.device)
+            attention_mask = move_to_device(attention_mask, self.device)
             block_kwargs["max_doc_len"] = max_doc_len
             block_kwargs["cu_doc_lens"] = move_to_device(cu_doc_lens, self.device)
+
+        # Add attention mask to block kwargs if provided
+        if attention_mask is not None:
+            block_kwargs["attention_mask"] = attention_mask
+
+        # Add inference kwargs to block kwargs if provided
+        if (prefill_kv_cache := kwargs.get("prefill_kv_cache")) is not None:
+            block_kwargs["prefill_kv_cache"] = prefill_kv_cache
 
         return (
             input_ids,
@@ -415,28 +441,42 @@ class Transformer(nn.Module):
         input_ids: torch.Tensor,
         *,
         labels: Optional[torch.Tensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
         ignore_index: int = -100,
         loss_reduction: Literal["mean", "sum", "none"] = "mean",
         z_loss_multiplier: Optional[float] = None,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         return_logits: Optional[bool] = None,
+        logits_to_keep: Union[int, torch.Tensor] = 0,
         **kwargs,
     ) -> Union[torch.Tensor, LMOutputWithLoss]:
         """
         Run the transformer on the token input IDs.
 
         :param input_ids: The token input IDs, shape ``(batch_size, seq_len)``.
+        :param labels: The token labels, shape ``(batch_size, seq_len)``.
+        :param attention_mask: The attention mask, shape ``(batch_size, seq_len)``. If provided,
+            it will be added to the block kwargs and passed to the attention module.
+        :param ignore_index: The index to ignore in the loss computation. Default is -100.
+        :param loss_reduction: The reduction method for the loss. Can be "mean", "sum", or "none".
+        :param z_loss_multiplier: Optional multiplier for the z-loss regularization term.
+        :param loss_div_factor: Optional divisor for the loss, can be a scalar or tensor.
+        :param return_logits: Whether to return logits along with the loss when labels are provided.
+        :param logits_to_keep: Number of positions to keep from the end of the sequence (if int),
+            or tensor specifying which positions to keep. Default is 0 (keep all).
 
         :returns: The logits if ``labels`` is ``None`` or the losses if ``labels`` is not ``None``.
         """
         input_ids, labels, block_kwargs, lm_head_kwargs = self._prepare_inputs(
             input_ids,
             labels,
+            attention_mask=attention_mask,
             ignore_index=ignore_index,
             loss_reduction=loss_reduction,
             z_loss_multiplier=z_loss_multiplier,
             loss_div_factor=loss_div_factor,
             return_logits=return_logits,
+            logits_to_keep=logits_to_keep,
             **kwargs,
         )
 

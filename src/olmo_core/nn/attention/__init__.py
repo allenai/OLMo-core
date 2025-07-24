@@ -1,7 +1,8 @@
+import gc
 import math
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import List, Optional, Union
+from typing import List, Optional, Tuple, Union
 
 import torch
 import torch.distributed as dist
@@ -15,6 +16,7 @@ from olmo_core.config import Config, DType, StrEnum
 from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.nn.attention.kv_cache import write_kvcache_
 
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
@@ -29,6 +31,7 @@ from ..utils import get_tp_wrappers
 from .flash_attn_api import (
     dispatch_flash_attn,
     dispatch_flash_attn_qkvpacked,
+    dispatch_flash_attn_with_kvcache,
     dispatch_ring_flash_attn,
     dispatch_ring_flash_attn_qkvpacked,
 )
@@ -377,6 +380,9 @@ class Attention(AttentionBase):
         self._cp_enabled = False
         self._cp_load_balancer: Optional[RingAttentionLoadBalancerType] = None
 
+        self.k_cache, self.v_cache = None, None
+        self.cache_seqlens = None
+
     @property
     def cp_enabled(self) -> bool:
         return self._cp_enabled
@@ -386,6 +392,7 @@ class Attention(AttentionBase):
         q: torch.Tensor,
         k: torch.Tensor,
         v: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
         cu_doc_lens_q: Optional[torch.Tensor] = None,
         cu_doc_lens_k: Optional[torch.Tensor] = None,
@@ -394,13 +401,53 @@ class Attention(AttentionBase):
         max_doc_len_k: Optional[int] = None,
         local_k_slice: Optional[slice] = None,
         scale: Optional[float] = None,
+        # Inference only:
+        prefill_kv_cache: bool = False,
     ) -> torch.Tensor:
         att: torch.Tensor
-        if self.cp_enabled:
+
+        # If we are pre-filling the KV cache, we need to write the new keys and values to it.
+        if self.k_cache is not None and self.v_cache is not None and prefill_kv_cache:
+            if self.cache_seqlens is None:
+                raise ValueError("cache_seqlens is required when using the KV cache")
+            write_kvcache_(self.k_cache, self.v_cache, self.cache_seqlens, k, v, q.shape[1])
+            self.cache_seqlens.add_(q.shape[1])
+
+        # If KV cache is provided and we're in decoding mode (not prefilling)
+        if self.k_cache is not None and self.v_cache is not None and not prefill_kv_cache:
+            if not self.use_flash:
+                raise RuntimeError(
+                    f"'{self.__class__.__name__}' requires flash (use_flash=True) for KV caching"
+                )
+            if self.cp_enabled:
+                raise RuntimeError(
+                    f"'{self.__class__.__name__}' does not support KV caching with context parallelism"
+                )
+            if self.cache_seqlens is None:
+                raise ValueError("cache_seqlens is required when using the KV cache")
+            att = dispatch_flash_attn_with_kvcache(
+                q,
+                self.k_cache,  # updated in-place
+                self.v_cache,  # updated in-place
+                k=k,
+                v=v,
+                cache_seqlens=self.cache_seqlens,
+                cache_leftpad=None,
+                block_table=None,
+                softmax_scale=scale,
+                causal=True,
+                window_size=self.window_size,
+            )
+            self.cache_seqlens.add_(q.shape[1])
+        elif self.cp_enabled:
             assert self._cp_pg is not None and self._cp_load_balancer is not None
             if not self.use_flash:
                 raise RuntimeError(
                     f"'{self.__class__.__name__}' requires flash (use_flash=True) for context parallelism"
+                )
+            if attention_mask is not None:
+                raise RuntimeError(
+                    f"'{self.__class__.__name__}' does not support attention masks with context parallelism"
                 )
             att = dispatch_ring_flash_attn(
                 q,
@@ -422,6 +469,10 @@ class Attention(AttentionBase):
                 window_size=self.window_size,
             )
         elif self.use_flash:
+            if attention_mask is not None:
+                raise RuntimeError(
+                    f"'{self.__class__.__name__}' does not support attention masks with flash attention"
+                )
             att = dispatch_flash_attn(
                 q,
                 k,
@@ -467,7 +518,13 @@ class Attention(AttentionBase):
 
             # shape: (batch_size, n_heads, seq_len, head_dim)
             att = F.scaled_dot_product_attention(
-                q, k, v, dropout_p=self.dropout_p, is_causal=True, scale=scale
+                q,
+                k,
+                v,
+                attn_mask=attention_mask,
+                dropout_p=self.dropout_p,
+                is_causal=True,
+                scale=scale,
             )
 
             # shape: (batch_size, seq_len, n_heads, head_dim)
@@ -478,6 +535,7 @@ class Attention(AttentionBase):
     def forward(
         self,
         x: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
         cu_doc_lens_q: Optional[torch.Tensor] = None,
         cu_doc_lens_k: Optional[torch.Tensor] = None,
@@ -488,17 +546,23 @@ class Attention(AttentionBase):
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
+        # Inference only:
+        prefill_kv_cache: bool = False,
     ) -> torch.Tensor:
         """
         Apply attention to the input.
 
         :param x: The input of shape ``(batch_size, seq_len, d_model)``.
+        :param attention_mask: The attention mask, shape ``(batch_size, seq_len)``. If provided,
+            it will be added to the block kwargs and passed to the attention module.
         :param cu_doc_lens: Cumulative document lengths in the input ``x``, a 1D
             :class:`torch.int32` tensor that should always have one more element than there
             are documents (the first element in the tensor should always be ``0``).
             Required together with ``max_doc_len`` when using intra-document masking.
         :param max_doc_len: The maximum document length in the input ``x``.
             Required together with ``cu_doc_lens`` when using intra-document masking.
+        :param prefill_kv_cache: If True and k_cache/v_cache are provided, process the prompt normally
+            and populate the cache. If False, use flash_attn_with_kvcache for incremental decoding.
 
         :returns: The output of attention with shape ``(batch_size, seq_len, d_model)``.
         """
@@ -536,14 +600,34 @@ class Attention(AttentionBase):
                 k = self.k_norm(k)
 
         if self.rope is not None:
+            start_pos: Optional[int] = None
+            if (
+                self.k_cache is not None
+                and self.v_cache is not None
+                and not prefill_kv_cache
+                and self.cache_seqlens is not None
+            ):
+                start_pos = (
+                    int(self.cache_seqlens.max().item()) if self.cache_seqlens.numel() > 0 else 0
+                )
+
+            # In context-parallel mode we must be given pre-sharded buffers
+            # unless we're in the single-token path (which sets ``start_pos``).
             if self.cp_enabled and pos_sin is None and pos_cos is None and freqs_cis is None:
                 raise RuntimeError(
                     "RoPE buffers must be passed through to attention after being properly "
                     "sharded by the context parallel load balancer"
                 )
 
+            # Single, unified call into RoPE
             q, k = self.rope(
-                q, k, head_first=False, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis
+                q,
+                k,
+                head_first=False,
+                pos_sin=pos_sin,
+                pos_cos=pos_cos,
+                freqs_cis=freqs_cis,
+                start_pos=start_pos,
             )
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
@@ -551,6 +635,7 @@ class Attention(AttentionBase):
             q,
             k,
             v,
+            attention_mask=attention_mask,
             cu_doc_lens=cu_doc_lens,
             cu_doc_lens_q=cu_doc_lens_q,
             cu_doc_lens_k=cu_doc_lens_k,
@@ -558,6 +643,7 @@ class Attention(AttentionBase):
             max_doc_len_q=max_doc_len_q,
             max_doc_len_k=max_doc_len_k,
             local_k_slice=local_k_slice,
+            prefill_kv_cache=prefill_kv_cache,
         )
 
         # shape: (batch_size, seq_len, d_model)
@@ -565,6 +651,33 @@ class Attention(AttentionBase):
 
         # shape: (batch_size, seq_len, d_model)
         return self.w_out(att)
+
+    def allocate_kv_cache(
+        self, batch_size: int, max_seq_len: int, dtype: torch.dtype
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        kv_cache_shape = (batch_size, max_seq_len, self.n_kv_heads, self.head_dim)
+        k_cache = torch.zeros(kv_cache_shape, device=self.w_k.weight.device, dtype=dtype)
+        v_cache = torch.zeros(kv_cache_shape, device=self.w_q.weight.device, dtype=dtype)
+        cache_seqlens = torch.zeros(batch_size, device=k_cache.device, dtype=torch.int32)
+        return k_cache, v_cache, cache_seqlens
+
+    def reset_kv_cache(
+        self, use_cache: bool, batch_size: int, max_seq_len: int, dtype: torch.dtype
+    ) -> None:
+        if hasattr(self, "k_cache") and self.k_cache is not None:
+            del self.k_cache
+        if hasattr(self, "v_cache") and self.v_cache is not None:
+            del self.v_cache
+        if hasattr(self, "cache_seqlens") and self.cache_seqlens is not None:
+            del self.cache_seqlens
+        if use_cache:
+            self.k_cache, self.v_cache, self.cache_seqlens = self.allocate_kv_cache(
+                batch_size, max_seq_len, dtype
+            )
+        else:
+            self.k_cache, self.v_cache, self.cache_seqlens = None, None, None
+        torch.cuda.empty_cache()
+        gc.collect()
 
     def apply_tp(
         self,
@@ -683,6 +796,7 @@ class NormalizedAttention(Attention):
     def forward(
         self,
         x: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
         cu_doc_lens_q: Optional[torch.Tensor] = None,
         cu_doc_lens_k: Optional[torch.Tensor] = None,
@@ -693,6 +807,7 @@ class NormalizedAttention(Attention):
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
+        prefill_kv_cache: bool = False,
     ) -> torch.Tensor:
         B, T, _ = x.shape
 
@@ -719,13 +834,36 @@ class NormalizedAttention(Attention):
         v = v.view(B, T, self.n_kv_heads, self.head_dim)
 
         if self.rope is not None:
-            if self.cp_enabled and pos_sin is None and pos_cos is None and freqs_cis is None:
+            start_pos: Optional[int] = None
+            if (
+                self.k_cache is not None
+                and self.v_cache is not None
+                and not prefill_kv_cache
+                and self.cache_seqlens is not None
+            ):
+                start_pos = (
+                    int(self.cache_seqlens.max().item()) if self.cache_seqlens.numel() > 0 else 0
+                )
+
+            if (
+                self.cp_enabled
+                and start_pos is None
+                and pos_sin is None
+                and pos_cos is None
+                and freqs_cis is None
+            ):
                 raise RuntimeError(
                     "RoPE buffers must be passed through to attention after being properly "
                     "sharded by the context parallel load balancer"
                 )
             q, k = self.rope(
-                q, k, head_first=False, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis
+                q,
+                k,
+                head_first=False,
+                pos_sin=pos_sin,
+                pos_cos=pos_cos,
+                freqs_cis=freqs_cis,
+                start_pos=start_pos,
             )
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
@@ -733,6 +871,7 @@ class NormalizedAttention(Attention):
             q,
             k,
             v,
+            attention_mask=attention_mask,
             cu_doc_lens=cu_doc_lens,
             cu_doc_lens_q=cu_doc_lens_q,
             cu_doc_lens_k=cu_doc_lens_k,
@@ -741,6 +880,7 @@ class NormalizedAttention(Attention):
             max_doc_len_k=max_doc_len_k,
             local_k_slice=local_k_slice,
             scale=self.sqrt_head_dim,
+            prefill_kv_cache=prefill_kv_cache,
         )
 
         # shape: (batch_size, seq_len, d_model)
@@ -845,6 +985,7 @@ class FusedAttention(AttentionBase):
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
+        prefill_kv_cache: bool = False,
     ) -> torch.Tensor:
         """
         Apply attention to the input.
@@ -859,6 +1000,11 @@ class FusedAttention(AttentionBase):
 
         :returns: The output of attention with shape ``(batch_size, seq_len, d_model)``.
         """
+        if prefill_kv_cache:
+            raise NotImplementedError(
+                "Prefill KV cache is not supported yetfor the fused attention variant"
+            )
+
         B, T, _ = x.shape
 
         # shape: (batch_size, seq_len, 3, n_heads, head_dim)
