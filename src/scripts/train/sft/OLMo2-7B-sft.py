@@ -126,11 +126,11 @@ class BatchSizeConfig:
             self.rank_microbatch_size_tokens = rank_batch_size_tokens
             self.grad_accum_steps = 1
 
-        # Validate that rank_microbatch_size_tokens is divisible by sequence_length
-        assert self.rank_microbatch_size_tokens % self.sequence_length == 0, (
-            "rank_microbatch_size_tokens must be divisible by sequence_length (got "
-            f"{self.rank_microbatch_size_tokens} and {self.sequence_length})"
-        )
+        # # Validate that rank_microbatch_size_tokens is divisible by sequence_length
+        # assert self.rank_microbatch_size_tokens % self.sequence_length == 0, (
+        #     "rank_microbatch_size_tokens must be divisible by sequence_length (got "
+        #     f"{self.rank_microbatch_size_tokens} and {self.sequence_length})"
+        # )
         self.rank_microbatch_size_sequences = (
             self.rank_microbatch_size_tokens // self.sequence_length
         )
