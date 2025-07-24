@@ -69,7 +69,7 @@ MAX_RANK_MICROBATCH_SIZE_TOKENS = 16_384  # max tokens this config can handle on
 class BatchSizeConfig:
     global_batch_size_tokens: int
     sequence_length: int
-    dp_world_size: int
+    world_size: int  # assumes all ranks are either data parallel or context parallel
     gpu_type: str
     rank_microbatch_size_tokens: int = field(init=False)
     rank_microbatch_size_sequences: int = field(init=False)
@@ -82,10 +82,8 @@ class BatchSizeConfig:
         assert (self.sequence_length & (self.sequence_length - 1)) == 0, (
             "sequence_length must be a power of 2"
         )
-        assert self.dp_world_size > 0, "dp_world_size must be positive"
-        assert (self.dp_world_size & (self.dp_world_size - 1)) == 0, (
-            "dp_world_size must be a power of 2"
-        )
+        assert self.world_size > 0, "world_size must be positive"
+        assert (self.world_size & (self.world_size - 1)) == 0, "world_size must be a power of 2"
 
         # Determine max tokens per rank based on GPU type
         max_tokens_per_rank = MAX_RANK_MICROBATCH_SIZE_TOKENS
@@ -107,7 +105,8 @@ class BatchSizeConfig:
 
         # Calculate rank batch size and grad accum steps
         cp_factor = self.cp_degree if self.cp_degree is not None else 1
-        rank_batch_size_tokens = self.global_batch_size_tokens // (self.dp_world_size)
+        dp_world_size = self.world_size // cp_factor
+        rank_batch_size_tokens = self.global_batch_size_tokens // dp_world_size
 
         # Ensure rank_batch_size_tokens doesn't exceed max_tokens_per_rank (adjusted by the cp_factor)
         if rank_batch_size_tokens > max_tokens_per_rank * cp_factor:
@@ -136,7 +135,7 @@ class BatchSizeConfig:
         )
 
         # Final validation
-        total_tokens = self.rank_microbatch_size_tokens * self.dp_world_size * self.grad_accum_steps
+        total_tokens = self.rank_microbatch_size_tokens * dp_world_size * self.grad_accum_steps
         assert self.global_batch_size_tokens == total_tokens, (
             "global_batch_size_tokens must equal "
             "(rank_microbatch_size_tokens * dp_world_size * grad_accum_steps) (got "
@@ -231,7 +230,7 @@ class SFTConfig(Config):
 
         bs_config = BatchSizeConfig(
             sequence_length=seq_len,
-            dp_world_size=num_nodes * GPUS_PER_NODE,  # every rank is data parallel
+            world_size=num_nodes * GPUS_PER_NODE,
             global_batch_size_tokens=global_batch_size,
             gpu_type=gpu_type,  # used to double microbatch size for B200s
         )
