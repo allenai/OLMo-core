@@ -457,7 +457,8 @@ def test_generation_module_distributed_fsdp(tmp_path: Path, use_cache: bool):
 #     "These kernels produce slightly different outputs that compound over layers, "
 #     "resulting in different predicted tokens."
 # )
-def test_generation_cache_consistency():
+@pytest.mark.parametrize("batch_size", [1, 8])
+def test_generation_cache_consistency(batch_size: int):
     if not has_flash_attn:
         pytest.skip("flash-attn is required for KV cache usage")
 
@@ -469,7 +470,7 @@ def test_generation_cache_consistency():
     model = transformer_config.build()
 
     gen_config = GenerationConfig(
-        max_length=24, do_sample=False, pad_token_id=0, eos_token_id=1, use_cache=False
+        max_length=128, do_sample=False, pad_token_id=0, eos_token_id=1, use_cache=False
     )
     generation_module = TransformerGenerationModule(
         model=model,
@@ -478,7 +479,7 @@ def test_generation_cache_consistency():
         autocast_precision=autocast_precision.as_pt(),
     )
 
-    batch_size, seq_len = 2, 22
+    seq_len = 124
     input_ids = torch.randint(2, 100, (batch_size, seq_len), device=device)
     seed_all(0)
     output_ids_no_cache, output_logits_no_cache, _ = generation_module.generate_batch(
@@ -488,8 +489,6 @@ def test_generation_cache_consistency():
     output_ids_with_cache, output_logits_with_cache, _ = generation_module.generate_batch(
         input_ids, completions_only=True, return_logits=True, use_cache=True
     )
-
-    torch.testing.assert_close(output_logits_no_cache, output_logits_with_cache)
 
     if not torch.equal(output_ids_no_cache, output_ids_with_cache):
         # Find differences for better debugging
@@ -502,10 +501,21 @@ def test_generation_cache_consistency():
 
         if diff_positions.shape[0] > 0:
             error_msg += "First few differences:\n"
-            for i, (batch_idx, seq_idx) in enumerate(diff_positions[:10]):  # Show first 10 diff
+            for batch_idx, seq_idx in diff_positions[:10]:  # Show first 10 diff
                 no_cache_val = output_ids_no_cache[batch_idx, seq_idx].item()
                 with_cache_val = output_ids_with_cache[batch_idx, seq_idx].item()
                 error_msg += f"  Position [{batch_idx}, {seq_idx}]: no_cache={no_cache_val}, with_cache={with_cache_val}\n"
+
+                # Check if the top logit matches at this position
+                if output_logits_no_cache is not None and output_logits_with_cache is not None:
+                    no_cache_top_logit = torch.argmax(
+                        output_logits_no_cache[batch_idx, seq_idx]
+                    ).item()
+                    with_cache_top_logit = torch.argmax(
+                        output_logits_with_cache[batch_idx, seq_idx]
+                    ).item()
+                    top_logits_match = no_cache_top_logit == with_cache_top_logit
+                    error_msg += f"    Top logits match: {top_logits_match} (no_cache={no_cache_top_logit}, with_cache={with_cache_top_logit})\n"
 
             if diff_positions.shape[0] > 10:
                 error_msg += f"  ... and {diff_positions.shape[0] - 10} more differences\n"
@@ -513,3 +523,5 @@ def test_generation_cache_consistency():
         error_msg += f"\nFull outputs:\nno_cache:\n{output_ids_no_cache}\nwith_cache:\n{output_ids_with_cache}"
 
         assert False, error_msg
+
+    torch.testing.assert_close(output_logits_no_cache, output_logits_with_cache)

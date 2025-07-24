@@ -166,6 +166,16 @@ class TransformerGenerationModule(GenerationModule):
             )
             return logits
 
+    @staticmethod
+    def _reset_kv_cache(
+        model: Transformer, use_cache: bool, batch_size: int, max_seq_len: int, dtype: torch.dtype
+    ):
+        for block in model.blocks.values():
+            if hasattr(block.attention, "reset_kv_cache"):
+                block.attention.reset_kv_cache(  # type: ignore
+                    use_cache=use_cache, batch_size=batch_size, max_seq_len=max_seq_len, dtype=dtype
+                )
+
     @torch.inference_mode()
     def generate_batch(
         self,
@@ -183,6 +193,9 @@ class TransformerGenerationModule(GenerationModule):
 
         Args:
             input_ids: Input token IDs of shape (batch_size, seq_len)
+            attention_mask: Optional attention mask of shape (batch_size, seq_len). This should be
+                a *left-padding* mask, not an arbitrary attention mask.
+                If not provided, the model will use a default mask that attends to all previous tokens.
             return_logits: If True, return logits along with generated tokens
             return_logprobs: If True, return log probabilities of generated tokens. If logits are
                 only required for the purpose of computing logprobs, then use this option instead
@@ -198,27 +211,15 @@ class TransformerGenerationModule(GenerationModule):
                   for positions 1 to N since the first token has no previous context.
         """
         self.model.eval()
-
-        # Move input_ids to the right device.
         input_ids = move_to_device(input_ids, self.device)
+        batch_size, prompt_len = input_ids.shape
+        finished = torch.zeros(batch_size, dtype=torch.bool, device=self.device)
 
         # Replace generation config with any overrides.
         generation_config = self._generation_config.replace(**generation_kwargs)
 
-        batch_size = input_ids.shape[0]
-
-        finished = torch.zeros(batch_size, dtype=torch.bool, device=self.device)
-        prompt_len = input_ids.shape[1]
+        # Output containers
         generated = input_ids
-
-        # Pre-convert stop sequences to tensors
-        stop_sequence_tensors = None
-        if generation_config.stop_sequences is not None:
-            stop_sequence_tensors = [
-                torch.tensor(stop_seq, device=self.device)
-                for stop_seq in generation_config.stop_sequences
-            ]
-
         all_logits = [] if return_logits else None
         all_logprobs = [] if return_logprobs else None
 
@@ -229,67 +230,45 @@ class TransformerGenerationModule(GenerationModule):
         tokens_generated = 0
 
         # Initialize/Reset the KV cache
-        for block in self.model.blocks.values():
-            if hasattr(block.attention, "reset_kv_cache"):
-                block.attention.reset_kv_cache(  # type: ignore
-                    use_cache=generation_config.use_cache,
-                    batch_size=batch_size,
-                    max_seq_len=generation_config.max_length,
-                    dtype=self.autocast_precision,
-                )
+        self._reset_kv_cache(
+            self.model,
+            generation_config.use_cache,
+            batch_size,
+            generation_config.max_length,
+            self.autocast_precision or torch.float32,
+        )
 
         pbar = tqdm(desc="Generating tokens", disable=not log_timing)
-
-        while generated.shape[1] <= generation_config.max_length:
+        while True:
             token_start_time = time.perf_counter()
 
+            # Determine model inputs based on whether we're using the cache
             is_first_forward = generated.shape[1] == prompt_len
             is_using_cache = generation_config.use_cache and not is_first_forward
 
-            if is_using_cache:
-                # KV cache: only pass the last token
-                input_ids_for_model = generated[:, -1:]
-                attention_mask_for_model = None
-                logits_to_keep = 1
-                prefill_kv_cache = False
-            else:
-                # No cache or first forward: pass full sequence
-                input_ids_for_model = generated
-                attention_mask_for_model = attention_mask
-                logits_to_keep = (
-                    0 if (is_first_forward and (return_logits or return_logprobs)) else 1
-                )
-                prefill_kv_cache = is_first_forward
+            input_ids_for_model = generated[:, -1:] if is_using_cache else generated
+            attention_mask_for_model = None if is_using_cache else attention_mask
+            logits_to_keep = prompt_len if is_first_forward else 1
 
             logits = self.model_forward(  # (batch_size, generated.shape[1], self.model.vocab_size)
                 input_ids_for_model,
                 attention_mask=attention_mask_for_model,
                 logits_to_keep=logits_to_keep,
-                prefill_kv_cache=prefill_kv_cache,
+                prefill_kv_cache=is_first_forward,
             )
-            next_token_logits = logits[:, -1, :] if logits.dim() == 3 else logits.squeeze(1)
+            next_token_logits = logits[:, -1, :]  # (batch_size, vocab_size)
 
             if all_logits is not None:
-                all_logits.append(logits)
-
-            # Calculate log probabilities for tokens in the sequence
-            if all_logprobs is not None:
-                if generated.shape[1] == prompt_len and prompt_len > 1:
-                    # For the prompt, calculate log probs for all positions
-                    prompt_log_probs = selective_log_softmax(logits[:, :-1, :], generated[:, 1:])
-                    all_logprobs.append(prompt_log_probs)
-                elif generated.shape[1] > prompt_len:
-                    # For generated tokens, get the log prob of the last token
-                    last_token_log_prob = selective_log_softmax(next_token_logits, generated[:, -1])
-                    all_logprobs.append(last_token_log_prob.unsqueeze(1))
+                all_logits.append(logits)  # (batch_size, seq_len, vocab_size)
 
             # Check if we should stop before generating more tokens
             pbar.update(1)
             if generated.shape[1] >= generation_config.max_length or finished.all():
+                pbar.close()
                 break
 
             # Select next tokens
-            next_tokens = select_next_token(
+            next_tokens = select_next_token(  # (batch_size,)
                 next_token_logits,
                 do_sample=generation_config.do_sample,
                 temperature=generation_config.temperature,
@@ -297,28 +276,23 @@ class TransformerGenerationModule(GenerationModule):
                 top_p=generation_config.top_p,
             )
 
+            # Calculate log probabilities for the tokens we just generated.
+            if all_logprobs is not None:
+                if is_first_forward and prompt_len > 1:
+                    # For the prompt, we already have the ground truth tokens, so we can
+                    # calculate their log probabilities all at once from the first forward pass.
+                    prompt_log_probs = selective_log_softmax(logits[:, :-1, :], generated[:, 1:])
+                    all_logprobs.append(prompt_log_probs)
+
+                # Calculate the log probability of the token that we just selected.
+                next_token_log_prob = selective_log_softmax(next_token_logits, next_tokens)
+                all_logprobs.append(next_token_log_prob.unsqueeze(1))
+
             # Handle finished sequences
             # - Check which sequences have generated EOS
-            just_finished = next_tokens == generation_config.eos_token_id
-
-            # - Check which sequences have generated stop sequences
-            if stop_sequence_tensors is not None:
-                for stop_sequence in stop_sequence_tensors:
-                    stop_seq_len = stop_sequence.shape[0]
-                    if generated.shape[1] >= stop_seq_len:
-                        # Get the last len(stop_sequence) tokens from generated (including the new token)
-                        generated_with_next = torch.cat(
-                            [generated, next_tokens.unsqueeze(-1)], dim=1
-                        )
-                        last_tokens = generated_with_next[:, -stop_seq_len:]
-
-                        # Check if any sequence ends with the stop sequence
-                        matches_stop = (last_tokens == stop_sequence.unsqueeze(0)).all(dim=1)
-                        just_finished = just_finished | matches_stop
-
             prev_finished = finished.clone()
-            finished = prev_finished | just_finished
-            next_tokens = torch.where(prev_finished, generation_config.pad_token_id, next_tokens)
+            just_finished = next_tokens == generation_config.eos_token_id
+            finished |= just_finished
 
             # - Append next tokens
             generated = torch.cat([generated, next_tokens.unsqueeze(-1)], dim=1)
@@ -339,33 +313,27 @@ class TransformerGenerationModule(GenerationModule):
         logits = None
         if return_logits and all_logits:
             logits = torch.cat(all_logits, dim=1)
-            padding_mask = generated == generation_config.pad_token_id
-            logits = logits.masked_fill(padding_mask.unsqueeze(-1), float("-inf"))
-
+            # TODO: align logits with generated tokens? OBO?
         logprobs = None
         if return_logprobs and all_logprobs:
             logprobs = torch.cat(all_logprobs, dim=1)
-            # Create padding mask for logprobs (excluding the first token which has no logprob)
-            padding_mask = generated[:, 1:] == generation_config.pad_token_id
-            logprobs = logprobs.masked_fill(padding_mask, float("-inf"))
+            # TODO: align logprobs with generated tokens? OBO?
 
         if completions_only:
             generated = generated[:, prompt_len:]
             if logits is not None:
                 logits = logits[:, prompt_len:, :]
             if logprobs is not None:
-                # Slice out prompt logprobs to only keep completion logprobs
-                logprobs = logprobs[:, prompt_len - 1 :]
+                logprobs = logprobs[:, prompt_len:, :]
 
-        # Initialize/Reset the KV cache
-        for block in self.model.blocks.values():
-            if hasattr(block.attention, "reset_kv_cache"):
-                block.attention.reset_kv_cache(  # type: ignore
-                    use_cache=False,
-                    batch_size=batch_size,
-                    max_seq_len=generation_config.max_length,
-                    dtype=self.autocast_precision,
-                )
+        # Erase the KV cache
+        self._reset_kv_cache(
+            self.model,
+            False,
+            batch_size,
+            generation_config.max_length,
+            self.autocast_precision or torch.float32,
+        )
 
         total_time = time.perf_counter() - start_time
         if log_timing:
