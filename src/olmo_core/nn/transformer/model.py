@@ -1100,6 +1100,7 @@ class BLTTransformer(Transformer):
         mp_policy = MixedPrecisionPolicy(
             param_dtype=param_dtype or self.dtype, reduce_dtype=reduce_dtype
         )
+        fsdp_config = dict(mesh=dp_mesh, mp_policy=mp_policy)
         # For PP, do not reshard after forward to avoid per-microbatch all-gathers,
         # which can be expensive and non-overlapped
         reshard_after_forward = False if pp_enabled else True
@@ -1111,6 +1112,7 @@ class BLTTransformer(Transformer):
             reshard_after_forward=reshard_after_forward,
             mp_policy=mp_policy,
         )
+        # TODO(benjaminm): this seems to cause perf deg? only tested on single GPU.
         self.local_decoder.apply_fsdp(  # type: ignore
             dp_mesh=dp_mesh,
             prefetch_factor=prefetch_factor,
@@ -1119,16 +1121,40 @@ class BLTTransformer(Transformer):
             mp_policy=mp_policy,
         )
 
-        # super().apply_fsdp must be last since self must be the last thing to shard
-        # (need to go in topological order)
-        super().apply_fsdp(
-            dp_mesh=dp_mesh,
-            param_dtype=param_dtype,
-            reduce_dtype=reduce_dtype,
-            pp_enabled=pp_enabled,
-            prefetch_factor=prefetch_factor,
-            wrapping_strategy=wrapping_strategy,
+        for block in self.blocks.values():
+            block = cast(TransformerBlockBase, block)
+            block.apply_fsdp(
+                dp_mesh=dp_mesh,
+                prefetch_factor=prefetch_factor,
+                wrapping_strategy=wrapping_strategy,
+                reshard_after_forward=reshard_after_forward,
+                mp_policy=mp_policy,
+            )
+
+        if (
+            wrapping_strategy != TransformerDataParallelWrappingStrategy.blocks
+            and self.lm_head is not None
+        ):
+            fully_shard(self.lm_head, reshard_after_forward=False, **fsdp_config)
+
+        fully_shard(self, reshard_after_forward=reshard_after_forward, **fsdp_config)
+        # Some inputs need to be on CPU initially, but FSDP will move everything to model's
+        # device if we don't hide it.
+        self.register_forward_pre_hook(_hide_cpu_inputs_from_torch, prepend=True, with_kwargs=True)
+        self.register_forward_pre_hook(
+            _unhide_cpu_inputs_from_torch, prepend=False, with_kwargs=True
         )
+
+        if prefetch_factor > 0:
+            blocks = cast(List[FSDPModule], list(self.blocks.values()))
+            for i in range(len(blocks)):
+                block = blocks[i]
+                if i + 1 < len(blocks):
+                    block.set_modules_to_forward_prefetch(blocks[i + 1 : i + 1 + prefetch_factor])
+                elif isinstance(self.lm_head, FSDPModule):
+                    block.set_modules_to_forward_prefetch([self.lm_head])
+
+        self._fsdp_enabled = True
 
     @cached_property
     def num_params(self) -> int:
@@ -1180,7 +1206,7 @@ class BLTTransformer(Transformer):
         decoder_cross_attn_mask: Optional[BlockMask] = None
 
         if (patch_lens := kwargs.pop("patch_lens", None)) is not None:
-            patch_lens = patch_lens
+            patch_lens = move_to_device(patch_lens, self.device)
             patch_ids = blt_utils.lengths_to_ids(patch_lens, input_ids.shape[-1])
             original_input_ids = kwargs.pop("original_input_ids", None) # must be present if patch_lens is present
 
@@ -1205,7 +1231,7 @@ class BLTTransformer(Transformer):
         local_encoder_kwargs["patch_ids"] = patch_ids
         local_encoder_kwargs["cross_attn_mask"] = encoder_cross_attn_mask
         local_decoder_kwargs["cross_attn_mask"] = decoder_cross_attn_mask
-        extra_kwargs["original_input_ids"] = original_input_ids
+        extra_kwargs["original_input_ids"] = move_to_device(original_input_ids, self.device)
 
         return (
             input_ids,
@@ -1228,13 +1254,8 @@ class BLTTransformer(Transformer):
         """
         super().apply_compile()
 
-        for block in self.local_encoder.blocks.values():  # type: ignore
-            block = cast(TransformerBlockBase, block)
-            block.apply_compile()
-
-        for block in self.local_decoder.blocks.values():  # type: ignore
-            block = cast(TransformerBlockBase, block)
-            block.apply_compile()
+        self.local_encoder.compile(fullgraph=False)
+        self.local_decoder.compile(fullgraph=False)
 
     def forward(
         self,
@@ -1427,6 +1448,8 @@ class BLTDistillTransformer(BLTTransformer):
             return_logits=True,  # needed for distillation
             **kwargs,
         )
+        if original_labels is not None:
+            original_labels = move_to_device(original_labels, self.device)
 
         # First, run the teacher.
         if not skip_teacher:

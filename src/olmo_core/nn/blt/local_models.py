@@ -275,7 +275,9 @@ class LocalEncoder(nn.Module):
         # NOTE: BLT applies the residual connection two times (presumably on accident?), so we have to 2x here.
         patch_embedding = (patch_embedding_init * 2 + residual).reshape(
             reduced_h.shape[0], reduced_h.shape[1], -1
-        )
+        ).clone()
+        # NOTE: ^clone is crucial here! otherwise get strange `SetStorage` errors in the backward pass on L40.
+        # (but possibly not on H100?)
 
         if self.out_projection is not None:
             patch_embedding = self.out_projection(patch_embedding)
