@@ -43,7 +43,8 @@ from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
 from ..lm_head import LMHeadConfig, LMOutputWithLoss
 from ..moe import MoEBase
-from ..blt import LocalEncoderConfig, LocalDecoderConfig, utils as blt_utils
+from ..blt.config import LocalEncoderConfig, LocalDecoderConfig
+from ..blt import utils as blt_utils
 from ..rope import RoPEBuffers, RotaryEmbeddingBase
 from ..utils import selective_checkpointing_context_fn
 from .block import (
@@ -1096,15 +1097,6 @@ class BLTTransformer(Transformer):
             in more aggressive prefetching.
         :wrapping_strategy: The wrapping strategy.
         """
-        super().apply_fsdp(
-            dp_mesh=dp_mesh,
-            param_dtype=param_dtype,
-            reduce_dtype=reduce_dtype,
-            pp_enabled=pp_enabled,
-            prefetch_factor=prefetch_factor,
-            wrapping_strategy=wrapping_strategy,
-        )
-
         mp_policy = MixedPrecisionPolicy(
             param_dtype=param_dtype or self.dtype, reduce_dtype=reduce_dtype
         )
@@ -1127,6 +1119,16 @@ class BLTTransformer(Transformer):
             mp_policy=mp_policy,
         )
 
+        # super().apply_fsdp must be last since self must be the last thing to shard
+        # (need to go in topological order)
+        super().apply_fsdp(
+            dp_mesh=dp_mesh,
+            param_dtype=param_dtype,
+            reduce_dtype=reduce_dtype,
+            pp_enabled=pp_enabled,
+            prefetch_factor=prefetch_factor,
+            wrapping_strategy=wrapping_strategy,
+        )
 
     @cached_property
     def num_params(self) -> int:

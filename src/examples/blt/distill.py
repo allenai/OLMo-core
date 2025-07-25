@@ -33,7 +33,7 @@ from olmo_core.distributed.checkpoint import load_model_and_optim_state
 from olmo_core.float8 import Float8Config
 from olmo_core.nn.transformer import TransformerConfig, TransformerType
 from olmo_core.nn.feed_forward import FeedForwardConfig
-from olmo_core.nn.blt import LocalEncoderConfig, LocalDecoderConfig
+from olmo_core.nn.blt.config import LocalEncoderConfig, LocalDecoderConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
 from olmo_core.train import (
     Duration,

@@ -14,7 +14,7 @@ from ..feed_forward import FeedForwardConfig, FeedForwardType
 from ..layer_norm import LayerNormConfig, LayerNormType
 from ..lm_head import LMHeadConfig, LMHeadType
 from ..moe import MoEConfig, MoERouterConfig, MoEType
-from ..blt import LocalEncoderConfig, LocalDecoderConfig
+from ..blt.config import LocalEncoderConfig, LocalDecoderConfig
 from ..rope import RoPEConfig, RoPEScalingConfig, RoPEType
 from .init import InitMethod
 
