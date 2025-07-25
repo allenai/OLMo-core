@@ -1,12 +1,17 @@
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional, cast
 
 import torch
 import torch.nn as nn
+from torch.distributed import DeviceMesh
+from torch.distributed.fsdp import FSDPModule, MixedPrecisionPolicy, fully_shard
 from torch.nn.attention.flex_attention import flex_attention, BlockMask
 from torch.distributed.tensor import DTensor, distribute_tensor
 
 from olmo_core.config import Config
+from olmo_core.nn.transformer.config import TransformerDataParallelWrappingStrategy
+from olmo_core.nn.transformer.block import TransformerBlockBase
 from olmo_core.nn.buffer_cache import BufferCache
 from .embed import add_hash_embeddings
 
@@ -167,6 +172,41 @@ class LocalEncoder(nn.Module):
             )
         else:
             self.out_projection = None
+
+    def apply_fsdp(
+        self,
+        dp_mesh: Optional[DeviceMesh] = None,
+        param_dtype: Optional[torch.dtype] = None,
+        reduce_dtype: torch.dtype = torch.float32,
+        pp_enabled: bool = False,
+        prefetch_factor: int = 0,
+        wrapping_strategy: TransformerDataParallelWrappingStrategy = TransformerDataParallelWrappingStrategy.full,
+    ):
+        mp_policy = MixedPrecisionPolicy(
+            param_dtype=param_dtype, reduce_dtype=reduce_dtype
+        )
+        fsdp_config = dict(mesh=dp_mesh, mp_policy=mp_policy)
+        # For PP, do not reshard after forward to avoid per-microbatch all-gathers,
+        # which can be expensive and non-overlapped
+        reshard_after_forward = False if pp_enabled else True
+
+        for emb in [self.embedding, *self.hash_embeddings]:
+            fully_shard(emb, reshard_after_forward=reshard_after_forward, **fsdp_config)
+            # Embedding params are not needed for backwards computation.
+            cast(FSDPModule, emb).set_unshard_in_backward(False)
+
+        for block in self.blocks.values():
+            block = cast(TransformerBlockBase, block)
+            block.apply_fsdp(
+                dp_mesh=dp_mesh,
+                prefetch_factor=prefetch_factor,
+                wrapping_strategy=wrapping_strategy,
+                reshard_after_forward=reshard_after_forward,
+                mp_policy=mp_policy,
+            )
+
+        fully_shard(self.cross_attention, reshard_after_forward=reshard_after_forward, **fsdp_config)
+        fully_shard(self, reshard_after_forward=reshard_after_forward, **fsdp_config)
 
     def fix_init(self, embedding_init_path, target_embeddings, n_estimate=10_000):
         """Rescale such that the local encoder outputs (given random inputs) have the same mean and std as the provided embeddings."""
@@ -374,6 +414,40 @@ class LocalDecoder(nn.Module):
                 cache=cache,
             )
             self.cross_attentions[str(block_idx)] = CrossAttention(d_model, cross_attn_n_heads, init_device=init_device)
+
+    def apply_fsdp(
+        self,
+        dp_mesh: Optional[DeviceMesh] = None,
+        param_dtype: Optional[torch.dtype] = None,
+        reduce_dtype: torch.dtype = torch.float32,
+        pp_enabled: bool = False,
+        prefetch_factor: int = 0,
+        wrapping_strategy: TransformerDataParallelWrappingStrategy = TransformerDataParallelWrappingStrategy.full,
+    ):
+        mp_policy = MixedPrecisionPolicy(
+            param_dtype=param_dtype, reduce_dtype=reduce_dtype
+        )
+        fsdp_config = dict(mesh=dp_mesh, mp_policy=mp_policy)
+        # For PP, do not reshard after forward to avoid per-microbatch all-gathers,
+        # which can be expensive and non-overlapped
+        reshard_after_forward = False if pp_enabled else True
+
+        for block in self.blocks.values():
+            block = cast(TransformerBlockBase, block)
+            block.apply_fsdp(
+                dp_mesh=dp_mesh,
+                prefetch_factor=prefetch_factor,
+                wrapping_strategy=wrapping_strategy,
+                reshard_after_forward=reshard_after_forward,
+                mp_policy=mp_policy,
+            )
+
+        for cross_attn in self.cross_attentions.values():
+            fully_shard(cross_attn, reshard_after_forward=reshard_after_forward, **fsdp_config)
+
+        # should we shard the patch embedding projection?
+        #fully_shard(self.patch_embedding_projection, reshard_after_forward=reshard_after_forward, **fsdp_config)
+        fully_shard(self, reshard_after_forward=reshard_after_forward, **fsdp_config)
 
     def forward(
         self,

@@ -1072,6 +1072,62 @@ class BLTTransformer(Transformer):
         else:
             self.boundary_predictor = None
 
+    def apply_fsdp(
+        self,
+        dp_mesh: Optional[DeviceMesh] = None,
+        param_dtype: Optional[torch.dtype] = None,
+        reduce_dtype: torch.dtype = torch.float32,
+        pp_enabled: bool = False,
+        prefetch_factor: int = 0,
+        wrapping_strategy: TransformerDataParallelWrappingStrategy = TransformerDataParallelWrappingStrategy.full,
+    ):
+        """
+        Apply FSDP(2) to the model.
+
+        .. warning::
+            This should generally be called last if using any other parallelism strategies or optimizations
+            like :meth:`apply_compile()`.
+
+        :param dp_mesh: The model data parallel device mesh.
+        :param param_dtype: The data type to materialize params in. Defaults to the current param dtype.
+        :param reduce_dtype: The data type for gradient reduction.
+        :pp_enabled: If pipeline parallelism is also enabled.
+        :prefetch_factor: For tuning the prefetch settings. 0 is the default, and higher values result
+            in more aggressive prefetching.
+        :wrapping_strategy: The wrapping strategy.
+        """
+        super().apply_fsdp(
+            dp_mesh=dp_mesh,
+            param_dtype=param_dtype,
+            reduce_dtype=reduce_dtype,
+            pp_enabled=pp_enabled,
+            prefetch_factor=prefetch_factor,
+            wrapping_strategy=wrapping_strategy,
+        )
+
+        mp_policy = MixedPrecisionPolicy(
+            param_dtype=param_dtype or self.dtype, reduce_dtype=reduce_dtype
+        )
+        # For PP, do not reshard after forward to avoid per-microbatch all-gathers,
+        # which can be expensive and non-overlapped
+        reshard_after_forward = False if pp_enabled else True
+
+        self.local_encoder.apply_fsdp(  # type: ignore
+            dp_mesh=dp_mesh,
+            prefetch_factor=prefetch_factor,
+            wrapping_strategy=wrapping_strategy,
+            reshard_after_forward=reshard_after_forward,
+            mp_policy=mp_policy,
+        )
+        self.local_decoder.apply_fsdp(  # type: ignore
+            dp_mesh=dp_mesh,
+            prefetch_factor=prefetch_factor,
+            wrapping_strategy=wrapping_strategy,
+            reshard_after_forward=reshard_after_forward,
+            mp_policy=mp_policy,
+        )
+
+
     @cached_property
     def num_params(self) -> int:
         return sum(p.numel() for p in self.parameters())
