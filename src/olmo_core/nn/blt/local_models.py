@@ -156,18 +156,24 @@ class LocalEncoder(nn.Module):
 
         if embedding_init_path is not None:
             # load embedding inits (computed via compute_hash_embedding_init.py)
-            self.embedding.weight.data[:] = distribute_tensor(
-                torch.load(Path(embedding_init_path) / "embedding_init.pth"),
-                device_mesh=self.embedding.weight.device_mesh,  # type: ignore
-                placements=self.embedding.weight.placements,  # type: ignore
-            )
+            if isinstance(self.embedding.weight.data, DTensor):
+                self.embedding.weight.data[:] = distribute_tensor(
+                    torch.load(Path(embedding_init_path) / "embedding_init.pth"),
+                    device_mesh=self.embedding.weight.data.device_mesh,
+                    placements=self.embedding.weight.data.placements,
+                )
+            else:
+                self.embedding.weight.data[:] = torch.load(Path(embedding_init_path) / "embedding_init.pth")
 
             for i, hash_embedding in enumerate(self.hash_embeddings):
-                hash_embedding.weight.data[:] = distribute_tensor(  # type: ignore
-                    torch.load(Path(embedding_init_path) / f"hash_embedding_init_{i}.pth"),
-                    device_mesh=hash_embedding.weight.device_mesh,  # type: ignore
-                    placements=hash_embedding.weight.placements,  # type: ignore
-                )
+                if isinstance(hash_embedding.weight.data, DTensor):
+                    hash_embedding.weight.data[:] = distribute_tensor(
+                        torch.load(Path(embedding_init_path) / f"hash_embedding_init_{i}.pth"),
+                        device_mesh=hash_embedding.weight.data.device_mesh,
+                        placements=hash_embedding.weight.data.placements,
+                    )
+                else:
+                    hash_embedding.weight.data[:] = torch.load(Path(embedding_init_path) / f"hash_embedding_init_{i}.pth")  # type: ignore
 
         # .std not supported for DTensor
         te_mean = target_embeddings.mean(0)
@@ -205,8 +211,18 @@ class LocalEncoder(nn.Module):
 
         h_patch_mean = h_patch[0].mean(0)
         h_patch_std = h_patch[0].var(0).sqrt()
-        h_patch_mean = distribute_tensor(h_patch_mean.detach(), device_mesh=te_mean.device_mesh)
-        h_patch_std = distribute_tensor(h_patch_std.detach(), device_mesh=te_std.device_mesh)
+
+        def maybe_distribute(tensor: torch.Tensor) -> DTensor | torch.Tensor:
+            if isinstance(self.embedding.weight.data, DTensor):
+                return distribute_tensor(
+                    tensor,
+                    device_mesh=self.embedding.weight.data.device_mesh,
+                )
+            else:
+                return tensor
+
+        h_patch_mean = maybe_distribute(h_patch_mean.detach())
+        h_patch_std = maybe_distribute(h_patch_std.detach())
 
         if self.out_projection is None:
             # NOTE: this does not match the output perfectly! should remove.
@@ -215,7 +231,7 @@ class LocalEncoder(nn.Module):
             te_folded_std = te_folded.var(0).sqrt()
 
             h_patch_folded_std = h_patch.reshape(-1, self.d_model).var(0).sqrt()
-            h_patch_folded_std = distribute_tensor(h_patch_folded_std.detach(), device_mesh=te_folded_std.device_mesh)
+            h_patch_folded_std = maybe_distribute(h_patch_folded_std.detach())
 
             # then rescale the last linear layer to get right magnitude out
             self.patch_embedding_projection.weight.data *= (te_folded_std / h_patch_folded_std).unsqueeze(0)
