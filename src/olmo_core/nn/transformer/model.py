@@ -1617,7 +1617,7 @@ class BLTDistillTransformer(BLTTransformer):
                     return -(
                         torch.exp(log_y_true) * log_y_pred
                         + (-torch.expm1(log_y_true) * log1mexp(log_y_pred))
-                    )
+                    ) * (blt_config.binarization_temp ** 2)
 
                 div_fn = kl_div_fn
             elif blt_config.div_fn == "tvd":
@@ -1625,13 +1625,20 @@ class BLTDistillTransformer(BLTTransformer):
                     log_y_true = (log_y_true.float() / blt_config.binarization_temp) - blt_config.epsilon
                     log_y_pred = (log_y_pred.float() / blt_config.binarization_temp) - blt_config.epsilon
 
+                    # TODO(benjaminm): how does this scale with temp?
                     return torch.abs(torch.exp(log_y_true) - torch.exp(log_y_pred))
 
                 div_fn = tvd_div_fn
+            elif blt_config.div_fn == "tvd_temp_limit":
+                def tvd_temp_limit_div_fn(log_y_true, log_y_pred):
+                    return torch.abs(log_y_true - log_y_pred)
+
+                div_fn = tvd_temp_limit_div_fn
             else:
                 raise ValueError(f"Unknown distillation div_fn '{blt_config.div_fn}'")
 
             local_decoder_loss = (div_fn(y_true, y_hat) * patch_mask[:, 1:-1]).mean()
+            metrics["blt/local_decoder_teacher_mean_p"] = (torch.exp(y_true) * patch_mask[:, 1:-1]).mean() / patch_mask[:, 1:-1].float().mean()
             metrics["blt/local_decoder_loss"] = local_decoder_loss / patch_mask[:, 1:-1].float().mean()
             metrics["blt/local_decoder_mae"] = (torch.abs(y_true - y_hat) * patch_mask[:, 1:-1]).mean() / patch_mask[:, 1:-1].float().mean()
         else:

@@ -61,7 +61,7 @@ from olmo_core.utils import seed_all
 
 NUM_WORKERS = 16
 SEQUENCE_LENGTH = 1024
-QUICK_DEBUG = False
+QUICK_DEBUG = True
 GLOBAL_BATCH_SIZE = 64
 LOCAL_BATCH_SIZE = 64
 EVAL_BATCH_SIZE = 16
@@ -117,16 +117,11 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         NUM_WORKERS = 0
         GLOBAL_BATCH_SIZE = 4
         LOCAL_BATCH_SIZE = 4
-        teacher_model_config = TransformerConfig.olmo2_190M(
-            vocab_size=subword_tokenizer_config.padded_vocab_size()
-        )
-        local_d_model = 384
-    else:
-        teacher_model_config = TransformerConfig.olmo2_1B_v2(
-            vocab_size=subword_tokenizer_config.padded_vocab_size()
-        )
-        local_d_model = 1024
-
+    
+    local_d_model = 1024
+    teacher_model_config = TransformerConfig.olmo2_1B_v2(
+        vocab_size=subword_tokenizer_config.padded_vocab_size()
+    )
     teacher_model_config = teacher_model_config.replace(
         freeze_params=["*"] # don't train teacher
     )
@@ -280,7 +275,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         TrainerConfig(
             save_folder=SAVE_FOLDER,
             save_overwrite=True,
-            load_strategy=LoadStrategy.if_available,
+            load_strategy=LoadStrategy.never if QUICK_DEBUG else LoadStrategy.if_available,
             metrics_collect_interval=5,
             cancel_check_interval=5,
             max_duration=Duration.steps(10000),
@@ -353,25 +348,24 @@ def main(run_name: str, overrides: List[str]):
     config_dict = config.as_config_dict()
     cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
 
-    if not QUICK_DEBUG:
-        # Load OLMo 1B checkpoint.
-        # assume share_blocks=True, so we don't have to map/duplicate block weights
-        random_init_keys = {"local_encoder", "boundary_predictor", "local_decoder"}
-        key_mapping = {
-            key: None for key in model.state_dict().keys() if any(key.startswith(x) for x in random_init_keys)
-        } | {
-            f"teacher.{key}": key for key in model.teacher.state_dict().keys()  # type: ignore
-        }
-        incompatible_keys = load_model_and_optim_state(OLMO_1B_CKPT_PATH, model, key_mapping=key_mapping, strict=False)
+    # Load OLMo 1B checkpoint.
+    # assume share_blocks=True, so we don't have to map/duplicate block weights
+    random_init_keys = {"local_encoder", "boundary_predictor", "local_decoder"}
+    key_mapping = {
+        key: None for key in model.state_dict().keys() if any(key.startswith(x) for x in random_init_keys)
+    } | {
+        f"teacher.{key}": key for key in model.teacher.state_dict().keys()  # type: ignore
+    }
+    incompatible_keys = load_model_and_optim_state(OLMO_1B_CKPT_PATH, model, key_mapping=key_mapping, strict=False)
 
-        if len(incompatible_keys.unexpected_keys) > 0:
-            raise ValueError(f"Unexpected keys when loading checkpoint: {incompatible_keys.unexpected_keys} (assume we use all teacher weights)")
+    if len(incompatible_keys.unexpected_keys) > 0:
+        raise ValueError(f"Unexpected keys when loading checkpoint: {incompatible_keys.unexpected_keys} (assume we use all teacher weights)")
 
-        for missing_key in incompatible_keys.missing_keys:
-            log.info(f"Key {missing_key} was not found in checkpoint, is randomly initialized (this is expected for local encoder/decoder and student lm head).")
+    for missing_key in incompatible_keys.missing_keys:
+        log.info(f"Key {missing_key} was not found in checkpoint, is randomly initialized (this is expected for local encoder/decoder and student lm head).")
 
-        # init embeddings + scale appropriately
-        model.fix_init(EMBEDDING_INIT_PATH)  # type: ignore
+    # init embeddings + scale appropriately
+    model.fix_init(EMBEDDING_INIT_PATH)  # type: ignore
 
     # TODO(benjaminm): this is not a nice place?
     register_fsdp_forward_method(model, "student_forward")
