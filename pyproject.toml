@@ -58,7 +58,8 @@ beaker = ["beaker-py>=1.36.0,<2.0", "GitPython>=3.0,<4.0"]
 wandb = ["wandb"]
 comet = ["comet_ml"]
 transformers = ["transformers"]
-all = ["ai2-olmo-core[dev,beaker,wandb,comet,transformers]"]
+float8 = ["torchao"]
+all = ["ai2-olmo-core[dev,beaker,wandb,comet,transformers,float8]"]
 
 [tool.setuptools]
 include-package-data = true

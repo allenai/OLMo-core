@@ -30,6 +30,7 @@ from olmo_core.data import (
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_rank
 from olmo_core.distributed.checkpoint import load_model_and_optim_state
+from olmo_core.float8 import Float8Config
 from olmo_core.nn.transformer import TransformerConfig, TransformerType
 from olmo_core.nn.feed_forward import FeedForwardConfig
 from olmo_core.nn.blt import LocalEncoderConfig, LocalDecoderConfig
@@ -224,6 +225,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         max_sequence_length=dataset_config.effective_sequence_length,
         optim=optim,
         compile_model=True,
+        float8_config=Float8Config(enabled=False),
         blt_config=BLTConfig(
             tokenizer=byte_tokenizer_config,
             losses=losses,
