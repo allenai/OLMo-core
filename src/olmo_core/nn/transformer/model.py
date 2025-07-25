@@ -1483,17 +1483,22 @@ class BLTDistillTransformer(BLTTransformer):
             if use_oracle_patch_reps:
                 if last_hidden_state is None:
                     raise ValueError("`last_hidden_state` must be provided when `use_oracle_patch_reps` is True")
-                h_patch[:, 1:] = last_hidden_state[:, :-1]
+                h_patch_after_global = torch.zeros_like(h_patch)
+                h_patch_after_global[:, 1:] = last_hidden_state[:, :-1]
             else:
+                h_patch_global = h_patch
+
                 for block in self.blocks.values():
                     # Mark sizes as dynamic for torch.compile().
                     if self.compile_enabled:
-                        mark_dynamic(h_patch, (0, 1), strict=False)
-                    h_patch = block(h_patch, **block_kwargs)
+                        mark_dynamic(h_patch_global, (0, 1), strict=False)
+                    h_patch_global = block(h_patch_global, **block_kwargs)
+
+                h_patch_after_global = h_patch_global
 
             h_out = self.local_decoder(
                 embeds=h_byte,
-                patch_embeds=h_patch,
+                patch_embeds=h_patch_after_global,
                 **local_decoder_kwargs,
             )
             logits = self.lm_head(h_out, **lm_head_kwargs)
