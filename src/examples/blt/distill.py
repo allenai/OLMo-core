@@ -232,7 +232,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             loss_weights=loss_weights,
             skip_blocks=TRAIN_MODE == "local_encoder_only",
             skip_teacher=False,
-            use_oracle_patch_reps=TRAIN_MODE == "local_decoder_only",
+            use_oracle_patch_reps=TRAIN_MODE in {"local_decoder_only", "full_stage_1"},
         ),
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
