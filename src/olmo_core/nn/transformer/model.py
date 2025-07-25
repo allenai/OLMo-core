@@ -1592,7 +1592,8 @@ class BLTDistillTransformer(BLTTransformer):
                 boundary_logprobs = F.logsigmoid(boundary_preds.float())
                 patch_end_indices = torch.cumsum(local_encoder_kwargs["patch_lens"], dim=1) - 1
                 if blt_config.add_boundary_logp:
-                    y_hat = y_hat + torch.gather(boundary_logprobs, -1, patch_end_indices)[:, 1:-1]
+                    # [2:]: skip bos, skip first patch (since we don't have logits for the first patch)
+                    y_hat = y_hat + torch.gather(boundary_logprobs, -1, patch_end_indices)[:, 2:]
 
                 boundary_labels = torch.zeros_like(boundary_preds, device=boundary_preds.device, dtype=boundary_preds.dtype)
                 boundary_labels.scatter_(1, patch_end_indices, 1.0)
