@@ -19,6 +19,7 @@ class BLTConfig(Config):
     skip_blocks: bool = False
     skip_teacher: bool = False
     use_oracle_patch_reps: bool = False
+    add_boundary_logp: bool = True
 
 
 @dataclass
