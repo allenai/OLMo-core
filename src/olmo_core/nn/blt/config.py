@@ -20,6 +20,8 @@ class BLTConfig(Config):
     skip_teacher: bool = False
     use_oracle_patch_reps: bool = False
     add_boundary_logp: bool = True
+    eval_add_boundary_logp: bool = True
+    debug_boundary_shift: int = 2
 
 
 @dataclass

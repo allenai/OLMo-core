@@ -1593,7 +1593,10 @@ class BLTDistillTransformer(BLTTransformer):
                 patch_end_indices = torch.cumsum(local_encoder_kwargs["patch_lens"], dim=1) - 1
                 if blt_config.add_boundary_logp:
                     # [2:]: skip bos, skip first patch (since we don't have logits for the first patch)
-                    y_hat = y_hat + torch.gather(boundary_logprobs, -1, patch_end_indices)[:, 2:]
+                    if blt_config.debug_boundary_shift == 2:
+                        y_hat = y_hat + torch.gather(boundary_logprobs, -1, patch_end_indices)[:, 2:]
+                    else:
+                        y_hat = y_hat + torch.gather(boundary_logprobs, -1, patch_end_indices)[:, 1:-1]
 
                 boundary_labels = torch.zeros_like(boundary_preds, device=boundary_preds.device, dtype=boundary_preds.dtype)
                 boundary_labels.scatter_(1, patch_end_indices, 1.0)
@@ -1768,6 +1771,9 @@ class BLTDistillTransformer(BLTTransformer):
         blt_config: Optional[BLTConfig] = None,
         **kwargs,
     ):
+        if blt_config is None:
+            raise ValueError("`blt_config` must be provided for original_trunk_forward")
+
         input_ids, labels, block_kwargs, lm_head_kwargs, local_encoder_kwargs, local_decoder_kwargs, extra_kwargs = self._prepare_inputs(
             input_ids,
             labels,
@@ -1817,7 +1823,11 @@ class BLTDistillTransformer(BLTTransformer):
         if boundary_preds is not None:
             boundary_logprobs = F.logsigmoid(boundary_preds.float())
             patch_end_indices = torch.cumsum(local_encoder_kwargs["patch_lens"], dim=1) - 1
-            y_hat = y_hat + torch.gather(boundary_logprobs, -1, patch_end_indices)[:, 1:-1]
+            if blt_config.eval_add_boundary_logp:
+                if blt_config.debug_boundary_shift == 2:
+                    y_hat = y_hat + torch.gather(boundary_logprobs, -1, patch_end_indices)[:, 2:]
+                else:
+                    y_hat = y_hat + torch.gather(boundary_logprobs, -1, patch_end_indices)[:, 1:-1]
 
         remaining_logpmass = log1mexp(y_hat)
         remaining_logp_uniform = remaining_logpmass - math.log(teacher_logits.shape[2] - 1)  # -1 to skip the main path token
