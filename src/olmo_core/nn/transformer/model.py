@@ -1603,6 +1603,10 @@ class BLTDistillTransformer(BLTTransformer):
             # now we still need to add the boundary logprobs...
             if boundary_preds is not None:
                 boundary_logprobs = F.logsigmoid(boundary_preds.float())
+
+                if not blt_config.decoder_backprop_through_add_boundary_logp:
+                    boundary_logprobs = boundary_logprobs.detach()
+
                 patch_end_indices = torch.cumsum(local_encoder_kwargs["patch_lens"], dim=1) - 1
                 if blt_config.add_boundary_logp:
                     # [2:]: skip bos, skip first patch (since we don't have logits for the first patch)
@@ -1764,10 +1768,6 @@ class BLTDistillTransformer(BLTTransformer):
 
         if boundary_preds is not None:
             boundary_logprobs = F.logsigmoid(boundary_preds.float())
-
-            if not blt_config.decoder_backprop_through_add_boundary_logp:
-                boundary_logprobs = boundary_logprobs.detach()
-
             patch_end_indices = torch.cumsum(local_encoder_kwargs["patch_lens"], dim=1) - 1
             if blt_config.eval_add_boundary_logp:
                 if blt_config.debug_boundary_shift == 2:
