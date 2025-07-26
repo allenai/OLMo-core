@@ -24,6 +24,7 @@ class BLTConfig(Config):
     debug_boundary_shift: int = 2
     decoder_backprop_through_encoder: bool = True
     boundary_predictor_backprop_through_encoder: bool = True
+    decoder_backprop_through_add_boundary_logp: bool = True
 
 
 @dataclass

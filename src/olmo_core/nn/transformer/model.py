@@ -1502,11 +1502,18 @@ class BLTDistillTransformer(BLTTransformer):
 
                 h_patch_after_global = h_patch_global
 
-            h_out = self.local_decoder(
-                embeds=h_byte,
-                patch_embeds=h_patch_after_global,
-                **local_decoder_kwargs,
-            )
+            if blt_config.decoder_backprop_through_encoder:
+                h_out = self.local_decoder(
+                    embeds=h_byte,
+                    patch_embeds=h_patch_after_global,
+                    **local_decoder_kwargs,
+                )
+            else:
+                h_out = self.local_decoder(
+                    embeds=h_byte.detach(),
+                    patch_embeds=h_patch_after_global.detach(),
+                    **local_decoder_kwargs,
+                )
             logits = self.lm_head(h_out, **lm_head_kwargs)
             logprobs = F.log_softmax(logits.float(), dim=-1)
             main_path_logprobs = torch.gather(logprobs[:, :-1], -1, input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
@@ -1757,6 +1764,10 @@ class BLTDistillTransformer(BLTTransformer):
 
         if boundary_preds is not None:
             boundary_logprobs = F.logsigmoid(boundary_preds.float())
+
+            if not blt_config.decoder_backprop_through_add_boundary_logp:
+                boundary_logprobs = boundary_logprobs.detach()
+
             patch_end_indices = torch.cumsum(local_encoder_kwargs["patch_lens"], dim=1) - 1
             if blt_config.eval_add_boundary_logp:
                 if blt_config.debug_boundary_shift == 2:
@@ -1879,18 +1890,12 @@ class BLTDistillTransformer(BLTTransformer):
 
         h_patch[:, 1:] = last_hidden_state[:, :-1]
 
-        if blt_config.decoder_backprop_through_encoder:
-            h_out = self.local_decoder(
-                embeds=h_byte,
-                patch_embeds=h_patch,
-                **local_decoder_kwargs,
-            )
-        else:
-            h_out = self.local_decoder(
-                embeds=h_byte.detach(),
-                patch_embeds=h_patch.detach(),
-                **local_decoder_kwargs,
-            )
+        h_out = self.local_decoder(
+            embeds=h_byte,
+            patch_embeds=h_patch,
+            **local_decoder_kwargs,
+        )
+
         logits = self.lm_head(h_out, **lm_head_kwargs)
         logprobs = F.log_softmax(logits.float(), dim=-1)
         main_path_logprobs = torch.gather(logprobs[:, :-1], -1, input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
