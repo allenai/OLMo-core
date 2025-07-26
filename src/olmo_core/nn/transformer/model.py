@@ -1801,11 +1801,18 @@ class BLTDistillTransformer(BLTTransformer):
 
         h_patch[:, 1:] = last_hidden_state[:, :-1]
 
-        h_out = self.local_decoder(
-            embeds=h_byte,
-            patch_embeds=h_patch,
-            **local_decoder_kwargs,
-        )
+        if blt_config.decoder_backprop_through_encoder:
+            h_out = self.local_decoder(
+                embeds=h_byte,
+                patch_embeds=h_patch,
+                **local_decoder_kwargs,
+            )
+        else:
+            h_out = self.local_decoder(
+                embeds=h_byte.detach(),
+                patch_embeds=h_patch.detach(),
+                **local_decoder_kwargs,
+            )
         logits = self.lm_head(h_out, **lm_head_kwargs)
         logprobs = F.log_softmax(logits.float(), dim=-1)
         main_path_logprobs = torch.gather(logprobs[:, :-1], -1, input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
