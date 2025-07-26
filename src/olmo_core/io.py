@@ -560,11 +560,13 @@ def _get_gcs_client():
 def _gcs_is_retriable(exc: Exception) -> bool:
     from google.api_core.exceptions import BadRequest
     from google.api_core.retry import if_transient_error
-
+    from google.api_core.exceptions import GatewayTimeout
+    
     return (
         if_transient_error(exc)
         or isinstance(exc, requests.exceptions.Timeout)
         or isinstance(exc, BadRequest)  # Weird choice, but Google throws this transiently
+        or isinstance(exc, GatewayTimeout)
     )
 
 
