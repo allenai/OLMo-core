@@ -316,4 +316,11 @@ class TransformerBLTTrainModule(TransformerTrainModule):
                         return_logits=True,
                         **model_kwargs,
                     )
+                # student_forward gives us logits over the original (Dolma2) tokens.
+                # so we need to change the batch tokens / token info back to subword token space from byte space.
+                batch["input_ids"] = batch["original_input_ids"]
+                batch["ctx"] = orig_batch["ctx"]
+                batch["continuation"] = orig_batch["continuation"]
+                batch["ctx_len"] = orig_batch["ctx_len"]
+                batch["cont_len"] = orig_batch["cont_len"]
             return out

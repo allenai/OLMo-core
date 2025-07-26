@@ -1476,7 +1476,13 @@ class BLTDistillTransformer(BLTTransformer):
         patch_mask = original_labels != ignore_index
 
         h_byte, h_patch = self.local_encoder(input_ids, **local_encoder_kwargs)
-        boundary_preds = self.boundary_predictor(h_byte).squeeze(-1) if self.boundary_predictor is not None else None
+        if self.boundary_predictor is not None:
+            if blt_config.boundary_predictor_backprop_through_encoder:
+                boundary_preds = self.boundary_predictor(h_byte).squeeze(-1)
+            else:
+                boundary_preds = self.boundary_predictor(h_byte.detach()).squeeze(-1)
+        else:
+            boundary_preds = None
 
         # Run each block.
         if not skip_blocks:
@@ -1697,19 +1703,91 @@ class BLTDistillTransformer(BLTTransformer):
         z_loss_multiplier: Optional[float] = None,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         return_logits: Optional[bool] = None,
+        blt_config: Optional[BLTConfig] = None,
         **kwargs,
     ):
-        output = super().forward(
+        if blt_config is None:
+            raise ValueError("`blt_config` must be provided for original_trunk_forward")
+
+        input_ids, labels, block_kwargs, lm_head_kwargs, local_encoder_kwargs, local_decoder_kwargs, extra_kwargs = self._prepare_inputs(
             input_ids,
-            labels=labels,
+            labels,
             ignore_index=ignore_index,
             loss_reduction=loss_reduction,
             z_loss_multiplier=z_loss_multiplier,
             loss_div_factor=loss_div_factor,
-            return_logits=return_logits,
+            return_logits=True,  # needed for distillation
             **kwargs,
         )
-        return output, {}
+
+        h_byte, h_patch = self.local_encoder(input_ids, **local_encoder_kwargs)
+        boundary_preds = self.boundary_predictor(h_byte).squeeze(-1) if self.boundary_predictor is not None else None
+
+        h_patch_global = h_patch[:, 1:]  # skip the first token, which is <bos>
+
+        for block in self.blocks.values():
+            # Mark sizes as dynamic for torch.compile().
+            if self.compile_enabled:
+                mark_dynamic(h_patch_global, (0, 1), strict=False)
+            h_patch_global = block(h_patch_global, **block_kwargs)
+
+        h_patch_after_global = h_patch_global
+
+        h_patch = torch.zeros_like(h_patch)
+        h_patch[:, 1:] = h_patch_after_global
+
+        h_out = self.local_decoder(
+            embeds=h_byte,
+            patch_embeds=h_patch,
+            **local_decoder_kwargs,
+        )
+        logits = self.lm_head(h_out, **lm_head_kwargs)
+        logprobs = F.log_softmax(logits.float(), dim=-1)
+        main_path_logprobs = torch.gather(logprobs[:, :-1], -1, input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
+
+        main_path_patch_logprobs = torch.zeros((h_patch.shape[0], h_patch.shape[1]), device=logprobs.device, dtype=logprobs.dtype)
+        main_path_patch_logprobs = main_path_patch_logprobs.scatter_reduce(
+            src=main_path_logprobs,
+            dim=1,
+            index=local_encoder_kwargs["patch_ids"][:, 1:] - 1,
+            reduce="sum",
+            include_self=False,
+        )
+        y_hat = main_path_patch_logprobs[:, 1:-1]
+
+        if boundary_preds is not None:
+            boundary_logprobs = F.logsigmoid(boundary_preds.float())
+            patch_end_indices = torch.cumsum(local_encoder_kwargs["patch_lens"], dim=1) - 1
+            if blt_config.eval_add_boundary_logp:
+                if blt_config.debug_boundary_shift == 2:
+                    y_hat = y_hat + torch.gather(boundary_logprobs, -1, patch_end_indices)[:, 2:]
+                else:
+                    y_hat = y_hat + torch.gather(boundary_logprobs, -1, patch_end_indices)[:, 1:-1]
+
+        n_vocab = self.teacher.embeddings.weight.shape[0]
+        remaining_logpmass = log1mexp(y_hat)
+        remaining_logp_uniform = remaining_logpmass - math.log(n_vocab - 1)  # -1 to skip the main path token
+
+        teacher_logits = torch.zeros(
+            (h_patch.shape[0], h_patch.shape[1], n_vocab),
+            device=logits.device,
+            dtype=logits.dtype,
+        )
+        teacher_logits[:, :-2, :] = remaining_logp_uniform.unsqueeze(-1)
+        teacher_logits.scatter_(
+            -1,
+            extra_kwargs["original_input_ids"][:, 1:-1].unsqueeze(-1),
+            y_hat.to(teacher_logits.dtype).unsqueeze(-1),
+        )
+        teacher_labels = get_labels({"input_ids": extra_kwargs["original_input_ids"]}, label_ignore_index=ignore_index)
+        ce_loss, _ = cross_entropy_loss(teacher_logits.view(-1, teacher_logits.shape[-1]), teacher_labels.view(-1))
+
+        return LMOutputWithLoss(
+            logits=teacher_logits,
+            loss=ce_loss,
+            ce_loss=ce_loss,
+            z_loss=None,
+        ), {}
 
     def original_head_forward(
         self,
