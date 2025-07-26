@@ -284,7 +284,10 @@ class TransformerBLTTrainModule(TransformerTrainModule):
                 batch["continuation"] = orig_batch["continuation"]
                 batch["ctx_len"] = orig_batch["ctx_len"]
                 batch["cont_len"] = orig_batch["cont_len"]
-            elif eval_mode == "orig_trunk":
+            elif eval_mode in {"orig_trunk", "orig_trunk_no_boundary"}:
+                if eval_mode == "orig_trunk_no_boundary" and (blt_config := model_kwargs.get("blt_config")) is not None:
+                    model_kwargs["blt_config"] = blt_config.replace(eval_add_boundary_logp=False)
+
                 with self._model_forward_context():
                     out, _ = self.model.original_trunk_forward(  # type: ignore
                         input_ids,
