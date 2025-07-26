@@ -252,6 +252,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             "mmlu_humanities_test_rc_5shot",
             "mmlu_social_sciences_test_rc_5shot",
             "mmlu_other_test_rc_5shot",
+            "basic_skills_string_operations_rc_5shot"
         ]
 
     all_eval_tasks = []
