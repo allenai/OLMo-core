@@ -19,6 +19,23 @@ from .embed import add_hash_embeddings
 # matching BLT, seems necessary but why?
 flex_attention_comp = torch.compile(flex_attention)
 
+
+# 2-layer MLP as in DTP
+class BoundaryPredictor(nn.Module):
+    def __init__(self, d_model: int, init_device: str = "cpu"):
+        super().__init__()
+        self.d_model = d_model
+        self.expansion_factor = 4 # as in DTP (and OLMo)
+        self.mlp = nn.Sequential(
+            nn.Linear(d_model, d_model * self.expansion_factor, device=init_device),
+            nn.SiLU(),
+            nn.Linear(d_model * self.expansion_factor, 1, device=init_device),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.mlp(x)
+
+
 class CrossAttention(nn.Module):
     # TODO(benjaminm): make norm_eps config arg without default?
     def __init__(self, d_model: int, n_heads: int, norm_eps: float = 1e-5, init_device: str = "cpu"):

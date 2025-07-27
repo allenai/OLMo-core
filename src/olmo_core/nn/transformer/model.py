@@ -44,6 +44,7 @@ from ..functional import l2_normalize
 from ..lm_head import LMHeadConfig, LMOutputWithLoss
 from ..moe import MoEBase
 from ..blt.config import LocalEncoderConfig, LocalDecoderConfig
+from ..blt.local_models import BoundaryPredictor
 from ..blt import utils as blt_utils
 from ..rope import RoPEBuffers, RotaryEmbeddingBase
 from ..utils import selective_checkpointing_context_fn
@@ -1069,7 +1070,7 @@ class BLTTransformer(Transformer):
         self.local_decoder = local_decoder.build(vocab_size, d_global_model=d_model)
 
         if add_boundary_predictor:
-            self.boundary_predictor = nn.Linear(local_decoder.d_model, 1, device=init_device, bias=False)
+            self.boundary_predictor = BoundaryPredictor(local_decoder.d_model, init_device=init_device)
         else:
             self.boundary_predictor = None
 
