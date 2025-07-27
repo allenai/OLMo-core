@@ -683,6 +683,18 @@ class NumpyByteFSLDataset(NumpyFSLDataset):
             dtype or self.dtype,
         )
 
+    def _get_file_size_and_length(self, path: PathOrStr, idx: int, dtype=None) -> Tuple[int, int]:
+        del idx
+        dtype = dtype or self.dtype
+        item_size = dtype(0).itemsize
+        file_size = get_file_size(path)
+        if self.max_target_sequence_length is not None:
+            raise NotImplementedError(
+                "max_target_sequence_length is not supported for NumpyByteFSLDataset."
+            )
+
+        return file_size, file_size // (item_size * self.patch_sequence_length)
+
     def __getitem__(self, index: int) -> Dict[str, Any]:
         item = super().__getitem__(index)
         original_input_ids = item["input_ids"]
