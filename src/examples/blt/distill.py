@@ -90,8 +90,6 @@ else:
     DATA_PATHS = ["gs://" + x for x in _DATA_SOURCES]
     raise NotImplementedError()
 
-DATA_WORK_DIR = "/tmp/dataset-cache"
-
 log = logging.getLogger(__name__)
 
 @dataclass
@@ -181,7 +179,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         sequence_length=SEQUENCE_LENGTH, # subword sequence length
         max_sequence_length=SEQUENCE_LENGTH * BYTE_EXPANSION_FACTOR, # max. length of the byte sequence
         tokenizer=byte_tokenizer_config,
-        work_dir=DATA_WORK_DIR,
+        work_dir=os.path.join(SAVE_FOLDER, "data"),
     )
 
     optim = AdamWConfig(
