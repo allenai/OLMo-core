@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added support for revisions in `convert_checkpoint_from_hf.py` and the `load_hf_model` method of `olmo_core.nn.hf.checkpoint`.
 - `foreach` support in `SkipStepAdamW`.
 - Added `budget` mode for activation checkpointing configuration.
+- Added `io.remove_file()` function.
 
 ### Changed
 
@@ -59,6 +60,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed fingerprinting for FSL datasets
 - Fixed bug where `step` state in `SkipStepAdamW` was not incremented, biasing the optimizer steps. Added option to restore the bug for backwards compatibility.
 - Removed `sklearn` from upstream dependency `ai2-olmo-eval`.
+- Made removing ephemeral checkpoints more robust.
 
 ## [v2.1.0](https://github.com/allenai/OLMo-core/releases/tag/v2.1.0) - 2025-04-14
 

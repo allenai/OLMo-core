@@ -308,6 +308,40 @@ def file_exists(path: PathOrStr) -> bool:
         return Path(path).exists()
 
 
+def remove_file(path: PathOrStr):
+    """
+    Remove a local or remote file.
+
+    :param path: The path or URL to the file.
+
+    :raises FileNotFoundError: If the file doesn't exist.
+    """
+    path = normalize_path(path)
+
+    if is_url(path):
+        from urllib.parse import urlparse
+
+        parsed = urlparse(str(path))
+        if parsed.scheme == "gs":
+            try:
+                _gcs_remove_file(parsed.netloc, parsed.path.strip("/"))
+            except FileNotFoundError:
+                return False
+            else:
+                return True
+        elif parsed.scheme in ("s3", "r2", "weka"):
+            try:
+                _s3_remove_file(parsed.scheme, parsed.netloc, parsed.path.strip("/"))
+            except FileNotFoundError:
+                return False
+            else:
+                return True
+        else:
+            raise NotImplementedError(f"file_exists not implemented for '{parsed.scheme}' files")
+    else:
+        Path(path).unlink()
+
+
 def clear_directory(dir: PathOrStr, force: bool = False):
     """
     Clear out the contents of a local or remote directory.
@@ -603,6 +637,20 @@ def _gcs_file_size(bucket_name: str, key: str) -> int:
 
 
 @retriable(retry_condition=_gcs_is_retriable)
+def _gcs_remove_file(bucket_name: str, key: str):
+    from google.api_core.exceptions import NotFound
+
+    storage_client = _get_gcs_client()
+    bucket = storage_client.bucket(bucket_name)
+    blob = bucket.blob(key)
+    try:
+        blob.reload(retry=_get_gcs_retry())
+    except NotFound:
+        raise FileNotFoundError(f"gs://{bucket_name}/{key}")
+    bucket.delete_blob(blob.name)
+
+
+@retriable(retry_condition=_gcs_is_retriable)
 def _gcs_get_bytes_range(bucket_name: str, key: str, bytes_start: int, num_bytes: int) -> bytes:
     from google.api_core.exceptions import NotFound
 
@@ -799,6 +847,19 @@ def _s3_file_size(scheme: str, bucket_name: str, key: str) -> int:
 
     try:
         return _get_s3_client(scheme).head_object(Bucket=bucket_name, Key=key)["ContentLength"]
+    except ClientError as e:
+        if e.response["ResponseMetadata"]["HTTPStatusCode"] == 404:
+            raise FileNotFoundError(f"s3://{bucket_name}/{key}") from e
+        else:
+            raise
+
+
+@retriable(retry_condition=_s3_retry_condition)
+def _s3_remove_file(scheme: str, bucket_name: str, key: str):
+    from botocore.exceptions import ClientError
+
+    try:
+        return _get_s3_client(scheme).delete_object(Bucket=bucket_name, Key=key)
     except ClientError as e:
         if e.response["ResponseMetadata"]["HTTPStatusCode"] == 404:
             raise FileNotFoundError(f"s3://{bucket_name}/{key}") from e
