@@ -9,6 +9,7 @@ from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import ensure_multiple_of
 
 from ..attention import AttentionConfig, AttentionType
+from ..mamba import MambaConfig
 from ..buffer_cache import BufferCache
 from ..feed_forward import FeedForwardConfig, FeedForwardType
 from ..layer_norm import LayerNormConfig, LayerNormType
@@ -129,6 +130,7 @@ class TransformerBlockType(StrEnum):
     """
     ➡️ :class:`MoEHybridReorderedNormTransformerBlock`
     """
+    mamba = "mamba"
 
 
 @dataclass
@@ -153,6 +155,7 @@ class TransformerBlockConfig(Config):
     """
     The config for the MoE feed-forward layer. Required for MoE blocks.
     """
+    mamba: Optional[MambaConfig] = None
     name: TransformerBlockType = TransformerBlockType.default
     """
     The block type.
@@ -179,6 +182,7 @@ class TransformerBlockConfig(Config):
             NormalizedTransformerBlock,
             ReorderedNormTransformerBlock,
             TransformerBlock,
+            MambaBlock,
         )
 
         kwargs = self.as_dict(exclude_none=True, recurse=False)
@@ -206,6 +210,9 @@ class TransformerBlockConfig(Config):
                 return MoEHybridTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.moe_hybrid_reordered_norm:
                 return MoEHybridReorderedNormTransformerBlock(**kwargs)
+            elif self.name == TransformerBlockType.mamba:
+                kwargs.pop("attention")  # Mamba does not use attention
+                return MambaBlock(**kwargs)
             else:
                 raise NotImplementedError(self.name)
         except TypeError as e:
@@ -913,7 +920,19 @@ class TransformerConfig(Config):
         )
 
     @classmethod
-    def blt_1b(cls, vocab_size=260, skip_local_encoder_decoder=False, **kwargs):
+    def hnet_1stage_L(cls, vocab_size=256, **kwargs):
+        return cls.hnet_like(
+            d_model=1536,
+            vocab_size=256,
+            n_layers=22,
+            n_heads=16,
+            local_encoder_n_layers=4,
+            local_decoder_n_layers=4,
+            local_d_model=1024,
+        )
+
+    @classmethod
+    def blt_1b(cls, vocab_size=260, **kwargs):
         return cls.blt_like(
             d_model=2048,
             vocab_size=vocab_size,
@@ -924,7 +943,7 @@ class TransformerConfig(Config):
             local_d_model=1024,
             local_attn_n_heads=16,
             local_cross_attn_n_heads=16,
-            skip_local_encoder_decoder=skip_local_encoder_decoder,
+            **kwargs,
         )
 
     @classmethod
@@ -1013,6 +1032,151 @@ class TransformerConfig(Config):
             dtype=dtype,
             **kwargs,
         )
+
+    @classmethod
+    def hnet_like(
+        cls,
+        *,
+        d_model: int,
+        vocab_size: int,
+        n_layers: int,
+        n_heads: int,
+        local_encoder_n_layers: int,
+        local_decoder_n_layers: int,
+        local_d_model: int,
+        n_kv_heads: Optional[int] = None,
+        qk_norm: bool = False,
+        layer_norm_eps: float = 1e-5,
+        rope_theta: int = 10_000,
+        rope_type: Optional[RoPEType] = None,
+        hidden_size_multiple_of: int = 256,
+        hidden_size_multiplier: Optional[float] = None,
+        fused_ops: bool = False,
+        use_flash: bool = False,
+        block_name: TransformerBlockType = TransformerBlockType.default,
+        dtype: DType = DType.float32,
+        rope_scaling: Optional[RoPEScalingConfig] = None,
+        feed_forward: Optional[FeedForwardConfig] = None,
+        feed_forward_moe: Optional[MoEConfig] = None,
+        skip_local_encoder_decoder: bool = False,
+        **kwargs,
+    ) -> "TransformerConfig":
+        """
+        TODO
+        """
+        hidden_size = int(8 * d_model / 3)
+        if hidden_size_multiplier is not None:
+            hidden_size = int(hidden_size_multiplier * hidden_size)
+        hidden_size = ensure_multiple_of(hidden_size, hidden_size_multiple_of)
+
+        # Configure global layer norm.
+        layer_norm = LayerNormConfig(
+            name=LayerNormType.fused_rms if fused_ops else LayerNormType.rms,
+            eps=layer_norm_eps,
+            bias=False,
+            dtype=dtype,
+        )
+
+        # HNet uses fused attn / RoPE impl
+        att_type = AttentionType.fused
+        rope_type = RoPEType.fused
+
+        # Feed-forward.
+        if feed_forward is None and feed_forward_moe is None:
+            feed_forward = FeedForwardConfig(
+                hidden_size=hidden_size,
+                bias=False,
+                dtype=dtype,
+                act_name="swiglu" # HNet uses swiglu
+            )
+
+        # Configure blocks.
+        block = TransformerBlockConfig(
+            name=block_name,
+            attention=AttentionConfig(
+                name=att_type,
+                n_heads=n_heads,
+                n_kv_heads=n_kv_heads,
+                bias=False,
+                rope=RoPEConfig(
+                    name=rope_type,
+                    rotary_dim=d_model // n_heads // 2,
+                    theta=rope_theta,
+                    scaling=rope_scaling
+                ),
+                qk_norm=layer_norm if qk_norm else None,
+                use_flash=use_flash,
+                dtype=dtype,
+            ),
+            feed_forward=feed_forward,
+            feed_forward_moe=feed_forward_moe,
+            layer_norm=layer_norm,
+        )
+
+        # local encoder / decoder setup
+        local_hidden_size = int(8 * local_d_model / 3)
+        if hidden_size_multiplier is not None:
+            local_hidden_size = int(hidden_size_multiplier * local_hidden_size)
+        local_hidden_size = ensure_multiple_of(local_hidden_size, hidden_size_multiple_of)
+
+        local_block = TransformerBlockConfig(
+            name=TransformerBlockType.mamba,
+            attention=AttentionConfig(), # not used
+            mamba=MambaConfig(
+                chunk_size=256,
+                d_conv=4,
+                d_state=128,
+                expand=2,
+            ),
+            feed_forward=None,
+            layer_norm=layer_norm,
+        )
+
+        local_encoder = LocalEncoderConfig(
+            add_hash_embeddings=False,
+            d_model=local_d_model,
+            n_layers=local_encoder_n_layers,
+            sliding_window_size=0,
+            cross_attn_n_heads=0,
+            block_config=local_block,
+            add_norm_after_last_block=True,
+            pooling="hnet",
+        )
+        local_decoder = LocalDecoderConfig(
+            d_model=local_d_model,
+            n_layers=local_decoder_n_layers,
+            sliding_window_size=0,
+            cross_attn_n_heads=0,
+            block_config=local_block,
+            add_norm_before_first_block=True,
+            add_in_projection=True,
+            depooling="hnet",
+        )
+
+        if skip_local_encoder_decoder:
+            return cls(
+                name=TransformerType.default,
+                d_model=d_model,
+                vocab_size=vocab_size,
+                n_layers=n_layers,
+                block=block,
+                lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype),
+                dtype=dtype,
+                **kwargs,
+            )
+        else:
+            return cls(
+                name=TransformerType.blt,
+                d_model=d_model,
+                vocab_size=vocab_size,
+                n_layers=n_layers,
+                block=block,
+                lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype),
+                local_encoder=local_encoder,
+                local_decoder=local_decoder,
+                dtype=dtype,
+                **kwargs,
+            )
 
     @classmethod
     def blt_like(

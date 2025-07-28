@@ -1066,7 +1066,7 @@ class BLTTransformer(Transformer):
             d_model=local_decoder.d_model, vocab_size=vocab_size, init_device=init_device
         )
 
-        self.local_encoder = local_encoder.build(vocab_size)
+        self.local_encoder = local_encoder.build(vocab_size, d_global_model=d_model)
         self.local_decoder = local_decoder.build(vocab_size, d_global_model=d_model)
 
         if add_boundary_predictor:
@@ -1168,7 +1168,10 @@ class BLTTransformer(Transformer):
     @cached_property
     def num_non_embedding_params(self) -> int:
         num_embeddings = 0
-        for embedding_module in [self.local_encoder.embedding] + list(self.local_encoder.hash_embeddings):  # type: ignore[attr-defined]
+
+        hash_embeddings = self.local_encoder.hash_embeddings if self.local_encoder.hash_embeddings is not None else []
+
+        for embedding_module in [self.local_encoder.embedding] + list(hash_embeddings):  # type: ignore[attr-defined]
             num_embeddings += embedding_module.weight.numel()   # type: ignore[attr-defined]
 
         return self.num_params - num_embeddings
@@ -1231,6 +1234,8 @@ class BLTTransformer(Transformer):
         local_encoder_kwargs["patch_lens"] = patch_lens
         local_encoder_kwargs["patch_ids"] = patch_ids
         local_encoder_kwargs["cross_attn_mask"] = encoder_cross_attn_mask
+        local_decoder_kwargs["patch_lens"] = patch_lens
+        local_decoder_kwargs["patch_ids"] = patch_ids
         local_decoder_kwargs["cross_attn_mask"] = decoder_cross_attn_mask
         extra_kwargs["original_input_ids"] = move_to_device(original_input_ids, self.device)
 

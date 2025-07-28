@@ -29,30 +29,37 @@ class BLTConfig(Config):
 
 @dataclass
 class LocalEncoderConfig(Config):
-    hash_byte_group_size: list[int]
-    hash_byte_group_vocab: int
-    hash_byte_group_nb_functions: int
     sliding_window_size: int
     d_model: int
     n_layers: int
     cross_attn_n_heads: int
     block_config: Config
+    pooling: str = "cross_attn"
+    add_hash_embeddings: bool = True
+    hash_byte_group_size: list[int] | None = None
+    hash_byte_group_vocab: int | None = None
+    hash_byte_group_nb_functions: int | None = None
+    add_norm_after_last_block: bool = False
     add_out_projection: bool = False
     apply_residual_twice: bool = False # for compat with BLT checkpoints
 
-    def build(self, vocab_size: int) -> nn.Module:
+    def build(self, vocab_size: int, d_global_model: int) -> nn.Module:
         from .local_models import LocalEncoder
 
         return LocalEncoder(
             vocab_size=vocab_size,
-            hash_byte_group_size=self.hash_byte_group_size,
-            hash_byte_group_vocab=self.hash_byte_group_vocab,
-            hash_byte_group_nb_functions=self.hash_byte_group_nb_functions,
             sliding_window_size=self.sliding_window_size,
             d_model=self.d_model,
+            d_global_model=d_global_model,
             n_layers=self.n_layers,
             cross_attn_n_heads=self.cross_attn_n_heads,
             block_config=self.block_config,
+            add_hash_embeddings=self.add_hash_embeddings,
+            hash_byte_group_size=self.hash_byte_group_size,
+            hash_byte_group_vocab=self.hash_byte_group_vocab,
+            hash_byte_group_nb_functions=self.hash_byte_group_nb_functions,
+            pooling=self.pooling,
+            add_norm_after_last_block=self.add_norm_after_last_block,
             add_out_projection=self.add_out_projection,
             apply_residual_twice=self.apply_residual_twice,
         )
@@ -65,6 +72,8 @@ class LocalDecoderConfig(Config):
     n_layers: int
     cross_attn_n_heads: int
     block_config: Config
+    depooling: str = "cross_attn"
+    add_norm_before_first_block: bool = False
     add_in_projection: bool = False
     apply_residual_twice: bool = False # for compat with BLT checkpoints
 
@@ -79,6 +88,8 @@ class LocalDecoderConfig(Config):
             n_layers=self.n_layers,
             cross_attn_n_heads=self.cross_attn_n_heads,
             block_config=self.block_config,
+            depooling=self.depooling,
+            add_norm_before_first_block=self.add_norm_before_first_block,
             add_in_projection=self.add_in_projection,
             apply_residual_twice=self.apply_residual_twice,
         )

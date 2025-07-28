@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, cast
 
+from einops import repeat, rearrange
 import torch
 import torch.nn as nn
 from torch.distributed import DeviceMesh
@@ -83,14 +84,18 @@ class LocalEncoder(nn.Module):
     def __init__(
             self,
             vocab_size: int,
-            hash_byte_group_size: list[int],
-            hash_byte_group_vocab: int,
-            hash_byte_group_nb_functions: int,
             sliding_window_size: int,
             d_model: int,
+            d_global_model: int,
             n_layers: int,
             cross_attn_n_heads: int,
             block_config,
+            add_hash_embeddings: bool,
+            hash_byte_group_size: list[int] | None,
+            hash_byte_group_vocab: int | None,
+            hash_byte_group_nb_functions: int | None,
+            pooling: str,
+            add_norm_after_last_block: bool,
             add_out_projection: bool,
             apply_residual_twice: bool = False,  # for compat with BLT checkpoints
             init_device: str = "cpu",
@@ -102,19 +107,29 @@ class LocalEncoder(nn.Module):
         self.hash_byte_group_nb_functions = hash_byte_group_nb_functions
         self.sliding_window_size = sliding_window_size
         self.d_model = d_model
+        self.d_global_model = d_global_model
         self.n_layers = n_layers
         self.cross_attn_n_heads = cross_attn_n_heads
         self.block_config = block_config
+        self.add_hash_embeddings = add_hash_embeddings
+        self.pooling = pooling
+        self.add_norm_after_last_block = add_norm_after_last_block
         self.add_out_projection = add_out_projection
         self.init_device = init_device
         self.apply_residual_twice = apply_residual_twice
 
         self.embedding = nn.Embedding(vocab_size, d_model, device=init_device)
 
-        total_hash_embeddings = hash_byte_group_nb_functions * len(hash_byte_group_size)
-        self.hash_embeddings = nn.ModuleList([
-            nn.Embedding(hash_byte_group_vocab, d_model, device=init_device) for _ in range(total_hash_embeddings)
-        ])
+        if self.add_hash_embeddings:
+            if hash_byte_group_size is None or hash_byte_group_vocab is None or hash_byte_group_nb_functions is None:
+                raise ValueError("Hash embeddings are enabled but hash_byte_group_size, hash_byte_group_vocab, or hash_byte_group_nb_functions are None.")
+
+            total_hash_embeddings = hash_byte_group_nb_functions * len(hash_byte_group_size)
+            self.hash_embeddings = nn.ModuleList([
+                nn.Embedding(hash_byte_group_vocab, d_model, device=init_device) for _ in range(total_hash_embeddings)
+            ])
+        else:
+            self.hash_embeddings = None
 
         cache = BufferCache()
         self.blocks = nn.ModuleDict()
@@ -129,17 +144,33 @@ class LocalEncoder(nn.Module):
 
         self.patch_embedding_projection = nn.Linear(
             d_model,
-            d_model * 2,  # TODO: argument for upsampling factor?
+            d_global_model,
             device=init_device,
             bias=False,
         )
 
-        self.cross_attention = CrossAttention(d_model, cross_attn_n_heads, init_device=init_device)
+        if self.pooling == "cross_attn":
+            self.cross_attention = CrossAttention(d_model, cross_attn_n_heads, init_device=init_device)
+            self.padding_parameters = None
+        elif self.pooling == "hnet":
+            self.cross_attention = None
+            self.padding_parameters = nn.Parameter(
+                torch.zeros(d_global_model - d_model, device=init_device),
+            )
+
+        if self.add_norm_after_last_block:
+            self.final_norm = nn.RMSNorm(
+                d_model,
+                eps=1e-5,  # TODO: make hparam
+                device=init_device,
+            )
+        else:
+            self.final_norm = None
 
         if self.add_out_projection:
             self.out_projection = nn.Linear(
-                d_model * 2,
-                d_model * 2,
+                d_global_model,
+                d_global_model,
                 device=init_device,
                 bias=True,
             )
@@ -153,7 +184,9 @@ class LocalEncoder(nn.Module):
         wrapping_strategy: TransformerDataParallelWrappingStrategy = TransformerDataParallelWrappingStrategy.full,
         **fsdp_kwargs,
     ):
-        for emb in [self.embedding, *self.hash_embeddings]:
+        hash_embeddings = self.hash_embeddings if self.hash_embeddings is not None else []
+
+        for emb in [self.embedding, *hash_embeddings]:
             fully_shard(emb, mesh=dp_mesh, **fsdp_kwargs)
             # Embedding params are not needed for backwards computation.
             cast(FSDPModule, emb).set_unshard_in_backward(False)
@@ -167,11 +200,13 @@ class LocalEncoder(nn.Module):
                 **fsdp_kwargs,
             )
 
-        fully_shard(self.cross_attention, mesh=dp_mesh, **fsdp_kwargs)
+        if self.cross_attention is not None:
+            fully_shard(self.cross_attention, mesh=dp_mesh, **fsdp_kwargs)
         fully_shard(self, mesh=dp_mesh, **fsdp_kwargs)
 
     def fix_init(self, embedding_init_path, target_embeddings, n_estimate=10_000):
         """Rescale such that the local encoder outputs (given random inputs) have the same mean and std as the provided embeddings."""
+        raise NotImplementedError("fix_init is not implemented for HNet.")
 
         if embedding_init_path is not None:
             # load embedding inits (computed via compute_hash_embedding_init.py)
@@ -214,6 +249,7 @@ class LocalEncoder(nn.Module):
             n_layers=self.n_layers,
             cross_attn_n_heads=self.cross_attn_n_heads,
             block_config=self.block_config,
+            pooling=self.pooling,
             add_out_projection=self.add_out_projection,
             init_device=device,
         )
@@ -270,7 +306,28 @@ class LocalEncoder(nn.Module):
         #     cross_attn_mask=None, # fine not to mask since mask does not change out magnitude
         # )
 
-    def _cross_attention(
+    def _pool_hnet(
+        self,
+        h: torch.Tensor,
+        patch_lens: torch.Tensor,
+        patch_ids: torch.Tensor,
+    ):
+        if self.padding_parameters is None:
+            raise ValueError("Padding parameters are not set, can not pool with HNet method.")
+
+        reduced_h = torch.gather(
+            h,
+            dim=1,
+            index=(torch.cumsum(patch_lens, dim=1) - 1).unsqueeze(-1).expand(-1, -1, h.shape[-1]),
+        )
+        padded_h = torch.cat(
+            (reduced_h, self.padding_parameters.expand(reduced_h.shape[:-1] + (-1,))), dim=-1
+        )
+
+        return padded_h
+
+
+    def _pool_blt(
         self,
         h: torch.Tensor,
         patch_lens: torch.Tensor,
@@ -278,6 +335,9 @@ class LocalEncoder(nn.Module):
         cross_attn_mask: BlockMask | None,
         reduction: str = "amax",
     ):
+        if self.cross_attention is None:
+            raise ValueError("Cross attention is disabled, can not pool with BLT method.")
+
         # downsample h
         # DIVERGENCE FROM BLT: + 1 for padding
         reduced_h = torch.zeros(
@@ -320,6 +380,29 @@ class LocalEncoder(nn.Module):
 
         return patch_embedding
 
+    def pool(
+        self,
+        h: torch.Tensor,
+        patch_lens: torch.Tensor,
+        patch_ids: torch.Tensor,
+        cross_attn_mask: BlockMask | None,
+    ):
+        if self.pooling == "cross_attn":
+            return self._pool_blt(
+                h=h,
+                patch_lens=patch_lens,
+                patch_ids=patch_ids,
+                cross_attn_mask=cross_attn_mask,
+            )
+        elif self.pooling == "hnet":
+            return self._pool_hnet(
+                h=h,
+                patch_lens=patch_lens,
+                patch_ids=patch_ids,
+            )
+        else:
+            raise ValueError(f"Unknown pooling method: {self.pooling}. Supported methods are 'cross_attn' and 'hnet'.")
+
     def forward(
         self,
         tokens: torch.Tensor,
@@ -328,14 +411,22 @@ class LocalEncoder(nn.Module):
         cross_attn_mask: BlockMask | None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         embeddings = self.embedding(tokens)
-        embeddings = add_hash_embeddings(
-            embeddings,
-            tokens,
-            self.hash_embeddings,
-            self.hash_byte_group_nb_functions,
-            self.hash_byte_group_size,
-            self.hash_byte_group_vocab,
-        )
+        if self.add_hash_embeddings:
+            assert (
+                self.hash_embeddings is not None and 
+                self.hash_byte_group_nb_functions is not None and 
+                self.hash_byte_group_size is not None and 
+                self.hash_byte_group_vocab is not None
+            )
+
+            embeddings = add_hash_embeddings(
+                embeddings,
+                tokens,
+                self.hash_embeddings,
+                self.hash_byte_group_nb_functions,
+                self.hash_byte_group_size,
+                self.hash_byte_group_vocab,
+            )
 
         # pass through encoder layers
         h = embeddings
@@ -347,8 +438,12 @@ class LocalEncoder(nn.Module):
             # TODO(benjaminm): do we need local_block_kwargs?
             h = block(h)
 
-        # downsample + cross attn
-        patch_embeddings = self._cross_attention(
+        if self.final_norm is not None:
+            h = self.final_norm(h)
+
+        # BLT: downsample + cross attn
+        # HNet: select + padding
+        patch_embeddings = self.pool(
             h=h,
             patch_lens=patch_lens,
             patch_ids=patch_ids,
@@ -368,6 +463,8 @@ class LocalDecoder(nn.Module):
         n_layers: int,
         cross_attn_n_heads: int,
         block_config,
+        depooling: str,
+        add_norm_before_first_block: bool,
         add_in_projection: bool,
         apply_residual_twice: bool = False,  # for compat with BLT checkpoints
         init_device: str = "cpu",
@@ -376,6 +473,9 @@ class LocalDecoder(nn.Module):
         self.sliding_window_size = sliding_window_size
         self.d_model = d_model
         self.n_layers = n_layers
+        self.depooling = depooling
+        self.add_norm_before_first_block = add_norm_before_first_block
+        self.add_in_projection = add_in_projection
         self.apply_residual_twice = apply_residual_twice
 
         self.patch_embedding_projection = nn.Linear(
@@ -397,14 +497,22 @@ class LocalDecoder(nn.Module):
                 init_device=init_device,
                 cache=cache,
             )
-            self.cross_attentions[str(block_idx)] = CrossAttention(d_model, cross_attn_n_heads, init_device=init_device)
+            if self.depooling == "cross_attn":
+                self.cross_attentions[str(block_idx)] = CrossAttention(d_model, cross_attn_n_heads, init_device=init_device)
 
-        if add_in_projection:
+        if self.add_norm_before_first_block:
+            self.initial_norm = nn.RMSNorm(
+                d_global_model,
+                eps=1e-5,  # TODO: make hparam
+                device=init_device,
+            )
+
+        if self.add_in_projection:
             self.in_projection = nn.Linear(
                 d_model,
                 d_model,
                 device=init_device,
-                bias=False,
+                bias=True,
             )
         else:
             self.in_projection = None
@@ -432,27 +540,88 @@ class LocalDecoder(nn.Module):
         #fully_shard(self.patch_embedding_projection, mesh=dp_mesh, **fsdp_kwargs)
         fully_shard(self, mesh=dp_mesh, **fsdp_kwargs)
 
-    def forward(
+    def _depool_hnet(
         self,
         embeds: torch.Tensor,
         patch_embeds: torch.Tensor,
-        cross_attn_mask: BlockMask,
+        patch_lens: torch.Tensor,
+        patch_ids: torch.Tensor,
+        block_size: int = 256,
+        headdim: int = 32,
+        epsilon=1e-4, # as in HNet
+    ) -> torch.Tensor:
+        from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
+
+        h_patch = patch_embeds[..., :self.d_model] # global d -> local d
+
+        # for now, use HNet's smoothing module but with probabilities in {0,1} instead of probabilities in [0,1]
+        # (i.e. no smoothing). so we could probably skip this? but not bad to have it implemented and likely
+        # no substantial performance difference in the grand scheme.
+        p = torch.full((h_patch.shape[0], h_patch.shape[1]), 1.0 - epsilon, device=h_patch.device, dtype=torch.float32)
+        dt = torch.log(1 / (1 - p)).to(h_patch.dtype)
+        x = (h_patch / dt[..., None])
+
+        n_heads = self.d_model // headdim
+        A = -torch.ones(
+            (n_heads,), device=h_patch.device, dtype=torch.float32
+        )
+        b = p.to(h_patch.dtype)
+        c = torch.ones_like(b)
+
+        # trust the HNet source...
+        depool_out = mamba_chunk_scan_combined(
+            rearrange(x, "b l (h p) -> b l h p", p=self.headdim),
+            repeat(dt, "b l -> b l h", h=self.nheads),
+            A,
+            rearrange(b, "b l -> b l 1 1"),
+            rearrange(c, "b l -> b l 1 1"),
+            chunk_size=self.block_size,
+            seq_idx=None,
+        )
+        depool_out = rearrange(depool_out, "b l h p -> b l (h p)")
+        depool_out = cast(torch.Tensor, depool_out)
+
+        boundary_mask = torch.zeros(
+            (embeds.shape[0], embeds.shape[1]), dtype=torch.bool, device=embeds.device
+        )
+        boundary_mask = boundary_mask.scatter(
+            dim=1,
+            index=torch.cumsum(patch_lens, dim=1) - 1,
+            src=torch.ones_like(patch_lens, dtype=torch.bool),
+        )
+
+        plug_back_idx = torch.cumsum(boundary_mask, dim=1) - 1
+        depool_out = torch.gather(
+            depool_out,
+            dim=1,
+            index=plug_back_idx.unsqueeze(-1).expand(-1, -1, self.d_model),
+        )
+
+        h = depool_out + embeds
+
+        for block_idx in range(self.n_layers):
+            block = self.blocks[str(block_idx)]
+            h = block(h)
+
+        return h
+
+    def _depool_blt(
+        self,
+        embeds: torch.Tensor,
+        patch_embeds: torch.Tensor,
+        cross_attn_mask: BlockMask | None,
     ) -> torch.Tensor:
         # expand seq length by a factor of k (k=2 in BLT released checkpoints)
         patch_embeds_projected = self.patch_embedding_projection(patch_embeds).reshape(
             patch_embeds.shape[0], patch_embeds.shape[1] * 2, embeds.shape[2]
         )
 
-        if self.in_projection is not None:
-            h = self.in_projection(embeds)
-        else:
-            h = embeds
+        h = embeds
 
         for block_idx in range(self.n_layers):
             cross_attn = self.cross_attentions[str(block_idx)]
             block = self.blocks[str(block_idx)]
 
-            # TODO(benjaminm): do we need mark_dynamic here / in general?
             # NOTE: What about LN before/after cross attn?
             h_cross = cross_attn(q=h, kv=patch_embeds_projected, mask=cross_attn_mask)
             # NOTE: same thing, BLT applies the residual connection two times (presumably on accident?), so we have to 2x here.
@@ -461,3 +630,44 @@ class LocalDecoder(nn.Module):
             h = block(h)
 
         return h
+
+    def depool(
+        self,
+        embeds: torch.Tensor,
+        patch_embeds: torch.Tensor,
+        patch_lens: torch.Tensor,
+        patch_ids: torch.Tensor,
+        cross_attn_mask: BlockMask | None = None,
+    ) -> torch.Tensor:
+        if self.depooling == "cross_attn":
+            return self._depool_blt(embeds, patch_embeds, cross_attn_mask)
+        elif self.depooling == "hnet":
+            return self._depool_hnet(embeds, patch_embeds, patch_lens, patch_ids)
+        else:
+            raise ValueError(f"Unknown depooling method: {self.depooling}. Supported methods are 'cross_attn' and 'hnet'.")
+
+    def forward(
+        self,
+        embeds: torch.Tensor,
+        patch_embeds: torch.Tensor,
+        patch_lens: torch.Tensor,
+        patch_ids: torch.Tensor,
+        cross_attn_mask: BlockMask | None = None,
+    ) -> torch.Tensor:
+        if self.in_projection is not None:
+            h = self.in_projection(embeds)
+        else:
+            h = embeds
+
+        if self.initial_norm is not None:
+            h_patch = self.initial_norm(patch_embeds)
+        else:
+            h_patch = patch_embeds
+
+        return self.depool(
+            embeds=h,
+            patch_embeds=h_patch,
+            patch_lens=patch_lens,
+            patch_ids=patch_ids,
+            cross_attn_mask=cross_attn_mask,
+        )

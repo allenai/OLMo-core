@@ -85,6 +85,7 @@ class RoPEConfig(Config):
     The name of the implementation.
     """
     theta: int = 500_000
+    rotary_dim: Optional[int] = None
     full_precision: bool = True
     scaling: Optional[RoPEScalingConfig] = None
 
@@ -100,7 +101,7 @@ class RoPEConfig(Config):
         """
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         kwargs.pop("name")
-        kwargs.update(head_size=head_size, cache=cache)
+        kwargs.update(head_size=kwargs.pop("rotary_dim", head_size), cache=cache)
 
         try:
             if self.name == "default":

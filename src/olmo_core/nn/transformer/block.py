@@ -15,6 +15,7 @@ from olmo_core.doc_utils import beta_feature
 from olmo_core.ops import attach_auxiliary_loss
 
 from ..attention import AttentionConfig, RingAttentionLoadBalancerType
+from ..mamba import MambaConfig
 from ..buffer_cache import BufferCache
 from ..feed_forward import FeedForward, FeedForwardConfig
 from ..functional import l2_normalize
@@ -877,3 +878,50 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
             x_moe = moe_shared_out.add(x_moe, alpha=self.top_k / (self.top_k + 1))
 
         return h + self.dropout(self.feed_forward_moe_norm(x_moe))
+
+
+class MambaBlock(TransformerBlockBase):
+    def __init__(
+        self,
+        *,
+        d_model: int,
+        block_idx: int,
+        n_layers: int,
+        mamba: MambaConfig,
+        layer_norm: LayerNormConfig,
+        feed_forward: Optional[FeedForwardConfig] = None,
+        dropout: float = 0.0,
+        init_device: str = "cpu",
+        cache: Optional[BufferCache] = None,
+    ):
+        super().__init__(n_layers=n_layers)
+        self.d_model = d_model
+        self.block_idx = block_idx
+        self.mamba = mamba.build(
+            d_model, init_device=init_device
+        )
+        self.mamba_norm = layer_norm.build(d_model, init_device=init_device)
+        if feed_forward is not None:
+            self.feed_forward = feed_forward.build(d_model=d_model, init_device=init_device)
+            self.feed_forward_norm = layer_norm.build(d_model, init_device=init_device)
+        else:
+            self.feed_forward = None
+            self.feed_forward_norm = None
+
+        self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        del loss_div_factor
+        h = x + self.dropout(self.mamba(self.mamba_norm(x), **kwargs))
+
+        if self.feed_forward is None or self.feed_forward_norm is None:
+            assert self.feed_forward is None and self.feed_forward_norm is None
+            return h
+        else:
+            return h + self.dropout(self.feed_forward(self.feed_forward_norm(h)))
