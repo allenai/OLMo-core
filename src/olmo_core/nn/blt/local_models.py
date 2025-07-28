@@ -92,6 +92,7 @@ class LocalEncoder(nn.Module):
             cross_attn_n_heads: int,
             block_config,
             add_out_projection: bool,
+            apply_residual_twice: bool = False,  # for compat with BLT checkpoints
             init_device: str = "cpu",
     ):
         super().__init__()
@@ -106,6 +107,7 @@ class LocalEncoder(nn.Module):
         self.block_config = block_config
         self.add_out_projection = add_out_projection
         self.init_device = init_device
+        self.apply_residual_twice = apply_residual_twice
 
         self.embedding = nn.Embedding(vocab_size, d_model, device=init_device)
 
@@ -306,7 +308,8 @@ class LocalEncoder(nn.Module):
 
         # residual connection + reshape back into patch length (from patch_length * k)
         # NOTE: BLT applies the residual connection two times (presumably on accident?), so we have to 2x here.
-        patch_embedding = (patch_embedding_init * 2 + residual).reshape(
+        residual_factor = 2 if self.apply_residual_twice else 1
+        patch_embedding = (patch_embedding_init * residual_factor + residual).reshape(
             reduced_h.shape[0], reduced_h.shape[1], -1
         ).clone()
         # NOTE: ^clone is crucial here! otherwise get strange `SetStorage` errors in the backward pass on L40.
@@ -365,12 +368,15 @@ class LocalDecoder(nn.Module):
         n_layers: int,
         cross_attn_n_heads: int,
         block_config,
+        add_in_projection: bool,
+        apply_residual_twice: bool = False,  # for compat with BLT checkpoints
         init_device: str = "cpu",
     ):
         super().__init__()
         self.sliding_window_size = sliding_window_size
         self.d_model = d_model
         self.n_layers = n_layers
+        self.apply_residual_twice = apply_residual_twice
 
         self.patch_embedding_projection = nn.Linear(
             d_global_model,
@@ -392,6 +398,16 @@ class LocalDecoder(nn.Module):
                 cache=cache,
             )
             self.cross_attentions[str(block_idx)] = CrossAttention(d_model, cross_attn_n_heads, init_device=init_device)
+
+        if add_in_projection:
+            self.in_projection = nn.Linear(
+                d_model,
+                d_model,
+                device=init_device,
+                bias=False,
+            )
+        else:
+            self.in_projection = None
 
     def apply_fsdp(
         self,
@@ -427,7 +443,10 @@ class LocalDecoder(nn.Module):
             patch_embeds.shape[0], patch_embeds.shape[1] * 2, embeds.shape[2]
         )
 
-        h = embeds
+        if self.in_projection is not None:
+            h = self.in_projection(embeds)
+        else:
+            h = embeds
 
         for block_idx in range(self.n_layers):
             cross_attn = self.cross_attentions[str(block_idx)]
@@ -437,7 +456,8 @@ class LocalDecoder(nn.Module):
             # NOTE: What about LN before/after cross attn?
             h_cross = cross_attn(q=h, kv=patch_embeds_projected, mask=cross_attn_mask)
             # NOTE: same thing, BLT applies the residual connection two times (presumably on accident?), so we have to 2x here.
-            h = h * 2 + h_cross
+            residual_factor = 2 if self.apply_residual_twice else 1
+            h = h * residual_factor + h_cross
             h = block(h)
 
         return h

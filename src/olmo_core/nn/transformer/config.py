@@ -1109,6 +1109,7 @@ class TransformerConfig(Config):
             n_layers=local_encoder_n_layers,
             cross_attn_n_heads=local_cross_attn_n_heads,
             block_config=local_block,
+            apply_residual_twice=True,
         )
         local_decoder = LocalDecoderConfig(
             sliding_window_size=512,
@@ -1116,6 +1117,7 @@ class TransformerConfig(Config):
             n_layers=local_decoder_n_layers,
             cross_attn_n_heads=local_cross_attn_n_heads,
             block_config=local_block,
+            apply_residual_twice=True,
         )
 
         if skip_local_encoder_decoder:

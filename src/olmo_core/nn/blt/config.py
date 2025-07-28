@@ -38,6 +38,7 @@ class LocalEncoderConfig(Config):
     cross_attn_n_heads: int
     block_config: Config
     add_out_projection: bool = False
+    apply_residual_twice: bool = False # for compat with BLT checkpoints
 
     def build(self, vocab_size: int) -> nn.Module:
         from .local_models import LocalEncoder
@@ -53,6 +54,7 @@ class LocalEncoderConfig(Config):
             cross_attn_n_heads=self.cross_attn_n_heads,
             block_config=self.block_config,
             add_out_projection=self.add_out_projection,
+            apply_residual_twice=self.apply_residual_twice,
         )
 
 
@@ -63,6 +65,8 @@ class LocalDecoderConfig(Config):
     n_layers: int
     cross_attn_n_heads: int
     block_config: Config
+    add_in_projection: bool = False
+    apply_residual_twice: bool = False # for compat with BLT checkpoints
 
     def build(self, vocab_size: int, d_global_model: int) -> nn.Module:
         from .local_models import LocalDecoder
@@ -75,4 +79,6 @@ class LocalDecoderConfig(Config):
             n_layers=self.n_layers,
             cross_attn_n_heads=self.cross_attn_n_heads,
             block_config=self.block_config,
+            add_in_projection=self.add_in_projection,
+            apply_residual_twice=self.apply_residual_twice,
         )
