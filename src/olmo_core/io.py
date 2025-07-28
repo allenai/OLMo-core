@@ -839,7 +839,7 @@ def _s3_file_size(scheme: str, bucket_name: str, key: str) -> int:
         return _get_s3_client(scheme).head_object(Bucket=bucket_name, Key=key)["ContentLength"]
     except ClientError as e:
         if e.response["ResponseMetadata"]["HTTPStatusCode"] == 404:
-            raise FileNotFoundError(f"s3://{bucket_name}/{key}") from e
+            raise FileNotFoundError(f"{scheme}://{bucket_name}/{key}") from e
         else:
             raise
 
@@ -852,7 +852,7 @@ def _s3_remove_file(scheme: str, bucket_name: str, key: str):
         return _get_s3_client(scheme).delete_object(Bucket=bucket_name, Key=key)
     except ClientError as e:
         if e.response["ResponseMetadata"]["HTTPStatusCode"] == 404:
-            raise FileNotFoundError(f"s3://{bucket_name}/{key}") from e
+            raise FileNotFoundError(f"{scheme}://{bucket_name}/{key}") from e
         else:
             raise
 
@@ -875,7 +875,7 @@ def _s3_get_bytes_range(
         )
     except ClientError as e:
         if e.response["ResponseMetadata"]["HTTPStatusCode"] == 404:
-            raise FileNotFoundError(f"s3://{bucket_name}/{key}") from e
+            raise FileNotFoundError(f"{scheme}://{bucket_name}/{key}") from e
         else:
             raise
 
