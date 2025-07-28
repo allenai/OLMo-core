@@ -323,21 +323,11 @@ def remove_file(path: PathOrStr):
 
         parsed = urlparse(str(path))
         if parsed.scheme == "gs":
-            try:
-                _gcs_remove_file(parsed.netloc, parsed.path.strip("/"))
-            except FileNotFoundError:
-                return False
-            else:
-                return True
+            return _gcs_remove_file(parsed.netloc, parsed.path.strip("/"))
         elif parsed.scheme in ("s3", "r2", "weka"):
-            try:
-                _s3_remove_file(parsed.scheme, parsed.netloc, parsed.path.strip("/"))
-            except FileNotFoundError:
-                return False
-            else:
-                return True
+            return _s3_remove_file(parsed.scheme, parsed.netloc, parsed.path.strip("/"))
         else:
-            raise NotImplementedError(f"file_exists not implemented for '{parsed.scheme}' files")
+            raise NotImplementedError(f"remove_file not implemented for '{parsed.scheme}' files")
     else:
         Path(path).unlink()
 
@@ -645,9 +635,9 @@ def _gcs_remove_file(bucket_name: str, key: str):
     blob = bucket.blob(key)
     try:
         blob.reload(retry=_get_gcs_retry())
+        bucket.delete_blob(blob.name)
     except NotFound:
         raise FileNotFoundError(f"gs://{bucket_name}/{key}")
-    bucket.delete_blob(blob.name)
 
 
 @retriable(retry_condition=_gcs_is_retriable)
