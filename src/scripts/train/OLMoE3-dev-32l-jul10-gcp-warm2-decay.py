@@ -53,7 +53,7 @@ GLOBAL_BATCH_SIZE_SEQ=512
 GLOBAL_BATCH_SIZE = (
     (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
 )  
-MAX_DURATION = int(1000e9)  # int(6e12), don't forget to adjust the LR when you increase this
+MAX_DURATION = int(1400e9)  # int(6e12), don't forget to adjust the LR when you increase this
 EVAL_INTERVAL = 500
 LR= 5e-5
 
