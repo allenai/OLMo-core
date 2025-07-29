@@ -96,6 +96,7 @@ class LocalEncoder(nn.Module):
             hash_byte_group_nb_functions: int | None,
             pooling: str,
             add_norm_after_last_block: bool,
+            last_block_norm_position: str,
             add_out_projection: bool,
             apply_residual_twice: bool = False,  # for compat with BLT checkpoints
             init_device: str = "cpu",
@@ -114,6 +115,7 @@ class LocalEncoder(nn.Module):
         self.add_hash_embeddings = add_hash_embeddings
         self.pooling = pooling
         self.add_norm_after_last_block = add_norm_after_last_block
+        self.last_block_norm_position = last_block_norm_position
         self.add_out_projection = add_out_projection
         self.init_device = init_device
         self.apply_residual_twice = apply_residual_twice
@@ -159,11 +161,20 @@ class LocalEncoder(nn.Module):
             )
 
         if self.add_norm_after_last_block:
-            self.final_norm = nn.RMSNorm(
-                d_model,
-                eps=1e-5,  # TODO: make hparam
-                device=init_device,
-            )
+            if self.last_block_norm_position == "pre-pool":
+                self.final_norm = nn.RMSNorm(
+                    d_model,
+                    eps=1e-5,  # TODO: make hparam
+                    device=init_device,
+                )
+            elif self.last_block_norm_position == "post-pool":
+                self.final_norm = nn.RMSNorm(
+                    d_global_model,
+                    eps=1e-5,  # TODO: make hparam
+                    device=init_device,
+                )
+            else:
+                raise ValueError(f"Unknown last_block_norm_position: {self.last_block_norm_position}")
         else:
             self.final_norm = None
 
@@ -251,6 +262,7 @@ class LocalEncoder(nn.Module):
             hash_byte_group_nb_functions=self.hash_byte_group_nb_functions,
             pooling=self.pooling,
             add_norm_after_last_block=self.add_norm_after_last_block,
+            last_block_norm_position=self.last_block_norm_position,
             add_out_projection=self.add_out_projection,
             init_device=device,
         )
@@ -423,7 +435,7 @@ class LocalEncoder(nn.Module):
             # TODO(benjaminm): do we need local_block_kwargs?
             h = block(h)
 
-        if self.final_norm is not None:
+        if self.final_norm is not None and self.last_block_norm_position == "pre-pool":
             h = self.final_norm(h)
 
         # BLT: downsample + cross attn
@@ -434,6 +446,9 @@ class LocalEncoder(nn.Module):
             patch_ids=patch_ids,
             cross_attn_mask=cross_attn_mask,
         )
+
+        if self.final_norm is not None and self.last_block_norm_position == "post-pool":
+            h = self.final_norm(h)
 
         if self.out_projection is not None:
             patch_embeddings = self.out_projection(patch_embeddings)

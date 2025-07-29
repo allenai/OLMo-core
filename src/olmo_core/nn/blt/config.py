@@ -40,6 +40,7 @@ class LocalEncoderConfig(Config):
     hash_byte_group_vocab: int | None = None
     hash_byte_group_nb_functions: int | None = None
     add_norm_after_last_block: bool = False
+    last_block_norm_position: str = "pre-pool"
     add_out_projection: bool = False
     apply_residual_twice: bool = False # for compat with BLT checkpoints
 
@@ -60,6 +61,7 @@ class LocalEncoderConfig(Config):
             hash_byte_group_nb_functions=self.hash_byte_group_nb_functions,
             pooling=self.pooling,
             add_norm_after_last_block=self.add_norm_after_last_block,
+            last_block_norm_position=self.last_block_norm_position,
             add_out_projection=self.add_out_projection,
             apply_residual_twice=self.apply_residual_twice,
         )
