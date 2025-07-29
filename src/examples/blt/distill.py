@@ -371,7 +371,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
                 batch_kwargs=all_eval_batch_kwargs,
                 tokenizer=byte_tokenizer_config,
                 eval_interval=5000,
-                eval_on_startup=False,
+                eval_on_startup=True,
                 batch_size=EVAL_BATCH_SIZE * SEQUENCE_LENGTH, # these are subword tokens, so no expansion factor
             ),
         )
