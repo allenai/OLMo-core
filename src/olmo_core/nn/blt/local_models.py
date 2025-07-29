@@ -448,7 +448,7 @@ class LocalEncoder(nn.Module):
         )
 
         if self.post_pool_norm is not None:
-            h = self.post_pool_norm(h)
+            patch_embeddings = self.post_pool_norm(patch_embeddings)
 
         if self.out_projection is not None:
             patch_embeddings = self.out_projection(patch_embeddings)
