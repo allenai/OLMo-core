@@ -31,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `foreach` support in `SkipStepAdamW`.
 - Added `budget` mode for activation checkpointing configuration.
 - Added a `GenerationModule` for simple autoregressive generation using Olmo-core the `Transformer` class.
+- Added `io.remove_file()` function.
+- Added ABF, PI, and YaRN rope scaling strategies.
 
 ### Changed
 

@@ -1,3 +1,4 @@
+import copy
 import json
 from dataclasses import dataclass, fields, is_dataclass, replace
 from enum import Enum
@@ -201,6 +202,12 @@ class Config:
         Creates a new object of the same type, replacing fields with values from ``changes``.
         """
         return replace(self, **changes)
+
+    def copy(self, deep: bool = True) -> Self:
+        """
+        Creates a new object of the same type, with the same values.
+        """
+        return copy.deepcopy(self) if deep else copy.copy(self)
 
     @classmethod
     def from_dict(cls: Type[C], data: Dict[str, Any], overrides: Optional[List[str]] = None) -> C:
