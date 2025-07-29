@@ -61,7 +61,7 @@ transformers = ["transformers"]
 float8 = ["torchao"]
 mamba = [
     "triton>=3.2.0",
-    "mamba_ssm @ git+https://github.com/bminixhofer/mamba.git@3411f45029a561ffab5d860d38e7aa52e1f49de9",
+    "mamba_ssm @ git+https://github.com/bminixhofer/mamba.git@141d43d310ae372d914029bd6f3940b8efd3273b",
     "flash_attn==2.8.0.post2",
     "causal_conv1d @ git+https://github.com/Dao-AILab/causal-conv1d.git@e940ead2fd962c56854455017541384909ca669f",
     "einops",
