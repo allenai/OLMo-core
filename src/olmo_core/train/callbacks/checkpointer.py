@@ -15,7 +15,7 @@ from olmo_core.distributed.utils import (
     scatter_object,
 )
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.io import clear_directory, is_url
+from olmo_core.io import clear_directory, is_url, join_path, remove_file
 from olmo_core.utils import wait_for
 
 from ..checkpoint import Checkpointer
@@ -153,6 +153,14 @@ class CheckpointerCallback(Callback):
 
     def _remove_checkpoint(self, path: str):
         log.info(f"Removing old checkpoint at '{path}'...")
+
+        # Remove metadata file first to invalidate the checkpoint.
+        if get_rank() == 0:
+            try:
+                remove_file(join_path(path, self.trainer.checkpointer.METADATA_FNAME))
+            except FileNotFoundError:
+                pass
+
         if is_url(path):
             if get_rank() == 0:
                 self.trainer.run_bookkeeping_op(clear_directory, path)
