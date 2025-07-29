@@ -129,19 +129,24 @@ def main():
     load_model_and_optim_state(args.teacher_ckpt_path, model)
     teacher_embeddings = model.state_dict()["embeddings.weight"]
 
-    # need to reduce dimension to the local d_model to use as an init
-    svd = TruncatedSVD(
-        n_components=args.local_d_model,
-        random_state=1234,
-    ).fit(teacher_embeddings.cpu().numpy())
-    log.info("SVD total explained variance ratio: %s", svd.explained_variance_ratio_.sum())
+    if args.local_d_model != teacher_embeddings.shape[1]:
+        assert args.local_d_model < teacher_embeddings.shape[1], "Local d_model must be less than or equal to global d_model."
 
-    teacher_embeddings_reduced = svd.transform(teacher_embeddings.cpu().numpy())
-    # rescale to mean/std of the original embeddings
-    mean = teacher_embeddings.mean(dim=0).mean()
-    std = teacher_embeddings.std(dim=0).mean()
-    teacher_embeddings_reduced = torch.tensor(teacher_embeddings_reduced, dtype=torch.float32)
-    teacher_embeddings_reduced = (teacher_embeddings_reduced - teacher_embeddings_reduced.mean()) / teacher_embeddings_reduced.std() * std + mean
+        # need to reduce dimension to the local d_model to use as an init
+        svd = TruncatedSVD(
+            n_components=args.local_d_model,
+            random_state=1234,
+        ).fit(teacher_embeddings.cpu().numpy())
+        log.info("SVD total explained variance ratio: %s", svd.explained_variance_ratio_.sum())
+
+        teacher_embeddings_reduced = svd.transform(teacher_embeddings.cpu().numpy())
+        # rescale to mean/std of the original embeddings
+        mean = teacher_embeddings.mean(dim=0).mean()
+        std = teacher_embeddings.std(dim=0).mean()
+        teacher_embeddings_reduced = torch.tensor(teacher_embeddings_reduced, dtype=torch.float32)
+        teacher_embeddings_reduced = (teacher_embeddings_reduced - teacher_embeddings_reduced.mean()) / teacher_embeddings_reduced.std() * std + mean
+    else:
+        teacher_embeddings_reduced = teacher_embeddings.cpu()
 
     hf_tokenizer = AutoTokenizer.from_pretrained(tokenizer_config.identifier)
     byte_tokenizer = byte_tokenizer_config.build()

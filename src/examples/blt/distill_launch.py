@@ -6,8 +6,10 @@ Run this with:
 """
 
 import sys
-from typing import List
+from typing import List, cast
 import os
+
+from beaker import Priority
 
 from olmo_core.launch.beaker import BeakerLaunchConfig, BeakerEnvVar, BeakerWekaBucket, BeakerEnvSecret
 from olmo_core.internal.common import get_beaker_username
@@ -57,6 +59,7 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
         env_vars=env_vars,
         num_nodes=int(os.environ.get("BEAKER_NUM_NODES", "1")),
         num_gpus=int(os.environ.get("BEAKER_NUM_GPUS", "1")),
+        priority=cast(Priority, os.environ.get("BEAKER_PRIORITY", "normal")),
         shared_filesystem=shared_filesystem,
         allow_dirty=True,
         beaker_image="ai2/cuda12.8-dev-ubuntu22.04-torch2.7.0", # TODO: -dev- only for hnet, or custom image? to reduce start time
