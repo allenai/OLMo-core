@@ -74,6 +74,7 @@ class LocalDecoderConfig(Config):
     block_config: Config
     depooling: str = "cross_attn"
     add_norm_before_first_block: bool = False
+    add_norm_onto_residual: bool = False
     add_in_projection: bool = False
     apply_residual_twice: bool = False # for compat with BLT checkpoints
 
@@ -90,6 +91,7 @@ class LocalDecoderConfig(Config):
             block_config=self.block_config,
             depooling=self.depooling,
             add_norm_before_first_block=self.add_norm_before_first_block,
+            add_norm_onto_residual=self.add_norm_onto_residual,
             add_in_projection=self.add_in_projection,
             apply_residual_twice=self.apply_residual_twice,
         )

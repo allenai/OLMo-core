@@ -251,7 +251,7 @@ class LocalEncoder(nn.Module):
             hash_byte_group_vocab=self.hash_byte_group_vocab,
             hash_byte_group_nb_functions=self.hash_byte_group_nb_functions,
             pooling=self.pooling,
-            add_norm_after_last_block= self.add_norm_after_last_block,
+            add_norm_after_last_block=self.add_norm_after_last_block,
             add_out_projection=self.add_out_projection,
             init_device=device,
         )
@@ -475,6 +475,7 @@ class LocalDecoder(nn.Module):
         block_config,
         depooling: str,
         add_norm_before_first_block: bool,
+        add_norm_onto_residual: bool,
         add_in_projection: bool,
         apply_residual_twice: bool = False,  # for compat with BLT checkpoints
         init_device: str = "cpu",
@@ -485,6 +486,7 @@ class LocalDecoder(nn.Module):
         self.n_layers = n_layers
         self.depooling = depooling
         self.add_norm_before_first_block = add_norm_before_first_block
+        self.add_norm_onto_residual = add_norm_onto_residual
         self.add_in_projection = add_in_projection
         self.apply_residual_twice = apply_residual_twice
 
@@ -516,6 +518,15 @@ class LocalDecoder(nn.Module):
                 eps=1e-5,  # TODO: make hparam
                 device=init_device,
             )
+
+        if self.add_norm_onto_residual:
+            self.residual_norm = nn.RMSNorm(
+                d_model,
+                eps=1e-5,  # TODO: make hparam
+                device=init_device,
+            )
+        else:
+            self.residual_norm = None
 
         if self.add_in_projection:
             self.in_projection = nn.Linear(
@@ -664,10 +675,13 @@ class LocalDecoder(nn.Module):
         patch_ids: torch.Tensor,
         cross_attn_mask: BlockMask | None = None,
     ) -> torch.Tensor:
-        if self.in_projection is not None:
-            h = self.in_projection(embeds)
+        if self.residual_norm is not None:
+            h = self.residual_norm(embeds)
         else:
             h = embeds
+
+        if self.in_projection is not None:
+            h = self.in_projection(h)
 
         if self.initial_norm is not None:
             h_patch = self.initial_norm(patch_embeds)

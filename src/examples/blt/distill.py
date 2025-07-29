@@ -184,7 +184,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             sliding_window_size=0,
             cross_attn_n_heads=0,
             block_config=local_block,
-            add_norm_after_last_block=True,
+            add_norm_after_last_block=False,
             pooling="hnet",
         )
         local_decoder = LocalDecoderConfig(
@@ -194,6 +194,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             cross_attn_n_heads=0,
             block_config=local_block,
             add_norm_before_first_block=True,
+            add_norm_onto_residual=True,
             add_in_projection=True,
             depooling="hnet",
         )
