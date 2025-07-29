@@ -68,7 +68,7 @@ mamba = [
     "optree",
     "regex",
 ]
-all = ["ai2-olmo-core[dev,beaker,wandb,comet,transformers,float8]"]
+all = ["ai2-olmo-core[dev,beaker,wandb,comet,transformers,float8,mamba]"]
 
 [tool.setuptools]
 include-package-data = true
