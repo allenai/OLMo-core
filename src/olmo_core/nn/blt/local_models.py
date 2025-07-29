@@ -156,9 +156,12 @@ class LocalEncoder(nn.Module):
             self.padding_parameters = None
         elif self.pooling == "hnet":
             self.cross_attention = None
-            self.padding_parameters = nn.Parameter(
-                torch.zeros(d_global_model - d_model, device=init_device),
-            )
+            if d_global_model > d_model:
+                self.padding_parameters = nn.Parameter(
+                    torch.zeros(d_global_model - d_model, device=init_device),
+                )
+            else:
+                self.padding_parameters = None
 
         if self.add_norm_after_last_block:
             self.post_last_block_norm = nn.RMSNorm(
@@ -312,17 +315,17 @@ class LocalEncoder(nn.Module):
         patch_lens: torch.Tensor,
         patch_ids: torch.Tensor,
     ):
-        if self.padding_parameters is None:
-            raise ValueError("Padding parameters are not set, can not pool with HNet method.")
-
         reduced_h = torch.gather(
             h,
             dim=1,
             index=(torch.cumsum(patch_lens, dim=1) - 1).unsqueeze(-1).expand(-1, -1, h.shape[-1]),
         )
-        padded_h = torch.cat(
-            (reduced_h, self.padding_parameters.expand(reduced_h.shape[:-1] + (-1,))), dim=-1
-        )
+        if self.padding_parameters is not None:
+            padded_h = torch.cat(
+                (reduced_h, self.padding_parameters.expand(reduced_h.shape[:-1] + (-1,))), dim=-1
+            )
+        else:
+            padded_h = reduced_h
 
         return padded_h
 
