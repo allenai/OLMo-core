@@ -228,6 +228,72 @@ class LocalEncoder(nn.Module):
                     else:
                         hash_embedding.weight.data[:] = torch.load(Path(embedding_init_path) / f"hash_embedding_init_{i}.pth")  # type: ignore
 
+        te_mean = target_embeddings.mean(0)
+        # .std not supported for DTensor
+        te_std = target_embeddings.var(0).sqrt()
+        device = target_embeddings.device
+        dummy_input = torch.randint(0, self.embedding.weight.shape[0], (n_estimate,), device=device).unsqueeze(0)
+        patch_lens = torch.ones((1, n_estimate), dtype=torch.long, device=dummy_input.device)
+        patch_ids = torch.arange(n_estimate, device=dummy_input.device).unsqueeze(0)
+
+        # this is annoying but didn't find a better way to make it compatible with FSDP2
+        local_encoder_copy = LocalEncoder(
+            vocab_size=self.vocab_size,
+            sliding_window_size=self.sliding_window_size,
+            d_model=self.d_model,
+            d_global_model=self.d_global_model,
+            n_layers=self.n_layers,
+            cross_attn_n_heads=self.cross_attn_n_heads,
+            block_config=self.block_config,
+            add_hash_embeddings=self.add_hash_embeddings,
+            hash_byte_group_size=self.hash_byte_group_size,
+            hash_byte_group_vocab=self.hash_byte_group_vocab,
+            hash_byte_group_nb_functions=self.hash_byte_group_nb_functions,
+            pooling=self.pooling,
+            add_norm_after_last_block=self.add_norm_after_last_block,
+            add_out_projection=self.add_out_projection,
+            init_device=device,
+        )
+        local_encoder_copy.load_state_dict({
+            k: v.full_tensor() if isinstance(v, DTensor) else v for k, v in self.state_dict().items()
+        })
+
+        _, h_patch = local_encoder_copy(
+            tokens=dummy_input,
+            patch_lens=patch_lens,
+            patch_ids=patch_ids,
+            cross_attn_mask=None, # fine not to mask since mask does not change out magnitude
+        )
+
+        def maybe_distribute(tensor: torch.Tensor) -> DTensor | torch.Tensor:
+            if isinstance(self.embedding.weight.data, DTensor):
+                return distribute_tensor(
+                    tensor,
+                    device_mesh=self.embedding.weight.data.device_mesh,
+                )
+            else:
+                return tensor
+
+        h_patch_mean = h_patch[0].mean(0)
+        h_patch_std = h_patch[0].var(0).sqrt()
+        h_patch_mean = maybe_distribute(h_patch_mean.detach())
+        h_patch_std = maybe_distribute(h_patch_std.detach())
+
+        if self.out_projection is not None:
+            self.out_projection.weight.data *= (te_std / h_patch_std).unsqueeze(0)
+            self.out_projection.bias.data[:] = te_mean - h_patch_mean * (te_std / h_patch_std)
+
+        # verify
+        # local_encoder_copy.load_state_dict({
+        #     k: v.full_tensor() if isinstance(v, DTensor) else v for k, v in self.state_dict().items()
+        # })
+        # _, h_patch_fixed = local_encoder_copy(
+        #     tokens=dummy_input,
+        #     patch_lens=patch_lens,
+        #     patch_ids=patch_ids,
+        #     cross_attn_mask=None, # fine not to mask since mask does not change out magnitude
+        # )
+
     def _pool_hnet(
         self,
         h: torch.Tensor,
@@ -296,9 +362,6 @@ class LocalEncoder(nn.Module):
         ).clone()
         # NOTE: ^clone is crucial here! otherwise get strange `SetStorage` errors in the backward pass on L40.
         # (but possibly not on H100?)
-
-        if self.out_projection is not None:
-            patch_embedding = self.out_projection(patch_embedding)
 
         return patch_embedding
 
@@ -371,6 +434,9 @@ class LocalEncoder(nn.Module):
             patch_ids=patch_ids,
             cross_attn_mask=cross_attn_mask,
         )
+
+        if self.out_projection is not None:
+            patch_embeddings = self.out_projection(patch_embeddings)
 
         return h, patch_embeddings
 
