@@ -925,3 +925,24 @@ class MambaBlock(TransformerBlockBase):
             return h
         else:
             return h + self.dropout(self.feed_forward(self.feed_forward_norm(h)))
+        
+    def apply_fsdp(
+        self,
+        dp_mesh: Optional[DeviceMesh] = None,
+        prefetch_factor: int = 0,
+        wrapping_strategy: TransformerDataParallelWrappingStrategy = TransformerDataParallelWrappingStrategy.full,
+        **fsdp_kwargs,
+    ):
+        if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
+            fsdp_mamba = cast(FSDPModule, fully_shard(self.mamba, mesh=dp_mesh, **fsdp_kwargs))
+            if self.feed_forward is not None:
+                fsdp_mlp = cast(FSDPModule, fully_shard(self.feed_forward, mesh=dp_mesh, **fsdp_kwargs))
+            else:
+                fsdp_mlp = None
+            fsdp_root = cast(FSDPModule, fully_shard(self, mesh=dp_mesh, **fsdp_kwargs))
+            if prefetch_factor > 0:
+                fsdp_root.set_modules_to_forward_prefetch([fsdp_mamba])
+                if self.feed_forward is not None:
+                    fsdp_mamba.set_modules_to_forward_prefetch([fsdp_mlp])  # type: ignore
+        else:
+            fully_shard(self, mesh=dp_mesh, **fsdp_kwargs)

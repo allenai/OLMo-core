@@ -28,6 +28,7 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
         "DATA_SOURCE",
         "SAVE_FOLDER",
         "BYTE_EXPANSION_FACTOR",
+        "LOCAL_MODEL_STYLE",
     ]:
         if transparent_env_var in os.environ:
             env_vars.append(BeakerEnvVar(name=transparent_env_var, value=os.environ[transparent_env_var]))

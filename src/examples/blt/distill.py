@@ -31,7 +31,14 @@ from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_rank
 from olmo_core.distributed.checkpoint import load_model_and_optim_state
 from olmo_core.float8 import Float8Config
-from olmo_core.nn.transformer import TransformerConfig, TransformerType
+from olmo_core.nn.transformer import (
+    TransformerConfig,
+    TransformerType,
+    TransformerBlockConfig,
+    TransformerBlockType,
+)
+from olmo_core.nn.attention import AttentionConfig
+from olmo_core.nn.mamba import MambaConfig
 from olmo_core.nn.feed_forward import FeedForwardConfig
 from olmo_core.nn.blt.config import LocalEncoderConfig, LocalDecoderConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
@@ -65,6 +72,7 @@ QUICK_DEBUG = False
 GLOBAL_BATCH_SIZE = 64
 LOCAL_BATCH_SIZE = 64
 EVAL_BATCH_SIZE = 16
+LOCAL_MODEL_STYLE = os.environ.get("LOCAL_MODEL_STYLE", "blt")
 TRAIN_MODE = os.environ.get("TRAIN_MODE", "local_encoder_only")
 DATA_SOURCE = os.environ.get("DATA_SOURCE", "dclm")
 
@@ -116,7 +124,6 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         GLOBAL_BATCH_SIZE = 4
         LOCAL_BATCH_SIZE = 4
     
-    local_d_model = 1024
     teacher_model_config = TransformerConfig.olmo2_1B_v2(
         vocab_size=subword_tokenizer_config.padded_vocab_size()
     )
@@ -124,33 +131,75 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         freeze_params=["*"] # don't train teacher
     )
 
-    local_encoder_n_layers = 1
-    local_decoder_n_layers = 9
-    local_attn_n_heads = 16
-    local_cross_attn_n_heads = 16
-    local_block = teacher_model_config.block.replace(
-        attention=teacher_model_config.block.attention.replace(n_heads=local_attn_n_heads),
-        feed_forward=FeedForwardConfig(hidden_size=local_d_model, bias=False),
-    )
+    if LOCAL_MODEL_STYLE == "blt":
+        local_d_model = 1024
+        local_encoder_n_layers = 1
+        local_decoder_n_layers = 9
+        local_attn_n_heads = 16
+        local_cross_attn_n_heads = 16
+        local_block = teacher_model_config.block.replace(
+            attention=teacher_model_config.block.attention.replace(n_heads=local_attn_n_heads),
+            feed_forward=FeedForwardConfig(hidden_size=local_d_model, bias=False),
+        )
 
-    local_encoder = LocalEncoderConfig(
-        hash_byte_group_size=[3, 4, 5, 6, 7, 8],
-        hash_byte_group_vocab=100_002,
-        hash_byte_group_nb_functions=1,
-        sliding_window_size=512,
-        d_model=local_d_model,
-        n_layers=local_encoder_n_layers,
-        cross_attn_n_heads=local_cross_attn_n_heads,
-        block_config=local_block,
-        add_out_projection=False,
-    )
-    local_decoder = LocalDecoderConfig(
-        sliding_window_size=512,
-        d_model=local_d_model,
-        n_layers=local_decoder_n_layers,
-        cross_attn_n_heads=local_cross_attn_n_heads,
-        block_config=local_block,
-    )
+        local_encoder = LocalEncoderConfig(
+            hash_byte_group_size=[3, 4, 5, 6, 7, 8],
+            hash_byte_group_vocab=100_002,
+            hash_byte_group_nb_functions=1,
+            sliding_window_size=512,
+            d_model=local_d_model,
+            n_layers=local_encoder_n_layers,
+            cross_attn_n_heads=local_cross_attn_n_heads,
+            block_config=local_block,
+            add_out_projection=False,
+        )
+        local_decoder = LocalDecoderConfig(
+            sliding_window_size=512,
+            d_model=local_d_model,
+            n_layers=local_decoder_n_layers,
+            cross_attn_n_heads=local_cross_attn_n_heads,
+            block_config=local_block,
+        )
+    elif LOCAL_MODEL_STYLE == "hnet":
+        local_d_model = 1536
+        local_encoder_n_layers = 4
+        local_decoder_n_layers = 4
+        local_block = TransformerBlockConfig(
+            name=TransformerBlockType.mamba,
+            attention=AttentionConfig(), # not used
+            mamba=MambaConfig(
+                chunk_size=256,
+                d_conv=4,
+                d_state=128,
+                expand=2,
+            ),
+            feed_forward=None,
+            layer_norm=teacher_model_config.block.layer_norm,
+        )
+
+        local_encoder = LocalEncoderConfig(
+            add_hash_embeddings=False,
+            d_model=local_d_model,
+            n_layers=local_encoder_n_layers,
+            sliding_window_size=0,
+            cross_attn_n_heads=0,
+            block_config=local_block,
+            add_norm_after_last_block=True,
+            pooling="hnet",
+        )
+        local_decoder = LocalDecoderConfig(
+            d_model=local_d_model,
+            n_layers=local_decoder_n_layers,
+            sliding_window_size=0,
+            cross_attn_n_heads=0,
+            block_config=local_block,
+            add_norm_before_first_block=True,
+            add_in_projection=True,
+            depooling="hnet",
+        )
+    else:
+        raise ValueError(f"Unknown LOCAL_MODEL_STYLE: {LOCAL_MODEL_STYLE}. Must be one of 'blt', 'hnet'.")
+
     model_config = teacher_model_config.replace(
         name=TransformerType.blt,
         vocab_size=byte_tokenizer_config.padded_vocab_size(),
@@ -188,8 +237,9 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             OptimGroupOverride(
                 params=[
                     "local_encoder.embedding.weight",
+                ] + [
                     "local_encoder.hash_embeddings.*.weight"
-                ],
+                ] if local_encoder.add_hash_embeddings else [],
                 opts=dict(weight_decay=0.0)
             )
         ],

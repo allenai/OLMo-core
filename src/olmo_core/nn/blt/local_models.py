@@ -206,8 +206,6 @@ class LocalEncoder(nn.Module):
 
     def fix_init(self, embedding_init_path, target_embeddings, n_estimate=10_000):
         """Rescale such that the local encoder outputs (given random inputs) have the same mean and std as the provided embeddings."""
-        raise NotImplementedError("fix_init is not implemented for HNet.")
-
         if embedding_init_path is not None:
             # load embedding inits (computed via compute_hash_embedding_init.py)
             if isinstance(self.embedding.weight.data, DTensor):
@@ -219,15 +217,16 @@ class LocalEncoder(nn.Module):
             else:
                 self.embedding.weight.data[:] = torch.load(Path(embedding_init_path) / "embedding_init.pth")
 
-            for i, hash_embedding in enumerate(self.hash_embeddings):
-                if isinstance(hash_embedding.weight.data, DTensor):
-                    hash_embedding.weight.data[:] = distribute_tensor(
-                        torch.load(Path(embedding_init_path) / f"hash_embedding_init_{i}.pth"),
-                        device_mesh=hash_embedding.weight.data.device_mesh,
-                        placements=hash_embedding.weight.data.placements,
-                    )
-                else:
-                    hash_embedding.weight.data[:] = torch.load(Path(embedding_init_path) / f"hash_embedding_init_{i}.pth")  # type: ignore
+            if self.hash_embeddings is not None:
+                for i, hash_embedding in enumerate(self.hash_embeddings):
+                    if isinstance(hash_embedding.weight.data, DTensor):
+                        hash_embedding.weight.data[:] = distribute_tensor(
+                            torch.load(Path(embedding_init_path) / f"hash_embedding_init_{i}.pth"),
+                            device_mesh=hash_embedding.weight.data.device_mesh,
+                            placements=hash_embedding.weight.data.placements,
+                        )
+                    else:
+                        hash_embedding.weight.data[:] = torch.load(Path(embedding_init_path) / f"hash_embedding_init_{i}.pth")  # type: ignore
 
         # .std not supported for DTensor
         te_mean = target_embeddings.mean(0)
@@ -241,15 +240,18 @@ class LocalEncoder(nn.Module):
         # this is annoying but didn't find a better way to make it compatible with FSDP2
         local_encoder_copy = LocalEncoder(
             vocab_size=self.vocab_size,
-            hash_byte_group_size=self.hash_byte_group_size,
-            hash_byte_group_vocab=self.hash_byte_group_vocab,
-            hash_byte_group_nb_functions=self.hash_byte_group_nb_functions,
-            sliding_window_size=self.sliding_window_size,
+            sliding_window_size= self.sliding_window_size,
             d_model=self.d_model,
+            d_global_model=self.d_global_model,
             n_layers=self.n_layers,
             cross_attn_n_heads=self.cross_attn_n_heads,
             block_config=self.block_config,
+            add_hash_embeddings=self.add_hash_embeddings,
+            hash_byte_group_size=self.hash_byte_group_size,
+            hash_byte_group_vocab=self.hash_byte_group_vocab,
+            hash_byte_group_nb_functions=self.hash_byte_group_nb_functions,
             pooling=self.pooling,
+            add_norm_after_last_block= self.add_norm_after_last_block,
             add_out_projection=self.add_out_projection,
             init_device=device,
         )
@@ -279,7 +281,18 @@ class LocalEncoder(nn.Module):
         h_patch_mean = maybe_distribute(h_patch_mean.detach())
         h_patch_std = maybe_distribute(h_patch_std.detach())
 
-        if self.out_projection is None:
+        # NOTE: all of this is very quick & dirty, should check if really necessary and if so redo properly
+        if self.out_projection is not None:
+            self.out_projection.weight.data *= (te_std / h_patch_std).unsqueeze(0)
+            self.out_projection.bias.data[:] = te_mean - h_patch_mean * (te_std / h_patch_std)
+        elif self.final_norm is not None:
+            self.final_norm.weight.data *= (te_std[:self.d_model] / h_patch_std[:self.d_model])
+        else:
+            if self.pooling != "cross_attn":
+                raise ValueError("Case where neither out projection nor final norm is set is only supported for cross attn.")
+
+            assert self.cross_attention is not None
+
             # NOTE: this does not match the output perfectly! should remove.
             # fold target embeddings to local encoder dim
             te_folded = torch.cat([target_embeddings[:, :self.d_model], target_embeddings[:, self.d_model:]], dim=0)
@@ -291,9 +304,6 @@ class LocalEncoder(nn.Module):
             # then rescale the last linear layer to get right magnitude out
             self.patch_embedding_projection.weight.data *= (te_folded_std / h_patch_folded_std).unsqueeze(0)
             self.cross_attention.w_out.weight.data *= (te_folded_std / h_patch_folded_std).unsqueeze(0)
-        else:
-            self.out_projection.weight.data *= (te_std / h_patch_std).unsqueeze(0)
-            self.out_projection.bias.data[:] = te_mean - h_patch_mean * (te_std / h_patch_std)
 
         # verify
         # local_encoder_copy.load_state_dict({
@@ -570,12 +580,12 @@ class LocalDecoder(nn.Module):
 
         # trust the HNet source...
         depool_out = mamba_chunk_scan_combined(
-            rearrange(x, "b l (h p) -> b l h p", p=self.headdim),
-            repeat(dt, "b l -> b l h", h=self.nheads),
+            rearrange(x, "b l (h p) -> b l h p", p=headdim),
+            repeat(dt, "b l -> b l h", h=n_heads),
             A,
             rearrange(b, "b l -> b l 1 1"),
             rearrange(c, "b l -> b l 1 1"),
-            chunk_size=self.block_size,
+            chunk_size=block_size,
             seq_idx=None,
         )
         depool_out = rearrange(depool_out, "b l h p -> b l (h p)")
