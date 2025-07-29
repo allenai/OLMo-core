@@ -29,6 +29,7 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
         "SAVE_FOLDER",
         "BYTE_EXPANSION_FACTOR",
         "LOCAL_MODEL_STYLE",
+        "ADD_HASH_EMBEDDINGS",
     ]:
         if transparent_env_var in os.environ:
             env_vars.append(BeakerEnvVar(name=transparent_env_var, value=os.environ[transparent_env_var]))
@@ -45,12 +46,6 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
 
     beaker_username = get_beaker_username()
 
-    if os.environ.get("LOCAL_MODEL_STYLE") == "hnet":
-        # need nvcc for mamba
-        beaker_image = "ai2/cuda12.8-dev-ubuntu22.04-torch2.7.0"
-    else:
-        beaker_image = "ai2/cuda12.8-ubuntu22.04-torch2.7.0"
-
     return BeakerLaunchConfig(
         name=f"blt-distill-{run_name}-{generate_uuid()[:4]}",
         budget="ai2/oe-training",
@@ -64,7 +59,7 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
         num_gpus=int(os.environ.get("BEAKER_NUM_GPUS", "1")),
         shared_filesystem=shared_filesystem,
         allow_dirty=True,
-        beaker_image=beaker_image,
+        beaker_image="ai2/cuda12.8-dev-ubuntu22.04-torch2.7.0", # TODO: -dev- only for hnet, or custom image? to reduce start time
         weka_buckets=weka_buckets,
         env_secrets=[
             BeakerEnvSecret(
