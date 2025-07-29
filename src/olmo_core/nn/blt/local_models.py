@@ -430,6 +430,8 @@ class LocalDecoder(nn.Module):
                 eps=1e-5,  # TODO: make hparam
                 device=init_device,
             )
+        else:
+            self.initial_norm = None
 
         if self.add_norm_onto_residual:
             self.residual_norm = nn.RMSNorm(
