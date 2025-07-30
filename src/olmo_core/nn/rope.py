@@ -370,10 +370,7 @@ class RotaryEmbedding(RotaryEmbeddingBase):
 
         with torch.autocast(device.type, enabled=False):
             if self.scaling is None:
-                inv_freq = 1.0 / (
-                    self.theta
-                    ** (torch.arange(0, self.dim, 2, device=device, dtype=torch.float) / self.dim)
-                )
+                inv_freq = compute_inv_freqs(self.theta, self.dim, device)
                 attention_rescale_factor = 1.0
             else:
                 inv_freq, attention_rescale_factor = self.scaling.compute_scaled_inv_freq(
