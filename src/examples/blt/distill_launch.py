@@ -12,6 +12,7 @@ import os
 from beaker import Priority
 
 from olmo_core.launch.beaker import BeakerLaunchConfig, BeakerEnvVar, BeakerWekaBucket, BeakerEnvSecret
+from olmo_core.launch.utils import GIT_BRANCH_ENV_VAR, GIT_REPO_URL_ENV_VAR, GIT_REF_ENV_VAR
 from olmo_core.internal.common import get_beaker_username
 from olmo_core.utils import generate_uuid, prepare_cli_environment
 
@@ -42,6 +43,10 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
             BeakerWekaBucket(
                 bucket="oe-training-default",
                 mount="/weka/oe-training-default",
+            ),
+            BeakerWekaBucket(
+                bucket="oe-adapt-default",
+                mount="/weka/oe-adapt-default",
             )
         ]
         shared_filesystem = True
@@ -62,13 +67,26 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
         priority=cast(Priority, os.environ.get("BEAKER_PRIORITY", "normal")),
         shared_filesystem=shared_filesystem,
         allow_dirty=True,
-        beaker_image="ai2/cuda12.8-dev-ubuntu22.04-torch2.7.0", # TODO: -dev- only for hnet, or custom image? to reduce start time
+        beaker_image="ai2/cuda12.8-dev-ubuntu22.04-torch2.7.0",
         weka_buckets=weka_buckets,
         env_secrets=[
             BeakerEnvSecret(
                 name="WANDB_API_KEY",
                 secret=f"{beaker_username}_WANDB_API_KEY",
             ),
+        ],
+        setup_steps=[
+            f'if [[ -z "${GIT_BRANCH_ENV_VAR}" ]]; then',
+            f'  git clone "${GIT_REPO_URL_ENV_VAR}" .',
+            "else",
+            f'  git clone -b "${GIT_BRANCH_ENV_VAR}" --single-branch "${GIT_REPO_URL_ENV_VAR}" .',
+            "fi",
+            f'git checkout "${GIT_REF_ENV_VAR}"',
+            "git submodule update --init --recursive",
+            # maybe not the best idea to share this with the dev env?
+            # or maybe it is the best idea...
+            ". /weka/oe-adapt-default/benjaminm/OLMo-core/.venv/bin/activate",
+            "uv pip freeze",
         ]
     )
 
