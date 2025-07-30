@@ -59,10 +59,8 @@ def write_kvcache_(
     B = k.shape[0]
     seq_positions_long = seq_positions.to(torch.long)
 
+    # Use index_copy_ along the sequence dimension so every (batch, pos)
+    # pair is updated exactly once and the cache remains contiguous.
     for b in range(B):
-        start = int(seq_positions_long[b, 0].item())
-        end = start + T  # inclusive range already verified not to overflow
-
-        # Slice-copy keeps (seq_len, heads, head_dim) contiguous.
-        k_cache[b, start:end].copy_(k[b])
-        v_cache[b, start:end].copy_(v[b])
+        k_cache[b].index_copy_(0, seq_positions_long[b], k[b])
+        v_cache[b].index_copy_(0, seq_positions_long[b], v[b])
