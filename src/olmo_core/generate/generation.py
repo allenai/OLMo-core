@@ -248,7 +248,7 @@ class TransformerGenerationModule(GenerationModule):
 
             input_ids_for_model = generated[:, -1:] if is_using_cache else generated
             attention_mask_for_model = None if is_using_cache else attention_mask
-            logits_to_keep = prompt_len if is_first_forward else 1
+            logits_to_keep = 1 if (is_using_cache or completions_only) else prompt_len
 
             logits = self.model_forward(  # (batch_size, generated.shape[1], self.model.vocab_size)
                 input_ids_for_model,
@@ -278,9 +278,10 @@ class TransformerGenerationModule(GenerationModule):
 
             # Calculate log probabilities for the tokens we just generated.
             if all_logprobs is not None:
-                if is_first_forward and prompt_len > 1:
+                if is_first_forward and prompt_len > 1 and not completions_only:
                     # For the prompt, we already have the ground truth tokens, so we can
                     # calculate their log probabilities all at once from the first forward pass.
+                    # But only if we're not in completions_only mode and we have the full prompt logits
                     prompt_log_probs = selective_log_softmax(logits[:, :-1, :], generated[:, 1:])
                     all_logprobs.append(prompt_log_probs)
 
