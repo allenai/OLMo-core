@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import List, Optional, cast
 import os
-import json
+import pickle
 import hashlib
 
 import torch
@@ -180,12 +180,11 @@ def main():
     arg_hash.update(str(args.teacher_ckpt_path).encode())
     arg_hash = arg_hash.hexdigest()
 
-    cache_file = os.path.join(DATA_WORK_DIR, f"token_init_mapping_{arg_hash}.json")
+    cache_file = os.path.join(DATA_WORK_DIR, f"token_init_mapping_{arg_hash}.pickle")
 
     if os.path.exists(cache_file):
         log.info("Loading token init mapping from cache: %s", cache_file)
-        with open(cache_file, "r") as f:
-            token_init_mapping = json.load(f)
+        token_init_mapping = pickle.load(open(cache_file, "rb"))
     else:
         log.info("Computing token init mapping...")
         for batch_idx, batch_token_init_mapping in tqdm(enumerate(data_loader._iter_batches()), total=N_BATCHES_TO_USE_FOR_ESTIMATE, desc="Computing token init mapping..."):
@@ -219,8 +218,8 @@ def main():
                 break
 
         log.info("Saving token init mapping to cache: %s", cache_file)
-        with open(cache_file, "w") as f:
-            json.dump(token_init_mapping, f)
+        with open(cache_file, "wb") as f:
+            pickle.dump(token_init_mapping, f)
 
     model = TransformerConfig.olmo2_1B_v2(
         vocab_size=tokenizer_config.padded_vocab_size()

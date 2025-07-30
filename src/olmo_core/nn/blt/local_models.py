@@ -144,17 +144,17 @@ class LocalEncoder(nn.Module):
                 cache=cache,
             )
 
-        self.patch_embedding_projection = nn.Linear(
-            d_model,
-            d_global_model,
-            device=init_device,
-            bias=False,
-        )
-
         if self.pooling == "cross_attn":
+            self.patch_embedding_projection = nn.Linear(
+                d_model,
+                d_global_model,
+                device=init_device,
+                bias=False,
+            )
             self.cross_attention = CrossAttention(d_model, cross_attn_n_heads, init_device=init_device)
             self.padding_parameters = None
         elif self.pooling == "hnet":
+            self.patch_embedding_projection = None
             self.cross_attention = None
             if d_global_model > d_model:
                 self.padding_parameters = nn.Parameter(
@@ -338,7 +338,7 @@ class LocalEncoder(nn.Module):
         cross_attn_mask: BlockMask | None,
         reduction: str = "amax",
     ):
-        if self.cross_attention is None:
+        if self.cross_attention is None or self.patch_embedding_projection is None:
             raise ValueError("Cross attention is disabled, can not pool with BLT method.")
 
         # downsample h
@@ -486,12 +486,15 @@ class LocalDecoder(nn.Module):
         self.add_in_projection = add_in_projection
         self.apply_residual_twice = apply_residual_twice
 
-        self.patch_embedding_projection = nn.Linear(
-            d_global_model,
-            d_model * 2,  # TODO: argument for upsampling factor?
-            device=init_device,
-            bias=False,
-        )
+        if self.depool == "cross_attn":
+            self.patch_embedding_projection = nn.Linear(
+                d_global_model,
+                d_global_model,
+                device=init_device,
+                bias=False,
+            )
+        else:
+            self.patch_embedding_projection = None
 
         cache = BufferCache()
         self.blocks = nn.ModuleDict()
@@ -630,6 +633,9 @@ class LocalDecoder(nn.Module):
         patch_embeds: torch.Tensor,
         cross_attn_mask: BlockMask | None,
     ) -> torch.Tensor:
+        if self.patch_embedding_projection is None:
+            raise ValueError("Patch embedding projection is not defined, can not depool with BLT method.")
+
         # expand seq length by a factor of k (k=2 in BLT released checkpoints)
         patch_embeds_projected = self.patch_embedding_projection(patch_embeds).reshape(
             patch_embeds.shape[0], patch_embeds.shape[1] * 2, embeds.shape[2]
