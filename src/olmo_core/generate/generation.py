@@ -212,7 +212,8 @@ class TransformerGenerationModule(GenerationModule):
         """
         self.model.eval()
         input_ids = move_to_device(input_ids, self.device)
-        attention_mask = move_to_device(attention_mask, self.device)
+        if attention_mask is not None:
+            attention_mask = move_to_device(attention_mask, self.device)
         batch_size, prompt_len = input_ids.shape
         finished = torch.zeros(batch_size, dtype=torch.bool, device=self.device)
 
