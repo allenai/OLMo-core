@@ -137,6 +137,6 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} gs://ai2-llm/checkpoints/OLMo25/step23
         num_nodes=16,
         beaker_workspace="ai2/OLMo_3",
     )
-    config.launch.cmd = [script, cmd, original_checkpoint, length, cluster] + overrides
+    config.launch.cmd = [script, "train", original_checkpoint, length, cluster] + overrides
 
     cmd.run(config)
