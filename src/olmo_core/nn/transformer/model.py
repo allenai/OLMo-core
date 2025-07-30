@@ -1239,6 +1239,9 @@ class BLTTransformer(Transformer):
         local_decoder_kwargs["cross_attn_mask"] = decoder_cross_attn_mask
         extra_kwargs["original_input_ids"] = move_to_device(original_input_ids, self.device)
 
+        if (constituent_input_ids := kwargs.pop("constituent_input_ids", None)) is not None:
+            extra_kwargs["constituent_input_ids"] = move_to_device(constituent_input_ids, self.device)
+
         return (
             input_ids,
             labels,
@@ -1260,8 +1263,11 @@ class BLTTransformer(Transformer):
         """
         super().apply_compile()
 
-        self.local_encoder.compile(fullgraph=False)
-        self.local_decoder.compile(fullgraph=False)
+        # without dynamic=False mamba runs into weird "'math' is not defined" errors akin to https://github.com/pytorch/pytorch/issues/100972
+        # this might slow down eval due to recompiles? but seems fine from initial tries.
+        # if this is too slow an alternative is compiling individual blocks and using torch.compiler.set_stance to disable compile in eval
+        self.local_encoder.compile(fullgraph=False, dynamic=False)
+        self.local_decoder.compile(fullgraph=False, dynamic=False)
 
     def forward(
         self,
@@ -1468,13 +1474,15 @@ class BLTDistillTransformer(BLTTransformer):
                     **kwargs,
                 )
                 if teacher_logits is not None:
-                    _teacher_logprobs = F.log_softmax(teacher_logits.float(), dim=-1) # type: ignore
-                    teacher_main_path_logprobs = torch.gather(_teacher_logprobs[:, :-1], -1, extra_kwargs["original_input_ids"][:, 1:].unsqueeze(-1)).squeeze(-1)
+                    teacher_logprobs = F.log_softmax(teacher_logits.float(), dim=-1) # type: ignore
+                    teacher_main_path_logprobs = torch.gather(teacher_logprobs[:, :-1], -1, extra_kwargs["original_input_ids"][:, 1:].unsqueeze(-1)).squeeze(-1)
                 else:
+                    teacher_logprobs = None
                     teacher_main_path_logprobs = None
         else:
             teacher_embeds = None
             last_hidden_state = None
+            teacher_logprobs = None
             teacher_main_path_logprobs = None
 
         # loss masks
