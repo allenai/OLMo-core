@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 import torch
 
-from ..config import StrEnum
+from ..config import Config, StrEnum
 from ..exceptions import OLMoConfigurationError
 from .config import INITIAL_LR_FIELD, LR_FIELD
 
@@ -23,7 +23,7 @@ class SchedulerUnits(StrEnum):
 
 
 @dataclass
-class Scheduler(metaclass=ABCMeta):
+class Scheduler(Config, metaclass=ABCMeta):
     """
     Learning rate scheduler base class.
     """
