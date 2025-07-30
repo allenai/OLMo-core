@@ -76,6 +76,7 @@ LOCAL_MODEL_STYLE = os.environ.get("LOCAL_MODEL_STYLE", "blt")
 TRAIN_MODE = os.environ.get("TRAIN_MODE", "local_encoder_only")
 DATA_SOURCE = os.environ.get("DATA_SOURCE", "dclm")
 ADD_HASH_EMBEDDINGS = os.environ.get("ADD_HASH_EMBEDDINGS", "").lower() in {"1", "true", "yes"}
+OLMO_ARCH = os.environ.get("OLMO_ARCH", "olmo2_1B_v2")
 
 if DATA_SOURCE == "dclm":
     _DATA_SOURCES = open(Path(__file__).parent / "data_sources.txt").read().strip().splitlines()
@@ -85,7 +86,7 @@ else:
     raise ValueError(f"Unknown DATA_SOURCE: {DATA_SOURCE}. Must be one of 'dclm', 'dolmino'.")
 
 if os.environ.get("HAS_WEKA"):
-    OLMO_1B_CKPT_PATH = os.environ.get(
+    OLMO_CKPT_PATH = os.environ.get(
         "OLMO_CKPT_PATH",
         "/weka/oe-training-default/benjaminm/checkpoints/olmo2_1b/model_and_optim",
     )
@@ -95,8 +96,6 @@ if os.environ.get("HAS_WEKA"):
         "/weka/oe-training-default/benjaminm/olmo_1b_blt_hash_embedding_init",
     )
 else:
-    OLMO_1B_CKPT_PATH = "gs://allennlp-benjaminm/checkpoints/olmo2_1b/model_and_optim"
-    DATA_PATHS = ["gs://" + x for x in _DATA_SOURCES]
     raise NotImplementedError()
 
 log = logging.getLogger(__name__)
@@ -124,8 +123,8 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         NUM_WORKERS = 0
         GLOBAL_BATCH_SIZE = 4
         LOCAL_BATCH_SIZE = 4
-    
-    teacher_model_config = TransformerConfig.olmo2_1B_v2(
+
+    teacher_model_config = getattr(TransformerConfig, OLMO_ARCH)(
         vocab_size=subword_tokenizer_config.padded_vocab_size()
     )
     teacher_model_config = teacher_model_config.replace(
@@ -133,7 +132,13 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     )
 
     if LOCAL_MODEL_STYLE == "blt":
-        local_d_model = 1024
+        if OLMO_ARCH == "olmo2_1B_v2":
+            local_d_model = 1024
+        elif OLMO_ARCH == "olmo2_7B":
+            local_d_model = 2048
+        else:
+            raise ValueError(f"Unknown OLMO_ARCH: {OLMO_ARCH}. Must be one of 'olmo2_1B_v2', 'olmo2_7B'.")
+
         local_encoder_n_layers = 1
         local_decoder_n_layers = 9
         local_attn_n_heads = 16
@@ -163,7 +168,13 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             block_config=local_block,
         )
     elif LOCAL_MODEL_STYLE == "hnet":
-        local_d_model = 1536
+        if OLMO_ARCH == "olmo2_1B_v2":
+            local_d_model = 1536
+        elif OLMO_ARCH == "olmo2_7B":
+            local_d_model = 3072
+        else:
+            raise ValueError(f"Unknown OLMO_ARCH: {OLMO_ARCH}. Must be one of 'olmo2_1B_v2', 'olmo2_7B'.")
+
         local_encoder_n_layers = 4
         local_decoder_n_layers = 4
         local_block = TransformerBlockConfig(
@@ -307,7 +318,12 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             "mmlu_humanities_test_rc_5shot",
             "mmlu_social_sciences_test_rc_5shot",
             "mmlu_other_test_rc_5shot",
-            "basic_skills_string_operations_rc_5shot"
+            "basic_skills_string_operations_rc_5shot",
+            "basic_skills_pattern_rc_5shot",
+            "basic_skills_logical_reasoning_rc_5shot",
+            "basic_skills_common_knowledge_rc_5shot",
+            "basic_skills_coding_rc_5shot",
+            "basic_skills_arithmetic_rc_5shot",
         ]
 
     all_eval_tasks = []
@@ -416,7 +432,7 @@ def main(run_name: str, overrides: List[str]):
     } | {
         f"teacher.{key}": key for key in model.teacher.state_dict().keys()  # type: ignore
     }
-    incompatible_keys = load_model_and_optim_state(OLMO_1B_CKPT_PATH, model, key_mapping=key_mapping, strict=False)
+    incompatible_keys = load_model_and_optim_state(OLMO_CKPT_PATH, model, key_mapping=key_mapping, strict=False)
 
     if len(incompatible_keys.unexpected_keys) > 0:
         raise ValueError(f"Unexpected keys when loading checkpoint: {incompatible_keys.unexpected_keys} (assume we use all teacher weights)")
