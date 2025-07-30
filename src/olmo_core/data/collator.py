@@ -166,6 +166,7 @@ class ByteDataCollator(DataCollator):
         batch = super().__call__(items)
 
         all_original_input_ids = []
+        all_constituent_input_ids = []
         all_patch_lengths = []
 
         max_original_len = max(
@@ -174,7 +175,12 @@ class ByteDataCollator(DataCollator):
 
         for x in items:
             original_input_ids = x.get("original_input_ids") if isinstance(x, dict) else None
+            constituent_input_ids = x.get("constituent_input_ids") if isinstance(x, dict) else None
             patch_lengths = x.get("patch_lens") if isinstance(x, dict) else None
+
+            if constituent_input_ids is not None:
+                # already padded in dset
+                all_constituent_input_ids.append(constituent_input_ids)
 
             if original_input_ids is not None:
                 # both or neither
@@ -207,6 +213,8 @@ class ByteDataCollator(DataCollator):
 
         if all_original_input_ids:
             batch["original_input_ids"] = torch.stack(all_original_input_ids, dim=0)
+        if all_constituent_input_ids:
+            batch["constituent_input_ids"] = torch.stack(all_constituent_input_ids, dim=0)
         if all_patch_lengths:
             batch["patch_lens"] = torch.stack(all_patch_lengths, dim=0)
 

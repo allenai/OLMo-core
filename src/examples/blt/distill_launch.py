@@ -83,9 +83,9 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
             "fi",
             f'git checkout "${GIT_REF_ENV_VAR}"',
             "git submodule update --init --recursive",
-            # maybe not the best idea to share this with the dev env?
-            # or maybe it is the best idea...
-            ". /weka/oe-adapt-default/benjaminm/OLMo-core/.venv/bin/activate",
+            ". /weka/oe-adapt-default/benjaminm/OLMo-core/.train-venv/bin/activate",
+            # make sure we have the git ref version of the code (not the dev /weka/oe-adapt-default/benjaminm/OLMo-core/ version)
+            "uv pip install . --no-deps --force-reinstall",
             "uv pip freeze",
         ]
     )

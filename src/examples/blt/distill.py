@@ -336,10 +336,6 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         all_eval_batch_kwargs += [{"eval_mode": "orig_head"} for _ in eval_tasks]
     if TRAIN_MODE in {"local_decoder_only", "full_stage_1"}:
         all_eval_tasks += eval_tasks
-        all_eval_names += [f"downstream_orig_trunk" for _ in eval_tasks]
-        all_eval_batch_kwargs += [{"eval_mode": "orig_trunk"} for _ in eval_tasks]
-        # probably temporary
-        all_eval_tasks += eval_tasks
         all_eval_names += [f"downstream_orig_trunk_no_boundary" for _ in eval_tasks]
         all_eval_batch_kwargs += [{"eval_mode": "orig_trunk_no_boundary"} for _ in eval_tasks]
     if TRAIN_MODE == "full_stage_1":

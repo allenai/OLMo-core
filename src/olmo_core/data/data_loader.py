@@ -576,6 +576,12 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
                 patch_lengths.shape,
                 device=input_ids.device,
             )
+            out["constituent_input_ids"] = torch.randint(
+                0,
+                100_000,
+                input_ids.shape,
+                device=input_ids.device,
+            )
 
         return out
 

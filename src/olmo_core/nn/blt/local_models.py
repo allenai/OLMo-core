@@ -486,7 +486,7 @@ class LocalDecoder(nn.Module):
         self.add_in_projection = add_in_projection
         self.apply_residual_twice = apply_residual_twice
 
-        if self.depool == "cross_attn":
+        if self.depooling == "cross_attn":
             self.patch_embedding_projection = nn.Linear(
                 d_global_model,
                 d_global_model,

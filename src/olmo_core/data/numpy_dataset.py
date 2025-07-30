@@ -674,6 +674,19 @@ class NumpyByteFSLDataset(NumpyFSLDataset):
         self.tokenizer = tokenizer_config.build()
         self.byte_sequence_length = byte_sequence_length
 
+        self.constituent_map = {}
+        vocab = self.tokenizer.hf_tokenizer.get_vocab()
+        for token, token_id in vocab.items():
+            constituents = []
+
+            for i in range(1, len(token) + 1):
+                if token[:i] in vocab:
+                    constituents.append(vocab[token[:i]])
+                else:
+                    constituents.append(-100)
+
+            self.constituent_map[token_id] = constituents
+
     def _read_chunk_from_array(self, path: PathOrStr, index: int, dtype=None) -> torch.Tensor:
         start_idx = index * self.patch_sequence_length # patch <-> sub/superword sequence length
         return load_array_slice_into_tensor(
@@ -712,6 +725,20 @@ class NumpyByteFSLDataset(NumpyFSLDataset):
             patch_lengths,
         )
 
+        constituent_input_ids = []
+        for token_id in original_input_ids:
+            constituent_input_ids.extend(self.constituent_map[int(token_id)])
+
+        constituent_input_ids = torch.tensor(constituent_input_ids, dtype=torch.int32)[:self.byte_sequence_length]
+
+        if constituent_input_ids.shape[0] < self.byte_sequence_length:
+            n_pad = self.byte_sequence_length - constituent_input_ids.shape[0]
+            constituent_input_ids = F.pad(
+                constituent_input_ids,
+                (0, n_pad),
+                value=-100,
+            )
+
         if new_input_ids.shape[0] > self.byte_sequence_length:
             new_input_ids = new_input_ids[:self.byte_sequence_length]
             new_attention_mask = new_attention_mask[:self.byte_sequence_length]
@@ -729,6 +756,7 @@ class NumpyByteFSLDataset(NumpyFSLDataset):
             )
 
         item["original_input_ids"] = original_input_ids
+        item["constituent_input_ids"] = constituent_input_ids
         item["input_ids"] = new_input_ids
         item["attention_mask"] = new_attention_mask
         item["patch_lens"] = patch_lengths
