@@ -60,6 +60,11 @@ def parse_args():
         help="Dimensionality of the local model. Default is 1024.",
     )
     parser.add_argument(
+        "--model_arch",
+        default="olmo2_1B_v2",
+        help="Model architecture to use. Default is 'olmo2_1B_v2'.",
+    )
+    parser.add_argument(
         "--teacher_ckpt_path",
         type=Path,
         default=Path("/weka/oe-training-default/benjaminm/checkpoints/olmo2_1b/model_and_optim"),
@@ -221,7 +226,7 @@ def main():
         with open(cache_file, "wb") as f:
             pickle.dump(token_init_mapping, f)
 
-    model = TransformerConfig.olmo2_1B_v2(
+    model = getattr(TransformerConfig, args.model_arch)(
         vocab_size=tokenizer_config.padded_vocab_size()
     ).build()
     load_model_and_optim_state(args.teacher_ckpt_path, model)
