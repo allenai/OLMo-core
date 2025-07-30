@@ -1874,10 +1874,7 @@ class BLTDistillTransformer(BLTTransformer):
             boundary_logprobs = F.logsigmoid(boundary_preds.float())
             patch_end_indices = torch.cumsum(local_encoder_kwargs["patch_lens"], dim=1) - 1
             if blt_config.eval_add_boundary_logp:
-                if blt_config.debug_boundary_shift == 2:
-                    y_hat = y_hat + torch.gather(boundary_logprobs, -1, patch_end_indices)[:, 2:]
-                else:
-                    y_hat = y_hat + torch.gather(boundary_logprobs, -1, patch_end_indices)[:, 1:-1]
+                y_hat = y_hat + torch.gather(boundary_logprobs, -1, patch_end_indices)[:, 2:]
 
         n_vocab = self.teacher.embeddings.weight.shape[0]
         remaining_logpmass = log1mexp(y_hat)
@@ -2018,10 +2015,7 @@ class BLTDistillTransformer(BLTTransformer):
             boundary_logprobs = F.logsigmoid(boundary_preds.float())
             patch_end_indices = torch.cumsum(local_encoder_kwargs["patch_lens"], dim=1) - 1
             if blt_config.eval_add_boundary_logp:
-                if blt_config.debug_boundary_shift == 2:
-                    y_hat = y_hat + torch.gather(boundary_logprobs, -1, patch_end_indices)[:, 2:]
-                else:
-                    y_hat = y_hat + torch.gather(boundary_logprobs, -1, patch_end_indices)[:, 1:-1]
+                y_hat = y_hat + torch.gather(boundary_logprobs, -1, patch_end_indices)[:, 2:]
 
         remaining_logpmass = log1mexp(y_hat)
         remaining_logp_uniform = remaining_logpmass - math.log(teacher_logits.shape[2] - 1)  # -1 to skip the main path token
