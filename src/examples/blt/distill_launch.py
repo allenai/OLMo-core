@@ -12,7 +12,6 @@ import os
 from beaker import Priority
 
 from olmo_core.launch.beaker import BeakerLaunchConfig, BeakerEnvVar, BeakerWekaBucket, BeakerEnvSecret
-from olmo_core.launch.utils import GIT_BRANCH_ENV_VAR, GIT_REPO_URL_ENV_VAR, GIT_REF_ENV_VAR
 from olmo_core.internal.common import get_beaker_username
 from olmo_core.utils import generate_uuid, prepare_cli_environment
 
@@ -44,10 +43,6 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
                 bucket="oe-training-default",
                 mount="/weka/oe-training-default",
             ),
-            BeakerWekaBucket(
-                bucket="oe-adapt-default",
-                mount="/weka/oe-adapt-default",
-            )
         ]
         shared_filesystem = True
 
@@ -75,19 +70,6 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
                 secret=f"{beaker_username}_WANDB_API_KEY",
             ),
         ],
-        setup_steps=[
-            f'if [[ -z "${GIT_BRANCH_ENV_VAR}" ]]; then',
-            f'  git clone "${GIT_REPO_URL_ENV_VAR}" .',
-            "else",
-            f'  git clone -b "${GIT_BRANCH_ENV_VAR}" --single-branch "${GIT_REPO_URL_ENV_VAR}" .',
-            "fi",
-            f'git checkout "${GIT_REF_ENV_VAR}"',
-            "git submodule update --init --recursive",
-            ". /weka/oe-adapt-default/benjaminm/OLMo-core/.venv/bin/activate",
-            # make sure we have the git ref version of the code (not the dev /weka/oe-adapt-default/benjaminm/OLMo-core/ version)
-            "uv pip install . --no-deps --force-reinstall",
-            "uv pip freeze",
-        ]
     )
 
 

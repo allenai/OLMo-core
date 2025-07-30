@@ -1748,8 +1748,8 @@ class BLTDistillTransformer(BLTTransformer):
                     / (remainder_mask.float().sum() + blt_config.epsilon)
                 )
 
-            local_decoder_loss = local_decoder_loss / byte_mask.numel()
             metrics["blt/local_decoder_loss"] = local_decoder_loss / (local_decoder_denom + blt_config.epsilon)
+            local_decoder_loss = local_decoder_loss / byte_mask.numel()
 
             # compute the boundary loss
             if boundary_preds is not None:

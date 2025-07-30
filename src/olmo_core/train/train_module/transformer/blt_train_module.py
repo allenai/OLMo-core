@@ -190,7 +190,7 @@ class TransformerBLTTrainModule(TransformerTrainModule):
                 metrics["max_patch_len"] = (model_kwargs["original_labels"] != self.label_ignore_index).float().max()  # type: ignore
 
                 for key, value in metrics.items():  # type: ignore
-                    batch_metrics[key] = batch_metrics.get(key, 0.0) + get_local_tensor(value.detach())
+                    batch_metrics[key] = batch_metrics.get(key, 0.0) + get_local_tensor(value.detach()) / num_micro_batches
 
                 # Run backward pass.
                 out.loss.backward()  # type: ignore
