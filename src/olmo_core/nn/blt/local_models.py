@@ -11,6 +11,7 @@ from torch.nn.attention.flex_attention import flex_attention, BlockMask
 from torch.distributed.tensor import DTensor, distribute_tensor
 
 from olmo_core.config import Config
+from olmo_core.io import resource_path
 from olmo_core.nn.transformer.config import TransformerDataParallelWrappingStrategy
 from olmo_core.nn.transformer.block import TransformerBlockBase
 from olmo_core.nn.buffer_cache import BufferCache
@@ -218,13 +219,13 @@ class LocalEncoder(nn.Module):
             fully_shard(self.cross_attention, mesh=dp_mesh, **fsdp_kwargs)
         fully_shard(self, mesh=dp_mesh, **fsdp_kwargs)
 
-    def fix_init(self, embedding_init_path, target_embeddings, n_estimate=10_000):
+    def fix_init(self, embedding_init_path, target_embeddings, n_estimate=10_000, cache_dir: Optional[str] = None):
         """Rescale such that the local encoder outputs (given random inputs) have the same mean and std as the provided embeddings."""
         if embedding_init_path is not None:
             # load embedding inits (computed via compute_hash_embedding_init.py)
             if isinstance(self.embedding.weight.data, DTensor):
                 self.embedding.weight.data[:] = distribute_tensor(
-                    torch.load(Path(embedding_init_path) / "embedding_init.pth"),
+                    torch.load(resource_path(embedding_init_path, "embedding_init.pth", local_cache=cache_dir)),
                     device_mesh=self.embedding.weight.data.device_mesh,
                     placements=self.embedding.weight.data.placements,
                 )
@@ -235,12 +236,12 @@ class LocalEncoder(nn.Module):
                 for i, hash_embedding in enumerate(self.hash_embeddings):
                     if isinstance(hash_embedding.weight.data, DTensor):
                         hash_embedding.weight.data[:] = distribute_tensor(
-                            torch.load(Path(embedding_init_path) / f"hash_embedding_init_{i}.pth"),
+                            torch.load(resource_path(embedding_init_path, f"hash_embedding_init_{i}.pth", local_cache=cache_dir)),
                             device_mesh=hash_embedding.weight.data.device_mesh,
                             placements=hash_embedding.weight.data.placements,
                         )
                     else:
-                        hash_embedding.weight.data[:] = torch.load(Path(embedding_init_path) / f"hash_embedding_init_{i}.pth")  # type: ignore
+                        hash_embedding.weight.data[:] = torch.load(resource_path(embedding_init_path, f"hash_embedding_init_{i}.pth", local_cache=cache_dir))  # type: ignore
 
         te_mean = target_embeddings.mean(0)
         # .std not supported for DTensor
