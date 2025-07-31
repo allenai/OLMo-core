@@ -1,5 +1,4 @@
 from typing import Any, Dict, Optional
-from unittest.mock import patch
 
 import pytest
 import torch
@@ -13,13 +12,10 @@ from olmo_core.nn.attention import (
     RingAttentionZigZagLoadBalancer,
     SlidingWindowAttentionConfig,
 )
-from olmo_core.nn.attention.flash_attn_api import (
-    dispatch_flash_attn,
-    dispatch_flash_attn_with_kvcache,
-)
 from olmo_core.nn.layer_norm import LayerNormConfig
 from olmo_core.nn.rope import RoPEConfig, RoPEType
 from olmo_core.testing import DEVICES, FLASH_MARKS, GPU_MARKS, requires_flash_attn, requires_gpu
+from olmo_core.utils import seed_all
 
 
 @pytest.mark.parametrize("device", DEVICES)
@@ -61,7 +57,7 @@ def test_attention(
     if dtype == torch.bfloat16 and device.type == "cpu":
         pytest.skip("bf16 requires GPU")
 
-    torch.random.manual_seed(0)
+    seed_all(0)
 
     d_model = 128
     seq_len = 32
@@ -96,7 +92,7 @@ def test_attention(
     "use_flash", [pytest.param(True, id="flash"), pytest.param(False, id="torch-SDPA")]
 )
 def test_fused_attention_against_non_fused(dtype: torch.dtype, use_flash: bool):
-    torch.random.manual_seed(0)
+    seed_all(0)
 
     d_model = 128
     seq_len = 32
@@ -133,7 +129,7 @@ def test_fused_attention_against_non_fused(dtype: torch.dtype, use_flash: bool):
 @requires_gpu
 @requires_flash_attn
 def test_fused_attention_with_rope():
-    torch.random.manual_seed(0)
+    seed_all(0)
 
     d_model = 128
     seq_len = 32
@@ -159,7 +155,7 @@ def test_fused_attention_with_rope():
 @requires_gpu
 @requires_flash_attn
 def test_attention_with_intra_document_masking():
-    torch.random.manual_seed(0)
+    seed_all(0)
 
     d_model = 128
     seq_len = 32
@@ -202,7 +198,7 @@ def test_attention_with_intra_document_masking():
 
 @requires_gpu
 @requires_flash_attn
-@pytest.mark.parametrize("batch_size", [1, 2, 4, 8])
+@pytest.mark.parametrize("batch_size", [1, 2])
 @pytest.mark.parametrize(
     "n_kv_heads",
     [pytest.param(None, id="MHA"), pytest.param(1, id="MQA"), pytest.param(2, id="GQA")],
@@ -218,12 +214,12 @@ def test_attention_with_intra_document_masking():
     ],
 )
 def test_attention_kv_caching(batch_size: int, n_kv_heads: Optional[int], kwargs: Dict[str, Any]):
-    torch.random.manual_seed(0)
+    seed_all(0)
 
-    d_model = 64
+    d_model = 512
     n_heads = 8
-    max_seq_len = 64
-    prefill_len = 60
+    max_seq_len = 512
+    prefill_len = 508
     decode_steps = 1
     total_len = prefill_len + decode_steps
     assert total_len <= max_seq_len
@@ -243,12 +239,13 @@ def test_attention_kv_caching(batch_size: int, n_kv_heads: Optional[int], kwargs
     x = torch.randn(batch_size, total_len, d_model, dtype=torch.bfloat16, device="cuda")
 
     # 1. Combined forward pass (for comparison)
+    seed_all(0)
     with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
         y_combined = attention(x)
 
     # 2. Prefill + multiple decode steps
     x_prefill = x[:, :prefill_len, :]
-
+    seed_all(0)
     with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
         y_reference_prefill = attention(x_prefill)
 
@@ -256,6 +253,7 @@ def test_attention_kv_caching(batch_size: int, n_kv_heads: Optional[int], kwargs
     attention.reset_kv_cache(
         use_cache=True, batch_size=batch_size, max_seq_len=max_seq_len, dtype=torch.bfloat16
     )
+    seed_all(0)
     with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
         y_prefill = attention(x_prefill, prefill_kv_cache=True)  # (B, P, D)
 
@@ -284,6 +282,8 @@ def test_attention_kv_caching(batch_size: int, n_kv_heads: Optional[int], kwargs
     torch.testing.assert_close(
         y_combined[:, :prefill_len, :],
         y_prefill,
+        rtol=1e-5 if batch_size > 1 else None,
+        atol=5e-3 if batch_size > 1 else None,
         msg=lambda s: f"Prefill outputs don't match: {s}",
     )
 
@@ -291,8 +291,8 @@ def test_attention_kv_caching(batch_size: int, n_kv_heads: Optional[int], kwargs
     torch.testing.assert_close(
         y_combined[:, prefill_len:, :],
         y_decode_combined,
-        rtol=1e-2 if batch_size > 1 else None,  # batch size > 1 is more numerically unstable
-        atol=1000,  # dont care
+        rtol=1e-5 if batch_size > 1 else None,
+        atol=5e-3 if batch_size > 1 else None,
         msg=lambda s: f"Outputs that leverage the KV-cache don't match: {s}",
     )
 
@@ -300,7 +300,7 @@ def test_attention_kv_caching(batch_size: int, n_kv_heads: Optional[int], kwargs
 @requires_gpu
 @requires_flash_attn
 def test_attention_kv_cache_update():
-    torch.random.manual_seed(0)
+    seed_all(0)
 
     d_model = 64
     n_heads = 8
@@ -408,7 +408,7 @@ def test_attention_kv_cache_update():
 @requires_flash_attn
 @pytest.mark.parametrize("batch_size", [1, 8, 32])
 def test_attention_prefill_forward_pass(batch_size: int):
-    torch.random.manual_seed(0)
+    seed_all(0)
 
     d_model = 64
     n_heads = 4

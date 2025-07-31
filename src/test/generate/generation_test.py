@@ -1,4 +1,3 @@
-import copy
 from pathlib import Path
 from typing import Optional
 
@@ -18,7 +17,6 @@ from olmo_core.generate.generation import TransformerGenerationModule
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.testing import requires_multi_gpu, run_distributed_test
 from olmo_core.testing.utils import (
-    DEVICES,
     GPU_MARKS,
     has_flash_attn,
     requires_flash_attn,
@@ -463,11 +461,6 @@ def test_generation_module_distributed_fsdp(tmp_path: Path, use_cache: bool):
 
 @requires_gpu
 @requires_flash_attn
-# @pytest.mark.xfail(
-#     reason="Generation with and without cache use different flash-attn kernels. "
-#     "These kernels produce slightly different outputs that compound over layers, "
-#     "resulting in different predicted tokens."
-# )
 @pytest.mark.parametrize("batch_size", [1, 8])
 def test_generation_cache_consistency(batch_size: int):
     if not has_flash_attn:
@@ -501,38 +494,5 @@ def test_generation_cache_consistency(batch_size: int):
         input_ids, completions_only=True, return_logits=True, use_cache=True
     )
 
-    if not torch.equal(output_ids_no_cache, output_ids_with_cache):
-        # Find differences for better debugging
-        diff_mask = output_ids_no_cache != output_ids_with_cache
-        diff_positions = torch.nonzero(diff_mask, as_tuple=False)
-
-        error_msg = "Generation with and without cache produced different outputs:\n"
-        error_msg += f"Output shapes: no_cache={output_ids_no_cache.shape}, with_cache={output_ids_with_cache.shape}\n"
-        error_msg += f"Number of differing positions: {diff_positions.shape[0]}\n"
-
-        if diff_positions.shape[0] > 0:
-            error_msg += "First few differences:\n"
-            for batch_idx, seq_idx in diff_positions[:10]:  # Show first 10 diff
-                no_cache_val = output_ids_no_cache[batch_idx, seq_idx].item()
-                with_cache_val = output_ids_with_cache[batch_idx, seq_idx].item()
-                error_msg += f"  Position [{batch_idx}, {seq_idx}]: no_cache={no_cache_val}, with_cache={with_cache_val}\n"
-
-                # Check if the top logit matches at this position
-                if output_logits_no_cache is not None and output_logits_with_cache is not None:
-                    no_cache_top_logit = torch.argmax(
-                        output_logits_no_cache[batch_idx, seq_idx]
-                    ).item()
-                    with_cache_top_logit = torch.argmax(
-                        output_logits_with_cache[batch_idx, seq_idx]
-                    ).item()
-                    top_logits_match = no_cache_top_logit == with_cache_top_logit
-                    error_msg += f"    Top logits match: {top_logits_match} (no_cache={no_cache_top_logit}, with_cache={with_cache_top_logit})\n"
-
-            if diff_positions.shape[0] > 10:
-                error_msg += f"  ... and {diff_positions.shape[0] - 10} more differences\n"
-
-        error_msg += f"\nFull outputs:\nno_cache:\n{output_ids_no_cache}\nwith_cache:\n{output_ids_with_cache}"
-
-        assert False, error_msg
-
+    assert torch.equal(output_ids_no_cache, output_ids_with_cache)
     torch.testing.assert_close(output_logits_no_cache, output_logits_with_cache)

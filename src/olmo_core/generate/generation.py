@@ -218,6 +218,7 @@ class TransformerGenerationModule(GenerationModule):
                   Shape: (batch_size, output_length - 1). Note: log probabilities are only computed
                   for positions 1 to N since the first token has no previous context.
         """
+        # TODO: try padding the input_ids to a multiple of 128
         self.model.eval()
         input_ids = move_to_device(input_ids, self.device)
         if attention_mask is not None:
@@ -238,11 +239,15 @@ class TransformerGenerationModule(GenerationModule):
         time_to_first_token = None
         token_times = []
         tokens_generated = 0
+        kv_cache_init_time = None
+        prefill_time = None
+        first_decode_time = None
 
         # Memory tracking
         initial_memory = None
         prefill_peak_memory = None
         decoding_peak_memory = None
+        post_prefill_memory = None
         if self.device.type == "cuda" and log_timing:
             torch.cuda.synchronize()
             initial_memory = torch.cuda.memory_allocated(self.device)
@@ -254,6 +259,7 @@ class TransformerGenerationModule(GenerationModule):
             max_length = generation_config.max_length
 
         # Initialize/Reset the KV cache
+        kv_cache_start_time = time.perf_counter()
         self._reset_kv_cache(
             self.model,
             generation_config.use_cache,
@@ -261,6 +267,9 @@ class TransformerGenerationModule(GenerationModule):
             max_length,
             self.autocast_precision or torch.float32,
         )
+        if self.device.type == "cuda":
+            torch.cuda.synchronize()
+        kv_cache_init_time = time.perf_counter() - kv_cache_start_time
 
         pbar = tqdm(desc="Generating tokens", disable=not log_timing)
         while True:
@@ -272,20 +281,35 @@ class TransformerGenerationModule(GenerationModule):
 
             input_ids_for_model = generated[:, -1:] if is_using_cache else generated
             attention_mask_for_model = None if is_using_cache else attention_mask
-            logits_to_keep = 1 if (is_using_cache or completions_only) else prompt_len
+            logits_to_keep = (
+                1 if (is_using_cache or completions_only) else prompt_len
+            )  # Todo: we also dont need full logits unless we're returning them
 
+            # Time the forward pass
+            forward_start_time = time.perf_counter()
             logits = self.model_forward(  # (batch_size, generated.shape[1], self.model.vocab_size)
                 input_ids_for_model,
                 attention_mask=attention_mask_for_model,
                 logits_to_keep=logits_to_keep,
                 prefill_kv_cache=is_first_forward,
             )
+            if self.device.type == "cuda":
+                torch.cuda.synchronize()
+            forward_end_time = time.perf_counter()
+
+            # Track prefill and first decode times
+            if is_first_forward:
+                prefill_time = forward_end_time - forward_start_time
+            elif tokens_generated == 0:
+                first_decode_time = forward_end_time - forward_start_time
+
             next_token_logits = logits[:, -1, :]  # (batch_size, vocab_size)
 
             # Track memory after prefill phase
             if is_first_forward and self.device.type == "cuda" and log_timing:
                 torch.cuda.synchronize()
                 prefill_peak_memory = torch.cuda.max_memory_allocated(self.device)
+                post_prefill_memory = torch.cuda.memory_allocated(self.device)
                 # Reset max memory tracking for decoding phase
                 torch.cuda.reset_max_memory_allocated(self.device)
 
@@ -365,15 +389,6 @@ class TransformerGenerationModule(GenerationModule):
             if logprobs is not None:
                 logprobs = logprobs[:, prompt_len:, :]
 
-        # Erase the KV cache
-        self._reset_kv_cache(
-            self.model,
-            False,
-            batch_size,
-            max_length,
-            self.autocast_precision or torch.float32,
-        )
-
         total_time = time.perf_counter() - start_time
         if log_timing:
             print("Generation stats:")
@@ -384,15 +399,32 @@ class TransformerGenerationModule(GenerationModule):
             )
             print(f"  Sequence length extended: {prompt_len} → {prompt_len + tokens_generated}")
             print(f"  Total generation time: {total_time:.3f}s")
+
+            # Detailed timing breakdown
+            print(f"\n  Timing breakdown:")
+            if kv_cache_init_time is not None:
+                print(f"    KV cache initialization: {kv_cache_init_time * 1000:.1f}ms")
+            if prefill_time is not None:
+                print(
+                    f"    Prefill time: {prefill_time * 1000:.1f}ms ({prompt_len / prefill_time:.1f} tokens/s)"
+                )
+            if first_decode_time is not None:
+                print(f"    First decode time: {first_decode_time * 1000:.1f}ms")
             if time_to_first_token is not None:
-                print(f"  Time to first token: {time_to_first_token:.3f}s")
+                print(f"    Time to first token: {time_to_first_token:.3f}s")
             if token_times:
                 avg_inter_token_latency = sum(token_times) / len(token_times)
-                print(f"  Average inter-token latency: {avg_inter_token_latency * 1000:.1f}ms")
+                print(f"    Average inter-token latency: {avg_inter_token_latency * 1000:.1f}ms")
+                if len(token_times) > 1:
+                    # Exclude first decode from average since it's often slower
+                    avg_subsequent_latency = sum(token_times[1:]) / len(token_times[1:])
+                    print(
+                        f"    Average subsequent token latency: {avg_subsequent_latency * 1000:.1f}ms"
+                    )
 
             # Log GPU memory usage
             if self.device.type == "cuda" and initial_memory is not None:
-                print(f"  GPU memory usage:")
+                print(f"\n  GPU memory usage:")
                 print(f"    Initial memory: {initial_memory / 1024**3:.2f} GB")
 
                 if prefill_peak_memory is not None:
@@ -401,12 +433,17 @@ class TransformerGenerationModule(GenerationModule):
                     print(f"      Peak memory: {prefill_peak_memory / 1024**3:.2f} GB")
                     print(f"      Memory used: {prefill_memory_used / 1024**3:.2f} GB")
 
-                    if decoding_peak_memory is not None:
-                        # Note: decoding_peak_memory is measured after reset, so it's relative to post-prefill state
+                    if decoding_peak_memory is not None and post_prefill_memory is not None:
+                        # decoding_peak_memory is measured after reset, so it's relative to post-prefill state
+                        decoding_memory_used = decoding_peak_memory - (
+                            post_prefill_memory - prefill_peak_memory
+                        )
                         print(f"    Decoding phase:")
-                        print(f"      Peak memory: {decoding_peak_memory / 1024**3:.2f} GB")
                         print(
-                            f"      Additional memory used: {decoding_peak_memory / 1024**3:.2f} GB"
+                            f"      Peak memory: {(post_prefill_memory + decoding_memory_used) / 1024**3:.2f} GB"
+                        )
+                        print(
+                            f"      Additional memory used: {decoding_memory_used / 1024**3:.2f} GB"
                         )
 
         return generated, logits, logprobs
