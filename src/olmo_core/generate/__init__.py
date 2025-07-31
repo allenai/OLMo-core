@@ -1,5 +1,5 @@
 from .config import GenerationConfig, TransformerGenerationModuleConfig
-from .generation import GenerationModule, TransformerGenerationModule
+from .generation_module import GenerationModule, TransformerGenerationModule
 
 __all__ = [
     "GenerationConfig",

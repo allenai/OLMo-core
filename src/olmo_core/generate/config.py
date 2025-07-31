@@ -15,7 +15,7 @@ from olmo_core.train.train_module.transformer.config import (
 )
 
 if TYPE_CHECKING:
-    from .generation import TransformerGenerationModule
+    from .generation_module import TransformerGenerationModule
 
 
 @dataclass
@@ -118,7 +118,7 @@ class TransformerGenerationModuleConfig(Config):
         :param pre_download: Whether to pre-download remote checkpoints.
         :param load_thread_count: Number of threads to use for loading.
         """
-        from olmo_core.generate.generation import TransformerGenerationModule
+        from olmo_core.generate.generation_module import TransformerGenerationModule
 
         config_dict = self.as_dict(exclude_none=True, recurse=False)
         if (dtype := config_dict.pop("dtype", None)) is not None:
