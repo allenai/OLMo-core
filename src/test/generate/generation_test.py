@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional, Union
 
 import pytest
 import torch
@@ -9,22 +9,12 @@ from olmo_core.config import DType
 from olmo_core.distributed.checkpoint import save_model_and_optim_state
 from olmo_core.distributed.parallel.data_parallel import DataParallelType
 from olmo_core.distributed.utils import get_world_size
-from olmo_core.generate.config import (
-    GenerationConfig,
-    TransformerGenerationModuleConfig,
-)
+from olmo_core.generate.config import GenerationConfig, TransformerGenerationModuleConfig
 from olmo_core.generate.generation_module import TransformerGenerationModule
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.testing import requires_multi_gpu, run_distributed_test
-from olmo_core.testing.utils import (
-    GPU_MARKS,
-    has_flash_attn,
-    requires_flash_attn,
-    requires_gpu,
-)
-from olmo_core.train.train_module.transformer.config import (
-    TransformerDataParallelConfig,
-)
+from olmo_core.testing.utils import has_flash_attn, requires_flash_attn, requires_gpu
+from olmo_core.train.train_module.transformer.config import TransformerDataParallelConfig
 from olmo_core.utils import seed_all
 
 
@@ -52,34 +42,14 @@ def single_layer_transformer_config(**kwargs):
     "use_cache",
     [pytest.param(False, id="use_cache=False"), pytest.param(True, id="use_cache=True")],
 )
-@pytest.mark.parametrize(
-    "dtype",
-    [
-        pytest.param(DType.float32, id="dtype=float32"),
-        pytest.param(DType.bfloat16, id="dtype=bfloat16", marks=GPU_MARKS),
-    ],
-)
-@pytest.mark.parametrize(
-    "autocast_precision",
-    [
-        pytest.param(DType.float32, id="autocast_precision=float32"),
-        pytest.param(DType.bfloat16, id="autocast_precision=bfloat16", marks=GPU_MARKS),
-    ],
-)
-def test_generation_module_basic(
-    compile_model: bool,
-    use_cache: bool,
-    dtype: DType,
-    autocast_precision: DType,
-):
+def test_generation_module_basic(compile_model: bool, use_cache: bool):
     device = torch.device("cuda")
+    dtype = DType.bfloat16
     seed_all(0)
 
     flash_attn_available = dtype == DType.bfloat16 and has_flash_attn
     if not flash_attn_available and use_cache:
         pytest.skip("flash-attn is required for use_cache")
-    if flash_attn_available and autocast_precision != DType.bfloat16:
-        pytest.skip("flash-attn is only supported with bfloat16 autocast precision")
 
     generation_config = GenerationConfig(
         use_cache=use_cache,
@@ -97,7 +67,6 @@ def test_generation_module_basic(
         generation_config=generation_config,
         compile_model=compile_model,
         device=device,
-        autocast_precision=autocast_precision.as_pt(),
     )
 
     # Create test input
@@ -280,9 +249,14 @@ def test_generation_module_stop_sequences():
         def mock_forward(
             input_ids: torch.Tensor,
             *,
+            labels: Optional[torch.Tensor] = None,
             attention_mask: Optional[torch.Tensor] = None,
-            logits_to_keep: int = 0,
-            prefill_kv_cache: bool = False,
+            ignore_index: int = -100,
+            loss_reduction: Literal["mean", "sum", "none"] = "mean",
+            z_loss_multiplier: Optional[float] = None,
+            loss_div_factor: Optional[torch.Tensor | float] = None,
+            return_logits: Optional[bool] = None,
+            logits_to_keep: Union[int, torch.Tensor] = 0,
             **kwargs,
         ):
             seq_len = input_ids.shape[1] - 3  # Subtract initial input length
@@ -301,25 +275,25 @@ def test_generation_module_stop_sequences():
 
     # Stop at first stop token (10)
     input_ids = torch.tensor([[3, 5, 7]], dtype=torch.long, device=device)
-    generation_module.model_forward = create_mock_forward([8, 9, 10, 99])
+    generation_module.model.forward = create_mock_forward([8, 9, 10, 99])
     output, *_ = generation_module.generate_batch(input_ids, completions_only=False)
     assert torch.equal(output, torch.tensor([[3, 5, 7, 8, 9, 10]], device=device))
 
     # Stop at second stop token (20)
     input_ids = torch.tensor([[2, 4, 6]], dtype=torch.long, device=device)
-    generation_module.model_forward = create_mock_forward([25, 15, 20, 99])
+    generation_module.model.forward = create_mock_forward([25, 15, 20, 99])
     output, *_ = generation_module.generate_batch(input_ids, completions_only=False)
     assert torch.equal(output, torch.tensor([[2, 4, 6, 25, 15, 20]], device=device))
 
     # Stop at third stop token (30)
     input_ids = torch.tensor([[1, 2, 3]], dtype=torch.long, device=device)
-    generation_module.model_forward = create_mock_forward([5, 30, 99])
+    generation_module.model.forward = create_mock_forward([5, 30, 99])
     output, *_ = generation_module.generate_batch(input_ids, completions_only=False)
     assert torch.equal(output, torch.tensor([[1, 2, 3, 5, 30]], device=device))
 
     # Stop at EOS token (not stop token)
     input_ids = torch.tensor([[3, 5, 7]], dtype=torch.long, device=device)
-    generation_module.model_forward = create_mock_forward([60, 70, 1, 99])
+    generation_module.model.forward = create_mock_forward([60, 70, 1, 99])
     output, *_ = generation_module.generate_batch(input_ids, completions_only=False)
     assert torch.equal(output, torch.tensor([[3, 5, 7, 60, 70, 1]], device=device))
 
@@ -333,7 +307,7 @@ def test_generation_module_stop_sequences():
         use_cache=False,
     )
     input_ids = torch.tensor([[3, 5, 7]], dtype=torch.long, device=device)
-    generation_module.model_forward = create_mock_forward([10, 20, 30, 40, 50, 1])
+    generation_module.model.forward = create_mock_forward([10, 20, 30, 40, 50, 1])
     output, *_ = generation_module.generate_batch(input_ids, completions_only=False)
     assert torch.equal(output, torch.tensor([[3, 5, 7, 10, 20, 30, 40, 50, 1]], device=device))
 
@@ -347,13 +321,12 @@ def test_generation_with_attention_mask():
         max_length=20, temperature=0.0, pad_token_id=pad, eos_token_id=1
     )
 
-    transformer_config = small_transformer_config(use_flash=True)
+    transformer_config = small_transformer_config(use_flash=True, dtype=DType.bfloat16)
     model = transformer_config.build()
     generation_module = TransformerGenerationModule(
         model=model,
         generation_config=generation_config,
         device=device,
-        autocast_precision=DType.bfloat16.as_pt(),
     )
     input_ids = torch.tensor([[pad, pad, 3, 5, 7]], dtype=torch.long, device=device)  # left-padded
     attention_mask = (input_ids != pad).to(torch.bool)
@@ -377,7 +350,6 @@ def run_distributed_generation(
     transformer_config: TransformerConfig,
     generation_config: GenerationConfig,
     dp_config: Optional[TransformerDataParallelConfig],
-    autocast_precision: DType,
     input_ids: torch.Tensor,
     expected_shape: tuple,
 ):
@@ -388,7 +360,6 @@ def run_distributed_generation(
         checkpoint_dir=checkpoint_dir,
         generation_config=generation_config,
         dp_config=dp_config,
-        autocast_precision=autocast_precision.as_pt(),
     )
 
     device = torch.device("cuda", dist.get_rank())
@@ -411,8 +382,6 @@ def run_distributed_generation(
 @pytest.mark.parametrize("use_cache", [True, False], ids=["with_cache", "without_cache"])
 def test_generation_module_distributed_fsdp(tmp_path: Path, use_cache: bool):
     seed_all(0)
-    dtype = DType.float32
-    autocast_precision = DType.bfloat16
 
     if not has_flash_attn and use_cache:
         pytest.skip("flash-attn is required for use_cache")
@@ -421,13 +390,10 @@ def test_generation_module_distributed_fsdp(tmp_path: Path, use_cache: bool):
     generation_config = GenerationConfig(
         max_length=16, do_sample=False, pad_token_id=0, eos_token_id=1, use_cache=use_cache
     )
-    transformer_config = small_transformer_config(dtype=dtype, use_flash=has_flash_attn)
+    transformer_config = small_transformer_config(dtype=DType.bfloat16, use_flash=has_flash_attn)
     model = transformer_config.build()
     generation_module = TransformerGenerationModule(
-        model=model,
-        generation_config=generation_config,
-        device=torch.device("cuda"),
-        autocast_precision=autocast_precision.as_pt(),
+        model=model, generation_config=generation_config, device=torch.device("cuda")
     )
 
     # Save checkpoint
@@ -452,7 +418,6 @@ def test_generation_module_distributed_fsdp(tmp_path: Path, use_cache: bool):
             transformer_config,
             generation_config,
             dp_config,
-            autocast_precision,
             input_ids,
             expected_shape,
         ),
@@ -467,24 +432,20 @@ def test_generation_cache_consistency(batch_size: int):
         pytest.skip("flash-attn is required for KV cache usage")
 
     device = torch.device("cuda")
-    dtype = DType.float32
-    autocast_precision = DType.float16
 
-    transformer_config = single_layer_transformer_config(dtype=dtype, use_flash=True)
+    transformer_config = single_layer_transformer_config(dtype=DType.bfloat16, use_flash=True)
     model = transformer_config.build()
 
     gen_config = GenerationConfig(
         max_length=128, do_sample=False, pad_token_id=0, eos_token_id=1, use_cache=False
     )
     generation_module = TransformerGenerationModule(
-        model=model,
-        generation_config=gen_config,
-        device=device,
-        autocast_precision=autocast_precision.as_pt(),
+        model=model, generation_config=gen_config, device=device
     )
 
     seq_len = 124
     input_ids = torch.randint(2, 100, (batch_size, seq_len), device=device)
+
     seed_all(0)
     output_ids_no_cache, output_logits_no_cache, _ = generation_module.generate_batch(
         input_ids, completions_only=True, return_logits=True, use_cache=False

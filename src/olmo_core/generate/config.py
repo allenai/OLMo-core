@@ -94,9 +94,6 @@ class TransformerGenerationModuleConfig(Config):
     dtype: Optional[DType] = None
     """The dtype to build the model in."""
 
-    autocast_precision: Optional[torch.dtype] = None
-    """The precision to autocast to during generation."""
-
     def build(
         self,
         checkpoint_dir: PathOrStr,
