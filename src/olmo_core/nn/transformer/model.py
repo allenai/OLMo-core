@@ -1628,7 +1628,7 @@ class BLTDistillTransformer(BLTTransformer):
                         + (-torch.expm1(log_y_true) * log1mexp(log_y_pred))
                     )
 
-                    return (e - ce) * (blt_config.binarization_temp ** 2)
+                    return (e - ce)
 
                 div_fn = kl_div_fn
             elif blt_config.div_fn == "tvd":
