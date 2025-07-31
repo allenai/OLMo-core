@@ -1657,99 +1657,126 @@ class BLTDistillTransformer(BLTTransformer):
             # this equals teacher_main_path_logprobs[0]
             # teacher_logprobs_to_compare[0][torch.cumsum(local_encoder_kwargs["patch_lens"][0, 1:], dim=0) - 1][1:]
 
-            local_decoder_loss = 0.0
-            local_decoder_denom = 0
+            if blt_config.use_exhaustive_decoder_loss:
+                local_decoder_loss = 0.0
+                local_decoder_denom = 0
 
-            for offset in range(blt_config.n_distill_offsets):
-                student_logprobs_to_compare = torch.zeros_like(teacher_logprobs_to_compare)
+                for offset in range(blt_config.n_distill_offsets):
+                    student_logprobs_to_compare = torch.zeros_like(teacher_logprobs_to_compare)
 
-                # write to last position of each patch
-                student_logprobs_mask = (local_encoder_kwargs["patch_ids"][:, 1:] < local_encoder_kwargs["patch_lens"].shape[1])
-                masked_offset_patch_ids = torch.where(
-                    student_logprobs_mask,
-                    local_encoder_kwargs["patch_ids"][:, 1:] - 1,
-                    torch.zeros_like(local_encoder_kwargs["patch_ids"][:, 1:])
-                )
-                # we can't include patches with length < offset
-                student_logprobs_mask &= torch.take_along_dim(
-                    local_encoder_kwargs["patch_lens"][:, 1:] - 1 - offset >= 0,
-                    masked_offset_patch_ids,
-                    dim=1,
-                )
-                # exclude the last n (n=offset) bytes from each patch
-                if offset > 0:
-                    student_logprobs_mask[:, :-offset] = (
-                        masked_offset_patch_ids[:, :-offset] == masked_offset_patch_ids[:, offset:]
+                    # write to last position of each patch
+                    student_logprobs_mask = (local_encoder_kwargs["patch_ids"][:, 1:] < local_encoder_kwargs["patch_lens"].shape[1])
+                    masked_offset_patch_ids = torch.where(
+                        student_logprobs_mask,
+                        local_encoder_kwargs["patch_ids"][:, 1:] - 1,
+                        torch.zeros_like(local_encoder_kwargs["patch_ids"][:, 1:])
+                    )
+                    # we can't include patches with length < offset
+                    student_logprobs_mask &= torch.take_along_dim(
+                        local_encoder_kwargs["patch_lens"][:, 1:] - 1 - offset >= 0,
+                        masked_offset_patch_ids,
+                        dim=1,
+                    )
+                    # exclude the last n (n=offset) bytes from each patch
+                    if offset > 0:
+                        student_logprobs_mask[:, :-offset] = (
+                            masked_offset_patch_ids[:, :-offset] == masked_offset_patch_ids[:, offset:]
+                        )
+
+                    student_logprobs_indices = torch.take_along_dim(
+                        torch.cumsum(local_encoder_kwargs["patch_lens"][:, 1:], dim=1) - 1 - offset,
+                        masked_offset_patch_ids,
+                        dim=1,
                     )
 
-                student_logprobs_indices = torch.take_along_dim(
-                    torch.cumsum(local_encoder_kwargs["patch_lens"][:, 1:], dim=1) - 1 - offset,
-                    masked_offset_patch_ids,
-                    dim=1,
-                )
+                    student_logprobs_indices = torch.where(
+                        student_logprobs_mask,
+                        torch.clamp(student_logprobs_indices, min=0), # should not be necessary, for dummy batch
+                        torch.zeros_like(student_logprobs_indices),
+                    )
 
-                student_logprobs_indices = torch.where(
-                    student_logprobs_mask,
-                    torch.clamp(student_logprobs_indices, min=0), # should not be necessary, for dummy batch
-                    torch.zeros_like(student_logprobs_indices),
-                )
+                    student_logprobs_to_compare = student_logprobs_to_compare.scatter_add(
+                        dim=1,
+                        index=student_logprobs_indices,
+                        src=main_path_logprobs,
+                    )
+                    nonzero_mask = (student_logprobs_to_compare != 0) & (teacher_logprobs_mask)
 
-                student_logprobs_to_compare = student_logprobs_to_compare.scatter_add(
-                    dim=1,
-                    index=student_logprobs_indices,
+                    if blt_config.add_boundary_logp:
+                        assert boundary_logprobs_for_decoder_loss is not None
+
+                        student_logprobs_to_compare += boundary_logprobs_for_decoder_loss[:, 1:]
+
+                    current_local_decoder_loss = (
+                        div_fn(teacher_logprobs_to_compare, student_logprobs_to_compare) * nonzero_mask.float()
+                    ).sum()
+                    current_local_decoder_denom = nonzero_mask.float().sum()
+
+                    local_decoder_loss += current_local_decoder_loss
+                    local_decoder_denom += current_local_decoder_denom
+
+                    metrics[f"blt/local_decoder_loss_{offset}"] = current_local_decoder_loss / (current_local_decoder_denom + blt_config.epsilon)
+                    metrics[f"blt/local_decoder_teacher_mean_p_{offset}"] = (teacher_logprobs_to_compare * nonzero_mask.float()).sum() / (current_local_decoder_denom + blt_config.epsilon)
+                    metrics[f"blt/local_decoder_mean_numel_{offset}"] = current_local_decoder_denom / nonzero_mask.numel()
+
+                    if blt_config.add_boundary_logp:
+                        assert boundary_labels is not None and boundary_preds is not None
+
+                        metrics[f"blt/boundary_acc_{offset}"] = (
+                            (((boundary_preds > 0) == (boundary_labels > 0))[:, 1:] * nonzero_mask.float()).sum()
+                            / (current_local_decoder_denom + blt_config.epsilon)
+                        )
+
+                # compute the boundary loss over the remaining boundaries (those can never occur)
+                if blt_config.add_boundary_logp:
+                    assert boundary_logprobs_for_decoder_loss is not None and boundary_labels is not None and boundary_preds is not None
+
+                    remainder_target_logprobs = torch.full_like(boundary_logprobs_for_decoder_loss, math.log(blt_config.epsilon))
+                    remainder_mask = byte_mask[:, 1:] & (~teacher_logprobs_mask)
+                    remainder_boundary_loss = (
+                        div_fn(
+                            remainder_target_logprobs[:, 1:],
+                            boundary_logprobs_for_decoder_loss[:, 1:],
+                        ) * remainder_mask.float()
+                    ).sum()
+
+                    local_decoder_loss += remainder_boundary_loss
+                    local_decoder_denom += remainder_mask.float().sum()
+
+                    metrics[f"blt/local_decoder_remainder_boundary_loss"] = remainder_boundary_loss / (remainder_mask.float().sum() + blt_config.epsilon)
+                    metrics[f"blt/local_decoder_remainder_boundary_acc"] = (
+                        (((boundary_preds > 0) == (boundary_labels > 0))[:, 1:] * remainder_mask.float()).sum()
+                        / (remainder_mask.float().sum() + blt_config.epsilon)
+                    )
+
+                metrics["blt/local_decoder_loss"] = local_decoder_loss / (local_decoder_denom + blt_config.epsilon)
+                local_decoder_loss = local_decoder_loss / byte_mask.numel()
+            else:
+                main_path_patch_logprobs = torch.zeros((teacher_embeds.shape[0], teacher_embeds.shape[1]), device=logprobs.device, dtype=logprobs.dtype)
+                main_path_patch_logprobs = main_path_patch_logprobs.scatter_reduce(
                     src=main_path_logprobs,
+                    dim=1,
+                    index=local_encoder_kwargs["patch_ids"][:, 1:] - 1,
+                    reduce="sum",
+                    include_self=False,
                 )
-                nonzero_mask = (student_logprobs_to_compare != 0) & (teacher_logprobs_mask)
+                # `main_path_patch_logprobs` are at this point probabilities for the first regular token onwards (since byte-level input ids include <bos>)
+                # the last position is written to by padding tokens (those with patch_ids == seq_length), so we need to disregard those.
+                # also `teacher_main_path_logprobs` contains the prediction starting from the *second* token (since the teacher does not use <bos>).
+                # so we need to shift appropriately.
+                y_hat = main_path_patch_logprobs[:, 1:-1]
+                # the teacher has had one more id passed to it (since we reduced seq length of the student by one to make room for <bos>).
+                # so we need to truncate by an extra position here.
+                y_true = teacher_main_path_logprobs[:, :-1]
 
-                if blt_config.add_boundary_logp:
-                    assert boundary_logprobs_for_decoder_loss is not None
+                if boundary_logprobs_for_decoder_loss is not None and blt_config.add_boundary_logp:
+                    patch_end_indices = torch.cumsum(local_encoder_kwargs["patch_lens"], dim=1) - 1
+                    y_hat = y_hat + torch.gather(boundary_logprobs_for_decoder_loss, -1, patch_end_indices)[:, 2:]
 
-                    student_logprobs_to_compare += boundary_logprobs_for_decoder_loss[:, 1:]
-
-                current_local_decoder_loss = (
-                    div_fn(teacher_logprobs_to_compare, student_logprobs_to_compare) * nonzero_mask.float()
-                ).sum()
-                current_local_decoder_denom = nonzero_mask.float().sum()
-
-                local_decoder_loss += current_local_decoder_loss
-                local_decoder_denom += current_local_decoder_denom
-
-                metrics[f"blt/local_decoder_loss_{offset}"] = current_local_decoder_loss / (current_local_decoder_denom + blt_config.epsilon)
-                metrics[f"blt/local_decoder_teacher_mean_p_{offset}"] = (teacher_logprobs_to_compare * nonzero_mask.float()).sum() / (current_local_decoder_denom + blt_config.epsilon)
-                metrics[f"blt/local_decoder_mean_numel_{offset}"] = current_local_decoder_denom / nonzero_mask.numel()
-
-                if blt_config.add_boundary_logp:
-                    assert boundary_labels is not None and boundary_preds is not None
-
-                    metrics[f"blt/boundary_acc_{offset}"] = (
-                        (((boundary_preds > 0) == (boundary_labels > 0))[:, 1:] * nonzero_mask.float()).sum()
-                        / (current_local_decoder_denom + blt_config.epsilon)
-                    )
-
-            # compute the boundary loss over the remaining boundaries (those can never occur)
-            if blt_config.add_boundary_logp:
-                assert boundary_logprobs is not None and boundary_labels is not None and boundary_preds is not None
-
-                remainder_target_logprobs = torch.full_like(boundary_logprobs, math.log(blt_config.epsilon))
-                remainder_mask = byte_mask[:, 1:] & (~teacher_logprobs_mask)
-                remainder_boundary_loss = (
-                    div_fn(
-                        remainder_target_logprobs[:, 1:],
-                        boundary_logprobs[:, 1:],
-                    ) * remainder_mask.float()
-                ).sum()
-
-                local_decoder_loss += remainder_boundary_loss
-                local_decoder_denom += remainder_mask.float().sum()
-
-                metrics[f"blt/local_decoder_remainder_boundary_loss"] = remainder_boundary_loss / (remainder_mask.float().sum() + blt_config.epsilon)
-                metrics[f"blt/local_decoder_remainder_boundary_acc"] = (
-                    (((boundary_preds > 0) == (boundary_labels > 0))[:, 1:] * remainder_mask.float()).sum()
-                    / (remainder_mask.float().sum() + blt_config.epsilon)
-                )
-
-            metrics["blt/local_decoder_loss"] = local_decoder_loss / (local_decoder_denom + blt_config.epsilon)
-            local_decoder_loss = local_decoder_loss / byte_mask.numel()
+                local_decoder_loss = (div_fn(y_true, y_hat) * patch_mask[:, 1:-1]).mean()
+                metrics["blt/local_decoder_teacher_mean_p"] = (torch.exp(y_true) * patch_mask[:, 1:-1]).mean() / patch_mask[:, 1:-1].float().mean()
+                metrics["blt/local_decoder_loss"] = local_decoder_loss / patch_mask[:, 1:-1].float().mean()
+                metrics["blt/local_decoder_mae"] = (torch.abs(y_true - y_hat) * patch_mask[:, 1:-1]).mean() / patch_mask[:, 1:-1].float().mean()
 
             # compute the boundary loss
             if boundary_preds is not None:

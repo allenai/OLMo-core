@@ -11,7 +11,8 @@ import os
 
 from beaker import Priority
 
-from olmo_core.launch.beaker import BeakerLaunchConfig, BeakerEnvVar, BeakerWekaBucket, BeakerEnvSecret
+from olmo_core.launch.beaker import BeakerLaunchConfig, BeakerEnvVar, BeakerWekaBucket, BeakerEnvSecret, DEFAULT_SETUP_STEPS
+from olmo_core.launch.utils import GIT_BRANCH_ENV_VAR, GIT_REPO_URL_ENV_VAR, GIT_REF_ENV_VAR
 from olmo_core.internal.common import get_beaker_username
 from olmo_core.utils import generate_uuid, prepare_cli_environment
 
@@ -43,8 +44,33 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
                 bucket="oe-training-default",
                 mount="/weka/oe-training-default",
             ),
+            BeakerWekaBucket(
+                bucket="oe-adapt-default",
+                mount="/weka/oe-adapt-default",
+            ),
         ]
         shared_filesystem = True
+
+    # setup depends on cluster since we need fast startup time
+    # (get preempted all the time :( )
+    if cluster != "ai2/titan-cirrascale":
+        # fast setup
+        setup_steps = [
+            f'if [[ -z "${GIT_BRANCH_ENV_VAR}" ]]; then',
+            f'  git clone "${GIT_REPO_URL_ENV_VAR}" .',
+            "else",
+            f'  git clone -b "${GIT_BRANCH_ENV_VAR}" --single-branch "${GIT_REPO_URL_ENV_VAR}" .',
+            "fi",
+            f'git checkout "${GIT_REF_ENV_VAR}"',
+            "git submodule update --init --recursive",
+            ". /weka/oe-adapt-default/benjaminm/OLMo-core/.venv/bin/activate",
+            # our dev env will need to overwrite this back to editable install
+            "uv pip install . --no-deps --force-reinstall",
+            "uv pip freeze",
+        ]
+    else:
+        # slow setup (need appropriate torch / cuda build)
+        setup_steps = list(DEFAULT_SETUP_STEPS)
 
     beaker_username = get_beaker_username()
 
@@ -70,6 +96,7 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
                 secret=f"{beaker_username}_WANDB_API_KEY",
             ),
         ],
+        setup_steps=setup_steps,
     )
 
 
