@@ -518,7 +518,7 @@ class Trainer:
     @property
     def multi_thread_pool(self) -> ThreadPoolExecutor:
         """
-        A thread that can be used by callbacks to run bookkeeping tasks without blocking training.
+        A multi-threaded executor for bookkeeping tasks that don't involve distributed communication.
         """
         if self._multi_thread_pool is None:
             self._multi_thread_pool = ThreadPoolExecutor(
@@ -530,7 +530,7 @@ class Trainer:
     @property
     def single_thread_pool(self) -> ThreadPoolExecutor:
         """
-        A thread that can be used by callbacks to run bookkeeping tasks without blocking training.
+        A single-threaded executor for bookkeeping tasks that involve distributed communication.
         """
         if self._single_thread_pool is None:
             self._single_thread_pool = ThreadPoolExecutor(
