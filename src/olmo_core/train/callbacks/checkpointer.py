@@ -163,9 +163,13 @@ class CheckpointerCallback(Callback):
 
         if is_url(path):
             if get_rank() == 0:
-                self.trainer.run_bookkeeping_op(clear_directory, path)
+                self.trainer.run_bookkeeping_op(
+                    clear_directory, path, op_name=f"clear_directory {path}", distributed=False
+                )
         elif get_fs_local_rank() == 0:
-            self.trainer.run_bookkeeping_op(clear_directory, path)
+            self.trainer.run_bookkeeping_op(
+                clear_directory, path, op_name=f"clear_directory {path}", distributed=False
+            )
 
     def _schedule_for_removal(self, path: str):
         self._checkpoints_to_remove.append(path)
