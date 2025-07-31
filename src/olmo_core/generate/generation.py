@@ -239,6 +239,15 @@ class TransformerGenerationModule(GenerationModule):
         token_times = []
         tokens_generated = 0
 
+        # Memory tracking
+        initial_memory = None
+        prefill_peak_memory = None
+        decoding_peak_memory = None
+        if self.device.type == "cuda" and log_timing:
+            torch.cuda.synchronize()
+            initial_memory = torch.cuda.memory_allocated(self.device)
+            torch.cuda.reset_max_memory_allocated(self.device)
+
         if generation_config.max_new_tokens is not None:
             max_length = prompt_len + generation_config.max_new_tokens
         else:
@@ -273,8 +282,17 @@ class TransformerGenerationModule(GenerationModule):
             )
             next_token_logits = logits[:, -1, :]  # (batch_size, vocab_size)
 
+            # Track memory after prefill phase
+            if is_first_forward and self.device.type == "cuda" and log_timing:
+                torch.cuda.synchronize()
+                prefill_peak_memory = torch.cuda.max_memory_allocated(self.device)
+                # Reset max memory tracking for decoding phase
+                torch.cuda.reset_max_memory_allocated(self.device)
+
             if all_logits is not None:
-                all_logits.append(logits)  # (batch_size, seq_len, vocab_size)
+                if is_first_forward and prompt_len > 1 and not completions_only:
+                    all_logits.append(logits[:, :-1, :])
+                all_logits.append(next_token_logits.unsqueeze(1))
 
             # Check if we should stop before generating more tokens
             pbar.update(1)
@@ -291,16 +309,10 @@ class TransformerGenerationModule(GenerationModule):
                 top_p=generation_config.top_p,
             )
 
-            # Calculate log probabilities for the tokens we just generated.
             if all_logprobs is not None:
                 if is_first_forward and prompt_len > 1 and not completions_only:
-                    # For the prompt, we already have the ground truth tokens, so we can
-                    # calculate their log probabilities all at once from the first forward pass.
-                    # But only if we're not in completions_only mode and we have the full prompt logits
                     prompt_log_probs = selective_log_softmax(logits[:, :-1, :], generated[:, 1:])
                     all_logprobs.append(prompt_log_probs)
-
-                # Calculate the log probability of the token that we just selected.
                 next_token_log_prob = selective_log_softmax(next_token_logits, next_tokens)
                 all_logprobs.append(next_token_log_prob.unsqueeze(1))
 
@@ -331,6 +343,11 @@ class TransformerGenerationModule(GenerationModule):
             else:
                 token_times.append(token_end_time - token_start_time)
             tokens_generated += 1
+
+        # Track peak memory for decoding phase
+        if self.device.type == "cuda" and log_timing and prefill_peak_memory is not None:
+            torch.cuda.synchronize()
+            decoding_peak_memory = torch.cuda.max_memory_allocated(self.device)
 
         logits = None
         if return_logits and all_logits:
@@ -372,6 +389,25 @@ class TransformerGenerationModule(GenerationModule):
             if token_times:
                 avg_inter_token_latency = sum(token_times) / len(token_times)
                 log.info(f"  Average inter-token latency: {avg_inter_token_latency * 1000:.1f}ms")
+
+            # Log GPU memory usage
+            if self.device.type == "cuda" and initial_memory is not None:
+                log.info(f"  GPU memory usage:")
+                log.info(f"    Initial memory: {initial_memory / 1024**3:.2f} GB")
+
+                if prefill_peak_memory is not None:
+                    prefill_memory_used = prefill_peak_memory - initial_memory
+                    log.info(f"    Prefill phase:")
+                    log.info(f"      Peak memory: {prefill_peak_memory / 1024**3:.2f} GB")
+                    log.info(f"      Memory used: {prefill_memory_used / 1024**3:.2f} GB")
+
+                    if decoding_peak_memory is not None:
+                        # Note: decoding_peak_memory is measured after reset, so it's relative to post-prefill state
+                        log.info(f"    Decoding phase:")
+                        log.info(f"      Peak memory: {decoding_peak_memory / 1024**3:.2f} GB")
+                        log.info(
+                            f"      Additional memory used: {decoding_peak_memory / 1024**3:.2f} GB"
+                        )
 
         return generated, logits, logprobs
 
