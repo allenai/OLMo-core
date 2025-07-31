@@ -86,6 +86,14 @@ class TransformerGenerationModule(GenerationModule):
 
         # Build world mesh.
         self.device = device or get_default_device()
+
+        # Verify H100 GPU
+        assert self.device.type == "cuda", f"Expected CUDA device, got {self.device.type}"
+        device_name = torch.cuda.get_device_name(self.device)
+        assert "H100" in device_name, (
+            f"Expected H100 GPU, but got {device_name}. Flash attention w/ kv caching is not verified to work on non-Hopper GPUs."
+        )
+
         self.world_mesh: Optional[DeviceMesh] = None
         if is_distributed():
             self.world_mesh = build_world_mesh(dp=dp_config, device_type=self.device.type)
