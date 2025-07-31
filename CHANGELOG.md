@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a "interleaved" numpy FSL variant that interleaves several documents into sequences following the work from [LongSkywork: A Training Recipe for Efficiently Extending Context Length in Large Language Models](https://arxiv.org/pdf/2406.00605).
 - Added sliding window attention as a feature
 - Added `BatchSizeSchedulerCallback` for setting a batch size schedule over the course of a training run.
+- Added optional `TrainModule` method, `.pre_train()`, which runs right after `Callback.pre_train()`.
 - The `BeakerCallback` will save the config and Python requirements to the results dataset.
 - Added `from_file` method to `Config` class.
 - Added in-loop evals for OLMES basic skills eval
