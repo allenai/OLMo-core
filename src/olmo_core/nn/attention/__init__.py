@@ -664,20 +664,39 @@ class Attention(AttentionBase):
     def reset_kv_cache(
         self, use_cache: bool, batch_size: int, max_seq_len: int, dtype: torch.dtype
     ) -> None:
+        # Fast path when KV caching is disabled.
+        if not use_cache:
+            self.k_cache, self.v_cache, self.cache_seqlens = None, None, None
+            return
+
+        # Attempt to reuse an existing cache that satisfies the requested size
+        # and dtype requirements.
+        if (
+            hasattr(self, "k_cache")
+            and self.k_cache is not None
+            and self.v_cache is not None
+            and self.k_cache.shape[0] == batch_size
+            and self.k_cache.shape[1] >= max_seq_len
+            and self.k_cache.dtype == dtype
+        ):
+            # The allocation is big enough – just reset the cache.
+            if self.cache_seqlens is not None:
+                self.cache_seqlens.zero_()
+            self.k_cache.zero_()
+            self.v_cache.zero_()
+            return
+
+        # Existing allocation is missing or insufficient
+        # Delete old references so their memory can be reclaimed by the GC
         if hasattr(self, "k_cache") and self.k_cache is not None:
             del self.k_cache
         if hasattr(self, "v_cache") and self.v_cache is not None:
             del self.v_cache
         if hasattr(self, "cache_seqlens") and self.cache_seqlens is not None:
             del self.cache_seqlens
-        if use_cache:
-            self.k_cache, self.v_cache, self.cache_seqlens = self.allocate_kv_cache(
-                batch_size, max_seq_len, dtype
-            )
-        else:
-            self.k_cache, self.v_cache, self.cache_seqlens = None, None, None
-        torch.cuda.empty_cache()
-        gc.collect()
+        self.k_cache, self.v_cache, self.cache_seqlens = self.allocate_kv_cache(
+            batch_size, max_seq_len, dtype
+        )
 
     def apply_tp(
         self,
