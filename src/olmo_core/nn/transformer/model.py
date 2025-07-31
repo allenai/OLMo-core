@@ -1619,10 +1619,16 @@ class BLTDistillTransformer(BLTTransformer):
                     log_y_true = (log_y_true.float() / blt_config.binarization_temp) - blt_config.epsilon
                     log_y_pred = (log_y_pred.float() / blt_config.binarization_temp) - blt_config.epsilon
 
-                    return -(
+                    e = (
+                        torch.exp(log_y_true) * log_y_true
+                        + (-torch.expm1(log_y_true) * log1mexp(log_y_true))
+                    )
+                    ce = (
                         torch.exp(log_y_true) * log_y_pred
                         + (-torch.expm1(log_y_true) * log1mexp(log_y_pred))
-                    ) * (blt_config.binarization_temp ** 2)
+                    )
+
+                    return (e - ce) * (blt_config.binarization_temp ** 2)
 
                 div_fn = kl_div_fn
             elif blt_config.div_fn == "tvd":
