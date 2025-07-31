@@ -1,5 +1,5 @@
+import math
 from datetime import datetime
-from math import ceil
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
@@ -7,15 +7,15 @@ from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
 from olmo_core.internal.experiment import CommonComponents, main
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
-from olmo_core.nn.transformer import TransformerConfig
+from olmo_core.nn.transformer import TransformerConfig, TransformerActivationCheckpointingMode
 from olmo_core.optim import OptimGroupOverride, SkipStepAdamWConfig
-from olmo_core.optim.scheduler import WSD, SchedulerUnits
+from olmo_core.optim.scheduler import ConstantScheduler
 from olmo_core.train import Duration, TrainerConfig, LoadStrategy
 from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
-    TransformerTrainModuleConfig,
+    TransformerTrainModuleConfig, TransformerActivationCheckpointingConfig,
 )
 
 from olmo_core.nn.rope import RoPEScalingConfig
@@ -52,11 +52,16 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         if all("B200" in g for g in gpus):
             rank_microbatch_size *= 2
 
+    last_lr_of_olmo2 = 6.135113558011711e-05
+    batch_size_of_olmo2 = 4 * 1024 * 1024
+    lr = last_lr_of_olmo2 * math.sqrt(GLOBAL_BATCH_SIZE / batch_size_of_olmo2)
+    lr *= 3     # fudge factor because it seems to work
+
     return TransformerTrainModuleConfig(
         rank_microbatch_size=rank_microbatch_size,
         max_sequence_length=common.dataset.effective_sequence_length,
         optim=SkipStepAdamWConfig(
-            lr=3 * 3e-4 / 10,
+            lr=lr,
             weight_decay=0.1,
             betas=(0.9, 0.95),
             group_overrides=[
@@ -71,15 +76,14 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
             shard_degree=32
         ),
+        ac_config= TransformerActivationCheckpointingConfig(
+            mode=TransformerActivationCheckpointingMode.budget,
+            activation_memory_budget=0.85
+        ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
-        scheduler=WSD(
-            units=SchedulerUnits.steps,
-            warmup=2000,
-            decay=ceil(10e9 / GLOBAL_BATCH_SIZE),
-            decay_fraction=None
-        ),
+        scheduler=ConstantScheduler(),
     )
 
 
@@ -98,7 +102,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=cancel_check_interval,
-            max_duration=Duration.tokens(int(60e9)),
+            max_duration=Duration.tokens(int(150e9)),
             load_path="gs://ai2-llm/checkpoints/shanea/OLMo-medium/peteish7/step928646/model_and_optim/",
             load_strategy=LoadStrategy.always
         )
