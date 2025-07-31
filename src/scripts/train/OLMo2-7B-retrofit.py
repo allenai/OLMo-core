@@ -55,7 +55,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
     last_lr_of_olmo2 = 6.135113558011711e-05
     batch_size_of_olmo2 = 4 * 1024 * 1024
     lr = last_lr_of_olmo2 * math.sqrt(GLOBAL_BATCH_SIZE / batch_size_of_olmo2)
-    lr *= 3     # fudge factor because it seems to work
+    lr *= 1.5     # fudge factor because it seems to work
 
     return TransformerTrainModuleConfig(
         rank_microbatch_size=rank_microbatch_size,
