@@ -638,6 +638,7 @@ class Trainer:
 
         for callback in self._iter_callbacks():
             callback.pre_train()
+        self.train_module.pre_train()
 
         barrier()
 
