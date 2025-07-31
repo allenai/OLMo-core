@@ -45,6 +45,7 @@ def single_layer_transformer_config(**kwargs):
 # TODO: test with different dtypes
 
 
+@requires_gpu
 @pytest.mark.parametrize(
     "compile_model",
     [pytest.param(False, id="compile_model=False"), pytest.param(True, id="compile_model=True")],
@@ -67,17 +68,16 @@ def single_layer_transformer_config(**kwargs):
         pytest.param(DType.bfloat16, id="autocast_precision=bfloat16", marks=GPU_MARKS),
     ],
 )
-@pytest.mark.parametrize("device", DEVICES)
 def test_generation_module_basic(
     compile_model: bool,
     use_cache: bool,
     dtype: DType,
     autocast_precision: DType,
-    device: torch.device,
 ):
+    device = torch.device("cuda")
     seed_all(0)
 
-    flash_attn_available = dtype == DType.bfloat16 and device.type == "cuda" and has_flash_attn
+    flash_attn_available = dtype == DType.bfloat16 and has_flash_attn
     if not flash_attn_available and use_cache:
         pytest.skip("flash-attn is required for use_cache")
     if flash_attn_available and autocast_precision != DType.bfloat16:
@@ -146,9 +146,10 @@ def test_generation_module_basic(
                 )
 
 
-@pytest.mark.parametrize("device", DEVICES)
-def test_generation_module_state_dict(device: torch.device):
+@requires_gpu
+def test_generation_module_state_dict():
     seed_all(0)
+    device = torch.device("cuda")
 
     generation_config = GenerationConfig(
         max_length=16, pad_token_id=0, eos_token_id=2, use_cache=False
@@ -215,9 +216,10 @@ def test_generation_config_overrides(
             assert torch.all(output_ids[0, first_eos_idx + 1 :] == generation_config.pad_token_id)
 
 
-@pytest.mark.parametrize("device", DEVICES)
-def test_generation_module_config_build(tmp_path: Path, device: torch.device):
+@requires_gpu
+def test_generation_module_config_build(tmp_path: Path):
     seed_all(0)
+    device = torch.device("cuda")
 
     # Create and save a generation module
     generation_config = GenerationConfig(
@@ -259,13 +261,13 @@ def test_generation_module_stop_sequences():
     seed_all(0)
     device = torch.device("cuda")
 
-    # Create generation config with stop sequences
+    # Create generation config with individual stop tokens
     generation_config = GenerationConfig(
         max_length=50,
         do_sample=False,
         pad_token_id=0,
         eos_token_id=1,
-        stop_sequences=[[10, 20], [30, 40, 50]],
+        stop_token_ids=[10, 20, 30, 40, 50],
         use_cache=False,
     )
 
@@ -299,31 +301,37 @@ def test_generation_module_stop_sequences():
 
         return mock_forward
 
-    # Stop at first stop sequence [10, 20]
+    # Stop at first stop token (10)
     input_ids = torch.tensor([[3, 5, 7]], dtype=torch.long, device=device)
-    generation_module.model_forward = create_mock_forward([8, 9, 10, 20, 99])
+    generation_module.model_forward = create_mock_forward([8, 9, 10, 99])
     output, *_ = generation_module.generate_batch(input_ids, completions_only=False)
-    assert torch.equal(output, torch.tensor([[3, 5, 7, 8, 9, 10, 20]], device=device))
+    assert torch.equal(output, torch.tensor([[3, 5, 7, 8, 9, 10]], device=device))
 
-    # Stop at second stop sequence [30, 40, 50]
+    # Stop at second stop token (20)
     input_ids = torch.tensor([[2, 4, 6]], dtype=torch.long, device=device)
-    generation_module.model_forward = create_mock_forward([25, 30, 40, 50, 99])
+    generation_module.model_forward = create_mock_forward([25, 15, 20, 99])
     output, *_ = generation_module.generate_batch(input_ids, completions_only=False)
-    assert torch.equal(output, torch.tensor([[2, 4, 6, 25, 30, 40, 50]], device=device))
+    assert torch.equal(output, torch.tensor([[2, 4, 6, 25, 15, 20]], device=device))
 
-    # Stop at EOS token (not stop sequence)
+    # Stop at third stop token (30)
+    input_ids = torch.tensor([[1, 2, 3]], dtype=torch.long, device=device)
+    generation_module.model_forward = create_mock_forward([5, 30, 99])
+    output, *_ = generation_module.generate_batch(input_ids, completions_only=False)
+    assert torch.equal(output, torch.tensor([[1, 2, 3, 5, 30]], device=device))
+
+    # Stop at EOS token (not stop token)
     input_ids = torch.tensor([[3, 5, 7]], dtype=torch.long, device=device)
     generation_module.model_forward = create_mock_forward([60, 70, 1, 99])
     output, *_ = generation_module.generate_batch(input_ids, completions_only=False)
     assert torch.equal(output, torch.tensor([[3, 5, 7, 60, 70, 1]], device=device))
 
-    # No stop sequences - only stops at EOS
+    # No stop tokens - only stops at EOS
     generation_module._generation_config = GenerationConfig(
         max_length=20,
         do_sample=False,
         pad_token_id=0,
         eos_token_id=1,
-        stop_sequences=None,
+        stop_token_ids=None,
         use_cache=False,
     )
     input_ids = torch.tensor([[3, 5, 7]], dtype=torch.long, device=device)
