@@ -85,18 +85,20 @@ elif DATA_SOURCE == "dolmino":
 else:
     raise ValueError(f"Unknown DATA_SOURCE: {DATA_SOURCE}. Must be one of 'dclm', 'dolmino'.")
 
-if os.environ.get("HAS_WEKA"):
-    OLMO_CKPT_PATH = os.environ.get(
-        "OLMO_CKPT_PATH",
-        "/weka/oe-training-default/benjaminm/checkpoints/olmo2_1b/model_and_optim",
-    )
-    DATA_PATHS = ["/weka/oe-training-default/" + x for x in _DATA_SOURCES]
-    EMBEDDING_INIT_PATH = os.environ.get(
-        "EMBEDDING_INIT_PATH",
-        "/weka/oe-training-default/benjaminm/olmo_1b_blt_hash_embedding_init",
-    )
-else:
-    raise NotImplementedError()
+OLMO_CKPT_PATH = os.environ.get(
+    "OLMO_CKPT_PATH",
+    "/weka/oe-training-default/benjaminm/checkpoints/olmo2_1b/model_and_optim",
+)
+DATA_PATHS = ["/weka/oe-training-default/" + x for x in _DATA_SOURCES]
+EMBEDDING_INIT_PATH = os.environ.get(
+    "EMBEDDING_INIT_PATH",
+    "/weka/oe-training-default/benjaminm/olmo_1b_blt_hash_embedding_init",
+)
+
+if not os.environ.get("HAS_WEKA"):
+    OLMO_CKPT_PATH = OLMO_CKPT_PATH.replace("/weka/oe-training-default/", "gs://ai2-llm/")
+    DATA_PATHS = [x.replace("/weka/oe-training-default/", "gs://") for x in DATA_PATHS] # slight inconsistency
+    EMBEDDING_INIT_PATH = EMBEDDING_INIT_PATH.replace("/weka/oe-training-default/", "gs://ai2-llm/")
 
 log = logging.getLogger(__name__)
 
