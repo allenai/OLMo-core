@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a "interleaved" numpy FSL variant that interleaves several documents into sequences following the work from [LongSkywork: A Training Recipe for Efficiently Extending Context Length in Large Language Models](https://arxiv.org/pdf/2406.00605).
 - Added sliding window attention as a feature
 - Added `BatchSizeSchedulerCallback` for setting a batch size schedule over the course of a training run.
+- Added optional `TrainModule` method, `.pre_train()`, which runs right after `Callback.pre_train()`.
 - The `BeakerCallback` will save the config and Python requirements to the results dataset.
 - Added `from_file` method to `Config` class.
 - Added in-loop evals for OLMES basic skills eval
@@ -29,6 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added support for accessing Google on non-Google clusters via auth with service account keys.
 - Added support for revisions in `convert_checkpoint_from_hf.py` and the `load_hf_model` method of `olmo_core.nn.hf.checkpoint`.
 - `foreach` support in `SkipStepAdamW`.
+- Added `budget` mode for activation checkpointing configuration.
+- Added `io.remove_file()` function.
+- Added ABF, PI, and YaRN rope scaling strategies.
 
 ### Changed
 
@@ -57,6 +61,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Ensure sharded parameters are initialized differently on separate ranks.
 - Fixed fingerprinting for FSL datasets
 - Fixed bug where `step` state in `SkipStepAdamW` was not incremented, biasing the optimizer steps. Added option to restore the bug for backwards compatibility.
+- Removed `sklearn` from upstream dependency `ai2-olmo-eval`.
+- Made removing ephemeral checkpoints more robust.
 - Fixed mixture rounding error with `SourceMixtureDataset`, which was previously causing samples to be repeated at the end of training.
 
 

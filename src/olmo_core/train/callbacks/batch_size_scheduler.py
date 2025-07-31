@@ -86,10 +86,9 @@ class BatchSizeSchedulerCallback(Callback):
 
     def post_checkpoint_loaded(self, *args):
         del args
-        # NOTE: we set the batch size correctly after loading a checkpoint because
+        # NOTE: we set the "initial_lr_field" correctly after loading a checkpoint because
         # the "initial_lr_field" in the optimizer state always gets reset to the value from
-        # the config, not the checkpoint, and same for the "batches_processed" field in the
-        # data loader.
+        # the config, not the checkpoint.
         self._maybe_update_batch_size_and_lr()
 
     def pre_load_batch(self):
