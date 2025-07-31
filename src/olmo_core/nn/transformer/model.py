@@ -1712,7 +1712,7 @@ class BLTDistillTransformer(BLTTransformer):
                 ).sum()
                 current_local_decoder_denom = nonzero_mask.float().sum()
 
-                local_decoder_loss_exhaustive += current_local_decoder_loss
+                local_decoder_loss_exhaustive += current_local_decoder_loss * blt_config.distill_offset_weights[offset]
                 local_decoder_denom += current_local_decoder_denom
 
                 metrics[f"blt/local_decoder_loss_{offset}"] = current_local_decoder_loss / (current_local_decoder_denom + blt_config.epsilon)
@@ -1751,7 +1751,7 @@ class BLTDistillTransformer(BLTTransformer):
                 )
 
             metrics["blt/local_decoder_loss_exhaustive"] = local_decoder_loss_exhaustive / (local_decoder_denom + blt_config.epsilon)
-            local_decoder_loss = local_decoder_loss_exhaustive / byte_mask.numel()
+            local_decoder_loss_exhaustive = local_decoder_loss_exhaustive / byte_mask.numel()
 
             ## SIMPLE LOSS
             main_path_patch_logprobs = torch.zeros((teacher_embeds.shape[0], teacher_embeds.shape[1]), device=logprobs.device, dtype=logprobs.dtype)
