@@ -43,7 +43,7 @@ from ..distributed.utils import (
 )
 from ..exceptions import OLMoConfigurationError
 from ..io import copy_file, file_exists, is_url, join_path, normalize_path
-from ..utils import cuda_sync_debug_mode, gc_cuda
+from ..utils import cuda_sync_debug_mode, gc_cuda, get_default_thread_count
 from .callbacks import (
     Callback,
     CheckpointerCallback,
@@ -522,7 +522,8 @@ class Trainer:
         """
         if self._multi_thread_pool is None:
             self._multi_thread_pool = ThreadPoolExecutor(
-                max_workers=1, thread_name_prefix="trainer-multi-thread-pool"
+                max_workers=get_default_thread_count(),
+                thread_name_prefix="trainer-multi-thread-pool",
             )
         return self._multi_thread_pool
 
