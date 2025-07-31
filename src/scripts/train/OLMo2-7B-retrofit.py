@@ -96,7 +96,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
     run_name = f"{common.run_name}-{datetime.now().astimezone().strftime('%Y%m%dT%H%M%S%z')}"
 
-    return (
+    config = (
         TrainerConfig(
             save_folder=common.save_folder,
             save_overwrite=True,
@@ -104,7 +104,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(int(150e9)),
             load_path="gs://ai2-llm/checkpoints/shanea/OLMo-medium/peteish7/step928646/model_and_optim/",
-            load_strategy=LoadStrategy.always
+            load_strategy=LoadStrategy.always,
         )
         .with_callback(
             "checkpointer",
@@ -142,6 +142,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             task_set="fast"
         )
     )
+    config.callbacks["lm_evaluator"].eval_interval = 1000
+    config.callbacks["downstream_evaluator"].eval_interval = 1000
+    return config
 
 
 if __name__ == "__main__":
