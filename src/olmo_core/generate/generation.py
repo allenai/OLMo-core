@@ -376,36 +376,36 @@ class TransformerGenerationModule(GenerationModule):
 
         total_time = time.perf_counter() - start_time
         if log_timing:
-            log.info("Generation stats:")
-            log.info(f"  Batch size: {batch_size}  Prompt length: {prompt_len}")
-            log.info(
+            print("Generation stats:")
+            print(f"  Batch size: {batch_size}  Prompt length: {prompt_len}")
+            print(
                 f"  Tokens generated: {tokens_generated * batch_size} ({tokens_generated} per sequence, "
                 f"{tokens_generated * batch_size / total_time:.1f} tokens/s)"
             )
-            log.info(f"  Sequence length extended: {prompt_len} → {prompt_len + tokens_generated}")
-            log.info(f"  Total generation time: {total_time:.3f}s")
+            print(f"  Sequence length extended: {prompt_len} → {prompt_len + tokens_generated}")
+            print(f"  Total generation time: {total_time:.3f}s")
             if time_to_first_token is not None:
-                log.info(f"  Time to first token: {time_to_first_token:.3f}s")
+                print(f"  Time to first token: {time_to_first_token:.3f}s")
             if token_times:
                 avg_inter_token_latency = sum(token_times) / len(token_times)
-                log.info(f"  Average inter-token latency: {avg_inter_token_latency * 1000:.1f}ms")
+                print(f"  Average inter-token latency: {avg_inter_token_latency * 1000:.1f}ms")
 
             # Log GPU memory usage
             if self.device.type == "cuda" and initial_memory is not None:
-                log.info(f"  GPU memory usage:")
-                log.info(f"    Initial memory: {initial_memory / 1024**3:.2f} GB")
+                print(f"  GPU memory usage:")
+                print(f"    Initial memory: {initial_memory / 1024**3:.2f} GB")
 
                 if prefill_peak_memory is not None:
                     prefill_memory_used = prefill_peak_memory - initial_memory
-                    log.info(f"    Prefill phase:")
-                    log.info(f"      Peak memory: {prefill_peak_memory / 1024**3:.2f} GB")
-                    log.info(f"      Memory used: {prefill_memory_used / 1024**3:.2f} GB")
+                    print(f"    Prefill phase:")
+                    print(f"      Peak memory: {prefill_peak_memory / 1024**3:.2f} GB")
+                    print(f"      Memory used: {prefill_memory_used / 1024**3:.2f} GB")
 
                     if decoding_peak_memory is not None:
                         # Note: decoding_peak_memory is measured after reset, so it's relative to post-prefill state
-                        log.info(f"    Decoding phase:")
-                        log.info(f"      Peak memory: {decoding_peak_memory / 1024**3:.2f} GB")
-                        log.info(
+                        print(f"    Decoding phase:")
+                        print(f"      Peak memory: {decoding_peak_memory / 1024**3:.2f} GB")
+                        print(
                             f"      Additional memory used: {decoding_peak_memory / 1024**3:.2f} GB"
                         )
 
