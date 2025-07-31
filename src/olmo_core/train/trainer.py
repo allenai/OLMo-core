@@ -1095,6 +1095,7 @@ class Trainer:
 
         def wrapped_op(*args, **kwargs):
             start_time = time.perf_counter()
+            assert soft_timeout is not None  # for mypy
             try:
                 return op(*args, **kwargs)
             finally:
