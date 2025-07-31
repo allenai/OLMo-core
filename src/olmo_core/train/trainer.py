@@ -1071,11 +1071,11 @@ class Trainer:
         :param kwargs: Keyword arguments to pass to the operation.
         :param cb: A callback to call with the result of the operation when it finishes.
         :param op_name: A name for the operation, used for logging, debugging, and potentially canceling
-            old invocations of the same operation (when ``cancel_in_progress`` is ``True``).
+            old invocations of the same operation when ``allow_multiple`` is ``False``.
         :param allow_multiple: If ``False``, only one bookkeeping operation with the given name is allowed
-            to run, so if there are other ops with the name that are queued, those will be canceled,
-            and if there's another one that's already running, the current op will be ignored.
-        :param soft_timeout: A soft timeout, in seconds, to wait for operation to finish. If the op
+            to run, so if there are other ops with the same name that are queued, those will be canceled,
+            and if there's another one that's already running, the current invocation will be ignored.
+        :param soft_timeout: A soft timeout, in seconds, to wait for the operation to finish. If the op
             takes longer than this a warning will be issued.
         :param distributed: This should only be set to ``False`` if the op doesn't use distributed
             communication, in which case it will be allowed to run concurrently with other ops.
