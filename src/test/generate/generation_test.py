@@ -13,7 +13,7 @@ from olmo_core.generate.config import (
     GenerationConfig,
     TransformerGenerationModuleConfig,
 )
-from olmo_core.generate.generation import TransformerGenerationModule
+from olmo_core.generate.generation_module import TransformerGenerationModule
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.testing import requires_multi_gpu, run_distributed_test
 from olmo_core.testing.utils import (
