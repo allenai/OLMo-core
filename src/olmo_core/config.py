@@ -230,6 +230,9 @@ class Config:
 
         def clean_data(d: Any, prefix: str) -> Any:
             if isinstance(d, dict):
+                # Try to convert string keys to int if they look like integers.
+                d = {(int(k) if isinstance(k, str) and k.isdigit() else k): v for k, v in d.items()}
+
                 new_dict = {
                     k: clean_data(v, f"{prefix}.{k}" if prefix else k)
                     for k, v in d.items()
