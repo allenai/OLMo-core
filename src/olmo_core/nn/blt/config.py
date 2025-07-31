@@ -15,6 +15,7 @@ class BLTConfig(Config):
     binarization_temp: float = 1.0
     div_fn: str = "tvd_temp_limit"
     n_distill_offsets: int = 8
+    distill_offset_weights: list[float] = field(default_factory=lambda: [1.0] * 8)
     use_exhaustive_decoder_loss: bool = False
     rep_compare_fn: str = "l2"
     epsilon: float = 1e-6

@@ -53,7 +53,8 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
 
     # setup depends on cluster since we need fast startup time
     # (get preempted all the time :( )
-    if cluster != "ai2/titan-cirrascale":
+    # not suppported for now
+    if False:
         # fast setup
         setup_steps = [
             f'if [[ -z "${GIT_BRANCH_ENV_VAR}" ]]; then',
@@ -64,8 +65,6 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
             f'git checkout "${GIT_REF_ENV_VAR}"',
             "git submodule update --init --recursive",
             ". /weka/oe-adapt-default/benjaminm/OLMo-core/.venv/bin/activate",
-            # our dev env will need to overwrite this back to editable install
-            "uv pip install . --no-deps --force-reinstall",
             "uv pip freeze",
         ]
     else:
