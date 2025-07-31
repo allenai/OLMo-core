@@ -1,3 +1,4 @@
+import logging
 from typing import Optional, Tuple
 
 import torch
@@ -14,6 +15,8 @@ try:
     import ring_flash_attn  # type: ignore
 except ImportError:
     ring_flash_attn = None
+
+log = logging.getLogger(__name__)
 
 
 def _flatten_batch_dim(x: torch.Tensor) -> torch.Tensor:
@@ -131,6 +134,11 @@ def dispatch_flash_attn_with_kvcache(
 ) -> torch.Tensor:
     if flash_attn is None:
         raise RuntimeError("flash-attn is required!")
+    if k is not None and q.dtype != k.dtype:
+        log.warning(f"q.dtype ({q.dtype}) != k.dtype ({k.dtype})")
+        k = k.to(q.dtype)
+    if q.dtype != k_cache.dtype:
+        log.warning(f"q.dtype ({q.dtype}) != k_cache.dtype ({k_cache.dtype})")
 
     return flash_attn.flash_attn_with_kvcache(
         q,
