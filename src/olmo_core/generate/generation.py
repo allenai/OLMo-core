@@ -300,9 +300,15 @@ class TransformerGenerationModule(GenerationModule):
                 all_logprobs.append(next_token_log_prob.unsqueeze(1))
 
             # Handle finished sequences
-            # - Check which sequences have generated EOS
+            # - Check which sequences have generated EOS or stop tokens
             prev_finished = finished.clone()
             just_finished = next_tokens == generation_config.eos_token_id
+
+            # Also check for stop tokens if provided
+            if generation_config.stop_token_ids is not None:
+                for stop_token_id in generation_config.stop_token_ids:
+                    just_finished |= next_tokens == stop_token_id
+
             finished |= just_finished
 
             # - Append next tokens

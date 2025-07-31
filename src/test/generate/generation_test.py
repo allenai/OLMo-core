@@ -42,6 +42,9 @@ def single_layer_transformer_config(**kwargs):
     )
 
 
+# TODO: test with different dtypes
+
+
 @pytest.mark.parametrize(
     "compile_model",
     [pytest.param(False, id="compile_model=False"), pytest.param(True, id="compile_model=True")],

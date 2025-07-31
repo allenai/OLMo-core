@@ -46,6 +46,9 @@ class GenerationConfig(Config):
     use_cache: bool = True
     """Whether to use a kv-cache for generation. If True, the model will cache past key-value pairs to speed up generation."""
 
+    stop_token_ids: Optional[List[int]] = None
+    """Tokens to stop generation at. If provided, the generation will stop when any of these tokens are generated."""
+
     def __post_init__(self):
         self.validate()
 
