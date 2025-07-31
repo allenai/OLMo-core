@@ -239,12 +239,17 @@ class TransformerGenerationModule(GenerationModule):
         token_times = []
         tokens_generated = 0
 
+        if generation_config.max_new_tokens is not None:
+            max_length = prompt_len + generation_config.max_new_tokens
+        else:
+            max_length = generation_config.max_length
+
         # Initialize/Reset the KV cache
         self._reset_kv_cache(
             self.model,
             generation_config.use_cache,
             batch_size,
-            generation_config.max_length,
+            max_length,
             self.autocast_precision or torch.float32,
         )
 
@@ -273,7 +278,7 @@ class TransformerGenerationModule(GenerationModule):
 
             # Check if we should stop before generating more tokens
             pbar.update(1)
-            if generated.shape[1] >= generation_config.max_length or finished.all():
+            if generated.shape[1] >= max_length or finished.all():
                 pbar.close()
                 break
 
@@ -348,7 +353,7 @@ class TransformerGenerationModule(GenerationModule):
             self.model,
             False,
             batch_size,
-            generation_config.max_length,
+            max_length,
             self.autocast_precision or torch.float32,
         )
 
