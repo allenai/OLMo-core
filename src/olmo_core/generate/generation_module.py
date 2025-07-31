@@ -1,11 +1,10 @@
-import contextlib
 import json
 import logging
 import tempfile
 import time
 from abc import ABCMeta, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, Generator, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import torch
 import torch.distributed as dist
@@ -76,7 +75,6 @@ class TransformerGenerationModule(GenerationModule):
         compile_model: bool = False,
         float8_config: Optional[Float8Config] = None,
         dp_config: Optional[TransformerDataParallelConfig] = None,
-        autocast_precision: Optional[torch.dtype] = None,
         device: Optional[torch.device] = None,
         state_dict_load_opts: Optional[dist_cp_sd.StateDictOptions] = None,
         state_dict_save_opts: Optional[dist_cp_sd.StateDictOptions] = None,
@@ -113,7 +111,6 @@ class TransformerGenerationModule(GenerationModule):
         )
 
         self._dp_config = dp_config
-        self.autocast_precision = autocast_precision
         self.state_dict_save_opts = state_dict_save_opts or dist_cp_sd.StateDictOptions(strict=True)
         self.state_dict_load_opts = state_dict_load_opts or dist_cp_sd.StateDictOptions(strict=True)
         self.load_key_mapping = load_key_mapping
@@ -136,43 +133,6 @@ class TransformerGenerationModule(GenerationModule):
         dist_cp_sd.set_model_state_dict(
             self.model, state_dict["model"], options=self.state_dict_load_opts
         )
-
-    @contextlib.contextmanager
-    def _model_forward_context(self) -> Generator[None, None, None]:
-        with contextlib.ExitStack() as stack:
-            if self.autocast_precision is not None:
-                stack.enter_context(torch.autocast(self.device.type, dtype=self.autocast_precision))
-            yield
-
-    def model_forward(
-        self,
-        input_ids: torch.Tensor,
-        *,
-        attention_mask: Optional[torch.Tensor] = None,
-        logits_to_keep: int = 0,
-        prefill_kv_cache: bool = False,
-        **kwargs,
-    ) -> torch.Tensor:
-        """
-        Run a forward pass on a micro-batch, returning the logits.
-
-        Args:
-            input_ids: Input token IDs
-            attention_mask: Optional attention mask
-            logits_to_keep: Number of positions to keep from the end (0 = keep all)
-            prefill_kv_cache: Whether to prefill the KV cache. If True, the KV cache will be
-                prefilled with the input_ids.
-            **kwargs: Additional arguments passed to the model
-        """
-        with self._model_forward_context():
-            logits = self.model(  # (batch_size, seq_len, vocab_size)
-                input_ids,
-                attention_mask=attention_mask,
-                logits_to_keep=logits_to_keep,
-                prefill_kv_cache=prefill_kv_cache,
-                **kwargs,
-            )
-            return logits
 
     @staticmethod
     def _reset_kv_cache(
@@ -265,7 +225,7 @@ class TransformerGenerationModule(GenerationModule):
             generation_config.use_cache,
             batch_size,
             max_length,
-            self.autocast_precision or torch.float32,
+            self.model.dtype,
         )
         if self.device.type == "cuda":
             torch.cuda.synchronize()
@@ -287,7 +247,7 @@ class TransformerGenerationModule(GenerationModule):
 
             # Time the forward pass
             forward_start_time = time.perf_counter()
-            logits = self.model_forward(  # (batch_size, generated.shape[1], self.model.vocab_size)
+            logits = self.model(  # (batch_size, generated.shape[1], self.model.vocab_size)
                 input_ids_for_model,
                 attention_mask=attention_mask_for_model,
                 logits_to_keep=logits_to_keep,
@@ -401,7 +361,7 @@ class TransformerGenerationModule(GenerationModule):
             print(f"  Total generation time: {total_time:.3f}s")
 
             # Detailed timing breakdown
-            print(f"\n  Timing breakdown:")
+            print("\n  Timing breakdown:")
             if kv_cache_init_time is not None:
                 print(f"    KV cache initialization: {kv_cache_init_time * 1000:.1f}ms")
             if prefill_time is not None:
@@ -424,12 +384,12 @@ class TransformerGenerationModule(GenerationModule):
 
             # Log GPU memory usage
             if self.device.type == "cuda" and initial_memory is not None:
-                print(f"\n  GPU memory usage:")
+                print("\n  GPU memory usage:")
                 print(f"    Initial memory: {initial_memory / 1024**3:.2f} GB")
 
                 if prefill_peak_memory is not None:
                     prefill_memory_used = prefill_peak_memory - initial_memory
-                    print(f"    Prefill phase:")
+                    print("    Prefill phase:")
                     print(f"      Peak memory: {prefill_peak_memory / 1024**3:.2f} GB")
                     print(f"      Memory used: {prefill_memory_used / 1024**3:.2f} GB")
 
@@ -438,7 +398,7 @@ class TransformerGenerationModule(GenerationModule):
                         decoding_memory_used = decoding_peak_memory - (
                             post_prefill_memory - prefill_peak_memory
                         )
-                        print(f"    Decoding phase:")
+                        print("    Decoding phase:")
                         print(
                             f"      Peak memory: {(post_prefill_memory + decoding_memory_used) / 1024**3:.2f} GB"
                         )
