@@ -51,11 +51,9 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
         ]
         shared_filesystem = True
 
-    # setup depends on cluster since we need fast startup time
-    # (get preempted all the time :( )
-    # not suppported for now
-    if False:
-        # fast setup
+    # fast setup for clusters were we have a prebuilt image
+    if cluster == "ai2/titan-cirrascale":
+        image = "benjaminm/titan_blt_train"
         setup_steps = [
             f'if [[ -z "${GIT_BRANCH_ENV_VAR}" ]]; then',
             f'  git clone "${GIT_REPO_URL_ENV_VAR}" .',
@@ -64,10 +62,10 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
             "fi",
             f'git checkout "${GIT_REF_ENV_VAR}"',
             "git submodule update --init --recursive",
-            ". /weka/oe-adapt-default/benjaminm/OLMo-core/.venv/bin/activate",
-            "uv pip freeze",
+            "pip freeze",
         ]
     else:
+        image = "ai2/cuda12.8-dev-ubuntu22.04-torch2.7.0"
         # slow setup (need appropriate torch / cuda build)
         setup_steps = list(DEFAULT_SETUP_STEPS)
 
@@ -87,7 +85,7 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
         priority=cast(Priority, os.environ.get("BEAKER_PRIORITY", "normal")),
         shared_filesystem=shared_filesystem,
         allow_dirty=True,
-        beaker_image="ai2/cuda12.8-dev-ubuntu22.04-torch2.7.0",
+        beaker_image=image,
         weka_buckets=weka_buckets,
         env_secrets=[
             BeakerEnvSecret(
@@ -95,7 +93,7 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
                 secret=f"{beaker_username}_WANDB_API_KEY",
             ),
         ],
-        setup_steps=setup_steps,
+        setup_steps=setup_steps,  # type: ignore
     )
 
 
