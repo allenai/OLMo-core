@@ -29,7 +29,10 @@ class GenerationConfig(Config):
     """End of sequence token ID."""
 
     max_length: int = 8192
-    """Maximum length of generated sequences."""
+    """Maximum length of input + newly generated tokens."""
+
+    max_new_tokens: Optional[int] = None
+    """Maximum number of new tokens to generate. If provided, this overrides max_length."""
 
     do_sample: bool = True
     """Whether to use sampling for generation. If False, greedy decoding is used. This overrides temperature, top_k, and top_p."""
