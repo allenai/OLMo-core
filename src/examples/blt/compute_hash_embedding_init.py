@@ -44,9 +44,9 @@ def parse_args():
     )
     parser.add_argument(
         "--hash_byte_group_vocab",
-        type=int,
-        default=100_002,
-        help="Vocabulary size for byte group hashing. Default is 100002.",
+        type=list,
+        default=[100_002] * 6,
+        help="Vocabulary sizes for byte group hashing. Default is 100002.",
     )
     parser.add_argument(
         "--hash_byte_group_nb_functions",
@@ -76,7 +76,7 @@ def parse_args():
 class Collator(DataCollator):
     byte_tokenizer: Optional[ByteTokenizer] = None
     hash_byte_group_size: List[int] = field(default_factory=lambda: [3, 4, 5, 6, 7, 8])
-    hash_byte_group_vocab: int = 100_002
+    hash_byte_group_vocab: List[int] = field(default_factory=lambda: [100_002] * 6)
     hash_byte_group_nb_functions: int = 1
 
     def __call__(self, items):
@@ -94,6 +94,7 @@ class Collator(DataCollator):
             for i, patch_length in enumerate(patch_lengths):
                 patch_ids.extend([i] * patch_length)
 
+            hash_embed_idx = 0
             for byte_group_size in self.hash_byte_group_size:
                 for func_nb in range(self.hash_byte_group_nb_functions):
                     if (byte_group_size, func_nb) not in token_init_mapping:
@@ -103,7 +104,7 @@ class Collator(DataCollator):
                         torch.tensor([byte_ids]),
                         byte_group_size,
                         hash_func_nb=func_nb,
-                        max_hash=self.hash_byte_group_vocab,
+                        max_hash=self.hash_byte_group_vocab[hash_embed_idx],
                     )[0]
 
                     for hash_id, patch_id in zip(hash_ids.tolist(), patch_ids):
@@ -115,6 +116,8 @@ class Collator(DataCollator):
                             token_init_mapping[(byte_group_size, func_nb)][hash_id][token_id] = 0
 
                         token_init_mapping[(byte_group_size, func_nb)][hash_id][token_id] += 1
+
+                    hash_embed_idx += 1
 
             for byte_id, patch_id in zip(byte_ids, patch_ids):
                 token_id = original_input_ids[patch_id]
@@ -257,10 +260,10 @@ def main():
     )
     hash_embedding_matrices = [
         torch.zeros(
-            (args.hash_byte_group_vocab, args.local_d_model),
+            (args.hash_byte_group_vocab[hash_embed_idx], args.local_d_model),
             dtype=torch.float32,
         )
-        for _ in range(args.hash_byte_group_nb_functions * len(args.hash_byte_group_size))
+        for hash_embed_idx in range(args.hash_byte_group_nb_functions * len(args.hash_byte_group_size))
     ]
 
     populate_embedding_matrix(
@@ -269,15 +272,15 @@ def main():
         token_init_mapping[1],
     )
 
-    i = 0
-    for func_nb in range(args.hash_byte_group_nb_functions):
-        for byte_group_size in args.hash_byte_group_size:
+    hash_embed_idx = 0
+    for byte_group_size in args.hash_byte_group_size:
+        for func_nb in range(args.hash_byte_group_nb_functions):
             populate_embedding_matrix(
-                hash_embedding_matrices[i],
+                hash_embedding_matrices[hash_embed_idx],
                 teacher_embeddings_reduced,
                 token_init_mapping[(byte_group_size, func_nb)],
             )
-            i += 1
+            hash_embed_idx += 1
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
 

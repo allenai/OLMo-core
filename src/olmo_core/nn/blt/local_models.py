@@ -92,7 +92,7 @@ class LocalEncoder(nn.Module):
             block_config,
             add_hash_embeddings: bool,
             hash_byte_group_size: list[int] | None,
-            hash_byte_group_vocab: int | None,
+            hash_byte_group_vocab: list[int] | None,
             hash_byte_group_nb_functions: int | None,
             pooling: str,
             add_norm_after_last_block: bool,
@@ -128,7 +128,7 @@ class LocalEncoder(nn.Module):
 
             total_hash_embeddings = hash_byte_group_nb_functions * len(hash_byte_group_size)
             self.hash_embeddings = nn.ModuleList([
-                nn.Embedding(hash_byte_group_vocab, d_model, device=init_device) for _ in range(total_hash_embeddings)
+                nn.Embedding(hash_byte_group_vocab[hash_embed_idx], d_model, device=init_device) for hash_embed_idx in range(total_hash_embeddings)
             ])
         else:
             self.hash_embeddings = None

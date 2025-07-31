@@ -51,7 +51,7 @@ def add_hash_embeddings(
     encoder_hash_tok_embeddings: nn.ModuleList,
     encoder_hash_byte_group_nb_functions: int,
     encoder_hash_byte_group_size: list,
-    encoder_hash_byte_group_vocab: int,
+    encoder_hash_byte_group_vocab: list,
 ) -> torch.Tensor:
     """
     Compute embeddings using hash token embeddings.
@@ -69,18 +69,18 @@ def add_hash_embeddings(
     """
     out_embeddings = embeddings
 
-    i = 0
-    for func_nb in range(encoder_hash_byte_group_nb_functions):
-        for byte_group_size in encoder_hash_byte_group_size:
+    hash_embed_idx = 0
+    for byte_group_size in encoder_hash_byte_group_size:
+        for func_nb in range(encoder_hash_byte_group_nb_functions):
             hash_ids = byte_group_hash_function(
                 tokens,
                 byte_group_size,
                 hash_func_nb=func_nb,
-                max_hash=encoder_hash_byte_group_vocab,
+                max_hash=encoder_hash_byte_group_vocab[hash_embed_idx],
             )
-            hash_tok_embedding = encoder_hash_tok_embeddings[i]
+            hash_tok_embedding = encoder_hash_tok_embeddings[hash_embed_idx]
             out_embeddings = out_embeddings + hash_tok_embedding(hash_ids)
-            i += 1
+            hash_embed_idx += 1
 
-    assert i == len(encoder_hash_tok_embeddings)
+    assert hash_embed_idx == len(encoder_hash_tok_embeddings)
     return out_embeddings

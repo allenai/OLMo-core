@@ -1266,7 +1266,7 @@ class TransformerConfig(Config):
 
         local_encoder = LocalEncoderConfig(
             hash_byte_group_size=[3, 4, 5, 6, 7, 8],
-            hash_byte_group_vocab=500_002,
+            hash_byte_group_vocab=[500_002] * 6,
             hash_byte_group_nb_functions=1,
             sliding_window_size=512,
             d_model=local_d_model,

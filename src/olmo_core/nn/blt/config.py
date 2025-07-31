@@ -39,7 +39,7 @@ class LocalEncoderConfig(Config):
     pooling: str = "cross_attn"
     add_hash_embeddings: bool = True
     hash_byte_group_size: list[int] | None = None
-    hash_byte_group_vocab: int | None = None
+    hash_byte_group_vocab: list[int] | None = None
     hash_byte_group_nb_functions: int | None = None
     add_norm_after_last_block: bool = False
     add_norm_after_pool: bool = False

@@ -75,7 +75,7 @@ EVAL_BATCH_SIZE = 16
 LOCAL_MODEL_STYLE = os.environ.get("LOCAL_MODEL_STYLE", "blt")
 TRAIN_MODE = os.environ.get("TRAIN_MODE", "local_encoder_only")
 DATA_SOURCE = os.environ.get("DATA_SOURCE", "dclm")
-ADD_HASH_EMBEDDINGS = os.environ.get("ADD_HASH_EMBEDDINGS", "").lower() in {"1", "true", "yes"}
+ADD_HASH_EMBEDDINGS = os.environ.get("ADD_HASH_EMBEDDINGS", "1").lower() in {"1", "true", "yes"}
 OLMO_ARCH = os.environ.get("OLMO_ARCH", "olmo2_1B_v2")
 
 if DATA_SOURCE == "dclm":
@@ -153,7 +153,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         local_encoder = LocalEncoderConfig(
             add_hash_embeddings=ADD_HASH_EMBEDDINGS,
             hash_byte_group_size=[3, 4, 5, 6, 7, 8],
-            hash_byte_group_vocab=100_002,
+            hash_byte_group_vocab=[100_002] * 6,
             hash_byte_group_nb_functions=1,
             sliding_window_size=512,
             d_model=local_d_model,
@@ -171,9 +171,9 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         )
     elif LOCAL_MODEL_STYLE == "hnet":
         if OLMO_ARCH == "olmo2_1B_v2":
-            local_d_model = 1536
+            local_d_model = 2048
         elif OLMO_ARCH == "olmo2_7B":
-            local_d_model = 3072
+            local_d_model = 4096
         else:
             raise ValueError(f"Unknown OLMO_ARCH: {OLMO_ARCH}. Must be one of 'olmo2_1B_v2', 'olmo2_7B'.")
 
@@ -195,7 +195,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         local_encoder = LocalEncoderConfig(
             add_hash_embeddings=ADD_HASH_EMBEDDINGS,
             hash_byte_group_size=[3, 4, 5, 6, 7, 8],
-            hash_byte_group_vocab=100_002,
+            hash_byte_group_vocab=[100_002] * 6,
             hash_byte_group_nb_functions=1,
             d_model=local_d_model,
             n_layers=local_encoder_n_layers,
