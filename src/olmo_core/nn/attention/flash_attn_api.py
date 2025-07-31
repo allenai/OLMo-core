@@ -112,6 +112,7 @@ def dispatch_flash_attn_qkvpacked(
         )
 
 
+@torch._dynamo.disable()
 def dispatch_flash_attn_with_kvcache(
     q: torch.Tensor,
     k_cache: torch.Tensor,
