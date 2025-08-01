@@ -40,9 +40,6 @@ def main():
             )
             assert response.status_code == 200
             host_id = response.text.strip()
-            #  block = host_id.strip("/").split("/")[0]
-            #  sub_block = host_id.strip("/").split("/")[1]
-            #  machine = host_id.strip("/").split("/")[2]
         except requests.exceptions.ConnectionError as e:
             # Unwrap the exception
             e = e.args[0]
