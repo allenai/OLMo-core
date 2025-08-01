@@ -23,7 +23,7 @@ from cached_path.schemes import S3Client, SchemeClient, add_scheme_client
 from rich.progress import track
 
 from .aliases import PathOrStr
-from .exceptions import OLMoEnvironmentError, OLMoNetworkError
+from .exceptions import OLMoEnvironmentError, OLMoNetworkError, OLMoUploadError
 
 log = logging.getLogger(__name__)
 
@@ -155,6 +155,7 @@ def upload(source: PathOrStr, target: str, save_overwrite: bool = False, quiet: 
     if not quiet:
         log.info(f"Uploading {_format_bytes(num_bytes)} from '{source}' to '{target}'...")
     parsed = urlparse(target)
+
     if parsed.scheme == "gs":
         _gcs_upload(source, parsed.netloc, parsed.path.strip("/"), save_overwrite=save_overwrite)
     elif parsed.scheme in ("s3", "r2", "weka"):
@@ -167,6 +168,7 @@ def upload(source: PathOrStr, target: str, save_overwrite: bool = False, quiet: 
         )
     else:
         raise NotImplementedError(f"Upload not implemented for '{parsed.scheme}' scheme")
+
     if not quiet:
         log.info(f"Uploaded {_format_bytes(num_bytes)} to '{target}'")
 
@@ -602,15 +604,6 @@ def _get_gcs_retry():
     )
 
 
-def _get_gcs_conditional_retry():
-    from google.cloud.storage.retry import (
-        ConditionalRetryPolicy,
-        is_generation_specified,
-    )
-
-    return ConditionalRetryPolicy(_get_gcs_retry(), is_generation_specified, ["query_params"])
-
-
 @retriable(retry_condition=_gcs_is_retriable)
 def _gcs_file_size(bucket_name: str, key: str) -> int:
     from google.api_core.exceptions import NotFound
@@ -665,23 +658,22 @@ def _gcs_upload(source: Path, bucket_name: str, key: str, save_overwrite: bool =
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(key)
 
-    generation: int = 0
-    if blob.exists(retry=_get_gcs_retry()):
-        if not save_overwrite:
-            raise FileExistsError(
-                f"gs://{bucket_name}/{key} already exists. Use save_overwrite to overwrite it."
-            )
+    if blob.exists(retry=_get_gcs_retry()) and not save_overwrite:
+        raise FileExistsError(
+            f"gs://{bucket_name}/{key} already exists. Use save_overwrite to overwrite it."
+        )
 
-        blob.reload(retry=_get_gcs_retry())
-        assert blob.generation is not None
-        generation = blob.generation
-
-    blob.upload_from_filename(
-        source,
-        if_generation_match=generation,
-        retry=_get_gcs_conditional_retry(),
-        checksum=None,
-    )
+    try:
+        blob.upload_from_filename(
+            source,
+            # NOTE: mypy and language servers may complain about the type here, but it does
+            # not in fact need to be a ConditionalRetry, a plain old Retry is fine.
+            retry=_get_gcs_retry(),  # type: ignore
+        )
+    except Exception as e:
+        raise OLMoUploadError(
+            f"Failed to upload '{source}' to '{key}' in GCS bucket '{bucket_name}'"
+        ) from e
 
 
 @retriable(retry_condition=_gcs_is_retriable)
