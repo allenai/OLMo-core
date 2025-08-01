@@ -389,7 +389,7 @@ def train(checkpoint: str, config: SFTConfig, save_tokenizer: bool):
     data_loader = config.data_loader.build(dataset, dp_process_group=train_module.dp_process_group)
     trainer = config.trainer.build(train_module, data_loader)
 
-    if save_tokenizer:
+    if save_tokenizer and get_local_rank() == 0:
         tokenizer_path = Path(dataset.paths[0]).parent / "tokenizer"
         if tokenizer_path.exists() and tokenizer_path.is_dir():
             log.info("saving tokenizer...")
