@@ -118,6 +118,9 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     BYTE_EXPANSION_FACTOR = int(os.environ.get("BYTE_EXPANSION_FACTOR", "6"))  # default (max) expansion factor
     SAVE_FOLDER = os.environ.get("SAVE_FOLDER", f"/tmp/{run_name}")
 
+    if not os.environ.get("HAS_WEKA"):
+        SAVE_FOLDER = SAVE_FOLDER.replace("/weka/oe-training-default/", "gs://ai2-llm/")
+
     byte_tokenizer_config = ByteTokenizerConfig.blt()
     subword_tokenizer_config = TokenizerConfig.dolma2()
 
@@ -232,15 +235,6 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             "blocks*" # freeze inner transformer layers
         ]
     )
-
-    if QUICK_DEBUG:
-        # save on hash embeddings to reduce gpu memory
-        model_config = model_config.replace(
-            local_encoder=model_config.local_encoder.replace(  # type: ignore
-                hash_byte_group_size=[3],
-                hash_byte_group_nb_functions=1,
-            )
-        )
 
     dataset_config = NumpyDatasetConfig(
         paths=DATA_PATHS,
