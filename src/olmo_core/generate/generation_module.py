@@ -347,7 +347,7 @@ class TransformerGenerationModule(GenerationModule):
             if logits is not None:
                 logits = logits[:, prompt_len:, :]
             if logprobs is not None:
-                logprobs = logprobs[:, prompt_len:, :]
+                logprobs = logprobs[:, prompt_len:]
 
         total_time = time.perf_counter() - start_time
         if log_timing:
