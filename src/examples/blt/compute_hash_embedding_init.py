@@ -38,14 +38,14 @@ def parse_args():
     )
     parser.add_argument(
         "--hash_byte_group_size",
-        type=list,
-        default=[3, 4, 5, 6, 7, 8],
+        type=str,
+        default=",".join(str(x) for x in [3, 4, 5, 6, 7, 8]),
         help="List of byte group sizes for hashing. Default is [3, 4, 5, 6, 7, 8].",
     )
     parser.add_argument(
         "--hash_byte_group_vocab",
-        type=list,
-        default=[100_002] * 6,
+        type=str,
+        default=",".join(str(x) for x in [100_002] * 6),
         help="Vocabulary sizes for byte group hashing. Default is 100002.",
     )
     parser.add_argument(
@@ -153,6 +153,9 @@ def populate_embedding_matrix(
 def main():
     args = parse_args()
 
+    hash_byte_group_size = [int(x) for x in args.hash_byte_group_size.split(",")]
+    hash_byte_group_vocab = [int(x) for x in args.hash_byte_group_vocab.split(",")]
+
     tokenizer_config = TokenizerConfig.dolma2()
     byte_tokenizer_config = ByteTokenizerConfig.blt()
 
@@ -172,8 +175,8 @@ def main():
     ).build(dset, collator=Collator(
         pad_token_id=tokenizer_config.pad_token_id,
         byte_tokenizer=byte_tokenizer,
-        hash_byte_group_size=args.hash_byte_group_size,
-        hash_byte_group_vocab=args.hash_byte_group_vocab,
+        hash_byte_group_size=hash_byte_group_size,
+        hash_byte_group_vocab=hash_byte_group_vocab,
         hash_byte_group_nb_functions=args.hash_byte_group_nb_functions,
     ))
     data_loader.reshuffle()
@@ -182,8 +185,8 @@ def main():
     token_init_mapping[1] = {}
 
     arg_hash = hashlib.sha256()
-    arg_hash.update(str(args.hash_byte_group_size).encode())
-    arg_hash.update(str(args.hash_byte_group_vocab).encode())
+    arg_hash.update(str(hash_byte_group_size).encode())
+    arg_hash.update(str(hash_byte_group_vocab).encode())
     arg_hash.update(str(args.hash_byte_group_nb_functions).encode())
     arg_hash.update(str(args.teacher_ckpt_path).encode())
     arg_hash = arg_hash.hexdigest()
@@ -197,7 +200,7 @@ def main():
         log.info("Computing token init mapping...")
         for batch_idx, batch_token_init_mapping in tqdm(enumerate(data_loader._iter_batches()), total=N_BATCHES_TO_USE_FOR_ESTIMATE, desc="Computing token init mapping..."):
             # combine mappings
-            for byte_group_size in args.hash_byte_group_size:
+            for byte_group_size in hash_byte_group_size:
                 for func_nb in range(args.hash_byte_group_nb_functions):
                     if (byte_group_size, func_nb) not in token_init_mapping:
                         token_init_mapping[(byte_group_size, func_nb)] = {}
@@ -260,10 +263,10 @@ def main():
     )
     hash_embedding_matrices = [
         torch.zeros(
-            (args.hash_byte_group_vocab[hash_embed_idx], args.local_d_model),
+            (hash_byte_group_vocab[hash_embed_idx], args.local_d_model),
             dtype=torch.float32,
         )
-        for hash_embed_idx in range(args.hash_byte_group_nb_functions * len(args.hash_byte_group_size))
+        for hash_embed_idx in range(args.hash_byte_group_nb_functions * len(hash_byte_group_size))
     ]
 
     populate_embedding_matrix(
@@ -273,7 +276,7 @@ def main():
     )
 
     hash_embed_idx = 0
-    for byte_group_size in args.hash_byte_group_size:
+    for byte_group_size in hash_byte_group_size:
         for func_nb in range(args.hash_byte_group_nb_functions):
             populate_embedding_matrix(
                 hash_embedding_matrices[hash_embed_idx],
