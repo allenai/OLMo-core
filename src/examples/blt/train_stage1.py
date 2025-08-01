@@ -156,7 +156,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         local_encoder = LocalEncoderConfig(
             add_hash_embeddings=ADD_HASH_EMBEDDINGS,
             hash_byte_group_size=[3, 4, 5, 6, 7, 8],
-            hash_byte_group_vocab=[100_002] * 6,
+            hash_byte_group_vocab=[1536, 3072, 6144, 12288, 24576, 49152],
             hash_byte_group_nb_functions=1,
             sliding_window_size=512,
             d_model=local_d_model,
@@ -198,7 +198,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         local_encoder = LocalEncoderConfig(
             add_hash_embeddings=ADD_HASH_EMBEDDINGS,
             hash_byte_group_size=[3, 4, 5, 6, 7, 8],
-            hash_byte_group_vocab=[100_002] * 6,
+            hash_byte_group_vocab=[1536, 3072, 6144, 12288, 24576, 49152],
             hash_byte_group_nb_functions=1,
             d_model=local_d_model,
             n_layers=local_encoder_n_layers,
