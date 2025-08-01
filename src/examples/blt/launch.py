@@ -27,6 +27,7 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
     for transparent_env_var in [
         "EMBEDDING_INIT_PATH",
         "OLMO_CKPT_PATH",
+        "OLMO_ARCH",
         "TRAIN_MODE",
         "DATA_SOURCE",
         "SAVE_FOLDER",
@@ -50,6 +51,8 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
             ),
         ]
         shared_filesystem = True
+    else:
+        shared_filesystem = False
 
     # fast setup for clusters were we have a prebuilt image
     if cluster == "ai2/titan-cirrascale":
