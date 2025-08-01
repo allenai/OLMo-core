@@ -28,6 +28,7 @@ def main():
         is_master=(args.rank == 0),
     )
 
+    # Get our own host id
     if args.debug:
         import socket
 
