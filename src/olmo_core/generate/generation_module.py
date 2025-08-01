@@ -136,7 +136,11 @@ class TransformerGenerationModule(GenerationModule):
 
     @staticmethod
     def _reset_kv_cache(
-        model: Transformer, use_cache: bool, batch_size: int, max_seq_len: int, dtype: torch.dtype
+        model: Transformer,
+        use_cache: bool,
+        batch_size: Optional[int] = None,
+        max_seq_len: Optional[int] = None,
+        dtype: Optional[torch.dtype] = None,
     ):
         for block in model.blocks.values():
             if hasattr(block.attention, "reset_kv_cache"):
@@ -215,20 +219,27 @@ class TransformerGenerationModule(GenerationModule):
 
         if generation_config.max_new_tokens is not None:
             max_length = prompt_len + generation_config.max_new_tokens
-        else:
+        elif generation_config.max_length is not None:
             max_length = generation_config.max_length
+        elif generation_config.use_cache:
+            raise OLMoConfigurationError(
+                "max_length or max_new_tokens must be provided if use_cache is True"
+            )
+        else:
+            max_length = None  # Generate until EOS or stop tokens or OOM...
 
         # Initialize/Reset the KV cache
         kv_cache_start_time = time.perf_counter()
-        self._reset_kv_cache(
-            self.model,
-            generation_config.use_cache,
-            batch_size,
-            max_length,
-            self.model.dtype,
-        )
-        if self.device.type == "cuda":
-            torch.cuda.synchronize()
+        if generation_config.use_cache:
+            self._reset_kv_cache(
+                self.model,
+                generation_config.use_cache,
+                batch_size,
+                max_length,
+                self.model.dtype,
+            )
+            if self.device.type == "cuda":
+                torch.cuda.synchronize()
         kv_cache_init_time = time.perf_counter() - kv_cache_start_time
 
         pbar = tqdm(desc="Generating tokens", disable=not log_timing)
@@ -280,7 +291,7 @@ class TransformerGenerationModule(GenerationModule):
 
             # Check if we should stop before generating more tokens
             pbar.update(1)
-            if generated.shape[1] >= max_length or finished.all():
+            if (max_length is not None and generated.shape[1] >= max_length) or finished.all():
                 pbar.close()
                 break
 
