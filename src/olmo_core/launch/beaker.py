@@ -406,10 +406,11 @@ class BeakerLaunchConfig(Config):
 
         if len(self.clusters) == 1 and "augusta" in self.clusters[0]:
             host_name_constraints = get_host_name_constraints(
-                self.num_nodes,
-                min(32, self.num_nodes),
-                1)
-            assert len(host_name_constraints) == 1 and len(host_name_constraints[0]) >= self.num_nodes
+                self.num_nodes, min(32, self.num_nodes), 1
+            )
+            assert (
+                len(host_name_constraints) == 1 and len(host_name_constraints[0]) >= self.num_nodes
+            )
             constraints_kwargs = {"hostname": host_name_constraints[0]}
         else:
             constraints_kwargs = {"cluster": self.clusters}
