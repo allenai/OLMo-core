@@ -662,12 +662,23 @@ class Attention(AttentionBase):
         return k_cache, v_cache, cache_seqlens
 
     def reset_kv_cache(
-        self, use_cache: bool, batch_size: int, max_seq_len: int, dtype: torch.dtype
+        self,
+        use_cache: bool,
+        batch_size: Optional[int] = None,
+        max_seq_len: Optional[int] = None,
+        dtype: Optional[torch.dtype] = torch.float32,
     ) -> None:
         # Fast path when KV caching is disabled.
         if not use_cache:
             self.k_cache, self.v_cache, self.cache_seqlens = None, None, None
             return
+
+        if batch_size is None:
+            raise ValueError("batch_size must be provided if use_cache is True")
+        if max_seq_len is None:
+            raise ValueError("max_seq_len must be provided if use_cache is True")
+        if dtype is None:
+            raise ValueError("dtype must be provided if use_cache is True")
 
         # Attempt to reuse an existing cache that satisfies the requested size
         # and dtype requirements.

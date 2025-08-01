@@ -28,11 +28,11 @@ class GenerationConfig(Config):
     eos_token_id: int
     """End of sequence token ID."""
 
-    max_length: int = 8192
+    max_length: Optional[int] = None
     """Maximum length of input + newly generated tokens."""
 
     max_new_tokens: Optional[int] = None
-    """Maximum number of new tokens to generate. If provided, this overrides max_length."""
+    """Maximum number of new tokens to generate. If provided, this takes precedence over max_length."""
 
     do_sample: bool = True
     """Whether to use sampling for generation. If False, greedy decoding is used. This overrides temperature, top_k, and top_p."""
@@ -61,8 +61,10 @@ class GenerationConfig(Config):
             raise ValueError(f"pad_token_id must be non-negative, got {self.pad_token_id}")
         if self.eos_token_id < 0:
             raise ValueError(f"eos_token_id must be non-negative, got {self.eos_token_id}")
-        if self.max_length <= 0:
+        if self.max_length is not None and self.max_length <= 0:
             raise ValueError(f"max_length must be positive, got {self.max_length}")
+        if self.max_new_tokens is not None and self.max_new_tokens <= 0:
+            raise ValueError(f"max_new_tokens must be positive, got {self.max_new_tokens}")
         if self.temperature < 0:
             raise ValueError(f"temperature must be non-negative, got {self.temperature}")
         if self.top_k <= 0 and self.top_k != -1:
