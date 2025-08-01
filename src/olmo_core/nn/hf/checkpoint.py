@@ -19,11 +19,12 @@ from olmo_core.nn.hf.convert import convert_state_from_hf, convert_state_to_hf
 from olmo_core.nn.transformer.model import Transformer
 
 try:
-    from accelerate import init_empty_weights
+    from accelerate import init_empty_weights  # type: ignore
 except ImportError:
 
     @contextmanager
     def init_empty_weights(include_buffers: bool = False) -> Generator[None, None, None]:
+        del include_buffers
         log.warning("accelerate not installed, will initialize weights.")
         yield None
 

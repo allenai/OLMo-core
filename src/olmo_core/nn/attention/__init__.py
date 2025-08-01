@@ -355,6 +355,14 @@ class Attention(AttentionBase):
                 raise OLMoConfigurationError(
                     f"fused RoPE is not compatible with {self.__class__.__name__}"
                 )
+
+            # On layers with sliding windows, we don't do rope extension.
+            uses_full_attention = self.window_size == (-1, -1)
+            uses_sliding_window = not uses_full_attention
+            if uses_sliding_window and rope.scaling is not None:
+                rope = rope.replace(scaling=None)
+            assert not (uses_sliding_window and rope.scaling is not None)
+
             rope_class = rope.build(self.head_dim, cache=cache)
             assert isinstance(rope_class, (RotaryEmbedding, ComplexRotaryEmbedding))
             self.rope = rope_class

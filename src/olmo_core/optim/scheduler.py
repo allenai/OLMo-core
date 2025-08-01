@@ -184,7 +184,9 @@ class WSD(Scheduler):
             )
 
         if (self.decay_fraction is None) == (self.decay is None):
-            raise OLMoConfigurationError("Either 'decay_fraction' or 'decay' must be specified.")
+            raise OLMoConfigurationError(
+                "Either 'decay_fraction' or 'decay' must be specified. Never both."
+            )
 
         if self.decay_fraction is not None and (self.decay_fraction < 0 or self.decay_fraction > 1):
             raise OLMoConfigurationError("decay_fraction must be between 0 and 1.")
