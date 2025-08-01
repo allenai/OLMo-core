@@ -54,6 +54,8 @@ from olmo_core.train.train_module.transformer.config import (
     TransformerContextParallelConfig,
 )
 from olmo_core.utils import prepare_cli_environment, seed_all
+from pathlib import Path
+import shutil
 
 log = logging.getLogger(__name__)
 
@@ -376,7 +378,7 @@ class SFTConfig(Config):
         return config
 
 
-def train(checkpoint: str, config: SFTConfig):
+def train(checkpoint: str, config: SFTConfig, save_tokenizer: bool):
     # Set RNG states on all devices.
     seed_all(config.init_seed)
 
@@ -386,6 +388,18 @@ def train(checkpoint: str, config: SFTConfig):
     dataset = config.dataset.build()
     data_loader = config.data_loader.build(dataset, dp_process_group=train_module.dp_process_group)
     trainer = config.trainer.build(train_module, data_loader)
+
+    if save_tokenizer:
+        tokenizer_path = Path(dataset.paths[0]).parent / "tokenizer"
+        if tokenizer_path.exists() and tokenizer_path.is_dir():
+            log.info("saving tokenizer...")
+            destination_path = Path(trainer.save_folder) / "tokenizer"
+            if destination_path.exists():
+                log.info(f"Tokenizer already exists: {destination_path}")
+            else:
+                log.info(f"Saving tokenizer to {destination_path}")
+                shutil.copytree(tokenizer_path, destination_path)
+
 
     # Record the config to W&B/Comet and each checkpoint dir.
     config_dict = config.as_config_dict()
@@ -443,6 +457,12 @@ Examples:
         "--num_nodes", type=int, help="The number of nodes to use.", default=DEFAULT_NUM_NODES
     )
     parser.add_argument(
+        "--follow", type=bool, help="Whether to follow the experiment in the terminal.", default=False
+    )
+    parser.add_argument(
+        "--save_tokenizer", type=bool, help="Whether to save the dataset's tokenizer in the model directory.", default=True
+    )
+    parser.add_argument(
         "--global_batch_size",
         type=int,
         help="The global batch size in tokens.",
@@ -488,10 +508,10 @@ Examples:
     if args.cmd == "dry_run":
         pass
     elif args.cmd == "launch":
-        config.launch.launch(follow=True)
+        config.launch.launch(follow=args.follow)
     elif args.cmd == "train":
         try:
-            train(args.pretrain_checkpoint, config)
+            train(args.pretrain_checkpoint, config, args.save_tokenizer)
         finally:
             teardown_training_environment()
     else:
