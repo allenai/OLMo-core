@@ -279,6 +279,7 @@ def load_model_and_optim_state(
     *,
     process_group: Optional[dist.ProcessGroup] = None,
     key_mapping: Optional[Dict[str, str | None]] = None,
+    extend_key_mapping: Optional[Dict[str, str]] = None,
     pre_download: bool = False,
     work_dir: Optional[PathOrStr] = None,
     strict: bool = True,
@@ -336,6 +337,12 @@ def load_model_and_optim_state(
     )
     metadata = reader.read_metadata()
 
+    if extend_key_mapping is not None:
+        if key_mapping is None:
+            key_mapping = {}
+
+        key_mapping = key_mapping | {value: None for key, value in extend_key_mapping.items()}
+
     if key_mapping is not None:
         swap_param_keys(state_dict, key_mapping, metadata=metadata)
 
@@ -348,6 +355,10 @@ def load_model_and_optim_state(
 
     if key_mapping is not None:
         swap_param_keys(state_dict, key_mapping, reverse=True, quiet=True)
+
+    if extend_key_mapping is not None:
+        for key, value in extend_key_mapping.items():
+            state_dict["model"][value] = state_dict["model"][key].clone()
 
     incompatible_keys = dist_cp_sd.set_model_state_dict(
         model, state_dict["model"], options=dist_cp_sd.StateDictOptions(strict=strict)

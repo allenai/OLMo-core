@@ -68,14 +68,14 @@ from olmo_core.utils import seed_all
 
 NUM_WORKERS = 16
 SEQUENCE_LENGTH = 1024
-QUICK_DEBUG = False
+QUICK_DEBUG = True
 GLOBAL_BATCH_SIZE = 64
 LOCAL_BATCH_SIZE = 64
 EVAL_BATCH_SIZE = 16
+GLOBAL_MODEL_LEARNING_RATE = os.environ.get("GLOBAL_MODEL_LEARNING_RATE", "")
 LOCAL_MODEL_STYLE = os.environ.get("LOCAL_MODEL_STYLE", "hnet")
-TRAIN_MODE = os.environ.get("TRAIN_MODE", "local_encoder_only")
 DATA_SOURCE = os.environ.get("DATA_SOURCE", "dclm")
-ADD_HASH_EMBEDDINGS = os.environ.get("ADD_HASH_EMBEDDINGS", "1").lower() in {"1", "true", "yes"}
+ADD_HASH_EMBEDDINGS = os.environ.get("ADD_HASH_EMBEDDINGS", "").lower() in {"1", "true", "yes"}
 OLMO_ARCH = os.environ.get("OLMO_ARCH", "olmo2_1B_v2")
 
 if DATA_SOURCE == "dclm":
@@ -85,20 +85,15 @@ elif DATA_SOURCE == "dolmino":
 else:
     raise ValueError(f"Unknown DATA_SOURCE: {DATA_SOURCE}. Must be one of 'dclm', 'dolmino'.")
 
-OLMO_CKPT_PATH = os.environ.get(
-    "OLMO_CKPT_PATH",
-    "/weka/oe-training-default/benjaminm/checkpoints/olmo2_1b/model_and_optim",
+STAGE1_CKPT_PATH = os.environ.get(
+    "STAGE1_CKPT_PATH",
+    "/weka/oe-training-default/benjaminm/runs_persist/hnet_v3_d2048_emb_v2_smaller_hash_embed/step50000/model_and_optim",
 )
 DATA_PATHS = ["/weka/oe-training-default/" + x for x in _DATA_SOURCES]
-EMBEDDING_INIT_PATH = os.environ.get(
-    "EMBEDDING_INIT_PATH",
-    "/weka/oe-training-default/benjaminm/olmo_1b_blt_hash_embedding_init",
-)
 
 if not os.environ.get("HAS_WEKA"):
-    OLMO_CKPT_PATH = OLMO_CKPT_PATH.replace("/weka/oe-training-default/", "gs://ai2-llm/")
+    STAGE1_CKPT_PATH = STAGE1_CKPT_PATH.replace("/weka/oe-training-default/", "gs://ai2-llm/")
     DATA_PATHS = [x.replace("/weka/oe-training-default/", "gs://") for x in DATA_PATHS] # slight inconsistency
-    EMBEDDING_INIT_PATH = EMBEDDING_INIT_PATH.replace("/weka/oe-training-default/", "gs://ai2-llm/")
 
 log = logging.getLogger(__name__)
 
@@ -117,9 +112,6 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
 
     BYTE_EXPANSION_FACTOR = int(os.environ.get("BYTE_EXPANSION_FACTOR", "6"))  # default (max) expansion factor
     SAVE_FOLDER = os.environ.get("SAVE_FOLDER", f"/tmp/{run_name}")
-
-    if not os.environ.get("HAS_WEKA"):
-        SAVE_FOLDER = SAVE_FOLDER.replace("/weka/oe-training-default/", "gs://ai2-llm/")
 
     byte_tokenizer_config = ByteTokenizerConfig.blt()
     subword_tokenizer_config = TokenizerConfig.dolma2()
@@ -229,11 +221,9 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         local_encoder=local_encoder,
         local_decoder=local_decoder,
         teacher_config=teacher_model_config,
-        share_blocks_between_teacher_and_student=True,
+        share_blocks_between_teacher_and_student=False,
         add_boundary_predictor=True,
-        freeze_params=[
-            "blocks*" # freeze inner transformer layers
-        ]
+        freeze_params=[]
     )
 
     dataset_config = NumpyDatasetConfig(
@@ -245,37 +235,34 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         work_dir=os.path.join(SAVE_FOLDER, "data"),
     )
 
-    optim = AdamWConfig(
-        lr=1e-3,
-        group_overrides=[
+    group_overrides = [
+        OptimGroupOverride(
+            params=[
+                "local_encoder.embedding.weight",
+            ] + [
+                "local_encoder.hash_embeddings.*.weight"
+            ] if ADD_HASH_EMBEDDINGS else [],
+            opts=dict(weight_decay=0.0)
+        )
+    ]
+
+    if GLOBAL_MODEL_LEARNING_RATE:
+        group_overrides.append(
             OptimGroupOverride(
                 params=[
-                    "local_encoder.embedding.weight",
-                ] + [
-                    "local_encoder.hash_embeddings.*.weight"
-                ] if ADD_HASH_EMBEDDINGS else [],
-                opts=dict(weight_decay=0.0)
+                    "blocks.*"
+                ],
+                opts=dict(lr=float(GLOBAL_MODEL_LEARNING_RATE))
             )
-        ],
-    )
+        )
+
+    optim = AdamWConfig(lr=1e-3, group_overrides=group_overrides)
 
     data_loader_config = NumpyDataLoaderConfig(
         global_batch_size=GLOBAL_BATCH_SIZE * SEQUENCE_LENGTH * BYTE_EXPANSION_FACTOR,
         seed=0,
         num_workers=NUM_WORKERS if not QUICK_DEBUG else 0,
     )
-
-    if TRAIN_MODE == "local_encoder_only":
-        losses = ["local_encoder"]
-        loss_weights = [1.0]
-    elif TRAIN_MODE == "local_decoder_only":
-        losses = ["local_decoder","boundary"]
-        loss_weights = [1.0]
-    elif TRAIN_MODE == "full_stage_1":
-        losses = ["local_encoder", "local_decoder", "boundary"]
-        loss_weights = [1.0, 1.0, 1.0]
-    else:
-        raise ValueError(f"Unknown TRAIN_MODE: {TRAIN_MODE}. Must be one of 'local_encoder_only', 'local_decoder_only', 'full_stage_1'.")
 
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=LOCAL_BATCH_SIZE * SEQUENCE_LENGTH * BYTE_EXPANSION_FACTOR,
@@ -285,11 +272,11 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         float8_config=Float8Config(enabled=False),
         blt_config=BLTConfig(
             tokenizer=byte_tokenizer_config,
-            losses=losses,
-            loss_weights=loss_weights,
-            skip_blocks=TRAIN_MODE == "local_encoder_only",
-            skip_teacher=False,
-            use_oracle_patch_reps=TRAIN_MODE in {"local_decoder_only", "full_stage_1"},
+            losses=["ce"],
+            loss_weights=[1.0],
+            skip_blocks=False,
+            skip_teacher=True,
+            use_oracle_patch_reps=False,
         ),
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
@@ -322,22 +309,9 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             "basic_skills_arithmetic_rc_5shot",
         ]
 
-    all_eval_tasks = []
-    all_eval_names = []
-    all_eval_batch_kwargs = []
-
-    if TRAIN_MODE in {"local_encoder_only", "full_stage_1"}:
-        all_eval_tasks += eval_tasks
-        all_eval_names += [f"downstream_orig_head" for _ in eval_tasks]
-        all_eval_batch_kwargs += [{"eval_mode": "orig_head"} for _ in eval_tasks]
-    if TRAIN_MODE in {"local_decoder_only", "full_stage_1"}:
-        all_eval_tasks += eval_tasks
-        all_eval_names += [f"downstream_orig_trunk" for _ in eval_tasks]
-        all_eval_batch_kwargs += [{"eval_mode": "orig_trunk"} for _ in eval_tasks]
-    if TRAIN_MODE == "full_stage_1":
-        all_eval_tasks += eval_tasks
-        all_eval_names += [f"downstream" for _ in eval_tasks]
-        all_eval_batch_kwargs += [{} for _ in eval_tasks]
+    all_eval_tasks = eval_tasks
+    all_eval_names = ["downstream" for _ in eval_tasks]
+    all_eval_batch_kwargs = [{} for _ in eval_tasks]
 
     trainer_config = (
         TrainerConfig(
@@ -416,24 +390,22 @@ def main(run_name: str, overrides: List[str]):
     config_dict = config.as_config_dict()
     cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
 
-    # Load OLMo 1B checkpoint.
-    # assume share_blocks=True, so we don't have to map/duplicate block weights
-    random_init_keys = {"local_encoder", "boundary_predictor", "local_decoder"}
-    key_mapping = {
-        key: None for key in model.state_dict().keys() if any(key.startswith(x) for x in random_init_keys)
-    } | {
-        f"teacher.{key}": key for key in model.teacher.state_dict().keys()  # type: ignore
+    # Load Stage 1 checkpoint.
+    # since blocks are not shared, we need to duplicate the blocks to the teacher
+    block_keys = [key for key in model.state_dict().keys() if key.startswith("blocks.0.")]
+    extend_key_mapping = {
+        key.replace(f"blocks.0.", f"blocks.{idx}."): key.replace(f"blocks.0.", f"teacher.blocks.{idx}.")
+        for key in block_keys
+        for idx in range(len(model.blocks))
     }
-    incompatible_keys = load_model_and_optim_state(OLMO_CKPT_PATH, model, key_mapping=key_mapping, strict=False)
+
+    incompatible_keys = load_model_and_optim_state(STAGE1_CKPT_PATH, model, extend_key_mapping=extend_key_mapping)
 
     if len(incompatible_keys.unexpected_keys) > 0:
         raise ValueError(f"Unexpected keys when loading checkpoint: {incompatible_keys.unexpected_keys} (assume we use all teacher weights)")
 
     for missing_key in incompatible_keys.missing_keys:
         log.info(f"Key {missing_key} was not found in checkpoint, is randomly initialized (this is expected for local encoder/decoder and student lm head).")
-
-    # init embeddings + scale appropriately
-    model.fix_init(EMBEDDING_INIT_PATH)  # type: ignore
 
     # TODO(benjaminm): this is not a nice place?
     register_fsdp_forward_method(model, "student_forward")
