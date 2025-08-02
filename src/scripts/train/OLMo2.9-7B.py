@@ -88,8 +88,6 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     config = (
         TrainerConfig(
             save_folder=f"gs://ai2-llm/checkpoints/{common.run_name}/",
-            load_path="gs://ai2-llm/checkpoints/OLMo25/step0/",
-            load_strategy=LoadStrategy.always,
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=cancel_check_interval,
