@@ -223,7 +223,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         teacher_config=teacher_model_config,
         share_blocks_between_teacher_and_student=False,
         add_boundary_predictor=True,
-        freeze_params=[]
+        freeze_params=["boundary_predictor.*"] # temporary
     )
 
     dataset_config = NumpyDatasetConfig(
