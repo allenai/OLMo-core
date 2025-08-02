@@ -19,6 +19,7 @@ from olmo_core.utils import generate_uuid, prepare_cli_environment
 
 def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
     cluster = os.environ.get("BEAKER_CLUSTER", "ai2/jupiter-cirrascale-2")
+    stage = os.environ.get("BEAKER_STAGE", "stage1")
 
     env_vars = []
     weka_buckets = []
@@ -73,12 +74,19 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
         # slow setup (need appropriate torch / cuda build)
         setup_steps = list(DEFAULT_SETUP_STEPS)
 
+    if stage == "stage1":
+        launch_script = "src/examples/blt/train_stage1.py"
+    elif stage == "stage2":
+        launch_script = "src/examples/blt/train_stage2.py"
+    else:
+        raise ValueError(f"Unknown stage: {stage}. Must be 'stage1' or 'stage2'.")
+
     beaker_username = get_beaker_username()
 
     return BeakerLaunchConfig(
         name=f"blt-distill-{run_name}-{generate_uuid()[:4]}",
         budget="ai2/oe-training",
-        cmd=["src/examples/blt/train_stage1.py", run_name, *overrides],
+        cmd=[launch_script, run_name, *overrides],
         task_name="train",
         workspace="ai2/benjaminm",
         description="Distilling OLMo from and to BLT.",
