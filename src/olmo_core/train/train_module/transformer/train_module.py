@@ -371,6 +371,15 @@ class TransformerTrainModule(TrainModule):
                     **model_kwargs,
                 )
 
+                # Check if ce_loss is nan and log if so
+                if torch.isnan(ce_loss):
+                    log.error(f"NaN ce_loss detected at micro_batch_idx {micro_batch_idx}")
+                    log.error(f"input_ids shape: {input_ids.shape}")
+                    log.error(f"input_ids: {input_ids}")
+                    if labels is not None:
+                        log.error(f"labels shape: {labels.shape}")
+                        log.error(f"labels: {labels}")
+
                 # Update total batch CE and Z loss.
                 ce_batch_loss += get_local_tensor(ce_loss.detach())
                 del ce_loss
