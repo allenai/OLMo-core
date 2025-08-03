@@ -349,6 +349,18 @@ class Attention(AttentionBase):
                     size=self.n_kv_heads * self.head_dim, init_device=init_device
                 )
 
+        # Translate window size so that we only look left, not right.
+        if window_size is not None:
+            if not use_flash:
+                raise OLMoConfigurationError(
+                    f"'window_size' is only supported with 'use_flash=True' (got {use_flash})"
+                )
+            if window_size <= 0:
+                raise OLMoConfigurationError(f"'window_size' must be positive (got {window_size})")
+            self.window_size = (window_size, 0)
+        else:
+            self.window_size = (-1, -1)
+
         self.rope: Optional[Union[RotaryEmbedding, ComplexRotaryEmbedding]] = None
         if rope is not None:
             if rope.name == "fused":
@@ -368,18 +380,6 @@ class Attention(AttentionBase):
             self.rope = rope_class
 
         self.use_flash = use_flash
-
-        # Translate window size so that we only look left, not right.
-        if window_size is not None:
-            if not use_flash:
-                raise OLMoConfigurationError(
-                    f"'window_size' is only supported with 'use_flash=True' (got {use_flash})"
-                )
-            if window_size <= 0:
-                raise OLMoConfigurationError(f"'window_size' must be positive (got {window_size})")
-            self.window_size = (window_size, 0)
-        else:
-            self.window_size = (-1, -1)
 
         self._cp_pg: Optional[dist.ProcessGroup] = None
         self._cp_enabled = False
