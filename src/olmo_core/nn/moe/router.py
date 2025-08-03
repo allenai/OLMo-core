@@ -436,7 +436,7 @@ class MoERouter(nn.Module):
         if self.gating_function == MoERouterGatingFunction.softmax:
             scores = logits.softmax(dim=-1)
         elif self.gating_function == MoERouterGatingFunction.sigmoid:
-            scores = F.sigmoid(logits)
+            scores = F.sigmoid(logits) + 1e-7
         else:
             raise NotImplementedError(self.gating_function)
 
@@ -560,7 +560,9 @@ class MoELinearRouter(MoERouter):
         return f"in_features={self.d_model}, num_experts={self.num_experts}"
 
     def get_expert_logits(self, x: torch.Tensor) -> torch.Tensor:
-        return F.linear(x, get_local_tensor(self.weight).view(self.num_experts, self.d_model))
+        return F.linear(
+            x.float(), get_local_tensor(self.weight).view(self.num_experts, self.d_model).float()
+        )
 
     def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
         super().apply_tp(tp_mesh, float8_enabled=float8_enabled)
