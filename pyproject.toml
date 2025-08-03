@@ -60,6 +60,14 @@ torchao = ["torchao"]
 transformers = ["transformers"]
 wandb = ["wandb"]
 all = ["ai2-olmo-core[dev,beaker,comet,eval,torchao,transformers,wandb]"]
+flash-attn = [
+    "flash-attn @ https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.2/flash_attn-2.8.2+cu12torch2.7cxx11abiFALSE-cp39-cp39-linux_x86_64.whl; sys_platform == 'linux' and platform_machine == 'x86_64' and python_version == '3.9'",
+    "flash-attn @ https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.2/flash_attn-2.8.2+cu12torch2.7cxx11abiFALSE-cp310-cp310-linux_x86_64.whl; sys_platform == 'linux' and platform_machine == 'x86_64' and python_version == '3.10'",
+    "flash-attn @ https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.2/flash_attn-2.8.2+cu12torch2.7cxx11abiFALSE-cp311-cp311-linux_x86_64.whl; sys_platform == 'linux' and platform_machine == 'x86_64' and python_version == '3.11'",
+    "flash-attn @ https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.2/flash_attn-2.8.2+cu12torch2.7cxx11abiFALSE-cp312-cp312-linux_x86_64.whl; sys_platform == 'linux' and platform_machine == 'x86_64' and python_version == '3.12'",
+]
+
+
 
 [tool.setuptools]
 include-package-data = true
