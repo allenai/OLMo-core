@@ -11,6 +11,7 @@ from olmo_core.utils import move_to_device
 from olmo_core.optim import OptimConfig, SkipStepOptimizer
 from olmo_core.nn.blt.config import BLTConfig
 from olmo_core.nn.blt.utils import get_original_labels
+from olmo_core.nn.lm_head import LMOutputWithLoss
 
 from ...common import ReduceType
 from .train_module import TransformerTrainModule
@@ -320,4 +321,16 @@ class TransformerBLTTrainModule(TransformerTrainModule):
                 batch["continuation"] = orig_batch["continuation"]
                 batch["ctx_len"] = orig_batch["ctx_len"]
                 batch["cont_len"] = orig_batch["cont_len"]
+
+            # move to CPU so we don't OOM (shouldn't be much slower)
+            out = LMOutputWithLoss(
+                logits=out.logits.cpu() if out.logits is not None else None,
+                loss=out.loss.cpu(),
+                ce_loss=out.loss.cpu(),
+                z_loss=out.z_loss.cpu() if out.z_loss is not None else None,
+            )
+            for key in batch.keys():
+                if isinstance(batch[key], torch.Tensor):
+                    batch[key] = batch[key].cpu()
+
             return out
