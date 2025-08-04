@@ -569,7 +569,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
                 patch_lengths,
             )
 
-            out["patch_lens"] = patch_lengths
+            out["patch_lens"] = out["space_patch_lens"] = patch_lengths
             out["original_input_ids"] = torch.randint(
                 0,
                 100_000,

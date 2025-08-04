@@ -168,6 +168,7 @@ class ByteDataCollator(DataCollator):
         all_original_input_ids = []
         all_constituent_input_ids = []
         all_patch_lengths = []
+        all_space_patch_lengths = []
 
         max_original_len = max(
             len(x["original_input_ids"]) if isinstance(x, dict) and "original_input_ids" in x else math.nan for x in items
@@ -177,6 +178,7 @@ class ByteDataCollator(DataCollator):
             original_input_ids = x.get("original_input_ids") if isinstance(x, dict) else None
             constituent_input_ids = x.get("constituent_input_ids") if isinstance(x, dict) else None
             patch_lengths = x.get("patch_lens") if isinstance(x, dict) else None
+            space_patch_lengths = x.get("space_patch_lens") if isinstance(x, dict) else None
 
             if constituent_input_ids is not None:
                 # already padded in dset
@@ -184,7 +186,7 @@ class ByteDataCollator(DataCollator):
 
             if original_input_ids is not None:
                 # both or neither
-                assert patch_lengths is not None
+                assert patch_lengths is not None and space_patch_lengths is not None
 
                 max_original_len = int(max_original_len)
 
@@ -210,6 +212,13 @@ class ByteDataCollator(DataCollator):
                         value=0,
                     )
                 )
+                all_space_patch_lengths.append(
+                    F.pad(
+                        space_patch_lengths.to(dtype=torch.long),
+                        pad_shape,
+                        value=0,
+                    )
+                )
 
         if all_original_input_ids:
             batch["original_input_ids"] = torch.stack(all_original_input_ids, dim=0)
@@ -217,5 +226,7 @@ class ByteDataCollator(DataCollator):
             batch["constituent_input_ids"] = torch.stack(all_constituent_input_ids, dim=0)
         if all_patch_lengths:
             batch["patch_lens"] = torch.stack(all_patch_lengths, dim=0)
+        if all_space_patch_lengths:
+            batch["space_patch_lens"] = torch.stack(all_space_patch_lengths, dim=0)
 
         return batch

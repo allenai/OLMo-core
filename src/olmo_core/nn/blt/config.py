@@ -18,6 +18,7 @@ class BLTConfig(Config):
     distill_offset_weights: list[float] = field(default_factory=lambda: [1.0] * 8)
     use_exhaustive_decoder_loss: bool = False
     rep_compare_fn: str = "l2"
+    patching: str = "dolma2"
     epsilon: float = 1e-6
     skip_blocks: bool = False
     skip_teacher: bool = False

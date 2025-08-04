@@ -10,7 +10,6 @@ from olmo_core.data.utils import get_labels, split_batch
 from olmo_core.utils import move_to_device
 from olmo_core.optim import OptimConfig, SkipStepOptimizer
 from olmo_core.nn.blt.config import BLTConfig
-from olmo_core.nn.blt.utils import get_original_labels
 from olmo_core.nn.lm_head import LMOutputWithLoss
 
 from ...common import ReduceType
@@ -60,6 +59,7 @@ class TransformerBLTTrainModule(TransformerTrainModule):
             all_original_input_ids = []
             all_input_ids = []
             all_patch_lens = []
+            all_space_patch_lens = []
             all_dc_input_ids = []
             all_ctx = []
             all_continuation = []
@@ -85,6 +85,10 @@ class TransformerBLTTrainModule(TransformerTrainModule):
                 input_ids, patch_lens = self.tokenizer.get_tokens_and_patch_lengths(
                     original_input_ids, add_bos=True, skip_last=True,
                 )
+                space_patch_lens = self.tokenizer.get_space_patch_lengths(input_ids)[:len(patch_lens)]
+                while len(space_patch_lens) < len(patch_lens):
+                    space_patch_lens.append(0)
+
                 dc_input_ids, _ = self.tokenizer.get_tokens_and_patch_lengths(
                     batch["dc_input_ids"][idx].tolist()[:prev_dc_len], add_bos=True
                 )
@@ -104,6 +108,7 @@ class TransformerBLTTrainModule(TransformerTrainModule):
                 all_original_input_ids.append(torch.tensor(original_input_ids, dtype=torch.long))
                 all_input_ids.append(torch.tensor(input_ids, dtype=torch.long))
                 all_patch_lens.append(torch.tensor(patch_lens, dtype=torch.long))
+                all_space_patch_lens.append(torch.tensor(space_patch_lens, dtype=torch.long))
                 all_dc_input_ids.append(torch.tensor(dc_input_ids, dtype=torch.long))
                 all_ctx.append(torch.tensor(ctx, dtype=torch.long))
                 all_continuation.append(torch.tensor(continuation, dtype=torch.long))
@@ -115,6 +120,7 @@ class TransformerBLTTrainModule(TransformerTrainModule):
             batch["input_ids"] = _pad_right(all_input_ids).to(device)
             batch["attention_mask"] = _pad_right([torch.ones_like(t) for t in all_input_ids]).to(device)
             batch["patch_lens"] = _pad_right(all_patch_lens).to(device)
+            batch["space_patch_lens"] = _pad_right(all_space_patch_lens).to(device)
             batch["dc_input_ids"] = _pad_right(all_dc_input_ids).to(device)
             batch["ctx"] = _pad_right(all_ctx).to(device)
             batch["continuation"] = _pad_right(all_continuation).to(device)
@@ -140,22 +146,29 @@ class TransformerBLTTrainModule(TransformerTrainModule):
         if "labels" not in batch:
             batch["labels"] = get_labels(batch, label_ignore_index=self.label_ignore_index)
 
-        if "original_labels" not in batch:
-            batch["original_labels"] = get_original_labels(batch, label_ignore_index=self.label_ignore_index)
-
         # Record how many instances are going to be skipped (masked out).
         if (instance_mask := batch.get("instance_mask")) is not None and not dry_run:
             self.record_metric(
                 "train/masked instances (%)", (~instance_mask).float().mean(), ReduceType.mean
             )
 
+        if self.blt_config.patching == "dolma2":
+            patch_lens = batch["patch_lens"]
+        elif self.blt_config.patching == "space":
+            patch_lens = batch["space_patch_lens"]
+        else:
+            raise ValueError(f"Unknown patching type: {self.blt_config.patching}")
+
         # Calculate how many tokens are going to be used in the loss.
         batch_num_tokens_for_loss = move_to_device(
             (batch["labels"] != self.label_ignore_index).sum(), self.device
         )
-        batch_num_patches_for_loss = move_to_device(
-            (batch["original_labels"] != self.label_ignore_index).sum(), self.device
+        shifted_patch_lens = F.pad(
+            patch_lens[:, 1:],
+            (0, 1),
+            value=0,
         )
+        batch_num_patches_for_loss = move_to_device((shifted_patch_lens != 0).sum(), self.device)
 
         # Split into micro-batches.
         if self.rank_microbatch_size < (seq_len := batch["input_ids"].shape[1]):
@@ -187,8 +200,8 @@ class TransformerBLTTrainModule(TransformerTrainModule):
 
                 metrics["mean_byte_len"] = (labels != self.label_ignore_index).float().mean()  # type: ignore
                 metrics["max_byte_len"] = (labels != self.label_ignore_index).float().max()  # type: ignore
-                metrics["mean_patch_len"] = (model_kwargs["original_labels"] != self.label_ignore_index).float().mean()  # type: ignore
-                metrics["max_patch_len"] = (model_kwargs["original_labels"] != self.label_ignore_index).float().max()  # type: ignore
+                metrics["mean_patch_len"] = (patch_lens != 0).float().mean()  # type: ignore
+                metrics["max_patch_len"] = (patch_lens != 0).float().max()  # type: ignore
 
                 for key, value in metrics.items():  # type: ignore
                     batch_metrics[key] = batch_metrics.get(key, 0.0) + get_local_tensor(value.detach()) / num_micro_batches
@@ -314,13 +327,6 @@ class TransformerBLTTrainModule(TransformerTrainModule):
                         return_logits=True,
                         **model_kwargs,
                     )
-                # student_forward gives us logits over the original (Dolma2) tokens.
-                # so we need to change the batch tokens / token info back to subword token space from byte space.
-                batch["input_ids"] = batch["original_input_ids"]
-                batch["ctx"] = orig_batch["ctx"]
-                batch["continuation"] = orig_batch["continuation"]
-                batch["ctx_len"] = orig_batch["ctx_len"]
-                batch["cont_len"] = orig_batch["cont_len"]
 
             # move to CPU so we don't OOM (shouldn't be much slower)
             out = LMOutputWithLoss(

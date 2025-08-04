@@ -1186,6 +1186,7 @@ class BLTTransformer(Transformer):
         z_loss_multiplier: Optional[float] = None,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         return_logits: Optional[bool] = None,
+        blt_config: Optional[BLTConfig] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any], Dict[str, Any], Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
         input_ids, labels, block_kwargs, lm_head_kwargs = super()._prepare_inputs(
@@ -1210,6 +1211,10 @@ class BLTTransformer(Transformer):
         decoder_cross_attn_mask: Optional[BlockMask] = None
 
         if (patch_lens := kwargs.pop("patch_lens", None)) is not None:
+            if blt_config is not None and blt_config.patching == "space":
+                patch_lens = kwargs["space_patch_lens"]
+                assert patch_lens is not None, "space_patch_lens must be present if patch_lens is present"
+
             patch_lens = move_to_device(patch_lens, self.device)
             patch_ids = blt_utils.lengths_to_ids(patch_lens, input_ids.shape[-1])
             original_input_ids = kwargs.pop("original_input_ids", None) # must be present if patch_lens is present
@@ -1241,6 +1246,11 @@ class BLTTransformer(Transformer):
 
         if (constituent_input_ids := kwargs.pop("constituent_input_ids", None)) is not None:
             extra_kwargs["constituent_input_ids"] = move_to_device(constituent_input_ids, self.device)
+
+        if blt_config is not None and blt_config.patching != "dolma2":
+            # can't use attributes relying on dolma2 patching
+            extra_kwargs["original_input_ids"] = None
+            extra_kwargs["constituent_input_ids"] = None
 
         return (
             input_ids,
@@ -1436,7 +1446,6 @@ class BLTDistillTransformer(BLTTransformer):
         input_ids: torch.Tensor,
         *,
         labels: Optional[torch.Tensor] = None,
-        original_labels: Optional[torch.Tensor] = None,
         ignore_index: int = -100,
         loss_reduction: Literal["mean", "sum", "none"] = "mean",
         z_loss_multiplier: Optional[float] = None,
@@ -1460,11 +1469,10 @@ class BLTDistillTransformer(BLTTransformer):
             loss_reduction=loss_reduction,
             z_loss_multiplier=z_loss_multiplier,
             loss_div_factor=loss_div_factor,
+            blt_config=blt_config,
             return_logits=True,  # needed for distillation
             **kwargs,
         )
-        if original_labels is not None:
-            original_labels = move_to_device(original_labels, self.device)
 
         # First, run the teacher.
         if not skip_teacher:
@@ -1490,7 +1498,12 @@ class BLTDistillTransformer(BLTTransformer):
 
         # loss masks
         byte_mask = labels != ignore_index
-        patch_mask = original_labels != ignore_index
+        shifted_patch_lens = F.pad(
+            local_encoder_kwargs["patch_lens"][:, 1:],
+            (0, 1),
+
+        )
+        patch_mask = shifted_patch_lens != 0
 
         h_byte, h_patch = self.local_encoder(input_ids, **local_encoder_kwargs)
         if self.boundary_predictor is not None:
@@ -1871,6 +1884,7 @@ class BLTDistillTransformer(BLTTransformer):
             loss_reduction=loss_reduction,
             z_loss_multiplier=z_loss_multiplier,
             loss_div_factor=loss_div_factor,
+            blt_config=blt_config,
             return_logits=True,  # needed for distillation
             **kwargs,
         )
@@ -1897,45 +1911,14 @@ class BLTDistillTransformer(BLTTransformer):
             **local_decoder_kwargs,
         )
         logits = self.lm_head(h_out, **lm_head_kwargs)
-        logprobs = F.log_softmax(logits.float(), dim=-1)
-        main_path_logprobs = torch.gather(logprobs[:, :-1], -1, input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
 
-        main_path_patch_logprobs = torch.zeros((h_patch.shape[0], h_patch.shape[1]), device=logprobs.device, dtype=logprobs.dtype)
-        main_path_patch_logprobs = main_path_patch_logprobs.scatter_reduce(
-            src=main_path_logprobs,
-            dim=1,
-            index=local_encoder_kwargs["patch_ids"][:, 1:] - 1,
-            reduce="sum",
-            include_self=False,
-        )
-        y_hat = main_path_patch_logprobs[:, 1:-1]
+        if blt_config.eval_add_boundary_logp:
+            raise NotImplementedError("`eval_add_boundary_logp` is not implemented for student_forward")
 
-        if boundary_preds is not None:
-            boundary_logprobs = F.logsigmoid(boundary_preds.float())
-            patch_end_indices = torch.cumsum(local_encoder_kwargs["patch_lens"], dim=1) - 1
-            if blt_config.eval_add_boundary_logp:
-                y_hat = y_hat + torch.gather(boundary_logprobs, -1, patch_end_indices)[:, 2:]
-
-        n_vocab = self.teacher.embeddings.weight.shape[0]
-        remaining_logpmass = log1mexp(y_hat)
-        remaining_logp_uniform = remaining_logpmass - math.log(n_vocab - 1)  # -1 to skip the main path token
-
-        teacher_logits = torch.zeros(
-            (h_patch.shape[0], h_patch.shape[1], n_vocab),
-            device=logits.device,
-            dtype=logits.dtype,
-        )
-        teacher_logits[:, :-2, :] = remaining_logp_uniform.unsqueeze(-1)
-        teacher_logits.scatter_(
-            -1,
-            extra_kwargs["original_input_ids"][:, 1:-1].unsqueeze(-1),
-            y_hat.to(teacher_logits.dtype).unsqueeze(-1),
-        )
-        teacher_labels = get_labels({"input_ids": extra_kwargs["original_input_ids"]}, label_ignore_index=ignore_index)
-        ce_loss, _ = cross_entropy_loss(teacher_logits.view(-1, teacher_logits.shape[-1]), teacher_labels.view(-1))
+        ce_loss, _ = cross_entropy_loss(logits.view(-1, logits.shape[-1]), labels.view(-1))  # type: ignore
 
         return LMOutputWithLoss(
-            logits=teacher_logits,
+            logits=logits,
             loss=ce_loss,
             ce_loss=ce_loss,
             z_loss=None,
@@ -1961,6 +1944,7 @@ class BLTDistillTransformer(BLTTransformer):
             loss_reduction=loss_reduction,
             z_loss_multiplier=z_loss_multiplier,
             loss_div_factor=loss_div_factor,
+            blt_config=blt_config,
             return_logits=True,  # needed for distillation
             **kwargs,
         )
@@ -2011,6 +1995,7 @@ class BLTDistillTransformer(BLTTransformer):
             loss_reduction=loss_reduction,
             z_loss_multiplier=z_loss_multiplier,
             loss_div_factor=loss_div_factor,
+            blt_config=blt_config,
             return_logits=True,  # needed for distillation
             **kwargs,
         )

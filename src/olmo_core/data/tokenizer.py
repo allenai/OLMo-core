@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from typing import Optional
 from transformers import AutoTokenizer
+import numpy as np
+from functools import lru_cache
 
 from ..config import Config, StrEnum
 from ..nn.blt import utils as blt_utils
@@ -255,3 +257,42 @@ class ByteTokenizer:
             byte_tokens.extend(token_byte_tokens)
 
         return byte_tokens, patch_lengths
+
+    @lru_cache(maxsize=1024)
+    def _is_spacelike(self, token_id: int) -> bool:
+        """
+        Check if a token ID is spacelike.
+        """
+        byte = token_id - self.offset
+        # see https://github.com/kjslag/spacebyte/blob/321111315c92bce0bc2f9f1630cb0bc82b897c57/spacebyte.py#L137-L145.
+        is_spacelike = (
+            (byte < ord('0')) |
+            ((ord('9') < byte) & (byte < ord('A'))) | 
+            ((ord('Z') < byte) & (byte < ord('a'))) |
+            ((ord('z') < byte) & (byte < 0b1000_0000)) |
+            (0b1100_0000 <= byte)
+        )
+        return is_spacelike
+
+    def get_space_patch_lengths(self, input_ids: list[int], max_patch_length: int = 16) -> list[int]:
+        patch_lengths = []
+        current_length = 0
+        previous_spacelike = False
+
+        special_tokens = {self.bos_token_id, self.eos_token_id, self.pad_token_id}
+
+        for token in input_ids:
+            current_length += 1
+
+            spacelike = self._is_spacelike(token)
+
+            if (not previous_spacelike and spacelike) or current_length >= max_patch_length or token in special_tokens:
+                patch_lengths.append(current_length)
+                current_length = 0
+
+            previous_spacelike = spacelike
+
+        if current_length > 0:
+            patch_lengths.append(current_length)
+
+        return patch_lengths
