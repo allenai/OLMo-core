@@ -27,3 +27,24 @@ def async_copy_to_cpu(gpu_buf):
 def wait_stream_no_compile(this_stream: torch.cuda.Stream, other_stream: torch.cuda.Stream):
     this_stream.wait_stream(other_stream)
     
+    
+from transformer_engine.pytorch.permutation import (
+    moe_permute,
+    moe_sort_chunks_by_index,
+    moe_unpermute,
+)
+
+# disable compile for permute
+@torch.compiler.disable()
+def moe_permute_no_compile(*args, **kwargs):
+    return moe_permute(*args, **kwargs)
+    
+@torch.compiler.disable()
+def moe_unpermute_no_compile(*args, **kwargs):
+    return moe_unpermute(*args, **kwargs)    
+
+@torch.compiler.disable()
+def moe_sort_chunks_by_index_no_compile(*args, **kwargs):
+    return moe_sort_chunks_by_index(*args, **kwargs)
+
+

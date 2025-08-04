@@ -29,28 +29,8 @@ import nvtx
 import torch.distributed as dist
 from olmo_core.distributed.utils import get_local_rank, get_rank
 
-
-from transformer_engine.pytorch.permutation import (
-    moe_permute,
-    moe_sort_chunks_by_index,
-    moe_unpermute,
-)
-
 from olmo_core.ops import moe as ops
 
-
-# disable compile for permute
-@torch.compiler.disable()
-def moe_permute_no_compile(*args, **kwargs):
-    return moe_permute(*args, **kwargs)
-    
-@torch.compiler.disable()
-def moe_unpermute_no_compile(*args, **kwargs):
-    return moe_unpermute(*args, **kwargs)    
-
-@torch.compiler.disable()
-def moe_sort_chunks_by_index_no_compile(*args, **kwargs):
-    return moe_sort_chunks_by_index(*args, **kwargs)
 
 
 if TYPE_CHECKING:
@@ -1104,3 +1084,6 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
                     x, **kwargs
                 )
             return xx
+        
+        
+        
