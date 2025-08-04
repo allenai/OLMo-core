@@ -126,3 +126,10 @@ def test_select_next_token_with_top_k_and_top_p():
 
     token = select_next_token(logits, do_sample=True, top_k=3, top_p=0.9)
     assert token.item() in [0, 1]
+
+
+def test_select_next_token_with_temperature_top_k_and_top_p():
+    seed_all(0)
+    logits = torch.tensor([[10.0, 9.0, 1.0, 8.0, 2.0]])
+    select_next_token(logits, do_sample=True, temperature=0.5, top_k=3, top_p=0.9)
+    # no error thrown
