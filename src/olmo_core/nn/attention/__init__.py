@@ -684,6 +684,7 @@ class Attention(AttentionBase):
         # and dtype requirements.
         if (
             hasattr(self, "k_cache")
+            and hasattr(self, "v_cache")
             and self.k_cache is not None
             and self.v_cache is not None
             and self.k_cache.shape[0] == batch_size
@@ -698,13 +699,15 @@ class Attention(AttentionBase):
             return
 
         # Existing allocation is missing or insufficient
-        # Delete old references so their memory can be reclaimed by the GC
+        # Delete old references, collect garbage, and empty the cuda cache
         if hasattr(self, "k_cache") and self.k_cache is not None:
             del self.k_cache
         if hasattr(self, "v_cache") and self.v_cache is not None:
             del self.v_cache
         if hasattr(self, "cache_seqlens") and self.cache_seqlens is not None:
             del self.cache_seqlens
+        gc.collect()
+        torch.cuda.empty_cache()
         self.k_cache, self.v_cache, self.cache_seqlens = self.allocate_kv_cache(
             batch_size, max_seq_len, dtype
         )
