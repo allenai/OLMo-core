@@ -4,19 +4,22 @@ import logging
 import sys
 from math import ceil
 from pathlib import Path
-from typing import Optional, Dict
+from typing import Dict, Optional
 
 import torch
 
 from olmo_core.distributed.checkpoint import load_state_dict
-from olmo_core.internal.experiment import SubCmd, build_config, CommonComponents
-from olmo_core.io import resource_path, join_path
+from olmo_core.internal.experiment import CommonComponents, SubCmd, build_config
+from olmo_core.io import join_path, resource_path
 from olmo_core.launch.beaker import OLMoCoreBeakerImage
 from olmo_core.nn.transformer import TransformerActivationCheckpointingMode
 from olmo_core.optim import SchedulerUnits
 from olmo_core.optim.scheduler import WSD
-from olmo_core.train import TrainerConfig, Duration, LoadStrategy
-from olmo_core.train.train_module import TransformerTrainModuleConfig, TransformerActivationCheckpointingConfig
+from olmo_core.train import Duration, LoadStrategy, TrainerConfig
+from olmo_core.train.train_module import (
+    TransformerActivationCheckpointingConfig,
+    TransformerTrainModuleConfig,
+)
 
 log = logging.getLogger(__name__)
 
@@ -49,8 +52,12 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} gs://ai2-llm/checkpoints/OLMo25/step23
     log.info(f"Training for {length_in_tokens} tokens ({length_in_tokens / 1_000_000_000}B)")
 
     # Load OLMo 2.5 7B module
-    o25_spec = importlib.util.spec_from_file_location("OLMo2.5-7B", Path(__file__).parent / "OLMo2.5-7B.py")
+    o25_spec = importlib.util.spec_from_file_location(
+        "OLMo2.5-7B", Path(__file__).parent / "OLMo2.5-7B.py"
+    )
+    assert o25_spec is not None and o25_spec.loader is not None, "Failed to load OLMo2.5-7B module"
     o25_module = importlib.util.module_from_spec(o25_spec)
+    assert o25_module is not None, "Failed to create OLMo2.5-7B module"
     sys.modules["OLMo2.5-7B"] = o25_module
     o25_spec.loader.exec_module(o25_module)
     batch_size = o25_module.GLOBAL_BATCH_SIZE
@@ -73,11 +80,10 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} gs://ai2-llm/checkpoints/OLMo25/step23
     state_dict: Dict[str, Optional[float]] = {key: None}
     load_state_dict(join_path(original_checkpoint, "model_and_optim"), state_dict)
     assert state_dict[key] is not None
-    lr = float(state_dict[key])
+    lr = float(state_dict[key])  # type: ignore
     log.info(f"Starting learning rate is {lr}")
 
     cmd = SubCmd(cmd)
-    cmd.prepare_environment()
 
     def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
         config = o25_module.build_train_module_config(common)
@@ -96,8 +102,7 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} gs://ai2-llm/checkpoints/OLMo25/step23
         config.rank_microbatch_size = 8192 * 2
         config.dp_config.shard_degree = 32
         config.ac_config = TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.budget,
-            activation_memory_budget=0.85
+            mode=TransformerActivationCheckpointingMode.budget, activation_memory_budget=0.85
         )
 
         return config
@@ -137,6 +142,8 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} gs://ai2-llm/checkpoints/OLMo25/step23
         num_nodes=16,
         beaker_workspace="ai2/OLMo_3",
     )
+    assert config.launch is not None
     config.launch.cmd = [script, "train", original_checkpoint, length, cluster] + overrides
 
+    cmd.prepare_environment(config)
     cmd.run(config)

@@ -2,14 +2,19 @@ from datetime import datetime
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
-from olmo_core.float8 import Float8Config, AOFloat8LinearConfig
+from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
 from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
 from olmo_core.internal.experiment import CommonComponents, main
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
-from olmo_core.train import Duration, TrainerConfig, LoadStrategy
-from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback, BatchSizeSchedulerCallback
+from olmo_core.train import Duration, TrainerConfig
+from olmo_core.train.callbacks import (
+    BatchSizeSchedulerCallback,
+    CheckpointerCallback,
+    CometCallback,
+    WandBCallback,
+)
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
@@ -36,6 +41,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     config.block.attention.use_head_qk_norm = True
     return config
 
+
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
     rank_microbatch_size = SEQUENCE_LENGTH * 2
     if common.launch is not None:
@@ -60,7 +66,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
-            shard_degree=32
+            shard_degree=32,
         ),
         float8_config=Float8Config(
             enabled=True,
@@ -123,12 +129,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 cancel_check_interval=cancel_check_interval,
             ),
         )
-        .with_recommended_evals(
-            common.tokenizer,
-            SEQUENCE_LENGTH,
-            cluster,
-            task_set="fast"
-        )
+        .with_recommended_evals(common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast")
     )
 
     # batch size warmup
@@ -142,10 +143,11 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             Duration.tokens(0),
             Duration.tokens(167_772_160_000),
             Duration.tokens(503_316_480_000),
-        ]
+        ],
     )
 
     return config
+
 
 if __name__ == "__main__":
     main(

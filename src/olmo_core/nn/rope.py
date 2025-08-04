@@ -74,6 +74,7 @@ class ABFRoPEScalingConfig(RoPEScalingConfig):
     def compute_scaled_inv_freq(
         self, theta: int, dim: int, device: torch.device
     ) -> tuple["torch.Tensor", float]:
+        del theta
         inv_freq = compute_inv_freqs(self.new_theta, dim, device)
         return inv_freq, self.attention_rescale_factor
 

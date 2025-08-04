@@ -7,18 +7,21 @@ from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
 from olmo_core.internal.experiment import CommonComponents, main
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
-from olmo_core.nn.transformer import TransformerConfig, TransformerActivationCheckpointingMode
+from olmo_core.nn.rope import YaRNRoPEScalingConfig
+from olmo_core.nn.transformer import (
+    TransformerActivationCheckpointingMode,
+    TransformerConfig,
+)
 from olmo_core.optim import OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.optim.scheduler import ConstantScheduler
-from olmo_core.train import Duration, TrainerConfig, LoadStrategy
+from olmo_core.train import Duration, LoadStrategy, TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
 from olmo_core.train.train_module import (
+    TransformerActivationCheckpointingConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
-    TransformerTrainModuleConfig, TransformerActivationCheckpointingConfig,
+    TransformerTrainModuleConfig,
 )
-
-from olmo_core.nn.rope import RoPEScalingConfig
 
 SEQUENCE_LENGTH = 4096 * 2
 GLOBAL_BATCH_SIZE = 1024 * SEQUENCE_LENGTH
@@ -35,9 +38,9 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
     # RoPE scaling
     OLD_SEQUENCE_LENGTH = 4096
-    config.block.attention.rope.scaling = RoPEScalingConfig(
-        old_context_len=OLD_SEQUENCE_LENGTH,
-        factor=SEQUENCE_LENGTH / OLD_SEQUENCE_LENGTH
+    assert config.block.attention.rope is not None
+    config.block.attention.rope.scaling = YaRNRoPEScalingConfig(
+        old_context_len=OLD_SEQUENCE_LENGTH, factor=SEQUENCE_LENGTH / OLD_SEQUENCE_LENGTH
     )
 
     # We cannot use headwise QK norm or GQA, because those can't be retrofit.
@@ -55,7 +58,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
     last_lr_of_olmo2 = 6.135113558011711e-05
     batch_size_of_olmo2 = 4 * 1024 * 1024
     lr = last_lr_of_olmo2 * math.sqrt(GLOBAL_BATCH_SIZE / batch_size_of_olmo2)
-    lr *= 1.5     # fudge factor because it seems to work
+    lr *= 1.5  # fudge factor because it seems to work
 
     return TransformerTrainModuleConfig(
         rank_microbatch_size=rank_microbatch_size,
@@ -74,11 +77,10 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
-            shard_degree=32
+            shard_degree=32,
         ),
-        ac_config= TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.budget,
-            activation_memory_budget=0.75
+        ac_config=TransformerActivationCheckpointingConfig(
+            mode=TransformerActivationCheckpointingMode.budget, activation_memory_budget=0.75
         ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
@@ -136,14 +138,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             ),
         )
         .with_recommended_evals(
-            common.tokenizer,
-            SEQUENCE_LENGTH,
-            cluster,
-            task_set="fast"
+            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=1000
         )
     )
-    config.callbacks["lm_evaluator"].eval_interval = 1000
-    config.callbacks["downstream_evaluator"].eval_interval = 1000
     return config
 
 
