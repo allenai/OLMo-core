@@ -22,20 +22,45 @@ def write_kvcache_(
     Raises:
         ValueError: If writing would exceed the cache capacity
     """
-    B = k.shape[0]
-    assert v.shape[0] == B, f"Value tensor batch size {v.shape[0]} != key tensor batch size {B}"
+    # Assert that k and v have the correct batch sizes
+    batch_size = k_cache.shape[0]
+    assert k.shape[0] == batch_size, (
+        f"Key tensor batch size {k.shape[0]} != cache batch size {batch_size}"
+    )
+    assert v.shape[0] == batch_size, (
+        f"Value tensor batch size {v.shape[0]} != cache batch size {batch_size}"
+    )
+    assert cache_seqlens.shape[0] == batch_size, (
+        f"cache_seqlens batch size {cache_seqlens.shape[0]} != cache batch size {batch_size}"
+    )
     assert k.shape[1] == T, f"Key tensor sequence length {k.shape[1]} != write length {T}"
     assert v.shape[1] == T, f"Value tensor sequence length {v.shape[1]} != write length {T}"
 
     # Compute the absolute positions in the sequence dimension **per batch item**
-    seq_positions = cache_seqlens[:B, None] + torch.arange(T, device=k.device)
+    # Shape: (B, T)
+    seq_positions = cache_seqlens[:, None] + torch.arange(
+        T, device=k.device, dtype=cache_seqlens.dtype
+    )
 
     # Sanity-check that we are not writing beyond the allocated cache.
     if (seq_positions >= k_cache.shape[1]).any():
         raise ValueError(
-            f"KV cache overflow: max position {seq_positions.max().item()} >=  max_cache_len ({k_cache.shape[1]})"
+            f"KV cache overflow: max position {seq_positions.max().item()} >= "
+            f"max_cache_len ({k_cache.shape[1]})"
         )
 
-    batch_indices = torch.arange(B, device=k.device)[:, None]  # (B, 1)
-    k_cache[batch_indices, seq_positions] = k
-    v_cache[batch_indices, seq_positions] = v
+    # NOTE: Flash-Attention expects the sequence dimension in K/V cache to be
+    # physically contiguous. Using `scatter_` or advanced indexing creates
+    # strided layouts which break numerical equivalence.  Write the new slice
+    # for each batch item with a plain slice assignment – this keeps the data
+    # contiguous in memory and is cheap because batch sizes during inference
+    # are small.
+
+    B = k.shape[0]
+    seq_positions_long = seq_positions.to(torch.long)
+
+    # Use index_copy_ along the sequence dimension so every (batch, pos)
+    # pair is updated exactly once and the cache remains contiguous.
+    for b in range(B):
+        k_cache[b].index_copy_(0, seq_positions_long[b], k[b])
+        v_cache[b].index_copy_(0, seq_positions_long[b], v[b])
