@@ -88,23 +88,20 @@ def select_next_token(
     if not do_sample or temperature == 0:
         return greedy_selection(logits)
 
-    assert not torch.isnan(logits).any(), "NaN values detected in logits"
+    nan_mask = torch.isnan(logits)
+    num_nans = nan_mask.sum().item()
+    total_elements = logits.numel()
+    nan_percentage = (num_nans / total_elements) * 100 if total_elements > 0 else 0
+    assert not nan_mask.any(), (
+        f"NaN values detected in logits: {num_nans}/{total_elements} ({nan_percentage:.2f}%) "
+        f"NaN values in tensor of shape {logits.shape}"
+    )
 
     scaled_logits = logits / temperature
-    assert not torch.isnan(scaled_logits).any(), (
-        "NaN values detected in scaled_logits after temperature scaling"
-    )
     if top_k != -1:
         scaled_logits = top_k_filtering(scaled_logits, top_k)
-        assert not torch.isnan(scaled_logits).any(), (
-            "NaN values detected in scaled_logits after top_k filtering"
-        )
     if top_p != 1.0:
         scaled_logits = top_p_filtering(scaled_logits, top_p)
-        assert not torch.isnan(scaled_logits).any(), (
-            "NaN values detected in scaled_logits after top_p filtering"
-        )
 
     probs = torch.softmax(scaled_logits, dim=-1)
-    assert not torch.isnan(probs).any(), "NaN values detected in probability distribution"
     return torch.multinomial(probs, num_samples=1).squeeze(-1)
