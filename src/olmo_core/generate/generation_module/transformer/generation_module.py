@@ -111,19 +111,23 @@ class TransformerGenerationModule(GenerationModule):
             self.model, state_dict["model"], options=self.state_dict_load_opts
         )
 
-    @staticmethod
-    def _reset_kv_cache(
-        model: Transformer,
+    def reset_kv_cache(
+        self,
         use_cache: bool,
         batch_size: Optional[int] = None,
         max_seq_len: Optional[int] = None,
         dtype: Optional[torch.dtype] = None,
     ):
-        for block in model.blocks.values():
+        for block in self.model.blocks.values():
             if hasattr(block.attention, "reset_kv_cache"):
                 block.attention.reset_kv_cache(  # type: ignore
                     use_cache=use_cache, batch_size=batch_size, max_seq_len=max_seq_len, dtype=dtype
                 )
+
+    def free_kv_cache(self):
+        for block in self.model.blocks.values():
+            if hasattr(block.attention, "free_kv_cache"):
+                block.attention.free_kv_cache()  # type: ignore
 
     @torch.inference_mode()
     def model_forward(self, input_ids: torch.Tensor, **kwargs):
@@ -214,12 +218,8 @@ class TransformerGenerationModule(GenerationModule):
         # Initialize/Reset the KV cache
         kv_cache_start_time = time.perf_counter()
         if generation_config.use_cache:
-            self._reset_kv_cache(
-                self.model,
-                generation_config.use_cache,
-                batch_size,
-                max_length,
-                self.model.dtype,
+            self.reset_kv_cache(
+                generation_config.use_cache, batch_size, max_length, self.model.dtype
             )
             if self.device.type == "cuda":
                 torch.cuda.synchronize()
