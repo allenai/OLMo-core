@@ -274,23 +274,29 @@ class ByteTokenizer:
         )
         return is_spacelike
 
-    def get_space_patch_lengths(self, input_ids: list[int], max_patch_length: int = 16) -> list[int]:
+    def get_space_patch_lengths(self, input_ids: list[int], max_patch_length: int = 16, end_with_space: bool = False) -> list[int]:
         patch_lengths = []
         current_length = 0
-        previous_spacelike = False
 
         special_tokens = {self.bos_token_id, self.eos_token_id, self.pad_token_id}
 
-        for token in input_ids:
+        all_spacelike = [self._is_spacelike(token) for token in input_ids]
+
+        for token_idx, token in enumerate(input_ids):
             current_length += 1
 
-            spacelike = self._is_spacelike(token)
+            spacelike = all_spacelike[token_idx]
+            previous_spacelike = all_spacelike[token_idx - 1] if token_idx > 0 else False
+            next_spacelike = all_spacelike[token_idx + 1] if token_idx < len(input_ids) - 1 else True
 
-            if (not previous_spacelike and spacelike) or current_length >= max_patch_length or token in special_tokens:
-                patch_lengths.append(current_length)
-                current_length = 0
-
-            previous_spacelike = spacelike
+            if end_with_space:
+                if (not previous_spacelike and spacelike) or current_length >= max_patch_length or token in special_tokens:
+                    patch_lengths.append(current_length)
+                    current_length = 0
+            else:
+                if (not spacelike and next_spacelike) or current_length >= max_patch_length or token in special_tokens:
+                    patch_lengths.append(current_length)
+                    current_length = 0
 
         if current_length > 0:
             patch_lengths.append(current_length)
