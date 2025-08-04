@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from olmo_core.generate.selection import (
+from olmo_core.generate.sampling import (
     greedy_selection,
     select_next_token,
     top_k_filtering,

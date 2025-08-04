@@ -2,7 +2,6 @@ import json
 import logging
 import tempfile
 import time
-from abc import ABCMeta, abstractmethod
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -13,7 +12,6 @@ from cached_path import cached_path
 from rich import print
 from torch.distributed import DeviceMesh, ProcessGroup
 from torch.distributed.checkpoint.metadata import Metadata
-from torch.distributed.checkpoint.stateful import Stateful
 from tqdm import tqdm
 
 from olmo_core.aliases import PathOrStr
@@ -36,33 +34,12 @@ from olmo_core.generate.utils import selective_log_softmax
 from olmo_core.io import is_url, join_path, normalize_path
 from olmo_core.nn.transformer import Transformer, TransformerConfig
 from olmo_core.train.train_module.transformer.common import parallelize_model
-from olmo_core.train.train_module.transformer.config import (
-    TransformerDataParallelConfig,
-)
+from olmo_core.train.train_module.transformer.config import TransformerDataParallelConfig
 from olmo_core.utils import get_default_device, move_to_device
 
+from ..generation_module import GenerationModule
+
 log = logging.getLogger(__name__)
-
-
-class GenerationModule(Stateful, metaclass=ABCMeta):
-    @property
-    def dp_process_group(self) -> Optional[dist.ProcessGroup]:
-        """
-        Should return the data parallel process group if it's anything other than the default
-        process group.
-        """
-        return None
-
-    def state_dict_to_load(self, metadata: Metadata) -> Dict[str, Any]:
-        del metadata
-        return self.state_dict()
-
-    @abstractmethod
-    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
-        """
-        Load a state dict.
-        """
-        raise NotImplementedError
 
 
 class TransformerGenerationModule(GenerationModule):
@@ -147,6 +124,12 @@ class TransformerGenerationModule(GenerationModule):
                 block.attention.reset_kv_cache(  # type: ignore
                     use_cache=use_cache, batch_size=batch_size, max_seq_len=max_seq_len, dtype=dtype
                 )
+
+    @torch.inference_mode()
+    def model_forward(self, input_ids: torch.Tensor, **kwargs):
+        self.model.eval()
+        input_ids = move_to_device(input_ids, self.device)
+        return self.model(input_ids, **kwargs)
 
     @torch.inference_mode()
     def generate_batch(

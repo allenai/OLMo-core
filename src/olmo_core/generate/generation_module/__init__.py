@@ -1,9 +1,7 @@
+from .config import GenerationConfig
 from .generation_module import GenerationModule
-from .generation_module.config import GenerationConfig
-from .generation_module.transformer import (
-    TransformerGenerationModule,
-    TransformerGenerationModuleConfig,
-)
+from .transformer.config import TransformerGenerationModuleConfig
+from .transformer.generation_module import TransformerGenerationModule
 
 __all__ = [
     "GenerationConfig",
