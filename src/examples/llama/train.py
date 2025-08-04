@@ -18,6 +18,7 @@ from olmo_core.data import (
     NumpyDatasetType,
     TokenizerConfig,
 )
+from olmo_core.distributed.checkpoint import load_model_and_optim_state
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
@@ -47,21 +48,7 @@ SEQUENCE_LENGTH = 1024
 
 # This will read stream data from the public endpoints by default, but that might be a lot slower
 # than reading data locally.
-DATA_ROOT = os.environ.get("OLMO_DATA_ROOT", "http://olmo-data.org/examples/c4-en/gpt2").rstrip("/")
-DATA_PATHS = [
-    f"{DATA_ROOT}/c4-train.00000-00099.npy",
-    f"{DATA_ROOT}/c4-train.00100-00199.npy",
-    f"{DATA_ROOT}/c4-train.00200-00299.npy",
-    f"{DATA_ROOT}/c4-train.00300-00399.npy",
-    f"{DATA_ROOT}/c4-train.00400-00499.npy",
-    f"{DATA_ROOT}/c4-train.00500-00599.npy",
-    f"{DATA_ROOT}/c4-train.00600-00699.npy",
-    f"{DATA_ROOT}/c4-train.00700-00799.npy",
-    f"{DATA_ROOT}/c4-train.00800-00899.npy",
-    f"{DATA_ROOT}/c4-train.00900-00999.npy",
-    f"{DATA_ROOT}/c4-train.01000-01023.npy",
-]
-EVAL_DATA_PATHS = [f"{DATA_ROOT}/c4-validation.00000-00008.npy"]
+DATA_PATHS = ["/weka/oe-training-default/ai2-llm/preprocessed/dclm/samples/src-20b/001/allenai/dolma2-tokenizer/part-00-00000.npy"]
 DATA_WORK_DIR = "/tmp/dataset-cache"
 
 
@@ -76,9 +63,9 @@ class ExperimentConfig(Config):
 
 
 def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
-    tokenizer_config = TokenizerConfig.gpt2()
+    tokenizer_config = TokenizerConfig.dolma2()
 
-    model_config = TransformerConfig.llama2_271M(
+    model_config = TransformerConfig.olmo2_1B_v2(
         vocab_size=tokenizer_config.padded_vocab_size(),  # a little bigger than actual vocab size to make it a multiple of 128
     )
 
@@ -149,26 +136,12 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         .with_callback("config_saver", ConfigSaverCallback())
         .with_callback("profiler", ProfilerCallback(enabled=False))
         .with_callback(
-            "lm_evaluator",
-            LMEvaluatorCallbackConfig(
-                eval_dataset=NumpyDatasetConfig(
-                    paths=EVAL_DATA_PATHS,
-                    metadata=[{"label": "c4-validation"}],
-                    name=NumpyDatasetType.padded_fsl,
-                    sequence_length=SEQUENCE_LENGTH,
-                    tokenizer=tokenizer_config,
-                    work_dir=DATA_WORK_DIR,
-                ),
-                eval_interval=250,
-                eval_duration=Duration.steps(50),
-            ),
-        )
-        .with_callback(
             "downstream_evaluator",
             DownstreamEvaluatorCallbackConfig(
-                tasks=["hellaswag"],
+                tasks=["basic_skills_arithmetic_rc_5shot"],
                 tokenizer=tokenizer_config,
                 eval_interval=250,
+                eval_on_startup=True,
             ),
         )
     )
@@ -198,6 +171,8 @@ def main(run_name: str, overrides: List[str]):
     # Save config to W&B and each checkpoint dir.
     config_dict = config.as_config_dict()
     cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
+
+    load_model_and_optim_state("/weka/oe-training-default/benjaminm/checkpoints/olmo2_1b/model_and_optim", model)
 
     # Train.
     trainer.fit()
