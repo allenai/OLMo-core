@@ -1,4 +1,5 @@
 import gc
+import logging
 import math
 from abc import abstractmethod
 from dataclasses import dataclass
@@ -54,6 +55,8 @@ __all__ = [
     "RingAttentionZigZagLoadBalancer",
     "RingAttentionLlama3LoadBalancer",
 ]
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -661,6 +664,16 @@ class Attention(AttentionBase):
         cache_seqlens = torch.zeros(batch_size, device=k_cache.device, dtype=torch.int32)
         return k_cache, v_cache, cache_seqlens
 
+    def free_kv_cache(self):
+        if hasattr(self, "k_cache") and self.k_cache is not None:
+            del self.k_cache
+        if hasattr(self, "v_cache") and self.v_cache is not None:
+            del self.v_cache
+        if hasattr(self, "cache_seqlens") and self.cache_seqlens is not None:
+            del self.cache_seqlens
+        gc.collect()
+        torch.cuda.empty_cache()
+
     def reset_kv_cache(
         self,
         use_cache: bool,
@@ -680,8 +693,7 @@ class Attention(AttentionBase):
         if dtype is None:
             raise ValueError("dtype must be provided if use_cache is True")
 
-        # Attempt to reuse an existing cache that satisfies the requested size
-        # and dtype requirements.
+        # Attempt to reuse an existing cache that satisfies the requested size and dtype requirements.
         if (
             hasattr(self, "k_cache")
             and hasattr(self, "v_cache")
@@ -698,16 +710,24 @@ class Attention(AttentionBase):
             self.v_cache.zero_()
             return
 
-        # Existing allocation is missing or insufficient
-        # Delete old references, collect garbage, and empty the cuda cache
-        if hasattr(self, "k_cache") and self.k_cache is not None:
-            del self.k_cache
-        if hasattr(self, "v_cache") and self.v_cache is not None:
-            del self.v_cache
-        if hasattr(self, "cache_seqlens") and self.cache_seqlens is not None:
-            del self.cache_seqlens
-        gc.collect()
-        torch.cuda.empty_cache()
+        if (
+            hasattr(self, "k_cache")
+            and self.k_cache is not None
+            and hasattr(self, "v_cache")
+            and self.v_cache is not None
+        ):
+            # cache exists, why did reuse fail?
+            reasons = []
+            if self.k_cache.shape[0] != batch_size:
+                reasons.append(f"batch_size mismatch: {self.k_cache.shape[0]} != {batch_size}")
+            if self.k_cache.shape[1] < max_seq_len:
+                reasons.append(f"max_seq_len insufficient: {self.k_cache.shape[1]} < {max_seq_len}")
+            if self.k_cache.dtype != dtype:
+                reasons.append(f"dtype mismatch: {self.k_cache.dtype} != {dtype}")
+            if reasons:
+                log.info(f"KV cache reuse failed: {', '.join(reasons)}")
+
+        self.free_kv_cache()  # free the old cache to avoid OOMs
         self.k_cache, self.v_cache, self.cache_seqlens = self.allocate_kv_cache(
             batch_size, max_seq_len, dtype
         )
