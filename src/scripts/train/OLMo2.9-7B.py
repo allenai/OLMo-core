@@ -91,8 +91,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=cancel_check_interval,
-            max_duration=Duration.tokens(int(5e12)),
-            hard_stop=Duration.tokens(int(4e12)),
+            max_duration=Duration.tokens(int(7e12)),
+            hard_stop=Duration.epochs(1),
         )
         .with_callback(
             "checkpointer",
