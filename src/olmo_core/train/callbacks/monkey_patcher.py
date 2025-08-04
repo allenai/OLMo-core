@@ -13,7 +13,7 @@ log = logging.getLogger(__name__)
 class MonkeyPatcherCallback(Callback):
     """
     While looking into performance issues with OLMo3 training, we discovered that
-    `DeviceMesh.__getitem__` can become a bottleneck because it gets called very often by FSDP and
+    `DeviceMesh.__getitem__()` can become a bottleneck because it gets called very often by FSDP and
     creates a new sub-mesh object each time. So this callback patches that method to cache
     the sub-meshes.
     """
