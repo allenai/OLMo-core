@@ -133,7 +133,7 @@ def build_launch_config(
         _to_beaker_env_secret(
             name="COMET_API_KEY",
             secret=f"{beaker_user}_COMET_API_KEY",
-            required=True,
+            required=False,
             workspace=workspace,
         ),
         _to_beaker_env_secret(
