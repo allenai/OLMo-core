@@ -61,7 +61,7 @@ def top_p_filtering(logits: torch.Tensor, top_p: float) -> torch.Tensor:
     return logits.masked_fill(indices_to_remove, float("-inf"))
 
 
-@torch.compile(dynamic=True)
+# @torch.compile(dynamic=True)
 def select_next_token(
     logits: torch.Tensor,
     do_sample: bool = True,
@@ -95,4 +95,8 @@ def select_next_token(
         scaled_logits = top_p_filtering(scaled_logits, top_p)
 
     probs = torch.softmax(scaled_logits, dim=-1)
+    assert not torch.isnan(probs).any(), "NaN values detected in probability distribution"
+    assert torch.all((probs >= 0) & (probs <= 1)), (
+        "Probability values outside [0, 1] range detected"
+    )
     return torch.multinomial(probs, num_samples=1).squeeze(-1)
