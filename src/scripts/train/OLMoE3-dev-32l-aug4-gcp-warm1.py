@@ -192,7 +192,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     return (
         TrainerConfig(
             save_folder=f'{common.save_folder}/{common.run_name}_{D_MODEL}d_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K_{TAG}',
-            load_path='gs://ai2-llm/checkpoints/OLMo3-moe-integrationtest-5-32L/OLMo3-moe-integrationtest-5-32L_2048d_32L2560M2560S_64E4K_dev/step19000',
+            # load_path='gs://ai2-llm/checkpoints/OLMo3-moe-integrationtest-5-32L/OLMo3-moe-integrationtest-5-32L_2048d_32L2560M2560S_64E4K_dev/step19000',
             save_overwrite=True,
             metrics_collect_interval=5,
             cancel_check_interval=cancel_check_interval,
