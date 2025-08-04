@@ -1,7 +1,10 @@
 import logging
 import time
 from dataclasses import dataclass, field, replace
+import tempfile
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from pathlib import Path
+import json
 
 import torch
 import torch.distributed as dist
@@ -14,6 +17,7 @@ from olmo_core.data import (
     TokenizerConfig,
     ByteTokenizerConfig,
 )
+from olmo_core.io import is_url, join_path, upload, normalize_path
 from olmo_core.data.utils import get_labels
 from olmo_core.distributed.utils import get_rank, get_world_size, is_distributed
 from olmo_core.eval import Evaluator
@@ -76,6 +80,10 @@ class EvaluatorCallback(Callback):
     log_interval: int = 5
     """
     How often to log eval progress to the console during an eval loop.
+    """
+    save_results: bool = False
+    """
+    Whether to dump the per-example results of the evaluation to a file.
     """
 
     def post_attach(self):
@@ -153,6 +161,34 @@ class EvaluatorCallback(Callback):
                 f"Finished {evaluator.name} evals in {time.monotonic() - start_time:.1f} seconds. Metrics:\n"
                 + "\n".join(metrics_str)
             )
+
+            if self.save_results and get_rank(self.trainer.dp_process_group) == 0:
+                eval_dir = join_path(self.trainer.save_folder, "evals")
+
+                if not is_url(eval_dir) and not Path(eval_dir).exists():
+                    Path(eval_dir).mkdir(parents=True, exist_ok=True)
+
+                eval_step_file = join_path(eval_dir, f"{evaluator.name}_{evaluator.label}_step_{self.trainer.training_progress.current_step}.json")  # type: ignore
+
+                data = {
+                    "examples": evaluator.task.samples,  # type: ignore
+                    "bpbs": evaluator.metric.bpbs,  # type: ignore
+                    "celosses": evaluator.metric.celosses,  # type: ignore
+                }
+
+                # adapated from olmo_core.distributed.checkpoint.filesystem._write_items
+                tmp_path = Path(
+                    tempfile.mktemp(suffix=".json", dir=None if is_url(eval_dir) else Path(eval_dir))
+                )
+                try:
+                    open(tmp_path, "w").write(json.dumps(data))
+
+                    if is_url(eval_step_file):
+                        upload(tmp_path, normalize_path(eval_step_file))
+                    else:
+                        tmp_path.rename(eval_step_file)
+                finally:
+                    tmp_path.unlink(missing_ok=True)
 
         # Sort by evaluator_times in ascending order
         sorted_evaluators = sorted(
@@ -399,6 +435,7 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
     eval_on_startup: bool = False
     cancel_after_first_eval: bool = False
     log_interval: int = 5
+    save_results: bool = False
     enabled: bool = True
     batch_size: Optional[int] = None
     names: Optional[List[str]] = None
@@ -456,5 +493,6 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
             eval_on_startup=self.eval_on_startup,
             cancel_after_first_eval=self.cancel_after_first_eval,
             log_interval=self.log_interval,
+            save_results=self.save_results,
             eval_duration=self.eval_duration,
         )

@@ -113,6 +113,9 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     BYTE_EXPANSION_FACTOR = int(os.environ.get("BYTE_EXPANSION_FACTOR", "6"))  # default (max) expansion factor
     SAVE_FOLDER = os.environ.get("SAVE_FOLDER", f"/tmp/{run_name}")
 
+    if not os.environ.get("HAS_WEKA"):
+        SAVE_FOLDER = SAVE_FOLDER.replace("/weka/oe-training-default/", "gs://ai2-llm/")
+
     byte_tokenizer_config = ByteTokenizerConfig.blt()
     subword_tokenizer_config = TokenizerConfig.dolma2()
 
@@ -354,6 +357,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
                 tokenizer=byte_tokenizer_config,
                 eval_interval=5000,
                 eval_on_startup=False,
+                save_results=True,
                 batch_size=EVAL_BATCH_SIZE * SEQUENCE_LENGTH, # these are subword tokens, so no expansion factor
             ),
         )

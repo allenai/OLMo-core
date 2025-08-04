@@ -22,7 +22,7 @@ dependencies = [
     "omegaconf",
     "safetensors",
     "importlib_resources",
-    "ai2-olmo-eval==0.8.4",
+    "ai2-olmo-eval @ git+https://github.com/allenai/OLMo-in-loop-evals.git@962c2e25268469fdc1ed253158af2e04a41a5297",
 ]
 
 [project.urls]
