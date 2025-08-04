@@ -9,8 +9,11 @@ from olmo_core.config import DType
 from olmo_core.distributed.checkpoint import save_model_and_optim_state
 from olmo_core.distributed.parallel.data_parallel import DataParallelType
 from olmo_core.distributed.utils import get_world_size
-from olmo_core.generate.config import GenerationConfig, TransformerGenerationModuleConfig
 from olmo_core.generate.generation_module import TransformerGenerationModule
+from olmo_core.generate.generation_module.config import (
+    GenerationConfig,
+    TransformerGenerationModuleConfig,
+)
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.testing import requires_multi_gpu, run_distributed_test
 from olmo_core.testing.utils import has_flash_attn, requires_flash_attn, requires_gpu

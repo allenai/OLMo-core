@@ -17,8 +17,8 @@ import torch
 from transformers import AutoTokenizer
 
 from olmo_core.config import DType
-from olmo_core.generate.config import GenerationConfig
 from olmo_core.generate.generation_module import TransformerGenerationModule
+from olmo_core.generate.generation_module.config import GenerationConfig
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 log = logging.getLogger(__name__)

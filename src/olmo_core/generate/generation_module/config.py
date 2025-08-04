@@ -15,7 +15,7 @@ from olmo_core.train.train_module.transformer.config import (
 )
 
 if TYPE_CHECKING:
-    from .generation_module import TransformerGenerationModule
+    from . import TransformerGenerationModule
 
 
 @dataclass

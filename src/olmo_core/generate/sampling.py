@@ -1,5 +1,3 @@
-from typing import Optional
-
 import torch
 
 
@@ -7,8 +5,9 @@ def greedy_selection(logits: torch.Tensor) -> torch.Tensor:
     """
     Deterministically select the next token as the one with the highest logit.
 
-    Returns:
-        Selected token indices of shape (...)
+    :param logits: Logits tensor of shape ``(..., vocab_size)``.
+
+    :returns: Selected token indices of shape ``(...)``.
     """
     return logits.argmax(dim=-1)
 
@@ -17,8 +16,10 @@ def top_k_filtering(logits: torch.Tensor, top_k: int) -> torch.Tensor:
     """
     Filter logits to keep only the top k tokens.
 
-    Returns:
-        Filtered logits with -inf for tokens outside top k.
+    :param logits: Logits tensor of shape ``(..., vocab_size)``.
+    :param top_k: Number of top tokens to keep.
+
+    :returns: Filtered logits with -inf for tokens outside top k.
     """
     if top_k <= 0:
         return logits
@@ -35,8 +36,10 @@ def top_p_filtering(logits: torch.Tensor, top_p: float) -> torch.Tensor:
     """
     Filter logits using nucleus (top-p) sampling.
 
-    Returns:
-        Filtered logits with -inf for tokens outside the nucleus.
+    :param logits: Logits tensor of shape ``(..., vocab_size)``.
+    :param top_p: Cumulative probability threshold for nucleus sampling.
+
+    :returns: Filtered logits with -inf for tokens outside the nucleus.
     """
     if top_p <= 0.0 or top_p >= 1.0:
         return logits
@@ -69,20 +72,18 @@ def select_next_token(
     """
     Sample from the logits using temperature scaling with optional top-k and top-p filtering.
 
-    Args:
-        logits: Logits tensor of shape (..., vocab_size)
-        do_sample: Whether to sample from the distribution. If False, uses greedy selection.
-                   If True, applies temperature scaling and optional top-k and top-p filtering.
-        temperature: Temperature for scaling. Higher values increase randomness.
-                    Values < 1.0 make the distribution sharper (more deterministic).
-                    Values > 1.0 make the distribution flatter (more random).
-                    Value = 0.0 is equivalent to greedy selection.
-        top_k: Only consider the top k tokens with highest probabilities. -1 means no filtering.
-        top_p: Only consider the smallest set of tokens whose cumulative
-               probability exceeds this threshold (nucleus sampling). 1.0 means no filtering.
+    :param logits: Logits tensor of shape ``(..., vocab_size)``.
+    :param do_sample: Whether to sample from the distribution. If False, uses greedy selection.
+                      If True, applies temperature scaling and optional top-k and top-p filtering.
+    :param temperature: Temperature for scaling. Higher values increase randomness.
+                        Values < 1.0 make the distribution sharper (more deterministic).
+                        Values > 1.0 make the distribution flatter (more random).
+                        Value = 0.0 is equivalent to greedy selection.
+    :param top_k: Only consider the top k tokens with highest probabilities. -1 means no filtering.
+    :param top_p: Only consider the smallest set of tokens whose cumulative
+                  probability exceeds this threshold (nucleus sampling). 1.0 means no filtering.
 
-    Returns:
-        Sampled token indices of shape (...)
+    :returns: Sampled token indices of shape ``(...)``.
     """
     if not do_sample or temperature == 0:
         return greedy_selection(logits)

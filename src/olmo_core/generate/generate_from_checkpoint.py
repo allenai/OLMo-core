@@ -5,6 +5,7 @@ This script is designed to sanity check the implementation with real data.
 
 Usage:
     python generate_from_checkpoint.py CHECKPOINT_PATH [--device cuda:0] [--max-length 100]
+    python generate_from_checkpoint.py CHECKPOINT_PATH --interactive
 """
 
 import argparse
@@ -17,8 +18,9 @@ import torch
 from transformers import AutoTokenizer
 
 from olmo_core.config import DType
-from olmo_core.generate.config import GenerationConfig
 from olmo_core.generate.generation_module import TransformerGenerationModule
+from olmo_core.generate.generation_module.config import GenerationConfig
+from olmo_core.utils import get_default_device
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 log = logging.getLogger(__name__)
@@ -48,7 +50,13 @@ def parse_args():
         default=1.0,
         help="Top-p (nucleus) sampling parameter (1.0 to disable)",
     )
-    parser.add_argument("--batch-size", type=int, default=1, help="Batch size for generation")
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=1,
+        help="Batch size for (non-interactive) generation. "
+        "For interactive generation, the batch size is always 1.",
+    )
     parser.add_argument(
         "--use-cache", action="store_true", help="Use KV cache for faster generation"
     )
@@ -59,27 +67,15 @@ def parse_args():
         choices=["float32", "float16", "bfloat16"],
         help="Model dtype",
     )
-    parser.add_argument(
-        "--autocast-precision",
-        type=str,
-        default="bfloat16",
-        choices=["float32", "float16", "bfloat16"],
-        help="Autocast precision for generation",
-    )
     parser.add_argument("--interactive", action="store_true", help="Run in interactive mode")
     return parser.parse_args()
 
 
 def get_device(device_str: str) -> torch.device:
-    """Get the appropriate device based on user input and availability."""
     if device_str == "auto":
-        if torch.cuda.is_available():
-            device = torch.device("cuda")
-        else:
-            device = torch.device("cpu")
+        device = get_default_device()
     else:
         device = torch.device(device_str)
-
     log.info(f"Using device: {device}")
     return device
 
@@ -89,7 +85,6 @@ def load_generation_module(
     device: torch.device,
     generation_config: GenerationConfig,
     dtype: str,
-    autocast_precision: str,
 ) -> TransformerGenerationModule:
     """Load the generation module from checkpoint."""
     start_time = time.time()
@@ -101,7 +96,6 @@ def load_generation_module(
             generation_config=generation_config,
             device=device,
             dtype=DType(dtype),
-            autocast_precision=DType(autocast_precision).as_pt(),
         )
         log.info(f"Model loaded successfully in {time.time() - start_time:.2f} seconds")
         return generation_module
@@ -156,11 +150,9 @@ def generate_text(
 
 
 def run_interactive_mode(
-    generation_module: TransformerGenerationModule,
-    tokenizer,
-    device: torch.device,
+    generation_module: TransformerGenerationModule, tokenizer, device: torch.device
 ):
-    """Run interactive generation mode."""
+    """Run interactive generation mode. This is a simple chatbot that can be used to test the model. Does not support conversation history."""
     print("\n=== Interactive Generation Mode ===")
     print("Enter prompts to generate text. Type 'quit' or 'exit' to stop.")
     print("Type 'help' for commands.\n")
@@ -226,7 +218,6 @@ def main():
             device,
             generation_config,
             args.dtype,
-            args.autocast_precision,
         )
 
         # Load the HuggingFace tokenizer
