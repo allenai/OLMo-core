@@ -699,11 +699,11 @@ class Attention(AttentionBase):
             and hasattr(self, "v_cache")
             and self.k_cache is not None
             and self.v_cache is not None
-            and self.k_cache.shape[0] >= batch_size
+            and self.k_cache.shape[0] == batch_size
             and self.k_cache.shape[1] >= max_seq_len
             and self.k_cache.dtype == dtype
         ):
-            # The allocation is big enough – just reset the cache.
+            # The kv cache is reusable, so we just reset it.
             if self.cache_seqlens is not None:
                 self.cache_seqlens.zero_()
             self.k_cache.zero_()
@@ -719,7 +719,7 @@ class Attention(AttentionBase):
             # cache exists, why did reuse fail?
             reasons = []
             if self.k_cache.shape[0] != batch_size:
-                reasons.append(f"batch_size mismatch: {self.k_cache.shape[0]} < {batch_size}")
+                reasons.append(f"batch_size mismatch: {self.k_cache.shape[0]} != {batch_size}")
             if self.k_cache.shape[1] < max_seq_len:
                 reasons.append(f"max_seq_len insufficient: {self.k_cache.shape[1]} < {max_seq_len}")
             if self.k_cache.dtype != dtype:
