@@ -125,7 +125,7 @@ class TransformerBlockType(StrEnum):
     ➡️ :class:`MoEHybridReorderedNormTransformerBlock`
     """
     
-    moe_fused_v1 = "moe_fused_v1"
+    moe_fused_v2 = "moe_fused_v2"
 
 
 @dataclass
@@ -181,7 +181,6 @@ class TransformerBlockConfig(Config):
             ReorderedNormTransformerBlock,
             TransformerBlock,
         )
-        from .fused_moe import MoEFusedV1TransformerBlock
 
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         kwargs.pop("name")
@@ -208,8 +207,9 @@ class TransformerBlockConfig(Config):
                 return MoEHybridTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.moe_hybrid_reordered_norm:
                 return MoEHybridReorderedNormTransformerBlock(**kwargs)
-            elif self.name == TransformerBlockType.moe_fused_v1:
-                return MoEFusedV1TransformerBlock(**kwargs)
+            elif self.name == TransformerBlockType.moe_fused_v2:
+                from ..moe.v2.block import MoEFusedV2TransformerBlock
+                return MoEFusedV2TransformerBlock(**kwargs)
             else:
                 raise NotImplementedError(self.name)
         except TypeError as e:

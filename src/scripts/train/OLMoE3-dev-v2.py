@@ -62,9 +62,9 @@ D_MODEL=2048
 MOE_HIDDEN_SIZE = 1024 + 1024 + 512
 SHARED_MLP_HIDDEN_SIZE = 2560  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
-MICRO_BSZ = 4
-NUM_LAYERS=32
-DP_DIM=32
+MICRO_BSZ = 2
+NUM_LAYERS=4
+DP_DIM=2
 EP_DIM=1
 PP_DIM=1
 SPLIT_POINTS = None
@@ -143,16 +143,13 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         
         # FSDP
         dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.hsdp,
+            name=DataParallelType.ddp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
-            #  num_replicas=1,  # to enable full-way expert parallel
             shard_degree=DP_DIM,
-            prefetch_factor=1,
-            wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
         ),
 
-         ep_config=TransformerExpertParallelConfig(degree=EP_DIM) if EP_DIM != 1 else None, # EP=1 means no expert parallel
+        ep_config=TransformerExpertParallelConfig(degree=EP_DIM) if EP_DIM != 1 else None, # EP=1 means no expert parallel
         pp_config=TransformerPipelineParallelConfig(
             degree=PP_DIM,
             schedule=PipelineScheduleType.custom_1F1B,
@@ -192,7 +189,6 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     return (
         TrainerConfig(
             save_folder=f'{common.save_folder}/{common.run_name}_{D_MODEL}d_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K_{TAG}',
-            load_path='gs://ai2-llm/checkpoints/OLMo3-moe-integrationtest-5-32L/OLMo3-moe-integrationtest-5-32L_2048d_32L2560M2560S_64E4K_dev/step19000',
             save_overwrite=True,
             metrics_collect_interval=5,
             cancel_check_interval=cancel_check_interval,
@@ -204,7 +200,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 save_interval=1000,
                 ephemeral_save_interval=200,
                 save_async=True,
-                pre_train_checkpoint=True,
+                pre_train_checkpoint=False,
             ),
         )
         .with_callback(
@@ -212,8 +208,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             WandBCallback(
                 name=common.run_name,
                 entity="ai2-llm",
-                # project="tianhua-moe",
-                project="olmo3",
+                project="tianhua-moe",
+                # project="olmo3",
                 enabled=True,
                 cancel_check_interval=cancel_check_interval,
             ),
@@ -239,9 +235,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             )
         )
         # TODO: might not be able to run in-loop evals depending on parallel strategies
-        .with_recommended_evals(
-            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
-        )
+        # .with_recommended_evals(
+        #     common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
+        # )
     )
 
 

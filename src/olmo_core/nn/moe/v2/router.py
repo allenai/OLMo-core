@@ -70,7 +70,7 @@ class MoERouterV2(nn.Module):
         super().__init__()
         self.d_model = d_model
         self.num_experts = num_experts
-        self.num_shared_experts = num_experts
+
         self.top_k = top_k
         self.jitter_eps = jitter_eps
         self.normalize_expert_weights = normalize_expert_weights
@@ -86,11 +86,11 @@ class MoERouterV2(nn.Module):
         self.tp_mesh: Optional[DeviceMesh] = None
         self.record_routing_batch_size = record_routing_batch_size
 
-        self.num_total_experts = self.num_routed_experts + self.num_shared_experts
+
 
         if self.bias_gamma is not None:
             assert self.bias_gamma > 0
-            self.register_buffer("score_bias", torch.zeros(self.num_total_experts, device=init_device))
+            self.register_buffer("score_bias", torch.zeros(self.num_experts, device=init_device))
         else:
             self.register_buffer("score_bias", None)
 
@@ -98,7 +98,7 @@ class MoERouterV2(nn.Module):
         # don't use a BufferCache because `torch.compile()` doesn't handle that well when we're modifying
         # values in the cache.
         self._batch_size_per_routed_expert = hide_from_torch(
-            torch.zeros(self.num_routed_experts, device=init_device)
+            torch.zeros(self.num_experts, device=init_device)
         )
         self._score_bias_batch_size_per_expert: Optional[_HiddenTensor] = None
         self._load_balancing_loss: Optional[_HiddenTensor] = None
@@ -106,13 +106,13 @@ class MoERouterV2(nn.Module):
         self._orth_loss: Optional[_HiddenTensor] = None
         
         self.weight = nn.Parameter(
-            torch.empty(self.num_total_experts * self.d_model, device=init_device, dtype=dtype)
+            torch.empty(self.num_experts * self.d_model, device=init_device, dtype=dtype)
         )
         self.reset_parameters()
 
     def reset_parameters(self):
         self._batch_size_per_routed_expert = hide_from_torch(
-            torch.zeros(self.num_routed_experts, device=self.device)
+            torch.zeros(self.num_experts, device=self.device)
         )
 
         if self.bias_gamma is not None:
@@ -120,7 +120,7 @@ class MoERouterV2(nn.Module):
             score_bias = cast(torch.Tensor, self.score_bias)
             score_bias.zero_()
             self._score_bias_batch_size_per_expert = hide_from_torch(
-                torch.zeros(self.num_total_experts, device=self.device)
+                torch.zeros(self.num_experts, device=self.device)
             )
 
         if self.lb_loss_weight is not None:
@@ -146,7 +146,7 @@ class MoERouterV2(nn.Module):
         if self.bias_gamma is not None:
             if self._score_bias_batch_size_per_expert is None:
                 self._score_bias_batch_size_per_expert = hide_from_torch(
-                    torch.zeros(self.num_total_experts, device=self.device)
+                    torch.zeros(self.num_experts, device=self.device)
                 )
             elif self._score_bias_batch_size_per_expert.device != self.device:
                 self._score_bias_batch_size_per_expert = self._score_bias_batch_size_per_expert.to(
@@ -276,7 +276,7 @@ class MoERouterV2(nn.Module):
 
     def get_expert_logits(self, x: torch.Tensor) -> torch.Tensor:
         return F.linear(
-            x.float(), get_local_tensor(self.weight).view(self.num_total_experts, self.d_model).float()
+            x.float(), get_local_tensor(self.weight).view(self.num_experts, self.d_model).float()
         )
 
     @torch.no_grad()
@@ -296,7 +296,7 @@ class MoERouterV2(nn.Module):
         
         # record the number of tokens routed to each routed expert.
         if self.record_routing_batch_size:
-            for i in range(self.num_routed_experts):
+            for i in range(self.num_experts):
                 out[f"expert {i} assigned tokens"] = (
                     self.batch_size_per_expert[i],
                     ReduceType.mean,
