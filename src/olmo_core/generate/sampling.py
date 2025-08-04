@@ -88,34 +88,23 @@ def select_next_token(
     if not do_sample or temperature == 0:
         return greedy_selection(logits)
 
+    assert not torch.isnan(logits).any(), "NaN values detected in logits"
+
     scaled_logits = logits / temperature
+    assert not torch.isnan(scaled_logits).any(), (
+        "NaN values detected in scaled_logits after temperature scaling"
+    )
     if top_k != -1:
         scaled_logits = top_k_filtering(scaled_logits, top_k)
+        assert not torch.isnan(scaled_logits).any(), (
+            "NaN values detected in scaled_logits after top_k filtering"
+        )
     if top_p != 1.0:
         scaled_logits = top_p_filtering(scaled_logits, top_p)
+        assert not torch.isnan(scaled_logits).any(), (
+            "NaN values detected in scaled_logits after top_p filtering"
+        )
 
     probs = torch.softmax(scaled_logits, dim=-1)
-    nan_mask = torch.isnan(probs)
-    if nan_mask.any():
-        nan_percentage = (nan_mask.sum().float() / probs.numel() * 100).item()
-
-        # Log the corresponding values in scaled_logits where probs are NaN
-        scaled_logits_at_nan = scaled_logits[nan_mask]
-        nan_in_scaled_logits = torch.isnan(scaled_logits_at_nan)
-        inf_in_scaled_logits = torch.isinf(scaled_logits_at_nan)
-
-        nan_count_in_scaled = nan_in_scaled_logits.sum().item()
-        inf_count_in_scaled = inf_in_scaled_logits.sum().item()
-        total_nan_locations = nan_mask.sum().item()
-
-        print(f"NaN analysis: {total_nan_locations} NaN locations in probs")
-        print(f"  - {nan_count_in_scaled} correspond to NaN in scaled_logits")
-        print(f"  - {inf_count_in_scaled} correspond to Inf in scaled_logits")
-        print(
-            f"  - {total_nan_locations - nan_count_in_scaled - inf_count_in_scaled} correspond to other values in scaled_logits"
-        )
-
-        raise AssertionError(
-            f"NaN values detected in probability distribution ({nan_percentage:.2f}% of values are NaN)"
-        )
+    assert not torch.isnan(probs).any(), "NaN values detected in probability distribution"
     return torch.multinomial(probs, num_samples=1).squeeze(-1)
