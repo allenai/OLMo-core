@@ -20,6 +20,9 @@ from olmo_core.nn.moe import (
     MoERouterGatingFunction,
     MoEType,
 )
+from olmo_core.nn.moe.v2.block import SharedExpertsConfig, RoutedExpertsConfig, LayerNormConfigV2, MoERouterConfigV2
+
+
 from olmo_core.nn.transformer import (
     TransformerBlockType,
     TransformerConfig,
@@ -70,21 +73,51 @@ PP_DIM=1
 SPLIT_POINTS = None
             
 TAG=f'dev'
+from olmo_core.nn.lm_head import LMHeadConfig, LMHeadType
+from olmo_core.nn.rope import RoPEConfig, RoPEScalingConfig, RoPEType
+from olmo_core.nn.attention import AttentionConfig, AttentionType
+from olmo_core.nn.layer_norm import LayerNormType
 
+from olmo_core.nn.moe.v2.block import LayerNormConfigV2
 def build_model_config(common: CommonComponents) -> TransformerConfig:
+    
     d_model = D_MODEL
-
-    config = TransformerConfig.llama_like(
+    dtype = DType.float32
+    
+    layer_norm = LayerNormConfigV2(
+        size=d_model,
+        name=LayerNormType.rms,
+        eps=1e-6,
+        bias=False,
+        dtype=dtype,
+    )
+    config = TransformerConfig(
         d_model=d_model,
         vocab_size=common.tokenizer.padded_vocab_size(),
         n_layers=NUM_LAYERS,
-        n_heads=16,
-        n_kv_heads=4,
+        block=TransformerBlockConfig(
+            name=TransformerBlockType.moe_fused_v2,
+            attention=AttentionConfig(
+                name=AttentionType.default,
+                n_heads=16,
+                n_kv_heads=4,
+                bias=False,
+                rope=RoPEConfig(name=RoPEType.default, theta=500_000, scaling=None, full_precision=True),
+                qk_norm=layer_norm ,
+                use_flash=True,
+                use_head_qk_norm=True,
+                dtype=dtype,
+            ),
+            feed_forward=feed_forward,
+            feed_forward_moe=feed_forward_moe,
+            feed_forward_norm=layer_norm,
+            attention_norm=layer_norm,
+        ),
+        lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype),
+
         name=TransformerType.moe,
-        block_name=TransformerBlockType.moe_hybrid_reordered_norm,
         qk_norm=True,
-        rope_theta=500_000,
-        layer_norm_eps=1e-6,
+
         # dropless
         feed_forward_moe=MoEConfig(
             name=MoEType.dropless,
@@ -99,6 +132,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         ),
         feed_forward=FeedForwardConfig(hidden_size=SHARED_MLP_HIDDEN_SIZE, bias=False),
         init_std=0.01,
+        dtype=dtype
     )
     
     config.lm_head.loss_implementation = LMLossImplementation.fused_linear
@@ -108,7 +142,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         force_full_attention_on_last_layer=True,
         pattern=[WINDOW_SIZE, WINDOW_SIZE, WINDOW_SIZE, -1]
     )
-    config.block.attention.use_flash = True
+    # config.block.attention.use_flash = True
     config.block.attention.use_head_qk_norm = True
     
     # First block will be a regular transformer block (no MoE component).

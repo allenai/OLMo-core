@@ -16,6 +16,7 @@ from olmo_core.doc_utils import beta_feature
 from olmo_core.ops import attach_auxiliary_loss
 from olmo_core.utils import get_or_init_stream
 from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.distributed.utils import barrier, get_fs_local_rank, get_rank, get_world_size
 from ...transformer.block import (
     TransformerBlockBase,
 )
@@ -242,7 +243,7 @@ class LayerNormConfigV2(Config):
     See the :class:`LayerNorm` subclasses to learn which fields are valid for each implementation.
     """
     size: int
-    name: LayerNormType = LayerNormType.default
+    name: LayerNormType
     """
     The name of the implementation.
     """
@@ -430,9 +431,10 @@ class MoEFusedV2TransformerBlock(TransformerBlockBase):
         if MOE_LAYER_USE_RECOMPUTE:
             # NOTE: this is the same as the MoEHybridTransformerBlock, but with recompute
             # on the dense forward pass.
-            return checkpoint(
-                self.combined_forward, x, use_reentrant=False, loss_div_factor=loss_div_factor, **kwargs
-            )
+            # return checkpoint(
+            #     self.combined_forward, x, use_reentrant=False, loss_div_factor=loss_div_factor, **kwargs
+            # )
+            raise NotImplementedError("MOE_LAYER_USE_RECOMPUTE is not supported in MoEFusedV2TransformerBlock")
         else:
             # always use combined forward    
             return self.combined_forward(x, loss_div_factor=loss_div_factor, **kwargs)
