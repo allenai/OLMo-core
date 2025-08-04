@@ -13,6 +13,7 @@ class BLTConfig(Config):
     losses: list[str] = field(default_factory=lambda: ["ce"])
     loss_weights: list[float] = field(default_factory=lambda: [1.0])
     binarization_temp: float = 1.0
+    temperature: float = 1.0
     div_fn: str = "tvd_temp_limit"
     n_distill_offsets: int = 8
     distill_offset_weights: list[float] = field(default_factory=lambda: [1.0] * 8)

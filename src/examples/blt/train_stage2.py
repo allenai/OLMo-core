@@ -72,6 +72,7 @@ QUICK_DEBUG = False
 GLOBAL_BATCH_SIZE = 64
 LOCAL_BATCH_SIZE = 64
 EVAL_BATCH_SIZE = 16
+TEACHER_MODE = os.environ.get("TEACHER_MODE", None)
 GLOBAL_MODEL_LEARNING_RATE = os.environ.get("GLOBAL_MODEL_LEARNING_RATE", "")
 LOCAL_MODEL_STYLE = os.environ.get("LOCAL_MODEL_STYLE", "hnet")
 DATA_SOURCE = os.environ.get("DATA_SOURCE", "dclm")
@@ -218,6 +219,16 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     else:
         raise ValueError(f"Unknown LOCAL_MODEL_STYLE: {LOCAL_MODEL_STYLE}. Must be one of 'blt', 'hnet'.")
 
+    if TEACHER_MODE == "stage1":
+        # use the stage1 checkpoint as the teacher instead of the original model (stage0)
+        teacher_model_config = teacher_model_config.replace(
+            name=TransformerType.blt,
+            vocab_size=byte_tokenizer_config.padded_vocab_size(),
+            local_encoder=local_encoder,
+            local_decoder=local_decoder,
+            add_boundary_predictor=True,
+        )
+
     model_config = teacher_model_config.replace(
         name=TransformerType.blt,
         vocab_size=byte_tokenizer_config.padded_vocab_size(),
@@ -278,7 +289,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             losses=["ce"],
             loss_weights=[1.0],
             skip_blocks=False,
-            skip_teacher=True,
+            skip_teacher=TEACHER_MODE is None,
             use_oracle_patch_reps=False,
         ),
         dp_config=TransformerDataParallelConfig(
@@ -395,13 +406,20 @@ def main(run_name: str, overrides: List[str]):
     cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
 
     # Load Stage 1 checkpoint.
-    # since blocks are not shared, we need to duplicate the blocks to the teacher
-    block_keys = [key for key in model.state_dict().keys() if key.startswith("blocks.0.")]
-    extend_key_mapping = {
-        key.replace(f"blocks.0.", f"blocks.{idx}."): key.replace(f"blocks.0.", f"teacher.blocks.{idx}.")
-        for key in block_keys
-        for idx in range(len(model.blocks))
-    }
+    # since we can"t share blocks (we might train them), we need to duplicate the blocks to the teacher
+    prefixes_to_duplicate = ["blocks"]
+    # If we are using the stage1 checkpoint as the teacher, we also need to duplicate
+    # the local encoder / decoder / boundary predictor / lm head to teacher
+    if TEACHER_MODE == "stage1":
+        prefixes_to_duplicate += ["local_encoder", "local_decoder", "boundary_predictor", "lm_head"]
+
+    extend_key_mapping = {}
+
+    for prefix in prefixes_to_duplicate:
+        extend_key_mapping.update({
+            key: key.replace(f"{prefix}", f"teacher.{prefix}")
+            for key in model.state_dict().keys() if key.startswith(prefix)
+        })
 
     incompatible_keys = load_model_and_optim_state(STAGE1_CKPT_PATH, model, extend_key_mapping=extend_key_mapping)
 
