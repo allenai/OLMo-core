@@ -54,7 +54,7 @@ GLOBAL_BATCH_SIZE = (
 )  
 MAX_DURATION = int(1000e9)  # int(6e12), don't forget to adjust the LR when you increase this
 EVAL_INTERVAL = 1000
-LR= 4e-4
+LR= 3e-4
 
 NUM_EXPERTS = 64
 TOP_K = 4
