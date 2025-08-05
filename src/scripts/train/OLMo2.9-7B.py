@@ -7,7 +7,7 @@ from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
 from olmo_core.internal.experiment import CommonComponents, main
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
+from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig, SchedulerUnits
 from olmo_core.train import Duration, TrainerConfig, LoadStrategy
 from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback, BatchSizeSchedulerCallback
 from olmo_core.train.train_module import (
@@ -17,7 +17,7 @@ from olmo_core.train.train_module import (
 )
 
 SEQUENCE_LENGTH = 8 * 1024
-GLOBAL_BATCH_SIZE = 4 * 1024 * 1024
+INITIAL_GLOBAL_BATCH_SIZE = 4 * 1024 * 1024
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
@@ -72,7 +72,10 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         ),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
-        scheduler=CosWithWarmup(warmup_steps=2000),
+        scheduler=CosWithWarmup(
+            units=SchedulerUnits.tokens,    # mandatory with batch size warmup
+            warmup_steps=2000 * INITIAL_GLOBAL_BATCH_SIZE
+        ),
     )
 
 
@@ -136,9 +139,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     # batch size warmup
     config.callbacks["batchwup"] = BatchSizeSchedulerCallback(
         batch_sizes=[
-            GLOBAL_BATCH_SIZE,
-            GLOBAL_BATCH_SIZE * 2,
-            GLOBAL_BATCH_SIZE * 4,
+            INITIAL_GLOBAL_BATCH_SIZE,
+            INITIAL_GLOBAL_BATCH_SIZE * 2,
+            INITIAL_GLOBAL_BATCH_SIZE * 4,
         ],
         schedule=[
             Duration.tokens(0),
@@ -151,7 +154,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
 if __name__ == "__main__":
     main(
-        global_batch_size=GLOBAL_BATCH_SIZE,
+        global_batch_size=INITIAL_GLOBAL_BATCH_SIZE,
         sequence_length=SEQUENCE_LENGTH,
         model_config_builder=build_model_config,
         train_module_config_builder=build_train_module_config,
