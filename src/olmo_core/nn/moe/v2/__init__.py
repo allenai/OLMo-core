@@ -1,8 +1,8 @@
-from .moe_block import (
-    MoEFusedV1TransformerBlock,
+# from .block import (
+#     MoEFusedV2TransformerBlock,
 
-)
+# )
 
-__all__ = [
-    "MoEFusedV1TransformerBlock",
-]
+# __all__ = [
+#     "MoEFusedV2TransformerBlock",
+# ]

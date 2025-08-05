@@ -16,34 +16,32 @@ from olmo_core.doc_utils import beta_feature
 from olmo_core.ops import attach_auxiliary_loss
 from olmo_core.utils import get_or_init_stream
 from olmo_core.exceptions import OLMoConfigurationError
+
 from olmo_core.distributed.utils import barrier, get_fs_local_rank, get_rank, get_world_size
-from ...transformer.block import (
-    TransformerBlockBase,
-)
+# import olmo_core.nn
+import olmo_core.nn.transformer
+
+
 from ...attention import AttentionConfig, RingAttentionLoadBalancerType
 from ...buffer_cache import BufferCache
-from ...feed_forward import FeedForward, FeedForwardConfig
 from ...functional import l2_normalize
 from ...layer_norm import LayerNormConfig
-from ...layer_norm import LayerNormType, LayerNorm, RMSNorm, FusedRMSNorm, L2Norm
-
-from ...moe import MoEConfig, MoERouterType, MoERouterGatingFunction
+from ...moe import  MoERouterGatingFunction
 from ...moe import MoERouterConfig as MoERouterConfigV1
 from ...moe.loss import MoELoadBalancingLossGranularity
 from ...moe.utils import async_copy_to_cpu, wait_stream_no_compile
 from .router import MoERouterV2
 from typing import List, Optional
-
 from torch.utils.checkpoint import checkpoint, CheckpointFunction
 import nvtx
 import torch.distributed as dist
 from olmo_core.distributed.utils import get_local_rank, get_rank
 from olmo_core.config import Config, DType, StrEnum
-import torch.nn.functional as F
 from typing import Callable
-
-import grouped_gemm  # type: ignore
-import grouped_gemm.ops
+from .router import MoERouterConfigV2
+from .shared_experts import SharedExpertsConfig
+from .routed_experts import RoutedExpertsConfig
+    
 
 from ..utils import (
     moe_unpermute_no_compile,
@@ -51,348 +49,94 @@ from ..utils import (
     moe_sort_chunks_by_index_no_compile,
 )
 
+
+
+from olmo_core.nn.transformer.config import (
+    TransformerBlockType, TransformerBlockConfig
+)
 @dataclass
-class SharedExpertsConfig(Config):
+class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
 
-    """
-    Configuration for shared experts in a MoE block.
-    """
-
-    # Input (and output) dimension of the experts
-    d_model: int
-
-    # Hidden (intermediate) dimension of the experts
-    hidden_size: int
-
-    # Number of shared experts (can be >= 1)
-    num_experts: int
+    router: Optional[MoERouterConfigV2] = None
     
-    # Whether to use bias in the experts
-    bias: bool
+    shared_experts: Optional[SharedExpertsConfig] = None
     
-    # default dtype for the experts
-    dtype: DType
+    routed_experts: Optional[RoutedExpertsConfig] = None
     
-
-    def build(self) -> "SharedExperts":
-        kwargs = self.as_dict()
-        return SharedExperts(**kwargs)
+    shared_experts_router: Optional[MoERouterConfigV2] = None
     
-    def num_params(self) -> int:
-        """
-        The number of params that the module will have once built.
+    routed_experts_router: Optional[MoERouterConfigV2] = None
 
-        :param d_model: The model dimensionality.
-        """
-
-        params = 3 * self.d_model * self.hidden_size # up, gate, down
-        if self.bias:
-            params += 2 * self.hidden_size # up and gate bias
-            params += self.d_model  # down bias
-
-        params *= self.num_experts # for each expert
         
-        return params 
-
-class SharedExperts(nn.Module):
-    """ 
-    Shared experts module for MoE blocks.
-    
-    Shared experts work like a regular feed-forward but can support more than 1 expert.
-    All experts will have the same number of input tokens, so it's possible that we concatenate
-    the weights of all experts and use a single linear layer to process the input.
-    """
-    
-    def __init__(self, 
-                 d_model: int, 
-                 hidden_size: int, 
-                 num_experts: int, 
-                 bias: bool, 
-                 dtype: DType
-    ):
-        super().__init__()
-        self.d_model = d_model
-        self.hidden_size = hidden_size
-        self.num_experts = num_experts
-        self.w_up_gate = nn.Linear(
-            d_model,
-            2 * num_experts * hidden_size,  # 2 for up and gate
-            bias=bias,
-            dtype=dtype,
-        )
-        self.w_down = nn.Linear(
-            num_experts * hidden_size,
-            d_model,
-            bias=bias,
-            dtype=dtype,
-        )
-
-    @nvtx.annotate("SharedExperts.forward", color='blue')
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        input shape: (B, S, D)
-        output shape: (num_experts, B, S, D)
-        """
-        B, S, D = x.shape
-        up, gate = self.w_up_gate(x).chunk(2, dim=0)
-        h = F.silu(up) * gate
-        y = self.w_down(h)
-        return y.view(self.num_experts, B, S, D)
-        
-        
-class RoutedExpertsConfig(Config):
-    """Configuration for routed experts in a MoE block."""
-    
-    # Input (and output) dimension of the experts
-    d_model: int
-
-    # Hidden (intermediate) dimension of the experts
-    hidden_size: int
-
-    # Number of routed experts
-    num_experts: int
-    
-    # Whether to use bias in the experts
-    bias: bool
-    
-    # default dtype for the experts
-    dtype: DType
-    
-
-    def build(self) -> "RoutedExperts":
-        kwargs = self.as_dict()
-        return RoutedExperts(**kwargs)
-    
-    def num_params(self) -> int:
-        """
-        The number of params that the module will have once built.
-
-        :param d_model: The model dimensionality.
-        """
-
-        params = 3 * self.d_model * self.hidden_size # up, gate, down
-        if self.bias:
-            params += 2 * self.hidden_size # up and gate bias
-            params += self.d_model  # down bias
-
-        params *= self.num_experts # for each expert
-        
-        return params
-    
-    def num_active_params(self, top_k: int) -> int:
-        """
-        The number of params that the module will have once built, given the top_k experts.
-
-        :param top_k: The number of experts to use.
-        """
-        if top_k <= 0:
-            raise ValueError("top_k must be greater than 0")
-        if top_k > self.num_experts:
-            raise ValueError(f"top_k ({top_k}) cannot be greater than num_experts ({self.num_experts})")
-        
-        params = 3 * self.d_model * self.hidden_size # up, gate, down
-        if self.bias:
-            params += 2 * self.hidden_size # up and gate bias
-            params += self.d_model  # down bias
-
-        params *= top_k # for each expert
-        
-        return params
-    
-class RoutedExperts(nn.Module):
-    def __init__(
-        self,
-        d_model: int,
-        hidden_size: int,
-        num_experts: int,
-        bias: bool,
-        dtype: DType,
-    ):
-        super().__init__()
-        self.d_model = d_model
-        self.hidden_size = hidden_size
-        self.num_experts = num_experts
-        self.w_up_gate = nn.Linear(
-            d_model,
-            2 * num_experts * hidden_size,  # 2 for up and gate
-            bias=bias,
-            dtype=dtype,
-        )
-        self.w_down = nn.Linear(
-            num_experts * hidden_size,
-            d_model,
-            bias=bias,
-            dtype=dtype,
-        )
-        self.gmm_ops = grouped_gemm.ops.gmm
-        
-        
-    @nvtx.annotate("RoutedExperts.forward", color="blue")
-    def forward(self, x: torch.Tensor, batch_size_per_expert: List) -> torch.Tensor:
-
-        assert isinstance(batch_size_per_expert, List), "only accept List for batch_size_per_expert"
-        batch_size_per_expert_tensor = torch.tensor(
-            batch_size_per_expert, 
-            device='cpu', 
-            dtype=torch.int64,  # NOTE: int64 required for grouped_gemm
-        )
-
-        if x.numel() == 0:
-            return x
-        
-        w_up_gate = self.w_up_gate
-        w_down = self.w_down
-        up_gate = self.gmm_ops(x, w_up_gate, batch_size_per_expert_tensor, trans_b=True)
-        up, gate = up_gate.chunk(2, dim=0)  
-        h = F.silu(up) * gate
-        
-        down = self.gmm_ops(h, w_down, batch_size_per_expert_tensor, trans_b=True) 
-            
-        return down
-    
-
-
-# @dataclass
-# class LayerNormConfigV2(Config):
-#     # NOTE: LayerNormConfigV2 is the same as LayerNormConfig, 
-#     # but with "size" as a required field (instead of being passed at build time).
-    
-#     """
-#     A config for conveniently building any one of the different layer norm classes.
-
-#     See the :class:`LayerNorm` subclasses to learn which fields are valid for each implementation.
-#     """
-#     size: int
-#     name: LayerNormType
-#     """
-#     The name of the implementation.
-#     """
-#     eps: Optional[float] = None
-#     elementwise_affine: Optional[bool] = None
-#     bias: Optional[bool] = None
-#     full_precision: Optional[bool] = None
-#     dtype: Optional[DType] = None
-
-#     def num_params(self) -> int:
-#         """
-#         The number of parameters in the module once built.
-
-#         :param size: The size of the input along the dimension to be normalized.
-#         """
-#         elementwise_affine = (
-#             self.elementwise_affine
-#             if self.elementwise_affine is not None
-#             else self.name != LayerNormType.l2_norm
-#         )
-#         bias = self.bias if self.bias is not None else self.name != LayerNormType.l2_norm
-#         ln_params = 0
-#         if elementwise_affine:
-#             ln_params += self.size
-#             if bias:
-#                 ln_params += self.size
-#         return ln_params
-
-#     def build(self, init_device: str = "cpu") -> "LayerNorm":
-#         """
-#         Construct the corresponding LayerNorm class.
-
-#         :param size: The size of the input along the dimension to be normalized.
-#         :param init_device: The device initialize the parameters on, e.g. "cpu", "meta".
-#         """
-#         kwargs = self.as_dict(exclude_none=True)
-#         kwargs.pop("name")
-#         if (dtype := kwargs.pop("dtype", None)) is not None:
-#             kwargs.update(dtype=dtype.as_pt())
-
-#         try:
-#             if self.name == LayerNormType.default:
-#                 return LayerNorm(init_device=init_device, **kwargs)
-#             elif self.name == LayerNormType.rms:
-#                 return RMSNorm(init_device=init_device, **kwargs)
-#             elif self.name == LayerNormType.fused_rms:
-#                 return FusedRMSNorm(init_device=init_device, **kwargs)
-#             elif self.name == LayerNormType.l2_norm:
-#                 return L2Norm(**kwargs)
-#             else:
-#                 raise NotImplementedError(self.name)
-#         except TypeError as e:
-#             raise OLMoConfigurationError(
-#                 f"invalid options for '{self.name}' {self.__class__.__name__}, {e}"
-#             ) from e
-                 
-
-
-@dataclass
-class MoERouterConfigV2(Config):
-    """
-    A configuration class for easily building any of the different MoE router modules.
-    """
-
-    d_model: int
-    
-    num_experts: int
-
-    top_k: int
-    jitter_eps: Optional[float] = None
-    normalize_expert_weights: Optional[float] = None
-    uniform_expert_assignment: bool = False
-    bias_gamma: Optional[float] = None
-    gating_function: MoERouterGatingFunction = MoERouterGatingFunction.softmax
-    dtype: Optional[DType] = None
-    record_routing_batch_size: bool = False
-    lb_loss_weight: Optional[float] = None
-    lb_loss_granularity: MoELoadBalancingLossGranularity = MoELoadBalancingLossGranularity.local_batch
-    z_loss_weight: Optional[float] = None
-    orth_loss_weight: Optional[float] = None
-    record_routing_batch_size: bool = False
-    
-    def num_params(self) -> int:
-        """
-        The number of params that the module will have once built.
-
-        :param d_model: The model dimensionality.
-        """
-        num_params = 0
-
-        num_params += self.d_model * self.num_experts
-
-        return num_params
-
     def build(
         self,
-        lb_loss_weight: Optional[float] = None,
-        lb_loss_granularity: MoELoadBalancingLossGranularity = MoELoadBalancingLossGranularity.local_batch,
-        z_loss_weight: Optional[float] = None,
-        orth_loss_weight: Optional[float] = None,
-        dtype: Optional[torch.dtype] = None,
+        *,
+        d_model: int,
+        block_idx: int,
+        n_layers: int,
         init_device: str = "cpu",
-    ) -> "MoERouterV2":
-        """
-        Build the corresponding MoE router module.
+        cache: Optional[BufferCache] = None,
+    ) -> olmo_core.nn.transformer.block.TransformerBlockBase:
+        assert self.feed_forward is None and self.feed_forward_moe is None, "MoEFusedV2TransformerBlock does not support `feed_forward` or `feed_forward_moe` (use TransformerBlockConfig instead). Set `shared_experts` and `routed_experts` instead."
 
-        :param d_model: The model dimensionality.
-        :param num_experts: The number of experts.
-        :param init_device: The device initialize the parameters on, e.g. "cpu", "meta".
-        """
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         kwargs.pop("name")
         kwargs.update(
+            d_model=d_model,
+            block_idx=block_idx,
+            n_layers=n_layers,
             init_device=init_device,
-            lb_loss_weight=lb_loss_weight,
-            lb_loss_granularity=lb_loss_granularity,
-            z_loss_weight=z_loss_weight,
-            orth_loss_weight=orth_loss_weight,
+            cache=cache,
         )
-        if self.dtype is not None:
-            kwargs["dtype"] = self.dtype.as_pt()
-        elif dtype is not None:
-            kwargs["dtype"] = dtype
-
-        return MoERouterV2(**kwargs)
-        
 
 
-class MoEFusedV2TransformerBlock(TransformerBlockBase):
+        if self.name == TransformerBlockType.moe_fused_v2:
+            return MoEFusedV2TransformerBlock(**kwargs)
+        else:
+            raise NotImplementedError(self.name)
+
+
+    def num_params(self, d_model: int) -> int:
+        block_params = 0
+
+        block_params += self.attention.num_params(d_model)
+        if self.attention_norm is not None:
+            block_params += self.attention_norm.num_params(d_model)
+        if self.shared_experts is not None:
+            block_params += self.shared_experts.num_params()
+        if self.routed_experts is not None:
+            block_params += self.routed_experts.num_params()
+        if self.routed_experts_router is not None:
+            block_params += self.routed_experts_router.num_params()
+        if self.shared_experts_router is not None:
+            block_params += self.shared_experts_router.num_params()
+        if self.feed_forward_norm is not None:
+            block_params += self.feed_forward_norm.num_params(d_model)
+
+        return block_params
+
+    def num_active_params(self, d_model: int) -> int:
+        block_params = 0
+
+        block_params += self.attention.num_params(d_model)
+        if self.attention_norm is not None:
+            block_params += self.attention_norm.num_params(d_model)
+        if self.shared_experts is not None:
+            block_params += self.shared_experts.num_params()
+        if self.routed_experts is not None:
+            assert self.routed_experts_router is not None, "routed_experts must have a router"
+            block_params += self.routed_experts.num_active_params(self.routed_experts_router.top_k)
+        if self.routed_experts_router is not None:
+            block_params += self.routed_experts_router.num_params()
+        if self.shared_experts_router is not None:
+            block_params += self.shared_experts_router.num_params()
+        if self.feed_forward_norm is not None:
+            block_params += self.feed_forward_norm.num_params(d_model)
+
+        return block_params
+
+
+class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBase):
     
     def __init__(
         self,
@@ -423,11 +167,10 @@ class MoEFusedV2TransformerBlock(TransformerBlockBase):
         self.attention_norm = attention_norm.build(d_model, init_device=init_device)
 
             
-        self.routed_experts = routed_experts.build()
-        self.shared_experts = shared_experts.build()
-        self.routed_experts_router = routed_experts_router.build()
-        self.shared_experts_router = shared_experts_router.build()
-        
+        self.routed_experts = routed_experts.build(init_device=init_device)
+        self.shared_experts = shared_experts.build(init_device=init_device)
+        self.routed_experts_router = routed_experts_router.build(init_device=init_device)
+        self.shared_experts_router = shared_experts_router.build(init_device=init_device)
 
         self.feed_forward_norm = feed_forward_norm.build(d_model, init_device=init_device)
         
@@ -561,7 +304,6 @@ class MoEFusedV2TransformerBlock(TransformerBlockBase):
         local_x_global_expert_indices = get_local_tensor(local_x_global_routed_expert_indices).flatten()
 
 
-        assert self.shared_mlp is None
         
         
         ######################################################################

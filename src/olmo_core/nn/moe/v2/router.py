@@ -32,6 +32,76 @@ import nvtx
 if TYPE_CHECKING:
     from olmo_core.train.common import ReduceType
     
+    
+
+@dataclass
+class MoERouterConfigV2(Config):
+    """
+    A configuration class for easily building any of the different MoE router modules.
+    """
+
+    d_model: int
+    
+    num_experts: int
+
+    top_k: int
+    jitter_eps: Optional[float] = None
+    normalize_expert_weights: Optional[float] = None
+    uniform_expert_assignment: bool = False
+    bias_gamma: Optional[float] = None
+    gating_function: MoERouterGatingFunction = MoERouterGatingFunction.softmax
+    dtype: Optional[DType] = None
+    record_routing_batch_size: bool = False
+    lb_loss_weight: Optional[float] = None
+    lb_loss_granularity: MoELoadBalancingLossGranularity = MoELoadBalancingLossGranularity.local_batch
+    z_loss_weight: Optional[float] = None
+    orth_loss_weight: Optional[float] = None
+    record_routing_batch_size: bool = False
+    
+    def num_params(self) -> int:
+        """
+        The number of params that the module will have once built.
+
+        :param d_model: The model dimensionality.
+        """
+        num_params = 0
+
+        num_params += self.d_model * self.num_experts
+
+        return num_params
+
+    def build(
+        self,
+        lb_loss_weight: Optional[float] = None,
+        lb_loss_granularity: MoELoadBalancingLossGranularity = MoELoadBalancingLossGranularity.local_batch,
+        z_loss_weight: Optional[float] = None,
+        orth_loss_weight: Optional[float] = None,
+        dtype: Optional[torch.dtype] = None,
+        init_device: str = "cpu",
+    ) -> "MoERouterV2":
+        """
+        Build the corresponding MoE router module.
+
+        :param d_model: The model dimensionality.
+        :param num_experts: The number of experts.
+        :param init_device: The device initialize the parameters on, e.g. "cpu", "meta".
+        """
+        kwargs = self.as_dict(exclude_none=True, recurse=False)
+        # kwargs.pop("name")
+        kwargs.update(
+            init_device=init_device,
+            lb_loss_weight=lb_loss_weight,
+            lb_loss_granularity=lb_loss_granularity,
+            z_loss_weight=z_loss_weight,
+            orth_loss_weight=orth_loss_weight,
+        )
+        if self.dtype is not None:
+            kwargs["dtype"] = self.dtype.as_pt()
+        elif dtype is not None:
+            kwargs["dtype"] = dtype
+
+        return MoERouterV2(**kwargs)
+        
 class MoERouterV2(nn.Module):
     """
     A base class for MoE router modules.
@@ -97,7 +167,7 @@ class MoERouterV2(nn.Module):
         # NOTE: we don't use buffers for t hese because we don't want FSDP to manage them, and we
         # don't use a BufferCache because `torch.compile()` doesn't handle that well when we're modifying
         # values in the cache.
-        self._batch_size_per_routed_expert = hide_from_torch(
+        self._batch_size_per_expert = hide_from_torch(
             torch.zeros(self.num_experts, device=init_device)
         )
         self._score_bias_batch_size_per_expert: Optional[_HiddenTensor] = None
@@ -111,7 +181,7 @@ class MoERouterV2(nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self):
-        self._batch_size_per_routed_expert = hide_from_torch(
+        self._batch_size_per_expert = hide_from_torch(
             torch.zeros(self.num_experts, device=self.device)
         )
 
@@ -139,7 +209,7 @@ class MoERouterV2(nn.Module):
         return self.weight.device if self.weight.device.type != "meta" else torch.device("cpu")
 
     def extra_repr(self):
-        return f"in_features={self.d_model}, num_experts=({self.num_routed_experts} routed + {self.num_shared_experts} shared)"
+        return f"in_features={self.d_model}, num_experts={self.num_experts}"
 
     @property
     def score_bias_batch_size_per_expert(self) -> Optional[torch.Tensor]:

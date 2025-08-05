@@ -65,6 +65,7 @@ NUM_EXPERTS = 64
 TOP_K = 4
 D_MODEL=2048
 MOE_HIDDEN_SIZE = 1024 + 1024 + 512
+NUM_SHARED_EXPERTS = 2  # Number of shared experts in the shared MLP
 SHARED_MLP_HIDDEN_SIZE = 2560  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
 MICRO_BSZ = 2
@@ -83,6 +84,11 @@ from olmo_core.nn.transformer import TransformerBlockConfig
 
 # from olmo_core.nn.moe.v2.block import LayerNormConfigV2
 def build_model_config(common: CommonComponents) -> TransformerConfig:
+    from olmo_core.nn.moe.v2.block import (
+        MoEFusedV2TransformerBlockConfig
+    )
+    from olmo_core.nn.moe.v2.shared_experts import SharedExpertsConfig
+    from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
     
     d_model = D_MODEL
     dtype = DType.float32
@@ -97,7 +103,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         d_model=d_model,
         vocab_size=common.tokenizer.padded_vocab_size(),
         n_layers=NUM_LAYERS,
-        block=TransformerBlockConfig(
+        block=MoEFusedV2TransformerBlockConfig(
             name=TransformerBlockType.moe_fused_v2,
             attention=AttentionConfig(
                 name=AttentionType.default,
@@ -110,20 +116,45 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                 use_head_qk_norm=True,
                 dtype=dtype,
             ),
-            feed_forward=FeedForwardConfig(hidden_size=SHARED_MLP_HIDDEN_SIZE, bias=False),
-            feed_forward_moe=MoEConfig(
-                name=MoEType.dropless,
-                num_experts=NUM_EXPERTS,
+            attention_norm=layer_norm,
+            routed_experts=RoutedExpertsConfig(
+                d_model=d_model,
                 hidden_size=MOE_HIDDEN_SIZE,
-                # capacity_factor=1.0,
-                router=MoERouterConfig(top_k=TOP_K, gating_function=MoERouterGatingFunction.sigmoid, uniform_expert_assignment=False),
+                num_experts=NUM_EXPERTS,
+                bias=False,
+                dtype=dtype,
+            ),
+            routed_experts_router=MoERouterConfigV2(
+                d_model=d_model,
+                num_experts=NUM_EXPERTS,
+                top_k=TOP_K,
+                gating_function=MoERouterGatingFunction.sigmoid,
+                uniform_expert_assignment=False,
                 lb_loss_weight=0.005,
                 z_loss_weight=None,
                 lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
-                scale_loss_by_num_layers=False,
+                dtype=dtype,
+            ),
+            shared_experts=SharedExpertsConfig(
+                d_model=d_model,
+                hidden_size=SHARED_MLP_HIDDEN_SIZE,
+                num_experts=NUM_SHARED_EXPERTS,
+                bias=False,
+                dtype=dtype
+            ),
+            
+            shared_experts_router=MoERouterConfigV2(
+                d_model=d_model,
+                num_experts=NUM_SHARED_EXPERTS,
+                top_k=NUM_SHARED_EXPERTS, # all experts are used
+                gating_function=MoERouterGatingFunction.sigmoid,
+                uniform_expert_assignment=False,
+                lb_loss_weight=None,
+                z_loss_weight=None,
+                lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
+                dtype=dtype,
             ),
             feed_forward_norm=layer_norm,
-            attention_norm=layer_norm,
         ),
         lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype),
         name=TransformerType.moe,
@@ -144,12 +175,24 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     
     # First block will be a regular transformer block (no MoE component).
     config.block_overrides = {
-        0: replace(
-            config.block, 
-            name=TransformerBlockType.reordered_norm, 
-            feed_forward_moe=None,
-            feed_forward=FeedForwardConfig(hidden_size=( TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE), bias=False),
-        ),
+        0: TransformerBlockConfig(
+                name=TransformerBlockType.reordered_norm,
+                attention=AttentionConfig(
+                    name=AttentionType.default,
+                    n_heads=16,
+                    n_kv_heads=4,
+                    bias=False,
+                    rope=RoPEConfig(name=RoPEType.default, theta=500_000, scaling=None, full_precision=True),
+                    qk_norm=layer_norm ,
+                    use_flash=True,
+                    use_head_qk_norm=True,
+                    dtype=dtype,
+                ),
+                feed_forward_moe=None,
+                feed_forward=FeedForwardConfig(hidden_size=( TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE), bias=False),
+                attention_norm=layer_norm,
+                feed_forward_norm=layer_norm,
+            ) 
     }
 
     return config
@@ -273,8 +316,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
 
 def finalize_config(config: ExperimentConfig):
-    config.dataset.mix = 'OLMo-mix-0625' # new dataset mix
-    config.dataset.mix_base_dir = "gs://ai2-llm" # only avail on Google Cloud
+    # config.dataset.mix = 'OLMo-mix-0625' # new dataset mix
+    # config.dataset.mix_base_dir = "gs://ai2-llm" # only avail on Google Cloud
     
     # add active & total params to the wandb name
     total_params_in_B = config.model.num_params/1000/1000/1000
