@@ -1330,11 +1330,23 @@ class BLTTransformer(Transformer):
 
 
 class BLTDistillTransformer(BLTTransformer):
-    def __init__(self, *args, teacher: Transformer, share_blocks: bool, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, *args, teacher: Transformer, share_blocks: bool, use_teacher_embs_with_vocab_size: Optional[int], dtype, init_device, **kwargs):
+        super().__init__(*args, dtype=dtype, **kwargs)
 
         self.teacher = teacher
         self.share_blocks = share_blocks
+        # if not None, keep & use the teacher embeddings (for distilling from stage1 local decoder transfer)
+        self.use_teacher_embs_with_vocab_size = use_teacher_embs_with_vocab_size
+
+        if self.use_teacher_embs_with_vocab_size is not None:
+            self.teacher_embeddings = nn.Embedding(
+                self.use_teacher_embs_with_vocab_size,
+                self.teacher.d_model,
+                dtype=dtype,
+                device=init_device,
+            )
+        else:
+            self.teacher_embeddings = None
 
         if self.share_blocks:
             self.teacher.blocks.clear()
@@ -1390,7 +1402,7 @@ class BLTDistillTransformer(BLTTransformer):
         :returns: The logits if ``labels`` is ``None`` or the losses if ``labels`` is not ``None``.
         """
         if isinstance(self.teacher, BLTTransformer):
-            input_ids, labels, block_kwargs, lm_head_kwargs, local_encoder_kwargs, local_decoder_kwargs, _ = self.teacher._prepare_inputs(
+            input_ids, labels, block_kwargs, lm_head_kwargs, local_encoder_kwargs, local_decoder_kwargs, extra_kwargs = self.teacher._prepare_inputs(
                 input_ids,
                 labels,
                 ignore_index=ignore_index,
@@ -1411,8 +1423,13 @@ class BLTDistillTransformer(BLTTransformer):
                 blocks = self.blocks
             else:
                 blocks = self.teacher.blocks
-
-            h_patch_global = h_patch[:, 1:] if zero_bos else h_patch
+            
+            if self.teacher_embeddings is not None:
+                h_patch_global = self.teacher_embeddings(extra_kwargs["original_input_ids"][:, :-1])
+            elif zero_bos:
+                h_patch_global = h_patch[:, 1:]
+            else:
+                h_patch_global = h_patch
 
             # Run each block.
             for block in blocks.values():
@@ -1886,7 +1903,7 @@ class BLTDistillTransformer(BLTTransformer):
                 local_decoder_loss = (local_decoder_loss * byte_mask).mean()
                 metrics["blt/kl_local_decoder_loss"] = local_decoder_loss / byte_mask.float().mean()
                 metrics["blt/kl_local_decoder_teacher_mean_p"] = (
-                    (torch.exp(teacher_main_path_logprobs) * byte_mask[:, 1:].float()).sum() / byte_mask[:, 1:].float().mean()
+                    (torch.exp(teacher_main_path_logprobs) * byte_mask[:, 1:].float()).mean() / byte_mask[:, 1:].float().mean()
                 )
                 metrics["blt/kl_local_decoder_acc"] = (
                     ((logprobs.argmax(-1) == teacher_logprobs.argmax(-1)) * byte_mask).float().mean()

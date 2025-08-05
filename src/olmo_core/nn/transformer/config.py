@@ -285,6 +285,7 @@ class TransformerConfig(Config):
     # teacher config for distillation
     teacher_config: "TransformerConfig | None" = None
     share_blocks_between_teacher_and_student: bool = False
+    use_teacher_embs_with_vocab_size: Optional[int] = None
 
     def build(
         self,
@@ -360,6 +361,7 @@ class TransformerConfig(Config):
                 kwargs = {
                     "teacher": self.teacher_config.build(init_device=init_device),
                     "share_blocks": self.share_blocks_between_teacher_and_student,
+                    "use_teacher_embs_with_vocab_size": self.use_teacher_embs_with_vocab_size,
                 }
             else:
                 cls = BLTTransformer

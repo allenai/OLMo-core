@@ -76,7 +76,7 @@ TEACHER_MODE = os.environ.get("TEACHER_MODE", None)
 GLOBAL_MODEL_LEARNING_RATE = os.environ.get("GLOBAL_MODEL_LEARNING_RATE", "")
 LOCAL_MODEL_STYLE = os.environ.get("LOCAL_MODEL_STYLE", "hnet")
 DATA_SOURCE = os.environ.get("DATA_SOURCE", "dclm")
-ADD_HASH_EMBEDDINGS = os.environ.get("ADD_HASH_EMBEDDINGS", "").lower() in {"1", "true", "yes"}
+ADD_HASH_EMBEDDINGS = os.environ.get("ADD_HASH_EMBEDDINGS", "1").lower() in {"1", "true", "yes"}
 OLMO_ARCH = os.environ.get("OLMO_ARCH", "olmo2_1B_v2")
 
 if DATA_SOURCE == "dclm":
@@ -236,6 +236,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         local_decoder=local_decoder,
         teacher_config=teacher_model_config,
         share_blocks_between_teacher_and_student=False,
+        use_teacher_embs_with_vocab_size=subword_tokenizer_config.padded_vocab_size() if TEACHER_MODE == "stage1" else None,
         add_boundary_predictor=True,
         freeze_params=["boundary_predictor.*"] # temporary
     )
@@ -413,6 +414,7 @@ def main(run_name: str, overrides: List[str]):
     if TEACHER_MODE == "stage1":
         prefixes_to_duplicate += ["local_encoder", "local_decoder", "boundary_predictor", "lm_head"]
 
+    key_mapping = {}
     extend_key_mapping = {}
 
     for prefix in prefixes_to_duplicate:
@@ -421,7 +423,10 @@ def main(run_name: str, overrides: List[str]):
             for key in model.state_dict().keys() if key.startswith(prefix)
         })
 
-    incompatible_keys = load_model_and_optim_state(STAGE1_CKPT_PATH, model, extend_key_mapping=extend_key_mapping)
+    if config.model.use_teacher_embs_with_vocab_size is not None:
+        key_mapping["teacher_embeddings.weight"] = "teacher.embeddings.weight"
+
+    incompatible_keys = load_model_and_optim_state(STAGE1_CKPT_PATH, model, key_mapping=key_mapping, extend_key_mapping=extend_key_mapping)
 
     if len(incompatible_keys.unexpected_keys) > 0:
         raise ValueError(f"Unexpected keys when loading checkpoint: {incompatible_keys.unexpected_keys} (assume we use all teacher weights)")
