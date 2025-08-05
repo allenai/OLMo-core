@@ -28,11 +28,8 @@ def main():
         is_master=(args.rank == 0),
     )
 
-    # Get our own host id
     if args.debug:
-        import socket
-
-        host_id = f"{socket.gethostname()}_{args.rank}"
+        host_id = "Hello"
     else:
         try:
             response = requests.get(
@@ -41,6 +38,9 @@ def main():
             )
             assert response.status_code == 200
             host_id = response.text.strip()
+            # block = host_id.strip("/").split("/")[0]
+            # sub_block = host_id.strip("/").split("/")[1]
+            # machine = host_id.strip("/").split("/")[2]
         except requests.exceptions.ConnectionError as e:
             # Unwrap the exception
             e = e.args[0]
@@ -56,28 +56,20 @@ def main():
     # Find the index of our host id
     store.set(f"node_{args.rank}_hostid", host_id)
     store.wait([f"node_{i}_hostid" for i in range(args.world_size)])
-    all_host_ids = [store.get(f"node_{i}_hostid").decode("UTF-8") for i in range(args.world_size)]
-    assert len(set(all_host_ids)) == len(all_host_ids)
-    assert host_id in all_host_ids
+    all_hostids = [store.get(f"node_{i}_hostid").decode("UTF-8") for i in range(args.world_size)]
+    assert host_id in all_hostids
 
-    # hostid is of the form "/block/subblock/machine", extract each component from all ranks.
-    all_blocks = [hostid.strip("/").split("/")[0] for hostid in all_host_ids]
-    all_subblocks = [hostid.strip("/").split("/")[1] for hostid in all_host_ids]
-    all_machines = [hostid.strip("/").split("/")[2] for hostid in all_host_ids]
+    all_blocks = [hostid.strip("/").split("/")[0] for hostid in all_hostids]
+    all_subblocks = [hostid.strip("/").split("/")[1] for hostid in all_hostids]
+    all_machines = [hostid.strip("/").split("/")[2] for hostid in all_hostids]
 
     rank0_block = all_blocks[0]
     rank0_subblock = all_subblocks[0]
     rank0_machine = all_machines[0]
 
+    # Rank 0 needs to remain rank 0.
     ranks = list(range(args.world_size))
-    # We want that 1) rank 0 remains rank 0, 2) blocks are grouped up, subblocks are grouped
-    # up within blocks, and machines are grouped up within subblocks.
-    # To achieve this, sort ranks so that the rank 0 block, subblock and machine are first
-    # by sorting on making its block, subblock and machine falsey in the sorting key.
-    # After this separation, sort so that blocks are together, subblocks are together
-    # within blocks, and machines are together within subblocks.
-    # Lastly, if 2 ranks are on the same block + subblock + machine, make the lowest
-    # rank first.
+    # Sort so that rank 0 blocks come first, then so that blocks are together, lastly so that shorter ranks are first
     ranks.sort(
         key=lambda rank: (
             all_blocks[rank] != rank0_block,
@@ -86,7 +78,7 @@ def main():
             all_blocks[rank],
             all_subblocks[rank],
             all_machines[rank],
-            rank,
+            rank
         )
     )
     assert ranks[0] == 0
@@ -94,7 +86,7 @@ def main():
     if args.verbose and args.rank == 0:
         for rank in ranks:
             print(
-                f"Initial rank: {rank}, Final rank: {ranks.index(rank)}, Block: {all_blocks[rank]}",
+                f"Initial rank: {rank}, Final rank: {ranks.index(rank)}, Hostids: {all_hostids[rank]}",
                 file=sys.stderr,
             )
     print(ranks.index(args.rank))

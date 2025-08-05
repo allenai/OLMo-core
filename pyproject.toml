@@ -46,6 +46,7 @@ dev = [
     "build",
     "boto3",
     "google-cloud-storage",
+    "google-cloud-compute",
     "Sphinx>=6.0,<9.0",
     "furo==2024.8.6",
     "myst-parser>=1.0",
