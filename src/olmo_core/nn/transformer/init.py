@@ -15,6 +15,7 @@ from ..moe import DroplessMoEMLP, MoEBase, MoELinearRouter, MoEMLP
 def _apply_init(init_fun, x: torch.Tensor, *args, **kwargs):
     if not isinstance(x, DTensor):
         init_fun(x, *args, **kwargs)
+        return
 
     # Initialize full version of x locally, then apply init to that.
     full_x = torch.zeros(x.shape, dtype=x.dtype, device=x.device)
