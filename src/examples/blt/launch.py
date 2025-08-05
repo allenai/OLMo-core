@@ -35,6 +35,7 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
         "BYTE_EXPANSION_FACTOR",
         "LOCAL_MODEL_STYLE",
         "ADD_HASH_EMBEDDINGS",
+        "TEACHER_MODE",
         "GLOBAL_MODEL_LEARNING_RATE",
     ]:
         if transparent_env_var in os.environ:

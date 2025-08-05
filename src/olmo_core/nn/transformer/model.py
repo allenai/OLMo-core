@@ -1873,7 +1873,7 @@ class BLTDistillTransformer(BLTTransformer):
                 local_decoder_loss = (local_decoder_loss * byte_mask).mean()
                 metrics["blt/kl_local_decoder_loss"] = local_decoder_loss / byte_mask.float().mean()
                 metrics["blt/kl_local_decoder_teacher_mean_p"] = (
-                    (torch.exp(teacher_main_path_logprobs) * byte_mask.float()).sum() / byte_mask.float().mean()
+                    (torch.exp(teacher_main_path_logprobs) * byte_mask[:, 1:].float()).sum() / byte_mask[:, 1:].float().mean()
                 )
                 metrics["blt/kl_local_decoder_acc"] = (
                     ((logprobs.argmax(-1) == teacher_logprobs.argmax(-1)) * byte_mask).float().mean()
