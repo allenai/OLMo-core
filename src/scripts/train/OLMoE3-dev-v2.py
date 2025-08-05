@@ -20,7 +20,9 @@ from olmo_core.nn.moe import (
     MoERouterGatingFunction,
     MoEType,
 )
-from olmo_core.nn.moe.v2.block import SharedExpertsConfig, RoutedExpertsConfig, LayerNormConfigV2, MoERouterConfigV2
+from olmo_core.nn.moe.v2.block import SharedExpertsConfig, RoutedExpertsConfig, MoERouterConfigV2
+from typing import cast
+from olmo_core.train.callbacks import WandBCallback
 
 
 from olmo_core.nn.transformer import (
@@ -76,16 +78,16 @@ TAG=f'dev'
 from olmo_core.nn.lm_head import LMHeadConfig, LMHeadType
 from olmo_core.nn.rope import RoPEConfig, RoPEScalingConfig, RoPEType
 from olmo_core.nn.attention import AttentionConfig, AttentionType
-from olmo_core.nn.layer_norm import LayerNormType
+from olmo_core.nn.layer_norm import LayerNormType, LayerNormConfig
+from olmo_core.nn.transformer import TransformerBlockConfig
 
-from olmo_core.nn.moe.v2.block import LayerNormConfigV2
+# from olmo_core.nn.moe.v2.block import LayerNormConfigV2
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     
     d_model = D_MODEL
     dtype = DType.float32
     
-    layer_norm = LayerNormConfigV2(
-        size=d_model,
+    layer_norm = LayerNormConfig(
         name=LayerNormType.rms,
         eps=1e-6,
         bias=False,
@@ -108,29 +110,24 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                 use_head_qk_norm=True,
                 dtype=dtype,
             ),
-            feed_forward=feed_forward,
-            feed_forward_moe=feed_forward_moe,
+            feed_forward=FeedForwardConfig(hidden_size=SHARED_MLP_HIDDEN_SIZE, bias=False),
+            feed_forward_moe=MoEConfig(
+                name=MoEType.dropless,
+                num_experts=NUM_EXPERTS,
+                hidden_size=MOE_HIDDEN_SIZE,
+                # capacity_factor=1.0,
+                router=MoERouterConfig(top_k=TOP_K, gating_function=MoERouterGatingFunction.sigmoid, uniform_expert_assignment=False),
+                lb_loss_weight=0.005,
+                z_loss_weight=None,
+                lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
+                scale_loss_by_num_layers=False,
+            ),
             feed_forward_norm=layer_norm,
             attention_norm=layer_norm,
         ),
         lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype),
-
         name=TransformerType.moe,
-        qk_norm=True,
 
-        # dropless
-        feed_forward_moe=MoEConfig(
-            name=MoEType.dropless,
-            num_experts=NUM_EXPERTS,
-            hidden_size=MOE_HIDDEN_SIZE,
-            # capacity_factor=1.0,
-            router=MoERouterConfig(top_k=TOP_K, gating_function=MoERouterGatingFunction.sigmoid, uniform_expert_assignment=False),
-            lb_loss_weight=0.005,
-            z_loss_weight=None,
-            lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
-            scale_loss_by_num_layers=False,
-        ),
-        feed_forward=FeedForwardConfig(hidden_size=SHARED_MLP_HIDDEN_SIZE, bias=False),
         init_std=0.01,
         dtype=dtype
     )
@@ -282,8 +279,11 @@ def finalize_config(config: ExperimentConfig):
     # add active & total params to the wandb name
     total_params_in_B = config.model.num_params/1000/1000/1000
     active_params_in_B = config.model.num_active_params/1000/1000/1000
-    config.trainer.callbacks['wandb'].name += f"_{active_params_in_B:.2f}@{total_params_in_B:.2f}B"  # print to 2 decimal places
-    config.trainer.callbacks['wandb'].name += f"_{TOP_K}K{NUM_EXPERTS}N"  # print to 2 decimal places
+
+    wandb_cb = cast(WandBCallback, config.trainer.callbacks['wandb'])
+    assert isinstance(wandb_cb.name, str), "WandB callback name must be initialized"
+    wandb_cb.name += f"_{active_params_in_B:.2f}@{total_params_in_B:.2f}B"
+    wandb_cb.name += f"_{TOP_K}K{NUM_EXPERTS}N"
     
 if __name__ == "__main__":
     main(

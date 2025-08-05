@@ -24,7 +24,7 @@ from ...attention import AttentionConfig, RingAttentionLoadBalancerType
 from ...buffer_cache import BufferCache
 from ...feed_forward import FeedForward, FeedForwardConfig
 from ...functional import l2_normalize
-from ...layer_norm import LayerNormConfig as LayerNormConfigV1
+from ...layer_norm import LayerNormConfig
 from ...layer_norm import LayerNormType, LayerNorm, RMSNorm, FusedRMSNorm, L2Norm
 
 from ...moe import MoEConfig, MoERouterType, MoERouterGatingFunction
@@ -179,6 +179,26 @@ class RoutedExpertsConfig(Config):
         
         return params
     
+    def num_active_params(self, top_k: int) -> int:
+        """
+        The number of params that the module will have once built, given the top_k experts.
+
+        :param top_k: The number of experts to use.
+        """
+        if top_k <= 0:
+            raise ValueError("top_k must be greater than 0")
+        if top_k > self.num_experts:
+            raise ValueError(f"top_k ({top_k}) cannot be greater than num_experts ({self.num_experts})")
+        
+        params = 3 * self.d_model * self.hidden_size # up, gate, down
+        if self.bias:
+            params += 2 * self.hidden_size # up and gate bias
+            params += self.d_model  # down bias
+
+        params *= top_k # for each expert
+        
+        return params
+    
 class RoutedExperts(nn.Module):
     def __init__(
         self,
@@ -232,73 +252,73 @@ class RoutedExperts(nn.Module):
     
 
 
-@dataclass
-class LayerNormConfigV2(Config):
-    # NOTE: LayerNormConfigV2 is the same as LayerNormConfig, 
-    # but with "size" as a required field (instead of being passed at build time).
+# @dataclass
+# class LayerNormConfigV2(Config):
+#     # NOTE: LayerNormConfigV2 is the same as LayerNormConfig, 
+#     # but with "size" as a required field (instead of being passed at build time).
     
-    """
-    A config for conveniently building any one of the different layer norm classes.
+#     """
+#     A config for conveniently building any one of the different layer norm classes.
 
-    See the :class:`LayerNorm` subclasses to learn which fields are valid for each implementation.
-    """
-    size: int
-    name: LayerNormType
-    """
-    The name of the implementation.
-    """
-    eps: Optional[float] = None
-    elementwise_affine: Optional[bool] = None
-    bias: Optional[bool] = None
-    full_precision: Optional[bool] = None
-    dtype: Optional[DType] = None
+#     See the :class:`LayerNorm` subclasses to learn which fields are valid for each implementation.
+#     """
+#     size: int
+#     name: LayerNormType
+#     """
+#     The name of the implementation.
+#     """
+#     eps: Optional[float] = None
+#     elementwise_affine: Optional[bool] = None
+#     bias: Optional[bool] = None
+#     full_precision: Optional[bool] = None
+#     dtype: Optional[DType] = None
 
-    def num_params(self) -> int:
-        """
-        The number of parameters in the module once built.
+#     def num_params(self) -> int:
+#         """
+#         The number of parameters in the module once built.
 
-        :param size: The size of the input along the dimension to be normalized.
-        """
-        elementwise_affine = (
-            self.elementwise_affine
-            if self.elementwise_affine is not None
-            else self.name != LayerNormType.l2_norm
-        )
-        bias = self.bias if self.bias is not None else self.name != LayerNormType.l2_norm
-        ln_params = 0
-        if elementwise_affine:
-            ln_params += self.size
-            if bias:
-                ln_params += self.size
-        return ln_params
+#         :param size: The size of the input along the dimension to be normalized.
+#         """
+#         elementwise_affine = (
+#             self.elementwise_affine
+#             if self.elementwise_affine is not None
+#             else self.name != LayerNormType.l2_norm
+#         )
+#         bias = self.bias if self.bias is not None else self.name != LayerNormType.l2_norm
+#         ln_params = 0
+#         if elementwise_affine:
+#             ln_params += self.size
+#             if bias:
+#                 ln_params += self.size
+#         return ln_params
 
-    def build(self, init_device: str = "cpu") -> "LayerNorm":
-        """
-        Construct the corresponding LayerNorm class.
+#     def build(self, init_device: str = "cpu") -> "LayerNorm":
+#         """
+#         Construct the corresponding LayerNorm class.
 
-        :param size: The size of the input along the dimension to be normalized.
-        :param init_device: The device initialize the parameters on, e.g. "cpu", "meta".
-        """
-        kwargs = self.as_dict(exclude_none=True)
-        kwargs.pop("name")
-        if (dtype := kwargs.pop("dtype", None)) is not None:
-            kwargs.update(dtype=dtype.as_pt())
+#         :param size: The size of the input along the dimension to be normalized.
+#         :param init_device: The device initialize the parameters on, e.g. "cpu", "meta".
+#         """
+#         kwargs = self.as_dict(exclude_none=True)
+#         kwargs.pop("name")
+#         if (dtype := kwargs.pop("dtype", None)) is not None:
+#             kwargs.update(dtype=dtype.as_pt())
 
-        try:
-            if self.name == LayerNormType.default:
-                return LayerNorm(init_device=init_device, **kwargs)
-            elif self.name == LayerNormType.rms:
-                return RMSNorm(init_device=init_device, **kwargs)
-            elif self.name == LayerNormType.fused_rms:
-                return FusedRMSNorm(init_device=init_device, **kwargs)
-            elif self.name == LayerNormType.l2_norm:
-                return L2Norm(**kwargs)
-            else:
-                raise NotImplementedError(self.name)
-        except TypeError as e:
-            raise OLMoConfigurationError(
-                f"invalid options for '{self.name}' {self.__class__.__name__}, {e}"
-            ) from e
+#         try:
+#             if self.name == LayerNormType.default:
+#                 return LayerNorm(init_device=init_device, **kwargs)
+#             elif self.name == LayerNormType.rms:
+#                 return RMSNorm(init_device=init_device, **kwargs)
+#             elif self.name == LayerNormType.fused_rms:
+#                 return FusedRMSNorm(init_device=init_device, **kwargs)
+#             elif self.name == LayerNormType.l2_norm:
+#                 return L2Norm(**kwargs)
+#             else:
+#                 raise NotImplementedError(self.name)
+#         except TypeError as e:
+#             raise OLMoConfigurationError(
+#                 f"invalid options for '{self.name}' {self.__class__.__name__}, {e}"
+#             ) from e
                  
 
 
@@ -326,7 +346,7 @@ class MoERouterConfigV2(Config):
     orth_loss_weight: Optional[float] = None
     record_routing_batch_size: bool = False
     
-    def num_params(self, d_model: int, num_experts: int) -> int:
+    def num_params(self) -> int:
         """
         The number of params that the module will have once built.
 
@@ -334,7 +354,7 @@ class MoERouterConfigV2(Config):
         """
         num_params = 0
 
-        num_params += d_model * num_experts
+        num_params += self.d_model * self.num_experts
 
         return num_params
 
@@ -374,21 +394,23 @@ class MoERouterConfigV2(Config):
 
 class MoEFusedV2TransformerBlock(TransformerBlockBase):
     
-    def __init__(        self,
+    def __init__(
+        self,
         *,
         d_model: int,
         block_idx: int,
         n_layers: int,
         attention: AttentionConfig,
-        attention_norm: LayerNormConfigV2,
-        router: MoERouterConfigV2,
+        attention_norm: LayerNormConfig,
+        routed_experts_router: MoERouterConfigV2,
+        shared_experts_router: MoERouterConfigV2,
         shared_experts: SharedExpertsConfig,
         routed_experts: RoutedExpertsConfig,
-        feed_forward_norm: LayerNormConfigV2,
+        feed_forward_norm: LayerNormConfig,
         dropout: float = 0.0,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
-        ):
+    ):
         super().__init__(n_layers=n_layers)
         assert dropout == 0.0, "MoEFusedV2TransformerBlock does not support dropout"
         self.d_model = d_model
@@ -398,18 +420,16 @@ class MoEFusedV2TransformerBlock(TransformerBlockBase):
         self.attention = attention.build(
             d_model, layer_idx=block_idx, n_layers=n_layers, init_device=init_device, cache=cache
         )
-        self.attention_norm = attention_norm.build()
+        self.attention_norm = attention_norm.build(d_model, init_device=init_device)
 
             
         self.routed_experts = routed_experts.build()
         self.shared_experts = shared_experts.build()
-        self.routed_experts_router = router.build()
-        self.shared_experts_router = router.build()
+        self.routed_experts_router = routed_experts_router.build()
+        self.shared_experts_router = shared_experts_router.build()
         
 
-        self.feed_forward_norm = feed_forward_norm.build()
-        
-        self.feed_forward_moe_norm = feed_forward_norm.build()
+        self.feed_forward_norm = feed_forward_norm.build(d_model, init_device=init_device)
         
         self.ep_pg = None
         self._ep_enabled = False

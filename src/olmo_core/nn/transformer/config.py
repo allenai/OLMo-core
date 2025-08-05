@@ -128,6 +128,7 @@ class TransformerBlockType(StrEnum):
     moe_fused_v2 = "moe_fused_v2"
 
 
+    
 @dataclass
 class TransformerBlockConfig(Config):
     """
@@ -320,6 +321,119 @@ class TransformerBlockConfig(Config):
     def flops_per_token(self, d_model, seq_len: int) -> int:
         return self.flops_per_seq(d_model, seq_len) // seq_len
 
+
+from ..moe.v2.block import (
+    MoERouterConfigV2,
+    SharedExpertsConfig,
+    RoutedExpertsConfig
+)
+@dataclass
+class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
+    
+    router: Optional[MoERouterConfigV2] = None
+    
+    shared_experts: Optional[SharedExpertsConfig] = None
+    
+    routed_experts: Optional[RoutedExpertsConfig] = None
+    
+    def __init__(
+        self,
+        *,
+        attention: AttentionConfig,
+        attention_norm: Optional[LayerNormConfig],
+        feed_forward_norm: Optional[LayerNormConfig],
+        routed_experts_router: Optional[MoERouterConfigV2],
+        shared_experts_router: Optional[MoERouterConfigV2],
+        routed_experts: Optional[RoutedExpertsConfig] ,
+        shared_experts: Optional[SharedExpertsConfig] ,
+        name: TransformerBlockType = TransformerBlockType.moe_fused_v2,
+        dropout: Optional[float] = None,
+    ):
+        super().__init__(
+            attention=attention,
+            attention_norm=attention_norm,
+            feed_forward_norm=feed_forward_norm,
+            feed_forward=None,
+            feed_forward_moe=None,
+            name=name,
+            dropout=dropout
+        )
+
+        self.routed_experts_router = routed_experts_router
+        self.shared_experts_router = shared_experts_router
+        self.routed_experts = routed_experts
+        self.shared_experts = shared_experts
+        
+    def build(
+        self,
+        *,
+        d_model: int,
+        block_idx: int,
+        n_layers: int,
+        init_device: str = "cpu",
+        cache: Optional[BufferCache] = None,
+    ) -> "TransformerBlockBase":
+        assert self.feed_forward is None and self.feed_forward_moe is None, "MoEFusedV2TransformerBlock does not support `feed_forward` or `feed_forward_moe` (use TransformerBlockConfig instead). Set `shared_experts` and `routed_experts` instead."
+
+        kwargs = self.as_dict(exclude_none=True, recurse=False)
+        kwargs.pop("name")
+        kwargs.update(
+            d_model=d_model,
+            block_idx=block_idx,
+            n_layers=n_layers,
+            init_device=init_device,
+            cache=cache,
+        )
+
+        try:
+            if self.name == TransformerBlockType.moe_fused_v2:
+                from ..moe.v2.block import MoEFusedV2TransformerBlock
+                return MoEFusedV2TransformerBlock(**kwargs)
+            else:
+                raise NotImplementedError(self.name)
+        except TypeError as e:
+            raise OLMoConfigurationError(
+                f"invalid options for '{self.name}' {self.__class__.__name__}, {e}"
+            ) from e
+
+    def num_params(self, d_model: int) -> int:
+        block_params = 0
+
+        block_params += self.attention.num_params(d_model)
+        if self.attention_norm is not None:
+            block_params += self.attention_norm.num_params(d_model)
+        if self.shared_experts is not None:
+            block_params += self.shared_experts.num_params()
+        if self.routed_experts is not None:
+            block_params += self.routed_experts.num_params()
+        if self.routed_experts_router is not None:
+            block_params += self.routed_experts_router.num_params()
+        if self.shared_experts_router is not None:
+            block_params += self.shared_experts_router.num_params()
+        if self.feed_forward_norm is not None:
+            block_params += self.feed_forward_norm.num_params(d_model)
+
+        return block_params
+
+    def num_active_params(self, d_model: int) -> int:
+        block_params = 0
+
+        block_params += self.attention.num_params(d_model)
+        if self.attention_norm is not None:
+            block_params += self.attention_norm.num_params(d_model)
+        if self.shared_experts is not None:
+            block_params += self.shared_experts.num_params()
+        if self.routed_experts is not None:
+            assert self.routed_experts_router is not None, "routed_experts must have a router"
+            block_params += self.routed_experts.num_active_params(self.routed_experts_router.top_k)
+        if self.routed_experts_router is not None:
+            block_params += self.routed_experts_router.num_params()
+        if self.shared_experts_router is not None:
+            block_params += self.shared_experts_router.num_params()
+        if self.feed_forward_norm is not None:
+            block_params += self.feed_forward_norm.num_params(d_model)
+
+        return block_params
 
 @dataclass
 class TransformerConfig(Config):
