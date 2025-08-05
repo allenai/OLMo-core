@@ -93,10 +93,8 @@ def main():
 
     if args.verbose and args.rank == 0:
         for rank in ranks:
-            if args.verbose and host_id == rank0_host_id:
-        for i in all_host_ids:
-            print(i, file=sys.stderr)print(
-                f"Initial rank: {rank}, Final rank: {ranks.index(rank)}, Hostids: {all_host_ids[rank]}",
+            print(
+                f"Initial rank: {rank}, Final rank: {ranks.index(rank)}, Block: {all_blocks[rank]}",
                 file=sys.stderr,
             )
     print(ranks.index(args.rank))
