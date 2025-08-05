@@ -1379,6 +1379,7 @@ class BLTDistillTransformer(BLTTransformer):
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         return_logits: Optional[bool] = None,
         skip_blocks: bool = False,
+        zero_bos: bool = True,
         **kwargs,
     ) -> Tuple[Union[torch.Tensor, LMOutputWithLoss, None], Optional[torch.Tensor], torch.Tensor]:
         """
@@ -1411,16 +1412,24 @@ class BLTDistillTransformer(BLTTransformer):
             else:
                 blocks = self.teacher.blocks
 
+            h_patch_global = h_patch[:, 1:] if zero_bos else h_patch
+
             # Run each block.
             for block in blocks.values():
                 # Mark sizes as dynamic for torch.compile().
                 if self.compile_enabled:
-                    mark_dynamic(h_patch, (0, 1), strict=False)
-                h_patch = block(h_patch, **block_kwargs)
+                    mark_dynamic(h_patch_global, (0, 1), strict=False)
+                h_patch_global = block(h_patch_global, **block_kwargs)
+
+            if zero_bos:
+                h_patch_after_global = torch.zeros_like(h_patch)
+                h_patch_after_global[:, 1:] = h_patch_global
+            else:
+                h_patch_after_global = h_patch_global
 
             h_out = self.teacher.local_decoder(
                 embeds=h_byte,
-                patch_embeds=h_patch,
+                patch_embeds=h_patch_after_global,
                 **local_decoder_kwargs,
             )
 
@@ -1716,6 +1725,7 @@ class BLTDistillTransformer(BLTTransformer):
                     labels=None, # we will compute loss ourselves
                     return_logits=True,
                     skip_blocks=skip_blocks,
+                    zero_bos=True,
                     **kwargs,
                 )
                 if teacher_logits is not None:
@@ -1770,7 +1780,9 @@ class BLTDistillTransformer(BLTTransformer):
                 h_patch_after_global = torch.zeros_like(h_patch)
                 h_patch_after_global[:, 1:] = last_hidden_state[:, :-1]
             else:
-                h_patch_global = h_patch
+                # need to start with the first token since <bos> token is not known to the global transformer
+                # and for consistency with the use_oracle_patch_reps=True case.
+                h_patch_global = h_patch[:, 1:]
 
                 for block in self.blocks.values():
                     # Mark sizes as dynamic for torch.compile().
@@ -1778,7 +1790,8 @@ class BLTDistillTransformer(BLTTransformer):
                         mark_dynamic(h_patch_global, (0, 1), strict=False)
                     h_patch_global = block(h_patch_global, **block_kwargs)
 
-                h_patch_after_global = h_patch_global
+                h_patch_after_global = torch.zeros_like(h_patch)
+                h_patch_after_global[:, 1:] = h_patch_global
 
             if blt_config.decoder_backprop_through_encoder:
                 h_out = self.local_decoder(
