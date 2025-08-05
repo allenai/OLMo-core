@@ -93,8 +93,8 @@ class BatchSizeSchedulerCallback(Callback):
             scheduler = self.trainer.train_module.scheduler
 
         # If we have an LR scheduler, we need to make sure that the value it uses for `t_max`
-        # (the end point of the schedule) won't be changed by this callback, since that will
-        # lead to unexpected behavior in the schedule.
+        # (the end point of the schedule) won't be changed by this callback, since that would
+        # lead to unexpected/discontinuous behavior in the schedule.
         # For example, if the scheduler doesn't have its own `self.t_max` set and its unit are in
         # steps, then it takes `t_max` to be `trainer.max_steps`, which will change when this callback
         # updates the batch size (unless the trainer's max duration is set in steps).
