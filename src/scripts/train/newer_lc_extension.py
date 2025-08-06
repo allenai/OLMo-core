@@ -33,6 +33,8 @@ from olmo_core.optim import (
     SkipStepAdamWConfig,
     LinearWithWarmup,
     OptimGroupOverride,
+    AdamWConfig,
+
 )
 from olmo_core.train import (
     Duration,
@@ -142,13 +144,15 @@ class LcContTrain(Config):
             ),
             train_module = TransformerTrainModuleConfig(
                 rank_microbatch_size=1 * CONTEXT_LENGTH,
-                 optim=SkipStepAdamWConfig(
-                    lr= 0.000088,
+                 optim=AdamWConfig(
+                    # lr= 0.000061499,
+                    lr= 0.000069932,
                     weight_decay=0.1,
                     betas=(0.9, 0.95),
                     group_overrides=[
                         OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
                     ],
+                    fused=True,
                 ),
                 max_sequence_length=CONTEXT_LENGTH,
                 compile_model=True,
