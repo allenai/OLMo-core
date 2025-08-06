@@ -43,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Changed default cluster to `saturn` in `src/examples/llama/train_launch.py`.
 - Made some beaker secrets optional for internal experiments.
 - Changed `SlidingWindowAttentionConfig` to improve clarity.
+- Changed the default Beaker budget
 
 ### Fixed
 
