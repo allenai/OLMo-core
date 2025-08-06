@@ -396,7 +396,7 @@ $ [i]python {sys.argv[0]} launch run01  --launch.num_nodes=2[/]
     )
 
     model_config = config.model
-    model_config.block.name = TransformerBlockType.default
+    #model_config.block.name = TransformerBlockType.default turns off post-order norm
     model_config.block.attention.sliding_window = SlidingWindowAttentionConfig(
         force_first=False, pattern=[False, False, False, True]
     )
