@@ -68,6 +68,7 @@ def select_next_token(
     temperature: float = 0.0,
     top_k: int = -1,
     top_p: float = 1.0,
+    dtype: torch.dtype = torch.float32,
 ) -> torch.Tensor:
     """
     Sample from the logits using temperature scaling with optional top-k and top-p filtering.
@@ -82,6 +83,8 @@ def select_next_token(
     :param top_k: Only consider the top k tokens with highest probabilities. -1 means no filtering.
     :param top_p: Only consider the smallest set of tokens whose cumulative
                   probability exceeds this threshold (nucleus sampling). 1.0 means no filtering.
+    :param dtype: The dtype of the output tensor. If specified, the input tensor is cast to dtype
+        before the operation is performed. This is useful for preventing data type overflows.
 
     :returns: Sampled token indices of shape ``(...)``.
     """
@@ -103,5 +106,5 @@ def select_next_token(
     if top_p != 1.0:
         scaled_logits = top_p_filtering(scaled_logits, top_p)
 
-    probs = torch.softmax(scaled_logits, dim=-1)
+    probs = torch.softmax(scaled_logits, dim=-1, dtype=dtype)
     return torch.multinomial(probs, num_samples=1).squeeze(-1)
