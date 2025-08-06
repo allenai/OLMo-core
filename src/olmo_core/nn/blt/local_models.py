@@ -569,6 +569,7 @@ class LocalDecoder(nn.Module):
         patch_embeds: torch.Tensor,
         patch_lens: torch.Tensor,
         patch_ids: torch.Tensor,
+        last_token_is_boundary: bool = True,
         block_size: int = 256,
         headdim: int = 32,
         epsilon=1e-4, # as in HNet
@@ -612,6 +613,8 @@ class LocalDecoder(nn.Module):
             index=torch.cumsum(patch_lens, dim=1) - 1,
             src=torch.ones_like(patch_lens, dtype=torch.bool),
         )
+        if not last_token_is_boundary:
+            boundary_mask[:, -1] = False
 
         plug_back_idx = torch.cumsum(boundary_mask, dim=1) - 1
         depool_out = torch.gather(
@@ -633,9 +636,13 @@ class LocalDecoder(nn.Module):
         embeds: torch.Tensor,
         patch_embeds: torch.Tensor,
         cross_attn_mask: BlockMask | None,
+        last_token_is_boundary: bool = True,
     ) -> torch.Tensor:
         if self.patch_embedding_projection is None:
             raise ValueError("Patch embedding projection is not defined, can not depool with BLT method.")
+
+        if not last_token_is_boundary:
+            raise NotImplementedError("BLT depooling with last_token_is_boundary=False is not implemented.")
 
         # expand seq length by a factor of k (k=2 in BLT released checkpoints)
         patch_embeds_projected = self.patch_embedding_projection(patch_embeds).reshape(
@@ -664,11 +671,12 @@ class LocalDecoder(nn.Module):
         patch_lens: torch.Tensor,
         patch_ids: torch.Tensor,
         cross_attn_mask: BlockMask | None = None,
+        last_token_is_boundary: bool = True,
     ) -> torch.Tensor:
         if self.depooling == "cross_attn":
-            return self._depool_blt(embeds, patch_embeds, cross_attn_mask)
+            return self._depool_blt(embeds, patch_embeds, cross_attn_mask, last_token_is_boundary)
         elif self.depooling == "hnet":
-            return self._depool_hnet(embeds, patch_embeds, patch_lens, patch_ids)
+            return self._depool_hnet(embeds, patch_embeds, patch_lens, patch_ids, last_token_is_boundary)
         else:
             raise ValueError(f"Unknown depooling method: {self.depooling}. Supported methods are 'cross_attn' and 'hnet'.")
 
@@ -679,6 +687,7 @@ class LocalDecoder(nn.Module):
         patch_lens: torch.Tensor,
         patch_ids: torch.Tensor,
         cross_attn_mask: BlockMask | None = None,
+        last_token_is_boundary: bool = True,
     ) -> torch.Tensor:
         if self.residual_norm is not None:
             h = self.residual_norm(embeds)
@@ -699,4 +708,5 @@ class LocalDecoder(nn.Module):
             patch_lens=patch_lens,
             patch_ids=patch_ids,
             cross_attn_mask=cross_attn_mask,
+            last_token_is_boundary=last_token_is_boundary,
         )

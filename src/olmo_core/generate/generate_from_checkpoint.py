@@ -18,7 +18,7 @@ import torch
 from transformers import AutoTokenizer
 
 from olmo_core.config import DType
-from olmo_core.generate.generation_module import TransformerGenerationModule
+from olmo_core.generate.generation_module import TransformerGenerationModule, BLTTransformerGenerationModule
 from olmo_core.generate.generation_module.config import GenerationConfig
 from olmo_core.utils import get_default_device
 
@@ -91,7 +91,7 @@ def load_generation_module(
     log.info(f"Loading model from {checkpoint_path}")
 
     try:
-        generation_module = TransformerGenerationModule.from_checkpoint(
+        generation_module = BLTTransformerGenerationModule.from_checkpoint(
             checkpoint_dir=checkpoint_path,
             generation_config=generation_config,
             device=device,
@@ -110,16 +110,13 @@ def generate_text(
     tokenizer,
     device: torch.device,
     batch_size: int,
+    stream: bool = True,
 ) -> list[str]:
     """Generate text from a prompt."""
-    log.info(f"Generating response for prompt: '{prompt}'")
-
     # Tokenize the prompt
     inputs = tokenizer([prompt] * batch_size, return_tensors="pt", padding_side="left")
     input_ids = inputs["input_ids"].to(device)
     attention_mask = inputs["attention_mask"].to(device)
-
-    log.info(f"Input tokens: {input_ids.shape[1]}")
 
     # Generate
     output_ids, _, _ = generation_module.generate_batch(
@@ -127,6 +124,7 @@ def generate_text(
         attention_mask=attention_mask,
         completions_only=True,
         log_timing=True,
+        stream=stream,
     )
 
     # Decode the generated tokens
@@ -142,9 +140,10 @@ def generate_text(
         output_texts.append(output_text)
         completion_texts.append(completion_only)
 
-    log.info(f"Generated {output_ids.shape[1]} new tokens")
-    for i, completion in enumerate(completion_texts):
-        log.info(f"Completion {i}: '{completion}'")
+    if not stream: # already printed otherwise
+        log.info(f"Generated {output_ids.shape[1]} new tokens")
+        for i, completion in enumerate(completion_texts):
+            log.info(f"Completion {i}: '{completion}'")
 
     return output_texts
 
@@ -211,39 +210,30 @@ def main():
 
     log.info(f"Generation config: {generation_config}")
 
-    try:
-        # Load generation module
-        generation_module = load_generation_module(
-            str(checkpoint_path),
-            device,
-            generation_config,
-            args.dtype,
+    # Load generation module
+    generation_module = load_generation_module(
+        str(checkpoint_path),
+        device,
+        generation_config,
+        args.dtype,
+    )
+
+    # Load the HuggingFace tokenizer
+    log.info("Loading tokenizer: allenai/dolma2-tokenizer")
+    tokenizer = AutoTokenizer.from_pretrained("allenai/dolma2-tokenizer")
+
+    # Ensure pad token is set
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    if args.interactive:
+        run_interactive_mode(generation_module, tokenizer, device)
+    else:
+        # Single generation example
+        test_prompt = "The quick brown fox"
+        responses = generate_text(
+            generation_module, test_prompt, tokenizer, device, args.batch_size
         )
-
-        # Load the HuggingFace tokenizer
-        log.info("Loading tokenizer: allenai/dolma2-tokenizer")
-        tokenizer = AutoTokenizer.from_pretrained("allenai/dolma2-tokenizer")
-
-        # Ensure pad token is set
-        if tokenizer.pad_token is None:
-            tokenizer.pad_token = tokenizer.eos_token
-
-        if args.interactive:
-            run_interactive_mode(generation_module, tokenizer, device)
-        else:
-            # Single generation example
-            test_prompt = "The quick brown fox"
-            responses = generate_text(
-                generation_module, test_prompt, tokenizer, device, args.batch_size
-            )
-            print(f"Prompt: {test_prompt}")
-            for i, resp in enumerate(responses):
-                print(f"Response {i}: {resp}")
-
-    except Exception as e:
-        log.error(f"Script failed: {e}")
-        sys.exit(1)
-
 
 if __name__ == "__main__":
     main()
