@@ -1250,7 +1250,7 @@ class BLTTransformer(Transformer):
 
             patch_lens = move_to_device(patch_lens, self.device)
             patch_ids = blt_utils.lengths_to_ids(patch_lens, input_ids.shape[-1])
-            original_input_ids = kwargs.pop("original_input_ids", None) # must be present if patch_lens is present
+            original_input_ids = kwargs.pop("original_input_ids", None)
 
             encoder_cross_attn_mask = blt_utils.cross_attn_mask(
                 patch_ids,
@@ -1275,7 +1275,7 @@ class BLTTransformer(Transformer):
         local_decoder_kwargs["patch_lens"] = patch_lens
         local_decoder_kwargs["patch_ids"] = patch_ids
         local_decoder_kwargs["cross_attn_mask"] = decoder_cross_attn_mask
-        extra_kwargs["original_input_ids"] = move_to_device(original_input_ids, self.device)
+        extra_kwargs["original_input_ids"] = move_to_device(original_input_ids, self.device) if original_input_ids is not None else None
 
         if (constituent_input_ids := kwargs.pop("constituent_input_ids", None)) is not None:
             extra_kwargs["constituent_input_ids"] = move_to_device(constituent_input_ids, self.device)
@@ -1429,6 +1429,59 @@ class BLTDistillTransformer(BLTTransformer):
         self.teacher.apply_fsdp(*args, **kwargs)
 
         super().apply_fsdp(*args, **kwargs)
+
+    def inference_forward(
+        self,
+        input_ids: torch.Tensor,
+        prefill_kv_cache: bool = False,
+        boundary_threshold: float = 0.5,
+        **kwargs,
+    ) -> Tuple[Union[torch.Tensor, LMOutputWithLoss, None], Optional[torch.Tensor], torch.Tensor]:
+        if self.boundary_predictor is None:
+            raise OLMoConfigurationError("Boundary predictor is required for inference.")
+
+        input_ids, labels, block_kwargs, lm_head_kwargs, local_encoder_kwargs, local_decoder_kwargs, extra_kwargs = self._prepare_inputs(
+            input_ids,
+            labels=None,
+            **kwargs,
+        )
+
+        h_byte, h_patch = self.local_encoder(input_ids, **local_encoder_kwargs)
+        boundary_preds = self.boundary_predictor(h_byte).squeeze(-1)
+        boundary_probs = F.sigmoid(boundary_preds)
+        boundary_mask = boundary_probs > boundary_threshold
+        last_token_is_boundary = boundary_mask[:, -1].any().item()
+
+        if last_token_is_boundary:
+            # skip bos
+            h_patch_global = h_patch[:, 1:]
+        else:
+            # skip the last token, not part of a complete patch
+            h_patch_global = h_patch[:, 1:-1]
+
+        for block in self.blocks.values():
+            # Mark sizes as dynamic for torch.compile().
+            if self.compile_enabled:
+                mark_dynamic(h_patch_global, (0, 1), strict=False)
+            h_patch_global = block(h_patch_global, **block_kwargs)
+
+        h_patch_after_global = h_patch_global
+
+        h_patch = torch.zeros_like(h_patch)
+        if last_token_is_boundary:
+            h_patch[:, 1:] = h_patch_after_global
+        else:
+            h_patch[:, 1:-1] = h_patch_after_global
+
+        h_out = self.local_decoder(
+            embeds=h_byte,
+            patch_embeds=h_patch,
+            **local_decoder_kwargs,
+            last_token_is_boundary=last_token_is_boundary,
+        )
+        logits = self.lm_head(h_out, **lm_head_kwargs)
+
+        return logits, last_token_is_boundary  # type: ignore
 
     # teacher forward patched to (1) use the student blocks if blocks are shared, (2) return the required extra hidden state information
     def _teacher_forward(
@@ -1771,8 +1824,16 @@ class BLTDistillTransformer(BLTTransformer):
         patch_loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         return_logits: Optional[bool] = None,
         blt_config: Optional[BLTConfig] = None,
+        prefill_kv_cache: Optional[bool] = None,
         **kwargs,
     ):
+        # a bit hacky, use the presence of prefill_kv_cache to check whether we are generating
+        if prefill_kv_cache is not None:
+            return self.inference_forward(
+                input_ids,
+                **kwargs,
+            )
+
         if blt_config is None:
             raise ValueError("`blt_config` must be provided for BLTDistillTransformer.forward")
 

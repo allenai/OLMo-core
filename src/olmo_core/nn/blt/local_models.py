@@ -826,6 +826,7 @@ class LocalDecoder(nn.Module):
         patch_lens: torch.Tensor,
         boundary_logprobs: torch.Tensor | None = None,
         boundary_mask: torch.Tensor | None = None,
+        last_token_is_boundary: bool = True,
         block_size: int = 256,
         headdim: int = 32,
         epsilon: float = 1e-3,
@@ -919,9 +920,13 @@ class LocalDecoder(nn.Module):
         embeds: torch.Tensor,
         patch_embeds: torch.Tensor,
         cross_attn_mask: BlockMask | None,
+        last_token_is_boundary: bool = True,
     ) -> torch.Tensor:
         if self.patch_embedding_projection is None or self.blt_k is None:
             raise ValueError("Patch embedding projection is not defined, can not depool with BLT method.")
+
+        if not last_token_is_boundary:
+            raise NotImplementedError("BLT depooling with last_token_is_boundary=False is not implemented.")
 
         # expand seq length by a factor of k (k=2 in BLT released checkpoints)
         patch_embeds_projected = self.patch_embedding_projection(patch_embeds).reshape(
@@ -951,11 +956,12 @@ class LocalDecoder(nn.Module):
         cross_attn_mask: BlockMask | None = None,
         boundary_logprobs: torch.Tensor | None = None,
         boundary_mask: torch.Tensor | None = None,
+        last_token_is_boundary: bool = True,
     ) -> torch.Tensor:
         if self.depooling == "cross_attn":
-            return self._depool_blt(embeds, patch_embeds, cross_attn_mask)
+            return self._depool_blt(embeds, patch_embeds, cross_attn_mask, last_token_is_boundary)
         elif self.depooling == "hnet":
-            return self._depool_hnet(embeds, patch_embeds, patch_lens, boundary_logprobs, boundary_mask)
+            return self._depool_hnet(embeds, patch_embeds, patch_lens, boundary_logprobs, boundary_mask, last_token_is_boundary)
         else:
             raise ValueError(f"Unknown depooling method: {self.depooling}. Supported methods are 'cross_attn' and 'hnet'.")
 
@@ -968,6 +974,7 @@ class LocalDecoder(nn.Module):
         cross_attn_mask: BlockMask | None = None,
         boundary_logprobs: torch.Tensor | None = None,
         boundary_mask: torch.Tensor | None = None,
+        last_token_is_boundary: bool = True,
     ) -> torch.Tensor:
         if self.residual_norm is not None:
             h = self.residual_norm(embeds)
@@ -989,4 +996,5 @@ class LocalDecoder(nn.Module):
             cross_attn_mask=cross_attn_mask,
             boundary_logprobs=boundary_logprobs,
             boundary_mask=boundary_mask,
+            last_token_is_boundary=last_token_is_boundary,
         )
