@@ -188,9 +188,6 @@ class LcContTrain(Config):
             ),
             model=TransformerConfig.olmo2_7B(
                 vocab_size=tokenizer_config.padded_vocab_size(),
-                n_kv_heads=8,
-                hidden_size_multiplier=1.2,
-                hidden_size_multiple_of=1024,
                 rope_theta = 8 * 10 ** 6,
                 use_flash=True
             ),
@@ -401,8 +398,6 @@ $ [i]python {sys.argv[0]} launch run01  --launch.num_nodes=2[/]
         force_first=False, pattern=[False, False, False, True]
     )
     model_config.block.attention.use_head_qk_norm = True
-    model_config.block.attention.n_kv_heads = 8
-
 
     # Print the config for debugging and then execute the command.
     if get_local_rank() == 0:
