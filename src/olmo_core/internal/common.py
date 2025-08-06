@@ -95,7 +95,7 @@ def build_launch_config(
     cluster: str,
     task_name: str = "train",
     workspace: str = "ai2/OLMo-core",
-    budget: str = "ai2/oe-training",
+    budget: str = "ai2/oe-base",
     nccl_debug: bool = False,
     beaker_image: str = OLMoCoreBeakerImage.stable,
     num_nodes: int = 1,
