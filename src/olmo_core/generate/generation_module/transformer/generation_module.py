@@ -271,6 +271,8 @@ class TransformerGenerationModule(GenerationModule):
                 if is_first_forward and prompt_len > 1 and not completions_only:
                     all_logits.append(logits[:, :-1, :])
                 all_logits.append(next_token_logits.unsqueeze(1))
+                # add the logits for the next token, but do not actually select that token
+                # is this the correct behavior?
 
             # Check if we should stop before generating more tokens
             pbar.update(1)
