@@ -401,6 +401,7 @@ $ [i]python {sys.argv[0]} launch run01  --launch.num_nodes=2[/]
         force_first=False, pattern=[False, False, False, True]
     )
     model_config.block.attention.use_head_qk_norm = True
+    model_config.block.attention.n_kv_heads = 8
 
 
     # Print the config for debugging and then execute the command.
