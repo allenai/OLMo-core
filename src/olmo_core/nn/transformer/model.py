@@ -954,12 +954,16 @@ class MoETransformer(Transformer):
         for block in self.blocks.values():
             if not block.is_moe:
                 continue
-            cast(MoETransformerBlock, block).feed_forward_moe.prepare_experts_for_fsdp(
+            block = cast(MoETransformerBlock, block)
+            reshard_after_forward = True
+            if pp_enabled or block.ep_enabled or block.tp_enabled:
+                reshard_after_forward = False
+            block.feed_forward_moe.prepare_experts_for_fsdp(
                 world_mesh=world_mesh,
                 mp_policy=MixedPrecisionPolicy(
                     param_dtype=param_dtype or self.dtype, reduce_dtype=reduce_dtype
                 ),
-                reshard_after_forward=not pp_enabled,
+                reshard_after_forward=reshard_after_forward,
             )
 
     def prepare_experts_for_ddp(self, world_mesh: DeviceMesh):
