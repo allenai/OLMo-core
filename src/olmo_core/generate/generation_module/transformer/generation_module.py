@@ -30,7 +30,6 @@ from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
 from olmo_core.generate.generation_module.config import GenerationConfig
 from olmo_core.generate.sampling import select_next_token
-from olmo_core.generate.utils import selective_log_softmax
 from olmo_core.io import is_url, join_path, normalize_path
 from olmo_core.nn.transformer import Transformer, TransformerConfig
 from olmo_core.train.train_module.transformer.common import parallelize_model
