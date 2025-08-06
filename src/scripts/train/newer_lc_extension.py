@@ -170,12 +170,7 @@ class LcContTrain(Config):
                     else TransformerContextParallelConfig.zig_zag(degree=CP_DEGREE)
                 ),
                 float8_config=Float8Config(
-                    enabled=True,
-                    ao=AOFloat8LinearConfig(
-                        enable_fsdp_float8_all_gather=True,
-                        force_recompute_fp8_weight_in_bwd=True,
-                        round_scales_to_power_of_2=True,
-                ),
+                    enabled=False,
             ),
                 max_grad_norm=1.0,
                 scheduler=LinearWithWarmup(warmup_steps=0, alpha_f=0.0),
