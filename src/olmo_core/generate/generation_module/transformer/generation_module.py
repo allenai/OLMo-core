@@ -142,11 +142,10 @@ class TransformerGenerationModule(GenerationModule):
         *,
         attention_mask: Optional[torch.Tensor] = None,
         return_logits: bool = False,
-        return_logprobs: bool = False,
         completions_only: bool = False,
         log_timing: bool = True,
         **generation_kwargs,
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
         Generate text using greedy decoding.
 
@@ -156,18 +155,12 @@ class TransformerGenerationModule(GenerationModule):
                 a *left-padding* mask, not an arbitrary attention mask.
                 If not provided, the model will use a default mask that attends to all previous tokens.
             return_logits: If True, return logits along with generated tokens
-            return_logprobs: If True, return log probabilities of generated tokens. If logits are
-                only required for the purpose of computing logprobs, then use this option instead
-                of return_logits - it is more memory efficient.
             completions_only: If True, return only the completions, not the entire sequence
             **generation_kwargs: Generation configuration overrides
         Returns:
             Tuple of (generated_ids, logits, logprobs) where:
                 - generated_ids: Generated token IDs of shape (batch_size, output_length)
                 - logits: Full logits if return_logits=True, else None. Shape: (batch_size, output_length, vocab_size)
-                - logprobs: Log probabilities of tokens if return_logprobs=True, else None.
-                  Shape: (batch_size, output_length - 1). Note: log probabilities are only computed
-                  for positions 1 to N since the first token has no previous context.
         """
         # TODO: try padding the input_ids to a multiple of 128
         self.model.eval()
@@ -183,7 +176,6 @@ class TransformerGenerationModule(GenerationModule):
         # Output containers
         generated = input_ids
         all_logits = [] if return_logits else None
-        all_logprobs = [] if return_logprobs else None
 
         # Timing stats
         start_time = time.perf_counter()
@@ -193,16 +185,6 @@ class TransformerGenerationModule(GenerationModule):
         kv_cache_init_time = None
         prefill_time = None
         first_decode_time = None
-
-        # Memory tracking
-        initial_memory = None
-        prefill_peak_memory = None
-        decoding_peak_memory = None
-        post_prefill_memory = None
-        if self.device.type == "cuda" and log_timing:
-            torch.cuda.synchronize()
-            initial_memory = torch.cuda.memory_allocated(self.device)
-            torch.cuda.reset_max_memory_allocated(self.device)
 
         if generation_config.max_new_tokens is not None:
             max_length = prompt_len + generation_config.max_new_tokens
@@ -235,16 +217,13 @@ class TransformerGenerationModule(GenerationModule):
 
             input_ids_for_model = generated[:, -1:] if is_using_cache else generated
             attention_mask_for_model = None if is_using_cache else attention_mask
-            logits_to_keep = (
-                1 if (is_using_cache or completions_only) else prompt_len
-            )  # Todo: we also dont need full logits unless we're returning them
 
             # Time the forward pass
             forward_start_time = time.perf_counter()
-            logits = self.model(  # (batch_size, generated.shape[1], self.model.vocab_size)
+            next_token_logits = self.model(  # (batch_size, 1, self.model.vocab_size)
                 input_ids_for_model,
                 attention_mask=attention_mask_for_model,
-                logits_to_keep=logits_to_keep,
+                logits_to_keep=1,
                 prefill_kv_cache=is_first_forward,
             )
             if self.device.type == "cuda":
@@ -257,22 +236,8 @@ class TransformerGenerationModule(GenerationModule):
             elif tokens_generated == 0:
                 first_decode_time = forward_end_time - forward_start_time
 
-            next_token_logits = logits[:, -1, :]  # (batch_size, vocab_size)
-
-            # Track memory after prefill phase
-            if is_first_forward and self.device.type == "cuda" and log_timing:
-                torch.cuda.synchronize()
-                prefill_peak_memory = torch.cuda.max_memory_allocated(self.device)
-                post_prefill_memory = torch.cuda.memory_allocated(self.device)
-                # Reset max memory tracking for decoding phase
-                torch.cuda.reset_max_memory_allocated(self.device)
-
             if all_logits is not None:
-                if is_first_forward and prompt_len > 1 and not completions_only:
-                    all_logits.append(logits[:, :-1, :])
-                all_logits.append(next_token_logits.unsqueeze(1))
-                # add the logits for the next token, but do not actually select that token
-                # is this the correct behavior?
+                all_logits.append(next_token_logits)
 
             # Check if we should stop before generating more tokens
             pbar.update(1)
@@ -282,19 +247,12 @@ class TransformerGenerationModule(GenerationModule):
 
             # Select next tokens
             next_tokens = select_next_token(  # (batch_size,)
-                next_token_logits,
+                next_token_logits.squeeze(1),
                 do_sample=generation_config.do_sample,
                 temperature=generation_config.temperature,
                 top_k=generation_config.top_k,
                 top_p=generation_config.top_p,
             )
-
-            if all_logprobs is not None:
-                if is_first_forward and prompt_len > 1 and not completions_only:
-                    prompt_log_probs = selective_log_softmax(logits[:, :-1, :], generated[:, 1:])
-                    all_logprobs.append(prompt_log_probs)
-                next_token_log_prob = selective_log_softmax(next_token_logits, next_tokens)
-                all_logprobs.append(next_token_log_prob.unsqueeze(1))
 
             # Handle finished sequences
             # - Check which sequences have generated EOS or stop tokens
@@ -324,85 +282,57 @@ class TransformerGenerationModule(GenerationModule):
                 token_times.append(token_end_time - token_start_time)
             tokens_generated += 1
 
-        # Track peak memory for decoding phase
-        if self.device.type == "cuda" and log_timing and prefill_peak_memory is not None:
-            torch.cuda.synchronize()
-            decoding_peak_memory = torch.cuda.max_memory_allocated(self.device)
-
         logits = None
         if return_logits and all_logits:
             logits = torch.cat(all_logits, dim=1)
             # TODO: align logits with generated tokens? OBO?
-        logprobs = None
-        if return_logprobs and all_logprobs:
-            logprobs = torch.cat(all_logprobs, dim=1)
-            # TODO: align logprobs with generated tokens? OBO?
 
         if completions_only:
             generated = generated[:, prompt_len:]
-            if logits is not None:
-                logits = logits[:, prompt_len:, :]
-            if logprobs is not None:
-                logprobs = logprobs[:, prompt_len:]
+            # NOTE: completions_only does not apply to logits. They are already only computed for completions.
 
         total_time = time.perf_counter() - start_time
         if log_timing:
-            print("Generation stats:")
-            print(f"  Batch size: {batch_size}  Prompt length: {prompt_len}")
+            # Calculate metrics
+            total_tokens = tokens_generated * batch_size
+            tokens_per_sec_total = total_tokens / total_time
+            tokens_per_sec_per_seq = tokens_generated / total_time
+
+            # Main generation stats
+            print(f"\n{'=' * 60}\nGENERATION STATISTICS\n{'=' * 60}")
+            print(f"  Batch size: {batch_size:,} | Prompt length: {prompt_len:,} tokens")
             print(
-                f"  Tokens generated: {tokens_generated * batch_size} ({tokens_generated} per sequence, "
-                f"{tokens_generated * batch_size / total_time:.1f} tokens/s)"
+                f"  Tokens generated: {tokens_generated:,} per sequence | Total: {total_tokens:,}"
             )
-            print(f"  Sequence length extended: {prompt_len} → {prompt_len + tokens_generated}")
+            print(f"  Sequence length: {prompt_len:,} → {prompt_len + tokens_generated:,}")
             print(f"  Total generation time: {total_time:.3f}s")
+            print(
+                f"  Throughput: {tokens_per_sec_total:.1f} tokens/s (total) | {tokens_per_sec_per_seq:.1f} tokens/s (per seq)"
+            )
 
             # Detailed timing breakdown
-            print("\n  Timing breakdown:")
+            print(f"{'-' * 60}\nTIMING BREAKDOWN\n{'-' * 60}")
             if kv_cache_init_time is not None:
-                print(f"    KV cache initialization: {kv_cache_init_time * 1000:.1f}ms")
+                print(f"  KV cache init: {kv_cache_init_time * 1000:7.1f} ms")
             if prefill_time is not None:
                 print(
-                    f"    Prefill time: {prefill_time * 1000:.1f}ms ({prompt_len / prefill_time:.1f} tokens/s)"
+                    f"  Prefill: {prefill_time * 1000:7.1f} ms ({prompt_len / prefill_time:.1f} tokens/s)"
                 )
             if first_decode_time is not None:
-                print(f"    First decode time: {first_decode_time * 1000:.1f}ms")
+                print(f"  First decode: {first_decode_time * 1000:7.1f} ms")
             if time_to_first_token is not None:
-                print(f"    Time to first token: {time_to_first_token:.3f}s")
+                print(f"  Time to first token: {time_to_first_token * 1000:7.1f} ms")
             if token_times:
-                avg_inter_token_latency = sum(token_times) / len(token_times)
-                print(f"    Average inter-token latency: {avg_inter_token_latency * 1000:.1f}ms")
+                print(
+                    f"  Avg inter-token latency: {sum(token_times) / len(token_times) * 1000:7.1f} ms"
+                )
                 if len(token_times) > 1:
-                    # Exclude first decode from average since it's often slower
-                    avg_subsequent_latency = sum(token_times[1:]) / len(token_times[1:])
                     print(
-                        f"    Average subsequent token latency: {avg_subsequent_latency * 1000:.1f}ms"
+                        f"  Avg subsequent token latency: {sum(token_times[1:]) / len(token_times[1:]) * 1000:7.1f} ms"
                     )
+            print(f"{'=' * 60}\n")
 
-            # Log GPU memory usage
-            if self.device.type == "cuda" and initial_memory is not None:
-                print("\n  GPU memory usage:")
-                print(f"    Initial memory: {initial_memory / 1024**3:.2f} GB")
-
-                if prefill_peak_memory is not None:
-                    prefill_memory_used = prefill_peak_memory - initial_memory
-                    print("    Prefill phase:")
-                    print(f"      Peak memory: {prefill_peak_memory / 1024**3:.2f} GB")
-                    print(f"      Memory used: {prefill_memory_used / 1024**3:.2f} GB")
-
-                    if decoding_peak_memory is not None and post_prefill_memory is not None:
-                        # decoding_peak_memory is measured after reset, so it's relative to post-prefill state
-                        decoding_memory_used = decoding_peak_memory - (
-                            post_prefill_memory - prefill_peak_memory
-                        )
-                        print("    Decoding phase:")
-                        print(
-                            f"      Peak memory: {(post_prefill_memory + decoding_memory_used) / 1024**3:.2f} GB"
-                        )
-                        print(
-                            f"      Additional memory used: {decoding_memory_used / 1024**3:.2f} GB"
-                        )
-
-        return generated, logits, logprobs
+        return generated, logits
 
     def load_checkpoint(
         self,
