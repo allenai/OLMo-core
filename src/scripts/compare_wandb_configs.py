@@ -64,7 +64,12 @@ def main(
     if len(keys_with_differences) > 0:
         if len(left_only_keys) > 0 or len(right_only_keys) > 0:
             print("Settings with differences:")
-        print("\n".join(f"{k}\n\t{left_config[k]}\n\t{right_config[k]}\n" for k in sorted(keys_with_differences)))
+        print(
+            "\n".join(
+                f"{k}\n\t{left_config[k]}\n\t{right_config[k]}\n"
+                for k in sorted(keys_with_differences)
+            )
+        )
     else:
         print("No differences in shared settings.")
 
