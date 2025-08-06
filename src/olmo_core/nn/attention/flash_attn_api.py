@@ -1,3 +1,4 @@
+import logging
 from typing import Optional, Tuple
 
 import torch
@@ -14,6 +15,8 @@ try:
     import ring_flash_attn  # type: ignore
 except ImportError:
     ring_flash_attn = None
+
+log = logging.getLogger(__name__)
 
 
 def _flatten_batch_dim(x: torch.Tensor) -> torch.Tensor:
@@ -110,6 +113,49 @@ def dispatch_flash_attn_qkvpacked(
             causal=causal,
             window_size=window_size,
         )
+
+
+@torch._dynamo.disable()
+def dispatch_flash_attn_with_kvcache(
+    q: torch.Tensor,
+    k_cache: torch.Tensor,
+    v_cache: torch.Tensor,
+    k: Optional[torch.Tensor] = None,
+    v: Optional[torch.Tensor] = None,
+    cache_seqlens: Optional[torch.Tensor] = None,
+    cache_leftpad: Optional[torch.Tensor] = None,
+    block_table: Optional[torch.Tensor] = None,
+    softmax_scale: Optional[float] = None,
+    causal: bool = False,
+    window_size: Tuple[int, int] = (-1, -1),
+    rotary_cos: Optional[torch.Tensor] = None,
+    rotary_sin: Optional[torch.Tensor] = None,
+    rotary_interleaved: bool = True,
+) -> torch.Tensor:
+    if flash_attn is None:
+        raise RuntimeError("flash-attn is required!")
+    if k is not None and q.dtype != k.dtype:
+        log.warning(f"q.dtype ({q.dtype}) != k.dtype ({k.dtype})")
+        k = k.to(q.dtype)
+    if q.dtype != k_cache.dtype:
+        log.warning(f"q.dtype ({q.dtype}) != k_cache.dtype ({k_cache.dtype})")
+
+    return flash_attn.flash_attn_with_kvcache(
+        q,
+        k_cache,  # updated in-place if k/v are provided
+        v_cache,  # updated in-place if k/v are provided
+        k=k,
+        v=v,
+        cache_seqlens=cache_seqlens,
+        cache_leftpad=cache_leftpad,
+        block_table=block_table,
+        softmax_scale=softmax_scale,
+        causal=causal,
+        window_size=window_size,
+        rotary_cos=rotary_cos,
+        rotary_sin=rotary_sin,
+        rotary_interleaved=rotary_interleaved,
+    )
 
 
 @torch._dynamo.disable()
