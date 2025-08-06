@@ -29,6 +29,7 @@ class BLTConfig(Config):
     decoder_backprop_through_encoder: bool = True
     boundary_predictor_backprop_through_encoder: bool = True
     decoder_backprop_through_add_boundary_logp: bool = True
+    decoder_use_mse_loss: bool = False
 
 
 @dataclass

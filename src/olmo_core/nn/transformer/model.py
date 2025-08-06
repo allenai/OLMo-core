@@ -1423,7 +1423,7 @@ class BLTDistillTransformer(BLTTransformer):
                 blocks = self.blocks
             else:
                 blocks = self.teacher.blocks
-            
+
             if self.teacher_embeddings is not None:
                 h_patch_global = self.teacher_embeddings(extra_kwargs["original_input_ids"][:, :-1])
             elif zero_bos:
@@ -1737,7 +1737,7 @@ class BLTDistillTransformer(BLTTransformer):
             with torch.no_grad():
                 input_ids_for_teacher = input_ids if isinstance(self.teacher, BLTTransformer) else extra_kwargs["original_input_ids"]
 
-                teacher_logits, last_hidden_state, teacher_embeds = self._teacher_forward(
+                teacher_logits, teacher_last_hidden_state, teacher_embeds = self._teacher_forward(
                     input_ids_for_teacher,
                     labels=None, # we will compute loss ourselves
                     return_logits=True,
@@ -1753,7 +1753,7 @@ class BLTDistillTransformer(BLTTransformer):
                     teacher_main_path_logprobs = None
         else:
             teacher_embeds = None
-            last_hidden_state = None
+            teacher_last_hidden_state = None
             teacher_logprobs = None
             teacher_main_path_logprobs = None
 
@@ -1792,10 +1792,10 @@ class BLTDistillTransformer(BLTTransformer):
         # Run each block.
         if not skip_blocks:
             if use_oracle_patch_reps:
-                if last_hidden_state is None:
+                if teacher_last_hidden_state is None:
                     raise ValueError("`last_hidden_state` must be provided when `use_oracle_patch_reps` is True")
                 h_patch_after_global = torch.zeros_like(h_patch)
-                h_patch_after_global[:, 1:] = last_hidden_state[:, :-1]
+                h_patch_after_global[:, 1:] = teacher_last_hidden_state[:, :-1]
             else:
                 # need to start with the first token since <bos> token is not known to the global transformer
                 # and for consistency with the use_oracle_patch_reps=True case.
@@ -1893,15 +1893,24 @@ class BLTDistillTransformer(BLTTransformer):
             assert teacher_embeds is not None
 
             if isinstance(self.teacher, BLTTransformer):
-                # we can use standard KL!
-                local_decoder_loss = F.kl_div(
-                    logprobs.float(),
-                    teacher_logprobs.float(),
-                    reduction="none",
-                    log_target=True,
-                ).sum(-1)
-                local_decoder_loss = (local_decoder_loss * byte_mask).mean()
-                metrics["blt/kl_local_decoder_loss"] = local_decoder_loss / byte_mask.float().mean()
+                if blt_config.decoder_use_mse_loss:
+                    elementwise_local_decoder_loss = rep_compare_fn(
+                        h_out,
+                        teacher_last_hidden_state,
+                    )
+                    local_decoder_loss = (elementwise_local_decoder_loss * byte_mask).mean()
+                    metrics["blt/mse_local_decoder_loss"] = local_decoder_loss / byte_mask.float().mean()
+                else:
+                    # we can use standard KL!
+                    local_decoder_loss = F.kl_div(
+                        logprobs.float(),
+                        teacher_logprobs.float(),
+                        reduction="none",
+                        log_target=True,
+                    ).sum(-1)
+                    local_decoder_loss = (local_decoder_loss * byte_mask).mean()
+                    metrics["blt/kl_local_decoder_loss"] = local_decoder_loss / byte_mask.float().mean()
+
                 metrics["blt/kl_local_decoder_teacher_mean_p"] = (
                     (torch.exp(teacher_main_path_logprobs) * byte_mask[:, 1:].float()).mean() / byte_mask[:, 1:].float().mean()
                 )
@@ -1909,6 +1918,9 @@ class BLTDistillTransformer(BLTTransformer):
                     ((logprobs.argmax(-1) == teacher_logprobs.argmax(-1)) * byte_mask).float().mean()
                 ) / byte_mask.float().mean()
             else:
+                if blt_config.decoder_use_mse_loss:
+                    raise ValueError("MSE loss not implemented for ALM-style distillation")
+
                 # use an ALM-style loss
                 local_decoder_loss_exhaustive, local_decoder_loss_simple, metrics = self._compute_alm_style_loss(
                     main_path_logprobs,
