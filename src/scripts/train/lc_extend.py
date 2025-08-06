@@ -400,6 +400,8 @@ $ [i]python {sys.argv[0]} launch run01  --launch.num_nodes=2[/]
     model_config.block.attention.sliding_window = SlidingWindowAttentionConfig(
         force_first=False, pattern=[False, False, False, True]
     )
+    model_config.block.attention.use_head_qk_norm = True
+
 
     # Print the config for debugging and then execute the command.
     if get_local_rank() == 0:
