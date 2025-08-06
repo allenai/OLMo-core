@@ -188,6 +188,9 @@ class LcContTrain(Config):
             ),
             model=TransformerConfig.olmo2_7B(
                 vocab_size=tokenizer_config.padded_vocab_size(),
+                n_kv_heads=8,
+                hidden_size_multiplier=1.2,
+                hidden_size_multiple_of=1024,
                 rope_theta = 8 * 10 ** 6,
                 use_flash=True
             ),
