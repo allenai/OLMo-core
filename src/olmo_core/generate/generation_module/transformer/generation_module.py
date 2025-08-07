@@ -198,12 +198,9 @@ class TransformerGenerationModule(GenerationModule):
 
         # Initialize/Reset the KV cache
         kv_cache_start_time = time.perf_counter()
-        if generation_config.use_cache:
-            self.reset_kv_cache(
-                generation_config.use_cache, batch_size, max_length, self.model.dtype
-            )
-            if self.device.type == "cuda":
-                torch.cuda.synchronize()
+        self.reset_kv_cache(generation_config.use_cache, batch_size, max_length, self.model.dtype)
+        if self.device.type == "cuda" and log_timing:
+            torch.cuda.synchronize()
         kv_cache_init_time = time.perf_counter() - kv_cache_start_time
 
         pbar = tqdm(desc="Generating tokens", disable=not log_timing)
@@ -244,7 +241,6 @@ class TransformerGenerationModule(GenerationModule):
                 pbar.close()
                 break
 
-            # Select next tokens
             next_tokens = select_next_token(  # (batch_size,)
                 next_token_logits.squeeze(1),
                 do_sample=generation_config.do_sample,

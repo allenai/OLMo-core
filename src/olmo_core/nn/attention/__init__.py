@@ -441,6 +441,18 @@ class Attention(AttentionBase):
                 causal=True,
                 window_size=self.window_size,
             )
+            if self.k_cache.isnan().any():
+                print("k_cache is nan")
+                breakpoint()
+            if self.v_cache.isnan().any():
+                print("v_cache is nan")
+                breakpoint()
+            if k.isnan().any():
+                print("k is nan")
+                breakpoint()
+            if v.isnan().any():
+                print("v is nan")
+                breakpoint()
             self.cache_seqlens.add_(q.shape[1])
         elif self.cp_enabled:
             assert self._cp_pg is not None and self._cp_load_balancer is not None
@@ -613,6 +625,7 @@ class Attention(AttentionBase):
                 start_pos = (
                     int(self.cache_seqlens.max().item()) if self.cache_seqlens.numel() > 0 else 0
                 )
+                print(f"start_pos: {start_pos}")
 
             # In context-parallel mode we must be given pre-sharded buffers
             # unless we're in the single-token path (which sets ``start_pos``).

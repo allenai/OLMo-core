@@ -35,6 +35,18 @@ def write_kvcache_(
     )
     assert k.shape[1] == T, f"Key tensor sequence length {k.shape[1]} != write length {T}"
     assert v.shape[1] == T, f"Value tensor sequence length {v.shape[1]} != write length {T}"
+    if k_cache.isnan().any():
+        print("k_cache is nan")
+        breakpoint()
+    if v_cache.isnan().any():
+        print("v_cache is nan")
+        breakpoint()
+    if k.isnan().any():
+        print("k is nan")
+        breakpoint()
+    if v.isnan().any():
+        print("v is nan")
+        breakpoint()
 
     # Compute the absolute positions in the sequence dimension **per batch item**
     # Shape: (B, T)
