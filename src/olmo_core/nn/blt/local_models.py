@@ -2,6 +2,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, cast
 import math
+import logging
+import gc
 
 from einops import repeat, rearrange
 import torch
@@ -19,6 +21,8 @@ from olmo_core.nn.transformer.block import TransformerBlockBase
 from olmo_core.nn.buffer_cache import BufferCache
 from .embed import add_hash_embeddings
 from .utils import log1mexp
+
+log = logging.getLogger(__name__)
 
 # matching BLT, seems necessary but why?
 flex_attention_comp = torch.compile(flex_attention)
@@ -640,6 +644,7 @@ class LocalEncoder(nn.Module):
         boundary_predictor_backprop_through_encoder: bool = True,
         boundary_threshold: float | int = 0.5,
         teacher_force_interpolation_ratio: Optional[float] = None,
+        **block_kwargs,
     ) -> tuple[torch.Tensor, torch.Tensor, tuple[Optional[torch.Tensor], Optional[torch.Tensor]], Optional[torch.Tensor]]:
         embeddings = self.embedding(tokens)
         if self.add_hash_embeddings:
@@ -666,8 +671,7 @@ class LocalEncoder(nn.Module):
             # Mark sizes as dynamic for torch.compile().
             #if self.compile_enabled:
             #    mark_dynamic(h, (0, 1), strict=False)
-            # TODO(benjaminm): do we need local_block_kwargs?
-            h = block(h)
+            h = block(h, **block_kwargs)
 
         if self.post_last_block_norm is not None:
             h = self.post_last_block_norm(h)
@@ -796,6 +800,66 @@ class LocalDecoder(nn.Module):
         else:
             self.in_projection = None
 
+    def allocate_kv_cache(
+        self, batch_size: int, max_seq_len: int, dtype: torch.dtype
+    ) -> torch.Tensor:
+        # TODO(benjaminm): propagate dtype
+        return torch.zeros((batch_size, self.d_model), device=next(self.parameters()).device, dtype=dtype)
+
+    def free_kv_cache(self):
+        if hasattr(self, "last_value") and self.last_value is not None:
+            del self.last_value
+        gc.collect()
+        torch.cuda.empty_cache()
+
+    def reset_kv_cache(
+        self,
+        use_cache: bool,
+        batch_size: Optional[int] = None,
+        max_seq_len: Optional[int] = None,
+        dtype: Optional[torch.dtype] = torch.float32,
+    ) -> None:
+        # Fast path when KV caching is disabled.
+        if not use_cache:
+            self.last_value = None
+            return
+
+        if batch_size is None:
+            raise ValueError("batch_size must be provided if use_cache is True")
+        if max_seq_len is None:
+            raise ValueError("max_seq_len must be provided if use_cache is True")
+        if dtype is None:
+            raise ValueError("dtype must be provided if use_cache is True")
+
+        # Attempt to reuse an existing cache that satisfies the requested size and dtype requirements.
+        if (
+            hasattr(self, "last_value")
+            and self.last_value is not None
+            and self.last_value.shape[0] == batch_size
+            and self.last_value.dtype == dtype
+        ):
+            # The kv cache is reusable, so we just reset it.
+            self.last_value.zero_()
+            return
+
+        if (
+            hasattr(self, "last_value")
+            and self.last_value is not None
+        ):
+            # cache exists, why did reuse fail?
+            reasons = []
+            if self.last_value.shape[0] != batch_size:
+                reasons.append(f"batch_size mismatch: {self.last_value.shape[0]} != {batch_size}")
+            if self.last_value.dtype != dtype:
+                reasons.append(f"dtype mismatch: {self.ssm_state.dtype} != {dtype}")
+            if reasons:
+                log.info(f"KV cache reuse failed: {', '.join(reasons)}")
+
+        self.free_kv_cache()  # free the old cache to avoid OOMs
+        self.last_value = self.allocate_kv_cache(
+            batch_size, max_seq_len, dtype
+        )
+
     def apply_fsdp(
         self,
         dp_mesh: Optional[DeviceMesh] = None,
@@ -830,9 +894,17 @@ class LocalDecoder(nn.Module):
         block_size: int = 256,
         headdim: int = 32,
         epsilon: float = 1e-3,
+        **block_kwargs,
     ) -> torch.Tensor:
         from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
 
+        # inference
+        if hasattr(self, "last_value") and self.last_value is not None:
+            if patch_embeds.shape[1] == 0:
+                patch_embeds = self.last_value.unsqueeze(1)
+            else:
+                self.last_value.copy_(patch_embeds[:, -1, :])
+    
         h_patch = patch_embeds[..., :self.d_model] # global d -> local d
 
         # for now, use HNet's smoothing module but with probabilities in {0,1} instead of probabilities in [0,1]
@@ -888,7 +960,7 @@ class LocalDecoder(nn.Module):
         depool_out = cast(torch.Tensor, depool_out)
 
         # TODO(benjaminm): clipping is problematic if it happens too much; track clip %.
-        plug_back_idx = (torch.cumsum(boundary_mask, dim=1) - 1).clip(max=depool_out.shape[1] - 1)
+        plug_back_idx = (torch.cumsum(boundary_mask, dim=1) - 1).clip(min=0, max=depool_out.shape[1] - 1)
         depool_out = torch.gather(
             depool_out,
             dim=1,
@@ -911,7 +983,7 @@ class LocalDecoder(nn.Module):
 
         for block_idx in range(self.n_layers):
             block = self.blocks[str(block_idx)]
-            h = block(h)
+            h = block(h, **block_kwargs)
 
         return h
 
@@ -921,6 +993,7 @@ class LocalDecoder(nn.Module):
         patch_embeds: torch.Tensor,
         cross_attn_mask: BlockMask | None,
         last_token_is_boundary: bool = True,
+        **block_kwargs,
     ) -> torch.Tensor:
         if self.patch_embedding_projection is None or self.blt_k is None:
             raise ValueError("Patch embedding projection is not defined, can not depool with BLT method.")
@@ -944,7 +1017,7 @@ class LocalDecoder(nn.Module):
             # NOTE: same thing, BLT applies the residual connection two times (presumably on accident?), so we have to 2x here.
             residual_factor = 2 if self.blt_compat else 1
             h = h * residual_factor + h_cross
-            h = block(h)
+            h = block(h, **block_kwargs)
 
         return h
 
@@ -957,11 +1030,12 @@ class LocalDecoder(nn.Module):
         boundary_logprobs: torch.Tensor | None = None,
         boundary_mask: torch.Tensor | None = None,
         last_token_is_boundary: bool = True,
+        **block_kwargs,
     ) -> torch.Tensor:
         if self.depooling == "cross_attn":
-            return self._depool_blt(embeds, patch_embeds, cross_attn_mask, last_token_is_boundary)
+            return self._depool_blt(embeds, patch_embeds, cross_attn_mask, last_token_is_boundary, **block_kwargs)
         elif self.depooling == "hnet":
-            return self._depool_hnet(embeds, patch_embeds, patch_lens, boundary_logprobs, boundary_mask, last_token_is_boundary)
+            return self._depool_hnet(embeds, patch_embeds, patch_lens, boundary_logprobs, boundary_mask, last_token_is_boundary, **block_kwargs)
         else:
             raise ValueError(f"Unknown depooling method: {self.depooling}. Supported methods are 'cross_attn' and 'hnet'.")
 
@@ -975,6 +1049,7 @@ class LocalDecoder(nn.Module):
         boundary_logprobs: torch.Tensor | None = None,
         boundary_mask: torch.Tensor | None = None,
         last_token_is_boundary: bool = True,
+        **block_kwargs,
     ) -> torch.Tensor:
         if self.residual_norm is not None:
             h = self.residual_norm(embeds)
@@ -997,4 +1072,5 @@ class LocalDecoder(nn.Module):
             boundary_logprobs=boundary_logprobs,
             boundary_mask=boundary_mask,
             last_token_is_boundary=last_token_is_boundary,
+            **block_kwargs,
         )
