@@ -1947,24 +1947,23 @@ class BLTDistillTransformer(BLTTransformer):
                     local_decoder_loss = local_decoder_loss_exhaustive
                 else:
                     local_decoder_loss = local_decoder_loss_simple
-
-            # compute the boundary loss
-            if boundary_preds is not None:
-                assert boundary_labels is not None
-
-                elementwise_boundary_loss = F.binary_cross_entropy_with_logits(
-                    boundary_preds.float(),
-                    boundary_labels.float(),
-                    reduction="none",
-                )
-                boundary_loss = (elementwise_boundary_loss * byte_mask).mean()
-                boundary_acc = (((boundary_preds > 0) == (boundary_labels > 0)) * byte_mask).float().mean()
-                metrics["blt/boundary_loss"] = boundary_loss / byte_mask.float().mean()
-                metrics["blt/boundary_acc"] = boundary_acc / byte_mask.float().mean()
-            else:
-                boundary_loss = torch.nan
         else:
             local_decoder_loss = torch.nan
+
+        # compute the boundary loss
+        if boundary_preds is not None:
+            assert boundary_labels is not None
+
+            elementwise_boundary_loss = F.binary_cross_entropy_with_logits(
+                boundary_preds.float(),
+                boundary_labels.float(),
+                reduction="none",
+            )
+            boundary_loss = (elementwise_boundary_loss * byte_mask).mean()
+            boundary_acc = (((boundary_preds > 0) == (boundary_labels > 0)) * byte_mask).float().mean()
+            metrics["blt/boundary_loss"] = boundary_loss / byte_mask.float().mean()
+            metrics["blt/boundary_acc"] = boundary_acc / byte_mask.float().mean()
+        else:
             boundary_loss = torch.nan
 
         # finalize losses
