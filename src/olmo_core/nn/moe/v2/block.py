@@ -135,7 +135,8 @@ class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
 
         return block_params
 
-
+if TYPE_CHECKING:
+    from olmo_core.train.common import ReduceType
 class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBase):
     
     def __init__(
@@ -179,6 +180,34 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         self.tp_pg = None
         self._tp_enabled = False
 
+    def compute_metrics(
+        self, reset: bool = True
+    ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
+        # TODO: compute shared and routed experts metrics
+        metrics_shared = self.shared_experts.compute_metrics(reset=reset)
+        metrics_routed = self.routed_experts.compute_metrics(reset=reset)
+        metrics = {
+            "shared": metrics_shared,
+            "routed": metrics_routed,
+        }
+        return metrics
+
+    def reset_metrics(self):
+        self.shared_experts.reset_metrics()
+        self.routed_experts.reset_metrics()
+
+
+    @property
+    def is_moe(self) -> bool:
+        return True
+
+    @property
+    def ep_enabled(self) -> bool:
+        return self._ep_enabled
+
+    @property
+    def tp_enabled(self) -> bool:
+        return self._tp_enabled
 
     def get_dense_stream(self) -> torch.cuda.Stream:
         return get_or_init_stream(id=2, priority=20)
@@ -215,6 +244,18 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
     ):
         raise NotImplementedError("TP is not supported in MoEFusedV1TransformerBlock")
+
+    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType):
+        self.attention.apply_cp(cp_mesh, load_balancer)
+        self.shared_experts.apply_cp(cp_mesh)
+        self.routed_experts.apply_cp(cp_mesh)
+
+    def apply_fsdp(
+        self,
+        *args,
+        **kwargs,
+    ):
+        raise NotImplementedError("FSDP is not supported in MoEFusedV2TransformerBlock")
 
     @property
     def ep_world_size(self) -> int:
