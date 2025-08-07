@@ -605,9 +605,12 @@ class Attention(AttentionBase):
         if self.rope is not None:
             start_pos: Optional[int] = None
             if (
-                self.k_cache is not None
+                hasattr(self, "k_cache")
+                and self.k_cache is not None
+                and hasattr(self, "v_cache")
                 and self.v_cache is not None
                 and not prefill_kv_cache
+                and hasattr(self, "cache_seqlens")
                 and self.cache_seqlens is not None
             ):
                 start_pos = (
