@@ -392,7 +392,8 @@ class Attention(AttentionBase):
                 )
             if window_size <= 0:
                 raise OLMoConfigurationError(f"'window_size' must be positive (got {window_size})")
-            self.window_size = (window_size, 0)
+            # Flash attn window is [i - window_size[0], i + window_size[1]] inclusive
+            self.window_size = (window_size - 1, 0)
         else:
             self.window_size = (-1, -1)
 
