@@ -1893,24 +1893,28 @@ class BLTDistillTransformer(BLTTransformer):
             assert teacher_embeds is not None
 
             if isinstance(self.teacher, BLTTransformer):
-                if blt_config.decoder_use_mse_loss:
-                    elementwise_local_decoder_loss = rep_compare_fn(
-                        h_out,
-                        teacher_last_hidden_state,
-                    )
-                    local_decoder_loss = (elementwise_local_decoder_loss * byte_mask).mean()
-                    metrics["blt/mse_local_decoder_loss"] = local_decoder_loss / byte_mask.float().mean()
-                else:
-                    # we can use standard KL!
-                    local_decoder_loss = F.kl_div(
-                        logprobs.float(),
-                        teacher_logprobs.float(),
-                        reduction="none",
-                        log_target=True,
-                    ).sum(-1)
-                    local_decoder_loss = (local_decoder_loss * byte_mask).mean()
-                    metrics["blt/kl_local_decoder_loss"] = local_decoder_loss / byte_mask.float().mean()
+                elementwise_mse_local_decoder_loss = rep_compare_fn(
+                    h_out,
+                    teacher_last_hidden_state,
+                )
+                mse_local_decoder_loss = (elementwise_mse_local_decoder_loss * byte_mask).mean()
 
+                # we can use standard KL!
+                elementwise_kl_local_decoder_loss = F.kl_div(
+                    logprobs.float(),
+                    teacher_logprobs.float(),
+                    reduction="none",
+                    log_target=True,
+                ).sum(-1)
+                kl_local_decoder_loss = (elementwise_kl_local_decoder_loss * byte_mask).mean()
+
+                if blt_config.decoder_use_mse_loss:
+                    local_decoder_loss = mse_local_decoder_loss
+                else:
+                    local_decoder_loss = kl_local_decoder_loss
+
+                metrics["blt/mse_local_decoder_loss"] = mse_local_decoder_loss / byte_mask.float().mean()
+                metrics["blt/kl_local_decoder_loss"] = kl_local_decoder_loss / byte_mask.float().mean()
                 metrics["blt/kl_local_decoder_teacher_mean_p"] = (
                     (torch.exp(teacher_main_path_logprobs) * byte_mask[:, 1:].float()).mean() / byte_mask[:, 1:].float().mean()
                 )
