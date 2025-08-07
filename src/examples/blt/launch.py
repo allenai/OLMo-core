@@ -71,7 +71,7 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
             "pip freeze",
         ]
     else:
-        image = "ai2/cuda12.8-dev-ubuntu22.04-torch2.7.0"
+        image = "benjaminm/titan_blt_train"
         # slow setup (need appropriate torch / cuda build)
         setup_steps = list(DEFAULT_SETUP_STEPS)
 
