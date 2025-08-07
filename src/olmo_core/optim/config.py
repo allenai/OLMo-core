@@ -1,6 +1,6 @@
 import logging
 from abc import ABCMeta, abstractmethod
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 from dataclasses import dataclass
 from fnmatch import fnmatch
 from typing import (
@@ -23,6 +23,7 @@ import torch.nn as nn
 
 from ..config import Config
 from ..exceptions import OLMoConfigurationError
+from ..nn.mup import MuP, MuPOptimizerType
 from ..utils import get_default_device, move_to_device
 
 __all__ = [
@@ -116,7 +117,11 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
         return OptimGroupOverride(param_names, go.opts.copy())
 
     def build_groups(
-        self, model: nn.Module, strict: bool = True
+        self,
+        model: nn.Module,
+        strict: bool = True,
+        initial_lr: Optional[float] = None,
+        default_weight_decay: Optional[float] = None,
     ) -> Union[Iterable[torch.Tensor], List[Dict[str, Any]]]:
         """
         Build parameters groups.
@@ -145,11 +150,75 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
         )
         group_overrides.append(default_override)
 
+        named_mups = MuP.named_mups(model)
+        # If muP is scaling LR up/down, create separate parameter groups based on the new LRs.
+        if any(mup.lr_multiplier for _, mup in named_mups.items()):
+            if initial_lr is None:
+                raise OLMoConfigurationError("Initial LR must be provided for muP")
+
+            mup_optimizer_type = self.mup_optimizer_type()
+            if mup_optimizer_type is None:
+                raise OLMoConfigurationError(
+                    f"Optimizer class {self.__class__.__name__} does not support muP but model has muP configs"
+                )
+
+            if any(mup.optimizer != mup_optimizer_type for _, mup in named_mups.items()):
+                raise OLMoConfigurationError(
+                    f"muP objects found with optimizer type not matching expected type {self.mup_optimizer_type()}"
+                )
+
+            if mup_optimizer_type.coupled_weight_decay and default_weight_decay is None:
+                raise OLMoConfigurationError(
+                    "Weight decay is required when applying muP to an optimizer with coupled weight decay"
+                )
+
+            new_group_overrides = []
+            for go in group_overrides:
+                params_name_by_mup_lr_and_wd: defaultdict[
+                    Tuple[float, Optional[float]], List[str]
+                ] = defaultdict(list)
+                for name in go.params:
+                    lr = MuP.scale_lr(named_mups.get(name), go.opts.get("lr", initial_lr))
+
+                    if mup_optimizer_type.coupled_weight_decay:
+                        assert default_weight_decay is not None
+                        weight_decay = MuP.scale_coupled_wd(
+                            named_mups.get(name), go.opts.get("weight_decay", default_weight_decay)
+                        )
+                    else:
+                        weight_decay = default_weight_decay
+
+                    params_name_by_mup_lr_and_wd[(lr, weight_decay)].append(name)
+
+                if mup_optimizer_type.coupled_weight_decay or default_weight_decay is not None:
+                    new_group_overrides += [
+                        OptimGroupOverride(
+                            param_names, {**go.opts, "lr": lr, "weight_decay": weight_decay}
+                        )
+                        for (lr, weight_decay), param_names in params_name_by_mup_lr_and_wd.items()
+                    ]
+                else:
+                    new_group_overrides += [
+                        OptimGroupOverride(param_names, {**go.opts, "lr": lr})
+                        for (lr, _), param_names in params_name_by_mup_lr_and_wd.items()
+                    ]
+
+            group_overrides = new_group_overrides
+
         return [
             {"params": [all_params[param_name] for param_name in go.params], **go.opts}
             for go in group_overrides
             if len(go.params) > 0
         ]
+
+    @classmethod
+    @abstractmethod
+    def mup_optimizer_type(cls) -> Optional[MuPOptimizerType]:
+        """
+        Get the MuP optimizer type associated with this config. If ``None``, then this optimizer
+        does not support muP.
+        """
+        raise NotImplementedError
 
     @classmethod
     @abstractmethod
@@ -172,7 +241,13 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
         kwargs.pop("fixed_fields")
 
         optim: torch.optim.Optimizer = self.optimizer()(
-            self.build_groups(model, strict=strict), **kwargs
+            self.build_groups(
+                model,
+                strict=strict,
+                initial_lr=kwargs.get("lr"),
+                default_weight_decay=kwargs.get("weight_decay"),
+            ),
+            **kwargs,
         )
 
         # Set 'lr' and 'initial_lr' in each group if needed.
