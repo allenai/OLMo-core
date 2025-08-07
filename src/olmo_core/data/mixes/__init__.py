@@ -38,6 +38,7 @@ class DataMix(DataMixBase):
     OLMoE_mix_0824 = "OLMoE-mix-0824"
     dolma17 = "dolma17"
     v3_small_ppl_validation = "v3-small-ppl-validation"
+    OLMo_mix_0625 = "OLMo-mix-0625"
 
     def build(self, base_dir: str, tokenizer: str) -> Tuple[List[str], List[str]]:
         if not base_dir.endswith("/"):
@@ -49,6 +50,9 @@ class DataMix(DataMixBase):
                 tokenizer_id = "gptneox20b"
             elif tokenizer == TokenizerName.dolma2:
                 tokenizer_id = "dolma2-tokenizer"
+        elif self == DataMix.OLMo_mix_0625:
+            if tokenizer == TokenizerName.dolma2_sigdig:
+                tokenizer_id = "dolma2-tokenizer-sigdig"
         elif tokenizer == TokenizerName.gpt_neox_olmo_dolma_v1_5:
             tokenizer_id = "gpt-neox-olmo-dolma-v1_5"
 

@@ -36,13 +36,15 @@ class BatchSizeSchedulerCallback(Callback):
     Defines the schedule at which to apply each batch size.
     """
 
+    enabled: bool = True
+
     def __post_init__(self):
         if len(self.batch_sizes) != len(self.schedule):
             raise OLMoConfigurationError(
                 "batch_sizes and schedules should have the same number of items"
             )
 
-        if not self.schedule:
+        if not self.schedule or not self.enabled:
             return
 
         if len({duration.unit for duration in self.schedule}) > 1:
@@ -126,6 +128,8 @@ class BatchSizeSchedulerCallback(Callback):
         self.trainer.record_metric("train/global batch size", self.current_batch_size)
 
     def _maybe_update_batch_size_and_lr(self):
+        if not self.enabled:
+            return
         # Find latest event in the schedule to apply.
         for target_batch_size, event_start in reversed(list(zip(self.batch_sizes, self.schedule))):
             if event_start.due(

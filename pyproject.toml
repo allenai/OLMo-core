@@ -45,6 +45,7 @@ dev = [
     "wheel",
     "build",
     "boto3",
+    "google-cloud-compute",
     "google-cloud-storage",
     "Sphinx>=6.0,<9.0",
     "furo==2024.8.6",
