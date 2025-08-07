@@ -386,6 +386,15 @@ class Attention(AttentionBase):
         self.k_cache, self.v_cache = None, None
         self.cache_seqlens = None
 
+        def nan_hook(module, input, output):
+            if any(torch.isnan(i).any() for i in input) or torch.isnan(output).any():
+                breakpoint()
+
+        self.w_q.register_forward_hook(nan_hook)
+        self.w_k.register_forward_hook(nan_hook)
+        self.w_v.register_forward_hook(nan_hook)
+        self.w_out.register_forward_hook(nan_hook)
+
     @property
     def cp_enabled(self) -> bool:
         return self._cp_enabled
