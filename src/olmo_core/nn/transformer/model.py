@@ -310,6 +310,7 @@ class Transformer(nn.Module):
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         return_logits: Optional[bool] = None,
         logits_to_keep: Union[int, torch.Tensor] = 0,
+        use_cache: bool = False,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any], Dict[str, Any]]:
         # NOTE: with pipeline parallelism input_ids might actually be an intermediate output,
@@ -341,18 +342,23 @@ class Transformer(nn.Module):
         # Convert attention mask to cache_leftpad if provided
         # The attention module will use this for KV caching if k_cache/v_cache are allocated
         if attention_mask is not None:
-            try:
+            if use_cache:
                 cache_leftpad, seq_lens = attention_mask_to_cache_leftpad(attention_mask)
                 # Successfully converted to cache_leftpad, so don't pass attention_mask
                 attention_mask = None
-            except Exception:
-                # If conversion fails (e.g., not left-padded), keep attention_mask as is
-                pass
-        
-        # Handle document length inputs (only if not using cache_leftpad)
-        if cache_leftpad is None and (doc_lens := kwargs.pop("doc_lens", None)) is not None and (
-            max_doc_lens := kwargs.pop("max_doc_lens", None)
-        ) is not None:
+            else:
+                raise NotImplementedError(
+                    "Generation with an attention mask but without a kv cache is not yet supported"
+                )
+        elif use_cache:
+            raise OLMoConfigurationError("attention_mask must be provided if use_cache is True")
+
+        # Handle document length inputs (only if not using kv-caching / cache_leftpad)
+        if (
+            cache_leftpad is None
+            and (doc_lens := kwargs.pop("doc_lens", None)) is not None
+            and (max_doc_lens := kwargs.pop("max_doc_lens", None)) is not None
+        ):
             max_doc_len = max(max_doc_lens)
             cu_doc_lens = get_cumulative_document_lengths(doc_lens)
 
@@ -388,18 +394,12 @@ class Transformer(nn.Module):
                 pad_values.append(ignore_index)
                 keys.append("labels")
 
-            if attention_mask is not None:
-                inputs.append(attention_mask)
-                seq_dims.append(1)
-                pad_values.append(0.0)
-                keys.append("attention_mask")
-            
             if cache_leftpad is not None:
                 inputs.append(cache_leftpad)
                 seq_dims.append(0)  # cache_leftpad is per-batch, not per-sequence
                 pad_values.append(0)
                 keys.append("cache_leftpad")
-            
+
             if seq_lens is not None:
                 inputs.append(seq_lens)
                 seq_dims.append(0)  # seq_lens is per-batch, not per-sequence
@@ -438,10 +438,9 @@ class Transformer(nn.Module):
 
             input_ids = block_kwargs.pop("input_ids")
             labels = block_kwargs.pop("labels", None)
-            attention_mask = block_kwargs.pop("attention_mask", None)
             cache_leftpad = block_kwargs.pop("cache_leftpad", None)
             seq_lens = block_kwargs.pop("seq_lens", None)
-            
+
             # Put them back in block_kwargs if they exist
             if cache_leftpad is not None:
                 block_kwargs["cache_leftpad"] = cache_leftpad
@@ -450,23 +449,19 @@ class Transformer(nn.Module):
         else:
             input_ids = move_to_device(input_ids, self.device)
             labels = move_to_device(labels, self.device)
-            attention_mask = move_to_device(attention_mask, self.device)
-            
+
             # Only pass cu_doc_lens if we're not using cache_leftpad
             if cache_leftpad is None:
                 block_kwargs["max_doc_len"] = max_doc_len
                 block_kwargs["cu_doc_lens"] = move_to_device(cu_doc_lens, self.device)
+                assert not use_cache, "use_cache must be False when using cu_doc_lens"
             else:
                 # When using cache_leftpad, pass it and seq_lens instead
+                assert max_doc_len is None, "max_doc_len must be None when using cache_leftpad"
+                assert cu_doc_lens is None, "cu_doc_lens must be None when using cache_leftpad"
                 block_kwargs["cache_leftpad"] = move_to_device(cache_leftpad, self.device)
                 block_kwargs["seq_lens"] = move_to_device(seq_lens, self.device)
-
-        # Add attention mask to block kwargs if provided
-        if attention_mask is not None:
-            block_kwargs["attention_mask"] = attention_mask
-
-        # Add any remaining inference kwargs to block kwargs
-        # (removed prefill_kv_cache since it's no longer used)
+                block_kwargs["use_cache"] = use_cache
 
         return (
             input_ids,
@@ -487,6 +482,7 @@ class Transformer(nn.Module):
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         return_logits: Optional[bool] = None,
         logits_to_keep: Union[int, torch.Tensor] = 0,
+        use_cache: bool = False,
         **kwargs,
     ) -> Union[torch.Tensor, LMOutputWithLoss]:
         """
@@ -503,6 +499,7 @@ class Transformer(nn.Module):
         :param return_logits: Whether to return logits along with the loss when labels are provided.
         :param logits_to_keep: Number of positions to keep from the end of the sequence (if int),
             or tensor specifying which positions to keep. Default is 0 (keep all).
+        :param use_cache: Whether to use the KV cache. Default is False. Only valid for inference.
 
         :returns: The logits if ``labels`` is ``None`` or the losses if ``labels`` is not ``None``.
         """
@@ -516,8 +513,11 @@ class Transformer(nn.Module):
             loss_div_factor=loss_div_factor,
             return_logits=return_logits,
             logits_to_keep=logits_to_keep,
+            use_cache=use_cache,
             **kwargs,
         )
+
+        print("block_kwargs", block_kwargs)
 
         # Get embeddings but pass-through for non-existent layers to allow easy
         # pipeline parallel configuration.

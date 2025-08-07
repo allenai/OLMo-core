@@ -926,6 +926,16 @@ def attention_mask_to_cache_leftpad(
     if attention_mask.dtype != torch.bool:
         attention_mask = attention_mask != 0
 
-    seq_lens = attention_mask.sum(dim=-1, dtype=torch.int32)  # (B,)
-    cache_leftpad = (attention_mask.size(-1) - seq_lens).int()  # (B,)
+    # Verify prefix-padding property
+    # Check that once we see a valid token (True), we don't see any padding tokens (False) after it
+    prefix_ok = (attention_mask.cummax(dim=1).values & ~attention_mask).any().item() is False
+    if not prefix_ok:
+        raise ValueError(
+            "attention_mask must represent *prefix padding* (all padding tokens precede valid tokens) "
+            "for conversion to flash attention cache leftpad."
+        )
+
+    # Find the first True value in each row (where valid tokens start)
+    cache_leftpad = attention_mask.int().argmax(dim=-1).int()  # (B,)
+    seq_lens = attention_mask.size(-1) - cache_leftpad  # (B,)
     return cache_leftpad, seq_lens

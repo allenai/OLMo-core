@@ -220,7 +220,7 @@ class TransformerGenerationModule(GenerationModule):
                 input_ids_for_model,
                 attention_mask=attention_mask_for_model,
                 logits_to_keep=1,
-                prefill_kv_cache=is_first_forward,
+                use_cache=generation_config.use_cache,
             )
             if self.device.type == "cuda":
                 torch.cuda.synchronize()
