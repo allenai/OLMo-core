@@ -1,7 +1,7 @@
 import logging
 import math
 import warnings
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import torch
 import torch.distributed as dist
@@ -14,6 +14,7 @@ from torch.distributed.tensor import Placement, Shard, distribute_tensor
 from olmo_core.distributed.parallel import get_device_mesh_info
 from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.nn.mup import MuP, MuPConfig, MuPHyperParam
 from olmo_core.utils import log_once
 
 try:
@@ -46,6 +47,7 @@ class MoEMLPBase(nn.Module):
         self.hidden_sharding_degree = 1
         self.ep_mesh: Optional[DeviceMesh] = None
         self.ep_pg: Optional[dist.ProcessGroup] = None
+        self.mups: Dict[str, MuP] = {}
 
     def apply_ep(self, ep_mesh: DeviceMesh):
         """
@@ -133,6 +135,7 @@ class MoEMLP(MoEMLPBase):
         num_experts: int,
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
+        mup: Optional[MuPConfig] = None,
     ):
         super().__init__(d_model=d_model, hidden_size=hidden_size, num_experts=num_experts)
         # NOTE: these parameters need to have a large enough first dimension (which would be num experts)
@@ -161,6 +164,24 @@ class MoEMLP(MoEMLPBase):
                 dtype=dtype,
             ),
         )
+
+        if mup:
+            self.mups["w1"] = mup.build(
+                {MuPHyperParam.d_model: 1},
+                {MuPHyperParam.hidden_size: 1},
+                # {MuPHyperParam.hidden_size: 1, MuPHyperParam.num_experts: 1},
+            )
+            self.mups["w2"] = mup.build(
+                {MuPHyperParam.hidden_size: 1},
+                {MuPHyperParam.d_model: 1},
+                # {MuPHyperParam.d_model: 1, MuPHyperParam.num_experts: 1},
+            )
+            self.mups["w3"] = mup.build(
+                {MuPHyperParam.d_model: 1},
+                {MuPHyperParam.hidden_size: 1},
+                # {MuPHyperParam.hidden_size: 1, MuPHyperParam.num_experts: 1},
+            )
+
         self.reset_parameters()
 
     def reset_parameters(self) -> None:
@@ -192,7 +213,12 @@ class MoEMLP(MoEMLPBase):
         x = x.type_as(w1)
 
         # Compute the MLP.
-        return torch.bmm(F.silu(torch.bmm(x, w1)) * torch.bmm(x, w3), w2).to(dtype=og_dtype)
+        w1_output = torch.bmm(MuP.scale_input(self.mups.get("w1"), x), w1)
+        w3_output = torch.bmm(MuP.scale_input(self.mups.get("w3"), x), w3)
+        return torch.bmm(
+            MuP.scale_input(self.mups.get("w2"), F.silu(w1_output) * w3_output),
+            w2,
+        ).to(dtype=og_dtype)
 
 
 class DroplessMoEMLP(MoEMLPBase):
@@ -208,6 +234,7 @@ class DroplessMoEMLP(MoEMLPBase):
         num_experts: int,
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
+        mup: Optional[MuPConfig] = None,
     ):
         super().__init__(d_model=d_model, hidden_size=hidden_size, num_experts=num_experts)
         # NOTE: these parameters need to have a large enough first dimension (which would be num experts)
@@ -236,6 +263,23 @@ class DroplessMoEMLP(MoEMLPBase):
                 dtype=dtype,
             ),
         )
+
+        if mup:
+            self.mups["w1"] = mup.build(
+                {MuPHyperParam.d_model: 1},
+                {MuPHyperParam.hidden_size: 1},
+                # {MuPHyperParam.hidden_size: 1, MuPHyperParam.num_experts: 1},
+            )
+            self.mups["w2"] = mup.build(
+                {MuPHyperParam.hidden_size: 1},
+                {MuPHyperParam.d_model: 1},
+                # {MuPHyperParam.d_model: 1, MuPHyperParam.num_experts: 1},
+            )
+            self.mups["w3"] = mup.build(
+                {MuPHyperParam.d_model: 1},
+                {MuPHyperParam.hidden_size: 1},
+                # {MuPHyperParam.hidden_size: 1, MuPHyperParam.num_experts: 1},
+            )
 
         self._gmm = gmm
         if self._gmm is None:
@@ -286,7 +330,11 @@ class DroplessMoEMLP(MoEMLPBase):
         )
 
         # Compute the MLP.
-        x1 = self.gmm(x, w1, batch_size_per_expert, trans_b=True)
-        x2 = self.gmm(x, w3, batch_size_per_expert, trans_b=True)
+        x1 = self.gmm(
+            MuP.scale_input(self.mups.get("w1"), x), w1, batch_size_per_expert, trans_b=True
+        )
+        x2 = self.gmm(
+            MuP.scale_input(self.mups.get("w3"), x), w3, batch_size_per_expert, trans_b=True
+        )
         x1 = F.silu(x1) * x2
-        return self.gmm(x1, w2, batch_size_per_expert)
+        return self.gmm(MuP.scale_input(self.mups.get("w2"), x1), w2, batch_size_per_expert)

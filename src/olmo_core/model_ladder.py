@@ -5,6 +5,7 @@ Configuration classes for defining model ladder scaling ablations.
 import logging
 from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass, field
+from typing import ClassVar, List
 
 from olmo_core.data.numpy_dataset import InstanceFilterConfig
 
@@ -47,6 +48,10 @@ class ModelSize(StrEnum):
     as close as possible, ignoring embeddings.
     """
 
+    size_60M = "60M"
+    """
+    60M parameters.
+    """
     size_190M = "190M"
     """
     190M parameters.
@@ -62,6 +67,10 @@ class ModelSize(StrEnum):
     size_760M = "760M"
     """
     760M parameters.
+    """
+    size_970M = "970M"
+    """
+    970M parameters.
     """
     size_1B = "1B"
     """
@@ -193,6 +202,13 @@ class ModelLadder(Config, metaclass=ABCMeta):
     """
     The maximum data parallel world size that you intent to run with. This is used to set the batch size.
     """
+
+    beaker_workspace: str = "ai2/OLMo-core"
+    """
+    Beaker workspace.
+    """
+
+    SUPPORTED_MODEL_SIZES: ClassVar[List[ModelSize]] = list(ModelSize)
 
     @property
     def model_size(self) -> int:
@@ -382,6 +398,11 @@ class ModelLadder(Config, metaclass=ABCMeta):
 
         from olmo_eval import list_tasks
 
+        if size not in self.SUPPORTED_MODEL_SIZES:
+            raise OLMoConfigurationError(
+                f"Size {size} not supported by this ladder (supported sizes: {self.SUPPORTED_MODEL_SIZES})."
+            )
+
         config = TrainerConfig(
             save_folder=self.get_save_folder(size, run_duration),
             metrics_collect_interval=10,
@@ -452,7 +473,7 @@ class ModelLadder(Config, metaclass=ABCMeta):
 
         :raises OLMoConfigurationError: If the ladder has any issues.
         """
-        for size in ModelSize:
+        for size in self.SUPPORTED_MODEL_SIZES:
             # validating to match old ladder sizes.
             if size == ModelSize.size_1B:
                 target_size = 1.3
