@@ -17,7 +17,6 @@ from olmo_core.config import Config, DType, StrEnum
 from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.nn.attention.kv_cache import write_kvcache_
 
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
@@ -414,19 +413,13 @@ class Attention(AttentionBase):
         local_k_slice: Optional[slice] = None,
         scale: Optional[float] = None,
         # Inference only:
-        prefill_kv_cache: bool = False,
+        cache_leftpad: Optional[torch.Tensor] = None,
+        seq_lens: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         att: torch.Tensor
 
-        # If we are pre-filling the KV cache, we need to write the new keys and values to it.
-        if self.k_cache is not None and self.v_cache is not None and prefill_kv_cache:
-            if self.cache_seqlens is None:
-                raise ValueError("cache_seqlens is required when using the KV cache")
-            write_kvcache_(self.k_cache, self.v_cache, self.cache_seqlens, k, v, q.shape[1])
-            self.cache_seqlens.add_(q.shape[1])
-
-        # If KV cache is provided and we're in decoding mode (not prefilling)
-        if self.k_cache is not None and self.v_cache is not None and not prefill_kv_cache:
+        # If KV cache is allocated, always use flash_attn_with_kvcache for decoding
+        if self.k_cache is not None and self.v_cache is not None:
             if not self.use_flash:
                 raise RuntimeError(
                     f"'{self.__class__.__name__}' requires flash (use_flash=True) for KV caching"
@@ -437,6 +430,10 @@ class Attention(AttentionBase):
                 )
             if self.cache_seqlens is None:
                 raise ValueError("cache_seqlens is required when using the KV cache")
+            if seq_lens is None:
+                raise ValueError("seq_lens is required when using the KV cache")
+            if cache_leftpad is None:
+                raise ValueError("cache_leftpad is required when using the KV cache")
             att = dispatch_flash_attn_with_kvcache(
                 q,
                 self.k_cache,  # updated in-place
@@ -444,25 +441,13 @@ class Attention(AttentionBase):
                 k=k,
                 v=v,
                 cache_seqlens=self.cache_seqlens,
-                cache_leftpad=None,
+                cache_leftpad=cache_leftpad,
                 block_table=None,
                 softmax_scale=scale,
                 causal=True,
                 window_size=self.window_size,
             )
-            if self.k_cache.isnan().any():
-                print("k_cache is nan")
-                breakpoint()
-            if self.v_cache.isnan().any():
-                print("v_cache is nan")
-                breakpoint()
-            if k.isnan().any():
-                print("k is nan")
-                breakpoint()
-            if v.isnan().any():
-                print("v is nan")
-                breakpoint()
-            self.cache_seqlens.add_(q.shape[1])
+            self.cache_seqlens.add_(seq_lens)
         elif self.cp_enabled:
             assert self._cp_pg is not None and self._cp_load_balancer is not None
             if not self.use_flash:
@@ -473,6 +458,8 @@ class Attention(AttentionBase):
                 raise RuntimeError(
                     f"'{self.__class__.__name__}' does not support attention masks with context parallelism"
                 )
+            if cache_leftpad is not None:
+                raise RuntimeError("cache_leftpad is not supported with context parallelism")
             att = dispatch_ring_flash_attn(
                 q,
                 k,
@@ -497,6 +484,11 @@ class Attention(AttentionBase):
                 raise RuntimeError(
                     f"'{self.__class__.__name__}' does not support attention masks with flash attention"
                 )
+            if cache_leftpad is not None:
+                raise RuntimeError(
+                    "cache_leftpad is only supported with KV caching. "
+                    "It should not be passed when KV cache is not being used."
+                )
             att = dispatch_flash_attn(
                 q,
                 k,
@@ -514,6 +506,10 @@ class Attention(AttentionBase):
             )
         else:
             # Fall back to PyTorch's SDPA...
+            if cache_leftpad is not None:
+                raise RuntimeError(
+                    "cache_leftpad is only supported with flash attention and KV caching"
+                )
             if any(
                 opt is not None
                 for opt in (
@@ -571,7 +567,8 @@ class Attention(AttentionBase):
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
         # Inference only:
-        prefill_kv_cache: bool = False,
+        cache_leftpad: Optional[torch.Tensor] = None,
+        seq_lens: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Apply attention to the input.
@@ -628,13 +625,11 @@ class Attention(AttentionBase):
             if (
                 self.k_cache is not None
                 and self.v_cache is not None
-                and not prefill_kv_cache
                 and self.cache_seqlens is not None
             ):
                 start_pos = (
                     int(self.cache_seqlens.max().item()) if self.cache_seqlens.numel() > 0 else 0
                 )
-                print(f"start_pos: {start_pos}")
 
             # In context-parallel mode we must be given pre-sharded buffers
             # unless we're in the single-token path (which sets ``start_pos``).
@@ -668,7 +663,8 @@ class Attention(AttentionBase):
             max_doc_len_q=max_doc_len_q,
             max_doc_len_k=max_doc_len_k,
             local_k_slice=local_k_slice,
-            prefill_kv_cache=prefill_kv_cache,
+            cache_leftpad=cache_leftpad,
+            seq_lens=seq_lens,
         )
 
         # shape: (batch_size, seq_len, d_model)
@@ -687,12 +683,9 @@ class Attention(AttentionBase):
         return k_cache, v_cache, cache_seqlens
 
     def free_kv_cache(self):
-        if hasattr(self, "k_cache") and self.k_cache is not None:
-            del self.k_cache
-        if hasattr(self, "v_cache") and self.v_cache is not None:
-            del self.v_cache
-        if hasattr(self, "cache_seqlens") and self.cache_seqlens is not None:
-            del self.cache_seqlens
+        self.k_cache = None
+        self.v_cache = None
+        self.cache_seqlens = None
         gc.collect()
         torch.cuda.empty_cache()
 
@@ -882,7 +875,8 @@ class NormalizedAttention(Attention):
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
-        prefill_kv_cache: bool = False,
+        cache_leftpad: Optional[torch.Tensor] = None,
+        seq_lens: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         B, T, _ = x.shape
 
@@ -913,7 +907,6 @@ class NormalizedAttention(Attention):
             if (
                 self.k_cache is not None
                 and self.v_cache is not None
-                and not prefill_kv_cache
                 and self.cache_seqlens is not None
             ):
                 start_pos = (
@@ -955,7 +948,8 @@ class NormalizedAttention(Attention):
             max_doc_len_k=max_doc_len_k,
             local_k_slice=local_k_slice,
             scale=self.sqrt_head_dim,
-            prefill_kv_cache=prefill_kv_cache,
+            cache_leftpad=cache_leftpad,
+            seq_lens=seq_lens,
         )
 
         # shape: (batch_size, seq_len, d_model)
@@ -1060,7 +1054,8 @@ class FusedAttention(AttentionBase):
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
-        prefill_kv_cache: bool = False,
+        cache_leftpad: Optional[torch.Tensor] = None,
+        seq_lens: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Apply attention to the input.
@@ -1075,10 +1070,12 @@ class FusedAttention(AttentionBase):
 
         :returns: The output of attention with shape ``(batch_size, seq_len, d_model)``.
         """
-        if prefill_kv_cache:
+        if cache_leftpad:
             raise NotImplementedError(
-                "Prefill KV cache is not supported yetfor the fused attention variant"
+                "cache_leftpad is not supported for the fused attention variant"
             )
+        if seq_lens is not None:
+            raise NotImplementedError("seq_lens is not supported for the fused attention variant")
 
         B, T, _ = x.shape
 

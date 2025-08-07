@@ -96,8 +96,6 @@ def select_next_token(
     total_elements = logits.numel()
     nan_percentage = (num_nans / total_elements) * 100 if total_elements > 0 else 0
     batch_nan_info = [i for i in range(logits.shape[0]) if torch.isnan(logits[i]).any()]
-    if nan_mask.any():
-        breakpoint()
 
     assert not nan_mask.any(), (
         f"NaN values detected in logits: {num_nans}/{total_elements} ({nan_percentage:.2f}%) "

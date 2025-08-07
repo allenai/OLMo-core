@@ -905,3 +905,27 @@ def attention_mask_to_cu_doc_lens(
     cu_doc_lens = get_cumulative_document_lengths(doc_lens)
 
     return doc_lens, cu_doc_lens, max_doc_len
+
+
+def attention_mask_to_cache_leftpad(
+    attention_mask: torch.Tensor,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Convert a left-padding attention mask into a cache leftpad for Flash-Attention.
+
+    The mask is expected to be a boolean or 0/1 tensor of shape ``(batch, seq_len)`` where
+    ``True``/1 indicates a *valid* token and the padding is on the **left** side of the
+    sequence (i.e. all padding tokens come *before* all valid tokens).
+
+    Returns:
+        cache_leftpad: (batch_size,), dtype torch.int32. The index that the KV cache starts.
+    """
+    if attention_mask.ndim != 2:
+        raise ValueError(
+            f"expected 2-D attention_mask (batch, seq_len), got shape {attention_mask.shape}"
+        )
+    if attention_mask.dtype != torch.bool:
+        attention_mask = attention_mask != 0
+
+    seq_lens = attention_mask.sum(dim=-1, dtype=torch.int32)  # (B,)
+    cache_leftpad = (attention_mask.size(-1) - seq_lens).int()  # (B,)
+    return cache_leftpad, seq_lens
