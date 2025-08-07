@@ -61,6 +61,10 @@ class GenerationConfig(Config):
             raise ValueError(f"pad_token_id must be non-negative, got {self.pad_token_id}")
         if self.eos_token_id < 0:
             raise ValueError(f"eos_token_id must be non-negative, got {self.eos_token_id}")
+        if self.pad_token_id == self.eos_token_id:
+            raise ValueError(
+                f"pad_token_id and eos_token_id must be different, got {self.pad_token_id} and {self.eos_token_id}"
+            )
         if self.max_length is not None and self.max_length <= 0:
             raise ValueError(f"max_length must be positive, got {self.max_length}")
         if self.max_new_tokens is not None and self.max_new_tokens <= 0:

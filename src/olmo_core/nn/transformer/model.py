@@ -303,7 +303,6 @@ class Transformer(nn.Module):
         input_ids: torch.Tensor,
         labels: Optional[torch.Tensor] = None,
         *,
-        attention_mask: Optional[torch.Tensor] = None,
         ignore_index: int = -100,
         loss_reduction: Literal["mean", "sum", "none"] = "mean",
         z_loss_multiplier: Optional[float] = None,
@@ -339,28 +338,19 @@ class Transformer(nn.Module):
         cache_leftpad: Optional[torch.Tensor] = None
         seq_lens: Optional[torch.Tensor] = None
 
-        # Convert attention mask to cache_leftpad if provided
-        # The attention module will use this for KV caching if k_cache/v_cache are allocated
-        if attention_mask is not None:
-            if use_cache:
-                cache_leftpad, seq_lens = attention_mask_to_cache_leftpad(attention_mask)
-                # Successfully converted to cache_leftpad, so don't pass attention_mask
-                attention_mask = None
-            else:
-                raise NotImplementedError(
-                    "Generation with an attention mask but without a kv cache is not yet supported"
-                )
-        elif use_cache:
-            raise OLMoConfigurationError("attention_mask must be provided if use_cache is True")
-
-        # Handle document length inputs (only if not using kv-caching / cache_leftpad)
-        if (
-            cache_leftpad is None
-            and (doc_lens := kwargs.pop("doc_lens", None)) is not None
-            and (max_doc_lens := kwargs.pop("max_doc_lens", None)) is not None
-        ):
+        # Handle document length inputs
+        if (doc_lens := kwargs.pop("doc_lens", None)) is not None and (
+            max_doc_lens := kwargs.pop("max_doc_lens", None)
+        ) is not None:
             max_doc_len = max(max_doc_lens)
             cu_doc_lens = get_cumulative_document_lengths(doc_lens)
+
+        # Handle KV cache inputs for inference
+        if use_cache:
+            if (cache_leftpad := kwargs.pop("cache_leftpad", None)) is None:
+                raise ValueError("cache_leftpad is required when use_cache=True")
+            if (seq_lens := kwargs.pop("seq_lens", None)) is None:
+                raise ValueError("seq_lens is required when use_cache=True")
 
         # Shard inputs and RoPE buffers on sequence dimension if using context parallelism.
         if (cp_load_balancer := self._cp_load_balancer) is not None:
@@ -395,16 +385,10 @@ class Transformer(nn.Module):
                 keys.append("labels")
 
             if cache_leftpad is not None:
-                inputs.append(cache_leftpad)
-                seq_dims.append(0)  # cache_leftpad is per-batch, not per-sequence
-                pad_values.append(0)
-                keys.append("cache_leftpad")
+                raise NotImplementedError("cache_leftpad is not supported with context parallelism")
 
             if seq_lens is not None:
-                inputs.append(seq_lens)
-                seq_dims.append(0)  # seq_lens is per-batch, not per-sequence
-                pad_values.append(0)
-                keys.append("seq_lens")
+                raise NotImplementedError("seq_lens is not supported with context parallelism")
 
             if cu_doc_lens is not None:
                 # NOTE: Can only shard properly here if 'input_ids' is flat, i.e. a single instance.
@@ -438,27 +422,19 @@ class Transformer(nn.Module):
 
             input_ids = block_kwargs.pop("input_ids")
             labels = block_kwargs.pop("labels", None)
-            cache_leftpad = block_kwargs.pop("cache_leftpad", None)
-            seq_lens = block_kwargs.pop("seq_lens", None)
-
-            # Put them back in block_kwargs if they exist
-            if cache_leftpad is not None:
-                block_kwargs["cache_leftpad"] = cache_leftpad
-            if seq_lens is not None:
-                block_kwargs["seq_lens"] = seq_lens
         else:
             input_ids = move_to_device(input_ids, self.device)
             labels = move_to_device(labels, self.device)
 
             # Only pass cu_doc_lens if we're not using cache_leftpad
-            if cache_leftpad is None:
+            if not use_cache:
                 block_kwargs["max_doc_len"] = max_doc_len
                 block_kwargs["cu_doc_lens"] = move_to_device(cu_doc_lens, self.device)
-                assert not use_cache, "use_cache must be False when using cu_doc_lens"
+                assert not cache_leftpad, "cache_leftpad must be False when using cu_doc_lens"
             else:
-                # When using cache_leftpad, pass it and seq_lens instead
-                assert max_doc_len is None, "max_doc_len must be None when using cache_leftpad"
-                assert cu_doc_lens is None, "cu_doc_lens must be None when using cache_leftpad"
+                # When using cache, pass cache_leftpad and seq_lens instead of cu_doc_lens
+                assert max_doc_len is None, "max_doc_len must be None when using cache"
+                assert cu_doc_lens is None, "cu_doc_lens must be None when using cache"
                 block_kwargs["cache_leftpad"] = move_to_device(cache_leftpad, self.device)
                 block_kwargs["seq_lens"] = move_to_device(seq_lens, self.device)
                 block_kwargs["use_cache"] = use_cache

@@ -21,19 +21,10 @@ from olmo_core.train.train_module.transformer.config import TransformerDataParal
 from olmo_core.utils import seed_all
 
 
-def small_transformer_config(**kwargs):
+def small_transformer_config(n_layers: int = 2, **kwargs):
     return TransformerConfig.llama_like(
-        d_model=128, n_heads=4, n_layers=2, vocab_size=512, **kwargs
+        d_model=128, n_heads=4, n_layers=n_layers, vocab_size=512, **kwargs
     )
-
-
-def single_layer_transformer_config(**kwargs):
-    return TransformerConfig.llama_like(
-        d_model=128, n_heads=4, n_layers=1, vocab_size=512, **kwargs
-    )
-
-
-# TODO: test with different dtypes
 
 
 @requires_gpu
@@ -73,11 +64,12 @@ def test_generation_module_basic(compile_model: bool, use_cache: bool):
     )
 
     # Create test input
-    batch_size, seq_len = 2, 16
-    input_ids = torch.randint(2, 100, (batch_size, seq_len), device=device)
+    batch_size, context_len = 2, 16
+    input_ids = torch.randint(2, 100, (batch_size, context_len), device=device)
+    attention_mask = torch.ones(batch_size, context_len, device=device, dtype=torch.bool)
 
-    output_ids, output_logits, output_logprobs = generation_module.generate_batch(
-        input_ids, return_logits=True, return_logprobs=True, completions_only=False
+    output_ids, output_logits = generation_module.generate_batch(  # type: ignore
+        input_ids, attention_mask=attention_mask, return_logits=True, completions_only=False
     )
 
     # TODO: test to make sure the model is compiled exactly once if compile_model is True
@@ -86,20 +78,15 @@ def test_generation_module_basic(compile_model: bool, use_cache: bool):
     # Verify output shape and properties
     assert output_ids.shape[0] == batch_size, "output batch size does not match input batch size"
     assert output_ids.shape[1] <= generation_config.max_length, "output_ids too long"
-    assert output_ids.shape[1] >= seq_len + 1, "no new tokens generated"
-    assert torch.all(output_ids[:, :seq_len] == input_ids), "input_ids not preserved"
+    assert output_ids.shape[1] >= context_len + 1, "no new tokens generated"
+    assert torch.all(output_ids[:, :context_len] == input_ids), "input_ids not preserved"
 
     assert isinstance(output_logits, torch.Tensor), "output_logits is not a tensor"
-    assert isinstance(output_logprobs, torch.Tensor), "output_logprobs is not a tensor"
     assert output_logits.shape == (
         batch_size,
-        output_ids.shape[1],
+        output_ids.shape[1] - context_len,
         transformer_config.vocab_size,
     ), "output_logits shape does not match expected shape"
-    assert output_logprobs.shape == (
-        batch_size,
-        output_ids.shape[1] - 1,
-    ), "output_logprobs shape does not match expected shape"
 
     # Check that generation stopped at EOS or max_length
     for i in range(batch_size):
@@ -145,8 +132,8 @@ def test_generation_module_state_dict():
 
     # Verify they produce same output
     input_ids = torch.randint(1, 100, (1, 4), device=device)
-    output_ids1, *_ = module1.generate_batch(input_ids)
-    output_ids2, *_ = module2.generate_batch(input_ids)
+    output_ids1, _ = module1.generate_batch(input_ids)
+    output_ids2, _ = module2.generate_batch(input_ids)
     torch.testing.assert_close(output_ids1, output_ids2)
 
 
@@ -171,7 +158,7 @@ def test_generation_config_overrides(
 
     # Generate with overrides
     input_ids = torch.randint(1, 50, (1, 4), device=device)
-    output_ids, *_ = generation_module.generate_batch(
+    output_ids, _ = generation_module.generate_batch(
         input_ids, max_length=max_length, eos_token_id=eos_token_id, temperature=0.8
     )
 
@@ -203,7 +190,7 @@ def test_generation_module_config_build(tmp_path: Path):
 
     # Generate output before saving
     input_ids = torch.randint(1, 100, (2, 4), device=device)
-    output_before, *_ = generation_module.generate_batch(input_ids)
+    output_before, _ = generation_module.generate_batch(input_ids)
 
     checkpoint_dir = tmp_path / "checkpoint"
     save_model_and_optim_state(checkpoint_dir, generation_module.model)
@@ -218,7 +205,7 @@ def test_generation_module_config_build(tmp_path: Path):
     )
 
     # Generate output after loading from checkpoint
-    output_after, *_ = generation_module2.generate_batch(input_ids)
+    output_after, _ = generation_module2.generate_batch(input_ids)
 
     # Verify predictions are the same before and after saving
     torch.testing.assert_close(output_before, output_after)
@@ -249,29 +236,13 @@ def test_generation_module_stop_sequences():
     )
 
     def create_mock_forward(tokens_to_generate):
-        def mock_forward(
-            input_ids: torch.Tensor,
-            *,
-            labels: Optional[torch.Tensor] = None,
-            attention_mask: Optional[torch.Tensor] = None,
-            ignore_index: int = -100,
-            loss_reduction: Literal["mean", "sum", "none"] = "mean",
-            z_loss_multiplier: Optional[float] = None,
-            loss_div_factor: Optional[torch.Tensor | float] = None,
-            return_logits: Optional[bool] = None,
-            logits_to_keep: Union[int, torch.Tensor] = 0,
-            **kwargs,
-        ):
-            seq_len = input_ids.shape[1] - 3  # Subtract initial input length
-            if seq_len < len(tokens_to_generate):
-                token = tokens_to_generate[seq_len]
-            else:
-                token = 99  # Default token after sequence
+        def mock_forward(input_ids: torch.Tensor, **kwargs):
             batch_size = input_ids.shape[0]
-            logits = torch.zeros(
-                batch_size, input_ids.shape[1], transformer_config.vocab_size, device=device
-            )
-            logits[:, -1, token] = 100.0  # High logit for desired token
+            seq_len = input_ids.shape[1] - 3  # Subtract initial input length
+            token = tokens_to_generate[seq_len] if seq_len < len(tokens_to_generate) else 99
+            print(f"Generating token {token} for input_ids {input_ids.tolist()}")
+            logits = torch.zeros(batch_size, 1, transformer_config.vocab_size, device=device)
+            logits[:, 0, token] = 100.0  # High logit for desired token
             return logits
 
         return mock_forward
@@ -279,25 +250,25 @@ def test_generation_module_stop_sequences():
     # Stop at first stop token (10)
     input_ids = torch.tensor([[3, 5, 7]], dtype=torch.long, device=device)
     generation_module.model.forward = create_mock_forward([8, 9, 10, 99])
-    output, *_ = generation_module.generate_batch(input_ids, completions_only=False)
+    output, _ = generation_module.generate_batch(input_ids, completions_only=False)
     assert torch.equal(output, torch.tensor([[3, 5, 7, 8, 9, 10]], device=device))
 
     # Stop at second stop token (20)
     input_ids = torch.tensor([[2, 4, 6]], dtype=torch.long, device=device)
     generation_module.model.forward = create_mock_forward([25, 15, 20, 99])
-    output, *_ = generation_module.generate_batch(input_ids, completions_only=False)
+    output, _ = generation_module.generate_batch(input_ids, completions_only=False)
     assert torch.equal(output, torch.tensor([[2, 4, 6, 25, 15, 20]], device=device))
 
     # Stop at third stop token (30)
     input_ids = torch.tensor([[1, 2, 3]], dtype=torch.long, device=device)
     generation_module.model.forward = create_mock_forward([5, 30, 99])
-    output, *_ = generation_module.generate_batch(input_ids, completions_only=False)
+    output, _ = generation_module.generate_batch(input_ids, completions_only=False)
     assert torch.equal(output, torch.tensor([[1, 2, 3, 5, 30]], device=device))
 
     # Stop at EOS token (not stop token)
     input_ids = torch.tensor([[3, 5, 7]], dtype=torch.long, device=device)
     generation_module.model.forward = create_mock_forward([60, 70, 1, 99])
-    output, *_ = generation_module.generate_batch(input_ids, completions_only=False)
+    output, _ = generation_module.generate_batch(input_ids, completions_only=False)
     assert torch.equal(output, torch.tensor([[3, 5, 7, 60, 70, 1]], device=device))
 
     # No stop tokens - only stops at EOS
@@ -319,32 +290,39 @@ def test_generation_module_stop_sequences():
 @requires_flash_attn
 def test_generation_with_attention_mask():
     device = torch.device("cuda")
-    pad = 0
+    pad_token_id = 0
+
     generation_config = GenerationConfig(
-        max_length=20, temperature=0.0, pad_token_id=pad, eos_token_id=1
+        max_length=20, temperature=0.0, pad_token_id=pad_token_id, eos_token_id=1
     )
 
     transformer_config = small_transformer_config(use_flash=True, dtype=DType.bfloat16)
     model = transformer_config.build()
     generation_module = TransformerGenerationModule(
-        model=model,
-        generation_config=generation_config,
-        device=device,
-    )
-    input_ids = torch.tensor([[pad, pad, 3, 5, 7]], dtype=torch.long, device=device)  # left-padded
-    attention_mask = (input_ids != pad).to(torch.bool)
-
-    output_with_mask, *_ = generation_module.generate_batch(
-        input_ids, attention_mask=attention_mask, completions_only=False
-    )
-    output_without_mask, *_ = generation_module.generate_batch(
-        input_ids, attention_mask=None, completions_only=False
+        model=model, generation_config=generation_config, device=device
     )
 
-    # The outputs should be different because attention mask affects how the model
-    # processes the padded positions
-    assert not torch.equal(output_with_mask, output_without_mask), (
-        "Attention mask should affect generation output"
+    # Create left-padded input
+    input_ids = torch.tensor(
+        [[pad_token_id, pad_token_id, 3, 5, 7]], dtype=torch.long, device=device
+    )
+
+    # Create two different attention masks
+    attention_mask1 = (input_ids != pad_token_id).to(torch.bool)
+    attention_mask2 = attention_mask1.clone()
+    attention_mask2[0, 2] = False  # Mask the first non-pad token (as if it were padding)
+
+    # Generate with different attention masks
+    output_with_mask1, _ = generation_module.generate_batch(
+        input_ids, attention_mask=attention_mask1, completions_only=False
+    )
+    output_with_mask2, _ = generation_module.generate_batch(
+        input_ids, attention_mask=attention_mask2, completions_only=False
+    )
+
+    # Different attention masks should produce different outputs
+    assert not torch.equal(output_with_mask1, output_with_mask2), (
+        "Different attention masks should affect generation output"
     )
 
 
@@ -368,7 +346,7 @@ def run_distributed_generation(
     device = torch.device("cuda", dist.get_rank())
     input_ids = input_ids.to(device)
 
-    output_ids, *_ = generation_module.generate_batch(input_ids, completions_only=False)
+    output_ids, _ = generation_module.generate_batch(input_ids, completions_only=False)
 
     assert output_ids.shape == expected_shape
     assert output_ids.device == device
@@ -436,7 +414,7 @@ def test_generation_cache_consistency(batch_size: int):
 
     device = torch.device("cuda")
 
-    transformer_config = single_layer_transformer_config(dtype=DType.bfloat16, use_flash=True)
+    transformer_config = small_transformer_config(dtype=DType.bfloat16, n_layers=1, use_flash=True)
     model = transformer_config.build()
 
     gen_config = GenerationConfig(
@@ -450,11 +428,11 @@ def test_generation_cache_consistency(batch_size: int):
     input_ids = torch.randint(2, 100, (batch_size, seq_len), device=device)
 
     seed_all(0)
-    output_ids_no_cache, output_logits_no_cache, _ = generation_module.generate_batch(
+    output_ids_no_cache, output_logits_no_cache = generation_module.generate_batch(
         input_ids, completions_only=True, return_logits=True, use_cache=False
     )
     seed_all(0)
-    output_ids_with_cache, output_logits_with_cache, _ = generation_module.generate_batch(
+    output_ids_with_cache, output_logits_with_cache = generation_module.generate_batch(
         input_ids, completions_only=True, return_logits=True, use_cache=True
     )
 

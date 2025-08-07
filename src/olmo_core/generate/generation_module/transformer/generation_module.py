@@ -17,6 +17,7 @@ from tqdm import tqdm
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import DType
 from olmo_core.data.tokenizer import TokenizerConfig
+from olmo_core.data.utils import attention_mask_to_cache_leftpad
 from olmo_core.distributed.checkpoint import get_checkpoint_metadata, load_state_dict
 from olmo_core.distributed.parallel import build_world_mesh, get_dp_process_group
 from olmo_core.distributed.utils import (
@@ -151,8 +152,8 @@ class TransformerGenerationModule(GenerationModule):
         Args:
             input_ids: Input token IDs of shape (batch_size, seq_len)
             attention_mask: Optional attention mask of shape (batch_size, seq_len). This should be
-                a *left-padding* mask, not an arbitrary attention mask.
-                If not provided, the model will use a default mask that attends to all previous tokens.
+                a *left-padding* mask, not an arbitrary attention mask. If not provided, the model
+                will assume there are no left-padding tokens.
             return_logits: If True, return logits along with generated tokens
             completions_only: If True, return only the completions, not the entire sequence
             **generation_kwargs: Generation configuration overrides
@@ -161,16 +162,20 @@ class TransformerGenerationModule(GenerationModule):
                 - generated_ids: Generated token IDs of shape (batch_size, output_length)
                 - logits: Full logits if return_logits=True, else None. Shape: (batch_size, output_length, vocab_size)
         """
-        # TODO: try padding the input_ids to a multiple of 128
-        self.model.eval()
-        input_ids = move_to_device(input_ids, self.device)
-        if attention_mask is not None:
-            attention_mask = move_to_device(attention_mask, self.device)
-        batch_size, prompt_len = input_ids.shape
-        finished = torch.zeros(batch_size, dtype=torch.bool, device=self.device)
-
         # Replace generation config with any overrides.
         generation_config = self._generation_config.replace(**generation_kwargs)
+        eos = generation_config.eos_token_id
+
+        self.model.eval()
+
+        input_ids = move_to_device(input_ids, self.device)
+        batch_size, prompt_len = input_ids.shape
+        finished = torch.zeros(batch_size, dtype=torch.bool, device=self.device)
+        stop_tokens = (
+            torch.tensor(generation_config.stop_token_ids, device=self.device, dtype=torch.int32)
+            if generation_config.stop_token_ids is not None
+            else None
+        )
 
         # Output containers
         generated = input_ids
@@ -196,6 +201,17 @@ class TransformerGenerationModule(GenerationModule):
         else:
             max_length = None  # Generate until EOS or stop tokens or OOM...
 
+        prefill_seq_lens = None
+        decode_seq_lens = None
+        cache_leftpad = None
+        if generation_config.use_cache:
+            if attention_mask is None:
+                attention_mask = torch.ones_like(input_ids, dtype=torch.bool, device=self.device)
+            cache_leftpad, prefill_seq_lens = attention_mask_to_cache_leftpad(attention_mask)
+            cache_leftpad = cache_leftpad.to(self.device)
+            prefill_seq_lens = prefill_seq_lens.to(self.device).to(torch.int32)
+            decode_seq_lens = torch.ones(batch_size, dtype=torch.int32, device=self.device)
+
         # Initialize/Reset the KV cache
         kv_cache_start_time = time.perf_counter()
         self.reset_kv_cache(generation_config.use_cache, batch_size, max_length, self.model.dtype)
@@ -203,24 +219,31 @@ class TransformerGenerationModule(GenerationModule):
             torch.cuda.synchronize()
         kv_cache_init_time = time.perf_counter() - kv_cache_start_time
 
-        pbar = tqdm(desc="Generating tokens", disable=not log_timing)
-        while True:
+        pbar = tqdm(
+            desc="Generating tokens",
+            total=max_length - prompt_len if max_length is not None else None,
+            disable=not log_timing,
+        )
+        while not ((max_length is not None and generated.shape[1] >= max_length) or finished.all()):
             token_start_time = time.perf_counter()
 
-            # Determine model inputs based on whether we're using the cache
+            # Determine model inputs based on if we are prefilling or decoding
             is_first_forward = generated.shape[1] == prompt_len
-            is_using_cache = generation_config.use_cache and not is_first_forward
-
-            input_ids_for_model = generated[:, -1:] if is_using_cache else generated
-            attention_mask_for_model = None if is_using_cache else attention_mask
+            input_ids_for_model = (
+                generated
+                if (is_first_forward or not generation_config.use_cache)
+                else generated[:, -1:]
+            )
+            step_seq_lens = prefill_seq_lens if is_first_forward else decode_seq_lens
 
             # Time the forward pass
             forward_start_time = time.perf_counter()
-            next_token_logits = self.model(  # (batch_size, 1, self.model.vocab_size)
+            next_token_logits = self.model(
                 input_ids_for_model,
-                attention_mask=attention_mask_for_model,
                 logits_to_keep=1,
                 use_cache=generation_config.use_cache,
+                cache_leftpad=cache_leftpad if generation_config.use_cache else None,
+                seq_lens=step_seq_lens if generation_config.use_cache else None,
             )
             if self.device.type == "cuda":
                 torch.cuda.synchronize()
@@ -235,12 +258,7 @@ class TransformerGenerationModule(GenerationModule):
             if all_logits is not None:
                 all_logits.append(next_token_logits)
 
-            # Check if we should stop before generating more tokens
-            pbar.update(1)
-            if (max_length is not None and generated.shape[1] >= max_length) or finished.all():
-                pbar.close()
-                break
-
+            # Generate next token
             next_tokens = select_next_token(  # (batch_size,)
                 next_token_logits.squeeze(1),
                 do_sample=generation_config.do_sample,
@@ -249,25 +267,17 @@ class TransformerGenerationModule(GenerationModule):
                 top_p=generation_config.top_p,
             )
 
+            # Force EOS for (previously) finished sequences
+            next_tokens = torch.where(finished, torch.full_like(next_tokens, eos), next_tokens)
+
             # Handle finished sequences
-            # - Check which sequences have generated EOS or stop tokens
-            prev_finished = finished.clone()
-            just_finished = next_tokens == generation_config.eos_token_id
+            stop_hit = next_tokens.eq(eos)
+            if stop_tokens is not None:
+                stop_hit |= next_tokens.unsqueeze(-1).eq(stop_tokens).any(dim=-1)
+            finished |= stop_hit
 
-            # Also check for stop tokens if provided
-            if generation_config.stop_token_ids is not None:
-                for stop_token_id in generation_config.stop_token_ids:
-                    just_finished |= next_tokens == stop_token_id
-
-            finished |= just_finished
-
-            # - Append next tokens
+            # Append next tokens
             generated = torch.cat([generated, next_tokens.unsqueeze(-1)], dim=1)
-
-            # - Update attention mask if provided
-            if attention_mask is not None:
-                new_token_mask = torch.ones_like(prev_finished, dtype=attention_mask.dtype)
-                attention_mask = torch.cat([attention_mask, new_token_mask.unsqueeze(-1)], dim=1)
 
             # Track timing
             token_end_time = time.perf_counter()
@@ -275,12 +285,19 @@ class TransformerGenerationModule(GenerationModule):
                 time_to_first_token = token_end_time - start_time
             else:
                 token_times.append(token_end_time - token_start_time)
+
             tokens_generated += 1
+            pbar.update(1)
+
+        pbar.close()
 
         logits = None
         if return_logits and all_logits:
             logits = torch.cat(all_logits, dim=1)
-            # TODO: align logits with generated tokens? OBO?
+            expected_logits = generated.shape[1] - prompt_len
+            assert logits.shape[1] == expected_logits, (
+                f"Number of logits ({logits.shape[1]}) does not match number of newly generated tokens ({expected_logits})"
+            )
 
         if completions_only:
             generated = generated[:, prompt_len:]
