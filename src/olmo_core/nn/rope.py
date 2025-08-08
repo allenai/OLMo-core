@@ -289,8 +289,13 @@ class RoPEConfig(Config):
 @dataclass
 class RoPEBuffers:
     pos_sin: Optional[torch.Tensor] = None
+    """Precomputed sine positional embeddings for RoPE."""
+
     pos_cos: Optional[torch.Tensor] = None
+    """Precomputed cosine positional embeddings for RoPE."""
+
     freqs_cis: Optional[torch.Tensor] = None
+    """Precomputed complex frequency tensor (used by complex RoPE implementations)."""
 
 
 class RotaryEmbeddingBase(nn.Module):
@@ -353,6 +358,9 @@ class RotaryEmbedding(RotaryEmbeddingBase):
     def _get_rotary_embedding(
         self, seq_len: int, device: torch.device
     ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        :returns: The sine and cosine positional embeddings of shape ``(seq_len, head_size)``.
+        """
         if (
             (pos_sin := self._cache.get("rope_pos_sin")) is not None
             and (pos_cos := self._cache.get("rope_pos_cos")) is not None
@@ -531,6 +539,9 @@ class FusedRotaryEmbedding(RotaryEmbeddingBase):
     def _get_rotary_embedding(
         self, seq_len: int, device: torch.device
     ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        :returns: The sine and cosine positional embeddings of shape ``(seq_len, head_size // 2)``.
+        """
         if (
             (pos_sin := self._cache.get("rope_pos_sin")) is not None
             and (pos_cos := self._cache.get("rope_pos_cos")) is not None
@@ -554,8 +565,9 @@ class FusedRotaryEmbedding(RotaryEmbeddingBase):
                     theta=self.theta, dim=self.dim, device=device
                 )
             seq = torch.arange(seq_len, device=device, dtype=torch.float)
-            freqs = torch.einsum("i , j -> i j", seq, inv_freq)
-            pos_sin, pos_cos = freqs.sin(), freqs.cos()
+            freqs = torch.einsum("i , j -> i j", seq, inv_freq)  # (seq_len, head_size // 2)
+            # Note: no concat here, unlike the default implementation
+            pos_sin, pos_cos = freqs.sin(), freqs.cos()  # 2x (seq_len, head_size // 2)
 
         pos_sin = pos_sin * attention_rescale_factor
         pos_cos = pos_cos * attention_rescale_factor
@@ -643,6 +655,9 @@ class ComplexRotaryEmbedding(RotaryEmbeddingBase):
         return RoPEBuffers(freqs_cis=freqs_cis)
 
     def _get_rotary_embedding(self, seq_len: int, device: torch.device) -> torch.Tensor:
+        """
+        :returns: The complex frequency tensor of shape ``(seq_len, head_size // 2)``.
+        """
         if (freqs_cis := self._cache.get("rope_freqs_cis")) is not None and freqs_cis.shape[
             -2
         ] >= seq_len:
