@@ -325,7 +325,10 @@ class ByteTokenizer:
                 if not strict_spacelike:
                     in_strict_prefix = False
 
-                if (not strict_spacelike and next_spacelike) or (not in_strict_prefix and spacelike and not next_strict_spacelike) or current_length >= max_patch_length or token in special_tokens:
+                if in_strict_prefix:
+                    continue
+
+                if (spacelike != next_spacelike) or (strict_spacelike != next_strict_spacelike) or current_length >= max_patch_length or token in special_tokens:
                     patch_lengths.append(current_length)
                     in_strict_prefix = True
                     current_length = 0

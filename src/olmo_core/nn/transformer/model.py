@@ -1810,6 +1810,14 @@ class BLTDistillTransformer(BLTTransformer):
                 torch.zeros_like(predicted_patch_lens[:, 1:]),
             )
 
+            # to compare GT against predictions
+            # cu_predicted_patch_lens = torch.cumsum(predicted_patch_lens, dim=1)
+            # cu_patch_lens = torch.cumsum(local_encoder_kwargs["patch_lens"], dim=1)
+
+            # predicted_patch_spans = set((start, end) for start, end in zip(cu_predicted_patch_lens[0].tolist(), cu_predicted_patch_lens[0].tolist()[1:]))
+            # patch_spans = set((start, end) for start, end in zip(cu_patch_lens[0].tolist(), cu_patch_lens[0].tolist()[1:]))
+            # len(predicted_patch_spans & patch_spans)
+
             local_encoder_kwargs["patch_lens"] = predicted_patch_lens
             local_encoder_kwargs["patch_ids"] = blt_utils.lengths_to_ids(predicted_patch_lens, input_ids.shape[-1])
             local_decoder_kwargs["patch_lens"] = local_encoder_kwargs["patch_lens"]
