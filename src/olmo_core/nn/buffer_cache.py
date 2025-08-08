@@ -51,6 +51,10 @@ class BufferCache(MutableMapping[str, torch.Tensor]):
             return None
 
     def with_namespace(self, namespace: str) -> "BufferCache":
+        """
+        This creates a new :class:`BufferCache` object with a pointer to the same underlying data
+        but with the given namespace.
+        """
         out = BufferCache(namespace=namespace)
         out._data = self._data
         return out
