@@ -18,6 +18,9 @@ from olmo_core.nn.rope import RoPEConfig, RoPEType
 from olmo_core.testing import DEVICES, FLASH_MARKS, GPU_MARKS, requires_flash_attn, requires_gpu
 from olmo_core.utils import seed_all
 
+BF16_RTOL = 1e-5
+BF16_ATOL = 5e-3
+
 
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize(
@@ -209,7 +212,7 @@ def test_attention_with_intra_document_masking():
     [
         pytest.param({}, id="no-opts"),
         pytest.param({"clip_qkv": 8.0}, id="QKV-clip"),
-        pytest.param({"rope": RoPEConfig()}, id="rope"),
+        pytest.param({"rope": RoPEConfig(name=RoPEType.batched_start)}, id="rope"),
         pytest.param({"qk_norm": LayerNormConfig()}, id="qk-norm"),
         pytest.param({"qk_norm": LayerNormConfig(), "use_head_qk_norm": True}, id="head-qk-norm"),
     ],
@@ -271,11 +274,11 @@ def test_attention_kv_caching(batch_size: int, n_kv_heads: Optional[int], kwargs
     for step in range(decode_steps):
         x_decode = x[:, prefill_len + step : prefill_len + step + 1, :]
         with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
-            # For decoding single tokens, seq_lens is 1
+            # For decoding single tokens, seq_lens is 1, cache_leftpad is not passed
             decode_seq_lens = torch.ones(batch_size, dtype=torch.int32, device="cuda")
             y_decode = attention(
-                x_decode, use_cache=True, cache_leftpad=cache_leftpad, seq_lens=decode_seq_lens
-            )  # (B, 1, D)
+                x_decode, use_cache=True, cache_leftpad=None, seq_lens=decode_seq_lens
+            )
         y_decode_steps.append(y_decode)
 
     # Concatenate decode outputs
@@ -294,15 +297,15 @@ def test_attention_kv_caching(batch_size: int, n_kv_heads: Optional[int], kwargs
     torch.testing.assert_close(
         y_reference_prefill,
         y_prefill,
-        rtol=1e-5 if batch_size > 1 else None,
-        atol=5e-3 if batch_size > 1 else None,
+        rtol=BF16_RTOL if batch_size > 1 else None,
+        atol=BF16_ATOL if batch_size > 1 else None,
         msg=lambda s: f"Prefill reference outputs don't match: {s}",
     )
     torch.testing.assert_close(
         y_combined[:, :prefill_len, :],
         y_prefill,
-        rtol=1e-5 if batch_size > 1 else None,
-        atol=5e-3 if batch_size > 1 else None,
+        rtol=BF16_RTOL if batch_size > 1 else None,
+        atol=BF16_ATOL if batch_size > 1 else None,
         msg=lambda s: f"Prefill outputs don't match: {s}",
     )
 
@@ -310,8 +313,8 @@ def test_attention_kv_caching(batch_size: int, n_kv_heads: Optional[int], kwargs
     torch.testing.assert_close(
         y_combined[:, prefill_len:, :],
         y_decode_combined,
-        rtol=1e-5 if batch_size > 1 else None,
-        atol=5e-3 if batch_size > 1 else None,
+        rtol=BF16_RTOL if batch_size > 1 else None,
+        atol=BF16_ATOL if batch_size > 1 else None,
         msg=lambda s: f"Outputs that leverage the KV-cache don't match: {s}",
     )
 
@@ -371,9 +374,7 @@ def test_attention_kv_cache_update():
         decode_input = torch.randn(batch_size, 1, d_model, dtype=dtype, device="cuda")
         decode_seq_lens = torch.ones(batch_size, dtype=torch.int32, device="cuda")
         with torch.no_grad(), torch.autocast("cuda", dtype=dtype):
-            attention(
-                decode_input, use_cache=True, cache_leftpad=cache_leftpad, seq_lens=decode_seq_lens
-            )
+            attention(decode_input, use_cache=True, cache_leftpad=None, seq_lens=decode_seq_lens)
 
         # Check that cache has been updated.
         assert not torch.equal(k_cache_before, attention.k_cache)
@@ -523,7 +524,7 @@ def test_attention_kv_caching_with_leftpad():
 
     with torch.no_grad(), torch.autocast("cuda", dtype=dtype):
         y_decode = attention(
-            new_token, use_cache=True, cache_leftpad=cache_leftpad, seq_lens=decode_seq_lens
+            new_token, use_cache=True, cache_leftpad=None, seq_lens=decode_seq_lens
         )
 
     assert y_decode.shape == (batch_size, 1, d_model)
@@ -534,57 +535,62 @@ def test_attention_kv_caching_with_leftpad():
 
 @requires_gpu
 @requires_flash_attn
-@pytest.mark.parametrize("use_rope", [True, False])
+@pytest.mark.parametrize("use_rope", [True, False], ids=["rope", "no-rope"])
 def test_attention_leftpad_shift_equivalence(use_rope):
-    """Two inputs that are equivalent after left-padding should produce equivalent outputs on the overlapping suffix."""
+    """The same content, presented with different left-padding, should produce identical outputs on the valid region."""
     seed_all(0)
 
     d_model = 128
     n_heads = 8
     dtype = torch.bfloat16
 
-    # Longer sequence A
-    len_a = 12
-    pad_a = 3
-    x_a = torch.randn(1, len_a, d_model, dtype=dtype, device="cuda")  # (1, 12, 128)
+    # Shared content of length L
+    len_content = 7
+    x_shared = torch.randn(1, len_content, d_model, dtype=dtype, device="cuda")
 
-    # Shorter sequence B is the suffix of A (overlap)
-    len_b = 7
+    # Two different left-padding amounts for the same content
+    pad_a = 3
     pad_b = 8
-    x_b = x_a[:, len_a - len_b :, :].clone()  # (1, 7, 128)
 
     # Build masks to derive correct cache_leftpad and seq_lens
-    max_len_a = pad_a + len_a
-    mask_a = torch.tensor([[0] * pad_a + [1] * len_a], dtype=torch.bool, device="cuda")
+    max_len_a = pad_a + len_content
+    mask_a = torch.tensor([[0] * pad_a + [1] * len_content], dtype=torch.bool, device="cuda")
     cache_leftpad_a, seq_lens_a = attention_mask_to_cache_leftpad(mask_a)
 
-    max_len_b = pad_b + len_b
-    mask_b = torch.tensor([[0] * pad_b + [1] * len_b], dtype=torch.bool, device="cuda")
+    max_len_b = pad_b + len_content
+    mask_b = torch.tensor([[0] * pad_b + [1] * len_content], dtype=torch.bool, device="cuda")
     cache_leftpad_b, seq_lens_b = attention_mask_to_cache_leftpad(mask_b)
+
+    # Build left-padded inputs so padding tokens are present and must be ignored by the kernel
+    x_a = torch.zeros(1, max_len_a, d_model, dtype=dtype, device="cuda")
+    x_b = torch.zeros(1, max_len_b, d_model, dtype=dtype, device="cuda")
+    x_a[:, -len_content:, :] = x_shared
+    x_b[:, -len_content:, :] = x_shared
 
     attention = Attention(
         d_model=d_model,
         n_heads=n_heads,
-        rope=RoPEConfig() if use_rope else None,
+        rope=RoPEConfig(name=RoPEType.batched_start) if use_rope else None,
         use_flash=True,
         init_device="cuda",
         dtype=torch.float32,
     )
 
-    # Run A
+    # Run with leftpad A
     attention.reset_kv_cache(use_cache=True, batch_size=1, max_seq_len=max_len_a, dtype=dtype)
     with torch.no_grad(), torch.autocast("cuda", dtype=dtype):
         y_a = attention(x_a, use_cache=True, cache_leftpad=cache_leftpad_a, seq_lens=seq_lens_a)
 
-    # Run B
+    # Run with leftpad B
     attention.reset_kv_cache(use_cache=True, batch_size=1, max_seq_len=max_len_b, dtype=dtype)
     with torch.no_grad(), torch.autocast("cuda", dtype=dtype):
         y_b = attention(x_b, use_cache=True, cache_leftpad=cache_leftpad_b, seq_lens=seq_lens_b)
 
-    # Compare overlapping suffix of A with valid portion of B (explicitly trim by seq_lens)
-    overlap_len = int(seq_lens_b.item())
+    # Compare the valid region (full length here)
+    valid_len = int(seq_lens_b.item())
+    # Without RoPE, leftpad shift should not change outputs on the valid region.
     torch.testing.assert_close(
-        y_a[:, -overlap_len:, :], y_b[:, :overlap_len, :], rtol=1e-5, atol=5e-3
+        y_a[:, -valid_len:, :], y_b[:, -valid_len:, :], rtol=BF16_RTOL, atol=BF16_ATOL
     )
 
 
