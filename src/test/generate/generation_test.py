@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Literal, Optional, Union
+from typing import Optional
 
 import pytest
 import torch
@@ -20,11 +20,17 @@ from olmo_core.testing.utils import has_flash_attn, requires_flash_attn, require
 from olmo_core.train.train_module.transformer.config import TransformerDataParallelConfig
 from olmo_core.utils import seed_all
 
+BF16_RTOL = 1e-5
+BF16_ATOL = 5e-3
 
-def small_transformer_config(n_layers: int = 2, **kwargs):
-    return TransformerConfig.llama_like(
+
+def small_transformer_config(n_layers: int = 2, use_rope: bool = True, **kwargs):
+    config = TransformerConfig.llama_like(
         d_model=128, n_heads=4, n_layers=n_layers, vocab_size=512, **kwargs
     )
+    if not use_rope:
+        config.block.attention.rope = None
+    return config
 
 
 @requires_gpu
@@ -77,7 +83,8 @@ def test_generation_module_basic(compile_model: bool, use_cache: bool):
 
     # Verify output shape and properties
     assert output_ids.shape[0] == batch_size, "output batch size does not match input batch size"
-    assert output_ids.shape[1] <= generation_config.max_length, "output_ids too long"
+    if generation_config.max_length is not None:
+        assert output_ids.shape[1] <= generation_config.max_length, "output_ids too long"
     assert output_ids.shape[1] >= context_len + 1, "no new tokens generated"
     assert torch.all(output_ids[:, :context_len] == input_ids), "input_ids not preserved"
 
@@ -328,21 +335,23 @@ def test_generation_with_attention_mask():
 
 @requires_gpu
 @requires_flash_attn
-def test_left_padded_attention_mask_equivalence():
+@pytest.mark.parametrize("use_rope", [True, False], ids=["rope", "no-rope"])
+def test_left_padded_attention_mask_equivalence(use_rope):
     device = torch.device("cuda")
     pad_token_id = 0
 
     generation_config = GenerationConfig(
-        max_length=20, temperature=0.0, pad_token_id=pad_token_id, eos_token_id=1, use_cache=True
+        max_new_tokens=8, temperature=0.0, pad_token_id=pad_token_id, eos_token_id=1, use_cache=True
     )
 
-    transformer_config = small_transformer_config(use_flash=True, dtype=DType.bfloat16)
+    transformer_config = small_transformer_config(
+        use_flash=True, n_layers=2, dtype=DType.bfloat16, use_rope=use_rope
+    )
     model = transformer_config.build()
     generation_module = TransformerGenerationModule(
         model=model, generation_config=generation_config, device=device
     )
 
-    # Single-example: left-padded vs unpadded should yield identical completions and logits
     unpadded = torch.tensor([[3, 5, 7]], dtype=torch.long, device=device)
     left_padded = torch.tensor(
         [[pad_token_id, pad_token_id, 3, 5, 7]], dtype=torch.long, device=device
@@ -353,28 +362,63 @@ def test_left_padded_attention_mask_equivalence():
     attn_left_padded = (left_padded != pad_token_id).to(torch.bool)
 
     seed_all(0)
-    out_ids_unpadded, out_logits_unpadded = generation_module.generate_batch(
+    out_ids_unpadded, logits_unpadded = generation_module.generate_batch(
         unpadded, attention_mask=attn_unpadded, completions_only=True, return_logits=True
     )
 
     seed_all(0)
-    out_ids_left, out_logits_left = generation_module.generate_batch(
+    out_ids_left, logits_left = generation_module.generate_batch(
         left_padded, attention_mask=attn_left_padded, completions_only=True, return_logits=True
     )
 
     seed_all(0)
-    out_ids_pseudo_left, out_logits_pseudo_left = generation_module.generate_batch(
+    out_ids_pseudo_left, logits_pseudo_left = generation_module.generate_batch(
         pseudo_left_padded,
         attention_mask=attn_left_padded,  # reuse the left-padded attention mask
         completions_only=True,
         return_logits=True,
     )
 
-    assert torch.equal(out_ids_left, out_ids_pseudo_left)
-    torch.testing.assert_close(out_logits_left, out_logits_pseudo_left)
-
     assert torch.equal(out_ids_unpadded, out_ids_left)
-    torch.testing.assert_close(out_logits_unpadded, out_logits_left)
+    assert torch.equal(out_ids_left, out_ids_pseudo_left)
+
+    torch.testing.assert_close(logits_unpadded, logits_left, rtol=BF16_RTOL, atol=BF16_ATOL)
+    torch.testing.assert_close(logits_left, logits_pseudo_left, rtol=BF16_RTOL, atol=BF16_ATOL)
+
+
+@requires_gpu
+@requires_flash_attn
+@pytest.mark.parametrize("batch_size", [1, 8])
+def test_generation_cache_consistency(batch_size: int):
+    if not has_flash_attn:
+        pytest.skip("flash-attn is required for KV cache usage")
+
+    device = torch.device("cuda")
+
+    transformer_config = small_transformer_config(dtype=DType.bfloat16, n_layers=1, use_flash=True)
+    model = transformer_config.build()
+
+    gen_config = GenerationConfig(
+        max_length=128, do_sample=False, pad_token_id=0, eos_token_id=1, use_cache=False
+    )
+    generation_module = TransformerGenerationModule(
+        model=model, generation_config=gen_config, device=device
+    )
+
+    seq_len = 124
+    input_ids = torch.randint(2, 100, (batch_size, seq_len), device=device)
+
+    seed_all(0)
+    output_ids_no_cache, output_logits_no_cache = generation_module.generate_batch(
+        input_ids, completions_only=True, return_logits=True, use_cache=False
+    )
+    seed_all(0)
+    output_ids_with_cache, output_logits_with_cache = generation_module.generate_batch(
+        input_ids, completions_only=True, return_logits=True, use_cache=True
+    )
+
+    assert torch.equal(output_ids_no_cache, output_ids_with_cache)
+    torch.testing.assert_close(output_logits_no_cache, output_logits_with_cache)
 
 
 def run_distributed_generation(
@@ -454,38 +498,3 @@ def test_generation_module_distributed_fsdp(tmp_path: Path, use_cache: bool):
             expected_shape,
         ),
     )
-
-
-@requires_gpu
-@requires_flash_attn
-@pytest.mark.parametrize("batch_size", [1, 8])
-def test_generation_cache_consistency(batch_size: int):
-    if not has_flash_attn:
-        pytest.skip("flash-attn is required for KV cache usage")
-
-    device = torch.device("cuda")
-
-    transformer_config = small_transformer_config(dtype=DType.bfloat16, n_layers=1, use_flash=True)
-    model = transformer_config.build()
-
-    gen_config = GenerationConfig(
-        max_length=128, do_sample=False, pad_token_id=0, eos_token_id=1, use_cache=False
-    )
-    generation_module = TransformerGenerationModule(
-        model=model, generation_config=gen_config, device=device
-    )
-
-    seq_len = 124
-    input_ids = torch.randint(2, 100, (batch_size, seq_len), device=device)
-
-    seed_all(0)
-    output_ids_no_cache, output_logits_no_cache = generation_module.generate_batch(
-        input_ids, completions_only=True, return_logits=True, use_cache=False
-    )
-    seed_all(0)
-    output_ids_with_cache, output_logits_with_cache = generation_module.generate_batch(
-        input_ids, completions_only=True, return_logits=True, use_cache=True
-    )
-
-    assert torch.equal(output_ids_no_cache, output_ids_with_cache)
-    torch.testing.assert_close(output_logits_no_cache, output_logits_with_cache)

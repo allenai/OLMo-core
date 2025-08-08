@@ -144,6 +144,7 @@ class TransformerGenerationModule(GenerationModule):
         return_logits: bool = False,
         completions_only: bool = False,
         log_timing: bool = True,
+        _forced_next_tokens: Optional[torch.Tensor] = None,
         **generation_kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
@@ -177,6 +178,21 @@ class TransformerGenerationModule(GenerationModule):
             else None
         )
 
+        # Optional testing hook to force the generated token at each step.
+        # Accepts shape (steps,) or (batch_size, steps). If provided, we will
+        # override the next token with the forced token for the corresponding step.
+        forced_tokens: Optional[torch.Tensor] = None
+        if _forced_next_tokens is not None:
+            if _forced_next_tokens.dim() not in (1, 2):
+                raise ValueError(
+                    "_forced_next_tokens must be 1D (steps,) or 2D (batch_size, steps)"
+                )
+            if _forced_next_tokens.dim() == 2 and _forced_next_tokens.shape[0] != batch_size:
+                raise ValueError(
+                    "_forced_next_tokens with 2D shape must have first dim equal to batch_size"
+                )
+            forced_tokens = move_to_device(_forced_next_tokens.to(torch.long), self.device)
+
         # Output containers
         generated = input_ids
         all_logits = [] if return_logits else None
@@ -204,7 +220,6 @@ class TransformerGenerationModule(GenerationModule):
         prefill_seq_lens = None
         decode_seq_lens = None
         prefill_cache_leftpad = None
-        decode_cache_leftpad = None
         if generation_config.use_cache:
             if attention_mask is None:
                 attention_mask = torch.ones_like(input_ids, dtype=torch.bool, device=self.device)
@@ -238,7 +253,9 @@ class TransformerGenerationModule(GenerationModule):
                 else generated[:, -1:]
             )
             step_seq_lens = prefill_seq_lens if is_first_forward else decode_seq_lens
-            cache_leftpad = prefill_cache_leftpad if is_first_forward else decode_cache_leftpad
+            cache_leftpad = (
+                prefill_cache_leftpad if is_first_forward and generation_config.use_cache else None
+            )
 
             # Time the forward pass
             forward_start_time = time.perf_counter()
@@ -262,14 +279,26 @@ class TransformerGenerationModule(GenerationModule):
             if all_logits is not None:
                 all_logits.append(next_token_logits)
 
-            # Generate next token
-            next_tokens = select_next_token(  # (batch_size,)
+            # Generate next token (predicted by sampling/argmax)
+            predicted_next_tokens = select_next_token(  # (batch_size,)
                 next_token_logits.squeeze(1),
                 do_sample=generation_config.do_sample,
                 temperature=generation_config.temperature,
                 top_k=generation_config.top_k,
                 top_p=generation_config.top_p,
             )
+
+            # Optionally override with forced tokens for testing determinism across runs
+            if forced_tokens is not None and (
+                (forced_tokens.dim() == 1 and tokens_generated < forced_tokens.shape[0])
+                or (forced_tokens.dim() == 2 and tokens_generated < forced_tokens.shape[1])
+            ):
+                if forced_tokens.dim() == 1:
+                    next_tokens = forced_tokens[tokens_generated].expand(batch_size)
+                else:
+                    next_tokens = forced_tokens[:, tokens_generated]
+            else:
+                next_tokens = predicted_next_tokens
 
             # Force EOS for (previously) finished sequences
             next_tokens = torch.where(finished, torch.full_like(next_tokens, eos), next_tokens)
