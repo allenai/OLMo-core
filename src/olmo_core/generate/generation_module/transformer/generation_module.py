@@ -242,7 +242,7 @@ class TransformerGenerationModule(GenerationModule):
             total=(max_length - prompt_len) if max_length is not None else None,
             disable=not log_timing,
             miniters=10,
-            color="#FFEE8C",
+            color="blue",
         )
         while not ((max_length is not None and generated.shape[1] >= max_length) or finished.all()):
             token_start_time = time.perf_counter()
