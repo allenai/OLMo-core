@@ -1,12 +1,13 @@
+from collections import defaultdict
 from collections.abc import MutableMapping
-from typing import Optional
+from typing import Dict, Optional
 
 import torch
 
 from olmo_core.utils import move_to_device
 
 
-class BufferCache(dict, MutableMapping[str, torch.Tensor]):
+class BufferCache(MutableMapping[str, torch.Tensor]):
     """
     Cache for attention biases and other things that would normally be stored as buffers.
     We avoid using buffers because we've run into various issues doing so with FSDP.
@@ -16,6 +17,25 @@ class BufferCache(dict, MutableMapping[str, torch.Tensor]):
     NaNs when they're synchronized due to casting or some other issue.
     """
 
+    def __init__(self, namespace: str = ""):
+        self._data: Dict[str, Dict[str, torch.Tensor]] = defaultdict(dict)
+        self._namespace = namespace
+
+    def __getitem__(self, key: str) -> torch.Tensor:
+        return self._data[self._namespace][key]
+
+    def __setitem__(self, key: str, value: torch.Tensor) -> None:
+        self._data[self._namespace][key] = value
+
+    def __delitem__(self, key: str) -> None:
+        del self._data[self._namespace][key]
+
+    def __iter__(self):
+        yield from self._data[self._namespace].keys()
+
+    def __len__(self) -> int:
+        return len(self._data[self._namespace])
+
     def get_for_device(self, key: str, device: torch.device) -> Optional[torch.Tensor]:
         if (tensor := self.get(key)) is not None:
             if tensor.device != device:
@@ -24,3 +44,8 @@ class BufferCache(dict, MutableMapping[str, torch.Tensor]):
             return tensor
         else:
             return None
+
+    def with_namespace(self, namespace: str) -> "BufferCache":
+        out = BufferCache(namespace=namespace)
+        out._data = self._data
+        return out
