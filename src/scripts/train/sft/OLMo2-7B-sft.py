@@ -398,7 +398,7 @@ def train(checkpoint: str, config: SFTConfig, save_tokenizer: bool):
                 log.info(f"Tokenizer already exists: {destination_path}")
             else:
                 log.info(f"Saving tokenizer to {destination_path}")
-                shutil.copytree(tokenizer_path, destination_path)
+                shutil.copytree(tokenizer_path, destination_path, dirs_exist_ok=True)
 
 
     # Record the config to W&B/Comet and each checkpoint dir.
