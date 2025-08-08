@@ -239,8 +239,14 @@ class TransformerGenerationModule(GenerationModule):
 
         pbar = tqdm(
             desc="Generating tokens",
-            total=max_length - prompt_len if max_length is not None else None,
+            total=(max_length - prompt_len) if max_length is not None else None,
+            leave=False,
             disable=not log_timing,
+            unit="token",
+            dynamic_ncols=True,
+            smoothing=0.1,
+            miniters=10,
+            colour="green",
         )
         while not ((max_length is not None and generated.shape[1] >= max_length) or finished.all()):
             token_start_time = time.perf_counter()
