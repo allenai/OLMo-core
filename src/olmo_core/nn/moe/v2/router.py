@@ -72,11 +72,6 @@ class MoERouterConfigV2(Config):
 
     def build(
         self,
-        lb_loss_weight: Optional[float] = None,
-        lb_loss_granularity: MoELoadBalancingLossGranularity = MoELoadBalancingLossGranularity.local_batch,
-        z_loss_weight: Optional[float] = None,
-        orth_loss_weight: Optional[float] = None,
-        dtype: Optional[torch.dtype] = None,
         init_device: str = "cpu",
     ) -> "MoERouterV2":
         """
@@ -87,20 +82,11 @@ class MoERouterConfigV2(Config):
         :param init_device: The device initialize the parameters on, e.g. "cpu", "meta".
         """
         kwargs = self.as_dict(exclude_none=True, recurse=False)
-        # kwargs.pop("name")
-        kwargs.update(
-            init_device=init_device,
-            lb_loss_weight=lb_loss_weight,
-            lb_loss_granularity=lb_loss_granularity,
-            z_loss_weight=z_loss_weight,
-            orth_loss_weight=orth_loss_weight,
-        )
+
         if self.dtype is not None:
             kwargs["dtype"] = self.dtype.as_pt()
-        elif dtype is not None:
-            kwargs["dtype"] = dtype
 
-        return MoERouterV2(**kwargs)
+        return MoERouterV2(**kwargs, init_device=init_device)
         
 class MoERouterV2(nn.Module):
     """
@@ -414,9 +400,10 @@ class MoERouterV2(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
+        scores_only: bool,
         *,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+    ) -> Tuple[torch.Tensor,  Optional[torch.Tensor],  Optional[torch.Tensor], Optional[torch.Tensor]]:
         """
         Given the input ``x`` of shape ``(B, S, d_model)``, compute the experts assignment.
 
@@ -441,6 +428,19 @@ class MoERouterV2(nn.Module):
             scores = scores + 1e-7  
         else:
             raise NotImplementedError(self.gating_function)
+
+        if scores_only:
+            if self.normalize_expert_weights is not None:
+                scores = scores.div(
+                    torch.norm(
+                        scores,
+                        p=self.normalize_expert_weights,
+                        dim=-1,
+                        keepdim=True,
+                    )
+                )
+            # If we only need the scores, return them directly.
+            return scores, None, None, None
 
         # shape: (batch_size, seq_len, top_k)
         expert_weights, expert_indices = self.get_top_k(scores)

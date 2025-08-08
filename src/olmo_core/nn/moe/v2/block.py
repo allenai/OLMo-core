@@ -264,19 +264,21 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         else:
             return 1
         
-    @torch.compile
+    # @torch.compile
     def router_forward(
         self,
         router: MoERouterV2,
         local_x: torch.Tensor,
+        scores_only: bool,
         loss_div_factor: Optional[Union[torch.Tensor, float]],
     ):
         return router(
             local_x, 
+            scores_only,
             loss_div_factor=loss_div_factor # scalar
         )
     
-    @torch.compile
+    # @torch.compile
     def combined_forward(
         self,
         x: torch.Tensor,
@@ -291,7 +293,10 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         # + attention norm
         # + residual connection
         x = x + self.attention_norm(self.attention(x, **kwargs))
-        
+        # remove attention kwargs
+        kwargs.pop("max_doc_len", None)
+        kwargs.pop("cu_doc_lens", None)
+
         local_x = x
             
         (
@@ -302,18 +307,20 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         ) = self.router_forward(
             router=self.routed_experts_router,
             local_x=x, 
+            scores_only=False,
             loss_div_factor=loss_div_factor # scalar
         )
         
         
         (
-            local_x_global_shared_expert_weights, # (B, S, top_k)
-            local_x_global_shared_expert_indices, # (B, S, top_k)
-            local_batch_size_per_global_shared_expert, # (num_experts, )
-            shared_expert_router_aux_loss # scalar
+            local_x_global_shared_expert_weights, # (B, S, E_shared)
+            _, 
+            _, 
+            _ 
         ) = self.router_forward(
             router=self.shared_experts_router,
             local_x=x, 
+            scores_only=True,  # only need scores for shared experts
             loss_div_factor=loss_div_factor # scalar
         )
         
@@ -333,20 +340,8 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             with nvtx.annotate("attach_auxiliary_loss", color="blue"):
                 if routed_expert_router_aux_loss is not None:
                     local_x = attach_auxiliary_loss(local_x, routed_expert_router_aux_loss)
-                if shared_expert_router_aux_loss is not None:
-                    local_x = attach_auxiliary_loss(local_x, shared_expert_router_aux_loss)
 
 
-        # shape: (batch_size * seq_len, d_model)
-        local_x = local_x.view(-1, D)
-        # shape: (batch_size * seq_len * top_k,)
-        local_x_global_expert_weights = get_local_tensor(local_x_global_routed_expert_weights).flatten()
-        # shape: (batch_size * seq_len * top_k,)
-        local_x_global_expert_indices = get_local_tensor(local_x_global_routed_expert_indices).flatten()
-
-
-        
-        
         ######################################################################
         ################# Call global_permute_mlp_unpermute() ##############
         ############################### START ################################
@@ -354,6 +349,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
 
         with nvtx.annotate("permute_mlp_unpermute", color="blue"):
             if self.ep_enabled:
+                raise NotImplementedError("TODO: EP permutation ")
                 x_moe, dense_out = self.global_permute_mlp_unpermute(
                     local_x,
                     local_x_global_expert_weights,
@@ -365,10 +361,11 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                     **kwargs,
                 ) # type: ignore
             else:
-                x_moe, dense_out = self.global_permute_mlp_unpermute_no_ep(
+                # (B, S, D), (E_shared, B, S, D)
+                x_moe, shared_out = self.global_permute_mlp_unpermute_no_ep(
                     local_x,
-                    local_x_global_expert_weights,
-                    local_x_global_expert_indices, 
+                    local_x_global_routed_expert_weights,
+                    local_x_global_routed_expert_indices, 
                     local_batch_size_per_global_expert=local_batch_size_per_global_routed_expert,
                     # overlap_callback=self.overlap_callback,
                     # overlap_callback=None,
@@ -379,58 +376,33 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         ################# Call global_permute_mlp_unpermute() ##############
         ############################### END ##################################
 
-        
-        x_moe = x_moe.view(B, -1, D) # (B, S * top_k, d_model)
-
-        
-            
-        #######################
-        SPARSE_DROP_NORM_RECOMPUTE = True
-        if SPARSE_DROP_NORM_RECOMPUTE:
-            final_out = checkpoint(
-                self.sparse_drop_norm_forward, x_moe, use_reentrant=False
-            )
-        else:
-            final_out = self.sparse_drop_norm_forward(
-                x_moe
-            )
-        
         wait_stream_no_compile(torch.cuda.current_stream(), self.get_dense_stream()) # type: ignore
-        
-        final_out = dense_out + final_out
+
+        # weighted sum of the shared experts and routed experts
+        # local_x_global_shared_expert_weights -> (B, S, E_shared)
+        # shared_out -> (E_shared, B, S, D)
+        _, _, E_s = local_x_global_shared_expert_weights.shape
+        local_x_global_shared_expert_weights.shape
+        mixed_shared_out = torch.bmm(
+            local_x_global_shared_expert_weights.to(shared_out.dtype).reshape(B*S, 1, E_s),            # (BS, 1, E), 
+            shared_out.permute(1, 2, 0, 3).contiguous().view(B*S, E_s, D)              # (BS, E, D)
+        ).squeeze(1).view(B, S, D)
+
+
+        shared_out_factor = self.shared_experts_router.top_k / (self.routed_experts_router.top_k + self.shared_experts_router.top_k )
+        routed_out_factor = self.routed_experts_router.top_k / (self.routed_experts_router.top_k + self.shared_experts_router.top_k )
+        mlp_out = mixed_shared_out * shared_out_factor + x_moe * routed_out_factor 
+        #######################
+
+        final_out = x + self.feed_forward_norm(mlp_out)
 
         #######################
 
         
         return final_out
 
-    @torch.compile
-    def sparse_add_drop_norm_forward(
-        self,
-        x_moe: torch.Tensor,
-        dense_out: torch.Tensor,
-    ) -> torch.Tensor:
-        return self.feed_forward_moe_norm(x_moe) + dense_out
-    
-    @torch.compile
-    def sparse_drop_norm_forward(
-        self,
-        x_moe: torch.Tensor,
-    ) -> torch.Tensor:
-        return self.feed_forward_moe_norm(x_moe)
-    
-    
-    def overlap_callback(self, x, **kwargs):
-        # NOTE: this is called in the middle of the global_permute_mlp_unpermute() function
-        # to overlap the dense forward pass with the all-to-all communication.
-        # It is called after the local_x_global_expert_weights and local_x_global_expert_indices
-        # are ready, but before the all-to-all communication starts.
-        with torch.cuda.stream(self.get_dense_stream()):
-            xx = self.shared_experts(x)
-        return xx
 
-
-    @torch.compile
+    # @torch.compile
     @nvtx.annotate("ParallelDroplessMLP.global_permute_mlp_unpermute_no_ep", color='blue')
     def global_permute_mlp_unpermute_no_ep(
         self,
@@ -443,30 +415,29 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         # **overlap_callback_kwargs,
     ):
         x, expert_weights, expert_indices, batch_size_per_expert = (
-            get_local_tensor(local_x),
-            get_local_tensor(local_x_global_expert_weights),
-            get_local_tensor(local_x_global_expert_indices),
-            get_local_tensor(local_batch_size_per_global_expert),
+            (local_x),
+            (local_x_global_expert_weights),
+            (local_x_global_expert_indices),
+            (local_batch_size_per_global_expert),
         )
 
         in_shape = x.size()
 
-        # shape: (N, d_model)
-        x = x.view(-1, x.shape[-1])
 
         # step 1A: DtoH token count communication
         # mark_dynamic(batch_size_per_expert, (0,), strict=False)
-        batch_size_per_expert_cpu, copy_stream, dtoh_event1 = async_copy_to_cpu(batch_size_per_expert) 
+        batch_size_per_expert_cpu, copy_stream, dtoh_event1 = async_copy_to_cpu(batch_size_per_expert)  # type: ignore
         
         # overlap compute while waiting for the copy to CPU to finish
         with torch.cuda.stream(self.get_dense_stream()):
-            shared_out = self.shared_experts(x)
+            shared_out = self.shared_experts(x) # (E_shared, B, S, D)
                 
         # step 1B: permute the input tokens
         copy_stream.synchronize() # wait for the copy to CPU to finish
         
+        x = x.view(-1, in_shape[-1])  # (B*S, D)
 
-        PERMUTE_GEMM_UNPERMUTE_USE_RECOMPUTE = True
+        PERMUTE_GEMM_UNPERMUTE_USE_RECOMPUTE = False
         if PERMUTE_GEMM_UNPERMUTE_USE_RECOMPUTE:
             x_moe = checkpoint(
                 self._forward_step_rc,
@@ -486,9 +457,9 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 in_shape=in_shape,
             )
 
-        return x_moe, shared_out
+        return x_moe, shared_out # (B, S, D), (E_shared, B, S, D)
 
-    @torch.compile
+    # @torch.compile
     def _forward_step_rc(
         self,
         x: torch.Tensor,
@@ -525,7 +496,12 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             
         return unpermutated_x.view(in_shape)
     
-    
+    def post_batch(self, dry_run: bool = False):
+        """
+        Should be called right after the final backward of a complete batch but before the optimizer step.
+        """
+        self.shared_experts_router.post_batch(dry_run=dry_run)
+        self.routed_experts_router.post_batch(dry_run=dry_run)
 
     @torch.compile
     @nvtx.annotate("ParallelDroplessMLP.global_permute_mlp_unpermute", color='blue')

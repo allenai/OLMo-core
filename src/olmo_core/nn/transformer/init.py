@@ -241,3 +241,76 @@ class InitMethod(StrEnum):
             b=3 * std,
             generator=generator,
         )
+    def init_moe_v2(
+        self,
+        b,
+        *,
+        d_model: int,
+        block_idx: int,
+        num_blocks: int,
+        std: float = 0.02,
+        generator: Optional[torch.Generator] = None,
+    ):
+        from ..moe.v2.block import MoEFusedV2TransformerBlock
+        b = cast(MoEFusedV2TransformerBlock, b)
+        if self == InitMethod.llama:
+            std = std / (2 * num_blocks) ** 0.5
+        elif self == InitMethod.llama_depth:
+            std = std / (2 * (block_idx + 1)) ** 0.5
+        # router
+        _apply_init(
+            nn.init.trunc_normal_,
+            b.shared_experts_router.weight,
+            mean=0.0,
+            std=std,
+            a=-3 * std,
+            b=3 * std,
+            generator=generator,
+        )
+        _apply_init(
+            nn.init.trunc_normal_,
+            b.routed_experts_router.weight,
+            mean=0.0,
+            std=std,
+            a=-3 * std,
+            b=3 * std,
+            generator=generator,
+        )
+        # routed experts
+        _apply_init(
+            nn.init.trunc_normal_,
+            b.routed_experts.w_up_gate,
+            mean=0.0,
+            std=std,
+            a=-3 * std,
+            b=3 * std,
+            generator=generator,
+        )
+        _apply_init(
+            nn.init.trunc_normal_,
+            b.routed_experts.w_down,
+            mean=0.0,
+            std=std,
+            a=-3 * std,
+            b=3 * std,
+            generator=generator,
+        )
+        # shared experts
+        _apply_init(
+            nn.init.trunc_normal_,
+            b.shared_experts.w_up_gate,
+            mean=0.0,
+            std=std,
+            a=-3 * std,
+            b=3 * std,
+            generator=generator,
+        )
+        _apply_init(
+            nn.init.trunc_normal_,
+            b.shared_experts.w_down,
+            mean=0.0,
+            std=std,
+            a=-3 * std,
+            b=3 * std,
+            generator=generator,
+        )

@@ -1,8 +1,10 @@
 import torch
 from olmo_core.utils import get_or_init_stream
-    
-@torch._dynamo.disable()         # helper runs eagerly, 
-def async_copy_to_cpu(gpu_buf):
+from typing import Any, Dict, List, Optional, Tuple
+from typing import cast
+
+@torch.compiler.disable()         # helper runs eagerly, 
+def async_copy_to_cpu(gpu_buf) -> Tuple[torch.Tensor, torch.cuda.Stream, torch.cuda.Event]:
     # *** async copy to CPU for future GroupedGEMM ***
     # start a new stream for the copy
     dtoh_stream = get_or_init_stream(id=3, priority=-5) # TODO: check any id that's not 0?
@@ -17,7 +19,8 @@ def async_copy_to_cpu(gpu_buf):
         cpu_buf.copy_(gpu_buf, non_blocking=True)
     
     dtoh_event = dtoh_stream.record_event()
-    
+    dtoh_event = cast(torch.cuda.Event, dtoh_event)
+
     # cpu_buf = gpu_buf.to(torch.device("cpu"), non_blocking=True)
     # Keep the source tensor alive until the copy_stream is done
     # gpu_buf.record_stream(dtoh_stream) # NOTE: does not work with compile

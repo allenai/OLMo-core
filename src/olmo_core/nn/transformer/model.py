@@ -250,22 +250,24 @@ class Transformer(nn.Module):
             # This might fail if it's wrapped.
             #  assert isinstance(block, TransformerBlock)
             block = cast(TransformerBlock, block)
-            att = cast(Union[Attention, FusedAttention], block.attention)
+            from ..moe.v2.block import MoEFusedV2TransformerBlock
+            if isinstance(block, MoEFusedV2TransformerBlock):
+                block = cast(MoEFusedV2TransformerBlock, block)
+                # v2 MoE blocks.
+                att = cast(Union[Attention, FusedAttention], block.attention)
 
-            # Attention weights.
-            self.init_method.init_attention(
-                att,
-                d_model=self.d_model,
-                block_idx=block.block_idx,
-                num_blocks=self.n_layers,
-                std=self.init_std,
-                generator=generator,
-            )
-
-            # Feed-forward weights.
-            if hasattr(block, "feed_forward"):
-                self.init_method.init_feed_forward(
-                    block.feed_forward,
+                # Attention weights.
+                self.init_method.init_attention(
+                    att,
+                    d_model=self.d_model,
+                    block_idx=block.block_idx,
+                    num_blocks=self.n_layers,
+                    std=self.init_std,
+                    generator=generator,
+                )
+                # MoE weights.
+                self.init_method.init_moe_v2(
+                    block,
                     d_model=self.d_model,
                     block_idx=block.block_idx,
                     num_blocks=self.n_layers,
@@ -273,13 +275,13 @@ class Transformer(nn.Module):
                     generator=generator,
                 )
 
-            # MoE weights.
-            if hasattr(block, "feed_forward_moe"):
-                block = cast(MoETransformerBlock, block)
-                if max_local_microbatch_size is not None:
-                    block.feed_forward_moe.warmup_cache(max_local_microbatch_size)
-                self.init_method.init_feed_forward_moe(
-                    block.feed_forward_moe,
+
+            else:
+                att = cast(Union[Attention, FusedAttention], block.attention)
+
+                # Attention weights.
+                self.init_method.init_attention(
+                    att,
                     d_model=self.d_model,
                     block_idx=block.block_idx,
                     num_blocks=self.n_layers,
@@ -287,9 +289,34 @@ class Transformer(nn.Module):
                     generator=generator,
                 )
 
-            # Warm up RoPE cache.
-            if max_seq_len is not None and att.rope is not None:
-                att.rope.warmup_cache(max_seq_len, device)
+                # Feed-forward weights.
+                if hasattr(block, "feed_forward"):
+                    self.init_method.init_feed_forward(
+                        block.feed_forward,
+                        d_model=self.d_model,
+                        block_idx=block.block_idx,
+                        num_blocks=self.n_layers,
+                        std=self.init_std,
+                        generator=generator,
+                    )
+
+                # MoE weights.
+                if hasattr(block, "feed_forward_moe"):
+                    block = cast(MoETransformerBlock, block)
+                    if max_local_microbatch_size is not None:
+                        block.feed_forward_moe.warmup_cache(max_local_microbatch_size)
+                    self.init_method.init_feed_forward_moe(
+                        block.feed_forward_moe,
+                        d_model=self.d_model,
+                        block_idx=block.block_idx,
+                        num_blocks=self.n_layers,
+                        std=self.init_std,
+                        generator=generator,
+                    )
+
+                # Warm up RoPE cache.
+                if max_seq_len is not None and att.rope is not None:
+                    att.rope.warmup_cache(max_seq_len, device)
 
         if self.lm_head is not None:
             self.init_method.init_final_w_out(

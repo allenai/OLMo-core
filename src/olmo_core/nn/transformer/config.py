@@ -85,6 +85,9 @@ class TransformerType(StrEnum):
     ➡️ :class:`MoETransformer`
     """
 
+    moe_fused_v2 = "moe_fused_v2"
+
+
 
 class TransformerBlockType(StrEnum):
     """
@@ -394,6 +397,21 @@ class TransformerConfig(Config):
             )
         elif self.name == TransformerType.moe:
             model = MoETransformer(
+                d_model=self.d_model,
+                vocab_size=self.vocab_size,
+                n_layers=self.n_layers,
+                block=self.block,
+                lm_head=self.lm_head,
+                dtype=self.dtype.as_pt(),
+                init_method=self.init_method,
+                init_device=init_device,
+                init_seed=self.init_seed,
+                init_std=self.init_std,
+                block_overrides=self.block_overrides,
+            )
+        elif self.name == TransformerType.moe_fused_v2:
+            from ..moe.v2.model import MoEFusedV2Transformer
+            model = MoEFusedV2Transformer(
                 d_model=self.d_model,
                 vocab_size=self.vocab_size,
                 n_layers=self.n_layers,

@@ -142,7 +142,6 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                 bias=False,
                 dtype=dtype
             ),
-            
             shared_experts_router=MoERouterConfigV2(
                 d_model=d_model,
                 num_experts=NUM_SHARED_EXPERTS,
@@ -157,7 +156,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
             feed_forward_norm=layer_norm,
         ),
         lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype),
-        name=TransformerType.moe,
+        name=TransformerType.moe_fused_v2,
 
         init_std=0.01,
         dtype=dtype

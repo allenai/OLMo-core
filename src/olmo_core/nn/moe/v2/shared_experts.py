@@ -74,19 +74,27 @@ class SharedExperts(nn.Module):
         self.d_model = d_model
         self.hidden_size = hidden_size
         self.num_experts = num_experts
-        self.w_up_gate = nn.Linear(
-            d_model,
-            2 * num_experts * hidden_size,  # 2 for up and gate
-            bias=bias,
-            dtype=dtype.as_pt(),
-            device=init_device
+
+        assert bias == False, "Shared experts do not support bias for now."
+
+        self.w_up_gate =nn.Parameter(
+            torch.empty(
+                num_experts,
+                d_model, # in features
+                2 * hidden_size, # out features ( up and gate )
+                dtype=dtype.as_pt(),
+                device=init_device
+            ),
         )
-        self.w_down = nn.Linear(
-            num_experts * hidden_size,
-            d_model,
-            bias=bias,
-            dtype=dtype.as_pt(),
-            device=init_device
+
+        self.w_down = nn.Parameter(
+            torch.empty(
+                num_experts,
+                hidden_size, # in features
+                d_model, # out features
+                dtype=dtype.as_pt(),
+                device=init_device
+            ),
         )
 
     @nvtx.annotate("SharedExperts.forward", color='blue')
@@ -96,9 +104,25 @@ class SharedExperts(nn.Module):
         output shape: (num_experts, B, S, D)
         """
         B, S, D = x.shape
-        up, gate = self.w_up_gate(x).chunk(2, dim=0)
-        h = F.silu(up) * gate
-        y = self.w_down(h)
-        return y.view(self.num_experts, B, S, D)
+        E, H = self.num_experts, self.hidden_size
+
+        B, S, D = x.shape
+        E, H = self.num_experts, self.hidden_size
+
+        # Flatten tokens once to maximize GEMM sizes
+        xs = x.reshape(B * S, D)                       # (BS, D)
+
+        # 1) Up+Gate in one GEMM: (1,BS,D) @ (E,D,2H) -> (E,BS,2H)
+        up_gate = torch.matmul(xs.unsqueeze(0),        # (1,BS,D)
+                            self.w_up_gate)  # (E,D,2H)
+        up, gate = up_gate.split(H, dim=-1)            # (E,BS,H), (E,BS,H)
+
+        # SWiGLU nonlinearity (SiLU on gate, elementwise product)
+        hidden = up * F.silu(gate)                     # (E,BS,H)
+
+        # 2) Down projection: (E,BS,H) @ (E,H,D) -> (E,BS,D)
+        out = torch.matmul(hidden, self.w_down)  # (E,BS, D)
+
+        return out.view(E, B, S, D)  # (E, B, S, D)
         
         

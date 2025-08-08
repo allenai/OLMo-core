@@ -9,7 +9,7 @@ import nvtx
 from olmo_core.config import Config, DType, StrEnum
 import torch.nn.functional as F
 from dataclasses import dataclass
-
+from typing import cast
 @dataclass
 class RoutedExpertsConfig(Config):
     """Configuration for routed experts in a MoE block."""
@@ -84,26 +84,34 @@ class RoutedExperts(nn.Module):
         self.d_model = d_model
         self.hidden_size = hidden_size
         self.num_experts = num_experts
-        self.w_up_gate = nn.Linear(
-            d_model,
-            2 * num_experts * hidden_size,  # 2 for up and gate
-            bias=bias,
-            dtype=dtype.as_pt(),
-            device=init_device
+        assert bias == False, "Routed experts do not support bias for now."
+        self.w_up_gate =nn.Parameter(
+            torch.empty(
+                num_experts,
+                2 * hidden_size,
+                d_model,
+                dtype=dtype.as_pt(),
+                device=init_device
+            ),
         )
-        self.w_down = nn.Linear(
-            num_experts * hidden_size,
-            d_model,
-            bias=bias,
-            dtype=dtype.as_pt(),
-            device=init_device
+
+        self.w_down = nn.Parameter(
+            torch.empty(
+                num_experts,
+                hidden_size, 
+                d_model,
+                dtype=dtype.as_pt(),
+                device=init_device
+            ),
         )
         self.gmm_ops = grouped_gemm.ops.gmm
         
         
     @nvtx.annotate("RoutedExperts.forward", color="blue")
     def forward(self, x: torch.Tensor, batch_size_per_expert: List) -> torch.Tensor:
-
+        """
+        `batch_size_per_expert` specifies the number of tokens in x for each expert.
+        """
         assert isinstance(batch_size_per_expert, List), "only accept List for batch_size_per_expert"
         batch_size_per_expert_tensor = torch.tensor(
             batch_size_per_expert, 
@@ -114,13 +122,14 @@ class RoutedExperts(nn.Module):
         if x.numel() == 0:
             return x
         
-        w_up_gate = self.w_up_gate
-        w_down = self.w_down
-        up_gate = self.gmm_ops(x, w_up_gate, batch_size_per_expert_tensor, trans_b=True)
-        up, gate = up_gate.chunk(2, dim=0)  
-        h = F.silu(up) * gate
+        w_up_gate = self.w_up_gate # (E, H, 2D)
+        w_down = self.w_down # (E, H, D)
+        up_gate = self.gmm_ops(x, w_up_gate, batch_size_per_expert_tensor, trans_b=True) # -> (BS, 2H)
+        up_gate = cast(torch.Tensor, up_gate)  # ensure type is Tensor
+        up, gate = up_gate.chunk(2, dim=-1)  
+        h = up * F.silu(gate) # -> (BS, H)
         
-        down = self.gmm_ops(h, w_down, batch_size_per_expert_tensor, trans_b=True) 
+        down = self.gmm_ops(h, w_down, batch_size_per_expert_tensor, trans_b=False) # -> (BS, H)
             
-        return down
+        return cast(torch.Tensor, down)  # ensure type is Tensor
     
