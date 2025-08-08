@@ -135,6 +135,11 @@ class AttentionType(StrEnum):
     """
 
 
+class InferencePhase(StrEnum):
+    prefill = "prefill"
+    decode = "decode"
+
+
 @dataclass
 class KVCacheContext:
     seq_lens: torch.Tensor  # seq lens of the current forward pass
@@ -398,6 +403,7 @@ class Attention(AttentionBase):
 
         self.k_cache, self.v_cache = None, None
         self.cache_seqlens, self.cache_leftpad = None, None
+        self.phase: Optional[InferencePhase] = None
 
         def nan_hook(module, input, output):
             if any(torch.isnan(i).any() for i in input) or torch.isnan(output).any():
@@ -444,10 +450,34 @@ class Attention(AttentionBase):
             if self.cache_seqlens is None:
                 raise ValueError("cache_seqlens is required when using the KV cache")
 
+            # IMPORTANT: The flash-attn kernel interprets cache_seqlens as absolute indices
+            # within the KV cache sequence dimension. Our internal cache_seqlens tracks only
+            # the number of valid tokens (excludes leftpad). Offset by cache_leftpad when present.
+            cache_seqlens_kernel = self.cache_seqlens
+            if self.cache_leftpad is not None:
+                cache_seqlens_kernel = torch.add(self.cache_seqlens, self.cache_leftpad)
+
             if kv_cache_context.cache_leftpad is not None:
                 if self.cache_leftpad is not None:
                     raise RuntimeError("cache_leftpad is already set!")
-                self.cache_leftpad = kv_cache_context.cache_leftpad
+                # Ensure cache_leftpad has the dtype/device expected by flash-attn (int32 on CUDA)
+                target_device = (
+                    self.cache_seqlens.device if self.cache_seqlens is not None else q.device
+                )
+                self.cache_leftpad = kv_cache_context.cache_leftpad.to(
+                    device=target_device, dtype=torch.int32
+                )
+
+            # Defensive: flash-attn expects int32 for cache_seqlens and cache_leftpad
+            if self.cache_seqlens.dtype != torch.int32:
+                self.cache_seqlens = self.cache_seqlens.to(dtype=torch.int32)
+            if self.cache_leftpad is not None and (
+                self.cache_leftpad.dtype != torch.int32
+                or self.cache_leftpad.device != self.cache_seqlens.device
+            ):
+                self.cache_leftpad = self.cache_leftpad.to(
+                    device=self.cache_seqlens.device, dtype=torch.int32
+                )
 
             att = dispatch_flash_attn_with_kvcache(
                 q,
@@ -455,7 +485,7 @@ class Attention(AttentionBase):
                 self.v_cache,  # updated in-place
                 k=k,
                 v=v,
-                cache_seqlens=self.cache_seqlens,
+                cache_seqlens=cache_seqlens_kernel,
                 cache_leftpad=self.cache_leftpad,
                 block_table=None,
                 softmax_scale=scale,
@@ -463,6 +493,7 @@ class Attention(AttentionBase):
                 window_size=self.window_size,
             )
             self.cache_seqlens.add_(kv_cache_context.seq_lens)
+            self.phase = InferencePhase.decode
 
         elif self.cp_enabled:
             assert self._cp_pg is not None and self._cp_load_balancer is not None
@@ -608,13 +639,13 @@ class Attention(AttentionBase):
                 k = self.k_norm(k)
 
         if self.rope is not None:
-            start_pos: Optional[torch.Tensor] = None
-            if self.cache_seqlens is not None:
-                start_pos = self.cache_seqlens
-                if self.cache_leftpad is not None:
-                    start_pos = start_pos + self.cache_leftpad
-                elif cache_leftpad is not None:
-                    start_pos = start_pos + cache_leftpad
+            start_pos = None
+            if self.phase == InferencePhase.decode:
+                if self.cache_seqlens is None or self.cache_leftpad is None:
+                    raise ValueError(
+                        "cache_seqlens and cache_leftpad are required when phase is decode"
+                    )
+                start_pos = self.cache_seqlens + self.cache_leftpad
 
             # In context-parallel mode we must be given pre-sharded buffers
             # unless we're in the single-token path (which sets ``start_pos``).
@@ -664,16 +695,18 @@ class Attention(AttentionBase):
 
     def allocate_kv_cache(
         self, batch_size: int, max_seq_len: int, dtype: torch.dtype
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, None]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Optional[torch.Tensor], InferencePhase]:
         kv_cache_shape = (batch_size, max_seq_len, self.n_kv_heads, self.head_dim)
         k_cache = torch.zeros(kv_cache_shape, device=self.w_k.weight.device, dtype=dtype)
         v_cache = torch.zeros(kv_cache_shape, device=self.w_q.weight.device, dtype=dtype)
         cache_seqlens = torch.zeros(batch_size, device=k_cache.device, dtype=torch.int32)
         cache_leftpad = None  # allow cache_leftpad to be set
-        return k_cache, v_cache, cache_seqlens, cache_leftpad
+        phase = InferencePhase.prefill
+        return k_cache, v_cache, cache_seqlens, cache_leftpad, phase
 
     def free_kv_cache(self):
         self.k_cache = self.v_cache = self.cache_seqlens = self.cache_leftpad = None
+        self.phase = None
         gc.collect()
         torch.cuda.empty_cache()
 
@@ -712,6 +745,7 @@ class Attention(AttentionBase):
             self.cache_leftpad = None
             self.k_cache.zero_()
             self.v_cache.zero_()
+            self.phase = InferencePhase.prefill  # reset to prefill phase
             return
 
         if (
@@ -737,6 +771,7 @@ class Attention(AttentionBase):
             self.v_cache,
             self.cache_seqlens,
             self.cache_leftpad,
+            self.phase,
         ) = self.allocate_kv_cache(batch_size, max_seq_len, dtype)
 
     def apply_tp(
@@ -926,6 +961,10 @@ class NormalizedAttention(Attention):
             )
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
+        kv_cache_context = None
+        if seq_lens is not None:
+            kv_cache_context = KVCacheContext(cache_leftpad=cache_leftpad, seq_lens=seq_lens)
+
         att = self.sdpa(
             q,
             k,
@@ -938,8 +977,7 @@ class NormalizedAttention(Attention):
             max_doc_len_k=max_doc_len_k,
             local_k_slice=local_k_slice,
             scale=self.sqrt_head_dim,
-            cache_leftpad=cache_leftpad,
-            seq_lens=seq_lens,
+            kv_cache_context=kv_cache_context,
         )
 
         # shape: (batch_size, seq_len, d_model)

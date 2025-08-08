@@ -21,8 +21,6 @@ from torch.distributed.tensor import Replicate, Shard
 from torch.distributed.tensor.parallel import RowwiseParallel, parallelize_module
 
 from olmo_core.data.utils import (
-    attention_mask_to_cache_leftpad,
-    attention_mask_to_cu_doc_lens,
     get_cumulative_document_lengths,
 )
 from olmo_core.distributed.parallel import get_pp_mesh
@@ -347,8 +345,7 @@ class Transformer(nn.Module):
 
         # Handle KV cache inputs for inference
         if use_cache:
-            if (cache_leftpad := kwargs.pop("cache_leftpad", None)) is None:
-                raise ValueError("cache_leftpad is required when use_cache=True")
+            cache_leftpad = kwargs.pop("cache_leftpad", None)
             if (seq_lens := kwargs.pop("seq_lens", None)) is None:
                 raise ValueError("seq_lens is required when use_cache=True")
 

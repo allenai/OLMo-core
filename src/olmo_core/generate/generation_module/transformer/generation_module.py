@@ -203,12 +203,15 @@ class TransformerGenerationModule(GenerationModule):
 
         prefill_seq_lens = None
         decode_seq_lens = None
-        cache_leftpad = None
+        prefill_cache_leftpad = None
+        decode_cache_leftpad = None
         if generation_config.use_cache:
             if attention_mask is None:
                 attention_mask = torch.ones_like(input_ids, dtype=torch.bool, device=self.device)
-            cache_leftpad, prefill_seq_lens = attention_mask_to_cache_leftpad(attention_mask)
-            cache_leftpad = cache_leftpad.to(self.device)
+            prefill_cache_leftpad, prefill_seq_lens = attention_mask_to_cache_leftpad(
+                attention_mask
+            )
+            prefill_cache_leftpad = prefill_cache_leftpad.to(self.device)
             prefill_seq_lens = prefill_seq_lens.to(self.device).to(torch.int32)
             decode_seq_lens = torch.ones(batch_size, dtype=torch.int32, device=self.device)
 
@@ -235,6 +238,7 @@ class TransformerGenerationModule(GenerationModule):
                 else generated[:, -1:]
             )
             step_seq_lens = prefill_seq_lens if is_first_forward else decode_seq_lens
+            cache_leftpad = prefill_cache_leftpad if is_first_forward else decode_cache_leftpad
 
             # Time the forward pass
             forward_start_time = time.perf_counter()

@@ -1,7 +1,7 @@
 import math
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -16,7 +16,6 @@ __all__ = [
     "RoPEScalingConfig",
     "RotaryEmbeddingBase",
     "RotaryEmbedding",
-    "RotaryEmbeddingPerExampleStart",
     "FusedRotaryEmbedding",
     "ComplexRotaryEmbedding",
 ]
@@ -38,11 +37,6 @@ class RoPEType(StrEnum):
     complex = "complex"
     """
     ➡️ :class:`ComplexRotaryEmbedding`
-    """
-
-    batched_start = "batched_start"
-    """
-    ➡️ :class:`RotaryEmbeddingPerExampleStart`
     """
 
 
@@ -284,8 +278,6 @@ class RoPEConfig(Config):
                 return FusedRotaryEmbedding(**kwargs)
             elif self.name == "complex":
                 return ComplexRotaryEmbedding(**kwargs)
-            elif self.name == "batched_start":
-                return RotaryEmbeddingPerExampleStart(**kwargs)
             else:
                 raise NotImplementedError(self.name)
         except TypeError as e:
@@ -424,102 +416,7 @@ class RotaryEmbedding(RotaryEmbeddingBase):
         q: torch.Tensor,
         k: torch.Tensor,
         head_first: bool = True,
-        start_pos: Optional[int] = None,
-        pos_sin: Optional[torch.Tensor] = None,
-        pos_cos: Optional[torch.Tensor] = None,
-        freqs_cis: Optional[torch.Tensor] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Apply RoPE to query (``q``) and key (``k``) matrices.
-
-        :param q: The query matrix of shape ``(batch_size, num_heads, seq_len, head_size)``
-            if ``head_first`` (the default) otherwise ``(batch_size, seq_len, num_heads, head_size)``.
-        :param k: The key matrix of shape ``(batch_size, num_kv_heads, seq_len, head_size)``
-            if ``head_first`` (the default) otherwise
-            ``(batch_size, seq_len, num_kv_heads, head_size)``.
-        :param head_first: If the head dim comes before the sequence dim.
-        :param start_pos: The absolute position of the first query token (eg for decoding
-            where the first query token is just the most recently decoded token) for each example
-            in the batch. (shape: ``(batch_size,)``) If not provided, defaults to zeros.
-
-        :returns: The query and key matrices after RoPE has been applied.
-        """
-        if freqs_cis is not None:
-            raise RuntimeError(f"'freqs_cis' is invalid for {self.__class__.__name__}")
-
-        if head_first:
-            q_len = q.size(2)
-            k_len = k.size(2)
-        else:
-            q_len = q.size(1)
-            k_len = k.size(1)
-
-        if self.full_precision:
-            q_, k_ = q.float(), k.float()
-        else:
-            q_, k_ = q, k
-
-        with torch.autocast(q.device.type, enabled=False):
-            # Decide how long the rotary tables must be.  When ``start_pos`` is
-            # provided we need embeddings up to that absolute position; otherwise
-            # we fall back to the original behaviour.
-            seq_len_needed = (start_pos + k_len) if start_pos is not None else k_len
-            # shape: (seq_len_needed, head_size)
-            if pos_sin is None or pos_cos is None:
-                pos_sin, pos_cos = self._get_rotary_embedding(seq_len_needed, q_.device)
-            pos_sin, pos_cos = pos_sin.type_as(q_), pos_cos.type_as(q_)
-            # Absolute positions of the first query and key tokens
-            q_abs_start = start_pos if start_pos is not None else (k_len - q_len)
-            k_abs_start = start_pos if start_pos is not None else 0
-
-            head_dim_local = q_.shape[-1]
-            if pos_sin.size(-1) < head_dim_local or pos_cos.size(-1) < head_dim_local:
-                raise RuntimeError(
-                    "RoPE buffer dimension smaller than tensor dimension: "
-                    f"{pos_sin.size(-1)} vs {head_dim_local}. This may be due to tensor "
-                    f"parallel sharding applied after RoPE module instantiation."
-                )
-
-            if head_first:
-                q_ = self._apply_rotary_pos_emb(
-                    pos_sin[None, None, q_abs_start : q_abs_start + q_len, :],
-                    pos_cos[None, None, q_abs_start : q_abs_start + q_len, :],
-                    q_,
-                )
-                k_ = self._apply_rotary_pos_emb(
-                    pos_sin[None, None, k_abs_start : k_abs_start + k_len, :],
-                    pos_cos[None, None, k_abs_start : k_abs_start + k_len, :],
-                    k_,
-                )
-            else:
-                q_ = self._apply_rotary_pos_emb(
-                    pos_sin[None, q_abs_start : q_abs_start + q_len, None, :],
-                    pos_cos[None, q_abs_start : q_abs_start + q_len, None, :],
-                    q_,
-                )
-                k_ = self._apply_rotary_pos_emb(
-                    pos_sin[None, k_abs_start : k_abs_start + k_len, None, :],
-                    pos_cos[None, k_abs_start : k_abs_start + k_len, None, :],
-                    k_,
-                )
-
-        return q_.type_as(q), k_.type_as(k)
-
-
-class RotaryEmbeddingPerExampleStart(RotaryEmbedding):
-    """
-    RotaryEmbedding variant that supports different absolute start positions per batch element.
-
-    Accepts ``start_pos`` as an ``int`` (broadcast to all examples) or a tensor of shape
-    ``(batch_size,)`` giving the absolute start for each example in the batch.
-    """
-
-    def forward(
-        self,
-        q: torch.Tensor,
-        k: torch.Tensor,
-        head_first: bool = True,
-        start_pos: Optional[torch.Tensor] = None,
+        start_pos: Optional[Union[int, torch.Tensor]] = None,
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,

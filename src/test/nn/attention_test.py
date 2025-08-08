@@ -212,7 +212,7 @@ def test_attention_with_intra_document_masking():
     [
         pytest.param({}, id="no-opts"),
         pytest.param({"clip_qkv": 8.0}, id="QKV-clip"),
-        pytest.param({"rope": RoPEConfig(name=RoPEType.batched_start)}, id="rope"),
+        pytest.param({"rope": RoPEConfig()}, id="rope"),
         pytest.param({"qk_norm": LayerNormConfig()}, id="qk-norm"),
         pytest.param({"qk_norm": LayerNormConfig(), "use_head_qk_norm": True}, id="head-qk-norm"),
     ],
@@ -518,16 +518,89 @@ def test_attention_kv_caching_with_leftpad():
 
     assert y_with_cache.shape == (batch_size, seq_len, d_model)
 
+    # Assert KV cache state after prefill
+    assert attention.k_cache is not None and attention.v_cache is not None
+    assert attention.cache_seqlens is not None
+    # cache_leftpad should be set and equal to the derived one
+    assert attention.cache_leftpad is not None
+    torch.testing.assert_close(attention.cache_leftpad, cache_leftpad)
+    torch.testing.assert_close(attention.cache_seqlens, seq_lens)
+
+    # Check zero/non-zero structure in the cache after prefill
+    for i in range(batch_size):
+        lp = int(cache_leftpad[i].item())
+        L = int(seq_lens[i].item())
+        # Everything before leftpad must be zero
+        if lp > 0:
+            assert torch.all(attention.k_cache[i, :lp, :, :] == 0)
+            assert torch.all(attention.v_cache[i, :lp, :, :] == 0)
+        # Filled span must contain some non-zeros
+        assert not torch.all(attention.k_cache[i, lp : lp + L, :, :] == 0)
+        assert not torch.all(attention.v_cache[i, lp : lp + L, :, :] == 0)
+        # Everything after the filled span must be zero
+        assert torch.all(attention.k_cache[i, lp + L :, :, :] == 0)
+        assert torch.all(attention.v_cache[i, lp + L :, :, :] == 0)
+
     # Test incremental decoding
     new_token = torch.randn(batch_size, 1, d_model, dtype=dtype, device="cuda")
     decode_seq_lens = torch.ones(batch_size, dtype=torch.int32, device="cuda")
 
     with torch.no_grad(), torch.autocast("cuda", dtype=dtype):
+        # Capture cache state before decoding a new token
+        k_cache_before = attention.k_cache.clone()
+        v_cache_before = attention.v_cache.clone()
+        seqlens_before = attention.cache_seqlens.clone()
+
         y_decode = attention(
             new_token, use_cache=True, cache_leftpad=None, seq_lens=decode_seq_lens
         )
 
     assert y_decode.shape == (batch_size, 1, d_model)
+
+    # After a single decode step, seqlens should increment by 1
+    torch.testing.assert_close(attention.cache_seqlens, seqlens_before + 1)
+
+    # Verify that only the single new write position per batch changed
+    for i in range(batch_size):
+        lp = int(attention.cache_leftpad[i].item())
+        prev_L = int(seqlens_before[i].item())
+        write_pos = lp + prev_L
+
+        # The write position must now be non-zero
+        assert not torch.all(attention.k_cache[i, write_pos, :, :] == 0)
+        assert not torch.all(attention.v_cache[i, write_pos, :, :] == 0)
+
+        # Regions before the write position should be unchanged
+        if write_pos > 0:
+            try:
+                torch.testing.assert_close(
+                    k_cache_before[i, :write_pos, :, :], attention.k_cache[i, :write_pos, :, :]
+                )
+            except AssertionError as e:
+                diff_indices = (
+                    k_cache_before[i, :write_pos, :, :] != attention.k_cache[i, :write_pos, :, :]
+                ).nonzero()
+                print(f"{i} Discrepancy in k_cache at indices: {diff_indices}")
+                raise e
+
+            try:
+                torch.testing.assert_close(
+                    v_cache_before[i, :write_pos, :, :], attention.v_cache[i, :write_pos, :, :]
+                )
+            except AssertionError as e:
+                diff_indices = (
+                    v_cache_before[i, :write_pos, :, :] != attention.v_cache[i, :write_pos, :, :]
+                ).nonzero()
+                print(f"{i} Discrepancy in v_cache at indices: {diff_indices}")
+                raise e
+
+        # Region after the write position should remain zeros (unchanged)
+        torch.testing.assert_close(
+            k_cache_before[i, write_pos + 1 :, :, :], attention.k_cache[i, write_pos + 1 :, :, :]
+        )
+        torch.testing.assert_close(
+            v_cache_before[i, write_pos + 1 :, :, :], attention.v_cache[i, write_pos + 1 :, :, :]
+        )
 
     # Clean up
     attention.free_kv_cache()
@@ -543,10 +616,12 @@ def test_attention_leftpad_shift_equivalence(use_rope):
     d_model = 128
     n_heads = 8
     dtype = torch.bfloat16
+    kv_cache_max_len = 100
 
     # Shared content of length L
     len_content = 7
     x_shared = torch.randn(1, len_content, d_model, dtype=dtype, device="cuda")
+    x_next_shared = torch.randn(1, 1, d_model, dtype=dtype, device="cuda")
 
     # Two different left-padding amounts for the same content
     pad_a = 3
@@ -570,21 +645,37 @@ def test_attention_leftpad_shift_equivalence(use_rope):
     attention = Attention(
         d_model=d_model,
         n_heads=n_heads,
-        rope=RoPEConfig(name=RoPEType.batched_start) if use_rope else None,
+        rope=RoPEConfig() if use_rope else None,
         use_flash=True,
         init_device="cuda",
         dtype=torch.float32,
     )
 
     # Run with leftpad A
-    attention.reset_kv_cache(use_cache=True, batch_size=1, max_seq_len=max_len_a, dtype=dtype)
+    attention.reset_kv_cache(
+        use_cache=True, batch_size=1, max_seq_len=kv_cache_max_len, dtype=dtype
+    )
     with torch.no_grad(), torch.autocast("cuda", dtype=dtype):
+        # Prefill
         y_a = attention(x_a, use_cache=True, cache_leftpad=cache_leftpad_a, seq_lens=seq_lens_a)
 
+        # Decode one more token using the KV cache
+        y_a_next = attention(
+            x_next_shared, use_cache=True, seq_lens=torch.ones(1, dtype=torch.int32, device="cuda")
+        )
+
     # Run with leftpad B
-    attention.reset_kv_cache(use_cache=True, batch_size=1, max_seq_len=max_len_b, dtype=dtype)
+    attention.reset_kv_cache(
+        use_cache=True, batch_size=1, max_seq_len=kv_cache_max_len, dtype=dtype
+    )
     with torch.no_grad(), torch.autocast("cuda", dtype=dtype):
+        # Prefill
         y_b = attention(x_b, use_cache=True, cache_leftpad=cache_leftpad_b, seq_lens=seq_lens_b)
+
+        # Decode one more token using the KV cache (same next token content)
+        y_b_next = attention(
+            x_next_shared, use_cache=True, seq_lens=torch.ones(1, dtype=torch.int32, device="cuda")
+        )
 
     # Compare the valid region (full length here)
     valid_len = int(seq_lens_b.item())
@@ -592,6 +683,9 @@ def test_attention_leftpad_shift_equivalence(use_rope):
     torch.testing.assert_close(
         y_a[:, -valid_len:, :], y_b[:, -valid_len:, :], rtol=BF16_RTOL, atol=BF16_ATOL
     )
+
+    # Also validate the decode step equivalence (single-token outputs should match)
+    torch.testing.assert_close(y_a_next, y_b_next, rtol=BF16_RTOL, atol=BF16_ATOL)
 
 
 @pytest.mark.parametrize(
