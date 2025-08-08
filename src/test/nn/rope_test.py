@@ -1,3 +1,4 @@
+# pyright: reportMissingImports=false
 import pytest
 import torch
 
@@ -7,6 +8,7 @@ from olmo_core.nn.rope import (
     FusedRotaryEmbedding,
     PIRoPEScalingConfig,
     RotaryEmbedding,
+    RotaryEmbeddingPerExampleStart,
     StepwiseRoPEScalingConfig,
     YaRNRoPEScalingConfig,
 )
@@ -347,3 +349,115 @@ def test_rope_scaling_attention_rescale_factor():
 
         torch.testing.assert_close(q2, expected_q2, rtol=1e-5, atol=1e-5)
         torch.testing.assert_close(k2, expected_k2, rtol=1e-5, atol=1e-5)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize(
+    "head_first",
+    [pytest.param(True, id="head_first"), pytest.param(False, id="seq_first")],
+)
+@pytest.mark.parametrize(
+    "rope_cls",
+    [
+        pytest.param(RotaryEmbedding, id="default"),
+        pytest.param(ComplexRotaryEmbedding, id="complex"),
+    ],
+)
+def test_rope_start_pos_zero_matches_default(device, head_first, rope_cls):
+    B, T, d_model, n_heads = 2, 12, 16, 4
+    head_size = d_model // n_heads
+    rope = rope_cls(head_size=head_size)
+
+    with torch.no_grad():
+        q = torch.rand(B, n_heads, T, head_size, device=device)
+        k = torch.rand(B, n_heads, T, head_size, device=device)
+        if not head_first:
+            q, k = q.transpose(1, 2), k.transpose(1, 2)
+
+        # Default behavior
+        q_def, k_def = rope(q.clone(), k.clone(), head_first=head_first)
+
+        # Explicit start_pos = 0 should match default
+        q_zero, k_zero = rope(q.clone(), k.clone(), head_first=head_first, start_pos=0)
+
+        torch.testing.assert_close(q_def, q_zero)
+        torch.testing.assert_close(k_def, k_zero)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize(
+    "head_first",
+    [pytest.param(True, id="head_first"), pytest.param(False, id="seq_first")],
+)
+def test_batched_start_matches_default_when_broadcasted(device, head_first):
+    B, T, d_model, n_heads = 3, 10, 16, 4
+    head_size = d_model // n_heads
+    rope_default = RotaryEmbedding(head_size=head_size)
+    rope_batched = RotaryEmbeddingPerExampleStart(head_size=head_size)
+
+    with torch.no_grad():
+        q = torch.rand(B, n_heads, T, head_size, device=device)
+        k = torch.rand(B, n_heads, T, head_size, device=device)
+        if not head_first:
+            q, k = q.transpose(1, 2), k.transpose(1, 2)
+
+        # No start_pos provided → should match
+        q1, k1 = rope_default(q.clone(), k.clone(), head_first=head_first)
+        q2, k2 = rope_batched(q.clone(), k.clone(), head_first=head_first)
+        torch.testing.assert_close(q1, q2)
+        torch.testing.assert_close(k1, k2)
+
+        # Scalar start_pos provided → should match
+        start_pos = 5
+        q3, k3 = rope_default(q.clone(), k.clone(), head_first=head_first, start_pos=start_pos)
+        q4, k4 = rope_batched(q.clone(), k.clone(), head_first=head_first, start_pos=start_pos)
+        torch.testing.assert_close(q3, q4)
+        torch.testing.assert_close(k3, k4)
+
+        # Per-example tensor with identical values → should match scalar
+        start_vec = torch.full((B,), start_pos, device=device, dtype=torch.long)
+        q5, k5 = rope_batched(q.clone(), k.clone(), head_first=head_first, start_pos=start_vec)
+        torch.testing.assert_close(q3, q5)
+        torch.testing.assert_close(k3, k5)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize(
+    "head_first",
+    [pytest.param(True, id="head_first"), pytest.param(False, id="seq_first")],
+)
+def test_batched_start_per_example_matches_loop_baseline(device, head_first):
+    # Validate correctness by comparing to a baseline that applies the parent class
+    # per-example and stacks the results.
+    B, T, d_model, n_heads = 3, 10, 16, 4
+    head_size = d_model // n_heads
+    rope_default = RotaryEmbedding(head_size=head_size)
+    rope_batched = RotaryEmbeddingPerExampleStart(head_size=head_size)
+
+    with torch.no_grad():
+        q = torch.rand(B, n_heads, T, head_size, device=device)
+        k = torch.rand(B, n_heads, T, head_size, device=device)
+        if not head_first:
+            q, k = q.transpose(1, 2), k.transpose(1, 2)
+
+        # Diverse per-example start positions
+        start_vec = torch.tensor([0, 3, 7], device=device, dtype=torch.long)
+
+        # Batched implementation
+        q_b, k_b = rope_batched(q.clone(), k.clone(), head_first=head_first, start_pos=start_vec)
+
+        # Baseline: loop over batch with the default implementation
+        q_list, k_list = [], []
+        for i in range(B):
+            qi = q[i : i + 1].clone()
+            ki = k[i : i + 1].clone()
+            qi_out, ki_out = rope_default(
+                qi, ki, head_first=head_first, start_pos=int(start_vec[i].item())
+            )
+            q_list.append(qi_out)
+            k_list.append(ki_out)
+        q_loop = torch.cat(q_list, dim=0)
+        k_loop = torch.cat(k_list, dim=0)
+
+        torch.testing.assert_close(q_b, q_loop)
+        torch.testing.assert_close(k_b, k_loop)

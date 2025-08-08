@@ -16,6 +16,7 @@ __all__ = [
     "RoPEScalingConfig",
     "RotaryEmbeddingBase",
     "RotaryEmbedding",
+    "RotaryEmbeddingPerExampleStart",
     "FusedRotaryEmbedding",
     "ComplexRotaryEmbedding",
 ]
@@ -37,6 +38,11 @@ class RoPEType(StrEnum):
     complex = "complex"
     """
     ➡️ :class:`ComplexRotaryEmbedding`
+    """
+
+    batched_start = "batched_start"
+    """
+    ➡️ :class:`RotaryEmbeddingPerExampleStart`
     """
 
 
@@ -278,6 +284,8 @@ class RoPEConfig(Config):
                 return FusedRotaryEmbedding(**kwargs)
             elif self.name == "complex":
                 return ComplexRotaryEmbedding(**kwargs)
+            elif self.name == "batched_start":
+                return RotaryEmbeddingPerExampleStart(**kwargs)
             else:
                 raise NotImplementedError(self.name)
         except TypeError as e:
@@ -431,7 +439,8 @@ class RotaryEmbedding(RotaryEmbeddingBase):
             ``(batch_size, seq_len, num_kv_heads, head_size)``.
         :param head_first: If the head dim comes before the sequence dim.
         :param start_pos: The absolute position of the first query token (eg for decoding
-            where the first query token is just the most recently decoded token).
+            where the first query token is just the most recently decoded token) for each example
+            in the batch. (shape: ``(batch_size,)``) If not provided, defaults to zeros.
 
         :returns: The query and key matrices after RoPE has been applied.
         """
@@ -459,8 +468,9 @@ class RotaryEmbedding(RotaryEmbeddingBase):
             if pos_sin is None or pos_cos is None:
                 pos_sin, pos_cos = self._get_rotary_embedding(seq_len_needed, q_.device)
             pos_sin, pos_cos = pos_sin.type_as(q_), pos_cos.type_as(q_)
-            # Absolute position of the *first* query token
+            # Absolute positions of the first query and key tokens
             q_abs_start = start_pos if start_pos is not None else (k_len - q_len)
+            k_abs_start = start_pos if start_pos is not None else 0
 
             head_dim_local = q_.shape[-1]
             if pos_sin.size(-1) < head_dim_local or pos_cos.size(-1) < head_dim_local:
@@ -477,8 +487,8 @@ class RotaryEmbedding(RotaryEmbeddingBase):
                     q_,
                 )
                 k_ = self._apply_rotary_pos_emb(
-                    pos_sin[None, None, q_abs_start : q_abs_start + k_len, :],
-                    pos_cos[None, None, q_abs_start : q_abs_start + k_len, :],
+                    pos_sin[None, None, k_abs_start : k_abs_start + k_len, :],
+                    pos_cos[None, None, k_abs_start : k_abs_start + k_len, :],
                     k_,
                 )
             else:
@@ -488,9 +498,112 @@ class RotaryEmbedding(RotaryEmbeddingBase):
                     q_,
                 )
                 k_ = self._apply_rotary_pos_emb(
-                    pos_sin[None, q_abs_start : q_abs_start + k_len, None, :],
-                    pos_cos[None, q_abs_start : q_abs_start + k_len, None, :],
+                    pos_sin[None, k_abs_start : k_abs_start + k_len, None, :],
+                    pos_cos[None, k_abs_start : k_abs_start + k_len, None, :],
                     k_,
+                )
+
+        return q_.type_as(q), k_.type_as(k)
+
+
+class RotaryEmbeddingPerExampleStart(RotaryEmbedding):
+    """
+    RotaryEmbedding variant that supports different absolute start positions per batch element.
+
+    Accepts ``start_pos`` as an ``int`` (broadcast to all examples) or a tensor of shape
+    ``(batch_size,)`` giving the absolute start for each example in the batch.
+    """
+
+    def forward(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        head_first: bool = True,
+        start_pos: Optional[torch.Tensor] = None,
+        pos_sin: Optional[torch.Tensor] = None,
+        pos_cos: Optional[torch.Tensor] = None,
+        freqs_cis: Optional[torch.Tensor] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        if freqs_cis is not None:
+            raise RuntimeError(f"'freqs_cis' is invalid for {self.__class__.__name__}")
+
+        if head_first:
+            q_len = q.size(2)
+            k_len = k.size(2)
+        else:
+            q_len = q.size(1)
+            k_len = k.size(1)
+
+        if self.full_precision:
+            q_, k_ = q.float(), k.float()
+        else:
+            q_, k_ = q, k
+
+        with torch.autocast(q.device.type, enabled=False):
+            batch_size = q_.size(0)
+            if start_pos is None:
+                q_abs_starts = torch.full(
+                    (batch_size,), k_len - q_len, device=q_.device, dtype=torch.long
+                )
+                k_abs_starts = torch.zeros(batch_size, device=q_.device, dtype=torch.long)
+            else:
+                if isinstance(start_pos, int):
+                    q_abs_starts = torch.full(
+                        (batch_size,), start_pos, device=q_.device, dtype=torch.long
+                    )
+                    k_abs_starts = q_abs_starts
+                else:
+                    start_vec = start_pos.to(device=q_.device, dtype=torch.long)
+                    if start_vec.ndim == 0:
+                        start_vec = start_vec.expand(batch_size)
+                    elif start_vec.shape[0] != batch_size:
+                        raise RuntimeError(
+                            "start_pos must be a scalar or a tensor of shape (batch_size,)"
+                        )
+                    q_abs_starts = start_vec
+                    k_abs_starts = start_vec
+
+            max_end = int((q_abs_starts + k_len).max().item())
+            if pos_sin is None or pos_cos is None:
+                pos_sin, pos_cos = self._get_rotary_embedding(max_end, q_.device)
+            pos_sin, pos_cos = pos_sin.type_as(q_), pos_cos.type_as(q_)
+
+            head_dim_local = q_.shape[-1]
+            if pos_sin.size(-1) < head_dim_local or pos_cos.size(-1) < head_dim_local:
+                raise RuntimeError(
+                    "RoPE buffer dimension smaller than tensor dimension: "
+                    f"{pos_sin.size(-1)} vs {head_dim_local}. This may be due to tensor "
+                    f"parallel sharding applied after RoPE module instantiation."
+                )
+            if pos_sin.size(-2) < max_end or pos_cos.size(-2) < max_end:
+                raise RuntimeError(
+                    f"RoPE buffers shorter than required: need {max_end}, have {pos_sin.size(-2)}."
+                )
+
+            arange_q = torch.arange(q_len, device=q_.device, dtype=torch.long)
+            arange_k = torch.arange(k_len, device=q_.device, dtype=torch.long)
+            idx_q = q_abs_starts[:, None] + arange_q[None, :]
+            idx_k = k_abs_starts[:, None] + arange_k[None, :]
+
+            # (B, T, head_size)
+            pos_sin_q = pos_sin.index_select(0, idx_q.reshape(-1)).view(batch_size, q_len, -1)
+            pos_cos_q = pos_cos.index_select(0, idx_q.reshape(-1)).view(batch_size, q_len, -1)
+            pos_sin_k = pos_sin.index_select(0, idx_k.reshape(-1)).view(batch_size, k_len, -1)
+            pos_cos_k = pos_cos.index_select(0, idx_k.reshape(-1)).view(batch_size, k_len, -1)
+
+            if head_first:
+                q_ = self._apply_rotary_pos_emb(
+                    pos_sin_q[:, None, :, :], pos_cos_q[:, None, :, :], q_
+                )
+                k_ = self._apply_rotary_pos_emb(
+                    pos_sin_k[:, None, :, :], pos_cos_k[:, None, :, :], k_
+                )
+            else:
+                q_ = self._apply_rotary_pos_emb(
+                    pos_sin_q[:, :, None, :], pos_cos_q[:, :, None, :], q_
+                )
+                k_ = self._apply_rotary_pos_emb(
+                    pos_sin_k[:, :, None, :], pos_cos_k[:, :, None, :], k_
                 )
 
         return q_.type_as(q), k_.type_as(k)
@@ -728,6 +841,7 @@ class ComplexRotaryEmbedding(RotaryEmbeddingBase):
             if freqs_cis is None:
                 freqs_cis = self._get_rotary_embedding(seq_len_needed, q_.device)
             q_abs_start = start_pos if start_pos is not None else (k_len - q_len)
+            k_abs_start = start_pos if start_pos is not None else 0
 
             head_dim_local = q_.shape[-1]
             if freqs_cis.size(-1) < head_dim_local:
@@ -742,14 +856,14 @@ class ComplexRotaryEmbedding(RotaryEmbeddingBase):
                     freqs_cis[None, None, q_abs_start : q_abs_start + q_len, :], q_
                 )
                 k_ = self._apply_rotary_pos_emb(
-                    freqs_cis[None, None, q_abs_start : q_abs_start + k_len, :], k_
+                    freqs_cis[None, None, k_abs_start : k_abs_start + k_len, :], k_
                 )
             else:
                 q_ = self._apply_rotary_pos_emb(
                     freqs_cis[None, q_abs_start : q_abs_start + q_len, None, :], q_
                 )
                 k_ = self._apply_rotary_pos_emb(
-                    freqs_cis[None, q_abs_start : q_abs_start + k_len, None, :], k_
+                    freqs_cis[None, k_abs_start : k_abs_start + k_len, None, :], k_
                 )
 
         return q_.type_as(q), k_.type_as(k)
