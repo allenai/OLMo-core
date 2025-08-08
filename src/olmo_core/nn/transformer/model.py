@@ -1789,6 +1789,39 @@ class BLTDistillTransformer(BLTTransformer):
             boundary_logprobs_for_decoder_loss = None
             boundary_labels = None
 
+        # TODO(benjaminm): inefficient since we pool twice, implement properly if it works
+        if blt_config.use_predicted_boundaries:
+            assert boundary_preds is not None
+            assert self.local_encoder.pooling == "hnet" # only supported for HNet
+
+            # from HNet
+            boundary_mask = (F.sigmoid(boundary_preds.detach()) > blt_config.boundary_threshold) & byte_mask
+            boundary_mask[:, 0] = True # <bos> must be boundary
+            token_idx = (
+                torch.arange(byte_mask.shape[1], device=self.device)[None, :] + (~boundary_mask).long() * byte_mask.shape[1]
+            )
+            seq_sorted_indices = torch.argsort(token_idx, dim=1)[:, :patch_mask.shape[1]]
+            predicted_patch_len_mask = seq_sorted_indices == torch.cummax(seq_sorted_indices, dim=1).values
+            predicted_patch_lens = seq_sorted_indices[:, :patch_mask.shape[1]] + 1
+            # TODO(benjaminm): potentially missing one patch at the end, does it make a difference?
+            predicted_patch_lens[:, 1:] = torch.where(
+                predicted_patch_len_mask[:, 1:],
+                predicted_patch_lens[:, 1:] - predicted_patch_lens[:, :-1],
+                torch.zeros_like(predicted_patch_lens[:, 1:]),
+            )
+
+            local_encoder_kwargs["patch_lens"] = predicted_patch_lens
+            local_encoder_kwargs["patch_ids"] = blt_utils.lengths_to_ids(predicted_patch_lens, input_ids.shape[-1])
+            local_decoder_kwargs["patch_lens"] = local_encoder_kwargs["patch_lens"]
+            local_decoder_kwargs["patch_ids"] = local_encoder_kwargs["patch_ids"]
+
+            h_patch = self.local_encoder.pool(  # type: ignore
+                h=h_byte,
+                patch_lens=local_encoder_kwargs["patch_lens"],
+                patch_ids=local_encoder_kwargs["patch_ids"],
+                cross_attn_mask=None,
+            )
+
         # Run each block.
         if not skip_blocks:
             if use_oracle_patch_reps:

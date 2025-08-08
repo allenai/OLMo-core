@@ -389,20 +389,28 @@ class LocalEncoder(nn.Module):
         cross_attn_mask: BlockMask | None,
     ):
         if self.pooling == "cross_attn":
-            return self._pool_blt(
+            patch_embeddings = self._pool_blt(
                 h=h,
                 patch_lens=patch_lens,
                 patch_ids=patch_ids,
                 cross_attn_mask=cross_attn_mask,
             )
         elif self.pooling == "hnet":
-            return self._pool_hnet(
+            patch_embeddings = self._pool_hnet(
                 h=h,
                 patch_lens=patch_lens,
                 patch_ids=patch_ids,
             )
         else:
             raise ValueError(f"Unknown pooling method: {self.pooling}. Supported methods are 'cross_attn' and 'hnet'.")
+        
+        if self.post_pool_norm is not None:
+            patch_embeddings = self.post_pool_norm(patch_embeddings)
+
+        if self.out_projection is not None:
+            patch_embeddings = self.out_projection(patch_embeddings)
+
+        return patch_embeddings
 
     def forward(
         self,
@@ -450,12 +458,6 @@ class LocalEncoder(nn.Module):
             patch_ids=patch_ids,
             cross_attn_mask=cross_attn_mask,
         )
-
-        if self.post_pool_norm is not None:
-            patch_embeddings = self.post_pool_norm(patch_embeddings)
-
-        if self.out_projection is not None:
-            patch_embeddings = self.out_projection(patch_embeddings)
 
         return h, patch_embeddings
 
