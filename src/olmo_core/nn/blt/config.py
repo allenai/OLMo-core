@@ -30,7 +30,7 @@ class BLTConfig(Config):
     boundary_predictor_backprop_through_encoder: bool = True
     decoder_backprop_through_add_boundary_logp: bool = True
     decoder_use_mse_loss: bool = False
-    use_predicted_boundaries: bool = True
+    use_predicted_boundaries: bool = False
     boundary_threshold: float = 0.5
 
 
