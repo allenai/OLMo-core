@@ -204,7 +204,6 @@ class TransformerGenerationModule(GenerationModule):
         tokens_generated = 0
         kv_cache_init_time = None
         prefill_time = None
-        first_decode_time = None
 
         if generation_config.max_new_tokens is not None:
             max_length = prompt_len + generation_config.max_new_tokens
@@ -239,14 +238,11 @@ class TransformerGenerationModule(GenerationModule):
 
         pbar = tqdm(
             desc="Generating tokens",
+            unit="tokens",
             total=(max_length - prompt_len) if max_length is not None else None,
-            leave=False,
             disable=not log_timing,
-            unit="token",
-            dynamic_ncols=True,
-            smoothing=0.1,
             miniters=10,
-            colour="green",
+            color="#FFEE8C",
         )
         while not ((max_length is not None and generated.shape[1] >= max_length) or finished.all()):
             token_start_time = time.perf_counter()
@@ -279,8 +275,6 @@ class TransformerGenerationModule(GenerationModule):
             # Track prefill and first decode times
             if is_first_forward:
                 prefill_time = forward_end_time - forward_start_time
-            elif tokens_generated == 0:
-                first_decode_time = forward_end_time - forward_start_time
 
             if all_logits is not None:
                 all_logits.append(next_token_logits)
@@ -357,30 +351,29 @@ class TransformerGenerationModule(GenerationModule):
             )
             print(f"  Sequence length: {prompt_len:,} → {prompt_len + tokens_generated:,}")
             print(f"  Total generation time: {total_time:.3f}s")
+            # Calculate prefill and completion throughput
+            prefill_tokens_total = prompt_len * batch_size
+            completion_tokens_total = tokens_generated * batch_size
+
+            print("  Throughput:")
             print(
-                f"  Throughput: {tokens_per_sec_total:.1f} tokens/s (total) | {tokens_per_sec_per_seq:.1f} tokens/s (per seq)"
+                f"    Overall: {tokens_per_sec_total:.1f} tokens/s (total) | {tokens_per_sec_per_seq:.1f} tokens/s (per seq)"
             )
 
-            # Detailed timing breakdown
-            print(f"{'-' * 60}\nTIMING BREAKDOWN\n{'-' * 60}")
-            if kv_cache_init_time is not None:
-                print(f"  KV cache init: {kv_cache_init_time * 1000:7.1f} ms")
-            if prefill_time is not None:
+            if prefill_time is not None and prefill_time > 0:
+                prefill_throughput_total = prefill_tokens_total / prefill_time
+                prefill_throughput_per_seq = prompt_len / prefill_time
                 print(
-                    f"  Prefill: {prefill_time * 1000:7.1f} ms ({prompt_len / prefill_time:.1f} tokens/s)"
+                    f"    Prefill: {prefill_throughput_total:.1f} tokens/s (total) | {prefill_throughput_per_seq:.1f} tokens/s (per seq)"
                 )
-            if first_decode_time is not None:
-                print(f"  First decode: {first_decode_time * 1000:7.1f} ms")
-            if time_to_first_token is not None:
-                print(f"  Time to first token: {time_to_first_token * 1000:7.1f} ms")
-            if token_times:
+
+            completion_time = total_time - (prefill_time or 0) - (kv_cache_init_time or 0)
+            if completion_time > 0 and tokens_generated > 0:
+                completion_throughput_total = completion_tokens_total / completion_time
+                completion_throughput_per_seq = tokens_generated / completion_time
                 print(
-                    f"  Avg inter-token latency: {sum(token_times) / len(token_times) * 1000:7.1f} ms"
+                    f"    Completion: {completion_throughput_total:.1f} tokens/s (total) | {completion_throughput_per_seq:.1f} tokens/s (per seq)"
                 )
-                if len(token_times) > 1:
-                    print(
-                        f"  Avg subsequent token latency: {sum(token_times[1:]) / len(token_times[1:]) * 1000:7.1f} ms"
-                    )
             print(f"{'=' * 60}\n")
 
         return generated, logits
