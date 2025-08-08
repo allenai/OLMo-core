@@ -490,8 +490,6 @@ class Transformer(nn.Module):
             **kwargs,
         )
 
-        print("block_kwargs", block_kwargs)
-
         # Get embeddings but pass-through for non-existent layers to allow easy
         # pipeline parallel configuration.
         h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
