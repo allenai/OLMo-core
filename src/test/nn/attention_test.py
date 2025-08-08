@@ -532,6 +532,62 @@ def test_attention_kv_caching_with_leftpad():
     attention.free_kv_cache()
 
 
+@requires_gpu
+@requires_flash_attn
+@pytest.mark.parametrize("use_rope", [True, False])
+def test_attention_leftpad_shift_equivalence(use_rope):
+    """Two inputs that are equivalent after left-padding should produce equivalent outputs on the overlapping suffix."""
+    seed_all(0)
+
+    d_model = 128
+    n_heads = 8
+    dtype = torch.bfloat16
+
+    # Longer sequence A
+    len_a = 12
+    pad_a = 3
+    x_a = torch.randn(1, len_a, d_model, dtype=dtype, device="cuda")  # (1, 12, 128)
+
+    # Shorter sequence B is the suffix of A (overlap)
+    len_b = 7
+    pad_b = 8
+    x_b = x_a[:, len_a - len_b :, :].clone()  # (1, 7, 128)
+
+    # Build masks to derive correct cache_leftpad and seq_lens
+    max_len_a = pad_a + len_a
+    mask_a = torch.tensor([[0] * pad_a + [1] * len_a], dtype=torch.bool, device="cuda")
+    cache_leftpad_a, seq_lens_a = attention_mask_to_cache_leftpad(mask_a)
+
+    max_len_b = pad_b + len_b
+    mask_b = torch.tensor([[0] * pad_b + [1] * len_b], dtype=torch.bool, device="cuda")
+    cache_leftpad_b, seq_lens_b = attention_mask_to_cache_leftpad(mask_b)
+
+    attention = Attention(
+        d_model=d_model,
+        n_heads=n_heads,
+        rope=RoPEConfig() if use_rope else None,
+        use_flash=True,
+        init_device="cuda",
+        dtype=torch.float32,
+    )
+
+    # Run A
+    attention.reset_kv_cache(use_cache=True, batch_size=1, max_seq_len=max_len_a, dtype=dtype)
+    with torch.no_grad(), torch.autocast("cuda", dtype=dtype):
+        y_a = attention(x_a, use_cache=True, cache_leftpad=cache_leftpad_a, seq_lens=seq_lens_a)
+
+    # Run B
+    attention.reset_kv_cache(use_cache=True, batch_size=1, max_seq_len=max_len_b, dtype=dtype)
+    with torch.no_grad(), torch.autocast("cuda", dtype=dtype):
+        y_b = attention(x_b, use_cache=True, cache_leftpad=cache_leftpad_b, seq_lens=seq_lens_b)
+
+    # Compare overlapping suffix of A with valid portion of B (explicitly trim by seq_lens)
+    overlap_len = int(seq_lens_b.item())
+    torch.testing.assert_close(
+        y_a[:, -overlap_len:, :], y_b[:, :overlap_len, :], rtol=1e-5, atol=5e-3
+    )
+
+
 @pytest.mark.parametrize(
     "attn_config",
     [

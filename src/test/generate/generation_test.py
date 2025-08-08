@@ -326,6 +326,57 @@ def test_generation_with_attention_mask():
     )
 
 
+@requires_gpu
+@requires_flash_attn
+def test_left_padded_attention_mask_equivalence():
+    device = torch.device("cuda")
+    pad_token_id = 0
+
+    generation_config = GenerationConfig(
+        max_length=20, temperature=0.0, pad_token_id=pad_token_id, eos_token_id=1, use_cache=True
+    )
+
+    transformer_config = small_transformer_config(use_flash=True, dtype=DType.bfloat16)
+    model = transformer_config.build()
+    generation_module = TransformerGenerationModule(
+        model=model, generation_config=generation_config, device=device
+    )
+
+    # Single-example: left-padded vs unpadded should yield identical completions and logits
+    unpadded = torch.tensor([[3, 5, 7]], dtype=torch.long, device=device)
+    left_padded = torch.tensor(
+        [[pad_token_id, pad_token_id, 3, 5, 7]], dtype=torch.long, device=device
+    )
+    pseudo_left_padded = torch.tensor([[2, 2, 3, 5, 7]], dtype=torch.long, device=device)
+
+    attn_unpadded = (unpadded != pad_token_id).to(torch.bool)
+    attn_left_padded = (left_padded != pad_token_id).to(torch.bool)
+
+    seed_all(0)
+    out_ids_unpadded, out_logits_unpadded = generation_module.generate_batch(
+        unpadded, attention_mask=attn_unpadded, completions_only=True, return_logits=True
+    )
+
+    seed_all(0)
+    out_ids_left, out_logits_left = generation_module.generate_batch(
+        left_padded, attention_mask=attn_left_padded, completions_only=True, return_logits=True
+    )
+
+    seed_all(0)
+    out_ids_pseudo_left, out_logits_pseudo_left = generation_module.generate_batch(
+        pseudo_left_padded,
+        attention_mask=attn_left_padded,  # reuse the left-padded attention mask
+        completions_only=True,
+        return_logits=True,
+    )
+
+    assert torch.equal(out_ids_left, out_ids_pseudo_left)
+    torch.testing.assert_close(out_logits_left, out_logits_pseudo_left)
+
+    assert torch.equal(out_ids_unpadded, out_ids_left)
+    torch.testing.assert_close(out_logits_unpadded, out_logits_left)
+
+
 def run_distributed_generation(
     checkpoint_dir: Path,
     transformer_config: TransformerConfig,
