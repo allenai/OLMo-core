@@ -32,6 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `budget` mode for activation checkpointing configuration.
 - Added `io.remove_file()` function.
 - Added ABF, PI, and YaRN rope scaling strategies.
+- Added a script to compare two WandB runs
+- Added `namespace` option to `nn.buffer_cache.BufferCache`.
 
 ### Changed
 
@@ -59,7 +61,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed parallelism compatiblity between cp + tp and cp + pp and added test to catch regressions.
 - Ensure sharded parameters are initialized differently on separate ranks.
 - Fixed fingerprinting for FSL datasets
-- Fixed bug where `step` state in `SkipStepAdamW` was not incremented, biasing the optimizer steps.
+- Fixed bug where `step` state in `SkipStepAdamW` was not incremented, biasing the optimizer steps. Added option to restore the bug for backwards compatibility.
+- Removed `sklearn` from upstream dependency `ai2-olmo-eval`.
+- Made removing ephemeral checkpoints more robust.
+- Made running bookkeeping operations more robust.
+- Ensure RoPE modules with different settings use a unique sub-cache for their buffers.
 
 ## [v2.1.0](https://github.com/allenai/OLMo-core/releases/tag/v2.1.0) - 2025-04-14
 
