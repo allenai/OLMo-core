@@ -79,6 +79,7 @@ class ABFRoPEScalingConfig(RoPEScalingConfig):
     def compute_scaled_inv_freq(
         self, theta: int, dim: int, device: torch.device
     ) -> tuple["torch.Tensor", float]:
+        del theta  # unused
         inv_freq = compute_inv_freqs(self.new_theta, dim, device)
         return inv_freq, self.attention_rescale_factor
 
@@ -346,7 +347,9 @@ class RotaryEmbeddingBase(nn.Module):
         self.theta = theta
         self.full_precision = full_precision
         self.scaling = scaling
-        self._cache = cache or BufferCache()
+        self._cache = (cache or BufferCache()).with_namespace(
+            f"RoPE_theta={self.theta}_scaling={repr(self.scaling)}"
+        )
 
     @abstractmethod
     def warmup_cache(self, max_seq_len: int, device: torch.device):
