@@ -9,12 +9,17 @@ from olmo_core.utils import move_to_device
 
 class BufferCache(MutableMapping[str, torch.Tensor]):
     """
-    Cache for attention biases and other things that would normally be stored as buffers.
+    Cache for buffers such as attention biases that would normally be registered as module buffers.
+
     We avoid using buffers because we've run into various issues doing so with FSDP.
     In general it appears the way FSDP handles buffers is not well-defined.
     It doesn't shard them but apparently it does synchronize them across processes, which we want to avoid
     since (A) it isn't necessary, and (B) we sometimes have `-inf` in these biases which might get turned into
     NaNs when they're synchronized due to casting or some other issue.
+
+    :param namespace: Optional namespace for the cache. This allows you to have a separate sub-cache
+        in a shared :class:`BufferCache` to avoid key collisions. See how this is used in the
+        :class:`olmo_core.nn.rope.RotaryEmbeddingBase` class for an example.
     """
 
     def __init__(self, namespace: str = ""):
