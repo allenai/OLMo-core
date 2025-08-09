@@ -8,7 +8,8 @@ def selective_log_softmax(logits: torch.Tensor, index: torch.Tensor) -> torch.Te
 
     .. note::
         torch.compile() performs an optimization that avoids materializing the full log softmax
-        tensor, which saves ~50% of the total memory usage of the operation.
+        tensor when combined with gather operations, which can save significant memory compared
+        to computing the full log softmax and then indexing.
 
     :param logits: The logits tensor of shape ``(batch_size, seq_len, vocab_size)``.
     :param index: The index tensor of shape ``(batch_size, seq_len)``.

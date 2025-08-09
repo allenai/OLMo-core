@@ -316,7 +316,7 @@ class TransformerGenerationModule(GenerationModule):
 
         logprobs = None
         if return_logprobs and all_logprobs:
-            logprobs = torch.stack(all_logprobs, dim=1)  # (batch_size, completion_length)
+            logprobs = torch.cat(all_logprobs, dim=1)  # (batch_size, completion_length)
             expected_logprobs = generated.shape[1] - prompt_len
             assert logprobs.shape[1] == expected_logprobs, (
                 f"Number of logprobs ({logprobs.shape[1]}) does not match number of newly generated tokens ({expected_logprobs})"

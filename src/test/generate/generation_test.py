@@ -75,7 +75,11 @@ def test_generation_module_basic(compile_model: bool, use_cache: bool):
     attention_mask = torch.ones(batch_size, context_len, device=device, dtype=torch.bool)
 
     output_ids, output_logits, output_logprobs = generation_module.generate_batch(  # type: ignore
-        input_ids, attention_mask=attention_mask, return_logits=True, completions_only=False
+        input_ids,
+        attention_mask=attention_mask,
+        return_logits=True,
+        return_logprobs=True,
+        completions_only=False,
     )
 
     # TODO: test to make sure the model is compiled exactly once if compile_model is True
@@ -99,7 +103,7 @@ def test_generation_module_basic(compile_model: bool, use_cache: bool):
     assert output_logprobs.shape == (
         batch_size,
         output_ids.shape[1] - context_len,
-    ), "output_logprobs shape does not match expected shape"
+    ), "output_logprobs shape does not match expected shape: " + str(output_logprobs.shape)
 
     # Check that generation stopped at EOS or max_length
     for i in range(batch_size):
