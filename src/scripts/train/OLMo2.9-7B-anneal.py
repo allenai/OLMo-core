@@ -52,7 +52,7 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} gs://ai2-llm/checkpoints/OLMo29/step16
     o29_module = importlib.util.module_from_spec(o29_spec)
     sys.modules["OLMo2.9-7B"] = o29_module
     o29_spec.loader.exec_module(o29_module)
-    batch_size = o29_module.GLOBAL_BATCH_SIZE
+    batch_size = o29_module.INITIAL_GLOBAL_BATCH_SIZE * 4
 
     # load state from the original training run
     trainer_state_file = resource_path(join_path(original_checkpoint, "train"), "rank0.pt")
@@ -102,6 +102,7 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} gs://ai2-llm/checkpoints/OLMo29/step16
         config.hard_stop = None
 
         config.callbacks["checkpointer"].save_interval = 10000
+        del config.callbacks["batchwup"]
 
         # performance settings
         config.metrics_collect_interval = 50
