@@ -31,6 +31,7 @@ from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
 from olmo_core.generate.generation_module.config import GenerationConfig
 from olmo_core.generate.sampling import select_next_token
+from olmo_core.generate.utils import selective_log_softmax
 from olmo_core.io import is_url, join_path, normalize_path
 from olmo_core.nn.transformer import Transformer, TransformerConfig
 from olmo_core.train.train_module.transformer.common import parallelize_model
@@ -142,11 +143,11 @@ class TransformerGenerationModule(GenerationModule):
         *,
         attention_mask: Optional[torch.Tensor] = None,
         return_logits: bool = False,
+        return_logprobs: bool = False,
         completions_only: bool = False,
         log_timing: bool = True,
-        _forced_next_tokens: Optional[torch.Tensor] = None,
         **generation_kwargs,
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
         """
         Generate text using greedy decoding.
 
@@ -155,7 +156,9 @@ class TransformerGenerationModule(GenerationModule):
             attention_mask: Optional attention mask of shape (batch_size, seq_len). This should be
                 a *left-padding* mask, not an arbitrary attention mask. If not provided, the model
                 will assume there are no left-padding tokens.
-            return_logits: If True, return logits along with generated tokens
+            return_logits: If True, return logits along with generated tokens.
+            return_logprobs: If True, return log probabilities *for the generated tokens* along with
+                generated tokens. This is notably more memory efficient than return_logits.
             completions_only: If True, return only the completions, not the entire sequence
             **generation_kwargs: Generation configuration overrides
         Returns:
@@ -178,24 +181,10 @@ class TransformerGenerationModule(GenerationModule):
             else None
         )
 
-        # Optional testing hook to force the generated token at each step.
-        # Accepts shape (steps,) or (batch_size, steps). If provided, we will
-        # override the next token with the forced token for the corresponding step.
-        forced_tokens: Optional[torch.Tensor] = None
-        if _forced_next_tokens is not None:
-            if _forced_next_tokens.dim() not in (1, 2):
-                raise ValueError(
-                    "_forced_next_tokens must be 1D (steps,) or 2D (batch_size, steps)"
-                )
-            if _forced_next_tokens.dim() == 2 and _forced_next_tokens.shape[0] != batch_size:
-                raise ValueError(
-                    "_forced_next_tokens with 2D shape must have first dim equal to batch_size"
-                )
-            forced_tokens = move_to_device(_forced_next_tokens.to(torch.long), self.device)
-
         # Output containers
         generated = input_ids
         all_logits = [] if return_logits else None
+        all_logprobs = [] if return_logprobs else None
 
         # Timing stats
         start_time = time.perf_counter()
@@ -261,7 +250,7 @@ class TransformerGenerationModule(GenerationModule):
 
             # Time the forward pass
             forward_start_time = time.perf_counter()
-            next_token_logits = self.model(
+            next_token_logits = self.model(  # (batch_size, 1, vocab_size)
                 input_ids_for_model,
                 logits_to_keep=1,
                 use_cache=generation_config.use_cache,
@@ -276,11 +265,8 @@ class TransformerGenerationModule(GenerationModule):
             if is_first_forward:
                 prefill_time = forward_end_time - forward_start_time
 
-            if all_logits is not None:
-                all_logits.append(next_token_logits)
-
             # Generate next token (predicted by sampling/argmax)
-            predicted_next_tokens = select_next_token(  # (batch_size,)
+            next_tokens = select_next_token(  # (batch_size,)
                 next_token_logits.squeeze(1),
                 do_sample=generation_config.do_sample,
                 temperature=generation_config.temperature,
@@ -288,17 +274,13 @@ class TransformerGenerationModule(GenerationModule):
                 top_p=generation_config.top_p,
             )
 
-            # Optionally override with forced tokens for testing determinism across runs
-            if forced_tokens is not None and (
-                (forced_tokens.dim() == 1 and tokens_generated < forced_tokens.shape[0])
-                or (forced_tokens.dim() == 2 and tokens_generated < forced_tokens.shape[1])
-            ):
-                if forced_tokens.dim() == 1:
-                    next_tokens = forced_tokens[tokens_generated].expand(batch_size)
-                else:
-                    next_tokens = forced_tokens[:, tokens_generated]
-            else:
-                next_tokens = predicted_next_tokens
+            if all_logits is not None:
+                all_logits.append(next_token_logits)  # Nx (batch_size, 1, vocab_size)
+
+            if all_logprobs is not None:
+                all_logprobs.append(  # Nx (batch_size,)
+                    selective_log_softmax(next_token_logits, next_tokens.unsqueeze(-1))
+                )
 
             # Force EOS for (previously) finished sequences
             next_tokens = torch.where(finished, torch.full_like(next_tokens, eos), next_tokens)
@@ -326,10 +308,18 @@ class TransformerGenerationModule(GenerationModule):
 
         logits = None
         if return_logits and all_logits:
-            logits = torch.cat(all_logits, dim=1)
+            logits = torch.cat(all_logits, dim=1)  # (batch_size, completion_length, vocab_size)
             expected_logits = generated.shape[1] - prompt_len
             assert logits.shape[1] == expected_logits, (
                 f"Number of logits ({logits.shape[1]}) does not match number of newly generated tokens ({expected_logits})"
+            )
+
+        logprobs = None
+        if return_logprobs and all_logprobs:
+            logprobs = torch.stack(all_logprobs, dim=1)  # (batch_size, completion_length)
+            expected_logprobs = generated.shape[1] - prompt_len
+            assert logprobs.shape[1] == expected_logprobs, (
+                f"Number of logprobs ({logprobs.shape[1]}) does not match number of newly generated tokens ({expected_logprobs})"
             )
 
         if completions_only:
@@ -376,7 +366,7 @@ class TransformerGenerationModule(GenerationModule):
                 )
             print(f"{'=' * 60}\n")
 
-        return generated, logits
+        return generated, logits, logprobs
 
     def load_checkpoint(
         self,

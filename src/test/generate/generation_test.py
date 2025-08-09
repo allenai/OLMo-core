@@ -74,7 +74,7 @@ def test_generation_module_basic(compile_model: bool, use_cache: bool):
     input_ids = torch.randint(2, 100, (batch_size, context_len), device=device)
     attention_mask = torch.ones(batch_size, context_len, device=device, dtype=torch.bool)
 
-    output_ids, output_logits = generation_module.generate_batch(  # type: ignore
+    output_ids, output_logits, output_logprobs = generation_module.generate_batch(  # type: ignore
         input_ids, attention_mask=attention_mask, return_logits=True, completions_only=False
     )
 
@@ -94,6 +94,12 @@ def test_generation_module_basic(compile_model: bool, use_cache: bool):
         output_ids.shape[1] - context_len,
         transformer_config.vocab_size,
     ), "output_logits shape does not match expected shape"
+
+    assert isinstance(output_logprobs, torch.Tensor), "output_logprobs is not a tensor"
+    assert output_logprobs.shape == (
+        batch_size,
+        output_ids.shape[1] - context_len,
+    ), "output_logprobs shape does not match expected shape"
 
     # Check that generation stopped at EOS or max_length
     for i in range(batch_size):
@@ -139,8 +145,8 @@ def test_generation_module_state_dict():
 
     # Verify they produce same output
     input_ids = torch.randint(1, 100, (1, 4), device=device)
-    output_ids1, _ = module1.generate_batch(input_ids)
-    output_ids2, _ = module2.generate_batch(input_ids)
+    output_ids1, _, _ = module1.generate_batch(input_ids)
+    output_ids2, _, _ = module2.generate_batch(input_ids)
     torch.testing.assert_close(output_ids1, output_ids2)
 
 
@@ -165,7 +171,7 @@ def test_generation_config_overrides(
 
     # Generate with overrides
     input_ids = torch.randint(1, 50, (1, 4), device=device)
-    output_ids, _ = generation_module.generate_batch(
+    output_ids, _, _ = generation_module.generate_batch(
         input_ids, max_length=max_length, eos_token_id=eos_token_id, temperature=0.8
     )
 
@@ -197,7 +203,7 @@ def test_generation_module_config_build(tmp_path: Path):
 
     # Generate output before saving
     input_ids = torch.randint(1, 100, (2, 4), device=device)
-    output_before, _ = generation_module.generate_batch(input_ids)
+    output_before, _, _ = generation_module.generate_batch(input_ids)
 
     checkpoint_dir = tmp_path / "checkpoint"
     save_model_and_optim_state(checkpoint_dir, generation_module.model)
@@ -212,7 +218,7 @@ def test_generation_module_config_build(tmp_path: Path):
     )
 
     # Generate output after loading from checkpoint
-    output_after, _ = generation_module2.generate_batch(input_ids)
+    output_after, _, _ = generation_module2.generate_batch(input_ids)
 
     # Verify predictions are the same before and after saving
     torch.testing.assert_close(output_before, output_after)
@@ -257,25 +263,25 @@ def test_generation_module_stop_sequences():
     # Stop at first stop token (10)
     input_ids = torch.tensor([[3, 5, 7]], dtype=torch.long, device=device)
     generation_module.model.forward = create_mock_forward([8, 9, 10, 99])
-    output, _ = generation_module.generate_batch(input_ids, completions_only=False)
+    output, _, _ = generation_module.generate_batch(input_ids, completions_only=False)
     assert torch.equal(output, torch.tensor([[3, 5, 7, 8, 9, 10]], device=device))
 
     # Stop at second stop token (20)
     input_ids = torch.tensor([[2, 4, 6]], dtype=torch.long, device=device)
     generation_module.model.forward = create_mock_forward([25, 15, 20, 99])
-    output, _ = generation_module.generate_batch(input_ids, completions_only=False)
+    output, _, _ = generation_module.generate_batch(input_ids, completions_only=False)
     assert torch.equal(output, torch.tensor([[2, 4, 6, 25, 15, 20]], device=device))
 
     # Stop at third stop token (30)
     input_ids = torch.tensor([[1, 2, 3]], dtype=torch.long, device=device)
     generation_module.model.forward = create_mock_forward([5, 30, 99])
-    output, _ = generation_module.generate_batch(input_ids, completions_only=False)
+    output, _, _ = generation_module.generate_batch(input_ids, completions_only=False)
     assert torch.equal(output, torch.tensor([[1, 2, 3, 5, 30]], device=device))
 
     # Stop at EOS token (not stop token)
     input_ids = torch.tensor([[3, 5, 7]], dtype=torch.long, device=device)
     generation_module.model.forward = create_mock_forward([60, 70, 1, 99])
-    output, _ = generation_module.generate_batch(input_ids, completions_only=False)
+    output, _, _ = generation_module.generate_batch(input_ids, completions_only=False)
     assert torch.equal(output, torch.tensor([[3, 5, 7, 60, 70, 1]], device=device))
 
     # No stop tokens - only stops at EOS
@@ -320,10 +326,10 @@ def test_generation_with_attention_mask():
     attention_mask2[0, 2] = False  # Mask the first non-pad token (as if it were padding)
 
     # Generate with different attention masks
-    output_with_mask1, _ = generation_module.generate_batch(
+    output_with_mask1, _, _ = generation_module.generate_batch(
         input_ids, attention_mask=attention_mask1, completions_only=False
     )
-    output_with_mask2, _ = generation_module.generate_batch(
+    output_with_mask2, _, _ = generation_module.generate_batch(
         input_ids, attention_mask=attention_mask2, completions_only=False
     )
 
@@ -362,17 +368,17 @@ def test_left_padded_attention_mask_equivalence(use_rope):
     attn_left_padded = (left_padded != pad_token_id).to(torch.bool)
 
     seed_all(0)
-    out_ids_unpadded, logits_unpadded = generation_module.generate_batch(
+    out_ids_unpadded, logits_unpadded, _ = generation_module.generate_batch(
         unpadded, attention_mask=attn_unpadded, completions_only=True, return_logits=True
     )
 
     seed_all(0)
-    out_ids_left, logits_left = generation_module.generate_batch(
+    out_ids_left, logits_left, _ = generation_module.generate_batch(
         left_padded, attention_mask=attn_left_padded, completions_only=True, return_logits=True
     )
 
     seed_all(0)
-    out_ids_pseudo_left, logits_pseudo_left = generation_module.generate_batch(
+    out_ids_pseudo_left, logits_pseudo_left, _ = generation_module.generate_batch(
         pseudo_left_padded,
         attention_mask=attn_left_padded,  # reuse the left-padded attention mask
         completions_only=True,
@@ -409,11 +415,11 @@ def test_generation_cache_consistency(batch_size: int):
     input_ids = torch.randint(2, 100, (batch_size, seq_len), device=device)
 
     seed_all(0)
-    output_ids_no_cache, output_logits_no_cache = generation_module.generate_batch(
+    output_ids_no_cache, output_logits_no_cache, _ = generation_module.generate_batch(
         input_ids, completions_only=True, return_logits=True, use_cache=False
     )
     seed_all(0)
-    output_ids_with_cache, output_logits_with_cache = generation_module.generate_batch(
+    output_ids_with_cache, output_logits_with_cache, _ = generation_module.generate_batch(
         input_ids, completions_only=True, return_logits=True, use_cache=True
     )
 
@@ -441,7 +447,7 @@ def run_distributed_generation(
     device = torch.device("cuda", dist.get_rank())
     input_ids = input_ids.to(device)
 
-    output_ids, _ = generation_module.generate_batch(input_ids, completions_only=False)
+    output_ids, _, _ = generation_module.generate_batch(input_ids, completions_only=False)
 
     assert output_ids.shape == expected_shape
     assert output_ids.device == device
