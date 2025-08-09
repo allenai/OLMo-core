@@ -344,7 +344,7 @@ class TransformerGenerationModule(GenerationModule):
             tokens_per_sec_per_seq = tokens_generated / total_time
 
             # Main generation stats
-            print(f"\n{'=' * 60}\nGENERATION STATISTICS\n{'=' * 60}")
+            print(f"\n{'=' * 60}\nGENERATION STATISTICS\n")
             print(f"  Batch size: {batch_size:,} | Prompt length: {prompt_len:,} tokens")
             print(
                 f"  Tokens generated: {tokens_generated:,} per sequence | Total: {total_tokens:,}"

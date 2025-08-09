@@ -640,10 +640,10 @@ class Attention(AttentionBase):
 
         if self.rope is not None:
             start_pos = None
-            if self.phase == InferencePhase.decode:
+            if use_cache and self.phase == InferencePhase.decode:
                 if self.cache_seqlens is None or self.cache_leftpad is None:
                     raise ValueError(
-                        "cache_seqlens and cache_leftpad are required when phase is decode"
+                        "cache_seqlens and cache_leftpad are required when cache is used and phase is decode"
                     )
                 start_pos = self.cache_seqlens + self.cache_leftpad
 
