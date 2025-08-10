@@ -118,7 +118,7 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
         return OptimGroupOverride(param_names, go.opts.copy())
 
     def build_groups(
-        self, model: nn.Module, strict: bool = True
+        self, model: nn.Module, strict: bool = True, param_filter=None
     ) -> Union[Iterable[torch.Tensor], List[Dict[str, Any]]]:
         """
         Build parameters groups.
@@ -131,7 +131,13 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
         frozen_params: set = set()
         for n, p in model.named_parameters():
             if p.requires_grad:
-                all_params[n] = p
+                if param_filter is None: # No filter applied
+                    all_params[n] = p
+                else:
+                    # Apply the parameter filter
+                    if param_filter(p):
+                        all_params[n] = p
+
             else:
                 frozen_params.add(n)
 
@@ -162,7 +168,7 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
         """
         raise NotImplementedError
 
-    def build(self, model: nn.Module, train_module: TrainModule, strict: bool = True) -> Opt:
+    def build(self, model: nn.Module, train_module: TrainModule, strict: bool = True, param_filter=None) -> Opt:
         """
         Build the optimizer.
 
@@ -178,7 +184,7 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
         kwargs.pop("fixed_fields")
 
         optim: torch.optim.Optimizer = self.optimizer()(
-            self.build_groups(model, strict=strict), **kwargs
+            self.build_groups(model, strict=strict, param_filter=param_filter), **kwargs
         )
 
         # Set 'lr' and 'initial_lr' in each group if needed.

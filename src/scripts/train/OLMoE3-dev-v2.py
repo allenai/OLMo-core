@@ -45,10 +45,13 @@ from olmo_core.train.train_module import (
     TransformerTrainModuleConfig,
     TransformerActivationCheckpointingConfig,
     TransformerActivationCheckpointingMode,
-    TransformerExpertParallelConfig
+    TransformerExpertParallelConfig,
+    MoEV2TransformerTrainModuleConfig
 )
 from olmo_core.train.train_module.transformer import TransformerPipelineParallelConfig
 from dataclasses import replace
+from olmo_core.train.train_module.transformer.moe_train_module import MoEV2TransformerTrainModule
+
 log = logging.getLogger(__name__)
 
 
@@ -70,8 +73,8 @@ SHARED_MLP_HIDDEN_SIZE = 2560  # Hidden size for shared MLP (or dense branch MLP
 
 MICRO_BSZ = 2
 NUM_LAYERS=4
-DP_DIM=2
-EP_DIM=1
+# DP_DIM=2
+EP_DIM=2
 PP_DIM=1
 SPLIT_POINTS = None
             
@@ -197,8 +200,8 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     return config
 
 
-def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
-    return TransformerTrainModuleConfig(
+def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrainModuleConfig:
+    return MoEV2TransformerTrainModuleConfig(
         rank_microbatch_size=MICRO_BSZ * SEQUENCE_LENGTH,
         max_sequence_length=common.dataset.effective_sequence_length,
         optim=SkipStepAdamWConfig(
@@ -219,9 +222,8 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             name=DataParallelType.ddp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
-            shard_degree=DP_DIM,
+            shard_degree=None,
         ),
-
         ep_config=TransformerExpertParallelConfig(degree=EP_DIM) if EP_DIM != 1 else None, # EP=1 means no expert parallel
         pp_config=TransformerPipelineParallelConfig(
             degree=PP_DIM,
@@ -229,19 +231,15 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             use_custom_stage_implementation=True,  # use custom stage implementation that re-uses receive buffers across micro-batches
             split_points=SPLIT_POINTS
         ) if PP_DIM > 1 else None,
-        # ac_config=TransformerActivationCheckpointingConfig(
-        #     mode=TransformerActivationCheckpointingMode.full,
-        #     # mode=TransformerActivationCheckpointingMode.selected_modules,
-        #     # modules=["*norm*", "*mlp*"],
+        # float8_config=Float8Config(
+        #     ao=AOFloat8LinearConfig(
+        #         enable_fsdp_float8_all_gather=True,
+        #         force_recompute_fp8_weight_in_bwd=True,
+        #         round_scales_to_power_of_2=True,
+        #     ),
+        #     enabled=False,
         # ),
-        float8_config=Float8Config(
-            ao=AOFloat8LinearConfig(
-                enable_fsdp_float8_all_gather=True,
-                force_recompute_fp8_weight_in_bwd=True,
-                round_scales_to_power_of_2=True,
-            ),
-            enabled=False,
-        ),
+        float8_config=None,
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
         scheduler=WSD(

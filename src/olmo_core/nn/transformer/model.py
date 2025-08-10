@@ -218,6 +218,7 @@ class Transformer(nn.Module):
         max_local_microbatch_size: Optional[int] = None,
         device: Optional[torch.device] = None,
         world_mesh: Optional[DeviceMesh] = None,
+        model_part_idx: int = 0,
     ) -> torch.Generator:
         """
         Initialize the model weights.
@@ -232,13 +233,13 @@ class Transformer(nn.Module):
         self.to_empty(device=device)
 
         for module in self.modules():
-            if hasattr(module, "reset_parameters"):
+            if hasattr(module, "reset_parameters"): # TODO: what's the point of this
                 module.reset_parameters()  # type: ignore
 
         seed = self.init_seed
         if world_mesh is not None and self.pp_enabled:
-            seed += get_pp_mesh(world_mesh).get_local_rank()
-
+            seed += get_pp_mesh(world_mesh).get_local_rank() # BUG: the same seed for all model parts on the same rank?
+            seed += model_part_idx * 997 # random prime
         generator = torch.Generator(device).manual_seed(seed)
 
         if self.embeddings is not None:
@@ -323,6 +324,8 @@ class Transformer(nn.Module):
                 self.lm_head.w_out, d_model=self.d_model, std=self.init_std, generator=generator
             )
 
+        # xx = self.lm_head.w_out.weight
+        # xxy = self.blocks['2'].routed_experts.w_up_gate.to_local()
         return generator
 
     def _prepare_inputs(

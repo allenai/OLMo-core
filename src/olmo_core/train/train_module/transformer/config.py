@@ -7,6 +7,7 @@ import torch
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 from torch.distributed import DeviceMesh
 from torch.distributed.pipelining import PipelineStage
+from abc import ABCMeta, abstractmethod
 
 from olmo_core.config import Config, DType
 from olmo_core.distributed.parallel import (
@@ -32,6 +33,7 @@ from .pipeline_schedule import CustomPipelineStage
 if TYPE_CHECKING:
     from .pipeline_train_module import TransformerPipelineTrainModule
     from .train_module import TransformerTrainModule
+    from .moe_train_module import MoEV2TransformerTrainModule
 
 log = logging.getLogger(__name__)
 
@@ -267,9 +269,11 @@ class TransformerActivationCheckpointingConfig(Config):
                 "'modules' is required for 'selected_modules' activation checkpointing"
             )
 
+from .. import TrainModuleConfig
+
 
 @dataclass
-class TransformerTrainModuleConfig(Config):
+class TransformerTrainModuleConfig(TrainModuleConfig):
     """
     A configuration class for building :class:`TransformerTrainModule` or
     :class:`TransformerPipelineTrainModule` instances.
@@ -360,3 +364,68 @@ class TransformerPipelineTrainModuleConfig(TransformerTrainModuleConfig):
     def __post_init__(self):
         if self.pp_config is None:
             raise OLMoConfigurationError("'pp_config' is required")
+
+
+@dataclass
+class MoEV2TransformerTrainModuleConfig(TrainModuleConfig):
+    
+    rank_microbatch_size: int
+    max_sequence_length: int
+
+    # Optimizer settings.
+
+    optim: OptimConfig
+    max_grad_norm: Optional[float] = None
+    scheduler: Optional[Scheduler] = None
+
+    # Model settings.
+
+    compile_model: bool = False
+    float8_config: Optional[Float8Config] = None
+    pp_config: Optional[TransformerPipelineParallelConfig] = None
+    dp_config: Optional[TransformerDataParallelConfig] = None
+    tp_config: Optional[TransformerTensorParallelConfig] = None
+    cp_config: Optional[TransformerContextParallelConfig] = None
+    ep_config: Optional[TransformerExpertParallelConfig] = None
+    ac_config: Optional[TransformerActivationCheckpointingConfig] = None
+
+    # Loss function settings.
+
+    z_loss_multiplier: Optional[float] = None
+
+    # Checkpoint settings.
+
+    state_dict_save_opts: Optional[Dict[str, Any]] = None
+    state_dict_load_opts: Optional[Dict[str, Any]] = None
+    load_key_mapping: Optional[Dict[str, str]] = None
+
+    # Other train settings.
+
+    label_ignore_index: int = -100
+
+    def build(
+        self,
+        model: Transformer,
+        device: Optional[torch.device] = None,
+    ) -> Union["TransformerTrainModule", "TransformerPipelineTrainModule", "MoEV2TransformerTrainModule"]:
+        """
+        Build the corresponding :class:`TransformerTrainModule` or :class:`TransformerPipelineTrainModule.
+
+        :param model: The :class:`~olmo_core.nn.transformer.Transformer` model to train.
+        :param device: The device to train on.
+        """
+        from .moe_train_module import MoEV2TransformerTrainModule
+
+        kwargs = self.as_dict(exclude_none=True, recurse=False)
+
+        if (state_dict_save_opts := kwargs.pop("state_dict_save_opts", None)) is not None:
+            kwargs["state_dict_save_opts"] = dist_cp_sd.StateDictOptions(**state_dict_save_opts)
+        if (state_dict_load_opts := kwargs.pop("state_dict_load_opts", None)) is not None:
+            kwargs["state_dict_load_opts"] = dist_cp_sd.StateDictOptions(**state_dict_load_opts)
+
+        return MoEV2TransformerTrainModule(
+            model=model,
+            device=device,
+            **kwargs,
+        )
+

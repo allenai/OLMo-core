@@ -232,13 +232,15 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             return self.combined_forward(x, loss_div_factor=loss_div_factor, **kwargs)
 
     def apply_pp(self, pp_mesh: DeviceMesh):
-        raise NotImplementedError("TODO")
-        # self.feed_forward_moe.apply_pp(pp_mesh)
+        pass # nothing to do
 
     def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
-        raise NotImplementedError("TODO")
-        # self.feed_forward_moe.apply_ep(ep_mesh, **kwargs)
-        # self._ep_enabled = True
+        ep_dp_mesh = ep_mesh['ep_dp']
+        ep_mp_mesh = ep_mesh['ep_mp']
+        self.ep_mesh = ep_mesh
+        self.routed_experts.apply_ep(
+            ep_mesh
+        )
 
     def apply_tp(
         self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False

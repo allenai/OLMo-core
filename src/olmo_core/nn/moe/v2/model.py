@@ -84,11 +84,56 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             cast(MoEFusedV2TransformerBlock, block).reset_metrics()
 
     def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
+        raise OLMoConfigurationError("Do not use `apply_ep`, use `apply_epdp` instead.")
+
+    def apply_epdp(
+        self,
+        dp_mesh: DeviceMesh,
+        ep_mesh: DeviceMesh,
+        param_dtype: Optional[torch.dtype] = None,
+        compile_enabled: bool = False,
+        autograd_compile_enabled: bool = False,
+    ):
+        """
+        Apply DDP to the model.
+        """
+        from torch.distributed._composable.replicate import replicate
+
         for block in self.blocks.values():
             if not block.is_moe:
                 continue
             block = cast(MoEFusedV2TransformerBlock, block)
-            block.apply_ep(ep_mesh, **kwargs)
+            block.apply_ep(ep_mesh)
+
+
+        # Cast model explicitly to the specified dtype before applying DDP
+        target_dtype = param_dtype or self.dtype
+        if target_dtype != self.dtype:
+            self.to(dtype=target_dtype)
+
+        # Adapted from
+        # https://github.com/pytorch/torchtitan/blob/90c889e972b56b9faadebbb78fc985dedc537ed9/torchtitan/parallelisms/parallelize_llama.py#L328
+        if compile_enabled:
+            if autograd_compile_enabled:
+                torch._dynamo.config.optimize_ddp = "python_reducer_without_compiled_forward"  # type: ignore
+            else:
+                torch._dynamo.config.optimize_ddp = "ddp_optimizer"  # type: ignore
+                
+        self.to(torch.bfloat16) # HACK, need fix
+        
+        ep_modules = [m for m in self.modules() if getattr(m, '_ep_sharded', False) ] # collect the ep sharded part based on `_ep_sharded` field (will be set to True in `apply_ep`)
+        replicate(self, device_mesh=dp_mesh, bucket_cap_mb=100, ignored_modules=ep_modules) # dense ddp
+
+        ep_dp_mesh = ep_mesh['ep_dp']
+        for m in ep_modules:
+            replicate(m, device_mesh=ep_dp_mesh, bucket_cap_mb=100) # moe ddp
+        # Some inputs need to be on CPU initially, but DDP will move everything to model's
+        # device if we don't hide it.
+        from ...transformer.model import _hide_cpu_inputs_from_torch, _unhide_cpu_inputs_from_torch
+        self.register_forward_pre_hook(_hide_cpu_inputs_from_torch, prepend=True, with_kwargs=True)
+        self.register_forward_pre_hook(
+            _unhide_cpu_inputs_from_torch, prepend=False, with_kwargs=True
+        )
 
     def prepare_experts_for_fsdp(
         self,

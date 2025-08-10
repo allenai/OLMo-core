@@ -9,6 +9,7 @@ from .config import (
     TransformerPipelineTrainModuleConfig,
     TransformerTensorParallelConfig,
     TransformerTrainModuleConfig,
+    MoEV2TransformerTrainModuleConfig,
 )
 from .pipeline_train_module import TransformerPipelineTrainModule
 from .train_module import TransformerTrainModule
@@ -34,5 +35,6 @@ __all__ = [
     "TransformerPipelineParallelConfig",
     "CustomPipelineStage",
     "CustomSchedule1F1B",
-    "CustomScheduleInterleaved1F1B"
+    "CustomScheduleInterleaved1F1B",
+    "MoEV2TransformerTrainModuleConfig"
 ]

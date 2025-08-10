@@ -10,6 +10,10 @@ from olmo_core.config import Config, DType, StrEnum
 import torch.nn.functional as F
 from dataclasses import dataclass
 from typing import cast
+from torch.distributed.device_mesh import DeviceMesh
+
+from torch.distributed.tensor import Placement, Replicate, Shard, distribute_tensor
+
 @dataclass
 class RoutedExpertsConfig(Config):
     """Configuration for routed experts in a MoE block."""
@@ -133,3 +137,25 @@ class RoutedExperts(nn.Module):
             
         return cast(torch.Tensor, down)  # ensure type is Tensor
     
+    def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
+        # ep_dp_mesh = ep_mesh['ep_dp']
+        # ep_mp_mesh = ep_mesh['ep_mp']
+        # shard dim 0 to ep_mp, replicate on ep_dp mesh
+        self.ep_mesh = ep_mesh['ep_dp', 'ep_mp']
+        dt = distribute_tensor(
+            self.w_up_gate.data,
+            self.ep_mesh,
+            placements=(Replicate(), Shard(0))
+        )
+        self.w_up_gate = nn.Parameter(dt)
+        dt = distribute_tensor(
+            self.w_down.data,
+            self.ep_mesh,
+            placements=(Replicate(), Shard(0))
+        )
+        self.w_down = nn.Parameter(dt)
+
+        self._ep_sharded = True
+
+    def extra_repr(self):
+        return f'w_up_gate={self.w_up_gate.shape}, w_down={self.w_down.shape}'

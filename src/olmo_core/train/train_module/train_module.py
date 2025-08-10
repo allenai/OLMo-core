@@ -69,6 +69,20 @@ class EvalBatchSpec:
             )
 
 
+from olmo_core.config import Config
+
+@dataclass
+class TrainModuleConfig(Config):
+
+    @abstractmethod
+    def build(
+        self,
+        *args,
+        **kargs
+    ) -> "TrainModule":
+        raise NotImplementedError
+    
+
 class TrainModule(Stateful, metaclass=ABCMeta):
     """
     A :class:`TrainModule` is an abstraction around a :class:`~torch.nn.Module` and
