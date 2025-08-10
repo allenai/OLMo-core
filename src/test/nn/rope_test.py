@@ -1,4 +1,3 @@
-# pyright: reportMissingImports=false
 import pytest
 import torch
 
