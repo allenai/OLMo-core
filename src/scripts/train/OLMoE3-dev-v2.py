@@ -74,7 +74,7 @@ SHARED_MLP_HIDDEN_SIZE = 2560  # Hidden size for shared MLP (or dense branch MLP
 MICRO_BSZ = 2
 NUM_LAYERS=4
 # DP_DIM=2
-EP_DIM=2
+EP_DIM=1
 PP_DIM=1
 SPLIT_POINTS = None
             

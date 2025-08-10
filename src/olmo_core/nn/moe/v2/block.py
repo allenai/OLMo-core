@@ -184,17 +184,17 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         self, reset: bool = True
     ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
         # TODO: compute shared and routed experts metrics
-        metrics_shared = self.shared_experts.compute_metrics(reset=reset)
-        metrics_routed = self.routed_experts.compute_metrics(reset=reset)
-        metrics = {
-            "shared": metrics_shared,
-            "routed": metrics_routed,
-        }
-        return metrics
+        # metrics_shared = self.shared_experts.compute_metrics(reset=reset)
+        metrics_routed = self.routed_experts_router.compute_metrics(reset=reset)
+        # metrics = {
+        #     "shared": metrics_shared,
+        #     "routed": metrics_routed,
+        # }
+        return metrics_routed
 
     def reset_metrics(self):
-        self.shared_experts.reset_metrics()
-        self.routed_experts.reset_metrics()
+        # self.shared_experts_router.reset_metrics()
+        self.routed_experts_router.reset_metrics()
 
 
     @property
@@ -241,6 +241,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         self.routed_experts.apply_ep(
             ep_mesh
         )
+        self._ep_enabled = True
 
     def apply_tp(
         self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
@@ -248,6 +249,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         raise NotImplementedError("TP is not supported in MoEFusedV1TransformerBlock")
 
     def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType):
+        raise NotImplementedError("CP is not supported in MoEFusedV1TransformerBlock")
         self.attention.apply_cp(cp_mesh, load_balancer)
         self.shared_experts.apply_cp(cp_mesh)
         self.routed_experts.apply_cp(cp_mesh)

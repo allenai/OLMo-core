@@ -13,6 +13,7 @@ from typing import cast
 from torch.distributed.device_mesh import DeviceMesh
 
 from torch.distributed.tensor import Placement, Replicate, Shard, distribute_tensor
+from olmo_core.distributed.utils import get_local_tensor
 
 @dataclass
 class RoutedExpertsConfig(Config):
@@ -126,8 +127,8 @@ class RoutedExperts(nn.Module):
         if x.numel() == 0:
             return x
         
-        w_up_gate = self.w_up_gate # (E, H, 2D)
-        w_down = self.w_down # (E, H, D)
+        w_up_gate = get_local_tensor(self.w_up_gate) # (E, H, 2D)
+        w_down = get_local_tensor(self.w_down) # (E, H, D)
         up_gate = self.gmm_ops(x, w_up_gate, batch_size_per_expert_tensor, trans_b=True) # -> (BS, 2H)
         up_gate = cast(torch.Tensor, up_gate)  # ensure type is Tensor
         up, gate = up_gate.chunk(2, dim=-1)  
@@ -158,4 +159,4 @@ class RoutedExperts(nn.Module):
         self._ep_sharded = True
 
     def extra_repr(self):
-        return f'w_up_gate={self.w_up_gate.shape}, w_down={self.w_down.shape}'
+        return f'num_experts={self.num_experts}, hidden_size={self.hidden_size}, d_model={self.d_model}'

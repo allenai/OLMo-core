@@ -126,4 +126,4 @@ class SharedExperts(nn.Module):
         return out.view(E, B, S, D)  # (E, B, S, D)
         
     def extra_repr(self):
-        return f'w_up_gate={self.w_up_gate.shape}, w_down={self.w_down.shape}'
+        return f'num_experts={self.num_experts}, hidden_size={self.hidden_size}, d_model={self.d_model}'

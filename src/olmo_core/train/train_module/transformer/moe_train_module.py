@@ -184,7 +184,7 @@ class MoEV2TransformerTrainModule(TrainModule):
         log.info("Building optimizer...")
         # dense_filter = lambda x: not getattr(x, "_ep_sharded", False)
         # moe_filter = lambda x:  getattr(x, "_ep_sharded", False)
-        self.dense_optim: Optimizer = optim.build(self.model, self, strict=True)
+        self.optim: Optimizer = optim.build(self.model, self, strict=True)
         # self.dense_optim: Optimizer = optim.build(self.model, self, strict=True, 
         #                                         #   reduce_group=self.dp_group, 
         #                                           param_filter=dense_filter)
@@ -899,3 +899,6 @@ class MoEV2TransformerTrainModule(TrainModule):
             )
 
         return model
+
+    def memory_usage_estimation(self):
+        pass
