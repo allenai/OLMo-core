@@ -8,12 +8,11 @@ Launch this with torchrun:
 
 import os
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, cast
-import glob
 import traceback
-from torch.nn import functional as F
-from functools import partial
+import logging
+from pathlib import Path
 
 from olmo_core.config import Config, DType
 from olmo_core.data import (
@@ -28,7 +27,7 @@ from olmo_core.data import (
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.checkpoint import load_model_and_optim_state
 from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
+from olmo_core.optim import AdamWConfig, LinearWithWarmup, OptimGroupOverride
 from olmo_core.train import (
     Duration,
     TrainerConfig,
@@ -53,14 +52,36 @@ from olmo_core.train.train_module import (
 )
 from olmo_core.utils import seed_all
 
+NUM_WORKERS = 16
 SEQUENCE_LENGTH = 1024
-USE_BASELINE = False # whether to use baseline (subword) model or BLT
+QUICK_DEBUG = True
+GLOBAL_BATCH_SIZE = 64
+LOCAL_BATCH_SIZE = 64
+EVAL_BATCH_SIZE = 16
+DATA_SOURCE = os.environ.get("DATA_SOURCE", "dclm")
+OLMO_ARCH = os.environ.get("OLMO_ARCH", "olmo2_1B_v2")
 
-# DEBUG: replaced 0* with 00
-DATA_PATTERN = "/weka/oe-training-default/ai2-llm/preprocessed/dclm/baseline_type_topic_classified_20pct/allenai/dolma2-tokenizer/**/**/part-00-00000.npy"
-DATA_PATHS = sorted(glob.glob(DATA_PATTERN, recursive=True))
-DATA_WORK_DIR = "/tmp/dataset-cache"
+if DATA_SOURCE == "dclm":
+    _DATA_SOURCES = open(
+        Path(__file__).parent / "data_sources.txt").read().strip().splitlines()
+elif DATA_SOURCE == "dolmino":
+    _DATA_SOURCES = open(Path(__file__).parent / "data_sources_dolmino.txt").read().strip().splitlines()
+else:
+    raise ValueError(f"Unknown DATA_SOURCE: {DATA_SOURCE}. Must be one of 'dclm', 'dolmino'.")
 
+OLMO_ARCH = os.environ.get("OLMO_ARCH", "olmo2_1B_v2")
+
+OLMO_CKPT_PATH = os.environ.get(
+    "OLMO_CKPT_PATH",
+    "/weka/oe-training-default/benjaminm/checkpoints/olmo2_1b/model_and_optim",
+)
+DATA_PATHS = ["/weka/oe-training-default/" + x for x in _DATA_SOURCES]
+
+if not os.environ.get("HAS_WEKA"):
+    OLMO_CKPT_PATH = OLMO_CKPT_PATH.replace("/weka/oe-training-default/", "gs://ai2-llm/")
+    DATA_PATHS = [x.replace("/weka/oe-training-default/", "gs://") for x in DATA_PATHS] # slight inconsistency
+
+log = logging.getLogger(__name__)
 
 @dataclass
 class ExperimentConfig(Config):
@@ -73,102 +94,95 @@ class ExperimentConfig(Config):
 
 
 def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
-    if USE_BASELINE:
-        BYTE_EXPANSION_FACTOR = 1  # no expansion
+    global NUM_WORKERS, GLOBAL_BATCH_SIZE, LOCAL_BATCH_SIZE
 
-        tokenizer_config = TokenizerConfig.dolma2()
-        model_config = TransformerConfig.blt_1b(
-            vocab_size=tokenizer_config.padded_vocab_size(),
-            skip_local_encoder_decoder=True, # no local encoder/decoder for subword model
-        )
+    SAVE_FOLDER = os.environ.get("SAVE_FOLDER", f"/tmp/{run_name}")
 
-        dataset_config = NumpyDatasetConfig(
-            paths=DATA_PATHS,
-            name=NumpyDatasetType.fsl,
-            sequence_length=SEQUENCE_LENGTH, # subword sequence length
-            tokenizer=tokenizer_config,
-            work_dir=DATA_WORK_DIR,
-        )
+    if not os.environ.get("HAS_WEKA"):
+        SAVE_FOLDER = SAVE_FOLDER.replace("/weka/oe-training-default/", "gs://ai2-llm/")
 
-        blt_config = None
+    if QUICK_DEBUG:
+        NUM_WORKERS = 0
+        GLOBAL_BATCH_SIZE = 4
+        LOCAL_BATCH_SIZE = 4
 
-        optim = AdamWConfig(
-            lr=1e-3,
-            group_overrides=[
-                OptimGroupOverride(
-                    params=["embeddings.weight"],
-                    opts=dict(weight_decay=0.0)
-                )
-            ],
-        )
-    else:
-        BYTE_EXPANSION_FACTOR = 8  # default (max) expansion factor
+    tokenizer_config = TokenizerConfig.dolma2()
+    model_config = getattr(TransformerConfig, OLMO_ARCH)(
+        vocab_size=tokenizer_config.padded_vocab_size(),
+    )
 
-        tokenizer_config = ByteTokenizerConfig.blt()
-        model_config = TransformerConfig.blt_1b(
-            vocab_size=260
-        )
-        # save on hash embeddings for now to reduce gpu memory
-        model_config = model_config.replace(
-            local_encoder=model_config.local_encoder.replace(  # type: ignore
-                hash_byte_group_size=[3],
-                hash_byte_group_nb_functions=1,
+    dataset_config = NumpyDatasetConfig(
+        paths=DATA_PATHS,
+        name=NumpyDatasetType.fsl,
+        sequence_length=SEQUENCE_LENGTH, # subword sequence length
+        tokenizer=tokenizer_config,
+        work_dir=os.path.join(SAVE_FOLDER, "data"),
+    )
+
+    optim = AdamWConfig(
+        lr=1e-3,
+        group_overrides=[
+            OptimGroupOverride(
+                params=["embeddings.weight"],
+                opts=dict(weight_decay=0.0)
             )
-        )
-
-        dataset_config = NumpyDatasetConfig(
-            paths=DATA_PATHS,
-            name=NumpyDatasetType.byte_fsl,
-            sequence_length=SEQUENCE_LENGTH, # subword sequence length
-            max_sequence_length=SEQUENCE_LENGTH * BYTE_EXPANSION_FACTOR, # max. length of the byte sequence
-            tokenizer=tokenizer_config,
-            work_dir=DATA_WORK_DIR,
-        )
-
-        blt_config = BLTConfig(
-            tokenizer=tokenizer_config,
-        )
-
-        optim = AdamWConfig(
-            lr=1e-3,
-            group_overrides=[
-                OptimGroupOverride(
-                    params=[
-                        "local_encoder.embedding.weight",
-                        "local_encoder.hash_embeddings.*.weight"
-                    ],
-                    opts=dict(weight_decay=0.0)
-                )
-            ],
-        )
+        ],
+    )
 
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=4 * SEQUENCE_LENGTH * BYTE_EXPANSION_FACTOR, # DEBUG (bs was 256)
+        global_batch_size=GLOBAL_BATCH_SIZE * SEQUENCE_LENGTH,
         seed=0,
-        num_workers=0, # DEBUG
+        num_workers=NUM_WORKERS,
     )
 
     train_module_config = TransformerTrainModuleConfig(
-        rank_microbatch_size=1 * SEQUENCE_LENGTH * BYTE_EXPANSION_FACTOR,
+        rank_microbatch_size=LOCAL_BATCH_SIZE * SEQUENCE_LENGTH,
         max_sequence_length=dataset_config.effective_sequence_length,
         optim=optim,
         compile_model=True,
-        blt_config=blt_config,
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
         ),
         max_grad_norm=1.0,
-        scheduler=CosWithWarmup(warmup_steps=100),
+        scheduler=LinearWithWarmup(warmup=10000, alpha_f=0.0),
     )
 
+    if QUICK_DEBUG:
+        eval_tasks = [
+            "arc_challenge_test_rc_5shot",
+        ]
+    else:
+        eval_tasks = [
+            "arc_challenge_test_rc_5shot",
+            "arc_easy_test_rc_5shot",
+            "hellaswag_rc_5shot",  # 1K subset of HellaSwag
+            "winogrande_val_rc_5shot",  # Helpful after 750M-5xC scale
+            "csqa_val_rc_5shot",
+            "piqa_val_rc_5shot",
+            "mmlu_stem_test_rc_5shot",
+            "mmlu_humanities_test_rc_5shot",
+            "mmlu_social_sciences_test_rc_5shot",
+            "mmlu_other_test_rc_5shot",
+            "basic_skills_string_operations_rc_5shot",
+            "basic_skills_pattern_rc_5shot",
+            "basic_skills_logical_reasoning_rc_5shot",
+            "basic_skills_common_knowledge_rc_5shot",
+            "basic_skills_coding_rc_5shot",
+            "basic_skills_arithmetic_rc_5shot",
+        ]
+
+    all_eval_tasks = eval_tasks
+    all_eval_names = ["downstream" for _ in eval_tasks]
+    all_eval_batch_kwargs = [{} for _ in eval_tasks]
+
     trainer_config = (
-        TrainerConfig(
-            save_folder=f"/tmp/{run_name}",
+       TrainerConfig(
+            save_folder=SAVE_FOLDER,
             save_overwrite=True,
-            load_strategy=LoadStrategy.never,
+            load_strategy=LoadStrategy.never if QUICK_DEBUG else LoadStrategy.if_available,
             metrics_collect_interval=5,
             cancel_check_interval=5,
-            max_duration=Duration.steps(10), # DEBUG
+            max_duration=Duration.steps(10000),
         )
         .with_callback("gpu_monitor", GPUMemoryMonitorCallback())
         .with_callback(
@@ -192,14 +206,17 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         )
         .with_callback("config_saver", ConfigSaverCallback())
         .with_callback("profiler", ProfilerCallback(enabled=False))
-        #  FIXME: make byte tokenizer work for eval
         .with_callback(
             "downstream_evaluator",
             DownstreamEvaluatorCallbackConfig(
-                tasks=["arc_easy"],
+                tasks=all_eval_tasks,
+                names=all_eval_names,
+                batch_kwargs=all_eval_batch_kwargs,
                 tokenizer=tokenizer_config,
-                eval_interval=250,
+                eval_interval=5000,
                 eval_on_startup=False,
+                save_results=True,
+                batch_size=EVAL_BATCH_SIZE * SEQUENCE_LENGTH, # these are subword tokens, so no expansion factor
             ),
         )
     )
@@ -235,7 +252,7 @@ def main(run_name: str, overrides: List[str]):
     config_dict = config.as_config_dict()
     cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
 
-    #load_model_and_optim_state("/tmp/blt_export/model_and_optim/", model)
+    load_model_and_optim_state(OLMO_CKPT_PATH, model)
 
     # Train.
     trainer.fit()

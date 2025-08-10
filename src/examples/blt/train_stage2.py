@@ -362,7 +362,6 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         )
         .with_callback("config_saver", ConfigSaverCallback())
         .with_callback("profiler", ProfilerCallback(enabled=False))
-        #  FIXME: make byte tokenizer work for eval
         .with_callback(
             "downstream_evaluator",
             DownstreamEvaluatorCallbackConfig(

@@ -79,8 +79,10 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
         launch_script = "src/examples/blt/train_stage1.py"
     elif stage == "stage2":
         launch_script = "src/examples/blt/train_stage2.py"
+    elif stage == "baseline":
+        launch_script = "src/examples/blt/baseline.py"
     else:
-        raise ValueError(f"Unknown stage: {stage}. Must be 'stage1' or 'stage2'.")
+        raise ValueError(f"Unknown stage: {stage}. Must be 'stage1', 'stage2' or 'baseline'.")
 
     beaker_username = get_beaker_username()
 
