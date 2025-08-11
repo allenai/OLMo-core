@@ -156,7 +156,9 @@ def test_ngpt_with_fsdp2():
 
 
 def get_transformer_config(
-    architecture: str, swa: Optional[SlidingWindowAttentionConfig] = None
+    architecture: str,
+    dtype: torch.dtype = torch.float32,
+    swa: Optional[SlidingWindowAttentionConfig] = None,
 ) -> TransformerConfig:
     config: TransformerConfig
     if architecture == "olmo2":
@@ -165,6 +167,7 @@ def get_transformer_config(
             n_layers=2,
             fused_ops=False,
             use_flash=False,
+            dtype=dtype,
         )
     elif architecture == "llama":
         config = TransformerConfig.llama2_271M(
@@ -172,6 +175,7 @@ def get_transformer_config(
             n_layers=2,
             fused_ops=False,
             use_flash=False,
+            dtype=dtype,
         )
     else:
         raise NotImplementedError(architecture)
@@ -242,7 +246,7 @@ def test_tensor_parallel_transformer(backend: str, architecture: str, tmp_path):
 
 def run_context_parallel_transformer(checkpoint_dir, outputs_path, architecture: str):
     device = get_default_device()
-    config = get_transformer_config(architecture)
+    config = get_transformer_config(architecture, dtype=torch.bfloat16)
     config.block.attention.use_flash = True
 
     mesh = init_device_mesh(
@@ -271,7 +275,7 @@ def run_context_parallel_transformer(checkpoint_dir, outputs_path, architecture:
 @pytest.mark.parametrize("architecture", ["olmo2"])
 def test_context_parallel_transformer(architecture: str, tmp_path):
     device = torch.device("cuda")
-    config = get_transformer_config(architecture)
+    config = get_transformer_config(architecture, dtype=torch.bfloat16)
     config.block.attention.use_flash = True
 
     model = config.build()
