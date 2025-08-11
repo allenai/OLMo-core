@@ -57,11 +57,6 @@ class ProfilerCallback(Callback):
     Whether to enable recording of CUDA sync events. Useful for critical-path analysis with
         https://hta.readthedocs.io/en/latest/source/features/lightweight_critical_path_analysis.html
     """
-    enable_cuda_sync_events: bool = False
-    """
-    Whether to enable recording of CUDA sync events. Useful for critical-path analysis with
-        https://hta.readthedocs.io/en/latest/source/features/lightweight_critical_path_analysis.html
-    """
     enabled: bool = True
     """
     Set to ``False`` to disable profiling.
@@ -189,6 +184,5 @@ class ProfilerCallback(Callback):
         output_dir.mkdir(exist_ok=True, parents=True)
         trace_path = output_dir / f"rank-{get_rank()}-step-{prof.step_num}.chrome_trace.json.gz"
         prof.export_chrome_trace(str(trace_path))
-        log.info(f"Chrome trace saved to working dir: '{trace_path}'")
         final_path = self.trainer.persist_working_file(trace_path)
-        log.info(f"Chrome trace saved to save dir: '{final_path}'")
+        log.info(f"Chrome trace saved to '{final_path}'")
