@@ -1273,11 +1273,13 @@ class BLTTransformer(Transformer):
         """
         super().apply_compile()
 
-        # without dynamic=False mamba runs into weird "'math' is not defined" errors akin to https://github.com/pytorch/pytorch/issues/100972
-        # this might slow down eval due to recompiles? but seems fine from initial tries.
-        # if this is too slow an alternative is compiling individual blocks and using torch.compiler.set_stance to disable compile in eval
-        self.local_encoder.compile(fullgraph=False, dynamic=False)
-        self.local_decoder.compile(fullgraph=False, dynamic=False)
+        for block in self.local_encoder.blocks.values():  # type: ignore
+            block = cast(TransformerBlockBase, block)
+            block.apply_compile()
+
+        for block in self.local_decoder.blocks.values():  # type: ignore
+            block = cast(TransformerBlockBase, block)
+            block.apply_compile()
 
     def forward(
         self,
@@ -1376,7 +1378,12 @@ class BLTDistillTransformer(BLTTransformer):
         """
         super().apply_compile()
 
-        self.teacher.lm_head.compile(fullgraph=False)
+        self.teacher.apply_compile()
+
+    def apply_fsdp(self, *args, **kwargs):
+        super().apply_fsdp(*args, **kwargs)
+
+        self.teacher.apply_fsdp(*args, **kwargs)
 
     # teacher forward patched to (1) use the student blocks if blocks are shared, (2) return the required extra hidden state information
     def _teacher_forward(

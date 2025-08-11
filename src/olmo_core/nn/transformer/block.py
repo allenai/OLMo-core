@@ -926,6 +926,12 @@ class MambaBlock(TransformerBlockBase):
         else:
             return h + self.dropout(self.feed_forward(self.feed_forward_norm(h)))
         
+    def apply_compile(self):
+        # without dynamic=False mamba runs into weird "'math' is not defined" errors akin to https://github.com/pytorch/pytorch/issues/100972
+        # this might slow down eval due to recompiles? but seems fine from initial tries.
+        # if this is too slow an alternative is setting torch.compiler.set_stance to disable compile in eval
+        return self.compile(fullgraph=False, dynamic=False)
+
     def apply_fsdp(
         self,
         dp_mesh: Optional[DeviceMesh] = None,
