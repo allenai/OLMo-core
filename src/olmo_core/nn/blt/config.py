@@ -32,6 +32,11 @@ class BLTConfig(Config):
     decoder_use_mse_loss: bool = False
     use_predicted_boundaries: bool = False
     boundary_threshold: float = 0.5
+    # stage1 smoothing options
+    smooth_encoder_out: bool = False
+    smooth_decoder_in: bool = False
+    smooth_boundary_means: tuple[float, float] = (0.1, 0.9)
+    smooth_boundary_stds: tuple[float, float] = (0.1, 0.1)
 
 
 @dataclass

@@ -92,7 +92,7 @@ OLMO_CKPT_PATH = os.environ.get(
 DATA_PATHS = ["/weka/oe-training-default/" + x for x in _DATA_SOURCES]
 EMBEDDING_INIT_PATH = os.environ.get(
     "EMBEDDING_INIT_PATH",
-    "/weka/oe-training-default/benjaminm/olmo_1b_blt_hash_embedding_init",
+    "/weka/oe-training-default/benjaminm/olmo_1b_blt_hash_embedding_init_v2_d2048_exp_vocab",
 )
 
 if not os.environ.get("HAS_WEKA"):
@@ -440,6 +440,7 @@ def main(run_name: str, overrides: List[str]):
     register_fsdp_forward_method(model, "student_forward")
     register_fsdp_forward_method(model, "original_head_forward")
     register_fsdp_forward_method(model, "original_trunk_forward")
+    register_fsdp_forward_method(model.local_encoder, "pool")  # type: ignore
 
     # Train.
     trainer.fit()

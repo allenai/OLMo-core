@@ -1789,8 +1789,35 @@ class BLTDistillTransformer(BLTTransformer):
             boundary_logprobs_for_decoder_loss = None
             boundary_labels = None
 
+        if blt_config.smooth_encoder_out or blt_config.smooth_decoder_in:
+            assert boundary_labels is not None
+
+            smoothed_boundary_labels = torch.where(
+                boundary_labels == 0.0,
+                (
+                    torch.randn(boundary_labels.shape, device=boundary_labels.device) * blt_config.smooth_boundary_stds[0] + blt_config.smooth_boundary_means[0]
+                ).clip(min=0.0, max=0.5),
+                (
+                    torch.randn(boundary_labels.shape, device=boundary_labels.device) * blt_config.smooth_boundary_stds[1] + blt_config.smooth_boundary_means[1]
+                ).clip(min=0.5, max=1.0),
+            )
+        else:
+            smoothed_boundary_labels = None
+
+        if blt_config.smooth_decoder_in:
+            local_decoder_kwargs["boundary_probs"] = smoothed_boundary_labels
+
         # TODO(benjaminm): inefficient since we pool twice, implement properly if it works
-        if blt_config.use_predicted_boundaries:
+        if blt_config.smooth_encoder_out:
+            h_patch = self.local_encoder.pool(  # type: ignore
+                h=h_byte,
+                patch_lens=local_encoder_kwargs["patch_lens"],
+                patch_ids=local_encoder_kwargs["patch_ids"],
+                cross_attn_mask=None,
+                boundary_probs=smoothed_boundary_labels,
+                smooth=True,
+            )
+        elif blt_config.use_predicted_boundaries:
             assert boundary_preds is not None
             assert self.local_encoder.pooling == "hnet" # only supported for HNet
 

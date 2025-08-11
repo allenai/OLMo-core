@@ -314,10 +314,43 @@ class LocalEncoder(nn.Module):
         self,
         h: torch.Tensor,
         patch_lens: torch.Tensor,
-        patch_ids: torch.Tensor,
+        boundary_probs: torch.Tensor | None = None,
+        smooth: bool = False,
+        block_size: int = 256,
+        epsilon=1e-4,
     ):
+        from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
+
+        if smooth:
+            assert boundary_probs is not None, "Boundary probabilities must be provided when smoothing is enabled."
+
+            p = boundary_probs.clip(min=epsilon, max=1 - epsilon).float()
+            dt = torch.log(1 / (1 - p)).to(h.dtype)
+            x = (h / dt[..., None])
+
+            A = -torch.ones(
+                (1,), device=h.device, dtype=torch.float32
+            )
+            b = p.to(h.dtype)
+            c = torch.ones_like(b)
+
+            # trust the HNet source...
+            pool_out = mamba_chunk_scan_combined(
+                rearrange(x, "b l (h p) -> b l h p", h=1),
+                repeat(dt, "b l -> b l h", h=1),
+                A,
+                rearrange(b, "b l -> b l 1 1"),
+                rearrange(c, "b l -> b l 1 1"),
+                chunk_size=block_size,
+                seq_idx=None,
+            )
+            pool_out = rearrange(pool_out, "b l h p -> b l (h p)")
+            pool_out = cast(torch.Tensor, pool_out)
+        else:
+            pool_out = h
+
         reduced_h = torch.gather(
-            h,
+            pool_out,
             dim=1,
             index=(torch.cumsum(patch_lens, dim=1) - 1).unsqueeze(-1).expand(-1, -1, h.shape[-1]),
         )
@@ -387,6 +420,8 @@ class LocalEncoder(nn.Module):
         patch_lens: torch.Tensor,
         patch_ids: torch.Tensor,
         cross_attn_mask: BlockMask | None,
+        boundary_probs: torch.Tensor | None = None,
+        smooth: bool = False,
     ):
         if self.pooling == "cross_attn":
             patch_embeddings = self._pool_blt(
@@ -399,7 +434,8 @@ class LocalEncoder(nn.Module):
             patch_embeddings = self._pool_hnet(
                 h=h,
                 patch_lens=patch_lens,
-                patch_ids=patch_ids,
+                boundary_probs=boundary_probs,
+                smooth=smooth,
             )
         else:
             raise ValueError(f"Unknown pooling method: {self.pooling}. Supported methods are 'cross_attn' and 'hnet'.")
@@ -570,7 +606,7 @@ class LocalDecoder(nn.Module):
         embeds: torch.Tensor,
         patch_embeds: torch.Tensor,
         patch_lens: torch.Tensor,
-        patch_ids: torch.Tensor,
+        boundary_probs: torch.Tensor | None = None,
         block_size: int = 256,
         headdim: int = 32,
         epsilon=1e-4, # as in HNet
@@ -582,7 +618,13 @@ class LocalDecoder(nn.Module):
         # for now, use HNet's smoothing module but with probabilities in {0,1} instead of probabilities in [0,1]
         # (i.e. no smoothing). so we could probably skip this? but not bad to have it implemented and likely
         # no substantial performance difference in the grand scheme.
-        p = torch.full((h_patch.shape[0], h_patch.shape[1]), 1.0 - epsilon, device=h_patch.device, dtype=torch.float32)
+        if boundary_probs is None:
+            p = torch.full((h_patch.shape[0], h_patch.shape[1]), 1.0 - epsilon, device=h_patch.device, dtype=torch.float32)
+        else:
+            # assumes patch lens match boundary probs
+            seq_sorted_indices = torch.cumsum(patch_lens, dim=1) - 1
+            p = torch.gather(boundary_probs, dim=1, index=seq_sorted_indices).float().clip(min=epsilon, max=1 - epsilon)
+
         dt = torch.log(1 / (1 - p)).to(h_patch.dtype)
         x = (h_patch / dt[..., None])
 
@@ -664,13 +706,13 @@ class LocalDecoder(nn.Module):
         embeds: torch.Tensor,
         patch_embeds: torch.Tensor,
         patch_lens: torch.Tensor,
-        patch_ids: torch.Tensor,
         cross_attn_mask: BlockMask | None = None,
+        boundary_probs: torch.Tensor | None = None,
     ) -> torch.Tensor:
         if self.depooling == "cross_attn":
             return self._depool_blt(embeds, patch_embeds, cross_attn_mask)
         elif self.depooling == "hnet":
-            return self._depool_hnet(embeds, patch_embeds, patch_lens, patch_ids)
+            return self._depool_hnet(embeds, patch_embeds, patch_lens, boundary_probs)
         else:
             raise ValueError(f"Unknown depooling method: {self.depooling}. Supported methods are 'cross_attn' and 'hnet'.")
 
@@ -679,8 +721,9 @@ class LocalDecoder(nn.Module):
         embeds: torch.Tensor,
         patch_embeds: torch.Tensor,
         patch_lens: torch.Tensor,
-        patch_ids: torch.Tensor,
+        patch_ids: torch.Tensor | None = None, # unused
         cross_attn_mask: BlockMask | None = None,
+        boundary_probs: torch.Tensor | None = None,
     ) -> torch.Tensor:
         if self.residual_norm is not None:
             h = self.residual_norm(embeds)
@@ -699,6 +742,6 @@ class LocalDecoder(nn.Module):
             embeds=h,
             patch_embeds=h_patch,
             patch_lens=patch_lens,
-            patch_ids=patch_ids,
             cross_attn_mask=cross_attn_mask,
+            boundary_probs=boundary_probs,
         )
