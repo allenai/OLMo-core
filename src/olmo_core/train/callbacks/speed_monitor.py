@@ -1,7 +1,6 @@
 import logging
 import time
 from dataclasses import dataclass
-from logging import log
 from typing import Any, ClassVar, Dict, Optional
 
 import torch
@@ -12,6 +11,8 @@ from olmo_core.utils import log_once
 from ..common import ReduceType
 from ..train_module import TransformerTrainModule
 from .callback import Callback
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
