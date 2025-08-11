@@ -243,6 +243,7 @@ def test_tensor_parallel_transformer(backend: str, architecture: str, tmp_path):
 def run_context_parallel_transformer(checkpoint_dir, outputs_path, architecture: str):
     device = get_default_device()
     config = get_transformer_config(architecture)
+    config.block.attention.use_flash = True
 
     mesh = init_device_mesh(
         device.type,
@@ -271,6 +272,7 @@ def run_context_parallel_transformer(checkpoint_dir, outputs_path, architecture:
 def test_context_parallel_transformer(architecture: str, tmp_path):
     device = torch.device("cuda")
     config = get_transformer_config(architecture)
+    config.block.attention.use_flash = True
 
     model = config.build()
     model.init_weights(device=device, max_seq_len=512)
