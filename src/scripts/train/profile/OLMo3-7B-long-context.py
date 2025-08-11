@@ -10,16 +10,16 @@ from olmo_core.internal.experiment import CommonComponents, main
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import OptimGroupOverride, SkipStepAdamWConfig
-from olmo_core.optim.scheduler import CosWithWarmup
+from olmo_core.optim.scheduler import LinearWithWarmup
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
     CheckpointerCallback,
-    CometCallback,
     WandBCallback,
 )
 from olmo_core.train.callbacks.console_logger import ConsoleLoggerCallback
 from olmo_core.train.callbacks.gpu_memory_monitor import GPUMemoryMonitorCallback
 from olmo_core.train.callbacks.profiler import ProfilerCallback
+from olmo_core.train.common import LoadStrategy
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
@@ -27,22 +27,18 @@ from olmo_core.train.train_module import (
 )
 from olmo_core.train.train_module.transformer.config import (
     TransformerContextParallelConfig,
-    TransformerTensorParallelConfig,
 )
 
-CONTEXT_LENGTH = 4 * 16_384
-GLOBAL_BATCH_SIZE = 64 * CONTEXT_LENGTH
+CONTEXT_LENGTH = 65536
+GLOBAL_BATCH_SIZE = 64 * CONTEXT_LENGTH  # 4_194_304 tok/batch, 32 seq/batch
 INTRA_DOCUMENT_MASKING = True
 
-NUM_GPUS = 32
-assert NUM_GPUS % 8 == 0
-NUM_NODES = NUM_GPUS // 8
+NUM_NODES = 4
 
 # Node(TP = 4, CP = 2) x 2 DP shards x 2 DP replics
-TP_DEGREE = None
 CP_DEGREE = 8
 DP_SHARDS = 2
-# DP_REPLICAS = NUM_GPUS // (TP_DEGREE * CP_DEGREE * DP_SHARDS)
+DP_REPLICAS = NUM_NODES * 8 // (CP_DEGREE * DP_SHARDS)
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
@@ -55,7 +51,9 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
     # NOTE: TP + CP + Sliding Window not yet supported
     config.block.attention.sliding_window = SlidingWindowAttentionConfig(
-        force_first=True, force_last=False, pattern=[True, True, True, False]
+        force_full_attention_on_first_layer=False,
+        force_full_attention_on_last_layer=True,
+        pattern=[4096, 4096, 4096, -1],
     )
     config.block.attention.use_flash = True
     config.block.attention.use_head_qk_norm = True
@@ -68,13 +66,14 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         rank_microbatch_size=1 * CONTEXT_LENGTH,
         max_sequence_length=common.dataset.effective_sequence_length,
         optim=SkipStepAdamWConfig(
-            lr=1e-5,
+            lr=0.00020712352850360292,
             weight_decay=0.1,
             betas=(0.9, 0.95),
             group_overrides=[
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
             ],
-            compile=False,
+            foreach=True,
+            step_increment_bugfix=False,
         ),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
@@ -84,9 +83,6 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
             shard_degree=DP_SHARDS,
         ),
-        tp_config=TransformerTensorParallelConfig(degree=TP_DEGREE, enable_async=True)
-        if TP_DEGREE
-        else None,
         cp_config=(
             TransformerContextParallelConfig.llama3(degree=CP_DEGREE)
             if INTRA_DOCUMENT_MASKING
@@ -102,7 +98,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         ),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
-        scheduler=CosWithWarmup(warmup_steps=2000),
+        scheduler=LinearWithWarmup(warmup_steps=200),
     )
 
 
@@ -114,16 +110,6 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             metrics_collect_interval=10,
             cancel_check_interval=10,
             max_duration=Duration.steps(22),
-        )
-        .with_callback(
-            "comet",
-            CometCallback(
-                name=common.run_name,
-                workspace="ai2",
-                project="OLMo-core-7B-long-context-profile-results",
-                enabled=False,
-                cancel_check_interval=10,
-            ),
         )
         .with_callback(
             "wandb",
@@ -142,7 +128,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 skip_first=15,
                 wait=3,
                 warmup=1,
-                active=1,
+                active=2,
                 repeat=1,
                 with_stack=True,
                 enable_cuda_sync_events=True,
