@@ -3,7 +3,7 @@ import logging
 import math
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Union
 
 import torch
 import torch.distributed as dist
@@ -49,6 +49,8 @@ __all__ = [
     "Attention",
     "FusedAttention",
     "NormalizedAttention",
+    "KVCacheUpdate",
+    "KVCacheManager",
     "RingAttentionLoadBalancerType",
     "RingAttentionLoadBalancer",
     "RingAttentionZigZagLoadBalancer",
@@ -141,17 +143,148 @@ class InferencePhase(StrEnum):
 
 
 @dataclass
-class KVCacheContext:
-    seq_lens: torch.Tensor  # seq lens of the current forward pass
-    cache_leftpad: Optional[torch.Tensor] = None  # leftpad of the underlying KV cache
+class KVCacheUpdate:
+    """Encapsulates updates to be applied to the KV cache during inference."""
+    
+    new_seq_lens: torch.Tensor
+    """Number of new tokens being processed in this forward pass."""
+    
+    leftpad: Optional[torch.Tensor] = None
+    """Optional left padding for the cache (used for batch processing with different lengths)."""
 
 
-@dataclass
-class KVCache:  # TODO:
-    k_cache: Optional[torch.Tensor] = None
-    v_cache: Optional[torch.Tensor] = None
-    cache_seqlens: Optional[torch.Tensor] = None
-    cache_leftpad: Optional[torch.Tensor] = None
+class KVCacheManager:
+    """Manages KV cache state and operations for attention mechanisms."""
+
+    def __init__(self, n_kv_heads: int, head_dim: int, device: torch.device):
+        self.n_kv_heads = n_kv_heads
+        self.head_dim = head_dim
+        self.device = device
+        self.k_cache: Optional[torch.Tensor] = None
+        self.v_cache: Optional[torch.Tensor] = None
+        self.cache_seqlens: Optional[torch.Tensor] = None
+        self.cache_leftpad: Optional[torch.Tensor] = None
+        self.phase: Optional[InferencePhase] = None
+
+    def allocate(
+        self, batch_size: int, max_seq_len: int, dtype: torch.dtype
+    ) -> None:
+        """Allocate new KV cache tensors."""
+        kv_cache_shape = (batch_size, max_seq_len, self.n_kv_heads, self.head_dim)
+        self.k_cache = torch.zeros(kv_cache_shape, device=self.device, dtype=dtype)
+        self.v_cache = torch.zeros(kv_cache_shape, device=self.device, dtype=dtype)
+        self.cache_seqlens = torch.zeros(batch_size, device=self.device, dtype=torch.int32)
+        self.cache_leftpad = None
+        self.phase = InferencePhase.prefill
+
+    def is_compatible(self, batch_size: int, max_seq_len: int, dtype: torch.dtype) -> bool:
+        """Check if current cache is compatible with requested parameters."""
+        if self.k_cache is None or self.v_cache is None:
+            return False
+        return (
+            self.k_cache.shape[0] == batch_size
+            and self.k_cache.shape[1] >= max_seq_len
+            and self.k_cache.dtype == dtype
+        )
+
+    def reset(
+        self,
+        use_cache: bool,
+        batch_size: Optional[int] = None,
+        max_seq_len: Optional[int] = None,
+        dtype: Optional[torch.dtype] = None,
+    ) -> None:
+        """Reset or reallocate cache based on requirements."""
+        if not use_cache:
+            self.free()
+            return
+
+        if batch_size is None or max_seq_len is None or dtype is None:
+            raise ValueError(
+                "batch_size, max_seq_len, and dtype must be provided when use_cache is True"
+            )
+
+        # Try to reuse existing cache if compatible
+        if self.is_compatible(batch_size, max_seq_len, dtype):
+            if self.cache_seqlens is not None:
+                self.cache_seqlens.zero_()
+            self.cache_leftpad = None
+            if self.k_cache is not None:
+                self.k_cache.zero_()
+            if self.v_cache is not None:
+                self.v_cache.zero_()
+            self.phase = InferencePhase.prefill
+            return
+
+        # Log why reuse failed if cache exists
+        if self.k_cache is not None:
+            reasons = []
+            if self.k_cache.shape[0] != batch_size:
+                reasons.append(f"batch_size mismatch: {self.k_cache.shape[0]} != {batch_size}")
+            if self.k_cache.shape[1] < max_seq_len:
+                reasons.append(f"max_seq_len insufficient: {self.k_cache.shape[1]} < {max_seq_len}")
+            if self.k_cache.dtype != dtype:
+                reasons.append(f"dtype mismatch: {self.k_cache.dtype} != {dtype}")
+            if reasons:
+                log.info(f"KV cache reuse failed: {', '.join(reasons)}")
+
+        # Free old cache and allocate new one
+        self.free()
+        self.allocate(batch_size, max_seq_len, dtype)
+
+    def free(self) -> None:
+        """Free all cache tensors and reset state."""
+        self.k_cache = None
+        self.v_cache = None
+        self.cache_seqlens = None
+        self.cache_leftpad = None
+        self.phase = None
+        gc.collect()
+        torch.cuda.empty_cache()
+
+    def update_leftpad(self, leftpad: torch.Tensor) -> None:
+        """Update cache leftpad, ensuring correct dtype and device."""
+        if self.cache_leftpad is not None:
+            raise RuntimeError("cache_leftpad is already set!")
+        
+        target_device = self.cache_seqlens.device if self.cache_seqlens is not None else self.device
+        self.cache_leftpad = leftpad.to(device=target_device, dtype=torch.int32)
+
+    def get_effective_seqlens(self) -> torch.Tensor:
+        """Get cache sequence lengths adjusted for leftpad if present."""
+        if self.cache_seqlens is None:
+            raise ValueError("cache_seqlens is not initialized")
+        
+        if self.cache_leftpad is not None:
+            return torch.add(self.cache_seqlens, self.cache_leftpad)
+        return self.cache_seqlens
+
+    def validate_for_inference(self) -> None:
+        """Validate cache state for inference operations."""
+        if self.k_cache is None or self.v_cache is None:
+            raise ValueError("k_cache and v_cache must be initialized when use_cache is True")
+        if self.cache_seqlens is None:
+            raise ValueError("cache_seqlens is required when using the KV cache")
+
+    def ensure_dtype_compatibility(self) -> None:
+        """Ensure cache tensors have correct dtypes for flash-attn."""
+        if self.cache_seqlens is not None and self.cache_seqlens.dtype != torch.int32:
+            self.cache_seqlens = self.cache_seqlens.to(dtype=torch.int32)
+        
+        if self.cache_leftpad is not None and self.cache_seqlens is not None and (
+            self.cache_leftpad.dtype != torch.int32
+            or self.cache_leftpad.device != self.cache_seqlens.device
+        ):
+            self.cache_leftpad = self.cache_leftpad.to(
+                device=self.cache_seqlens.device, dtype=torch.int32
+            )
+
+    def update_seqlens(self, seq_lens: torch.Tensor) -> None:
+        """Update cache sequence lengths after processing."""
+        if self.cache_seqlens is None:
+            raise ValueError("cache_seqlens must be initialized")
+        self.cache_seqlens.add_(seq_lens)
+        self.phase = InferencePhase.decode
 
 
 @dataclass
@@ -401,9 +534,32 @@ class Attention(AttentionBase):
         self._cp_enabled = False
         self._cp_load_balancer: Optional[RingAttentionLoadBalancerType] = None
 
-        self.k_cache, self.v_cache = None, None
-        self.cache_seqlens, self.cache_leftpad = None, None
-        self.phase: Optional[InferencePhase] = None
+        # Initialize KV cache manager
+        self._kv_cache_manager = KVCacheManager(
+            n_kv_heads=self.n_kv_heads,
+            head_dim=self.head_dim,
+            device=torch.device(init_device) if init_device != "meta" else torch.device("cpu")
+        )
+
+    @property
+    def k_cache(self) -> Optional[torch.Tensor]:
+        return self._kv_cache_manager.k_cache
+
+    @property
+    def v_cache(self) -> Optional[torch.Tensor]:
+        return self._kv_cache_manager.v_cache
+
+    @property
+    def cache_seqlens(self) -> Optional[torch.Tensor]:
+        return self._kv_cache_manager.cache_seqlens
+
+    @property
+    def cache_leftpad(self) -> Optional[torch.Tensor]:
+        return self._kv_cache_manager.cache_leftpad
+
+    @property
+    def phase(self) -> Optional[InferencePhase]:
+        return self._kv_cache_manager.phase
 
     @property
     def cp_enabled(self) -> bool:
@@ -423,11 +579,12 @@ class Attention(AttentionBase):
         local_k_slice: Optional[slice] = None,
         scale: Optional[float] = None,
         # Inference only:
-        kv_cache_context: Optional[KVCacheContext] = None,
+        kv_cache_update: Optional[KVCacheUpdate] = None,
     ) -> torch.Tensor:
         att: torch.Tensor
 
-        if kv_cache_context is not None:
+        if kv_cache_update is not None:
+            # Validate preconditions for KV caching
             if self.cp_enabled:
                 raise RuntimeError(
                     f"'{self.__class__.__name__}' does not support KV caching with context parallelism"
@@ -436,40 +593,23 @@ class Attention(AttentionBase):
                 raise RuntimeError(
                     f"'{self.__class__.__name__}' requires flash (use_flash=True) for KV caching"
                 )
-            if self.k_cache is None or self.v_cache is None:
-                raise ValueError("k_cache and v_cache must be initialized when use_cache is True")
-            if self.cache_seqlens is None:
-                raise ValueError("cache_seqlens is required when using the KV cache")
-
-            # IMPORTANT: The flash-attn kernel interprets cache_seqlens as absolute indices
-            # within the KV cache sequence dimension. Our internal cache_seqlens tracks only
-            # the number of valid tokens (excludes leftpad). Offset by cache_leftpad when present.
-            cache_seqlens_kernel = self.cache_seqlens
-            if self.cache_leftpad is not None:
-                cache_seqlens_kernel = torch.add(self.cache_seqlens, self.cache_leftpad)
-
-            if kv_cache_context.cache_leftpad is not None:
-                if self.cache_leftpad is not None:
-                    raise RuntimeError("cache_leftpad is already set!")
-                # Ensure cache_leftpad has the dtype/device expected by flash-attn (int32 on CUDA)
-                target_device = (
-                    self.cache_seqlens.device if self.cache_seqlens is not None else q.device
-                )
-                self.cache_leftpad = kv_cache_context.cache_leftpad.to(
-                    device=target_device, dtype=torch.int32
-                )
-
-            # Defensive: flash-attn expects int32 for cache_seqlens and cache_leftpad
-            if self.cache_seqlens.dtype != torch.int32:
-                self.cache_seqlens = self.cache_seqlens.to(dtype=torch.int32)
-            if self.cache_leftpad is not None and (
-                self.cache_leftpad.dtype != torch.int32
-                or self.cache_leftpad.device != self.cache_seqlens.device
-            ):
-                self.cache_leftpad = self.cache_leftpad.to(
-                    device=self.cache_seqlens.device, dtype=torch.int32
-                )
-
+            
+            # Validate cache state
+            self._kv_cache_manager.validate_for_inference()
+            
+            # Update leftpad if provided
+            if kv_cache_update.leftpad is not None:
+                self._kv_cache_manager.update_leftpad(kv_cache_update.leftpad)
+            
+            # Ensure dtype compatibility for flash-attn
+            self._kv_cache_manager.ensure_dtype_compatibility()
+            
+            # Get effective sequence lengths for kernel
+            cache_seqlens_kernel = self._kv_cache_manager.get_effective_seqlens()
+            
+            # Perform attention with KV cache
+            # Cache tensors are guaranteed to be non-None after validate_for_inference
+            assert self.k_cache is not None and self.v_cache is not None
             att = dispatch_flash_attn_with_kvcache(
                 q,
                 self.k_cache,  # updated in-place
@@ -478,13 +618,13 @@ class Attention(AttentionBase):
                 v=v,
                 cache_seqlens=cache_seqlens_kernel,
                 cache_leftpad=self.cache_leftpad,
-                block_table=None,
                 softmax_scale=scale,
                 causal=True,
                 window_size=self.window_size,
             )
-            self.cache_seqlens.add_(kv_cache_context.seq_lens)
-            self.phase = InferencePhase.decode
+            
+            # Update cache state
+            self._kv_cache_manager.update_seqlens(kv_cache_update.new_seq_lens)
 
         elif self.cp_enabled:
             assert self._cp_pg is not None and self._cp_load_balancer is not None
@@ -632,11 +772,12 @@ class Attention(AttentionBase):
         if self.rope is not None:
             start_pos = None
             if use_cache and self.phase == InferencePhase.decode:
-                if self.cache_seqlens is None or self.cache_leftpad is None:
-                    raise ValueError(
-                        "cache_seqlens and cache_leftpad are required when cache is used and phase is decode"
-                    )
-                start_pos = self.cache_seqlens + self.cache_leftpad
+                # Calculate start position for RoPE during decode phase
+                if self.cache_seqlens is None:
+                    raise ValueError("cache_seqlens is required during decode phase")
+                start_pos = self.cache_seqlens
+                if self.cache_leftpad is not None:
+                    start_pos = start_pos + self.cache_leftpad
 
             # In context-parallel mode we must be given pre-sharded buffers
             # unless we're in the single-token path (which sets ``start_pos``).
@@ -657,11 +798,12 @@ class Attention(AttentionBase):
                 start_pos=start_pos,
             )
 
-        kv_cache_context = None
+        # Create KV cache context if caching is enabled
+        kv_cache_update = None
         if use_cache:
             if seq_lens is None:
                 raise ValueError("seq_lens is required when use_cache is True")
-            kv_cache_context = KVCacheContext(cache_leftpad=cache_leftpad, seq_lens=seq_lens)
+            kv_cache_update = KVCacheUpdate(new_seq_lens=seq_lens, leftpad=cache_leftpad)
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
         att = self.sdpa(
@@ -675,7 +817,7 @@ class Attention(AttentionBase):
             max_doc_len_q=max_doc_len_q,
             max_doc_len_k=max_doc_len_k,
             local_k_slice=local_k_slice,
-            kv_cache_context=kv_cache_context,
+            kv_cache_update=kv_cache_update,
         )
 
         # shape: (batch_size, seq_len, d_model)
@@ -684,23 +826,6 @@ class Attention(AttentionBase):
         # shape: (batch_size, seq_len, d_model)
         return self.w_out(att)
 
-    def allocate_kv_cache(
-        self, batch_size: int, max_seq_len: int, dtype: torch.dtype
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Optional[torch.Tensor], InferencePhase]:
-        kv_cache_shape = (batch_size, max_seq_len, self.n_kv_heads, self.head_dim)
-        k_cache = torch.zeros(kv_cache_shape, device=self.w_k.weight.device, dtype=dtype)
-        v_cache = torch.zeros(kv_cache_shape, device=self.w_q.weight.device, dtype=dtype)
-        cache_seqlens = torch.zeros(batch_size, device=k_cache.device, dtype=torch.int32)
-        cache_leftpad = None  # allow cache_leftpad to be set
-        phase = InferencePhase.prefill
-        return k_cache, v_cache, cache_seqlens, cache_leftpad, phase
-
-    def free_kv_cache(self):
-        self.k_cache = self.v_cache = self.cache_seqlens = self.cache_leftpad = None
-        self.phase = None
-        gc.collect()
-        torch.cuda.empty_cache()
-
     def reset_kv_cache(
         self,
         use_cache: bool,
@@ -708,62 +833,12 @@ class Attention(AttentionBase):
         max_seq_len: Optional[int] = None,
         dtype: Optional[torch.dtype] = torch.float32,
     ) -> None:
-        # Fast path when KV caching is disabled.
-        if not use_cache:
-            self.k_cache = self.v_cache = self.cache_seqlens = self.cache_leftpad = None
-            return
-
-        if batch_size is None:
-            raise ValueError("batch_size must be provided if use_cache is True")
-        if max_seq_len is None:
-            raise ValueError("max_seq_len must be provided if use_cache is True")
-        if dtype is None:
-            raise ValueError("dtype must be provided if use_cache is True")
-
-        # Attempt to reuse an existing cache that satisfies the requested size and dtype requirements.
-        if (
-            hasattr(self, "k_cache")
-            and hasattr(self, "v_cache")
-            and self.k_cache is not None
-            and self.v_cache is not None
-            and self.k_cache.shape[0] == batch_size
-            and self.k_cache.shape[1] >= max_seq_len
-            and self.k_cache.dtype == dtype
-        ):
-            # The kv cache is reusable, so we just reset it.
-            if self.cache_seqlens is not None:
-                self.cache_seqlens.zero_()
-            self.cache_leftpad = None
-            self.k_cache.zero_()
-            self.v_cache.zero_()
-            self.phase = InferencePhase.prefill  # reset to prefill phase
-            return
-
-        if (
-            hasattr(self, "k_cache")
-            and self.k_cache is not None
-            and hasattr(self, "v_cache")
-            and self.v_cache is not None
-        ):
-            # cache exists, why did reuse fail?
-            reasons = []
-            if self.k_cache.shape[0] != batch_size:
-                reasons.append(f"batch_size mismatch: {self.k_cache.shape[0]} != {batch_size}")
-            if self.k_cache.shape[1] < max_seq_len:
-                reasons.append(f"max_seq_len insufficient: {self.k_cache.shape[1]} < {max_seq_len}")
-            if self.k_cache.dtype != dtype:
-                reasons.append(f"dtype mismatch: {self.k_cache.dtype} != {dtype}")
-            if reasons:
-                log.info(f"KV cache reuse failed: {', '.join(reasons)}")
-
-        self.free_kv_cache()  # free the old cache to avoid OOMs
-        (
-            self.k_cache,
-            self.v_cache,
-            self.cache_seqlens,
-            self.cache_leftpad,
-            self.phase,
-        ) = self.allocate_kv_cache(batch_size, max_seq_len, dtype)
+        """Reset or reallocate the KV cache."""
+        # Update device if weight has moved
+        if hasattr(self.w_k, 'weight'):
+            self._kv_cache_manager.device = self.w_k.weight.device
+        
+        self._kv_cache_manager.reset(use_cache, batch_size, max_seq_len, dtype)
 
     def apply_tp(
         self,
@@ -925,7 +1000,7 @@ class NormalizedAttention(Attention):
                 self.k_cache is not None
                 and self.v_cache is not None
                 and self.cache_seqlens is not None
-            ):
+            ):  # todo fix this
                 start_pos = (
                     int(self.cache_seqlens.max().item()) if self.cache_seqlens.numel() > 0 else 0
                 )
@@ -952,9 +1027,9 @@ class NormalizedAttention(Attention):
             )
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
-        kv_cache_context = None
+        kv_cache_update = None
         if seq_lens is not None:
-            kv_cache_context = KVCacheContext(cache_leftpad=cache_leftpad, seq_lens=seq_lens)
+            kv_cache_update = KVCacheUpdate(new_seq_lens=seq_lens, leftpad=cache_leftpad)
 
         att = self.sdpa(
             q,
@@ -968,7 +1043,7 @@ class NormalizedAttention(Attention):
             max_doc_len_k=max_doc_len_k,
             local_k_slice=local_k_slice,
             scale=self.sqrt_head_dim,
-            kv_cache_context=kv_cache_context,
+            kv_cache_update=kv_cache_update,
         )
 
         # shape: (batch_size, seq_len, d_model)
