@@ -1,10 +1,13 @@
+import logging
 import time
 from dataclasses import dataclass
+from logging import log
 from typing import Any, ClassVar, Dict, Optional
 
 import torch
 
 from olmo_core.distributed.utils import get_world_size
+from olmo_core.utils import log_once
 
 from ..common import ReduceType
 from ..train_module import TransformerTrainModule
@@ -50,8 +53,11 @@ class SpeedMonitorCallback(Callback):
         if self.num_flops_per_token is not None:
             return self.num_flops_per_token
         elif isinstance(self.trainer.train_module, TransformerTrainModule):
-            return self.trainer.train_module.num_flops_per_token(seq_len)
+            flops_per_token = self.trainer.train_module.num_flops_per_token(seq_len)
+            log_once(log, f"Flops per token at {seq_len=}: {flops_per_token}")
+            return flops_per_token
         else:
+            log_once(log, "Unable to determine FLOPS per token", level=logging.WARNING)
             return None
 
     def pre_train(self):
@@ -68,7 +74,7 @@ class SpeedMonitorCallback(Callback):
             and isinstance(self.trainer.train_module, TransformerTrainModule)
         ):
             device_name = torch.cuda.get_device_name(self.trainer.device)
-            if self.trainer.train_module.autocast_precision == torch.bfloat16:
+            if self.trainer.train_module.autocast_precision in {torch.bfloat16, torch.float16}:
                 if "A100" in device_name:
                     self.device_peak_flops = int(312e12)
                 elif "H100" in device_name:
@@ -84,6 +90,7 @@ class SpeedMonitorCallback(Callback):
                     self.device_peak_flops = int(2200e12)
                 else:  # for other GPU types, assume A100
                     self.device_peak_flops = int(312e12)
+            log.info(f"Device: {device_name}, Device peak FLOPS: {self.device_peak_flops}")
 
     def pre_load_batch(self):
         self._batch_load_start = time.perf_counter()
