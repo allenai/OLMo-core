@@ -8,6 +8,7 @@ import torch.distributed as dist
 import torch.nn as nn
 from torch.distributed.tensor import DTensor, init_device_mesh
 
+from olmo_core.config import DType
 from olmo_core.distributed.checkpoint import (
     load_model_and_optim_state,
     save_model_and_optim_state,
@@ -167,7 +168,7 @@ def get_transformer_config(
             n_layers=2,
             fused_ops=False,
             use_flash=False,
-            dtype=dtype,
+            dtype=DType.from_pt(dtype),
         )
     elif architecture == "llama":
         config = TransformerConfig.llama2_271M(
@@ -175,7 +176,7 @@ def get_transformer_config(
             n_layers=2,
             fused_ops=False,
             use_flash=False,
-            dtype=dtype,
+            dtype=DType.from_pt(dtype),
         )
     else:
         raise NotImplementedError(architecture)
