@@ -33,6 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `budget` mode for activation checkpointing configuration.
 - Added `io.remove_file()` function.
 - Added ABF, PI, and YaRN rope scaling strategies.
+- Added a script to compare two WandB runs
+- Added `namespace` option to `nn.buffer_cache.BufferCache`.
 
 ### Changed
 
@@ -43,6 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Changed default cluster to `saturn` in `src/examples/llama/train_launch.py`.
 - Made some beaker secrets optional for internal experiments.
 - Changed `SlidingWindowAttentionConfig` to improve clarity.
+- Changed the default Beaker budget
 
 ### Fixed
 
@@ -64,6 +67,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed `sklearn` from upstream dependency `ai2-olmo-eval`.
 - Made removing ephemeral checkpoints more robust.
 - Made running bookkeeping operations more robust.
+- Ensure RoPE modules with different settings use a unique sub-cache for their buffers.
 
 ## [v2.1.0](https://github.com/allenai/OLMo-core/releases/tag/v2.1.0) - 2025-04-14
 
