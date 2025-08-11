@@ -315,15 +315,13 @@ class LocalEncoder(nn.Module):
         h: torch.Tensor,
         patch_lens: torch.Tensor,
         boundary_probs: torch.Tensor | None = None,
-        smooth: bool = False,
         block_size: int = 256,
         epsilon=1e-4,
     ):
         from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
 
-        if smooth:
-            assert boundary_probs is not None, "Boundary probabilities must be provided when smoothing is enabled."
-
+        if boundary_probs is not None:
+            # NOT IN HNET! Add pooling to the encoder.
             p = boundary_probs.clip(min=epsilon, max=1 - epsilon).float()
             dt = torch.log(1 / (1 - p)).to(h.dtype)
             x = (h / dt[..., None])
@@ -334,7 +332,6 @@ class LocalEncoder(nn.Module):
             b = p.to(h.dtype)
             c = torch.ones_like(b)
 
-            # trust the HNet source...
             pool_out = mamba_chunk_scan_combined(
                 rearrange(x, "b l (h p) -> b l h p", h=1),
                 repeat(dt, "b l -> b l h", h=1),
@@ -421,7 +418,6 @@ class LocalEncoder(nn.Module):
         patch_ids: torch.Tensor,
         cross_attn_mask: BlockMask | None,
         boundary_probs: torch.Tensor | None = None,
-        smooth: bool = False,
     ):
         if self.pooling == "cross_attn":
             patch_embeddings = self._pool_blt(
@@ -435,7 +431,6 @@ class LocalEncoder(nn.Module):
                 h=h,
                 patch_lens=patch_lens,
                 boundary_probs=boundary_probs,
-                smooth=smooth,
             )
         else:
             raise ValueError(f"Unknown pooling method: {self.pooling}. Supported methods are 'cross_attn' and 'hnet'.")
@@ -454,6 +449,7 @@ class LocalEncoder(nn.Module):
         patch_lens: torch.Tensor,
         patch_ids: torch.Tensor,
         cross_attn_mask: BlockMask | None,
+        boundary_probs: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         embeddings = self.embedding(tokens)
         if self.add_hash_embeddings:
@@ -493,6 +489,7 @@ class LocalEncoder(nn.Module):
             patch_lens=patch_lens,
             patch_ids=patch_ids,
             cross_attn_mask=cross_attn_mask,
+            boundary_probs=boundary_probs,
         )
 
         return h, patch_embeddings
