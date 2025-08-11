@@ -5,6 +5,7 @@ from typing import Any, ClassVar, Dict, Optional
 
 import torch
 
+from olmo_core.config import DType
 from olmo_core.distributed.utils import get_world_size
 
 from ..common import ReduceType
@@ -74,7 +75,7 @@ class SpeedMonitorCallback(Callback):
 
             tm = self.trainer.train_module
             using_half_precision = tm.autocast_precision == torch.bfloat16 or (
-                tm.dp_config is not None and tm.dp_config.param_dtype == torch.bfloat16
+                tm.dp_config is not None and tm.dp_config.param_dtype == DType.bfloat16
             )
             if using_half_precision:
                 dense_correction = 0.5  # listed specs are one-half lower without sparsity
