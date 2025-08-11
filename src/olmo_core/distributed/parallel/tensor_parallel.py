@@ -32,7 +32,6 @@ class TensorParallelConfig(Config):
 
     def maybe_enable_async_tp(self, tp_mesh: DeviceMesh):
         if self.enable_async:
-            # https://discuss.pytorch.org/t/distributed-w-torchtitan-introducing-async-tensor-parallelism-in-pytorch/
             log.info("Enabling async tensor parallel")
 
             from torch.distributed._symmetric_memory import enable_symm_mem_for_group
