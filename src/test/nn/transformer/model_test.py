@@ -6,7 +6,7 @@ import pytest
 import torch
 import torch.distributed as dist
 import torch.nn as nn
-from torch.distributed.tensor import DTensor, init_device_mesh
+from torch.distributed.tensor import DTensor, Shard, init_device_mesh
 
 from olmo_core.config import DType
 from olmo_core.distributed.checkpoint import (
@@ -262,10 +262,8 @@ def run_context_parallel_transformer(checkpoint_dir, outputs_path, architecture:
     load_model_and_optim_state(checkpoint_dir, model)
 
     input_ids = get_transformer_inputs().to(device)
-    logits = model(input_ids=input_ids)
-
-    loss = logits.sum()
-    loss.backward()
+    local_logits = model(input_ids=input_ids)
+    logits = DTensor.from_local(local_logits, mesh, (Shard(1),))
 
     og_logits = torch.load(outputs_path, map_location=device)
     torch.testing.assert_close(og_logits, get_full_tensor(logits))
