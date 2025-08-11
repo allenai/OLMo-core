@@ -1381,9 +1381,9 @@ class BLTDistillTransformer(BLTTransformer):
         self.teacher.apply_compile()
 
     def apply_fsdp(self, *args, **kwargs):
-        super().apply_fsdp(*args, **kwargs)
-
         self.teacher.apply_fsdp(*args, **kwargs)
+
+        super().apply_fsdp(*args, **kwargs)
 
     # teacher forward patched to (1) use the student blocks if blocks are shared, (2) return the required extra hidden state information
     def _teacher_forward(
