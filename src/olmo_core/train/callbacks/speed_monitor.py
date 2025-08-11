@@ -72,11 +72,9 @@ class SpeedMonitorCallback(Callback):
         ):
             device_name = torch.cuda.get_device_name(self.trainer.device)
 
-            # Check if we're using half precision
-            train_module = self.trainer.train_module
-            using_half_precision = train_module.autocast_precision == torch.bfloat16 or (
-                train_module.dp_config is not None
-                and train_module.dp_config.param_dtype == torch.bfloat16
+            tm = self.trainer.train_module
+            using_half_precision = tm.autocast_precision == torch.bfloat16 or (
+                tm.dp_config is not None and tm.dp_config.param_dtype == torch.bfloat16
             )
             if using_half_precision:
                 dense_correction = 0.5  # listed specs are one-half lower without sparsity
