@@ -75,7 +75,14 @@ class SpeedMonitorCallback(Callback):
             and isinstance(self.trainer.train_module, TransformerTrainModule)
         ):
             device_name = torch.cuda.get_device_name(self.trainer.device)
-            if self.trainer.train_module.autocast_precision in {torch.bfloat16, torch.float16}:
+
+            # Check if we're using half precision
+            train_module = self.trainer.train_module
+            using_half_precision = train_module.autocast_precision == torch.bfloat16 or (
+                train_module.dp_config is not None
+                and train_module.dp_config.param_dtype == torch.bfloat16
+            )
+            if using_half_precision:
                 if "A100" in device_name:
                     self.device_peak_flops = int(312e12)
                 elif "H100" in device_name:
