@@ -19,7 +19,6 @@ from olmo_core.train.callbacks import (
 from olmo_core.train.callbacks.console_logger import ConsoleLoggerCallback
 from olmo_core.train.callbacks.gpu_memory_monitor import GPUMemoryMonitorCallback
 from olmo_core.train.callbacks.profiler import ProfilerCallback
-from olmo_core.train.common import LoadStrategy
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
