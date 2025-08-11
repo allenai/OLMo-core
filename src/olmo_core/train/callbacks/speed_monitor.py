@@ -78,12 +78,8 @@ class SpeedMonitorCallback(Callback):
             )
             if using_half_precision:
                 dense_correction = 0.5  # listed specs are one-half lower without sparsity
-                if "A100" in device_name:
-                    # data from https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/a100/pdf/nvidia-a100-datasheet-us-nvidia-1758950-r4-web.pdf
-                    self.device_peak_flops = int(312e12 * dense_correction)
-                elif "H100" in device_name:
+                if "H100" in device_name:
                     # data from https://www.nvidia.com/en-us/data-center/h100/
-                    # and https://www.megware.com/fileadmin/user_upload/LandingPage%20NVIDIA/nvidia-h100-datasheet.pdf
                     if "NVL" in device_name:
                         self.device_peak_flops = int(1671e12 * dense_correction)
                     elif "PCIe" in device_name:
@@ -91,10 +87,11 @@ class SpeedMonitorCallback(Callback):
                     else:  # for SXM and other variants
                         self.device_peak_flops = int(1979e12 * dense_correction)
                 elif "B200" in device_name:
-                    # data from https://semianalysis.com/2024/04/10/nvidia-blackwell-perf-tco-analysis
-                    self.device_peak_flops = int(4500e12 * dense_correction)
+                    # data from https://www.nvidia.com/en-us/data-center/hgx/
+                    self.device_peak_flops = int(4.5e15 * dense_correction)
                 else:  # for other GPU types, assume A100
-                    self.device_peak_flops = int(312e12)
+                    # data from https://www.nvidia.com/en-us/data-center/a100/
+                    self.device_peak_flops = int(312e12 * dense_correction)
             log.info(f"Device: {device_name}, Device peak FLOPS: {self.device_peak_flops}")
 
     def pre_load_batch(self):
