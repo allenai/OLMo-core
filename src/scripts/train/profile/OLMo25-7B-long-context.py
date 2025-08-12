@@ -54,7 +54,6 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         pattern=[4096, 4096, 4096, -1],
     )
     config.block.attention.use_flash = True
-    config.block.attention.use_head_qk_norm = False
 
     return config
 
