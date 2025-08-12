@@ -19,11 +19,12 @@ from olmo_core.nn.hf.convert import convert_state_from_hf, convert_state_to_hf
 from olmo_core.nn.transformer.model import Transformer
 
 try:
-    from accelerate import init_empty_weights
+    from accelerate import init_empty_weights  # type: ignore
 except ImportError:
 
     @contextmanager
     def init_empty_weights(include_buffers: bool = False) -> Generator[None, None, None]:
+        del include_buffers
         log.warning("accelerate not installed, will initialize weights.")
         yield None
 
@@ -36,6 +37,7 @@ def load_hf_model(
     model_name_or_path: PathOrStr,
     model_state_dict: Dict[str, Any],
     *,
+    revision: str = "main",
     model_id: Optional[str] = None,
     num_embeddings: Optional[int] = None,
     process_group: Optional[dist.ProcessGroup] = None,
@@ -46,6 +48,8 @@ def load_hf_model(
 
     :param model_name_or_path: The name of a model in HF Hub or the path to a model saved in HF format.
     :param model_state_dict: The OLMo Core model state dict in which to load HF state.
+    :param revision: If ``model_name_or_path`` is the id of a model in HF Hub, then this is the revision
+        (branch) of that model. Defaults to "main".
     :param model_id: If ``model_name_or_path`` is a local or remote path, this is the id of the model
         in HF Hub that the model corresponds to.
     :param num_embeddings: The number of embeddings in the OLMo Core model being loaded into,
@@ -88,11 +92,11 @@ def load_hf_model(
 
     # Warm up the HF local cache by downloading the model on just local rank 0
     if get_fs_local_rank() == 0:
-        hf_model = AutoModelForCausalLM.from_pretrained(model_name_or_path)
+        hf_model = AutoModelForCausalLM.from_pretrained(model_name_or_path, revision=revision)
         del hf_model
     barrier(group=process_group)
 
-    hf_model = AutoModelForCausalLM.from_pretrained(model_name_or_path)
+    hf_model = AutoModelForCausalLM.from_pretrained(model_name_or_path, revision=revision)
     log.info(f"Loaded hf model: {hf_model}")
     hf_model.resize_token_embeddings(num_embeddings)
 

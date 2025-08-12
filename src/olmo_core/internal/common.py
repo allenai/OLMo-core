@@ -5,6 +5,7 @@ from typing import List, Optional
 import torch
 from beaker import Beaker, BeakerError, SecretNotFound
 
+from olmo_core.distributed.utils import is_distributed
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.io import is_url
 from olmo_core.launch.beaker import (
@@ -53,16 +54,17 @@ def beaker_secret_exists(secret: str, workspace: Optional[str] = None) -> bool:
 def _to_beaker_env_secret(
     name: str, secret: str, *, workspace: Optional[str] = None, required: bool = True
 ) -> Optional[BeakerEnvSecret]:
-    # if beaker_secret_exists(secret, workspace=workspace):
-    #     return BeakerEnvSecret(name=name, secret=secret)
-    # elif required:
-    #     raise OLMoConfigurationError(
-    #         f"Secret {secret} not configured in beaker workspace {workspace}"
-    #     )
-    # else:
-    #     log.info(f"Secret {secret} not configured in beaker workspace {workspace}")
-    #     return None
-    return BeakerEnvSecret(name=name, secret=secret)
+    # Assume beaker secret exists if we are in a distributed setting (e.g., during a training job)
+    # so that we don't DOS beaker.
+    if is_distributed() or beaker_secret_exists(secret, workspace=workspace):
+        return BeakerEnvSecret(name=name, secret=secret)
+    elif required:
+        raise OLMoConfigurationError(
+            f"Secret {secret} not configured in beaker workspace {workspace}"
+        )
+    else:
+        log.info(f"Secret {secret} not configured in beaker workspace {workspace}")
+        return None
 
 
 def get_root_dir(cluster: str) -> str:
@@ -93,7 +95,7 @@ def build_launch_config(
     cluster: str,
     task_name: str = "train",
     workspace: str = "ai2/OLMo-core",
-    budget: str = "ai2/oe-training",
+    budget: str = "ai2/oe-base",
     nccl_debug: bool = False,
     beaker_image: str = OLMoCoreBeakerImage.stable,
     num_nodes: int = 1,

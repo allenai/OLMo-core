@@ -1,6 +1,7 @@
 """
 Train a 1B OLMo model. Run this script without any arguments to see usage info.
 """
+
 from datetime import datetime
 
 from olmo_core.config import DType
@@ -48,7 +49,10 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     #  config.block.name = TransformerBlockType.default
     #  config.block.attention.qk_norm = None
     config.block.attention.sliding_window = SlidingWindowAttentionConfig(
-        force_first=False, pattern=[False, False, False, True]
+        force_full_attention_on_first_layer=False,
+        force_full_attention_on_last_layer=True,
+        # NOTE: 4097 instead of 4096 to reproduce with the off-by-one bug.
+        pattern=[4097, 4097, 4097, -1],
     )
     config.block.attention.use_flash = True
     config.block.attention.use_head_qk_norm = True
@@ -74,6 +78,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
             ],
             compile=False,
+            step_increment_bugfix=False,
         ),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(

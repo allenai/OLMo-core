@@ -37,6 +37,7 @@ from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
 from olmo_core.nn.lm_head import LMOutputWithLoss
 from olmo_core.nn.transformer import Transformer
+from olmo_core.nn.transformer.config import TransformerActivationCheckpointingMode
 from olmo_core.optim import OptimConfig, SkipStepOptimizer
 from olmo_core.optim.scheduler import Scheduler
 from olmo_core.utils import gc_cuda, get_default_device, log_once, move_to_device
@@ -142,6 +143,15 @@ class TransformerTrainModule(TrainModule):
                 "Training parallelism configs are only valid for distributed training"
             )
 
+        if (
+            ac_config is not None
+            and ac_config.mode == TransformerActivationCheckpointingMode.budget
+            and not compile_model
+        ):
+            raise OLMoConfigurationError(
+                "Activation checkpointing with 'budget' mode requires compilation to be enabled"
+            )
+
         # Parallelize model.
         self.model = parallelize_model(
             model,
@@ -217,8 +227,10 @@ class TransformerTrainModule(TrainModule):
     def _reduce_divide_factor(self) -> float:
         return get_reduce_divide_factor(self.world_size)
 
-    def on_attach(self):
+    def pre_train(self):
         # Validate batch size.
+        # NOTE: we run this in `pre_train()` instead of, say, `on_attach()` because callbacks
+        # like `BatchSizeScheduler` may change the global batch size after the module is attached.
         dp_ws = get_world_size(self.trainer.dp_process_group)
         if self.trainer.global_batch_size % (self.rank_microbatch_size * dp_ws) != 0:
             raise OLMoConfigurationError(

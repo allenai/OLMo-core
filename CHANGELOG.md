@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a "interleaved" numpy FSL variant that interleaves several documents into sequences following the work from [LongSkywork: A Training Recipe for Efficiently Extending Context Length in Large Language Models](https://arxiv.org/pdf/2406.00605).
 - Added sliding window attention as a feature
 - Added `BatchSizeSchedulerCallback` for setting a batch size schedule over the course of a training run.
+- Added optional `TrainModule` method, `.pre_train()`, which runs right after `Callback.pre_train()`.
 - The `BeakerCallback` will save the config and Python requirements to the results dataset.
 - Added `from_file` method to `Config` class.
 - Added in-loop evals for OLMES basic skills eval
@@ -44,6 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Changed default cluster to `saturn` in `src/examples/llama/train_launch.py`.
 - Made some beaker secrets optional for internal experiments.
 - Changed `SlidingWindowAttentionConfig` to improve clarity.
+- Changed the default Beaker budget
 
 ### Fixed
 
@@ -67,6 +69,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Made running bookkeeping operations more robust.
 - Ensure RoPE modules with different settings use a unique sub-cache for their buffers.
 - Fixed bug with context parallelism where every transformer block would use the same RoPE buffers even if their RoPE was configured differently.
+- Fixed MFU computation to work with FSDP, corrected some device specs.
 
 ## [v2.1.0](https://github.com/allenai/OLMo-core/releases/tag/v2.1.0) - 2025-04-14
 

@@ -58,7 +58,7 @@ class SlidingWindowAttentionConfig(Config):
     pattern: List[int]
     """
     The pattern of window sizes to use for attention, repeated to cover all layers.
-    A value of -1 indicates full attention. For example, a pattern of `[4096, 4096, 4096, -1]`
+    A value of -1 indicates full attention. For example, a pattern of ``[4096, 4096, 4096, -1]``
     means that for each set of 4 layers, the first 3 will use a window size of 4096,
     and the last layer will use full attention.
     """
@@ -349,18 +349,6 @@ class Attention(AttentionBase):
                     size=self.n_kv_heads * self.head_dim, init_device=init_device
                 )
 
-        self.rope: Optional[Union[RotaryEmbedding, ComplexRotaryEmbedding]] = None
-        if rope is not None:
-            if rope.name == "fused":
-                raise OLMoConfigurationError(
-                    f"fused RoPE is not compatible with {self.__class__.__name__}"
-                )
-            rope_class = rope.build(self.head_dim, cache=cache)
-            assert isinstance(rope_class, (RotaryEmbedding, ComplexRotaryEmbedding))
-            self.rope = rope_class
-
-        self.use_flash = use_flash
-
         # Translate window size so that we only look left, not right.
         if window_size is not None:
             if not use_flash:
@@ -369,9 +357,30 @@ class Attention(AttentionBase):
                 )
             if window_size <= 0:
                 raise OLMoConfigurationError(f"'window_size' must be positive (got {window_size})")
-            self.window_size = (window_size, 0)
+            # Flash attn window is [i - window_size[0], i + window_size[1]] inclusive
+            self.window_size = (window_size - 1, 0)
         else:
             self.window_size = (-1, -1)
+
+        self.rope: Optional[Union[RotaryEmbedding, ComplexRotaryEmbedding]] = None
+        if rope is not None:
+            if rope.name == "fused":
+                raise OLMoConfigurationError(
+                    f"fused RoPE is not compatible with {self.__class__.__name__}"
+                )
+
+            # On layers with sliding windows, we don't do rope extension.
+            uses_full_attention = self.window_size == (-1, -1)
+            uses_sliding_window = not uses_full_attention
+            if uses_sliding_window and rope.scaling is not None:
+                rope = rope.replace(scaling=None)
+            assert not (uses_sliding_window and rope.scaling is not None)
+
+            rope_class = rope.build(self.head_dim, cache=cache)
+            assert isinstance(rope_class, (RotaryEmbedding, ComplexRotaryEmbedding))
+            self.rope = rope_class
+
+        self.use_flash = use_flash
 
         self._cp_pg: Optional[dist.ProcessGroup] = None
         self._cp_enabled = False

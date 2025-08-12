@@ -33,6 +33,7 @@ from ..exceptions import BeakerExperimentFailedError, OLMoConfigurationError
 from ..train.callbacks.beaker import BEAKER_RESULT_DIR
 from ..utils import LOG_FILTER_TYPE_ENV_VAR, LogFilterType
 from ..version import VERSION
+from .select_beaker_hosts import get_host_name_constraints
 from .utils import GIT_BRANCH_ENV_VAR, GIT_REF_ENV_VAR, GIT_REPO_URL_ENV_VAR, GitConfig
 
 log = logging.getLogger(__name__)
@@ -403,6 +404,17 @@ class BeakerLaunchConfig(Config):
 
         entrypoint_dataset = self._create_script_dataset("entrypoint.sh", entrypoint_script)
 
+        if len(self.clusters) == 1 and "augusta" in self.clusters[0]:
+            host_name_constraints = get_host_name_constraints(
+                self.num_nodes, min(32, self.num_nodes), 1
+            )
+            assert (
+                len(host_name_constraints) == 1 and len(host_name_constraints[0]) >= self.num_nodes
+            )
+            constraints_kwargs = {"hostname": host_name_constraints[0]}
+        else:
+            constraints_kwargs = {"cluster": self.clusters}
+
         task_spec = (
             TaskSpec.new(
                 self.task_name,
@@ -428,7 +440,7 @@ class BeakerLaunchConfig(Config):
                 result_path=self.result_dir,
             )
             .with_dataset("/olmo-core", beaker=entrypoint_dataset.id)
-            .with_constraint(cluster=self.clusters)
+            .with_constraint(**constraints_kwargs)
             .with_env_var(GIT_REPO_URL_ENV_VAR, self.git.repo_url)
             .with_env_var(GIT_REF_ENV_VAR, self.git.ref)
         )
