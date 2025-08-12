@@ -54,9 +54,9 @@ class _UniformExpertAssignment(torch.autograd.Function):
         return out.view(x.shape)
 
 
-_uniform_expert_assignment: Callable[[torch.Tensor, int], torch.Tensor] = (
-    _UniformExpertAssignment.apply
-)  # type: ignore
+_uniform_expert_assignment: Callable[
+    [torch.Tensor, int], torch.Tensor
+] = _UniformExpertAssignment.apply  # type: ignore
 
 
 class MoERouterType(StrEnum):
@@ -347,9 +347,7 @@ class MoERouter(nn.Module):
             assert self.score_bias is not None
             with torch.no_grad():
                 _, expert_indices = torch.topk(
-                    scores + self.score_bias.unsqueeze(0),
-                    self.top_k,
-                    dim=-1,  # type: ignore
+                    scores + self.score_bias.unsqueeze(0), self.top_k, dim=-1  # type: ignore
                 )
             expert_weights = scores.gather(-1, expert_indices)
 
