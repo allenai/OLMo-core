@@ -423,7 +423,7 @@ class Attention(AttentionBase):
                 max_seqlen=max_doc_len,
                 max_seqlen_q=max_doc_len_q,
                 max_seqlen_k=max_doc_len_k,
-                heads_k_stride=1,  # TODO: should this ever not be 1?
+                heads_k_stride=2,  # TODO: should this ever not be 1?
                 local_k_slice=local_k_slice,
                 dropout_p=self.dropout_p,
                 causal=True,

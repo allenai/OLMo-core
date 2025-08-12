@@ -33,11 +33,16 @@ GLOBAL_BATCH_SIZE = 64 * CONTEXT_LENGTH  # 4_194_304 tok/batch, 32 seq/batch
 INTRA_DOCUMENT_MASKING = True
 
 NUM_NODES = 4
+NUM_GPUS = NUM_NODES * 8
 
-# Node(TP = 4, CP = 2) x 2 DP shards x 2 DP replics
 CP_DEGREE = 8
 DP_SHARDS = 2
-DP_REPLICAS = NUM_NODES * 8 // (CP_DEGREE * DP_SHARDS)
+DP_REPLICAS = NUM_GPUS // (CP_DEGREE * DP_SHARDS)  # 2
+
+
+# 16 forward-backwards per step
+# 64 BS / 16 = 4 DP?
+# Then those 4 DP shards are
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
@@ -52,6 +57,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
+    assert common.dataset.effective_sequence_length == CONTEXT_LENGTH
     return TransformerTrainModuleConfig(
         rank_microbatch_size=1 * CONTEXT_LENGTH,
         max_sequence_length=common.dataset.effective_sequence_length,
