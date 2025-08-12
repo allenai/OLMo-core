@@ -323,7 +323,7 @@ class LocalEncoder(nn.Module):
 
         if boundary_probs is not None:
             # NOT IN HNET! Add pooling to the encoder.
-            p = boundary_probs.float().clip(max=1.0 - epsilon)
+            p = boundary_probs.float().clip(min=epsilon, max=1.0 - epsilon)
             dt = torch.log(1 / (1 - p)).to(h.dtype)
             x = (h / dt[..., None])
 
