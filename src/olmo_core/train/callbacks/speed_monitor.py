@@ -7,7 +7,6 @@ import torch
 
 from olmo_core.config import DType
 from olmo_core.distributed.utils import get_world_size
-from olmo_core.utils import log_once
 
 from ..common import ReduceType
 from ..train_module import TransformerTrainModule
@@ -55,11 +54,8 @@ class SpeedMonitorCallback(Callback):
         if self.num_flops_per_token is not None:
             return self.num_flops_per_token
         elif isinstance(self.trainer.train_module, TransformerTrainModule):
-            flops_per_token = self.trainer.train_module.num_flops_per_token(seq_len)
-            log_once(log, f"Flops per token at {seq_len=}: {flops_per_token}")
-            return flops_per_token
+            return self.trainer.train_module.num_flops_per_token(seq_len)
         else:
-            log_once(log, "Unable to determine FLOPS per token", level=logging.WARNING)
             return None
 
     def pre_train(self):
