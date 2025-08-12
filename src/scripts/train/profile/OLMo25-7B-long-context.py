@@ -39,6 +39,8 @@ CP_DEGREE = 8
 DP_SHARDS = 2
 DP_REPLICAS = NUM_GPUS // (CP_DEGREE * DP_SHARDS)  # 2
 
+CP_HEAD_STRIDE = 4
+
 
 # 16 forward-backwards per step
 # 64 BS / 16 = 4 DP?
@@ -80,9 +82,11 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             shard_degree=DP_SHARDS,
         ),
         cp_config=(
-            TransformerContextParallelConfig.llama3(degree=CP_DEGREE)
+            TransformerContextParallelConfig.llama3(degree=CP_DEGREE, head_stride=CP_HEAD_STRIDE)
             if INTRA_DOCUMENT_MASKING
-            else TransformerContextParallelConfig.zig_zag(degree=CP_DEGREE)
+            else TransformerContextParallelConfig.zig_zag(
+                degree=CP_DEGREE, head_stride=CP_HEAD_STRIDE
+            )
         ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
