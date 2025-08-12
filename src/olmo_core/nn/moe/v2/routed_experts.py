@@ -15,6 +15,10 @@ from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import Placement, Replicate, Shard, distribute_tensor
 from olmo_core.distributed.utils import get_local_tensor
 
+@torch.compiler.disable
+def gmm_no_compile(a, b, batch_sizes, trans_b=False):
+    return grouped_gemm.ops.gmm(a, b, batch_sizes, trans_b)
+
 @dataclass
 class RoutedExpertsConfig(Config):
     """Configuration for routed experts in a MoE block."""
@@ -109,7 +113,7 @@ class RoutedExperts(nn.Module):
                 device=init_device
             ),
         )
-        self.gmm_ops = grouped_gemm.ops.gmm
+        self.gmm_ops = gmm_no_compile
         
         
     @nvtx.annotate("RoutedExperts.forward", color="blue")

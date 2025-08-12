@@ -1009,7 +1009,7 @@ class ParallelDroplessMLP(ParallelMLPBase):
         return ops.scatter(x, indices, bin_ids, expert_weights, bins, top_k)
 
 
-    @torch.compile
+    # @torch.compile
     @nvtx.annotate("ParallelDroplessMLP.global_permute_mlp_unpermute", color='blue')
     def global_permute_mlp_unpermute(
         self,
@@ -1179,7 +1179,7 @@ class ParallelDroplessMLP(ParallelMLPBase):
         return local_x, overlap_out
 
 
-    @torch.compile
+    # @torch.compile
     def forward_step_1_9(
         self,
         local_x: torch.Tensor,
@@ -1344,7 +1344,7 @@ class ParallelDroplessMLP(ParallelMLPBase):
         return local_x
 
 
-    @torch.compile
+    # @torch.compile
     @nvtx.annotate("ParallelDroplessMLP.global_permute_mlp_unpermute_no_ep", color='blue')
     def global_permute_mlp_unpermute_no_ep(
         self,
@@ -1405,7 +1405,7 @@ class ParallelDroplessMLP(ParallelMLPBase):
 
         return x_moe, overlap_out
 
-    @torch.compile
+    # @torch.compile
     def _forward_step_rc(
         self,
         x: torch.Tensor,

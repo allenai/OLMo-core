@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from typing import cast
 
 @torch.compiler.disable()         # helper runs eagerly, 
-def async_copy_to_cpu(gpu_buf) -> Tuple[torch.Tensor, torch.cuda.Stream, torch.cuda.Event]:
+def async_copy_to_cpu(gpu_buf, return_event=True) -> Tuple[torch.Tensor, torch.cuda.Stream, Optional[torch.cuda.Event]]:
     # *** async copy to CPU for future GroupedGEMM ***
     # start a new stream for the copy
     dtoh_stream = get_or_init_stream(id=3, priority=-5) # TODO: check any id that's not 0?
@@ -24,8 +24,11 @@ def async_copy_to_cpu(gpu_buf) -> Tuple[torch.Tensor, torch.cuda.Stream, torch.c
     # cpu_buf = gpu_buf.to(torch.device("cpu"), non_blocking=True)
     # Keep the source tensor alive until the copy_stream is done
     # gpu_buf.record_stream(dtoh_stream) # NOTE: does not work with compile
-    return cpu_buf, dtoh_stream, dtoh_event
-        
+    if return_event:
+        return cpu_buf, dtoh_stream, dtoh_event
+    
+    return cpu_buf, dtoh_stream, None
+
 @torch._dynamo.disable()        # helper runs eagerly,
 def wait_stream_no_compile(this_stream: torch.cuda.Stream, other_stream: torch.cuda.Stream):
     this_stream.wait_stream(other_stream)

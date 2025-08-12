@@ -62,13 +62,14 @@ class SpeedMonitorCallback(Callback):
             self._parallel_degree = get_world_size() // get_world_size(
                 self.trainer.dp_process_group
             )
-
+        from olmo_core.train.train_module.transformer.moe_train_module import MoEV2TransformerTrainModule
         if (
             self.device_peak_flops is None
             and self.trainer.device.type == "cuda"
             and (
                 isinstance(self.trainer.train_module, TransformerTrainModule)
                 or isinstance(self.trainer.train_module, TransformerPipelineTrainModule)
+                or isinstance(self.trainer.train_module, MoEV2TransformerTrainModule)
             )
         ):
             device_name = torch.cuda.get_device_name(self.trainer.device)

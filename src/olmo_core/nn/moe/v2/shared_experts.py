@@ -77,53 +77,95 @@ class SharedExperts(nn.Module):
 
         assert bias == False, "Shared experts do not support bias for now."
 
-        self.w_up_gate =nn.Parameter(
-            torch.empty(
-                num_experts,
-                d_model, # in features
-                2 * hidden_size, # out features ( up and gate )
-                dtype=dtype.as_pt(),
-                device=init_device
-            ),
-        )
+        # self.w_up_gate =nn.Parameter(
+        #     torch.empty(
+        #         num_experts,
+        #         d_model, # in features
+        #         2 * hidden_size, # out features ( up and gate )
+        #         dtype=dtype.as_pt(),
+        #         device=init_device
+        #     ),
+        # )
 
-        self.w_down = nn.Parameter(
-            torch.empty(
-                num_experts,
-                hidden_size, # in features
-                d_model, # out features
-                dtype=dtype.as_pt(),
-                device=init_device
-            ),
-        )
+        # self.w_down = nn.Parameter(
+        #     torch.empty(
+        #         num_experts,
+        #         hidden_size, # in features
+        #         d_model, # out features
+        #         dtype=dtype.as_pt(),
+        #         device=init_device
+        #     ),
+        # )
 
+        E, D, H = num_experts, d_model, hidden_size
+
+        # One big column-packed weight for up+gate: (D, E*2H)
+        self.w_up_gate = nn.Parameter(torch.empty(D, E * 2 * H, device=init_device, dtype=dtype.as_pt()))
+        # Per-expert down: (E, H, D)
+        self.w_down = nn.Parameter(torch.empty(E, H, D, device=init_device, dtype=dtype.as_pt()))
+
+
+    # @nvtx.annotate("SharedExperts.forward", color='blue')
+    # def forward(self, x: torch.Tensor) -> torch.Tensor:
+    #     """
+    #     input shape: (B, S, D)
+    #     output shape: (num_experts, B, S, D)
+    #     """
+    #     B, S, D = x.shape
+    #     E, H = self.num_experts, self.hidden_size
+
+    #     B, S, D = x.shape
+    #     E, H = self.num_experts, self.hidden_size
+
+    #     # Flatten tokens once to maximize GEMM sizes
+    #     xs = x.reshape(B * S, D)                       # (BS, D)
+
+    #     # 1) Up+Gate in one GEMM: (1,BS,D) @ (E,D,2H) -> (E,BS,2H)
+    #     up_gate = torch.matmul(xs.unsqueeze(0),        # (1,BS,D)
+    #                         self.w_up_gate)  # (E,D,2H)
+    #     up, gate = up_gate.split(H, dim=-1)            # (E,BS,H), (E,BS,H)
+
+    #     # SWiGLU nonlinearity (SiLU on gate, elementwise product)
+    #     hidden = up * F.silu(gate)                     # (E,BS,H)
+
+    #     # 2) Down projection: (E,BS,H) @ (E,H,D) -> (E,BS,D)
+    #     out = torch.matmul(hidden, self.w_down)  # (E,BS, D)
+
+    #     return out.view(E, B, S, D)  # (E, B, S, D)
+        
     @nvtx.annotate("SharedExperts.forward", color='blue')
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        input shape: (B, S, D)
-        output shape: (num_experts, B, S, D)
+        x: (B, S, D) -> out: (E, B, S, D)
+        Fast path:
+          1) [BS, D] @ [D, E*2H] -> [BS, E*2H]
+          2) reshape+permute -> (E, BS, 2, H)
+          3) in-place SiLU on gate, elementwise multiply
+          4) bmm with per-expert down: (E, BS, H) x (E, H, D) -> (E, BS, D)
         """
         B, S, D = x.shape
         E, H = self.num_experts, self.hidden_size
+        BS = B * S
 
-        B, S, D = x.shape
-        E, H = self.num_experts, self.hidden_size
+        # 1) One big GEMM (best utilization, contiguous out in last dim)
+        x2 = x.reshape(BS, D)                                  # (BS, D)
+        up_gate = x2 @ self.w_up_gate                          # (BS, E*2H)
 
-        # Flatten tokens once to maximize GEMM sizes
-        xs = x.reshape(B * S, D)                       # (BS, D)
+        # 2) Reshape to separate experts and [up|gate], then make per-expert leading dim
+        #    Shapes: (BS, E, 2, H) -> (E, BS, 2, H)
+        up_gate = up_gate.view(BS, E, 2, H).permute(1, 0, 2, 3)
 
-        # 1) Up+Gate in one GEMM: (1,BS,D) @ (E,D,2H) -> (E,BS,2H)
-        up_gate = torch.matmul(xs.unsqueeze(0),        # (1,BS,D)
-                            self.w_up_gate)  # (E,D,2H)
-        up, gate = up_gate.split(H, dim=-1)            # (E,BS,H), (E,BS,H)
+        # 3) SwiGLU: split into up / gate; materialize gate once and do in-place SiLU
+        up, gate = up_gate.unbind(dim=2)                       # each (E, BS, H) views
+        gate = gate.contiguous()                               # explicit materialization (same cost as implicit copy)
+        F.silu(gate, inplace=True)                             # in-place activation
+        hidden = up * gate                                     # (E, BS, H)
 
-        # SWiGLU nonlinearity (SiLU on gate, elementwise product)
-        hidden = up * F.silu(gate)                     # (E,BS,H)
+        # 4) Per-expert down-proj as grouped GEMM
+        #    hidden: (E, BS, H), w_down: (E, H, D) -> out: (E, BS, D)
+        out = torch.bmm(hidden, self.w_down)
 
-        # 2) Down projection: (E,BS,H) @ (E,H,D) -> (E,BS,D)
-        out = torch.matmul(hidden, self.w_down)  # (E,BS, D)
+        return out.view(E, B, S, D)
 
-        return out.view(E, B, S, D)  # (E, B, S, D)
-        
     def extra_repr(self):
         return f'num_experts={self.num_experts}, hidden_size={self.hidden_size}, d_model={self.d_model}'

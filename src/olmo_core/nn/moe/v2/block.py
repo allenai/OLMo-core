@@ -135,6 +135,81 @@ class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
 
         return block_params
 
+    def flops_per_seq(self, d_model: int, seqlen: int) -> int:
+        import argparse
+        from olmo_core.nn.transformer.flops import num_floating_point_operations_for_single_layer
+        args = argparse.Namespace()
+        
+        # MTP parameters (not supported)
+        args.mtp_num_layers = None # set to None for non-MTP models
+        from olmo_core.nn.attention import MultiheadLatentAttentionConfig, AttentionConfig
+        
+        # MLA parameters 
+        if isinstance(self.attention, MultiheadLatentAttentionConfig):
+            args.multi_latent_attention = True
+            
+            raise NotImplementedError("MLA flops not supported")
+        else:
+            args.multi_latent_attention = False
+            args.q_lora_rank = None # set to None for non-MLA models
+            args.kv_lora_rank = None
+            args.qk_pos_emb_head_dim = None
+            args.qk_head_dim = None
+            args.v_head_dim = None
+        
+        # # regular mlp
+        # if self.feed_forward is not None:
+        #    args.ffn_hidden_size = self.feed_forward.hidden_size
+        #    if isinstance(self.feed_forward, DenseMoEFeedForwardConfig):
+        #        args.dense_moe_mlp = True
+        #    else:
+        #         args.dense_moe_mlp = False
+        # else:
+        #     args.ffn_hidden_size = None
+        #     args.dense_moe_mlp = False
+
+        args.ffn_hidden_size = None
+        args.dense_moe_mlp = False
+
+        # routed experts
+        if self.routed_experts is not None:
+            assert self.routed_experts_router is not None
+            # routed experts
+            args.moe_ffn_hidden_size = self.routed_experts.hidden_size
+            args.moe_router_topk = self.routed_experts_router.top_k
+            args.num_experts = self.routed_experts.num_experts
+            # shared MLP
+        else:
+            args.moe_ffn_hidden_size = None
+            args.moe_router_topk = None
+            args.num_experts = None
+            # args.moe_shared_expert_intermediate_size = None
+            # args.shared_expert_count = 0
+
+        # shared experts
+        if self.shared_experts is not None:
+            args.moe_shared_expert_intermediate_size = self.shared_experts.hidden_size
+            args.shared_expert_count = self.shared_experts.num_experts
+        else:
+            args.moe_shared_expert_intermediate_size = None
+            args.shared_expert_count = 0
+                
+        
+            
+
+        args.swiglu = True
+        
+        args.seq_length = seqlen
+        args.d_model = d_model
+        args.num_attention_heads = self.attention.n_heads
+        args.num_query_groups = self.attention.n_kv_heads if self.attention.n_kv_heads is not None else args.num_attention_heads # default to n_heads if n_kv_heads is not set
+        
+
+        per_seq_flops = num_floating_point_operations_for_single_layer(args, 1) # flops for a batch size of 1
+        
+        return per_seq_flops
+        
+
 if TYPE_CHECKING:
     from olmo_core.train.common import ReduceType
 class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBase):
@@ -219,17 +294,24 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         **kwargs,
     ) -> torch.Tensor:
-        MOE_LAYER_USE_RECOMPUTE = False 
-        if MOE_LAYER_USE_RECOMPUTE:
-            # NOTE: this is the same as the MoEHybridTransformerBlock, but with recompute
-            # on the dense forward pass.
-            # return checkpoint(
-            #     self.combined_forward, x, use_reentrant=False, loss_div_factor=loss_div_factor, **kwargs
-            # )
-            raise NotImplementedError("MOE_LAYER_USE_RECOMPUTE is not supported in MoEFusedV2TransformerBlock")
+        # MOE_LAYER_USE_RECOMPUTE = False 
+        if self.ep_enabled:
+            return self.combined_forward_ep(x, loss_div_factor=loss_div_factor, **kwargs)
+
+            # if MOE_LAYER_USE_RECOMPUTE:
+            #     return checkpoint(
+            #         self.combined_forward_ep, x, use_reentrant=False, loss_div_factor=loss_div_factor, **kwargs
+            #     )
+            # else:
+            #     return self.combined_forward_ep(x, loss_div_factor=loss_div_factor, **kwargs)
         else:
-            # always use combined forward    
-            return self.combined_forward(x, loss_div_factor=loss_div_factor, **kwargs)
+            return self.combined_forward_no_ep(x, loss_div_factor=loss_div_factor, **kwargs)
+            # if MOE_LAYER_USE_RECOMPUTE:
+            #     return checkpoint(
+            #         self.combined_forward_no_ep, x, use_reentrant=False, loss_div_factor=loss_div_factor, **kwargs
+            #     )
+            # else:
+            #     return self.combined_forward_no_ep(x, loss_div_factor=loss_div_factor, **kwargs)
 
     def apply_pp(self, pp_mesh: DeviceMesh):
         pass # nothing to do
@@ -283,7 +365,169 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         )
     
     # @torch.compile
-    def combined_forward(
+    def combined_forward_no_ep(
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ) -> torch.Tensor:
+
+        B, S, D = x.shape
+
+        # rename "x" to avoid confusion
+        block_inp = x
+        del x
+
+        # attention 
+        # + attention norm
+        # + residual connection
+        attn_res_out = block_inp + self.attention_norm(self.attention(block_inp, **kwargs))
+        # remove attention kwargs
+        kwargs.pop("max_doc_len", None)
+        kwargs.pop("cu_doc_lens", None)
+
+
+
+
+        # routed expert router
+        (
+            local_x_global_routed_expert_weights, # (B, S, top_k)
+            local_x_global_routed_expert_indices, # (B, S, top_k)
+            local_batch_size_per_global_routed_expert, # (num_experts, )
+            routed_expert_router_aux_loss # scalar
+        ) = self.router_forward(
+            router=self.routed_experts_router,
+            local_x=attn_res_out, 
+            scores_only=False,
+            loss_div_factor=loss_div_factor # scalar
+        )
+        # step 1A: DtoH token count communication
+        # should start DtoH as immediately after the results are available on GPU
+        local_batch_size_per_global_routed_expert_cpu, copy_stream, dtoh_event = async_copy_to_cpu(local_batch_size_per_global_routed_expert,)  # type: ignore
+
+        # copy_stream.synchronize() # wait for the copy to CPU to finish
+        
+        # shared expert router
+        (
+            local_x_global_shared_expert_weights, # (B, S, E_shared)
+            _, 
+            _, 
+            _ 
+        ) = self.router_forward(
+            router=self.shared_experts_router,
+            local_x=attn_res_out, 
+            scores_only=True,  # only need scores for shared experts
+            loss_div_factor=loss_div_factor # scalar
+        )
+        
+
+        # only when grad enabled
+        if torch.is_grad_enabled():
+            with nvtx.annotate("attach_auxiliary_loss", color="blue"):
+                if routed_expert_router_aux_loss is not None:
+                    attn_res_out = attach_auxiliary_loss(attn_res_out, routed_expert_router_aux_loss)
+        
+        moe_inp = attn_res_out
+
+        in_shape = moe_inp.size()
+
+        # the shared experts (executed on the dense stream) need to wait for `attn_res_out` and `local_x_global_shared_expert_weights` (on the main stream) to be complete
+        wait_stream_no_compile(
+            this_stream=self.get_dense_stream(),  # type: ignore
+            other_stream=torch.cuda.current_stream() # type: ignore
+        ) # ignore
+
+
+        # overlap compute while waiting for the copy to CPU to finish
+        with torch.cuda.stream(self.get_dense_stream()):
+            shared_out = self.shared_experts(moe_inp) # (E_shared, B, S, D)
+
+            # weighted sum of the shared experts by router weights
+            # local_x_global_shared_expert_weights -> (B, S, E_shared)
+            # shared_out -> (E_shared, B, S, D)
+            _, _, E_s = local_x_global_shared_expert_weights.shape
+            local_x_global_shared_expert_weights.shape
+            mixed_shared_out = torch.bmm(
+                local_x_global_shared_expert_weights.to(shared_out.dtype).reshape(B*S, 1, E_s),            # (BS, 1, E), 
+                shared_out.permute(1, 2, 0, 3).contiguous().view(B*S, E_s, D)              # (BS, E, D)
+            ).squeeze(1).view(B, S, D)
+                
+        
+        moe_inp = moe_inp.view(-1, in_shape[-1])  # (B*S, D)
+
+
+
+        routing_map = local_x_global_routed_expert_indices.view(-1, self.routed_experts_router.top_k).int()
+        num_out_tokens = routing_map.size(0) * self.routed_experts_router.top_k # dropless
+        hidden_shape_before_permute = moe_inp.shape
+
+        # step 2: permute the input tokens
+        with nvtx.annotate("Permute", color='green'):
+            permutated_input_tokens, reversed_input_permutation_mapping = moe_permute_no_compile(
+                inp=moe_inp, 
+                routing_map=routing_map, 
+                num_out_tokens=num_out_tokens, 
+                map_type='index'
+            ) # type: ignore
+
+
+        ####################################
+        # copy_stream.synchronize() # wait for the copy to CPU to finish
+        assert dtoh_event is not None 
+        dtoh_event = cast(torch.cuda.Event, dtoh_event)
+        dtoh_event.synchronize()
+        ####################################
+
+        # step 3: MLP
+        mlp_x = self.routed_experts(permutated_input_tokens, local_batch_size_per_global_routed_expert_cpu.tolist())
+
+        # step 4: unpermutate the output tokens
+        with nvtx.annotate("Unpermute", color='green'):
+            unpermutated_x = moe_unpermute_no_compile(
+                inp=mlp_x,
+                row_id_map=reversed_input_permutation_mapping,
+                restore_shape=hidden_shape_before_permute,
+                map_type='index',
+                merging_probs=local_x_global_routed_expert_weights.view(-1, self.routed_experts_router.top_k)
+            ) # type: ignore
+            
+        x_moe = unpermutated_x.view(in_shape)
+
+        # need to use `mixed_shared_out`
+        wait_stream_no_compile(torch.cuda.current_stream(), self.get_dense_stream()) # type: ignore
+
+
+
+        # weighted sum of the shared experts and routed experts
+        shared_out_factor = self.shared_experts_router.top_k / (self.routed_experts_router.top_k + self.shared_experts_router.top_k )
+        routed_out_factor = self.routed_experts_router.top_k / (self.routed_experts_router.top_k + self.shared_experts_router.top_k )
+        mlp_out = self.merge_shared_and_routed_out(
+            shared_out= mixed_shared_out,
+            shared_factor=shared_out_factor,
+            routed_out=x_moe,
+            routed_factor=routed_out_factor
+        )
+
+        final_out = attn_res_out + self.feed_forward_norm(mlp_out)
+
+        #######################
+
+        
+        return final_out
+
+    def merge_shared_and_routed_out(
+        self,
+        shared_out: torch.Tensor,
+        shared_factor: float,
+        routed_out: torch.Tensor,
+        routed_factor: float,
+    ) -> torch.Tensor:
+        # Combine shared and routed outputs
+        return shared_out * shared_factor + routed_out * routed_factor
+
+    # @torch.compile
+    def combined_forward_ep(
         self,
         x: torch.Tensor,
         *,
@@ -382,7 +626,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
 
         wait_stream_no_compile(torch.cuda.current_stream(), self.get_dense_stream()) # type: ignore
 
-        # weighted sum of the shared experts and routed experts
+        # weighted sum of the shared experts by router weights
         # local_x_global_shared_expert_weights -> (B, S, E_shared)
         # shared_out -> (E_shared, B, S, D)
         _, _, E_s = local_x_global_shared_expert_weights.shape
@@ -392,7 +636,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             shared_out.permute(1, 2, 0, 3).contiguous().view(B*S, E_s, D)              # (BS, E, D)
         ).squeeze(1).view(B, S, D)
 
-
+        # weighted sum of the shared experts and routed experts
         shared_out_factor = self.shared_experts_router.top_k / (self.routed_experts_router.top_k + self.shared_experts_router.top_k )
         routed_out_factor = self.routed_experts_router.top_k / (self.routed_experts_router.top_k + self.shared_experts_router.top_k )
         mlp_out = mixed_shared_out * shared_out_factor + x_moe * routed_out_factor 
@@ -417,7 +661,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         # overlap_callback: Optional[Callable] = None,
         # overlap_callback_x=None,
         # **overlap_callback_kwargs,
-    ):
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         x, expert_weights, expert_indices, batch_size_per_expert = (
             (local_x),
             (local_x_global_expert_weights),
@@ -430,14 +674,14 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
 
         # step 1A: DtoH token count communication
         # mark_dynamic(batch_size_per_expert, (0,), strict=False)
-        batch_size_per_expert_cpu, copy_stream, dtoh_event1 = async_copy_to_cpu(batch_size_per_expert)  # type: ignore
+        batch_size_per_expert_cpu, copy_stream, _ = async_copy_to_cpu(batch_size_per_expert, return_event=False)  # type: ignore
         
         # overlap compute while waiting for the copy to CPU to finish
         with torch.cuda.stream(self.get_dense_stream()):
             shared_out = self.shared_experts(x) # (E_shared, B, S, D)
                 
         # step 1B: permute the input tokens
-        copy_stream.synchronize() # wait for the copy to CPU to finish
+        # copy_stream.synchronize() # wait for the copy to CPU to finish
         
         x = x.view(-1, in_shape[-1])  # (B*S, D)
 
@@ -451,6 +695,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 batch_size_per_expert_cpu,
                 use_reentrant=False,
                 in_shape=in_shape,
+                # copy_stream=copy_stream
             )
         else:
             x_moe = self._forward_step_rc(
@@ -459,6 +704,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 expert_weights,
                 batch_size_per_expert_cpu,
                 in_shape=in_shape,
+                # copy_stream=copy_stream
             )
 
         return x_moe, shared_out # (B, S, D), (E_shared, B, S, D)
@@ -470,7 +716,8 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         expert_indices: torch.Tensor,
         expert_weights: torch.Tensor,
         batch_size_per_expert_cpu: torch.Tensor,
-        in_shape: torch.Size
+        in_shape: torch.Size,
+        # copy_stream: torch.cuda.Stream
     ):
         routing_map = expert_indices.view(-1, self.routed_experts_router.top_k).int()
         num_out_tokens = routing_map.size(0) * self.routed_experts_router.top_k # dropless
@@ -484,6 +731,8 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 num_out_tokens=num_out_tokens, 
                 map_type='index'
             ) # type: ignore
+
+        # copy_stream.synchronize() # wait for the copy to CPU to finish
 
         # step 3: MLP
         x = self.routed_experts(permutated_input_tokens, batch_size_per_expert_cpu.tolist())
@@ -507,7 +756,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         self.shared_experts_router.post_batch(dry_run=dry_run)
         self.routed_experts_router.post_batch(dry_run=dry_run)
 
-    @torch.compile
+    # @torch.compile
     @nvtx.annotate("ParallelDroplessMLP.global_permute_mlp_unpermute", color='blue')
     def global_permute_mlp_unpermute(
         self,
@@ -654,7 +903,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
 
 
         
-        EP_PERMUTE_GEMM_UNPERMUTE_USE_RECOMPUTE = True
+        EP_PERMUTE_GEMM_UNPERMUTE_USE_RECOMPUTE = False
         if EP_PERMUTE_GEMM_UNPERMUTE_USE_RECOMPUTE:
             local_x = checkpoint(
                 self.forward_step_1_9,
@@ -682,7 +931,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         return local_x, overlap_out
 
 
-    @torch.compile
+    # @torch.compile
     def forward_step_1_9(
         self,
         local_x: torch.Tensor,

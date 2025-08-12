@@ -54,7 +54,7 @@ from .config import (
 )
 from .flops import num_floating_point_operations_for_logits
 from .init import InitMethod
-
+import nvtx
 if TYPE_CHECKING:
     from olmo_core.train.common import ReduceType
 
@@ -479,11 +479,12 @@ class Transformer(nn.Module):
         h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
 
         # Run each block.
-        for block in self.blocks.values():
+        for block_idx, block in enumerate(self.blocks.values()):
             # Mark sizes as dynamic for torch.compile().
             if self.compile_enabled:
                 mark_dynamic(h, (0, 1), strict=False)
-            h = block(h, **block_kwargs)
+            with nvtx.annotate(f"fwd_block_{block_idx}", color="blue"):
+                h = block(h, **block_kwargs)
 
         # Get final logits but again pass-through in case of pipeline parallelism.
         if self.lm_head is not None:

@@ -62,17 +62,17 @@ GLOBAL_BATCH_SIZE = (
 )  
 MAX_DURATION = int(1000e9)  # int(6e12), don't forget to adjust the LR when you increase this
 EVAL_INTERVAL = 1000
-LR= 5e-5
+LR= 5e-3
 
-NUM_EXPERTS = 64
+NUM_EXPERTS = 32
 TOP_K = 4
 D_MODEL=2048
-MOE_HIDDEN_SIZE = 1024 + 1024 + 512
+MOE_HIDDEN_SIZE = 2048
 NUM_SHARED_EXPERTS = 2  # Number of shared experts in the shared MLP
-SHARED_MLP_HIDDEN_SIZE = 2560  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
+SHARED_MLP_HIDDEN_SIZE = 2048  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
-MICRO_BSZ = 2
-NUM_LAYERS=4
+MICRO_BSZ = 4
+NUM_LAYERS= 6
 # DP_DIM=2
 EP_DIM=1
 PP_DIM=1
@@ -191,7 +191,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                     dtype=dtype,
                 ),
                 feed_forward_moe=None,
-                feed_forward=FeedForwardConfig(hidden_size=( TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE), bias=False),
+                feed_forward=FeedForwardConfig(hidden_size=( TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE) * 2, bias=False), # dense mlp is twice as fast as moe mlp
                 attention_norm=layer_norm,
                 feed_forward_norm=layer_norm,
             ) 
@@ -215,7 +215,7 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
             compile=False,
             foreach=True
         ),
-        compile_model=False,
+        compile_model=True,
         
         # FSDP
         dp_config=TransformerDataParallelConfig(
@@ -259,7 +259,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
     return (
         TrainerConfig(
-            save_folder=f'{common.save_folder}/{common.run_name}_{D_MODEL}d_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K_{TAG}',
+            # save_folder=f'{common.save_folder}/{common.run_name}_{D_MODEL}d_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K_{TAG}',
+            save_folder=f'/workspace/tmp/{common.run_name}_{D_MODEL}d_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K_{TAG}',
             save_overwrite=True,
             metrics_collect_interval=5,
             cancel_check_interval=cancel_check_interval,
@@ -299,10 +300,10 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         )
         .with_callback(
             "profiler", 
-            NvidiaProfilerCallback(enabled=False, # NOTE: change this
+            NvidiaProfilerCallback(enabled=True, # NOTE: change this
                                    profile_ranks=[0, 8, 16, 24],
-                                   start=30,
-                                   end=33
+                                   start=20,
+                                   end=23
             )
         )
         # TODO: might not be able to run in-loop evals depending on parallel strategies
@@ -315,7 +316,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 def finalize_config(config: ExperimentConfig):
     # config.dataset.mix = 'OLMo-mix-0625' # new dataset mix
     # config.dataset.mix_base_dir = "gs://ai2-llm" # only avail on Google Cloud
-    
+    config.dataset.mix = "OLMoE-mix-0824-dev"
+    config.data_loader.num_workers = 1
     # add active & total params to the wandb name
     total_params_in_B = config.model.num_params/1000/1000/1000
     active_params_in_B = config.model.num_active_params/1000/1000/1000
@@ -324,7 +326,7 @@ def finalize_config(config: ExperimentConfig):
     assert isinstance(wandb_cb.name, str), "WandB callback name must be initialized"
     wandb_cb.name += f"_{active_params_in_B:.2f}@{total_params_in_B:.2f}B"
     wandb_cb.name += f"_{TOP_K}K{NUM_EXPERTS}N"
-    
+
 if __name__ == "__main__":
     main(
         global_batch_size=GLOBAL_BATCH_SIZE,

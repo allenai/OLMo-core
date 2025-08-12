@@ -219,29 +219,30 @@ class ReorderedNormTransformerBlock(TransformerBlock):
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         **kwargs,
     ) -> torch.Tensor:
-        DENSE_LAYER_USE_RECOMPUTE = True # BUG;HACK;NOTE: change this later
+        del loss_div_factor
+        h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
+        return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
+        # DENSE_LAYER_USE_RECOMPUTE = True # BUG;HACK;NOTE: change this later
+        # if DENSE_LAYER_USE_RECOMPUTE:
         
-        @torch.compile
-        def custom_forward(
-            x: torch.Tensor,
-            *,
-            loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
-            **kwargs,
-        ):  
-            del loss_div_factor
-            h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
-            return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
-        
-        if DENSE_LAYER_USE_RECOMPUTE:
-        
-            return checkpoint(
-                custom_forward, x, use_reentrant=False, loss_div_factor=loss_div_factor, **kwargs
-            )
-        else:
-            return custom_forward(
-                x, loss_div_factor=loss_div_factor, **kwargs
-            )
+        #     return checkpoint(
+        #         self.custom_forward, x, use_reentrant=False, loss_div_factor=loss_div_factor, **kwargs
+        #     )
+        # else:
+        #     return self.custom_forward(
+        #         x, loss_div_factor=loss_div_factor, **kwargs
+        #     )
 
+    def custom_forward(
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ):  
+        del loss_div_factor
+        h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
+        return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
 
 @beta_feature
 class NormalizedTransformerBlock(TransformerBlockBase):
@@ -533,7 +534,7 @@ class MoEReorderedNormTransformerBlock(MoETransformerBlock):
     of attention instead of the input, and likewise the feed-forward norm is applied on the
     output of the feed-forward MoE instead of the input.
     """
-    @torch.compile
+    # @torch.compile
     def forward(
         self,
         x: torch.Tensor,
@@ -900,7 +901,7 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
             # always use combined forward    
             return cast(MoEHybridReorderedNormTransformerBlock, self).combined_forward(x, loss_div_factor=loss_div_factor, **kwargs)
 
-    @torch.compile
+    # @torch.compile
     def dense_forward_rc(
         self,
         x: torch.Tensor,
@@ -909,7 +910,7 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
         return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))   
     
-    @torch.compile
+    # @torch.compile
     def router_forward(
         self,
         local_x: torch.Tensor,
@@ -920,7 +921,7 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
             loss_div_factor=loss_div_factor # scalar
         )
     
-    @torch.compile
+    # @torch.compile
     def combined_forward(
         self,
         x: torch.Tensor,
@@ -1051,7 +1052,7 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         
         return final_out
 
-    @torch.compile
+    # @torch.compile
     def sparse_add_drop_norm_forward(
         self,
         x_moe: torch.Tensor,
@@ -1059,7 +1060,7 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
     ) -> torch.Tensor:
         return self.dropout(self.feed_forward_moe_norm(x_moe)) + dense_out
     
-    @torch.compile
+    # @torch.compile
     def sparse_drop_norm_forward(
         self,
         x_moe: torch.Tensor,
