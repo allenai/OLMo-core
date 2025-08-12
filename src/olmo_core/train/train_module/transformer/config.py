@@ -185,8 +185,8 @@ class TransformerContextParallelConfig(ContextParallelConfig):
     head_stride: int = 1
     """
     The stride of the head dimension to process for each iteration of ring attention. A value of 1
-    means each iteration will process one k and one v head, resulting in 2*n_kv_heads communications.
-    A value of 2 will process two k and two v heads, resulting in 2*n_kv_heads/2 communications, etc.
+    means each iteration will process one k and one v head. A value of 2 will process two k and two
+    v heads, etc. A larger stride will reduce the number of communication ops.
     """
 
     @classmethod
