@@ -316,6 +316,7 @@ class LocalEncoder(nn.Module):
         patch_lens: torch.Tensor,
         boundary_probs: torch.Tensor | None = None,
         block_size: int = 256,
+        headdim: int = 32,
         epsilon=1e-4,
     ):
         from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
@@ -326,15 +327,16 @@ class LocalEncoder(nn.Module):
             dt = torch.log(1 / (1 - p)).to(h.dtype)
             x = (h / dt[..., None])
 
+            n_heads = self.d_model // headdim
             A = -torch.ones(
-                (1,), device=h.device, dtype=torch.float32
+                (n_heads,), device=h.device, dtype=torch.float32
             )
             b = p.to(h.dtype)
             c = torch.ones_like(b)
 
             pool_out = mamba_chunk_scan_combined(
-                rearrange(x, "b l (h p) -> b l h p", h=1),
-                repeat(dt, "b l -> b l h", h=1),
+                rearrange(x, "b l (h p) -> b l h p", p=headdim),
+                repeat(dt, "b l -> b l h", h=n_heads),
                 A,
                 rearrange(b, "b l -> b l 1 1"),
                 rearrange(c, "b l -> b l 1 1"),
