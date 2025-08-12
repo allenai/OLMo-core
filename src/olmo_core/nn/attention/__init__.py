@@ -271,7 +271,12 @@ class AttentionBase(nn.Module):
         raise NotImplementedError
 
     @abstractmethod
-    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType):
+    def apply_cp(
+        self,
+        cp_mesh: DeviceMesh,
+        load_balancer: RingAttentionLoadBalancerType,
+        head_stride: int = 1,
+    ):
         raise NotImplementedError
 
 
@@ -423,7 +428,7 @@ class Attention(AttentionBase):
                 max_seqlen=max_doc_len,
                 max_seqlen_q=max_doc_len_q,
                 max_seqlen_k=max_doc_len_k,
-                heads_k_stride=1,  # TODO: should this ever not be 1?
+                heads_k_stride=self._cp_head_stride,
                 local_k_slice=local_k_slice,
                 dropout_p=self.dropout_p,
                 causal=True,
@@ -620,7 +625,12 @@ class Attention(AttentionBase):
             parallelize_plan=plan,
         )
 
-    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType):
+    def apply_cp(
+        self,
+        cp_mesh: DeviceMesh,
+        load_balancer: RingAttentionLoadBalancerType,
+        head_stride: int = 1,
+    ):
         """
         Prepare the module for context-parallelism (ring attention).
 
@@ -633,6 +643,7 @@ class Attention(AttentionBase):
         self._cp_pg = cp_mesh.get_group()
         self._cp_load_balancer = load_balancer
         self._cp_enabled = True
+        self._cp_head_stride = head_stride
 
 
 @beta_feature
@@ -922,10 +933,16 @@ class FusedAttention(AttentionBase):
 
         raise NotImplementedError("TP is not implemented yet for the fused attention variant")
 
-    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType):
+    def apply_cp(
+        self,
+        cp_mesh: DeviceMesh,
+        load_balancer: RingAttentionLoadBalancerType,
+        head_stride: int = 1,
+    ):
         self._cp_pg = cp_mesh.get_group()
         self._cp_load_balancer = load_balancer
         self._cp_enabled = True
+        self._cp_head_stride = head_stride
 
 
 def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
