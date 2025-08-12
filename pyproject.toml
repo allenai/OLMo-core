@@ -45,7 +45,6 @@ dev = [
     "wheel",
     "build",
     "boto3",
-    "google-cloud-compute",
     "google-cloud-storage",
     "Sphinx>=6.0,<9.0",
     "furo==2024.8.6",
@@ -55,7 +54,7 @@ dev = [
     "sphinx-autodoc-typehints==1.23.3",
     "sphinx-inline-tabs",
 ]
-beaker = ["beaker-py>=1.36.0,<2.0", "GitPython>=3.0,<4.0"]
+beaker = ["beaker-py>=1.36.0,<2.0", "GitPython>=3.0,<4.0", "google-cloud-compute"]
 wandb = ["wandb"]
 comet = ["comet_ml"]
 transformers = ["transformers"]
