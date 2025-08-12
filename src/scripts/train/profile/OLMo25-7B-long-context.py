@@ -5,6 +5,7 @@ Run this script without any arguments to see usage info.
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
+from olmo_core.float8 import Float8Config
 from olmo_core.internal.experiment import CommonComponents, main
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.transformer import TransformerConfig
@@ -40,21 +41,13 @@ DP_REPLICAS = NUM_NODES * 8 // (CP_DEGREE * DP_SHARDS)
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
-    config = TransformerConfig.olmo2_7B(
-        vocab_size=common.tokenizer.padded_vocab_size(),
-        n_heads=32,
-        hidden_size_multiplier=1.2,
-        hidden_size_multiple_of=1024,
-    )
-
-    # NOTE: TP + CP + Sliding Window not yet supported
+    config = TransformerConfig.olmo2_7B(vocab_size=common.tokenizer.padded_vocab_size())
     config.block.attention.sliding_window = SlidingWindowAttentionConfig(
         force_full_attention_on_first_layer=False,
         force_full_attention_on_last_layer=True,
         pattern=[4096, 4096, 4096, -1],
     )
     config.block.attention.use_flash = True
-
     return config
 
 
@@ -85,7 +78,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             if INTRA_DOCUMENT_MASKING
             else TransformerContextParallelConfig.zig_zag(degree=CP_DEGREE)
         ),
-        float8_config=None,
+        float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
         scheduler=LinearWithWarmup(warmup_steps=200),
