@@ -11,6 +11,7 @@ from .scheduler import (
     Scheduler,
     SchedulerUnits,
     SequentialScheduler,
+    HalfCosWithWarmup,
 )
 from .skip_step_optimizer import SkipStepOptimizer
 
@@ -31,6 +32,7 @@ __all__ = [
     "ConstantScheduler",
     "ConstantWithWarmup",
     "CosWithWarmup",
+    "HalfCosWithWarmup",
     "InvSqrtWithWarmup",
     "LinearWithWarmup",
     "SequentialScheduler",
