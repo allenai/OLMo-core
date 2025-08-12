@@ -68,6 +68,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Made removing ephemeral checkpoints more robust.
 - Made running bookkeeping operations more robust.
 - Ensure RoPE modules with different settings use a unique sub-cache for their buffers.
+- Fixed MFU computation to work with FSDP, corrected some device specs.
 
 ## [v2.1.0](https://github.com/allenai/OLMo-core/releases/tag/v2.1.0) - 2025-04-14
 
