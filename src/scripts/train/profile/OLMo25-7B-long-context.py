@@ -29,7 +29,7 @@ from olmo_core.train.train_module.transformer.config import (
 
 CONTEXT_LENGTH = 65536
 GLOBAL_BATCH_SIZE = 64 * CONTEXT_LENGTH  # 4_194_304 tok/batch, 32 seq/batch
-INTRA_DOCUMENT_MASKING = False
+INTRA_DOCUMENT_MASKING = True
 
 NUM_NODES = 4
 
