@@ -936,13 +936,6 @@ class MoETransformer(Transformer):
     def is_moe(self) -> bool:
         return True
 
-    def _validate_block(self, block: TransformerBlockBase) -> TransformerBlockBase:
-        if not isinstance(block, MoETransformerBlock):
-            raise OLMoConfigurationError(
-                f"'{self.__class__.__name__}' requires a '{MoETransformerBlock.__name__}' block"
-            )
-        return block
-
     def compute_auxiliary_metrics(
         self, reset: bool = True
     ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
@@ -955,6 +948,8 @@ class MoETransformer(Transformer):
 
         out: Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]] = {}
         for block_idx, block in self.blocks.items():
+            if not block.is_moe:
+                continue
             block = cast(MoETransformerBlock, block)
             block_metrics = block.compute_metrics(reset=reset)
             for metric_name, (metric_val, reduce_type) in block_metrics.items():
@@ -978,10 +973,14 @@ class MoETransformer(Transformer):
 
     def reset_auxiliary_metrics(self):
         for block in self.blocks.values():
+            if not block.is_moe:
+                continue
             cast(MoETransformerBlock, block).reset_metrics()
 
     def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
         for block in self.blocks.values():
+            if not block.is_moe:
+                continue
             block = cast(MoETransformerBlock, block)
             block.apply_ep(ep_mesh, **kwargs)
 
@@ -993,22 +992,32 @@ class MoETransformer(Transformer):
         pp_enabled: bool = False,
     ):
         for block in self.blocks.values():
-            cast(MoETransformerBlock, block).feed_forward_moe.prepare_experts_for_fsdp(
+            if not block.is_moe:
+                continue
+            block = cast(MoETransformerBlock, block)
+            reshard_after_forward = True
+            if pp_enabled or block.ep_enabled or block.tp_enabled:
+                reshard_after_forward = False
+            block.feed_forward_moe.prepare_experts_for_fsdp(
                 world_mesh=world_mesh,
                 mp_policy=MixedPrecisionPolicy(
                     param_dtype=param_dtype or self.dtype, reduce_dtype=reduce_dtype
                 ),
-                reshard_after_forward=not pp_enabled,
+                reshard_after_forward=reshard_after_forward,
             )
 
     def prepare_experts_for_ddp(self, world_mesh: DeviceMesh):
         for block in self.blocks.values():
+            if not block.is_moe:
+                continue
             cast(MoETransformerBlock, block).feed_forward_moe.prepare_experts_for_ddp(
                 world_mesh=world_mesh,
             )
 
     def post_batch(self, dry_run: bool = False):
         for block in self.blocks.values():
+            if not block.is_moe:
+                continue
             block = cast(MoETransformerBlock, block)
             block.feed_forward_moe.post_batch(dry_run=dry_run)
 
