@@ -39,7 +39,7 @@ CP_DEGREE = 8
 DP_SHARDS = 2
 DP_REPLICAS = NUM_GPUS // (CP_DEGREE * DP_SHARDS)  # 2
 
-CP_HEAD_STRIDE = 8
+CP_HEAD_STRIDE = 16
 
 
 # 16 forward-backwards per step
