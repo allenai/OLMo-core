@@ -1,7 +1,6 @@
 """
 Train a 1B OLMo model. Run this script without any arguments to see usage info.
 """
-
 from datetime import datetime
 
 from olmo_core.config import DType

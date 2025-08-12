@@ -1,7 +1,6 @@
 """
 Train a 7B OLMo model. Run this script without any arguments to see usage info.
 """
-
 import math
 from datetime import datetime
 
