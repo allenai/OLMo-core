@@ -125,7 +125,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 repeat=1,
                 with_stack=True,
                 enable_cuda_sync_events=True,
-                ranks="all",
+                ranks="cp",
             ),
         )
         .with_callback("gpu_monitor", GPUMemoryMonitorCallback())
