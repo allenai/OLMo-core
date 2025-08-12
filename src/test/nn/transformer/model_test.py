@@ -272,6 +272,7 @@ def run_context_parallel_transformer(checkpoint_dir, outputs_path, architecture:
 @requires_multi_gpu
 @requires_flash_attn
 @pytest.mark.parametrize("architecture", ["olmo2"])
+@pytest.mark.skip("known precision issues with ring-flash-attn")
 def test_context_parallel_transformer(architecture: str, tmp_path):
     device = torch.device("cuda")
     config = get_transformer_config(architecture, dtype=torch.bfloat16)
