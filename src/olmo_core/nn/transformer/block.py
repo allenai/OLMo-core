@@ -65,7 +65,12 @@ class TransformerBlockBase(nn.Module):
         raise NotImplementedError
 
     @abstractmethod
-    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType):
+    def apply_cp(
+        self,
+        cp_mesh: DeviceMesh,
+        load_balancer: RingAttentionLoadBalancerType,
+        head_stride: int = 1,
+    ):
         raise NotImplementedError
 
     def apply_compile(self):
@@ -167,8 +172,13 @@ class TransformerBlock(TransformerBlockBase):
 
         parallelize_module(self.dropout, device_mesh=tp_mesh, parallelize_plan=SequenceParallel())
 
-    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType):
-        self.attention.apply_cp(cp_mesh, load_balancer)
+    def apply_cp(
+        self,
+        cp_mesh: DeviceMesh,
+        load_balancer: RingAttentionLoadBalancerType,
+        head_stride: int = 1,
+    ):
+        self.attention.apply_cp(cp_mesh, load_balancer, head_stride=head_stride)
 
     def apply_fsdp(
         self,
@@ -286,8 +296,13 @@ class NormalizedTransformerBlock(TransformerBlockBase):
             "TP is not implemented yet for the normalized transformer block variant"
         )
 
-    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType):
-        self.attention.apply_cp(cp_mesh, load_balancer)
+    def apply_cp(
+        self,
+        cp_mesh: DeviceMesh,
+        load_balancer: RingAttentionLoadBalancerType,
+        head_stride: int = 1,
+    ):
+        self.attention.apply_cp(cp_mesh, load_balancer, head_stride=head_stride)
 
     def apply_fsdp(
         self,
@@ -459,8 +474,13 @@ class MoETransformerBlock(TransformerBlockBase):
 
         self._tp_enabled = True
 
-    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType):
-        self.attention.apply_cp(cp_mesh, load_balancer)
+    def apply_cp(
+        self,
+        cp_mesh: DeviceMesh,
+        load_balancer: RingAttentionLoadBalancerType,
+        head_stride: int = 1,
+    ):
+        self.attention.apply_cp(cp_mesh, load_balancer, head_stride=head_stride)
         self.feed_forward_moe.apply_cp(cp_mesh)
 
     def apply_fsdp(

@@ -182,13 +182,28 @@ class TransformerContextParallelConfig(ContextParallelConfig):
     The type of load balancer to use for ring attention.
     """
 
-    @classmethod
-    def zig_zag(cls, degree: int) -> "TransformerContextParallelConfig":
-        return cls(degree=degree, load_balancer=RingAttentionLoadBalancerType.zig_zag)
+    head_stride: int = 1
+    """
+    The stride of the head dimension to process for each iteration of ring attention. A value of 1
+    means each iteration will process one k and one v head, resulting in 2*n_kv_heads communications.
+    A value of 2 will process two k and two v heads, resulting in 2*n_kv_heads/2 communications, etc.
+    """
 
     @classmethod
-    def llama3(cls, degree: int) -> "TransformerContextParallelConfig":
-        return cls(degree=degree, load_balancer=RingAttentionLoadBalancerType.llama3)
+    def zig_zag(cls, degree: int, head_stride: int = 1) -> "TransformerContextParallelConfig":
+        return cls(
+            degree=degree,
+            load_balancer=RingAttentionLoadBalancerType.zig_zag,
+            head_stride=head_stride,
+        )
+
+    @classmethod
+    def llama3(cls, degree: int, head_stride: int = 1) -> "TransformerContextParallelConfig":
+        return cls(
+            degree=degree,
+            load_balancer=RingAttentionLoadBalancerType.llama3,
+            head_stride=head_stride,
+        )
 
 
 @dataclass
