@@ -317,13 +317,13 @@ class LocalEncoder(nn.Module):
         boundary_probs: torch.Tensor | None = None,
         block_size: int = 256,
         headdim: int = 32,
-        epsilon=1e-4,
+        epsilon=1e-3,
     ):
         from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
 
         if boundary_probs is not None:
             # NOT IN HNET! Add pooling to the encoder.
-            p = boundary_probs.clip(min=epsilon, max=1 - epsilon).float()
+            p = boundary_probs.float().clip(max=1.0 - epsilon)
             dt = torch.log(1 / (1 - p)).to(h.dtype)
             x = (h / dt[..., None])
 
@@ -608,7 +608,7 @@ class LocalDecoder(nn.Module):
         boundary_probs: torch.Tensor | None = None,
         block_size: int = 256,
         headdim: int = 32,
-        epsilon=1e-4, # as in HNet
+        epsilon=1e-3, # as in HNet
     ) -> torch.Tensor:
         from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
 
