@@ -5,6 +5,7 @@ from typing import Any, ClassVar, Dict, Optional
 
 import torch
 
+from olmo_core.config import DType
 from olmo_core.distributed.utils import get_world_size
 from olmo_core.utils import log_once
 
@@ -76,28 +77,26 @@ class SpeedMonitorCallback(Callback):
         ):
             device_name = torch.cuda.get_device_name(self.trainer.device)
 
-            # Check if we're using half precision
-            train_module = self.trainer.train_module
-            using_half_precision = train_module.autocast_precision == torch.bfloat16 or (
-                train_module.dp_config is not None
-                and train_module.dp_config.param_dtype == torch.bfloat16
+            tm = self.trainer.train_module
+            using_half_precision = tm.autocast_precision == torch.bfloat16 or (
+                tm.dp_config is not None and tm.dp_config.param_dtype == DType.bfloat16
             )
             if using_half_precision:
-                if "A100" in device_name:
-                    self.device_peak_flops = int(312e12)
-                elif "H100" in device_name:
+                dense_correction = 0.5  # listed specs are one-half lower without sparsity
+                if "H100" in device_name:
                     # data from https://www.nvidia.com/en-us/data-center/h100/
-                    # NOTE: Specifications are one-half lower without sparsity.
                     if "NVL" in device_name:
-                        self.device_peak_flops = int(1979e12)
+                        self.device_peak_flops = int(1671e12 * dense_correction)
                     elif "PCIe" in device_name:
-                        self.device_peak_flops = int(756e12)
+                        self.device_peak_flops = int(1513e12 * dense_correction)
                     else:  # for SXM and other variants
-                        self.device_peak_flops = int(989e12)
+                        self.device_peak_flops = int(1979e12 * dense_correction)
                 elif "B200" in device_name:
-                    self.device_peak_flops = int(2200e12)
+                    # data from https://www.nvidia.com/en-us/data-center/hgx/
+                    self.device_peak_flops = int(4.5e15 * dense_correction)
                 else:  # for other GPU types, assume A100
-                    self.device_peak_flops = int(312e12)
+                    # data from https://www.nvidia.com/en-us/data-center/a100/
+                    self.device_peak_flops = int(312e12 * dense_correction)
             log.info(f"Device: {device_name}, Device peak FLOPS: {self.device_peak_flops}")
 
     def pre_load_batch(self):
