@@ -182,7 +182,7 @@ class TransformerContextParallelConfig(ContextParallelConfig):
     The type of load balancer to use for ring attention.
     """
 
-    head_stride: int = 1
+    head_stride: int = 8  # TODO: change this back to 1 if merging to main
     """
     The stride of the head dimension to process for each iteration of ring attention. A value of 1
     means each iteration will process one k and one v head. A value of 2 will process two k and two
