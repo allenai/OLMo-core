@@ -123,7 +123,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         .with_callback(
             "profiler",
             ProfilerCallback(
-                enabled=True,
+                enabled=False,
                 skip_first=15,
                 wait=3,
                 warmup=1,
