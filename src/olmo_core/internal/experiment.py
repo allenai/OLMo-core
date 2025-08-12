@@ -66,6 +66,7 @@ class ExperimentConfig(Config):
     trainer: TrainerConfig
     init_seed: int = 12536
     backend: Optional[str] = "cpu:gloo,cuda:nccl"
+    follow: bool = True
 
 
 class SubCmd(StrEnum):
@@ -283,7 +284,7 @@ def build_config(
 def launch(config: ExperimentConfig):
     log.info(config)
     assert config.launch is not None
-    config.launch.launch(follow=True)
+    config.launch.launch(follow=config.follow)
 
 
 def launch_prep(config: ExperimentConfig):
@@ -291,7 +292,7 @@ def launch_prep(config: ExperimentConfig):
     config.launch.num_gpus = 0
     config.launch.num_nodes = 1
     log.info(config)
-    config.launch.launch(follow=True, torchrun=False)
+    config.launch.launch(follow=config.follow, torchrun=False)
 
 
 def prep(config: ExperimentConfig):
@@ -335,7 +336,7 @@ def main(
     beaker_workspace: str = "ai2/OLMo-core",
 ):
     usage = f"""
-[yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]{'|'.join(SubCmd)}[/] [i b]RUN_NAME CLUSTER[/] [i][OVERRIDES...][/]
+[yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]{"|".join(SubCmd)}[/] [i b]RUN_NAME CLUSTER[/] [i][OVERRIDES...][/]
 
 [b]Subcommands[/]
 [b magenta]launch:[/]      Launch the script on Beaker with the [b magenta]train[/] subcommand.
