@@ -554,7 +554,12 @@ class Transformer(nn.Module):
         self._tp_enabled = True
         self._tp_mesh = tp_mesh
 
-    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType):
+    def apply_cp(
+        self,
+        cp_mesh: DeviceMesh,
+        load_balancer: RingAttentionLoadBalancerType,
+        head_stride: int = 1,
+    ):
         """
         Prepare the model for context-parallelism (CP).
 
@@ -563,7 +568,9 @@ class Transformer(nn.Module):
         """
         self._cp_load_balancer = load_balancer.build(cp_mesh)
         for block in self.blocks.values():
-            cast(TransformerBlockBase, block).apply_cp(cp_mesh, load_balancer)
+            cast(TransformerBlockBase, block).apply_cp(
+                cp_mesh, load_balancer, head_stride=head_stride
+            )
         if self.lm_head is not None:
             self.lm_head.apply_cp(cp_mesh, load_balancer)
 
