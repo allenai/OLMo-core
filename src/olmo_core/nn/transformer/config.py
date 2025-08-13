@@ -868,6 +868,7 @@ class TransformerConfig(Config):
         hidden_size_multiplier: Optional[float] = None,
         fused_ops: bool = False,
         use_flash: bool = False,
+        use_sinks: bool = False,
         block_name: TransformerBlockType = TransformerBlockType.default,
         block_mods: Optional[
             Dict[int, Callable[[TransformerBlockConfig], TransformerBlockConfig]]
@@ -925,6 +926,7 @@ class TransformerConfig(Config):
                 rope=RoPEConfig(name=rope_type, theta=rope_theta, scaling=rope_scaling),
                 qk_norm=layer_norm if qk_norm else None,
                 use_flash=use_flash,
+                use_sinks=use_sinks,
                 dtype=dtype,
             ),
             feed_forward=feed_forward,

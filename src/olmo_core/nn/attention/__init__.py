@@ -153,6 +153,7 @@ class AttentionConfig(Config):
     dtype: DType = DType.float32
     sliding_window: Optional[SlidingWindowAttentionConfig] = None
     use_head_qk_norm: Optional[bool] = None
+    use_sinks: Optional[bool] = None
 
     def num_params(self, d_model: int) -> int:
         """
@@ -323,6 +324,7 @@ class Attention(AttentionBase):
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
         use_head_qk_norm: bool = False,
+        use_sinks: Optional[bool] = False,
     ):
         super().__init__()
 
@@ -341,7 +343,6 @@ class Attention(AttentionBase):
         self.clip_qkv = clip_qkv
         self.dropout_p = dropout
         self.use_head_qk_norm = use_head_qk_norm
-
         self.q_norm: Optional[LayerNorm] = None
         self.k_norm: Optional[LayerNorm] = None
         if qk_norm is not None:
@@ -353,6 +354,12 @@ class Attention(AttentionBase):
                 self.k_norm = qk_norm.build(
                     size=self.n_kv_heads * self.head_dim, init_device=init_device
                 )
+
+        self.use_sinks = use_sinks
+        if use_sinks is not None and use_sinks:
+            self.sinks = nn.Parameter(torch.empty(self.n_heads, dtype=dtype, device=init_device))
+        else:
+            self.sinks = None
 
         # Translate window size so that we only look left, not right.
         if window_size is not None:
@@ -408,6 +415,7 @@ class Attention(AttentionBase):
         max_doc_len_k: Optional[int] = None,
         local_k_slice: Optional[slice] = None,
         scale: Optional[float] = None,
+        sinks: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         att: torch.Tensor
         if self.cp_enabled:
@@ -479,13 +487,68 @@ class Attention(AttentionBase):
             #        (batch_size, n_kv_heads, seq_len, head_dim)
             q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
 
-            # shape: (batch_size, n_heads, seq_len, head_dim)
-            att = F.scaled_dot_product_attention(
-                q, k, v, dropout_p=self.dropout_p, is_causal=True, scale=scale
-            )
+            if sinks is not None:
+                batch_size, n_heads, seq_len, head_dim = q.shape
+                attn_logits = torch.matmul(
+                    q, k.transpose(2, 3)
+                )  # (batch_size, n_heads, seq_len, seq_len)
+                if scale is not None:
+                    attn_logits *= scale
+                else:
+                    attn_logits *= 1.0 / math.sqrt(head_dim)
 
-            # shape: (batch_size, seq_len, n_heads, head_dim)
-            att = att.transpose(1, 2).contiguous()
+                causal_mask = torch.triu(q.new_full((seq_len, seq_len), -float("inf")), diagonal=1)
+
+                if self.window_size != (-1, -1):
+                    window_left, window_right = self.window_size
+                    window_mask = torch.full((seq_len, seq_len), -float("inf"), device=q.device, dtype=q.dtype)
+                    for i in range(seq_len):
+                        start = max(0, i - window_left)
+                        end = min(seq_len, i + window_right + 1)
+                        window_mask[i, start:end] = 0.0
+                    combined_mask = causal_mask + window_mask
+                else:
+                    combined_mask = causal_mask
+                
+                attn_logits = attn_logits + combined_mask[None, None, :, :]
+
+                if sinks.ndim == 1:
+                    S = sinks.numel()
+                    sink_logits = (
+                        sinks.view(1, 1, 1, S)
+                        .to(attn_logits)
+                        .expand(batch_size, n_heads, seq_len, S)
+                    )
+                elif sinks.ndim == 2:
+                    assert sinks.size(0) == n_heads, "Sinks first dim must equal n_heads"
+                    S = sinks.size(1)
+                    sink_logits = (
+                        sinks.view(1, n_heads, 1, S)
+                        .to(attn_logits)
+                        .expand(batch_size, n_heads, seq_len, S)
+                    )
+                else:
+                    raise ValueError("Sinks must have shape (S) or (n_heads, S)")
+
+                combined_logits = torch.cat(
+                    [attn_logits, sink_logits], dim=-1
+                )  # (batch_size, n_heads, head_dim, head_dim + seq_len)
+                combined_probs = F.softmax(combined_logits, dim=-1, dtype=torch.float32).to(
+                    attn_logits.dtype
+                )
+                probs = combined_probs[..., :seq_len]
+                probs = F.dropout(probs, p=self.dropout_p)
+                att = torch.matmul(probs, v)
+                att = att.transpose(1, 2).contiguous()
+
+            else:
+                # shape: (batch_size, n_heads, seq_len, head_dim)
+                att = F.scaled_dot_product_attention(
+                    q, k, v, dropout_p=self.dropout_p, is_causal=True, scale=scale
+                )
+
+                # shape: (batch_size, seq_len, n_heads, head_dim)
+                att = att.transpose(1, 2).contiguous()
 
         return att
 
@@ -572,10 +635,11 @@ class Attention(AttentionBase):
             max_doc_len_q=max_doc_len_q,
             max_doc_len_k=max_doc_len_k,
             local_k_slice=local_k_slice,
+            sinks=self.sinks if self.use_sinks else None,
         )
 
         # shape: (batch_size, seq_len, d_model)
-        att = att.view(B, T, -1)
+        att = att.reshape(B, T, -1)
 
         # shape: (batch_size, seq_len, d_model)
         return self.w_out(att)
