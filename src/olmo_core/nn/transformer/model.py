@@ -1223,7 +1223,7 @@ class BLTTransformer(Transformer):
                 patch_ids,
                 patch_lens,
                 patches_as_queries=True,
-                cross_attn_k=2, # TODO: config
+                cross_attn_k=self.local_encoder.blt_k or 1,  # type: ignore
                 block_mask=True,
             )
 
@@ -1232,7 +1232,7 @@ class BLTTransformer(Transformer):
                 _decoder_patch_ids,
                 patch_lens,
                 patches_as_queries=False,
-                cross_attn_k=2, # TODO: config
+                cross_attn_k=self.local_decoder.blt_k or 1,  # type: ignore
                 block_mask=True,
             )
 

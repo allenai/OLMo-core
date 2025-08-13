@@ -163,6 +163,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             n_layers=local_encoder_n_layers,
             cross_attn_n_heads=local_cross_attn_n_heads,
             block_config=local_block,
+            blt_k=2,
             add_out_projection=False,
         )
         local_decoder = LocalDecoderConfig(
@@ -171,6 +172,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             n_layers=local_decoder_n_layers,
             cross_attn_n_heads=local_cross_attn_n_heads,
             block_config=local_block,
+            blt_k=2,
         )
     elif LOCAL_MODEL_STYLE == "hnet":
         if OLMO_ARCH == "olmo2_1B_v2":

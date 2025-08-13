@@ -945,6 +945,23 @@ class TransformerConfig(Config):
             local_d_model=1024,
             local_attn_n_heads=16,
             local_cross_attn_n_heads=16,
+            blt_k=2,
+            **kwargs,
+        )
+
+    @classmethod
+    def blt_7b(cls, vocab_size=260, **kwargs):
+        return cls.blt_like(
+            d_model=4096,
+            vocab_size=vocab_size,
+            n_layers=32,
+            n_heads=32,
+            local_encoder_n_layers=1,
+            local_decoder_n_layers=6,
+            local_d_model=1280,
+            local_attn_n_heads=20,
+            local_cross_attn_n_heads=20,
+            blt_k=4,
             **kwargs,
         )
 
@@ -1193,6 +1210,7 @@ class TransformerConfig(Config):
         local_d_model: int,
         local_attn_n_heads: int,
         local_cross_attn_n_heads: int,
+        blt_k: int,
         n_kv_heads: Optional[int] = None,
         qk_norm: bool = False,
         layer_norm_eps: float = 1e-5,
@@ -1264,7 +1282,6 @@ class TransformerConfig(Config):
             attention=block.attention.replace(n_heads=local_attn_n_heads),
             feed_forward=FeedForwardConfig(hidden_size=local_hidden_size, bias=False, dtype=dtype),
         )
-        
 
         local_encoder = LocalEncoderConfig(
             hash_byte_group_size=[3, 4, 5, 6, 7, 8],
@@ -1275,7 +1292,9 @@ class TransformerConfig(Config):
             n_layers=local_encoder_n_layers,
             cross_attn_n_heads=local_cross_attn_n_heads,
             block_config=local_block,
-            apply_residual_twice=True,
+            blt_k=blt_k,
+            blt_compat=True,
+            add_out_projection=blt_k * local_d_model != d_model,
         )
         local_decoder = LocalDecoderConfig(
             sliding_window_size=512,
@@ -1283,7 +1302,8 @@ class TransformerConfig(Config):
             n_layers=local_decoder_n_layers,
             cross_attn_n_heads=local_cross_attn_n_heads,
             block_config=local_block,
-            apply_residual_twice=True,
+            blt_k=blt_k,
+            blt_compat=True,
         )
 
         if skip_local_encoder_decoder:

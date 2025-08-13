@@ -56,7 +56,8 @@ class LocalEncoderConfig(Config):
     add_norm_after_last_block: bool = False
     add_norm_after_pool: bool = False
     add_out_projection: bool = False
-    apply_residual_twice: bool = False # for compat with BLT checkpoints
+    blt_k: Optional[int] = None  # used in blt
+    blt_compat: bool = False # for compat with BLT checkpoints
 
     def build(self, vocab_size: int, d_global_model: int) -> nn.Module:
         from .local_models import LocalEncoder
@@ -77,7 +78,8 @@ class LocalEncoderConfig(Config):
             add_norm_after_last_block=self.add_norm_after_last_block,
             add_norm_after_pool=self.add_norm_after_pool,
             add_out_projection=self.add_out_projection,
-            apply_residual_twice=self.apply_residual_twice,
+            blt_k=self.blt_k,
+            blt_compat=self.blt_compat,
         )
 
 
@@ -92,7 +94,8 @@ class LocalDecoderConfig(Config):
     add_norm_before_first_block: bool = False
     add_norm_onto_residual: bool = False
     add_in_projection: bool = False
-    apply_residual_twice: bool = False # for compat with BLT checkpoints
+    blt_k: Optional[int] = None  # used in blt
+    blt_compat: bool = False # for compat with BLT checkpoints
 
     def build(self, vocab_size: int, d_global_model: int) -> nn.Module:
         from .local_models import LocalDecoder
@@ -109,5 +112,6 @@ class LocalDecoderConfig(Config):
             add_norm_before_first_block=self.add_norm_before_first_block,
             add_norm_onto_residual=self.add_norm_onto_residual,
             add_in_projection=self.add_in_projection,
-            apply_residual_twice=self.apply_residual_twice,
+            blt_k=self.blt_k,
+            blt_compat=self.blt_compat,
         )

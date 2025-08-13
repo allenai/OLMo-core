@@ -96,6 +96,7 @@ BLT_TO_OLMO_CORE_MAPPINGS: Dict[str, str] = {
 def _get_transformer_config(model_arch: str) -> TransformerConfig:
     transformer_configs = {
         "blt_1b": TransformerConfig.blt_1b,
+        "blt_7b": TransformerConfig.blt_7b,
     }
 
     return transformer_configs[model_arch.lower()]()
@@ -107,11 +108,13 @@ def _load_blt_model(
     transformer_config_dict: Dict[str, Any],
 ):
     blt_state_dict = torch.load(checkpoint_path, map_location="cpu")["model"]
-
     mapping_templates = [
         StateMappingTemplate(hf_key, olmo_core_key)
         for hf_key, olmo_core_key in BLT_TO_OLMO_CORE_MAPPINGS.items()
     ]
+    if "global_transformer.token_embedding_projection.weight" in blt_state_dict:
+        mapping_templates.append(StateMappingTemplate("global_transformer.token_embedding_projection.weight", "local_encoder.out_projection.weight"))
+
     converter = StateConverter(mapping_templates)
 
     placeholder_bounds = {

@@ -99,7 +99,8 @@ class LocalEncoder(nn.Module):
             add_norm_after_last_block: bool,
             add_norm_after_pool: bool,
             add_out_projection: bool,
-            apply_residual_twice: bool = False,  # for compat with BLT checkpoints
+            blt_k: Optional[int] = None,
+            blt_compat: bool = False,  # for compat with BLT checkpoints
             init_device: str = "cpu",
     ):
         super().__init__()
@@ -119,7 +120,8 @@ class LocalEncoder(nn.Module):
         self.add_norm_after_pool = add_norm_after_pool
         self.add_out_projection = add_out_projection
         self.init_device = init_device
-        self.apply_residual_twice = apply_residual_twice
+        self.blt_k = blt_k
+        self.blt_compat = blt_compat
 
         self.embedding = nn.Embedding(vocab_size, d_model, device=init_device)
 
@@ -146,9 +148,11 @@ class LocalEncoder(nn.Module):
             )
 
         if self.pooling == "cross_attn":
+            assert self.blt_k is not None
+
             self.patch_embedding_projection = nn.Linear(
                 d_model,
-                d_global_model,
+                d_model * self.blt_k,
                 device=init_device,
                 bias=False,
             )
@@ -184,10 +188,10 @@ class LocalEncoder(nn.Module):
 
         if self.add_out_projection:
             self.out_projection = nn.Linear(
-                d_global_model,
+                d_model * self.blt_k if self.blt_k is not None else d_global_model,
                 d_global_model,
                 device=init_device,
-                bias=True,
+                bias=not blt_compat,
             )
         else:
             self.out_projection = None
@@ -268,6 +272,8 @@ class LocalEncoder(nn.Module):
             add_norm_after_last_block=self.add_norm_after_last_block,
             add_norm_after_pool=self.add_norm_after_pool,
             add_out_projection=self.add_out_projection,
+            blt_k=self.blt_k,
+            blt_compat=self.blt_compat,
             init_device=device,
         )
         local_encoder_copy.load_state_dict({
@@ -371,7 +377,7 @@ class LocalEncoder(nn.Module):
         cross_attn_mask: BlockMask | None,
         reduction: str = "amax",
     ):
-        if self.cross_attention is None or self.patch_embedding_projection is None:
+        if self.cross_attention is None or self.patch_embedding_projection is None or self.blt_k is None:
             raise ValueError("Cross attention is disabled, can not pool with BLT method.")
 
         # downsample h
@@ -388,11 +394,11 @@ class LocalEncoder(nn.Module):
         )
         reduced_h = reduced_h[:, :-1, :]  # DIVERGENCE FROM BLT: remove padding
 
-        # expand seq length by a factor of k (k=2 in BLT released checkpoints)
+        # expand seq length by a factor of k (k=2 or 4 in BLT released checkpoints)
         # i.e. per patch, conduct k cross attentions (each with h heads)
         # NOTE: the need for an upprojection seems to imply an unwanted information bottleneck?
         patch_embedding_init = self.patch_embedding_projection(reduced_h).reshape(
-            reduced_h.shape[0], reduced_h.shape[1] * 2, reduced_h.shape[2]
+            reduced_h.shape[0], reduced_h.shape[1] * self.blt_k, reduced_h.shape[2]
         )
 
         # apply cross attention
@@ -404,7 +410,7 @@ class LocalEncoder(nn.Module):
 
         # residual connection + reshape back into patch length (from patch_length * k)
         # NOTE: BLT applies the residual connection two times (presumably on accident?), so we have to 2x here.
-        residual_factor = 2 if self.apply_residual_twice else 1
+        residual_factor = 2 if self.blt_compat else 1
         patch_embedding = (patch_embedding_init * residual_factor + residual).reshape(
             reduced_h.shape[0], reduced_h.shape[1], -1
         ).clone()
@@ -511,7 +517,8 @@ class LocalDecoder(nn.Module):
         add_norm_before_first_block: bool,
         add_norm_onto_residual: bool,
         add_in_projection: bool,
-        apply_residual_twice: bool = False,  # for compat with BLT checkpoints
+        blt_k: Optional[int] = None,
+        blt_compat: bool = False,  # for compat with BLT checkpoints
         init_device: str = "cpu",
     ):
         super().__init__()
@@ -522,12 +529,15 @@ class LocalDecoder(nn.Module):
         self.add_norm_before_first_block = add_norm_before_first_block
         self.add_norm_onto_residual = add_norm_onto_residual
         self.add_in_projection = add_in_projection
-        self.apply_residual_twice = apply_residual_twice
+        self.blt_k = blt_k
+        self.blt_compat = blt_compat
 
         if self.depooling == "cross_attn":
+            assert self.blt_k is not None
+
             self.patch_embedding_projection = nn.Linear(
                 d_global_model,
-                d_global_model,
+                self.d_model * self.blt_k,
                 device=init_device,
                 bias=False,
             )
@@ -677,12 +687,12 @@ class LocalDecoder(nn.Module):
         patch_embeds: torch.Tensor,
         cross_attn_mask: BlockMask | None,
     ) -> torch.Tensor:
-        if self.patch_embedding_projection is None:
+        if self.patch_embedding_projection is None or self.blt_k is None:
             raise ValueError("Patch embedding projection is not defined, can not depool with BLT method.")
 
         # expand seq length by a factor of k (k=2 in BLT released checkpoints)
         patch_embeds_projected = self.patch_embedding_projection(patch_embeds).reshape(
-            patch_embeds.shape[0], patch_embeds.shape[1] * 2, embeds.shape[2]
+            patch_embeds.shape[0], patch_embeds.shape[1] * self.blt_k, embeds.shape[2]
         )
 
         h = embeds
@@ -694,7 +704,7 @@ class LocalDecoder(nn.Module):
             # NOTE: What about LN before/after cross attn?
             h_cross = cross_attn(q=h, kv=patch_embeds_projected, mask=cross_attn_mask)
             # NOTE: same thing, BLT applies the residual connection two times (presumably on accident?), so we have to 2x here.
-            residual_factor = 2 if self.apply_residual_twice else 1
+            residual_factor = 2 if self.blt_compat else 1
             h = h * residual_factor + h_cross
             h = block(h)
 
