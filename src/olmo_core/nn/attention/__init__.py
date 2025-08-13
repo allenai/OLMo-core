@@ -444,21 +444,27 @@ class Attention(AttentionBase):
                 window_size=self.window_size,
             )
         elif self.use_flash:
-            att = dispatch_flash_attn(
-                q,
-                k,
-                v,
-                cu_seqlens=cu_doc_lens,
-                cu_seqlens_q=cu_doc_lens_q,
-                cu_seqlens_k=cu_doc_lens_k,
-                max_seqlen=max_doc_len,
-                max_seqlen_q=max_doc_len_q,
-                max_seqlen_k=max_doc_len_k,
-                dropout_p=self.dropout_p,
-                softmax_scale=scale,
-                causal=True,
-                window_size=self.window_size,
-            )
+            if sinks is not None:
+                raise OLMoConfigurationError(
+                    "Sinks with flash attention are not yet implemented. "
+                    "Please use use_flash=False when using sinks, or disable sinks when using flash attention."
+                )
+            else:
+                att = dispatch_flash_attn(
+                    q,
+                    k,
+                    v,
+                    cu_seqlens=cu_doc_lens,
+                    cu_seqlens_q=cu_doc_lens_q,
+                    cu_seqlens_k=cu_doc_lens_k,
+                    max_seqlen=max_doc_len,
+                    max_seqlen_q=max_doc_len_q,
+                    max_seqlen_k=max_doc_len_k,
+                    dropout_p=self.dropout_p,
+                    softmax_scale=scale,
+                    causal=True,
+                    window_size=self.window_size,
+                )
         else:
             # Fall back to PyTorch's SDPA...
             if any(
@@ -498,19 +504,7 @@ class Attention(AttentionBase):
                     attn_logits *= 1.0 / math.sqrt(head_dim)
 
                 causal_mask = torch.triu(q.new_full((seq_len, seq_len), -float("inf")), diagonal=1)
-
-                if self.window_size != (-1, -1):
-                    window_left, window_right = self.window_size
-                    window_mask = torch.full((seq_len, seq_len), -float("inf"), device=q.device, dtype=q.dtype)
-                    for i in range(seq_len):
-                        start = max(0, i - window_left)
-                        end = min(seq_len, i + window_right + 1)
-                        window_mask[i, start:end] = 0.0
-                    combined_mask = causal_mask + window_mask
-                else:
-                    combined_mask = causal_mask
-                
-                attn_logits = attn_logits + combined_mask[None, None, :, :]
+                attn_logits = attn_logits + causal_mask[None, None, :, :]
 
                 if sinks.ndim == 1:
                     S = sinks.numel()
