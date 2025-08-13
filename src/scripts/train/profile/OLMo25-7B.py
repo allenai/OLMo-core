@@ -26,12 +26,9 @@ from olmo_core.train.train_module import (
     TransformerTrainModuleConfig,
 )
 
+NUM_NODES = 2
 SEQUENCE_LENGTH = 8 * 1024
-GLOBAL_BATCH_SIZE = 4 * 1024 * 1024
-
-# 16 forward-backwards per step
-# 64 BS / 16 = 4 DP?
-# Then those 4 DP shards are
+GLOBAL_BATCH_SIZE = 4 * 1024 * (16 * NUM_NODES)
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
@@ -128,4 +125,5 @@ if __name__ == "__main__":
         trainer_config_builder=build_trainer_config,
         include_instance_filter=False,  # We use SkipStepOptimizer for this problem.
         include_default_evals=False,
+        num_nodes=NUM_NODES,
     )
