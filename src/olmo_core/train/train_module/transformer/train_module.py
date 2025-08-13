@@ -356,7 +356,7 @@ class TransformerTrainModule(TrainModule):
 
         # Train one micro-batch at a time.
         for micro_batch_idx, micro_batch in enumerate(micro_batches):
-            with self._train_microbatch_context(micro_batch_idx, num_micro_batches) as is_last_mb:
+            with self._train_microbatch_context(micro_batch_idx, num_micro_batches):
                 input_ids, labels, model_kwargs = self._prepare_batch(micro_batch)
 
                 # Run forward pass, get losses.
@@ -379,15 +379,6 @@ class TransformerTrainModule(TrainModule):
                     z_batch_loss += get_local_tensor(z_loss.detach())
                     del z_loss
 
-                # Record CE loss metrics before the final backward pass.
-                # This allows the optimizer step to potentially start earlier.
-                if is_last_mb and not dry_run:
-                    if isinstance(self.optim, SkipStepOptimizer) and is_distributed():
-                        # Need to reduce the loss right away for the SkipStepOptimizer.
-                        ce_batch_loss.div_(self._reduce_divide_factor)
-                        dist.all_reduce(ce_batch_loss)
-                        ce_batch_loss.div_(self.world_size)
-
                 # Run backward pass.
                 loss.backward()
 
@@ -399,14 +390,18 @@ class TransformerTrainModule(TrainModule):
             self.model.reset_auxiliary_metrics()
             return
 
-        # CE loss has already been recorded before the final backward pass.
-        # Record Z loss metrics (less critical timing).
+        # Record loss metrics.
         if isinstance(self.optim, SkipStepOptimizer):
+            # Need to reduce the loss right away for the SkipStepOptimizer.
+            if is_distributed():
+                ce_batch_loss.div_(self._reduce_divide_factor)
+                dist.all_reduce(ce_batch_loss)
+                ce_batch_loss.div_(self.world_size)
+                ce_batch_loss.mul_(self._reduce_divide_factor)
             self.record_ce_loss(ce_batch_loss)
             self.optim.latest_loss = ce_batch_loss
         else:
             self.record_ce_loss(ce_batch_loss, ReduceType.mean)
-
         if z_batch_loss is not None:
             assert self.z_loss_multiplier is not None
             self.record_metric(
@@ -506,7 +501,7 @@ class TransformerTrainModule(TrainModule):
     @contextlib.contextmanager
     def _train_microbatch_context(
         self, micro_batch_idx: int, num_micro_batches: int
-    ) -> Generator[bool, None, None]:
+    ) -> Generator[None, None, None]:
         is_last_mb = micro_batch_idx == num_micro_batches - 1
         with contextlib.ExitStack() as stack:
             if isinstance(self.model, FSDPModule):
@@ -522,7 +517,7 @@ class TransformerTrainModule(TrainModule):
                 if not is_last_mb:
                     stack.enter_context(self.model.no_sync())
 
-            yield is_last_mb
+            yield
 
     @contextlib.contextmanager
     def _eval_batch_context(self) -> Generator[None, None, None]:
