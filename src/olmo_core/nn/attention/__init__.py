@@ -693,6 +693,10 @@ class Attention(AttentionBase):
     def allocate_kv_cache(
         self, batch_size: int, max_seq_len: int, dtype: torch.dtype
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Optional[torch.Tensor], InferencePhase]:
+        log.info(
+            "Allocating new KV cache of shape %s",
+            (batch_size, max_seq_len, self.n_kv_heads, self.head_dim),
+        )
         kv_cache_shape = (batch_size, max_seq_len, self.n_kv_heads, self.head_dim)
         k_cache = torch.zeros(kv_cache_shape, device=self.w_k.weight.device, dtype=dtype)
         v_cache = torch.zeros(kv_cache_shape, device=self.w_q.weight.device, dtype=dtype)
@@ -702,6 +706,7 @@ class Attention(AttentionBase):
         return k_cache, v_cache, cache_seqlens, cache_leftpad, phase
 
     def free_kv_cache(self):
+        log.info("Freeing KV cache!")
         self.k_cache = self.v_cache = self.cache_seqlens = self.cache_leftpad = None
         self.phase = None
         gc.collect()
