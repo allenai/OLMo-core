@@ -833,8 +833,14 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
 
 class NumpyPaddedFSLDataset(NumpyFSLDataset):
     """
-    An FSL dataset that creates a single instance from each document.
-    The resulting instances will all have exactly ``sequence_length`` tokens, using padding if needed.
+    An FSL dataset that creates that uses padding to avoid fragmenting documents.
+    If ``do_greedy_packing`` is ``False`` (the default), each source document becomes its own
+    instance with padding added as needed to reach the desired ``sequence_length``.
+    If ``do_greedy_packing`` is ``True``, documents are packed greedily into instances, resulting
+    in less padding overall.
+
+    Regardless of the value of ``do_greedy_packing``, the resulting instances will all have exactly
+    ``sequence_length`` tokens.
     """
 
     def __init__(
@@ -850,6 +856,7 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
         include_instance_metadata: Optional[bool] = None,
         instance_filter_config: Optional[InstanceFilterConfig] = None,
         label_mask_paths: Optional[List[PathOrStr]] = None,
+        do_greedy_packing: bool = False,
     ):
         super().__init__(
             *paths,
@@ -865,10 +872,11 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
             label_mask_paths=label_mask_paths,
         )
         self._array_instance_offsets: Optional[Tuple[Tuple[int, int], ...]] = None
+        self._do_greedy_packing = do_greedy_packing
 
     @property
     def fingerprint_fields(self) -> Tuple[str, ...]:
-        return (
+        fields = (
             "vocab_size",
             "pad_token_id",
             "eos_token_id",
@@ -877,6 +885,10 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
             "bos_token_id",
             "sequence_length",
         )
+        # For backwards compat, don't add this unless it's true.
+        if self._do_greedy_packing:
+            fields = fields + ("_do_greedy_packing",)
+        return fields
 
     @property
     def offsets(self) -> Tuple[Tuple[int, int], ...]:
@@ -929,7 +941,10 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
         return data
 
     def _get_instance_indices_path(self, source_path: PathOrStr) -> Path:
-        return self._get_indices_path(source_path, "instance-indices")
+        if self._do_greedy_packing:
+            return self._get_indices_path(source_path, "instance-indices", "greedily-packed")
+        else:
+            return self._get_indices_path(source_path, "instance-indices")
 
     def _write_instance_indices(self):
         paths_needed: List[PathOrStr] = []
@@ -955,6 +970,7 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
                         eos_token_id=self.eos_token_id,
                         dtype=self.dtype,
                         indices_dtype=self.indices_dtype,
+                        do_greedy_packing=self._do_greedy_packing,
                     )
                     futures.append(future)
 
@@ -962,10 +978,10 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
 
                 # Log results.
                 for path, future in zip(paths_needed, futures):
-                    _, total_instances = future.result()
+                    total_docs, total_instances = future.result()
                     log.info(
                         f"Created {total_instances:,d} instances of sequence length up to "
-                        f"{self.sequence_length} from '{path}'"
+                        f"{self.sequence_length} from {total_docs:,d} documents at '{path}'."
                     )
 
 
@@ -2335,6 +2351,10 @@ class NumpyDatasetConfig(Config):
     """
     Determines how long documents are handled with the packed FSL dataset.
     """
+    do_greedy_packing: Optional[bool] = False
+    """
+    Only valid for the padded FSL dataset.
+    """
 
     def validate(self):
         if self.name in (NumpyDatasetType.fsl, NumpyDatasetType.padded_fsl):
@@ -2506,6 +2526,10 @@ class NumpyDatasetConfig(Config):
                 raise OLMoConfigurationError(
                     "'interleaving_exempt_paths' is only valid for the interleaved FSL dataset"
                 )
+            if self.do_greedy_packing is not None:
+                raise OLMoConfigurationError(
+                    "'do_greedy_packing' is only valid for the padded FSL dataset"
+                )
             if self.source_mixture_config:
                 if label_mask_paths is not None:
                     raise OLMoConfigurationError(
@@ -2603,6 +2627,7 @@ class NumpyDatasetConfig(Config):
                 include_instance_metadata=self.include_instance_metadata,
                 instance_filter_config=self.instance_filter_config,
                 label_mask_paths=label_mask_paths,
+                do_greedy_packing=self.do_greedy_packing or False,
             )
         elif self.name == NumpyDatasetType.packed_fsl:
             if self.sequence_length is None:
@@ -2642,6 +2667,10 @@ class NumpyDatasetConfig(Config):
             if self.interleaving_exempt_paths is not None:
                 raise OLMoConfigurationError(
                     "'interleaving_exempt_paths' is only valid for the interleaved FSL dataset"
+                )
+            if self.do_greedy_packing is not None:
+                raise OLMoConfigurationError(
+                    "'do_greedy_packing' is only valid for the padded FSL dataset"
                 )
             dataset = NumpyPackedFSLDataset(
                 *paths,
@@ -2703,6 +2732,10 @@ class NumpyDatasetConfig(Config):
                 raise OLMoConfigurationError(
                     "'long_doc_strategy' is only a valid field for the packed FSL dataset"
                 )
+            if self.do_greedy_packing is not None:
+                raise OLMoConfigurationError(
+                    "'do_greedy_packing' is only valid for the padded FSL dataset"
+                )
 
             interleaving_exempt_paths = cast(
                 Optional[List[PathOrStr]], self.interleaving_exempt_paths
@@ -2761,6 +2794,10 @@ class NumpyDatasetConfig(Config):
             if self.tokenizer.bos_token_id is not None:
                 raise OLMoConfigurationError(
                     "'bos_token_id' is not yet supported for the VSL dataset"
+                )
+            if self.do_greedy_packing is not None:
+                raise OLMoConfigurationError(
+                    "'do_greedy_packing' is only valid for the padded FSL dataset"
                 )
             dataset = NumpyVSLDataset(
                 *paths,
