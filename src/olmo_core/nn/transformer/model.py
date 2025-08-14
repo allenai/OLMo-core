@@ -350,7 +350,6 @@ class Transformer(nn.Module):
         cu_doc_lens: Optional[torch.Tensor] = None
         doc_lens: Optional[torch.Tensor] = None
         cache_leftpad: Optional[torch.Tensor] = None
-        seq_lens: Optional[torch.Tensor] = None
 
         # Handle document length inputs
         if (doc_lens := kwargs.pop("doc_lens", None)) is not None and (
@@ -362,8 +361,6 @@ class Transformer(nn.Module):
         # Handle KV cache inputs for inference
         if use_cache:
             cache_leftpad = kwargs.pop("cache_leftpad", None)
-            if (seq_lens := kwargs.pop("seq_lens", None)) is None:
-                raise ValueError("seq_lens is required when use_cache=True")
 
         # Shard inputs and RoPE buffers on sequence dimension if using context parallelism.
         if (cp_load_balancer := self._cp_load_balancer) is not None:
@@ -399,9 +396,6 @@ class Transformer(nn.Module):
 
             if cache_leftpad is not None:
                 raise NotImplementedError("cache_leftpad is not supported with context parallelism")
-
-            if seq_lens is not None:
-                raise NotImplementedError("seq_lens is not supported with context parallelism")
 
             if cu_doc_lens is not None:
                 # NOTE: Can only shard properly here if 'input_ids' is flat, i.e. a single instance.
@@ -455,7 +449,6 @@ class Transformer(nn.Module):
                 assert max_doc_len is None, "max_doc_len must be None when using cache"
                 assert cu_doc_lens is None, "cu_doc_lens must be None when using cache"
                 all_block_kwargs["cache_leftpad"] = move_to_device(cache_leftpad, self.device)
-                all_block_kwargs["seq_lens"] = move_to_device(seq_lens, self.device)
                 all_block_kwargs["use_cache"] = use_cache
 
         return (

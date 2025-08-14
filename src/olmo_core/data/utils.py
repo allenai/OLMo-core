@@ -869,7 +869,7 @@ def pack_documents_into_instances(
 
 def attention_mask_to_cache_leftpad(
     attention_mask: torch.Tensor,
-) -> Tuple[torch.Tensor, torch.Tensor]:
+) -> torch.Tensor:
     """Convert a left-padding attention mask into a cache leftpad for Flash-Attention.
 
     The mask is expected to be a boolean or 0/1 tensor of shape ``(batch, seq_len)`` where
@@ -886,8 +886,6 @@ def attention_mask_to_cache_leftpad(
     if attention_mask.dtype != torch.bool:
         attention_mask = attention_mask != 0
 
-    _, T = attention_mask.shape
-
     # Verify prefix-padding property
     # Check that once we see a valid token (True), we don't see any padding tokens (False) after it
     prefix_ok = (attention_mask.cummax(dim=1).values & ~attention_mask).any().item() is False
@@ -899,10 +897,4 @@ def attention_mask_to_cache_leftpad(
 
     # Find the first True value in each row (where valid tokens start)
     cache_leftpad = attention_mask.int().argmax(dim=-1).int()  # (B,)
-    seq_lens = T - cache_leftpad  # (B,)
-
-    total_seqlen = cache_leftpad + seq_lens
-    if not torch.all(total_seqlen == total_seqlen[0]):
-        raise ValueError(f"All values in total_seqlen must be the same, but got: {total_seqlen}")
-
-    return cache_leftpad, seq_lens
+    return cache_leftpad

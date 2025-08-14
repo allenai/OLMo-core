@@ -206,18 +206,11 @@ class TransformerGenerationModule(GenerationModule):
         else:
             max_length = None  # Generate until EOS or stop tokens or OOM...
 
-        prefill_seq_lens = None
-        decode_seq_lens = None
         prefill_cache_leftpad = None
         if generation_config.use_cache:
             if attention_mask is None:
                 attention_mask = torch.ones_like(input_ids, dtype=torch.bool, device=self.device)
-            prefill_cache_leftpad, prefill_seq_lens = attention_mask_to_cache_leftpad(
-                attention_mask
-            )
-            prefill_cache_leftpad = prefill_cache_leftpad.to(self.device)
-            prefill_seq_lens = prefill_seq_lens.to(self.device).to(torch.int32)
-            decode_seq_lens = torch.ones(batch_size, dtype=torch.int32, device=self.device)
+            prefill_cache_leftpad = attention_mask_to_cache_leftpad(attention_mask).to(self.device)
 
         # Initialize/Reset the KV cache
         kv_cache_start_time = time.perf_counter()
@@ -244,7 +237,6 @@ class TransformerGenerationModule(GenerationModule):
                 if (is_first_forward or not generation_config.use_cache)
                 else generated[:, -1:]
             )
-            step_seq_lens = prefill_seq_lens if is_first_forward else decode_seq_lens
             cache_leftpad = (
                 prefill_cache_leftpad if is_first_forward and generation_config.use_cache else None
             )
@@ -256,7 +248,6 @@ class TransformerGenerationModule(GenerationModule):
                 logits_to_keep=1,
                 use_cache=generation_config.use_cache,
                 cache_leftpad=cache_leftpad if generation_config.use_cache else None,
-                seq_lens=step_seq_lens if generation_config.use_cache else None,
             )
             if self.device.type == "cuda":
                 torch.cuda.synchronize()
