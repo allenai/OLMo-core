@@ -35,6 +35,11 @@ log = logging.getLogger(__name__)
 
 
 def _get_transformer_config(model_arch: str, vocab_size: int) -> TransformerConfig:
+    if model_arch == "olmo2_7b_lc":
+        return TransformerConfig.olmo2_7B(
+                vocab_size=vocab_size,
+                rope_theta=8 * 10**6,
+        )
     transformer_configs = {
         "olmo2_190m": TransformerConfig.olmo2_190M,
         "olmo2_370m": TransformerConfig.olmo2_370M,
