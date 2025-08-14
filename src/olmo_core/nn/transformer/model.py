@@ -20,6 +20,7 @@ from torch.distributed import DeviceMesh
 from torch.distributed.fsdp import FSDPModule, MixedPrecisionPolicy, fully_shard
 from torch.distributed.tensor import Replicate, Shard
 from torch.distributed.tensor.parallel import RowwiseParallel, parallelize_module
+from torch.nn.attention.flex_attention import BlockMask
 
 from olmo_core.data.utils import get_cumulative_document_lengths
 from olmo_core.distributed.parallel import get_pp_mesh
@@ -34,6 +35,7 @@ from ..attention import (
     FusedAttention,
     RingAttentionLoadBalancer,
     RingAttentionLoadBalancerType,
+    get_flex_attn_causal_block_mask,
 )
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
@@ -196,6 +198,36 @@ class Transformer(nn.Module):
     def compile_enabled(self) -> bool:
         return self._compile_enabled
 
+    def _get_flex_attn_block_masks(
+        self,
+        seq_len: int,
+        device: Optional[torch.device] = None,
+        doc_lens: Optional[torch.Tensor] = None,
+    ) -> List[Optional[BlockMask]]:
+        if device is None:
+            device = self.device
+
+        block_masks_by_window_size = {}
+        block_masks = []
+        for block in self.blocks.values():
+            block = cast(TransformerBlock, block)
+            att = cast(Union[Attention, FusedAttention], block.attention)
+
+            block_mask = None
+            if att.use_flex:
+                # Reuse block masks across layers with the same window size
+                window_size = getattr(att, "window_size", None)
+                if window_size not in block_masks_by_window_size:
+                    block_masks_by_window_size[window_size] = get_flex_attn_causal_block_mask(
+                        seq_len, device, window_size, doc_lens
+                    )
+
+                block_mask = block_masks_by_window_size[window_size]
+
+            block_masks.append(block_mask)
+
+        return block_masks
+
     def get_rope_buffers(
         self, seq_len: int, device: Optional[torch.device] = None
     ) -> Dict[int, Optional[RoPEBuffers]]:
@@ -342,6 +374,9 @@ class Transformer(nn.Module):
         ) is not None:
             max_doc_len = max(max_doc_lens)
             cu_doc_lens = get_cumulative_document_lengths(doc_lens)
+        
+        block_masks = self._get_flex_attn_block_masks(S, self.device, doc_lens)
+        all_block_kwargs["block_masks"] = block_masks
 
         # Shard inputs and RoPE buffers on sequence dimension if using context parallelism.
         if (cp_load_balancer := self._cp_load_balancer) is not None:
