@@ -450,10 +450,19 @@ class Attention(AttentionBase):
             # IMPORTANT: The flash-attn kernel interprets cache_seqlens as absolute indices
             # within the KV cache sequence dimension. Our internal cache_seqlens tracks only
             # the number of valid tokens (excludes leftpad). Offset by cache_leftpad when present.
-            cache_seqlens_kernel = self.cache_seqlens
             if self.cache_leftpad is not None:
                 cache_seqlens_kernel = torch.add(self.cache_seqlens, self.cache_leftpad)
+            else:
+                cache_seqlens_kernel = self.cache_seqlens
 
+            # Assert that all values in cache_seqlens_kernel are the same
+            if not torch.all(cache_seqlens_kernel == cache_seqlens_kernel[0]):
+                breakpoint()
+                raise ValueError(
+                    f"All values in cache_seqlens_kernel must be the same, but got: {cache_seqlens_kernel}"
+                )
+
+            # Set cache_leftpad if it is provided and not already set
             if kv_cache_context.cache_leftpad is not None:
                 if self.cache_leftpad is not None:
                     raise RuntimeError("cache_leftpad is already set!")
@@ -475,9 +484,6 @@ class Attention(AttentionBase):
                 self.cache_leftpad = self.cache_leftpad.to(
                     device=self.cache_seqlens.device, dtype=torch.int32
                 )
-
-            if kv_cache_context.cache_leftpad is None:
-                breakpoint()
 
             att = dispatch_flash_attn_with_kvcache(
                 q,
