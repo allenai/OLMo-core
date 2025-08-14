@@ -3,7 +3,7 @@ import logging
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, cast
 
 import torch
 import torch.distributed as dist
@@ -33,6 +33,7 @@ from olmo_core.generate.generation_module.config import GenerationConfig
 from olmo_core.generate.sampling import select_next_token
 from olmo_core.generate.utils import selective_log_softmax
 from olmo_core.io import is_url, join_path, normalize_path
+from olmo_core.nn.attention import Attention
 from olmo_core.nn.transformer import Transformer, TransformerConfig
 from olmo_core.train.train_module.transformer.common import parallelize_model
 from olmo_core.train.train_module.transformer.config import TransformerDataParallelConfig
@@ -121,14 +122,14 @@ class TransformerGenerationModule(GenerationModule):
     ):
         for block in self.model.blocks.values():
             if hasattr(block.attention, "reset_kv_cache"):
-                block.attention.reset_kv_cache(  # type: ignore
+                cast(Attention, block.attention).reset_kv_cache(
                     use_cache=use_cache, batch_size=batch_size, max_seq_len=max_seq_len, dtype=dtype
                 )
 
     def free_kv_cache(self):
         for block in self.model.blocks.values():
             if hasattr(block.attention, "free_kv_cache"):
-                block.attention.free_kv_cache()  # type: ignore
+                cast(Attention, block.attention).free_kv_cache()
 
     @torch.inference_mode()
     def model_forward(self, input_ids: torch.Tensor, **kwargs):
