@@ -280,8 +280,6 @@ class TransformerConfig(Config):
     # BLT config
     local_encoder: Optional[LocalEncoderConfig] = None
     local_decoder: Optional[LocalDecoderConfig] = None
-    # custom boundary predictor extension to BLT
-    add_boundary_predictor: bool = False
     # teacher config for distillation
     teacher_config: "TransformerConfig | None" = None
     share_blocks_between_teacher_and_student: bool = False
@@ -381,7 +379,6 @@ class TransformerConfig(Config):
                 block_overrides=self.block_overrides,
                 local_encoder=self.local_encoder,
                 local_decoder=self.local_decoder,
-                add_boundary_predictor=self.add_boundary_predictor,
                 **kwargs,
             )
         else:
@@ -925,12 +922,25 @@ class TransformerConfig(Config):
     def hnet_1stage_L(cls, vocab_size=256, **kwargs):
         return cls.hnet_like(
             d_model=1536,
-            vocab_size=256,
+            vocab_size=vocab_size,
             n_layers=22,
             n_heads=16,
             local_encoder_n_layers=4,
             local_decoder_n_layers=4,
             local_d_model=1024,
+        )
+
+    @classmethod
+    def hnet_1stage_XL(cls, vocab_size=256, **kwargs):
+        return cls.hnet_like(
+            d_model=2048,
+            vocab_size=vocab_size,
+            n_layers=24,
+            n_heads=16,
+            local_encoder_n_layers=4,
+            local_decoder_n_layers=4,
+            local_d_model=1024,
+            hidden_size_multiple_of=128,
         )
 
     @classmethod
@@ -1160,6 +1170,7 @@ class TransformerConfig(Config):
             block_config=local_block,
             add_norm_after_last_block=True,
             pooling="hnet",
+            boundary_predictor="hnet",
         )
         local_decoder = LocalDecoderConfig(
             d_model=local_d_model,

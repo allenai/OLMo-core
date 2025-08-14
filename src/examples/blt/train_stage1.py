@@ -232,7 +232,6 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         local_decoder=local_decoder,
         teacher_config=teacher_model_config,
         share_blocks_between_teacher_and_student=True,
-        add_boundary_predictor=True,
         freeze_params=[
             "blocks*" # freeze inner transformer layers
         ]

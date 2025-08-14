@@ -5,6 +5,7 @@ from typing import Optional, cast
 from einops import repeat, rearrange
 import torch
 import torch.nn as nn
+from torch.nn import functional as F
 from torch.distributed import DeviceMesh
 from torch.distributed.fsdp import FSDPModule, MixedPrecisionPolicy, fully_shard
 from torch.nn.attention.flex_attention import flex_attention, BlockMask
@@ -22,8 +23,22 @@ from .embed import add_hash_embeddings
 flex_attention_comp = torch.compile(flex_attention)
 
 
+class STE(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x):
+        return torch.ones_like(x)
+
+    @staticmethod
+    def backward(ctx, grad_output):  # type: ignore
+        grad_x = grad_output
+        return grad_x
+
+def ste_func(x: torch.Tensor) -> torch.Tensor:
+    return STE.apply(x)  # type: ignore
+
+
 # 2-layer MLP as in DTP
-class BoundaryPredictor(nn.Module):
+class DTPBoundaryPredictor(nn.Module):
     def __init__(self, d_model: int, init_device: str = "cpu"):
         super().__init__()
         self.d_model = d_model
@@ -35,8 +50,38 @@ class BoundaryPredictor(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.mlp(x)
+        return F.sigmoid(self.mlp(x))
 
+
+# cosine-similarity based boundary predictor as in H-Net
+class HNetBoundaryPredictor(nn.Module):
+    def __init__(self, d_model: int, init_device: str = "cpu"):
+        super().__init__()
+        self.d_model = d_model
+        self.q_proj_layer = nn.Linear(d_model, d_model, bias=False, device=init_device)
+        self.k_proj_layer = nn.Linear(d_model, d_model, bias=False, device=init_device)
+        with torch.no_grad():
+            self.q_proj_layer.weight.copy_(torch.eye(d_model))
+            self.k_proj_layer.weight.copy_(torch.eye(d_model))
+        
+        # TODO(benjaminm): for training with this: does this work / where to make sure not reinit?
+        # self.q_proj_layer.weight._no_reinit = True
+        # self.k_proj_layer.weight._no_reinit = True
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        cos_sim = torch.einsum(
+            "b l d, b l d -> b l",
+            F.normalize(self.q_proj_layer(hidden_states[:, :-1]), dim=-1),
+            F.normalize(self.k_proj_layer(hidden_states[:, 1:]), dim=-1),
+        )
+        boundary_prob = torch.clamp(((1 - cos_sim) / 2), min=0.0, max=1.0)
+        PAD_PROB = 1.0
+        boundary_prob = F.pad(boundary_prob, (1, 0), "constant", PAD_PROB)
+        
+        return boundary_prob
+
+
+    
 
 class CrossAttention(nn.Module):
     # TODO(benjaminm): make norm_eps config arg without default?
@@ -99,6 +144,7 @@ class LocalEncoder(nn.Module):
             add_norm_after_last_block: bool,
             add_norm_after_pool: bool,
             add_out_projection: bool,
+            boundary_predictor: Optional[str] = None,
             blt_k: Optional[int] = None,
             blt_compat: bool = False,  # for compat with BLT checkpoints
             init_device: str = "cpu",
@@ -120,8 +166,16 @@ class LocalEncoder(nn.Module):
         self.add_norm_after_pool = add_norm_after_pool
         self.add_out_projection = add_out_projection
         self.init_device = init_device
+        self.boundary_predictor = boundary_predictor
         self.blt_k = blt_k
         self.blt_compat = blt_compat
+
+        if self.boundary_predictor == "dtp":
+            self.boundary_predictor_module = DTPBoundaryPredictor(d_model, init_device=init_device)
+        elif self.boundary_predictor == "hnet":
+            self.boundary_predictor_module = HNetBoundaryPredictor(d_model, init_device=init_device)
+        else:
+            self.boundary_predictor_module = None
 
         self.embedding = nn.Embedding(vocab_size, d_model, device=init_device)
 
@@ -321,15 +375,21 @@ class LocalEncoder(nn.Module):
         h: torch.Tensor,
         patch_lens: torch.Tensor,
         boundary_probs: torch.Tensor | None = None,
+        smooth: bool = False,
+        teacher_force_boundaries: bool = True,
         block_size: int = 256,
         headdim: int = 32,
         epsilon=1e-3,
     ):
         from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
 
-        if boundary_probs is not None:
+        if boundary_probs is None and not teacher_force_boundaries:
+            if boundary_probs is None:
+                raise ValueError("Boundary probabilities must be provided for if teacher_force_boundaries=False.")
+
+        if smooth and not teacher_force_boundaries:
             # NOT IN HNET! Add pooling to the encoder.
-            p = boundary_probs.float().clip(min=epsilon, max=1.0 - epsilon)
+            p = boundary_probs.float().clip(min=epsilon, max=1.0 - epsilon)  # type: ignore
             dt = torch.log(1 / (1 - p)).to(h.dtype)
             x = (h / dt[..., None])
 
@@ -354,10 +414,24 @@ class LocalEncoder(nn.Module):
         else:
             pool_out = h
 
+        if teacher_force_boundaries:
+            index = (torch.cumsum(patch_lens, dim=1) - 1).unsqueeze(-1).expand(-1, -1, h.shape[-1])
+        else:
+            boundary_mask = boundary_probs > 0.5  # type: ignore
+
+            L = pool_out.shape[1]
+            token_idx = (
+                torch.arange(L, device=pool_out.device)[None, :] + (~boundary_mask).long() * L
+            )
+            seq_sorted_indices = torch.argsort(token_idx, dim=1)
+            index = seq_sorted_indices[:, :patch_lens.shape[1], None].expand(
+                -1, -1, pool_out.shape[-1]
+            )
+
         reduced_h = torch.gather(
             pool_out,
             dim=1,
-            index=(torch.cumsum(patch_lens, dim=1) - 1).unsqueeze(-1).expand(-1, -1, h.shape[-1]),
+            index=index,
         )
         if self.padding_parameters is not None:
             padded_h = torch.cat(
@@ -425,6 +499,8 @@ class LocalEncoder(nn.Module):
         patch_lens: torch.Tensor,
         patch_ids: torch.Tensor,
         cross_attn_mask: BlockMask | None,
+        smooth: bool = False,
+        teacher_force_boundaries: bool = True,
         boundary_probs: torch.Tensor | None = None,
     ):
         if self.pooling == "cross_attn":
@@ -439,6 +515,8 @@ class LocalEncoder(nn.Module):
                 h=h,
                 patch_lens=patch_lens,
                 boundary_probs=boundary_probs,
+                smooth=smooth,
+                teacher_force_boundaries=teacher_force_boundaries,
             )
         else:
             raise ValueError(f"Unknown pooling method: {self.pooling}. Supported methods are 'cross_attn' and 'hnet'.")
@@ -457,8 +535,10 @@ class LocalEncoder(nn.Module):
         patch_lens: torch.Tensor,
         patch_ids: torch.Tensor,
         cross_attn_mask: BlockMask | None,
-        boundary_probs: torch.Tensor | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+        smooth: bool = False,
+        teacher_force_boundaries: bool = True,
+        boundary_predictor_backprop_through_encoder: bool = True,
+    ) -> tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
         embeddings = self.embedding(tokens)
         if self.add_hash_embeddings:
             assert (
@@ -490,6 +570,14 @@ class LocalEncoder(nn.Module):
         if self.post_last_block_norm is not None:
             h = self.post_last_block_norm(h)
 
+        if self.boundary_predictor_module is not None:
+            if boundary_predictor_backprop_through_encoder:
+                boundary_probs = self.boundary_predictor_module(h)
+            else:
+                boundary_probs = self.boundary_predictor_module(h.detach())
+        else:
+            boundary_probs = None
+
         # BLT: downsample + cross attn
         # HNet: select + padding
         patch_embeddings = self.pool(
@@ -497,10 +585,12 @@ class LocalEncoder(nn.Module):
             patch_lens=patch_lens,
             patch_ids=patch_ids,
             cross_attn_mask=cross_attn_mask,
+            smooth=smooth,
+            teacher_force_boundaries=teacher_force_boundaries,
             boundary_probs=boundary_probs,
         )
 
-        return h, patch_embeddings
+        return h, patch_embeddings, boundary_probs
 
 
 class LocalDecoder(nn.Module):
@@ -629,9 +719,24 @@ class LocalDecoder(nn.Module):
         # no substantial performance difference in the grand scheme.
         if boundary_probs is None:
             p = torch.full((h_patch.shape[0], h_patch.shape[1]), 1.0 - epsilon, device=h_patch.device, dtype=torch.float32)
+
+            boundary_mask = torch.zeros(
+                (embeds.shape[0], embeds.shape[1]), dtype=torch.bool, device=embeds.device
+            )
+            boundary_mask = boundary_mask.scatter(
+                dim=1,
+                index=torch.cumsum(patch_lens, dim=1) - 1,
+                src=torch.ones_like(patch_lens, dtype=torch.bool),
+            )
         else:
-            # assumes patch lens match boundary probs
-            seq_sorted_indices = torch.cumsum(patch_lens, dim=1) - 1
+            boundary_mask = boundary_probs > 0.5
+            B, L = boundary_mask.shape
+
+            token_idx = (
+                torch.arange(L, device=patch_embeds.device)[None, :]
+                + (~boundary_mask).long() * L
+            )
+            seq_sorted_indices = torch.argsort(token_idx, dim=1)
             p = torch.gather(boundary_probs, dim=1, index=seq_sorted_indices).float().clip(min=epsilon, max=1 - epsilon)
 
         dt = torch.log(1 / (1 - p)).to(h_patch.dtype)
@@ -657,15 +762,6 @@ class LocalDecoder(nn.Module):
         depool_out = rearrange(depool_out, "b l h p -> b l (h p)")
         depool_out = cast(torch.Tensor, depool_out)
 
-        boundary_mask = torch.zeros(
-            (embeds.shape[0], embeds.shape[1]), dtype=torch.bool, device=embeds.device
-        )
-        boundary_mask = boundary_mask.scatter(
-            dim=1,
-            index=torch.cumsum(patch_lens, dim=1) - 1,
-            src=torch.ones_like(patch_lens, dtype=torch.bool),
-        )
-
         plug_back_idx = torch.cumsum(boundary_mask, dim=1) - 1
         depool_out = torch.gather(
             depool_out,
@@ -673,7 +769,17 @@ class LocalDecoder(nn.Module):
             index=plug_back_idx.unsqueeze(-1).expand(-1, -1, self.d_model),
         )
 
-        h = depool_out + embeds
+        if boundary_probs is not None:
+            selected_boundary_probs = torch.where(
+                boundary_probs > 0.5,
+                boundary_probs,
+                1 - boundary_probs,
+            )
+            depool_out_modulated = depool_out * ste_func(selected_boundary_probs).unsqueeze(-1)
+        else:
+            depool_out_modulated = depool_out
+
+        h = depool_out_modulated + embeds
 
         for block_idx in range(self.n_layers):
             block = self.blocks[str(block_idx)]

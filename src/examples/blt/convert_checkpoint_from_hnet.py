@@ -38,7 +38,10 @@ HNET_TO_OLMO_CORE_MAPPINGS: Dict[str, str] = {
     },
     # Layer norms.
     f"backbone.encoder.layers.{LOCAL_ENCODER_LAYER}.norm1.weight": f"local_encoder.blocks.{LOCAL_ENCODER_LAYER}.mamba_norm.weight",
-    "backbone.encoder.rmsnorm.weight": "local_encoder.final_norm.weight",
+    "backbone.encoder.rmsnorm.weight": "local_encoder.post_last_block_norm.weight",
+    # Boundary predictor
+    "backbone.routing_module.q_proj_layer.weight": "local_encoder.boundary_predictor_module.q_proj_layer.weight",
+    "backbone.routing_module.k_proj_layer.weight": "local_encoder.boundary_predictor_module.k_proj_layer.weight",
     ## GLOBAL (LATENT) TRANSFORMER
     f"backbone.main_network.main_network.layers.{LAYER}.mixer.Wqkv.weight": f"blocks.{LAYER}.attention.w_qkv.weight",
     f"backbone.main_network.main_network.layers.{LAYER}.mlp.fc2.weight": f"blocks.{LAYER}.feed_forward.w2.weight",
@@ -51,9 +54,14 @@ HNET_TO_OLMO_CORE_MAPPINGS: Dict[str, str] = {
     "backbone.residual_proj.bias": "local_decoder.in_projection.bias",
     # Mamba layers.
     **{
-        f"backbone.encoder.layers.{LOCAL_DECODER_LAYER}.mixer.{k}": f"local_encoder.blocks.{LOCAL_DECODER_LAYER}.mamba.{k}"
+        f"backbone.decoder.layers.{LOCAL_DECODER_LAYER}.mixer.{k}": f"local_decoder.blocks.{LOCAL_DECODER_LAYER}.mamba.{k}"
         for k in ["dt_bias", "A_log", "D", "in_proj.weight", "conv1d.weight", "conv1d.bias", "norm.weight", "out_proj.weight"]
     },
+    # Layer norms.
+    f"backbone.decoder.layers.{LOCAL_DECODER_LAYER}.norm1.weight": f"local_decoder.blocks.{LOCAL_DECODER_LAYER}.mamba_norm.weight",
+    # Final layer norm and lm head.
+    "backbone.decoder.rmsnorm.weight": "lm_head.norm.weight",
+    "lm_head.weight": "lm_head.w_out.weight",
 }
 # handle HNET fused parameters
 HNET_TO_OLMO_CORE_TEMPLATE_MAPPINGS: Dict[str, StateMappingTemplate] = {
@@ -81,6 +89,7 @@ HNET_TO_OLMO_CORE_TEMPLATE_MAPPINGS: Dict[str, StateMappingTemplate] = {
 def _get_transformer_config(model_arch: str) -> TransformerConfig:
     transformer_configs = {
         "hnet_1stage_l": TransformerConfig.hnet_1stage_L,
+        "hnet_1stage_xl": TransformerConfig.hnet_1stage_XL,
     }
 
     return transformer_configs[model_arch.lower()]()

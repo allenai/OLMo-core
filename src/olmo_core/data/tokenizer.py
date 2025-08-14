@@ -142,6 +142,7 @@ class TokenizerConfig(Config):
 @dataclass
 class ByteTokenizerConfig(TokenizerConfig):
     special_tokens: list[str] = field(default_factory=lambda: [])
+    special_tokens_first: bool = True
     original_identifier: Optional[str] = None
 
     @classmethod
@@ -190,6 +191,24 @@ class ByteTokenizerConfig(TokenizerConfig):
             original_identifier=TokenizerConfig.dolma2().identifier,
         )
     
+    @classmethod
+    def hnet(cls) -> "ByteTokenizerConfig":
+        special_tokens = [
+            "<bos>",
+            "<eos>",
+        ]
+
+        return cls(
+            vocab_size=256,
+            special_tokens=special_tokens,
+            special_tokens_first=False,
+            bos_token_id=254,
+            pad_token_id=255,
+            eos_token_id=255,
+            # slightly hacky, but this must match the dataset tokenizer, so dolma2
+            original_identifier=TokenizerConfig.dolma2().identifier,
+        )
+    
     def build(self):
         return ByteTokenizer(self)
 
@@ -198,13 +217,18 @@ class ByteTokenizer:
     def __init__(self, tokenizer_config: ByteTokenizerConfig):
         self.config = tokenizer_config
         self.hf_tokenizer = AutoTokenizer.from_pretrained(tokenizer_config.original_identifier)
-        self.offset = len(tokenizer_config.special_tokens)
+        if self.config.special_tokens_first:
+            self.offset = len(tokenizer_config.special_tokens)
+            self.special_tokens_offset = 0
+        else:
+            self.offset = 0
+            self.special_tokens_offset = self.config.vocab_size - len(tokenizer_config.special_tokens)
 
         self.byte_sequences = {}
     
         for key, value in self.hf_tokenizer.get_vocab().items():
             if key in self.config.special_tokens:
-                byte_sequence = [self.config.special_tokens.index(key)]
+                byte_sequence = [self.special_tokens_offset + self.config.special_tokens.index(key)]
             else:
                 byte_sequence = [self.offset + i for i in blt_utils.chars_to_bytes(key)]
 
