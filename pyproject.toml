@@ -22,7 +22,6 @@ dependencies = [
     "omegaconf",
     "safetensors",
     "importlib_resources",
-    "ai2-olmo-eval==0.8.5",
 ]
 
 [project.urls]
@@ -61,7 +60,7 @@ dev = [
 ]
 beaker = ["beaker-py>=1.36.0,<2.0", "GitPython>=3.0,<4.0"]
 comet = ["comet_ml"]
-eval = ["ai2-olmo-eval==0.8.4"]
+eval = ["ai2-olmo-eval==0.8.5"]
 torchao = ["torchao"]
 transformers = ["transformers"]
 wandb = ["wandb"]
