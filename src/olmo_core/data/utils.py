@@ -886,6 +886,8 @@ def attention_mask_to_cache_leftpad(
     if attention_mask.dtype != torch.bool:
         attention_mask = attention_mask != 0
 
+    _, T = attention_mask.shape
+
     # Verify prefix-padding property
     # Check that once we see a valid token (True), we don't see any padding tokens (False) after it
     prefix_ok = (attention_mask.cummax(dim=1).values & ~attention_mask).any().item() is False
@@ -897,5 +899,10 @@ def attention_mask_to_cache_leftpad(
 
     # Find the first True value in each row (where valid tokens start)
     cache_leftpad = attention_mask.int().argmax(dim=-1).int()  # (B,)
-    seq_lens = attention_mask.size(-1) - cache_leftpad  # (B,)
+    seq_lens = T - cache_leftpad  # (B,)
+
+    total_seqlen = cache_leftpad + seq_lens
+    if not torch.all(total_seqlen == total_seqlen[0]):
+        raise ValueError(f"All values in total_seqlen must be the same, but got: {total_seqlen}")
+
     return cache_leftpad, seq_lens
