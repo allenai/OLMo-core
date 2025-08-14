@@ -252,6 +252,14 @@ class SFTConfig(Config):
                 use_flash=True,
                 rope_theta=8 * 10**6,
             )
+        elif model_name == "olmo2.5-7b":
+            model = TransformerConfig.olmo2_7B(vocab_size=tokenizer_config.padded_vocab_size())
+            model.block.attention.sliding_window = SlidingWindowAttentionConfig(
+                force_full_attention_on_first_layer=False,
+                force_full_attention_on_last_layer=True,
+                pattern=[4096, 4096, 4096, -1],
+            )
+            model.block.attention.use_flash = True
         elif model_name == "olmo3-7b":
             model = TransformerConfig.olmo2_7B(  # Based on https://github.com/allenai/OLMo-core/pull/310/files#diff-03f6a1f5db18fc4be7a243d8168698ae674cd50b2866253bcdadba5d48590b3dR48
                 vocab_size=tokenizer_config.padded_vocab_size(),
