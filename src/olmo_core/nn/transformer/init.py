@@ -134,10 +134,10 @@ class InitMethod(StrEnum):
         self._init_linear(m.w_out, std=std, generator=generator)
         
         if hasattr(m, 'sinks') and m.sinks is not None:
-            head_dim = d_model // getattr(m, 'n_heads', 1)
-            sink_std = 1.0 / (head_dim ** 0.5)
+            # head_dim = d_model // getattr(m, 'n_heads', 1)
+            # sink_std = 1.0 / (head_dim ** 0.5)
             if isinstance(m.sinks, nn.Parameter):
-                _apply_init(nn.init.normal_, m.sinks.data, mean=0.0, std=sink_std, generator=generator)
+                _apply_init(nn.init.normal_, m.sinks.data, mean=0.0, std=std, generator=generator)
 
     def init_feed_forward(
         self,
