@@ -175,6 +175,12 @@ def dispatch_ring_flash_attn(
         if local_k_slice is not None:
             raise RuntimeError(f"'local_k_slice' is invalid for {strategy} load balancing strategy")
 
+        if window_size != (-1, -1):
+            # See https://github.com/zhuzilin/ring-flash-attention/issues/35
+            raise RuntimeError(
+                f"SWA is currently not supported for {strategy} load balancing strategy"
+            )
+
         if cu_seqlens is not None and max_seqlen is not None:
             out = ring_flash_attn.zigzag_ring_flash_attn_varlen_func(
                 _flatten_batch_dim(q),

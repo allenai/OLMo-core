@@ -241,7 +241,7 @@ class TransformerPipelineTrainModule(TrainModule):
         del labels
         return output
 
-    def on_attach(self):
+    def pre_train(self):
         # Validate batch size.
         dp_ws = get_world_size(self.trainer.dp_process_group)
         if self.trainer.global_batch_size % (self.rank_microbatch_size * dp_ws) != 0:

@@ -1,4 +1,5 @@
 import logging
+from collections import defaultdict
 from functools import cached_property
 from typing import (
     TYPE_CHECKING,
@@ -109,7 +110,9 @@ class Transformer(nn.Module):
         self.n_attn_heads = block.attention.n_heads
         self.dtype = dtype
 
-        self.embeddings = nn.Embedding(vocab_size, d_model, dtype=dtype, device=init_device)
+        self.embeddings = nn.Embedding(
+            vocab_size, d_model, dtype=dtype, device=init_device
+        )
         self.blocks = nn.ModuleDict()
         for block_idx in range(n_layers):
             block_config = block
@@ -199,14 +202,19 @@ class Transformer(nn.Module):
 
     def get_rope_buffers(
         self, seq_len: int, device: Optional[torch.device] = None
-    ) -> Optional[RoPEBuffers]:
+    ) -> Dict[int, Optional[RoPEBuffers]]:
+        """
+        Get the RoPE buffers to pass to each layer.
+        """
         if device is None:
             device = self.device
-        for block in self.blocks.values():
+        rope_buffers = {}
+        for key, block in self.blocks.items():
             rope = cast(Optional[RotaryEmbeddingBase], block.attention.rope)  # type: ignore
-            if rope is not None:
-                return rope.get_buffers(seq_len, device)
-        return None
+            rope_buffers[int(key)] = (
+                None if rope is None else rope.get_buffers(seq_len, device)
+            )
+        return rope_buffers
 
     @torch.no_grad()
     def init_weights(
@@ -241,7 +249,10 @@ class Transformer(nn.Module):
 
         if self.embeddings is not None:
             self.init_method.init_embeddings(
-                self.embeddings, d_model=self.d_model, std=self.init_std, generator=generator
+                self.embeddings,
+                d_model=self.d_model,
+                std=self.init_std,
+                generator=generator,
             )
 
         for block in self.blocks.values():
@@ -291,7 +302,10 @@ class Transformer(nn.Module):
 
         if self.lm_head is not None:
             self.init_method.init_final_w_out(
-                self.lm_head.w_out, d_model=self.d_model, std=self.init_std, generator=generator
+                self.lm_head.w_out,
+                d_model=self.d_model,
+                std=self.init_std,
+                generator=generator,
             )
 
         return generator
@@ -309,13 +323,19 @@ class Transformer(nn.Module):
         logits_to_keep: Union[int, torch.Tensor] = 0,
         use_cache: bool = False,
         **kwargs,
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any], Dict[str, Any]]:
+    ) -> Tuple[
+        torch.Tensor,
+        Optional[torch.Tensor],
+        Dict[str, Any],
+        Dict[int, Dict[str, Any]],
+        Dict[str, Any],
+    ]:
         # NOTE: with pipeline parallelism input_ids might actually be an intermediate output,
         # so we have to be careful here.
         B, S = input_ids.shape[:2]
 
-        block_kwargs: Dict[str, Any] = {}
-
+        all_block_kwargs: Dict[str, Any] = {}
+        per_block_kwargs: Dict[int, Dict[str, Any]] = defaultdict(dict)
         lm_head_kwargs: Dict[str, Any] = dict(
             ignore_index=ignore_index,
             loss_reduction=loss_reduction,
@@ -327,7 +347,7 @@ class Transformer(nn.Module):
         if loss_div_factor is not None:
             loss_div_factor = move_to_device(loss_div_factor, self.device)
             lm_head_kwargs["loss_div_factor"] = loss_div_factor
-            block_kwargs["loss_div_factor"] = loss_div_factor
+            all_block_kwargs["loss_div_factor"] = loss_div_factor
 
         # Prepare document length inputs.
         max_doc_len: Optional[int] = None
@@ -357,23 +377,25 @@ class Transformer(nn.Module):
             keys = ["input_ids"]
 
             # NOTE: initialize buffer(s) on CPU to avoid possible host-device sync when sharding.
-            rope_buffers = self.get_rope_buffers(S, torch.device("cpu"))
-            if rope_buffers is not None:
-                if rope_buffers.pos_sin is not None:
-                    inputs.append(rope_buffers.pos_sin)
-                    seq_dims.append(0)
-                    pad_values.append(0.0)
-                    keys.append("pos_sin")
-                if rope_buffers.pos_cos is not None:
-                    inputs.append(rope_buffers.pos_cos)
-                    seq_dims.append(0)
-                    pad_values.append(0.0)
-                    keys.append("pos_cos")
-                if rope_buffers.freqs_cis is not None:
-                    inputs.append(rope_buffers.freqs_cis)
-                    seq_dims.append(0)
-                    pad_values.append(0.0)
-                    keys.append("freqs_cis")
+            for block_idx, rope_buffers in self.get_rope_buffers(
+                S, torch.device("cpu")
+            ).items():
+                if rope_buffers is not None:
+                    if rope_buffers.pos_sin is not None:
+                        inputs.append(rope_buffers.pos_sin)
+                        seq_dims.append(0)
+                        pad_values.append(0.0)
+                        keys.append(f"block_{block_idx}.pos_sin")
+                    if rope_buffers.pos_cos is not None:
+                        inputs.append(rope_buffers.pos_cos)
+                        seq_dims.append(0)
+                        pad_values.append(0.0)
+                        keys.append(f"block_{block_idx}.pos_cos")
+                    if rope_buffers.freqs_cis is not None:
+                        inputs.append(rope_buffers.freqs_cis)
+                        seq_dims.append(0)
+                        pad_values.append(0.0)
+                        keys.append(f"block_{block_idx}.freqs_cis")
 
             if labels is not None:
                 inputs.append(labels)
@@ -382,10 +404,14 @@ class Transformer(nn.Module):
                 keys.append("labels")
 
             if cache_leftpad is not None:
-                raise NotImplementedError("cache_leftpad is not supported with context parallelism")
+                raise NotImplementedError(
+                    "cache_leftpad is not supported with context parallelism"
+                )
 
             if seq_lens is not None:
-                raise NotImplementedError("seq_lens is not supported with context parallelism")
+                raise NotImplementedError(
+                    "seq_lens is not supported with context parallelism"
+                )
 
             if cu_doc_lens is not None:
                 # NOTE: Can only shard properly here if 'input_ids' is flat, i.e. a single instance.
@@ -406,7 +432,8 @@ class Transformer(nn.Module):
                     length_multiple=16,
                 )
                 for key, value in additional_inputs.items():
-                    block_kwargs[key] = move_to_device(value, self.device)
+                    all_block_kwargs[key] = move_to_device(value, self.device)
+
             else:
                 inputs = cp_load_balancer.batch_shard(
                     inputs=inputs,
@@ -415,10 +442,17 @@ class Transformer(nn.Module):
                 )
 
             for key, value in zip(keys, inputs):
-                block_kwargs[key] = move_to_device(value, self.device)
+                if key.startswith("block_"):
+                    block_key, key = key.split(".", 1)
+                    block_idx = int(block_key.replace("block_", ""))
+                    per_block_kwargs[block_idx][key] = move_to_device(
+                        value, self.device
+                    )
+                else:
+                    all_block_kwargs[key] = move_to_device(value, self.device)
 
-            input_ids = block_kwargs.pop("input_ids")
-            labels = block_kwargs.pop("labels", None)
+            input_ids = all_block_kwargs.pop("input_ids")
+            labels = all_block_kwargs.pop("labels", None)
         else:
             input_ids = move_to_device(input_ids, self.device)
             labels = move_to_device(labels, self.device)
@@ -427,19 +461,24 @@ class Transformer(nn.Module):
             if not use_cache:
                 block_kwargs["max_doc_len"] = max_doc_len
                 block_kwargs["cu_doc_lens"] = move_to_device(cu_doc_lens, self.device)
-                assert not cache_leftpad, "cache_leftpad must be False when using cu_doc_lens"
+                assert not cache_leftpad, (
+                    "cache_leftpad must be False when using cu_doc_lens"
+                )
             else:
                 # When using cache, pass cache_leftpad and seq_lens instead of cu_doc_lens
                 assert max_doc_len is None, "max_doc_len must be None when using cache"
                 assert cu_doc_lens is None, "cu_doc_lens must be None when using cache"
-                block_kwargs["cache_leftpad"] = move_to_device(cache_leftpad, self.device)
+                block_kwargs["cache_leftpad"] = move_to_device(
+                    cache_leftpad, self.device
+                )
                 block_kwargs["seq_lens"] = move_to_device(seq_lens, self.device)
                 block_kwargs["use_cache"] = use_cache
 
         return (
             input_ids,
             labels,
-            block_kwargs,
+            all_block_kwargs,
+            per_block_kwargs,
             lm_head_kwargs,
         )
 
@@ -476,7 +515,13 @@ class Transformer(nn.Module):
 
         :returns: The logits if ``labels`` is ``None`` or the losses if ``labels`` is not ``None``.
         """
-        input_ids, labels, block_kwargs, lm_head_kwargs = self._prepare_inputs(
+        (
+            input_ids,
+            labels,
+            all_block_kwargs,
+            per_block_kwargs,
+            lm_head_kwargs,
+        ) = self._prepare_inputs(
             input_ids,
             labels,
             attention_mask=attention_mask,
@@ -495,11 +540,13 @@ class Transformer(nn.Module):
         h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
 
         # Run each block.
-        for block in self.blocks.values():
+        for block_key, block in self.blocks.items():
+            block_idx = int(block_key)
+            block_kwargs = per_block_kwargs.get(block_idx, {})
             # Mark sizes as dynamic for torch.compile().
             if self.compile_enabled:
                 mark_dynamic(h, (0, 1), strict=False)
-            h = block(h, **block_kwargs)
+            h = block(h, **all_block_kwargs, **block_kwargs)
 
         # Get final logits but again pass-through in case of pipeline parallelism.
         if self.lm_head is not None:
@@ -571,7 +618,9 @@ class Transformer(nn.Module):
         # Apply tensor/sequence parallelism to every transformer block.
         for block in self.blocks.values():
             block = cast(TransformerBlockBase, block)
-            block.apply_tp(tp_mesh, input_layout=Shard(1), float8_enabled=float8_enabled)
+            block.apply_tp(
+                tp_mesh, input_layout=Shard(1), float8_enabled=float8_enabled
+            )
 
         if self.lm_head is not None:
             self.lm_head.apply_tp(tp_mesh, input_layouts=(Shard(1), Replicate()))
@@ -579,7 +628,12 @@ class Transformer(nn.Module):
         self._tp_enabled = True
         self._tp_mesh = tp_mesh
 
-    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType):
+    def apply_cp(
+        self,
+        cp_mesh: DeviceMesh,
+        load_balancer: RingAttentionLoadBalancerType,
+        head_stride: int = 1,
+    ):
         """
         Prepare the model for context-parallelism (CP).
 
@@ -588,7 +642,9 @@ class Transformer(nn.Module):
         """
         self._cp_load_balancer = load_balancer.build(cp_mesh)
         for block in self.blocks.values():
-            cast(TransformerBlockBase, block).apply_cp(cp_mesh, load_balancer)
+            cast(TransformerBlockBase, block).apply_cp(
+                cp_mesh, load_balancer, head_stride=head_stride
+            )
         if self.lm_head is not None:
             self.lm_head.apply_cp(cp_mesh, load_balancer)
 
@@ -615,9 +671,13 @@ class Transformer(nn.Module):
 
         if mode == TransformerActivationCheckpointingMode.budget:
             if activation_memory_budget is None:
-                raise ValueError("'activation_memory_budget' is required for 'budget' mode")
+                raise ValueError(
+                    "'activation_memory_budget' is required for 'budget' mode"
+                )
             if activation_memory_budget < 0 or activation_memory_budget > 1:
-                raise ValueError("'activation_memory_budget' must be in the range [0, 1]")
+                raise ValueError(
+                    "'activation_memory_budget' must be in the range [0, 1]"
+                )
             torch._functorch.config.activation_memory_budget = activation_memory_budget
             return
 
@@ -631,7 +691,10 @@ class Transformer(nn.Module):
         ):
             raise ValueError("'block_interval' is required for 'selected_blocks' mode")
 
-        if mode == TransformerActivationCheckpointingMode.selected_modules and modules is None:
+        if (
+            mode == TransformerActivationCheckpointingMode.selected_modules
+            and modules is None
+        ):
             raise ValueError("'modules' is required for 'selected_modules' mode")
 
         # TODO: only preserve RNG state if dropout is active
@@ -661,7 +724,9 @@ class Transformer(nn.Module):
                     continue
 
                 parent = self if not parent_name else self.get_submodule(parent_name)
-                module = ptd_checkpoint_wrapper(module, preserve_rng_state=preserve_rng_state)
+                module = ptd_checkpoint_wrapper(
+                    module, preserve_rng_state=preserve_rng_state
+                )
                 parent.register_module(name.split(".")[-1], module)
                 log.info(f"Wrapped '{name}' for activation checkpointing")
                 wrapped_modules.add(name)
@@ -674,13 +739,17 @@ class Transformer(nn.Module):
                             raise OLMoConfigurationError(
                                 "Wrapping MoE blocks for activation checkpointing is not supported."
                             )
-                        block = ptd_checkpoint_wrapper(block, preserve_rng_state=preserve_rng_state)
+                        block = ptd_checkpoint_wrapper(
+                            block, preserve_rng_state=preserve_rng_state
+                        )
                 elif mode == TransformerActivationCheckpointingMode.full:
                     if isinstance(block, MoETransformerBlock):
                         raise OLMoConfigurationError(
                             "Wrapping MoE blocks for activation checkpointing is not supported."
                         )
-                    block = ptd_checkpoint_wrapper(block, preserve_rng_state=preserve_rng_state)
+                    block = ptd_checkpoint_wrapper(
+                        block, preserve_rng_state=preserve_rng_state
+                    )
                 elif mode == TransformerActivationCheckpointingMode.selected_ops:
                     block = ptd_checkpoint_wrapper(
                         block,
@@ -751,7 +820,11 @@ class Transformer(nn.Module):
             )
 
         if self.embeddings is not None:
-            fully_shard(self.embeddings, reshard_after_forward=reshard_after_forward, **fsdp_config)
+            fully_shard(
+                self.embeddings,
+                reshard_after_forward=reshard_after_forward,
+                **fsdp_config,
+            )
             # Embedding params are not needed for backwards computation.
             cast(FSDPModule, self.embeddings).set_unshard_in_backward(False)
 
@@ -764,7 +837,9 @@ class Transformer(nn.Module):
         fully_shard(self, reshard_after_forward=reshard_after_forward, **fsdp_config)
         # Some inputs need to be on CPU initially, but FSDP will move everything to model's
         # device if we don't hide it.
-        self.register_forward_pre_hook(_hide_cpu_inputs_from_torch, prepend=True, with_kwargs=True)
+        self.register_forward_pre_hook(
+            _hide_cpu_inputs_from_torch, prepend=True, with_kwargs=True
+        )
         self.register_forward_pre_hook(
             _unhide_cpu_inputs_from_torch, prepend=False, with_kwargs=True
         )
@@ -774,7 +849,9 @@ class Transformer(nn.Module):
             for i in range(len(blocks)):
                 block = blocks[i]
                 if i + 1 < len(blocks):
-                    block.set_modules_to_forward_prefetch(blocks[i + 1 : i + 1 + prefetch_factor])
+                    block.set_modules_to_forward_prefetch(
+                        blocks[i + 1 : i + 1 + prefetch_factor]
+                    )
                 elif isinstance(self.lm_head, FSDPModule):
                     block.set_modules_to_forward_prefetch([self.lm_head])
 
@@ -801,14 +878,18 @@ class Transformer(nn.Module):
         # https://github.com/pytorch/torchtitan/blob/90c889e972b56b9faadebbb78fc985dedc537ed9/torchtitan/parallelisms/parallelize_llama.py#L328
         if compile_enabled:
             if autograd_compile_enabled:
-                torch._dynamo.config.optimize_ddp = "python_reducer_without_compiled_forward"  # type: ignore
+                torch._dynamo.config.optimize_ddp = (
+                    "python_reducer_without_compiled_forward"  # type: ignore
+                )
             else:
                 torch._dynamo.config.optimize_ddp = "ddp_optimizer"  # type: ignore
 
         replicate(self, device_mesh=dp_mesh, bucket_cap_mb=100)
         # Some inputs need to be on CPU initially, but DDP will move everything to model's
         # device if we don't hide it.
-        self.register_forward_pre_hook(_hide_cpu_inputs_from_torch, prepend=True, with_kwargs=True)
+        self.register_forward_pre_hook(
+            _hide_cpu_inputs_from_torch, prepend=True, with_kwargs=True
+        )
         self.register_forward_pre_hook(
             _unhide_cpu_inputs_from_torch, prepend=False, with_kwargs=True
         )
@@ -961,13 +1042,6 @@ class MoETransformer(Transformer):
     def is_moe(self) -> bool:
         return True
 
-    def _validate_block(self, block: TransformerBlockBase) -> TransformerBlockBase:
-        if not isinstance(block, MoETransformerBlock):
-            raise OLMoConfigurationError(
-                f"'{self.__class__.__name__}' requires a '{MoETransformerBlock.__name__}' block"
-            )
-        return block
-
     def compute_auxiliary_metrics(
         self, reset: bool = True
     ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
@@ -980,10 +1054,15 @@ class MoETransformer(Transformer):
 
         out: Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]] = {}
         for block_idx, block in self.blocks.items():
+            if not block.is_moe:
+                continue
             block = cast(MoETransformerBlock, block)
             block_metrics = block.compute_metrics(reset=reset)
             for metric_name, (metric_val, reduce_type) in block_metrics.items():
-                out[f"block {int(block_idx):02d}/{metric_name}"] = (metric_val, reduce_type)
+                out[f"block {int(block_idx):02d}/{metric_name}"] = (
+                    metric_val,
+                    reduce_type,
+                )
 
                 if self.pp_enabled and reduce_type == ReduceType.mean:
                     metric_val = metric_val.float() * mean_offset
@@ -996,17 +1075,24 @@ class MoETransformer(Transformer):
                         reduce_type,
                     )
                 elif reduce_type == ReduceType.max:
-                    out[metric_name] = (torch.max(out[metric_name][0], metric_val), reduce_type)
+                    out[metric_name] = (
+                        torch.max(out[metric_name][0], metric_val),
+                        reduce_type,
+                    )
                 else:
                     raise NotImplementedError(reduce_type)
         return out
 
     def reset_auxiliary_metrics(self):
         for block in self.blocks.values():
+            if not block.is_moe:
+                continue
             cast(MoETransformerBlock, block).reset_metrics()
 
     def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
         for block in self.blocks.values():
+            if not block.is_moe:
+                continue
             block = cast(MoETransformerBlock, block)
             block.apply_ep(ep_mesh, **kwargs)
 
@@ -1018,34 +1104,48 @@ class MoETransformer(Transformer):
         pp_enabled: bool = False,
     ):
         for block in self.blocks.values():
-            cast(MoETransformerBlock, block).feed_forward_moe.prepare_experts_for_fsdp(
+            if not block.is_moe:
+                continue
+            block = cast(MoETransformerBlock, block)
+            reshard_after_forward = True
+            if pp_enabled or block.ep_enabled or block.tp_enabled:
+                reshard_after_forward = False
+            block.feed_forward_moe.prepare_experts_for_fsdp(
                 world_mesh=world_mesh,
                 mp_policy=MixedPrecisionPolicy(
                     param_dtype=param_dtype or self.dtype, reduce_dtype=reduce_dtype
                 ),
-                reshard_after_forward=not pp_enabled,
+                reshard_after_forward=reshard_after_forward,
             )
 
     def prepare_experts_for_ddp(self, world_mesh: DeviceMesh):
         for block in self.blocks.values():
+            if not block.is_moe:
+                continue
             cast(MoETransformerBlock, block).feed_forward_moe.prepare_experts_for_ddp(
                 world_mesh=world_mesh,
             )
 
     def post_batch(self, dry_run: bool = False):
         for block in self.blocks.values():
+            if not block.is_moe:
+                continue
             block = cast(MoETransformerBlock, block)
             block.feed_forward_moe.post_batch(dry_run=dry_run)
 
 
-def _hide_cpu_inputs_from_torch(m, args, kwargs) -> Optional[Tuple[Any, Dict[str, Any]]]:
+def _hide_cpu_inputs_from_torch(
+    m, args, kwargs
+) -> Optional[Tuple[Any, Dict[str, Any]]]:
     del m
     if (doc_lens := kwargs.get("doc_lens")) is not None:
         kwargs["doc_lens"] = hide_from_torch(doc_lens)
     return (args, kwargs)
 
 
-def _unhide_cpu_inputs_from_torch(m, args, kwargs) -> Optional[Tuple[Any, Dict[str, Any]]]:
+def _unhide_cpu_inputs_from_torch(
+    m, args, kwargs
+) -> Optional[Tuple[Any, Dict[str, Any]]]:
     del m
     if (doc_lens := kwargs.get("doc_lens")) is not None:
         kwargs["doc_lens"] = unhide_from_torch(doc_lens)

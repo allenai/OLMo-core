@@ -41,7 +41,9 @@ class RoPEType(StrEnum):
 
 
 def compute_inv_freqs(theta: int, dim: int, device: torch.device) -> "torch.Tensor":
-    inv_freq = 1.0 / (theta ** (torch.arange(0, dim, 2, device=device, dtype=torch.float) / dim))
+    inv_freq = 1.0 / (
+        theta ** (torch.arange(0, dim, 2, device=device, dtype=torch.float) / dim)
+    )
     return inv_freq
 
 
@@ -74,6 +76,7 @@ class ABFRoPEScalingConfig(RoPEScalingConfig):
     def compute_scaled_inv_freq(
         self, theta: int, dim: int, device: torch.device
     ) -> tuple["torch.Tensor", float]:
+        del theta  # unused
         inv_freq = compute_inv_freqs(self.new_theta, dim, device)
         return inv_freq, self.attention_rescale_factor
 
@@ -156,16 +159,22 @@ class StepwiseRoPEScalingConfig(RoPEScalingConfig):
 
         # 1. Low-frequency band  (wavelen > low_band_threshold) -> fully scaled.
         # 2. High-frequency band (wavelen < high_band_threshold) -> unchanged.
-        inv_freq = torch.where(wavelen > low_band_threshold, inv_freq / self.factor, inv_freq)
+        inv_freq = torch.where(
+            wavelen > low_band_threshold, inv_freq / self.factor, inv_freq
+        )
 
         # 3. Mid-frequency band  (between the two thresholds) -> smoothly interpolated.
         interp_weight = (self.old_context_len / wavelen - low_freq_factor) / (
             high_freq_factor - low_freq_factor
         )
-        smoothed_inv_freq = (1 - interp_weight) * inv_freq / self.factor + interp_weight * inv_freq
+        smoothed_inv_freq = (
+            1 - interp_weight
+        ) * inv_freq / self.factor + interp_weight * inv_freq
         is_mid_band = (wavelen <= low_band_threshold) & (wavelen >= high_band_threshold)
 
-        return torch.where(is_mid_band, smoothed_inv_freq, inv_freq), self.attention_rescale_factor
+        return torch.where(
+            is_mid_band, smoothed_inv_freq, inv_freq
+        ), self.attention_rescale_factor
 
 
 @dataclass
@@ -317,7 +326,9 @@ class RotaryEmbeddingBase(nn.Module):
         self.theta = theta
         self.full_precision = full_precision
         self.scaling = scaling
-        self._cache = cache or BufferCache()
+        self._cache = (cache or BufferCache()).with_namespace(
+            f"RoPE_theta={self.theta}_scaling={repr(self.scaling)}"
+        )
 
     @abstractmethod
     def warmup_cache(self, max_seq_len: int, device: torch.device):
@@ -378,14 +389,13 @@ class RotaryEmbedding(RotaryEmbeddingBase):
 
         with torch.autocast(device.type, enabled=False):
             if self.scaling is None:
-                inv_freq = 1.0 / (
-                    self.theta
-                    ** (torch.arange(0, self.dim, 2, device=device, dtype=torch.float) / self.dim)
-                )
+                inv_freq = compute_inv_freqs(self.theta, self.dim, device)
                 attention_rescale_factor = 1.0
             else:
-                inv_freq, attention_rescale_factor = self.scaling.compute_scaled_inv_freq(
-                    theta=self.theta, dim=self.dim, device=device
+                inv_freq, attention_rescale_factor = (
+                    self.scaling.compute_scaled_inv_freq(
+                        theta=self.theta, dim=self.dim, device=device
+                    )
                 )
             seq = torch.arange(seq_len, device=device, dtype=torch.float)
             freqs = torch.einsum("i , j -> i j", seq, inv_freq)
@@ -442,7 +452,9 @@ class RotaryEmbedding(RotaryEmbeddingBase):
                 q_abs_starts = torch.full(
                     (batch_size,), k_len - q_len, device=q_.device, dtype=torch.long
                 )
-                k_abs_starts = torch.zeros(batch_size, device=q_.device, dtype=torch.long)
+                k_abs_starts = torch.zeros(
+                    batch_size, device=q_.device, dtype=torch.long
+                )
             else:
                 if isinstance(start_pos, int):
                     q_abs_starts = torch.full(
@@ -483,10 +495,18 @@ class RotaryEmbedding(RotaryEmbeddingBase):
             idx_k = k_abs_starts[:, None] + arange_k[None, :]
 
             # (B, T, head_size)
-            pos_sin_q = pos_sin.index_select(0, idx_q.reshape(-1)).view(batch_size, q_len, -1)
-            pos_cos_q = pos_cos.index_select(0, idx_q.reshape(-1)).view(batch_size, q_len, -1)
-            pos_sin_k = pos_sin.index_select(0, idx_k.reshape(-1)).view(batch_size, k_len, -1)
-            pos_cos_k = pos_cos.index_select(0, idx_k.reshape(-1)).view(batch_size, k_len, -1)
+            pos_sin_q = pos_sin.index_select(0, idx_q.reshape(-1)).view(
+                batch_size, q_len, -1
+            )
+            pos_cos_q = pos_cos.index_select(0, idx_q.reshape(-1)).view(
+                batch_size, q_len, -1
+            )
+            pos_sin_k = pos_sin.index_select(0, idx_k.reshape(-1)).view(
+                batch_size, k_len, -1
+            )
+            pos_cos_k = pos_cos.index_select(0, idx_k.reshape(-1)).view(
+                batch_size, k_len, -1
+            )
 
             if head_first:
                 q_ = self._apply_rotary_pos_emb(
@@ -571,11 +591,15 @@ class FusedRotaryEmbedding(RotaryEmbeddingBase):
                 inv_freq = compute_inv_freqs(self.theta, self.dim, device)
                 attention_rescale_factor = 1.0
             else:
-                inv_freq, attention_rescale_factor = self.scaling.compute_scaled_inv_freq(
-                    theta=self.theta, dim=self.dim, device=device
+                inv_freq, attention_rescale_factor = (
+                    self.scaling.compute_scaled_inv_freq(
+                        theta=self.theta, dim=self.dim, device=device
+                    )
                 )
             seq = torch.arange(seq_len, device=device, dtype=torch.float)
-            freqs = torch.einsum("i , j -> i j", seq, inv_freq)  # (seq_len, head_size // 2)
+            freqs = torch.einsum(
+                "i , j -> i j", seq, inv_freq
+            )  # (seq_len, head_size // 2)
             # Note: no concat here, unlike the default implementation
             pos_sin, pos_cos = freqs.sin(), freqs.cos()  # 2x (seq_len, head_size // 2)
 
@@ -647,7 +671,9 @@ class ComplexRotaryEmbedding(RotaryEmbeddingBase):
         scaling: Optional[RoPEScalingConfig] = None,
     ):
         if scaling is not None:
-            raise OLMoConfigurationError("scaling is not yet supported for ComplexRotaryEmbedding")
+            raise OLMoConfigurationError(
+                "scaling is not yet supported for ComplexRotaryEmbedding"
+            )
 
         super().__init__(
             head_size=head_size,
@@ -668,9 +694,9 @@ class ComplexRotaryEmbedding(RotaryEmbeddingBase):
         """
         :returns: The complex frequency tensor of shape ``(seq_len, head_size // 2)``.
         """
-        if (freqs_cis := self._cache.get("rope_freqs_cis")) is not None and freqs_cis.shape[
-            -2
-        ] >= seq_len:
+        if (
+            freqs_cis := self._cache.get("rope_freqs_cis")
+        ) is not None and freqs_cis.shape[-2] >= seq_len:
             if freqs_cis.device != device:
                 freqs_cis = freqs_cis.to(device)
                 self._cache["rope_freqs_cis"] = freqs_cis
@@ -684,7 +710,9 @@ class ComplexRotaryEmbedding(RotaryEmbeddingBase):
         self._cache["rope_freqs_cis"] = freqs_cis
         return freqs_cis
 
-    def _apply_rotary_pos_emb(self, freqs_cis: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+    def _apply_rotary_pos_emb(
+        self, freqs_cis: torch.Tensor, x: torch.Tensor
+    ) -> torch.Tensor:
         return torch.view_as_real(x * freqs_cis).flatten(3)
 
     def forward(
@@ -712,7 +740,9 @@ class ComplexRotaryEmbedding(RotaryEmbeddingBase):
         :returns: The query and key matrices after RoPE has been applied.
         """
         if pos_sin is not None or pos_cos is not None:
-            raise RuntimeError(f"'pos_sin' and 'pos_cos' are invalid for {self.__class__.__name__}")
+            raise RuntimeError(
+                f"'pos_sin' and 'pos_cos' are invalid for {self.__class__.__name__}"
+            )
 
         if head_first:
             q_len = q.size(2)

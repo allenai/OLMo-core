@@ -260,7 +260,6 @@ class SkipStepAdamWConfig(OptimConfig):
     eps: float = 1e-8
     weight_decay: float = 1e-2
     dtype: Optional[DType] = None
-
     foreach: bool = True
     """
     Whether to use multi-tensor (*foreach*) kernels for the AdamW update.

@@ -67,7 +67,9 @@ def parallelize_model(
         assert world_mesh is not None
         cp_mesh = get_cp_mesh(world_mesh)
         for m in model_parts:
-            m.apply_cp(cp_mesh, load_balancer=cp_config.load_balancer)
+            m.apply_cp(
+                cp_mesh, load_balancer=cp_config.load_balancer, head_stride=cp_config.head_stride
+            )
         log.info(f"Applied context parallelism to the model with {get_device_mesh_info(cp_mesh)}")
 
     # Maybe apply tensor.

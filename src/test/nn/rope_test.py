@@ -67,15 +67,21 @@ def test_rope_with_past_key_values(device, head_first):
 @requires_gpu
 @requires_flash_attn
 @pytest.mark.parametrize(
-    "dtype", [pytest.param(torch.bfloat16, id="bf16"), pytest.param(torch.float32, id="fp32")]
+    "dtype",
+    [pytest.param(torch.bfloat16, id="bf16"), pytest.param(torch.float32, id="fp32")],
 )
 def test_fused_rope(dtype):
     B, T, d_model, n_heads = 2, 12, 32, 4
     fused_rope = FusedRotaryEmbedding(head_size=d_model // n_heads)
     rope = RotaryEmbedding(head_size=d_model // n_heads)
 
-    with torch.no_grad(), torch.autocast("cuda", dtype=dtype, enabled=dtype != torch.float32):
-        qkv = torch.rand(B, T, 3, n_heads, d_model // n_heads, device="cuda", dtype=dtype)
+    with (
+        torch.no_grad(),
+        torch.autocast("cuda", dtype=dtype, enabled=dtype != torch.float32),
+    ):
+        qkv = torch.rand(
+            B, T, 3, n_heads, d_model // n_heads, device="cuda", dtype=dtype
+        )
         q, k, _ = qkv.split(1, dim=2)
         q, k = q.squeeze(2), k.squeeze(2)
         qkv = fused_rope(qkv.clone())
@@ -142,7 +148,9 @@ def test_abf_rope_scaling(device):
 
     # Test case where new_theta == theta, output should be identical
     rope_vanilla = RotaryEmbedding(head_size=head_size, theta=500_000)
-    rope_abf = RotaryEmbedding(head_size=head_size, scaling=ABFRoPEScalingConfig(new_theta=500_000))
+    rope_abf = RotaryEmbedding(
+        head_size=head_size, scaling=ABFRoPEScalingConfig(new_theta=500_000)
+    )
 
     with torch.no_grad():
         q = torch.rand(B, n_heads, T, head_size, device=device)
@@ -176,7 +184,9 @@ def test_pi_rope_scaling(device):
 
     # Test vanilla RoPE vs PI scaling with factor=1 (should be identical)
     rope_vanilla = RotaryEmbedding(head_size=head_size)
-    rope_pi_factor1 = RotaryEmbedding(head_size=head_size, scaling=PIRoPEScalingConfig(factor=1.0))
+    rope_pi_factor1 = RotaryEmbedding(
+        head_size=head_size, scaling=PIRoPEScalingConfig(factor=1.0)
+    )
 
     with torch.no_grad():
         q = torch.rand(B, n_heads, T, head_size, device=device)
@@ -189,7 +199,9 @@ def test_pi_rope_scaling(device):
         torch.testing.assert_close(k1, k2, rtol=1e-5, atol=1e-5)
 
     # Test PI scaling with factor=2 (should compress positions)
-    rope_pi_factor2 = RotaryEmbedding(head_size=head_size, scaling=PIRoPEScalingConfig(factor=2.0))
+    rope_pi_factor2 = RotaryEmbedding(
+        head_size=head_size, scaling=PIRoPEScalingConfig(factor=2.0)
+    )
 
     with torch.no_grad():
         q3, k3 = rope_pi_factor2(q.clone(), k.clone())
@@ -209,7 +221,9 @@ def test_per_frequency_rope_scaling(device):
     head_size = d_model // n_heads
 
     rope_vanilla = RotaryEmbedding(head_size=head_size)
-    rope_per_freq = RotaryEmbedding(head_size=head_size, scaling=StepwiseRoPEScalingConfig())
+    rope_per_freq = RotaryEmbedding(
+        head_size=head_size, scaling=StepwiseRoPEScalingConfig()
+    )
 
     with torch.no_grad():
         q = torch.rand(B, n_heads, T, head_size, device=device)
@@ -293,7 +307,8 @@ def test_rope_scaling_with_different_seq_lengths(seq_len):
         pytest.param(ABFRoPEScalingConfig(new_theta=8_000_000), id="abf"),
         pytest.param(PIRoPEScalingConfig(factor=2.0), id="pi"),
         pytest.param(
-            PIRoPEScalingConfig(factor=4.0, attention_rescale_factor=1.2), id="pi_rescale"
+            PIRoPEScalingConfig(factor=4.0, attention_rescale_factor=1.2),
+            id="pi_rescale",
         ),
         pytest.param(StepwiseRoPEScalingConfig(factor=16.0), id="perfreq"),
         pytest.param(YaRNRoPEScalingConfig(factor=8.0), id="yarn"),
@@ -327,11 +342,13 @@ def test_rope_scaling_attention_rescale_factor():
 
     # Test with custom attention rescale factor
     rope_rescaled = RotaryEmbedding(
-        head_size=head_size, scaling=PIRoPEScalingConfig(factor=2.0, attention_rescale_factor=1.5)
+        head_size=head_size,
+        scaling=PIRoPEScalingConfig(factor=2.0, attention_rescale_factor=1.5),
     )
 
     rope_normal = RotaryEmbedding(
-        head_size=head_size, scaling=PIRoPEScalingConfig(factor=2.0, attention_rescale_factor=1.0)
+        head_size=head_size,
+        scaling=PIRoPEScalingConfig(factor=2.0, attention_rescale_factor=1.0),
     )
 
     with torch.no_grad():
