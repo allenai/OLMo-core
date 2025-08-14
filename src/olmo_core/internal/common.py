@@ -95,7 +95,7 @@ def build_launch_config(
     cluster: str,
     task_name: str = "train",
     workspace: str = "ai2/OLMo-core",
-    budget: str = "ai2/oe-training",
+    budget: str = "ai2/oe-base",
     nccl_debug: bool = False,
     cuda_launch_blocking: bool = False,
     beaker_image: str = OLMoCoreBeakerImage.stable,
@@ -128,7 +128,7 @@ def build_launch_config(
         _to_beaker_env_secret(
             name="WANDB_API_KEY",
             secret=f"{beaker_user}_WANDB_API_KEY",
-            required=False,
+            required=True,
             workspace=workspace,
         ),
         _to_beaker_env_secret(
@@ -190,7 +190,7 @@ def build_launch_config(
             "pip install -e '.[all]'",
             #  "pip install --upgrade beaker-py",
             # Quickly try a new version of PyTorch like this
-            #  "pip install --upgrade --pre torch==2.6.0.dev20241112+cu121 --index-url https://download.pytorch.org/whl/nightly/cu121",
+            #  "pip install torch==2.7.1 --index-url https://download.pytorch.org/whl/cu128",
             "pip freeze",
             # Move AWS credentials from env to relevant files
             "mkdir -p ~/.aws",

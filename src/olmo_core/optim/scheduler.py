@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 import torch
 
-from ..config import StrEnum
+from ..config import Config, StrEnum
 from ..exceptions import OLMoConfigurationError
 from .config import INITIAL_LR_FIELD, LR_FIELD
 
@@ -23,7 +23,7 @@ class SchedulerUnits(StrEnum):
 
 
 @dataclass
-class Scheduler(metaclass=ABCMeta):
+class Scheduler(Config, metaclass=ABCMeta):
     """
     Learning rate scheduler base class.
     """
@@ -184,7 +184,9 @@ class WSD(Scheduler):
             )
 
         if (self.decay_fraction is None) == (self.decay is None):
-            raise OLMoConfigurationError("Either 'decay_fraction' or 'decay' must be specified.")
+            raise OLMoConfigurationError(
+                "Either 'decay_fraction' or 'decay' must be specified. Never both."
+            )
 
         if self.decay_fraction is not None and (self.decay_fraction < 0 or self.decay_fraction > 1):
             raise OLMoConfigurationError("decay_fraction must be between 0 and 1.")
