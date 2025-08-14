@@ -157,6 +157,8 @@ class WSD(Scheduler):
     decay_fraction: Optional[float] = 0.1
     warmup_min_lr: float = 0.0
     decay_min_lr: float = 0.0
+    decay_kind: str = "linear"
+    cosine_decay_alpha: float = 10
 
     def __post_init__(self):
         if self.warmup is None and self.warmup_steps is not None:
@@ -189,6 +191,9 @@ class WSD(Scheduler):
         if self.decay_fraction is not None and (self.decay_fraction < 0 or self.decay_fraction > 1):
             raise OLMoConfigurationError("decay_fraction must be between 0 and 1.")
 
+    def h(self, x):
+        return 1 / sqrt(1 + self.cosine_decay_alpha * x) - 1
+
     def get_lr(
         self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
     ) -> Union[float, torch.Tensor]:
@@ -208,7 +213,12 @@ class WSD(Scheduler):
             decay = self.decay
 
         if current >= t_max - decay:
-            return _linear_decay(initial_lr, t_max - current, decay, self.decay_min_lr)
+            if self.decay_kind == "linear":
+                return _linear_decay(initial_lr, t_max - current, decay, self.decay_min_lr)
+            elif self.decay_kind == "inv_sqrt":
+                return initial_lr + (self.decay_min_lr - initial_lr) / self.h(1) * self.h((current - (t_max - decay)) / decay)
+            else:
+                raise OLMoConfigurationError("Invalid decay kind")
 
         return initial_lr
 

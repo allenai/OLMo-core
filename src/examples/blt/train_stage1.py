@@ -41,7 +41,8 @@ from olmo_core.nn.attention import AttentionConfig
 from olmo_core.nn.mamba import MambaConfig
 from olmo_core.nn.feed_forward import FeedForwardConfig
 from olmo_core.nn.blt.config import LocalEncoderConfig, LocalDecoderConfig
-from olmo_core.optim import AdamWConfig, LinearWithWarmup, OptimGroupOverride
+from olmo_core.optim import AdamWConfig, OptimGroupOverride
+from olmo_core.optim.scheduler import WSD, LinearWithWarmup
 from olmo_core.train import (
     Duration,
     TrainerConfig,
@@ -75,6 +76,7 @@ EVAL_BATCH_SIZE = 16
 LOCAL_MODEL_STYLE = os.environ.get("LOCAL_MODEL_STYLE", "hnet")
 TRAIN_MODE = os.environ.get("TRAIN_MODE", "local_encoder_only")
 DATA_SOURCE = os.environ.get("DATA_SOURCE", "dclm")
+LR_SCHEDULE = os.environ.get("LR_SCHEDULE", "linear_with_warmup")
 ADD_HASH_EMBEDDINGS = os.environ.get("ADD_HASH_EMBEDDINGS", "1").lower() in {"1", "true", "yes"}
 OLMO_ARCH = os.environ.get("OLMO_ARCH", "olmo2_1B_v2")
 
@@ -280,6 +282,19 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     else:
         raise ValueError(f"Unknown TRAIN_MODE: {TRAIN_MODE}. Must be one of 'local_encoder_only', 'local_decoder_only', 'full_stage_1'.")
 
+    if LR_SCHEDULE == "linear_with_warmup":
+        scheduler = LinearWithWarmup(warmup_fraction=0.1, alpha_f=0.0)
+    elif LR_SCHEDULE == "wsd":
+        scheduler = WSD(
+            warmup_fraction=0.1,
+            decay_fraction=0.2,
+            decay_kind="inv_sqrt",
+            cosine_decay_alpha=10,
+            decay_min_lr=1e-4, # probably best around 10% of peak LR
+        )
+    else:
+        raise ValueError(f"Unknown LR_SCHEDULE: {LR_SCHEDULE}. Must be one of 'linear_with_warmup', 'wsd'.")
+
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=LOCAL_BATCH_SIZE * SEQUENCE_LENGTH * BYTE_EXPANSION_FACTOR,
         max_sequence_length=dataset_config.effective_sequence_length,
@@ -298,7 +313,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
         ),
         max_grad_norm=1.0,
-        scheduler=LinearWithWarmup(warmup=10000, alpha_f=0.0),
+        scheduler=scheduler,
     )
 
     if QUICK_DEBUG:
