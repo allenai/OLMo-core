@@ -706,6 +706,8 @@ class Attention(AttentionBase):
         return k_cache, v_cache, cache_seqlens, cache_leftpad, phase
 
     def free_kv_cache(self):
+        if self.k_cache is None and self.v_cache is None:
+            return
         log.info("Freeing KV cache!")
         self.k_cache = self.v_cache = self.cache_seqlens = self.cache_leftpad = None
         self.phase = None
