@@ -1,7 +1,7 @@
 import math
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import List, Optional, Union
+from typing import Callable, List, Optional, Tuple, Union
 
 import torch
 import torch.distributed as dist
@@ -10,6 +10,13 @@ import torch.nn.functional as F
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import Placement, Replicate, Shard
 from torch.distributed.tensor.parallel import parallelize_module
+
+from torch.nn.attention.flex_attention import (
+    BlockMask,
+    and_masks,
+    create_block_mask,
+    flex_attention,
+)
 
 from olmo_core.config import Config, DType, StrEnum
 from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
@@ -150,6 +157,7 @@ class AttentionConfig(Config):
     qk_norm: Optional[LayerNormConfig] = None
     dropout: Optional[float] = None
     use_flash: Optional[bool] = None
+    use_flex: Optional[bool] = None
     dtype: DType = DType.float32
     sliding_window: Optional[SlidingWindowAttentionConfig] = None
     use_head_qk_norm: Optional[bool] = None
@@ -236,6 +244,10 @@ class AttentionConfig(Config):
                 return Attention(**kwargs)
             elif self.name == "fused":
                 kwargs.pop("use_flash", None)
+                if kwargs.get("use_flex"):
+                    raise OLMoConfigurationError(
+                        "Flex attention is not supported with fused attention"
+                    )
                 if "window_size" in kwargs:
                     raise OLMoConfigurationError(
                         "'window_size' is not supported with fused attention"
@@ -319,6 +331,7 @@ class Attention(AttentionBase):
         qk_norm: Optional[LayerNormConfig] = None,
         dropout: float = 0.0,
         use_flash: bool = False,
+        use_flex: bool = False,
         window_size: Optional[int] = None,
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
@@ -363,9 +376,9 @@ class Attention(AttentionBase):
 
         # Translate window size so that we only look left, not right.
         if window_size is not None:
-            if not use_flash:
+            if not use_flash and not use_flex:
                 raise OLMoConfigurationError(
-                    f"'window_size' is only supported with 'use_flash=True' (got {use_flash})"
+                    f"'window_size' is only supported with 'use_flash=True' or 'use_flex=True' (got {use_flash=}, {use_flex=})"
                 )
             if window_size <= 0:
                 raise OLMoConfigurationError(f"'window_size' must be positive (got {window_size})")
@@ -415,6 +428,7 @@ class Attention(AttentionBase):
         max_doc_len_k: Optional[int] = None,
         local_k_slice: Optional[slice] = None,
         scale: Optional[float] = None,
+        block_mask: Optional[BlockMask] = None,
         sinks: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         att: torch.Tensor
@@ -423,6 +437,10 @@ class Attention(AttentionBase):
             if not self.use_flash:
                 raise RuntimeError(
                     f"'{self.__class__.__name__}' requires flash (use_flash=True) for context parallelism"
+                )
+            if self.use_flex:
+                raise RuntimeError(
+                    f"'{self.__class__.__name__}' cannot use flex attention for context parallelism"
                 )
             att = dispatch_ring_flash_attn(
                 q,
@@ -465,6 +483,54 @@ class Attention(AttentionBase):
                     causal=True,
                     window_size=self.window_size,
                 )
+        elif self.use_flex:
+            if self.dropout_p != 0:
+                raise NotImplementedError("Our flex attention does not yet support dropout.")
+            if block_mask is None:
+                raise ValueError("Block mask missing during flex attention.")
+
+            # Reshape (batch_size, seq_len) so that the seq_len matches that of the block mask.
+            # This is needed for intra-document masking, in which case the block mask sequence
+            # length is batch_size * seq_len.
+            # shape: (batch_size, seq_len, n_heads, head_dim)
+            #        (batch_size, seq_len, n_kv_heads, head_dim),
+            #        (batch_size, seq_len, n_kv_heads, head_dim)
+            q = q.view(
+                q.shape[0] * q.shape[1] // block_mask.seq_lengths[0],
+                block_mask.seq_lengths[0],
+                *q.shape[2:],
+            )
+            k = k.view(
+                k.shape[0] * k.shape[1] // block_mask.seq_lengths[1],
+                block_mask.seq_lengths[1],
+                *k.shape[2:],
+            )
+            v = v.view(
+                v.shape[0] * v.shape[1] // block_mask.seq_lengths[1],
+                block_mask.seq_lengths[1],
+                *v.shape[2:],
+            )
+
+            # PyTorch's flex attn expects the number of heads to come before the sequence dimension.
+            # shape: (batch_size, n_heads, seq_len, head_dim),
+            #        (batch_size, n_kv_heads, seq_len, head_dim),
+            #        (batch_size, n_kv_heads, seq_len, head_dim)
+            q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
+
+            # SDPA uses full precision. We match it for flex attention.
+            og_dtype = q.dtype
+            q, k, v = q.float(), k.float(), v.float()
+            with torch.autocast(enabled=False, device_type=q.device.type):
+                # shape: (batch_size, n_heads, seq_len, head_dim)
+                flex_att = flex_attention(
+                    q, k, v, block_mask=block_mask, scale=scale, enable_gqa=True
+                )
+            assert isinstance(flex_att, torch.Tensor)
+            att = flex_att.to(dtype=og_dtype)
+
+            # shape: (batch_size, seq_len, n_heads, head_dim)
+            att = att.transpose(1, 2).contiguous()
+            
         else:
             # Fall back to PyTorch's SDPA...
             if any(
@@ -559,6 +625,7 @@ class Attention(AttentionBase):
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
+        block_mask: Optional[BlockMask] = None,
     ) -> torch.Tensor:
         """
         Apply attention to the input.
@@ -805,6 +872,9 @@ class NormalizedAttention(Attention):
             q, k = self.rope(
                 q, k, head_first=False, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis
             )
+        assert (
+            not self.use_flex or block_mask is not None
+        ), "Block mask cannot be null for flex attention layer"
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
         att = self.sdpa(
@@ -819,6 +889,7 @@ class NormalizedAttention(Attention):
             max_doc_len_k=max_doc_len_k,
             local_k_slice=local_k_slice,
             scale=self.sqrt_head_dim,
+            block_mask=block_mask,
         )
 
         # shape: (batch_size, seq_len, d_model)
