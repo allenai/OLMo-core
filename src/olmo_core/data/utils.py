@@ -527,7 +527,7 @@ def segment_documents_into_instances(
                     # If document is at least 'max_sequence_length' long, just yield that as an instance.
                     if doc_length >= max_sequence_length:
                         yield start_idx
-                        yield end_idx
+                        yield start_idx + max_sequence_length
                         continue
 
                     # Otherwise start a new instance with this document.
@@ -537,8 +537,8 @@ def segment_documents_into_instances(
                     # Document is too long to add to current instance without truncating, so start a new instance.
                     yield instance_start
                     yield instance_start + instance_length
-                    instance_start = None
-                    instance_length = 0
+                    instance_start = start_idx
+                    instance_length = doc_length
                 else:
                     # We can add the document to the current instance.
                     instance_length += doc_length
