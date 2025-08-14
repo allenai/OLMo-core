@@ -37,6 +37,7 @@ from ..aliases import PathOrStr
 from ..config import Config, StrEnum
 from ..distributed.utils import barrier, get_fs_local_rank
 from ..io import _get_s3_client, get_file_size
+from ..io import glob as olmo_glob
 from .mixes import DataMix, DataMixBase
 from .source_mixture import SourceMixtureDatasetConfig
 from .tokenizer import TokenizerConfig
@@ -2442,11 +2443,9 @@ class NumpyDatasetConfig(Config):
         metadata = self.metadata
         label_mask_paths: Optional[List[PathOrStr]] = None
         if self.paths and self.expand_glob:
-            from glob import glob
-
             for glob_path in self.paths:
                 log.info(f"Expanding '{glob_path}'...")
-                matches = sorted(glob(glob_path))
+                matches = sorted(olmo_glob(glob_path))
                 if not matches:
                     raise FileNotFoundError(glob_path)
                 for path in matches:
@@ -2457,7 +2456,7 @@ class NumpyDatasetConfig(Config):
                 label_mask_paths = []
                 for glob_path in self.label_mask_paths:
                     log.info(f"Expanding '{glob_path}'...")
-                    matches = sorted(glob(glob_path))
+                    matches = sorted(olmo_glob(glob_path))
                     if not matches:
                         raise FileNotFoundError(glob_path)
                     for path in matches:
