@@ -54,7 +54,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
-            wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
+            wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
         ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
