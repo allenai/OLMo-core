@@ -406,6 +406,7 @@ class Attention(AttentionBase):
             self.rope = rope_class
 
         self.use_flash = use_flash
+        self.use_flex = use_flex
 
         self._cp_pg: Optional[dist.ProcessGroup] = None
         self._cp_enabled = False
@@ -464,8 +465,7 @@ class Attention(AttentionBase):
         elif self.use_flash:
             if sinks is not None:
                 raise OLMoConfigurationError(
-                    "Sinks with flash attention are not yet implemented. "
-                    "Please use use_flash=False when using sinks, or disable sinks when using flash attention."
+                    "Sinks with flash attention is not yet implemented."
                 )
             else:
                 att = dispatch_flash_attn(
@@ -517,19 +517,74 @@ class Attention(AttentionBase):
             #        (batch_size, n_kv_heads, seq_len, head_dim)
             q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
 
-            # SDPA uses full precision. We match it for flex attention.
-            og_dtype = q.dtype
-            q, k, v = q.float(), k.float(), v.float()
-            with torch.autocast(enabled=False, device_type=q.device.type):
-                # shape: (batch_size, n_heads, seq_len, head_dim)
-                flex_att = flex_attention(
-                    q, k, v, block_mask=block_mask, scale=scale, enable_gqa=True
+            if sinks is None:
+                # SDPA uses full precision. We match it for flex attention.
+                og_dtype = q.dtype
+                q, k, v = q.float(), k.float(), v.float()
+                with torch.autocast(enabled=False, device_type=q.device.type):
+                    # shape: (batch_size, n_heads, seq_len, head_dim)
+                    flex_att = flex_attention(
+                        q, k, v, block_mask=block_mask, scale=scale, enable_gqa=False
+                    )
+                assert isinstance(flex_att, torch.Tensor)
+                att = flex_att.to(dtype=og_dtype)
+
+            else:
+                batch_size, n_heads, seq_len, _ = q.shape
+                attn_logits = torch.matmul(
+                    q, k.transpose(2, 3)
+                )  # (batch_size, n_heads, seq_len, seq_len)
+                if scale is not None:
+                    attn_logits *= scale
+                    
+                if self.window_size != (-1, -1):
+                    window_left, window_right = self.window_size
+                    positions = torch.arange(seq_len, device=q.device)
+                    causal_mask = positions[:, None] < positions[None, :]
+                    
+                    if window_left >= 0:
+                        window_mask_left = positions[:, None] > positions[None, :] + window_left
+                        causal_mask = causal_mask | window_mask_left
+                    
+                    if window_right >= 0:
+                        window_mask_right = positions[None, :] > positions[:, None] + window_right
+                        causal_mask = causal_mask | window_mask_right
+                else:
+                    causal_mask = torch.triu(q.new_ones((seq_len, seq_len), dtype=torch.bool), diagonal=1)
+                
+                attn_logits = attn_logits.masked_fill(causal_mask[None, None, :, :], -float("inf"))
+
+                if sinks.ndim == 1:
+                    S = sinks.numel()
+                    sink_logits = (
+                        sinks.view(1, 1, 1, S)
+                        .to(attn_logits)
+                        .expand(batch_size, n_heads, seq_len, S)
+                    )
+                elif sinks.ndim == 2:
+                    assert sinks.size(0) == n_heads, "Sinks first dim must equal n_heads"
+                    S = sinks.size(1)
+                    sink_logits = (
+                        sinks.view(1, n_heads, 1, S)
+                        .to(attn_logits)
+                        .expand(batch_size, n_heads, seq_len, S)
+                    )
+                else:
+                    raise ValueError("Sinks must have shape (S) or (n_heads, S)")
+
+                combined_logits = torch.cat(
+                    [attn_logits, sink_logits], dim=-1
+                )  # (batch_size, n_heads, head_dim, head_dim + seq_len)
+                combined_probs = F.softmax(combined_logits, dim=-1, dtype=torch.float32).to(
+                    attn_logits.dtype
                 )
-            assert isinstance(flex_att, torch.Tensor)
-            att = flex_att.to(dtype=og_dtype)
+                probs = combined_probs[..., :seq_len]
+                probs = F.dropout(probs, p=self.dropout_p)
+                att = torch.matmul(probs, v)
 
             # shape: (batch_size, seq_len, n_heads, head_dim)
             att = att.transpose(1, 2).contiguous()
+
             
         else:
             # Fall back to PyTorch's SDPA...
@@ -559,15 +614,21 @@ class Attention(AttentionBase):
             #        (batch_size, n_kv_heads, seq_len, head_dim)
             q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
 
-            if sinks is not None:
-                batch_size, n_heads, seq_len, head_dim = q.shape
+            if sinks is None:
+                # shape: (batch_size, n_heads, seq_len, head_dim)
+                att = F.scaled_dot_product_attention(
+                    q, k, v, dropout_p=self.dropout_p, is_causal=True, scale=scale
+                )
+            
+            else:
+                batch_size, n_heads, seq_len, _ = q.shape
                 attn_logits = torch.matmul(
                     q, k.transpose(2, 3)
                 )  # (batch_size, n_heads, seq_len, seq_len)
                 if scale is not None:
                     attn_logits *= scale
-                else:
-                    attn_logits *= 1.0 / math.sqrt(head_dim)
+                # else:
+                #     attn_logits *= 1.0 / math.sqrt(head_dim)
 
                 causal_mask = torch.triu(q.new_full((seq_len, seq_len), -float("inf")), diagonal=1)
                 attn_logits = attn_logits + causal_mask[None, None, :, :]
@@ -599,16 +660,9 @@ class Attention(AttentionBase):
                 probs = combined_probs[..., :seq_len]
                 probs = F.dropout(probs, p=self.dropout_p)
                 att = torch.matmul(probs, v)
-                att = att.transpose(1, 2).contiguous()
 
-            else:
-                # shape: (batch_size, n_heads, seq_len, head_dim)
-                att = F.scaled_dot_product_attention(
-                    q, k, v, dropout_p=self.dropout_p, is_causal=True, scale=scale
-                )
-
-                # shape: (batch_size, seq_len, n_heads, head_dim)
-                att = att.transpose(1, 2).contiguous()
+            # shape: (batch_size, seq_len, n_heads, head_dim)
+            att = att.transpose(1, 2).contiguous()
 
         return att
 

@@ -502,14 +502,17 @@ class Transformer(nn.Module):
         # pipeline parallel configuration.
         h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
 
+        block_mask_by_layer = all_block_kwargs.pop("block_masks", [None] * self.n_layers)
+
         # Run each block.
         for block_key, block in self.blocks.items():
             block_idx = int(block_key)
             block_kwargs = per_block_kwargs.get(block_idx, {})
+            block_mask = block_mask_by_layer[block_idx]
             # Mark sizes as dynamic for torch.compile().
             if self.compile_enabled:
                 mark_dynamic(h, (0, 1), strict=False)
-            h = block(h, **all_block_kwargs, **block_kwargs)
+            h = block(h, block_mask=block_mask, **all_block_kwargs, **block_kwargs)
 
         # Get final logits but again pass-through in case of pipeline parallelism.
         if self.lm_head is not None:
@@ -1076,3 +1079,20 @@ def _unhide_cpu_inputs_from_torch(m, args, kwargs) -> Optional[Tuple[Any, Dict[s
     if (doc_lens := kwargs.get("doc_lens")) is not None:
         kwargs["doc_lens"] = unhide_from_torch(doc_lens)
     return (args, kwargs)
+
+
+def _mark_block_mask_dynamic(block_mask: BlockMask):
+    mark_dynamic(block_mask.kv_num_blocks, 2)
+    mark_dynamic(block_mask.kv_indices, (2, 3))
+    if block_mask.full_kv_num_blocks is not None:
+        mark_dynamic(block_mask.full_kv_num_blocks, 2)
+    if block_mask.full_kv_indices is not None:
+        mark_dynamic(block_mask.full_kv_indices, (2, 3))
+    if block_mask.q_num_blocks is not None:
+        mark_dynamic(block_mask.q_num_blocks, 2)
+    if block_mask.q_indices is not None:
+        mark_dynamic(block_mask.q_indices, (2, 3))
+    if block_mask.full_q_num_blocks is not None:
+        mark_dynamic(block_mask.full_q_num_blocks, 2)
+    if block_mask.full_q_indices is not None:
+        mark_dynamic(block_mask.full_q_indices, (2, 3))
