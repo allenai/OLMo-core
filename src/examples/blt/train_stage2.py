@@ -226,7 +226,6 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             vocab_size=byte_tokenizer_config.padded_vocab_size(),
             local_encoder=local_encoder,
             local_decoder=local_decoder,
-            add_boundary_predictor=True,
         )
 
     model_config = teacher_model_config.replace(
@@ -237,7 +236,6 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         teacher_config=teacher_model_config,
         share_blocks_between_teacher_and_student=False,
         use_teacher_embs_with_vocab_size=subword_tokenizer_config.padded_vocab_size() if TEACHER_MODE == "stage1" else None,
-        add_boundary_predictor=True,
         freeze_params=[
             "boundary_predictor.*", # temporary
             "teacher_embeddings.*",

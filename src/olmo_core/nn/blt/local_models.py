@@ -60,14 +60,7 @@ class HNetBoundaryPredictor(nn.Module):
         self.d_model = d_model
         self.q_proj_layer = nn.Linear(d_model, d_model, bias=False, device=init_device)
         self.k_proj_layer = nn.Linear(d_model, d_model, bias=False, device=init_device)
-        with torch.no_grad():
-            self.q_proj_layer.weight.copy_(torch.eye(d_model))
-            self.k_proj_layer.weight.copy_(torch.eye(d_model))
         
-        # TODO(benjaminm): for training with this: does this work / where to make sure not reinit?
-        # self.q_proj_layer.weight._no_reinit = True
-        # self.k_proj_layer.weight._no_reinit = True
-
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         cos_sim = torch.einsum(
             "b l d, b l d -> b l",
@@ -278,7 +271,12 @@ class LocalEncoder(nn.Module):
         fully_shard(self, mesh=dp_mesh, **fsdp_kwargs)
 
     def fix_init(self, embedding_init_path, target_embeddings, n_estimate=10_000, cache_dir: Optional[str] = None):
-        """Rescale such that the local encoder outputs (given random inputs) have the same mean and std as the provided embeddings."""
+        """
+        Rescale such that the local encoder outputs (given random inputs) have the same mean and std as the provided embeddings.
+        
+        Also inits HNetBoundaryPredictor q and k to weights to identity following HNet.
+
+        """
         if embedding_init_path is not None:
             # load embedding inits (computed via compute_hash_embedding_init.py)
             if isinstance(self.embedding.weight.data, DTensor):
@@ -358,6 +356,10 @@ class LocalEncoder(nn.Module):
         if self.out_projection is not None:
             self.out_projection.weight.data *= (te_std / h_patch_std).unsqueeze(0)
             self.out_projection.bias.data[:] = te_mean - h_patch_mean * (te_std / h_patch_std)
+
+        if isinstance(self.boundary_predictor_module, HNetBoundaryPredictor):
+            self.boundary_predictor_module.q_proj_layer.weight.data[:] = torch.eye(self.d_model, device=device)
+            self.boundary_predictor_module.k_proj_layer.weight.data[:] = torch.eye(self.d_model, device=device)
 
         # verify
         # local_encoder_copy.load_state_dict({

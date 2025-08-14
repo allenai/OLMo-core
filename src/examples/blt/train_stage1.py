@@ -164,6 +164,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             cross_attn_n_heads=local_cross_attn_n_heads,
             block_config=local_block,
             blt_k=2,
+            boundary_predictor="blt",
             add_out_projection=False,
         )
         local_decoder = LocalDecoderConfig(
@@ -208,6 +209,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             cross_attn_n_heads=0,
             block_config=local_block,
             add_norm_after_last_block=True,
+            boundary_predictor="hnet",
             add_out_projection=True,
             pooling="hnet",
         )
