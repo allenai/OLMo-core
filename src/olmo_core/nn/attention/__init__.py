@@ -683,6 +683,9 @@ class Attention(AttentionBase):
             q, k = self.rope(
                 q, k, head_first=False, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis
             )
+        assert (
+            not self.use_flex or block_mask is not None
+        ), "Block mask cannot be null for flex attention layer"
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
         att = self.sdpa(
@@ -696,6 +699,7 @@ class Attention(AttentionBase):
             max_doc_len_q=max_doc_len_q,
             max_doc_len_k=max_doc_len_k,
             local_k_slice=local_k_slice,
+            block_mask=block_mask,
             sinks=self.sinks if self.use_sinks else None,
         )
 
@@ -872,9 +876,6 @@ class NormalizedAttention(Attention):
             q, k = self.rope(
                 q, k, head_first=False, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis
             )
-        assert (
-            not self.use_flex or block_mask is not None
-        ), "Block mask cannot be null for flex attention layer"
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
         att = self.sdpa(
@@ -889,7 +890,6 @@ class NormalizedAttention(Attention):
             max_doc_len_k=max_doc_len_k,
             local_k_slice=local_k_slice,
             scale=self.sqrt_head_dim,
-            block_mask=block_mask,
         )
 
         # shape: (batch_size, seq_len, d_model)
@@ -1083,4 +1083,101 @@ def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
         torch.unsqueeze(x, dim=3)
         .expand(bs, slen, n_kv_heads, n_rep, head_dim)
         .reshape(bs, slen, n_kv_heads * n_rep, head_dim)
+    )
+
+def _get_flex_attn_mask_mod(
+    window_size: Optional[Tuple[int, int]] = None,
+    doc_lens: Optional[Tuple[int, ...]] = None,
+    device: Optional[torch.device] = None,
+) -> Callable[[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor], torch.Tensor]:
+    mask_mods = []
+
+    def _causal_mask_mod(
+        B: torch.Tensor, H: torch.Tensor, q_idx: torch.Tensor, kv_idx: torch.Tensor
+    ) -> torch.Tensor:
+        return q_idx >= kv_idx
+
+    mask_mods.append(_causal_mask_mod)
+
+    if window_size is not None and window_size != (-1, -1):
+
+        def _sliding_window_mask_mod(
+            B: torch.Tensor, H: torch.Tensor, q_idx: torch.Tensor, kv_idx: torch.Tensor
+        ) -> torch.Tensor:
+            assert window_size is not None
+            return torch.logical_and(
+                q_idx - kv_idx <= window_size[0], kv_idx - q_idx <= window_size[1]
+            )
+
+        mask_mods.append(_sliding_window_mask_mod)
+
+    if doc_lens is not None:
+        if device is None:
+            raise ValueError("Device is required for intra-document masking mod")
+
+        document_ids = torch.repeat_interleave(  
+            torch.arange(len(doc_lens), device=device),  
+            torch.as_tensor(doc_lens, device=device, dtype=torch.uint32)  
+        )
+
+        def _document_masking_mask_mod(
+            B: torch.Tensor, H: torch.Tensor, q_idx: torch.Tensor, kv_idx: torch.Tensor
+        ) -> torch.Tensor:
+            return document_ids[q_idx] == document_ids[kv_idx]
+
+        mask_mods.append(_document_masking_mask_mod)
+
+    return and_masks(*mask_mods)
+
+
+def _get_flex_attn_causal_block_mask(
+    seq_len: int,
+    device: torch.device,
+    window_size: Optional[Tuple[int, int]] = None,
+    doc_lens: Optional[Tuple[int, ...]] = None,
+    block_size: int = 128,
+) -> BlockMask:
+    if doc_lens is not None:
+        token_count = int(sum(doc_lens))
+        if token_count % seq_len != 0:
+            raise ValueError("Sum of document lengths is not a multiple of sequence length")
+
+        # For intra-document masking, we merge the batch size dimension into the sequence dimension.
+        return create_block_mask(
+            _get_flex_attn_mask_mod(window_size, doc_lens=doc_lens, device=device),
+            B=1,
+            H=None,
+            Q_LEN=token_count,
+            KV_LEN=token_count,
+            device=device.type,
+            BLOCK_SIZE=block_size,
+        )
+
+    else:
+        return create_block_mask(
+            _get_flex_attn_mask_mod(window_size, device=device),
+            B=None,
+            H=None,
+            Q_LEN=seq_len,
+            KV_LEN=seq_len,
+            device=device.type,
+            BLOCK_SIZE=block_size,
+        )
+
+
+def get_flex_attn_causal_block_mask(
+    seq_len: int,
+    device: torch.device,
+    window_size: Optional[Tuple[int, int]] = None,
+    doc_lens: Optional[torch.Tensor] = None,
+    block_size: int = 128,
+) -> BlockMask:
+    if doc_lens is not None:
+        doc_lens_list = tuple(doc_lens.flatten().tolist())
+        return _get_flex_attn_causal_block_mask(
+            seq_len, device, window_size, doc_lens_list, block_size
+        )
+
+    return _get_flex_attn_causal_block_mask(
+        seq_len, device, window_size, doc_lens=None, block_size=block_size
     )
