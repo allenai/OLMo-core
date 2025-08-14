@@ -203,29 +203,48 @@ class Transformer(nn.Module):
         seq_len: int,
         device: Optional[torch.device] = None,
         doc_lens: Optional[torch.Tensor] = None,
-    ) -> List[Optional[BlockMask]]:
+        return_mask_fns: bool = False,
+    ) -> Union[List[Optional[BlockMask]], Tuple[List[Optional[BlockMask]], List[Optional[Any]]]]:
         if device is None:
             device = self.device
 
         block_masks_by_window_size = {}
+        mask_fns_by_window_size = {}
         block_masks = []
+        mask_fns = []
+        
         for block in self.blocks.values():
             block = cast(TransformerBlock, block)
             att = cast(Union[Attention, FusedAttention], block.attention)
 
             block_mask = None
+            mask_fn = None
             if att.use_flex:
                 # Reuse block masks across layers with the same window size
                 window_size = getattr(att, "window_size", None)
                 if window_size not in block_masks_by_window_size:
-                    block_masks_by_window_size[window_size] = get_flex_attn_causal_block_mask(
-                        seq_len, device, window_size, doc_lens
-                    )
+                    needs_mask_fn = return_mask_fns or getattr(att, "use_sinks", False)
+                    
+                    if needs_mask_fn:
+                        result = get_flex_attn_causal_block_mask(
+                            seq_len, device, window_size, doc_lens, return_mask_fn=True
+                        )
+                        block_masks_by_window_size[window_size] = result[0]
+                        mask_fns_by_window_size[window_size] = result[1]
+                    else:
+                        block_masks_by_window_size[window_size] = get_flex_attn_causal_block_mask(
+                            seq_len, device, window_size, doc_lens
+                        )
+                        mask_fns_by_window_size[window_size] = None
 
                 block_mask = block_masks_by_window_size[window_size]
+                mask_fn = mask_fns_by_window_size[window_size]
 
             block_masks.append(block_mask)
+            mask_fns.append(mask_fn)
 
+        if return_mask_fns:
+            return block_masks, mask_fns
         return block_masks
 
     def get_rope_buffers(
@@ -375,8 +394,20 @@ class Transformer(nn.Module):
             max_doc_len = max(max_doc_lens)
             cu_doc_lens = get_cumulative_document_lengths(doc_lens)
         
-        block_masks = self._get_flex_attn_block_masks(S, self.device, doc_lens)
-        all_block_kwargs["block_masks"] = block_masks
+        # Check if any layer needs mask functions (for sinks)
+        has_sinks = any(
+            getattr(cast(Union[Attention, FusedAttention], block.attention), "use_sinks", False)
+            for block in self.blocks.values()
+            if hasattr(block, "attention")
+        )
+        
+        if has_sinks:
+            block_masks, mask_fns = self._get_flex_attn_block_masks(S, self.device, doc_lens, return_mask_fns=True)
+            all_block_kwargs["block_masks"] = block_masks
+            all_block_kwargs["mask_fns"] = mask_fns
+        else:
+            block_masks = self._get_flex_attn_block_masks(S, self.device, doc_lens)
+            all_block_kwargs["block_masks"] = block_masks
 
         # Shard inputs and RoPE buffers on sequence dimension if using context parallelism.
         if (cp_load_balancer := self._cp_load_balancer) is not None:
@@ -503,16 +534,18 @@ class Transformer(nn.Module):
         h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
 
         block_mask_by_layer = all_block_kwargs.pop("block_masks", [None] * self.n_layers)
+        mask_fn_by_layer = all_block_kwargs.pop("mask_fns", [None] * self.n_layers)
 
         # Run each block.
         for block_key, block in self.blocks.items():
             block_idx = int(block_key)
             block_kwargs = per_block_kwargs.get(block_idx, {})
             block_mask = block_mask_by_layer[block_idx]
+            mask_fn = mask_fn_by_layer[block_idx]
             # Mark sizes as dynamic for torch.compile().
             if self.compile_enabled:
                 mark_dynamic(h, (0, 1), strict=False)
-            h = block(h, block_mask=block_mask, **all_block_kwargs, **block_kwargs)
+            h = block(h, block_mask=block_mask, mask_fn=mask_fn, **all_block_kwargs, **block_kwargs)
 
         # Get final logits but again pass-through in case of pipeline parallelism.
         if self.lm_head is not None:

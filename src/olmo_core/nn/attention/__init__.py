@@ -431,6 +431,7 @@ class Attention(AttentionBase):
         scale: Optional[float] = None,
         block_mask: Optional[BlockMask] = None,
         sinks: Optional[torch.Tensor] = None,
+        mask_fn: Optional[Callable] = None,
     ) -> torch.Tensor:
         att: torch.Tensor
         if self.cp_enabled:
@@ -536,23 +537,29 @@ class Attention(AttentionBase):
                 )  # (batch_size, n_heads, seq_len, seq_len)
                 if scale is not None:
                     attn_logits *= scale
-                    
-                if self.window_size != (-1, -1):
-                    window_left, window_right = self.window_size
-                    positions = torch.arange(seq_len, device=q.device)
-                    causal_mask = positions[:, None] < positions[None, :]
-                    
-                    if window_left >= 0:
-                        window_mask_left = positions[:, None] > positions[None, :] + window_left
-                        causal_mask = causal_mask | window_mask_left
-                    
-                    if window_right >= 0:
-                        window_mask_right = positions[None, :] > positions[:, None] + window_right
-                        causal_mask = causal_mask | window_mask_right
-                else:
-                    causal_mask = torch.triu(q.new_ones((seq_len, seq_len), dtype=torch.bool), diagonal=1)
                 
-                attn_logits = attn_logits.masked_fill(causal_mask[None, None, :, :], -float("inf"))
+                if mask_fn is not None:
+                    attention_mask = materialize_dense_mask(
+                        mask_fn, seq_len, q.device, batch_size, n_heads
+                    )
+                    attn_logits = attn_logits.masked_fill(~attention_mask, -float("inf"))
+                else:
+                    if self.window_size != (-1, -1):
+                        window_left, window_right = self.window_size
+                        positions = torch.arange(seq_len, device=q.device)
+                        causal_mask = positions[:, None] < positions[None, :]
+                        
+                        if window_left >= 0:
+                            window_mask_left = positions[:, None] > positions[None, :] + window_left
+                            causal_mask = causal_mask | window_mask_left
+                        
+                        if window_right >= 0:
+                            window_mask_right = positions[None, :] > positions[:, None] + window_right
+                            causal_mask = causal_mask | window_mask_right
+                    else:
+                        causal_mask = torch.triu(q.new_ones((seq_len, seq_len), dtype=torch.bool), diagonal=1)
+                    
+                    attn_logits = attn_logits.masked_fill(causal_mask[None, None, :, :], -float("inf"))
 
                 if sinks.ndim == 1:
                     S = sinks.numel()
@@ -627,11 +634,15 @@ class Attention(AttentionBase):
                 )  # (batch_size, n_heads, seq_len, seq_len)
                 if scale is not None:
                     attn_logits *= scale
-                # else:
-                #     attn_logits *= 1.0 / math.sqrt(head_dim)
 
-                causal_mask = torch.triu(q.new_full((seq_len, seq_len), -float("inf")), diagonal=1)
-                attn_logits = attn_logits + causal_mask[None, None, :, :]
+                if mask_fn is not None:
+                    attention_mask = materialize_dense_mask(
+                        mask_fn, seq_len, q.device, batch_size, n_heads
+                    )
+                    attn_logits = attn_logits.masked_fill(~attention_mask, -float("inf"))
+                else:
+                    causal_mask = torch.triu(q.new_full((seq_len, seq_len), -float("inf")), diagonal=1)
+                    attn_logits = attn_logits + causal_mask[None, None, :, :]
 
                 if sinks.ndim == 1:
                     S = sinks.numel()
@@ -680,6 +691,7 @@ class Attention(AttentionBase):
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
         block_mask: Optional[BlockMask] = None,
+        mask_fn: Optional[Callable] = None,
     ) -> torch.Tensor:
         """
         Apply attention to the input.
@@ -755,6 +767,7 @@ class Attention(AttentionBase):
             local_k_slice=local_k_slice,
             block_mask=block_mask,
             sinks=self.sinks if self.use_sinks else None,
+            mask_fn=mask_fn,
         )
 
         # shape: (batch_size, seq_len, d_model)
@@ -896,6 +909,8 @@ class NormalizedAttention(Attention):
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
+        block_mask: Optional[BlockMask] = None,
+        mask_fn: Optional[Callable] = None,
     ) -> torch.Tensor:
         B, T, _ = x.shape
 
@@ -1225,13 +1240,56 @@ def get_flex_attn_causal_block_mask(
     window_size: Optional[Tuple[int, int]] = None,
     doc_lens: Optional[torch.Tensor] = None,
     block_size: int = 128,
-) -> BlockMask:
+    return_mask_fn: bool = False,
+) -> Union[BlockMask, Tuple[BlockMask, Callable]]:
     if doc_lens is not None:
         doc_lens_list = tuple(doc_lens.flatten().tolist())
-        return _get_flex_attn_causal_block_mask(
+        mask_fn = _get_flex_attn_mask_mod(window_size, doc_lens=doc_lens_list, device=device)
+        block_mask = _get_flex_attn_causal_block_mask(
             seq_len, device, window_size, doc_lens_list, block_size
         )
+    else:
+        mask_fn = _get_flex_attn_mask_mod(window_size, device=device)
+        block_mask = _get_flex_attn_causal_block_mask(
+            seq_len, device, window_size, doc_lens=None, block_size=block_size
+        )
+    
+    if return_mask_fn:
+        return block_mask, mask_fn
+    return block_mask
 
-    return _get_flex_attn_causal_block_mask(
-        seq_len, device, window_size, doc_lens=None, block_size=block_size
-    )
+
+def materialize_dense_mask(
+    mask_fn: Callable[[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor], torch.Tensor],
+    seq_len: int,
+    device: torch.device,
+    batch_size: int = 1,
+    n_heads: int = 1,
+) -> torch.Tensor:
+    """
+    Convert a flex attention mask function to a dense boolean mask.
+    
+    Args:
+        mask_fn: The mask function from _get_flex_attn_mask_mod
+        seq_len: Sequence length
+        device: Device to create tensors on
+        batch_size: Batch size (for broadcasting)
+        n_heads: Number of heads (for broadcasting)
+    
+    Returns:
+        Dense boolean mask of shape (batch_size, n_heads, seq_len, seq_len)
+        True means attention is allowed, False means masked out.
+    """
+    
+    q_indices = torch.arange(seq_len, device=device)
+    kv_indices = torch.arange(seq_len, device=device)
+    
+    q_idx, kv_idx = torch.meshgrid(q_indices, kv_indices, indexing="ij")
+    
+    B = torch.zeros(1, device=device, dtype=torch.long)
+    H = torch.zeros(1, device=device, dtype=torch.long)
+    
+    dense_mask = mask_fn(B, H, q_idx, kv_idx)
+    dense_mask = dense_mask.unsqueeze(0).unsqueeze(0).expand(batch_size, n_heads, -1, -1)
+    
+    return dense_mask
