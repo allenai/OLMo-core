@@ -476,6 +476,9 @@ class Attention(AttentionBase):
                     device=self.cache_seqlens.device, dtype=torch.int32
                 )
 
+            if kv_cache_context.cache_leftpad is None:
+                breakpoint()
+
             att = dispatch_flash_attn_with_kvcache(
                 q,
                 self.k_cache,  # updated in-place
