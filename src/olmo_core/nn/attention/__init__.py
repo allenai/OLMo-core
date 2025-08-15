@@ -10,7 +10,6 @@ import torch.nn.functional as F
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import Placement, Replicate, Shard
 from torch.distributed.tensor.parallel import parallelize_module
-
 from torch.nn.attention.flex_attention import (
     BlockMask,
     and_masks,
@@ -465,9 +464,7 @@ class Attention(AttentionBase):
             )
         elif self.use_flash:
             if sinks is not None:
-                raise OLMoConfigurationError(
-                    "Sinks with flash attention is not yet implemented."
-                )
+                raise OLMoConfigurationError("Sinks with flash attention is not yet implemented.")
             else:
                 att = dispatch_flash_attn(
                     q,
@@ -537,7 +534,7 @@ class Attention(AttentionBase):
                 )  # (batch_size, n_heads, seq_len, seq_len)
                 if scale is not None:
                     attn_logits *= scale
-                
+
                 if mask_fn is not None:
                     attention_mask = materialize_dense_mask(
                         mask_fn, seq_len, q.device, batch_size, n_heads
@@ -548,18 +545,24 @@ class Attention(AttentionBase):
                         window_left, window_right = self.window_size
                         positions = torch.arange(seq_len, device=q.device)
                         causal_mask = positions[:, None] < positions[None, :]
-                        
+
                         if window_left >= 0:
                             window_mask_left = positions[:, None] > positions[None, :] + window_left
                             causal_mask = causal_mask | window_mask_left
-                        
+
                         if window_right >= 0:
-                            window_mask_right = positions[None, :] > positions[:, None] + window_right
+                            window_mask_right = (
+                                positions[None, :] > positions[:, None] + window_right
+                            )
                             causal_mask = causal_mask | window_mask_right
                     else:
-                        causal_mask = torch.triu(q.new_ones((seq_len, seq_len), dtype=torch.bool), diagonal=1)
-                    
-                    attn_logits = attn_logits.masked_fill(causal_mask[None, None, :, :], -float("inf"))
+                        causal_mask = torch.triu(
+                            q.new_ones((seq_len, seq_len), dtype=torch.bool), diagonal=1
+                        )
+
+                    attn_logits = attn_logits.masked_fill(
+                        causal_mask[None, None, :, :], -float("inf")
+                    )
 
                 if sinks.ndim == 1:
                     S = sinks.numel()
@@ -592,7 +595,6 @@ class Attention(AttentionBase):
             # shape: (batch_size, seq_len, n_heads, head_dim)
             att = att.transpose(1, 2).contiguous()
 
-            
         else:
             # Fall back to PyTorch's SDPA...
             if any(
@@ -626,7 +628,7 @@ class Attention(AttentionBase):
                 att = F.scaled_dot_product_attention(
                     q, k, v, dropout_p=self.dropout_p, is_causal=True, scale=scale
                 )
-            
+
             else:
                 batch_size, n_heads, seq_len, _ = q.shape
                 attn_logits = torch.matmul(
@@ -641,7 +643,9 @@ class Attention(AttentionBase):
                     )
                     attn_logits = attn_logits.masked_fill(~attention_mask, -float("inf"))
                 else:
-                    causal_mask = torch.triu(q.new_full((seq_len, seq_len), -float("inf")), diagonal=1)
+                    causal_mask = torch.triu(
+                        q.new_full((seq_len, seq_len), -float("inf")), diagonal=1
+                    )
                     attn_logits = attn_logits + causal_mask[None, None, :, :]
 
                 if sinks.ndim == 1:
@@ -1152,6 +1156,7 @@ def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
         .reshape(bs, slen, n_kv_heads * n_rep, head_dim)
     )
 
+
 def _get_flex_attn_mask_mod(
     window_size: Optional[Tuple[int, int]] = None,
     doc_lens: Optional[Tuple[int, ...]] = None,
@@ -1182,9 +1187,9 @@ def _get_flex_attn_mask_mod(
         if device is None:
             raise ValueError("Device is required for intra-document masking mod")
 
-        document_ids = torch.repeat_interleave(  
-            torch.arange(len(doc_lens), device=device),  
-            torch.as_tensor(doc_lens, device=device, dtype=torch.uint32)  
+        document_ids = torch.repeat_interleave(
+            torch.arange(len(doc_lens), device=device),
+            torch.as_tensor(doc_lens, device=device, dtype=torch.uint32),
         )
 
         def _document_masking_mask_mod(
@@ -1251,7 +1256,7 @@ def get_flex_attn_causal_block_mask(
         block_mask = _get_flex_attn_causal_block_mask(
             seq_len, device, window_size, doc_lens=None, block_size=block_size
         )
-    
+
     if return_mask_fn:
         return block_mask, mask_fn
     return block_mask
@@ -1266,28 +1271,28 @@ def materialize_dense_mask(
 ) -> torch.Tensor:
     """
     Convert a flex attention mask function to a dense boolean mask.
-    
+
     Args:
         mask_fn: The mask function from _get_flex_attn_mask_mod
         seq_len: Sequence length
         device: Device to create tensors on
         batch_size: Batch size (for broadcasting)
         n_heads: Number of heads (for broadcasting)
-    
+
     Returns:
         Dense boolean mask of shape (batch_size, n_heads, seq_len, seq_len)
         True means attention is allowed, False means masked out.
     """
-    
+
     q_indices = torch.arange(seq_len, device=device)
     kv_indices = torch.arange(seq_len, device=device)
-    
+
     q_idx, kv_idx = torch.meshgrid(q_indices, kv_indices, indexing="ij")
-    
+
     B = torch.zeros(1, device=device, dtype=torch.long)
     H = torch.zeros(1, device=device, dtype=torch.long)
-    
+
     dense_mask = mask_fn(B, H, q_idx, kv_idx)
     dense_mask = dense_mask.unsqueeze(0).unsqueeze(0).expand(batch_size, n_heads, -1, -1)
-    
+
     return dense_mask

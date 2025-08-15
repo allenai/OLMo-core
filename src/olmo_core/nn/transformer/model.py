@@ -212,7 +212,7 @@ class Transformer(nn.Module):
         mask_fns_by_window_size = {}
         block_masks = []
         mask_fns = []
-        
+
         for block in self.blocks.values():
             block = cast(TransformerBlock, block)
             att = cast(Union[Attention, FusedAttention], block.attention)
@@ -224,7 +224,7 @@ class Transformer(nn.Module):
                 window_size = getattr(att, "window_size", None)
                 if window_size not in block_masks_by_window_size:
                     needs_mask_fn = return_mask_fns or getattr(att, "use_sinks", False)
-                    
+
                     if needs_mask_fn:
                         result = get_flex_attn_causal_block_mask(
                             seq_len, device, window_size, doc_lens, return_mask_fn=True
@@ -393,16 +393,18 @@ class Transformer(nn.Module):
         ) is not None:
             max_doc_len = max(max_doc_lens)
             cu_doc_lens = get_cumulative_document_lengths(doc_lens)
-        
+
         # Check if any layer needs mask functions (for sinks)
         has_sinks = any(
             getattr(cast(Union[Attention, FusedAttention], block.attention), "use_sinks", False)
             for block in self.blocks.values()
             if hasattr(block, "attention")
         )
-        
+
         if has_sinks:
-            block_masks, mask_fns = self._get_flex_attn_block_masks(S, self.device, doc_lens, return_mask_fns=True)
+            block_masks, mask_fns = self._get_flex_attn_block_masks(
+                S, self.device, doc_lens, return_mask_fns=True
+            )
             all_block_kwargs["block_masks"] = block_masks
             all_block_kwargs["mask_fns"] = mask_fns
         else:

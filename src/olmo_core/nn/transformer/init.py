@@ -132,8 +132,8 @@ class InitMethod(StrEnum):
             std = std / (2 * num_blocks) ** 0.5
 
         self._init_linear(m.w_out, std=std, generator=generator)
-        
-        if hasattr(m, 'sinks') and m.sinks is not None:
+
+        if hasattr(m, "sinks") and m.sinks is not None:
             # head_dim = d_model // getattr(m, 'n_heads', 1)
             # sink_std = 1.0 / (head_dim ** 0.5)
             if isinstance(m.sinks, nn.Parameter):
