@@ -333,7 +333,7 @@ class LocalEncoder(nn.Module):
             k: v.full_tensor() if isinstance(v, DTensor) else v for k, v in self.state_dict().items()
         })
 
-        _, h_patch = local_encoder_copy(
+        _, h_patch, _ = local_encoder_copy(
             tokens=dummy_input,
             patch_lens=patch_lens,
             patch_ids=patch_ids,
