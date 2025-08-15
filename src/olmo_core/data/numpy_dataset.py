@@ -877,7 +877,7 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
 
     @property
     def fingerprint_fields(self) -> Tuple[str, ...]:
-        fields = (
+        fields: Tuple[str, ...] = (
             "vocab_size",
             "pad_token_id",
             "eos_token_id",
@@ -2352,7 +2352,7 @@ class NumpyDatasetConfig(Config):
     """
     Determines how long documents are handled with the packed FSL dataset.
     """
-    do_greedy_packing: Optional[bool] = False
+    do_greedy_packing: Optional[bool] = None
     """
     Only valid for the padded FSL dataset.
     """
