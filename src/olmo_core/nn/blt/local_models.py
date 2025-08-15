@@ -51,7 +51,7 @@ class DTPBoundaryPredictor(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return F.logsigmoid(self.mlp(x))
+        return F.logsigmoid(self.mlp(x)).squeeze(-1)
 
 
 # cosine-similarity based boundary predictor as in H-Net
@@ -166,6 +166,8 @@ class LocalEncoder(nn.Module):
             self.boundary_predictor_module = DTPBoundaryPredictor(d_model, init_device=init_device)
         elif self.boundary_predictor == "hnet":
             self.boundary_predictor_module = HNetBoundaryPredictor(d_model, init_device=init_device)
+        elif self.boundary_predictor is not None:
+            raise ValueError(f"Unknown boundary predictor: {self.boundary_predictor}")
         else:
             self.boundary_predictor_module = None
 
@@ -778,6 +780,7 @@ class LocalDecoder(nn.Module):
                 boundary_probs,
                 1 - boundary_probs,
             )
+            # TODO(benjaminm): do we want to train this? or detach selected boundary probs?
             depool_out_modulated = depool_out * ste_func(selected_boundary_probs).unsqueeze(-1)
         else:
             depool_out_modulated = depool_out

@@ -2068,7 +2068,11 @@ class BLTDistillTransformer(BLTTransformer):
             **kwargs,
         )
 
-        h_byte, h_patch, boundary_logprobs = self.local_encoder(input_ids, **local_encoder_kwargs)
+        h_byte, h_patch, boundary_logprobs = self.local_encoder(
+            input_ids,
+            teacher_force_boundaries=blt_config.teacher_force_boundaries,
+            **local_encoder_kwargs
+        )
 
         h_patch_global = h_patch[:, 1:]  # skip the first token, which is <bos>
 
@@ -2086,6 +2090,7 @@ class BLTDistillTransformer(BLTTransformer):
         h_out = self.local_decoder(
             embeds=h_byte,
             patch_embeds=h_patch,
+            boundary_logprobs=None if blt_config.teacher_force_boundaries else boundary_logprobs,
             **local_decoder_kwargs,
         )
         logits = self.lm_head(h_out, **lm_head_kwargs)

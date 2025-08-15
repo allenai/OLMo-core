@@ -159,6 +159,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             n_layers=local_encoder_n_layers,
             cross_attn_n_heads=local_cross_attn_n_heads,
             block_config=local_block,
+            boundary_predictor="dtp",
             add_out_projection=False,
         )
         local_decoder = LocalDecoderConfig(
@@ -203,6 +204,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             block_config=local_block,
             add_norm_after_last_block=True,
             add_out_projection=True,
+            boundary_predictor="dtp",
             pooling="hnet",
         )
         local_decoder = LocalDecoderConfig(
@@ -426,7 +428,11 @@ def main(run_name: str, overrides: List[str]):
     if config.model.use_teacher_embs_with_vocab_size is not None:
         key_mapping["teacher_embeddings.weight"] = "teacher.embeddings.weight"
 
+    # temporary to convert from old boundary predictor location to new
+    key_mapping |= {k: k.replace("local_encoder.", "").replace("boundary_predictor_module", "boundary_predictor") for k in model.state_dict().keys() if "boundary_predictor_module" in k}
+
     incompatible_keys = load_model_and_optim_state(STAGE1_CKPT_PATH, model, key_mapping=key_mapping, extend_key_mapping=extend_key_mapping)
+    log.info(incompatible_keys)
 
     if len(incompatible_keys.unexpected_keys) > 0:
         raise ValueError(f"Unexpected keys when loading checkpoint: {incompatible_keys.unexpected_keys} (assume we use all teacher weights)")
