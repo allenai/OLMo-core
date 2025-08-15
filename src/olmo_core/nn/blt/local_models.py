@@ -62,13 +62,13 @@ class HNetBoundaryPredictor(nn.Module):
         self.q_proj_layer = nn.Linear(d_model, d_model, bias=False, device=init_device)
         self.k_proj_layer = nn.Linear(d_model, d_model, bias=False, device=init_device)
         
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+    def forward(self, hidden_states: torch.Tensor, epsilon: float = 1e-6) -> torch.Tensor:
         cos_sim = torch.einsum(
             "b l d, b l d -> b l",
             F.normalize(self.q_proj_layer(hidden_states[:, :-1]), dim=-1),
             F.normalize(self.k_proj_layer(hidden_states[:, 1:]), dim=-1),
         )
-        boundary_logprobs = torch.log1p(-cos_sim) - math.log(2)
+        boundary_logprobs = torch.log1p(-cos_sim.float().clip(max=1.0 - epsilon)) - math.log(2)
         PAD_LOGPROB = 0.0
         boundary_logprobs = F.pad(boundary_logprobs, (1, 0), "constant", PAD_LOGPROB)
 
@@ -419,8 +419,7 @@ class LocalEncoder(nn.Module):
         if teacher_force_boundaries:
             index = (torch.cumsum(patch_lens, dim=1) - 1).unsqueeze(-1).expand(-1, -1, h.shape[-1])
         else:
-            boundary_probs = torch.exp(boundary_logprobs)  # type: ignore
-            boundary_mask = boundary_probs > 0.5
+            boundary_mask = boundary_logprobs > math.log(0.5) # type: ignore
 
             L = pool_out.shape[1]
             token_idx = (
@@ -711,7 +710,7 @@ class LocalDecoder(nn.Module):
         boundary_logprobs: torch.Tensor | None = None,
         block_size: int = 256,
         headdim: int = 32,
-        epsilon: float = 1e-8,
+        epsilon: float = 1e-6,
     ) -> torch.Tensor:
         from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
 
