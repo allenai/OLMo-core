@@ -224,16 +224,24 @@ class Transformer(nn.Module):
                 window_size = getattr(att, "window_size", None)
                 if window_size not in block_masks_by_window_size:
                     needs_mask_fn = return_mask_fns or getattr(att, "use_sinks", False)
+                    
+                    # Determine number of sink tokens for this layer
+                    num_sink_tokens = 0
+                    if getattr(att, "use_sinks", False) and hasattr(att, "sinks") and att.sinks is not None:
+                        if att.sinks.ndim == 1:
+                            num_sink_tokens = 1
+                        elif att.sinks.ndim == 2:
+                            num_sink_tokens = att.sinks.size(1)
 
                     if needs_mask_fn:
                         result = get_flex_attn_causal_block_mask(
-                            seq_len, device, window_size, doc_lens, return_mask_fn=True
+                            seq_len, device, window_size, doc_lens, return_mask_fn=True, num_sink_tokens=num_sink_tokens
                         )
                         block_masks_by_window_size[window_size] = result[0]
                         mask_fns_by_window_size[window_size] = result[1]
                     else:
                         block_masks_by_window_size[window_size] = get_flex_attn_causal_block_mask(
-                            seq_len, device, window_size, doc_lens
+                            seq_len, device, window_size, doc_lens, num_sink_tokens=num_sink_tokens
                         )
                         mask_fns_by_window_size[window_size] = None
 

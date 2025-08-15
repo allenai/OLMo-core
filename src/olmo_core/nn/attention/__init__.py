@@ -528,69 +528,9 @@ class Attention(AttentionBase):
                 att = flex_att.to(dtype=og_dtype)
 
             else:
-                batch_size, n_heads, seq_len, _ = q.shape
-                attn_logits = torch.matmul(
-                    q, k.transpose(2, 3)
-                )  # (batch_size, n_heads, seq_len, seq_len)
-                if scale is not None:
-                    attn_logits *= scale
-
-                if mask_fn is not None:
-                    attention_mask = materialize_dense_mask(
-                        mask_fn, seq_len, q.device, batch_size, n_heads
-                    )
-                    attn_logits = attn_logits.masked_fill(~attention_mask, -float("inf"))
-                else:
-                    if self.window_size != (-1, -1):
-                        window_left, window_right = self.window_size
-                        positions = torch.arange(seq_len, device=q.device)
-                        causal_mask = positions[:, None] < positions[None, :]
-
-                        if window_left >= 0:
-                            window_mask_left = positions[:, None] > positions[None, :] + window_left
-                            causal_mask = causal_mask | window_mask_left
-
-                        if window_right >= 0:
-                            window_mask_right = (
-                                positions[None, :] > positions[:, None] + window_right
-                            )
-                            causal_mask = causal_mask | window_mask_right
-                    else:
-                        causal_mask = torch.triu(
-                            q.new_ones((seq_len, seq_len), dtype=torch.bool), diagonal=1
-                        )
-
-                    attn_logits = attn_logits.masked_fill(
-                        causal_mask[None, None, :, :], -float("inf")
-                    )
-
-                if sinks.ndim == 1:
-                    S = sinks.numel()
-                    sink_logits = (
-                        sinks.view(1, 1, 1, S)
-                        .to(attn_logits)
-                        .expand(batch_size, n_heads, seq_len, S)
-                    )
-                elif sinks.ndim == 2:
-                    assert sinks.size(0) == n_heads, "Sinks first dim must equal n_heads"
-                    S = sinks.size(1)
-                    sink_logits = (
-                        sinks.view(1, n_heads, 1, S)
-                        .to(attn_logits)
-                        .expand(batch_size, n_heads, seq_len, S)
-                    )
-                else:
-                    raise ValueError("Sinks must have shape (S) or (n_heads, S)")
-
-                combined_logits = torch.cat(
-                    [attn_logits, sink_logits], dim=-1
-                )  # (batch_size, n_heads, head_dim, head_dim + seq_len)
-                combined_probs = F.softmax(combined_logits, dim=-1, dtype=torch.float32).to(
-                    attn_logits.dtype
+                att = get_flex_attn_with_sinks(
+                    q, k, v, sinks, block_mask, scale
                 )
-                probs = combined_probs[..., :seq_len]
-                probs = F.dropout(probs, p=self.dropout_p)
-                att = torch.matmul(probs, v)
 
             # shape: (batch_size, seq_len, n_heads, head_dim)
             att = att.transpose(1, 2).contiguous()
@@ -1161,6 +1101,7 @@ def _get_flex_attn_mask_mod(
     window_size: Optional[Tuple[int, int]] = None,
     doc_lens: Optional[Tuple[int, ...]] = None,
     device: Optional[torch.device] = None,
+    num_sink_tokens: int = 0,
 ) -> Callable[[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor], torch.Tensor]:
     mask_mods = []
 
@@ -1202,6 +1143,14 @@ def _get_flex_attn_mask_mod(
 
         mask_mods.append(_document_masking_mask_mod)
 
+    if num_sink_tokens > 0:
+        def _sink_mask_mod(
+            B: torch.Tensor, H: torch.Tensor, q_idx: torch.Tensor, kv_idx: torch.Tensor
+        ) -> torch.Tensor:
+            return kv_idx < num_sink_tokens
+        
+        mask_mods.append(_sink_mask_mod)
+
     return and_masks(*mask_mods)
 
 
@@ -1211,6 +1160,7 @@ def _get_flex_attn_causal_block_mask(
     window_size: Optional[Tuple[int, int]] = None,
     doc_lens: Optional[Tuple[int, ...]] = None,
     block_size: int = 128,
+    num_sink_tokens: int = 0,
 ) -> BlockMask:
     if doc_lens is not None:
         token_count = int(sum(doc_lens))
@@ -1219,22 +1169,22 @@ def _get_flex_attn_causal_block_mask(
 
         # For intra-document masking, we merge the batch size dimension into the sequence dimension.
         return create_block_mask(
-            _get_flex_attn_mask_mod(window_size, doc_lens=doc_lens, device=device),
+            _get_flex_attn_mask_mod(window_size, doc_lens=doc_lens, device=device, num_sink_tokens=num_sink_tokens),
             B=1,
             H=None,
             Q_LEN=token_count,
-            KV_LEN=token_count,
+            KV_LEN=token_count + num_sink_tokens,
             device=device.type,
             BLOCK_SIZE=block_size,
         )
 
     else:
         return create_block_mask(
-            _get_flex_attn_mask_mod(window_size, device=device),
+            _get_flex_attn_mask_mod(window_size, device=device, num_sink_tokens=num_sink_tokens),
             B=None,
             H=None,
             Q_LEN=seq_len,
-            KV_LEN=seq_len,
+            KV_LEN=seq_len + num_sink_tokens,
             device=device.type,
             BLOCK_SIZE=block_size,
         )
@@ -1247,17 +1197,18 @@ def get_flex_attn_causal_block_mask(
     doc_lens: Optional[torch.Tensor] = None,
     block_size: int = 128,
     return_mask_fn: bool = False,
+    num_sink_tokens: int = 0,
 ) -> Union[BlockMask, Tuple[BlockMask, Callable]]:
     if doc_lens is not None:
         doc_lens_list = tuple(doc_lens.flatten().tolist())
-        mask_fn = _get_flex_attn_mask_mod(window_size, doc_lens=doc_lens_list, device=device)
+        mask_fn = _get_flex_attn_mask_mod(window_size, doc_lens=doc_lens_list, device=device, num_sink_tokens=num_sink_tokens)
         block_mask = _get_flex_attn_causal_block_mask(
-            seq_len, device, window_size, doc_lens_list, block_size
+            seq_len, device, window_size, doc_lens_list, block_size, num_sink_tokens=num_sink_tokens
         )
     else:
-        mask_fn = _get_flex_attn_mask_mod(window_size, device=device)
+        mask_fn = _get_flex_attn_mask_mod(window_size, device=device, num_sink_tokens=num_sink_tokens)
         block_mask = _get_flex_attn_causal_block_mask(
-            seq_len, device, window_size, doc_lens=None, block_size=block_size
+            seq_len, device, window_size, doc_lens=None, block_size=block_size, num_sink_tokens=num_sink_tokens
         )
 
     if return_mask_fn:
@@ -1299,3 +1250,61 @@ def materialize_dense_mask(
     dense_mask = dense_mask.unsqueeze(0).unsqueeze(0).expand(batch_size, n_heads, -1, -1)
 
     return dense_mask
+
+
+def get_flex_attn_with_sinks(
+    q: torch.Tensor,
+    k: torch.Tensor, 
+    v: torch.Tensor,
+    sinks: torch.Tensor,
+    block_mask: BlockMask,
+    scale: Optional[float] = None,
+) -> torch.Tensor:
+    """
+    This combines the optimized flex attention kernels with sink token support
+    by expanding the key/value sequences with sink representations.
+    
+    Args:
+        q: Query tensor of shape (batch_size, n_heads, seq_len, head_dim)
+        k: Key tensor of shape (batch_size, n_kv_heads, seq_len, head_dim)  
+        v: Value tensor of shape (batch_size, n_kv_heads, seq_len, head_dim)
+        sinks: Sink parameters of shape (n_heads,) or (n_heads, S)
+        block_mask: Flex attention block mask (should include sink positions)
+        scale: Optional attention scale factor
+
+    Returns:
+        Attention output tensor of shape (batch_size, n_heads, seq_len, head_dim)
+    """
+    batch_size, _, _, head_dim = q.shape
+    _, n_kv_heads, _, _ = k.shape
+    
+    if sinks.ndim == 1:
+        S = 1
+        # (batch_size, n_kv_heads, 1, head_dim)
+        sink_k = sinks[:n_kv_heads].view(1, n_kv_heads, 1, 1).expand(batch_size, n_kv_heads, 1, head_dim)
+        sink_v = sinks[:n_kv_heads].view(1, n_kv_heads, 1, 1).expand(batch_size, n_kv_heads, 1, head_dim)
+    elif sinks.ndim == 2:
+        assert sinks.size(0) >= n_kv_heads, "Sinks first dim must be >= n_kv_heads"
+        S = sinks.size(1)
+        # (batch_size, n_kv_heads, S, head_dim)
+        sink_k = sinks[:n_kv_heads].unsqueeze(0).unsqueeze(-1).expand(batch_size, n_kv_heads, S, head_dim)
+        sink_v = sink_k.clone()
+    else:
+        raise OLMoConfigurationError("Sinks must have shape (n_heads,) or (n_heads, S)")
+    
+    k_with_sinks = torch.cat([sink_k, k], dim=2)  # (batch_size, n_kv_heads, S + seq_len, head_dim)
+    v_with_sinks = torch.cat([sink_v, v], dim=2)  # (batch_size, n_kv_heads, S + seq_len, head_dim)
+    
+    og_dtype = q.dtype
+    q, k_with_sinks, v_with_sinks = q.float(), k_with_sinks.float(), v_with_sinks.float()
+    
+    with torch.autocast(enabled=False, device_type=q.device.type):
+        flex_att = flex_attention(
+            q, k_with_sinks, v_with_sinks, 
+            block_mask=block_mask, 
+            scale=scale, 
+            enable_gqa=True
+        )
+    
+    assert isinstance(flex_att, torch.Tensor)
+    return flex_att.to(dtype=og_dtype)
