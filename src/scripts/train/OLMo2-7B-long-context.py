@@ -30,7 +30,7 @@ INTRA_DOCUMENT_MASKING = True
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     config = TransformerConfig.olmo2_7B(
-        vocab_size=common.tokenizer.padded_vocab_size(), use_flex=True
+        vocab_size=common.tokenizer.padded_vocab_size(), use_flash=True
     )
     config.block.attention.use_sinks = False
     return config
