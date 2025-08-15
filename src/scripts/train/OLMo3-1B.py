@@ -54,6 +54,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         pattern=[4097, 4097, 4097, -1],
     )
     config.block.attention.use_flex = True
+    config.block.attention.use_sinks = True
     config.block.attention.use_head_qk_norm = True
 
     return config
