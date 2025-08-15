@@ -1189,7 +1189,7 @@ def _get_flex_attn_mask_mod(
 
         document_ids = torch.repeat_interleave(
             torch.arange(len(doc_lens), device=device),
-            torch.as_tensor(doc_lens, device=device, dtype=torch.uint32),
+            torch.as_tensor(doc_lens, device=device, dtype=torch.long),
         )
 
         def _document_masking_mask_mod(
