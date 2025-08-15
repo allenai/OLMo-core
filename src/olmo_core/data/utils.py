@@ -495,6 +495,7 @@ def segment_documents_into_instances(
         Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]
     ] = np.uint32,
     sample: Optional[Tuple[int, int]] = None,
+    do_greedy_packing: bool = False,
 ) -> Tuple[int, int]:
     """
     Segment documents into instances of at most ``sequence_length`` tokens.
@@ -505,15 +506,48 @@ def segment_documents_into_instances(
     Returns the number of original documents and the number of resulting instances documents.
     """
     total_og_docs = 0
-    idx_gen = (
-        idx
-        for start_idx, end_idx in iter_document_indices(
-            path, eos_token_id=eos_token_id, dtype=dtype
-        )
-        for idx in (start_idx, start_idx + min(end_idx - start_idx, max_sequence_length))
-    )
-    indices = np.fromiter(idx_gen, dtype=indices_dtype)
-    total_og_docs = len(indices) // 2
+
+    def _gen_indices():
+        nonlocal total_og_docs
+        doc_indices = iter(iter_document_indices(path, eos_token_id=eos_token_id, dtype=dtype))
+        if not do_greedy_packing:
+            for start_idx, end_idx in doc_indices:
+                total_og_docs += 1
+                yield start_idx
+                yield start_idx + min(end_idx - start_idx, max_sequence_length)
+        else:
+            instance_start: Optional[int] = None
+            instance_length = 0
+            for start_idx, end_idx in doc_indices:
+                total_og_docs += 1
+                doc_length = end_idx - start_idx
+
+                if instance_start is None:
+                    # Start of a new instance...
+                    # If document is at least 'max_sequence_length' long, just yield that as an instance.
+                    if doc_length >= max_sequence_length:
+                        yield start_idx
+                        yield start_idx + max_sequence_length
+                        continue
+
+                    # Otherwise start a new instance with this document.
+                    instance_start = start_idx
+                    instance_length = doc_length
+                elif instance_length + doc_length > max_sequence_length:
+                    # Document is too long to add to current instance without truncating, so start a new instance.
+                    yield instance_start
+                    yield instance_start + instance_length
+                    instance_start = start_idx
+                    instance_length = doc_length
+                else:
+                    # We can add the document to the current instance.
+                    instance_length += doc_length
+
+            if instance_start is not None:
+                yield instance_start
+                yield instance_start + instance_length
+
+    indices = np.fromiter(_gen_indices(), dtype=indices_dtype)
 
     if sample is not None:
         max_instances, seed = sample

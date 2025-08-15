@@ -1,3 +1,4 @@
+import fnmatch
 import io
 import logging
 import os
@@ -375,6 +376,16 @@ def clear_directory(dir: PathOrStr, force: bool = False):
             )
     elif Path(dir).is_dir():
         shutil.rmtree(dir, ignore_errors=True)
+
+
+def glob(pattern: str, recurse: bool = True) -> Generator[str, None, None]:
+    """
+    Like ``glob.glob()`` from the standard library, but works with remote directories as well.
+    """
+    dir = pattern.split("*", 1)[0]
+    for path in list_directory(dir, recurse=recurse):
+        if fnmatch.fnmatch(path, pattern):
+            yield path
 
 
 def list_directory(
