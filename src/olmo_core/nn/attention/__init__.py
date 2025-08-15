@@ -1187,9 +1187,12 @@ def _get_flex_attn_mask_mod(
         if device is None:
             raise ValueError("Device is required for intra-document masking mod")
 
-        document_ids = torch.repeat_interleave(
-            torch.arange(len(doc_lens), device=device),
-            torch.as_tensor(doc_lens, device=device, dtype=torch.long),
+        # document_ids = torch.repeat_interleave(
+        #     torch.arange(len(doc_lens), device=device),
+        #     torch.as_tensor(doc_lens, device=device, dtype=torch.long),
+        # )
+        document_ids = torch.cat(
+            [torch.full((int(doc_len),), i, device=device) for i, doc_len in enumerate(doc_lens)]
         )
 
         def _document_masking_mask_mod(
