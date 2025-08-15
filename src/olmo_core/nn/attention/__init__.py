@@ -1139,7 +1139,14 @@ def _get_flex_attn_mask_mod(
         def _document_masking_mask_mod(
             B: torch.Tensor, H: torch.Tensor, q_idx: torch.Tensor, kv_idx: torch.Tensor
         ) -> torch.Tensor:
-            return document_ids[q_idx] == document_ids[kv_idx]
+            # handling the offset
+            if num_sink_tokens > 0:
+                actual_kv_idx = kv_idx - num_sink_tokens
+                is_regular_token = kv_idx >= num_sink_tokens
+                doc_mask = document_ids[q_idx] == document_ids[torch.clamp(actual_kv_idx, min=0)]
+                return torch.where(is_regular_token, doc_mask, torch.zeros_like(doc_mask))
+            else:
+                return document_ids[q_idx] == document_ids[kv_idx]
 
         mask_mods.append(_document_masking_mask_mod)
 
