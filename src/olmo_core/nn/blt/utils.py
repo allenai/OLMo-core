@@ -1,4 +1,5 @@
 from typing import Dict, Any, List
+import math
 
 import torch
 from torch.nn import functional as F
@@ -147,3 +148,17 @@ def cross_attn_mask(
             device=patch_ids.device,
         )
         return block_mask
+
+
+def log1mexp(x):
+    """Computes log(1 - exp(x)) in a numerically stable way for x < 0."""
+    # For x < log(0.5), use log1p(-exp(x)) directly
+    # For x >= log(0.5), use log(-expm1(x)) to avoid precision issues
+    log_half = -math.log(2)
+    return torch.where(x < log_half, torch.log1p(-torch.exp(x)), torch.log(-torch.expm1(x)))
+
+
+def binary_cross_entropy_with_logprobs(logprobs, targets):
+    logprobs = logprobs.float()
+    targets = targets.float()
+    return - (targets * logprobs + (1 - targets) * log1mexp(logprobs))
