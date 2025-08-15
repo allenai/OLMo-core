@@ -21,7 +21,7 @@ from olmo_core.train.train_module import (
 log = logging.getLogger(__name__)
 
 
-CONTEXT_LENGTH = 2 * 4096
+CONTEXT_LENGTH = 4 * 16_384
 INTRA_DOCUMENT_MASKING = True
 # 64K length, 32 GPUs, FP8, no intra-doc masking -> 2,750 TPS
 # 64K length, 32 GPUs, no FP8, intra-doc masking -> 3,250 TPS
@@ -38,7 +38,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
     return TransformerTrainModuleConfig(
-        rank_microbatch_size=1 * CONTEXT_LENGTH,
+        rank_microbatch_size=8 * CONTEXT_LENGTH,
         max_sequence_length=common.dataset.effective_sequence_length,
         optim=AdamWConfig(
             lr=1e-5,
