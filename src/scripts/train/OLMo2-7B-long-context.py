@@ -13,7 +13,6 @@ from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
 from olmo_core.train import TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
 from olmo_core.train.train_module import (
-    TransformerContextParallelConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
@@ -33,7 +32,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     config = TransformerConfig.olmo2_7B(
         vocab_size=common.tokenizer.padded_vocab_size(), use_flex=True
     )
-    config.block.attention.use_sinks = True
+    config.block.attention.use_sinks = False
     return config
 
 
