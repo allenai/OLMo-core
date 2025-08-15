@@ -525,7 +525,7 @@ class Attention(AttentionBase):
                 with torch.autocast(enabled=False, device_type=q.device.type):
                     # shape: (batch_size, n_heads, seq_len, head_dim)
                     flex_att = flex_attention(
-                        q, k, v, block_mask=block_mask, scale=scale, enable_gqa=False
+                        q, k, v, block_mask=block_mask, scale=scale, enable_gqa=True
                     )
                 assert isinstance(flex_att, torch.Tensor)
                 att = flex_att.to(dtype=og_dtype)
@@ -909,8 +909,6 @@ class NormalizedAttention(Attention):
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
-        block_mask: Optional[BlockMask] = None,
-        mask_fn: Optional[Callable] = None,
     ) -> torch.Tensor:
         B, T, _ = x.shape
 
