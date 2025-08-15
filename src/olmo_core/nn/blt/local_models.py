@@ -61,16 +61,16 @@ class HNetBoundaryPredictor(nn.Module):
         self.q_proj_layer = nn.Linear(d_model, d_model, bias=False, device=init_device)
         self.k_proj_layer = nn.Linear(d_model, d_model, bias=False, device=init_device)
         
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+    def forward(self, hidden_states: torch.Tensor, epsilon=1e-4) -> torch.Tensor:
         cos_sim = torch.einsum(
             "b l d, b l d -> b l",
             F.normalize(self.q_proj_layer(hidden_states[:, :-1]), dim=-1),
             F.normalize(self.k_proj_layer(hidden_states[:, 1:]), dim=-1),
         )
-        boundary_prob = torch.clamp(((1 - cos_sim) / 2), min=0.0, max=1.0)
-        PAD_PROB = 1.0
+        boundary_prob = torch.clamp(((1 - cos_sim) / 2), min=epsilon, max=1.0 - epsilon)
+        PAD_PROB = 1.0 - epsilon
         boundary_prob = F.pad(boundary_prob, (1, 0), "constant", PAD_PROB)
-        
+
         return boundary_prob
 
 
