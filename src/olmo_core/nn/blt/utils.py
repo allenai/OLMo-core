@@ -158,7 +158,7 @@ def log1mexp(x):
     return torch.where(x < log_half, torch.log1p(-torch.exp(x)), torch.log(-torch.expm1(x)))
 
 
-def binary_cross_entropy_with_logprobs(logprobs, targets):
-    logprobs = logprobs.float()
+def binary_cross_entropy_with_logprobs(logprobs, targets, epsilon=1e-8):
+    logprobs = logprobs.float().clip(max=-epsilon)
     targets = targets.float()
     return - (targets * logprobs + (1 - targets) * log1mexp(logprobs))

@@ -18,7 +18,7 @@ from olmo_core.nn.transformer.config import TransformerDataParallelWrappingStrat
 from olmo_core.nn.transformer.block import TransformerBlockBase
 from olmo_core.nn.buffer_cache import BufferCache
 from .embed import add_hash_embeddings
-
+from .utils import log1mexp
 
 # matching BLT, seems necessary but why?
 flex_attention_comp = torch.compile(flex_attention)
@@ -711,7 +711,7 @@ class LocalDecoder(nn.Module):
         boundary_logprobs: torch.Tensor | None = None,
         block_size: int = 256,
         headdim: int = 32,
-        epsilon=1e-3, # as in HNet
+        epsilon: float = 1e-8,
     ) -> torch.Tensor:
         from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
 
@@ -721,7 +721,7 @@ class LocalDecoder(nn.Module):
         # (i.e. no smoothing). so we could probably skip this? but not bad to have it implemented and likely
         # no substantial performance difference in the grand scheme.
         if boundary_logprobs is None:
-            p = torch.full((h_patch.shape[0], h_patch.shape[1]), 1.0 - epsilon, device=h_patch.device, dtype=torch.float32)
+            logp = torch.full((h_patch.shape[0], h_patch.shape[1]), -epsilon, device=h_patch.device, dtype=torch.float32)
 
             boundary_mask = torch.zeros(
                 (embeds.shape[0], embeds.shape[1]), dtype=torch.bool, device=embeds.device
@@ -732,8 +732,7 @@ class LocalDecoder(nn.Module):
                 src=torch.ones_like(patch_lens, dtype=torch.bool),
             )
         else:
-            boundary_probs = torch.exp(boundary_logprobs)
-            boundary_mask = boundary_probs > 0.5
+            boundary_mask = boundary_logprobs > math.log(0.5)
             B, L = boundary_mask.shape
 
             token_idx = (
@@ -741,16 +740,16 @@ class LocalDecoder(nn.Module):
                 + (~boundary_mask).long() * L
             )
             seq_sorted_indices = torch.argsort(token_idx, dim=1)
-            p = torch.gather(boundary_probs, dim=1, index=seq_sorted_indices).float().clip(min=epsilon, max=1 - epsilon)
+            logp = torch.gather(boundary_logprobs.clip(max=-epsilon), dim=1, index=seq_sorted_indices).float()
 
-        dt = torch.log(1 / (1 - p)).to(h_patch.dtype)
+        dt = (math.log(1) - log1mexp(logp)).to(h_patch.dtype)
         x = (h_patch / dt[..., None])
 
         n_heads = self.d_model // headdim
         A = -torch.ones(
             (n_heads,), device=h_patch.device, dtype=torch.float32
         )
-        b = p.to(h_patch.dtype)
+        b = torch.exp(logp).to(h_patch.dtype)
         c = torch.ones_like(b)
 
         # trust the HNet source...
