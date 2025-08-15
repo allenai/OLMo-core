@@ -359,8 +359,8 @@ class LocalEncoder(nn.Module):
             self.out_projection.bias.data[:] = te_mean - h_patch_mean * (te_std / h_patch_std)
 
         if isinstance(self.boundary_predictor_module, HNetBoundaryPredictor):
-            self.boundary_predictor_module.q_proj_layer.weight.data[:] = torch.eye(self.d_model, device=device)
-            self.boundary_predictor_module.k_proj_layer.weight.data[:] = torch.eye(self.d_model, device=device)
+            self.boundary_predictor_module.q_proj_layer.weight.data[:] = maybe_distribute(torch.eye(self.d_model, device=device))
+            self.boundary_predictor_module.k_proj_layer.weight.data[:] = maybe_distribute(torch.eye(self.d_model, device=device))
 
         # verify
         # local_encoder_copy.load_state_dict({
