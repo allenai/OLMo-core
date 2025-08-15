@@ -1,7 +1,9 @@
+import gc
+import logging
 import math
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import List, Optional, Union
+from typing import List, Optional, Tuple, Union
 
 import torch
 import torch.distributed as dist
@@ -29,6 +31,7 @@ from ..utils import get_tp_wrappers
 from .flash_attn_api import (
     dispatch_flash_attn,
     dispatch_flash_attn_qkvpacked,
+    dispatch_flash_attn_with_kvcache,
     dispatch_ring_flash_attn,
     dispatch_ring_flash_attn_qkvpacked,
 )
@@ -51,6 +54,8 @@ __all__ = [
     "RingAttentionZigZagLoadBalancer",
     "RingAttentionLlama3LoadBalancer",
 ]
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -128,6 +133,24 @@ class AttentionType(StrEnum):
     """
     ➡️ :class:`NormalizedAttention`
     """
+
+
+class InferencePhase(StrEnum):
+    prefill = "prefill"
+    decode = "decode"
+
+
+@dataclass
+class KVCacheContext:
+    cache_leftpad: Optional[torch.Tensor] = None  # leftpad of the underlying KV cache
+
+
+@dataclass
+class KVCache:  # TODO:
+    k_cache: Optional[torch.Tensor] = None
+    v_cache: Optional[torch.Tensor] = None
+    cache_seqlens: Optional[torch.Tensor] = None
+    cache_leftpad: Optional[torch.Tensor] = None
 
 
 @dataclass
@@ -373,14 +396,6 @@ class Attention(AttentionBase):
                 raise OLMoConfigurationError(
                     f"fused RoPE is not compatible with {self.__class__.__name__}"
                 )
-
-            # On layers with sliding windows, we don't do rope extension.
-            uses_full_attention = self.window_size == (-1, -1)
-            uses_sliding_window = not uses_full_attention
-            if uses_sliding_window and rope.scaling is not None:
-                rope = rope.replace(scaling=None)
-            assert not (uses_sliding_window and rope.scaling is not None)
-
             rope_class = rope.build(self.head_dim, cache=cache)
             assert isinstance(rope_class, (RotaryEmbedding, ComplexRotaryEmbedding))
             self.rope = rope_class
@@ -390,6 +405,10 @@ class Attention(AttentionBase):
         self._cp_pg: Optional[dist.ProcessGroup] = None
         self._cp_enabled = False
         self._cp_load_balancer: Optional[RingAttentionLoadBalancerType] = None
+
+        self.k_cache, self.v_cache = None, None
+        self.cache_seqlens, self.cache_leftpad = None, None
+        self.phase: Optional[InferencePhase] = None
 
     @property
     def cp_enabled(self) -> bool:
@@ -408,9 +427,53 @@ class Attention(AttentionBase):
         max_doc_len_k: Optional[int] = None,
         local_k_slice: Optional[slice] = None,
         scale: Optional[float] = None,
+        # Inference only:
+        kv_cache_context: Optional[KVCacheContext] = None,
     ) -> torch.Tensor:
         att: torch.Tensor
-        if self.cp_enabled:
+
+        if kv_cache_context is not None:
+            if self.cp_enabled:
+                raise RuntimeError(
+                    f"'{self.__class__.__name__}' does not support KV caching with context parallelism"
+                )
+            if not self.use_flash:
+                raise RuntimeError(
+                    f"'{self.__class__.__name__}' requires flash (use_flash=True) for KV caching"
+                )
+            if self.k_cache is None or self.v_cache is None:
+                raise ValueError("k_cache and v_cache must be initialized when use_cache is True")
+            if self.cache_seqlens is None:
+                raise ValueError("cache_seqlens is required when using the KV cache")
+
+            # IMPORTANT: The flash-attn kernel interprets cache_seqlens as absolute
+            # indices within the KV cache sequence dimension. Not as actual logical
+            # sequence lengths that exclude padding.
+
+            # Set cache_leftpad if it is provided and not already set
+            if kv_cache_context.cache_leftpad is not None:
+                if self.cache_leftpad is not None:
+                    raise RuntimeError("cache_leftpad is already set!")
+                self.cache_leftpad = kv_cache_context.cache_leftpad
+
+            att = dispatch_flash_attn_with_kvcache(
+                q,
+                k=k,
+                v=v,
+                k_cache=self.k_cache,  # updated in-place
+                v_cache=self.v_cache,  # updated in-place
+                cache_seqlens=self.cache_seqlens,
+                cache_leftpad=self.cache_leftpad,
+                softmax_scale=scale,
+                causal=True,
+                window_size=self.window_size,
+            )
+
+            T = q.shape[1]
+            self.cache_seqlens.add_(T)
+            self.phase = InferencePhase.decode
+
+        elif self.cp_enabled:
             assert self._cp_pg is not None and self._cp_load_balancer is not None
             if not self.use_flash:
                 raise RuntimeError(
@@ -502,6 +565,9 @@ class Attention(AttentionBase):
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
+        # Inference only:
+        use_cache: bool = False,
+        cache_leftpad: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Apply attention to the input.
@@ -550,15 +616,33 @@ class Attention(AttentionBase):
                 k = self.k_norm(k)
 
         if self.rope is not None:
+            start_pos = None
+            if use_cache and self.phase == InferencePhase.decode:
+                assert self.cache_seqlens is not None
+                start_pos = self.cache_seqlens
+
+            # In context-parallel mode we must be given pre-sharded buffers
+            # unless we're in the single-token path (which sets ``start_pos``).
             if self.cp_enabled and pos_sin is None and pos_cos is None and freqs_cis is None:
                 raise RuntimeError(
                     "RoPE buffers must be passed through to attention after being properly "
                     "sharded by the context parallel load balancer"
                 )
 
+            # Single, unified call into RoPE
             q, k = self.rope(
-                q, k, head_first=False, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis
+                q,
+                k,
+                head_first=False,
+                pos_sin=pos_sin,
+                pos_cos=pos_cos,
+                freqs_cis=freqs_cis,
+                start_pos=start_pos,
             )
+
+        kv_cache_context = None
+        if use_cache:
+            kv_cache_context = KVCacheContext(cache_leftpad=cache_leftpad)
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
         att = self.sdpa(
@@ -572,6 +656,7 @@ class Attention(AttentionBase):
             max_doc_len_q=max_doc_len_q,
             max_doc_len_k=max_doc_len_k,
             local_k_slice=local_k_slice,
+            kv_cache_context=kv_cache_context,
         )
 
         # shape: (batch_size, seq_len, d_model)
@@ -579,6 +664,94 @@ class Attention(AttentionBase):
 
         # shape: (batch_size, seq_len, d_model)
         return self.w_out(att)
+
+    def allocate_kv_cache(
+        self, batch_size: int, max_seq_len: int, dtype: torch.dtype
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Optional[torch.Tensor], InferencePhase]:
+        log.info(
+            "Allocating new KV cache of shape %s",
+            (batch_size, max_seq_len, self.n_kv_heads, self.head_dim),
+        )
+        kv_cache_shape = (batch_size, max_seq_len, self.n_kv_heads, self.head_dim)
+        k_cache = torch.zeros(kv_cache_shape, device=self.w_k.weight.device, dtype=dtype)
+        v_cache = torch.zeros(kv_cache_shape, device=self.w_q.weight.device, dtype=dtype)
+        cache_seqlens = torch.zeros(batch_size, device=k_cache.device, dtype=torch.int32)
+        cache_leftpad = None  # allow cache_leftpad to be set
+        phase = InferencePhase.prefill
+        return k_cache, v_cache, cache_seqlens, cache_leftpad, phase
+
+    def free_kv_cache(self):
+        if self.k_cache is None and self.v_cache is None:
+            return
+        log.info("Freeing KV cache!")
+        self.k_cache = self.v_cache = self.cache_seqlens = self.cache_leftpad = None
+        self.phase = None
+        gc.collect()
+        torch.cuda.empty_cache()
+
+    def reset_kv_cache(
+        self,
+        use_cache: bool,
+        batch_size: Optional[int] = None,
+        max_seq_len: Optional[int] = None,
+        dtype: Optional[torch.dtype] = torch.float32,
+    ) -> None:
+        # Fast path when KV caching is disabled.
+        if not use_cache:
+            self.k_cache = self.v_cache = self.cache_seqlens = self.cache_leftpad = None
+            return
+
+        if batch_size is None:
+            raise ValueError("batch_size must be provided if use_cache is True")
+        if max_seq_len is None:
+            raise ValueError("max_seq_len must be provided if use_cache is True")
+        if dtype is None:
+            raise ValueError("dtype must be provided if use_cache is True")
+
+        # Attempt to reuse an existing cache that satisfies the requested size and dtype requirements.
+        if (
+            hasattr(self, "k_cache")
+            and hasattr(self, "v_cache")
+            and self.k_cache is not None
+            and self.v_cache is not None
+            and self.k_cache.shape[0] == batch_size
+            and self.k_cache.shape[1] >= max_seq_len
+            and self.k_cache.dtype == dtype
+        ):
+            # The kv cache is reusable, so we just reset it.
+            if self.cache_seqlens is not None:
+                self.cache_seqlens.zero_()
+            self.cache_leftpad = None
+            self.k_cache.zero_()
+            self.v_cache.zero_()
+            self.phase = InferencePhase.prefill  # reset to prefill phase
+            return
+
+        if (
+            hasattr(self, "k_cache")
+            and self.k_cache is not None
+            and hasattr(self, "v_cache")
+            and self.v_cache is not None
+        ):
+            # cache exists, why did reuse fail?
+            reasons = []
+            if self.k_cache.shape[0] != batch_size:
+                reasons.append(f"batch_size mismatch: {self.k_cache.shape[0]} != {batch_size}")
+            if self.k_cache.shape[1] < max_seq_len:
+                reasons.append(f"max_seq_len insufficient: {self.k_cache.shape[1]} < {max_seq_len}")
+            if self.k_cache.dtype != dtype:
+                reasons.append(f"dtype mismatch: {self.k_cache.dtype} != {dtype}")
+            if reasons:
+                log.info(f"KV cache reuse failed: {', '.join(reasons)}")
+
+        self.free_kv_cache()  # free the old cache to avoid OOMs
+        (
+            self.k_cache,
+            self.v_cache,
+            self.cache_seqlens,
+            self.cache_leftpad,
+            self.phase,
+        ) = self.allocate_kv_cache(batch_size, max_seq_len, dtype)
 
     def apply_tp(
         self,
@@ -713,7 +886,10 @@ class NormalizedAttention(Attention):
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
+        use_cache: bool = False,
+        cache_leftpad: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        # TODO: fixup and test kv caching with this class
         B, T, _ = x.shape
 
         # shape: (batch_size, seq_len, n_heads * head_dim),
@@ -739,16 +915,38 @@ class NormalizedAttention(Attention):
         v = v.view(B, T, self.n_kv_heads, self.head_dim)
 
         if self.rope is not None:
-            if self.cp_enabled and pos_sin is None and pos_cos is None and freqs_cis is None:
+            start_pos = None
+            if use_cache and self.phase == InferencePhase.decode:
+                assert self.cache_seqlens is not None
+                start_pos = self.cache_seqlens
+
+            if (
+                self.cp_enabled
+                and start_pos is None
+                and pos_sin is None
+                and pos_cos is None
+                and freqs_cis is None
+            ):
                 raise RuntimeError(
                     "RoPE buffers must be passed through to attention after being properly "
                     "sharded by the context parallel load balancer"
                 )
+
             q, k = self.rope(
-                q, k, head_first=False, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis
+                q,
+                k,
+                head_first=False,
+                pos_sin=pos_sin,
+                pos_cos=pos_cos,
+                freqs_cis=freqs_cis,
+                start_pos=start_pos,
             )
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
+        kv_cache_context = None
+        if cache_leftpad is not None:
+            kv_cache_context = KVCacheContext(cache_leftpad=cache_leftpad)
+
         att = self.sdpa(
             q,
             k,
@@ -761,6 +959,7 @@ class NormalizedAttention(Attention):
             max_doc_len_k=max_doc_len_k,
             local_k_slice=local_k_slice,
             scale=self.sqrt_head_dim,
+            kv_cache_context=kv_cache_context,
         )
 
         # shape: (batch_size, seq_len, d_model)
@@ -865,6 +1064,8 @@ class FusedAttention(AttentionBase):
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
+        cache_leftpad: Optional[torch.Tensor] = None,
+        seq_lens: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Apply attention to the input.
@@ -879,6 +1080,13 @@ class FusedAttention(AttentionBase):
 
         :returns: The output of attention with shape ``(batch_size, seq_len, d_model)``.
         """
+        if cache_leftpad:
+            raise NotImplementedError(
+                "cache_leftpad is not supported for the fused attention variant"
+            )
+        if seq_lens is not None:
+            raise NotImplementedError("seq_lens is not supported for the fused attention variant")
+
         B, T, _ = x.shape
 
         # shape: (batch_size, seq_len, 3, n_heads, head_dim)
