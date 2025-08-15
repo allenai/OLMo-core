@@ -324,6 +324,7 @@ class LocalEncoder(nn.Module):
             add_norm_after_last_block=self.add_norm_after_last_block,
             add_norm_after_pool=self.add_norm_after_pool,
             add_out_projection=self.add_out_projection,
+            boundary_predictor=self.boundary_predictor,
             blt_k=self.blt_k,
             blt_compat=self.blt_compat,
             init_device=device,
