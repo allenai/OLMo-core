@@ -24,7 +24,7 @@ from olmo_core.train.train_module import (
     TransformerTrainModuleConfig,
 )
 
-SEQUENCE_LENGTH = 8192
+SEQUENCE_LENGTH = 4096
 GLOBAL_BATCH_SIZE = (
     1024 * 4096
 )  # batch size at step 0, let's keep this independent of the sequence length in case we change it.
@@ -53,7 +53,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         # NOTE: 4097 instead of 4096 to reproduce with the off-by-one bug.
         pattern=[4097, 4097, 4097, -1],
     )
-    config.block.attention.use_flash = True
+    config.block.attention.use_flex = True
     config.block.attention.use_head_qk_norm = True
 
     return config
