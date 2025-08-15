@@ -446,10 +446,9 @@ class Attention(AttentionBase):
             if self.cache_seqlens is None:
                 raise ValueError("cache_seqlens is required when using the KV cache")
 
-            breakpoint()
-
-            # IMPORTANT: The flash-attn kernel interprets cache_seqlens as absolute indices
-            # within the KV cache sequence dimension.
+            # IMPORTANT: The flash-attn kernel interprets cache_seqlens as absolute
+            # indices within the KV cache sequence dimension. Not as actual logical
+            # sequence lengths that exclude padding.
 
             # Set cache_leftpad if it is provided and not already set
             if kv_cache_context.cache_leftpad is not None:
@@ -459,10 +458,10 @@ class Attention(AttentionBase):
 
             att = dispatch_flash_attn_with_kvcache(
                 q,
-                self.k_cache,  # updated in-place
-                self.v_cache,  # updated in-place
                 k=k,
                 v=v,
+                k_cache=self.k_cache,  # updated in-place
+                v_cache=self.v_cache,  # updated in-place
                 cache_seqlens=self.cache_seqlens,
                 cache_leftpad=self.cache_leftpad,
                 softmax_scale=scale,
@@ -619,12 +618,8 @@ class Attention(AttentionBase):
         if self.rope is not None:
             start_pos = None
             if use_cache and self.phase == InferencePhase.decode:
-                # Calculate start position for RoPE during decode phase
-                if self.cache_seqlens is None:
-                    raise ValueError("cache_seqlens is required during decode phase")
+                assert self.cache_seqlens is not None
                 start_pos = self.cache_seqlens
-                if self.cache_leftpad is not None:
-                    start_pos += self.cache_leftpad
 
             # In context-parallel mode we must be given pre-sharded buffers
             # unless we're in the single-token path (which sets ``start_pos``).
@@ -891,9 +886,10 @@ class NormalizedAttention(Attention):
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
+        use_cache: bool = False,
         cache_leftpad: Optional[torch.Tensor] = None,
-        seq_lens: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        # TODO: fixup and test kv caching with this class
         B, T, _ = x.shape
 
         # shape: (batch_size, seq_len, n_heads * head_dim),
@@ -919,15 +915,10 @@ class NormalizedAttention(Attention):
         v = v.view(B, T, self.n_kv_heads, self.head_dim)
 
         if self.rope is not None:
-            start_pos: Optional[int] = None
-            if (
-                self.k_cache is not None
-                and self.v_cache is not None
-                and self.cache_seqlens is not None
-            ):  # todo fix this
-                start_pos = (
-                    int(self.cache_seqlens.max().item()) if self.cache_seqlens.numel() > 0 else 0
-                )
+            start_pos = None
+            if use_cache and self.phase == InferencePhase.decode:
+                assert self.cache_seqlens is not None
+                start_pos = self.cache_seqlens
 
             if (
                 self.cp_enabled
@@ -940,6 +931,7 @@ class NormalizedAttention(Attention):
                     "RoPE buffers must be passed through to attention after being properly "
                     "sharded by the context parallel load balancer"
                 )
+
             q, k = self.rope(
                 q,
                 k,

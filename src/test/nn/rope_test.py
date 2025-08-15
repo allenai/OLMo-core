@@ -79,9 +79,7 @@ def test_fused_rope(dtype):
         torch.no_grad(),
         torch.autocast("cuda", dtype=dtype, enabled=dtype != torch.float32),
     ):
-        qkv = torch.rand(
-            B, T, 3, n_heads, d_model // n_heads, device="cuda", dtype=dtype
-        )
+        qkv = torch.rand(B, T, 3, n_heads, d_model // n_heads, device="cuda", dtype=dtype)
         q, k, _ = qkv.split(1, dim=2)
         q, k = q.squeeze(2), k.squeeze(2)
         qkv = fused_rope(qkv.clone())
@@ -148,9 +146,7 @@ def test_abf_rope_scaling(device):
 
     # Test case where new_theta == theta, output should be identical
     rope_vanilla = RotaryEmbedding(head_size=head_size, theta=500_000)
-    rope_abf = RotaryEmbedding(
-        head_size=head_size, scaling=ABFRoPEScalingConfig(new_theta=500_000)
-    )
+    rope_abf = RotaryEmbedding(head_size=head_size, scaling=ABFRoPEScalingConfig(new_theta=500_000))
 
     with torch.no_grad():
         q = torch.rand(B, n_heads, T, head_size, device=device)
@@ -184,9 +180,7 @@ def test_pi_rope_scaling(device):
 
     # Test vanilla RoPE vs PI scaling with factor=1 (should be identical)
     rope_vanilla = RotaryEmbedding(head_size=head_size)
-    rope_pi_factor1 = RotaryEmbedding(
-        head_size=head_size, scaling=PIRoPEScalingConfig(factor=1.0)
-    )
+    rope_pi_factor1 = RotaryEmbedding(head_size=head_size, scaling=PIRoPEScalingConfig(factor=1.0))
 
     with torch.no_grad():
         q = torch.rand(B, n_heads, T, head_size, device=device)
@@ -199,9 +193,7 @@ def test_pi_rope_scaling(device):
         torch.testing.assert_close(k1, k2, rtol=1e-5, atol=1e-5)
 
     # Test PI scaling with factor=2 (should compress positions)
-    rope_pi_factor2 = RotaryEmbedding(
-        head_size=head_size, scaling=PIRoPEScalingConfig(factor=2.0)
-    )
+    rope_pi_factor2 = RotaryEmbedding(head_size=head_size, scaling=PIRoPEScalingConfig(factor=2.0))
 
     with torch.no_grad():
         q3, k3 = rope_pi_factor2(q.clone(), k.clone())
@@ -221,9 +213,7 @@ def test_per_frequency_rope_scaling(device):
     head_size = d_model // n_heads
 
     rope_vanilla = RotaryEmbedding(head_size=head_size)
-    rope_per_freq = RotaryEmbedding(
-        head_size=head_size, scaling=StepwiseRoPEScalingConfig()
-    )
+    rope_per_freq = RotaryEmbedding(head_size=head_size, scaling=StepwiseRoPEScalingConfig())
 
     with torch.no_grad():
         q = torch.rand(B, n_heads, T, head_size, device=device)
@@ -399,4 +389,89 @@ def test_rope_start_pos_zero_matches_default(device, head_first, rope_cls):
         torch.testing.assert_close(k_def, k_zero)
 
 
-# TODO: better test for start positions
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize(
+    "head_first",
+    [pytest.param(True, id="head_first"), pytest.param(False, id="seq_first")],
+)
+def test_rope_tensor_start_pos(device, head_first):
+    """Test that passing a tensor start_pos correctly retrieves the needed indices."""
+    B, T, d_model, n_heads = 3, 8, 16, 4  # Using 3 batches to test different positions
+    head_size = d_model // n_heads
+    rope = RotaryEmbedding(head_size=head_size)
+
+    with torch.no_grad():
+        # Create queries and keys
+        q = torch.rand(B, n_heads, T, head_size, device=device)
+        k = torch.rand(B, n_heads, T, head_size, device=device)
+        if not head_first:
+            q, k = q.transpose(1, 2), k.transpose(1, 2)
+
+        # Test 1: Scalar tensor (0-dimensional) - should be broadcast to all batches
+        scalar_start_pos = torch.tensor(5, device=device)
+        q_scalar, k_scalar = rope(
+            q.clone(), k.clone(), head_first=head_first, start_pos=scalar_start_pos
+        )
+
+        # Compare with passing int directly
+        q_int, k_int = rope(q.clone(), k.clone(), head_first=head_first, start_pos=5)
+        torch.testing.assert_close(q_scalar, q_int)
+        torch.testing.assert_close(k_scalar, k_int)
+
+        # Test 2: 1D tensor with same value - should match scalar behavior
+        uniform_start_pos = torch.tensor([5, 5, 5], device=device)
+        q_uniform, k_uniform = rope(
+            q.clone(), k.clone(), head_first=head_first, start_pos=uniform_start_pos
+        )
+        torch.testing.assert_close(q_uniform, q_int)
+        torch.testing.assert_close(k_uniform, k_int)
+
+        # Test 3: 1D tensor with different values per batch
+        varied_start_pos = torch.tensor([0, 3, 7], device=device)
+        q_varied, k_varied = rope(
+            q.clone(), k.clone(), head_first=head_first, start_pos=varied_start_pos
+        )
+
+        # Verify each batch gets different RoPE positions
+        # by checking that results differ between batches
+        if head_first:
+            # Shape: (B, n_heads, T, head_size)
+            assert not torch.allclose(q_varied[0], q_varied[1], rtol=1e-5, atol=1e-5)
+            assert not torch.allclose(q_varied[1], q_varied[2], rtol=1e-5, atol=1e-5)
+        else:
+            # Shape: (B, T, n_heads, head_size)
+            assert not torch.allclose(q_varied[0], q_varied[1], rtol=1e-5, atol=1e-5)
+            assert not torch.allclose(q_varied[1], q_varied[2], rtol=1e-5, atol=1e-5)
+
+        # Test 4: Verify correct position indices are applied
+        # Check that batch 0 with start_pos=0 matches default behavior
+        q_batch0 = q[0:1].clone()  # Shape: (1, ...)
+        k_batch0 = k[0:1].clone()
+        q_default, k_default = rope(q_batch0, k_batch0, head_first=head_first)
+
+        if head_first:
+            torch.testing.assert_close(q_varied[0:1], q_default)
+            torch.testing.assert_close(k_varied[0:1], k_default)
+        else:
+            torch.testing.assert_close(q_varied[0:1], q_default)
+            torch.testing.assert_close(k_varied[0:1], k_default)
+
+        # Test 5: Single query token with different start positions per batch
+        q_single = q[:, :, :1, :] if head_first else q[:, :1, :, :]
+        k_full = k
+
+        varied_start_pos_single = torch.tensor([7, 10, 15], device=device)
+        q_single_varied, k_single_varied = rope(
+            q_single.clone(),
+            k_full.clone(),
+            head_first=head_first,
+            start_pos=varied_start_pos_single,
+        )
+
+        # Each batch should have different RoPE applied to the single query
+        if head_first:
+            assert not torch.allclose(q_single_varied[0], q_single_varied[1], rtol=1e-5, atol=1e-5)
+            assert not torch.allclose(q_single_varied[1], q_single_varied[2], rtol=1e-5, atol=1e-5)
+        else:
+            assert not torch.allclose(q_single_varied[0], q_single_varied[1], rtol=1e-5, atol=1e-5)
+            assert not torch.allclose(q_single_varied[1], q_single_varied[2], rtol=1e-5, atol=1e-5)
