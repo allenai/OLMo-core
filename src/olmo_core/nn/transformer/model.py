@@ -317,7 +317,6 @@ class Transformer(nn.Module):
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         return_logits: Optional[bool] = None,
         logits_to_keep: Union[int, torch.Tensor] = 0,
-        use_cache: bool = False,
         **kwargs,
     ) -> Tuple[
         torch.Tensor,
@@ -349,7 +348,7 @@ class Transformer(nn.Module):
         max_doc_len: Optional[int] = None
         cu_doc_lens: Optional[torch.Tensor] = None
         doc_lens: Optional[torch.Tensor] = None
-        cache_leftpad: Optional[torch.Tensor] = None
+        cache_leftpad: Optional[torch.Tensor] = kwargs.pop("cache_leftpad", None)
 
         # Handle document length inputs
         if (doc_lens := kwargs.pop("doc_lens", None)) is not None and (
@@ -357,10 +356,6 @@ class Transformer(nn.Module):
         ) is not None:
             max_doc_len = max(max_doc_lens)
             cu_doc_lens = get_cumulative_document_lengths(doc_lens)
-
-        # Handle KV cache inputs for inference
-        if use_cache:
-            cache_leftpad = kwargs.pop("cache_leftpad", None)
 
         # Shard inputs and RoPE buffers on sequence dimension if using context parallelism.
         if (cp_load_balancer := self._cp_load_balancer) is not None:
@@ -439,17 +434,11 @@ class Transformer(nn.Module):
             input_ids = move_to_device(input_ids, self.device)
             labels = move_to_device(labels, self.device)
 
-            # Only pass cu_doc_lens if we're not using cache_leftpad
-            if not use_cache:
+            if max_doc_len is not None or cu_doc_lens is not None:
                 all_block_kwargs["max_doc_len"] = max_doc_len
                 all_block_kwargs["cu_doc_lens"] = move_to_device(cu_doc_lens, self.device)
-                assert not cache_leftpad, "cache_leftpad must be False when using cu_doc_lens"
-            else:
-                # When using cache, pass cache_leftpad and seq_lens instead of cu_doc_lens
-                assert max_doc_len is None, "max_doc_len must be None when using cache"
-                assert cu_doc_lens is None, "cu_doc_lens must be None when using cache"
+            elif cache_leftpad is not None:
                 all_block_kwargs["cache_leftpad"] = move_to_device(cache_leftpad, self.device)
-                all_block_kwargs["use_cache"] = use_cache
 
         return (
             input_ids,
@@ -471,7 +460,6 @@ class Transformer(nn.Module):
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         return_logits: Optional[bool] = None,
         logits_to_keep: Union[int, torch.Tensor] = 0,
-        use_cache: bool = False,
         **kwargs,
     ) -> Union[torch.Tensor, LMOutputWithLoss]:
         """
@@ -488,7 +476,6 @@ class Transformer(nn.Module):
         :param return_logits: Whether to return logits along with the loss when labels are provided.
         :param logits_to_keep: Number of positions to keep from the end of the sequence (if int),
             or tensor specifying which positions to keep. Default is 0 (keep all).
-        :param use_cache: Whether to use the KV cache. Default is False. Only valid for inference.
 
         :returns: The logits if ``labels`` is ``None`` or the losses if ``labels`` is not ``None``.
         """
@@ -508,7 +495,6 @@ class Transformer(nn.Module):
             loss_div_factor=loss_div_factor,
             return_logits=return_logits,
             logits_to_keep=logits_to_keep,
-            use_cache=use_cache,
             **kwargs,
         )
 

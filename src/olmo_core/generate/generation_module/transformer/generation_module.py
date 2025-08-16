@@ -113,23 +113,17 @@ class TransformerGenerationModule(GenerationModule):
             self.model, state_dict["model"], options=self.state_dict_load_opts
         )
 
-    def reset_kv_cache(
-        self,
-        use_cache: bool,
-        batch_size: Optional[int] = None,
-        max_seq_len: Optional[int] = None,
-        dtype: Optional[torch.dtype] = None,
-    ):
+    def prepare_kv_cache(self, batch_size: int, max_seq_len: int, dtype: torch.dtype):
         for block in self.model.blocks.values():
-            if hasattr(block.attention, "reset_kv_cache"):
-                cast(Attention, block.attention).reset_kv_cache(
-                    use_cache=use_cache, batch_size=batch_size, max_seq_len=max_seq_len, dtype=dtype
-                )
+            attn = cast(Attention, block.attention)
+            if attn.kv_cache_manager is None:
+                attn.init_kv_cache_manager(batch_size, max_seq_len, dtype)
+            else:
+                attn.kv_cache_manager.reset(batch_size, max_seq_len, dtype)
 
     def free_kv_cache(self):
         for block in self.model.blocks.values():
-            if hasattr(block.attention, "free_kv_cache"):
-                cast(Attention, block.attention).free_kv_cache()
+            cast(Attention, block.attention).kv_cache_manager = None
 
     @torch.inference_mode()
     def model_forward(self, input_ids: torch.Tensor, **kwargs):
@@ -199,10 +193,6 @@ class TransformerGenerationModule(GenerationModule):
             max_length = prompt_len + generation_config.max_new_tokens
         elif generation_config.max_length is not None:
             max_length = generation_config.max_length
-        elif generation_config.use_cache:
-            raise OLMoConfigurationError(
-                "max_length or max_new_tokens must be provided if use_cache is True"
-            )
         else:
             max_length = None  # Generate until EOS or stop tokens or OOM...
 
@@ -214,7 +204,16 @@ class TransformerGenerationModule(GenerationModule):
 
         # Initialize/Reset the KV cache
         kv_cache_start_time = time.perf_counter()
-        self.reset_kv_cache(generation_config.use_cache, batch_size, max_length, self.model.dtype)
+
+        if generation_config.use_cache:
+            if max_length is None:
+                raise OLMoConfigurationError(
+                    "max_length or max_new_tokens must be provided if use_cache is True"
+                )
+            self.prepare_kv_cache(batch_size, max_length, self.model.dtype)
+        else:
+            self.free_kv_cache()
+
         if self.device.type == "cuda" and log_timing:
             torch.cuda.synchronize()
         kv_cache_init_time = time.perf_counter() - kv_cache_start_time
@@ -246,7 +245,6 @@ class TransformerGenerationModule(GenerationModule):
             next_token_logits = self.model(  # (batch_size, 1, vocab_size)
                 input_ids_for_model,
                 logits_to_keep=1,
-                use_cache=generation_config.use_cache,
                 cache_leftpad=cache_leftpad if generation_config.use_cache else None,
             )
             if self.device.type == "cuda":
