@@ -40,18 +40,38 @@ def ste_func(x: torch.Tensor) -> torch.Tensor:
 
 # 2-layer MLP as in DTP
 class DTPBoundaryPredictor(nn.Module):
-    def __init__(self, d_model: int, init_device: str = "cpu"):
+    def __init__(self, d_model: int, use_transformer_style_mlp: bool = False, init_device: str = "cpu"):
         super().__init__()
         self.d_model = d_model
-        self.expansion_factor = 4 # as in DTP (and OLMo)
-        self.mlp = nn.Sequential(
-            nn.Linear(d_model, d_model * self.expansion_factor, device=init_device),
-            nn.SiLU(),
-            nn.Linear(d_model * self.expansion_factor, 1, device=init_device),
-        )
+        self.use_transformer_style_mlp = use_transformer_style_mlp
+
+        expansion_factor = 4 # as in DTP (and OLMo)
+        hidden_size = d_model * expansion_factor
+
+        if use_transformer_style_mlp:
+            self.feed_forward_norm = nn.RMSNorm(hidden_size, eps=1e-5, device=init_device)
+            self.w1 = nn.Linear(d_model, hidden_size, bias=False, device=init_device)
+            self.w2 = nn.Linear(hidden_size, d_model, bias=False, device=init_device)
+            self.w3 = nn.Linear(d_model, hidden_size, bias=False, device=init_device)
+            self.final_norm = nn.RMSNorm(hidden_size, eps=1e-5, device=init_device)
+            self.out_proj = nn.Linear(d_model, 1, device=init_device)
+        else:
+            self.mlp = nn.Sequential(
+                nn.Linear(d_model, d_model * expansion_factor, device=init_device),
+                nn.SiLU(),
+                nn.Linear(d_model * expansion_factor, 1, device=init_device),
+            )
 
     def forward(self, x: torch.Tensor, boundary_threshold: float | int) -> tuple[torch.Tensor, torch.Tensor]:
-        boundary_logprobs = F.logsigmoid(self.mlp(x)).squeeze(-1).float()
+        if self.use_transformer_style_mlp:
+            residual = x
+
+            h = self.feed_forward_norm(x)
+            h = self.w2(F.silu(self.w1(h), self.w3(h)))
+            h = self.final_norm(h + residual)
+            boundary_logprobs = F.logsigmoid(self.out_proj(h).squeeze(-1).float())
+        else:
+            boundary_logprobs = F.logsigmoid(self.mlp(x)).squeeze(-1).float()
 
         # make sure boundary at first
         boundary_logprobs[:, 0] = 0.0
@@ -182,6 +202,8 @@ class LocalEncoder(nn.Module):
 
         if self.boundary_predictor == "dtp":
             self.boundary_predictor_module = DTPBoundaryPredictor(d_model, init_device=init_device)
+        elif self.boundary_predictor == "dtp_chonky":
+            self.boundary_predictor_module = DTPBoundaryPredictor(d_model, use_transformer_style_mlp=True, init_device=init_device)
         elif self.boundary_predictor == "hnet":
             self.boundary_predictor_module = HNetBoundaryPredictor(d_model, init_device=init_device)
         elif self.boundary_predictor is not None:
