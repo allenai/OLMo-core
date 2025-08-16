@@ -57,11 +57,9 @@ class DTPBoundaryPredictor(nn.Module):
         boundary_logprobs[:, 0] = 0.0
 
         if boundary_threshold > 1:
-            assert isinstance(boundary_threshold, int)
             thresholds = torch.quantile(boundary_logprobs, dim=1, q=1 - (boundary_threshold / boundary_logprobs.shape[1]))
             boundary_mask = (boundary_logprobs > thresholds.unsqueeze(-1))
         else:
-            assert isinstance(boundary_threshold, float)
             boundary_mask = (boundary_logprobs > math.log(boundary_threshold))
 
         return boundary_logprobs, boundary_mask
