@@ -766,7 +766,8 @@ class LocalDecoder(nn.Module):
         depool_out = rearrange(depool_out, "b l h p -> b l (h p)")
         depool_out = cast(torch.Tensor, depool_out)
 
-        plug_back_idx = torch.cumsum(boundary_mask, dim=1) - 1
+        # TODO(benjaminm): clipping is problematic if it happens too much; track clip %.
+        plug_back_idx = (torch.cumsum(boundary_mask, dim=1) - 1).clip(max=depool_out.shape[1] - 1)
         depool_out = torch.gather(
             depool_out,
             dim=1,
