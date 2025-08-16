@@ -487,47 +487,63 @@ class Attention(AttentionBase):
             if block_mask is None:
                 raise ValueError("Block mask missing during flex attention.")
 
-            if sinks is not None:
-                batch_size, seq_len, n_kv_heads, head_dim = k.shape
-                
-                if sinks.ndim == 1:
-                    num_sink_tokens = 1
-                    # (batch_size, 1, n_kv_heads, head_dim)
-                    sink_k = sinks[:n_kv_heads].view(1, 1, n_kv_heads, 1).expand(batch_size, 1, n_kv_heads, head_dim)
-                    sink_v = sinks[:n_kv_heads].view(1, 1, n_kv_heads, 1).expand(batch_size, 1, n_kv_heads, head_dim)
-                elif sinks.ndim == 2:
-                    assert sinks.size(0) >= n_kv_heads, "Sinks first dim must be >= n_kv_heads"
-                    num_sink_tokens = sinks.size(1)
-                    # (batch_size, num_sink_tokens, n_kv_heads, head_dim)
-                    sink_k = sinks[:n_kv_heads].unsqueeze(0).unsqueeze(-1).expand(batch_size, num_sink_tokens, n_kv_heads, head_dim)
-                    sink_v = sink_k.clone()
-                else:
-                    raise ValueError("Sinks must have shape (n_heads,) or (n_heads, S)")
-                
-                k = torch.cat([sink_k, k], dim=1)  # (batch_size, seq_len + num_sink_tokens, n_kv_heads, head_dim)
-                v = torch.cat([sink_v, v], dim=1)  # (batch_size, seq_len + num_sink_tokens, n_kv_heads, head_dim)
-
+            original_total_tokens_q = q.shape[0] * q.shape[1]
+            original_total_tokens_kv = k.shape[0] * k.shape[1]
+            
             # Reshape (batch_size, seq_len) so that the seq_len matches that of the block mask.
             # This is needed for intra-document masking, in which case the block mask sequence
             # length is batch_size * seq_len.
-            # shape: (batch_size, seq_len, n_heads, head_dim)
-            #        (batch_size, seq_len, n_kv_heads, head_dim),
-            #        (batch_size, seq_len, n_kv_heads, head_dim)
             q = q.view(
-                q.shape[0] * q.shape[1] // block_mask.seq_lengths[0],
+                original_total_tokens_q // block_mask.seq_lengths[0],
                 block_mask.seq_lengths[0],
                 *q.shape[2:],
             )
-            k = k.view(
-                k.shape[0] * k.shape[1] // block_mask.seq_lengths[1],
-                block_mask.seq_lengths[1],
-                *k.shape[2:],
-            )
-            v = v.view(
-                v.shape[0] * v.shape[1] // block_mask.seq_lengths[1],
-                block_mask.seq_lengths[1],
-                *v.shape[2:],
-            )
+            
+            # For K/V, we need to account for the fact that the block mask KV length includes sinks
+            # but our current tensor doesn't have sinks yet
+            if sinks is not None:
+                if sinks.ndim == 1:
+                    num_sink_tokens = 1
+                else:
+                    num_sink_tokens = sinks.size(1)
+                
+                # The block mask KV length includes sinks, so we reshape to the non-sink length first
+                kv_seq_len_without_sinks = block_mask.seq_lengths[1] - num_sink_tokens
+                k = k.view(
+                    original_total_tokens_kv // kv_seq_len_without_sinks,
+                    kv_seq_len_without_sinks,
+                    *k.shape[2:],
+                )
+                v = v.view(
+                    original_total_tokens_kv // kv_seq_len_without_sinks,
+                    kv_seq_len_without_sinks,
+                    *v.shape[2:],
+                )
+                
+                batch_size, seq_len, n_kv_heads, head_dim = k.shape
+                
+                if sinks.ndim == 1:
+                    # (batch_size, 1, n_kv_heads, head_dim)
+                    sink_k = sinks[:n_kv_heads].view(1, 1, n_kv_heads, 1).expand(batch_size, 1, n_kv_heads, head_dim)
+                    sink_v = sinks[:n_kv_heads].view(1, 1, n_kv_heads, 1).expand(batch_size, 1, n_kv_heads, head_dim)
+                else:
+                    # (batch_size, num_sink_tokens, n_kv_heads, head_dim)
+                    sink_k = sinks[:n_kv_heads].unsqueeze(0).unsqueeze(-1).expand(batch_size, num_sink_tokens, n_kv_heads, head_dim)
+                    sink_v = sink_k.clone()
+                
+                k = torch.cat([sink_k, k], dim=1)
+                v = torch.cat([sink_v, v], dim=1)
+            else:
+                k = k.view(
+                    original_total_tokens_kv // block_mask.seq_lengths[1],
+                    block_mask.seq_lengths[1],
+                    *k.shape[2:],
+                )
+                v = v.view(
+                    original_total_tokens_kv // block_mask.seq_lengths[1],
+                    block_mask.seq_lengths[1],
+                    *v.shape[2:],
+                )
 
             # PyTorch's flex attn expects the number of heads to come before the sequence dimension.
             # shape: (batch_size, n_heads, seq_len, head_dim),
@@ -536,7 +552,6 @@ class Attention(AttentionBase):
             q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
 
             # SDPA uses full precision. We match it for flex attention.
-            # Since we've already added sink tokens to k, v above, we can use regular flex attention
             og_dtype = q.dtype
             q, k, v = q.float(), k.float(), v.float()
             with torch.autocast(enabled=False, device_type=q.device.type):
