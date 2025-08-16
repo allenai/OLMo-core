@@ -767,7 +767,7 @@ class LocalDecoder(nn.Module):
                 + (~boundary_mask).long() * L
             )
             seq_sorted_indices = torch.argsort(token_idx, dim=1)[:, :patch_embeds.shape[1]]
-            logp = torch.gather(boundary_logprobs.clip(max=-epsilon), dim=1, index=seq_sorted_indices).float()
+            logp = torch.gather(boundary_logprobs.float().clip(max=-epsilon), dim=1, index=seq_sorted_indices)
 
         dt = (math.log(1) - log1mexp(logp)).to(h_patch.dtype)
         x = (h_patch / dt[..., None])
