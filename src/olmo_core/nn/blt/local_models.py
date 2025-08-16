@@ -74,7 +74,7 @@ class HNetBoundaryPredictor(nn.Module):
         self.q_proj_layer = nn.Linear(d_model, d_model, bias=False, device=init_device)
         self.k_proj_layer = nn.Linear(d_model, d_model, bias=False, device=init_device)
         
-    def forward(self, hidden_states: torch.Tensor, boundary_threshold: float | int, epsilon: float = 1e-6) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, hidden_states: torch.Tensor, boundary_threshold: float | int, epsilon: float = 1e-3) -> tuple[torch.Tensor, torch.Tensor]:
         cos_sim = torch.einsum(
             "b l d, b l d -> b l",
             F.normalize(self.q_proj_layer(hidden_states[:, :-1]), dim=-1),
