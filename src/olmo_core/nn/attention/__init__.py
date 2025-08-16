@@ -487,6 +487,26 @@ class Attention(AttentionBase):
             if block_mask is None:
                 raise ValueError("Block mask missing during flex attention.")
 
+            if sinks is not None:
+                batch_size, seq_len, n_kv_heads, head_dim = k.shape
+                
+                if sinks.ndim == 1:
+                    num_sink_tokens = 1
+                    # (batch_size, 1, n_kv_heads, head_dim)
+                    sink_k = sinks[:n_kv_heads].view(1, 1, n_kv_heads, 1).expand(batch_size, 1, n_kv_heads, head_dim)
+                    sink_v = sinks[:n_kv_heads].view(1, 1, n_kv_heads, 1).expand(batch_size, 1, n_kv_heads, head_dim)
+                elif sinks.ndim == 2:
+                    assert sinks.size(0) >= n_kv_heads, "Sinks first dim must be >= n_kv_heads"
+                    num_sink_tokens = sinks.size(1)
+                    # (batch_size, num_sink_tokens, n_kv_heads, head_dim)
+                    sink_k = sinks[:n_kv_heads].unsqueeze(0).unsqueeze(-1).expand(batch_size, num_sink_tokens, n_kv_heads, head_dim)
+                    sink_v = sink_k.clone()
+                else:
+                    raise ValueError("Sinks must have shape (n_heads,) or (n_heads, S)")
+                
+                k = torch.cat([sink_k, k], dim=1)  # (batch_size, seq_len + num_sink_tokens, n_kv_heads, head_dim)
+                v = torch.cat([sink_v, v], dim=1)  # (batch_size, seq_len + num_sink_tokens, n_kv_heads, head_dim)
+
             # Reshape (batch_size, seq_len) so that the seq_len matches that of the block mask.
             # This is needed for intra-document masking, in which case the block mask sequence
             # length is batch_size * seq_len.
@@ -515,22 +535,17 @@ class Attention(AttentionBase):
             #        (batch_size, n_kv_heads, seq_len, head_dim)
             q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
 
-            if sinks is None:
-                # SDPA uses full precision. We match it for flex attention.
-                og_dtype = q.dtype
-                q, k, v = q.float(), k.float(), v.float()
-                with torch.autocast(enabled=False, device_type=q.device.type):
-                    # shape: (batch_size, n_heads, seq_len, head_dim)
-                    flex_att = flex_attention(
-                        q, k, v, block_mask=block_mask, scale=scale, enable_gqa=True
-                    )
-                assert isinstance(flex_att, torch.Tensor)
-                att = flex_att.to(dtype=og_dtype)
-
-            else:
-                att = get_flex_attn_with_sinks(
-                    q, k, v, sinks, block_mask, scale
+            # SDPA uses full precision. We match it for flex attention.
+            # Since we've already added sink tokens to k, v above, we can use regular flex attention
+            og_dtype = q.dtype
+            q, k, v = q.float(), k.float(), v.float()
+            with torch.autocast(enabled=False, device_type=q.device.type):
+                # shape: (batch_size, n_heads, seq_len, head_dim)
+                flex_att = flex_attention(
+                    q, k, v, block_mask=block_mask, scale=scale, enable_gqa=True
                 )
+            assert isinstance(flex_att, torch.Tensor)
+            att = flex_att.to(dtype=og_dtype)
 
             # shape: (batch_size, seq_len, n_heads, head_dim)
             att = att.transpose(1, 2).contiguous()
@@ -1259,59 +1274,3 @@ def materialize_dense_mask(
     return dense_mask
 
 
-def get_flex_attn_with_sinks(
-    q: torch.Tensor,
-    k: torch.Tensor, 
-    v: torch.Tensor,
-    sinks: torch.Tensor,
-    block_mask: BlockMask,
-    scale: Optional[float] = None,
-) -> torch.Tensor:
-    """
-    This combines the optimized flex attention kernels with sink token support
-    by expanding the key/value sequences with sink representations.
-    
-    Args:
-        q: Query tensor of shape (batch_size, n_heads, seq_len, head_dim)
-        k: Key tensor of shape (batch_size, n_kv_heads, seq_len, head_dim)  
-        v: Value tensor of shape (batch_size, n_kv_heads, seq_len, head_dim)
-        sinks: Sink parameters of shape (n_heads,) or (n_heads, S)
-        block_mask: Flex attention block mask (should include sink positions)
-        scale: Optional attention scale factor
-
-    Returns:
-        Attention output tensor of shape (batch_size, n_heads, seq_len, head_dim)
-    """
-    batch_size, _, _, head_dim = q.shape
-    _, n_kv_heads, _, _ = k.shape
-    
-    if sinks.ndim == 1:
-        S = 1
-        # (batch_size, n_kv_heads, 1, head_dim)
-        sink_k = sinks[:n_kv_heads].view(1, n_kv_heads, 1, 1).expand(batch_size, n_kv_heads, 1, head_dim)
-        sink_v = sinks[:n_kv_heads].view(1, n_kv_heads, 1, 1).expand(batch_size, n_kv_heads, 1, head_dim)
-    elif sinks.ndim == 2:
-        assert sinks.size(0) >= n_kv_heads, "Sinks first dim must be >= n_kv_heads"
-        S = sinks.size(1)
-        # (batch_size, n_kv_heads, S, head_dim)
-        sink_k = sinks[:n_kv_heads].unsqueeze(0).unsqueeze(-1).expand(batch_size, n_kv_heads, S, head_dim)
-        sink_v = sink_k.clone()
-    else:
-        raise OLMoConfigurationError("Sinks must have shape (n_heads,) or (n_heads, S)")
-    
-    k_with_sinks = torch.cat([sink_k, k], dim=2)  # (batch_size, n_kv_heads, S + seq_len, head_dim)
-    v_with_sinks = torch.cat([sink_v, v], dim=2)  # (batch_size, n_kv_heads, S + seq_len, head_dim)
-    
-    og_dtype = q.dtype
-    q, k_with_sinks, v_with_sinks = q.float(), k_with_sinks.float(), v_with_sinks.float()
-    
-    with torch.autocast(enabled=False, device_type=q.device.type):
-        flex_att = flex_attention(
-            q, k_with_sinks, v_with_sinks, 
-            block_mask=block_mask, 
-            scale=scale, 
-            enable_gqa=True
-        )
-    
-    assert isinstance(flex_att, torch.Tensor)
-    return flex_att.to(dtype=og_dtype)
