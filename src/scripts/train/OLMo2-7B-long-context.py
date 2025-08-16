@@ -10,7 +10,7 @@ from olmo_core.float8 import Float8Config
 from olmo_core.internal.experiment import CommonComponents, main
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
-from olmo_core.train import TrainerConfig
+from olmo_core.train import LoadStrategy, TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
 from olmo_core.train.train_module import (
     TransformerContextParallelConfig,
@@ -73,6 +73,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=1,
+            load_strategy=LoadStrategy.never
         )
         .with_callback(
             "checkpointer",
