@@ -746,7 +746,7 @@ class LocalDecoder(nn.Module):
         # no substantial performance difference in the grand scheme.
         if boundary_logprobs is None:
             assert boundary_mask is None
-            logp = torch.full((h_patch.shape[0], h_patch.shape[1]), -epsilon, device=h_patch.device, dtype=torch.float32)
+            p = torch.full((h_patch.shape[0], h_patch.shape[1]), 1 - epsilon, device=h_patch.device, dtype=torch.float32)
 
             boundary_mask = torch.zeros(
                 (embeds.shape[0], embeds.shape[1]), dtype=torch.bool, device=embeds.device
@@ -765,16 +765,16 @@ class LocalDecoder(nn.Module):
                 + (~boundary_mask).long() * L
             )
             seq_sorted_indices = torch.argsort(token_idx, dim=1)[:, :patch_embeds.shape[1]]
-            logp = torch.gather(boundary_logprobs.float().clip(max=-epsilon), dim=1, index=seq_sorted_indices)
+            p = torch.gather(torch.exp(boundary_logprobs).float().clip(min=epsilon, max=1 - epsilon), dim=1, index=seq_sorted_indices)
 
-        dt = (math.log(1) - log1mexp(logp)).to(h_patch.dtype)
+        dt = torch.log(1 / (1 - p)).to(h_patch.dtype)
         x = (h_patch / dt[..., None])
 
         n_heads = self.d_model // headdim
         A = -torch.ones(
             (n_heads,), device=h_patch.device, dtype=torch.float32
         )
-        b = torch.exp(logp).to(h_patch.dtype)
+        b = p.to(h_patch.dtype)
         c = torch.ones_like(b)
 
         # trust the HNet source...
