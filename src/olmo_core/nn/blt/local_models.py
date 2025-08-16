@@ -58,7 +58,7 @@ class DTPBoundaryPredictor(nn.Module):
 
         if boundary_threshold > 1:
             thresholds = torch.quantile(boundary_logprobs, dim=1, q=1 - (boundary_threshold / boundary_logprobs.shape[1]))
-            boundary_mask = (boundary_logprobs > thresholds.unsqueeze(-1))
+            boundary_mask = (boundary_logprobs >= thresholds.unsqueeze(-1))
         else:
             boundary_mask = (boundary_logprobs > math.log(boundary_threshold))
 
@@ -633,6 +633,8 @@ class LocalDecoder(nn.Module):
         add_norm_before_first_block: bool,
         add_norm_onto_residual: bool,
         add_in_projection: bool,
+        hnet_smooth: bool = True,
+        hnet_modulate: bool = True,
         blt_k: Optional[int] = None,
         blt_compat: bool = False,  # for compat with BLT checkpoints
         init_device: str = "cpu",
@@ -645,6 +647,8 @@ class LocalDecoder(nn.Module):
         self.add_norm_before_first_block = add_norm_before_first_block
         self.add_norm_onto_residual = add_norm_onto_residual
         self.add_in_projection = add_in_projection
+        self.hnet_smooth = hnet_smooth
+        self.hnet_modulate = hnet_modulate
         self.blt_k = blt_k
         self.blt_compat = blt_compat
 
@@ -760,12 +764,15 @@ class LocalDecoder(nn.Module):
             assert boundary_mask is not None
             B, L = boundary_mask.shape
 
-            token_idx = (
-                torch.arange(L, device=patch_embeds.device)[None, :]
-                + (~boundary_mask).long() * L
-            )
-            seq_sorted_indices = torch.argsort(token_idx, dim=1)[:, :patch_embeds.shape[1]]
-            p = torch.gather(torch.exp(boundary_logprobs).float().clip(min=epsilon, max=1 - epsilon), dim=1, index=seq_sorted_indices)
+            if self.hnet_smooth:
+                token_idx = (
+                    torch.arange(L, device=patch_embeds.device)[None, :]
+                    + (~boundary_mask).long() * L
+                )
+                seq_sorted_indices = torch.argsort(token_idx, dim=1)[:, :patch_embeds.shape[1]]
+                p = torch.gather(torch.exp(boundary_logprobs).float().clip(min=epsilon, max=1 - epsilon), dim=1, index=seq_sorted_indices)
+            else:
+                p = torch.full((h_patch.shape[0], h_patch.shape[1]), 1 - epsilon, device=h_patch.device, dtype=torch.float32)
 
         dt = torch.log(1 / (1 - p)).to(h_patch.dtype)
         x = (h_patch / dt[..., None])
@@ -798,7 +805,7 @@ class LocalDecoder(nn.Module):
             index=plug_back_idx.unsqueeze(-1).expand(-1, -1, self.d_model),
         )
 
-        if boundary_logprobs is not None:
+        if self.hnet_modulate and boundary_logprobs is not None:
             boundary_probs = torch.exp(boundary_logprobs)
             selected_boundary_probs = torch.where(
                 boundary_probs > 0.5,
