@@ -51,8 +51,12 @@ class DTPBoundaryPredictor(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return F.logsigmoid(self.mlp(x)).squeeze(-1)
+        boundary_logprobs =  F.logsigmoid(self.mlp(x)).squeeze(-1)
 
+        # make sure boundary at first
+        boundary_logprobs[:, 0] = 0.0
+
+        return boundary_logprobs
 
 # cosine-similarity based boundary predictor as in H-Net
 class HNetBoundaryPredictor(nn.Module):
