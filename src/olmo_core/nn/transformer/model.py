@@ -1999,6 +1999,7 @@ class BLTDistillTransformer(BLTTransformer):
             boundary_acc = (((boundary_logprobs > math.log(0.5)) == (boundary_labels > 0)) * byte_mask).float().mean()
             metrics["blt/boundary_loss"] = boundary_loss / byte_mask.float().mean()
             metrics["blt/boundary_acc"] = boundary_acc / byte_mask.float().mean()
+            metrics["blt/boundary_mean"] = ((boundary_logprobs > math.log(0.5)) * byte_mask).float().mean() / byte_mask.float().mean()
         else:
             boundary_loss = torch.nan
 
