@@ -68,7 +68,7 @@ from olmo_core.utils import seed_all
 
 NUM_WORKERS = 16
 SEQUENCE_LENGTH = 1024
-QUICK_DEBUG = False
+QUICK_DEBUG = True
 GLOBAL_BATCH_SIZE = 64
 LOCAL_BATCH_SIZE = 64
 EVAL_BATCH_SIZE = 16
@@ -290,8 +290,8 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         float8_config=Float8Config(enabled=False),
         blt_config=BLTConfig(
             tokenizer=byte_tokenizer_config,
-            losses=["ce"],
-            loss_weights=[1.0],
+            losses=["ce","boundary"],
+            loss_weights=[1.0,1.0],
             skip_blocks=False,
             skip_teacher=TEACHER_MODE is None,
             use_oracle_patch_reps=False,
