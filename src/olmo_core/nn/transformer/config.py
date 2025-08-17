@@ -888,6 +888,7 @@ class TransformerConfig(Config):
         :param fused_ops: Use fused operations where possible.
         :param use_flash: Use flash-attn.
         :param use_flex: Use flex-attn.
+        :param use_sinks: Use attention sinks.
         :param block_mods: A dictionary of block indices to functions that take the base block config and return a modified block config.
         :param dtype: The default data type to use for all parameters.
         """
