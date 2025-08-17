@@ -67,7 +67,7 @@ class DTPBoundaryPredictor(nn.Module):
             residual = x
 
             h = self.feed_forward_norm(x)
-            h = self.w2(F.silu(self.w1(h), self.w3(h)))
+            h =self.w2(F.silu(self.w1(h)) * self.w3(h))
             h = self.final_norm(h + residual)
             boundary_logprobs = F.logsigmoid(self.out_proj(h).squeeze(-1).float())
         else:
