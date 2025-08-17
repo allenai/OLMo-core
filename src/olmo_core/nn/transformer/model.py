@@ -1797,9 +1797,9 @@ class BLTDistillTransformer(BLTTransformer):
 
         if blt_config.teacher_force_interpolation_steps != 0:
             teacher_force_interpolation_ratio = min(kwargs["step"] / blt_config.teacher_force_interpolation_steps, 1.0)
+            metrics[f"blt/teacher_force_interpolation_ratio"] = teacher_force_interpolation_ratio
         else:
             teacher_force_interpolation_ratio = None
-        metrics[f"blt/teacher_force_interpolation_ratio"] = teacher_force_interpolation_ratio
 
         h_byte, h_patch, (boundary_logprobs_for_loss, boundary_logprobs), boundary_mask = self.local_encoder(
             input_ids,
