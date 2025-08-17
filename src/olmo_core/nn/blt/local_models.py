@@ -49,11 +49,11 @@ class DTPBoundaryPredictor(nn.Module):
         hidden_size = d_model * expansion_factor
 
         if use_transformer_style_mlp:
-            self.feed_forward_norm = nn.RMSNorm(hidden_size, eps=1e-5, device=init_device)
+            self.feed_forward_norm = nn.RMSNorm(d_model, eps=1e-5, device=init_device)
             self.w1 = nn.Linear(d_model, hidden_size, bias=False, device=init_device)
             self.w2 = nn.Linear(hidden_size, d_model, bias=False, device=init_device)
             self.w3 = nn.Linear(d_model, hidden_size, bias=False, device=init_device)
-            self.final_norm = nn.RMSNorm(hidden_size, eps=1e-5, device=init_device)
+            self.final_norm = nn.RMSNorm(d_model, eps=1e-5, device=init_device)
             self.out_proj = nn.Linear(d_model, 1, device=init_device)
         else:
             self.mlp = nn.Sequential(
