@@ -46,6 +46,7 @@ class TransformerBLTTrainModule(TransformerTrainModule):
         self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any]]:
         batch["blt_config"] = self.blt_config
+        batch["step"] = self.trainer.global_step
 
         # this has had the byte collator + ByteFSLDataset applied, no need to patch
         if "patch_lens" in batch:
@@ -204,7 +205,10 @@ class TransformerBLTTrainModule(TransformerTrainModule):
                 metrics["max_patch_len"] = (patch_lens != 0).float().max()  # type: ignore
 
                 for key, value in metrics.items():  # type: ignore
-                    batch_metrics[key] = batch_metrics.get(key, 0.0) + get_local_tensor(value.detach()) / num_micro_batches
+                    if isinstance(value, torch.Tensor):
+                        batch_metrics[key] = batch_metrics.get(key, 0.0) + get_local_tensor(value.detach()) / num_micro_batches
+                    else:
+                        batch_metrics[key] = batch_metrics.get(key, 0.0) + value / num_micro_batches
 
                 # Run backward pass.
                 out.loss.backward()  # type: ignore

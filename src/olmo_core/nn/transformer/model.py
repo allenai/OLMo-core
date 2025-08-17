@@ -1304,7 +1304,7 @@ class BLTTransformer(Transformer):
             **kwargs,
         )
 
-        h_byte, h_patch, boundary_logprobs, boundary_mask = self.local_encoder(
+        h_byte, h_patch, (_, boundary_logprobs), boundary_mask = self.local_encoder(
             input_ids,
             teacher_force_boundaries=False,
             **local_encoder_kwargs,
@@ -1752,6 +1752,9 @@ class BLTDistillTransformer(BLTTransformer):
             **kwargs,
         )
 
+        # losses (incl. distillation losses)
+        metrics = {}
+
         # First, run the teacher.
         if not skip_teacher:
             with torch.no_grad():
@@ -1792,18 +1795,25 @@ class BLTDistillTransformer(BLTTransformer):
         boundary_labels = torch.zeros_like(byte_mask, dtype=torch.float32)
         boundary_labels.scatter_(1, patch_end_indices, 1.0)
 
-        h_byte, h_patch, boundary_logprobs, boundary_mask = self.local_encoder(
+        if blt_config.teacher_force_interpolation_steps != 0:
+            teacher_force_interpolation_ratio = min(kwargs["step"] / blt_config.teacher_force_interpolation_steps, 1.0)
+        else:
+            teacher_force_interpolation_ratio = None
+        metrics[f"blt/teacher_force_interpolation_ratio"] = teacher_force_interpolation_ratio
+
+        h_byte, h_patch, (boundary_logprobs_for_loss, boundary_logprobs), boundary_mask = self.local_encoder(
             input_ids,
             boundary_predictor_backprop_through_encoder=blt_config.boundary_predictor_backprop_through_encoder,
             teacher_force_boundaries=blt_config.teacher_force_boundaries,
             boundary_threshold=blt_config.boundary_threshold,
+            teacher_force_interpolation_ratio=teacher_force_interpolation_ratio,
             **local_encoder_kwargs,
         )
         if boundary_logprobs is not None:
             if blt_config.decoder_backprop_through_add_boundary_logp:
-                boundary_logprobs_for_decoder_loss = boundary_logprobs
+                boundary_logprobs_for_decoder_loss = boundary_logprobs_for_loss
             else:
-                boundary_logprobs_for_decoder_loss = boundary_logprobs.detach()
+                boundary_logprobs_for_decoder_loss = boundary_logprobs_for_loss.detach()
         else:
             boundary_logprobs = None
             boundary_logprobs_for_decoder_loss = None
@@ -1854,9 +1864,6 @@ class BLTDistillTransformer(BLTTransformer):
             logits = None
             logprobs = None
             main_path_logprobs = None
-
-        # losses (incl. distillation losses)
-        metrics = {}
 
         # compute CE
         if not skip_blocks:
@@ -2000,7 +2007,7 @@ class BLTDistillTransformer(BLTTransformer):
             assert boundary_labels is not None
 
             elementwise_boundary_loss = blt_utils.binary_cross_entropy_with_logprobs(
-                boundary_logprobs,
+                boundary_logprobs_for_loss,
                 boundary_labels,
             )
             boundary_loss = (elementwise_boundary_loss * byte_mask).mean()
@@ -2082,7 +2089,7 @@ class BLTDistillTransformer(BLTTransformer):
             **kwargs,
         )
 
-        h_byte, h_patch, boundary_logprobs, boundary_mask = self.local_encoder(
+        h_byte, h_patch, (_, boundary_logprobs), boundary_mask = self.local_encoder(
             input_ids,
             teacher_force_boundaries=blt_config.teacher_force_boundaries,
             boundary_threshold=blt_config.boundary_threshold,
@@ -2148,7 +2155,7 @@ class BLTDistillTransformer(BLTTransformer):
             **kwargs,
         )
 
-        h_byte, h_patch, boundary_logprobs, boundary_mask = self.local_encoder(input_ids, **local_encoder_kwargs)
+        h_byte, h_patch, _, _ = self.local_encoder(input_ids, **local_encoder_kwargs)
 
         teacher_logits: torch.Tensor
         teacher_logits, (_, _, teacher_embeds) = self._teacher_forward(  # type: ignore
@@ -2210,7 +2217,7 @@ class BLTDistillTransformer(BLTTransformer):
         )
         assert teacher_last_hidden_state is not None, "Teacher forward must return last_hidden_state if skip_blocks=False"
 
-        h_byte, h_patch, boundary_logprobs, boundary_mask = self.local_encoder(input_ids, **local_encoder_kwargs)
+        h_byte, h_patch, (_, boundary_logprobs), boundary_mask = self.local_encoder(input_ids, **local_encoder_kwargs)
 
         h_patch[:, 1:] = teacher_last_hidden_state[:, :-1]
 

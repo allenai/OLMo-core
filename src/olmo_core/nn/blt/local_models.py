@@ -38,6 +38,35 @@ def ste_func(x: torch.Tensor) -> torch.Tensor:
     return STE.apply(x)  # type: ignore
 
 
+def _teacher_force_interpolate(
+        boundary_logprobs: torch.Tensor,
+        patch_lens: Optional[torch.Tensor] = None,
+        teacher_force_interpolation_ratio: Optional[float] = None,
+        epsilon: float = 1e-6,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+    if teacher_force_interpolation_ratio is not None:
+        assert patch_lens is not None
+        patch_end_indices = torch.cumsum(patch_lens, dim=1) - 1
+        boundary_probs = torch.exp(boundary_logprobs)
+        true_boundary_probs = torch.full_like(boundary_logprobs, fill_value=epsilon)
+        true_boundary_probs.scatter_(1, patch_end_indices, 1 - epsilon)
+
+        r = teacher_force_interpolation_ratio / 2 + 0.5
+
+        boundary_probs_interpolated = boundary_probs * r + true_boundary_probs * (1 - r)
+        return boundary_logprobs, torch.log(boundary_probs_interpolated)
+    else:
+        return boundary_logprobs, boundary_logprobs
+
+
+def _compute_boundary_mask(boundary_logprobs: torch.Tensor, boundary_threshold: float | int) -> torch.Tensor:
+    if boundary_threshold > 1:
+        thresholds = torch.quantile(boundary_logprobs, dim=1, q=1 - (boundary_threshold / boundary_logprobs.shape[1]))
+        return (boundary_logprobs >= thresholds.unsqueeze(-1))
+    else:
+        return (boundary_logprobs > math.log(boundary_threshold))
+
+
 # 2-layer MLP as in DTP
 class DTPBoundaryPredictor(nn.Module):
     def __init__(self, d_model: int, use_transformer_style_mlp: bool = False, init_device: str = "cpu"):
@@ -62,7 +91,13 @@ class DTPBoundaryPredictor(nn.Module):
                 nn.Linear(d_model * expansion_factor, 1, device=init_device),
             )
 
-    def forward(self, x: torch.Tensor, boundary_threshold: float | int) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(
+        self,
+        x: torch.Tensor,
+        boundary_threshold: float | int,
+        patch_lens: Optional[torch.Tensor] = None,
+        teacher_force_interpolation_ratio: Optional[float] = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         if self.use_transformer_style_mlp:
             residual = x
 
@@ -76,13 +111,15 @@ class DTPBoundaryPredictor(nn.Module):
         # make sure boundary at first
         boundary_logprobs[:, 0] = 0.0
 
-        if boundary_threshold > 1:
-            thresholds = torch.quantile(boundary_logprobs, dim=1, q=1 - (boundary_threshold / boundary_logprobs.shape[1]))
-            boundary_mask = (boundary_logprobs >= thresholds.unsqueeze(-1))
-        else:
-            boundary_mask = (boundary_logprobs > math.log(boundary_threshold))
+        boundary_logprobs_for_loss, boundary_logprobs = _teacher_force_interpolate(
+            boundary_logprobs,
+            patch_lens,
+            teacher_force_interpolation_ratio
+        )
 
-        return boundary_logprobs, boundary_mask
+        boundary_mask = _compute_boundary_mask(boundary_logprobs, boundary_threshold)
+
+        return boundary_logprobs_for_loss, boundary_logprobs, boundary_mask
 
 # cosine-similarity based boundary predictor as in H-Net
 class HNetBoundaryPredictor(nn.Module):
@@ -91,8 +128,15 @@ class HNetBoundaryPredictor(nn.Module):
         self.d_model = d_model
         self.q_proj_layer = nn.Linear(d_model, d_model, bias=False, device=init_device)
         self.k_proj_layer = nn.Linear(d_model, d_model, bias=False, device=init_device)
-        
-    def forward(self, hidden_states: torch.Tensor, boundary_threshold: float | int, epsilon: float = 1e-3) -> tuple[torch.Tensor, torch.Tensor]:
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        boundary_threshold: float | int,
+        patch_lens: Optional[torch.Tensor] = None,
+        teacher_force_interpolation_ratio: Optional[float] = None,
+        epsilon: float = 1e-3,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         cos_sim = torch.einsum(
             "b l d, b l d -> b l",
             F.normalize(self.q_proj_layer(hidden_states[:, :-1]), dim=-1),
@@ -102,15 +146,15 @@ class HNetBoundaryPredictor(nn.Module):
         PAD_LOGPROB = 0.0
         boundary_logprobs = F.pad(boundary_logprobs, (1, 0), "constant", PAD_LOGPROB)
 
-        if boundary_threshold > 1:
-            assert isinstance(boundary_threshold, int)
-            thresholds = torch.quantile(boundary_logprobs, dim=1, q=1 - (boundary_threshold / boundary_logprobs.shape[1]))
-            boundary_mask = (boundary_logprobs > thresholds.unsqueeze(-1))
-        else:
-            assert isinstance(boundary_threshold, float)
-            boundary_mask = (boundary_logprobs > math.log(boundary_threshold))
+        boundary_logprobs_for_loss, boundary_logprobs = _teacher_force_interpolate(
+            boundary_logprobs,
+            patch_lens,
+            teacher_force_interpolation_ratio
+        )
 
-        return boundary_logprobs, boundary_mask
+        boundary_mask = _compute_boundary_mask(boundary_logprobs, boundary_threshold)
+
+        return boundary_logprobs_for_loss, boundary_logprobs, boundary_mask
 
 
 class CrossAttention(nn.Module):
@@ -584,7 +628,8 @@ class LocalEncoder(nn.Module):
         teacher_force_boundaries: bool = True,
         boundary_predictor_backprop_through_encoder: bool = True,
         boundary_threshold: float | int = 0.5,
-    ) -> tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
+        teacher_force_interpolation_ratio: Optional[float] = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, tuple[Optional[torch.Tensor], Optional[torch.Tensor]], Optional[torch.Tensor]]:
         embeddings = self.embedding(tokens)
         if self.add_hash_embeddings:
             assert (
@@ -618,10 +663,21 @@ class LocalEncoder(nn.Module):
 
         if self.boundary_predictor_module is not None:
             if boundary_predictor_backprop_through_encoder:
-                boundary_logprobs, boundary_mask = self.boundary_predictor_module(h, boundary_threshold)
+                boundary_logprobs_for_loss, boundary_logprobs, boundary_mask = self.boundary_predictor_module(
+                    h,
+                    boundary_threshold,
+                    patch_lens=patch_lens,
+                    teacher_force_interpolation_ratio=teacher_force_interpolation_ratio
+                )
             else:
-                boundary_logprobs, boundary_mask = self.boundary_predictor_module(h.detach(), boundary_threshold)
+                boundary_logprobs_for_loss, boundary_logprobs, boundary_mask = self.boundary_predictor_module(
+                    h.detach(),
+                    boundary_threshold,
+                    patch_lens=patch_lens,
+                    teacher_force_interpolation_ratio=teacher_force_interpolation_ratio
+                )
         else:
+            boundary_logprobs_for_loss = None
             boundary_logprobs = None
             boundary_mask = None
 
@@ -638,7 +694,7 @@ class LocalEncoder(nn.Module):
             boundary_mask=boundary_mask,
         )
 
-        return h, patch_embeddings, boundary_logprobs, boundary_mask
+        return h, patch_embeddings, (boundary_logprobs_for_loss, boundary_logprobs), boundary_mask
 
 
 class LocalDecoder(nn.Module):

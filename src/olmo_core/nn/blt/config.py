@@ -33,6 +33,7 @@ class BLTConfig(Config):
     decoder_backprop_through_add_boundary_logp: bool = True
     decoder_use_mse_loss: bool = False
     teacher_force_boundaries: bool = True
+    teacher_force_interpolation_steps: int = 0
     boundary_threshold: float = 0.5
     # stage1 smoothing options
     smooth_encoder_out: bool = False
