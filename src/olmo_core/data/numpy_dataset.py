@@ -1080,14 +1080,16 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
     def source_instance_offsets(self) -> Tuple[Tuple[int, int], ...]:
         if self._source_instance_offsets is None:
             item_size = self.indices_dtype(0).itemsize
-            num_instances_per_path = self.map(
-                lambda path, _: get_file_size(self._get_instance_offsets_path(path))
-                // (item_size * 2)
+            num_instances_per_group = self.map(
+                lambda path, _: get_file_size(path) // (item_size * 2),
+                _paths=[
+                    self._get_instance_offsets_path(*paths)
+                    for paths in chunked(self.paths, self.source_group_size)
+                ],
             )
             array_instance_offsets = []
             start_offset = 0
-            for source_instances in chunked(num_instances_per_path, self.source_group_size):
-                num_instances = sum(source_instances)
+            for num_instances in num_instances_per_group:
                 array_instance_offsets.append((start_offset, start_offset + num_instances))
                 start_offset += num_instances
             self._source_instance_offsets = tuple(array_instance_offsets)
