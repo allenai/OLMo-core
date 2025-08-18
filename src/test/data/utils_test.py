@@ -303,10 +303,9 @@ def test_attention_mask_to_cache_leftpad_valid_cases(test_case):
     for i, start in enumerate(valid_starts):
         attention_mask[i, start:] = True
 
-    cache_leftpad, seq_lens = attention_mask_to_cache_leftpad(attention_mask)
+    cache_leftpad = attention_mask_to_cache_leftpad(attention_mask)
 
     assert cache_leftpad.tolist() == test_case.expected_cache_leftpad
-    assert seq_lens.tolist() == test_case.expected_seq_lens
 
 
 @pytest.mark.parametrize(

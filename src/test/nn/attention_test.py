@@ -365,15 +365,13 @@ def test_attention_kv_cache_update():
         # Check that cache has been updated.
         assert not torch.equal(k_cache_before, attention.kv_cache_manager.cache["k_cache"])
         assert not torch.equal(v_cache_before, attention.kv_cache_manager.cache["v_cache"])
-        assert torch.all(
-            attention.kv_cache_manager.cache["cache_seqlens"] == cache_seqlens_before + 1
-        )
+        assert attention.kv_cache_manager.cache["cache_seqlens"] == cache_seqlens_before + 1
 
         # Check that the update happened at the right position.
         k_at_current_write_pos_list = []
         v_at_current_write_pos_list = []
         for i in range(batch_size):
-            current_write_pos = cache_seqlens_before[i]
+            current_write_pos = cache_seqlens_before
             # Check that the cache *before* the new token is unchanged.
             torch.testing.assert_close(
                 k_cache_before[i, :current_write_pos, :, :],
@@ -537,7 +535,7 @@ def test_attention_kv_caching_with_leftpad():
         # Capture cache state before decoding a new token
         k_cache_before = cache["k_cache"].clone()
         v_cache_before = cache["v_cache"].clone()
-        seqlens_before = cache["cache_seqlens"].clone()
+        seqlens_before = cache["cache_seqlens"]
 
         y_decode = attention(new_token, cache_leftpad=None)
 
@@ -546,12 +544,12 @@ def test_attention_kv_caching_with_leftpad():
     # After a single decode step, seqlens should increment by 1
     assert attention.kv_cache_manager is not None
     cache = attention.kv_cache_manager.cache
-    torch.testing.assert_close(cache["cache_seqlens"], seqlens_before + 1)
+    assert cache["cache_seqlens"] == (seqlens_before + 1)
 
     # Verify that only the single new write position per batch changed
     for i in range(batch_size):
         lp = int(cache["cache_leftpad"][i].item())
-        prev_L = int(seqlens_before[i].item())
+        prev_L = int(seqlens_before)
         write_pos = prev_L  # cache_seqlens is already an absolute position
 
         # The write position must now be non-zero

@@ -219,17 +219,16 @@ class LMHead(nn.Module):
 
         h = self.norm(x) if self.norm is not None else x
 
-        if logits_to_keep != 0:
-            if isinstance(logits_to_keep, int):
+        if isinstance(logits_to_keep, int):
+            if logits_to_keep != 0:
                 # Keep only the last logits_to_keep positions
                 h = h[:, -logits_to_keep:, :]
                 if labels is not None:
                     labels = labels[:, -logits_to_keep:]
-            else:
-                # logits_to_keep is a tensor specifying positions to keep
-                h = h.gather(1, logits_to_keep.unsqueeze(-1).expand(-1, -1, h.size(-1)))
-                if labels is not None:
-                    labels = labels.gather(1, logits_to_keep)
+        else:  # logits_to_keep is a tensor specifying positions to keep
+            h = h.gather(1, logits_to_keep.unsqueeze(-1).expand(-1, -1, h.size(-1)))
+            if labels is not None:
+                labels = labels.gather(1, logits_to_keep)
 
         if labels is None:
             if return_logits is False:
@@ -245,7 +244,7 @@ class LMHead(nn.Module):
             assert logits is not None
             ce_loss, z_loss = cross_entropy_loss(
                 get_local_tensor(logits).view(-1, self.vocab_size),
-                get_local_tensor(labels).view(-1),
+                get_local_tensor(labels).contiguous().view(-1),
                 ignore_index=ignore_index,
                 reduction=loss_reduction,
                 compute_z_loss=z_loss_multiplier is not None,
@@ -258,9 +257,9 @@ class LMHead(nn.Module):
         elif self.loss_implementation == LMLossImplementation.fused_linear:
             logits = None
             loss, z_loss = fused_linear_cross_entropy_loss(
-                get_local_tensor(h).view(-1, self.d_model),
-                get_local_tensor(self.w_out.weight),
-                get_local_tensor(labels).view(-1),
+                get_local_tensor(h).contiguous().view(-1, self.d_model),
+                weight=get_local_tensor(self.w_out.weight),
+                labels=get_local_tensor(labels).contiguous().view(-1),
                 bias=get_local_tensor(self.w_out.bias) if self.w_out.bias is not None else None,
                 ignore_index=ignore_index,
                 reduction=loss_reduction,
@@ -421,12 +420,13 @@ class NormalizedLMHead(LMHead):
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
         loss_implementation: LMLossImplementation = LMLossImplementation.default,
+        bias: bool = False,
     ):
         super().__init__(
             d_model=d_model,
             vocab_size=vocab_size,
             layer_norm=None,
-            bias=False,
+            bias=bias,
             dtype=dtype,
             init_device=init_device,
             loss_implementation=loss_implementation,
@@ -458,17 +458,16 @@ class NormalizedLMHead(LMHead):
     ) -> Union[torch.Tensor, LMOutputWithLoss]:
         B = x.shape[0]
 
-        if logits_to_keep != 0:
-            if isinstance(logits_to_keep, int):
+        if isinstance(logits_to_keep, int):
+            if logits_to_keep != 0:
                 # Keep only the last logits_to_keep positions
                 x = x[:, -logits_to_keep:, :]
                 if labels is not None:
                     labels = labels[:, -logits_to_keep:]
-            else:
-                # logits_to_keep is a tensor specifying positions to keep
-                x = x.gather(1, logits_to_keep.unsqueeze(-1).expand(-1, -1, x.size(-1)))
-                if labels is not None:
-                    labels = labels.gather(1, logits_to_keep)
+        else:  # logits_to_keep is a tensor specifying positions to keep
+            x = x.gather(1, logits_to_keep.unsqueeze(-1).expand(-1, -1, x.size(-1)))
+            if labels is not None:
+                labels = labels.gather(1, logits_to_keep)
 
         sz = self.sz * (self.sz_init_value / self.sz_init_scaling)
         logits = sz * self.w_out(x)
@@ -483,7 +482,7 @@ class NormalizedLMHead(LMHead):
         if self.loss_implementation == LMLossImplementation.default:
             ce_loss, z_loss = cross_entropy_loss(
                 get_local_tensor(logits).view(-1, self.vocab_size),
-                get_local_tensor(labels).view(-1),
+                get_local_tensor(labels).contiguous().view(-1),
                 ignore_index=ignore_index,
                 reduction=loss_reduction,
                 compute_z_loss=z_loss_multiplier is not None,

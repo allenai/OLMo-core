@@ -136,16 +136,6 @@ class AttentionType(StrEnum):
     """
 
 
-class InferencePhase(StrEnum):
-    prefill = "prefill"
-    decode = "decode"
-
-
-@dataclass
-class KVCacheContext:
-    cache_leftpad: Optional[torch.Tensor] = None  # leftpad of the underlying KV cache
-
-
 @dataclass
 class AttentionConfig(Config):
     """
@@ -400,10 +390,6 @@ class Attention(AttentionBase):
         self._cp_load_balancer: Optional[RingAttentionLoadBalancerType] = None
 
         self.kv_cache_manager: Optional[KVCacheManager] = None
-
-        # self.k_cache, self.v_cache = None, None
-        # self.cache_seqlens, self.cache_leftpad = None, None
-        # self.phase: Optional[InferencePhase] = None
 
     @property
     def cp_enabled(self) -> bool:
