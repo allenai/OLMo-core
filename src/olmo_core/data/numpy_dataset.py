@@ -1182,6 +1182,8 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
             source_start = 0
             for i, (source_path, source_size) in enumerate(zip(source_paths, source_sizes)):
                 if source_start <= document_start < (source_start + source_size):
+                    document_start -= source_start
+                    document_end -= source_start
                     if label_mask_paths is not None:
                         label_mask_path = label_mask_paths[i]
                     break
