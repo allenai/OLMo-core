@@ -1050,14 +1050,6 @@ def _unhide_cpu_inputs_from_torch(m, args, kwargs) -> Optional[Tuple[Any, Dict[s
     return (args, kwargs)
 
 
-def log1mexp(x):
-    """Computes log(1 - exp(x)) in a numerically stable way for x < 0."""
-    # For x < log(0.5), use log1p(-exp(x)) directly
-    # For x >= log(0.5), use log(-expm1(x)) to avoid precision issues
-    log_half = -math.log(2)
-    return torch.where(x < log_half, torch.log1p(-torch.exp(x)), torch.log(-torch.expm1(x)))
-
-
 class BLTTransformer(Transformer):
     def __init__(
         self,
@@ -1667,11 +1659,11 @@ class BLTDistillTransformer(BLTTransformer):
 
                 e = (
                     torch.exp(log_y_true) * log_y_true
-                    + (-torch.expm1(log_y_true) * log1mexp(log_y_true))
+                    + (-torch.expm1(log_y_true) * blt_utils.log1mexp(log_y_true))
                 )
                 ce = (
                     torch.exp(log_y_true) * log_y_pred
-                    + (-torch.expm1(log_y_true) * log1mexp(log_y_pred))
+                    + (-torch.expm1(log_y_true) * blt_utils.log1mexp(log_y_pred))
                 )
 
                 return (e - ce)
@@ -2378,7 +2370,7 @@ class BLTDistillTransformer(BLTTransformer):
             if blt_config.eval_add_boundary_logp:
                 y_hat = y_hat + torch.gather(boundary_logprobs, -1, patch_end_indices)[:, 2:]
 
-        remaining_logpmass = log1mexp(y_hat)
+        remaining_logpmass = blt_utils.log1mexp(y_hat)
         remaining_logp_uniform = remaining_logpmass - math.log(teacher_logits.shape[2] - 1)  # -1 to skip the main path token
 
         teacher_logits.zero_()

@@ -4,6 +4,8 @@ import tempfile
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, cast
+import math
+import os
 
 import torch
 import torch.distributed as dist
@@ -33,7 +35,8 @@ from olmo_core.generate.sampling import select_next_token
 from olmo_core.generate.utils import selective_log_softmax
 from olmo_core.io import is_url, join_path, normalize_path
 from olmo_core.nn.blt.config import BLTConfig
-from olmo_core.nn.transformer import Transformer, TransformerConfig
+import olmo_core.nn.blt.utils as blt_utils
+from olmo_core.nn.transformer import Transformer, TransformerConfig, TransformerType
 from olmo_core.train.train_module.transformer.common import parallelize_model
 from olmo_core.train.train_module.transformer.config import TransformerDataParallelConfig
 from olmo_core.utils import get_default_device, move_to_device
@@ -42,6 +45,7 @@ from ..generation_module import GenerationModule
 
 log = logging.getLogger(__name__)
 
+BYTE_EXPANSION_FACTOR = int(os.environ.get("BYTE_EXPANSION_FACTOR", "6"))
 
 class TransformerGenerationModule(GenerationModule):
     """Module for autoregressive text generation with transformer models."""
@@ -518,6 +522,20 @@ class TransformerGenerationModule(GenerationModule):
                     f"Failed to load config from checkpoint at {config_path}: missing required field {e}"
                 ) from e
 
+        # TODO(benjaminm): this does not seem like a good place..
+        if transformer_config.name == TransformerType.blt:  # type: ignore
+            return BLTTransformerGenerationModule.from_checkpoint(
+                checkpoint_dir=checkpoint_dir,
+                transformer_config=transformer_config,
+                generation_config=generation_config,
+                process_group=process_group,
+                work_dir=work_dir,
+                pre_download=pre_download,
+                load_thread_count=load_thread_count,
+                dtype=dtype,
+                **kwargs,
+            )
+
         # Create work directory on rank 0
         work_dir = Path(
             work_dir or (tempfile.mkdtemp() if get_rank(process_group) == 0 else "/tmp")
@@ -728,10 +746,11 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
             initial_memory = torch.cuda.memory_allocated(self.device)
             torch.cuda.reset_max_memory_allocated(self.device)
 
+        # TODO(benjaminm): should probably get rid of BYTE_EXPANSION_FACTOR and handle length diff on the caller side
         if generation_config.max_new_tokens is not None:
-            max_length = prompt_len + generation_config.max_new_tokens
+            max_length = prompt_len + generation_config.max_new_tokens * BYTE_EXPANSION_FACTOR
         elif generation_config.max_length is not None:
-            max_length = generation_config.max_length
+            max_length = generation_config.max_length * BYTE_EXPANSION_FACTOR
         elif generation_config.use_cache:
             raise OLMoConfigurationError(
                 "max_length or max_new_tokens must be provided if use_cache is True"
@@ -881,7 +900,8 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                     else:
                         print(self.tokenizer.decode(tokens_to_print), end="", flush=True)
 
-        print()
+        if stream:
+            print()
 
         # Track peak memory for decoding phase
         if self.device.type == "cuda" and log_timing and prefill_peak_memory is not None:
@@ -973,7 +993,44 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                             f"      Additional memory used: {decoding_memory_used / 1024**3:.2f} GB"
                         )
 
-        return generated, logits, logprobs
+        # convert to token-level ids / logits / logprobs
+        generated_continuation = generated[:, prompt_len:]
+
+        # decoding errors could be a problem here - but not really a way around
+        generated_text = self.tokenizer.decode(generated_continuation[0].tolist())
+        generated_subword_ids = torch.tensor([self.tokenizer.hf_tokenizer.encode(generated_text)], dtype=torch.int64, device=self.device)
+        _, patch_lens = self.tokenizer.get_tokens_and_patch_lengths(generated_subword_ids[0].tolist(), add_bos=False)
+        patch_lens = torch.tensor([patch_lens], dtype=torch.int32, device=self.device)
+        patch_ids = blt_utils.lengths_to_ids(patch_lens, generated_continuation.shape[-1]).to(self.device)
+
+        if return_logits or return_logprobs:
+            assert logits is not None and logprobs is not None
+
+            main_path_patch_logprobs = torch.zeros((1, generated_subword_ids.shape[1]), device=self.device, dtype=torch.float32)
+            main_path_patch_logprobs = main_path_patch_logprobs.scatter_reduce(
+                src=logprobs.float(),
+                dim=1,
+                index=patch_ids,
+                reduce="sum",
+                include_self=False,
+            )
+
+            # we can't compute token-level logits, but logprobs should be fine since F.log_softmax(logprobs, -1) == logprobs
+            patch_logits = torch.zeros((1, generated_subword_ids.shape[1] + 1, len(self.tokenizer.hf_tokenizer)), device=self.device, dtype=torch.float32)
+            remaining_logpmass = blt_utils.log1mexp(main_path_patch_logprobs)
+            remaining_logp_uniform = remaining_logpmass - math.log(patch_logits.shape[2] - 1)  # -1 to skip the main path token
+
+            patch_logits[:, :-1, :] = remaining_logp_uniform.unsqueeze(-1)
+            patch_logits.scatter_(
+                -1,
+                generated_subword_ids.unsqueeze(-1),
+                main_path_patch_logprobs.to(patch_logits.dtype).unsqueeze(-1),
+            )
+        else:
+            main_path_patch_logprobs = None
+            patch_logits = None
+
+        return generated_subword_ids, patch_logits, main_path_patch_logprobs
 
     @classmethod
     def from_checkpoint(
@@ -1019,15 +1076,17 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
 
         # Load transformer config from checkpoint if not provided
         tokenizer_config = None
-        if transformer_config is None and get_rank(process_group) == 0:
+        if transformer_config is None or tokenizer_config is None and get_rank(process_group) == 0:
             config_path = join_path(checkpoint_dir, "config.json")
             with cached_path(config_path).open() as f:
                 config_dict = json.load(f)
             try:
                 # Avoid loading the entire experiment config b/c we don't care about validation outside
                 # of the transformer config and the tokenizer config
-                transformer_config = TransformerConfig.from_dict(config_dict["model"])
-                tokenizer_config = TokenizerConfig.from_dict(config_dict["dataset"]["tokenizer"])
+                if transformer_config is None:
+                    transformer_config = TransformerConfig.from_dict(config_dict["model"])
+                if tokenizer_config is None:
+                    tokenizer_config = TokenizerConfig.from_dict(config_dict["dataset"]["tokenizer"])
             except KeyError as e:
                 raise OLMoConfigurationError(
                     f"Failed to load config from checkpoint at {config_path}: missing required field {e}"
