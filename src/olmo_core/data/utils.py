@@ -874,7 +874,7 @@ def pack_documents_into_instances(
     source_start_offsets: List[int] = [0]
     for path in paths[1:]:
         file_size = get_file_size(path)
-        source_start_offsets.append(file_size // dtype(0).itemsize)
+        source_start_offsets.append(source_start_offsets[-1] + file_size // dtype(0).itemsize)
 
     def doc_idx_gen() -> Generator[int, None, None]:
         for path, start_offset in zip(paths, source_start_offsets):
