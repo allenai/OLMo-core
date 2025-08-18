@@ -34,7 +34,7 @@ class BLTConfig(Config):
     decoder_use_mse_loss: bool = False
     teacher_force_boundaries: bool = True
     teacher_force_interpolation_steps: int = 0
-    boundary_threshold: float = 0.5
+    boundary_threshold: str = "sample:0" # sample:<temperature> or topk:<value>
     # stage1 smoothing options
     smooth_encoder_out: bool = False
     smooth_decoder_in: bool = False

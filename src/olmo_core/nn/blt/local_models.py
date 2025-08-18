@@ -59,13 +59,24 @@ def _teacher_force_interpolate(
         return boundary_logprobs, boundary_logprobs
 
 
-def _compute_boundary_mask(boundary_logprobs: torch.Tensor, boundary_threshold: float | int) -> torch.Tensor:
-    if boundary_threshold > 1:
-        thresholds = torch.quantile(boundary_logprobs, dim=1, q=1 - (boundary_threshold / boundary_logprobs.shape[1]))
+def _compute_boundary_mask(boundary_logprobs: torch.Tensor, boundary_threshold: str) -> torch.Tensor:
+    if boundary_threshold.startswith("sample:"):
+        _, temperature = boundary_threshold.split(":")
+        temperature = float(temperature)
+
+        if temperature == 0:
+            return (boundary_logprobs > math.log(0.5))
+        elif temperature == 1:
+            return torch.bernoulli(torch.exp(boundary_logprobs)).to(torch.bool)
+        else:
+            raise NotImplementedError("Temperatures outside {0,1} are not implemented yet.")
+    elif boundary_threshold.startswith("topk:"):
+        _, topk = boundary_threshold.split(":")
+        topk = int(topk)
+        thresholds = torch.quantile(boundary_logprobs, dim=1, q=1 - (topk / boundary_logprobs.shape[1]))
         return (boundary_logprobs >= thresholds.unsqueeze(-1))
     else:
-        return (boundary_logprobs > math.log(boundary_threshold))
-
+        raise ValueError(f"Unknown boundary threshold: {boundary_threshold}")
 
 # 2-layer MLP as in DTP
 class DTPBoundaryPredictor(nn.Module):
@@ -94,7 +105,7 @@ class DTPBoundaryPredictor(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        boundary_threshold: float | int,
+        boundary_threshold: str,
         patch_lens: Optional[torch.Tensor] = None,
         teacher_force_interpolation_ratio: Optional[float] = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -132,7 +143,7 @@ class HNetBoundaryPredictor(nn.Module):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        boundary_threshold: float | int,
+        boundary_threshold: str,
         patch_lens: Optional[torch.Tensor] = None,
         teacher_force_interpolation_ratio: Optional[float] = None,
         epsilon: float = 1e-3,
