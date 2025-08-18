@@ -51,7 +51,7 @@ def _teacher_force_interpolate(
         true_boundary_probs = torch.full_like(boundary_logprobs, fill_value=epsilon)
         true_boundary_probs.scatter_(1, patch_end_indices, 1 - epsilon)
 
-        r = teacher_force_interpolation_ratio / 2 + 0.5
+        r = teacher_force_interpolation_ratio
 
         boundary_probs_interpolated = boundary_probs * r + true_boundary_probs * (1 - r)
         return boundary_logprobs, torch.log(boundary_probs_interpolated)
