@@ -749,6 +749,12 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                 torch.cuda.synchronize()
         kv_cache_init_time = time.perf_counter() - kv_cache_start_time
 
+        # temporary, need to find a better solution
+        blt_config = BLTConfig(
+            teacher_force_boundaries=False,
+            boundary_threshold="sample:0",
+        )
+
         pbar = tqdm(desc="Generating tokens", disable=True)
         while True:
             token_start_time = time.perf_counter()
@@ -777,6 +783,7 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                 logits_to_keep=logits_to_keep,
                 patch_lens=patch_lens_for_model,
                 prefill_kv_cache=is_first_forward,
+                blt_config=blt_config,
             )
             if self.device.type == "cuda":
                 torch.cuda.synchronize()
@@ -893,7 +900,7 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                     input_ids=generated,
                     labels=get_labels({"input_ids": generated}),
                     patch_lens=patch_lens,
-                    blt_config=BLTConfig(skip_teacher=True),
+                    blt_config=blt_config.replace(skip_teacher=True),
                 )
             # last logit is potentially wrong since last_token_is_boundary=True in reference, so skip it
             assert torch.allclose(logits[:, :-1], reference_out.logits[:, -tokens_generated-1:-1], rtol=1e-1, atol=0.5)

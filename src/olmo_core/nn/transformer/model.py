@@ -1437,10 +1437,10 @@ class BLTDistillTransformer(BLTTransformer):
     def inference_forward(
         self,
         input_ids: torch.Tensor,
-        boundary_threshold: float = 0.5,
+        blt_config: BLTConfig,
         **kwargs,
     ) -> Tuple[Union[torch.Tensor, LMOutputWithLoss, None], Optional[torch.Tensor], torch.Tensor]:
-        if self.boundary_predictor is None:
+        if self.local_encoder.boundary_predictor_module is None:
             raise OLMoConfigurationError("Boundary predictor is required for inference.")
 
         input_ids, labels, block_kwargs, lm_head_kwargs, local_encoder_kwargs, local_decoder_kwargs, extra_kwargs = self._prepare_inputs(
@@ -1449,10 +1449,12 @@ class BLTDistillTransformer(BLTTransformer):
             **kwargs,
         )
 
-        h_byte, h_patch = self.local_encoder(input_ids, **local_encoder_kwargs)
-        boundary_preds = self.boundary_predictor(h_byte).squeeze(-1)
-        boundary_probs = F.sigmoid(boundary_preds)
-        boundary_mask = boundary_probs > boundary_threshold
+        h_byte, h_patch, (boundary_logprobs, _), boundary_mask = self.local_encoder(
+            input_ids,
+            teacher_force_boundaries=blt_config.teacher_force_boundaries,
+            boundary_threshold=blt_config.boundary_threshold,
+            **local_encoder_kwargs
+        )
         last_token_is_boundary = boundary_mask[:, -1].any().item()
 
         h_patch_global = h_patch
@@ -1491,8 +1493,10 @@ class BLTDistillTransformer(BLTTransformer):
         h_out = self.local_decoder(
             embeds=h_byte,
             patch_embeds=h_patch,
-            **local_decoder_kwargs,
+            boundary_logprobs=None if blt_config.teacher_force_boundaries else boundary_logprobs,
+            boundary_mask=None if blt_config.teacher_force_boundaries else boundary_mask,
             last_token_is_boundary=last_token_is_boundary,
+            **local_decoder_kwargs,
         )
 
         h_out = h_out.to(self.dtype)
@@ -1847,9 +1851,12 @@ class BLTDistillTransformer(BLTTransformer):
     ):
         # a bit hacky, use the presence of prefill_kv_cache to check whether we are generating
         if prefill_kv_cache is not None:
+            assert blt_config is not None
+
             return self.inference_forward(
                 input_ids,
                 prefill_kv_cache=prefill_kv_cache,
+                blt_config=blt_config,
                 **kwargs,
             )
 

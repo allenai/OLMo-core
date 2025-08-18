@@ -642,7 +642,7 @@ class LocalEncoder(nn.Module):
         smooth: bool = False,
         teacher_force_boundaries: bool = True,
         boundary_predictor_backprop_through_encoder: bool = True,
-        boundary_threshold: float | int = 0.5,
+        boundary_threshold: str = "sample:0",
         teacher_force_interpolation_ratio: Optional[float] = None,
         **block_kwargs,
     ) -> tuple[torch.Tensor, torch.Tensor, tuple[Optional[torch.Tensor], Optional[torch.Tensor]], Optional[torch.Tensor]]:
