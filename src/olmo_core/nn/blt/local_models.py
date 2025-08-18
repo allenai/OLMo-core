@@ -852,14 +852,14 @@ class LocalDecoder(nn.Module):
             else:
                 p = torch.full((h_patch.shape[0], h_patch.shape[1]), 1 - epsilon, device=h_patch.device, dtype=torch.float32)
 
-        dt = torch.log(1 / (1 - p)).to(h_patch.dtype)
-        x = (h_patch / dt[..., None])
+        dt = torch.log(1 / (1 - p)).float()
+        x = (h_patch.float() / dt[..., None])
 
         n_heads = self.d_model // headdim
         A = -torch.ones(
             (n_heads,), device=h_patch.device, dtype=torch.float32
         )
-        b = p.to(h_patch.dtype)
+        b = p.float()
         c = torch.ones_like(b)
 
         # trust the HNet source...
@@ -871,7 +871,7 @@ class LocalDecoder(nn.Module):
             rearrange(c, "b l -> b l 1 1"),
             chunk_size=block_size,
             seq_idx=None,
-        )
+        ).to(h_patch.dtype)
         depool_out = rearrange(depool_out, "b l h p -> b l (h p)")
         depool_out = cast(torch.Tensor, depool_out)
 
