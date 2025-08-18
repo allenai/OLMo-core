@@ -431,7 +431,12 @@ class Attention(AttentionBase):
                 softmax_scale=scale,
                 causal=True,
                 window_size=self.window_size,
-                **self.kv_cache_manager.cache,  # k_cache and v_cache are updated in-place
+                k_cache=self.kv_cache_manager.k_cache,  # updated in-place
+                v_cache=self.kv_cache_manager.v_cache,  # updated in-place
+                cache_leftpad=self.kv_cache_manager.cache_leftpad,
+                cache_seqlens=self.kv_cache_manager.cache_seqlens.expand(
+                    self.kv_cache_manager.cache_leftpad.shape[0]
+                ).contiguous(),
             )
             self.kv_cache_manager.update_seqlen(q.shape[1])
 
@@ -682,13 +687,12 @@ class Attention(AttentionBase):
         self._cp_enabled = True
         self._cp_head_stride = head_stride
 
-    def init_kv_cache_manager(self, batch_size: int, max_seq_len: int, dtype: torch.dtype):
+    def init_kv_cache_manager(self, batch_size: int, max_seq_len: int):
         self.kv_cache_manager = KVCacheManager(
             batch_size=batch_size,
             max_seq_len=max_seq_len,
             num_kv_heads=self.n_kv_heads,
             head_dim=self.head_dim,
-            dtype=dtype,
             device=self.w_k.weight.device,
         )
 

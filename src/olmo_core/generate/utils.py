@@ -11,10 +11,10 @@ def selective_log_softmax(logits: torch.Tensor, index: torch.Tensor) -> torch.Te
         tensor when combined with gather operations, which can save significant memory compared
         to computing the full log softmax and then indexing.
 
-    :param logits: The logits tensor of shape ``(batch_size, seq_len, vocab_size)``.
-    :param index: The index tensor of shape ``(batch_size, seq_len)``.
+    :param logits: The logits tensor of shape ``(..., vocab_size)``.
+    :param index: The index tensor of shape ``(...)``.
 
-    :returns: The log probabilities of shape ``(batch_size, seq_len)``.
+    :returns: The log probabilities of shape ``(...)``.
     """
     logprobs = torch.log_softmax(logits.float(), dim=-1)
     return torch.gather(logprobs, dim=-1, index=index.unsqueeze(-1)).squeeze(-1)

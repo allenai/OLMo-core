@@ -3,100 +3,104 @@ import logging
 from typing import Optional
 
 import torch
-
-from olmo_core.config import StrEnum
+import torch.nn as nn
 
 log = logging.getLogger(__name__)
 
 
-class InferencePhase(StrEnum):
-    prefill = "prefill"
-    decode = "decode"
-
-
-class KVCacheManager:
+class KVCacheManager(nn.Module):
     def __init__(
         self,
         batch_size: int,
         max_seq_len: int,
         num_kv_heads: int,
         head_dim: int,
-        dtype: torch.dtype,
         device: torch.device,
+        dtype: torch.dtype = torch.bfloat16,
     ):
+        super().__init__()
         self.num_kv_heads = num_kv_heads
         self.head_dim = head_dim
-        self.device = device
-        self.reallocate(batch_size, max_seq_len, dtype)
+        self.kv_cache_shape = (batch_size, max_seq_len, self.num_kv_heads, self.head_dim)
+
+        self.register_buffer(
+            "k_cache",
+            torch.zeros(self.kv_cache_shape, device=device, dtype=dtype),
+            persistent=False,
+        )
+        self.register_buffer(
+            "v_cache",
+            torch.zeros(self.kv_cache_shape, device=device, dtype=dtype),
+            persistent=False,
+        )
+        self.register_buffer(
+            "cache_leftpad",
+            torch.zeros(batch_size, dtype=torch.int32, device=device),
+            persistent=False,
+        )
+        self.register_buffer(
+            "cache_seqlens", torch.zeros((), dtype=torch.int32, device=device), persistent=False
+        )
 
     def record_leftpad(self, leftpad: Optional[torch.Tensor]):
         if leftpad is not None:
-            self.cache["cache_leftpad"].data.copy_(leftpad)
+            self.cache_leftpad.copy_(leftpad)
 
     def update_seqlen(self, seqlen: int):
         # IMPORTANT: The flash-attn kernel interprets cache_seqlens as absolute
         # indices within the KV cache sequence dimension. Not as actual logical
         # sequence lengths that exclude padding.
-        self.cache["cache_seqlens"] += seqlen
+        self.cache_seqlens.add_(seqlen)
 
-    @property
-    def phase(self):
-        if self.cache["cache_seqlens"] == 0:
-            return InferencePhase.prefill
-        return InferencePhase.decode
-
-    # def current_position(self) -> int:
-    #     if self.phase == InferencePhase.decode:
-    #         return self.cache["cache_seqlens"]
-    #     return 0
-
-    def current_position(self) -> int:
-        return self.cache["cache_seqlens"]
+    def current_position(self) -> torch.Tensor:
+        return self.cache_seqlens
 
     def zero_cache(self):
-        self.cache["k_cache"].data.zero_()
-        self.cache["v_cache"].data.zero_()
-        self.cache["cache_seqlens"] = 0
-        self.cache["cache_leftpad"].data.zero_()
+        self.k_cache.zero_()
+        self.v_cache.zero_()
+        self.cache_leftpad.zero_()
+        self.cache_seqlens.zero_()
 
-    def reallocate(self, batch_size: int, max_seq_len: int, dtype: torch.dtype):
+    def reallocate(
+        self,
+        batch_size: int,
+        max_seq_len: int,
+        _explicitly_free_memory: bool = True,
+    ):
         self.kv_cache_shape = (batch_size, max_seq_len, self.num_kv_heads, self.head_dim)
-        self.dtype = dtype
-
-        if hasattr(self, "cache"):
+        if _explicitly_free_memory and hasattr(self, "cache"):
             # The cache can be large so we explicitly free it before reallocating
             del self.cache
             gc.collect()
             torch.cuda.empty_cache()
 
-        self.cache = torch.nn.ParameterDict(
-            {
-                "k_cache": torch.nn.Parameter(
-                    torch.zeros(self.kv_cache_shape, device=self.device, dtype=dtype),
-                    requires_grad=False,
-                ),
-                "v_cache": torch.nn.Parameter(
-                    torch.zeros(self.kv_cache_shape, device=self.device, dtype=dtype),
-                    requires_grad=False,
-                ),
-                "cache_leftpad": torch.nn.Parameter(
-                    torch.zeros(batch_size, dtype=torch.int32, device=self.device),
-                    requires_grad=False,
-                ),
-                "cache_seqlens": 0,
-            }
-        )
+        # Inherit device/dtype from existing buffers via new_zeros (no manual device/dtype).
+        k = self.k_cache.new_zeros(self.kv_cache_shape)
+        v = self.v_cache.new_zeros(self.kv_cache_shape)
+        leftpad = self.cache_leftpad.new_zeros((batch_size,), dtype=torch.int32)
+        seqlens = self.cache_seqlens.new_zeros(())
 
-    def is_reusable(self, batch_size: int, max_seq_len: int, dtype: torch.dtype) -> bool:
-        return (
-            self.kv_cache_shape[0] == batch_size
-            and self.kv_cache_shape[1] >= max_seq_len
-            and self.dtype == dtype
-        )
+        # Re-register to preserve persistent=False
+        self.register_buffer("k_cache", k, persistent=False)
+        self.register_buffer("v_cache", v, persistent=False)
+        self.register_buffer("cache_leftpad", leftpad, persistent=False)
+        self.register_buffer("cache_seqlens", seqlens, persistent=False)
 
-    def reset(self, batch_size: int, max_seq_len: int, dtype: torch.dtype):
-        if self.is_reusable(batch_size, max_seq_len, dtype):
+    def is_reusable(self, batch_size: int, max_seq_len: int) -> bool:
+        return self.kv_cache_shape[0] == batch_size and self.kv_cache_shape[1] >= max_seq_len
+
+    def reset(self, batch_size: int, max_seq_len: int):
+        """
+        Reset the KV cache for new generation parameters.
+
+        If the cache is reusable with the given parameters, it will be zeroed out.
+        Otherwise, it will be reallocated with the new dimensions and dtype.
+
+        :param batch_size: The batch size for the cache.
+        :param max_seq_len: The maximum sequence length for the cache.
+        """
+        if self.is_reusable(batch_size, max_seq_len):
             self.zero_cache()
         else:
             log.debug("Unreusable KV cache, reallocating")
-            self.reallocate(batch_size, max_seq_len, dtype)
+            self.reallocate(batch_size, max_seq_len)
