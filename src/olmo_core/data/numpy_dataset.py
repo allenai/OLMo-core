@@ -5,6 +5,7 @@ import hashlib
 import logging
 import math
 import os
+import random
 import tempfile
 from abc import ABC, abstractmethod
 from copy import deepcopy
@@ -2408,6 +2409,10 @@ class NumpyDatasetConfig(Config):
     Determines how many sources are grouped together a single source for packing with the packed
     FSL dataset.
     """
+    source_permutation_seed: Optional[int] = None
+    """
+    Used to shuffle the source files.
+    """
 
     def validate(self):
         if self.name in (NumpyDatasetType.fsl, NumpyDatasetType.padded_fsl):
@@ -2536,6 +2541,16 @@ class NumpyDatasetConfig(Config):
             if metadata is None:
                 metadata = [{"label": label} for label in labels]
             label_mask_paths = cast(Optional[List[PathOrStr]], self.label_mask_paths)
+
+        if self.source_permutation_seed is not None:
+            source_order = list(range(len(paths)))
+            rng = random.Random(self.source_permutation_seed)
+            rng.shuffle(source_order)
+            paths = [paths[i] for i in source_order]
+            if metadata is not None:
+                metadata = [metadata[i] for i in source_order]
+            if label_mask_paths is not None:
+                label_mask_paths = [label_mask_paths[i] for i in source_order]
 
         dataset: NumpyDatasetBase
         if self.name == NumpyDatasetType.fsl:
