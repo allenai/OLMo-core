@@ -1346,8 +1346,10 @@ class BLTTransformer(Transformer):
             **local_encoder_kwargs,
         )
 
-        # TEMP DEBUG
-        h_patch_global = h_patch.to(torch.bfloat16)
+        if self.blocks["0"].attention.use_flash:  # type: ignore
+            h_patch_global = h_patch.to(torch.bfloat16)
+        else:
+            h_patch_global = h_patch
 
         # Run each block.
         for block in self.blocks.values():
@@ -1460,7 +1462,8 @@ class BLTDistillTransformer(BLTTransformer):
             # skip the last token, not part of a complete patch
             h_patch_global = h_patch_global[:, :-1]
 
-        h_patch_global = h_patch_global.to(self.dtype)
+        if self.blocks["0"].attention.use_flash:  # type: ignore
+            h_patch_global = h_patch_global.to(torch.bfloat16)
 
         if h_patch_global.shape[1] > 0:
             for block in self.blocks.values():
@@ -1469,8 +1472,7 @@ class BLTDistillTransformer(BLTTransformer):
                     mark_dynamic(h_patch_global, (0, 1), strict=False)
                 h_patch_global = block(h_patch_global, **block_kwargs)
 
-        h_patch_after_global = h_patch_global
-
+        h_patch_after_global = h_patch_global.to(h_patch.dtype)
 
         if input_ids.shape[1] > 1:
             # skip bos if present
@@ -1952,6 +1954,9 @@ class BLTDistillTransformer(BLTTransformer):
                 # and for consistency with the use_oracle_patch_reps=True case.
                 h_patch_global = h_patch[:, 1:]
 
+                if self.blocks["0"].attention.use_flash:  # type: ignore
+                    h_patch_global = h_patch_global.to(torch.bfloat16)
+
                 for block in self.blocks.values():
                     # Mark sizes as dynamic for torch.compile().
                     if self.compile_enabled:
@@ -1959,7 +1964,7 @@ class BLTDistillTransformer(BLTTransformer):
                     h_patch_global = block(h_patch_global, **block_kwargs)
 
                 h_patch_after_global = torch.zeros_like(h_patch)
-                h_patch_after_global[:, 1:] = h_patch_global
+                h_patch_after_global[:, 1:] = h_patch_global.to(h_patch_after_global.dtype)
 
             if blt_config.decoder_backprop_through_encoder:
                 h_out = self.local_decoder(

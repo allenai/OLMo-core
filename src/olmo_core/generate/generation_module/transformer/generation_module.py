@@ -1135,6 +1135,11 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         print(transformer_config)
         print(generation_config)
         model = transformer_config.build()
+
+        # DEBUG flash attention needs bf16
+        for block in model.blocks.values():
+            block.to(torch.bfloat16)
+
         generation_module = cls(model, cast(ByteTokenizerConfig, tokenizer_config).build(), generation_config, **kwargs)
 
         # Load checkpoint
