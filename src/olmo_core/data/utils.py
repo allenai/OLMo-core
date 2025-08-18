@@ -871,13 +871,9 @@ def pack_documents_into_instances(
     if len(paths) == 0:
         raise RuntimeError("At least one source path must be provided")
 
-    source_start_offsets: List[int] = [0]
-    for path in paths[1:]:
-        file_size = get_file_size(path)
-        source_start_offsets.append(source_start_offsets[-1] + file_size // dtype(0).itemsize)
-
     def doc_idx_gen() -> Generator[int, None, None]:
-        for path, start_offset in zip(paths, source_start_offsets):
+        start_offset = 0
+        for path in paths:
             for start_idx, end_idx in iter_document_indices_with_max_sequence_length(
                 path,
                 max_sequence_length,
@@ -887,6 +883,7 @@ def pack_documents_into_instances(
             ):
                 yield start_offset + start_idx
                 yield start_offset + end_idx
+            start_offset += get_file_size(path) // dtype(0).itemsize
 
     # shape: (num_docs, 2)
     document_indices = np.fromiter(doc_idx_gen(), dtype=indices_dtype).reshape(-1, 2)

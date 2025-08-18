@@ -1139,13 +1139,17 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
         if source_group_index is None or instance_index is None:
             raise IndexError(f"{index} is out of bounds for dataset of size {len(self)}")
 
+        # All npy source file paths within the group.
         source_paths = self._source_path_groups[source_group_index]
+        # The number of tokens in each npy source file within the group.
         source_sizes = self.source_size_groups[source_group_index]
+        # All label mask paths for the group.
         label_mask_paths = (
             None
             if self._label_mask_path_groups is None
             else self._label_mask_path_groups[source_group_index]
         )
+
         document_indices_path = self._get_document_indices_path(*source_paths)
         instance_offsets_path = self._get_instance_offsets_path(*source_paths)
         docs_by_instance_path = self._get_docs_by_instance_path(*source_paths)
@@ -1178,7 +1182,8 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
             ).tolist()
             document_start, document_end = document_indices
 
-            # Pick out the right source from the source group.
+            # Pick out the right source file from the source group by comparing the starting
+            # index (in tokens) of the document to the starting index of each source within the group.
             source_path: Optional[PathOrStr] = None
             label_mask_path: Optional[PathOrStr] = None
             source_start = 0
@@ -1189,7 +1194,10 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
                     if label_mask_paths is not None:
                         label_mask_path = label_mask_paths[i]
                     break
-                source_start += source_size
+                else:
+                    source_start += source_size
+            else:
+                raise RuntimeError("we shouldn't be here!")
 
             assert source_path is not None
             document_token_ids.append(
