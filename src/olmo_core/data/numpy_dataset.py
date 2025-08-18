@@ -44,6 +44,7 @@ from .types import LongDocStrategy, NumpyDatasetDType, NumpyDatasetType, NumpyUI
 from .utils import (
     bucket_documents,
     chunk_array,
+    chunked,
     divide_into_buckets,
     find_periodic_sequences,
     get_doc_lengths_from_indices,
@@ -413,16 +414,19 @@ class NumpyFSLDatasetBase(NumpyDatasetBase, Dataset[Dict[str, Any]]):
     def max_target_sequence_length(self) -> Optional[int]:
         return None
 
-    def _get_indices_path(self, source_path: PathOrStr, name: str, *extra_ids: str) -> Path:
-        # NOTE: the pre-processed data file names are based on the corresponding source (token IDs) file name,
-        # so to get the right instance indices file name for a label mask file, we need to map
-        # the label mask file name to its corresponding source file name.
-        if source_path in self._label_mask_path_to_source_path:
-            source_path = self._label_mask_path_to_source_path[source_path]
+    def _get_indices_path(
+        self, name: str, *source_paths: PathOrStr, extra_ids: Optional[Sequence[str]] = None
+    ) -> Path:
         sha256_hash = hashlib.sha256()
-        sha256_hash.update(str(source_path).encode())
-        sha256_hash.update(str(self._get_file_size(source_path)).encode())
-        for extra_id in extra_ids:
+        for source_path in source_paths:
+            # NOTE: the pre-processed data file names are based on the corresponding source (token IDs) file name,
+            # so to get the right instance indices file name for a label mask file, we need to map
+            # the label mask file name to its corresponding source file name.
+            if source_path in self._label_mask_path_to_source_path:
+                source_path = self._label_mask_path_to_source_path[source_path]
+            sha256_hash.update(str(source_path).encode())
+            sha256_hash.update(str(self._get_file_size(source_path)).encode())
+        for extra_id in extra_ids or []:
             sha256_hash.update(extra_id.encode())
         path_hash = sha256_hash.hexdigest()
         return self.work_dir / "dataset-common" / f"{name}-{self.sequence_length}-{path_hash}.npy"
@@ -745,7 +749,7 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
 
     def _get_instance_indices_path(self, source_path: PathOrStr) -> Path:
         return self._get_indices_path(
-            source_path, "mixture-instance-indices", self.indices_dtype.__name__
+            "mixture-instance-indices", source_path, extra_ids=(self.indices_dtype.__name__,)
         )
 
     def _write_document_indices(self):
@@ -929,7 +933,7 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
         return data
 
     def _get_instance_indices_path(self, source_path: PathOrStr) -> Path:
-        return self._get_indices_path(source_path, "instance-indices")
+        return self._get_indices_path("instance-indices", source_path)
 
     def _write_instance_indices(self):
         paths_needed: List[PathOrStr] = []
@@ -976,9 +980,10 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
     The resulting instances will all have exactly ``sequence_length`` tokens, using padding if needed.
 
     .. note::
-        OBFD is applied to each source file separately since source files from the Dolma toolkit
+        By default OBFD is applied to each source file separately since source files from the Dolma toolkit
         are usually large enough for OBFD to achieve very good compactness (minimal padding tokens)
-        and so that we can parallelize the packing.
+        and so that we can parallelize the packing. However, you can pack instances from multiple
+        consecutive source files together by setting ``source_group_size`` to a value greater than 1.
     """
 
     def __init__(
@@ -996,6 +1001,7 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
         instance_filter_config: Optional[InstanceFilterConfig] = None,
         label_mask_paths: Optional[List[PathOrStr]] = None,
         long_doc_strategy: LongDocStrategy = LongDocStrategy.truncate,
+        source_group_size: int = 1,
     ):
         super().__init__(
             *paths,
@@ -1011,25 +1017,37 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
             instance_filter_config=instance_filter_config,
         )
 
+        assert source_group_size >= 1
+
         self._long_doc_strategy = long_doc_strategy
+        self._source_group_size = source_group_size
 
         if label_mask_paths is not None and len(label_mask_paths) != len(paths):
             raise OLMoConfigurationError(
                 "There must be the same number of 'label_mask_paths' as there are 'paths'"
             )
 
+        self._source_path_groups = list(chunked(self.paths, self.source_group_size))
+        self._label_mask_path_groups: Optional[List[List[PathOrStr]]] = None
+        self._metadata_groups = list(chunked(self._metadata, self.source_group_size))
+
         self._label_mask_paths = label_mask_paths
         self._label_mask_path_to_source_path: Dict[PathOrStr, PathOrStr] = {}
         if self._label_mask_paths:
+            self._label_mask_path_groups = list(
+                chunked(self._label_mask_paths, self.source_group_size)
+            )
             for label_mask_path, source_path in zip(self._label_mask_paths, self._array_paths):
                 self._label_mask_path_to_source_path[label_mask_path] = source_path
 
-        self._array_instance_offsets: Optional[Tuple[Tuple[int, int], ...]] = None
+        self._source_sizes: Optional[List[int]] = None
+        self._source_size_groups: Optional[List[List[int]]] = None
+        self._source_instance_offsets: Optional[Tuple[Tuple[int, int], ...]] = None
         self._num_instances: Optional[int] = None
 
     @property
     def fingerprint_fields(self) -> Tuple[str, ...]:
-        return (
+        fields: Tuple[str, ...] = (
             "vocab_size",
             "pad_token_id",
             "eos_token_id",
@@ -1038,10 +1056,18 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
             "bos_token_id",
             "sequence_length",
         )
+        # For backwards compat, only add this when it's not the default.
+        if self._source_group_size > 1:
+            fields = fields + ("source_group_size",)
+        return fields
 
     @property
     def long_doc_strategy(self) -> LongDocStrategy:
         return self._long_doc_strategy
+
+    @property
+    def source_group_size(self) -> int:
+        return self._source_group_size
 
     @property
     def indices_dtype(
@@ -1050,8 +1076,8 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
         return np.uint64
 
     @property
-    def offsets(self) -> Tuple[Tuple[int, int], ...]:
-        if self._array_instance_offsets is None:
+    def source_instance_offsets(self) -> Tuple[Tuple[int, int], ...]:
+        if self._source_instance_offsets is None:
             item_size = self.indices_dtype(0).itemsize
             num_instances_per_path = self.map(
                 lambda path, _: get_file_size(self._get_instance_offsets_path(path))
@@ -1059,11 +1085,25 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
             )
             array_instance_offsets = []
             start_offset = 0
-            for num_instances in num_instances_per_path:
+            for source_instances in chunked(num_instances_per_path, self.source_group_size):
+                num_instances = sum(source_instances)
                 array_instance_offsets.append((start_offset, start_offset + num_instances))
                 start_offset += num_instances
-            self._array_instance_offsets = tuple(array_instance_offsets)
-        return self._array_instance_offsets
+            self._source_instance_offsets = tuple(array_instance_offsets)
+        return self._source_instance_offsets
+
+    @property
+    def source_sizes(self) -> List[int]:
+        if self._source_sizes is None:
+            item_size = self.dtype(0).itemsize
+            self._source_sizes = self.map(lambda path, _: get_file_size(path) // item_size)
+        return self._source_sizes
+
+    @property
+    def source_size_groups(self) -> List[List[int]]:
+        if self._source_size_groups is None:
+            self._source_size_groups = list(chunked(self.source_sizes, self.source_group_size))
+        return self._source_size_groups
 
     def prepare(self):
         if self.fs_local_rank == 0:
@@ -1074,39 +1114,44 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
 
     def __len__(self) -> int:
         if self._num_instances is None:
-            self._num_instances = self.offsets[-1][1]
+            self._num_instances = self.source_instance_offsets[-1][1]
         return self._num_instances
 
     def __getitem__(self, index: int) -> Dict[str, Any]:
         index = int(index)  # in case this is a numpy int type.
-        pos_index = index if index >= 0 else len(self) + index
+        index = index if index >= 0 else len(self) + index
 
-        # The index of the array within 'self.paths'.
-        array_index: Optional[int] = None
-        # The instance index within the corresponding array.
-        array_local_index: Optional[int] = None
-        for i, (offset_start, offset_end) in enumerate(self.offsets):
-            if offset_start <= pos_index < offset_end:
-                array_index = i
-                array_local_index = pos_index - offset_start
+        # The index of the source group.
+        source_group_index: Optional[int] = None
+        # The instance index within the source group.
+        instance_index: Optional[int] = None
+        for i, (instance_offset_start, instance_offset_end) in enumerate(
+            self.source_instance_offsets
+        ):
+            if instance_offset_start <= index < instance_offset_end:
+                source_group_index = i
+                instance_index = index - instance_offset_start
                 break
 
-        if array_index is None or array_local_index is None:
+        if source_group_index is None or instance_index is None:
             raise IndexError(f"{index} is out of bounds for dataset of size {len(self)}")
 
-        source_path = self.paths[array_index]
-        label_mask_path = (
-            None if self._label_mask_paths is None else self._label_mask_paths[array_index]
+        source_paths = self._source_path_groups[source_group_index]
+        source_sizes = self.source_size_groups[source_group_index]
+        label_mask_paths = (
+            None
+            if self._label_mask_path_groups is None
+            else self._label_mask_path_groups[source_group_index]
         )
-        document_indices_path = self._get_document_indices_path(source_path)
-        instance_offsets_path = self._get_instance_offsets_path(source_path)
-        docs_by_instance_path = self._get_docs_by_instance_path(source_path)
+        document_indices_path = self._get_document_indices_path(*source_paths)
+        instance_offsets_path = self._get_instance_offsets_path(*source_paths)
+        docs_by_instance_path = self._get_docs_by_instance_path(*source_paths)
 
         # Load start and end document indices corresponding to instance.
         instance_indices = load_array_slice_into_tensor(
             instance_offsets_path,
-            array_local_index * 2,
-            array_local_index * 2 + 2,
+            instance_index * 2,
+            instance_index * 2 + 2,
             self.indices_dtype,
         ).tolist()
         instance_start, instance_end = instance_indices
@@ -1121,12 +1166,27 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
 
         # Load token IDs and maybe label masks for each document.
         document_token_ids: List[torch.Tensor] = []
-        document_label_masks: Optional[List[torch.Tensor]] = None if label_mask_path is None else []
+        document_label_masks: Optional[List[torch.Tensor]] = (
+            None if label_mask_paths is None else []
+        )
         for document_id in document_ids:
             document_indices = load_array_slice_into_tensor(
                 document_indices_path, document_id * 2, document_id * 2 + 2, self.indices_dtype
             ).tolist()
             document_start, document_end = document_indices
+
+            # Pick out the right source from the source group.
+            source_path: Optional[PathOrStr] = None
+            label_mask_path: Optional[PathOrStr] = None
+            source_start = 0
+            for i, (source_path, source_size) in enumerate(zip(source_paths, source_sizes)):
+                if source_start <= document_start < (source_start + source_size):
+                    if label_mask_paths is not None:
+                        label_mask_path = label_mask_paths[i]
+                    break
+                source_start += source_size
+
+            assert source_path is not None
             document_token_ids.append(
                 load_array_slice_into_tensor(source_path, document_start, document_end, self.dtype)
             )
@@ -1155,7 +1215,7 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
         if self.instance_filter_config is not None:
             out["instance_mask"] = self._validate_instance(input_ids, self.instance_filter_config)
         if self._include_instance_metadata:
-            metadata = self._metadata[array_index]
+            metadata = self._metadata_groups[source_group_index]
             out["metadata"] = deepcopy(metadata)
         if self._generate_doc_lengths:
             out["doc_lens"] = get_document_lengths(
@@ -1163,31 +1223,36 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
             )
         return out
 
-    def _get_document_indices_path(self, source_path: PathOrStr) -> Path:
+    def _get_document_indices_path(self, *source_paths: PathOrStr) -> Path:
         return self._get_indices_path(
-            source_path, "document-indices", self._long_doc_strategy, self.indices_dtype.__name__
+            "document-indices",
+            *source_paths,
+            extra_ids=(self._long_doc_strategy, self.indices_dtype.__name__),
         )
 
-    def _get_instance_offsets_path(self, source_path: PathOrStr) -> Path:
+    def _get_instance_offsets_path(self, *source_paths: PathOrStr) -> Path:
         return self._get_indices_path(
-            source_path, "instance-offsets", self._long_doc_strategy, self.indices_dtype.__name__
+            "instance-offsets",
+            *source_paths,
+            extra_ids=(self._long_doc_strategy, self.indices_dtype.__name__),
         )
 
-    def _get_docs_by_instance_path(self, source_path: PathOrStr) -> Path:
+    def _get_docs_by_instance_path(self, *source_paths: PathOrStr) -> Path:
         return self._get_indices_path(
-            source_path,
             "documents-by-instance",
-            self._long_doc_strategy,
-            self.indices_dtype.__name__,
+            *source_paths,
+            extra_ids=(self._long_doc_strategy, self.indices_dtype.__name__),
         )
 
-    def _pack_documents_from_source_into_instances(self, source_path: PathOrStr) -> Tuple[int, int]:
-        document_indices_path = self._get_document_indices_path(source_path)
-        instance_offsets_path = self._get_instance_offsets_path(source_path)
-        docs_by_instance_path = self._get_docs_by_instance_path(source_path)
+    def _pack_documents_from_source_into_instances(
+        self, *source_paths: PathOrStr
+    ) -> Tuple[int, int]:
+        document_indices_path = self._get_document_indices_path(*source_paths)
+        instance_offsets_path = self._get_instance_offsets_path(*source_paths)
+        docs_by_instance_path = self._get_docs_by_instance_path(*source_paths)
 
         instances, document_indices, total_tokens = pack_documents_into_instances(
-            source_path,
+            *source_paths,
             max_sequence_length=self.sequence_length,
             eos_token_id=self.eos_token_id,
             dtype=self.dtype,
@@ -1217,41 +1282,42 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
         return len(instances), total_tokens
 
     def _pack_all_documents_into_instances(self):
-        paths_needed: List[PathOrStr] = []
-        for source_path in self.paths:
-            document_indices_path = self._get_document_indices_path(source_path)
-            instance_offsets_path = self._get_instance_offsets_path(source_path)
-            docs_by_instance_path = self._get_docs_by_instance_path(source_path)
+        # Collect all sources that need to be packed (no cache hit).
+        sources_needed: List[List[PathOrStr]] = []
+        for source_paths in chunked(self.paths, self.source_group_size):
+            document_indices_path = self._get_document_indices_path(*source_paths)
+            instance_offsets_path = self._get_instance_offsets_path(*source_paths)
+            docs_by_instance_path = self._get_docs_by_instance_path(*source_paths)
             if (
                 document_indices_path.is_file()
                 and instance_offsets_path.is_file()
                 and docs_by_instance_path.is_file()
             ):
-                log.info(f"Reusing cached packing results for '{source_path}'")
-            elif source_path not in paths_needed:
-                paths_needed.append(source_path)
+                log.info(f"Reusing cached packing results for {source_paths}")
+            elif source_paths not in sources_needed:
+                sources_needed.append(source_paths)
 
-        if paths_needed:
+        if sources_needed:
             with concurrent.futures.ProcessPoolExecutor() as executor:
                 futures = []
-                for source_path in paths_needed:
-                    log.info(f"Packing documents from '{source_path}' into instances...")
+                for source_paths in sources_needed:
+                    log.info(f"Packing documents from {source_paths} into instances...")
                     future = executor.submit(
                         run_worker_func,
                         self._pack_documents_from_source_into_instances,
-                        source_path,
+                        *source_paths,
                     )
                     futures.append(future)
 
                 concurrent.futures.wait(futures, return_when="FIRST_EXCEPTION")
 
                 # Log results.
-                for source_path, future in zip(paths_needed, futures):
+                for source_paths, future in zip(sources_needed, futures):
                     total_instances, total_tokens = future.result()
                     total_padding = self.sequence_length * total_instances - total_tokens
                     avg_padding = total_padding / total_instances
                     log.info(
-                        f"Packed {total_tokens:,} tokens from '{source_path}' into {total_instances:,d} instances "
+                        f"Packed {total_tokens:,} tokens from {source_paths} into {total_instances:,d} instances "
                         f"of sequence length {self.sequence_length:,d} using an average of "
                         f"{avg_padding:.1f} padding tokens per instance."
                     )
@@ -1520,7 +1586,9 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
         return item
 
     def _get_instance_indices_path(self, source_path: PathOrStr) -> Path:
-        return self._get_indices_path(source_path, "instance-indices", str(self._docs_per_instance))
+        return self._get_indices_path(
+            "instance-indices", source_path, extra_ids=(str(self._docs_per_instance),)
+        )
 
     def _get_interleaveable_indices_path(self) -> Path:
         return self.work_dir / f"dataset-{self.fingerprint}" / "interleavable-docs-indices.npy"
@@ -2335,6 +2403,11 @@ class NumpyDatasetConfig(Config):
     """
     Determines how long documents are handled with the packed FSL dataset.
     """
+    source_group_size: Optional[int] = None
+    """
+    Determines how many sources are grouped together a single source for packing with the packed
+    FSL dataset.
+    """
 
     def validate(self):
         if self.name in (NumpyDatasetType.fsl, NumpyDatasetType.padded_fsl):
@@ -2506,6 +2579,10 @@ class NumpyDatasetConfig(Config):
                 raise OLMoConfigurationError(
                     "'interleaving_exempt_paths' is only valid for the interleaved FSL dataset"
                 )
+            if self.source_group_size is not None:
+                raise OLMoConfigurationError(
+                    "'source_group_size' is only valid for the packed FSL dataset"
+                )
             if self.source_mixture_config:
                 if label_mask_paths is not None:
                     raise OLMoConfigurationError(
@@ -2591,6 +2668,10 @@ class NumpyDatasetConfig(Config):
                 raise OLMoConfigurationError(
                     "'interleaving_exempt_paths' is only valid for the interleaved FSL dataset"
                 )
+            if self.source_group_size is not None:
+                raise OLMoConfigurationError(
+                    "'source_group_size' is only valid for the packed FSL dataset"
+                )
             dataset = NumpyPaddedFSLDataset(
                 *paths,
                 sequence_length=self.sequence_length,
@@ -2657,6 +2738,9 @@ class NumpyDatasetConfig(Config):
                 instance_filter_config=self.instance_filter_config,
                 long_doc_strategy=self.long_doc_strategy or LongDocStrategy.truncate,
                 label_mask_paths=label_mask_paths,
+                source_group_size=self.source_group_size
+                if self.source_group_size is not None
+                else 1,
             )
         elif self.name == NumpyDatasetType.interleaved_fsl:
             if self.sequence_length is None:
@@ -2702,6 +2786,10 @@ class NumpyDatasetConfig(Config):
             if self.long_doc_strategy is not None:
                 raise OLMoConfigurationError(
                     "'long_doc_strategy' is only a valid field for the packed FSL dataset"
+                )
+            if self.source_group_size is not None:
+                raise OLMoConfigurationError(
+                    "'source_group_size' is only valid for the packed FSL dataset"
                 )
 
             interleaving_exempt_paths = cast(
@@ -2761,6 +2849,10 @@ class NumpyDatasetConfig(Config):
             if self.tokenizer.bos_token_id is not None:
                 raise OLMoConfigurationError(
                     "'bos_token_id' is not yet supported for the VSL dataset"
+                )
+            if self.source_group_size is not None:
+                raise OLMoConfigurationError(
+                    "'source_group_size' is only valid for the packed FSL dataset"
                 )
             dataset = NumpyVSLDataset(
                 *paths,
