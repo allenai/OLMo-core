@@ -17,7 +17,9 @@ from olmo_core.generate.generation_module.config import (
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.testing import requires_multi_gpu, run_distributed_test
 from olmo_core.testing.utils import has_flash_attn, requires_flash_attn, requires_gpu
-from olmo_core.train.train_module.transformer.config import TransformerDataParallelConfig
+from olmo_core.train.train_module.transformer.config import (
+    TransformerDataParallelConfig,
+)
 from olmo_core.utils import seed_all
 
 BF16_RTOL = 1e-5
@@ -248,12 +250,12 @@ def test_generation_module_stop_sequences():
 
     # Test stop at stop token
     input_ids = torch.tensor([[3, 5, 7]], dtype=torch.long, device=device)
-    generation_module.model.forward = create_mock_forward([8, 10, 99])
+    generation_module.model.forward = create_mock_forward([8, 10, 99])  # type: ignore[method-assign]
     output, _, _ = generation_module.generate_batch(input_ids, completions_only=False)
     assert torch.equal(output, torch.tensor([[3, 5, 7, 8, 10]], device=device))
 
     # Test stop at EOS token
-    generation_module.model.forward = create_mock_forward([8, 1, 99])
+    generation_module.model.forward = create_mock_forward([8, 1, 99])  # type: ignore[method-assign]
     output, _, _ = generation_module.generate_batch(input_ids, completions_only=False)
     assert torch.equal(output, torch.tensor([[3, 5, 7, 8, 1]], device=device))
 

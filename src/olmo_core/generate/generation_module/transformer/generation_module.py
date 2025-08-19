@@ -3,7 +3,7 @@ import logging
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple, cast
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 import torch
 import torch.distributed as dist
@@ -36,7 +36,9 @@ from olmo_core.io import is_url, join_path, normalize_path
 from olmo_core.nn.attention import Attention
 from olmo_core.nn.transformer import Transformer, TransformerConfig
 from olmo_core.train.train_module.transformer.common import parallelize_model
-from olmo_core.train.train_module.transformer.config import TransformerDataParallelConfig
+from olmo_core.train.train_module.transformer.config import (
+    TransformerDataParallelConfig,
+)
 from olmo_core.utils import get_default_device, move_to_device
 
 from ..generation_module import GenerationModule
@@ -67,9 +69,9 @@ class TransformerGenerationModule(GenerationModule):
         # Verify H100 GPU
         assert self.device.type == "cuda", f"Expected CUDA device, got {self.device.type}"
         device_name = torch.cuda.get_device_name(self.device)
-        assert "H100" in device_name, (
-            f"Expected H100 GPU, but got {device_name}. Flash attention w/ kv caching is not verified to work on non-Hopper GPUs."
-        )
+        assert (
+            "H100" in device_name
+        ), f"Expected H100 GPU, but got {device_name}. Flash attention w/ kv caching is not verified to work on non-Hopper GPUs."
 
         self.world_mesh: Optional[DeviceMesh] = None
         if is_distributed():
@@ -178,13 +180,13 @@ class TransformerGenerationModule(GenerationModule):
 
         # Output containers
         generated = input_ids
-        all_logits = [] if return_logits else None
-        all_logprobs = [] if return_logprobs else None
+        all_logits: Optional[List[torch.Tensor]] = [] if return_logits else None
+        all_logprobs: Optional[List[torch.Tensor]] = [] if return_logprobs else None
 
         # Timing stats
         start_time = time.perf_counter()
         time_to_first_token = None
-        token_times = []
+        token_times: List[float] = []
         tokens_generated = 0
         kv_cache_init_time = None
         prefill_time = None
@@ -300,17 +302,17 @@ class TransformerGenerationModule(GenerationModule):
         if return_logits and all_logits:
             logits = torch.cat(all_logits, dim=1)  # (batch_size, completion_length, vocab_size)
             expected_logits = generated.shape[1] - prompt_len
-            assert logits.shape[1] == expected_logits, (
-                f"Number of logits ({logits.shape[1]}) does not match number of newly generated tokens ({expected_logits})"
-            )
+            assert (
+                logits.shape[1] == expected_logits
+            ), f"Number of logits ({logits.shape[1]}) does not match number of newly generated tokens ({expected_logits})"
 
         logprobs = None
         if return_logprobs and all_logprobs:
             logprobs = torch.cat(all_logprobs, dim=1)  # (batch_size, completion_length)
             expected_logprobs = generated.shape[1] - prompt_len
-            assert logprobs.shape[1] == expected_logprobs, (
-                f"Number of logprobs ({logprobs.shape[1]}) does not match number of newly generated tokens ({expected_logprobs})"
-            )
+            assert (
+                logprobs.shape[1] == expected_logprobs
+            ), f"Number of logprobs ({logprobs.shape[1]}) does not match number of newly generated tokens ({expected_logprobs})"
 
         if completions_only:
             generated = generated[:, prompt_len:]
