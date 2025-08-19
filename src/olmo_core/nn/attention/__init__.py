@@ -410,14 +410,14 @@ class Attention(AttentionBase):
         att: torch.Tensor
 
         # If we are pre-filling the KV cache, we need to write the new keys and values to it.
-        if self.k_cache is not None and self.v_cache is not None and prefill_kv_cache:
+        if hasattr(self, "k_cache") and self.k_cache is not None and hasattr(self, "v_cache") and self.v_cache is not None and prefill_kv_cache:
             if self.cache_seqlens is None:
                 raise ValueError("cache_seqlens is required when using the KV cache")
             write_kvcache_(self.k_cache, self.v_cache, self.cache_seqlens, k, v, q.shape[1])
             self.cache_seqlens.add_(q.shape[1])
 
         # If KV cache is provided and we're in decoding mode (not prefilling)
-        if self.k_cache is not None and self.v_cache is not None and not prefill_kv_cache:
+        if hasattr(self, "k_cache") and self.k_cache is not None and hasattr(self, "v_cache") and self.v_cache is not None and not prefill_kv_cache:
             if not self.use_flash:
                 raise RuntimeError(
                     f"'{self.__class__.__name__}' requires flash (use_flash=True) for KV caching"

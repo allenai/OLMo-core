@@ -20,7 +20,6 @@ from olmo_core.nn.transformer.config import TransformerDataParallelWrappingStrat
 from olmo_core.nn.transformer.block import TransformerBlockBase
 from olmo_core.nn.buffer_cache import BufferCache
 from .embed import add_hash_embeddings
-from .utils import log1mexp
 
 log = logging.getLogger(__name__)
 
@@ -123,8 +122,9 @@ class DTPBoundaryPredictor(nn.Module):
         else:
             boundary_logprobs = F.logsigmoid(self.mlp(x)).squeeze(-1).float()
 
-        # make sure boundary at first
-        boundary_logprobs[:, 0] = 0.0
+        # make sure boundary at first (unless inference)
+        if x.shape[1] > 1:
+            boundary_logprobs[:, 0] = 0.0
 
         boundary_logprobs_for_loss, boundary_logprobs = _teacher_force_interpolate(
             boundary_logprobs,
@@ -152,6 +152,9 @@ class HNetBoundaryPredictor(nn.Module):
         teacher_force_interpolation_ratio: Optional[float] = None,
         epsilon: float = 1e-3,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        if hidden_states.shape[1] == 1:
+            raise NotImplementedError("Generation is not implemented for HNetBoundaryPredictor.")
+
         cos_sim = torch.einsum(
             "b l d, b l d -> b l",
             F.normalize(self.q_proj_layer(hidden_states[:, :-1]), dim=-1),
@@ -897,75 +900,82 @@ class LocalDecoder(nn.Module):
         **block_kwargs,
     ) -> torch.Tensor:
         from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
-
-        # inference
-        if hasattr(self, "last_value") and self.last_value is not None:
-            if patch_embeds.shape[1] == 0:
-                patch_embeds = self.last_value.unsqueeze(1)
-            else:
-                self.last_value.copy_(patch_embeds[:, -1, :])
     
         h_patch = patch_embeds[..., :self.d_model] # global d -> local d
 
-        # for now, use HNet's smoothing module but with probabilities in {0,1} instead of probabilities in [0,1]
-        # (i.e. no smoothing). so we could probably skip this? but not bad to have it implemented and likely
-        # no substantial performance difference in the grand scheme.
-        if boundary_logprobs is None:
-            assert boundary_mask is None
-            p = torch.full((h_patch.shape[0], h_patch.shape[1]), 1 - epsilon, device=h_patch.device, dtype=torch.float32)
+        if embeds.shape[1] == 1:
+            if boundary_logprobs is None:
+                raise ValueError("`boundary_logprobs` must be passed for generation.")
 
-            boundary_mask = torch.zeros(
-                (embeds.shape[0], embeds.shape[1]), dtype=torch.bool, device=embeds.device
-            )
-            boundary_mask = boundary_mask.scatter(
-                dim=1,
-                index=torch.cumsum(patch_lens, dim=1) - 1,
-                src=torch.ones_like(patch_lens, dtype=torch.bool),
-            )
-        else:
-            assert boundary_mask is not None
-            B, L = boundary_mask.shape
+            if self.last_value is None:
+                raise ValueError("`last_value` must be set for generation (after prefilling).")
 
-            if self.hnet_smooth:
-                token_idx = (
-                    torch.arange(L, device=patch_embeds.device)[None, :]
-                    + (~boundary_mask).long() * L
-                )
-                seq_sorted_indices = torch.argsort(token_idx, dim=1)[:, :patch_embeds.shape[1]]
-                p = torch.gather(torch.exp(boundary_logprobs).float().clip(min=epsilon, max=1 - epsilon), dim=1, index=seq_sorted_indices)
+            p = torch.exp(boundary_logprobs).float().clip(min=epsilon, max=1 - epsilon)
+            if patch_embeds.shape[1] == 0:
+                depool_out = self.last_value.unsqueeze(1)
             else:
+                depool_out = p * patch_embeds + (1 - p) * self.last_value.unsqueeze(1)
+        else:
+            if boundary_logprobs is None:
+                assert boundary_mask is None
                 p = torch.full((h_patch.shape[0], h_patch.shape[1]), 1 - epsilon, device=h_patch.device, dtype=torch.float32)
 
-        dt = torch.log(1 / (1 - p)).float()
-        x = (h_patch.float() / dt[..., None])
+                boundary_mask = torch.zeros(
+                    (embeds.shape[0], embeds.shape[1]), dtype=torch.bool, device=embeds.device
+                )
+                boundary_mask = boundary_mask.scatter(
+                    dim=1,
+                    index=torch.cumsum(patch_lens, dim=1) - 1,
+                    src=torch.ones_like(patch_lens, dtype=torch.bool),
+                )
+            else:
+                assert boundary_mask is not None
+                B, L = boundary_mask.shape
 
-        n_heads = self.d_model // headdim
-        A = -torch.ones(
-            (n_heads,), device=h_patch.device, dtype=torch.float32
-        )
-        b = p.float()
-        c = torch.ones_like(b)
+                if self.hnet_smooth:
+                    token_idx = (
+                        torch.arange(L, device=patch_embeds.device)[None, :]
+                        + (~boundary_mask).long() * L
+                    )
+                    seq_sorted_indices = torch.argsort(token_idx, dim=1)[:, :patch_embeds.shape[1]]
+                    p = torch.gather(torch.exp(boundary_logprobs).float().clip(min=epsilon, max=1 - epsilon), dim=1, index=seq_sorted_indices)
+                else:
+                    p = torch.full((h_patch.shape[0], h_patch.shape[1]), 1 - epsilon, device=h_patch.device, dtype=torch.float32)
 
-        # trust the HNet source...
-        depool_out = mamba_chunk_scan_combined(
-            rearrange(x, "b l (h p) -> b l h p", p=headdim),
-            repeat(dt, "b l -> b l h", h=n_heads),
-            A,
-            rearrange(b, "b l -> b l 1 1"),
-            rearrange(c, "b l -> b l 1 1"),
-            chunk_size=block_size,
-            seq_idx=None,
-        ).to(h_patch.dtype)
-        depool_out = rearrange(depool_out, "b l h p -> b l (h p)")
-        depool_out = cast(torch.Tensor, depool_out)
+            dt = torch.log(1 / (1 - p)).float()
+            x = (h_patch.float() / dt[..., None])
 
-        # TODO(benjaminm): clipping is problematic if it happens too much; track clip %.
-        plug_back_idx = (torch.cumsum(boundary_mask, dim=1) - 1).clip(min=0, max=depool_out.shape[1] - 1)
-        depool_out = torch.gather(
-            depool_out,
-            dim=1,
-            index=plug_back_idx.unsqueeze(-1).expand(-1, -1, self.d_model),
-        )
+            n_heads = self.d_model // headdim
+            A = -torch.ones(
+                (n_heads,), device=h_patch.device, dtype=torch.float32
+            )
+            b = p.float()
+            c = torch.ones_like(b)
+
+            # trust the HNet source...
+            depool_out = mamba_chunk_scan_combined(
+                rearrange(x, "b l (h p) -> b l h p", p=headdim),
+                repeat(dt, "b l -> b l h", h=n_heads),
+                A,
+                rearrange(b, "b l -> b l 1 1"),
+                rearrange(c, "b l -> b l 1 1"),
+                chunk_size=block_size,
+                seq_idx=None,
+            ).to(h_patch.dtype)  # type: ignore
+            depool_out = rearrange(depool_out, "b l h p -> b l (h p)")
+            depool_out = cast(torch.Tensor, depool_out)
+
+            # TODO(benjaminm): clipping is problematic if it happens too much; track clip %.
+            plug_back_idx = (torch.cumsum(boundary_mask, dim=1) - 1).clip(min=0, max=depool_out.shape[1] - 1)
+            depool_out = torch.gather(
+                depool_out,
+                dim=1,
+                index=plug_back_idx.unsqueeze(-1).expand(-1, -1, self.d_model),
+            )
+
+        # inference
+        if hasattr(self, "last_value") and self.last_value is not None:
+            self.last_value.copy_(depool_out[:, -1, :])
 
         if self.hnet_modulate and boundary_logprobs is not None:
             boundary_probs = torch.exp(boundary_logprobs)

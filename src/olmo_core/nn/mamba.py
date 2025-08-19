@@ -61,6 +61,7 @@ class MambaWrapper(Mamba2):
             # The kv cache is reusable, so we just reset it.
             self.conv_state.zero_()
             self.ssm_state.zero_()
+            self.seqlen_offset = 0
             return
 
         if (
@@ -103,11 +104,12 @@ class MambaWrapper(Mamba2):
 
         if has_cache and prefill_kv_cache:
             # writes to cache inplace
-            # Mamba2 excepts it in this format
+            # Mamba2 expects it in this format
             inference_params = SimpleNamespace(
                 key_value_memory_dict={0: (self.conv_state, self.ssm_state)},
                 seqlen_offset=self.seqlen_offset,
             )
+            self.seqlen_offset = x.shape[1]
 
             return super().forward(x, inference_params=inference_params)
         elif has_cache:

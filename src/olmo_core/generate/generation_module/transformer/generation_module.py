@@ -633,7 +633,8 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
             if hasattr(block, "attention"):
                 if hasattr(block.attention, "reset_kv_cache"):
                     block.attention.reset_kv_cache(  # type: ignore
-                        use_cache=use_cache, batch_size=batch_size, max_seq_len=max_seq_len, dtype=dtype
+                        # flash attention needs bf16
+                        use_cache=use_cache, batch_size=batch_size, max_seq_len=max_seq_len, dtype=torch.bfloat16,
                     )
 
             if hasattr(block, "mamba"):
