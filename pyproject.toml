@@ -52,7 +52,7 @@ dev = [
     "myst-parser>=1.0",
     "sphinx-copybutton",
     "sphinx-autobuild",
-    "sphinx-autodoc-typehints==1.23.3",
+    "sphinx-autodoc-typehints==3.0.1",
     "sphinx-inline-tabs",
 ]
 beaker = ["beaker-py>=1.36.0,<2.0", "GitPython>=3.0,<4.0"]
