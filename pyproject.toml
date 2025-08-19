@@ -34,7 +34,7 @@ Changelog = "https://github.com/allenai/OLMo-core/blob/main/CHANGELOG.md"
 dev = [
     "ruff",
     "mypy>=1.0,<1.4",
-    "black>=23.1,<24.0",
+    "black>=23.1,<26.0",
     "isort>=5.12,<5.14",
     "pytest",
     "pytest-memray",
