@@ -551,7 +551,7 @@ class FusedRotaryEmbedding(RotaryEmbeddingBase):
             if pos_cos.device != device:
                 pos_cos = pos_cos.to(device)
                 self._cache["rope_pos_cos"] = pos_cos
-            return pos_sin[:seq_len, :], pos_cos[:seq_len, :]
+            return pos_sin, pos_cos
 
         with torch.autocast(device.type, enabled=False):
             if self.scaling is None:
@@ -576,10 +576,10 @@ class FusedRotaryEmbedding(RotaryEmbeddingBase):
     def forward(
         self,
         qkv: torch.Tensor,
+        start_pos: Optional[int] = None,
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
-        start_pos: Optional[int] = None,
     ) -> torch.Tensor:
         """
         Apply RoPE to ``qkv``.
@@ -592,25 +592,24 @@ class FusedRotaryEmbedding(RotaryEmbeddingBase):
             ``(batch_size, seq_len, 3, n_heads, head_size)``.
         :param start_pos: The absolute position of the first query token (eg for decoding
             where the first query token is just the most recently decoded token).
+        :return: The qkv tensor after applying RoPE, of the same shape and dtype as the input.
         """
         if freqs_cis is not None:
             raise RuntimeError(f"'freqs_cis' is invalid for {self.__class__.__name__}")
-
-        if start_pos is not None:
-            raise NotImplementedError(
-                f"'start_pos' is not implemented for {self.__class__.__name__}"
-            )
 
         if self.full_precision:
             qkv_ = qkv.float()
         else:
             qkv_ = qkv
 
+        seqlen_offsets = start_pos or 0
         if pos_sin is None or pos_cos is None:
-            pos_sin, pos_cos = self._get_rotary_embedding(qkv_.size(1), qkv_.device)
+            pos_sin, pos_cos = self._get_rotary_embedding(
+                qkv_.size(1) + seqlen_offsets, qkv_.device
+            )
         pos_sin, pos_cos = pos_sin.type_as(qkv_), pos_cos.type_as(qkv_)
         qkv_ = self._apply_rotary_emb_qkv_(
-            qkv_, pos_cos, pos_sin, interleaved=False, seqlen_offsets=0
+            qkv_, pos_cos, pos_sin, interleaved=False, seqlen_offsets=seqlen_offsets
         )
         return qkv_.type_as(qkv)
 

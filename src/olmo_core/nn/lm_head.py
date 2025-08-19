@@ -211,9 +211,19 @@ class LMHead(nn.Module):
         logits_to_keep: Union[int, torch.Tensor] = 0,
     ) -> Union[torch.Tensor, LMOutputWithLoss]:
         """
-        Apply the LM head to the hidden state ``x`` with shape ``(B, S, D)``..
+        Applies the language modeling (LM) head to the input hidden states.
 
-        :returns: The logits if ``labels`` is ``None`` or a named tuple which will include the loss(es).
+        :param x: The input hidden states of shape ``(batch_size, seq_len, d_model)``.
+        :param labels: (Optional) Target token IDs of shape ``(batch_size, seq_len)``. If provided, the method computes and returns the loss.
+        :param ignore_index: Specifies a target value that is ignored and does not contribute to the loss.
+        :param loss_reduction: Specifies the reduction to apply to the output loss: "mean", "sum", or "none".
+        :param z_loss_multiplier: (Optional) Multiplier for the z-loss regularization term.
+        :param loss_div_factor: (Optional) Divisor for the loss, can be a scalar or tensor.
+        :param return_logits: If True, returns logits along with the loss when labels are provided.
+        :param logits_to_keep: If nonzero, restricts computation to the last N positions (if int) or to specific positions (if tensor).
+
+        :returns: If ``labels`` is ``None``, returns the logits tensor of shape ``(batch_size, seq_len, vocab_size)``.
+                  If ``labels`` is provided, returns an ``LMOutputWithLoss`` named tuple containing the loss and optionally the logits.
         """
         B = x.shape[0]
 

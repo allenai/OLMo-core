@@ -348,7 +348,6 @@ class Transformer(nn.Module):
         doc_lens: Optional[torch.Tensor] = None
         cache_leftpad: Optional[torch.Tensor] = kwargs.pop("cache_leftpad", None)
 
-        # Handle document length inputs
         if (doc_lens := kwargs.pop("doc_lens", None)) is not None and (
             max_doc_lens := kwargs.pop("max_doc_lens", None)
         ) is not None:
@@ -451,7 +450,6 @@ class Transformer(nn.Module):
         input_ids: torch.Tensor,
         *,
         labels: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
         ignore_index: int = -100,
         loss_reduction: Literal["mean", "sum", "none"] = "mean",
         z_loss_multiplier: Optional[float] = None,
@@ -465,8 +463,6 @@ class Transformer(nn.Module):
 
         :param input_ids: The token input IDs, shape ``(batch_size, seq_len)``.
         :param labels: The token labels, shape ``(batch_size, seq_len)``.
-        :param attention_mask: The attention mask, shape ``(batch_size, seq_len)``. If provided,
-            it will be added to the block kwargs and passed to the attention module.
         :param ignore_index: The index to ignore in the loss computation. Default is -100.
         :param loss_reduction: The reduction method for the loss. Can be "mean", "sum", or "none".
         :param z_loss_multiplier: Optional multiplier for the z-loss regularization term.
@@ -486,7 +482,6 @@ class Transformer(nn.Module):
         ) = self._prepare_inputs(
             input_ids,
             labels,
-            attention_mask=attention_mask,
             ignore_index=ignore_index,
             loss_reduction=loss_reduction,
             z_loss_multiplier=z_loss_multiplier,

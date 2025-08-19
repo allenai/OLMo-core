@@ -591,10 +591,10 @@ class Attention(AttentionBase):
                 q,
                 k,
                 head_first=False,
+                start_pos=start_pos,
                 pos_sin=pos_sin,
                 pos_cos=pos_cos,
                 freqs_cis=freqs_cis,
-                start_pos=start_pos,
             )
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
@@ -684,6 +684,13 @@ class Attention(AttentionBase):
         self._cp_head_stride = head_stride
 
     def init_kv_cache_manager(self, batch_size: int, max_seq_len: int):
+        """
+        Initialize the kv cache manager for attention. When the kv cache manager exists,
+        kv caching will be used during the forward pass. This should only be called during inference.
+
+        :param batch_size: The batch size for the cache.
+        :param max_seq_len: The maximum sequence length for the cache.
+        """
         self.kv_cache_manager = KVCacheManager(
             batch_size=batch_size,
             max_seq_len=max_seq_len,
@@ -803,10 +810,10 @@ class NormalizedAttention(Attention):
                 q,
                 k,
                 head_first=False,
+                start_pos=start_pos,
                 pos_sin=pos_sin,
                 pos_cos=pos_cos,
                 freqs_cis=freqs_cis,
-                start_pos=start_pos,
             )
 
         # shape: (batch_size, seq_len, n_heads, head_dim)

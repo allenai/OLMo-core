@@ -11,6 +11,7 @@ from olmo_core.nn.rope import (
     YaRNRoPEScalingConfig,
 )
 from olmo_core.testing import DEVICES, requires_flash_attn, requires_gpu
+from olmo_core.utils import has_flash_attn
 
 
 @pytest.mark.parametrize("device", DEVICES)
@@ -387,6 +388,23 @@ def test_rope_start_pos_zero_matches_default(device, head_first, rope_cls):
 
         torch.testing.assert_close(q_def, q_zero)
         torch.testing.assert_close(k_def, k_zero)
+
+
+@requires_gpu
+@requires_flash_attn
+def test_fused_rope_start_pos_zero_matches_default():
+    B, T, d_model, n_heads = 2, 12, 16, 4
+    head_size = d_model // n_heads
+    rope = FusedRotaryEmbedding(head_size=head_size)
+
+    with torch.no_grad():
+        qkv = torch.rand(B, T, 3, n_heads, head_size, device="cuda")
+        qkv_default = rope(qkv.clone())
+        qkv_zero = rope(qkv.clone(), start_pos=0)
+        torch.testing.assert_close(qkv_default, qkv_zero)
+
+        qkv = torch.rand(B, T, 3, n_heads, head_size, device="cuda")
+        _ = rope(qkv.clone(), start_pos=2)  # just check it doesnt break
 
 
 @pytest.mark.parametrize("device", DEVICES)
