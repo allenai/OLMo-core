@@ -42,7 +42,7 @@ from olmo_core.nn.mamba import MambaConfig
 from olmo_core.nn.feed_forward import FeedForwardConfig
 from olmo_core.nn.blt.config import LocalEncoderConfig, LocalDecoderConfig
 from olmo_core.optim import AdamWConfig, OptimGroupOverride
-from olmo_core.optim.scheduler import WSD, LinearWithWarmup
+from olmo_core.optim.scheduler import WSD, LinearWithWarmup, ConstantScheduler
 from olmo_core.train import (
     Duration,
     TrainerConfig,
@@ -292,8 +292,10 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             cosine_decay_alpha=10,
             decay_min_lr=1e-4, # probably best around 10% of peak LR
         )
+    elif LR_SCHEDULE == "constant":
+        scheduler = ConstantScheduler()
     else:
-        raise ValueError(f"Unknown LR_SCHEDULE: {LR_SCHEDULE}. Must be one of 'linear_with_warmup', 'wsd'.")
+        raise ValueError(f"Unknown LR_SCHEDULE: {LR_SCHEDULE}. Must be one of 'linear_with_warmup', 'wsd', 'constant'.")
 
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=LOCAL_BATCH_SIZE * SEQUENCE_LENGTH * BYTE_EXPANSION_FACTOR,
