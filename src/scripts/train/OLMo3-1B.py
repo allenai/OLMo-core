@@ -83,7 +83,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         ),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.fsdp,
+            name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
@@ -97,9 +97,6 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
                 int(ANNEAL_TOKENS / GLOBAL_BATCH_SIZE)
             ),  # TODO: This isn't right because it doesn't take batchwup into account.
             decay_fraction=None,
-        ),
-        tp_config=TransformerTensorParallelConfig(
-            degree=2,
         )
     )
 
