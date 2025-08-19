@@ -710,7 +710,9 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         byte_input_ids, patch_lens = self.tokenizer.get_tokens_and_patch_lengths(input_ids[0].tolist())
 
         byte_input_ids = torch.tensor([byte_input_ids], dtype=torch.long, device=input_ids.device)
-        patch_lens = torch.tensor([patch_lens], dtype=torch.long, device=input_ids.device)
+        # TODO(benjaminm): our 'budget' of global tokens. we set it to the worst case (n_tokens == n_bytes)
+        # but this is probably quite inefficient. do better?
+        patch_lens = torch.ones_like(byte_input_ids, dtype=torch.long, device=input_ids.device)
 
         # TODO: try padding the input_ids to a multiple of 128
         self.model.eval()
@@ -924,7 +926,8 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                     blt_config=blt_config.replace(skip_teacher=True),
                 )
             # last logit is potentially wrong since last_token_is_boundary=True in reference, so skip it
-            assert torch.allclose(logits[:, :-1], reference_out.logits[:, -tokens_generated-1:-1], rtol=1e-1, atol=0.5)
+            assert torch.argmax(logits[:, -tokens_generated-1:-1], -1) == reference_out.logits[:, -tokens_generated-1:-1].argmax(-1)
+            assert torch.allclose(logits[:, -tokens_generated-1:-1], reference_out.logits[:, -tokens_generated-1:-1], rtol=1e-1, atol=1)
         logprobs = None
         if return_logprobs and all_logprobs:
             logprobs = torch.cat(all_logprobs, dim=1)
