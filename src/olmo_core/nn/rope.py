@@ -446,15 +446,11 @@ class RotaryEmbedding(RotaryEmbeddingBase):
         q_, k_ = (q.float(), k.float()) if self.full_precision else (q, k)
 
         with torch.autocast(q.device.type, enabled=False):
-            if start_pos is None:
-                q_abs_start = k_len - q_len  # Q starts where K stops
-                k_abs_start = 0  # K always starts at position 0
-            else:
-                q_abs_start = k_abs_start = start_pos
-
-            seq_len_needed = k_abs_start + k_len
+            seq_len_needed = (start_pos + k_len) if start_pos is not None else k_len
             if pos_sin is None or pos_cos is None:
                 pos_sin, pos_cos = self._get_rotary_embedding(seq_len_needed, q_.device)
+            q_abs_start = start_pos if start_pos is not None else (k_len - q_len)
+            k_abs_start = start_pos if start_pos is not None else 0
 
             pos_sin, pos_cos = pos_sin.type_as(q_), pos_cos.type_as(q_)
 
