@@ -223,7 +223,7 @@ def test_lm_head_logits_to_keep(head_type, loss_implementation):
     d_model, vocab_size = 256, 1024
     B, S = 2, 32
 
-    config = LMHeadConfig(name=head_type, loss_implementation=loss_implementation, bias=False)
+    config = LMHeadConfig(name=head_type, loss_implementation=loss_implementation)
     lm_head = config.build(d_model=d_model, vocab_size=vocab_size, init_device="cuda")
 
     inputs = torch.randn(B, S, d_model, device=device)

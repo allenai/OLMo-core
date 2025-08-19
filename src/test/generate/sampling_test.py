@@ -45,7 +45,6 @@ def test_top_k_filtering():
 def test_top_p_filtering():
     logits = torch.tensor([[0.4, 0.3, 0.2, 0.1]])
     # Softmax of logits: [0.267, 0.242, 0.219, 0.198, 0.179]
-    # Cumulative sum of sorted probs: [0.267, 0.509, 0.728, 0.926, 1.0]
     # For top_p=0.5, we expect to keep the first token (prob 0.267).
     # The code keeps the token that crosses the threshold, so we also keep the second token.
     # The set of kept tokens corresponds to original logits 0.4 and 0.3.
@@ -64,11 +63,6 @@ def test_top_p_filtering():
     # Test with a batch
     logits_batch = torch.tensor([[0.1, 0.2, 0.3, 0.4], [4.0, 3.0, 2.0, 1.0]])
     filtered_batch = top_p_filtering(logits_batch, top_p=0.8)
-    # Row 1: Softmax probs ≈ [0.289, 0.261, 0.236, 0.214]. Cum. probs ≈ [0.289, 0.550, 0.786, 1.000].
-    #         The cumulative probability exceeds `top_p=0.8` only after adding the final token, so all
-    #         four tokens remain.
-    # Row 2: Softmax probs ≈ [0.659, 0.242, 0.089, 0.033]. Cum. probs ≈ [0.659, 0.901, 0.990, 1.000].
-    #         Tokens beyond the second are removed, leaving the first two.
     expected_batch = torch.tensor([[0.1, 0.2, 0.3, 0.4], [4.0, 3.0, -float("inf"), -float("inf")]])
     assert torch.equal(filtered_batch, expected_batch)
 
@@ -119,11 +113,11 @@ def test_select_next_token_with_top_p():
 def test_select_next_token_with_top_k_and_top_p():
     seed_all(0)
     logits = torch.tensor([[10.0, 9.0, 1.0, 8.0, 2.0]])
+
     # top_k=3 -> indices {0, 1, 3} (logits {10, 9, 8})
     # Probs for {10, 9, 8} are ~[0.70, 0.26, 0.03], cumsum ~[0.70, 0.96, 0.99]
     # top_p=0.9 -> nucleus is {0, 1}
     # Intersection of top-k and top-p is {0, 1}.
-
     token = select_next_token(logits, do_sample=True, top_k=3, top_p=0.9)
     assert token.item() in [0, 1]
 

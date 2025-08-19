@@ -251,49 +251,23 @@ def test_pack_documents_into_instances(tmp_path):
 
 
 AttentionMaskTestCase = namedtuple(
-    "AttentionMaskTestCase",
-    ["shape", "valid_starts", "expected_cache_leftpad", "expected_seq_lens"],
+    "AttentionMaskTestCase", ["shape", "valid_starts", "expected_seq_lens"]
 )
 
 
 @pytest.mark.parametrize(
     "test_case",
     [
-        # Test case 1: Mixed padding lengths
-        AttentionMaskTestCase(
-            shape=(2, 10),
-            valid_starts=[3, 5],
-            expected_cache_leftpad=[3, 5],
-            expected_seq_lens=[7, 5],
-        ),
-        # Test case 2: No padding (all valid tokens)
-        AttentionMaskTestCase(
-            shape=(2, 8),
-            valid_starts=[0, 0],
-            expected_cache_leftpad=[0, 0],
-            expected_seq_lens=[8, 8],
-        ),
-        # Test case 3: Different sequence lengths with padding
-        AttentionMaskTestCase(
-            shape=(3, 12),
-            valid_starts=[2, 4, 7],
-            expected_cache_leftpad=[2, 4, 7],
-            expected_seq_lens=[10, 8, 5],
-        ),
-        # Test case 4: Single sequence
-        AttentionMaskTestCase(
-            shape=(1, 15),
-            valid_starts=[5],
-            expected_cache_leftpad=[5],
-            expected_seq_lens=[10],
-        ),
-        # Test case 5: All padding except last token
-        AttentionMaskTestCase(
-            shape=(2, 20),
-            valid_starts=[19, 18],
-            expected_cache_leftpad=[19, 18],
-            expected_seq_lens=[1, 2],
-        ),
+        # Mixed padding lengths
+        AttentionMaskTestCase(shape=(2, 10), valid_starts=[3, 5], expected_seq_lens=[7, 5]),
+        # No padding (all valid tokens)
+        AttentionMaskTestCase(shape=(2, 8), valid_starts=[0, 0], expected_seq_lens=[8, 8]),
+        # Different sequence lengths with padding
+        AttentionMaskTestCase(shape=(3, 12), valid_starts=[2, 4, 7], expected_seq_lens=[10, 8, 5]),
+        # Single sequence
+        AttentionMaskTestCase(shape=(1, 15), valid_starts=[5], expected_seq_lens=[10]),
+        # All padding except last token
+        AttentionMaskTestCase(shape=(2, 20), valid_starts=[19, 18], expected_seq_lens=[1, 2]),
     ],
 )
 def test_attention_mask_to_cache_leftpad_valid_cases(test_case):
@@ -305,17 +279,17 @@ def test_attention_mask_to_cache_leftpad_valid_cases(test_case):
 
     cache_leftpad = attention_mask_to_cache_leftpad(attention_mask)
 
-    assert cache_leftpad.tolist() == test_case.expected_cache_leftpad
+    assert cache_leftpad.tolist() == valid_starts
 
 
 @pytest.mark.parametrize(
-    "invalid_mask,error_match",
+    "invalid_mask",
     [
-        (torch.tensor([[1, 0, 1, 1, 1], [1, 1, 0, 1, 1]], dtype=torch.bool), "prefix padding"),
-        (torch.tensor([[0, 1, 0, 1, 0], [1, 0, 1, 0, 1]], dtype=torch.bool), "prefix padding"),
-        (torch.tensor([[1, 1, 0, 0, 0], [1, 0, 0, 0, 0]], dtype=torch.bool), "prefix padding"),
+        torch.tensor([[1, 0, 1, 1, 1], [1, 1, 0, 1, 1]], dtype=torch.bool),
+        torch.tensor([[0, 1, 0, 1, 0], [1, 0, 1, 0, 1]], dtype=torch.bool),
+        torch.tensor([[1, 1, 0, 0, 0], [1, 0, 0, 0, 0]], dtype=torch.bool),
     ],
 )
-def test_attention_mask_to_cache_leftpad_invalid_masks(invalid_mask, error_match):
-    with pytest.raises(ValueError, match=error_match):
+def test_attention_mask_to_cache_leftpad_invalid_masks(invalid_mask):
+    with pytest.raises(ValueError, match="prefix padding"):
         attention_mask_to_cache_leftpad(invalid_mask)

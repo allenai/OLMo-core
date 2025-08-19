@@ -420,13 +420,12 @@ class NormalizedLMHead(LMHead):
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
         loss_implementation: LMLossImplementation = LMLossImplementation.default,
-        bias: bool = False,
     ):
         super().__init__(
             d_model=d_model,
             vocab_size=vocab_size,
             layer_norm=None,
-            bias=bias,
+            bias=False,
             dtype=dtype,
             init_device=init_device,
             loss_implementation=loss_implementation,
