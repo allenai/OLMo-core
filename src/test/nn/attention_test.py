@@ -334,7 +334,7 @@ def test_attention_kv_cache_update():
         assert attention.kv_cache_manager.cache_seqlens == cache_seqlens_before + 1
 
         # Check that the update happened at the right position.
-        current_write_pos = cache_seqlens_before[0].item()
+        current_write_pos = cache_seqlens_before.item()
         k_cache_after = attention.kv_cache_manager.k_cache
         v_cache_after = attention.kv_cache_manager.v_cache
 
@@ -413,7 +413,7 @@ def test_attention_prefill_forward_pass(batch_size: int):
 
 @requires_gpu
 @requires_flash_attn
-def test_attention_kv_caching_with_leftpad():
+def test_attention_kv_cache_write_position():
     """Test KV caching with left-padded attention masks."""
     seed_all(0)
 
@@ -486,17 +486,24 @@ def test_attention_kv_caching_with_leftpad():
     assert y_decode.shape == (batch_size, 1, d_model)
     assert torch.all(attention.kv_cache_manager.cache_seqlens == (seqlens_before + 1))
 
-    # Verify that only the single new write position per batch changed
+    # Verify that only the new write position per batch changed
     for i in range(batch_size):
-        write_pos = int(seqlens_before[i].item())
-        # Check that the new token was written to the correct position
-        assert not torch.all(k_cache[i, write_pos] == 0)
-        assert not torch.all(v_cache[i, write_pos] == 0)
-        # Check that the cache is unchanged everywhere else
-        k_cache_before[i, write_pos] = k_cache[i, write_pos]
-        v_cache_before[i, write_pos] = v_cache[i, write_pos]
-        torch.testing.assert_close(k_cache, k_cache_before)
-        torch.testing.assert_close(v_cache, v_cache_before)
+        write_pos = int(seqlens_before)
+        k_cache_new = attention.kv_cache_manager.k_cache[i]
+        v_cache_new = attention.kv_cache_manager.v_cache[i]
+
+        # Regions before the write position should be unchanged
+        if write_pos > 0:
+            torch.testing.assert_close(k_cache_before[i, :write_pos], k_cache_new[:write_pos])
+            torch.testing.assert_close(v_cache_before[i, :write_pos], v_cache_new[:write_pos])
+
+        # The write position must now be non-zero
+        assert not torch.all(k_cache_new[write_pos] == 0)
+        assert not torch.all(v_cache_new[write_pos] == 0)
+
+        # Region after the write position should remain zeros (unchanged)
+        torch.testing.assert_close(k_cache_before[i, write_pos + 1 :], k_cache_new[write_pos + 1 :])
+        torch.testing.assert_close(v_cache_before[i, write_pos + 1 :], v_cache_new[write_pos + 1 :])
 
 
 @requires_gpu
