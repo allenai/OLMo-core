@@ -74,7 +74,6 @@ class KVCacheManager(nn.Module):
             gc.collect()
             torch.cuda.empty_cache()
 
-        # Inherit device/dtype from existing buffers via new_zeros (no manual device/dtype).
         k = self.k_cache.new_zeros(self.kv_cache_shape)
         v = self.v_cache.new_zeros(self.kv_cache_shape)
         leftpad = self.cache_leftpad.new_zeros((batch_size,), dtype=torch.int32)

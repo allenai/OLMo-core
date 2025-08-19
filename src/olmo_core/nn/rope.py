@@ -439,11 +439,16 @@ class RotaryEmbedding(RotaryEmbeddingBase):
             raise RuntimeError(f"'freqs_cis' is invalid for {self.__class__.__name__}")
 
         if head_first:
-            q_len, k_len = q.size(2), k.size(2)
+            q_len = q.size(2)
+            k_len = k.size(2)
         else:
-            q_len, k_len = q.size(1), k.size(1)
+            q_len = q.size(1)
+            k_len = k.size(1)
 
-        q_, k_ = (q.float(), k.float()) if self.full_precision else (q, k)
+        if self.full_precision:
+            q_, k_ = q.float(), k.float()
+        else:
+            q_, k_ = q, k
 
         with torch.autocast(q.device.type, enabled=False):
             seq_len_needed = (start_pos + k_len) if start_pos is not None else k_len

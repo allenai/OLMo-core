@@ -1,9 +1,8 @@
-import gc
 import logging
 import math
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Union
 
 import torch
 import torch.distributed as dist
@@ -408,7 +407,6 @@ class Attention(AttentionBase):
         max_doc_len_k: Optional[int] = None,
         local_k_slice: Optional[slice] = None,
         scale: Optional[float] = None,
-        # Inference only:
         cache_leftpad: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         att: torch.Tensor
@@ -532,7 +530,6 @@ class Attention(AttentionBase):
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
-        # Inference only:
         cache_leftpad: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
@@ -583,7 +580,6 @@ class Attention(AttentionBase):
 
         if self.rope is not None:
             # In context-parallel mode we must be given pre-sharded buffers
-            # unless we're in the single-token path (which sets ``start_pos``).
             if self.cp_enabled and pos_sin is None and pos_cos is None and freqs_cis is None:
                 raise RuntimeError(
                     "RoPE buffers must be passed through to attention after being properly "
@@ -766,6 +762,11 @@ class NormalizedAttention(Attention):
         freqs_cis: Optional[torch.Tensor] = None,
         cache_leftpad: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        if cache_leftpad:
+            raise NotImplementedError(
+                "cache_leftpad is not supported for the normalized attention variant"
+            )
+
         # TODO: fixup and test kv caching with this class
         B, T, _ = x.shape
 
@@ -809,6 +810,7 @@ class NormalizedAttention(Attention):
                 start_pos=start_pos,
             )
 
+        # shape: (batch_size, seq_len, n_heads, head_dim)
         att = self.sdpa(
             q,
             k,
@@ -927,7 +929,6 @@ class FusedAttention(AttentionBase):
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
         cache_leftpad: Optional[torch.Tensor] = None,
-        seq_lens: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Apply attention to the input.
@@ -946,8 +947,6 @@ class FusedAttention(AttentionBase):
             raise NotImplementedError(
                 "cache_leftpad is not supported for the fused attention variant"
             )
-        if seq_lens is not None:
-            raise NotImplementedError("seq_lens is not supported for the fused attention variant")
 
         B, T, _ = x.shape
 

@@ -10,6 +10,7 @@ from olmo_core.nn.attention import (
     AttentionConfig,
     AttentionType,
     FusedAttention,
+    NormalizedAttention,
     RingAttentionZigZagLoadBalancer,
     SlidingWindowAttentionConfig,
 )
@@ -28,6 +29,7 @@ BF16_RTOL = 1e-5
 BF16_ATOL = 5e-3
 
 
+@pytest.mark.parametrize("attention_cls", [Attention, NormalizedAttention])
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize(
     "dtype",
@@ -55,6 +57,7 @@ BF16_ATOL = 5e-3
     ],
 )
 def test_attention(
+    attention_cls,
     dtype: torch.dtype,
     device: torch.device,
     n_kv_heads: Optional[int],
@@ -63,16 +66,24 @@ def test_attention(
 ):
     if use_flash and dtype == torch.float32:
         pytest.skip("flash requires a low precision dtype")
-
     if dtype == torch.bfloat16 and device.type == "cpu":
         pytest.skip("bf16 requires GPU")
+    if attention_cls is NormalizedAttention:
+        if "clip_qkv" in kwargs:
+            pytest.skip("clip_qkv is not supported for NormalizedAttention")
+        if "use_head_qk_norm" in kwargs:
+            pytest.skip("use_head_qk_norm is not supported for NormalizedAttention")
+        if use_flash:
+            pytest.xfail(
+                "NormalizedAttention is broken with flash because it creates activation tensors in fp32"
+            )
 
     seed_all(0)
 
     d_model = 128
     seq_len = 32
 
-    attention = Attention(
+    attention = attention_cls(
         d_model=d_model,
         n_heads=4,
         n_kv_heads=n_kv_heads,
