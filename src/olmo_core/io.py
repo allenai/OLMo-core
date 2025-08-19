@@ -408,6 +408,30 @@ def list_directory(
             )
 
 
+def glob_directory(pattern: str) -> Generator[str, None, None]:
+    """
+    Similar to ``glob.glob()`` from the standard library, but works with remote directories as well.
+
+    .. warning::
+        Only a subset of glob patterns are supported. Specifically, ``*`` and ``**`` wildcards,
+        which the follow the semantics defined here https://docs.python.org/3/library/pathlib.html#pattern-language.
+    """
+    # Pull out base directory from pattern.
+    dir = pattern.split("*", 1)[0]
+
+    # Translate the glob pattern into a regex.
+    # For example, "src/examples/**/*.py" --> "^src/examples/.*[^/]*\\.py$".
+    regex = re.compile(
+        "^"
+        + re.escape(pattern).replace(r"\*\*/", ".*").replace(r"\*\*", ".*").replace(r"\*", "[^/]*")
+        + "$"
+    )
+
+    for path in list_directory(dir, recurse="**" in pattern):
+        if regex.match(path):
+            yield path
+
+
 def init_client(remote_path: str):
     """
     Initialize the right client for the given remote resource. This is helpful to avoid threading issues

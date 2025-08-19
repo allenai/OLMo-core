@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added support for revisions in `convert_checkpoint_from_hf.py` and the `load_hf_model` method of `olmo_core.nn.hf.checkpoint`.
 - `foreach` support in `SkipStepAdamW`.
 - Added `budget` mode for activation checkpointing configuration.
+- Added `io.glob_directory` functions.
 
 ### Changed
 
@@ -66,6 +67,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed bug with context parallelism where every transformer block would use the same RoPE buffers even if their RoPE was configured differently.
 - Fixed MFU computation to work with FSDP, corrected some device specs.
 - Optimization: avoid redundant calls to `model.train()` in `TransformerTrainModule`.
+- `NumpyDatasetConfig.expand_glob` now works with remote directories.
 
 ## [v2.1.0](https://github.com/allenai/OLMo-core/releases/tag/v2.1.0) - 2025-04-14
 
