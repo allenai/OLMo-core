@@ -10,7 +10,7 @@ from olmo_core.float8 import Float8Config
 from olmo_core.internal.experiment import CommonComponents, main
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
-from olmo_core.train import TrainerConfig
+from olmo_core.train import LoadStrategy, TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
 from olmo_core.train.train_module import (
     TransformerContextParallelConfig,
@@ -30,9 +30,12 @@ INTRA_DOCUMENT_MASKING = True
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
-    return TransformerConfig.olmo2_7B(
-        vocab_size=common.tokenizer.padded_vocab_size(), use_flash=True
+    config = TransformerConfig.olmo2_7B(
+        vocab_size=common.tokenizer.padded_vocab_size(),
     )
+    config.block.attention.use_flex = True
+    config.block.attention.use_sinks = True
+    return config
 
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
@@ -56,9 +59,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
         ),
-        cp_config=TransformerContextParallelConfig.llama3(degree=8)
-        if INTRA_DOCUMENT_MASKING
-        else TransformerContextParallelConfig.zig_zag(degree=8),
+        cp_config=None,
         float8_config=Float8Config(enabled=False),
         max_grad_norm=1.0,
         scheduler=CosWithWarmup(warmup_steps=2000),
@@ -72,6 +73,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=1,
+            load_strategy=LoadStrategy.never
         )
         .with_callback(
             "checkpointer",
