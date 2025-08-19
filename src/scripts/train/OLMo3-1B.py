@@ -99,7 +99,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             decay_fraction=None,
         ),
         tp_config=TransformerTensorParallelConfig(
-            degree=4,
+            degree=2,
         )
     )
 
