@@ -11,7 +11,6 @@ from olmo_core.nn.rope import (
     YaRNRoPEScalingConfig,
 )
 from olmo_core.testing import DEVICES, requires_flash_attn, requires_gpu
-from olmo_core.utils import has_flash_attn
 
 
 @pytest.mark.parametrize("device", DEVICES)
