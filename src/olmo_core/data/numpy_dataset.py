@@ -2534,10 +2534,7 @@ class NumpyDatasetConfig(Config):
         elif self.paths:
             paths = self.paths
             label_mask_paths = cast(Optional[List[PathOrStr]], self.label_mask_paths)
-        elif self.source_mixture_config and self.name == NumpyDatasetType.fsl:
-            log.info("Building dataset from source mixture...")
-        else:
-            assert self.mix is not None
+        elif self.mix is not None:
             if self.mix_base_dir is None:
                 raise OLMoConfigurationError(
                     "'mix_base_dir' is required to build a dataset from a mix"
@@ -2553,6 +2550,8 @@ class NumpyDatasetConfig(Config):
             if metadata is None:
                 metadata = [{"label": label} for label in labels]
             label_mask_paths = cast(Optional[List[PathOrStr]], self.label_mask_paths)
+        else:
+            assert self.source_mixture_config is not None  # sanity check
 
         if self.source_permutation_seed is not None:
             source_order = list(range(len(paths)))
@@ -2608,11 +2607,12 @@ class NumpyDatasetConfig(Config):
                 raise OLMoConfigurationError(
                     "'source_group_size' is only valid for the packed FSL dataset"
                 )
-            if self.source_mixture_config:
+            if self.source_mixture_config is not None:
                 if label_mask_paths is not None:
                     raise OLMoConfigurationError(
                         "'label_mask_paths' is not supported for mixture datasets"
                     )
+                log.info("Building dataset from source mixture...")
                 mixture = self.source_mixture_config.build()
                 dataset = NumpyFSLDatasetMixture(
                     *mixture.to_paths(),
@@ -2647,6 +2647,10 @@ class NumpyDatasetConfig(Config):
                     label_mask_paths=label_mask_paths,
                 )
         elif self.name == NumpyDatasetType.padded_fsl:
+            if self.source_mixture_config is not None:
+                raise OLMoConfigurationError(
+                    "'source_mixture_config' is only valid for the default (non-padded) FSL dataset"
+                )
             if self.sequence_length is None:
                 raise OLMoConfigurationError("'sequence_length' is required for padded FSL dataset")
             if self.max_target_sequence_length is not None:
@@ -2711,6 +2715,10 @@ class NumpyDatasetConfig(Config):
                 label_mask_paths=label_mask_paths,
             )
         elif self.name == NumpyDatasetType.packed_fsl:
+            if self.source_mixture_config is not None:
+                raise OLMoConfigurationError(
+                    "'source_mixture_config' is only valid for the default (non-packed) FSL dataset"
+                )
             if self.sequence_length is None:
                 raise OLMoConfigurationError("'sequence_length' is required for packed FSL dataset")
             if self.max_target_sequence_length is not None:
@@ -2768,6 +2776,10 @@ class NumpyDatasetConfig(Config):
                 else 1,
             )
         elif self.name == NumpyDatasetType.interleaved_fsl:
+            if self.source_mixture_config is not None:
+                raise OLMoConfigurationError(
+                    "'source_mixture_config' is only valid for the default FSL dataset"
+                )
             if self.sequence_length is None:
                 raise OLMoConfigurationError(
                     "'sequence_length' is required for interleaved FSL dataset"
@@ -2839,6 +2851,10 @@ class NumpyDatasetConfig(Config):
                 interleaving_exempt_paths=interleaving_exempt_paths,
             )
         elif self.name == NumpyDatasetType.vsl:
+            if self.source_mixture_config is not None:
+                raise OLMoConfigurationError(
+                    "'source_mixture_config' is only valid for the default FSL dataset"
+                )
             if self.max_sequence_length is None:
                 raise OLMoConfigurationError("'max_sequence_length' is required for VSL datasets")
             if self.min_sequence_length is None:
