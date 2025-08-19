@@ -61,7 +61,6 @@ def top_p_filtering(logits: torch.Tensor, top_p: float) -> torch.Tensor:
     return logits.masked_fill(indices_to_remove, float("-inf"))
 
 
-# @torch.compile(dynamic=True)
 def select_next_token(
     logits: torch.Tensor,
     do_sample: bool = True,
