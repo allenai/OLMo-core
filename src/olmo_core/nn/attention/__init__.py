@@ -767,7 +767,6 @@ class NormalizedAttention(Attention):
                 "cache_leftpad is not supported for the normalized attention variant"
             )
 
-        # TODO: fixup and test kv caching with this class
         B, T, _ = x.shape
 
         # shape: (batch_size, seq_len, n_heads * head_dim),
