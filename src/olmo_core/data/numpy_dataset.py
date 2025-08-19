@@ -2418,12 +2418,12 @@ class NumpyDatasetConfig(Config):
     """
     source_group_size: Optional[int] = None
     """
-    Determines how many sources are grouped together a single source for packing with the packed
+    Determines how many sources are grouped together as a single source for packing with the packed
     FSL dataset.
     """
     source_permutation_seed: Optional[int] = None
     """
-    Used to shuffle the source files.
+    Used to shuffle the source files before handing off to the dataset class.
     """
 
     def validate(self):

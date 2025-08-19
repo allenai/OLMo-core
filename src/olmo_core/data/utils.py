@@ -688,6 +688,10 @@ def _take(n: int, iterable: Iterable[T]) -> List[T]:
 
 
 def chunked(iterable: Iterable[T], n: int) -> Iterable[List[T]]:
+    """
+    Group items in the iterable into chunks of size `n`, at most. This is equivalent to the function
+    from ``more-itertools`` with the same name and ``strict=False``.
+    """
     return iter(ft.partial(_take, n, iter(iterable)), [])
 
 
