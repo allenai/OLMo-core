@@ -36,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a script to compare two WandB runs
 - Added `namespace` option to `nn.buffer_cache.BufferCache`.
 - Added the option to configure `head_stride` for context parallelism with ring-flash-attn.
+- Added `GenerationModule` for OLMo-core native autoregressive generation with support for kv caching.
 
 ### Changed
 
