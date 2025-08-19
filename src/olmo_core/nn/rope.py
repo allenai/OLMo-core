@@ -1,7 +1,7 @@
 import math
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -416,92 +416,78 @@ class RotaryEmbedding(RotaryEmbeddingBase):
         q: torch.Tensor,
         k: torch.Tensor,
         head_first: bool = True,
-        start_pos: Optional[Union[int, torch.Tensor]] = None,
+        start_pos: Optional[int] = None,
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Apply RoPE to query (``q``) and key (``k``) matrices.
+
+        :param q: The query matrix of shape ``(batch_size, num_heads, seq_len, head_size)``
+            if ``head_first`` (the default) otherwise ``(batch_size, seq_len, num_heads, head_size)``.
+        :param k: The key matrix of shape ``(batch_size, num_kv_heads, seq_len, head_size)``
+            if ``head_first`` (the default) otherwise
+            ``(batch_size, seq_len, num_kv_heads, head_size)``.
+        :param head_first: If the head dim comes before the sequence dim.
+        :param start_pos: The absolute position of the first query token (eg for decoding
+            where the first query token is just the most recently decoded token).
+
+        :returns: The query and key matrices after RoPE has been applied.
+        """
         if freqs_cis is not None:
             raise RuntimeError(f"'freqs_cis' is invalid for {self.__class__.__name__}")
 
         if head_first:
-            q_len = q.size(2)
-            k_len = k.size(2)
+            q_len, k_len = q.size(2), k.size(2)
         else:
-            q_len = q.size(1)
-            k_len = k.size(1)
+            q_len, k_len = q.size(1), k.size(1)
 
-        if self.full_precision:
-            q_, k_ = q.float(), k.float()
-        else:
-            q_, k_ = q, k
+        q_, k_ = (q.float(), k.float()) if self.full_precision else (q, k)
 
         with torch.autocast(q.device.type, enabled=False):
-            batch_size = q_.size(0)
             if start_pos is None:
-                q_abs_starts = torch.full(
-                    (batch_size,), k_len - q_len, device=q_.device, dtype=torch.long
-                )
-                k_abs_starts = torch.zeros(batch_size, device=q_.device, dtype=torch.long)
+                q_abs_start = k_len - q_len  # Q starts where K stops
+                k_abs_start = 0  # K always starts at position 0
             else:
-                if isinstance(start_pos, int):
-                    q_abs_starts = torch.full(
-                        (batch_size,), start_pos, device=q_.device, dtype=torch.long
-                    )
-                    k_abs_starts = q_abs_starts
-                else:
-                    start_vec = start_pos.to(device=q_.device, dtype=torch.long)
-                    if start_vec.ndim == 0:
-                        start_vec = start_vec.expand(batch_size)
-                    elif start_vec.shape[0] != batch_size:
-                        raise RuntimeError(
-                            "start_pos must be a scalar or a tensor of shape (batch_size,)"
-                        )
-                    q_abs_starts = start_vec
-                    k_abs_starts = start_vec
+                q_abs_start = k_abs_start = start_pos
 
-            max_end = int((q_abs_starts + k_len).max().item())
+            seq_len_needed = k_abs_start + k_len
             if pos_sin is None or pos_cos is None:
-                pos_sin, pos_cos = self._get_rotary_embedding(max_end, q_.device)
+                pos_sin, pos_cos = self._get_rotary_embedding(seq_len_needed, q_.device)
+
             pos_sin, pos_cos = pos_sin.type_as(q_), pos_cos.type_as(q_)
 
             head_dim_local = q_.shape[-1]
             if pos_sin.size(-1) < head_dim_local or pos_cos.size(-1) < head_dim_local:
                 raise RuntimeError(
                     "RoPE buffer dimension smaller than tensor dimension: "
-                    f"{pos_sin.size(-1)} vs {head_dim_local}. This may be due to tensor "
-                    f"parallel sharding applied after RoPE module instantiation."
+                    f"{pos_sin.size(-1)} vs {head_dim_local}. "
+                    "This may be due to tensor parallel sharding applied after "
+                    "RoPE module instantiation."
                 )
-            if pos_sin.size(-2) < max_end or pos_cos.size(-2) < max_end:
+            if pos_sin.size(-2) < seq_len_needed or pos_cos.size(-2) < seq_len_needed:
                 raise RuntimeError(
-                    f"RoPE buffers shorter than required: need {max_end}, have {pos_sin.size(-2)}."
+                    f"RoPE buffers shorter than required: need {seq_len_needed}, "
+                    f"have {pos_sin.size(-2)}."
                 )
-
-            arange_q = torch.arange(q_len, device=q_.device, dtype=torch.long)
-            arange_k = torch.arange(k_len, device=q_.device, dtype=torch.long)
-            idx_q = q_abs_starts[:, None] + arange_q[None, :]
-            idx_k = k_abs_starts[:, None] + arange_k[None, :]
-
-            # (B, T, head_size)
-            pos_sin_q = pos_sin.index_select(0, idx_q.reshape(-1)).view(batch_size, q_len, -1)
-            pos_cos_q = pos_cos.index_select(0, idx_q.reshape(-1)).view(batch_size, q_len, -1)
-            pos_sin_k = pos_sin.index_select(0, idx_k.reshape(-1)).view(batch_size, k_len, -1)
-            pos_cos_k = pos_cos.index_select(0, idx_k.reshape(-1)).view(batch_size, k_len, -1)
 
             if head_first:
-                q_ = self._apply_rotary_pos_emb(
-                    pos_sin_q[:, None, :, :], pos_cos_q[:, None, :, :], q_
-                )
-                k_ = self._apply_rotary_pos_emb(
-                    pos_sin_k[:, None, :, :], pos_cos_k[:, None, :, :], k_
-                )
+                sin_q = pos_sin[q_abs_start : q_abs_start + q_len, :][None, None, :, :]
+                cos_q = pos_cos[q_abs_start : q_abs_start + q_len, :][None, None, :, :]
+                sin_k = pos_sin[k_abs_start : k_abs_start + k_len, :][None, None, :, :]
+                cos_k = pos_cos[k_abs_start : k_abs_start + k_len, :][None, None, :, :]
+
+                q_ = self._apply_rotary_pos_emb(sin_q, cos_q, q_)
+                k_ = self._apply_rotary_pos_emb(sin_k, cos_k, k_)
             else:
-                q_ = self._apply_rotary_pos_emb(
-                    pos_sin_q[:, :, None, :], pos_cos_q[:, :, None, :], q_
-                )
-                k_ = self._apply_rotary_pos_emb(
-                    pos_sin_k[:, :, None, :], pos_cos_k[:, :, None, :], k_
-                )
+                sin_q = pos_sin[q_abs_start : q_abs_start + q_len, :][None, :, None, :]
+                cos_q = pos_cos[q_abs_start : q_abs_start + q_len, :][None, :, None, :]
+                sin_k = pos_sin[k_abs_start : k_abs_start + k_len, :][None, :, None, :]
+                cos_k = pos_cos[k_abs_start : k_abs_start + k_len, :][None, :, None, :]
+
+                q_ = self._apply_rotary_pos_emb(sin_q, cos_q, q_)
+                k_ = self._apply_rotary_pos_emb(sin_k, cos_k, k_)
 
         return q_.type_as(q), k_.type_as(k)
 

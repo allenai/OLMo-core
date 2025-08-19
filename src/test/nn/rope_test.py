@@ -395,83 +395,57 @@ def test_rope_start_pos_zero_matches_default(device, head_first, rope_cls):
     [pytest.param(True, id="head_first"), pytest.param(False, id="seq_first")],
 )
 def test_rope_tensor_start_pos(device, head_first):
-    """Test that passing a tensor start_pos correctly retrieves the needed indices."""
-    B, T, d_model, n_heads = 3, 8, 16, 4  # Using 3 batches to test different positions
+    # Test that passing an int for start_pos works and gives expected offset
+    B, T, d_model, n_heads = 2, 8, 16, 4
     head_size = d_model // n_heads
     rope = RotaryEmbedding(head_size=head_size)
 
     with torch.no_grad():
-        # Create queries and keys
         q = torch.rand(B, n_heads, T, head_size, device=device)
         k = torch.rand(B, n_heads, T, head_size, device=device)
         if not head_first:
-            q, k = q.transpose(1, 2), k.transpose(1, 2)
+            q = q.transpose(1, 2)
+            k = k.transpose(1, 2)
 
-        # Test 1: Scalar tensor (0-dimensional) - should be broadcast to all batches
-        scalar_start_pos = torch.tensor(5, device=device)
-        q_scalar, k_scalar = rope(
-            q.clone(), k.clone(), head_first=head_first, start_pos=scalar_start_pos
-        )
+        # Compute with start_pos=0 (should be default)
+        q0, k0 = rope(q.clone(), k.clone(), head_first=head_first, start_pos=0)
+        q_def, k_def = rope(q.clone(), k.clone(), head_first=head_first)
+        torch.testing.assert_close(q0, q_def)
+        torch.testing.assert_close(k0, k_def)
 
-        # Compare with passing int directly
-        q_int, k_int = rope(q.clone(), k.clone(), head_first=head_first, start_pos=5)
-        torch.testing.assert_close(q_scalar, q_int)
-        torch.testing.assert_close(k_scalar, k_int)
+        # Compute with start_pos > 0, should be offset in position encoding
+        start_pos = 2
+        q2, k2 = rope(q.clone(), k.clone(), head_first=head_first, start_pos=start_pos)
 
-        # Test 2: 1D tensor with same value - should match scalar behavior
-        uniform_start_pos = torch.tensor([5, 5, 5], device=device)
-        q_uniform, k_uniform = rope(
-            q.clone(), k.clone(), head_first=head_first, start_pos=uniform_start_pos
-        )
-        torch.testing.assert_close(q_uniform, q_int)
-        torch.testing.assert_close(k_uniform, k_int)
-
-        # Test 3: 1D tensor with different values per batch
-        varied_start_pos = torch.tensor([0, 3, 7], device=device)
-        q_varied, k_varied = rope(
-            q.clone(), k.clone(), head_first=head_first, start_pos=varied_start_pos
-        )
-
-        # Verify each batch gets different RoPE positions
-        # by checking that results differ between batches
-        if head_first:
-            # Shape: (B, n_heads, T, head_size)
-            assert not torch.allclose(q_varied[0], q_varied[1], rtol=1e-5, atol=1e-5)
-            assert not torch.allclose(q_varied[1], q_varied[2], rtol=1e-5, atol=1e-5)
-        else:
-            # Shape: (B, T, n_heads, head_size)
-            assert not torch.allclose(q_varied[0], q_varied[1], rtol=1e-5, atol=1e-5)
-            assert not torch.allclose(q_varied[1], q_varied[2], rtol=1e-5, atol=1e-5)
-
-        # Test 4: Verify correct position indices are applied
-        # Check that batch 0 with start_pos=0 matches default behavior
-        q_batch0 = q[0:1].clone()  # Shape: (1, ...)
-        k_batch0 = k[0:1].clone()
-        q_default, k_default = rope(q_batch0, k_batch0, head_first=head_first)
+        # To check correctness: compare to slicing the buffer
+        buffers = rope.get_buffers(T + start_pos, device)
+        pos_sin = buffers.pos_sin
+        pos_cos = buffers.pos_cos
+        assert pos_sin is not None
+        assert pos_cos is not None
 
         if head_first:
-            torch.testing.assert_close(q_varied[0:1], q_default)
-            torch.testing.assert_close(k_varied[0:1], k_default)
+            q_expected = rope._apply_rotary_pos_emb(
+                pos_sin[start_pos : start_pos + T, :][None, None, :, :],
+                pos_cos[start_pos : start_pos + T, :][None, None, :, :],
+                q.float(),
+            )
+            k_expected = rope._apply_rotary_pos_emb(
+                pos_sin[start_pos : start_pos + T, :][None, None, :, :],
+                pos_cos[start_pos : start_pos + T, :][None, None, :, :],
+                k.float(),
+            )
         else:
-            torch.testing.assert_close(q_varied[0:1], q_default)
-            torch.testing.assert_close(k_varied[0:1], k_default)
+            q_expected = rope._apply_rotary_pos_emb(
+                pos_sin[start_pos : start_pos + T, :][None, :, None, :],
+                pos_cos[start_pos : start_pos + T, :][None, :, None, :],
+                q.float(),
+            )
+            k_expected = rope._apply_rotary_pos_emb(
+                pos_sin[start_pos : start_pos + T, :][None, :, None, :],
+                pos_cos[start_pos : start_pos + T, :][None, :, None, :],
+                k.float(),
+            )
 
-        # Test 5: Single query token with different start positions per batch
-        q_single = q[:, :, :1, :] if head_first else q[:, :1, :, :]
-        k_full = k
-
-        varied_start_pos_single = torch.tensor([7, 10, 15], device=device)
-        q_single_varied, k_single_varied = rope(
-            q_single.clone(),
-            k_full.clone(),
-            head_first=head_first,
-            start_pos=varied_start_pos_single,
-        )
-
-        # Each batch should have different RoPE applied to the single query
-        if head_first:
-            assert not torch.allclose(q_single_varied[0], q_single_varied[1], rtol=1e-5, atol=1e-5)
-            assert not torch.allclose(q_single_varied[1], q_single_varied[2], rtol=1e-5, atol=1e-5)
-        else:
-            assert not torch.allclose(q_single_varied[0], q_single_varied[1], rtol=1e-5, atol=1e-5)
-            assert not torch.allclose(q_single_varied[1], q_single_varied[2], rtol=1e-5, atol=1e-5)
+        torch.testing.assert_close(q2, q_expected)
+        torch.testing.assert_close(k2, k_expected)
