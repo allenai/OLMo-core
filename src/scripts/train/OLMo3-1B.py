@@ -83,10 +83,11 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         ),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.hsdp,
+            name=DataParallelType.fsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
+            shard_degree=4,
         ),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
