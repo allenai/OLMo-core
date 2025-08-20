@@ -23,7 +23,12 @@ from cached_path.schemes import S3Client, SchemeClient, add_scheme_client
 from rich.progress import track
 
 from .aliases import PathOrStr
-from .exceptions import OLMoEnvironmentError, OLMoNetworkError, OLMoUploadError
+from .exceptions import (
+    OLMoEnvironmentError,
+    OLMoInvalidRangeRequestError,
+    OLMoNetworkError,
+    OLMoUploadError,
+)
 
 log = logging.getLogger(__name__)
 
@@ -430,6 +435,30 @@ def list_directory(
             raise NotImplementedError(
                 f"list_directory size not implemented for '{parsed.scheme}' URLs"
             )
+
+
+def glob_directory(pattern: str) -> Generator[str, None, None]:
+    """
+    Similar to ``glob.glob()`` from the standard library, but works with remote directories as well.
+
+    .. warning::
+        Only a subset of glob patterns are supported. Specifically, ``*`` and ``**`` wildcards,
+        which the follow the semantics defined here https://docs.python.org/3/library/pathlib.html#pattern-language.
+    """
+    # Pull out base directory from pattern.
+    dir = pattern.split("*", 1)[0]
+
+    # Translate the glob pattern into a regex.
+    # For example, "src/examples/**/*.py" --> "^src/examples/.*[^/]*\\.py$".
+    regex = re.compile(
+        "^"
+        + re.escape(pattern).replace(r"\*\*/", ".*").replace(r"\*\*", ".*").replace(r"\*", "[^/]*")
+        + "$"
+    )
+
+    for path in list_directory(dir, recurse="**" in pattern):
+        if regex.match(path):
+            yield path
 
 
 def init_client(remote_path: str):
@@ -871,6 +900,10 @@ def _s3_get_bytes_range(
     except ClientError as e:
         if e.response["ResponseMetadata"]["HTTPStatusCode"] == 404:
             raise FileNotFoundError(f"{scheme}://{bucket_name}/{key}") from e
+        elif e.response["Error"]["Code"] == "InvalidRange":
+            raise OLMoInvalidRangeRequestError(
+                f"Invalid range request to '{scheme}://{bucket_name}/{key}' ({bytes_start=}, {num_bytes=})"
+            )
         else:
             raise
 

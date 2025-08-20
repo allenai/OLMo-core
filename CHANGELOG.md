@@ -31,11 +31,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added support for revisions in `convert_checkpoint_from_hf.py` and the `load_hf_model` method of `olmo_core.nn.hf.checkpoint`.
 - `foreach` support in `SkipStepAdamW`.
 - Added `budget` mode for activation checkpointing configuration.
-- Added `io.remove_file()` function.
+- Added `io.remove_file()` and `io.glob_directory` functions.
 - Added ABF, PI, and YaRN rope scaling strategies.
 - Added a script to compare two WandB runs
 - Added `namespace` option to `nn.buffer_cache.BufferCache`.
 - Added the option to configure `head_stride` for context parallelism with ring-flash-attn.
+- Added the option to group multiple npy source files together for packing with the packed FSL dataset by setting `source_group_size` to an integer greater than 1.
 
 ### Changed
 
@@ -71,6 +72,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Ensure RoPE modules with different settings use a unique sub-cache for their buffers.
 - Fixed bug with context parallelism where every transformer block would use the same RoPE buffers even if their RoPE was configured differently.
 - Fixed MFU computation to work with FSDP, corrected some device specs.
+- Optimization: avoid redundant calls to `model.train()` in `TransformerTrainModule`.
+- `NumpyDatasetConfig.expand_glob` now works with remote directories.
 
 ## [v2.1.0](https://github.com/allenai/OLMo-core/releases/tag/v2.1.0) - 2025-04-14
 
