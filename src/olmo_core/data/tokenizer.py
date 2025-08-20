@@ -255,8 +255,11 @@ class ByteTokenizer:
         return self.patch_ids_to_byte_ids(input_ids)
 
     def decode(self, tokens: list[int]) -> str:
+        return self.decode_to_bytes(tokens).decode("utf-8", errors="replace")
+
+    def decode_to_bytes(self, tokens: list[int]) -> bytes:
         utf8_bytes = [tokens - self.offset for tokens in tokens if tokens >= self.offset]
-        return bytes(utf8_bytes).decode("utf-8", errors="replace")
+        return bytes(utf8_bytes)
 
     def get_tokens_and_patch_lengths(self, original_input_ids: list[int], add_bos=True, strip_pad=False, skip_last=False):
         if add_bos and self.bos_token_id is not None:

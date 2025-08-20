@@ -1,6 +1,7 @@
 import math
 import random
 from functools import partial
+from typing import Optional, Any
 
 from tokenizers import pre_tokenizers
 from transformers import AutoTokenizer
@@ -222,6 +223,7 @@ def _bpe(token, self, p_bpe_dropout):
 class Noiser:
     def __init__(self, subword_tokenizer, p_ctrl_char=0.01, p_bpe_dropout=0.01):
         self.ctrl_char = chr(0xFAFAF) # in private use area
+        self.ctrl_char_bytes = self.ctrl_char.encode("utf-8")
         self.subword_tokenizer = subword_tokenizer
         self.p_ctrl_char = p_ctrl_char
         self.p_bpe_dropout = p_bpe_dropout
@@ -239,6 +241,24 @@ class Noiser:
             self=self.subword_tokenizer_with_bpe_dropout,
             p_bpe_dropout=p_bpe_dropout,
         )
+
+    def noise_ctrl_char_preset_boundaries(self, subword_input_ids, byte_boundaries: set[int], byte_tokenizer: Optional[Any] = None):
+        if byte_tokenizer is None:
+            # problematic if the last token is not full valid utf-8
+            text_bytes = self.subword_tokenizer.decode(subword_input_ids).encode("utf-8")
+        else:
+            text_bytes = byte_tokenizer.decode_to_bytes(byte_tokenizer.patch_ids_to_byte_ids(subword_input_ids))
+
+        text_bytes_with_split_char = b""
+        for i in range(len(text_bytes)):
+            if i in byte_boundaries:
+                text_bytes_with_split_char += self.ctrl_char_bytes
+
+            text_bytes_with_split_char += text_bytes[i:i+1]
+
+        text_with_split_char = text_bytes_with_split_char.decode("utf-8", errors="ignore")
+
+        return self.subword_tokenizer_with_ctrl_split.encode(text_with_split_char)
 
     def noise_ctrl_char(self, subword_input_ids):
         text = self.subword_tokenizer.decode(subword_input_ids)

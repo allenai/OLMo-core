@@ -23,6 +23,7 @@ from torch.distributed.fsdp import FSDPModule, MixedPrecisionPolicy, fully_shard
 from torch.distributed.tensor import Replicate, Shard
 from torch.distributed.tensor.parallel import RowwiseParallel, parallelize_module
 
+from olmo_core.data.tokenizer import ByteTokenizerConfig
 from olmo_core.data.utils import get_cumulative_document_lengths, get_labels
 from olmo_core.distributed.parallel import get_pp_mesh
 from olmo_core.distributed.utils import hide_from_torch, unhide_from_torch
@@ -1719,6 +1720,72 @@ class BLTDistillTransformer(BLTTransformer):
 
         return local_decoder_loss_exhaustive, local_decoder_loss_simple, metrics
 
+    def _noise(
+        self,
+        input_ids,
+        p,
+        **kwargs: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        if not hasattr(self, "_tokenizer"):
+            # hardcode for now
+            self._tokenizer = ByteTokenizerConfig.blt().build()
+        if not hasattr(self, "_noiser"):
+            self._noiser = blt_utils.Noiser(self._tokenizer.hf_tokenizer)
+
+        indices = torch.randperm(input_ids.shape[0])[:int(input_ids.shape[0] * p)]
+
+        with torch.no_grad():
+            _, _, (_, boundary_logprobs), boundary_mask = self.local_encoder(
+                input_ids[indices],
+                patch_lens=torch.tensor([[input_ids.shape[1]]], device=input_ids.device, dtype=torch.long).expand(indices.shape[0], -1),
+                patch_ids=torch.zeros_like(input_ids[indices]),
+                cross_attn_mask=None,
+            )
+
+        # -1 / 1: to skip bos
+        L = input_ids.shape[1] - 1
+        boundary_indices = (
+            torch.arange(L, device=input_ids.device)[None, :] + (~boundary_mask)[:, 1:].long() * L  # type: ignore
+        )
+        boundary_indices = torch.argsort(boundary_indices, dim=1)[:, :kwargs["patch_lens"].shape[1]]  # type: ignore
+
+        for i, idx in enumerate(indices):
+            original_input_ids = kwargs["original_input_ids"][idx] # type: ignore
+            noised_original_input_ids = self._noiser.noise_ctrl_char_preset_boundaries(
+                original_input_ids,
+                set(boundary_indices[i][:boundary_mask[i].sum()].tolist()),
+                byte_tokenizer=self._tokenizer,
+            )[:len(original_input_ids)]
+
+            while len(noised_original_input_ids) < len(original_input_ids):
+                noised_original_input_ids.append(self._tokenizer.hf_tokenizer.pad_token_id)
+
+            _, noised_patch_lengths = self._tokenizer.get_tokens_and_patch_lengths(
+                noised_original_input_ids,
+                add_bos=True,
+                skip_last=True
+            )
+            noised_patch_lengths = torch.tensor(
+                noised_patch_lengths,
+                device=original_input_ids.device,
+                dtype=original_input_ids.dtype,
+            )
+            # make sure lengths do not surpass byte_sequence_length
+            noised_patch_lengths = torch.where(
+                torch.cumsum(noised_patch_lengths, dim=0) > input_ids.shape[1],
+                torch.zeros_like(noised_patch_lengths),
+                noised_patch_lengths,
+            )
+
+            kwargs["original_input_ids"][idx] = torch.tensor(  # type: ignore
+                noised_original_input_ids,
+                device=original_input_ids.device,
+                dtype=original_input_ids.dtype,
+            )
+            kwargs["patch_lens"][idx] = noised_patch_lengths  # type: ignore
+
+        return kwargs
+
     def forward(  # type: ignore[override]
         self,
         input_ids: torch.Tensor,
@@ -1739,6 +1806,9 @@ class BLTDistillTransformer(BLTTransformer):
         skip_blocks = blt_config.skip_blocks
         skip_teacher = blt_config.skip_teacher
         use_oracle_patch_reps = blt_config.use_oracle_patch_reps
+
+        if blt_config.p_boundary_noise > 0:
+            kwargs = self._noise(input_ids, p=blt_config.p_boundary_noise, **kwargs)
 
         input_ids, labels, block_kwargs, lm_head_kwargs, local_encoder_kwargs, local_decoder_kwargs, extra_kwargs = self._prepare_inputs(
             input_ids,
