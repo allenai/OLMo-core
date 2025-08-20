@@ -42,7 +42,7 @@ from olmo_core.nn.mamba import MambaConfig
 from olmo_core.nn.feed_forward import FeedForwardConfig
 from olmo_core.nn.blt.config import LocalEncoderConfig, LocalDecoderConfig
 from olmo_core.optim import AdamWConfig, OptimGroupOverride
-from olmo_core.optim.scheduler import WSD, LinearWithWarmup
+from olmo_core.optim.scheduler import WSD, LinearWithWarmup, ConstantScheduler
 from olmo_core.train import (
     Duration,
     TrainerConfig,
@@ -67,7 +67,7 @@ from olmo_core.train.train_module import (
 )
 from olmo_core.utils import seed_all
 
-NUM_WORKERS = 16
+NUM_WORKERS = 32
 SEQUENCE_LENGTH = 1024
 QUICK_DEBUG = False
 GLOBAL_BATCH_SIZE = 64
@@ -77,7 +77,8 @@ LOCAL_MODEL_STYLE = os.environ.get("LOCAL_MODEL_STYLE", "hnet")
 TRAIN_MODE = os.environ.get("TRAIN_MODE", "local_encoder_only")
 DATA_SOURCE = os.environ.get("DATA_SOURCE", "dclm")
 LR_SCHEDULE = os.environ.get("LR_SCHEDULE", "linear_with_warmup")
-ADD_HASH_EMBEDDINGS = os.environ.get("ADD_HASH_EMBEDDINGS", "1").lower() in {"1", "true", "yes"}
+TOKEN_NOISE_STR = os.environ.get("TOKEN_NOISE_STR", "")
+ADD_HASH_EMBEDDINGS = os.environ.get("ADD_HASH_EMBEDDINGS", "").lower() in {"1", "true", "yes"}
 OLMO_ARCH = os.environ.get("OLMO_ARCH", "olmo2_1B_v2")
 
 if DATA_SOURCE == "dclm":
@@ -292,8 +293,10 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             cosine_decay_alpha=10,
             decay_min_lr=1e-4, # probably best around 10% of peak LR
         )
+    elif LR_SCHEDULE == "constant":
+        scheduler = ConstantScheduler()
     else:
-        raise ValueError(f"Unknown LR_SCHEDULE: {LR_SCHEDULE}. Must be one of 'linear_with_warmup', 'wsd'.")
+        raise ValueError(f"Unknown LR_SCHEDULE: {LR_SCHEDULE}. Must be one of 'linear_with_warmup', 'wsd', 'constant'.")
 
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=LOCAL_BATCH_SIZE * SEQUENCE_LENGTH * BYTE_EXPANSION_FACTOR,
@@ -424,6 +427,10 @@ def main(run_name: str, overrides: List[str]):
     train_module = config.train_module.build(model)
 
     dataset = config.dataset.build()
+
+    if TOKEN_NOISE_STR:
+        dataset.set_noise_fn(TOKEN_NOISE_STR)  # type: ignore
+
     data_loader = config.data_loader.build(
         dataset,
         collator=ByteDataCollator(pad_token_id=dataset.pad_token_id) if isinstance(dataset, NumpyByteFSLDataset) else None,
