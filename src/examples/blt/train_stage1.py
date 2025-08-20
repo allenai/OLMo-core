@@ -77,7 +77,8 @@ LOCAL_MODEL_STYLE = os.environ.get("LOCAL_MODEL_STYLE", "hnet")
 TRAIN_MODE = os.environ.get("TRAIN_MODE", "local_encoder_only")
 DATA_SOURCE = os.environ.get("DATA_SOURCE", "dclm")
 LR_SCHEDULE = os.environ.get("LR_SCHEDULE", "linear_with_warmup")
-ADD_HASH_EMBEDDINGS = os.environ.get("ADD_HASH_EMBEDDINGS", "1").lower() in {"1", "true", "yes"}
+TOKEN_NOISE_STR = os.environ.get("TOKEN_NOISE_STR", "")
+ADD_HASH_EMBEDDINGS = os.environ.get("ADD_HASH_EMBEDDINGS", "").lower() in {"1", "true", "yes"}
 OLMO_ARCH = os.environ.get("OLMO_ARCH", "olmo2_1B_v2")
 
 if DATA_SOURCE == "dclm":
@@ -426,6 +427,10 @@ def main(run_name: str, overrides: List[str]):
     train_module = config.train_module.build(model)
 
     dataset = config.dataset.build()
+
+    if TOKEN_NOISE_STR:
+        dataset.set_noise_fn(TOKEN_NOISE_STR)  # type: ignore
+
     data_loader = config.data_loader.build(
         dataset,
         collator=ByteDataCollator(pad_token_id=dataset.pad_token_id) if isinstance(dataset, NumpyByteFSLDataset) else None,

@@ -78,7 +78,7 @@ GLOBAL_MODEL_LEARNING_RATE = os.environ.get("GLOBAL_MODEL_LEARNING_RATE", "")
 LOCAL_MODEL_STYLE = os.environ.get("LOCAL_MODEL_STYLE", "hnet")
 DATA_SOURCE = os.environ.get("DATA_SOURCE", "dclm")
 LR_SCHEDULE = os.environ.get("LR_SCHEDULE", "linear_with_warmup")
-ADD_HASH_EMBEDDINGS = os.environ.get("ADD_HASH_EMBEDDINGS", "1").lower() in {"1", "true", "yes"}
+ADD_HASH_EMBEDDINGS = os.environ.get("ADD_HASH_EMBEDDINGS", "").lower() in {"1", "true", "yes"}
 OLMO_ARCH = os.environ.get("OLMO_ARCH", "olmo2_1B_v2")
 
 if DATA_SOURCE == "dclm":

@@ -1,6 +1,9 @@
-from typing import Dict, Any, List
 import math
+import random
 
+from tokenizers import pre_tokenizers
+from transformers import AutoTokenizer
+from transformers.models.gpt2 import tokenization_gpt2
 import torch
 from torch.nn import functional as F
 from torch.nn.attention.flex_attention import create_block_mask
@@ -162,3 +165,88 @@ def binary_cross_entropy_with_logprobs(logprobs, targets, epsilon=1e-3):
     logprobs = logprobs.float().clip(max=-epsilon)
     targets = targets.float()
     return - (targets * logprobs + (1 - targets) * log1mexp(logprobs))
+
+
+class Noiser:
+    def __init__(self, subword_tokenizer, p_ctrl_char=0.01, p_bpe_dropout=0.01):
+        self.ctrl_char = chr(0xFAFAF) # in private use area
+        self.subword_tokenizer = subword_tokenizer
+        self.p_ctrl_char = p_ctrl_char
+        self.p_bpe_dropout = p_bpe_dropout
+
+        # for noise_ctrl_char
+        self.subword_tokenizer_with_ctrl_split = AutoTokenizer.from_pretrained(subword_tokenizer.name_or_path)
+        self.subword_tokenizer_with_ctrl_split.backend_tokenizer.pre_tokenizer = pre_tokenizers.Sequence(
+            [pre_tokenizers.Split(self.ctrl_char, behavior="removed"), subword_tokenizer.backend_tokenizer.pre_tokenizer]
+        )
+
+        # for noise_bpe_dropout
+        self.subword_tokenizer_with_bpe_dropout = AutoTokenizer.from_pretrained(subword_tokenizer.name_or_path, use_fast=False)
+        # patch adding dropout
+        def _bpe(self, token):
+            word = tuple(token)
+            pairs = tokenization_gpt2.get_pairs(word)
+
+            if not pairs:
+                return token
+
+            while True:
+                bigram = min(pairs, key=lambda pair: self.bpe_ranks.get(pair, float("inf")))
+                if bigram not in self.bpe_ranks:
+                    break
+
+                # MODIFIED
+                # with probability = dropout, skip this merge (treat as if it's not in ranks)
+                if p_bpe_dropout > 0 and random.random() < p_bpe_dropout:
+                    # remove this pair from consideration, but continue loop
+                    pairs = {p for p in pairs if p != bigram}
+                    if not pairs:
+                        break
+                    continue
+
+                first, second = bigram
+                new_word = []
+                i = 0
+                while i < len(word):
+                    try:
+                        j = word.index(first, i)
+                    except ValueError:
+                        new_word.extend(word[i:])
+                        break
+                    else:
+                        new_word.extend(word[i:j])
+                        i = j
+
+                    if word[i] == first and i < len(word) - 1 and word[i + 1] == second:
+                        new_word.append(first + second)
+                        i += 2
+                    else:
+                        new_word.append(word[i])
+                        i += 1
+                new_word = tuple(new_word)
+                word = new_word
+                if len(word) == 1:
+                    break
+                else:
+                    pairs = tokenization_gpt2.get_pairs(word)
+            word = " ".join(word)
+            return word
+
+        self.subword_tokenizer_with_bpe_dropout.bpe = lambda token: _bpe(self.subword_tokenizer_with_bpe_dropout, token)
+
+    def noise_ctrl_char(self, subword_input_ids):
+        text = self.subword_tokenizer.decode(subword_input_ids)
+
+        text_with_split_char = ""
+        for i in range(len(text)):
+            if i > 0 and text_with_split_char[-1] != self.ctrl_char and random.random() < self.p_ctrl_char:
+                text_with_split_char += self.ctrl_char
+
+            text_with_split_char += text[i]
+
+        return self.subword_tokenizer_with_ctrl_split.encode(text_with_split_char)
+
+    def noise_bpe_dropout(self, subword_input_ids):
+        text = self.subword_tokenizer.decode(subword_input_ids)
+
+        return self.subword_tokenizer_with_bpe_dropout.encode(text)

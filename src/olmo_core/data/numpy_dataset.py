@@ -25,6 +25,7 @@ from typing import (
     Union,
     cast,
 )
+import random
 
 import numpy as np
 import torch
@@ -687,6 +688,36 @@ class NumpyByteFSLDataset(NumpyFSLDataset):
 
             self.constituent_map[token_id] = constituents
 
+        self.noise_fn = lambda x: x
+
+    def set_noise_fn(self, noise_str: str):
+        kind, p, fn_p = noise_str.split(":")
+        p = float(p)
+        fn_p = float(fn_p)
+
+        if kind == "bpe_dropout":
+            raw_noise_fn = blt_utils.Noiser(self.tokenizer.hf_tokenizer, p_bpe_dropout=fn_p).noise_bpe_dropout
+        elif kind == "ctrl_char":
+            raw_noise_fn = blt_utils.Noiser(self.tokenizer.hf_tokenizer, p_ctrl_char=fn_p).noise_ctrl_char
+        else:
+            raise ValueError(f"Unknown noise kind: {kind}")
+
+        def _noise_fn(x: torch.Tensor) -> torch.Tensor:
+            if random.random() < p:
+                noised_x = raw_noise_fn(x)[:len(x)]
+                # typically at least as long as x, but could be shorter in an edge case?
+                while len(noised_x) < len(x):
+                    noised_x.append(self.tokenizer.hf_tokenizer.pad_token_id)
+
+                return torch.tensor(noised_x, dtype=x.dtype, device=x.device)
+            else:
+                return x
+
+        self.noise_fn = _noise_fn
+
+    def reset_noise_fn(self):
+        self.noise_fn = lambda x: x
+
     def _read_chunk_from_array(self, path: PathOrStr, index: int, dtype=None) -> torch.Tensor:
         start_idx = index * self.patch_sequence_length # patch <-> sub/superword sequence length
         return load_array_slice_into_tensor(
@@ -710,7 +741,7 @@ class NumpyByteFSLDataset(NumpyFSLDataset):
 
     def __getitem__(self, index: int) -> Dict[str, Any]:
         item = super().__getitem__(index)
-        original_input_ids = item["input_ids"]
+        original_input_ids = self.noise_fn(item["input_ids"])
 
         byte_tokens, patch_lengths = self.tokenizer.get_tokens_and_patch_lengths(original_input_ids, add_bos=True, skip_last=True)
         space_patch_lengths = self.tokenizer.get_space_patch_lengths(byte_tokens)
