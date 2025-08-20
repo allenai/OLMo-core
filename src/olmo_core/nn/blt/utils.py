@@ -1,5 +1,6 @@
 import math
 import random
+from functools import partial
 
 from tokenizers import pre_tokenizers
 from transformers import AutoTokenizer
@@ -167,6 +168,57 @@ def binary_cross_entropy_with_logprobs(logprobs, targets, epsilon=1e-3):
     return - (targets * logprobs + (1 - targets) * log1mexp(logprobs))
 
 
+# patch adding dropout
+def _bpe(token, self, p_bpe_dropout):
+    word = tuple(token)
+    pairs = tokenization_gpt2.get_pairs(word)
+
+    if not pairs:
+        return token
+
+    while True:
+        bigram = min(pairs, key=lambda pair: self.bpe_ranks.get(pair, float("inf")))
+        if bigram not in self.bpe_ranks:
+            break
+
+        # MODIFIED
+        # with probability = dropout, skip this merge (treat as if it's not in ranks)
+        if p_bpe_dropout > 0 and random.random() < p_bpe_dropout:
+            # remove this pair from consideration, but continue loop
+            pairs = {p for p in pairs if p != bigram}
+            if not pairs:
+                break
+            continue
+
+        first, second = bigram
+        new_word = []
+        i = 0
+        while i < len(word):
+            try:
+                j = word.index(first, i)
+            except ValueError:
+                new_word.extend(word[i:])
+                break
+            else:
+                new_word.extend(word[i:j])
+                i = j
+
+            if word[i] == first and i < len(word) - 1 and word[i + 1] == second:
+                new_word.append(first + second)
+                i += 2
+            else:
+                new_word.append(word[i])
+                i += 1
+        new_word = tuple(new_word)
+        word = new_word
+        if len(word) == 1:
+            break
+        else:
+            pairs = tokenization_gpt2.get_pairs(word)
+    word = " ".join(word)
+    return word
+
+
 class Noiser:
     def __init__(self, subword_tokenizer, p_ctrl_char=0.01, p_bpe_dropout=0.01):
         self.ctrl_char = chr(0xFAFAF) # in private use area
@@ -182,57 +234,11 @@ class Noiser:
 
         # for noise_bpe_dropout
         self.subword_tokenizer_with_bpe_dropout = AutoTokenizer.from_pretrained(subword_tokenizer.name_or_path, use_fast=False)
-        # patch adding dropout
-        def _bpe(self, token):
-            word = tuple(token)
-            pairs = tokenization_gpt2.get_pairs(word)
-
-            if not pairs:
-                return token
-
-            while True:
-                bigram = min(pairs, key=lambda pair: self.bpe_ranks.get(pair, float("inf")))
-                if bigram not in self.bpe_ranks:
-                    break
-
-                # MODIFIED
-                # with probability = dropout, skip this merge (treat as if it's not in ranks)
-                if p_bpe_dropout > 0 and random.random() < p_bpe_dropout:
-                    # remove this pair from consideration, but continue loop
-                    pairs = {p for p in pairs if p != bigram}
-                    if not pairs:
-                        break
-                    continue
-
-                first, second = bigram
-                new_word = []
-                i = 0
-                while i < len(word):
-                    try:
-                        j = word.index(first, i)
-                    except ValueError:
-                        new_word.extend(word[i:])
-                        break
-                    else:
-                        new_word.extend(word[i:j])
-                        i = j
-
-                    if word[i] == first and i < len(word) - 1 and word[i + 1] == second:
-                        new_word.append(first + second)
-                        i += 2
-                    else:
-                        new_word.append(word[i])
-                        i += 1
-                new_word = tuple(new_word)
-                word = new_word
-                if len(word) == 1:
-                    break
-                else:
-                    pairs = tokenization_gpt2.get_pairs(word)
-            word = " ".join(word)
-            return word
-
-        self.subword_tokenizer_with_bpe_dropout.bpe = lambda token: _bpe(self.subword_tokenizer_with_bpe_dropout, token)
+        self.subword_tokenizer_with_bpe_dropout.bpe = partial(
+            _bpe,
+            self=self.subword_tokenizer_with_bpe_dropout,
+            p_bpe_dropout=p_bpe_dropout,
+        )
 
     def noise_ctrl_char(self, subword_input_ids):
         text = self.subword_tokenizer.decode(subword_input_ids)
