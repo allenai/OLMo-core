@@ -688,15 +688,17 @@ class NumpyByteFSLDataset(NumpyFSLDataset):
 
             self.constituent_map[token_id] = constituents
 
-        self._raw_noise_fn = None
+        # slightly convoluted to make picklable
+        self._noiser = None
+        self._noise_fn_name = ""
         self._noise_p = None
 
     def noise_fn(self, x: torch.Tensor) -> torch.Tensor:
-        if self._raw_noise_fn is None or self._noise_p is None:
+        if self._noiser is None or self._noise_p is None:
             return x
 
         if random.random() < self._noise_p:
-            noised_x = self._raw_noise_fn(x)[:len(x)]
+            noised_x = getattr(self._noiser, self._noise_fn_name)(x)[:len(x)]
             # typically at least as long as x, but could be shorter in an edge case?
             while len(noised_x) < len(x):
                 noised_x.append(self.tokenizer.hf_tokenizer.pad_token_id)
@@ -711,17 +713,19 @@ class NumpyByteFSLDataset(NumpyFSLDataset):
         fn_p = float(fn_p)
 
         if kind == "bpe_dropout":
-            raw_noise_fn = blt_utils.Noiser(self.tokenizer.hf_tokenizer, p_bpe_dropout=fn_p).noise_bpe_dropout
+            self._noiser = blt_utils.Noiser(self.tokenizer.hf_tokenizer, p_bpe_dropout=fn_p)
+            self._noise_fn_name = "noise_bpe_dropout"
         elif kind == "ctrl_char":
-            raw_noise_fn = blt_utils.Noiser(self.tokenizer.hf_tokenizer, p_ctrl_char=fn_p).noise_ctrl_char
+            self._noiser = blt_utils.Noiser(self.tokenizer.hf_tokenizer, p_ctrl_char=fn_p)
+            self._noise_fn_name = "noise_ctrl_char"
         else:
             raise ValueError(f"Unknown noise kind: {kind}")
 
-        self._raw_noise_fn = raw_noise_fn
         self._noise_p = p
 
     def reset_noise_fn(self):
-        self._raw_noise_fn = None
+        self._noiser = None
+        self._noise_fn_name = ""
         self._noise_p = None
 
     def _read_chunk_from_array(self, path: PathOrStr, index: int, dtype=None) -> torch.Tensor:
