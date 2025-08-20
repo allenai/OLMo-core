@@ -1068,6 +1068,7 @@ class BLTTransformer(Transformer):
         init_seed: int = 0,
         init_std: float = 0.02,
         block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None,
+        prepend_embedding_to_global: bool = False,
     ):
         # accessed in super() so we need a placeholder
         self.num_non_embedding_params = -1
@@ -1099,6 +1100,11 @@ class BLTTransformer(Transformer):
 
         self.local_encoder = local_encoder.build(vocab_size, d_global_model=d_model)
         self.local_decoder = local_decoder.build(vocab_size, d_global_model=d_model)
+
+        if prepend_embedding_to_global:
+            self.prepend_embedding = nn.Embedding(1, self.d_model, dtype=self.dtype)
+        else:
+            self.prepend_embedding = None
 
     def apply_fsdp(
         self,
@@ -1358,6 +1364,9 @@ class BLTTransformer(Transformer):
             if self.compile_enabled:
                 mark_dynamic(h_patch, (0, 1), strict=False)
             h_patch_global = block(h_patch_global, **block_kwargs)
+
+        if self.prepend_embedding is not None:
+            h_patch_global = h_patch_global[:, 1:]
 
         h_patch = h_patch_global.to(h_patch.dtype)
 
@@ -1832,9 +1841,10 @@ class BLTDistillTransformer(BLTTransformer):
     def _noise(
         self,
         input_ids,
+        labels,
         p,
         **kwargs: Dict[str, Any],
-    ) -> Dict[str, Any]:
+    ) -> tuple[torch.Tensor, Dict[str, Any], torch.Tensor]:
         if not hasattr(self, "_tokenizer"):
             # hardcode for now
             self._tokenizer = ByteTokenizerConfig.blt().build()
@@ -1869,7 +1879,7 @@ class BLTDistillTransformer(BLTTransformer):
             while len(noised_original_input_ids) < len(original_input_ids):
                 noised_original_input_ids.append(self._tokenizer.hf_tokenizer.pad_token_id)
 
-            _, noised_patch_lengths = self._tokenizer.get_tokens_and_patch_lengths(
+            noised_input_ids, noised_patch_lengths = self._tokenizer.get_tokens_and_patch_lengths(
                 noised_original_input_ids,
                 add_bos=True,
                 skip_last=True
@@ -1892,8 +1902,9 @@ class BLTDistillTransformer(BLTTransformer):
                 dtype=original_input_ids.dtype,
             )
             kwargs["patch_lens"][idx] = noised_patch_lengths  # type: ignore
+            labels[len(noised_input_ids):] = -100  # type: ignore 
 
-        return kwargs
+        return labels, kwargs, indices
 
     def forward(  # type: ignore[override]
         self,
@@ -1929,7 +1940,9 @@ class BLTDistillTransformer(BLTTransformer):
         use_oracle_patch_reps = blt_config.use_oracle_patch_reps
 
         if blt_config.p_boundary_noise > 0:
-            kwargs = self._noise(input_ids, p=blt_config.p_boundary_noise, **kwargs)
+            labels, kwargs, noised_indices = self._noise(input_ids, labels, p=blt_config.p_boundary_noise, **kwargs)
+        else:
+            noised_indices = None
 
         input_ids, labels, block_kwargs, lm_head_kwargs, local_encoder_kwargs, local_decoder_kwargs, extra_kwargs = self._prepare_inputs(
             input_ids,
@@ -2022,7 +2035,11 @@ class BLTDistillTransformer(BLTTransformer):
             else:
                 # need to start with the first token since <bos> token is not known to the global transformer
                 # and for consistency with the use_oracle_patch_reps=True case.
-                h_patch_global = h_patch[:, 1:]
+                if self.prepend_embedding is not None:
+                    h_patch_global = h_patch.clone()
+                    h_patch_global[:, 0] = self.prepend_embedding.weight.expand(h_patch.shape[0], -1)
+                else:
+                    h_patch_global = h_patch[:, 1:]
 
                 if self.blocks["0"].attention.use_flash:  # type: ignore
                     h_patch_global = h_patch_global.to(torch.bfloat16)
@@ -2032,6 +2049,9 @@ class BLTDistillTransformer(BLTTransformer):
                     if self.compile_enabled:
                         mark_dynamic(h_patch_global, (0, 1), strict=False)
                     h_patch_global = block(h_patch_global, **block_kwargs)
+
+                if self.prepend_embedding is not None:
+                    h_patch_global = h_patch_global[:, 1:]
 
                 h_patch_after_global = torch.zeros_like(h_patch)
                 h_patch_after_global[:, 1:] = h_patch_global.to(h_patch_after_global.dtype)
@@ -2068,9 +2088,6 @@ class BLTDistillTransformer(BLTTransformer):
             metrics["blt/ce_loss"] = ce_loss
         else:
             ce_loss = torch.nan
-
-        if blt_config is None:
-            raise ValueError("`blt_config` must be provided for distillation")
 
         if blt_config.rep_compare_fn == "l2":
             def l2_compare_fn(x, y):
@@ -2203,15 +2220,21 @@ class BLTDistillTransformer(BLTTransformer):
         if boundary_logprobs is not None:
             assert boundary_labels is not None
 
+            boundary_byte_mask = byte_mask.clone()
+            # shouldn't compute boundary loss over wrong boundaries
+            # slight inaccuracies here because the div factor is not adjusted accordingly
+            # but should not have a big impact (hopefully :) )
+            boundary_byte_mask[noised_indices] = False
+
             elementwise_boundary_loss = blt_utils.binary_cross_entropy_with_logprobs(
                 boundary_logprobs_for_loss,
                 boundary_labels,
             )
-            boundary_loss = (elementwise_boundary_loss * byte_mask).mean()
-            boundary_acc = ((boundary_mask == (boundary_labels > 0)) * byte_mask).float().mean()
-            metrics["blt/boundary_loss"] = boundary_loss / byte_mask.float().mean()
-            metrics["blt/boundary_acc"] = boundary_acc / byte_mask.float().mean()
-            metrics["blt/boundary_mean"] = (boundary_mask * byte_mask).float().mean() / byte_mask.float().mean()
+            boundary_loss = (elementwise_boundary_loss * boundary_byte_mask).mean()
+            boundary_acc = ((boundary_mask == (boundary_labels > 0)) * boundary_byte_mask).float().mean()
+            metrics["blt/boundary_loss"] = boundary_loss / boundary_byte_mask.float().mean()
+            metrics["blt/boundary_acc"] = boundary_acc / boundary_byte_mask.float().mean()
+            metrics["blt/boundary_mean"] = (boundary_mask * boundary_byte_mask).float().mean() / boundary_byte_mask.float().mean()
             metrics["blt/boundary_threshold"] = torch.where(
                 boundary_mask,
                 torch.exp(boundary_logprobs),
@@ -2293,7 +2316,12 @@ class BLTDistillTransformer(BLTTransformer):
             **local_encoder_kwargs
         )
 
-        h_patch_global = h_patch[:, 1:]  # skip the first token, which is <bos>
+        if self.prepend_embedding is not None:
+            h_patch_global = h_patch.clone()
+            h_patch_global[:, 0] = self.prepend_embedding.weight.expand(h_patch.shape[0], -1)
+        else:
+            h_patch_global = h_patch[:, 1:]  # skip the first token, which is <bos>
+
         h_patch_global = h_patch_global.to(self.dtype)
 
         for block in self.blocks.values():
@@ -2303,6 +2331,9 @@ class BLTDistillTransformer(BLTTransformer):
             h_patch_global = block(h_patch_global, **block_kwargs)
 
         h_patch_after_global = h_patch_global
+
+        if self.prepend_embedding is not None:
+            h_patch_after_global = h_patch_after_global[:, 1:]
 
         h_patch = torch.zeros_like(h_patch)
         h_patch[:, 1:] = h_patch_after_global
@@ -2342,6 +2373,9 @@ class BLTDistillTransformer(BLTTransformer):
         blt_config: Optional[BLTConfig] = None,
         **kwargs,
     ):
+        if self.prepend_embedding is not None:
+            raise NotImplementedError("`prepend_embedding` is not implemented for original_head_forward")
+
         input_ids, labels, block_kwargs, lm_head_kwargs, local_encoder_kwargs, local_decoder_kwargs, extra_kwargs = self._prepare_inputs(
             input_ids,
             labels,
@@ -2390,6 +2424,9 @@ class BLTDistillTransformer(BLTTransformer):
         blt_config: Optional[BLTConfig] = None,
         **kwargs,
     ):
+        if self.prepend_embedding is not None:
+            raise NotImplementedError("`prepend_embedding` is not implemented for original_head_forward")
+
         if blt_config is None:
             raise ValueError("`blt_config` must be provided for original_trunk_forward")
 
