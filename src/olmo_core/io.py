@@ -23,7 +23,12 @@ from cached_path.schemes import S3Client, SchemeClient, add_scheme_client
 from rich.progress import track
 
 from .aliases import PathOrStr
-from .exceptions import OLMoEnvironmentError, OLMoNetworkError, OLMoUploadError
+from .exceptions import (
+    OLMoEnvironmentError,
+    OLMoInvalidRangeRequestError,
+    OLMoNetworkError,
+    OLMoUploadError,
+)
 
 log = logging.getLogger(__name__)
 
@@ -895,6 +900,10 @@ def _s3_get_bytes_range(
     except ClientError as e:
         if e.response["ResponseMetadata"]["HTTPStatusCode"] == 404:
             raise FileNotFoundError(f"{scheme}://{bucket_name}/{key}") from e
+        elif e.response["Error"]["Code"] == "InvalidRange":
+            raise OLMoInvalidRangeRequestError(
+                f"Invalid range request to '{scheme}://{bucket_name}/{key}' ({bytes_start=}, {num_bytes=})"
+            )
         else:
             raise
 
