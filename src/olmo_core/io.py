@@ -23,7 +23,12 @@ from cached_path.schemes import S3Client, SchemeClient, add_scheme_client
 from rich.progress import track
 
 from .aliases import PathOrStr
-from .exceptions import OLMoEnvironmentError, OLMoNetworkError, OLMoUploadError
+from .exceptions import (
+    OLMoEnvironmentError,
+    OLMoInvalidRangeRequestError,
+    OLMoNetworkError,
+    OLMoUploadError,
+)
 
 log = logging.getLogger(__name__)
 
@@ -521,7 +526,7 @@ def _http_file_size(url: str) -> int:
 @retriable()
 def _http_get_bytes_range(url: str, bytes_start: int, num_bytes: int) -> bytes:
     response = requests.get(
-        url, headers={"Range": f"bytes={bytes_start}-{bytes_start+num_bytes-1}"}
+        url, headers={"Range": f"bytes={bytes_start}-{bytes_start + num_bytes - 1}"}
     )
     if response.status_code == 404:
         raise FileNotFoundError(url)
@@ -558,10 +563,9 @@ def _get_gcs_client():
 
 
 def _gcs_is_retriable(exc: Exception) -> bool:
-    from google.api_core.exceptions import BadRequest
+    from google.api_core.exceptions import BadRequest, GatewayTimeout
     from google.api_core.retry import if_transient_error
-    from google.api_core.exceptions import GatewayTimeout
-    
+
     return (
         if_transient_error(exc)
         or isinstance(exc, requests.exceptions.Timeout)
@@ -818,7 +822,11 @@ def _s3_get_bytes_range(
         )
     except ClientError as e:
         if e.response["ResponseMetadata"]["HTTPStatusCode"] == 404:
-            raise FileNotFoundError(f"s3://{bucket_name}/{key}") from e
+            raise FileNotFoundError(f"{scheme}://{bucket_name}/{key}") from e
+        elif e.response["Error"]["Code"] == "InvalidRange":
+            raise OLMoInvalidRangeRequestError(
+                f"Invalid range request to '{scheme}://{bucket_name}/{key}' ({bytes_start=}, {num_bytes=})"
+            )
         else:
             raise
 
@@ -962,6 +970,6 @@ class _WekaClient(SchemeClient):
 
     def get_bytes_range(self, index: int, length: int) -> bytes:
         response = self.s3.get_object(
-            Bucket=self.bucket_name, Key=self.path, Range=f"bytes={index}-{index+length-1}"
+            Bucket=self.bucket_name, Key=self.path, Range=f"bytes={index}-{index + length - 1}"
         )
         return response["Body"].read()
