@@ -261,24 +261,30 @@ class TransformerTrainModule(TrainModule):
                 optim = True
 
         load_opts = self.state_dict_load_opts
-        if "optim.param_groups.0.params" in metadata.state_dict_metadata:
-            # unflattened optimizer state
-            if load_opts.flatten_optimizer_state_dict:
-                log.warning(
-                    "Loading checkpoint with an unflattened optimizer state even though "
-                    "'flatten_optimizer_state_dict=True' in train module's 'state_dict_load_opts', "
-                    "automatically switching to 'flatten_optimizer_state_dict=False'."
+        if optim:
+            if not has_optim_state:
+                raise RuntimeError(
+                    "Checkpoint does not contain optimizer state, but 'optim=True' was requested"
                 )
-                load_opts = replace(load_opts, flatten_optimizer_state_dict=False)
-        else:
-            # flattened optimizer state
-            if not load_opts.flatten_optimizer_state_dict:
-                log.warning(
-                    "Loading checkpoint with a flattened optimizer state even though "
-                    "'flatten_optimizer_state_dict=False' in train module's 'state_dict_load_opts', "
-                    "automatically switching to 'flatten_optimizer_state_dict=True'."
-                )
-                load_opts = replace(load_opts, flatten_optimizer_state_dict=True)
+
+            if "optim.param_groups.0.params" in metadata.state_dict_metadata:
+                # unflattened optimizer state
+                if load_opts.flatten_optimizer_state_dict:
+                    log.warning(
+                        "Loading checkpoint with an unflattened optimizer state even though "
+                        "'flatten_optimizer_state_dict=True' in train module's 'state_dict_load_opts', "
+                        "automatically switching to 'flatten_optimizer_state_dict=False'."
+                    )
+                    load_opts = replace(load_opts, flatten_optimizer_state_dict=False)
+            else:
+                # flattened optimizer state
+                if not load_opts.flatten_optimizer_state_dict:
+                    log.warning(
+                        "Loading checkpoint with a flattened optimizer state even though "
+                        "'flatten_optimizer_state_dict=False' in train module's 'state_dict_load_opts', "
+                        "automatically switching to 'flatten_optimizer_state_dict=True'."
+                    )
+                    load_opts = replace(load_opts, flatten_optimizer_state_dict=True)
 
         state_dict = self._get_state_dict(load_opts, optim=optim)
         if self.load_key_mapping is not None:
