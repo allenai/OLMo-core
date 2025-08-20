@@ -1725,7 +1725,7 @@ class BLTDistillTransformer(BLTTransformer):
         input_ids,
         p,
         **kwargs: Dict[str, Any],
-    ) -> Dict[str, Any]:
+    ) -> tuple[Dict[str, Any], torch.Tensor]:
         if not hasattr(self, "_tokenizer"):
             # hardcode for now
             self._tokenizer = ByteTokenizerConfig.blt().build()
@@ -1760,7 +1760,7 @@ class BLTDistillTransformer(BLTTransformer):
             while len(noised_original_input_ids) < len(original_input_ids):
                 noised_original_input_ids.append(self._tokenizer.hf_tokenizer.pad_token_id)
 
-            _, noised_patch_lengths = self._tokenizer.get_tokens_and_patch_lengths(
+            noised_input_ids, noised_patch_lengths = self._tokenizer.get_tokens_and_patch_lengths(
                 noised_original_input_ids,
                 add_bos=True,
                 skip_last=True
@@ -1783,8 +1783,11 @@ class BLTDistillTransformer(BLTTransformer):
                 dtype=original_input_ids.dtype,
             )
             kwargs["patch_lens"][idx] = noised_patch_lengths  # type: ignore
+            kwargs["attention_mask"][idx][:len(noised_input_ids)] = 1  # type: ignore
+            kwargs["attention_mask"][idx][len(noised_input_ids):] = 0  # type: ignore
+            kwargs["labels"][len(noised_input_ids):] = -100  # type: ignore 
 
-        return kwargs
+        return kwargs, indices
 
     def forward(  # type: ignore[override]
         self,
@@ -1808,7 +1811,9 @@ class BLTDistillTransformer(BLTTransformer):
         use_oracle_patch_reps = blt_config.use_oracle_patch_reps
 
         if blt_config.p_boundary_noise > 0:
-            kwargs = self._noise(input_ids, p=blt_config.p_boundary_noise, **kwargs)
+            kwargs, noised_indices = self._noise(input_ids, p=blt_config.p_boundary_noise, **kwargs)
+        else:
+            noised_indices = None
 
         input_ids, labels, block_kwargs, lm_head_kwargs, local_encoder_kwargs, local_decoder_kwargs, extra_kwargs = self._prepare_inputs(
             input_ids,
@@ -1942,9 +1947,6 @@ class BLTDistillTransformer(BLTTransformer):
         else:
             ce_loss = torch.nan
 
-        if blt_config is None:
-            raise ValueError("`blt_config` must be provided for distillation")
-
         if blt_config.rep_compare_fn == "l2":
             def l2_compare_fn(x, y):
                 return torch.linalg.norm(x - y, dim=-1) / math.sqrt(x.shape[-1])
@@ -2076,15 +2078,21 @@ class BLTDistillTransformer(BLTTransformer):
         if boundary_logprobs is not None:
             assert boundary_labels is not None
 
+            boundary_byte_mask = byte_mask.clone()
+            # shouldn't compute boundary loss over wrong boundaries
+            # slight inaccuracies here because the div factor is not adjusted accordingly
+            # but should not have a big impact (hopefully :) )
+            boundary_byte_mask[noised_indices] = False
+
             elementwise_boundary_loss = blt_utils.binary_cross_entropy_with_logprobs(
                 boundary_logprobs_for_loss,
                 boundary_labels,
             )
-            boundary_loss = (elementwise_boundary_loss * byte_mask).mean()
-            boundary_acc = ((boundary_mask == (boundary_labels > 0)) * byte_mask).float().mean()
-            metrics["blt/boundary_loss"] = boundary_loss / byte_mask.float().mean()
-            metrics["blt/boundary_acc"] = boundary_acc / byte_mask.float().mean()
-            metrics["blt/boundary_mean"] = (boundary_mask * byte_mask).float().mean() / byte_mask.float().mean()
+            boundary_loss = (elementwise_boundary_loss * boundary_byte_mask).mean()
+            boundary_acc = ((boundary_mask == (boundary_labels > 0)) * boundary_byte_mask).float().mean()
+            metrics["blt/boundary_loss"] = boundary_loss / boundary_byte_mask.float().mean()
+            metrics["blt/boundary_acc"] = boundary_acc / boundary_byte_mask.float().mean()
+            metrics["blt/boundary_mean"] = (boundary_mask * boundary_byte_mask).float().mean() / boundary_byte_mask.float().mean()
             metrics["blt/boundary_threshold"] = torch.where(
                 boundary_mask,
                 torch.exp(boundary_logprobs),
