@@ -121,6 +121,12 @@ class TrainModule(Stateful, metaclass=ABCMeta):
         Runs as soon as the :class:`~olmo_core.train.Trainer` has been attached.
         """
 
+    def pre_train(self):
+        """
+        Runs before the training loop starts and right after ``pre_train()`` has been called on all
+        callbacks.
+        """
+
     @abstractmethod
     def state_dict(self, *, optim: bool = True) -> Dict[str, Any]:
         """

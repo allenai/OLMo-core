@@ -282,7 +282,12 @@ class AttentionBase(nn.Module):
         raise NotImplementedError
 
     @abstractmethod
-    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType):
+    def apply_cp(
+        self,
+        cp_mesh: DeviceMesh,
+        load_balancer: RingAttentionLoadBalancerType,
+        head_stride: int = 1,
+    ):
         raise NotImplementedError
 
 
@@ -382,9 +387,30 @@ class Attention(AttentionBase):
                 )
             if window_size <= 0:
                 raise OLMoConfigurationError(f"'window_size' must be positive (got {window_size})")
-            self.window_size = (window_size, 0)
+            # Flash attn window is [i - window_size[0], i + window_size[1]] inclusive
+            self.window_size = (window_size - 1, 0)
         else:
             self.window_size = (-1, -1)
+
+        self.rope: Optional[Union[RotaryEmbedding, ComplexRotaryEmbedding]] = None
+        if rope is not None:
+            if rope.name == "fused":
+                raise OLMoConfigurationError(
+                    f"fused RoPE is not compatible with {self.__class__.__name__}"
+                )
+
+            # On layers with sliding windows, we don't do rope extension.
+            uses_full_attention = self.window_size == (-1, -1)
+            uses_sliding_window = not uses_full_attention
+            if uses_sliding_window and rope.scaling is not None:
+                rope = rope.replace(scaling=None)
+            assert not (uses_sliding_window and rope.scaling is not None)
+
+            rope_class = rope.build(self.head_dim, cache=cache)
+            assert isinstance(rope_class, (RotaryEmbedding, ComplexRotaryEmbedding))
+            self.rope = rope_class
+
+        self.use_flash = use_flash
 
         self._cp_pg: Optional[dist.ProcessGroup] = None
         self._cp_enabled = False
@@ -432,7 +458,7 @@ class Attention(AttentionBase):
                 max_seqlen=max_doc_len,
                 max_seqlen_q=max_doc_len_q,
                 max_seqlen_k=max_doc_len_k,
-                heads_k_stride=1,  # TODO: should this ever not be 1?
+                heads_k_stride=self._cp_head_stride,
                 local_k_slice=local_k_slice,
                 dropout_p=self.dropout_p,
                 causal=True,
@@ -612,9 +638,9 @@ class Attention(AttentionBase):
                 q, k, head_first=False, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis
             )
 
-        assert (
-            not self.use_flex_attn or block_mask is not None
-        ), "Block mask cannot be null for flex attention layer"
+        assert not self.use_flex_attn or block_mask is not None, (
+            "Block mask cannot be null for flex attention layer"
+        )
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
         att = self.sdpa(
@@ -682,7 +708,12 @@ class Attention(AttentionBase):
             parallelize_plan=plan,
         )
 
-    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType):
+    def apply_cp(
+        self,
+        cp_mesh: DeviceMesh,
+        load_balancer: RingAttentionLoadBalancerType,
+        head_stride: int = 1,
+    ):
         """
         Prepare the module for context-parallelism (ring attention).
 
@@ -695,6 +726,7 @@ class Attention(AttentionBase):
         self._cp_pg = cp_mesh.get_group()
         self._cp_load_balancer = load_balancer
         self._cp_enabled = True
+        self._cp_head_stride = head_stride
 
 
 @beta_feature
@@ -988,10 +1020,16 @@ class FusedAttention(AttentionBase):
 
         raise NotImplementedError("TP is not implemented yet for the fused attention variant")
 
-    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType):
+    def apply_cp(
+        self,
+        cp_mesh: DeviceMesh,
+        load_balancer: RingAttentionLoadBalancerType,
+        head_stride: int = 1,
+    ):
         self._cp_pg = cp_mesh.get_group()
         self._cp_load_balancer = load_balancer
         self._cp_enabled = True
+        self._cp_head_stride = head_stride
 
 
 def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:

@@ -14,7 +14,7 @@ from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor, distribute_tensor
 
 from ..exceptions import OLMoEnvironmentError
-from ..utils import logging_configured, move_to_device, set_env_var
+from ..utils import log_or_print, move_to_device, set_env_var
 
 OLMO_SHARED_FS_ENV_VAR = "OLMO_SHARED_FS"
 OLMO_FS_LOCAL_RANK_ENV_VAR = "FS_LOCAL_RANK"
@@ -42,16 +42,19 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
 
     # Set host-specific env var defaults.
     if _running_in_beaker():
+        node_name = get_node_hostname()
+        log_or_print(log, f"Running in beaker on node '{node_name}'")
         multi_node = int(os.environ.get(OLMO_NUM_NODES_ENV_VAR, "1")) > 1
+
         # See https://beaker-docs.apps.allenai.org/experiments/distributed-training.html
-        if "jupiter" in get_node_hostname():
+        if "jupiter" in node_name:
             set_env_var("NCCL_IB_HCA", "^=mlx5_bond_0")
             if multi_node:
                 # Only for multi-node
                 set_env_var("NCCL_SOCKET_IFNAME", "ib")
-        elif "pluto" in get_node_hostname():
+        elif "pluto" in node_name:
             set_env_var("NCCL_IB_HCA", "^=mlx5_1,mlx5_2")
-        elif "augusta" in get_node_hostname():
+        elif "augusta" in node_name:
             # NOTE: For single-node training we still need all of these settings and we also
             # need host networking enabled so that the ethernet interface names don't change.
             set_env_var("NCCL_CROSS_NIC", "0")
@@ -106,15 +109,12 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
 
     validate_env_vars()
 
-    msg = (
+    log_or_print(
+        log,
         f"Global rank {get_rank()} "
         f"= local rank {get_local_rank()} "
-        f"= file system local rank {get_fs_local_rank()}"
+        f"= file system local rank {get_fs_local_rank()}",
     )
-    if logging_configured():
-        log.warning(msg)
-    else:
-        print(msg)
 
 
 def validate_env_vars():
