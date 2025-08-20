@@ -250,6 +250,7 @@ def build_config(
     train_module_config_builder: Callable[[CommonComponents], TransformerTrainModuleConfig],
     trainer_config_builder: Callable[[CommonComponents], TrainerConfig],
     finalize_config: Optional[Callable[[ExperimentConfig], None]] = None,
+    init_seed: int = 12536,
     **kwargs,
 ) -> ExperimentConfig:
     common = build_common_components(script, cmd, run_name, cluster, overrides, **kwargs)
@@ -269,6 +270,7 @@ def build_config(
         data_loader=common.data_loader,
         train_module=train_module_config_builder(common),
         trainer=trainer,
+        init_seed=init_seed,
     )
 
     config = config.merge(overrides)
