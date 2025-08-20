@@ -80,7 +80,6 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             ],
             compile=False,
             step_increment_bugfix=False,
-            foreach=False,
         ),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
