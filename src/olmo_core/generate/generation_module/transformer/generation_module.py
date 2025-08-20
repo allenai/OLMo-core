@@ -9,7 +9,6 @@ import torch
 import torch.distributed as dist
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 from cached_path import cached_path
-from rich import print
 from torch.distributed import DeviceMesh, ProcessGroup
 from torch.distributed.checkpoint.metadata import Metadata
 from tqdm import tqdm
@@ -25,7 +24,6 @@ from olmo_core.distributed.utils import (
     get_rank,
     get_world_size,
     is_distributed,
-    scatter_object,
 )
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
@@ -39,7 +37,7 @@ from olmo_core.train.train_module.transformer.common import parallelize_model
 from olmo_core.train.train_module.transformer.config import (
     TransformerDataParallelConfig,
 )
-from olmo_core.utils import get_default_device, move_to_device
+from olmo_core.utils import get_default_device, log_or_print, move_to_device
 
 from ..generation_module import GenerationModule
 
@@ -69,9 +67,9 @@ class TransformerGenerationModule(GenerationModule):
         # Verify H100 GPU
         assert self.device.type == "cuda", f"Expected CUDA device, got {self.device.type}"
         device_name = torch.cuda.get_device_name(self.device)
-        assert (
-            "H100" in device_name
-        ), f"Expected H100 GPU, but got {device_name}. Flash attention w/ kv caching is not verified to work on non-Hopper GPUs."
+        assert "H100" in device_name, (
+            f"Expected H100 GPU, but got {device_name}. Flash attention w/ kv caching is not verified to work on non-Hopper GPUs."
+        )
 
         self.world_mesh: Optional[DeviceMesh] = None
         if is_distributed():
@@ -302,17 +300,17 @@ class TransformerGenerationModule(GenerationModule):
         if return_logits and all_logits:
             logits = torch.cat(all_logits, dim=1)  # (batch_size, completion_length, vocab_size)
             expected_logits = generated.shape[1] - prompt_len
-            assert (
-                logits.shape[1] == expected_logits
-            ), f"Number of logits ({logits.shape[1]}) does not match number of newly generated tokens ({expected_logits})"
+            assert logits.shape[1] == expected_logits, (
+                f"Number of logits ({logits.shape[1]}) does not match number of newly generated tokens ({expected_logits})"
+            )
 
         logprobs = None
         if return_logprobs and all_logprobs:
             logprobs = torch.cat(all_logprobs, dim=1)  # (batch_size, completion_length)
             expected_logprobs = generated.shape[1] - prompt_len
-            assert (
-                logprobs.shape[1] == expected_logprobs
-            ), f"Number of logprobs ({logprobs.shape[1]}) does not match number of newly generated tokens ({expected_logprobs})"
+            assert logprobs.shape[1] == expected_logprobs, (
+                f"Number of logprobs ({logprobs.shape[1]}) does not match number of newly generated tokens ({expected_logprobs})"
+            )
 
         if completions_only:
             generated = generated[:, prompt_len:]
@@ -326,37 +324,45 @@ class TransformerGenerationModule(GenerationModule):
             tokens_per_sec_per_seq = tokens_generated / total_time
 
             # Main generation stats
-            print(f"\n{'=' * 60}\nGENERATION STATISTICS\n")
-            print(f"  Batch size: {batch_size:,} | Prompt length: {prompt_len:,} tokens")
-            print(
-                f"  Tokens generated: {tokens_generated:,} per sequence | Total: {total_tokens:,}"
+            log_or_print(log, f"\n{'=' * 60}\nGENERATION STATISTICS")
+            log_or_print(
+                log, f"  Batch size: {batch_size:,} | Prompt length: {prompt_len:,} tokens"
             )
-            print(f"  Sequence length: {prompt_len:,} → {prompt_len + tokens_generated:,}")
-            print(f"  Total generation time: {total_time:.3f}s")
+            log_or_print(
+                log,
+                f"  Tokens generated: {tokens_generated:,} per sequence | Total: {total_tokens:,}",
+            )
+            log_or_print(
+                log, f"  Sequence length: {prompt_len:,} → {prompt_len + tokens_generated:,}"
+            )
+            log_or_print(log, f"  Total generation time: {total_time:.3f}s")
             # Calculate prefill and completion throughput
             prefill_tokens_total = prompt_len * batch_size
             completion_tokens_total = tokens_generated * batch_size
 
-            print("  Throughput:")
-            print(
-                f"    Overall: {tokens_per_sec_total:.1f} tokens/s (total) | {tokens_per_sec_per_seq:.1f} tokens/s (per seq)"
+            log_or_print(log, "  Throughput:")
+            log_or_print(
+                log,
+                f"    Overall:  {tokens_per_sec_total:.1f} tokens/s (total) | {tokens_per_sec_per_seq:.1f} tokens/s (per seq)",
             )
 
             if prefill_time is not None and prefill_time > 0:
                 prefill_throughput_total = prefill_tokens_total / prefill_time
                 prefill_throughput_per_seq = prompt_len / prefill_time
-                print(
-                    f"    Prefill: {prefill_throughput_total:.1f} tokens/s (total) | {prefill_throughput_per_seq:.1f} tokens/s (per seq)"
+                log_or_print(
+                    log,
+                    f"    Prefill: {prefill_throughput_total:.1f} tokens/s (total) | {prefill_throughput_per_seq:.1f} tokens/s (per seq)",
                 )
 
             completion_time = total_time - (prefill_time or 0) - (kv_cache_init_time or 0)
             if completion_time > 0 and tokens_generated > 0:
                 completion_throughput_total = completion_tokens_total / completion_time
                 completion_throughput_per_seq = tokens_generated / completion_time
-                print(
-                    f"    Completion: {completion_throughput_total:.1f} tokens/s (total) | {completion_throughput_per_seq:.1f} tokens/s (per seq)"
+                log_or_print(
+                    log,
+                    f"    Completion: {completion_throughput_total:.1f} tokens/s (total) | {completion_throughput_per_seq:.1f} tokens/s (per seq)",
                 )
-            print(f"{'=' * 60}\n")
+            log_or_print(log, f"{'=' * 60}")
 
         return generated, logits, logprobs
 
@@ -395,9 +401,11 @@ class TransformerGenerationModule(GenerationModule):
             except FileNotFoundError:
                 # Try base directory, which could be the case if user is trying to
                 # load model weights and not an actual train checkpoint.
-                log.warning(
+                log_or_print(
+                    log,
                     f"Checkpoint metadata not found in '{train_module_dir}', "
-                    f"trying base directory '{checkpoint_dir}'"
+                    f"trying base directory '{checkpoint_dir}'",
+                    level=logging.WARNING,
                 )
                 metadata = get_checkpoint_metadata(checkpoint_dir)
                 train_module_dir = checkpoint_dir
@@ -501,7 +509,7 @@ class TransformerGenerationModule(GenerationModule):
                 pad_token_id=tokenizer_config.pad_token_id,
                 eos_token_id=tokenizer_config.eos_token_id,
             )
-            log.info(
+            log_or_print(
                 f"No generation config provided, using defaults from checkpoint config: {generation_config}",
             )
 
@@ -511,8 +519,9 @@ class TransformerGenerationModule(GenerationModule):
             transformer_config.apply(
                 lambda c: setattr(c, "dtype", dtype) if hasattr(c, "dtype") else None
             )
-        print(transformer_config)
-        print(generation_config)
+
+        log_or_print(transformer_config)
+        log_or_print(generation_config)
         model = transformer_config.build()
         generation_module = cls(model, generation_config, **kwargs)
 

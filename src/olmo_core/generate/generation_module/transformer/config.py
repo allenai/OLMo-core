@@ -27,8 +27,7 @@ class TransformerGenerationModuleConfig(Config):
     """
 
     # Generation settings.
-    generation_config: GenerationConfig
-
+    generation_config: GenerationConfigs
     # Model settings.
     compile_model: bool = False
     float8_config: Optional[Float8Config] = None
@@ -78,7 +77,7 @@ class TransformerGenerationModuleConfig(Config):
             config_dict["state_dict_load_opts"] = dist_cp_sd.StateDictOptions(
                 **state_dict_load_opts
             )
-        print(config_dict)
+        log_or_print(config_dict)
 
         return TransformerGenerationModule.from_checkpoint(
             checkpoint_dir=checkpoint_dir,
