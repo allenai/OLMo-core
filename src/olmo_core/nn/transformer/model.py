@@ -1036,6 +1036,7 @@ class BLTTransformer(Transformer):
         init_seed: int = 0,
         init_std: float = 0.02,
         block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None,
+        prepend_embedding_to_global: bool = False,
     ):
         # accessed in super() so we need a placeholder
         self.num_non_embedding_params = -1
@@ -1067,6 +1068,11 @@ class BLTTransformer(Transformer):
 
         self.local_encoder = local_encoder.build(vocab_size, d_global_model=d_model)
         self.local_decoder = local_decoder.build(vocab_size, d_global_model=d_model)
+
+        if prepend_embedding_to_global:
+            self.prepend_embedding = nn.Embedding(1, self.d_model, dtype=self.dtype)
+        else:
+            self.prepend_embedding = None
 
     def apply_fsdp(
         self,
@@ -1314,12 +1320,21 @@ class BLTTransformer(Transformer):
         # TEMP DEBUG
         h_patch_global = h_patch.to(torch.bfloat16)
 
+        if self.prepend_embedding is not None:
+            h_patch_global = torch.cat([
+                self.prepend_embedding.weight.unsqueeze(0).expand(h_patch_global.shape[0], -1, -1),
+                h_patch_global,
+            ], dim=1)
+
         # Run each block.
         for block in self.blocks.values():
             # Mark sizes as dynamic for torch.compile().
             if self.compile_enabled:
                 mark_dynamic(h_patch, (0, 1), strict=False)
             h_patch_global = block(h_patch_global, **block_kwargs)
+
+        if self.prepend_embedding is not None:
+            h_patch_global = h_patch_global[:, 1:]
 
         h_patch = h_patch_global.to(h_patch.dtype)
 
@@ -1903,7 +1918,11 @@ class BLTDistillTransformer(BLTTransformer):
             else:
                 # need to start with the first token since <bos> token is not known to the global transformer
                 # and for consistency with the use_oracle_patch_reps=True case.
-                h_patch_global = h_patch[:, 1:]
+                if self.prepend_embedding is not None:
+                    h_patch_global = h_patch.clone()
+                    h_patch_global[:, 0] = self.prepend_embedding.weight.expand(h_patch.shape[0], -1)
+                else:
+                    h_patch_global = h_patch[:, 1:]
 
                 for block in self.blocks.values():
                     # Mark sizes as dynamic for torch.compile().
@@ -1911,7 +1930,10 @@ class BLTDistillTransformer(BLTTransformer):
                         mark_dynamic(h_patch_global, (0, 1), strict=False)
                     h_patch_global = block(h_patch_global, **block_kwargs)
 
-                h_patch_after_global = torch.zeros_like(h_patch)
+                if self.prepend_embedding is not None:
+                    h_patch_global = h_patch_global[:, 1:]
+
+                h_patch_after_global = torch.zeros_like(h_patch_global)
                 h_patch_after_global[:, 1:] = h_patch_global
 
             if blt_config.decoder_backprop_through_encoder:
@@ -2173,7 +2195,11 @@ class BLTDistillTransformer(BLTTransformer):
             **local_encoder_kwargs
         )
 
-        h_patch_global = h_patch[:, 1:]  # skip the first token, which is <bos>
+        if self.prepend_embedding is not None:
+            h_patch_global = h_patch.clone()
+            h_patch_global[:, 0] = self.prepend_embedding.weight.expand(h_patch.shape[0], -1)
+        else:
+            h_patch_global = h_patch[:, 1:]  # skip the first token, which is <bos>
 
         for block in self.blocks.values():
             # Mark sizes as dynamic for torch.compile().
@@ -2182,6 +2208,9 @@ class BLTDistillTransformer(BLTTransformer):
             h_patch_global = block(h_patch_global, **block_kwargs)
 
         h_patch_after_global = h_patch_global
+
+        if self.prepend_embedding is not None:
+            h_patch_after_global = h_patch_after_global[:, 1:]
 
         h_patch = torch.zeros_like(h_patch)
         h_patch[:, 1:] = h_patch_after_global
@@ -2220,6 +2249,9 @@ class BLTDistillTransformer(BLTTransformer):
         blt_config: Optional[BLTConfig] = None,
         **kwargs,
     ):
+        if self.prepend_embedding is not None:
+            raise NotImplementedError("`prepend_embedding` is not implemented for original_head_forward")
+
         input_ids, labels, block_kwargs, lm_head_kwargs, local_encoder_kwargs, local_decoder_kwargs, extra_kwargs = self._prepare_inputs(
             input_ids,
             labels,
@@ -2268,6 +2300,9 @@ class BLTDistillTransformer(BLTTransformer):
         blt_config: Optional[BLTConfig] = None,
         **kwargs,
     ):
+        if self.prepend_embedding is not None:
+            raise NotImplementedError("`prepend_embedding` is not implemented for original_head_forward")
+
         if blt_config is None:
             raise ValueError("`blt_config` must be provided for original_trunk_forward")
 

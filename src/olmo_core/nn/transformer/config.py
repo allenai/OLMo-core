@@ -280,6 +280,7 @@ class TransformerConfig(Config):
     # BLT config
     local_encoder: Optional[LocalEncoderConfig] = None
     local_decoder: Optional[LocalDecoderConfig] = None
+    prepend_embedding_to_global: bool = False
     # teacher config for distillation
     teacher_config: "TransformerConfig | None" = None
     share_blocks_between_teacher_and_student: bool = False
@@ -360,10 +361,13 @@ class TransformerConfig(Config):
                     "teacher": self.teacher_config.build(init_device=init_device),
                     "share_blocks": self.share_blocks_between_teacher_and_student,
                     "use_teacher_embs_with_vocab_size": self.use_teacher_embs_with_vocab_size,
+                    "prepend_embedding_to_global": self.prepend_embedding_to_global,
                 }
             else:
                 cls = BLTTransformer
-                kwargs = {}
+                kwargs = {
+                    "prepend_embedding_to_global": self.prepend_embedding_to_global,
+                }
 
             model = cls(
                 d_model=self.d_model,
