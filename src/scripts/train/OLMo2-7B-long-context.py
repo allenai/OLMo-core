@@ -13,11 +13,12 @@ from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
 from olmo_core.train import LoadStrategy, TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
 from olmo_core.train.train_module import (
-    TransformerContextParallelConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
+from olmo_core.train.train_module.transformer.config import TransformerTensorParallelConfig
+
 
 log = logging.getLogger(__name__)
 
@@ -58,11 +59,14 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
+            shard_degree=8,
         ),
-        cp_config=None,
         float8_config=Float8Config(enabled=False),
         max_grad_norm=1.0,
         scheduler=CosWithWarmup(warmup_steps=2000),
+        tp_config=TransformerTensorParallelConfig(
+            degree=4,
+        )
     )
 
 
