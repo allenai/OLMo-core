@@ -688,7 +688,22 @@ class NumpyByteFSLDataset(NumpyFSLDataset):
 
             self.constituent_map[token_id] = constituents
 
-        self.noise_fn = lambda x: x
+        self._raw_noise_fn = None
+        self._noise_p = None
+
+    def noise_fn(self, x: torch.Tensor) -> torch.Tensor:
+        if self._raw_noise_fn is None or self._noise_p is None:
+            return x
+
+        if random.random() < self._noise_p:
+            noised_x = self._raw_noise_fn(x)[:len(x)]
+            # typically at least as long as x, but could be shorter in an edge case?
+            while len(noised_x) < len(x):
+                noised_x.append(self.tokenizer.hf_tokenizer.pad_token_id)
+
+            return torch.tensor(noised_x, dtype=x.dtype, device=x.device)
+        else:
+            return x
 
     def set_noise_fn(self, noise_str: str):
         kind, p, fn_p = noise_str.split(":")
@@ -702,21 +717,12 @@ class NumpyByteFSLDataset(NumpyFSLDataset):
         else:
             raise ValueError(f"Unknown noise kind: {kind}")
 
-        def _noise_fn(x: torch.Tensor) -> torch.Tensor:
-            if random.random() < p:
-                noised_x = raw_noise_fn(x)[:len(x)]
-                # typically at least as long as x, but could be shorter in an edge case?
-                while len(noised_x) < len(x):
-                    noised_x.append(self.tokenizer.hf_tokenizer.pad_token_id)
-
-                return torch.tensor(noised_x, dtype=x.dtype, device=x.device)
-            else:
-                return x
-
-        self.noise_fn = _noise_fn
+        self._raw_noise_fn = raw_noise_fn
+        self._noise_p = p
 
     def reset_noise_fn(self):
-        self.noise_fn = lambda x: x
+        self._raw_noise_fn = None
+        self._noise_p = None
 
     def _read_chunk_from_array(self, path: PathOrStr, index: int, dtype=None) -> torch.Tensor:
         start_idx = index * self.patch_sequence_length # patch <-> sub/superword sequence length
