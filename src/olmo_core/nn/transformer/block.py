@@ -65,7 +65,12 @@ class TransformerBlockBase(nn.Module):
         raise NotImplementedError
 
     @abstractmethod
-    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType):
+    def apply_cp(
+        self,
+        cp_mesh: DeviceMesh,
+        load_balancer: RingAttentionLoadBalancerType,
+        head_stride: int = 1,
+    ):
         raise NotImplementedError
 
     def apply_compile(self):
@@ -167,8 +172,13 @@ class TransformerBlock(TransformerBlockBase):
 
         parallelize_module(self.dropout, device_mesh=tp_mesh, parallelize_plan=SequenceParallel())
 
-    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType):
-        self.attention.apply_cp(cp_mesh, load_balancer)
+    def apply_cp(
+        self,
+        cp_mesh: DeviceMesh,
+        load_balancer: RingAttentionLoadBalancerType,
+        head_stride: int = 1,
+    ):
+        self.attention.apply_cp(cp_mesh, load_balancer, head_stride=head_stride)
 
     def apply_fsdp(
         self,
@@ -286,8 +296,13 @@ class NormalizedTransformerBlock(TransformerBlockBase):
             "TP is not implemented yet for the normalized transformer block variant"
         )
 
-    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType):
-        self.attention.apply_cp(cp_mesh, load_balancer)
+    def apply_cp(
+        self,
+        cp_mesh: DeviceMesh,
+        load_balancer: RingAttentionLoadBalancerType,
+        head_stride: int = 1,
+    ):
+        self.attention.apply_cp(cp_mesh, load_balancer, head_stride=head_stride)
 
     def apply_fsdp(
         self,
@@ -459,8 +474,13 @@ class MoETransformerBlock(TransformerBlockBase):
 
         self._tp_enabled = True
 
-    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType):
-        self.attention.apply_cp(cp_mesh, load_balancer)
+    def apply_cp(
+        self,
+        cp_mesh: DeviceMesh,
+        load_balancer: RingAttentionLoadBalancerType,
+        head_stride: int = 1,
+    ):
+        self.attention.apply_cp(cp_mesh, load_balancer, head_stride=head_stride)
         self.feed_forward_moe.apply_cp(cp_mesh)
 
     def apply_fsdp(
@@ -629,6 +649,18 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
         wrapping_strategy: TransformerDataParallelWrappingStrategy = TransformerDataParallelWrappingStrategy.full,
         **fsdp_kwargs,
     ):
+        from torch.distributed.fsdp import MixedPrecisionPolicy
+
+        # Force router to be full-precision.
+        fsdp_router = cast(
+            FSDPModule,
+            fully_shard(
+                self.feed_forward_moe.router,
+                mesh=dp_mesh,
+                mp_policy=MixedPrecisionPolicy(param_dtype=torch.float32),
+            ),
+        )
+
         if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
             if not self.use_combined_forward:
                 fsdp_att = cast(
@@ -642,7 +674,7 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
                 )
                 fsdp_root = cast(FSDPModule, fully_shard(self, mesh=dp_mesh, **fsdp_kwargs))
                 if prefetch_factor > 0:
-                    fsdp_root.set_modules_to_forward_prefetch([fsdp_moe, fsdp_att])
+                    fsdp_root.set_modules_to_forward_prefetch([fsdp_router, fsdp_moe, fsdp_att])
                     fsdp_att.set_modules_to_forward_prefetch([fsdp_mlp])
             else:
                 fsdp_att = cast(
@@ -651,10 +683,10 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
                 fsdp_mlp = cast(
                     FSDPModule, fully_shard(self.feed_forward, mesh=dp_mesh, **fsdp_kwargs)
                 )
-                fsdp_moe = cast(
-                    FSDPModule,
-                    fully_shard(self.feed_forward_moe.experts.mlp, mesh=dp_mesh, **fsdp_kwargs),
-                )
+                #  fsdp_moe = cast(
+                #      FSDPModule,
+                #      fully_shard(self.feed_forward_moe.experts.mlp, mesh=dp_mesh, **fsdp_kwargs),
+                #  )
                 fsdp_shared_mlp = (
                     None
                     if self.feed_forward_moe.shared_mlp is None
@@ -666,7 +698,8 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
                 fsdp_root = cast(FSDPModule, fully_shard(self, mesh=dp_mesh, **fsdp_kwargs))
 
                 if prefetch_factor > 0:
-                    fsdp_root.set_modules_to_forward_prefetch([fsdp_att, fsdp_moe])
+                    #  fsdp_root.set_modules_to_forward_prefetch([fsdp_att, fsdp_moe])
+                    fsdp_root.set_modules_to_forward_prefetch([fsdp_att, fsdp_router])
                     if fsdp_shared_mlp is not None:
                         fsdp_att.set_modules_to_forward_prefetch([fsdp_mlp, fsdp_shared_mlp])
                     else:

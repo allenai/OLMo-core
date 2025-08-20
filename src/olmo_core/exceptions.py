@@ -4,6 +4,10 @@ class OLMoError(Exception):
     """
 
 
+class OLMoInvalidRangeRequestError(OLMoError):
+    pass
+
+
 class OLMoNetworkError(OLMoError):
     pass
 
@@ -33,4 +37,8 @@ class OLMoThreadError(OLMoError):
 
 
 class BeakerExperimentFailedError(OLMoError):
+    pass
+
+
+class OLMoUploadError(OLMoError):
     pass

@@ -1,51 +1,49 @@
-"""
-Train a 7B OLMo model. Run this script without any arguments to see usage info.
-"""
 import math
 from datetime import datetime
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
-from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
+from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
 from olmo_core.internal.experiment import CommonComponents, main
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
-from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.optim import OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig
-from olmo_core.optim.scheduler import WSD
-from olmo_core.train import Duration, TrainerConfig
-from olmo_core.train.callbacks import (
-    BatchSizeSchedulerCallback,
-    CheckpointerCallback,
-    CometCallback,
-    WandBCallback,
+from olmo_core.nn.rope import YaRNRoPEScalingConfig
+from olmo_core.nn.transformer import (
+    TransformerActivationCheckpointingMode,
+    TransformerConfig,
 )
+from olmo_core.optim import OptimGroupOverride, SkipStepAdamWConfig
+from olmo_core.optim.scheduler import ConstantScheduler
+from olmo_core.train import Duration, LoadStrategy, TrainerConfig
+from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
 from olmo_core.train.train_module import (
+    TransformerActivationCheckpointingConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
 
-SEQUENCE_LENGTH = 8192
-GLOBAL_BATCH_SIZE = (
-    1024 * 4096
-)  # batch size at step 0, let's keep this independent of the sequence length in case we change it.
-MAX_DURATION = int(500e9)  # int(6e12), don't forget to adjust the LR when you increase this
-EVAL_INTERVAL = 1000
+SEQUENCE_LENGTH = 4096 * 2
+GLOBAL_BATCH_SIZE = 1024 * SEQUENCE_LENGTH
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
-    config = TransformerConfig.olmo2_7B(
-        vocab_size=common.tokenizer.padded_vocab_size(), qk_norm=False
-    )
-
+    config = TransformerConfig.olmo2_7B(vocab_size=common.tokenizer.padded_vocab_size())
     config.block.attention.sliding_window = SlidingWindowAttentionConfig(
         force_full_attention_on_first_layer=False,
         force_full_attention_on_last_layer=True,
-        # NOTE: 4097 instead of 4096 to reproduce with the off-by-one bug.
-        pattern=[4097, 4097, 4097, -1],
+        pattern=[4096, 4096, 4096, -1],
     )
     config.block.attention.use_flash = True
+
+    # RoPE scaling
+    OLD_SEQUENCE_LENGTH = 4096
+    assert config.block.attention.rope is not None
+    config.block.attention.rope.scaling = YaRNRoPEScalingConfig(
+        old_context_len=OLD_SEQUENCE_LENGTH, factor=SEQUENCE_LENGTH / OLD_SEQUENCE_LENGTH
+    )
+
+    # We cannot use headwise QK norm or GQA, because those can't be retrofit.
 
     return config
 
@@ -57,20 +55,21 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         if all("B200" in g for g in gpus):
             rank_microbatch_size *= 2
 
+    last_lr_of_olmo2 = 6.135113558011711e-05
+    batch_size_of_olmo2 = 4 * 1024 * 1024
+    lr = last_lr_of_olmo2 * math.sqrt(GLOBAL_BATCH_SIZE / batch_size_of_olmo2)
+    lr *= 1.5  # fudge factor because it seems to work
+
     return TransformerTrainModuleConfig(
         rank_microbatch_size=rank_microbatch_size,
         max_sequence_length=common.dataset.effective_sequence_length,
         optim=SkipStepAdamWConfig(
-            lr=1.6e-4
-            * math.sqrt(
-                GLOBAL_BATCH_SIZE / (4096 * 512)
-            ),  # 1.6e-4 was used for 2M batch size, adjusting it accordingly
+            lr=lr,
             weight_decay=0.1,
             betas=(0.9, 0.95),
             group_overrides=[
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
             ],
-            compile=True,
         ),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
@@ -80,27 +79,18 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
             shard_degree=32,
         ),
-        float8_config=Float8Config(
-            enabled=False,
-            ao=AOFloat8LinearConfig(
-                enable_fsdp_float8_all_gather=True,
-                force_recompute_fp8_weight_in_bwd=True,
-                round_scales_to_power_of_2=True,
-            ),
+        ac_config=TransformerActivationCheckpointingConfig(
+            mode=TransformerActivationCheckpointingMode.budget, activation_memory_budget=0.75
         ),
+        float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
-        scheduler=WSD(
-            units=SchedulerUnits.steps,
-            warmup=2000,
-            decay=(int(50e9 / GLOBAL_BATCH_SIZE)),
-            decay_fraction=None,
-        ),
+        scheduler=ConstantScheduler(),
     )
 
 
 def build_trainer_config(common: CommonComponents) -> TrainerConfig:
-    cancel_check_interval = 50
+    cancel_check_interval = 10
 
     assert common.launch is not None
     assert len(common.launch.clusters) == 1
@@ -114,23 +104,25 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=cancel_check_interval,
-            max_duration=Duration.tokens(MAX_DURATION),
+            max_duration=Duration.tokens(int(150e9)),
+            load_path="gs://ai2-llm/checkpoints/shanea/OLMo-medium/peteish7/step928646/model_and_optim/",
+            load_strategy=LoadStrategy.always,
         )
         .with_callback(
             "checkpointer",
             CheckpointerCallback(
-                save_interval=1000,
-                ephemeral_save_interval=None,
+                save_interval=10_000,
+                ephemeral_save_interval=250,
                 save_async=True,
             ),
         )
         .with_callback(
             "comet",
             CometCallback(
-                name=run_name,
+                name=common.run_name,
                 workspace="ai2",
                 project="olmo3",
-                enabled=True,
+                enabled=False,
                 cancel_check_interval=cancel_check_interval,
             ),
         )
@@ -138,28 +130,17 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "wandb",
             WandBCallback(
                 name=run_name,
-                group=common.run_name,
                 entity="ai2-llm",
                 project="olmo3",
+                group=common.run_name,
                 enabled=True,
                 cancel_check_interval=cancel_check_interval,
             ),
         )
         .with_recommended_evals(
-            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
+            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=1000
         )
     )
-
-    # batch size warmup
-    config.callbacks["batchwup"] = BatchSizeSchedulerCallback(
-        batch_sizes=[GLOBAL_BATCH_SIZE, GLOBAL_BATCH_SIZE * 2, GLOBAL_BATCH_SIZE * 4],
-        schedule=[
-            Duration.tokens(0),
-            Duration.tokens(167_772_160_000),
-            Duration.tokens(503_316_480_000),
-        ],
-    )
-
     return config
 
 

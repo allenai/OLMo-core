@@ -570,7 +570,7 @@ class MoELinearRouter(MoERouter):
 
     def get_expert_logits(self, x: torch.Tensor) -> torch.Tensor:
         x = MuP.scale_input(self.mups.get("weight"), x)
-        return F.linear(x, get_local_tensor(self.weight).view(self.num_experts, self.d_model))
+        return F.linear(x.float(), get_local_tensor(self.weight).view(self.num_experts, self.d_model)).float()
 
     def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):
         super().apply_tp(tp_mesh, float8_enabled=float8_enabled)
