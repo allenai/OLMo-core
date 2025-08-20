@@ -62,10 +62,37 @@ def _teacher_force_interpolate(
         return boundary_logprobs, boundary_logprobs
 
 
-def _compute_boundary_mask(boundary_logprobs: torch.Tensor, boundary_threshold: str) -> torch.Tensor:
+def _exponential_decay_of_complement(t, blogprob, alpha=0.01):
+    bprob = 1 - torch.exp(-alpha * t) + torch.exp(blogprob) * torch.exp(-alpha * t)
+
+    t = torch.where(
+        bprob > 0.5,
+        torch.zeros_like(t),
+        t + 1,
+    )
+
+    return t, torch.log(bprob)
+
+
+def _smooth_boundaries(boundary_logprobs: torch.Tensor, smooth_alpha: float) -> torch.Tensor:
+    _, boundary_logprobs_smoothed = torch._higher_order_ops.scan(
+        _exponential_decay_of_complement,
+        torch.zeros(boundary_logprobs.shape[0], dtype=torch.float32, device=boundary_logprobs.device),
+        boundary_logprobs.float(),
+        dim=1,
+    )
+    # scan transposes for some reason...
+    boundary_logprobs_smoothed = boundary_logprobs_smoothed.T
+    return boundary_logprobs_smoothed
+
+
+def _compute_boundary_mask(boundary_logprobs: torch.Tensor, boundary_threshold: str, smooth_alpha: float = 0.0) -> torch.Tensor:
     if boundary_threshold.startswith("sample:"):
         _, temperature = boundary_threshold.split(":")
         temperature = float(temperature)
+
+        if smooth_alpha > 0:
+            boundary_logprobs = _smooth_boundaries(boundary_logprobs, smooth_alpha)
 
         if temperature == 0:
             return (boundary_logprobs > math.log(0.5))
