@@ -1723,9 +1723,10 @@ class BLTDistillTransformer(BLTTransformer):
     def _noise(
         self,
         input_ids,
+        labels,
         p,
         **kwargs: Dict[str, Any],
-    ) -> tuple[Dict[str, Any], torch.Tensor]:
+    ) -> tuple[torch.Tensor, Dict[str, Any], torch.Tensor]:
         if not hasattr(self, "_tokenizer"):
             # hardcode for now
             self._tokenizer = ByteTokenizerConfig.blt().build()
@@ -1783,11 +1784,9 @@ class BLTDistillTransformer(BLTTransformer):
                 dtype=original_input_ids.dtype,
             )
             kwargs["patch_lens"][idx] = noised_patch_lengths  # type: ignore
-            kwargs["attention_mask"][idx][:len(noised_input_ids)] = 1  # type: ignore
-            kwargs["attention_mask"][idx][len(noised_input_ids):] = 0  # type: ignore
-            kwargs["labels"][len(noised_input_ids):] = -100  # type: ignore 
+            labels[len(noised_input_ids):] = -100  # type: ignore 
 
-        return kwargs, indices
+        return labels, kwargs, indices
 
     def forward(  # type: ignore[override]
         self,
@@ -1811,7 +1810,7 @@ class BLTDistillTransformer(BLTTransformer):
         use_oracle_patch_reps = blt_config.use_oracle_patch_reps
 
         if blt_config.p_boundary_noise > 0:
-            kwargs, noised_indices = self._noise(input_ids, p=blt_config.p_boundary_noise, **kwargs)
+            labels, kwargs, noised_indices = self._noise(input_ids, labels, p=blt_config.p_boundary_noise, **kwargs)
         else:
             noised_indices = None
 
