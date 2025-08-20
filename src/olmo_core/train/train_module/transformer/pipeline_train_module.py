@@ -269,12 +269,28 @@ class TransformerPipelineTrainModule(TrainModule):
             num_microbatches=num_microbatches,
         )
 
-    def state_dict(self, *, optim: bool = True) -> Dict[str, Any]:
+    def state_dict(self, *, optim: Optional[bool] = None) -> Dict[str, Any]:
+        if optim is None:
+            optim = True
         return self._get_state_dict(self.state_dict_save_opts, optim=optim)
 
-    def state_dict_to_load(self, metadata: Metadata, *, optim: bool = True) -> Dict[str, Any]:
-        load_opts = self.state_dict_load_opts
+    def state_dict_to_load(
+        self, metadata: Metadata, *, optim: Optional[bool] = None
+    ) -> Dict[str, Any]:
+        has_optim_state: bool = False
+        for key in metadata.state_dict_metadata.keys():
+            if key.startswith("optim."):
+                has_optim_state = True
+                break
 
+        if optim is None:
+            if not has_optim_state:
+                log.warning("No optimizer state found in checkpoint")
+                optim = False
+            else:
+                optim = True
+
+        load_opts = self.state_dict_load_opts
         if "optim.param_groups.0.params" in metadata.state_dict_metadata:
             # unflattened optimizer state
             if load_opts.flatten_optimizer_state_dict:
@@ -294,16 +310,6 @@ class TransformerPipelineTrainModule(TrainModule):
                 )
                 load_opts = replace(load_opts, flatten_optimizer_state_dict=True)
 
-        has_optim_state: bool = False
-        for key in metadata.state_dict_metadata.keys():
-            if key.startswith("optim."):
-                has_optim_state = True
-                break
-
-        if optim and not has_optim_state:
-            log.warning("No optimizer state found in checkpoint")
-            optim = False
-
         state_dict = self._get_state_dict(load_opts, optim=optim)
         if self.load_key_mapping is not None:
             swap_param_keys(state_dict, self.load_key_mapping, metadata=metadata)
@@ -316,7 +322,9 @@ class TransformerPipelineTrainModule(TrainModule):
 
         return state_dict
 
-    def state_dict_to_save(self, *, optim: bool = True) -> Dict[str, Any]:
+    def state_dict_to_save(self, *, optim: Optional[bool] = None) -> Dict[str, Any]:
+        if optim is None:
+            optim = True
         return self._get_state_dict(self.state_dict_save_opts, optim=optim)
 
     def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
