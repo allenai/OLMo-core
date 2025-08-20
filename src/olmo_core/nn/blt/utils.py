@@ -247,14 +247,14 @@ class Noiser:
             # problematic if the last token is not full valid utf-8
             text_bytes = self.subword_tokenizer.decode(subword_input_ids).encode("utf-8")
         else:
-            text_bytes = byte_tokenizer.decode_to_bytes(byte_tokenizer.patch_ids_to_byte_ids(subword_input_ids))
+            text_bytes = byte_tokenizer.decode_to_bytes(byte_tokenizer.patch_ids_to_byte_ids(subword_input_ids.tolist()))
 
         text_bytes_with_split_char = b""
         for i in range(len(text_bytes)):
+            text_bytes_with_split_char += text_bytes[i:i+1]
+
             if i in byte_boundaries:
                 text_bytes_with_split_char += self.ctrl_char_bytes
-
-            text_bytes_with_split_char += text_bytes[i:i+1]
 
         text_with_split_char = text_bytes_with_split_char.decode("utf-8", errors="ignore")
 
