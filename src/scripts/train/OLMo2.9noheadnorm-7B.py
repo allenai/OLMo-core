@@ -16,6 +16,8 @@ from olmo_core.train.train_module import (
     TransformerTrainModuleConfig,
 )
 
+from beaker import Priority
+
 SEQUENCE_LENGTH = 8 * 1024
 INITIAL_GLOBAL_BATCH_SIZE = 4 * 1024 * 1024
 
@@ -42,6 +44,9 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         gpus = {CLUSTER_TO_GPU_TYPE.get(c, "unknown") for c in common.launch.clusters}
         if all("B200" in g for g in gpus):
             rank_microbatch_size *= 2
+        common.launch.workspace='ai2/long-contexts'
+        common.launch.budget='ai2/oe-base'
+        common.launch.priority=Priority.urgent
 
     return TransformerTrainModuleConfig(
         rank_microbatch_size=rank_microbatch_size,
@@ -96,7 +101,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             metrics_collect_interval=10,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(int(7e12)),
-            hard_stop=Duration.tokens(int(150e9)) # stop at 150B tokens for this run 
+            hard_stop=Duration.tokens(int(150e9)) # stop at 10B tokens for this run 
         )
         .with_callback(
             "checkpointer",
