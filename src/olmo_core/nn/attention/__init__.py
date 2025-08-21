@@ -616,9 +616,9 @@ class Attention(AttentionBase):
             ),
         }
         if self.q_norm is not None:
-            # if head-wise norm: output is sharded on the head dimension (dim 2)
-            # if full-dim norm: output is sharded on the embedding dimension (dim 2), which will
-            #    be reshaped into heads that are sharded on the head dimensions
+            # if full-dim norm: output is sharded on the embedding dimension (B, T, E [sharded])
+            #    which will be reshaped into (B, T, H [sharded], D)
+            # if head-wise norm: output is sharded on the head dimension (B, T, H [sharded], D)
             plan["q_norm"] = SequenceParallel(use_local_output=True, output_layouts=Shard(2))
         if self.k_norm is not None:
             plan["k_norm"] = SequenceParallel(use_local_output=True, output_layouts=Shard(2))
