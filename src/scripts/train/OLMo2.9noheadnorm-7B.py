@@ -99,8 +99,6 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         TrainerConfig(
             save_folder=f"gs://ai2-llm/checkpoints/amandab/{common.run_name}/",
             save_overwrite=True,
-            load_path="gs://ai2-llm/checkpoints/amandab/OLMo29/step0/",
-            load_strategy=LoadStrategy.always,
             metrics_collect_interval=10,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(int(7e12)),
