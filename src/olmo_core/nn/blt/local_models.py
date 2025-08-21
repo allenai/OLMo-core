@@ -366,7 +366,7 @@ class LocalEncoder(nn.Module):
             fully_shard(self.cross_attention, mesh=dp_mesh, **fsdp_kwargs)
         fully_shard(self, mesh=dp_mesh, **fsdp_kwargs)
 
-    def fix_init(self, embedding_init_path, target_embeddings, n_estimate=10_000, cache_dir: Optional[str] = None):
+    def fix_init(self, embedding_init_path: Optional[str], target_embeddings, n_estimate=10_000, cache_dir: Optional[str] = None):
         """
         Rescale such that the local encoder outputs (given random inputs) have the same mean and std as the provided embeddings.
         

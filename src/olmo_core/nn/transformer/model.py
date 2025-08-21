@@ -1547,7 +1547,7 @@ class BLTDistillTransformer(BLTTransformer):
         else:
             return None, ([], None, None)
 
-    def fix_init(self, embedding_init_path: str):
+    def fix_init(self, embedding_init_path: Optional[str] = None):
         self.local_encoder.fix_init(embedding_init_path, self.teacher.embeddings.weight)  # type: ignore
 
     def _compute_alm_style_loss(
