@@ -173,12 +173,12 @@ class Trainer:
 
     load_trainer_state: Optional[bool] = None
     """
-    Whether to load trainer and optimizer state from the checkpoint.
+    Whether to load trainer state from the checkpoint.
     
-    When this is False, we will only load weights.
-    When this is True, we will load trainer and optimizer state, and fail loudly if we can't.
-    When this is None, we will try to load the trainer and optimizer state, but fall back quietly to just loading
-    weights if we can't.
+    When this is False, we will not load trainer state. We will start from step 0.
+    When this is True, we will load trainer state, and fail loudly if we can't.
+    When this is None, we will try to load the trainer state, but fall back quietly to just loading
+    weights and optimizer state if we can't.
     """
 
     metrics_collect_interval: int = 5
