@@ -1933,7 +1933,7 @@ class BLTDistillTransformer(BLTTransformer):
                 if self.prepend_embedding is not None:
                     h_patch_global = h_patch_global[:, 1:]
 
-                h_patch_after_global = torch.zeros_like(h_patch_global)
+                h_patch_after_global = torch.zeros_like(h_patch)
                 h_patch_after_global[:, 1:] = h_patch_global
 
             if blt_config.decoder_backprop_through_encoder:
