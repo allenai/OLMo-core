@@ -2103,7 +2103,8 @@ class BLTDistillTransformer(BLTTransformer):
             # shouldn't compute boundary loss over wrong boundaries
             # slight inaccuracies here because the div factor is not adjusted accordingly
             # but should not have a big impact (hopefully :) )
-            boundary_byte_mask[noised_indices] = False
+            if noised_indices is not None:
+                boundary_byte_mask[noised_indices] = False
 
             elementwise_boundary_loss = blt_utils.binary_cross_entropy_with_logprobs(
                 boundary_logprobs_for_loss,
