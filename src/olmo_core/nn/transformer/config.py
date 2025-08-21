@@ -90,6 +90,11 @@ class TransformerType(StrEnum):
     ➡️ :class:`BLTTransformer`
     """
 
+    blt_distill = "blt_distill"
+    """
+    ➡️ :class:`BLTDistillTransformer`
+    """
+
 
 class TransformerBlockType(StrEnum):
     """
@@ -299,7 +304,7 @@ class TransformerConfig(Config):
         """
         from .model import MoETransformer, NormalizedTransformer, Transformer, BLTTransformer, BLTDistillTransformer
 
-        if self.name != TransformerType.blt:
+        if self.name not in {TransformerType.blt, TransformerType.blt_distill}:
             # not implemented for BLTTransformer
             log.info(
                 f"Building transformer with {self.num_params:,d} total params, "
@@ -356,20 +361,11 @@ class TransformerConfig(Config):
                 )
 
             if self.teacher_config is not None:
-                cls = BLTDistillTransformer
-                kwargs = {
-                    "teacher": self.teacher_config.build(init_device=init_device),
-                    "share_blocks": self.share_blocks_between_teacher_and_student,
-                    "use_teacher_embs_with_vocab_size": self.use_teacher_embs_with_vocab_size,
-                    "prepend_embedding_to_global": self.prepend_embedding_to_global,
-                }
-            else:
-                cls = BLTTransformer
-                kwargs = {
-                    "prepend_embedding_to_global": self.prepend_embedding_to_global,
-                }
+                raise OLMoConfigurationError(
+                    f"Teacher config must be None for BLTTransformer (use BLTDistillTransformer)."
+                )
 
-            model = cls(
+            model = BLTTransformer(
                 d_model=self.d_model,
                 vocab_size=self.vocab_size,
                 n_layers=self.n_layers,
@@ -383,7 +379,32 @@ class TransformerConfig(Config):
                 block_overrides=self.block_overrides,
                 local_encoder=self.local_encoder,
                 local_decoder=self.local_decoder,
-                **kwargs,
+                prepend_embedding_to_global=self.prepend_embedding_to_global,
+            )
+        elif self.name == TransformerType.blt_distill:
+            if self.local_encoder is None or self.local_decoder is None:
+                raise OLMoConfigurationError(
+                    f"Both local_encoder and local_decoder must be specified for BLTTransformer, got {self.local_encoder} and {self.local_decoder}"
+                )
+
+            model = BLTDistillTransformer(
+                d_model=self.d_model,
+                vocab_size=self.vocab_size,
+                n_layers=self.n_layers,
+                block=self.block,
+                lm_head=self.lm_head,
+                dtype=self.dtype.as_pt(),
+                init_method=self.init_method,
+                init_device=init_device,
+                init_seed=self.init_seed,
+                init_std=self.init_std,
+                block_overrides=self.block_overrides,
+                local_encoder=self.local_encoder,
+                local_decoder=self.local_decoder,
+                teacher=self.teacher_config.build(init_device=init_device) if self.teacher_config is not None else None,
+                share_blocks=self.share_blocks_between_teacher_and_student,
+                use_teacher_embs_with_vocab_size=self.use_teacher_embs_with_vocab_size,
+                prepend_embedding_to_global=self.prepend_embedding_to_global,
             )
         else:
             raise NotImplementedError(self.name)
@@ -413,7 +434,7 @@ class TransformerConfig(Config):
         """
         The total number of parameters that a model from this config would have.
         """
-        if self.name == TransformerType.blt:
+        if self.name in {TransformerType.blt, TransformerType.blt_distill}:
             raise NotImplementedError("BLTTransformer config does not support num_params")
 
         num_params = 0
@@ -442,7 +463,7 @@ class TransformerConfig(Config):
         """
         The total number of active parameters that a model from this config would have.
         """
-        if self.name == TransformerType.blt:
+        if self.name in {TransformerType.blt, TransformerType.blt_distill}:
             raise NotImplementedError("BLTTransformer config does not support num_active_params")
 
         num_active_params = 0
@@ -471,7 +492,7 @@ class TransformerConfig(Config):
         """
         The number of parameters excluding embedding parameters.
         """
-        if self.name == TransformerType.blt:
+        if self.name in {TransformerType.blt, TransformerType.blt_distill}:
             raise NotImplementedError("BLTTransformer config does not support num_non_embedding_params")
 
         return self.num_params - self.d_model * self.vocab_size
@@ -481,7 +502,7 @@ class TransformerConfig(Config):
         """
         The number of active parameters excluding embedding parameters.
         """
-        if self.name == TransformerType.blt:
+        if self.name in {TransformerType.blt, TransformerType.blt_distill}:
             raise NotImplementedError("BLTTransformer config does not support num_active_non_embedding_params")
 
         return self.num_active_params - self.d_model * self.vocab_size

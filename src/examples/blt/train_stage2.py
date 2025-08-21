@@ -223,6 +223,8 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     else:
         raise ValueError(f"Unknown LOCAL_MODEL_STYLE: {LOCAL_MODEL_STYLE}. Must be one of 'blt', 'hnet'.")
 
+    model_config = teacher_model_config.replace()
+
     if TEACHER_MODE == "stage1":
         # use the stage1 checkpoint as the teacher instead of the original model (stage0)
         teacher_model_config = teacher_model_config.replace(
@@ -231,9 +233,15 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             local_encoder=local_encoder,
             local_decoder=local_decoder,
         )
+    elif TEACHER_MODE == "stage0":
+        pass # already set correctly
+    elif TEACHER_MODE is None:
+        teacher_model_config = None
+    else:
+        raise ValueError(f"Unknown TEACHER_MODE: {TEACHER_MODE}. Must be one of 'stage0', 'stage1', None.")
 
-    model_config = teacher_model_config.replace(
-        name=TransformerType.blt,
+    model_config = model_config.replace(
+        name=TransformerType.blt_distill,
         vocab_size=byte_tokenizer_config.padded_vocab_size(),
         local_encoder=local_encoder,
         local_decoder=local_decoder,
