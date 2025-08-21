@@ -404,7 +404,7 @@ class BeakerLaunchConfig(Config):
 
         entrypoint_dataset = self._create_script_dataset("entrypoint.sh", entrypoint_script)
 
-        if len(self.clusters) == 1 and "augusta" in self.clusters[0]:
+        if len(self.clusters) == 1 and "augusta" in self.clusters[0] and self.priority == Priority.urgent:
             host_name_constraints = get_host_name_constraints(
                 self.num_nodes,
                 min(32, self.num_nodes),
