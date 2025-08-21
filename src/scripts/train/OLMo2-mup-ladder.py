@@ -82,10 +82,12 @@ class BaselineModelLadder(ModelLadder):
 
     def get_optim_config(self) -> OptimConfig:
         # Calculate LR according to https://api.semanticscholar.org/CorpusID:270764838
-        assert self.sequence_length in {2048, 4096}
+        assert self.sequence_length in {2048, 4096, 8192}
         lr = 0.0047 * (self.model_size / 108000000) ** (-1 / 3)
         if self.sequence_length == 4096:
             lr /= 4
+        elif self.sequence_length == 8192:
+            lr /= 16
 
         return AdamWConfig(
             lr=lr,
@@ -141,7 +143,7 @@ class BaselineModelLadder(ModelLadder):
         :param size: The target model size.
         """
         # Let's avoid global batch size making results harder to interpret, for now.
-        return self.sequence_length * 128
+        return 4096 * 1024
 
     def get_rank_microbatch_size(self, *, size: ModelSize, gpu_type: str) -> int:
         if gpu_type.lower() in ("mps", "cpu"):
@@ -163,7 +165,7 @@ def build_ladder(root_dir: str) -> BaselineModelLadder:
         mix_base_dir=root_dir,
         work_dir=get_work_dir(root_dir),
         save_folder=save_folder,
-        sequence_length=4096,
+        sequence_length=8192,
         beaker_workspace="ai2/OLMo-mup",
     )
 
