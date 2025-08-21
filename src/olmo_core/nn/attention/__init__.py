@@ -536,11 +536,11 @@ class Attention(AttentionBase):
 
         # NOTE: use -1 instead of `n_heads` / `n_kv_heads` to infer actual local size when
         # using tensor parallelism.
-        # shape: (batch_size, seq_len, n_heads, head_dim)
+        # shape: (batch_size, seq_len, n_heads (local), head_dim)
         q = q.view(B, T, -1, self.head_dim)
-        # shape: (batch_size, seq_len, n_kv_heads, head_dim)
+        # shape: (batch_size, seq_len, n_kv_heads (local), head_dim)
         k = k.view(B, T, -1, self.head_dim)
-        # shape: (batch_size, seq_len, n_kv_heads, head_dim)
+        # shape: (batch_size, seq_len, n_kv_heads (local), head_dim)
         v = v.view(B, T, -1, self.head_dim)
 
         if self.use_head_qk_norm:
@@ -616,9 +616,13 @@ class Attention(AttentionBase):
             ),
         }
         if self.q_norm is not None:
-            plan["q_norm"] = SequenceParallel(use_local_output=True, output_layouts=Shard(-1))
+            # if head-wise norm: output is sharded on the head dimension (dim 2)
+            # if full-dim norm: output is sharded on the embedding dimension (dim 2), which will
+            #    be reshaped into heads that are sharded on the head dimensions
+            plan["q_norm"] = SequenceParallel(use_local_output=True, output_layouts=Shard(2))
         if self.k_norm is not None:
-            plan["k_norm"] = SequenceParallel(use_local_output=True, output_layouts=Shard(-1))
+            plan["k_norm"] = SequenceParallel(use_local_output=True, output_layouts=Shard(2))
+
         parallelize_module(
             module=self,
             device_mesh=tp_mesh,
