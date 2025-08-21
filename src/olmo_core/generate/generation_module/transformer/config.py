@@ -27,7 +27,7 @@ class TransformerGenerationModuleConfig(Config):
     """
 
     # Generation settings.
-    generation_config: GenerationConfigs
+    generation_config: GenerationConfig
     # Model settings.
     compile_model: bool = False
     float8_config: Optional[Float8Config] = None

@@ -431,10 +431,12 @@ class Transformer(nn.Module):
             input_ids = move_to_device(input_ids, self.device)
             labels = move_to_device(labels, self.device)
 
+            if (max_doc_len is not None or cu_doc_lens is not None) and cache_leftpad is not None:
+                raise ValueError("max_doc_len/cu_doc_lens and cache_leftpad are mutually exclusive")
             if max_doc_len is not None or cu_doc_lens is not None:
                 all_block_kwargs["max_doc_len"] = max_doc_len
                 all_block_kwargs["cu_doc_lens"] = move_to_device(cu_doc_lens, self.device)
-            elif cache_leftpad is not None:
+            if cache_leftpad is not None:
                 all_block_kwargs["cache_leftpad"] = move_to_device(cache_leftpad, self.device)
 
         return (
