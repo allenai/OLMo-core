@@ -76,8 +76,8 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
         scheduler=CosWithWarmup(
-            units=SchedulerUnits.tokens,    # mandatory with batch size warmup
-            warmup_steps=2000 * INITIAL_GLOBAL_BATCH_SIZE
+            units=SchedulerUnits.steps,    # mandatory with batch size warmup
+            warmup_steps=200
         ),
     )
 
@@ -101,7 +101,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=cancel_check_interval,
-            max_duration=Duration.tokens(int(7e12)),
+            max_duration=Duration.tokens(int(5e12)),
             hard_stop=Duration.tokens(int(150e9)) # stop at 10B tokens for this run 
         )
         .with_callback(
