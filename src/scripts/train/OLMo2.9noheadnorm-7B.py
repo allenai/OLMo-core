@@ -90,14 +90,13 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
     config = (
         TrainerConfig(
-            save_folder=f"gs://ai2-llm/checkpoints/{common.run_name}/",
+            save_folder=f"gs://ai2-llm/checkpoints/amandab/{common.run_name}/",
             save_overwrite=True,
-            load_path="gs://ai2-llm/checkpoints/OLMo29/step2000/",
             load_strategy=LoadStrategy.always,
             metrics_collect_interval=10,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(int(7e12)),
-            hard_stop=Duration.epochs(1),
+            hard_stop=Duration.tokens(int(150e9)) # stop at 150B tokens for this run 
         )
         .with_callback(
             "checkpointer",
@@ -112,7 +111,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             CometCallback(
                 name=run_name,
                 workspace="ai2",
-                project="olmo3",
+                project="long-contexts",
                 enabled=False,
                 cancel_check_interval=cancel_check_interval,
             ),
