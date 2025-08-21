@@ -4,7 +4,7 @@ from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config, AOFloat8LinearConfig
 from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
-from olmo_core.internal.experiment import CommonComponents, main
+from olmo_core.internal.experiment import CommonComponents, main, build_launch_config
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig, SchedulerUnits
@@ -44,10 +44,8 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         gpus = {CLUSTER_TO_GPU_TYPE.get(c, "unknown") for c in common.launch.clusters}
         if all("B200" in g for g in gpus):
             rank_microbatch_size *= 2
-        common.launch.workspace='ai2/long-contexts'
-        common.launch.budget='ai2/oe-base'
-        common.launch.priority=Priority.urgent
-
+        
+        
     return TransformerTrainModuleConfig(
         rank_microbatch_size=rank_microbatch_size,
         max_sequence_length=common.dataset.effective_sequence_length,
@@ -90,6 +88,10 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     assert common.launch is not None
     assert len(common.launch.clusters) == 1
     cluster = common.launch.clusters[0]
+
+    common.launch.workspace='ai2/long-contexts'
+    common.launch.budget='ai2/oe-base'
+    common.launch.priority=Priority.urgent
 
     run_name = f"{common.run_name}-{datetime.now().astimezone().strftime('%Y%m%dT%H%M%S%z')}"
 
@@ -165,4 +167,5 @@ if __name__ == "__main__":
         trainer_config_builder=build_trainer_config,
         include_instance_filter=False,  # We use SkipStepOptimizer for this problem.
         include_default_evals=False,
+        beaker_workspace="ai2/long-contexts"
     )
