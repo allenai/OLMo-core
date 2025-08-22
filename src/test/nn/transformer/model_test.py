@@ -178,6 +178,17 @@ def get_transformer_config(
             use_flash=False,
             dtype=DType.from_pt(dtype),
         )
+    elif architecture == "sinks":
+        config = TransformerConfig.olmo2_190M(
+            vocab_size=16_000,
+            n_layers=2,
+            fused_ops=False,
+            use_flash=False,
+            dtype=DType.from_pt(dtype),
+        )
+        config.block.attention.use_head_qk_norm = True
+        config.block.attention.use_flex = True
+        config.block.attention.use_sinks = True
     else:
         raise NotImplementedError(architecture)
 
@@ -218,7 +229,7 @@ def run_tensor_parallel_transformer(checkpoint_dir, outputs_path, architecture: 
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
-@pytest.mark.parametrize("architecture", ["olmo2", "llama"])
+@pytest.mark.parametrize("architecture", ["olmo2", "llama", "sinks"])
 def test_tensor_parallel_transformer(backend: str, architecture: str, tmp_path):
     device = torch.device("cuda") if "nccl" in backend else torch.device("cpu")
     config = get_transformer_config(architecture)

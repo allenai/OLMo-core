@@ -789,6 +789,8 @@ class Attention(AttentionBase):
             plan["q_norm"] = SequenceParallel(use_local_output=True, output_layouts=Shard(2))
         if self.k_norm is not None:
             plan["k_norm"] = SequenceParallel(use_local_output=True, output_layouts=Shard(2))
+        if self.sinks is not None:
+            plan["sinks"] = SequenceParallel(use_local_output=True, output_layouts=Shard(0))
         parallelize_module(
             module=self,
             device_mesh=tp_mesh,
