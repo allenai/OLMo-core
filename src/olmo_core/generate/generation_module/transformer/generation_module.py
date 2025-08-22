@@ -9,6 +9,7 @@ import os
 
 import torch
 import torch.distributed as dist
+from torch.nn import functional as F
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 from cached_path import cached_path
 from torch.distributed import DeviceMesh, ProcessGroup
@@ -615,6 +616,13 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         )
         self.tokenizer = tokenizer
 
+        # temporary, need to find a better solution
+        self.blt_config = BLTConfig(
+            teacher_force_boundaries=False,
+            boundary_threshold="sample:0",
+            skip_teacher=True,
+        )
+
     def reset_kv_cache(
         self,
         use_cache: bool,
@@ -666,6 +674,26 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
 
         if hasattr(self.model.local_decoder, "free_kv_cache"):
             self.model.local_decoder.free_kv_cache()  # type: ignore
+
+    @torch.inference_mode()
+    def model_forward(self, input_ids: torch.Tensor, **kwargs):
+        self.model.eval()
+        input_ids = move_to_device(input_ids, self.device)
+        
+        # dummy patch lengths - not used
+        patch_lens = torch.ones_like(input_ids)
+
+        labels = F.pad(
+            input_ids[..., 1:], (0, 1, 0, 0), value=-100
+        )
+
+        return self.model.student_forward(  # type: ignore
+            input_ids,
+            labels=labels,
+            patch_lens=patch_lens,
+            blt_config=self.blt_config,
+            **kwargs
+        )[0].logits
 
     @torch.inference_mode()
     def generate_batch(
@@ -771,12 +799,6 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                 torch.cuda.synchronize()
         kv_cache_init_time = time.perf_counter() - kv_cache_start_time
 
-        # temporary, need to find a better solution
-        blt_config = BLTConfig(
-            teacher_force_boundaries=False,
-            boundary_threshold="sample:0",
-        )
-
         pbar = tqdm(desc="Generating tokens", disable=True)
         while True:
             token_start_time = time.perf_counter()
@@ -805,7 +827,7 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                 logits_to_keep=logits_to_keep,
                 patch_lens=patch_lens_for_model,
                 prefill_kv_cache=is_first_forward,
-                blt_config=blt_config,
+                blt_config=self.blt_config,
             )
             if self.device.type == "cuda":
                 torch.cuda.synchronize()
@@ -923,7 +945,7 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                     input_ids=generated,
                     labels=get_labels({"input_ids": generated}),
                     patch_lens=patch_lens,
-                    blt_config=blt_config.replace(skip_teacher=True),
+                    blt_config=self.blt_config,
                 )
             # last logit is potentially wrong since last_token_is_boundary=True in reference, so skip it
             assert torch.argmax(logits[:, -tokens_generated-1:-1], -1) == reference_out.logits[:, -tokens_generated-1:-1].argmax(-1)
