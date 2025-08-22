@@ -15,6 +15,7 @@ from olmo_core.nn.attention import (
     AttentionConfig,
     AttentionType,
     FusedAttention,
+    RingAttentionLoadBalancerType,
     RingAttentionZigZagLoadBalancer,
     SlidingWindowAttentionConfig,
 )
@@ -27,6 +28,7 @@ from olmo_core.testing import (
     GPU_MARKS,
     requires_flash_attn,
     requires_gpu,
+    requires_multi_gpu,
     run_distributed_test,
 )
 from olmo_core.utils import get_default_device, seed_all
@@ -396,7 +398,7 @@ def _run_tensor_parallel_attention(
     attn = Attention(init_device=device.type, **attn_kwargs)
 
     # Shard sequence dim in/out like the transformer block does.
-    attn.apply_tp(mesh["tp"], input_layout=Shard(1))
+    attn.apply_tp(mesh["tp"], input_layout=Shard(1), output_layout=Shard(1), use_local_output=False)
     load_model_and_optim_state(checkpoint_dir, attn)
 
     x = torch.load(inputs_path, map_location=device)
@@ -409,7 +411,8 @@ def _run_tensor_parallel_attention(
     y_local.sum().backward()
 
     y_ref = torch.load(outputs_path, map_location=device)
-    torch.testing.assert_close(y_ref, y_local)
+    y_ref_local = y_ref[:, rank * chunk : (rank + 1) * chunk, :]
+    torch.testing.assert_close(y_ref_local, y_local.to_local())
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
@@ -453,4 +456,81 @@ def test_tensor_parallel_attention(backend: str, attn_kwargs: Dict[str, Any], tm
         backend=backend,
         start_method="spawn",
         func_args=(checkpoint_dir, inputs_path, outputs_path, attn_kwargs),
+    )
+
+
+def _run_context_parallel_attention(
+    checkpoint_dir: str,
+    inputs_path: str,
+    outputs_path: str,
+    attn_kwargs: Dict[str, Any],
+    load_balancer_type,
+):
+    device = get_default_device()
+    mesh = init_device_mesh(device.type, (get_world_size(),), mesh_dim_names=("cp",))
+
+    attn = Attention(init_device=device.type, **attn_kwargs)
+    attn.apply_cp(mesh["cp"], load_balancer_type)
+    load_model_and_optim_state(checkpoint_dir, attn)
+
+    # Feed the full input on each rank; ring attention returns local outputs.
+    x = torch.load(inputs_path, map_location=device)
+    y_local = attn(x)
+
+    # Backward to exercise graph in CP mode.
+    y_local.sum().backward()
+
+    # Compare against the reference full output by reassembling shards.
+    from torch.distributed.tensor import DTensor
+
+    y_ref = torch.load(outputs_path, map_location=device)
+    y_dt = DTensor.from_local(y_local, mesh, (Shard(1),))
+    torch.testing.assert_close(y_ref, y_dt.full_tensor())
+
+
+@requires_multi_gpu
+@requires_flash_attn
+@pytest.mark.parametrize(
+    "attn_kwargs",
+    [
+        pytest.param({}, id="default"),
+        pytest.param(
+            {"qk_norm": LayerNormConfig(), "use_head_qk_norm": True, "rope": RoPEConfig()},
+            id="headwise-qk-layernorm-rope",
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    "load_balancer_type",
+    [
+        pytest.param(RingAttentionLoadBalancerType.zig_zag, id="zig_zag"),
+        pytest.param(RingAttentionLoadBalancerType.llama3, id="llama3"),
+    ],
+)
+@pytest.mark.skip("known precision issues with ring-flash-attn")
+def test_context_parallel_attention(attn_kwargs: Dict[str, Any], load_balancer_type, tmp_path):
+    device = torch.device("cuda")
+
+    seed_all(0)
+    # CP requires flash-attn and low precision dtypes.
+    attn_kwargs.update({"d_model": 128, "n_heads": 8, "use_flash": True})
+    attn = Attention(init_device=device.type, **attn_kwargs)
+
+    bs, seq_len = 2, 64
+    x = torch.randn(bs, seq_len, attn_kwargs["d_model"], device=device, dtype=torch.bfloat16)
+    with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+        y = attn(x)
+
+    outputs_path = tmp_path / "attn_y.pt"
+    torch.save(y, outputs_path)
+    inputs_path = tmp_path / "attn_x.pt"
+    torch.save(x, inputs_path)
+    checkpoint_dir = tmp_path / "checkpoint"
+    save_model_and_optim_state(checkpoint_dir, attn)
+
+    run_distributed_test(
+        _run_context_parallel_attention,
+        backend="nccl",
+        start_method="spawn",
+        func_args=(checkpoint_dir, inputs_path, outputs_path, attn_kwargs, load_balancer_type),
     )
