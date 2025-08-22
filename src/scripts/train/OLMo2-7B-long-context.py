@@ -58,7 +58,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             name=DataParallelType.fsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
-            wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
+            wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
             shard_degree=4,
         ),
         float8_config=Float8Config(enabled=False),
