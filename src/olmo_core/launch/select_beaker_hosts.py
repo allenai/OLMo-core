@@ -73,14 +73,16 @@ def _is_job_preemptible(job: Job, desired_priority: Priority) -> bool:
 
 def get_hostname_constraints(
     hosts_metadata: dict[str, HostMetadata],
-    num_hosts_per_replica: int,
+    num_execution_units: int,
     num_hosts_per_task: int,
     num_tasks: int,
 ) -> list[list[str]]:
-    if num_hosts_per_task % num_hosts_per_replica != 0:
+    if num_hosts_per_task % num_execution_units != 0:
         raise ValueError(
-            "Number of hosts in a replica must be a divisor of number of hosts in a task"
+            "Number of execution units must be a divisor of number of hosts in a task "
+            "(since a task runs one or more execution units)."
         )
+    num_hosts_per_exec_unit = (num_tasks * num_hosts_per_task) // num_execution_units
 
     hosts_by_block: defaultdict[str, list[str]] = defaultdict(list)
     for host, metadata in hosts_metadata.items():
@@ -104,18 +106,18 @@ def get_hostname_constraints(
             block = sorted_blocks[block_idx]
             num_block_hosts = len(hosts_by_block[block])
 
-            if num_block_hosts < num_hosts_per_replica:
+            if num_block_hosts < num_hosts_per_exec_unit:
                 # We have exhausted this block, move onto the next one
                 block_idx += 1
                 continue
 
             needed_hosts = num_hosts_per_task - len(task_hosts)
-            assert needed_hosts % num_hosts_per_replica == 0
+            assert needed_hosts % num_hosts_per_exec_unit == 0
 
-            # Take the nearest multiple of num_hosts_per_replica as the number of hosts to give to the current task
+            # Take the nearest multiple of num_hosts_per_exec_unit as the number of hosts to give to the current task
             host_count_from_block = min(
                 needed_hosts,
-                num_block_hosts // num_hosts_per_replica * num_hosts_per_replica,
+                num_block_hosts // num_hosts_per_exec_unit * num_hosts_per_exec_unit,
             )
             assert host_count_from_block > 0
 
@@ -140,7 +142,7 @@ def get_hostname_constraints(
 
 def get_beaker_hostname_constraints(
     num_nodes: int,
-    num_model_replica_nodes: int,
+    num_execution_units: int,
     beaker_task_count: int,
     gcp_zone: str,
     *,
@@ -160,7 +162,7 @@ def get_beaker_hostname_constraints(
         )
 
     assert num_nodes > 0
-    assert num_nodes % num_model_replica_nodes == 0
+    assert num_nodes % num_execution_units == 0
     assert num_nodes % beaker_task_count == 0
     beaker_num_hosts_per_task = num_nodes // beaker_task_count
 
@@ -191,7 +193,7 @@ def get_beaker_hostname_constraints(
             del machines_metadata[host]
 
     return get_hostname_constraints(
-        machines_metadata, num_model_replica_nodes, beaker_num_hosts_per_task, beaker_task_count
+        machines_metadata, num_execution_units, beaker_num_hosts_per_task, beaker_task_count
     )
 
 
@@ -199,7 +201,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("num-nodes", type=int, required=True, help="Total number of nodes")
     parser.add_argument(
-        "num-model-replica-nodes", type=int, required=True, help="Number of nodes in each replica"
+        "--num-execution-units",
+        type=int,
+        default=1,
+        help="Number of `execution units`. An `execution unit` is abstraction for any node-using entity of which 1 or more copies are run that requires its nodes come from the same block (e.g., a model replica).",
     )
     parser.add_argument(
         "--task-count",
@@ -240,7 +245,7 @@ def main():
     print(
         get_beaker_hostname_constraints(
             args.num_nodes,
-            args.num_model_replica_nodes,
+            args.num_execution_units,
             args.task_count,
             args.zone,
             beaker_cluster=args.cluster,
