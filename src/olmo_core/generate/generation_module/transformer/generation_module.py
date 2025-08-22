@@ -3,7 +3,7 @@ import logging
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, cast
+from typing import Any, Dict, List, Literal, Optional, Tuple, cast
 
 import torch
 import torch.distributed as dist
@@ -24,10 +24,11 @@ from olmo_core.distributed.utils import (
     get_rank,
     get_world_size,
     is_distributed,
+    scatter_object,
 )
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
-from olmo_core.generate.generation_module.config import GenerationConfig
+from olmo_core.generate.generation_module import GenerationConfig, GenerationModule
 from olmo_core.generate.sampling import select_next_token
 from olmo_core.generate.utils import selective_log_softmax
 from olmo_core.io import is_url, join_path, normalize_path
@@ -38,8 +39,6 @@ from olmo_core.train.train_module.transformer.config import (
     TransformerDataParallelConfig,
 )
 from olmo_core.utils import get_default_device, log_or_print, move_to_device
-
-from ..generation_module import GenerationModule
 
 log = logging.getLogger(__name__)
 
@@ -61,15 +60,17 @@ class TransformerGenerationModule(GenerationModule):
     ):
         super().__init__()
 
-        # Build world mesh.
         self.device = device or get_default_device()
+        if self.device.type != "cuda":
+            raise AssertionError(f"Expected CUDA device, got {self.device.type}")
 
-        # Verify H100 GPU
-        assert self.device.type == "cuda", f"Expected CUDA device, got {self.device.type}"
         device_name = torch.cuda.get_device_name(self.device)
-        assert "H100" in device_name, (
-            f"Expected H100 GPU, but got {device_name}. Flash attention w/ kv caching is not verified to work on non-Hopper GPUs."
-        )
+        if "H100" not in device_name:
+            log_or_print(
+                log,
+                "Flash attention w/ kv caching is not verified to work on non-Hopper GPUs.",
+                level=logging.WARNING,
+            )
 
         self.world_mesh: Optional[DeviceMesh] = None
         if is_distributed():
@@ -88,6 +89,7 @@ class TransformerGenerationModule(GenerationModule):
             float8_config=float8_config,
             dp_config=dp_config,
         )
+        self._model_mode: Optional[Literal["train", "eval"]] = None
 
         self._dp_config = dp_config
         self.state_dict_save_opts = state_dict_save_opts or dist_cp_sd.StateDictOptions(strict=True)
@@ -115,6 +117,7 @@ class TransformerGenerationModule(GenerationModule):
 
     def prepare_kv_cache(self, batch_size: int, max_seq_len: int):
         for block in self.model.blocks.values():
+            assert isinstance(block.attention, Attention)
             attn = cast(Attention, block.attention)
             if attn.kv_cache_manager is None:
                 attn.init_kv_cache_manager(batch_size, max_seq_len)
@@ -123,11 +126,22 @@ class TransformerGenerationModule(GenerationModule):
 
     def free_kv_cache(self):
         for block in self.model.blocks.values():
+            assert isinstance(block.attention, Attention)
             cast(Attention, block.attention).kv_cache_manager = None
+
+    def _set_model_mode(self, mode: Literal["train", "eval"]):
+        if self._model_mode != mode:
+            if mode == "train":
+                self.model.train()
+            elif mode == "eval":
+                self.model.eval()
+            else:
+                raise ValueError(f"Invalid model mode: {mode}")
+            self._model_mode = mode
 
     @torch.inference_mode()
     def model_forward(self, input_ids: torch.Tensor, **kwargs):
-        self.model.eval()
+        self._set_model_mode("eval")
         input_ids = move_to_device(input_ids, self.device)
         return self.model(input_ids, **kwargs)
 
@@ -144,28 +158,29 @@ class TransformerGenerationModule(GenerationModule):
         **generation_kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
         """
-        Generate text using greedy decoding.
+        Generate text with autoregressive decoding.
 
-        Args:
-            input_ids: Input token IDs of shape (batch_size, seq_len)
-            attention_mask: Optional attention mask of shape (batch_size, seq_len). This should be
-                a *left-padding* mask, not an arbitrary attention mask. If not provided, the model
-                will assume there are no left-padding tokens.
-            return_logits: If True, return logits along with generated tokens.
-            return_logprobs: If True, return log probabilities *for the generated tokens* along with
-                generated tokens. This is notably more memory efficient than return_logits.
-            completions_only: If True, return only the completions, not the entire sequence
-            **generation_kwargs: Generation configuration overrides
-        Returns:
-            Tuple of (generated_ids, logits, logprobs) where:
-                - generated_ids: Generated token IDs of shape (batch_size, output_length)
-                - logits: Full logits if return_logits=True, else None. Shape: (batch_size, output_length, vocab_size)
+        :param input_ids: Input token IDs of shape ``(batch_size, seq_len)``.
+        :param attention_mask: Optional attention mask of shape ``(batch_size, seq_len)``. This should be
+            a *left-padding* mask, not an arbitrary attention mask. If not provided, the model
+            will assume there are no left-padding tokens.
+        :param return_logits: If ``True``, return logits along with generated tokens.
+        :param return_logprobs: If ``True``, return log probabilities *for the generated tokens* along with
+            generated tokens. This is notably more memory efficient than ``return_logits``.
+        :param completions_only: If ``True``, return only the completions, not the entire sequence.
+        :param generation_kwargs: Generation configuration overrides.
+
+        :returns: Tuple of ``(generated_ids, logits, logprobs)`` where:
+            - ``generated_ids``: Generated token IDs of shape ``(batch_size, output_length)``.
+            - ``logits``: Full logits if ``return_logits=True``, else ``None``. Shape: ``(batch_size, output_length, vocab_size)``.
+            - ``logprobs``: Log probabilities of generated tokens if ``return_logprobs=True``, else ``None``. Shape: ``(batch_size, output_length)``.
         """
+        start_time = time.perf_counter()
+
         # Replace generation config with any overrides.
         generation_config = self._generation_config.replace(**generation_kwargs)
         eos = generation_config.eos_token_id
-
-        self.model.eval()
+        pad = generation_config.pad_token_id
 
         input_ids = move_to_device(input_ids, self.device)
         batch_size, prompt_len = input_ids.shape
@@ -182,12 +197,10 @@ class TransformerGenerationModule(GenerationModule):
         all_logprobs: Optional[List[torch.Tensor]] = [] if return_logprobs else None
 
         # Timing stats
-        start_time = time.perf_counter()
         time_to_first_token = None
-        token_times: List[float] = []
+        decode_start_time = None
+        setup_time = None
         tokens_generated = 0
-        kv_cache_init_time = None
-        prefill_time = None
 
         if generation_config.max_new_tokens is not None:
             max_length = prompt_len + generation_config.max_new_tokens
@@ -203,8 +216,6 @@ class TransformerGenerationModule(GenerationModule):
             prefill_cache_leftpad = attention_mask_to_cache_leftpad(attention_mask).to(self.device)
 
         # Initialize/Reset the KV cache
-        kv_cache_start_time = time.perf_counter()
-
         if generation_config.use_cache:
             if max_length is None:
                 raise OLMoConfigurationError(
@@ -213,10 +224,6 @@ class TransformerGenerationModule(GenerationModule):
             self.prepare_kv_cache(batch_size, max_length)
         else:
             self.free_kv_cache()
-
-        if self.device.type == "cuda" and log_timing:
-            torch.cuda.synchronize()
-        kv_cache_init_time = time.perf_counter() - kv_cache_start_time
 
         pbar = tqdm(
             desc="Generating tokens",
@@ -227,8 +234,6 @@ class TransformerGenerationModule(GenerationModule):
             colour="blue",
         )
         while not ((max_length is not None and generated.shape[1] >= max_length) or finished.all()):
-            token_start_time = time.perf_counter()
-
             # Determine model inputs based on if we are prefilling or decoding
             is_first_forward = generated.shape[1] == prompt_len
             input_ids_for_model = (
@@ -240,23 +245,15 @@ class TransformerGenerationModule(GenerationModule):
                 prefill_cache_leftpad if is_first_forward and generation_config.use_cache else None
             )
 
-            # Time the forward pass
+            # Forward pass - handles both prefill and decode phases
             forward_start_time = time.perf_counter()
-            next_token_logits = self.model(  # (batch_size, 1, vocab_size)
+            next_token_logits = self.model(  # (batch_size, seq_len=1, vocab_size)
                 input_ids_for_model,
                 logits_to_keep=1,
                 cache_leftpad=cache_leftpad if generation_config.use_cache else None,
             )
-            if self.device.type == "cuda":
-                torch.cuda.synchronize()
-            forward_end_time = time.perf_counter()
 
-            # Track prefill and first decode times
-            if is_first_forward:
-                prefill_time = forward_end_time - forward_start_time
-
-            # Generate next token (predicted by sampling/argmax)
-            next_tokens = select_next_token(  # (batch_size,)
+            next_tokens = select_next_token(
                 next_token_logits.squeeze(1),
                 do_sample=generation_config.do_sample,
                 temperature=generation_config.temperature,
@@ -265,10 +262,9 @@ class TransformerGenerationModule(GenerationModule):
             )
 
             if all_logits is not None:
-                all_logits.append(next_token_logits)  # Nx (batch_size, 1, vocab_size)
-
+                all_logits.append(next_token_logits)
             if all_logprobs is not None:
-                all_logprobs.append(  # Nx (batch_size,)
+                all_logprobs.append(
                     selective_log_softmax(next_token_logits, next_tokens.unsqueeze(-1))
                 )
 
@@ -284,86 +280,60 @@ class TransformerGenerationModule(GenerationModule):
             # Append next tokens
             generated = torch.cat([generated, next_tokens.unsqueeze(-1)], dim=1)
 
-            # Track timing
-            token_end_time = time.perf_counter()
-            if time_to_first_token is None:
-                time_to_first_token = token_end_time - start_time
-            else:
-                token_times.append(token_end_time - token_start_time)
-
+            if log_timing and tokens_generated == 0:
+                torch.cuda.synchronize()
+                decode_start_time = time.perf_counter()
+                time_to_first_token = decode_start_time - forward_start_time
+                setup_time = forward_start_time - start_time
             tokens_generated += 1
             pbar.update(1)
-
         pbar.close()
 
-        logits = None
+        logits = logprobs = None
         if return_logits and all_logits:
-            logits = torch.cat(all_logits, dim=1)  # (batch_size, completion_length, vocab_size)
-            expected_logits = generated.shape[1] - prompt_len
-            assert logits.shape[1] == expected_logits, (
-                f"Number of logits ({logits.shape[1]}) does not match number of newly generated tokens ({expected_logits})"
-            )
-
-        logprobs = None
+            logits = torch.cat(all_logits, dim=1)
         if return_logprobs and all_logprobs:
-            logprobs = torch.cat(all_logprobs, dim=1)  # (batch_size, completion_length)
-            expected_logprobs = generated.shape[1] - prompt_len
-            assert logprobs.shape[1] == expected_logprobs, (
-                f"Number of logprobs ({logprobs.shape[1]}) does not match number of newly generated tokens ({expected_logprobs})"
-            )
+            logprobs = torch.cat(all_logprobs, dim=1)
+
+        if log_timing:
+            torch.cuda.synchronize()
+            end_time = time.perf_counter()
+            total_time = end_time - start_time
+
+            total_tokens = tokens_generated * batch_size
+            assert total_tokens == generated.numel(), "Total tokens computed incorrectly"
+            prefill_tokens = prompt_len * batch_size
+            completion_tokens = tokens_generated * batch_size
+            tokens_per_sec_total = total_tokens / total_time
+            tokens_per_sec_per_seq = tokens_generated / total_time
+            pad_count = (generated == pad).sum().item()
+            pad_percentage = (pad_count / total_tokens) * 100 if total_tokens > 0 else 0.0
+
+            stats_lines = [
+                f"\n{'=' * 60}",
+                "GENERATION STATISTICS",
+                f"  Batch size: {batch_size:,} | Prompt len: {prompt_len:,} tokens",
+                f"  Tokens generated: {tokens_generated:,} per sequence | Total: {total_tokens:,}",
+                f"  Seq length: {prompt_len:,} → {prompt_len + tokens_generated:,}",
+                f"  Padding stats: {pad_count:,} / {total_tokens:,} ({pad_percentage:.1f}%)",
+            ]
+            if decode_start_time and forward_start_time and time_to_first_token:
+                decode_time = end_time - decode_start_time
+                completion_time = end_time - decode_start_time
+                stats_lines.append(
+                    f"  Throughput:\n"
+                    f"    Setup: {setup_time:.3f}s | Prefill: {time_to_first_token:.3f}s | Decode: {decode_time:.3f}s | Total: {total_time:.3f}s\n"
+                    f"    Overall TPS: {tokens_per_sec_per_seq:.1f} /seq | {tokens_per_sec_total:.1f} /total\n"
+                    f"    Prefill TPS: {prompt_len / time_to_first_token:.1f} /seq | {prefill_tokens / time_to_first_token:.1f} /total\n"
+                    f"    Completion TPS: {tokens_generated / completion_time:.1f} /seq | {completion_tokens / completion_time:.1f} /total",
+                )
+
+            stats_lines.append(f"{'=' * 60}")
+            log_or_print(log, "\n".join(stats_lines))
 
         if completions_only:
             generated = generated[:, prompt_len:]
-            # NOTE: completions_only does not apply to logits. They are already only computed for completions.
-
-        total_time = time.perf_counter() - start_time
-        if log_timing:
-            # Calculate metrics
-            total_tokens = tokens_generated * batch_size
-            tokens_per_sec_total = total_tokens / total_time
-            tokens_per_sec_per_seq = tokens_generated / total_time
-
-            # Main generation stats
-            log_or_print(log, f"\n{'=' * 60}\nGENERATION STATISTICS")
-            log_or_print(
-                log, f"  Batch size: {batch_size:,} | Prompt length: {prompt_len:,} tokens"
-            )
-            log_or_print(
-                log,
-                f"  Tokens generated: {tokens_generated:,} per sequence | Total: {total_tokens:,}",
-            )
-            log_or_print(
-                log, f"  Sequence length: {prompt_len:,} → {prompt_len + tokens_generated:,}"
-            )
-            log_or_print(log, f"  Total generation time: {total_time:.3f}s")
-            # Calculate prefill and completion throughput
-            prefill_tokens_total = prompt_len * batch_size
-            completion_tokens_total = tokens_generated * batch_size
-
-            log_or_print(log, "  Throughput:")
-            log_or_print(
-                log,
-                f"    Overall:  {tokens_per_sec_total:.1f} tokens/s (total) | {tokens_per_sec_per_seq:.1f} tokens/s (per seq)",
-            )
-
-            if prefill_time is not None and prefill_time > 0:
-                prefill_throughput_total = prefill_tokens_total / prefill_time
-                prefill_throughput_per_seq = prompt_len / prefill_time
-                log_or_print(
-                    log,
-                    f"    Prefill: {prefill_throughput_total:.1f} tokens/s (total) | {prefill_throughput_per_seq:.1f} tokens/s (per seq)",
-                )
-
-            completion_time = total_time - (prefill_time or 0) - (kv_cache_init_time or 0)
-            if completion_time > 0 and tokens_generated > 0:
-                completion_throughput_total = completion_tokens_total / completion_time
-                completion_throughput_per_seq = tokens_generated / completion_time
-                log_or_print(
-                    log,
-                    f"    Completion: {completion_throughput_total:.1f} tokens/s (total) | {completion_throughput_per_seq:.1f} tokens/s (per seq)",
-                )
-            log_or_print(log, f"{'=' * 60}")
-
+            # NOTE: completions_only does not apply to logits/logprobs. They are already computed only for completions.
         return generated, logits, logprobs
 
     def load_checkpoint(

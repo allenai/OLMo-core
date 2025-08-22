@@ -1,3 +1,4 @@
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
@@ -14,6 +15,9 @@ from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.train.train_module.transformer.config import (
     TransformerDataParallelConfig,
 )
+from olmo_core.utils import log_or_print
+
+log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from . import TransformerGenerationModule
@@ -77,7 +81,7 @@ class TransformerGenerationModuleConfig(Config):
             config_dict["state_dict_load_opts"] = dist_cp_sd.StateDictOptions(
                 **state_dict_load_opts
             )
-        log_or_print(config_dict)
+        log_or_print(log, f"TransformerGenerationModuleConfig: {config_dict}")
 
         return TransformerGenerationModule.from_checkpoint(
             checkpoint_dir=checkpoint_dir,
