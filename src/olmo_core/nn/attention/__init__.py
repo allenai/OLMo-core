@@ -522,13 +522,15 @@ class Attention(AttentionBase):
                 
                 batch_size, seq_len, n_kv_heads, head_dim = k.shape
                 
-                if sinks.ndim == 1:
+                local_sinks = sinks.to_local() if hasattr(sinks, 'to_local') else sinks
+                
+                if local_sinks.ndim == 1:
                     # (batch_size, 1, n_kv_heads, head_dim)
-                    sink_k = sinks[:n_kv_heads].view(1, 1, n_kv_heads, 1).expand(batch_size, 1, n_kv_heads, head_dim)
-                    sink_v = sinks[:n_kv_heads].view(1, 1, n_kv_heads, 1).expand(batch_size, 1, n_kv_heads, head_dim)
+                    sink_k = local_sinks[:n_kv_heads].view(1, 1, n_kv_heads, 1).expand(batch_size, 1, n_kv_heads, head_dim)
+                    sink_v = local_sinks[:n_kv_heads].view(1, 1, n_kv_heads, 1).expand(batch_size, 1, n_kv_heads, head_dim)
                 else:
                     # (batch_size, num_sink_tokens, n_kv_heads, head_dim)
-                    sink_k = sinks[:n_kv_heads].unsqueeze(0).unsqueeze(-1).expand(batch_size, num_sink_tokens, n_kv_heads, head_dim)
+                    sink_k = local_sinks[:n_kv_heads].unsqueeze(0).unsqueeze(-1).expand(batch_size, num_sink_tokens, n_kv_heads, head_dim)
                     sink_v = sink_k.clone()
                 
                 k = torch.cat([sink_k, k], dim=1)
@@ -618,18 +620,20 @@ class Attention(AttentionBase):
                     )
                     attn_logits = attn_logits + causal_mask[None, None, :, :]
 
-                if sinks.ndim == 1:
-                    S = sinks.numel()
+                local_sinks = sinks.to_local() if hasattr(sinks, 'to_local') else sinks
+                
+                if local_sinks.ndim == 1:
+                    S = local_sinks.numel()
                     sink_logits = (
-                        sinks.view(1, 1, 1, S)
+                        local_sinks.view(1, 1, 1, S)
                         .to(attn_logits)
                         .expand(batch_size, n_heads, seq_len, S)
                     )
-                elif sinks.ndim == 2:
-                    assert sinks.size(0) == n_heads, "Sinks first dim must equal n_heads"
-                    S = sinks.size(1)
+                elif local_sinks.ndim == 2:
+                    assert local_sinks.size(0) == n_heads, "Sinks first dim must equal n_heads"
+                    S = local_sinks.size(1)
                     sink_logits = (
-                        sinks.view(1, n_heads, 1, S)
+                        local_sinks.view(1, n_heads, 1, S)
                         .to(attn_logits)
                         .expand(batch_size, n_heads, seq_len, S)
                     )
@@ -790,7 +794,7 @@ class Attention(AttentionBase):
         if self.k_norm is not None:
             plan["k_norm"] = SequenceParallel(use_local_output=True, output_layouts=Shard(2))
         if self.sinks is not None:
-            from torch.distributed.tensor import distribute_tensor, Shard
+            from torch.distributed.tensor import distribute_tensor
             self.sinks = nn.Parameter(distribute_tensor(self.sinks.data, tp_mesh, [Shard(0)]))
         parallelize_module(
             module=self,
