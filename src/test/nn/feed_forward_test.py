@@ -47,7 +47,7 @@ def test_tensor_parallel_feed_forward(backend: str, tmp_path):
     seed_all(0)
     d_model = 128
     hidden = 4 * d_model
-    ff_kwargs = {"d_model": d_model, "hidden_size": hidden, "bias": False}
+    ff_kwargs: Dict[str, Any] = {"d_model": d_model, "hidden_size": hidden}
     ff = FeedForward(init_device=device.type, **ff_kwargs)
 
     bs, seq_len = 2, 64

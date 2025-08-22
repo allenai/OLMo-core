@@ -2,7 +2,7 @@ from typing import Any, Dict, Optional
 
 import pytest
 import torch
-from torch.distributed.tensor import DTensor, Shard, init_device_mesh
+from torch.distributed.tensor import Shard, init_device_mesh
 
 from olmo_core.distributed.checkpoint import (
     load_model_and_optim_state,
