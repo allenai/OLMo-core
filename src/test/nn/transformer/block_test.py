@@ -15,7 +15,6 @@ from olmo_core.nn.layer_norm import LayerNormConfig
 from olmo_core.nn.transformer.block import (
     ReorderedNormTransformerBlock,
     TransformerBlock,
-    TransformerBlockBase,
 )
 from olmo_core.testing import BACKENDS, run_distributed_test
 from olmo_core.utils import get_default_device, seed_all
@@ -76,7 +75,6 @@ def _run_tensor_parallel_block(
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
-@pytest.mark.parametrize("block_cls", [TransformerBlock, ReorderedNormTransformerBlock])
 @pytest.mark.parametrize(
     "attn_kwargs",
     [
@@ -84,6 +82,7 @@ def _run_tensor_parallel_block(
         pytest.param(dict(n_heads=8, rope=None, bias=False), id="no-bias"),
     ],
 )
+@pytest.mark.parametrize("block_cls", [TransformerBlock, ReorderedNormTransformerBlock])
 def test_tensor_parallel_transformer_block(
     backend: str, block_cls: Type[TransformerBlock], attn_kwargs: Dict[str, Any], tmp_path
 ):

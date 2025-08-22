@@ -49,6 +49,9 @@ from olmo_core.utils import get_default_device
 
 log = logging.getLogger(__name__)
 
+BF16_RTOL = 1e-5
+BF16_ATOL = 5e-3
+
 
 @pytest.mark.parametrize(
     "init_device, device",
@@ -266,13 +269,12 @@ def run_context_parallel_transformer(checkpoint_dir, outputs_path, architecture:
     logits = DTensor.from_local(local_logits, mesh, (Shard(1),))
 
     og_logits = torch.load(outputs_path, map_location=device)
-    torch.testing.assert_close(og_logits, get_full_tensor(logits))
+    torch.testing.assert_close(og_logits, get_full_tensor(logits), rtol=BF16_RTOL, atol=BF16_ATOL)
 
 
 @requires_multi_gpu
 @requires_flash_attn
 @pytest.mark.parametrize("architecture", ["olmo2"])
-@pytest.mark.skip("known precision issues with ring-flash-attn")
 def test_context_parallel_transformer(architecture: str, tmp_path):
     device = torch.device("cuda")
     config = get_transformer_config(architecture, dtype=torch.bfloat16)

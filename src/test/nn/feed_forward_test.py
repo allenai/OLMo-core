@@ -25,18 +25,19 @@ def _run_tensor_parallel_feed_forward(
     ff.apply_tp(mesh["tp"], output_layout=Shard(1), use_local_output=False)
     load_model_and_optim_state(checkpoint_dir, ff)
 
+    # Input x is replicated across ranks, output y is sharded on the sequence dimension.
     x = torch.load(inputs_path, map_location=device)
-    rank, world_size = get_rank(), get_world_size()
-    chunk = x.size(1) // world_size
-    y = ff(x)
+    y_local = ff(x).to_local()
 
     # Backward to exercise graph in TP mode.
-    y.to_local().sum().backward()
+    y_local.sum().backward()
 
     # Check the local shard of the output is the same as the corresponding shard of the reference output
     y_ref = torch.load(outputs_path, map_location=device)
+    rank, world_size = get_rank(), get_world_size()
+    chunk = x.size(1) // world_size
     y_ref_local = y_ref[:, rank * chunk : (rank + 1) * chunk, :]
-    torch.testing.assert_close(y_ref_local, y.to_local())
+    torch.testing.assert_close(y_ref_local, y_local)
 
 
 @pytest.mark.parametrize("backend", BACKENDS)

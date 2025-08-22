@@ -2,7 +2,7 @@ from typing import Any, Dict, Optional
 
 import pytest
 import torch
-from torch.distributed.tensor import Shard, init_device_mesh
+from torch.distributed.tensor import DTensor, Shard, init_device_mesh
 
 from olmo_core.distributed.checkpoint import (
     load_model_and_optim_state,
@@ -32,6 +32,9 @@ from olmo_core.testing import (
     run_distributed_test,
 )
 from olmo_core.utils import get_default_device, seed_all
+
+BF16_RTOL = 1e-5
+BF16_ATOL = 5e-3
 
 
 @pytest.mark.parametrize("device", DEVICES)
@@ -465,41 +468,37 @@ def _run_context_parallel_attention(
     outputs_path: str,
     attn_kwargs: Dict[str, Any],
     load_balancer_type,
+    head_stride: int,
 ):
     device = get_default_device()
     mesh = init_device_mesh(device.type, (get_world_size(),), mesh_dim_names=("cp",))
 
     attn = Attention(init_device=device.type, **attn_kwargs)
-    attn.apply_cp(mesh["cp"], load_balancer_type)
+    attn.apply_cp(mesh["cp"], load_balancer_type, head_stride=head_stride)
     load_model_and_optim_state(checkpoint_dir, attn)
 
-    # Feed the full input on each rank; ring attention returns local outputs.
+    # Load the input and split it across ranks on the sequence dimension.
     x = torch.load(inputs_path, map_location=device)
-    y_local = attn(x)
+    rank, world_size = get_rank(), get_world_size()
+    chunk_size = x.size(1) // world_size
+    x_local = x[:, rank * chunk_size : (rank + 1) * chunk_size, :]
+
+    # Feed the local input into the attention module.
+    y_local = attn(x_local)
 
     # Backward to exercise graph in CP mode.
     y_local.sum().backward()
 
-    # Compare against the reference full output by reassembling shards.
-    from torch.distributed.tensor import DTensor
-
+    # Load the reference output and split it across ranks on the sequence dimension.
     y_ref = torch.load(outputs_path, map_location=device)
-    y_dt = DTensor.from_local(y_local, mesh, (Shard(1),))
-    torch.testing.assert_close(y_ref, y_dt.full_tensor())
+    y_ref_local = y_ref[:, rank * chunk_size : (rank + 1) * chunk_size, :]
+
+    # Compare the local output with the reference output.
+    torch.testing.assert_close(y_ref_local, y_local, rtol=BF16_RTOL, atol=BF16_ATOL)
 
 
 @requires_multi_gpu
 @requires_flash_attn
-@pytest.mark.parametrize(
-    "attn_kwargs",
-    [
-        pytest.param({}, id="default"),
-        pytest.param(
-            {"qk_norm": LayerNormConfig(), "use_head_qk_norm": True, "rope": RoPEConfig()},
-            id="headwise-qk-layernorm-rope",
-        ),
-    ],
-)
 @pytest.mark.parametrize(
     "load_balancer_type",
     [
@@ -507,11 +506,16 @@ def _run_context_parallel_attention(
         pytest.param(RingAttentionLoadBalancerType.llama3, id="llama3"),
     ],
 )
-@pytest.mark.skip("known precision issues with ring-flash-attn")
-def test_context_parallel_attention(attn_kwargs: Dict[str, Any], load_balancer_type, tmp_path):
+@pytest.mark.parametrize("head_stride", [pytest.param(1), pytest.param(8)])
+@pytest.mark.parametrize(
+    "attn_kwargs", [pytest.param({}, id="default"), pytest.param({"window_size": 8}, id="swa")]
+)
+def test_context_parallel_attention(
+    attn_kwargs: Dict[str, Any], load_balancer_type, head_stride: int, tmp_path
+):
+    seed_all(0)
     device = torch.device("cuda")
 
-    seed_all(0)
     # CP requires flash-attn and low precision dtypes.
     attn_kwargs.update({"d_model": 128, "n_heads": 8, "use_flash": True})
     attn = Attention(init_device=device.type, **attn_kwargs)
@@ -532,5 +536,12 @@ def test_context_parallel_attention(attn_kwargs: Dict[str, Any], load_balancer_t
         _run_context_parallel_attention,
         backend="nccl",
         start_method="spawn",
-        func_args=(checkpoint_dir, inputs_path, outputs_path, attn_kwargs, load_balancer_type),
+        func_args=(
+            checkpoint_dir,
+            inputs_path,
+            outputs_path,
+            attn_kwargs,
+            load_balancer_type,
+            head_stride,
+        ),
     )
