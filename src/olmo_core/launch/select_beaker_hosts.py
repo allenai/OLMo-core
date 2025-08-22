@@ -147,7 +147,6 @@ def get_beaker_host_name_constraints(
     beaker_cluster: str,
     beaker_priority: Priority,
     gcp_credentials_path: Optional[Path] = None,
-    remove_occupied_hosts: bool = False,
 ) -> list[list[str]]:
     if beaker_cluster != "augusta-google-1":
         raise ValueError(
@@ -167,31 +166,29 @@ def get_beaker_host_name_constraints(
 
     machines_metadata = get_hosts_metadata_from_gcp(gcp_zone, credentials_path=gcp_credentials_path)
 
-    # Remove hosts with jobs running on equal or higher priority
-    if remove_occupied_hosts:
-        from olmo_core.internal.common import get_beaker_client
+    from olmo_core.internal.common import get_beaker_client
 
-        beaker = get_beaker_client()
-        assert beaker is not None
+    beaker = get_beaker_client()
+    assert beaker is not None
 
-        cluster = beaker.cluster.get(beaker_cluster)
-        jobs = beaker.job.list(cluster=cluster)
+    cluster = beaker.cluster.get(beaker_cluster)
+    jobs = beaker.job.list(cluster=cluster)
 
-        for job in jobs:
-            if job.node is None:
-                continue
+    for job in jobs:
+        if job.node is None:
+            continue
 
-            host = beaker.node.get(job.node).hostname
-            if host not in machines_metadata:
-                continue
+        host = beaker.node.get(job.node).hostname
+        if host not in machines_metadata:
+            continue
 
-            if (
-                job.is_running
-                and job.execution
-                and job.execution.spec.resources.gpu_count > 0
-                and _is_job_preemptible(job, beaker_priority)
-            ):
-                del machines_metadata[host]
+        if (
+            job.is_running
+            and job.execution
+            and job.execution.spec.resources.gpu_count > 0
+            and _is_job_preemptible(job, beaker_priority)
+        ):
+            del machines_metadata[host]
 
     return get_host_name_constraints(
         machines_metadata, num_model_replica_nodes, beaker_num_hosts_per_task, beaker_task_count
@@ -224,12 +221,6 @@ def main():
         default="augusta-google-1",
         help="The beaker cluster. This defaults to and is assumed to be Augusta for now.",
     )
-    parser.add_argument(
-        "--allow-occupied-hosts",
-        action="store_false",
-        dest="remove_occupied_hosts",
-        help="If set, allow selecting hosts with equal/higher priority GPU jobs.",
-    )
 
     # GCP-related settings
     parser.add_argument(
@@ -254,7 +245,6 @@ def main():
             args.zone,
             beaker_cluster=args.cluster,
             beaker_priority=args.priority,
-            remove_occupied_hosts=args.remove_occupied_hosts,
         )
     )
 
