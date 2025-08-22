@@ -9,6 +9,8 @@ import google.auth
 from beaker import Job, Priority
 from google.cloud.compute_v1.services.instances.client import InstancesClient
 
+from olmo_core.exceptions import BeakerInsufficientResourcesError
+
 log = logging.getLogger(__name__)
 
 
@@ -75,59 +77,61 @@ def get_host_name_constraints(
     num_hosts_per_task: int,
     num_tasks: int,
 ) -> list[list[str]]:
+    if num_hosts_per_task % num_hosts_per_replica != 0:
+        raise ValueError(
+            "Number of hosts in a replica must be a divisor of number of hosts in a task"
+        )
+
     hosts_by_block: defaultdict[str, list[str]] = defaultdict(list)
     for host, metadata in hosts_metadata.items():
         hosts_by_block[metadata.block].append(host)
 
+    # Sort blocks in descending order of number of hosts
+    sorted_blocks = sorted(
+        hosts_by_block.keys(), key=lambda block: len(hosts_by_block[block]), reverse=True
+    )
+
+    if len(hosts_by_block[sorted_blocks[0]]) > num_hosts_per_task * num_tasks:
+        # If all the tasks can be fulfilled in a single block, let's do that!
+        return [list(hosts_by_block[sorted_blocks[0]]) for _ in range(num_tasks)]
+
     hosts_per_task: list[list[str]] = []
-    for block, hosts in sorted(hosts_by_block.items(), key=lambda item: len(item[1]), reverse=True):
-        # We want no model replicas to have nodes from different blocks.
-        # To make this possible, within a task, either 1) every host must be from the same block or
-        # 2) we must have exactly as many hosts as the task size, and the number of hosts from each block
-        # must be a multiple of the model replica size.
+    block_idx = 0
+    for _ in range(num_tasks):
+        task_hosts: list[str] = []
 
-        if len(hosts) > num_hosts_per_task:
-            # Use all the hosts that we desire! They are all from the same block
+        while block_idx < len(sorted_blocks) and len(task_hosts) < num_hosts_per_task:
+            block = sorted_blocks[block_idx]
+            num_block_hosts = len(hosts_by_block[block])
 
-            for _ in range(0, len(hosts), num_hosts_per_task):
-                hosts_per_task.append(list(hosts))
-        else:
-            # We must constrain the hosts so that we have exactly as many hosts as the task size. This
-            # forces the tasks to be on those specific hosts
+            if num_block_hosts < num_hosts_per_replica:
+                # We have exhausted this block, move onto the next one
+                block_idx += 1
+                continue
 
-            # Only keep a multiple of replica_size number of hosts from each block, to avoid having replicas
-            # go across block boundaries
-            host_count_from_block = (len(hosts) // num_hosts_per_replica) * num_hosts_per_replica
+            needed_hosts = num_hosts_per_task - len(task_hosts)
+            assert needed_hosts % num_hosts_per_replica == 0
 
-            used_hosts_count = 0
+            # Take the nearest multiple of num_hosts_per_replica as the number of hosts to give to the current task
+            host_count_from_block = min(
+                needed_hosts,
+                num_block_hosts // num_hosts_per_replica * num_hosts_per_replica,
+            )
+            assert host_count_from_block > 0
 
-            if len(hosts_per_task) > 0 and len(hosts_per_task[-1]) < num_hosts_per_task:
-                # Last task needs more hosts, fill them up from here
-                needed_hosts = num_hosts_per_task - len(hosts_per_task[-1])
-                assert needed_hosts % num_hosts_per_replica == 0
+            block_hosts = hosts_by_block[block]
+            task_hosts.extend(block_hosts[:host_count_from_block])
 
-                # Take the nearest multiple of num_hosts_per_replica as the number of hosts to give to that task
-                used_hosts_count = min(
-                    needed_hosts,
-                    host_count_from_block // num_hosts_per_replica * num_hosts_per_replica,
-                )
-                assert used_hosts_count % num_hosts_per_replica == 0
+            hosts_by_block[block] = block_hosts[host_count_from_block:]
 
-                hosts_per_task[-1].extend(hosts[:used_hosts_count])
-
-            # Deal with when last host didn't get filled up
-
-            # Put remaining hosts into next task
-            assert host_count_from_block - used_hosts_count <= num_hosts_per_task
-            assert (host_count_from_block - used_hosts_count) % num_hosts_per_replica == 0
-            hosts_per_task.append(list(hosts[used_hosts_count:host_count_from_block]))
-
-    hosts_per_task = hosts_per_task[:num_tasks]
+        hosts_per_task.append(task_hosts)
 
     if len(hosts_per_task) < num_tasks:
-        raise RuntimeError(f"Could only satisfy {len(hosts_per_task)} tasks")
+        raise BeakerInsufficientResourcesError(
+            f"Could only satisfy {len(hosts_per_task)} out of {num_tasks} tasks"
+        )
     if len(hosts_per_task[-1]) < num_hosts_per_task:
-        raise RuntimeError(
+        raise BeakerInsufficientResourcesError(
             f"Could not satisfy task number {len(hosts_per_task) - 1}, only got {len(hosts_per_task[-1])} hosts"
         )
 
@@ -160,9 +164,6 @@ def get_beaker_host_name_constraints(
     assert num_nodes % num_model_replica_nodes == 0
     assert num_nodes % beaker_task_count == 0
     beaker_num_hosts_per_task = num_nodes // beaker_task_count
-
-    if beaker_task_count != 1:
-        raise NotImplementedError("Multiple task are not (fully) supported")
 
     machines_metadata = get_hosts_metadata_from_gcp(gcp_zone, credentials_path=gcp_credentials_path)
 
