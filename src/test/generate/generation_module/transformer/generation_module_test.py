@@ -10,8 +10,8 @@ from olmo_core.distributed.checkpoint import save_model_and_optim_state
 from olmo_core.distributed.parallel.data_parallel import DataParallelType
 from olmo_core.distributed.utils import get_world_size
 from olmo_core.generate.generation_module import TransformerGenerationModule
-from olmo_core.generate.generation_module.config import (
-    GenerationConfig,
+from olmo_core.generate.generation_module.config import GenerationConfig
+from olmo_core.generate.generation_module.transformer.config import (
     TransformerGenerationModuleConfig,
 )
 from olmo_core.nn.transformer import TransformerConfig
@@ -283,7 +283,11 @@ def test_generation_with_attention_mask():
     mask2 = mask1.clone()
     mask2[0, 2] = False  # Mask first non-pad token
 
-    output1, _, _ = generation_module.generate_batch(input_ids, attention_mask=mask1)
+    output1, _, _ = generation_module.generate_batch(
+        input_ids,
+        attention_mask=mask1,
+        log_timing=True,  # just to check that log_timing works too
+    )
     output2, _, _ = generation_module.generate_batch(input_ids, attention_mask=mask2)
 
     assert not torch.equal(output1, output2), "Using different attention masks should affect output"
