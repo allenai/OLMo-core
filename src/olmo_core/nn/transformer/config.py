@@ -868,6 +868,8 @@ class TransformerConfig(Config):
         hidden_size_multiplier: Optional[float] = None,
         fused_ops: bool = False,
         use_flash: bool = False,
+        use_flex: bool = False,
+        use_sinks: bool = False,
         block_name: TransformerBlockType = TransformerBlockType.default,
         block_mods: Optional[
             Dict[int, Callable[[TransformerBlockConfig], TransformerBlockConfig]]
@@ -885,6 +887,8 @@ class TransformerConfig(Config):
         :param hidden_size_multiplier: Custom multiplier for the FFN hidden size.
         :param fused_ops: Use fused operations where possible.
         :param use_flash: Use flash-attn.
+        :param use_flex: Use flex-attn.
+        :param use_sinks: Use attention sinks.
         :param block_mods: A dictionary of block indices to functions that take the base block config and return a modified block config.
         :param dtype: The default data type to use for all parameters.
         """
@@ -925,6 +929,8 @@ class TransformerConfig(Config):
                 rope=RoPEConfig(name=rope_type, theta=rope_theta, scaling=rope_scaling),
                 qk_norm=layer_norm if qk_norm else None,
                 use_flash=use_flash,
+                use_flex=use_flex,
+                use_sinks=use_sinks,
                 dtype=dtype,
             ),
             feed_forward=feed_forward,
