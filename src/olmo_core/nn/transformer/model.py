@@ -1247,6 +1247,9 @@ class BLTTransformer(Transformer):
         if (constituent_input_ids := kwargs.pop("constituent_input_ids", None)) is not None:
             extra_kwargs["constituent_input_ids"] = move_to_device(constituent_input_ids, self.device)
 
+        if (teacher_inputs_embeds := kwargs.pop("teacher_inputs_embeds", None)) is not None:
+            extra_kwargs["teacher_inputs_embeds"] = move_to_device(teacher_inputs_embeds, self.device)
+
         if blt_config is not None and blt_config.patching != "dolma2":
             # can't use attributes relying on dolma2 patching
             extra_kwargs["original_input_ids"] = None
@@ -1740,6 +1743,74 @@ class BLTDistillTransformer(BLTTransformer):
 
         return local_decoder_loss_exhaustive, local_decoder_loss_simple, metrics
 
+    def _noise_strict(
+        self,
+        input_ids,
+        labels,
+        p,
+        **kwargs: Dict[str, Any],
+    ) -> tuple[torch.Tensor, Dict[str, Any], torch.Tensor]:
+        if not hasattr(self, "_tokenizer"):
+            # hardcode for now
+            self._tokenizer = ByteTokenizerConfig.blt().build()
+
+        indices = torch.randperm(input_ids.shape[0])[:int(input_ids.shape[0] * p)]
+
+        with torch.no_grad():
+            _, _, (_, boundary_logprobs), boundary_mask = self.local_encoder(
+                input_ids[indices],
+                patch_lens=torch.tensor([[input_ids.shape[1]]], device=input_ids.device, dtype=torch.long).expand(indices.shape[0], -1),
+                patch_ids=torch.zeros_like(input_ids[indices]),
+                cross_attn_mask=None,
+            )
+
+        B, L = boundary_mask.shape
+        token_idx = (
+            torch.arange(L, device=boundary_mask.device)[None, :]
+            + (~boundary_mask).long() * L
+        )
+        seq_sorted_indices = torch.argsort(token_idx, dim=1)[:, :kwargs["patch_lens"].shape[1]]  # type: ignore
+        patch_lens = kwargs["patch_lens"].clone()  # type: ignore
+
+        # get / unshard teacher embeddings
+        teacher_embeddings = self.teacher.embeddings(torch.arange(len(self.teacher.embeddings.weight), device=input_ids.device))  # type: ignore
+        teacher_inputs_embeds = teacher_embeddings[kwargs["original_input_ids"]]
+
+        for i, idx in enumerate(indices):
+            teacher_inputs_embeds[idx] = 0
+            patch_lens[idx, 1:] = 0
+
+            prev_i = 1
+
+            for j in range(seq_sorted_indices.shape[1] - 1):
+                curr_i = seq_sorted_indices[i, j + 1] # offset bos
+
+                if curr_i + 1 <= prev_i:
+                    break
+
+                current_bytes = self._tokenizer.decode_to_bytes(input_ids[idx, prev_i:curr_i + 1])
+                current_byte_str = blt_utils.bytes_to_chars(current_bytes)
+                subword_ids = [x.id for x in self._tokenizer.hf_tokenizer.backend_tokenizer.model.tokenize(current_byte_str)]
+
+                for subword_id in subword_ids:
+                    teacher_inputs_embeds[idx, j] += teacher_embeddings[subword_id]  # type: ignore
+
+                patch_lens[idx, j + 1] = len(current_bytes)
+
+                teacher_inputs_embeds[idx, j] /= len(subword_ids)
+                prev_i = curr_i + 1
+
+            labels[idx, prev_i:] = -100
+
+            # cant use
+            kwargs["original_input_ids"][idx] = 0 # type: ignore
+            kwargs["constituent_input_ids"][idx] = 0 # type: ignore
+
+        kwargs["teacher_inputs_embeds"] = teacher_inputs_embeds  # type: ignore
+        kwargs["patch_lens"] = patch_lens  # type: ignore
+
+        return labels, kwargs, indices
+
     def _noise(
         self,
         input_ids,
@@ -1804,7 +1875,7 @@ class BLTDistillTransformer(BLTTransformer):
                 dtype=original_input_ids.dtype,
             )
             kwargs["patch_lens"][idx] = noised_patch_lengths  # type: ignore
-            labels[len(noised_input_ids):] = -100  # type: ignore 
+            labels[idx, len(noised_input_ids):] = -100  # type: ignore 
 
         return labels, kwargs, indices
 
@@ -1830,7 +1901,7 @@ class BLTDistillTransformer(BLTTransformer):
         use_oracle_patch_reps = blt_config.use_oracle_patch_reps
 
         if blt_config.p_boundary_noise > 0:
-            labels, kwargs, noised_indices = self._noise(input_ids, labels, p=blt_config.p_boundary_noise, **kwargs)
+            labels, kwargs, noised_indices = self._noise_strict(input_ids, labels, p=blt_config.p_boundary_noise, **kwargs)
         else:
             noised_indices = None
 
@@ -1856,6 +1927,7 @@ class BLTDistillTransformer(BLTTransformer):
 
                 teacher_logits, (teacher_hidden_states, teacher_last_hidden_state, teacher_embeds) = self._teacher_forward(
                     input_ids_for_teacher,
+                    inputs_embeds=extra_kwargs.get("teacher_inputs_embeds"),
                     labels=None, # we will compute loss ourselves
                     return_logits=True,
                     skip_blocks=skip_blocks,
@@ -2076,18 +2148,22 @@ class BLTDistillTransformer(BLTTransformer):
                 if blt_config.decoder_use_mse_loss:
                     raise ValueError("MSE loss not implemented for ALM-style distillation")
 
-                # use an ALM-style loss
+                noised_mask = torch.zeros(input_ids.shape[0], device=self.device, dtype=torch.bool)
+                noised_mask[noised_indices] = True
+                non_noised_indices = torch.where(~noised_mask)[0]
+
+                # use an ALM-style loss over non-noised examples
                 local_decoder_loss_exhaustive, local_decoder_loss_simple, metrics = self._compute_alm_style_loss(
-                    main_path_logprobs,
-                    boundary_logprobs_for_decoder_loss,
-                    boundary_labels,
-                    teacher_logprobs,
-                    teacher_main_path_logprobs,
-                    byte_mask,
-                    patch_mask,
-                    local_encoder_kwargs["patch_lens"],
-                    local_encoder_kwargs["patch_ids"],
-                    extra_kwargs["constituent_input_ids"],
+                    main_path_logprobs[non_noised_indices],
+                    boundary_logprobs_for_decoder_loss[non_noised_indices] if boundary_logprobs_for_decoder_loss is not None else None,
+                    boundary_labels[non_noised_indices] if boundary_labels is not None else None,
+                    teacher_logprobs[non_noised_indices],
+                    teacher_main_path_logprobs[non_noised_indices],
+                    byte_mask[non_noised_indices],
+                    patch_mask[non_noised_indices],
+                    local_encoder_kwargs["patch_lens"][non_noised_indices],
+                    local_encoder_kwargs["patch_ids"][non_noised_indices],
+                    extra_kwargs["constituent_input_ids"][non_noised_indices],
                     ignore_index,
                     blt_config,
                     metrics,
