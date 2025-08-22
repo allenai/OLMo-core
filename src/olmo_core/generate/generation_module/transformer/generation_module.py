@@ -483,6 +483,7 @@ class TransformerGenerationModule(GenerationModule):
                 eos_token_id=tokenizer_config.eos_token_id,
             )
             log_or_print(
+                log,
                 f"No generation config provided, using defaults from checkpoint config: {generation_config}",
             )
 
@@ -493,8 +494,8 @@ class TransformerGenerationModule(GenerationModule):
                 lambda c: setattr(c, "dtype", dtype) if hasattr(c, "dtype") else None
             )
 
-        log_or_print(transformer_config)
-        log_or_print(generation_config)
+        log_or_print(log, f"{transformer_config}")
+        log_or_print(log, f"{generation_config}")
         model = transformer_config.build()
         generation_module = cls(model, generation_config, **kwargs)
 
