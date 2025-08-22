@@ -522,15 +522,20 @@ class Attention(AttentionBase):
                 
                 batch_size, seq_len, n_kv_heads, head_dim = k.shape
                 
-                local_sinks = sinks.to_local() if hasattr(sinks, 'to_local') else sinks
+                if hasattr(sinks, 'to_local'):
+                    local_sinks = sinks.to_local()
+                elif hasattr(sinks, '_local_tensor'):
+                    local_sinks = sinks._local_tensor
+                else:
+                    local_sinks = sinks
                 
                 if local_sinks.ndim == 1:
                     # (batch_size, 1, n_kv_heads, head_dim)
-                    sink_k = local_sinks[:n_kv_heads].view(1, 1, n_kv_heads, 1).expand(batch_size, 1, n_kv_heads, head_dim)
-                    sink_v = local_sinks[:n_kv_heads].view(1, 1, n_kv_heads, 1).expand(batch_size, 1, n_kv_heads, head_dim)
+                    sink_k = local_sinks[:n_kv_heads].view(1, 1, n_kv_heads, 1).expand(batch_size, 1, n_kv_heads, head_dim).clone()
+                    sink_v = local_sinks[:n_kv_heads].view(1, 1, n_kv_heads, 1).expand(batch_size, 1, n_kv_heads, head_dim).clone()
                 else:
                     # (batch_size, num_sink_tokens, n_kv_heads, head_dim)
-                    sink_k = local_sinks[:n_kv_heads].unsqueeze(0).unsqueeze(-1).expand(batch_size, num_sink_tokens, n_kv_heads, head_dim)
+                    sink_k = local_sinks[:n_kv_heads].unsqueeze(0).unsqueeze(-1).expand(batch_size, num_sink_tokens, n_kv_heads, head_dim).clone()
                     sink_v = sink_k.clone()
                 
                 k = torch.cat([sink_k, k], dim=1)
@@ -620,7 +625,12 @@ class Attention(AttentionBase):
                     )
                     attn_logits = attn_logits + causal_mask[None, None, :, :]
 
-                local_sinks = sinks.to_local() if hasattr(sinks, 'to_local') else sinks
+                if hasattr(sinks, 'to_local'):
+                    local_sinks = sinks.to_local()
+                elif hasattr(sinks, '_local_tensor'):
+                    local_sinks = sinks._local_tensor
+                else:
+                    local_sinks = sinks
                 
                 if local_sinks.ndim == 1:
                     S = local_sinks.numel()
