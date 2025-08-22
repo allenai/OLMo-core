@@ -36,7 +36,7 @@ class GenerationConfig(Config):
     """Top-p (nucleus) sampling. Only consider the smallest set of tokens whose cumulative probability exceeds this threshold. 1.0 means no filtering."""
 
     use_cache: bool = True
-    """Whether to use a kv-cache for generation. If True, the model will cache past key-value pairs to speed up generation."""
+    """Whether to use an inference cache (e.g. a kv-cache) for generation."""
 
     stop_token_ids: Optional[List[int]] = None
     """Tokens to stop generation at. If provided, the generation will stop when any of these tokens are generated."""

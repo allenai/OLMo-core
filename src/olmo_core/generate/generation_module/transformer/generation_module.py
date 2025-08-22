@@ -115,7 +115,10 @@ class TransformerGenerationModule(GenerationModule):
             self.model, state_dict["model"], options=self.state_dict_load_opts
         )
 
-    def prepare_kv_cache(self, batch_size: int, max_seq_len: int):
+    def prepare_inference_cache(self, batch_size: int, max_seq_len: int):
+        # Note: not all models use key-value caches, which is why this method
+        # is called "prepare_inference_cache" rather than "prepare_kv_cache".
+        # For example, Mamba requires cache state but doesn't use a kv-cache.
         for block in self.model.blocks.values():
             assert isinstance(block.attention, Attention)
             attn = cast(Attention, block.attention)
@@ -124,7 +127,7 @@ class TransformerGenerationModule(GenerationModule):
             else:
                 attn.kv_cache_manager.reset(batch_size, max_seq_len)
 
-    def free_kv_cache(self):
+    def free_inference_cache(self):
         for block in self.model.blocks.values():
             assert isinstance(block.attention, Attention)
             cast(Attention, block.attention).kv_cache_manager = None
@@ -215,15 +218,15 @@ class TransformerGenerationModule(GenerationModule):
                 attention_mask = torch.ones_like(input_ids, dtype=torch.bool, device=self.device)
             prefill_cache_leftpad = attention_mask_to_cache_leftpad(attention_mask).to(self.device)
 
-        # Initialize/Reset the KV cache
+        # Initialize/Reset the inference cache
         if generation_config.use_cache:
             if max_length is None:
                 raise OLMoConfigurationError(
                     "max_length or max_new_tokens must be provided if use_cache is True"
                 )
-            self.prepare_kv_cache(batch_size, max_length)
+            self.prepare_inference_cache(batch_size, max_length)
         else:
-            self.free_kv_cache()
+            self.free_inference_cache()
 
         pbar = tqdm(
             desc="Generating tokens",
