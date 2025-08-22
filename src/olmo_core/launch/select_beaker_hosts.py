@@ -71,7 +71,7 @@ def _is_job_preemptible(job: Job, desired_priority: Priority) -> bool:
     return sorted_priorities.index(desired_priority) < sorted_priorities.index(job.priority)
 
 
-def get_host_name_constraints(
+def get_hostname_constraints(
     hosts_metadata: dict[str, HostMetadata],
     num_hosts_per_replica: int,
     num_hosts_per_task: int,
@@ -138,7 +138,7 @@ def get_host_name_constraints(
     return hosts_per_task
 
 
-def get_beaker_host_name_constraints(
+def get_beaker_hostname_constraints(
     num_nodes: int,
     num_model_replica_nodes: int,
     beaker_task_count: int,
@@ -190,7 +190,7 @@ def get_beaker_host_name_constraints(
         ):
             del machines_metadata[host]
 
-    return get_host_name_constraints(
+    return get_hostname_constraints(
         machines_metadata, num_model_replica_nodes, beaker_num_hosts_per_task, beaker_task_count
     )
 
@@ -238,7 +238,7 @@ def main():
     args = parser.parse_args()
 
     print(
-        get_beaker_host_name_constraints(
+        get_beaker_hostname_constraints(
             args.num_nodes,
             args.num_model_replica_nodes,
             args.task_count,
