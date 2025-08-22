@@ -425,6 +425,11 @@ class BeakerLaunchConfig(Config):
             and len(self.clusters) == 1
             and "augusta" in self.clusters[0]
         ):
+            if self.retries is not None and self.retries > 0:
+                raise OLMoConfigurationError(
+                    "Hostname constraints cannot be used for beaker jobs with retries, since constraints do not update on retry."
+                )
+
             host_name_constraints = get_beaker_hostname_constraints(
                 self.num_nodes,
                 self.num_execution_units or max(1, self.num_nodes // 32),
