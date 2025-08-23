@@ -97,7 +97,7 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} gs://ai2-llm/checkpoints/dirkg/OLMo2-7
         config.dp_config.shard_degree = 32
         config.ac_config = TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.budget,
-            activation_memory_budget=0.80
+            activation_memory_budget=0.75
         )
 
         return config
