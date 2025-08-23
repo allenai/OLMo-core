@@ -112,6 +112,7 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} gs://ai2-llm/checkpoints/dirkg/OLMo2-7
 
         config.callbacks["checkpointer"].save_interval = 10000
         config.callbacks["checkpointer"].ephemeral_save_interval = 500
+        config.callbacks["checkpointer"].save_async = False
 
         # performance settings
         config.metrics_collect_interval = 50
