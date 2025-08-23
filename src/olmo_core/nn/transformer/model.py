@@ -1,5 +1,5 @@
 import logging
-from functools import cached_property
+from functools import cached_property, lru_cache
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -1743,6 +1743,14 @@ class BLTDistillTransformer(BLTTransformer):
 
         return local_decoder_loss_exhaustive, local_decoder_loss_simple, metrics
 
+    @lru_cache(maxsize=100_000)
+    def _backend_tokenize(self, byte_str):
+        if not hasattr(self, "_tokenizer"):
+            # hardcode for now
+            self._tokenizer = ByteTokenizerConfig.blt().build()
+
+        return tuple(x.id for x in self._tokenizer.hf_tokenizer.backend_tokenizer.model.tokenize(byte_str))
+
     def _noise_strict(
         self,
         input_ids,
@@ -1751,10 +1759,6 @@ class BLTDistillTransformer(BLTTransformer):
         epsilon=1e-6,
         **kwargs: Dict[str, Any],
     ) -> tuple[torch.Tensor, Dict[str, Any], torch.Tensor]:
-        if not hasattr(self, "_tokenizer"):
-            # hardcode for now
-            self._tokenizer = ByteTokenizerConfig.blt().build()
-
         indices = torch.randperm(input_ids.shape[0])[:int(input_ids.shape[0] * p)]
 
         with torch.no_grad():
@@ -1791,7 +1795,7 @@ class BLTDistillTransformer(BLTTransformer):
 
                 current_bytes = self._tokenizer.decode_to_bytes(input_ids[idx, prev_i:curr_i + 1])
                 current_byte_str = blt_utils.bytes_to_chars(current_bytes)
-                subword_ids = [x.id for x in self._tokenizer.hf_tokenizer.backend_tokenizer.model.tokenize(current_byte_str)]
+                subword_ids = self._backend_tokenize(current_byte_str)
 
                 for subword_id in subword_ids:
                     teacher_inputs_embeds[idx, j] += teacher_embeddings[subword_id]  # type: ignore
