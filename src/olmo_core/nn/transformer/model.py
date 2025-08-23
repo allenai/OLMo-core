@@ -1748,6 +1748,7 @@ class BLTDistillTransformer(BLTTransformer):
         input_ids,
         labels,
         p,
+        epsilon=1e-6,
         **kwargs: Dict[str, Any],
     ) -> tuple[torch.Tensor, Dict[str, Any], torch.Tensor]:
         if not hasattr(self, "_tokenizer"):
@@ -1797,7 +1798,8 @@ class BLTDistillTransformer(BLTTransformer):
 
                 patch_lens[idx, j + 1] = len(current_bytes)
 
-                teacher_inputs_embeds[idx, j] /= len(subword_ids)
+                # len(subword_ids) should never be zero during regular training, but make sure (and could be zero in dry run batch)
+                teacher_inputs_embeds[idx, j] /= len(subword_ids) + epsilon
                 prev_i = curr_i + 1
 
             labels[idx, prev_i:] = -100
