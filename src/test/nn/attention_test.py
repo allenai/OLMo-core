@@ -483,8 +483,8 @@ def _run_context_parallel_attention(
     chunk_size = x.size(1) // world_size
     x_local = x[:, rank * chunk_size : (rank + 1) * chunk_size, :]
 
-    # Feed the local input into the attention module.
-    y_local = attn(x_local)
+    with torch.autocast(device.type, dtype=x_local.dtype):
+        y_local = attn(x_local)
 
     # Backward to exercise graph in CP mode.
     y_local.sum().backward()
