@@ -1759,6 +1759,10 @@ class BLTDistillTransformer(BLTTransformer):
         epsilon=1e-6,
         **kwargs: Dict[str, Any],
     ) -> tuple[torch.Tensor, Dict[str, Any], torch.Tensor]:
+        if not hasattr(self, "_tokenizer"):
+            # hardcode for now
+            self._tokenizer = ByteTokenizerConfig.blt().build()
+
         indices = torch.randperm(input_ids.shape[0])[:int(input_ids.shape[0] * p)]
 
         with torch.no_grad():
