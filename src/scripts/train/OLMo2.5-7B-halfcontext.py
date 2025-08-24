@@ -134,4 +134,6 @@ if __name__ == "__main__":
         trainer_config_builder=build_trainer_config,
         include_instance_filter=False,  # We use SkipStepOptimizer for this problem.
         include_default_evals=False,
+        beaker_workspace="ai2/long-contexts"
+
     )
