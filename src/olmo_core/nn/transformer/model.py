@@ -1789,6 +1789,15 @@ class BLTDistillTransformer(BLTTransformer):
             teacher_inputs_embeds[idx] = 0
             patch_lens[idx, 1:] = 0
 
+            to_write = {}
+            # len(subword_ids) should never be zero during regular training, but make sure (and could be zero in dry run batch)
+            counts = torch.full(
+                (len(teacher_inputs_embeds[idx]),),
+                fill_value=epsilon,
+                dtype=torch.float32,
+                device=teacher_inputs_embeds.device
+            )
+
             prev_i = 1
 
             for j in range(seq_sorted_indices.shape[1] - 1):
@@ -1801,15 +1810,21 @@ class BLTDistillTransformer(BLTTransformer):
                 current_byte_str = blt_utils.bytes_to_chars(current_bytes)
                 subword_ids = self._backend_tokenize(current_byte_str)
 
-                for subword_id in subword_ids:
-                    teacher_inputs_embeds[idx, j] += teacher_embeddings[subword_id]  # type: ignore
+                for idx_in_patch, subword_id in enumerate(subword_ids):
+                    if idx_in_patch not in to_write:
+                        to_write[idx_in_patch] = ([], [])
+
+                    to_write[idx_in_patch][0].append(j)
+                    to_write[idx_in_patch][1].append(subword_id)
 
                 patch_lens[idx, j + 1] = len(current_bytes)
-
-                # len(subword_ids) should never be zero during regular training, but make sure (and could be zero in dry run batch)
-                teacher_inputs_embeds[idx, j] /= len(subword_ids) + epsilon
                 prev_i = curr_i + 1
 
+            for idx_in_patch, (js, subword_ids) in to_write.items():
+                teacher_inputs_embeds[idx, js] += teacher_embeddings[subword_ids]
+                counts[js] += 1
+
+            teacher_inputs_embeds[idx] /= counts.unsqueeze(-1)
             labels[idx, prev_i:] = -100
 
             # cant use
