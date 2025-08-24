@@ -250,6 +250,7 @@ class InitMethod(StrEnum):
         num_blocks: int,
         std: float = 0.02,
         generator: Optional[torch.Generator] = None,
+        ep_generator: Optional[torch.Generator] = None,
     ):
         from ..moe.v2.block import MoEFusedV2TransformerBlock
         b = cast(MoEFusedV2TransformerBlock, b)
@@ -257,6 +258,13 @@ class InitMethod(StrEnum):
             std = std / (2 * num_blocks) ** 0.5
         elif self == InitMethod.llama_depth:
             std = std / (2 * (block_idx + 1)) ** 0.5
+
+        if ep_generator is None:
+            assert b.ep_enabled is False, "ep_generator should be provided when ep_enabled is True"
+            # use default generator for ep_generator
+            # which means (EP is not used)
+            ep_generator = generator
+
         # router
         _apply_init(
             nn.init.trunc_normal_,
@@ -284,7 +292,7 @@ class InitMethod(StrEnum):
             std=std,
             a=-3 * std,
             b=3 * std,
-            generator=generator,
+            generator=ep_generator, # might be sharded, use ep_generator
         )
         _apply_init(
             nn.init.trunc_normal_,
@@ -293,7 +301,7 @@ class InitMethod(StrEnum):
             std=std,
             a=-3 * std,
             b=3 * std,
-            generator=generator,
+            generator=ep_generator, # might be sharded, use ep_generator
         )
         # shared experts
         _apply_init(

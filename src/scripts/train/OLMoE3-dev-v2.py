@@ -4,7 +4,8 @@ Train an OLMoE model. Run this script without any arguments to see usage info.
 
 import logging
 import math
-
+import torch
+import transformer_engine
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.parallel.pipeline_parallel import PipelineScheduleType
@@ -30,7 +31,7 @@ from olmo_core.nn.transformer import (
     TransformerConfig,
     TransformerType,
 )
-from olmo_core.optim import WSD, OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig, AdamWConfig, ZeroAdamWConfig
+from olmo_core.optim import WSD, OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig, AdamWConfig
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
     BatchSizeSchedulerCallback,
@@ -64,17 +65,17 @@ MAX_DURATION = int(1000e9)  # int(6e12), don't forget to adjust the LR when you 
 EVAL_INTERVAL = 1000
 LR= 5e-3
 
-NUM_EXPERTS = 32
+NUM_EXPERTS = 64
 TOP_K = 4
 D_MODEL=2048
 MOE_HIDDEN_SIZE = 2048
 NUM_SHARED_EXPERTS = 2  # Number of shared experts in the shared MLP
 SHARED_MLP_HIDDEN_SIZE = 2048  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
-MICRO_BSZ = 4
+MICRO_BSZ = 2
 NUM_LAYERS= 6
 # DP_DIM=2
-EP_DIM=1
+EP_DIM=8
 PP_DIM=1
 SPLIT_POINTS = None
             
@@ -201,19 +202,21 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
 
 def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrainModuleConfig:
+    from olmo_core.optim.moe_optimizer import MoEFusedV2OptimizerConfig
     return MoEV2TransformerTrainModuleConfig(
         rank_microbatch_size=MICRO_BSZ * SEQUENCE_LENGTH,
         max_sequence_length=common.dataset.effective_sequence_length,
-        optim=SkipStepAdamWConfig(
+        optim=MoEFusedV2OptimizerConfig(
             lr=LR,
             weight_decay=0.1,
             betas=(0.9, 0.95),
             group_overrides=[
-                OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
+                OptimGroupOverride(params=["embeddings.weight", "*_norm.weight"], opts=dict(weight_decay=0.0))
             ],
+            #TODO: weight decay for norm?
             # fused=True,
             compile=False,
-            foreach=True
+            # foreach=True
         ),
         compile_model=True,
         
@@ -260,7 +263,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     return (
         TrainerConfig(
             # save_folder=f'{common.save_folder}/{common.run_name}_{D_MODEL}d_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K_{TAG}',
-            save_folder=f'/workspace/tmp/{common.run_name}_{D_MODEL}d_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K_{TAG}',
+            save_folder=f'/workspace/tmp/{common.run_name}_{D_MODEL}d_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K{NUM_SHARED_EXPERTS}S_{TAG}',
             save_overwrite=True,
             metrics_collect_interval=5,
             cancel_check_interval=cancel_check_interval,
@@ -270,7 +273,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "checkpointer",
             CheckpointerCallback(
                 save_interval=1000,
-                ephemeral_save_interval=200,
+                ephemeral_save_interval=100,
                 save_async=True,
                 pre_train_checkpoint=False,
             ),
@@ -282,7 +285,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 entity="ai2-llm",
                 project="tianhua-moe",
                 # project="olmo3",
-                enabled=True,
+                enabled=False,
                 cancel_check_interval=cancel_check_interval,
             ),
         )
@@ -325,7 +328,7 @@ def finalize_config(config: ExperimentConfig):
     wandb_cb = cast(WandBCallback, config.trainer.callbacks['wandb'])
     assert isinstance(wandb_cb.name, str), "WandB callback name must be initialized"
     wandb_cb.name += f"_{active_params_in_B:.2f}@{total_params_in_B:.2f}B"
-    wandb_cb.name += f"_{TOP_K}K{NUM_EXPERTS}N"
+    wandb_cb.name += f"_{TOP_K}K{NUM_EXPERTS}N{NUM_SHARED_EXPERTS}S"
 
 if __name__ == "__main__":
     main(

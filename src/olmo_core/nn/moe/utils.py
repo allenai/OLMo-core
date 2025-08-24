@@ -2,12 +2,19 @@ import torch
 from olmo_core.utils import get_or_init_stream
 from typing import Any, Dict, List, Optional, Tuple
 from typing import cast
-
+# LAST_STREAM_ID = None
 @torch.compiler.disable()         # helper runs eagerly, 
-def async_copy_to_cpu(gpu_buf, return_event=True) -> Tuple[torch.Tensor, torch.cuda.Stream, Optional[torch.cuda.Event]]:
+def async_copy_to_cpu(gpu_buf, event=None, return_event=True) -> Tuple[torch.Tensor, torch.cuda.Stream, Optional[torch.cuda.Event]]:
     # *** async copy to CPU for future GroupedGEMM ***
     # start a new stream for the copy
     dtoh_stream = get_or_init_stream(id=3, priority=-5) # TODO: check any id that's not 0?
+
+    # global LAST_STREAM_ID
+    # if LAST_STREAM_ID is None:
+    #     LAST_STREAM_ID = id(dtoh_stream)
+    #     print(f"Initialized LAST_STREAM_ID: {LAST_STREAM_ID}")
+    # else:
+    #     assert LAST_STREAM_ID == id(dtoh_stream), f"Expected stream id {LAST_STREAM_ID}, got {id(dtoh_stream)}"
     
     # Make the copy_stream start **after** everything already queued
     #  on the current stream (default) that touches batch_size_per_expert.
@@ -18,7 +25,7 @@ def async_copy_to_cpu(gpu_buf, return_event=True) -> Tuple[torch.Tensor, torch.c
                                 device="cpu", pin_memory=True) # compile does not work with pin_memory
         cpu_buf.copy_(gpu_buf, non_blocking=True)
     
-    dtoh_event = dtoh_stream.record_event()
+    dtoh_event = dtoh_stream.record_event(event)
     dtoh_event = cast(torch.cuda.Event, dtoh_event)
 
     # cpu_buf = gpu_buf.to(torch.device("cpu"), non_blocking=True)
@@ -42,9 +49,16 @@ from transformer_engine.pytorch.permutation import (
 
 # disable compile for permute
 @torch.compiler.disable()
-def moe_permute_no_compile(*args, **kwargs):
-    return moe_permute(*args, **kwargs)
-    
+def moe_permute_no_compile(inp: torch.Tensor,
+    routing_map: torch.Tensor,
+    num_out_tokens: int = -1,
+    max_token_num: int = -1,
+    map_type: str = "mask",
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    return moe_permute(
+        inp, routing_map, num_out_tokens=num_out_tokens, max_token_num=max_token_num, map_type=map_type
+    )
+
 @torch.compiler.disable()
 def moe_unpermute_no_compile(*args, **kwargs):
     return moe_unpermute(*args, **kwargs)    

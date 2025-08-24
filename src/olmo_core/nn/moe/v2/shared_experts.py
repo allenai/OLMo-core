@@ -7,7 +7,7 @@ from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
 from olmo_core.config import Config, DType, StrEnum
 import nvtx
 import torch.nn.functional as F
-
+from typing import Tuple, Optional, TYPE_CHECKING, cast
 
 @dataclass
 class SharedExpertsConfig(Config):
@@ -133,7 +133,7 @@ class SharedExperts(nn.Module):
 
     #     return out.view(E, B, S, D)  # (E, B, S, D)
         
-    @nvtx.annotate("SharedExperts.forward", color='blue')
+    @nvtx.annotate("SharedExperts.forward", color='purple')
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         x: (B, S, D) -> out: (E, B, S, D)
@@ -157,8 +157,49 @@ class SharedExperts(nn.Module):
 
         # 3) SwiGLU: split into up / gate; materialize gate once and do in-place SiLU
         up, gate = up_gate.unbind(dim=2)                       # each (E, BS, H) views
-        gate = gate.contiguous()                               # explicit materialization (same cost as implicit copy)
-        F.silu(gate, inplace=True)                             # in-place activation
+        # gate = gate.contiguous()                               # explicit materialization (same cost as implicit copy)
+        # F.silu(gate, inplace=True)                             # in-place activation
+        gate = F.silu(gate)
+
+        hidden = up * gate                                     # (E, BS, H)
+
+        # 4) Per-expert down-proj as grouped GEMM
+        #    hidden: (E, BS, H), w_down: (E, H, D) -> out: (E, BS, D)
+        out = torch.bmm(hidden, self.w_down)
+
+        return out.view(E, B, S, D)
+
+    @nvtx.annotate("SharedExperts.forward1", color='purple')
+    # @torch._dynamo.disable()
+    def forward1(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        B, S, D = x.shape
+        E, H = self.num_experts, self.hidden_size
+        BS = B * S
+
+        # 1) One big GEMM (best utilization, contiguous out in last dim)
+        x2 = x.reshape(BS, D)                                  # (BS, D)
+        up_gate = x2 @ self.w_up_gate                          # (BS, E*2H)
+
+        # 2) Reshape to separate experts and [up|gate], then make per-expert leading dim
+        #    Shapes: (BS, E, 2, H) -> (E, BS, 2, H)
+        up_gate = up_gate.view(BS, E, 2, H).permute(1, 0, 2, 3)
+
+        # 3) SwiGLU: split into up / gate; materialize gate once and do in-place SiLU
+        up, gate = up_gate.unbind(dim=2)                       # each (E, BS, H) views
+
+        return up, gate
+
+    @nvtx.annotate("SharedExperts.forward2", color='purple')
+    # @torch._dynamo.disable()
+    def forward2(self, up: torch.Tensor, gate: torch.Tensor, xshape: torch.Size) -> torch.Tensor:
+        E, H = self.num_experts, self.hidden_size
+        B, S, D = xshape
+        # 3) SwiGLU: split into up / gate; materialize gate once and do in-place SiLU
+
+        # gate = gate.contiguous()                               # explicit materialization (same cost as implicit copy)
+        # F.silu(gate, inplace=True)                             # in-place activation
+        gate = F.silu(gate)
+
         hidden = up * gate                                     # (E, BS, H)
 
         # 4) Per-expert down-proj as grouped GEMM

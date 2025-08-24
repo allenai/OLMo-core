@@ -74,6 +74,7 @@ def foreach_adamw_step(
     """Perform a single AdamW update with multi-tensor (*foreach*) kernels."""
     if not params:
         return  # nothing to do
+    dbg_mem_step0 = torch.cuda.memory_allocated()/1024**3
 
     beta1, beta2 = betas
 
@@ -89,11 +90,10 @@ def foreach_adamw_step(
     torch._foreach_mul_(exp_avgs, 1.0 - w1)
     torch._foreach_add_(exp_avgs, torch._foreach_mul(grads, w1))
 
-    grad_squares = torch._foreach_mul(grads, grads)
 
     w2 = step_factor * (1 - beta2)
     torch._foreach_mul_(exp_avg_sqs, 1.0 - w2)
-    torch._foreach_add_(exp_avg_sqs, torch._foreach_mul(grad_squares, w2))
+    torch._foreach_add_(exp_avg_sqs, torch._foreach_mul(torch._foreach_mul(grads, grads), w2))
 
     steps_t = torch.stack(steps)
     bias_corrections1 = 1 - torch.pow(beta1, steps_t + 1)
@@ -106,6 +106,7 @@ def foreach_adamw_step(
     torch._foreach_add_(denoms, eps)
 
     updates = torch._foreach_div(exp_avgs, denoms)
+    del denoms
     torch._foreach_mul_(updates, (-step_factor * step_sizes).unbind())
     torch._foreach_add_(params, updates)
     if step_increment_bugfix:
@@ -303,115 +304,3 @@ class SkipStepAdamWConfig(OptimConfig):
     def optimizer(cls) -> Type[SkipStepAdamW]:
         return SkipStepAdamW
 
-
-
-# --------------------------------------------------------------------------- #
-# ZeRO-1 sharded Skip-Step AdamW
-# --------------------------------------------------------------------------- #
-from torch.distributed.optim import ZeroRedundancyOptimizer
-from typing import (
-    Any,
-    Dict,
-    Generic,
-    Iterable,
-    List,
-    Optional,
-    Set,
-    Tuple,
-    Type,
-    TypeVar,
-    Union,
-    cast,
-)
-from .config import LR_FIELD, INITIAL_LR_FIELD
-from ..utils import get_default_device, move_to_device
-Opt = TypeVar("Opt", bound=torch.optim.Optimizer)
-
-from ..train.train_module import TrainModule
-
-@dataclass
-class ZeroAdamWConfig(OptimConfig):
-    """
-    Config for the ZeRO-1 sharded Skip-Step AdamW optimizer.
-    """
-
-    lr: float = 1e-3
-    betas: Tuple[float, float] = (0.9, 0.999)
-    eps: float = 1e-8
-    weight_decay: float = 1e-2
-    foreach: Optional[bool] = None
-    fused: Optional[bool] = None
-    # optimizer_class: torch.optim.Optimizer = torch.optim.AdamW
-    
-    @classmethod
-    def optimizer(cls):
-        return ZeroRedundancyOptimizer
-    
-
-    def build(self, model: nn.Module, train_module: TrainModule, strict: bool = True) -> Opt:
-        """
-        Build the optimizer.
-
-        :param strict: If ``True`` an error is raised if a pattern in ``group_overrides`` doesn't
-            match any parameter.
-        """
-        kwargs = self.as_dict()
-        kwargs.pop("group_overrides")
-        kwargs.pop("compile")
-        kwargs.pop("fixed_fields")
-
-        optim: torch.optim.Optimizer = self.optimizer()(
-            self.build_groups(model, strict=strict), 
-            optimizer_class=torch.optim.AdamW,
-            process_group=train_module.dp_process_group,
-            **kwargs
-        )
-
-        # Set 'lr' and 'initial_lr' in each group if needed.
-        fixed_fields_per_group: List[Dict[str, Any]] = [{} for _ in optim.param_groups]
-        for fixed_fields, group in zip(fixed_fields_per_group, optim.param_groups):
-            lr: Optional[float] = None
-            if LR_FIELD in group:
-                lr = group[LR_FIELD]
-            elif hasattr(self, LR_FIELD):
-                lr = getattr(self, LR_FIELD)
-
-            if lr is not None:
-                if self.compile:
-                    # 'lr' should be a tensor.
-                    group[LR_FIELD] = move_to_device(torch.tensor(lr), self.device)
-                else:
-                    group[LR_FIELD] = lr
-                group.setdefault(INITIAL_LR_FIELD, lr)
-
-            for k in self.fixed_fields:
-                if k in group:
-                    fixed_fields[k] = group[k]
-
-        log.info(
-            f"Building {self.optimizer().__name__} optimizer with {len(optim.param_groups)} param group(s)..."
-        )
-        for g_idx, group in enumerate(optim.param_groups):
-            group_fields_list = "\n - ".join(
-                [f"{k}: {v}" for k, v in optim.param_groups[g_idx].items() if k != "params"]
-            )
-            if group_fields_list:
-                log.info(
-                    f"Group {g_idx}, {len(group['params'])} parameter(s):\n - {group_fields_list}"
-                )
-            else:
-                log.info(f"Group {g_idx}, {len(group['params'])} parameter(s)")
-
-        if self.compile:
-            log.info("Compiling optimizer step...")
-            optim.step = torch.compile(optim.step)
-
-        # Register hook to reset fixed fields after loading a checkpoint.
-        def reset_fixed_fields(opt: torch.optim.Optimizer):
-            for fixed_fields, group in zip(fixed_fields_per_group, opt.param_groups):
-                group.update(fixed_fields)
-
-        optim.register_load_state_dict_post_hook(reset_fixed_fields)
-
-        return cast(Opt, optim)
-    

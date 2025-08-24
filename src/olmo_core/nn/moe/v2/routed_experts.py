@@ -114,8 +114,12 @@ class RoutedExperts(nn.Module):
             ),
         )
         self.gmm_ops = gmm_no_compile
-        
-        
+
+        # assume no ep in init
+        self.num_local_experts: int = num_experts
+        self.ep_dim: int = 1
+        self.ep_rank: int = 0
+
     @nvtx.annotate("RoutedExperts.forward", color="blue")
     def forward(self, x: torch.Tensor, batch_size_per_expert: List) -> torch.Tensor:
         """
@@ -131,8 +135,8 @@ class RoutedExperts(nn.Module):
         if x.numel() == 0:
             return x
         
-        w_up_gate = get_local_tensor(self.w_up_gate) # (E, H, 2D)
-        w_down = get_local_tensor(self.w_down) # (E, H, D)
+        w_up_gate = self.w_up_gate # (E, H, 2D)
+        w_down = self.w_down # (E, H, D)
         up_gate = self.gmm_ops(x, w_up_gate, batch_size_per_expert_tensor, trans_b=True) # -> (BS, 2H)
         up_gate = cast(torch.Tensor, up_gate)  # ensure type is Tensor
         up, gate = up_gate.chunk(2, dim=-1)  
@@ -147,20 +151,36 @@ class RoutedExperts(nn.Module):
         # ep_mp_mesh = ep_mesh['ep_mp']
         # shard dim 0 to ep_mp, replicate on ep_dp mesh
         self.ep_mesh = ep_mesh['ep_dp', 'ep_mp']
-        dt = distribute_tensor(
-            self.w_up_gate.data,
-            self.ep_mesh,
-            placements=(Replicate(), Shard(0))
+        # with torch.no_grad():  # just to avoid tracking the rebind below
+        self.ep_dim = ep_mesh['ep_mp'].size()
+        self.ep_rank = ep_mesh['ep_mp'].get_local_rank()
+
+        assert self.num_experts % self.ep_dim == 0, "num_experts must be divisible by the number of expert partitions"
+        self.num_local_experts = self.num_experts // self.ep_dim
+
+        self.w_up_gate = nn.Parameter(
+            torch.empty(
+                self.num_local_experts,
+                2 * self.hidden_size,
+                self.d_model,
+                dtype=self.w_up_gate.dtype,
+                device=self.w_up_gate.device
+            ),
         )
-        self.w_up_gate = nn.Parameter(dt)
-        dt = distribute_tensor(
-            self.w_down.data,
-            self.ep_mesh,
-            placements=(Replicate(), Shard(0))
+
+        self.w_down = nn.Parameter(
+            torch.empty(
+                self.num_local_experts,
+                self.hidden_size, 
+                self.d_model,
+                dtype=self.w_down.dtype,
+                device=self.w_down.device
+            ),
         )
-        self.w_down = nn.Parameter(dt)
+
 
         self._ep_sharded = True
+
 
     def extra_repr(self):
         return f'num_experts={self.num_experts}, hidden_size={self.hidden_size}, d_model={self.d_model}'

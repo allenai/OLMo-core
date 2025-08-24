@@ -149,8 +149,6 @@ class MoEV2TransformerTrainModule(TrainModule):
         # Parallelize model.
         self.model = self.parallelize_model(
             model,
-            max_sequence_length=max_sequence_length,
-            rank_microbatch_size=rank_microbatch_size,
             compile_model=compile_model,
             float8_config=float8_config,
             dp_config=dp_config,
@@ -160,6 +158,16 @@ class MoEV2TransformerTrainModule(TrainModule):
             ac_config=ac_config,
             pp_config=pp_config
         )
+
+        self.init_model_weights(
+            max_sequence_length=max_sequence_length,
+            rank_microbatch_size=rank_microbatch_size,
+        )
+
+        self._cast_to_fwd_bwd_precision(self.model)
+
+        if compile_model:
+            self.compile_model()
 
         self._dp_config = dp_config
         self._cp_config = cp_config
@@ -193,6 +201,23 @@ class MoEV2TransformerTrainModule(TrainModule):
         #                                         # reduce_group=self.ep_dp_group, 
         #                                         param_filter=moe_filter)
 
+    def _cast_to_fwd_bwd_precision(self, model: M) -> None:
+        """
+        Cast the model to the forward and backward precision.
+        """
+        if isinstance(model, list):
+            for m in model:
+                self._cast_to_fwd_bwd_precision(m)
+        else:
+            # if the model has implemented `cast_to_fwd_bwd_precision` method, call it.
+            if hasattr(model, "_cast_to_fwd_bwd_precision"):
+                assert callable(model._cast_to_fwd_bwd_precision), \
+                    "model._cast_to_fwd_bwd_precision must be callable"
+                model._cast_to_fwd_bwd_precision()
+            else:
+                # if the model doesn't have `cast_to_fwd_bwd_precision`, we need to cast the parameters directly.
+                for p in model.parameters():
+                    p.data = p.data.to(torch.bfloat16)
 
     def build_world_mesh(
         self,
@@ -353,7 +378,7 @@ class MoEV2TransformerTrainModule(TrainModule):
         )
 
     @property
-    def dp_config(self) -> Optional[TransformerDataParallelConfig]:
+    def dp_config(self) -> TransformerDataParallelConfig:
         return self._dp_config
 
     @property
@@ -508,7 +533,7 @@ class MoEV2TransformerTrainModule(TrainModule):
                 with nvtx.annotate(f"fwd_mb{micro_batch_idx}", color='blue'):
                     
                     input_ids, labels, model_kwargs = self._prepare_batch(micro_batch)
-
+                    dbg_mem_before_fwd = torch.cuda.memory_allocated()/1024**3
                     # Run forward pass, get losses.
                     _, loss, ce_loss, z_loss = self.model_forward(
                         input_ids,
@@ -520,7 +545,8 @@ class MoEV2TransformerTrainModule(TrainModule):
                         return_logits=False,
                         **model_kwargs,
                     )
-
+                    dbg_mem_after_fwd = torch.cuda.memory_allocated()/1024**3
+                    dbg_mem_activation_usage = dbg_mem_after_fwd - dbg_mem_before_fwd
                     # Update total batch CE and Z loss.
                     ce_batch_loss += get_local_tensor(ce_loss.detach())
                     del ce_loss
@@ -531,7 +557,11 @@ class MoEV2TransformerTrainModule(TrainModule):
 
                 with nvtx.annotate(f"bwd_mb{micro_batch_idx}", color='red'):
                     # Run backward pass.
+                    dbg_mem_before_bwd = torch.cuda.memory_allocated()/1024**3
                     loss.backward()
+                    dbg_mem_after_bwd = torch.cuda.memory_allocated()/1024**3
+                    pass
+
 
         del batch  # In case this helps with memory utilization.
 
@@ -719,21 +749,9 @@ class MoEV2TransformerTrainModule(TrainModule):
         is_last_mb = micro_batch_idx == num_micro_batches - 1
         with contextlib.ExitStack() as stack:
             if isinstance(self.model, FSDPModule):
-                assert self.dp_config is not None
-                # On the last backward FSDP waits on pending gradient reduction and clears internal data
-                # data structures for backward prefetching.
-                self.model.set_is_last_backward(is_last_mb)
-                # For HSDP we can delay the gradients all-reduce until the final micro-batch.
-                if self.dp_config.name == DataParallelType.hsdp:
-                    self.model.set_requires_all_reduce(is_last_mb)
-            elif isinstance(self.model, DDP):  # BUG: always false.  --> the model is returned by replicate(), so it's a torch.distributed._composable.replicate.DDP not torch.nn.parallel.DistributedDataParallel
-                # see: debug message below
-                # print(type(self.model).__mro__)
-                # (<class 'torch.distributed._composable.replicate.DDPMoETransformer'>, <class 'torch.distributed._composable.replicate.DDP'>, <class 'olmo_core.nn.transformer.model.MoETransformer'>, <class 'olmo_core.nn.transformer.model.Transformer'>, <class 'torch.nn.modules.module.Module'>, <class 'object'>)
-                
-                # For DDP, only sync gradients on the final micro-batch.
-                if not is_last_mb:
-                    stack.enter_context(self.model.no_sync())
+                raise OLMoConfigurationError("FSDP not supported. Use replicate()")
+            elif isinstance(self.model, DDP): 
+                raise OLMoConfigurationError("torch DDP not supported. Use replicate()")
             elif self.dp_config.name == DataParallelType.ddp: # temp fix
                 if not is_last_mb and self.dp_config.only_allreduce_last_microbatch:
                     stack.enter_context(self.ddp_no_sync(self.model)) # only DDP has no_sync(), can only call set_requires_gradient_sync()
@@ -742,11 +760,23 @@ class MoEV2TransformerTrainModule(TrainModule):
 
     @contextlib.contextmanager
     def ddp_no_sync(self, module: torch.nn.Module):
-        module.set_requires_gradient_sync(False)
+        assert callable(getattr(module, "set_requires_gradient_sync", None)), \
+       f"{type(module).__name__} must implement set_requires_gradient_sync(flag: bool). " \
+       "This is automatically managed if the model is returned by torch.distributed._composable.replicate"
+        # non-EP modules
+        module.set_requires_gradient_sync(False) # type: ignore
+
+        # EP managed modules
+        ep_modules = [m for m in module.modules() if getattr(m, '_ep_sharded', False) ]
+        for m in ep_modules:
+            m.set_requires_gradient_sync(False) # type: ignore
+            
         try:
             yield
         finally:
-            module.set_requires_gradient_sync(True)
+            module.set_requires_gradient_sync(True) # type: ignore
+            for m in ep_modules:
+                m.set_requires_gradient_sync(True) # type: ignore
 
     @contextlib.contextmanager
     def _eval_batch_context(self) -> Generator[None, None, None]:
@@ -765,20 +795,40 @@ class MoEV2TransformerTrainModule(TrainModule):
     def _get_state_dict(
         self, sd_options: dist_cp_sd.StateDictOptions, optim: bool = True
     ) -> Dict[str, Any]:
+        assert optim == True, "model and optimizer must be saved at the same time"
+
+        model_sd = self.model.state_dict() # bf16 version
+
+        # replace with main param
+        named_params_dict = dict(self.model.named_parameters())
+        for k, v in model_sd.items():
+            if k in named_params_dict:
+                if hasattr(named_params_dict[k], "main_param"):
+                    model_sd[k] = named_params_dict[k].main_param # type: ignore
+
+        optim_sd = self.optim.state_dict()
         state_dict: Dict[str, Any] = {
-            "model": dist_cp_sd.get_model_state_dict(self.model, options=sd_options),
+            "model": model_sd,
+            "optim": optim_sd
         }
-        if optim:
-            state_dict["optim"] = dist_cp_sd.get_optimizer_state_dict(
-                self.model, self.optim, options=sd_options
-            )
         return state_dict
+        # state_dict: Dict[str, Any] = {
+        #     "model": dist_cp_sd.get_model_state_dict(self.model, options=sd_options),
+        # }
+        # if optim: # BUG
+        #     state_dict["optim"] = dist_cp_sd.get_optimizer_state_dict(
+        #         self.model, self.optim, options=sd_options
+        #     )
+        #     # model_data, main_params_data = self.optim._get_model_and_main_params_data_float16()
+        # return state_dict
 
     def _clip_grad_norm(
         self, max_grad_norm: float, norm_type: float = 2.0, foreach: Optional[bool] = None
     ) -> torch.Tensor:
-        if isinstance(self.model, FSDP):
-            return self.model.clip_grad_norm_(max_grad_norm)
+        # raise NotImplementedError()
+    
+        # if isinstance(self.model, FSDP):
+        #     return self.model.clip_grad_norm_(max_grad_norm)
 
         # Adapted from https://github.com/pytorch/torchtitan/blob/2a4437014e66bcf88a3f0419b816266e6326d539/torchtitan/utils.py#L348
 
@@ -796,6 +846,7 @@ class MoEV2TransformerTrainModule(TrainModule):
         #       1. to make sure the total norm is computed correctly when PP is used (see below)
         #       2. to return a reduced total_norm tensor whose .item() would return the correct value
         if isinstance(total_norm, DTensor):
+            raise NotImplementedError("WHY?")
             # Will reach here if any non-PP parallelism is used.
             # If only using PP, total_norm will be a local tensor.
             total_norm = total_norm.full_tensor()
@@ -817,8 +868,6 @@ class MoEV2TransformerTrainModule(TrainModule):
         self,
         model: M, # the full model before sharding, the same on all models
         *,
-        max_sequence_length: int,
-        rank_microbatch_size: int,
         compile_model: bool = False,
         float8_config: Optional[Float8Config] = None,
         dp_config: Optional[TransformerDataParallelConfig] = None,
@@ -864,7 +913,7 @@ class MoEV2TransformerTrainModule(TrainModule):
                 cast(MoEFusedV2Transformer, m).apply_epdp(
                     dp_mesh=dp_mesh,
                     ep_mesh=ep_mesh,
-                    param_dtype = dp_config.param_dtype.as_pt() if dp_config.param_dtype is not None else None,
+                    param_dtype=None,
                     compile_enabled=compile_model
                 )
             log.info(f"Applied expert parallelism + DDP to the model with {get_device_mesh_info(ep_mesh)}")
@@ -875,25 +924,27 @@ class MoEV2TransformerTrainModule(TrainModule):
             param_dtype = dp_config.param_dtype.as_pt() if dp_config.param_dtype is not None else None
             dp_mesh = self.world_mesh["dense"]["dp"]
             for m in model_parts:
-                m.apply_ddp(dp_mesh=dp_mesh, compile_enabled=compile_model, param_dtype=param_dtype)
+                cast(MoEFusedV2Transformer, m).apply_ddp(dp_mesh=dp_mesh, compile_enabled=compile_model, param_dtype=param_dtype)
             log.info(f"Applied DDP to the model with {get_device_mesh_info(dp_mesh)}")
 
-
-        # Maybe compile.
-        if compile_model:
-            if torch.cuda.is_available():
-                for m in model_parts:
-                    m.apply_compile()
-                log.info("Applied torch.compile() to the model")
-            else:
-                log.warning("Skipping model compilation since CUDA is not available")
+        return model
 
 
+    def memory_usage_estimation(self):
+        pass
 
-
+    def init_model_weights(
+        self,
+        max_sequence_length: int,
+        rank_microbatch_size: int,
+    ):
+        from olmo_core.nn.moe.v2.model import MoEFusedV2Transformer
+        
         # Materialize and init parameters.
+        model_parts: List[Transformer] = [self.model] if isinstance(self.model, Transformer) else self.model
         log.info("Initializing model weights...")
         for model_part_idx, m in enumerate(model_parts):
+            m = cast(MoEFusedV2Transformer, m)
             m.init_weights(
                 max_seq_len=max_sequence_length,
                 max_local_microbatch_size=rank_microbatch_size,
@@ -902,7 +953,12 @@ class MoEV2TransformerTrainModule(TrainModule):
                 model_part_idx=model_part_idx
             )
 
-        return model
+    def compile_model(self):
+        model_parts: List[Transformer] = [self.model] if isinstance(self.model, Transformer) else self.model
+        if torch.cuda.is_available():
+            for m in model_parts:
+                m.apply_compile()
+            log.info("Applied torch.compile() to the model")
+        else:
+            log.warning("Skipping model compilation since CUDA is not available")
 
-    def memory_usage_estimation(self):
-        pass
