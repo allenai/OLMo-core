@@ -33,8 +33,8 @@ from olmo_core.testing import (
 )
 from olmo_core.utils import get_default_device, seed_all
 
-BF16_RTOL = 1e-5
-BF16_ATOL = 5e-3
+BF16_RTOL = 1e-3
+BF16_ATOL = 1e-3
 
 
 @pytest.mark.parametrize("device", DEVICES)
@@ -212,6 +212,7 @@ def test_attention_with_intra_document_masking():
     torch.testing.assert_close(y1, y2)
     torch.testing.assert_close(y1_fused, y2_fused)
     torch.testing.assert_close(y1, y1_fused)
+    torch.testing.assert_close(y2, y2_fused)
 
 
 @pytest.mark.parametrize(
@@ -509,7 +510,7 @@ def test_context_parallel_attention(load_balancer_type, head_stride: int, tmp_pa
     device = torch.device("cuda")
 
     # CP requires flash-attn and low precision dtypes.
-    attn_kwargs = {"d_model": 128, "n_heads": 8, "use_flash": True}
+    attn_kwargs: Dict[str, Any] = {"d_model": 128, "n_heads": 8, "use_flash": True}
     attn = Attention(init_device=device.type, **attn_kwargs)
 
     bs, seq_len = 2, 64
