@@ -16,6 +16,8 @@ from olmo_core.train.train_module import (
     TransformerTrainModuleConfig,
 )
 
+from beaker import Priority
+
 SEQUENCE_LENGTH = 4 * 1024
 GLOBAL_BATCH_SIZE = 4 * 1024 * 1024
 

@@ -57,12 +57,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             shard_degree=32
         ),
         float8_config=Float8Config(
-            enabled=True,
-            ao=AOFloat8LinearConfig(
-                enable_fsdp_float8_all_gather=True,
-                force_recompute_fp8_weight_in_bwd=True,
-                round_scales_to_power_of_2=True,
-            ),
+            enabled=False
         ),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
