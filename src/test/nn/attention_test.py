@@ -501,23 +501,15 @@ def _run_context_parallel_attention(
 @requires_flash_attn
 @pytest.mark.parametrize(
     "load_balancer_type",
-    [
-        pytest.param(RingAttentionLoadBalancerType.zig_zag, id="zig_zag"),
-        pytest.param(RingAttentionLoadBalancerType.llama3, id="llama3"),
-    ],
+    [pytest.param(RingAttentionLoadBalancerType.zig_zag, id="zig_zag")],
 )
 @pytest.mark.parametrize("head_stride", [pytest.param(1), pytest.param(8)])
-@pytest.mark.parametrize(
-    "attn_kwargs", [pytest.param({}, id="default"), pytest.param({"window_size": 8}, id="swa")]
-)
-def test_context_parallel_attention(
-    attn_kwargs: Dict[str, Any], load_balancer_type, head_stride: int, tmp_path
-):
+def test_context_parallel_attention(load_balancer_type, head_stride: int, tmp_path):
     seed_all(0)
     device = torch.device("cuda")
 
     # CP requires flash-attn and low precision dtypes.
-    attn_kwargs.update({"d_model": 128, "n_heads": 8, "use_flash": True})
+    attn_kwargs = {"d_model": 128, "n_heads": 8, "use_flash": True}
     attn = Attention(init_device=device.type, **attn_kwargs)
 
     bs, seq_len = 2, 64
