@@ -78,7 +78,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=1,
-            # load_strategy=LoadStrategy.always,
+            load_strategy=LoadStrategy.never,
         )
         .with_callback(
             "checkpointer",
