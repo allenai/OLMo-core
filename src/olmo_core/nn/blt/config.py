@@ -25,6 +25,7 @@ class BLTConfig(Config):
     patching: str = "dolma2"
     epsilon: float = 1e-6
     skip_blocks: bool = False
+    skip_teacher_blocks: bool = False
     skip_teacher: bool = False
     use_oracle_patch_reps: bool = False
     add_boundary_logp: bool = True
