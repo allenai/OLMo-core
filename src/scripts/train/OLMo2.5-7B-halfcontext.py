@@ -70,6 +70,10 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     assert len(common.launch.clusters) == 1
     cluster = common.launch.clusters[0]
 
+
+    common.launch.workspace='ai2/long-contexts'
+    common.launch.budget='ai2/oe-base'
+    
     run_name = f"{common.run_name}-{datetime.now().astimezone().strftime('%Y%m%dT%H%M%S%z')}"
 
     return (
