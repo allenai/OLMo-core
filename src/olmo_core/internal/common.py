@@ -99,6 +99,8 @@ def build_launch_config(
     nccl_debug: bool = False,
     beaker_image: str = OLMoCoreBeakerImage.stable,
     num_nodes: int = 1,
+    use_hostname_constraints: bool = False,
+    num_execution_units: Optional[int] = None,
 ) -> BeakerLaunchConfig:
     weka_buckets: List[BeakerWekaBucket] = []
     if root_dir.startswith("/weka/"):
@@ -171,6 +173,8 @@ def build_launch_config(
         beaker_image=beaker_image,
         num_nodes=num_nodes,
         num_gpus=8,
+        use_hostname_constraints=use_hostname_constraints,
+        num_execution_units=num_execution_units,
         shared_filesystem=not is_url(root_dir),
         allow_dirty=False,
         env_vars=[BeakerEnvVar(name="NCCL_DEBUG", value="INFO" if nccl_debug else "WARN")],
