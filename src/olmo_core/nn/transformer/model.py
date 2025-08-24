@@ -1922,6 +1922,7 @@ class BLTDistillTransformer(BLTTransformer):
             raise ValueError("`blt_config` must be provided for BLTDistillTransformer.forward")
 
         skip_blocks = blt_config.skip_blocks
+        skip_teacher_blocks = blt_config.skip_teacher_blocks
         skip_teacher = blt_config.skip_teacher
         use_oracle_patch_reps = blt_config.use_oracle_patch_reps
 
@@ -1955,7 +1956,7 @@ class BLTDistillTransformer(BLTTransformer):
                     inputs_embeds=extra_kwargs.get("teacher_inputs_embeds"),
                     labels=None, # we will compute loss ourselves
                     return_logits=True,
-                    skip_blocks=skip_blocks,
+                    skip_blocks=skip_blocks or skip_teacher_blocks,
                     zero_bos=True,
                     hidden_states_to_return=list(range(blt_config.encoder_loss_lookahead)),
                     **kwargs,
@@ -2133,7 +2134,7 @@ class BLTDistillTransformer(BLTTransformer):
         else:
             local_encoder_loss = torch.nan
 
-        if not skip_blocks and not skip_teacher:
+        if not skip_blocks and not skip_teacher and not skip_teacher_blocks:
             assert logprobs is not None
             assert main_path_logprobs is not None
             assert teacher_logprobs is not None

@@ -317,6 +317,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             losses=["ce","boundary"],
             loss_weights=[1.0,1.0],
             skip_blocks=False,
+            skip_teacher_blocks=TEACHER_MODE == "stage0",
             skip_teacher=TEACHER_MODE is None,
             use_oracle_patch_reps=False,
         ),
