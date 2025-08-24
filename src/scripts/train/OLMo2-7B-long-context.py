@@ -59,14 +59,15 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
-            shard_degree=4,
+            shard_degree=8,
         ),
         float8_config=Float8Config(enabled=False),
         max_grad_norm=1.0,
         scheduler=CosWithWarmup(warmup_steps=2000),
         tp_config=TransformerTensorParallelConfig(
             degree=4,
-        )
+        ),
+        state_dict_load_opts={"strict": False},
     )
 
 
@@ -77,7 +78,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=1,
-            # load_strategy=LoadStrategy.never
+            # load_strategy=LoadStrategy.always,
         )
         .with_callback(
             "checkpointer",
