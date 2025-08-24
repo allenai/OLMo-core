@@ -97,6 +97,7 @@ DATA_PATHS = ["/weka/oe-training-default/" + x for x in _DATA_SOURCES]
 
 if not os.environ.get("HAS_WEKA"):
     STAGE1_CKPT_PATH = STAGE1_CKPT_PATH.replace("/weka/oe-training-default/", "gs://ai2-llm/")
+    OLMO_CKPT_PATH = OLMO_CKPT_PATH.replace("/weka/oe-training-default/", "gs://ai2-llm/")
     DATA_PATHS = [x.replace("/weka/oe-training-default/", "gs://") for x in DATA_PATHS] # slight inconsistency
 
 log = logging.getLogger(__name__)
