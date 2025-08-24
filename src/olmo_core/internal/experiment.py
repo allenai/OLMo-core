@@ -144,6 +144,8 @@ def build_common_components(
     beaker_image: str = OLMoCoreBeakerImage.stable,
     num_nodes: int = 1,
     beaker_workspace: str = "ai2/OLMo-core",
+    use_hostname_constraints: bool = False,
+    num_execution_units: Optional[int] = None,
 ) -> CommonComponents:
     root_dir = get_root_dir(cluster)
 
@@ -163,6 +165,8 @@ def build_common_components(
             beaker_image=beaker_image,
             num_nodes=num_nodes,
             workspace=beaker_workspace,
+            use_hostname_constraints=use_hostname_constraints,
+            num_execution_units=num_execution_units,
         )
 
     tokenizer_config = TokenizerConfig.dolma2()
@@ -333,6 +337,8 @@ def main(
     beaker_image: str = OLMoCoreBeakerImage.stable,
     num_nodes: int = 1,
     beaker_workspace: str = "ai2/OLMo-core",
+    use_hostname_constraints: bool = False,
+    num_execution_units: Optional[int] = None,
 ):
     usage = f"""
 [yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]{'|'.join(SubCmd)}[/] [i b]RUN_NAME CLUSTER[/] [i][OVERRIDES...][/]
@@ -378,6 +384,8 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/pluto-cirrascale --launch.nu
         beaker_image=beaker_image,
         num_nodes=num_nodes,
         beaker_workspace=beaker_workspace,
+        use_hostname_constraints=use_hostname_constraints,
+        num_execution_units=num_execution_units,
     )
 
     cmd.prepare_environment(config)
