@@ -89,10 +89,7 @@ else:
     raise ValueError(f"Unknown DATA_SOURCE: {DATA_SOURCE}. Must be one of 'dclm', 'dolmino'.")
 
 OLMO_CKPT_PATH = os.environ.get("OLMO_CKPT_PATH", "") # for baseline
-STAGE1_CKPT_PATH = os.environ.get(
-    "STAGE1_CKPT_PATH",
-    "/weka/oe-training-default/benjaminm/runs_persist/hnet_v3_d2048_emb_v2_smaller_hash_embed/step50000/model_and_optim",
-)
+STAGE1_CKPT_PATH = os.environ.get("STAGE1_CKPT_PATH", "")
 DATA_PATHS = ["/weka/oe-training-default/" + x for x in _DATA_SOURCES]
 
 if not os.environ.get("HAS_WEKA"):
