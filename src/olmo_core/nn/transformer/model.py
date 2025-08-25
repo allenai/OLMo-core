@@ -2283,6 +2283,7 @@ class BLTDistillTransformer(BLTTransformer):
         local_encoder_loss = self._finalize_loss(local_encoder_loss, loss_div_factor=patch_loss_div_factor)
         # TODO: check div factor after update / take constituent_input_ids -100's into account
         local_decoder_loss = self._finalize_loss(local_decoder_loss, loss_div_factor=loss_div_factor)
+        hnet_embed_loss = self._finalize_loss(hnet_embed_loss, loss_div_factor=loss_div_factor)
 
         loss = 0.0
         for loss_name, loss_weight in zip(blt_config.losses, blt_config.loss_weights):
