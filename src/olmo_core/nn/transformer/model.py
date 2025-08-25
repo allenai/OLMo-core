@@ -2291,6 +2291,7 @@ class BLTDistillTransformer(BLTTransformer):
                 schedule = blt_config.loss_schedules[loss_idx]
                 if schedule.startswith("linear_decrease"):
                     _, n_steps = schedule.split(":")
+                    n_steps = int(n_steps)
 
                     schedule_multiplier = max(1.0 - kwargs["step"] / n_steps, 0.0)
                 elif schedule == "constant":
