@@ -561,11 +561,68 @@ class Attention(AttentionBase):
             # Use bfloat16 for flex attention to save memory
             og_dtype = q.dtype
             q, k, v = q.bfloat16(), k.bfloat16(), v.bfloat16()
-            with torch.autocast(enabled=False, device_type=q.device.type):
-                # shape: (batch_size, n_heads, seq_len, head_dim)
-                flex_att = flex_attention(
-                    q, k, v, block_mask=block_mask, scale=scale, enable_gqa=True
-                )
+            
+            # Handle sinks if present
+            if sinks is not None:
+                batch_size, n_heads, seq_len, head_dim = q.shape
+                _, n_kv_heads, kv_seq_len, _ = k.shape
+                
+                # Get local sinks
+                if hasattr(sinks, 'to_local'):
+                    local_sinks = sinks.to_local()
+                elif hasattr(sinks, '_local_tensor'):
+                    local_sinks = sinks._local_tensor
+                else:
+                    local_sinks = sinks
+                
+                if local_sinks.ndim == 1:
+                    num_sink_tokens = 1
+                    # Create dummy sink k,v with empty (so they don't contribute to output)
+                    sink_k = k.new_empty(batch_size, n_kv_heads, num_sink_tokens, head_dim)
+                    sink_v = v.new_zeros(batch_size, n_kv_heads, num_sink_tokens, head_dim)
+                    
+                    # Score modifier to inject sink logits
+                    def score_mod(score, b, h_q, q_idx, kv_idx):
+                        sink_start_idx = kv_seq_len
+                        is_sink = kv_idx >= sink_start_idx
+                        sink_logit = local_sinks[h_q % local_sinks.size(0)]
+                        return torch.where(is_sink, sink_logit.to(score.dtype), score)
+                        
+                elif local_sinks.ndim == 2:
+                    num_sink_tokens = local_sinks.size(1)
+                    # Create dummy sink k,v with empty
+                    sink_k = k.new_empty(batch_size, n_kv_heads, num_sink_tokens, head_dim)
+                    sink_v = v.new_zeros(batch_size, n_kv_heads, num_sink_tokens, head_dim)
+                    
+                    # Score modifier for multi-token sinks
+                    def score_mod(score, b, h_q, q_idx, kv_idx):
+                        sink_start_idx = kv_seq_len
+                        is_sink = kv_idx >= sink_start_idx
+                        sink_token_idx = kv_idx - sink_start_idx
+                        h_idx = h_q % local_sinks.size(0)
+                        sink_logit = local_sinks[h_idx, sink_token_idx]
+                        return torch.where(is_sink, sink_logit.to(score.dtype), score)
+                else:
+                    raise ValueError("Sinks must have shape (S) or (n_heads, S)")
+                
+                # Extend k,v with dummy sinks
+                k = torch.cat([k, sink_k], dim=2)
+                v = torch.cat([v, sink_v], dim=2)
+                
+                # Update block mask to include sinks - this might need adjustment
+                # For now, we'll rely on the score_mod to handle sink visibility
+                
+                with torch.autocast(enabled=False, device_type=q.device.type):
+                    flex_att = flex_attention(
+                        q, k, v, block_mask=block_mask, scale=scale, enable_gqa=True, score_mod=score_mod
+                    )
+            else:
+                with torch.autocast(enabled=False, device_type=q.device.type):
+                    # shape: (batch_size, n_heads, seq_len, head_dim)
+                    flex_att = flex_attention(
+                        q, k, v, block_mask=block_mask, scale=scale, enable_gqa=True
+                    )
+            
             assert isinstance(flex_att, torch.Tensor)
             att = flex_att.to(dtype=og_dtype)
 
