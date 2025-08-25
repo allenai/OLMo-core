@@ -2259,8 +2259,8 @@ class BLTDistillTransformer(BLTTransformer):
 
         # H-Net ratio loss
         if boundary_logprobs is not None:
-            true_ratio = boundary_mask.float().mean()
-            average_prob = torch.exp(boundary_logprobs).float().mean()
+            true_ratio = (boundary_mask * byte_mask).float().mean() / byte_mask.mean()
+            average_prob = (torch.exp(boundary_logprobs) * byte_mask).float().mean() / byte_mask.mean()
 
             ratio_loss = (
                 (1 - true_ratio) * (1 - average_prob) +
