@@ -159,6 +159,7 @@ class Checkpointer:
         train_module: TrainModule,
         *,
         load_trainer_state: Optional[bool] = None,
+        load_optim_state: Optional[bool] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Load model, optim, and other training state from a local or remote checkpoint directory
@@ -200,7 +201,7 @@ class Checkpointer:
         if metadata is None:
             metadata = get_checkpoint_metadata(train_module_dir)
 
-        state_dict = train_module.state_dict_to_load(metadata)
+        state_dict = train_module.state_dict_to_load(metadata, optim=load_optim_state)
         load_state_dict(
             train_module_dir,
             state_dict,
