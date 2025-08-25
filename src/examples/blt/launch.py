@@ -94,7 +94,7 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
         budget="ai2/oe-base",
         cmd=[launch_script, run_name, *overrides],
         task_name="train",
-        workspace="ai2/benjaminm",
+        workspace=os.environ.get("BEAKER_WORKSPACE", "ai2/benjaminm"),
         description="Distilling OLMo from and to BLT.",
         clusters=[cluster],
         env_vars=env_vars,

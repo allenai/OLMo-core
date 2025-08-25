@@ -2040,21 +2040,25 @@ class BLTDistillTransformer(BLTTransformer):
                 h_patch_after_global[:, 1:] = h_patch_global
 
             if blt_config.decoder_backprop_through_encoder:
-                h_out = self.local_decoder(
-                    embeds=h_byte,
-                    patch_embeds=h_patch_after_global,
-                    boundary_logprobs=None if blt_config.teacher_force_boundaries else boundary_logprobs,
-                    boundary_mask=None if blt_config.teacher_force_boundaries else boundary_mask,
-                    **local_decoder_kwargs,
-                )
+                h_byte_for_decoder = h_byte
+                h_patch_for_decoder = h_patch_after_global
             else:
-                h_out = self.local_decoder(
-                    embeds=h_byte.detach(),
-                    patch_embeds=h_patch_after_global.detach(),
-                    boundary_logprobs=None if blt_config.teacher_force_boundaries else boundary_logprobs,
-                    boundary_mask=None if blt_config.teacher_force_boundaries else boundary_mask,
-                    **local_decoder_kwargs,
-                )
+                h_byte_for_decoder = h_byte.detach()
+                h_patch_for_decoder = h_patch_after_global.detach()
+
+            if blt_config.decoder_backprop_through_boundary_predictor:
+                boundary_logprobs_for_decoder = boundary_logprobs if boundary_logprobs is not None else None
+            else:
+                boundary_logprobs_for_decoder = boundary_logprobs.detach() if boundary_logprobs is not None else None
+
+            h_out = self.local_decoder(
+                embeds=h_byte_for_decoder,
+                patch_embeds=h_patch_for_decoder,
+                boundary_logprobs=None if blt_config.teacher_force_boundaries else boundary_logprobs_for_decoder,
+                boundary_mask=None if blt_config.teacher_force_boundaries else boundary_mask,
+                **local_decoder_kwargs,
+            )
+
             logits = self.lm_head(h_out, **lm_head_kwargs)
             logprobs = F.log_softmax(logits.float() / blt_config.temperature, dim=-1)
             main_path_logprobs = torch.gather(logprobs[:, :-1], -1, input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
@@ -2253,6 +2257,19 @@ class BLTDistillTransformer(BLTTransformer):
         else:
             boundary_loss = torch.nan
 
+        # H-Net ratio loss
+        if boundary_logprobs is not None:
+            true_ratio = boundary_mask.float().mean()
+            average_prob = torch.exp(boundary_logprobs).float().mean()
+
+            ratio_loss = (
+                (1 - true_ratio) * (1 - average_prob) +
+                (true_ratio) * (average_prob) * (blt_config.target_ratio - 1)
+            ) * blt_config.target_ratio / (blt_config.target_ratio - 1)
+            metrics["blt/ratio_loss"] = ratio_loss
+        else:
+            ratio_loss = torch.nan
+
         # finalize losses
         # NOTE: loss_div_factor is at *byte sequence level*.
         if loss_div_factor is not None:
@@ -2281,6 +2298,8 @@ class BLTDistillTransformer(BLTTransformer):
                 loss = loss + boundary_loss * loss_weight
             elif loss_name == "hnet_embed":
                 loss = loss + hnet_embed_loss * loss_weight
+            elif loss_name == "ratio":
+                loss = loss + ratio_loss * loss_weight
             else:
                 raise ValueError(f"Unknown distillation loss '{loss_name}'")
 
