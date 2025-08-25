@@ -148,6 +148,8 @@ jobs:
                 src/test/nn/moe*
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}  # check out PR head commit instead of merge commit
 
       - uses: astral-sh/setup-uv@v6
         with:
