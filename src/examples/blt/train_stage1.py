@@ -74,7 +74,7 @@ GLOBAL_BATCH_SIZE = 64
 LOCAL_BATCH_SIZE = 64
 EVAL_BATCH_SIZE = 16
 LOCAL_MODEL_STYLE = os.environ.get("LOCAL_MODEL_STYLE", "hnet")
-TRAIN_MODE = os.environ.get("TRAIN_MODE", "local_encoder_only")
+TRAIN_MODE = os.environ.get("TRAIN_MODE", "full_stage_1")
 DATA_SOURCE = os.environ.get("DATA_SOURCE", "dclm")
 LR_SCHEDULE = os.environ.get("LR_SCHEDULE", "linear_with_warmup")
 TOKEN_NOISE_STR = os.environ.get("TOKEN_NOISE_STR", "")
@@ -231,7 +231,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         raise ValueError(f"Unknown LOCAL_MODEL_STYLE: {LOCAL_MODEL_STYLE}. Must be one of 'blt', 'hnet'.")
 
     model_config = teacher_model_config.replace(
-        name=TransformerType.blt,
+        name=TransformerType.blt_distill,
         vocab_size=byte_tokenizer_config.padded_vocab_size(),
         local_encoder=local_encoder,
         local_decoder=local_decoder,

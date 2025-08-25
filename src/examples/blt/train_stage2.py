@@ -88,14 +88,13 @@ elif DATA_SOURCE == "dolmino":
 else:
     raise ValueError(f"Unknown DATA_SOURCE: {DATA_SOURCE}. Must be one of 'dclm', 'dolmino'.")
 
-STAGE1_CKPT_PATH = os.environ.get(
-    "STAGE1_CKPT_PATH",
-    "/weka/oe-training-default/benjaminm/runs_persist/hnet_v3_d2048_emb_v2_smaller_hash_embed/step50000/model_and_optim",
-)
+OLMO_CKPT_PATH = os.environ.get("OLMO_CKPT_PATH", "") # for baseline
+STAGE1_CKPT_PATH = os.environ.get("STAGE1_CKPT_PATH", "")
 DATA_PATHS = ["/weka/oe-training-default/" + x for x in _DATA_SOURCES]
 
 if not os.environ.get("HAS_WEKA"):
     STAGE1_CKPT_PATH = STAGE1_CKPT_PATH.replace("/weka/oe-training-default/", "gs://ai2-llm/")
+    OLMO_CKPT_PATH = OLMO_CKPT_PATH.replace("/weka/oe-training-default/", "gs://ai2-llm/")
     DATA_PATHS = [x.replace("/weka/oe-training-default/", "gs://") for x in DATA_PATHS] # slight inconsistency
 
 log = logging.getLogger(__name__)
@@ -223,6 +222,8 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     else:
         raise ValueError(f"Unknown LOCAL_MODEL_STYLE: {LOCAL_MODEL_STYLE}. Must be one of 'blt', 'hnet'.")
 
+    model_config = teacher_model_config.replace()
+
     if TEACHER_MODE == "stage1":
         # use the stage1 checkpoint as the teacher instead of the original model (stage0)
         teacher_model_config = teacher_model_config.replace(
@@ -231,9 +232,15 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             local_encoder=local_encoder,
             local_decoder=local_decoder,
         )
+    elif TEACHER_MODE == "stage0":
+        pass # already set correctly
+    elif TEACHER_MODE is None:
+        teacher_model_config = None
+    else:
+        raise ValueError(f"Unknown TEACHER_MODE: {TEACHER_MODE}. Must be one of 'stage0', 'stage1', None.")
 
-    model_config = teacher_model_config.replace(
-        name=TransformerType.blt,
+    model_config = model_config.replace(
+        name=TransformerType.blt_distill,
         vocab_size=byte_tokenizer_config.padded_vocab_size(),
         local_encoder=local_encoder,
         local_decoder=local_decoder,
@@ -310,6 +317,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             losses=["ce","boundary"],
             loss_weights=[1.0,1.0],
             skip_blocks=False,
+            skip_teacher_blocks=TEACHER_MODE == "stage0",
             skip_teacher=TEACHER_MODE is None,
             use_oracle_patch_reps=False,
         ),
@@ -425,37 +433,86 @@ def main(run_name: str, overrides: List[str]):
     config_dict = config.as_config_dict()
     cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
 
-    # Load Stage 1 checkpoint.
-    # since we can"t share blocks (we might train them), we need to duplicate the blocks to the teacher
-    prefixes_to_duplicate = ["blocks"]
-    # If we are using the stage1 checkpoint as the teacher, we also need to duplicate
-    # the local encoder / decoder / boundary predictor / lm head to teacher
-    if TEACHER_MODE == "stage1":
-        prefixes_to_duplicate += ["local_encoder", "local_decoder", "boundary_predictor", "lm_head"]
+    if STAGE1_CKPT_PATH:
+        if OLMO_CKPT_PATH:
+            raise ValueError("Cannot use both OLMO_CKPT_PATH and STAGE1_CKPT_PATH. Please set only one of them.")
 
-    key_mapping = {}
-    extend_key_mapping = {}
+        # Load Stage 1 checkpoint.
+        # since we can"t share blocks (we might train them), we need to duplicate the blocks to the teacher
+        prefixes_to_duplicate = ["blocks"]
+        # If we are using the stage1 checkpoint as the teacher, we also need to duplicate
+        # the local encoder / decoder / boundary predictor / lm head to teacher
+        if TEACHER_MODE == "stage1":
+            prefixes_to_duplicate += ["local_encoder", "local_decoder", "boundary_predictor", "lm_head"]
 
-    for prefix in prefixes_to_duplicate:
-        extend_key_mapping.update({
-            key: key.replace(f"{prefix}", f"teacher.{prefix}")
-            for key in model.state_dict().keys() if key.startswith(prefix)
-        })
+        key_mapping = {}
+        extend_key_mapping = {}
 
-    if config.model.use_teacher_embs_with_vocab_size is not None:
-        key_mapping["teacher_embeddings.weight"] = "teacher.embeddings.weight"
+        for prefix in prefixes_to_duplicate:
+            extend_key_mapping.update({
+                key: key.replace(f"{prefix}", f"teacher.{prefix}")
+                for key in model.state_dict().keys() if key.startswith(prefix)
+            })
 
-    # temporary to convert from old boundary predictor location to new
-    key_mapping |= {k: k.replace("local_encoder.", "").replace("boundary_predictor_module", "boundary_predictor") for k in model.state_dict().keys() if "boundary_predictor_module" in k}
+        if config.model.use_teacher_embs_with_vocab_size is not None:
+            key_mapping["teacher_embeddings.weight"] = "teacher.embeddings.weight"
 
-    incompatible_keys = load_model_and_optim_state(STAGE1_CKPT_PATH, model, key_mapping=key_mapping, extend_key_mapping=extend_key_mapping)
-    log.info(incompatible_keys)
+        # temporary to convert from old boundary predictor location to new
+        key_mapping |= {k: k.replace("local_encoder.", "").replace("boundary_predictor_module", "boundary_predictor") for k in model.state_dict().keys() if "boundary_predictor_module" in k}
 
-    if len(incompatible_keys.unexpected_keys) > 0:
-        raise ValueError(f"Unexpected keys when loading checkpoint: {incompatible_keys.unexpected_keys} (assume we use all teacher weights)")
+        incompatible_keys = load_model_and_optim_state(
+            STAGE1_CKPT_PATH,
+            model,
+            key_mapping=key_mapping,
+            extend_key_mapping=extend_key_mapping,
+            strict=TEACHER_MODE is not None,  # if we are not using a teacher, getting unexpected saved teacher params
+        )
+        log.info(incompatible_keys)
 
-    for missing_key in incompatible_keys.missing_keys:
-        log.info(f"Key {missing_key} was not found in checkpoint, is randomly initialized (this is expected for local encoder/decoder and student lm head).")
+        if len(incompatible_keys.unexpected_keys) > 0:
+            if TEACHER_MODE is not None:
+                raise ValueError(f"Unexpected keys when loading checkpoint: {incompatible_keys.unexpected_keys} (assume we use all teacher weights)")
+            elif not all(key.startswith("teacher") for key in incompatible_keys.unexpected_keys):
+                raise ValueError(f"Unexpected keys when loading checkpoint: {incompatible_keys.unexpected_keys} (assume we use all student weights)")
+
+        for missing_key in incompatible_keys.missing_keys:
+            log.info(f"Key {missing_key} was not found in checkpoint, is randomly initialized (this is expected for local encoder/decoder and student lm head).")
+    else:
+        # start directly from an OLMo checkpoint (no stage 1) for H-Net distill baseline.
+        if not OLMO_CKPT_PATH:
+            raise ValueError("Either OLMO_CKPT_PATH or STAGE1_CKPT_PATH must be set.")
+
+        random_init_keys = {"local_encoder", "boundary_predictor", "local_decoder"}
+        prefixes_to_duplicate = ["blocks"]
+        extend_key_mapping = {}
+
+        for prefix in prefixes_to_duplicate:
+            extend_key_mapping.update({
+                key: key.replace(f"{prefix}", f"teacher.{prefix}")
+                for key in model.state_dict().keys() if key.startswith(prefix)
+            })
+
+        key_mapping = {
+            key: None for key in model.state_dict().keys() if any(key.startswith(x) for x in random_init_keys)
+        } | {
+            f"teacher.{key}": key for key in model.teacher.state_dict().keys() if not key.startswith("blocks")  # type: ignore
+        } # set non-block keys (embeddings, lm head)
+        incompatible_keys = load_model_and_optim_state(
+            OLMO_CKPT_PATH,
+            model,
+            key_mapping=key_mapping,
+            extend_key_mapping=extend_key_mapping,
+            strict=False,  # allow missing keys for local encoder/decoder and student lm head
+        )
+
+        if len(incompatible_keys.unexpected_keys) > 0:
+            raise ValueError(f"Unexpected keys when loading checkpoint: {incompatible_keys.unexpected_keys} (assume we use all teacher weights)")
+
+        for missing_key in incompatible_keys.missing_keys:
+            log.info(f"Key {missing_key} was not found in checkpoint, is randomly initialized (this is expected for local encoder/decoder and student lm head).")
+
+        # do not support path for heuristic embeddings for now, just rescale encoder out
+        model.fix_init()  # type: ignore
 
     # TODO(benjaminm): this is not a nice place?
     register_fsdp_forward_method(model, "student_forward")

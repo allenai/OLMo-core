@@ -1,5 +1,5 @@
 import logging
-from functools import cached_property
+from functools import cached_property, lru_cache
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -1283,6 +1283,9 @@ class BLTTransformer(Transformer):
         if (constituent_input_ids := kwargs.pop("constituent_input_ids", None)) is not None:
             extra_kwargs["constituent_input_ids"] = move_to_device(constituent_input_ids, self.device)
 
+        if (teacher_inputs_embeds := kwargs.pop("teacher_inputs_embeds", None)) is not None:
+            extra_kwargs["teacher_inputs_embeds"] = move_to_device(teacher_inputs_embeds, self.device)
+
         if blt_config is not None and blt_config.patching != "dolma2":
             # can't use attributes relying on dolma2 patching
             extra_kwargs["original_input_ids"] = None
@@ -1385,7 +1388,7 @@ class BLTTransformer(Transformer):
 
 
 class BLTDistillTransformer(BLTTransformer):
-    def __init__(self, *args, teacher: Transformer, share_blocks: bool, use_teacher_embs_with_vocab_size: Optional[int], dtype, init_device, **kwargs):
+    def __init__(self, *args, teacher: Optional[Transformer], share_blocks: bool, use_teacher_embs_with_vocab_size: Optional[int], dtype, init_device, **kwargs):
         super().__init__(*args, dtype=dtype, **kwargs)
 
         self.teacher = teacher
@@ -1393,7 +1396,7 @@ class BLTDistillTransformer(BLTTransformer):
         # if not None, keep & use the teacher embeddings (for distilling from stage1 local decoder transfer)
         self.use_teacher_embs_with_vocab_size = use_teacher_embs_with_vocab_size
 
-        if self.use_teacher_embs_with_vocab_size is not None:
+        if self.teacher is not None and self.use_teacher_embs_with_vocab_size is not None:
             self.teacher_embeddings = nn.Embedding(
                 self.use_teacher_embs_with_vocab_size,
                 self.teacher.d_model,
@@ -1403,8 +1406,9 @@ class BLTDistillTransformer(BLTTransformer):
         else:
             self.teacher_embeddings = None
 
-        if self.share_blocks:
-            self.teacher.blocks.clear()
+        if self.teacher is not None:
+            if self.share_blocks:
+                self.teacher.blocks.clear()
 
     # adapted from LMHead._finalize_loss
     def _finalize_loss(self, loss: torch.Tensor | float, loss_div_factor: Optional[Union[torch.Tensor, float]] = None):
@@ -1431,10 +1435,12 @@ class BLTDistillTransformer(BLTTransformer):
         """
         super().apply_compile()
 
-        self.teacher.apply_compile()
+        if self.teacher is not None:
+            self.teacher.apply_compile()
 
     def apply_fsdp(self, *args, **kwargs):
-        self.teacher.apply_fsdp(*args, **kwargs)
+        if self.teacher is not None:
+            self.teacher.apply_fsdp(*args, **kwargs)
 
         super().apply_fsdp(*args, **kwargs)
 
@@ -1525,7 +1531,7 @@ class BLTDistillTransformer(BLTTransformer):
         zero_bos: bool = True,
         hidden_states_to_return: Optional[list[int]] = None,
         **kwargs,
-    ) -> Tuple[Union[torch.Tensor, LMOutputWithLoss, None], Tuple[list[torch.Tensor], Optional[torch.Tensor], torch.Tensor]]:
+    ) -> Tuple[Union[torch.Tensor, LMOutputWithLoss, None], Tuple[list[torch.Tensor], Optional[torch.Tensor], Optional[torch.Tensor]]]:
         """
         Run the transformer on the token input IDs.
 
@@ -1593,7 +1599,7 @@ class BLTDistillTransformer(BLTTransformer):
                 return self.teacher.lm_head(h_out, **lm_head_kwargs), (out_hidden_states, h_out, h_emb)
             else:
                 return None, (out_hidden_states, h_out, h_emb)
-        else:
+        elif isinstance(self.teacher, Transformer):
             input_ids, labels, block_kwargs, lm_head_kwargs = self.teacher._prepare_inputs(
                 input_ids,
                 labels,
@@ -1644,8 +1650,10 @@ class BLTDistillTransformer(BLTTransformer):
                 return self.teacher.lm_head(h, **lm_head_kwargs), (out_hidden_states, h, h_emb)
             else:
                 return None, (out_hidden_states, h, h_emb)
+        else:
+            return None, ([], None, None)
 
-    def fix_init(self, embedding_init_path: str):
+    def fix_init(self, embedding_init_path: Optional[str] = None):
         self.local_encoder.fix_init(embedding_init_path, self.teacher.embeddings.weight)  # type: ignore
 
     def _compute_alm_style_loss(
@@ -1838,6 +1846,99 @@ class BLTDistillTransformer(BLTTransformer):
 
         return local_decoder_loss_exhaustive, local_decoder_loss_simple, metrics
 
+    @lru_cache(maxsize=100_000)
+    def _backend_tokenize(self, byte_str):
+        if not hasattr(self, "_tokenizer"):
+            # hardcode for now
+            self._tokenizer = ByteTokenizerConfig.blt().build()
+
+        return tuple(x.id for x in self._tokenizer.hf_tokenizer.backend_tokenizer.model.tokenize(byte_str))
+
+    def _noise_strict(
+        self,
+        input_ids,
+        labels,
+        p,
+        epsilon=1e-6,
+        **kwargs: Dict[str, Any],
+    ) -> tuple[torch.Tensor, Dict[str, Any], torch.Tensor]:
+        if not hasattr(self, "_tokenizer"):
+            # hardcode for now
+            self._tokenizer = ByteTokenizerConfig.blt().build()
+
+        indices = torch.randperm(input_ids.shape[0])[:int(input_ids.shape[0] * p)]
+
+        with torch.no_grad():
+            _, _, (_, boundary_logprobs), boundary_mask = self.local_encoder(
+                input_ids[indices],
+                patch_lens=torch.tensor([[input_ids.shape[1]]], device=input_ids.device, dtype=torch.long).expand(indices.shape[0], -1),
+                patch_ids=torch.zeros_like(input_ids[indices]),
+                cross_attn_mask=None,
+            )
+
+        B, L = boundary_mask.shape
+        token_idx = (
+            torch.arange(L, device=boundary_mask.device)[None, :]
+            + (~boundary_mask).long() * L
+        )
+        seq_sorted_indices = torch.argsort(token_idx, dim=1)[:, :kwargs["patch_lens"].shape[1]]  # type: ignore
+        patch_lens = kwargs["patch_lens"].clone()  # type: ignore
+
+        # get / unshard teacher embeddings
+        teacher_embeddings = self.teacher.embeddings(torch.arange(len(self.teacher.embeddings.weight), device=input_ids.device))  # type: ignore
+        teacher_inputs_embeds = teacher_embeddings[kwargs["original_input_ids"]]
+
+        for i, idx in enumerate(indices):
+            teacher_inputs_embeds[idx] = 0
+            patch_lens[idx, 1:] = 0
+
+            to_write = {}
+            # len(subword_ids) should never be zero during regular training, but make sure (and could be zero in dry run batch)
+            counts = torch.full(
+                (len(teacher_inputs_embeds[idx]),),
+                fill_value=epsilon,
+                dtype=torch.float32,
+                device=teacher_inputs_embeds.device
+            )
+
+            prev_i = 1
+
+            for j in range(seq_sorted_indices.shape[1] - 1):
+                curr_i = seq_sorted_indices[i, j + 1] # offset bos
+
+                if curr_i + 1 <= prev_i:
+                    break
+
+                current_bytes = self._tokenizer.decode_to_bytes(input_ids[idx, prev_i:curr_i + 1])
+                current_byte_str = blt_utils.bytes_to_chars(current_bytes)
+                subword_ids = self._backend_tokenize(current_byte_str)
+
+                for idx_in_patch, subword_id in enumerate(subword_ids):
+                    if idx_in_patch not in to_write:
+                        to_write[idx_in_patch] = ([], [])
+
+                    to_write[idx_in_patch][0].append(j)
+                    to_write[idx_in_patch][1].append(subword_id)
+
+                patch_lens[idx, j + 1] = len(current_bytes)
+                prev_i = curr_i + 1
+
+            for idx_in_patch, (js, subword_ids) in to_write.items():
+                teacher_inputs_embeds[idx, js] += teacher_embeddings[subword_ids]
+                counts[js] += 1
+
+            teacher_inputs_embeds[idx] /= counts.unsqueeze(-1)
+            labels[idx, prev_i:] = -100
+
+            # cant use
+            kwargs["original_input_ids"][idx] = 0 # type: ignore
+            kwargs["constituent_input_ids"][idx] = 0 # type: ignore
+
+        kwargs["teacher_inputs_embeds"] = teacher_inputs_embeds  # type: ignore
+        kwargs["patch_lens"] = patch_lens  # type: ignore
+
+        return labels, kwargs, indices
+
     def _noise(
         self,
         input_ids,
@@ -1902,7 +2003,7 @@ class BLTDistillTransformer(BLTTransformer):
                 dtype=original_input_ids.dtype,
             )
             kwargs["patch_lens"][idx] = noised_patch_lengths  # type: ignore
-            labels[len(noised_input_ids):] = -100  # type: ignore 
+            labels[idx, len(noised_input_ids):] = -100  # type: ignore 
 
         return labels, kwargs, indices
 
@@ -1936,11 +2037,12 @@ class BLTDistillTransformer(BLTTransformer):
             raise ValueError("`blt_config` must be provided for BLTDistillTransformer.forward")
 
         skip_blocks = blt_config.skip_blocks
+        skip_teacher_blocks = blt_config.skip_teacher_blocks
         skip_teacher = blt_config.skip_teacher
         use_oracle_patch_reps = blt_config.use_oracle_patch_reps
 
         if blt_config.p_boundary_noise > 0:
-            labels, kwargs, noised_indices = self._noise(input_ids, labels, p=blt_config.p_boundary_noise, **kwargs)
+            labels, kwargs, noised_indices = self._noise_strict(input_ids, labels, p=blt_config.p_boundary_noise, **kwargs)
         else:
             noised_indices = None
 
@@ -1966,9 +2068,10 @@ class BLTDistillTransformer(BLTTransformer):
 
                 teacher_logits, (teacher_hidden_states, teacher_last_hidden_state, teacher_embeds) = self._teacher_forward(
                     input_ids_for_teacher,
+                    inputs_embeds=extra_kwargs.get("teacher_inputs_embeds"),
                     labels=None, # we will compute loss ourselves
                     return_logits=True,
-                    skip_blocks=skip_blocks,
+                    skip_blocks=skip_blocks or skip_teacher_blocks,
                     zero_bos=True,
                     hidden_states_to_return=list(range(blt_config.encoder_loss_lookahead)),
                     **kwargs,
@@ -2152,7 +2255,7 @@ class BLTDistillTransformer(BLTTransformer):
         else:
             local_encoder_loss = torch.nan
 
-        if not skip_blocks and not skip_teacher:
+        if not skip_blocks and not skip_teacher and not skip_teacher_blocks:
             assert logprobs is not None
             assert main_path_logprobs is not None
             assert teacher_logprobs is not None
@@ -2192,18 +2295,22 @@ class BLTDistillTransformer(BLTTransformer):
                 if blt_config.decoder_use_mse_loss:
                     raise ValueError("MSE loss not implemented for ALM-style distillation")
 
-                # use an ALM-style loss
+                noised_mask = torch.zeros(input_ids.shape[0], device=self.device, dtype=torch.bool)
+                noised_mask[noised_indices] = True
+                non_noised_indices = torch.where(~noised_mask)[0]
+
+                # use an ALM-style loss over non-noised examples
                 local_decoder_loss_exhaustive, local_decoder_loss_simple, metrics = self._compute_alm_style_loss(
-                    main_path_logprobs,
-                    boundary_logprobs_for_decoder_loss,
-                    boundary_labels,
-                    teacher_logprobs,
-                    teacher_main_path_logprobs,
-                    byte_mask,
-                    patch_mask,
-                    local_encoder_kwargs["patch_lens"],
-                    local_encoder_kwargs["patch_ids"],
-                    extra_kwargs["constituent_input_ids"],
+                    main_path_logprobs[non_noised_indices],
+                    boundary_logprobs_for_decoder_loss[non_noised_indices] if boundary_logprobs_for_decoder_loss is not None else None,
+                    boundary_labels[non_noised_indices] if boundary_labels is not None else None,
+                    teacher_logprobs[non_noised_indices],
+                    teacher_main_path_logprobs[non_noised_indices],
+                    byte_mask[non_noised_indices],
+                    patch_mask[non_noised_indices],
+                    local_encoder_kwargs["patch_lens"][non_noised_indices],
+                    local_encoder_kwargs["patch_ids"][non_noised_indices],
+                    extra_kwargs["constituent_input_ids"][non_noised_indices],
                     ignore_index,
                     blt_config,
                     metrics,
@@ -2216,6 +2323,29 @@ class BLTDistillTransformer(BLTTransformer):
         else:
             local_decoder_loss = torch.nan
 
+        # H-Net style embedding loss
+        if teacher_embeds is not None and not isinstance(self.teacher, BLTTransformer):
+            teacher_embs_repeated = torch.gather(
+                teacher_embeds,
+                dim=1,
+                index=(local_encoder_kwargs["patch_ids"][:, 1:] - 1).unsqueeze(-1).expand(-1, -1, teacher_embeds.shape[-1]),
+            )
+
+            if blt_config.hnet_embed_loss_use_offset:
+                elementwise_hnet_embed_loss = rep_compare_fn(
+                    h_byte[:, 2:], # skip bos and first embedding to produce offset as in H-Net paper (match first patch byte to prev emb)
+                    teacher_embs_repeated[:, :-1]
+                )
+                hnet_embed_loss_mask = byte_mask[:, 2:]
+            else:
+                elementwise_hnet_embed_loss = rep_compare_fn(h_byte[:, 1:], teacher_embs_repeated)
+                hnet_embed_loss_mask = byte_mask[:, 1:]
+
+            hnet_embed_loss = (elementwise_hnet_embed_loss * hnet_embed_loss_mask.float()).mean()
+            metrics[f"blt/hnet_embed_loss"] = hnet_embed_loss / hnet_embed_loss_mask.float().mean()
+        else:
+            hnet_embed_loss = torch.nan
+
         # compute the boundary loss
         if boundary_logprobs is not None:
             assert boundary_labels is not None
@@ -2224,7 +2354,8 @@ class BLTDistillTransformer(BLTTransformer):
             # shouldn't compute boundary loss over wrong boundaries
             # slight inaccuracies here because the div factor is not adjusted accordingly
             # but should not have a big impact (hopefully :) )
-            boundary_byte_mask[noised_indices] = False
+            if noised_indices is not None:
+                boundary_byte_mask[noised_indices] = False
 
             elementwise_boundary_loss = blt_utils.binary_cross_entropy_with_logprobs(
                 boundary_logprobs_for_loss,
@@ -2269,6 +2400,8 @@ class BLTDistillTransformer(BLTTransformer):
                 loss = loss + local_decoder_loss * loss_weight
             elif loss_name == "boundary" and boundary_loss is not None:
                 loss = loss + boundary_loss * loss_weight
+            elif loss_name == "hnet_embed":
+                loss = loss + hnet_embed_loss * loss_weight
             else:
                 raise ValueError(f"Unknown distillation loss '{loss_name}'")
 
@@ -2376,6 +2509,9 @@ class BLTDistillTransformer(BLTTransformer):
         if self.prepend_embedding is not None:
             raise NotImplementedError("`prepend_embedding` is not implemented for original_head_forward")
 
+        if self.teacher is None or isinstance(self.teacher, BLTTransformer):
+            raise ValueError("`teacher` must be provided and be a subword-level transformer for original_trunk_forward.")
+
         input_ids, labels, block_kwargs, lm_head_kwargs, local_encoder_kwargs, local_decoder_kwargs, extra_kwargs = self._prepare_inputs(
             input_ids,
             labels,
@@ -2430,6 +2566,9 @@ class BLTDistillTransformer(BLTTransformer):
         if blt_config is None:
             raise ValueError("`blt_config` must be provided for original_trunk_forward")
 
+        if self.teacher is None or isinstance(self.teacher, BLTTransformer):
+            raise ValueError("`teacher` must be provided and be a subword-level transformer for original_trunk_forward.")
+
         input_ids, labels, block_kwargs, lm_head_kwargs, local_encoder_kwargs, local_decoder_kwargs, extra_kwargs = self._prepare_inputs(
             input_ids,
             labels,
@@ -2443,6 +2582,7 @@ class BLTDistillTransformer(BLTTransformer):
         )
 
         teacher_logits: torch.Tensor
+        teacher_embeds: torch.Tensor
         teacher_logits, (_, teacher_last_hidden_state, teacher_embeds) = self._teacher_forward(  # type: ignore
             extra_kwargs["original_input_ids"],
             # this could leak information since we take the true last embedding
