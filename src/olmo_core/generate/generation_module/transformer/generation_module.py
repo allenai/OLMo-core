@@ -524,7 +524,7 @@ class TransformerGenerationModule(GenerationModule):
                 ) from e
 
         # TODO(benjaminm): this does not seem like a good place..
-        if transformer_config.name == TransformerType.blt:  # type: ignore
+        if transformer_config.name in {TransformerType.blt, TransformerType.blt_distill}:  # type: ignore
             return BLTTransformerGenerationModule.from_checkpoint(
                 checkpoint_dir=checkpoint_dir,
                 transformer_config=transformer_config,
