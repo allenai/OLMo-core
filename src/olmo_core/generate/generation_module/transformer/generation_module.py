@@ -302,9 +302,7 @@ class TransformerGenerationModule(GenerationModule):
             torch.cuda.synchronize()
             end_time = time.perf_counter()
             total_time = end_time - start_time
-
-            total_tokens = tokens_generated * batch_size
-            assert total_tokens == generated.numel(), "Total tokens computed incorrectly"
+            total_tokens = generated.numel()
             prefill_tokens = prompt_len * batch_size
             completion_tokens = tokens_generated * batch_size
             tokens_per_sec_total = total_tokens / total_time
