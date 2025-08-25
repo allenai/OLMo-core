@@ -765,7 +765,13 @@ class Trainer:
                 "were saved with a different world size."
             )
 
-    def load_checkpoint(self, dir: PathOrStr, *, load_trainer_state: Optional[bool] = None):
+    def load_checkpoint(
+        self,
+        dir: PathOrStr,
+        *,
+        load_trainer_state: Optional[bool] = None,
+        load_optim_state: Optional[bool] = None,
+    ):
         """
         Load a checkpoint.
 
@@ -773,7 +779,8 @@ class Trainer:
             :meth:`fit()` may call this method automatically depending on the :data:`load_strategy`.
 
         :param dir: The path/URL to a checkpoint or a folder of checkpoints.
-        :param load_trainer_state: Load trainer state.
+        :param load_trainer_state: Load trainer state (data loader state, RNG states, and other bookkeeping).
+        :param load_optim_state: Load optimizer state in the train module.
         """
         dir = normalize_path(dir)
 
@@ -789,6 +796,7 @@ class Trainer:
             dir,
             self.train_module,
             load_trainer_state=load_trainer_state,
+            load_optim_state=load_optim_state,
         )
         if trainer_state is not None:
             self.load_state_dict(cast(TrainerStateDict, trainer_state))
@@ -800,7 +808,11 @@ class Trainer:
         log.info("Checkpoint successfully loaded")
 
     def maybe_load_checkpoint(
-        self, dir: PathOrStr, *, load_trainer_state: Optional[bool] = None
+        self,
+        dir: PathOrStr,
+        *,
+        load_trainer_state: Optional[bool] = None,
+        load_optim_state: Optional[bool] = None,
     ) -> bool:
         """
         Like :meth:`load_checkpoint()` but is a no-op if there is no checkpoint in the ``dir`` provided.
@@ -818,6 +830,7 @@ class Trainer:
             self.load_checkpoint(
                 dir,
                 load_trainer_state=load_trainer_state,
+                load_optim_state=load_optim_state,
             )
             assert self.checkpoint_loaded
             return True

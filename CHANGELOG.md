@@ -37,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `namespace` option to `nn.buffer_cache.BufferCache`.
 - Added the option to configure `head_stride` for context parallelism with ring-flash-attn.
 - Added the option to group multiple npy source files together for packing with the packed FSL dataset by setting `source_group_size` to an integer greater than 1.
+- Added `load_optim_state: Optional[bool]` option to `Trainer.load_checkpoint()`.
 - Added `GenerationModule` for OLMo-core native autoregressive generation with support for kv caching.
 
 ### Changed
