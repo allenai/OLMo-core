@@ -253,7 +253,7 @@ class BeakerLaunchConfig(Config):
 
     num_execution_units: Optional[int] = None
     """
-    Number of \"execution units\", defaults to ``max(1, num_nodes // 32)``. An \"execution unit\" is abstraction
+    Number of "execution units", defaults to ``max(1, num_nodes // 32)``. An "execution unit" is abstraction
     for any node-using entity of which 1 or more copies are run, where each unit wants its nodes to be
     from colocated hardware (e.g., a model replica for large jobs, or a full distributed model for small jobs).
     """
