@@ -177,6 +177,7 @@ jobs:
       - name: GPU Tests
         if: env.BEAKER_TOKEN != ''
         run: |
+          git remote -v
           gantry run \
             --show-logs \
             --yes \
