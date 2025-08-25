@@ -112,6 +112,8 @@ jobs:
     name: ${{ matrix.task.name }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      GANTRY_GITHUB_TESTING: 'true'
     strategy:
       fail-fast: false
       matrix:
