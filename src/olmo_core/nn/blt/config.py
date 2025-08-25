@@ -12,6 +12,7 @@ class BLTConfig(Config):
     tokenizer: Optional[ByteTokenizerConfig] = None
     losses: list[str] = field(default_factory=lambda: ["ce"])
     loss_weights: list[float] = field(default_factory=lambda: [1.0])
+    loss_schedules: Optional[list[str]] = None
     binarization_temp: float = 1.0
     temperature: float = 1.0
     div_fn: str = "tvd_temp_limit"

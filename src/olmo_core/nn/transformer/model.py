@@ -2286,21 +2286,36 @@ class BLTDistillTransformer(BLTTransformer):
         hnet_embed_loss = self._finalize_loss(hnet_embed_loss, loss_div_factor=loss_div_factor)
 
         loss = 0.0
-        for loss_name, loss_weight in zip(blt_config.losses, blt_config.loss_weights):
+        for loss_idx, (loss_name, loss_weight) in enumerate(zip(blt_config.losses, blt_config.loss_weights)):
+            if blt_config.loss_schedules is not None:
+                schedule = blt_config.loss_schedules[loss_idx]
+                if schedule.startswith("linear_decrease"):
+                    _, n_steps = schedule.split(":")
+
+                    schedule_multiplier = max(1.0 - kwargs["step"] / n_steps, 0.0)
+                elif schedule == "constant":
+                    schedule_multiplier = 1.0
+                else:
+                    raise ValueError(f"Unknown loss schedule '{schedule}'")
+
+                metrics[f"blt/{loss_name}_loss_schedule_multiplier"] = schedule_multiplier
+            else:
+                schedule_multiplier = 1.0
+
             if loss_weight == 0.0:
                 continue
             if loss_name == "ce":
-                loss = loss + ce_loss * loss_weight
+                loss = loss + ce_loss * loss_weight * schedule_multiplier
             elif loss_name == "local_encoder":
-                loss = loss + local_encoder_loss * loss_weight
+                loss = loss + local_encoder_loss * loss_weight * schedule_multiplier
             elif loss_name == "local_decoder":
-                loss = loss + local_decoder_loss * loss_weight
+                loss = loss + local_decoder_loss * loss_weight * schedule_multiplier
             elif loss_name == "boundary" and boundary_loss is not None:
-                loss = loss + boundary_loss * loss_weight
+                loss = loss + boundary_loss * loss_weight * schedule_multiplier
             elif loss_name == "hnet_embed":
-                loss = loss + hnet_embed_loss * loss_weight
+                loss = loss + hnet_embed_loss * loss_weight * schedule_multiplier
             elif loss_name == "ratio":
-                loss = loss + ratio_loss * loss_weight
+                loss = loss + ratio_loss * loss_weight * schedule_multiplier
             else:
                 raise ValueError(f"Unknown distillation loss '{loss_name}'")
 
