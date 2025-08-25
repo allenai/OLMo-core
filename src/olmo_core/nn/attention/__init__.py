@@ -558,9 +558,9 @@ class Attention(AttentionBase):
             #        (batch_size, n_kv_heads, seq_len, head_dim)
             q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
 
-            # SDPA uses full precision. We match it for flex attention.
+            # Use bfloat16 for flex attention to save memory
             og_dtype = q.dtype
-            q, k, v = q.float(), k.float(), v.float()
+            q, k, v = q.bfloat16(), k.bfloat16(), v.bfloat16()
             with torch.autocast(enabled=False, device_type=q.device.type):
                 # shape: (batch_size, n_heads, seq_len, head_dim)
                 flex_att = flex_attention(
