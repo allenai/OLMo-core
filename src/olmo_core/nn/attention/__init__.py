@@ -1,3 +1,4 @@
+import logging
 import math
 from abc import abstractmethod
 from dataclasses import dataclass
@@ -15,6 +16,7 @@ from olmo_core.config import Config, DType, StrEnum
 from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.nn.attention.kv_cache import KVCacheManager
 
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
@@ -29,6 +31,7 @@ from ..utils import get_tp_wrappers
 from .flash_attn_api import (
     dispatch_flash_attn,
     dispatch_flash_attn_qkvpacked,
+    dispatch_flash_attn_with_kvcache,
     dispatch_ring_flash_attn,
     dispatch_ring_flash_attn_qkvpacked,
 )
@@ -51,6 +54,8 @@ __all__ = [
     "RingAttentionZigZagLoadBalancer",
     "RingAttentionLlama3LoadBalancer",
 ]
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -373,14 +378,6 @@ class Attention(AttentionBase):
                 raise OLMoConfigurationError(
                     f"fused RoPE is not compatible with {self.__class__.__name__}"
                 )
-
-            # On layers with sliding windows, we don't do rope extension.
-            uses_full_attention = self.window_size == (-1, -1)
-            uses_sliding_window = not uses_full_attention
-            if uses_sliding_window and rope.scaling is not None:
-                rope = rope.replace(scaling=None)
-            assert not (uses_sliding_window and rope.scaling is not None)
-
             rope_class = rope.build(self.head_dim, cache=cache)
             assert isinstance(rope_class, (RotaryEmbedding, ComplexRotaryEmbedding))
             self.rope = rope_class
@@ -390,6 +387,8 @@ class Attention(AttentionBase):
         self._cp_pg: Optional[dist.ProcessGroup] = None
         self._cp_enabled = False
         self._cp_load_balancer: Optional[RingAttentionLoadBalancerType] = None
+
+        self.kv_cache_manager: Optional[KVCacheManager] = None
 
     @property
     def cp_enabled(self) -> bool:
@@ -408,9 +407,38 @@ class Attention(AttentionBase):
         max_doc_len_k: Optional[int] = None,
         local_k_slice: Optional[slice] = None,
         scale: Optional[float] = None,
+        cache_leftpad: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         att: torch.Tensor
-        if self.cp_enabled:
+
+        if self.kv_cache_manager:
+            if self.cp_enabled:
+                raise RuntimeError(
+                    f"'{self.__class__.__name__}' does not support KV caching with context parallelism"
+                )
+            if not self.use_flash:
+                raise RuntimeError(
+                    f"'{self.__class__.__name__}' requires flash (use_flash=True) for KV caching"
+                )
+
+            self.kv_cache_manager.record_leftpad(cache_leftpad)
+            att = dispatch_flash_attn_with_kvcache(
+                q,
+                k=k,
+                v=v,
+                softmax_scale=scale,
+                causal=True,
+                window_size=self.window_size,
+                k_cache=self.kv_cache_manager.k_cache,  # updated in-place
+                v_cache=self.kv_cache_manager.v_cache,  # updated in-place
+                cache_leftpad=self.kv_cache_manager.cache_leftpad,
+                cache_seqlens=self.kv_cache_manager.cache_seqlens.expand(
+                    self.kv_cache_manager.cache_leftpad.shape[0]
+                ).contiguous(),
+            )
+            self.kv_cache_manager.update_seqlen(q.shape[1])
+
+        elif self.cp_enabled:
             assert self._cp_pg is not None and self._cp_load_balancer is not None
             if not self.use_flash:
                 raise RuntimeError(
@@ -502,6 +530,7 @@ class Attention(AttentionBase):
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
+        cache_leftpad: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Apply attention to the input.
@@ -550,14 +579,22 @@ class Attention(AttentionBase):
                 k = self.k_norm(k)
 
         if self.rope is not None:
+            # In context-parallel mode we must be given pre-sharded buffers
             if self.cp_enabled and pos_sin is None and pos_cos is None and freqs_cis is None:
                 raise RuntimeError(
                     "RoPE buffers must be passed through to attention after being properly "
                     "sharded by the context parallel load balancer"
                 )
 
+            start_pos = self.kv_cache_manager.current_position() if self.kv_cache_manager else None
             q, k = self.rope(
-                q, k, head_first=False, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis
+                q,
+                k,
+                head_first=False,
+                start_pos=start_pos,
+                pos_sin=pos_sin,
+                pos_cos=pos_cos,
+                freqs_cis=freqs_cis,
             )
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
@@ -572,6 +609,7 @@ class Attention(AttentionBase):
             max_doc_len_q=max_doc_len_q,
             max_doc_len_k=max_doc_len_k,
             local_k_slice=local_k_slice,
+            cache_leftpad=cache_leftpad,
         )
 
         # shape: (batch_size, seq_len, d_model)
@@ -649,6 +687,22 @@ class Attention(AttentionBase):
         self._cp_enabled = True
         self._cp_head_stride = head_stride
 
+    def init_kv_cache_manager(self, batch_size: int, max_seq_len: int):
+        """
+        Initialize the kv cache manager for attention. When the kv cache manager exists,
+        kv caching will be used during the forward pass. This should only be called during inference.
+
+        :param batch_size: The batch size for the cache.
+        :param max_seq_len: The maximum sequence length for the cache.
+        """
+        self.kv_cache_manager = KVCacheManager(
+            batch_size=batch_size,
+            max_seq_len=max_seq_len,
+            num_kv_heads=self.n_kv_heads,
+            head_dim=self.head_dim,
+            device=self.w_k.weight.device,
+        )
+
 
 @beta_feature
 class NormalizedAttention(Attention):
@@ -717,7 +771,13 @@ class NormalizedAttention(Attention):
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
+        cache_leftpad: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        if cache_leftpad:
+            raise NotImplementedError(
+                "cache_leftpad is not supported for the normalized attention variant"
+            )
+
         B, T, _ = x.shape
 
         # shape: (batch_size, seq_len, n_heads * head_dim),
@@ -748,8 +808,16 @@ class NormalizedAttention(Attention):
                     "RoPE buffers must be passed through to attention after being properly "
                     "sharded by the context parallel load balancer"
                 )
+
+            start_pos = self.kv_cache_manager.current_position() if self.kv_cache_manager else None
             q, k = self.rope(
-                q, k, head_first=False, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis
+                q,
+                k,
+                head_first=False,
+                start_pos=start_pos,
+                pos_sin=pos_sin,
+                pos_cos=pos_cos,
+                freqs_cis=freqs_cis,
             )
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
@@ -765,6 +833,7 @@ class NormalizedAttention(Attention):
             max_doc_len_k=max_doc_len_k,
             local_k_slice=local_k_slice,
             scale=self.sqrt_head_dim,
+            cache_leftpad=cache_leftpad,
         )
 
         # shape: (batch_size, seq_len, d_model)
@@ -869,6 +938,7 @@ class FusedAttention(AttentionBase):
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
+        cache_leftpad: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Apply attention to the input.
@@ -883,6 +953,11 @@ class FusedAttention(AttentionBase):
 
         :returns: The output of attention with shape ``(batch_size, seq_len, d_model)``.
         """
+        if cache_leftpad:
+            raise NotImplementedError(
+                "cache_leftpad is not supported for the fused attention variant"
+            )
+
         B, T, _ = x.shape
 
         # shape: (batch_size, seq_len, 3, n_heads, head_dim)
