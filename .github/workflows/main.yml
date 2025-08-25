@@ -184,7 +184,6 @@ jobs:
             --show-logs \
             --yes \
             --workspace ${{ env.BEAKER_WORKSPACE }} \
-            --task-name '${{ matrix.task.name }}' \
             --description 'OLMo-core ${{ matrix.task.name }}' \
             --ref ${{ env.COMMIT_SHA }} \
             --branch ${{ env.BRANCH_NAME }} \
