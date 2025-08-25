@@ -177,7 +177,7 @@ jobs:
       - name: GPU Tests
         if: env.BEAKER_TOKEN != ''
         run: |
-          uv tool run gantry \
+          gantry run \
             --show-logs \
             --yes \
             --workspace ${{ env.BEAKER_WORKSPACE }} \
