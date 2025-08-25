@@ -33,6 +33,7 @@ from olmo_core.testing import (
     requires_multi_gpu,
     run_distributed_test,
 )
+from olmo_core.testing.utils import requires_compute_capability
 from olmo_core.utils import get_default_device, seed_all
 
 BF16_RTOL = 1e-5
@@ -229,6 +230,7 @@ def test_attention_with_intra_document_masking():
 
 @requires_gpu
 @requires_flash_attn
+@requires_compute_capability(min_cc=9)  # flash-attn bf16 precision is worse on A100s (cc=8)
 @pytest.mark.parametrize("batch_size", [1, 2])
 @pytest.mark.parametrize(
     "n_kv_heads",
