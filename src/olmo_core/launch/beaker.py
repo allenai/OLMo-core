@@ -247,7 +247,7 @@ class BeakerLaunchConfig(Config):
     Uses hostname constraints to restrict the hostnames on which the experiment runs. This is currently
     only supported for Augusta clusters, and can benefit performance by forcing the use of colocated nodes.
 
-    This is NOT recommended to be used lower priority preemptible jobs, since hostname constraints are not
+    This is NOT recommended to be used with lower priority preemptible jobs, since hostname constraints are not
     updated on preemption.
     """
 
