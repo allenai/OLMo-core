@@ -459,14 +459,6 @@ class RotaryEmbedding(RotaryEmbeddingBase):
 
             pos_sin, pos_cos = pos_sin.type_as(q_), pos_cos.type_as(q_)
 
-            head_dim_local = q_.shape[-1]
-            if pos_sin.size(-1) < head_dim_local or pos_cos.size(-1) < head_dim_local:
-                raise RuntimeError(
-                    "RoPE buffer dimension smaller than tensor dimension: "
-                    f"{pos_sin.size(-1)} vs {head_dim_local}. "
-                    "This may be due to tensor parallel sharding applied after "
-                    "RoPE module instantiation."
-                )
             if pos_sin.size(-2) < seq_len_needed or pos_cos.size(-2) < seq_len_needed:
                 raise RuntimeError(
                     f"RoPE buffers shorter than required: need {seq_len_needed}, "
@@ -725,14 +717,6 @@ class ComplexRotaryEmbedding(RotaryEmbeddingBase):
                 freqs_cis = self._get_rotary_embedding(seq_len_needed, q_.device)
             q_abs_start = start_pos if start_pos is not None else (k_len - q_len)
             k_abs_start = start_pos if start_pos is not None else 0
-
-            head_dim_local = q_.shape[-1]
-            if freqs_cis.size(-1) < head_dim_local:
-                raise RuntimeError(
-                    "RoPE buffer dimension smaller than tensor dimension: "
-                    f"{freqs_cis.size(-1)} vs {head_dim_local}. This may be due to tensor "
-                    f"parallel sharding applied after RoPE module instantiation."
-                )
 
             if head_first:
                 q_ = self._apply_rotary_pos_emb(

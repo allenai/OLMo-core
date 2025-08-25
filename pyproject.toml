@@ -143,7 +143,7 @@ reportPrivateImportUsage = false
 ignore_missing_imports = true
 no_site_packages = true
 check_untyped_defs = true
-no_namespace_packages = true
+namespace_packages = false
 disable_error_code = "has-type"
 
 [[tool.mypy.overrides]]
