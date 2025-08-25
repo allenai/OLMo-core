@@ -2,25 +2,36 @@ from typing import Any, Dict, Optional
 
 import pytest
 import torch
+from torch.distributed.tensor import Shard, init_device_mesh
 
+from olmo_core.distributed.checkpoint import (
+    load_model_and_optim_state,
+    save_model_and_optim_state,
+)
+from olmo_core.distributed.utils import get_rank, get_world_size
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention import (
     Attention,
     AttentionConfig,
     AttentionType,
     FusedAttention,
+    RingAttentionLoadBalancerType,
     RingAttentionZigZagLoadBalancer,
     SlidingWindowAttentionConfig,
 )
 from olmo_core.nn.layer_norm import LayerNormConfig
 from olmo_core.nn.rope import RoPEConfig, RoPEType
 from olmo_core.testing import (
+    BACKENDS,
     DEVICES,
     FLASH_MARKS,
     GPU_MARKS,
     requires_flash_attn,
     requires_gpu,
+    requires_multi_gpu,
+    run_distributed_test,
 )
+from olmo_core.utils import get_default_device, seed_all
 
 
 @pytest.mark.parametrize("device", DEVICES)
@@ -377,3 +388,151 @@ def test_sliding_window_attention_config_invalid_pattern_error():
             pattern=[0], force_full_attention_on_first_layer=False
         )
         bad_config._get_window_size(0, n_layers=12)
+
+
+def _run_tensor_parallel_attention(
+    checkpoint_dir: str, inputs_path: str, outputs_path: str, attn_kwargs: Dict[str, Any]
+):
+    device = get_default_device()
+    mesh = init_device_mesh(device.type, (get_world_size(),), mesh_dim_names=("tp",))
+
+    attn = Attention(init_device=device.type, **attn_kwargs)
+
+    # Shard sequence dim in/out like the transformer block does.
+    attn.apply_tp(mesh["tp"], input_layout=Shard(1), output_layout=Shard(1), use_local_output=False)
+    load_model_and_optim_state(checkpoint_dir, attn)
+
+    x = torch.load(inputs_path, map_location=device)
+    rank, world_size = get_rank(), get_world_size()
+    chunk = x.size(1) // world_size
+    x_local = x[:, rank * chunk : (rank + 1) * chunk, :]
+    y_local = attn(x_local)
+
+    # Backward to exercise graph in TP mode.
+    y_local.sum().backward()
+
+    y_ref = torch.load(outputs_path, map_location=device)
+    y_ref_local = y_ref[:, rank * chunk : (rank + 1) * chunk, :]
+    torch.testing.assert_close(y_ref_local, y_local.to_local())
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+@pytest.mark.parametrize(
+    "attn_kwargs",
+    [
+        pytest.param({}, id="default"),
+        pytest.param({"rope": RoPEConfig()}, id="rope"),
+        pytest.param({"qk_norm": LayerNormConfig()}, id="qk-layernorm"),
+        pytest.param({"qk_norm": LayerNormConfig(), "rope": RoPEConfig()}, id="qk-layernorm-rope"),
+        pytest.param(
+            {"qk_norm": LayerNormConfig(), "use_head_qk_norm": True},
+            id="headwise-qk-layernorm",
+        ),
+        pytest.param(
+            {"qk_norm": LayerNormConfig(), "use_head_qk_norm": True, "rope": RoPEConfig()},
+            id="headwise-qk-layernorm-rope",
+        ),
+    ],
+)
+def test_tensor_parallel_attention(backend: str, attn_kwargs: Dict[str, Any], tmp_path):
+    device = torch.device("cuda") if "nccl" in backend else torch.device("cpu")
+
+    seed_all(0)
+    attn_kwargs.update({"d_model": 128, "n_heads": 8, "use_flash": False})
+    attn = Attention(init_device=device.type, **attn_kwargs)
+
+    bs, seq_len = 2, 64
+    x = torch.randn(bs, seq_len, attn_kwargs["d_model"], device=device)
+    y = attn(x)
+
+    outputs_path = tmp_path / "attn_y.pt"
+    torch.save(y, outputs_path)
+    inputs_path = tmp_path / "attn_x.pt"
+    torch.save(x, inputs_path)
+    checkpoint_dir = tmp_path / "checkpoint"
+    save_model_and_optim_state(checkpoint_dir, attn)
+
+    run_distributed_test(
+        _run_tensor_parallel_attention,
+        backend=backend,
+        start_method="spawn",
+        func_args=(checkpoint_dir, inputs_path, outputs_path, attn_kwargs),
+    )
+
+
+def _run_context_parallel_attention(
+    checkpoint_dir: str,
+    inputs_path: str,
+    outputs_path: str,
+    attn_kwargs: Dict[str, Any],
+    load_balancer_type,
+    head_stride: int,
+):
+    device = get_default_device()
+    mesh = init_device_mesh(device.type, (get_world_size(),), mesh_dim_names=("cp",))
+
+    attn = Attention(init_device=device.type, **attn_kwargs)
+    attn.apply_cp(mesh["cp"], load_balancer_type, head_stride=head_stride)
+    load_model_and_optim_state(checkpoint_dir, attn)
+
+    # Load the input and split it across ranks on the sequence dimension.
+    x = torch.load(inputs_path, map_location=device)
+    rank, world_size = get_rank(), get_world_size()
+    chunk_size = x.size(1) // world_size
+    x_local = x[:, rank * chunk_size : (rank + 1) * chunk_size, :]
+
+    with torch.autocast(device.type, dtype=x_local.dtype):
+        y_local = attn(x_local)
+
+    # Backward to exercise graph in CP mode.
+    y_local.sum().backward()
+
+    # Load the reference output and split it across ranks on the sequence dimension.
+    y_ref = torch.load(outputs_path, map_location=device)
+    y_ref_local = y_ref[:, rank * chunk_size : (rank + 1) * chunk_size, :]
+
+    # Compare the local output with the reference output.
+    torch.testing.assert_close(y_ref_local, y_local)
+
+
+@requires_multi_gpu
+@requires_flash_attn
+@pytest.mark.parametrize(
+    "load_balancer_type",
+    [pytest.param(RingAttentionLoadBalancerType.zig_zag, id="zig_zag")],
+)
+@pytest.mark.parametrize("head_stride", [pytest.param(1), pytest.param(8)])
+@pytest.mark.skip("known precision issues with ring-flash-attn")
+def test_context_parallel_attention(load_balancer_type, head_stride: int, tmp_path):
+    seed_all(0)
+    device = torch.device("cuda")
+
+    # CP requires flash-attn and low precision dtypes.
+    attn_kwargs: Dict[str, Any] = {"d_model": 128, "n_heads": 8, "use_flash": True}
+    attn = Attention(init_device=device.type, **attn_kwargs)
+
+    bs, seq_len = 2, 64
+    x = torch.randn(bs, seq_len, attn_kwargs["d_model"], device=device, dtype=torch.bfloat16)
+    with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+        y = attn(x)
+
+    outputs_path = tmp_path / "attn_y.pt"
+    torch.save(y, outputs_path)
+    inputs_path = tmp_path / "attn_x.pt"
+    torch.save(x, inputs_path)
+    checkpoint_dir = tmp_path / "checkpoint"
+    save_model_and_optim_state(checkpoint_dir, attn)
+
+    run_distributed_test(
+        _run_context_parallel_attention,
+        backend="nccl",
+        start_method="spawn",
+        func_args=(
+            checkpoint_dir,
+            inputs_path,
+            outputs_path,
+            attn_kwargs,
+            load_balancer_type,
+            head_stride,
+        ),
+    )
