@@ -113,7 +113,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      GANTRY_GITHUB_TESTING: 'true'
+      GANTRY_GITHUB_TESTING: 'true'  # force better logging for CI
     strategy:
       fail-fast: false
       matrix:
@@ -159,8 +159,8 @@ jobs:
 
       - name: Install Gantry
         run:
-          # uv tool install 'beaker-gantry>=3.0,<4.0'
-          uv tool install git+https://github.com/allenai/beaker-gantry
+          # uv tool install git+https://github.com/allenai/beaker-gantry
+          uv tool install 'beaker-gantry>=3.1,<4.0'
 
       - name: Determine Beaker workspace
         if: env.BEAKER_TOKEN != ''
@@ -202,7 +202,7 @@ jobs:
             --dataset-secret 'GOOGLE_CREDENTIALS:/.google/credentials.json' \
             --env 'GOOGLE_APPLICATION_CREDENTIALS=/.google/credentials.json' \
             --env 'TOKENIZERS_PARALLELISM=false' \
-            --env 'CUBLAS_WORKSPACE_CONFIG=16:8' \
+            --env 'CUBLAS_WORKSPACE_CONFIG=:16:8' \
             --env-secret 'AWS_ACCESS_KEY_ID=AWS_ACCESS_KEY_ID' \
             --env-secret 'AWS_SECRET_ACCESS_KEY=AWS_SECRET_ACCESS_KEY' \
             -- ${{ matrix.task.run }}
