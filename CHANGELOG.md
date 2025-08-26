@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [v2.2.0](https://github.com/allenai/OLMo-core/releases/tag/v2.2.0) - 2025-08-26
+
 ### Added
 
 - Added option to set LR scheduler based on tokens instead of steps (e.g. `--train_module.scheduler.units=tokens`).
@@ -38,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added the option to configure `head_stride` for context parallelism with ring-flash-attn.
 - Added the option to group multiple npy source files together for packing with the packed FSL dataset by setting `source_group_size` to an integer greater than 1.
 - Added `load_optim_state: Optional[bool]` option to `Trainer.load_checkpoint()`.
+- Added `GenerationModule` for OLMo-core native autoregressive generation with support for kv caching.
 - Added optional hostname constraints for beaker experiments on Google clusters.
 
 ### Changed

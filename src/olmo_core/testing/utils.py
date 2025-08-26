@@ -10,6 +10,7 @@ log = logging.getLogger(__name__)
 
 has_cuda = torch.cuda.is_available()
 has_multiple_gpus = has_cuda and torch.cuda.device_count() > 1
+compute_capability = torch.cuda.get_device_capability()[0] if has_cuda else None
 has_flash_attn = False
 has_torchao = False
 has_grouped_gemm = False
@@ -58,6 +59,16 @@ def requires_multi_gpu(func):
     for mark in MULTI_GPU_MARKS:
         func = mark(func)
     return func
+
+
+def requires_compute_capability(min_cc: int):
+    def decorator(func):
+        return pytest.mark.skipif(
+            compute_capability is None or compute_capability < min_cc,
+            reason=f"Requires compute capability >={min_cc}, device has {compute_capability=}",
+        )(func)
+
+    return decorator
 
 
 FLASH_MARKS = (

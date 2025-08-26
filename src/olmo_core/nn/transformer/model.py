@@ -243,7 +243,10 @@ class Transformer(nn.Module):
 
         if self.embeddings is not None:
             self.init_method.init_embeddings(
-                self.embeddings, d_model=self.d_model, std=self.init_std, generator=generator
+                self.embeddings,
+                d_model=self.d_model,
+                std=self.init_std,
+                generator=generator,
             )
 
         for block in self.blocks.values():
@@ -293,7 +296,10 @@ class Transformer(nn.Module):
 
         if self.lm_head is not None:
             self.init_method.init_final_w_out(
-                self.lm_head.w_out, d_model=self.d_model, std=self.init_std, generator=generator
+                self.lm_head.w_out,
+                d_model=self.d_model,
+                std=self.init_std,
+                generator=generator,
             )
 
         return generator
@@ -308,6 +314,7 @@ class Transformer(nn.Module):
         z_loss_multiplier: Optional[float] = None,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         return_logits: Optional[bool] = None,
+        logits_to_keep: Union[int, torch.Tensor] = 0,
         **kwargs,
     ) -> Tuple[
         torch.Tensor,
@@ -327,6 +334,7 @@ class Transformer(nn.Module):
             loss_reduction=loss_reduction,
             z_loss_multiplier=z_loss_multiplier,
             return_logits=return_logits,
+            logits_to_keep=logits_to_keep,
         )
 
         if loss_div_factor is not None:
@@ -337,6 +345,9 @@ class Transformer(nn.Module):
         # Prepare document length inputs.
         max_doc_len: Optional[int] = None
         cu_doc_lens: Optional[torch.Tensor] = None
+        doc_lens: Optional[torch.Tensor] = None
+        cache_leftpad: Optional[torch.Tensor] = kwargs.pop("cache_leftpad", None)
+
         if (doc_lens := kwargs.pop("doc_lens", None)) is not None and (
             max_doc_lens := kwargs.pop("max_doc_lens", None)
         ) is not None:
@@ -374,6 +385,9 @@ class Transformer(nn.Module):
                 seq_dims.append(1)
                 pad_values.append(ignore_index)
                 keys.append("labels")
+
+            if cache_leftpad is not None:
+                raise NotImplementedError("cache_leftpad is not supported with context parallelism")
 
             if cu_doc_lens is not None:
                 # NOTE: Can only shard properly here if 'input_ids' is flat, i.e. a single instance.
@@ -416,8 +430,14 @@ class Transformer(nn.Module):
         else:
             input_ids = move_to_device(input_ids, self.device)
             labels = move_to_device(labels, self.device)
-            all_block_kwargs["max_doc_len"] = max_doc_len
-            all_block_kwargs["cu_doc_lens"] = move_to_device(cu_doc_lens, self.device)
+
+            if (max_doc_len is not None or cu_doc_lens is not None) and cache_leftpad is not None:
+                raise ValueError("max_doc_len/cu_doc_lens and cache_leftpad are mutually exclusive")
+            if max_doc_len is not None or cu_doc_lens is not None:
+                all_block_kwargs["max_doc_len"] = max_doc_len
+                all_block_kwargs["cu_doc_lens"] = move_to_device(cu_doc_lens, self.device)
+            if cache_leftpad is not None:
+                all_block_kwargs["cache_leftpad"] = move_to_device(cache_leftpad, self.device)
 
         return (
             input_ids,
@@ -437,12 +457,21 @@ class Transformer(nn.Module):
         z_loss_multiplier: Optional[float] = None,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         return_logits: Optional[bool] = None,
+        logits_to_keep: Union[int, torch.Tensor] = 0,
         **kwargs,
     ) -> Union[torch.Tensor, LMOutputWithLoss]:
         """
         Run the transformer on the token input IDs.
 
         :param input_ids: The token input IDs, shape ``(batch_size, seq_len)``.
+        :param labels: The token labels, shape ``(batch_size, seq_len)``.
+        :param ignore_index: The index to ignore in the loss computation. Default is -100.
+        :param loss_reduction: The reduction method for the loss. Can be "mean", "sum", or "none".
+        :param z_loss_multiplier: Optional multiplier for the z-loss regularization term.
+        :param loss_div_factor: Optional divisor for the loss, can be a scalar or tensor.
+        :param return_logits: Whether to return logits along with the loss when labels are provided.
+        :param logits_to_keep: Number of positions to keep from the end of the sequence (if int),
+            or tensor specifying which positions to keep. Default is 0 (keep all).
 
         :returns: The logits if ``labels`` is ``None`` or the losses if ``labels`` is not ``None``.
         """
@@ -460,6 +489,7 @@ class Transformer(nn.Module):
             z_loss_multiplier=z_loss_multiplier,
             loss_div_factor=loss_div_factor,
             return_logits=return_logits,
+            logits_to_keep=logits_to_keep,
             **kwargs,
         )
 
@@ -733,7 +763,11 @@ class Transformer(nn.Module):
             )
 
         if self.embeddings is not None:
-            fully_shard(self.embeddings, reshard_after_forward=reshard_after_forward, **fsdp_config)
+            fully_shard(
+                self.embeddings,
+                reshard_after_forward=reshard_after_forward,
+                **fsdp_config,
+            )
             # Embedding params are not needed for backwards computation.
             cast(FSDPModule, self.embeddings).set_unshard_in_backward(False)
 
@@ -960,7 +994,10 @@ class MoETransformer(Transformer):
             block = cast(MoETransformerBlock, block)
             block_metrics = block.compute_metrics(reset=reset)
             for metric_name, (metric_val, reduce_type) in block_metrics.items():
-                out[f"block {int(block_idx):02d}/{metric_name}"] = (metric_val, reduce_type)
+                out[f"block {int(block_idx):02d}/{metric_name}"] = (
+                    metric_val,
+                    reduce_type,
+                )
 
                 if self.pp_enabled and reduce_type == ReduceType.mean:
                     metric_val = metric_val.float() * mean_offset
@@ -973,7 +1010,10 @@ class MoETransformer(Transformer):
                         reduce_type,
                     )
                 elif reduce_type == ReduceType.max:
-                    out[metric_name] = (torch.max(out[metric_name][0], metric_val), reduce_type)
+                    out[metric_name] = (
+                        torch.max(out[metric_name][0], metric_val),
+                        reduce_type,
+                    )
                 else:
                     raise NotImplementedError(reduce_type)
         return out
