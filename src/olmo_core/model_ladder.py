@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import ClassVar, List
 
 from olmo_core.data.numpy_dataset import InstanceFilterConfig
+from olmo_core.train.callbacks.monkey_patcher import MonkeyPatcherCallback
 
 from .config import Config, StrEnum
 from .data import (
@@ -207,6 +208,8 @@ class ModelLadder(Config, metaclass=ABCMeta):
     Beaker workspace.
     """
 
+    intra_document_masking: bool = False
+
     SUPPORTED_MODEL_SIZES: ClassVar[List[ModelSize]] = list(ModelSize)
 
     @property
@@ -259,6 +262,7 @@ class ModelLadder(Config, metaclass=ABCMeta):
             mix_base_dir=self.mix_base_dir,
             sequence_length=self.sequence_length,
             work_dir=self.work_dir,
+            generate_doc_lengths=self.intra_document_masking,
             instance_filter_config=InstanceFilterConfig(
                 repetition_max_period=13,
                 repetition_min_period=1,
@@ -393,6 +397,7 @@ class ModelLadder(Config, metaclass=ABCMeta):
         run_duration: RunDuration,
         gpu_type: str,
         dp_world_size: int,
+        cluster: str,
     ) -> TrainerConfig:
         """
         Build the trainer config.
@@ -457,32 +462,18 @@ class ModelLadder(Config, metaclass=ABCMeta):
             config = config.with_callback("gpu_monitor", GPUMemoryMonitorCallback())
         config = config.with_callback("config_saver", ConfigSaverCallback())
         config = config.with_callback("garbage_collector", GarbageCollectorCallback())
-        config = config.with_callback(
-            "lm_evaluator",
-            LMEvaluatorCallbackConfig(
-                eval_dataset=NumpyDatasetConfig.from_data_mix(
-                    DataMix.v3_small_ppl_validation,
-                    name=NumpyDatasetType.padded_fsl,
-                    mix_base_dir=self.mix_base_dir,
-                    sequence_length=self.sequence_length,
-                    tokenizer=self.tokenizer,
-                    work_dir=self.work_dir,
-                ),
-                eval_interval=1_000_000,
-            ),
-        )
-        config = config.with_callback(
-            "downstream_evaluator",
-            DownstreamEvaluatorCallbackConfig(
-                tasks=tasks,
-                tokenizer=self.tokenizer,
-                eval_interval=1_000_000,
-            ),
+        config = config.with_callback("monkey_patcher", MonkeyPatcherCallback())
+        config = config.with_recommended_evals(
+            self.tokenizer,
+            self.sequence_length,
+            cluster,
+            task_set="fast",
+            eval_interval=1000,
         )
         config = config.with_callback(
             "checkpointer",
             CheckpointerCallback(
-                save_interval=100_000,  # large enough value that we won't save until the end
+                save_interval=1000,  # large enough value that we won't save until the end
                 ephemeral_save_interval=250,
                 save_async=True,
             ),
@@ -493,7 +484,7 @@ class ModelLadder(Config, metaclass=ABCMeta):
                 name=f"{self.name}-{size}-{run_duration}",
                 workspace="ai2",
                 project=self.project,
-                enabled=True,
+                enabled=False,
                 cancel_check_interval=5,
             ),
         )
@@ -503,7 +494,7 @@ class ModelLadder(Config, metaclass=ABCMeta):
                 name=f"{self.name}-{size}-{run_duration}",
                 entity="ai2",
                 project=self.project,
-                enabled=False,
+                enabled=True,
                 cancel_check_interval=5,
             ),
         )

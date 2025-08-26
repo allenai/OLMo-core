@@ -130,7 +130,11 @@ def build_config(
         size=size, run_duration=run_duration, gpu_type=gpu_type, dp_world_size=dp_world_size
     )
     trainer = ladder.get_trainer_config(
-        size=size, run_duration=run_duration, gpu_type=gpu_type, dp_world_size=dp_world_size
+        size=size,
+        run_duration=run_duration,
+        gpu_type=gpu_type,
+        dp_world_size=dp_world_size,
+        cluster=cluster,
     )
 
     return LadderRunConfig(
