@@ -260,6 +260,20 @@ class SFTConfig(Config):
                 pattern=[4096, 4096, 4096, -1],
             )
             model.block.attention.use_flash = True
+        elif model_name == "olmo2.9-7b":
+            model = TransformerConfig.olmo2_7B(
+                    vocab_size=tokenizer_config.padded_vocab_size(),
+                    n_kv_heads=8,
+                    hidden_size_multiplier=1.2,
+                    hidden_size_multiple_of=1024,
+            )
+            model.block.attention.sliding_window = SlidingWindowAttentionConfig(
+                force_full_attention_on_first_layer=False,
+                force_full_attention_on_last_layer=True,
+                pattern=[4096, 4096, 4096, -1],
+            )
+            model.block.attention.use_flash = True
+            model.block.attention.use_head_qk_norm = True
         elif model_name == "olmo3-7b":
             model = TransformerConfig.olmo2_7B(  # Based on https://github.com/allenai/OLMo-core/pull/310/files#diff-03f6a1f5db18fc4be7a243d8168698ae674cd50b2866253bcdadba5d48590b3dR48
                 vocab_size=tokenizer_config.padded_vocab_size(),
