@@ -197,7 +197,7 @@ def get_beaker_hostname_constraints(
 
     if beaker_priority != Priority.urgent:
         log.warning(
-            "This script depends on cluster having nodes with jobs running at lower priority."
+            "Host selection depends on the cluster having nodes with jobs running at lower priority. "
             "It is relatively unlikely to work on non-urgent priorities."
         )
 
