@@ -70,7 +70,8 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             degree=8,
         ),
         ac_config=TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.full,
+            mode=TransformerActivationCheckpointingMode.selected_modules,
+            modules=["blocks.*.attention"],
         ),
         state_dict_load_opts={"strict": False},
     )
