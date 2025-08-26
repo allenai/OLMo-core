@@ -188,7 +188,7 @@ def get_beaker_hostname_constraints(
             job.is_running
             and job.execution
             and job.execution.spec.resources.gpu_count > 0
-            and _is_job_preemptible(job, beaker_priority)
+            and not _is_job_preemptible(job, beaker_priority)
         ):
             del machines_metadata[host]
 
