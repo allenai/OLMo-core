@@ -874,7 +874,7 @@ class TransformerConfig(Config):
         block_mods: Optional[
             Dict[int, Callable[[TransformerBlockConfig], TransformerBlockConfig]]
         ] = None,
-        dtype: DType = DType.bfloat16,
+        dtype: DType = DType.float32,
         rope_scaling: Optional[RoPEScalingConfig] = None,
         feed_forward: Optional[FeedForwardConfig] = None,
         feed_forward_moe: Optional[MoEConfig] = None,

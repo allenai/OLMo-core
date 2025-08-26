@@ -23,7 +23,7 @@ from olmo_core.train.train_module.transformer.config import TransformerTensorPar
 log = logging.getLogger(__name__)
 
 
-CONTEXT_LENGTH = 4 * 4096
+CONTEXT_LENGTH = 4 * 16_384
 INTRA_DOCUMENT_MASKING = True
 # 64K length, 32 GPUs, FP8, no intra-doc masking -> 2,750 TPS
 # 64K length, 32 GPUs, no FP8, intra-doc masking -> 3,250 TPS
