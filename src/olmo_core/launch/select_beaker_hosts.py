@@ -61,6 +61,37 @@ def get_hosts_metadata_from_gcp(
     }
 
 
+def get_occupied_beaker_hosts(
+    hosts_metadata: dict[str, HostMetadata], beaker_cluster: str, beaker_priority: Priority
+) -> set[str]:
+    from olmo_core.internal.common import get_beaker_client
+
+    beaker = get_beaker_client()
+    assert beaker is not None
+
+    occupied_hosts = set()
+
+    cluster = beaker.cluster.get(beaker_cluster)
+    jobs = beaker.job.list(cluster=cluster)
+    for job in jobs:
+        if job.node is None:
+            continue
+
+        host = beaker.node.get(job.node).hostname
+        if host not in hosts_metadata or host in occupied_hosts:
+            continue
+
+        if (
+            job.is_running
+            and job.execution
+            and job.execution.spec.resources.gpu_count > 0
+            and not _is_job_preemptible(job, beaker_priority)
+        ):
+            occupied_hosts.add(host)
+
+    return occupied_hosts
+
+
 def _is_job_preemptible(job: Job, desired_priority: Priority) -> bool:
     if not job.is_preemptible:
         return False
@@ -76,6 +107,7 @@ def get_hostname_constraints(
     num_execution_units: int,
     num_hosts_per_task: int,
     num_tasks: int,
+    occupied_hosts: Optional[set[str]] = None,
 ) -> list[list[str]]:
     if num_hosts_per_task % num_execution_units != 0:
         raise ValueError(
@@ -84,17 +116,25 @@ def get_hostname_constraints(
         )
     num_hosts_per_exec_unit = (num_tasks * num_hosts_per_task) // num_execution_units
 
+    occupied_hosts = occupied_hosts or set()
+
     hosts_by_block: defaultdict[str, list[str]] = defaultdict(list)
+    available_hosts_by_block: defaultdict[str, list[str]] = defaultdict(list)
     for host, metadata in hosts_metadata.items():
         hosts_by_block[metadata.block].append(host)
+        if host not in occupied_hosts:
+            available_hosts_by_block[metadata.block].append(host)
 
-    # Sort blocks in descending order of number of hosts
+    # Sort blocks in descending order of number of available hosts
     sorted_blocks = sorted(
-        hosts_by_block.keys(), key=lambda block: len(hosts_by_block[block]), reverse=True
+        available_hosts_by_block.keys(),
+        key=lambda block: len(available_hosts_by_block[block]),
+        reverse=True,
     )
 
-    if len(hosts_by_block[sorted_blocks[0]]) > num_hosts_per_task * num_tasks:
+    if len(available_hosts_by_block[sorted_blocks[0]]) > num_hosts_per_task * num_tasks:
         # If all the tasks can be fulfilled in a single block, let's do that!
+        # Moreover, include occupied hosts since they might free up later.
         return [list(hosts_by_block[sorted_blocks[0]]) for _ in range(num_tasks)]
 
     hosts_per_task: list[list[str]] = []
@@ -104,7 +144,7 @@ def get_hostname_constraints(
 
         while block_idx < len(sorted_blocks) and len(task_hosts) < num_hosts_per_task:
             block = sorted_blocks[block_idx]
-            num_block_hosts = len(hosts_by_block[block])
+            num_block_hosts = len(available_hosts_by_block[block])
 
             if num_block_hosts < num_hosts_per_exec_unit:
                 # We have exhausted this block, move onto the next one
@@ -121,10 +161,10 @@ def get_hostname_constraints(
             )
             assert host_count_from_block > 0
 
-            block_hosts = hosts_by_block[block]
+            block_hosts = available_hosts_by_block[block]
             task_hosts.extend(block_hosts[:host_count_from_block])
 
-            hosts_by_block[block] = block_hosts[host_count_from_block:]
+            available_hosts_by_block[block] = block_hosts[host_count_from_block:]
 
         hosts_per_task.append(task_hosts)
 
@@ -166,34 +206,16 @@ def get_beaker_hostname_constraints(
     assert num_nodes % beaker_task_count == 0
     beaker_num_hosts_per_task = num_nodes // beaker_task_count
 
-    machines_metadata = get_hosts_metadata_from_gcp(gcp_zone, credentials_path=gcp_credentials_path)
+    hosts_metadata = get_hosts_metadata_from_gcp(gcp_zone, credentials_path=gcp_credentials_path)
 
-    from olmo_core.internal.common import get_beaker_client
-
-    beaker = get_beaker_client()
-    assert beaker is not None
-
-    cluster = beaker.cluster.get(beaker_cluster)
-    jobs = beaker.job.list(cluster=cluster)
-
-    for job in jobs:
-        if job.node is None:
-            continue
-
-        host = beaker.node.get(job.node).hostname
-        if host not in machines_metadata:
-            continue
-
-        if (
-            job.is_running
-            and job.execution
-            and job.execution.spec.resources.gpu_count > 0
-            and not _is_job_preemptible(job, beaker_priority)
-        ):
-            del machines_metadata[host]
+    occupied_hosts = get_occupied_beaker_hosts(hosts_metadata, beaker_cluster, beaker_priority)
 
     return get_hostname_constraints(
-        machines_metadata, num_execution_units, beaker_num_hosts_per_task, beaker_task_count
+        hosts_metadata,
+        num_execution_units,
+        beaker_num_hosts_per_task,
+        beaker_task_count,
+        occupied_hosts,
     )
 
 
