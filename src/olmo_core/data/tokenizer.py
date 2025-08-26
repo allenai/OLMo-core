@@ -144,6 +144,8 @@ class ByteTokenizerConfig(TokenizerConfig):
     special_tokens: list[str] = field(default_factory=lambda: [])
     special_tokens_first: bool = True
     original_identifier: Optional[str] = None
+    token_end_token_id: Optional[int] = None
+    add_token_end: bool = True
 
     @classmethod
     def from_tokenizer_config(cls, tokenizer_config):
@@ -187,10 +189,11 @@ class ByteTokenizerConfig(TokenizerConfig):
             bos_token_id=special_tokens.index("<bos>"),
             pad_token_id=special_tokens.index("<pad>"),
             eos_token_id=special_tokens.index("<eos>"),
+            token_end_token_id=special_tokens.index("<bpe_token_end>"),
             # slightly hacky, but this must match the dataset tokenizer, so dolma2
             original_identifier=TokenizerConfig.dolma2().identifier,
         )
-    
+
     @classmethod
     def hnet(cls) -> "ByteTokenizerConfig":
         special_tokens = [
@@ -208,7 +211,7 @@ class ByteTokenizerConfig(TokenizerConfig):
             # slightly hacky, but this must match the dataset tokenizer, so dolma2
             original_identifier=TokenizerConfig.dolma2().identifier,
         )
-    
+
     def build(self):
         return ByteTokenizer(self)
 
@@ -234,6 +237,9 @@ class ByteTokenizer:
 
             assert self.byte_sequences.get(value) is None
             self.byte_sequences[value] = byte_sequence
+
+            if self.config.add_token_end:
+                self.byte_sequences[value] += [self.config.token_end_token_id]
 
     @property
     def bos_token_id(self):

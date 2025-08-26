@@ -18,7 +18,6 @@ class BLTConfig(Config):
     div_fn: str = "tvd_temp_limit"
     n_distill_offsets: int = 8
     distill_offset_weights: list[float] = field(default_factory=lambda: [1.0] * 8)
-    use_exhaustive_decoder_loss: bool = False
     rep_compare_fn: str = "l2"
     hnet_embed_loss_use_offset: bool = True
     target_ratio: float = 4.5
@@ -33,6 +32,7 @@ class BLTConfig(Config):
     add_boundary_logp: bool = True
     eval_add_boundary_logp: bool = False
     decoder_backprop_through_encoder: bool = True
+    decoder_backprop_through_global_model: bool = True
     decoder_backprop_through_boundary_predictor: bool = True
     boundary_predictor_backprop_through_encoder: bool = True
     decoder_backprop_through_add_boundary_logp: bool = True

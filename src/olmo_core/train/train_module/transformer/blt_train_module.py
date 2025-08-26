@@ -160,6 +160,13 @@ class TransformerBLTTrainModule(TransformerTrainModule):
         else:
             raise ValueError(f"Unknown patching type: {self.blt_config.patching}")
 
+        # Ignore tokens not contained in any patch (outside ctx)
+        batch["labels"] = torch.where(
+            torch.arange(batch["labels"].shape[1], device=batch["labels"].device)[None, :] < patch_lens.sum(-1)[:, None],
+            batch["labels"],
+            self.label_ignore_index,
+        )
+
         # Calculate how many tokens are going to be used in the loss.
         batch_num_tokens_for_loss = move_to_device(
             (batch["labels"] != self.label_ignore_index).sum(), self.device
