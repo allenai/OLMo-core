@@ -27,17 +27,18 @@ from olmo_core.utils import seed_all
 
 log = logging.getLogger(__name__)
 
-CHECKPOINT_DIR = "/weka/oe-training-default/benjaminm/runs/stage2_hnet_v4_global_2dot6e-5_fixed_bsx4_local_5e-4_zero_bos-fula-100k-no-tf/step100000"
-OUTPUT = "/weka/oe-training-default/benjaminm/merges/bolmo_v0_instruct"
-BASE_CHECKPOINT_DIR = "/weka/oe-training-default/benjaminm/checkpoints/olmo2_1b"
-INSTRUCT_CHECKPOINT_DIR = "/weka/oe-training-default/benjaminm/checkpoints/olmo2_1b_instruct"
+CHECKPOINT_DIR = "/weka/oe-training-default/benjaminm/runs/stage2_hnet_v4_global_1dot83e-5_fixed_bsx4_local_3dot53e-4_zero_bos-fula-with-bpred-noise-strict-100k-no-tf_7b/step50000"
+OUTPUT = "/weka/oe-training-default/benjaminm/merges/bolmo_v0_instruct_7b_50k"
+BASE_CHECKPOINT_DIR = "/weka/oe-training-default/benjaminm/checkpoints/olmo2_7b"
+INSTRUCT_CHECKPOINT_DIR = "/weka/oe-training-default/benjaminm/checkpoints/olmo2_7b_instruct"
 BYTE_EXPANSION_FACTOR = 6
 MAX_SEQUENCE_LENGTH = 1024
 
 
 def _load_state_dict(checkpoint_dir, model):
     train_module_dir = join_path(checkpoint_dir, "model_and_optim")
-    load_model_and_optim_state(train_module_dir, model)
+    incompatible_keys = load_model_and_optim_state(train_module_dir, model, strict=False)
+    print(incompatible_keys)
 
 
 def _load_config(checkpoint_dir):
@@ -56,6 +57,38 @@ def _load_config(checkpoint_dir):
 
 
     return transformer_config, tokenizer_config
+
+
+def _load_our_model(checkpoint_dir):
+    if get_rank() == 0:
+        transformer_config, tokenizer_config = _load_config(checkpoint_dir)
+    else:
+        transformer_config = None
+        tokenizer_config = None
+
+    # Broadcast config and work_dir to all ranks
+    transformer_config, tokenizer_config = scatter_object((transformer_config, tokenizer_config))
+
+    if is_distributed():
+        world_mesh = build_world_mesh()
+    else:
+        world_mesh = None
+
+    transformer_config = transformer_config.replace(teacher_config=None)  # type: ignore
+
+    model = transformer_config.build(init_device="meta")  # type: ignore
+    model = parallelize_model(
+        model,
+        world_mesh=world_mesh,
+        device=get_default_device(),
+        max_sequence_length=MAX_SEQUENCE_LENGTH * BYTE_EXPANSION_FACTOR,
+        rank_microbatch_size=1,
+        compile_model=True,
+    )
+
+    _load_state_dict(checkpoint_dir, model)
+
+    return transformer_config, tokenizer_config, model
 
 
 def _load_model(checkpoint_dir):
@@ -95,7 +128,7 @@ def main():
     base_checkpoint_dir = normalize_path(BASE_CHECKPOINT_DIR)
     instruct_checkpoint_dir = normalize_path(INSTRUCT_CHECKPOINT_DIR)
 
-    transformer_config, tokenizer_config, model = _load_model(checkpoint_dir)
+    transformer_config, tokenizer_config, model = _load_our_model(checkpoint_dir)
     _, _, base_model = _load_model(base_checkpoint_dir)
     _, instruct_tokenizer_config, instruct_model = _load_model(instruct_checkpoint_dir)
 
@@ -109,10 +142,6 @@ def main():
         else:
             log.warning(f"Key {key} not found in instruct model state dict, skipping (this is okay for local enc/dec and boundary predictor).")
 
-    # instruction tuned model uses bos token
-    transformer_config = transformer_config.replace(prepend_embedding_to_global=True)  # type: ignore
-    model.state_dict()["prepend_embedding.weight"] = instruct_model.state_dict()["embeddings.weight"][[instruct_tokenizer_config.eos_token_id]]  # type: ignore
- 
     model_and_optim_dir = join_path(OUTPUT, "model_and_optim")
     log.info(f"Saving OLMo core checkpoint to '{model_and_optim_dir}'")
     save_model_and_optim_state(model_and_optim_dir, model, save_overwrite=True)
@@ -130,6 +159,7 @@ def main():
 
     with tempfile.NamedTemporaryFile(mode="w") as temp_file:
         json.dump(experiment_config_dict, temp_file)
+        temp_file.flush()
         copy_file(temp_file.name, config_path, save_overwrite=True)
         log.info(f"Successfully wrote partial experiment config to '{config_path}'")
 
