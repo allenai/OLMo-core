@@ -17,7 +17,6 @@ from olmo_core.data import (
     VSLCurriculumConfig,
     VSLCurriculumType,
 )
-from olmo_core.distributed.parallel import get_dp_model_mesh, get_world_mesh
 from olmo_core.distributed.utils import get_local_rank
 from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
 from olmo_core.nn.transformer import TransformerConfig
@@ -305,33 +304,6 @@ def prep(config: ExperimentConfig):
     data_loader.reshuffle(epoch=1)
 
 
-def _check_model_not_split_across_hardware(config: ExperimentConfig):
-    # When running on Augusta with hostname constraints enabled, setting more beaker
-    # execution units than model replicas may result in the replicas being split across
-    # Augusta hardware blocks.
-    if (
-        config.launch
-        and config.launch.use_hostname_constraints
-        and any("augusta" in cluster for cluster in config.launch.clusters)
-        and (num_execution_units := config.launch.num_execution_units) is not None
-        and (world_mesh := get_world_mesh()) is not None
-    ):
-        dp_model_mesh = get_dp_model_mesh(world_mesh)
-        assert dp_model_mesh.ndim in (1, 2)
-        if dp_model_mesh.ndim == 2:
-            num_model_replicas = dp_model_mesh.shape[0]
-        else:
-            num_model_replicas = 1
-
-        if num_execution_units > num_model_replicas:
-            log.warning(
-                f"Number of execution units {num_execution_units} exceeds number of model replicas {num_model_replicas}. "
-                "On Augusta, this may result in suboptimal performance due to model replicas being split "
-                "across hardware blocks. To resolve, decrease num_execution_units in beaker launch config, "
-                "increase number of model replicas or disable use_hostname_constraints in beaker launch config."
-            )
-
-
 def train(config: ExperimentConfig):
     # Set RNG states on all devices.
     seed_all(config.init_seed)
@@ -346,8 +318,6 @@ def train(config: ExperimentConfig):
     # Record the config to W&B/Comet and each checkpoint dir.
     config_dict = config.as_config_dict()
     cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
-
-    _check_model_not_split_across_hardware(config)
 
     # Train.
     trainer.fit()
