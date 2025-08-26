@@ -92,6 +92,7 @@ class BaselineModelLadder(ModelLadder):
         )
         model_config.block.attention.use_flash = True
         model_config.block.attention.use_head_qk_norm = True
+        return model_config
 
     def get_optim_config(self) -> OptimConfig:
         # Calculate LR according to https://api.semanticscholar.org/CorpusID:270764838
