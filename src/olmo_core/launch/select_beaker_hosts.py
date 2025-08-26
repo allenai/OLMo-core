@@ -199,7 +199,7 @@ def get_beaker_hostname_constraints(
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("num-nodes", type=int, required=True, help="Total number of nodes")
+    parser.add_argument("num_nodes", type=int, help="Total number of nodes")
     parser.add_argument(
         "--num-execution-units",
         type=int,
@@ -209,7 +209,7 @@ def main():
     parser.add_argument(
         "--task-count",
         type=int,
-        required=True,
+        default=1,
         help="Number of beaker (pre-replication) tasks this job is being spread across",
     )
 
@@ -223,7 +223,7 @@ def main():
     parser.add_argument(
         "--cluster",
         type=str,
-        default="augusta-google-1",
+        default="ai2/augusta-google-1",
         help="The beaker cluster. This defaults to and is assumed to be Augusta for now.",
     )
 
