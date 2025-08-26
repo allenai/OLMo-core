@@ -244,6 +244,37 @@ def build_common_components(
     )
 
 
+def _set_beaker_execution_units(config: ExperimentConfig):
+    # When running on Augusta with hostname constraints enabled, setting more beaker
+    # execution units than model replicas may result in the replicas being split across
+    # Augusta hardware blocks.
+    if (
+        config.launch
+        and config.launch.use_hostname_constraints
+        and any("augusta" in cluster for cluster in config.launch.clusters)
+        and (dp_config := config.train_module.dp_config) is not None
+    ):
+        if dp_config.num_replicas is not None:
+            num_model_replicas = dp_config.num_replicas
+        elif dp_config.shard_degree is not None:
+            num_model_replicas = (
+                config.launch.num_nodes * config.launch.num_gpus // dp_config.shard_degree
+            )
+        else:
+            return
+
+        if config.launch.num_execution_units is None:
+            log.info(f"Setting number of execution units to {num_model_replicas}.")
+            config.launch.num_execution_units = num_model_replicas
+        elif config.launch.num_execution_units > num_model_replicas:
+            log.warning(
+                f"Number of execution units {config.launch.num_execution_units} exceeds number of model replicas {num_model_replicas}. "
+                "On Augusta, this may result in suboptimal performance due to model replicas being split "
+                "across hardware blocks. To resolve, decrease num_execution_units in beaker launch config, "
+                "increase number of model replicas or disable use_hostname_constraints in beaker launch config."
+            )
+
+
 def build_config(
     script: str,
     cmd: SubCmd,
@@ -277,6 +308,8 @@ def build_config(
     )
 
     config = config.merge(overrides)
+
+    _set_beaker_execution_units(config)
 
     if finalize_config is not None:
         finalize_config(config)

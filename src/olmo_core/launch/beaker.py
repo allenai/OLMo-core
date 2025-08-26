@@ -256,6 +256,8 @@ class BeakerLaunchConfig(Config):
     Number of "execution units", defaults to ``max(1, num_nodes // 32)``. An "execution unit" is abstraction
     for any node-using entity of which 1 or more copies are run, where each unit wants its nodes to be
     from colocated hardware (e.g., a model replica for large jobs, or a full distributed model for small jobs).
+
+    For internal experiments, this defaults to the number of data-parallel model replicas instead.
     """
 
     # NOTE: don't assign a type here because omegaconf can't validate arbitrary classes
