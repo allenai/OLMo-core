@@ -65,7 +65,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         max_grad_norm=1.0,
         scheduler=CosWithWarmup(warmup_steps=2000),
         tp_config=TransformerTensorParallelConfig(
-            degree=4,
+            degree=8,
         ),
         state_dict_load_opts={"strict": False},
     )
