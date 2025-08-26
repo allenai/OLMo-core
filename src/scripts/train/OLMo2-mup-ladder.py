@@ -146,9 +146,14 @@ class BaselineModelLadder(ModelLadder):
         run_duration: RunDuration,
         gpu_type: str,
         dp_world_size: int,
+        cluster: str,
     ) -> TrainerConfig:
         config = super().get_trainer_config(
-            size=size, run_duration=run_duration, gpu_type=gpu_type, dp_world_size=dp_world_size
+            size=size,
+            run_duration=run_duration,
+            gpu_type=gpu_type,
+            dp_world_size=dp_world_size,
+            cluster=cluster,
         )
 
         config = config.with_callback(
