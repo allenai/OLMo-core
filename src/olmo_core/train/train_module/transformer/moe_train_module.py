@@ -17,6 +17,8 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import Optimizer
 from typing import List, Optional, Tuple
 from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
+from torch.distributed.tensor import Placement, Replicate, Shard
+
 from torch.distributed import ProcessGroup
 from olmo_core.data.utils import get_labels, split_batch
 from olmo_core.distributed.checkpoint import (
@@ -45,6 +47,7 @@ from olmo_core.optim.scheduler import Scheduler
 from olmo_core.utils import gc_cuda, get_default_device, log_once, move_to_device
 from typing import List, Optional, TypeVar, cast
 from olmo_core.nn.transformer import MoETransformer, Transformer
+from collections import OrderedDict
 from ...common import ReduceType
 from ..train_module import EvalBatchSpec, TrainModule
 
@@ -97,6 +100,7 @@ class MoEV2TransformerTrainModule(TrainModule):
         state_dict_load_opts: Optional[dist_cp_sd.StateDictOptions] = None,
         load_key_mapping: Optional[Dict[str, str]] = None,
         label_ignore_index: int = -100,
+        reduce_scatter_grads: bool = True
     ):
         super().__init__()
 
@@ -116,6 +120,10 @@ class MoEV2TransformerTrainModule(TrainModule):
         self.ep_dp_group = None
         self.ep_mp_group = None
 
+        # If True, the DDP will not all-reduce grad for the last microbatch
+        # instead it will call optim.step() which will reduce_scatter 
+        # directly into the owner main grad 
+        self.reduce_scatter_grads = reduce_scatter_grads
 
         if tp_config is not None:
             assert tp_config.degree > 1, "Tensor parallelism requires a degree > 1, otherwise use None"
@@ -178,8 +186,8 @@ class MoEV2TransformerTrainModule(TrainModule):
         self.z_loss_multiplier = z_loss_multiplier
         self.rank_microbatch_size = rank_microbatch_size
         self.max_sequence_length = max_sequence_length
-        
-        self.max_grad_norm = max_grad_norm
+
+        self.max_grad_norm = max_grad_norm # TODO: remove, use optim.max_grad_norm
         self.scheduler = scheduler
         self.state_dict_save_opts = state_dict_save_opts or dist_cp_sd.StateDictOptions(
             flatten_optimizer_state_dict=True, cpu_offload=True
@@ -191,15 +199,16 @@ class MoEV2TransformerTrainModule(TrainModule):
 
         # Build optimizer(s).
         log.info("Building optimizer...")
-        # dense_filter = lambda x: not getattr(x, "_ep_sharded", False)
-        # moe_filter = lambda x:  getattr(x, "_ep_sharded", False)
-        self.optim: Optimizer = optim.build(self.model, self, strict=True)
-        # self.dense_optim: Optimizer = optim.build(self.model, self, strict=True, 
-        #                                         #   reduce_group=self.dp_group, 
-        #                                           param_filter=dense_filter)
-        # self.moe_optim: Optimizer = optim.build(self.model, self, strict=True, 
-        #                                         # reduce_group=self.ep_dp_group, 
-        #                                         param_filter=moe_filter)
+
+        from olmo_core.optim.moe_optimizer import MoEFusedV2Optimizer, MoEFusedV2OptimizerConfig
+        assert isinstance(optim, MoEFusedV2OptimizerConfig)
+        self.optim: MoEFusedV2Optimizer = optim.build(
+            self.model, 
+            self, 
+            strict=False # group_overrides might only be matched in one group, strict=False allows it to not match in one group (could match in some other group),
+        )
+
+        self.optim.set_reduce_scatter_grads(self.reduce_scatter_grads)
 
     def _cast_to_fwd_bwd_precision(self, model: M) -> None:
         """
@@ -479,19 +488,44 @@ class MoEV2TransformerTrainModule(TrainModule):
             full_state_dict = self._get_state_dict(load_opts, optim=load_optim)
             merge_state_dicts(state_dict, full_state_dict)
 
+        plain_model_state_dict = OrderedDict()
+        for key, value in state_dict["model"].items():
+            if isinstance(value, DTensor):
+                plain_model_state_dict[key] = value.to_local()
+            else:
+                plain_model_state_dict[key] = value
+
         dist_cp_sd.set_model_state_dict(
             self.model,
-            state_dict["model"],
+            plain_model_state_dict,
             options=self.state_dict_load_opts,
         )
         gc_cuda()
         if load_optim:
-            dist_cp_sd.set_optimizer_state_dict(
-                self.model,
-                self.optim,
-                state_dict["optim"],
-                options=self.state_dict_load_opts,
-            )
+            self.optim.load_state_dict(state_dict["optim"])
+
+            debug_model1 = torch.load(f'tmp.model.{dist.get_rank()}.pt')
+            debug_model2 = self.model.state_dict()
+
+            # compare
+            for key in debug_model1.keys():
+                if not torch.equal(debug_model1[key], debug_model2[key]):
+                    print(f"Difference found in key: {key}")
+
+            debug_optim1 = torch.load(f'tmp.optim.{dist.get_rank()}.pt')
+
+            debug_optim2 = torch.optim.Optimizer.state_dict(self.optim)
+            debug_optim2['_flat_main_dp'] = self.optim._flat_main_dp
+            debug_optim2['_flat_main_ep_dp '] = self.optim._flat_main_ep_dp 
+            debug_optim2['_flat_exp_avg_dp '] = self.optim._flat_exp_avg_dp 
+            debug_optim2['_flat_exp_avg_ep_dp'] = self.optim._flat_exp_avg_ep_dp
+            debug_optim2['_flat_exp_avg_sq_dp '] = self.optim._flat_exp_avg_sq_dp 
+            debug_optim2['_flat_exp_avg_sq_ep_dp  '] = self.optim._flat_exp_avg_sq_ep_dp 
+            # compare
+            for key in debug_optim1.keys():
+                if key.startswith('_') and not torch.equal(debug_optim1[key], debug_optim2[key]):
+                    print(f"Difference found in key: {key}")
+
             gc_cuda()
 
     def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
@@ -526,6 +560,8 @@ class MoEV2TransformerTrainModule(TrainModule):
             )
         micro_batches = split_batch(batch, self.rank_microbatch_size // seq_len)
         num_micro_batches = len(micro_batches)
+
+        dbg_mem_before_fwd0 = torch.cuda.memory_allocated()/1024**3
 
         # Train one micro-batch at a time.
         for micro_batch_idx, micro_batch in enumerate(micro_batches):
@@ -572,7 +608,8 @@ class MoEV2TransformerTrainModule(TrainModule):
             return
 
         # Record loss metrics.
-        if isinstance(self.optim, SkipStepOptimizer):
+        from olmo_core.optim.moe_optimizer import MoEFusedV2Optimizer
+        if isinstance(self.optim, MoEFusedV2Optimizer):
             # Need to reduce the loss right away for the SkipStepOptimizer.
             if is_distributed():
                 ce_batch_loss.div_(self._reduce_divide_factor)
@@ -583,6 +620,7 @@ class MoEV2TransformerTrainModule(TrainModule):
             self.optim.latest_loss = ce_batch_loss
         else:
             self.record_ce_loss(ce_batch_loss, ReduceType.mean)
+  
         if z_batch_loss is not None:
             assert self.z_loss_multiplier is not None
             self.record_metric(
@@ -641,77 +679,82 @@ class MoEV2TransformerTrainModule(TrainModule):
             )
 
     def optim_step(self):
-        # Maybe clip gradients.
-        if self.max_grad_norm is not None:
-            grad_norm = self._clip_grad_norm(self.max_grad_norm)
-            # NOTE: grad norm is already reduced over ranks, so we set `reduce_type` to `None`.
-            self.trainer.record_metric(
-                "total grad norm", grad_norm, reduce_type=None, namespace="optim"
-            )
-            if isinstance(self.optim, SkipStepOptimizer):
-                self.optim.latest_grad_norm = grad_norm
-
-        # calculate per layer grad norm
-        per_layer_norms = []
-        for layer_idx, layer in enumerate(self.model.blocks.values()):
-            layer_grads = [p.grad for p in layer.parameters() if p.grad is not None]
-            if layer_grads:
-                per_layer_norm = nn.utils.get_total_norm(
-                    layer_grads, norm_type=2.0, error_if_nonfinite=False, foreach=None
+        from olmo_core.optim.moe_optimizer import MoEFusedV2Optimizer
+        
+        if self.reduce_scatter_grads:
+            pass
+        else:
+            # Maybe clip gradients.
+            if self.max_grad_norm is not None:
+                grad_norm = self._clip_grad_norm(self.max_grad_norm)
+                # NOTE: grad norm is already reduced over ranks, so we set `reduce_type` to `None`.
+                self.trainer.record_metric(
+                    "total grad norm", grad_norm, reduce_type=None, namespace="optim"
                 )
-                if isinstance(per_layer_norm, DTensor):
-                    # If per_layer_norm is a DTensor, we need to reduce it to get the correct value.
-                    per_layer_norm = per_layer_norm.full_tensor()
-                per_layer_norms.append(per_layer_norm)
-            else:
-                per_layer_norms.append(torch.tensor(0.0, device=self.device)) 
-                
-            self.trainer.record_metric(
-                f"clipped grad norm (layer {layer_idx})", per_layer_norms[layer_idx], reduce_type=None, namespace="optim"
-            )
-            
-            del layer_grads
-            
-        del per_layer_norms
+                if isinstance(self.optim, MoEFusedV2Optimizer):
+                    self.optim.latest_grad_norm = grad_norm
 
-        # embedding layer grad norm
-        embedding_grads = [p.grad for p in self.model.embeddings.parameters() if p.grad is not None]
-        if embedding_grads:
-            embedding_grad_norm = nn.utils.get_total_norm(
-                embedding_grads, norm_type=2.0, error_if_nonfinite=False, foreach=None
-            )
-            if isinstance(embedding_grad_norm, DTensor):
-                # If embedding_grad_norm is a DTensor, we need to reduce it to get the correct value.
-                embedding_grad_norm = embedding_grad_norm.full_tensor()
-        else:
-            embedding_grad_norm = torch.tensor(0.0, device=self.device) 
-        self.trainer.record_metric(
-            "clipped grad norm (embedding)",
-            embedding_grad_norm,
-            reduce_type=None,
-            namespace="optim",
-        )  
-        
-        del embedding_grads
-        
-        # lm head grad norm
-        lm_head_grads = [p.grad for p in self.model.lm_head.parameters() if p.grad is not None]
-        if lm_head_grads:
-            lm_head_grad_norm = nn.utils.get_total_norm(
-                lm_head_grads, norm_type=2.0, error_if_nonfinite=False, foreach=None
-            )
-            if isinstance(lm_head_grad_norm, DTensor):
-                # If lm_head_grad_norm is a DTensor, we need to reduce it to get the correct value.
-                lm_head_grad_norm = lm_head_grad_norm.full_tensor()
-        else:
-            lm_head_grad_norm = torch.tensor(0.0, device=self.device)
-        self.trainer.record_metric(
-            "clipped grad norm (lm head)",
-            lm_head_grad_norm,
-            reduce_type=None,
-            namespace="optim",
-        )       
-        del lm_head_grads
+            # calculate per layer grad norm
+            per_layer_norms = []
+            for layer_idx, layer in enumerate(self.model.blocks.values()):
+                layer_grads = [p.grad for p in layer.parameters() if p.grad is not None]
+                if layer_grads:
+                    per_layer_norm = nn.utils.get_total_norm(
+                        layer_grads, norm_type=2.0, error_if_nonfinite=False, foreach=None
+                    )
+                    if isinstance(per_layer_norm, DTensor):
+                        # If per_layer_norm is a DTensor, we need to reduce it to get the correct value.
+                        per_layer_norm = per_layer_norm.full_tensor()
+                    per_layer_norms.append(per_layer_norm)
+                else:
+                    per_layer_norms.append(torch.tensor(0.0, device=self.device)) 
+                    
+                self.trainer.record_metric(
+                    f"clipped grad norm (layer {layer_idx})", per_layer_norms[layer_idx], reduce_type=None, namespace="optim"
+                )
+                
+                del layer_grads
+                
+            del per_layer_norms
+
+            # embedding layer grad norm
+            embedding_grads = [p.grad for p in self.model.embeddings.parameters() if p.grad is not None]
+            if embedding_grads:
+                embedding_grad_norm = nn.utils.get_total_norm(
+                    embedding_grads, norm_type=2.0, error_if_nonfinite=False, foreach=None
+                )
+                if isinstance(embedding_grad_norm, DTensor):
+                    # If embedding_grad_norm is a DTensor, we need to reduce it to get the correct value.
+                    embedding_grad_norm = embedding_grad_norm.full_tensor()
+            else:
+                embedding_grad_norm = torch.tensor(0.0, device=self.device) 
+            self.trainer.record_metric(
+                "clipped grad norm (embedding)",
+                embedding_grad_norm,
+                reduce_type=None,
+                namespace="optim",
+            )  
+            
+            del embedding_grads
+            
+            # lm head grad norm
+            lm_head_grads = [p.grad for p in self.model.lm_head.parameters() if p.grad is not None]
+            if lm_head_grads:
+                lm_head_grad_norm = nn.utils.get_total_norm(
+                    lm_head_grads, norm_type=2.0, error_if_nonfinite=False, foreach=None
+                )
+                if isinstance(lm_head_grad_norm, DTensor):
+                    # If lm_head_grad_norm is a DTensor, we need to reduce it to get the correct value.
+                    lm_head_grad_norm = lm_head_grad_norm.full_tensor()
+            else:
+                lm_head_grad_norm = torch.tensor(0.0, device=self.device)
+            self.trainer.record_metric(
+                "clipped grad norm (lm head)",
+                lm_head_grad_norm,
+                reduce_type=None,
+                namespace="optim",
+            )       
+            del lm_head_grads
         
 
         # Maybe adjust learning rate.
@@ -722,13 +765,14 @@ class MoEV2TransformerTrainModule(TrainModule):
 
         # Step optimizer.
         self.optim.step()
-        if isinstance(self.optim, SkipStepOptimizer):
+        if isinstance(self.optim, MoEFusedV2Optimizer):
             self.record_metric("step skipped", self.optim.step_skipped, namespace="optim")
 
         self.model.post_optim_step()
 
     def zero_grads(self):
-        self.optim.zero_grad(set_to_none=True)
+        self.optim.zero_grad(set_to_none=True) # clear main grad
+        self.model.zero_grad(set_to_none=True) # clear model grad
 
     def model_forward(
         self, input_ids: torch.Tensor, labels: Optional[torch.Tensor] = None, **kwargs
@@ -753,7 +797,14 @@ class MoEV2TransformerTrainModule(TrainModule):
             elif isinstance(self.model, DDP): 
                 raise OLMoConfigurationError("torch DDP not supported. Use replicate()")
             elif self.dp_config.name == DataParallelType.ddp: # temp fix
-                if not is_last_mb and self.dp_config.only_allreduce_last_microbatch:
+                if (
+                    self.reduce_scatter_grads # if use RS, always no sync
+                    or  # if not, fall back to all-reduce
+                    ( 
+                        # if specified, only AR at the last microbatch
+                        not is_last_mb and self.dp_config.only_allreduce_last_microbatch
+                    )
+                ):
                     stack.enter_context(self.ddp_no_sync(self.model)) # only DDP has no_sync(), can only call set_requires_gradient_sync()
             yield
 
@@ -770,7 +821,7 @@ class MoEV2TransformerTrainModule(TrainModule):
         ep_modules = [m for m in module.modules() if getattr(m, '_ep_sharded', False) ]
         for m in ep_modules:
             m.set_requires_gradient_sync(False) # type: ignore
-            
+
         try:
             yield
         finally:
@@ -795,42 +846,48 @@ class MoEV2TransformerTrainModule(TrainModule):
     def _get_state_dict(
         self, sd_options: dist_cp_sd.StateDictOptions, optim: bool = True
     ) -> Dict[str, Any]:
-        assert optim == True, "model and optimizer must be saved at the same time"
+        plain_model_sd = self.model.state_dict() # bf16 version
+        
+        # debug
+        # torch.save(plain_model_sd, f'tmp.model.{dist.get_rank()}.pt')
+        # og_optim_sd = torch.optim.Optimizer.state_dict(self.optim)
+        # og_optim_sd['_flat_main_dp'] = self.optim._flat_main_dp
+        # og_optim_sd['_flat_main_ep_dp '] = self.optim._flat_main_ep_dp 
+        # og_optim_sd['_flat_exp_avg_dp '] = self.optim._flat_exp_avg_dp 
+        # og_optim_sd['_flat_exp_avg_ep_dp'] = self.optim._flat_exp_avg_ep_dp
+        # og_optim_sd['_flat_exp_avg_sq_dp '] = self.optim._flat_exp_avg_sq_dp 
+        # og_optim_sd['_flat_exp_avg_sq_ep_dp  '] = self.optim._flat_exp_avg_sq_ep_dp  
+        # torch.save(og_optim_sd, f'tmp.optim.{dist.get_rank()}.pt')
 
-        model_sd = self.model.state_dict() # bf16 version
 
-        # replace with main param
-        named_params_dict = dict(self.model.named_parameters())
-        for k, v in model_sd.items():
-            if k in named_params_dict:
-                if hasattr(named_params_dict[k], "main_param"):
-                    model_sd[k] = named_params_dict[k].main_param # type: ignore
+        # wrap it in dtensor so that it works with checkpointer
+        wrapped_model_sd = OrderedDict()
+        for k, v in plain_model_sd.items():
+            if isinstance(v, torch.Tensor) and "routed_experts." in k:
+                assert self.world_mesh is not None
+                assert self.world_mesh['moe'] is not None
+                wrapped_model_sd[k] = DTensor.from_local(v, device_mesh=self.world_mesh['moe']['ep_dp', 'ep_mp'] , placements=(Replicate(), Shard(0)))
+            elif isinstance(v, torch.Tensor):
+                assert self.world_mesh is not None
+                assert self.world_mesh['dense'] is not None
+                wrapped_model_sd[k] = DTensor.from_local(v, device_mesh=self.world_mesh['dense']['dp'], placements=(Replicate(),))
+            else:
+                wrapped_model_sd[k] = v
 
-        optim_sd = self.optim.state_dict()
         state_dict: Dict[str, Any] = {
-            "model": model_sd,
-            "optim": optim_sd
+            "model": wrapped_model_sd,
         }
+
+        if optim:
+            optim_sd = self.optim.state_dict()
+            state_dict["optim"] = optim_sd
+
         return state_dict
-        # state_dict: Dict[str, Any] = {
-        #     "model": dist_cp_sd.get_model_state_dict(self.model, options=sd_options),
-        # }
-        # if optim: # BUG
-        #     state_dict["optim"] = dist_cp_sd.get_optimizer_state_dict(
-        #         self.model, self.optim, options=sd_options
-        #     )
-        #     # model_data, main_params_data = self.optim._get_model_and_main_params_data_float16()
-        # return state_dict
+
 
     def _clip_grad_norm(
         self, max_grad_norm: float, norm_type: float = 2.0, foreach: Optional[bool] = None
     ) -> torch.Tensor:
-        # raise NotImplementedError()
-    
-        # if isinstance(self.model, FSDP):
-        #     return self.model.clip_grad_norm_(max_grad_norm)
-
-        # Adapted from https://github.com/pytorch/torchtitan/blob/2a4437014e66bcf88a3f0419b816266e6326d539/torchtitan/utils.py#L348
 
         parameters = [p for p in self.model.parameters()]
         grads = [p.grad for p in parameters if p.grad is not None]

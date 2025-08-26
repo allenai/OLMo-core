@@ -24,6 +24,9 @@ from ..config import DType
 from .config import OptimConfig
 from .skip_step_optimizer import SkipStepOptimizer
 import logging
+import torch.distributed as dist
+from torch.distributed import ProcessGroup
+from typing import NamedTuple
 from torch.distributed.optim import ZeroRedundancyOptimizer
 from torch.distributed.algorithms.ddp_comm_hooks.ddp_zero_hook import (
     hook_with_zero_step,
@@ -41,10 +44,23 @@ from typing import cast
 from ..config import Config
 from .config import OptimGroupOverride, INITIAL_LR_FIELD, LR_FIELD
 from ..exceptions import OLMoConfigurationError
-
+from torch.distributed.tensor import DTensor, Shard
+from torch.distributed.device_mesh import DeviceMesh
 log = logging.getLogger(__name__)
 
 # Opt = TypeVar("Opt", bound=torch.optim.Optimizer)
+
+### DEBUG PRINT ###
+def _str_paramt(paramt):
+    rets = ''
+    total_numel = 0
+    for i, pgrp in enumerate(paramt):
+        rets += f'{i}: {pgrp["__pg_tag__"]}\n'
+        rets += f'    num params: {len(pgrp["params"])}\n'
+        rets += f'    num ele: {sum(p.numel() for p in pgrp["params"])}\n'
+        total_numel += sum(p.numel() for p in pgrp["params"])
+    rets += f'Total num ele: {total_numel}\n'
+    return rets
 
 @dataclass
 class MoEFusedV2OptimizerConfig(Config): 
@@ -94,6 +110,7 @@ class MoEFusedV2OptimizerConfig(Config):
     The number of standard deviations above the mean loss to skip a step.
     """
 
+    max_grad_norm: float = 1.0
 
     @property
     def device(self) -> torch.device:
@@ -180,6 +197,18 @@ class MoEFusedV2OptimizerConfig(Config):
         return MoEFusedV2Optimizer
 
 
+    def _collect_ep_param_ids(self, model: nn.Module) -> Set[int]:
+        """
+        Collect ids() of parameters that belong to modules marked as EP-managed
+        (i.e., modules having attribute `_ep_sharded` set to True).
+        """
+        ep_param_ids: Set[int] = set()
+        for m in model.modules():
+            if getattr(m, "_ep_sharded", False):
+                for _, p in m.named_parameters(recurse=True):
+                    ep_param_ids.add(id(p))
+        return ep_param_ids
+
     def build(self, model: nn.Module, train_module: TrainModule, strict: bool = True, param_filter=None) -> torch.optim.Optimizer:
         """
         Build the optimizer.
@@ -187,16 +216,46 @@ class MoEFusedV2OptimizerConfig(Config):
         :param strict: If ``True`` an error is raised if a pattern in ``group_overrides`` doesn't
             match any parameter.
         """
-        
-        # not used: train_module
-        
+
+        # not used: train_module (was); now used to pass process groups
         kwargs = self.as_dict()
         kwargs.pop("group_overrides")
         kwargs.pop("compile")
         kwargs.pop("fixed_fields")
 
+        # Stable parameter order (by name) for each partition, used by all ranks for packing/broadcast.
+        ep_param_ids = self._collect_ep_param_ids(model)
+        dp_param_order: List[torch.nn.Parameter] = []
+        ep_param_order: List[torch.nn.Parameter] = []
+        for name, p in model.named_parameters():
+            if not p.requires_grad:
+                continue
+            if id(p) in ep_param_ids:
+                ep_param_order.append(p)
+            else:
+                dp_param_order.append(p)
+
+        # Build param groups for the two PGs by filtering.
+        dp_groups = self.build_groups(model, strict=strict, param_filter=lambda p: id(p) not in ep_param_ids)
+        for g in dp_groups:
+            g["__pg_tag__"] = "dp" # type: ignore
+
+        ep_groups = self.build_groups(model, strict=strict, param_filter=lambda p: id(p) in ep_param_ids)
+        for g in ep_groups:
+            g["__pg_tag__"] = "ep_dp" # type: ignore
+
+        # Concatenate, ensuring the "default" groups remain first in each partition (already ensured by build_groups()).
+        all_groups: List[Dict[str, Any]] = list(dp_groups) + list(ep_groups) # type: ignore
+
         optim: torch.optim.Optimizer = self.optimizer()(
-            self.build_groups(model, strict=strict, param_filter=param_filter), **kwargs
+            all_groups,
+            param_order_dp=dp_param_order,
+            param_order_ep=ep_param_order,
+            dp_group=getattr(train_module, "dp_group", None),
+            ep_dp_group=getattr(train_module, "ep_dp_group", None),
+            dp_mesh=train_module.world_mesh['dense']['dp'], # type: ignore
+            moe_mesh=train_module.world_mesh['moe'], # type: ignore
+            **kwargs,
         )
 
         # Set 'lr' and 'initial_lr' in each group if needed.
@@ -250,7 +309,6 @@ class MoEFusedV2OptimizerConfig(Config):
 
 class MoEFusedV2Optimizer(Optimizer):
 
-
     def __init__(
         self,
         params,
@@ -260,8 +318,17 @@ class MoEFusedV2Optimizer(Optimizer):
         weight_decay: float = 1e-2,
         rolling_interval_length: int = 128,
         sigma_factor: int = 6,
+        max_grad_norm: float = 1.0,
         dtype: Optional[Union[torch.dtype, DType]] = None,
         # foreach: bool = False,
+        # --- new args for sharding across multiple PGs ---
+        dp_group: Optional[ProcessGroup] = None,
+        ep_dp_group: Optional[ProcessGroup] = None,
+        dp_mesh: Optional[DeviceMesh] = None,
+        moe_mesh: Optional[DeviceMesh] = None,
+        param_order_dp: Optional[List[torch.nn.Parameter]] = None,
+        param_order_ep: Optional[List[torch.nn.Parameter]] = None,
+        broadcast_bucket_mb: int = 32,
     ) -> None:
         assert lr > 0.0
         assert all([0.0 <= beta <= 1.0 for beta in betas])
@@ -269,12 +336,31 @@ class MoEFusedV2Optimizer(Optimizer):
 
         super().__init__(params, defaults)
 
+        # ---- Sharding context (DP and EP-DP) ----
+        self._dp_group: Optional[ProcessGroup] = dp_group
+        self._ep_dp_group: Optional[ProcessGroup] = ep_dp_group
+        self._param_order_dp: List[torch.nn.Parameter] = param_order_dp or []
+        self._param_order_ep: List[torch.nn.Parameter] = param_order_ep or []
+        self._broadcast_bucket_bytes: int = int(broadcast_bucket_mb * 1024 * 1024)
+        self._enable_sharding: bool = (
+            (self._dp_group is not None and len(self._param_order_dp) > 0)
+            or (self._ep_dp_group is not None and len(self._param_order_ep) > 0)
+        )
+        self.dp_mesh = dp_mesh
+        self.moe_mesh = moe_mesh
+        self.ep_dp_mesh = moe_mesh['ep_dp'] if moe_mesh else None
+        # Tag each param_group with its PG tag if present (default to 'dp' for backwards compat).
+        for g in self.param_groups:
+            tag = g.get("__pg_tag__")
+            if tag not in ("dp", "ep_dp"):
+                g["__pg_tag__"] = "dp"
+
         self.rolling_interval_length = rolling_interval_length
         self.sigma_factor = sigma_factor
         self._losses: List[torch.Tensor] = []
         self._grad_norms: List[torch.Tensor] = []
         self._device: Optional[torch.device] = None
-
+        self.max_grad_norm = max_grad_norm
         if isinstance(dtype, DType):
             dtype = dtype.as_pt()
         self.dtype = dtype
@@ -282,51 +368,149 @@ class MoEFusedV2Optimizer(Optimizer):
         self._step_skipped: Optional[torch.Tensor] = None
 
 
-        # keep the main copy in fp32
-        self.float16_groups = []
-        self.fp32_from_float16_groups = []
-        self.fp32_from_fp32_groups = []
-        
+        params = cast(Iterable[Dict[str, Any]], params)
+
+        device = None
         for param_group in params:
-            float16_params_this_group = []
-            fp32_params_this_group = []
-            fp32_from_float16_params_this_group = []
-            # For all the parameters in this group:
             for i, param in enumerate(param_group['params']):
-                if param.requires_grad:
-                    # float16 params:
-                    if param.type() in ['torch.cuda.HalfTensor', 'torch.cuda.BFloat16Tensor']:
-                        float16_params_this_group.append(param)
-                        # Create a copy
-                        main_param = param.detach().clone().float()
+                if not param.requires_grad:
+                    continue
+                if device is None:
+                    device = param.device
+                else:
+                    assert device == param.device, "Inconsistent device found"
+                # float16 params:
+                assert param.type() in ['torch.cuda.HalfTensor', 'torch.cuda.BFloat16Tensor'], 'Only support 16 bit params. Received {}'.format(param.type())
 
-                        # Replace the optimizer params with the new fp32 copy.
-                        param_group['params'][i] = main_param
 
-                        # Store handle to main_param.
-                        param.main_param = main_param
+        self._owned_views: List[MoEFusedV2Optimizer._OwnedView] = []
+        self._segments_by_rank: Dict[str, List[List[Tuple[torch.nn.Parameter, int, int]]]] = {}
 
-                        fp32_from_float16_params_this_group.append(main_param)
-                        # Reset existing state dict key to the new main param.
-                        if param in self.state:
-                            self.state[main_param] = self.state.pop(param)
-                    # fp32 params.
-                    elif param.type() == 'torch.cuda.FloatTensor':
-                        fp32_params_this_group.append(param)
-                        param_group['params'][i] = param
+        new_param_groups: List[Dict[str, Any]] = []
+        self._flat_main_grad_buf: Dict[str, Optional[torch.Tensor]] = {}
+        for tag in ("dp", "ep_dp"):
+            pg, order = self._pg_and_order_for_tag(tag)
+            if pg is None or not order:
+                continue
+            ws, r = self._world_and_rank(pg)
 
-                    else:
-                        raise TypeError(
-                            'Wrapped parameters must be one of '
-                            'torch.cuda.FloatTensor,  '
-                            'torch.cuda.HalfTensor, or '
-                            'torch.cuda.BFloat16Tensor. '
-                            'Received {}'.format(param.type())
-                        )
+            # Build per-rank segments list (deterministic across ranks)
+            # order, offsets, total = self._build_concat_layout(tag)
+            segs_by_rank = self._build_segments_by_rank(tag)
+            self._segments_by_rank[tag] = segs_by_rank
 
-            self.float16_groups.append(float16_params_this_group)
-            self.fp32_from_float16_groups.append(fp32_from_float16_params_this_group)
-            self.fp32_from_fp32_groups.append(fp32_params_this_group)
+            my_segs = segs_by_rank[r]
+            if not my_segs:
+                continue
+
+            # Allocate flat main/state shards (fp32) for the sum of my segment lengths
+            owned_numel = sum(seg_len for (_, _, seg_len) in my_segs)
+            device = order[0].device
+            flat_main = torch.empty(owned_numel, dtype=torch.float32, device=device)
+            flat_exp_avg = torch.zeros_like(flat_main, dtype=torch.float32)
+            flat_exp_avg_sq = torch.zeros_like(flat_main, dtype=torch.float32)
+
+            # Create 1-D views per segment
+            offset = 0
+            for (model_param, seg_start, seg_len) in my_segs:
+                main_param_view = flat_main.narrow(0, offset, seg_len)
+                exp_avg_view = flat_exp_avg.narrow(0, offset, seg_len)
+                exp_avg_sq_view = flat_exp_avg_sq.narrow(0, offset, seg_len)
+
+                # Initialize main from model param slice
+                main_param_view.data.copy_(model_param.data.view(-1)[seg_start:seg_start + seg_len].float())
+
+                self._owned_views.append(MoEFusedV2Optimizer._OwnedView(
+                    model_param=model_param,
+                    param_start=seg_start,
+                    length=seg_len,
+                    main_param_view=main_param_view,
+                    exp_avg_view=exp_avg_view,
+                    exp_avg_sq_view=exp_avg_sq_view,
+                    pg_tag=tag,
+                ))
+                offset += seg_len
+
+            # Hold references by tag for broadcasts
+            setattr(self, f"_flat_main_{tag}", flat_main)
+            setattr(self, f"_flat_exp_avg_{tag}", flat_exp_avg)
+            setattr(self, f"_flat_exp_avg_sq_{tag}", flat_exp_avg_sq)
+            self._flat_main_grad_buf[tag] = None
+
+
+        def _param_in_list(param, lst):
+            return id(param) in (id(p) for p in lst)
+
+        def _filter_owned_main_views_whose_model_params_are_in(params):
+            # Iterate all owned views and return those whose model_param is in params
+            rst = []
+            for ov in self._owned_views:
+                if _param_in_list(ov.model_param, params):
+                    rst.append(ov.main_param_view)
+            return rst
+
+        for old_param_group in self.param_groups:
+            owned_params = _filter_owned_main_views_whose_model_params_are_in(old_param_group["params"])
+            new_param_group = {
+                "params": owned_params,
+                "__pg_tag__": old_param_group["__pg_tag__"],
+                "lr": old_param_group["lr"],
+                "betas": old_param_group["betas"],
+                "eps": old_param_group["eps"],
+                "weight_decay": old_param_group["weight_decay"],
+            }
+            if owned_params:
+                new_param_groups.append(new_param_group)
+
+        log_str = '\n'
+        log_str += f'Old param group:\n'
+        log_str += _str_paramt(self.param_groups)
+
+
+        log_str += f'New param group:\n'
+        log_str += _str_paramt(new_param_groups)
+
+        print(log_str)
+        ##########
+
+        # update param groups with only OWNED ones
+        self.param_groups = new_param_groups
+
+
+        # init optimizer per-parameter states
+        # the states are a view into the flat buffers
+        for group in self.param_groups:
+            tag = group["__pg_tag__"]
+            flat_exp_avg = getattr(self, f"_flat_exp_avg_{tag}")
+            flat_exp_avg_sq = getattr(self, f"_flat_exp_avg_sq_{tag}")
+
+            for p in group["params"]:
+                state = self.state[p]
+                if len(state) == 0:
+                    # find the owned view for this main param
+                    ov = next(ov for ov in self._owned_views if ov.main_param_view is p)
+                    state["step"] = torch.zeros((), dtype=torch.float32, device=p.device)
+                    state["exp_avg"] = ov.exp_avg_view
+                    state["exp_avg_sq"] = ov.exp_avg_sq_view
+
+        self.print_memory_summary()
+        self._check_model_param_main_param_the_same()
+
+    def print_memory_summary(self):
+        main_param_bytes = 0 
+        states_bytes = 0
+        for tag in ("dp", "ep_dp"):
+            flat_main = getattr(self, f"_flat_main_{tag}")
+            main_param_bytes += flat_main.numel() * flat_main.element_size()
+
+            flat_exp_avg = getattr(self, f"_flat_exp_avg_{tag}")
+            states_bytes += flat_exp_avg.numel() * flat_exp_avg.element_size()
+
+            flat_exp_avg_sq = getattr(self, f"_flat_exp_avg_sq_{tag}")
+            states_bytes += flat_exp_avg_sq.numel() * flat_exp_avg_sq.element_size()
+
+        print(f'Main param memory usage: {main_param_bytes / 1024**3:.2f} GB')
+        print(f'States memory usage: {states_bytes / 1024**3:.2f} GB')
 
     @property
     def device(self) -> torch.device:
@@ -381,75 +565,473 @@ class MoEFusedV2Optimizer(Optimizer):
     def step(self, closure: Callable[[], float]) -> float:
         ...
 
+    def set_reduce_scatter_grads(self, enabled: bool = True):
+        self._use_reduce_scatter_grads = enabled
+
+    def _clip_grad(self):
+
+        global_grads = []
+        
+        # dp grad
+        flat_main_grad_buf_dp = self._flat_main_grad_buf['dp']
+        if flat_main_grad_buf_dp is not None:
+            flat_main_grad_buf_dp_dt = DTensor.from_local(
+                flat_main_grad_buf_dp,
+                device_mesh=self.dp_mesh,
+                placements=[Shard(0)],
+            )
+            global_grads.append(flat_main_grad_buf_dp_dt)
+
+        flat_main_grad_buf_ep_dp = self._flat_main_grad_buf['ep_dp']
+        if flat_main_grad_buf_ep_dp is not None:
+            flat_main_grad_buf_ep_dp_dt = DTensor.from_local(
+                flat_main_grad_buf_ep_dp.unsqueeze(0),
+                device_mesh=self.moe_mesh['ep_dp', 'ep_mp'],
+                placements=[Shard(1), Shard(0)],
+            )
+            global_grads.append(flat_main_grad_buf_ep_dp_dt)
+
+        # NOTE: aten._foreach_norm.Scalar: DTensor does not support cross-mesh operation yet!
+        # total_grad_norm = nn.utils.get_total_norm(global_grads, norm_type=2.0, error_if_nonfinite=False)
+
+        # alternative
+        n0 = torch.norm(global_grads[0], p=2.0)
+        n0 = cast(DTensor, n0).full_tensor() 
+        n1 = torch.norm(global_grads[1], p=2.0)
+        n1 = cast(DTensor, n1).full_tensor() 
+        total_grad_norm = (n0.square() + n1.square()).sqrt()
+
+        # dbg0 = global_grads[0].full_tensor()
+        # dbg1 = global_grads[1].full_tensor()
+        # total_grad_norm1 = nn.utils.get_total_norm([dbg0, dbg1], norm_type=2.0, error_if_nonfinite=False)
+
+        clip_coef = self.max_grad_norm / (total_grad_norm + 1e-6)
+        # Note: multiplying by the clamped coef is redundant when the coef is clamped to 1, but doing so
+        # avoids a `if clip_coef < 1:` conditional which can require a CPU <=> device synchronization
+        # when the gradients do not reside in CPU memory.
+        clip_coef_clamped = torch.clamp(clip_coef, max=1.0).to(global_grads[0].device)
+        # torch._foreach_mul_(global_grads, clip_coef_clamped)
+        flat_main_grad_buf_dp.mul_(clip_coef_clamped)
+        flat_main_grad_buf_ep_dp.mul_(clip_coef_clamped)
+
+        return total_grad_norm
+
     @torch.no_grad()
     def step(self, closure: Optional[Callable[[], float]] = None) -> Optional[float]:
         dbg_mem_before_cp1 = torch.cuda.memory_allocated()/1024**3
-        self._copy_model_grads_to_main_grads()
+        if getattr(self, "_use_reduce_scatter_grads", True):
+            # Precondition: DDP model did not all-reduce grads, grads on dp ranks different now
+            # the optimizer has sharded main param + states in fp32
+            # now call reduce scatter to collect averaged grads from dp ranks
+            # directly into the owned main param views
+            self._reduce_scatter_model_grads()
+        else:
+            # Precondition: DDP model called all-reduce grads, bf16 model grads on dp ranks are the same
+            # only copy the model grads to OWNED main grads
+            self._copy_owned_model_grads_to_main_grads()
+
+        self._clip_grad()
+
         dbg_mem_before_step = torch.cuda.memory_allocated()/1024**3
         self._step_foreach(closure)
         dbg_mem_after_step = torch.cuda.memory_allocated()/1024**3
         self._dealloc_main_grad()
         dbg_mem_before_cp2 = torch.cuda.memory_allocated()/1024**3
-        self._copy_main_params_to_model_params()
+
+        # 1) owners write back to local model params
+        self._copy_owned_main_to_model_bf16()
+        # 2) broadcast owned shards to replicas within each PG
+        # self._broadcast_updated_model_params()
+        # or 2b) use all-gather
+        self._allgather_updated_model_params()
+
         return None
 
-    def _copy_main_params_to_model_params(self):
-        # Only needed for the float16 params.
-        model_data, main_data = self._get_model_and_main_params_data_float16()
-        _multi_tensor_cp(
-            src=main_data, dst=model_data,
-        )
+    class _OwnedView(NamedTuple):
+        # A contiguous slice (in flattened space) of a model parameter owned by this rank.
+        model_param: torch.nn.Parameter        # replicated bf16/fp16 param
+        param_start: int                       # start index into model_param.view(-1)
+        length: int                            # number of elements in this slice
+        main_param_view: torch.Tensor          # 1-D fp32 view into our flat main shard
+        exp_avg_view: torch.Tensor             # 1-D fp32 view into our flat exp_avg shard
+        exp_avg_sq_view: torch.Tensor          # 1-D fp32 view into our flat exp_avg_sq shard
+        pg_tag: str                            # "dp" or "ep_dp"
+
+        def __repr__(self) -> str:
+            return (f"_OwnedView(pg_tag={self.pg_tag}, model_param={self.model_param.shape}, param_start={self.param_start}, "
+                    f"length={self.length}, main_param_view={self.main_param_view.shape}, "
+                    f"exp_avg_view={self.exp_avg_view.shape}, exp_avg_sq_view={self.exp_avg_sq_view.shape})")
+        
+    def _pg_and_order_for_tag(self, tag: str):
+        if tag == "dp":
+            return self._dp_group, self._param_order_dp
+        elif tag == "ep_dp":
+            return self._ep_dp_group, self._param_order_ep
+        else:
+            raise RuntimeError(f"Unknown pg tag: {tag}")
+
+    def _world_and_rank(self, pg: Optional[ProcessGroup]) -> Tuple[int, int]:
+        if pg is None:
+            return 1, 0
+        return dist.get_world_size(pg), dist.get_rank(pg)
+
+    def _owner_for_index(self, index: int, world_size: int) -> int:
+        # Simple round-robin owner assignment by (global) param index.
+        return index % max(1, world_size)
+
+    def _iter_group_params_with_tag(self, tag: str) -> List[torch.nn.Parameter]:
+        out: List[torch.nn.Parameter] = []
+        # Respect the stable global order (by name) computed in Config.build()
+        _, order = self._pg_and_order_for_tag(tag)
+        if order:
+            out.extend(order)
+        else:
+            # Fallback: walk current param_groups tagged with 'tag'
+            for g in self.param_groups:
+                if g.get("__pg_tag__") == tag:
+                    for p in g["params"]:
+                        out.append(p if isinstance(p, torch.nn.Parameter) else p)
+        return out
+
+    def _build_concat_layout(self, tag: str):
+        """
+        Build a stable concatenation layout for all parameters in `tag`.
+        Returns (order, offsets, total_numel) where:
+        - order: List[Parameter] in stable order
+        - offsets: List[int] prefix starts for each param in flattened concatenation
+        - total_numel: int total elements over all params
+        """
+        pg, order = self._pg_and_order_for_tag(tag)
+        if order is None or len(order) == 0:
+            return [], [], 0
+        offsets: List[int] = []
+        total = 0
+        for p in order:
+            offsets.append(total)
+            total += int(p.numel())
+        return order, offsets, total
+
+    @staticmethod
+    def _ceil_to_multiple(x: int, m: int) -> int:
+        return ((x + m - 1) // m) * m
+
+    def _compute_shard_ranges(self, total_numel: int, ws: int) -> List[Tuple[int, int]]:
+        """
+        Split [0, padded_total) into `ws` equal shards. Return list of (start, end).
+        """
+        if ws <= 1:
+            return [(0, total_numel)]
+        padded = self._ceil_to_multiple(total_numel, ws)
+        shard = padded // ws
+        return [(r * shard, (r + 1) * shard) for r in range(ws)]
+
+    def _intersect(self, a: Tuple[int, int], b: Tuple[int, int]) -> Tuple[int, int]:
+        s = max(a[0], b[0]); e = min(a[1], b[1])
+        return (s, e) if e > s else (0, 0)
+
+    def _build_segments_by_rank(self, tag: str):
+        """
+        For the given tag ('dp' or 'ep_dp'), compute, for every rank in that PG,
+        the list of contiguous segments (param, start_in_param, length) that fall
+        inside that rank's equal-size shard of the globally concatenated parameter space.
+
+        Returns:
+        segments_by_rank: List[List[Tuple[param, start, length]]], length = ws
+        """
+        pg, order = self._pg_and_order_for_tag(tag)
+        if pg is None or not order:
+            return []
+        ws, _ = self._world_and_rank(pg)
+        order, offsets, total = self._build_concat_layout(tag)
+        if total == 0:
+            return [[] for _ in range(ws)]
+
+        shard_ranges = self._compute_shard_ranges(total, ws)
+
+        # Param ranges in global (concatenated) coordinates.
+        param_ranges: List[Tuple[int, int]] = []
+        for i, p in enumerate(order):
+            start = offsets[i]; end = start + int(p.numel())
+            param_ranges.append((start, end))
+
+        segments_by_rank: List[List[Tuple[torch.nn.Parameter, int, int]]] = [[] for _ in range(ws)]
+        for rank in range(ws):
+            s_start, s_end = shard_ranges[rank]
+            for i, p in enumerate(order):
+                p_start, p_end = param_ranges[i]
+                inter = self._intersect((s_start, s_end), (p_start, p_end))
+                if inter == (0, 0):
+                    continue
+                seg_start_in_param = inter[0] - p_start
+                seg_len = inter[1] - inter[0]
+                if seg_len > 0:
+                    segments_by_rank[rank].append((p, seg_start_in_param, seg_len))
+        return segments_by_rank
+    
+    def _reduce_scatter_model_grads(self) -> None:
+        """
+        Pack bf16/fp16 model grads in the stable concat order per PG, pad to ws multiple,
+        and perform reduce-scatter (SUM) to obtain the local shard of grads. Then scale by 1/ws
+        and place into each owned main view's .grad (fp32).
+        """
+        for tag in ("dp", "ep_dp"):
+            pg, order = self._pg_and_order_for_tag(tag)
+            if pg is None or not order:
+                continue
+            ws, _ = self._world_and_rank(pg)
+            if ws == 1:
+                # No communication needed; fall back to owned-copy.
+                self._copy_owned_model_grads_to_main_grads()
+                continue
+
+            order_list, offsets, total = self._build_concat_layout(tag)
+            if total == 0:
+                continue
+            device = order_list[0].device
+
+            grad_dtype = torch.float32          # force fp32 RS
+
+            padded_total = self._ceil_to_multiple(total, ws)
+            shard = padded_total // ws
+
+            # Pack grads into flat buffer
+            send_buf = torch.zeros(padded_total, dtype=grad_dtype, device=device)
+            for i, p in enumerate(order_list):
+                if p.grad is None:
+                    continue
+
+                dst = send_buf.narrow(0, offsets[i], p.numel())
+                src = p.grad.detach().view(-1)
+                dst.copy_(src) # may auto-cast on some builds
+                # dst.copy_(src.to(dst.dtype)) # fallback: small, per-param temp only
+
+                p.grad = None  # free bf16/fp16 grad
+
+            # Reduce-scatter -> local shard
+            # TODO: this send buf is huge, consider using a few small buckets
+            flat_main_grad_buf = torch.empty(shard, dtype=grad_dtype, device=device)
+            self._flat_main_grad_buf[tag] = flat_main_grad_buf # record for grad clip
+            dist.reduce_scatter_tensor(flat_main_grad_buf, send_buf, group=pg, op=dist.ReduceOp.AVG)
+
+            # Write into owned fp32 main.grad views
+            off = 0
+            for ov in self._owned_views:
+                if ov.pg_tag != tag:
+                    continue
+                n = ov.length
+                main_param_grad = flat_main_grad_buf.narrow(0, off, n) 
+                # option 1
+                # if ov.main_param_view.grad is None:
+                #     ov.main_param_view.grad = torch.empty_like(ov.main_param_view, dtype=torch.float32)
+                # ov.main_param_view.grad.copy_(main_param_grad.float())
+
+                # option 2
+                ov.main_param_view.grad = main_param_grad
+
+                off += n
+
+    def _copy_owned_model_grads_to_main_grads(self):
+        """
+        Copy bf16/fp16 model grads into fp32 main.grad for OWNED segments only.
+        Assumes DDP has already allreduced grads in-place on model params.
+        """
+
+        for ov in self._owned_views:
+            mp = ov.model_param
+            if mp.grad is None:
+                continue
+            src = mp.grad.detach().view(-1).narrow(0, ov.param_start, ov.length)
+            if ov.main_param_view.grad is None:
+                ov.main_param_view.grad = torch.empty_like(ov.main_param_view, dtype=torch.float32)
+            ov.main_param_view.grad.copy_(src.float())
+
+    def _copy_owned_main_to_model_bf16(self):
+        """
+        Copy updated fp32 main shard views back into local bf16/fp16 model params for OWNED segments only.
+        """
+        for ov in self._owned_views:
+            dst = ov.model_param.data.view(-1).narrow(0, ov.param_start, ov.length)
+            dst.copy_(ov.main_param_view.data.to(dtype=ov.model_param.dtype))
+
+    def _allgather_updated_model_params(self):
+        """
+        param sync: each rank packs its UPDATED bf16/fp16 model param shard
+        (equal size) and calls all_gather_into_tensor to materialize the full params,
+        then unpacks into the live tensors. Padding is ignored.
+        """
+
+        for tag in ("dp", "ep_dp"):
+            pg, order = self._pg_and_order_for_tag(tag)
+            if pg is None or not order:
+                continue
+            ws, r = self._world_and_rank(pg)
+            if ws == 1:
+                continue
+
+            order_list, offsets, total = self._build_concat_layout(tag)
+            if total == 0:
+                continue
+            padded_total = self._ceil_to_multiple(total, ws)
+            shard = padded_total // ws
+
+            segs_by_rank = self._segments_by_rank.get(tag, [])
+            if not segs_by_rank:
+                segs_by_rank = self._build_segments_by_rank(tag)
+                self._segments_by_rank[tag] = segs_by_rank
+
+            my_segs = segs_by_rank[r]
+            device = order_list[0].device
+            dtype = order_list[0].dtype
+
+            # Pack my shard
+            local_shard = torch.empty(shard, dtype=dtype, device=device)
+            off = 0
+            for (mp, start, length) in my_segs:
+                view = mp.data.view(-1).narrow(0, start, length)
+                local_shard.narrow(0, off, length).copy_(view)
+                off += length
+            if off < shard:
+                local_shard.narrow(0, off, shard - off).zero_()
+
+            # All-gather all shards
+            full_buf = torch.empty(ws * shard, dtype=dtype, device=device)
+            dist.all_gather_into_tensor(full_buf, local_shard, group=pg)
+
+            # Unpack into live params for each rank's shard
+            for src in range(ws):
+                segs = segs_by_rank[src]
+                if not segs:
+                    continue
+                chunk = full_buf.narrow(0, src * shard, shard)
+                off = 0
+                for (mp, start, length) in segs:
+                    dst = mp.data.view(-1).narrow(0, start, length)
+                    dst.copy_(chunk.narrow(0, off, length))
+                    off += length
+    
+    def _broadcast_updated_model_params(self):
+        """
+        After owners update local bf16/fp16 model params from main shard views,
+        broadcast each rank's OWNED segments (in bf16/fp16) so all replicas end
+        with identical model params. We pack segments into buckets up to
+        `self._broadcast_bucket_bytes`.
+        """
+
+        for tag in ("dp", "ep_dp"):
+            pg, order = self._pg_and_order_for_tag(tag)
+            if pg is None or not order:
+                continue
+            ws, r = self._world_and_rank(pg)
+            if ws == 1:
+                continue
+
+            segs_by_rank = self._segments_by_rank.get(tag, [])
+            if not segs_by_rank:
+                continue
+
+            # Iterate over each rank as source
+            for src in range(ws):
+                segs = segs_by_rank[src]
+                if not segs:
+                    continue
+
+                # Bucketize by bytes
+                current: List[Tuple[torch.nn.Parameter, int, int]] = []
+                current_bytes = 0
+                buckets: List[List[Tuple[torch.nn.Parameter, int, int]]] = []
+                for (mp, start, length) in segs:
+                    nbytes = length * mp.element_size()
+                    if current and current_bytes + nbytes > self._broadcast_bucket_bytes:
+                        buckets.append(current)
+                        current = []
+                        current_bytes = 0
+                    current.append((mp, start, length))
+                    current_bytes += nbytes
+                if current:
+                    buckets.append(current)
+
+                # Send / recv each bucket
+                for bucket in buckets:
+                    numel = sum(length for (_, _, length) in bucket)
+                    device = bucket[0][0].device
+                    dtype = bucket[0][0].dtype
+
+                    if r == src:
+                        # Pack from our local model params (already updated)
+                        send_buf = torch.empty(numel, dtype=dtype, device=device)
+                        off = 0
+                        for (mp, start, length) in bucket:
+                            view = mp.data.view(-1).narrow(0, start, length)
+                            send_buf.narrow(0, off, length).copy_(view)
+                            off += length
+                        src_global = dist.get_global_rank(pg, src)
+                        dist.broadcast(send_buf, src=src_global, group=pg)
+                        del send_buf
+                    else:
+                        recv_buf = torch.empty(numel, dtype=dtype, device=device)
+                        src_global = dist.get_global_rank(pg, src)
+                        dist.broadcast(recv_buf, src=src_global, group=pg)
+                        # Unpack into our model params
+                        off = 0
+                        for (mp, start, length) in bucket:
+                            dst = mp.data.view(-1).narrow(0, start, length)
+                            dst.copy_(recv_buf.narrow(0, off, length))
+                            off += length
+                        del recv_buf
+
+    # def _copy_main_params_to_model_params(self):
+    #     # Only needed for the float16 params.
+    #     model_data, main_data = self._get_model_and_main_params_data_float16()
+    #     _multi_tensor_cp(
+    #         src=main_data, dst=model_data,
+    #     )
 
     def _dealloc_main_grad(self):
-        for model_group, main_group in zip(self.float16_groups, self.fp32_from_float16_groups):
-            for model_param, main_param in zip(model_group, main_group):
-                assert model_param.main_param is main_param, 'main param pointer mismatch'
-                if hasattr(main_param, 'grad'):
-                    main_param.grad = None
+        for main_param_group in self.param_groups:
+            for main_param in main_param_group["params"]:
+                main_param.grad = None
 
-        for model_group, main_group in zip(self.float16_groups, self.fp32_from_float16_groups):
-            for model_param, main_param in zip(model_group, main_group):
-                assert model_param.main_param is main_param, 'main param pointer mismatch'
+        for tag in self._flat_main_grad_buf:
+            self._flat_main_grad_buf[tag] = None
 
+    # def _copy_model_params_to_main_params(self, state_dict=None):
+    #     assert state_dict is None, "Initialize main params from state dict is not supported"
+    #     # Only needed for the float16 params.
+    #     model_data, main_data = self._get_model_and_main_params_data_float16()
+    #     _multi_tensor_cp(
+    #         src=model_data, dst=main_data,
+    #     )
 
-    def _copy_model_params_to_main_params(self, state_dict=None):
-        assert state_dict is None, "Initialize main params from state dict is not supported"
-        # Only needed for the float16 params.
-        model_data, main_data = self._get_model_and_main_params_data_float16()
-        _multi_tensor_cp(
-            src=model_data, dst=main_data,
-        )
-
-    def _get_model_and_main_params_data_float16(self):
-        model_data = []
-        main_data = []
-        for model_group, main_group in zip(self.float16_groups, self.fp32_from_float16_groups):
-            for model_param, main_param in zip(model_group, main_group):
-                model_data.append(model_param.data)
-                main_data.append(main_param.data)
-        return model_data, main_data
+    # def _get_model_and_main_params_data_float16(self):
+    #     model_data = []
+    #     main_data = []
+    #     for model_group, main_group in zip(self.float16_groups, self.fp32_from_float16_groups):
+    #         for model_param, main_param in zip(model_group, main_group):
+    #             model_data.append(model_param.data)
+    #             main_data.append(main_param.data)
+    #     return model_data, main_data
     
-    def _copy_model_grads_to_main_grads(self):
-        # This only needs to be done for the float16 group.
-        for model_group, main_group in zip(self.float16_groups, self.fp32_from_float16_groups):
-            for model_param, main_param in zip(model_group, main_group):
-                assert model_param.main_param is main_param, 'main param pointer mismatch'
-                if hasattr(model_param, 'main_grad'):
-                    assert False, "Use main_param.grad, not model_param.main_grad"
-                    main_param.grad = model_param.main_grad.float()
-                else:
-                    if model_param.grad is not None:
-                        main_param.grad = model_param.grad.float()
+    # def _copy_model_grads_to_main_grads(self):
+    #     # This only needs to be done for the float16 group.
+    #     for model_group, main_group in zip(self.float16_groups, self.fp32_from_float16_groups):
+    #         for model_param, main_param in zip(model_group, main_group):
+    #             assert model_param.main_param is main_param, 'main param pointer mismatch'
+    #             if hasattr(model_param, 'main_grad'):
+    #                 assert False, "Use main_param.grad, not model_param.main_grad"
+    #                 main_param.grad = model_param.main_grad.float()
+    #             else:
+    #                 if model_param.grad is not None:
+    #                     main_param.grad = model_param.grad.float()
 
-                # Safe to deallocate model's grad/main_grad after copying.
-                # (If using contiguous buffers, main_grad's memory should
-                # persist and therefore should not be deallocated.)
-                # model_param.grad = None
+    #             # Safe to deallocate model's grad/main_grad after copying.
+    #             # (If using contiguous buffers, main_grad's memory should
+    #             # persist and therefore should not be deallocated.)
+    #             # model_param.grad = None
 
-        # For fp32 grads, we need to reset the grads to main grad.
-        for model_group in self.fp32_from_fp32_groups:
-            for model_param in model_group:
-                model_param.grad = model_param.main_grad
+    #     # For fp32 grads, we need to reset the grads to main grad.
+    #     for model_group in self.fp32_from_fp32_groups:
+    #         for model_param in model_group:
+    #             model_param.grad = model_param.main_grad
 
     @torch._dynamo.disable()
     def get_step_factor(self) -> torch.Tensor:
@@ -499,9 +1081,10 @@ class MoEFusedV2Optimizer(Optimizer):
 
                 state = self.state[p]
                 if len(state) == 0:
-                    state["step"] = torch.zeros((), dtype=torch.float32, device=p.device)
-                    state["exp_avg"] = torch.zeros_like(p, dtype=self.dtype)
-                    state["exp_avg_sq"] = torch.zeros_like(p, dtype=self.dtype)
+                    raise RuntimeError("Optimizer state not initialized")
+                    # state["step"] = torch.zeros((), dtype=torch.float32, device=p.device)
+                    # state["exp_avg"] = torch.zeros_like(p, dtype=self.dtype)
+                    # state["exp_avg_sq"] = torch.zeros_like(p, dtype=self.dtype)
 
                 params_with_grad.append(p)
                 grads.append(p.grad)
@@ -530,17 +1113,123 @@ class MoEFusedV2Optimizer(Optimizer):
             # exp_avg_sqs_size = sum([eas.numel() * eas.element_size() for eas in exp_avg_sqs])/1024**3
 
     def zero_grad(self, set_to_none=True):
-        """We only need to zero the model related parameters, i.e.,
-        float16_groups & fp32_from_fp32_groups. We additionally zero
-        fp32_from_float16_groups as a memory optimization to reduce
-        fragmentation; in the case of set_to_none==True, the space
-        used by this field can be safely deallocated at this point."""
-        for group in self.float16_groups:
-            _zero_grad_group_helper(group, set_to_none)
-        for group in self.fp32_from_float16_groups:
-            _zero_grad_group_helper(group, set_to_none)
-        for group in self.fp32_from_fp32_groups:
-            _zero_grad_group_helper(group, set_to_none)
+        for group in self.param_groups:
+            for p in group["params"]:
+                if p.grad is not None:
+                    if set_to_none:
+                        p.grad = None
+                    else:
+                        p.grad.detach_()
+                        p.grad.zero_()
+
+    def _check_model_param_main_param_the_same(self):
+        for ov in self._owned_views:
+            param_start_offset = ov.param_start
+            param_end_offset = param_start_offset + ov.length
+            model_param = ov.model_param.data.view(-1)[param_start_offset:param_end_offset] # bf16
+            main_param_bf16 = ov.main_param_view.bfloat16() # fp32 -> bf16
+            if not torch.allclose(model_param, main_param_bf16, atol=1e-5):
+                raise ValueError(f"Model param {ov.model_param} and main param {ov.main_param_view} are not close")
+
+    def state_dict(self) -> dict:
+        # ori_sd = super().state_dict()  # validate unsharded state
+        sd = {"meta": {}}
+        for tag in ("dp", "ep_dp"):
+            pg, order = self._pg_and_order_for_tag(tag)
+            if pg is None or not order:
+                continue
+            N = self._global_numel(tag)
+            exp_avg     = getattr(self, f"_flat_exp_avg_{tag}")
+            exp_avg_sq  = getattr(self, f"_flat_exp_avg_sq_{tag}")
+            main_param  = getattr(self, f"_flat_main_{tag}")
+            # Wrap local shards as DTensors with the *global* size
+            sd[tag] = {
+                "exp_avg":    self._as_dtensor(exp_avg, tag, N),
+                "exp_avg_sq": self._as_dtensor(exp_avg_sq, tag, N),
+                "main_param": self._as_dtensor(main_param, tag, N)
+            }
+            # sd["meta"][f"order_{tag}_names"] = [n for n, _ in self._iter_named_params_for_tag(tag)]
+        # Single global step (identical across ranks)
+        tmp_state = list(self.state.values())[0]
+        sd["step"] = tmp_state['step'].clone()
+        return sd             
+    
+        
+    def load_state_dict(self, state_dict: Dict[str, Any], strict: bool = True) -> None:
+        """
+        Load optimizer state saved by our custom `state_dict()`.
+
+        Supported formats:
+        1) **Custom flat format** (recommended):
+           {
+             "dp":    {"exp_avg": DTensor/Tensor, "exp_avg_sq": DTensor/Tensor},
+             "ep_dp": {"exp_avg": DTensor/Tensor, "exp_avg_sq": DTensor/Tensor},
+             "step":  scalar tensor or int
+             "meta":  {... optional auxiliary info ...}
+           }
+           - If values are DTensors with Shard(0) on the correct mesh, we take `.to_local()`
+             and copy directly into our live flat buffers.
+           - If values are regular Tensors with *global* length, we slice out this rank's
+             owned segments and copy into the live flat buffers.
+
+        2) **PyTorch-style** dict with "state"/"param_groups":
+           Delegated to `super().load_state_dict(...)`.
+
+        Main fp32 weights are *not* saved/loaded; they are rebuilt from the model each run.
+        """
+
+
+        # Otherwise expect our custom per-tag flat representation.
+        for tag in ("dp", "ep_dp"):
+            if tag not in state_dict:
+                # Not present: skip gracefully unless strict and this tag is active.
+                flat_exp_avg = getattr(self, f"_flat_exp_avg_{tag}", None)
+                flat_exp_avg_sq = getattr(self, f"_flat_exp_avg_sq_{tag}", None)
+                if strict and (flat_exp_avg is not None or flat_exp_avg_sq is not None):
+                    raise KeyError(f"Missing '{tag}' in optimizer state_dict")
+                continue
+
+            entry = state_dict[tag]
+
+            exp_avg_src = entry["exp_avg"].to_local().squeeze(0)
+            exp_avg_sq_src = entry["exp_avg_sq"].to_local().squeeze(0)
+            main_param = entry["main_param"].to_local().squeeze(0)
+            # Destination live flat buffers (must exist if tag is active)
+            flat_exp_avg: Optional[torch.Tensor] = getattr(self, f"_flat_exp_avg_{tag}", None)
+            flat_exp_avg_sq: Optional[torch.Tensor] = getattr(self, f"_flat_exp_avg_sq_{tag}", None)
+            flat_main_param: Optional[torch.Tensor] = getattr(self, f"_flat_main_{tag}", None)
+            
+            # flat_exp_avg.copy_(exp_avg_src)
+            # flat_exp_avg_sq.copy_(exp_avg_sq_src)
+            # flat_main_param.copy_(main_param)
+            assert torch.equal(flat_exp_avg, exp_avg_src)
+            assert torch.equal(flat_exp_avg_sq, exp_avg_sq_src)
+            assert torch.equal(flat_main_param, main_param)
+
+        loaded_step = state_dict.get("step", None)
+        for state in self.state.values():
+            state["step"].fill_(loaded_step)
+
+        self._check_model_param_main_param_the_same()
+        
+        return None
+
+    def _as_dtensor(self, local: torch.Tensor, tag: str, global_numel: int) -> DTensor:
+        if tag == 'dp':
+            # optimizer is sharded over dp ranks
+            return DTensor.from_local(local, self.dp_mesh, placements=[Shard(0)], )
+        elif tag == 'ep_dp':
+            # optimizer is sharded over ep_dp ranks, which is previously already sharded over ep_mp ranks
+            #(N, ) -> (1, N)
+            local = local.unsqueeze(0)
+            return DTensor.from_local(local, self.moe_mesh['ep_dp','ep_mp'], placements=[Shard(1), Shard(0)], ) # mp shards first dimension (0)
+        else:
+            raise ValueError(f"Unknown tag: {tag}")
+
+    def _global_numel(self, tag: str) -> int:
+        _, order = self._pg_and_order_for_tag(tag)
+        return sum(int(p.numel()) for p in order)
+
 
 def _multi_tensor_cp(src: List[torch.Tensor], dst: List[torch.Tensor]):
     """
@@ -548,25 +1237,3 @@ def _multi_tensor_cp(src: List[torch.Tensor], dst: List[torch.Tensor]):
     """
     for s, d in zip(src, dst):
         d.copy_(s)
-
-
-def _zero_grad_group_helper(
-    group: List[torch.nn.Parameter], set_to_none: bool, use_decoupled_grad: bool = False
-):
-    """
-    Zero out the gradient for a group of parameters.
-    Note: copied from torch.optim.optimizer.
-    """
-    for param in group:
-        grad_attr = "decoupled_grad" if use_decoupled_grad else "grad"
-        if hasattr(param, grad_attr) and getattr(param, grad_attr) is not None:
-            if set_to_none:
-                setattr(param, grad_attr, None)
-            else:
-                grad_obj = getattr(param, grad_attr)
-                if grad_obj.grad_fn is not None:
-                    grad_obj.detach_()
-                else:
-                    grad_obj.requires_grad_(False)
-                grad_obj.zero_()
-

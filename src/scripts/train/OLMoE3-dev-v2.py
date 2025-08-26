@@ -65,20 +65,21 @@ MAX_DURATION = int(1000e9)  # int(6e12), don't forget to adjust the LR when you 
 EVAL_INTERVAL = 1000
 LR= 5e-3
 
-NUM_EXPERTS = 64
+NUM_EXPERTS = 16
 TOP_K = 4
 D_MODEL=2048
 MOE_HIDDEN_SIZE = 2048
 NUM_SHARED_EXPERTS = 2  # Number of shared experts in the shared MLP
 SHARED_MLP_HIDDEN_SIZE = 2048  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
-MICRO_BSZ = 2
+MICRO_BSZ = 4
 NUM_LAYERS= 6
 # DP_DIM=2
-EP_DIM=8
+EP_DIM=2
 PP_DIM=1
 SPLIT_POINTS = None
-            
+USE_COMPILE=True
+     
 TAG=f'dev'
 from olmo_core.nn.lm_head import LMHeadConfig, LMHeadType
 from olmo_core.nn.rope import RoPEConfig, RoPEScalingConfig, RoPEType
@@ -216,9 +217,10 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
             #TODO: weight decay for norm?
             # fused=True,
             compile=False,
+            dtype=DType.float32,
             # foreach=True
         ),
-        compile_model=True,
+        compile_model=USE_COMPILE,
         
         # FSDP
         dp_config=TransformerDataParallelConfig(
@@ -273,9 +275,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "checkpointer",
             CheckpointerCallback(
                 save_interval=1000,
-                ephemeral_save_interval=100,
-                save_async=True,
-                pre_train_checkpoint=False,
+                ephemeral_save_interval=200,
+                save_async=False,
+                pre_train_checkpoint=True,
             ),
         )
         .with_callback(
@@ -285,7 +287,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 entity="ai2-llm",
                 project="tianhua-moe",
                 # project="olmo3",
-                enabled=False,
+                enabled=True,
                 cancel_check_interval=cancel_check_interval,
             ),
         )
@@ -305,8 +307,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "profiler", 
             NvidiaProfilerCallback(enabled=True, # NOTE: change this
                                    profile_ranks=[0, 8, 16, 24],
-                                   start=20,
-                                   end=23
+                                   start=30,
+                                   end=33
             )
         )
         # TODO: might not be able to run in-loop evals depending on parallel strategies
@@ -324,6 +326,7 @@ def finalize_config(config: ExperimentConfig):
     # add active & total params to the wandb name
     total_params_in_B = config.model.num_params/1000/1000/1000
     active_params_in_B = config.model.num_active_params/1000/1000/1000
+    log.info(f"Total params: {total_params_in_B:.2f}B, Active params: {active_params_in_B:.2f}B")
 
     wandb_cb = cast(WandBCallback, config.trainer.callbacks['wandb'])
     assert isinstance(wandb_cb.name, str), "WandB callback name must be initialized"

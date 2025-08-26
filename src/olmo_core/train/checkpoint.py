@@ -201,6 +201,8 @@ class Checkpointer:
             metadata = get_checkpoint_metadata(train_module_dir)
 
         state_dict = train_module.state_dict_to_load(metadata)
+        import copy
+        old_sd = copy.deepcopy(state_dict)
         load_state_dict(
             train_module_dir,
             state_dict,
