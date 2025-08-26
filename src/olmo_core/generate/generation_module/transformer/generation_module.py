@@ -46,7 +46,7 @@ from ..generation_module import GenerationModule
 
 log = logging.getLogger(__name__)
 
-BYTE_EXPANSION_FACTOR = int(os.environ.get("BYTE_EXPANSION_FACTOR", "6"))
+BYTE_EXPANSION_FACTOR = int(os.environ.get("BYTE_EXPANSION_FACTOR", "4"))
 
 class TransformerGenerationModule(GenerationModule):
     """Module for autoregressive text generation with transformer models."""
@@ -951,6 +951,10 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                         print(self.tokenizer.decode(tokens_to_print), end="", flush=True)
 
         if stream:
+            RED = "\033[0;31m"
+            GREEN = "\033[0;32m"
+            RESET = "\033[0;0m"
+            print(RED + self.tokenizer.decode(generated[0][-1:].tolist()) + RESET, end="", flush=True)
             print()
 
         # Track peak memory for decoding phase
@@ -983,9 +987,9 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         if completions_only:
             generated = generated[:, prompt_len:]
             if logits is not None:
-                logits = logits[:, prompt_len:, :]
+                logits = logits[:, -generated.shape[1]:, :]
             if logprobs is not None:
-                logprobs = logprobs[:, prompt_len:]
+                logprobs = logprobs[:, -generated.shape[1]:]
 
         total_time = time.perf_counter() - start_time
         if log_timing:

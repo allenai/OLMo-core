@@ -125,6 +125,7 @@ def generate_text(
         completions_only=True,
         log_timing=True,
         stream=stream,
+        until=["<|endoftext|>"]
     )
 
     # Decode the generated tokens
@@ -230,7 +231,7 @@ def main():
         run_interactive_mode(generation_module, tokenizer, device)
     else:
         # Single generation example
-        test_prompt = "The quick brown fox"
+        test_prompt = "<|endoftext|><|user|>\nHello, who are you?\n<|assistant|>"
         responses = generate_text(
             generation_module, test_prompt, tokenizer, device, args.batch_size
         )

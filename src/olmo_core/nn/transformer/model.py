@@ -2455,7 +2455,7 @@ class BLTDistillTransformer(BLTTransformer):
         else:
             h_patch_global = h_patch[:, 1:]  # skip the first token, which is <bos>
 
-        h_patch_global = h_patch_global.to(self.dtype)
+        h_patch_global = h_patch_global.to(torch.bfloat16)
 
         for block in self.blocks.values():
             # Mark sizes as dynamic for torch.compile().
@@ -2463,7 +2463,7 @@ class BLTDistillTransformer(BLTTransformer):
                 mark_dynamic(h_patch_global, (0, 1), strict=False)
             h_patch_global = block(h_patch_global, **block_kwargs)
 
-        h_patch_after_global = h_patch_global
+        h_patch_after_global = h_patch_global.to(self.dtype)
 
         if self.prepend_embedding is not None:
             h_patch_after_global = h_patch_after_global[:, 1:]
