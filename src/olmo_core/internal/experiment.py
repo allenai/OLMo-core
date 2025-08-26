@@ -257,9 +257,8 @@ def _set_beaker_execution_units(config: ExperimentConfig):
         if dp_config.num_replicas is not None:
             num_model_replicas = dp_config.num_replicas
         elif dp_config.shard_degree is not None:
-            num_model_replicas = (
-                config.launch.num_nodes * config.launch.num_gpus // dp_config.shard_degree
-            )
+            nodes_per_replica = max(1, dp_config.shard_degree // config.launch.num_gpus)
+            num_model_replicas = config.launch.num_nodes // nodes_per_replica
         else:
             return
 
