@@ -132,6 +132,18 @@ class DTPBoundaryPredictor(nn.Module):
                 nn.Linear(d_model * expansion_factor, 1, device=init_device),
             )
 
+    def free_kv_cache(self):
+        pass
+
+    def reset_kv_cache(
+        self,
+        use_cache: bool,
+        batch_size: Optional[int] = None,
+        max_seq_len: Optional[int] = None,
+        dtype: Optional[torch.dtype] = torch.float32,
+    ):
+        pass
+
     def forward(
         self,
         x: torch.Tensor,
@@ -171,6 +183,66 @@ class HNetBoundaryPredictor(nn.Module):
         self.q_proj_layer = nn.Linear(d_model, d_model, bias=False, device=init_device)
         self.k_proj_layer = nn.Linear(d_model, d_model, bias=False, device=init_device)
 
+    def allocate_kv_cache(
+        self, batch_size: int, max_seq_len: int, dtype: torch.dtype
+    ) -> torch.Tensor:
+        # TODO(benjaminm): propagate dtype
+        return torch.zeros((batch_size, self.d_model), device=next(self.parameters()).device, dtype=dtype)
+
+    def free_kv_cache(self):
+        if hasattr(self, "last_value") and self.last_value is not None:
+            del self.last_value
+        gc.collect()
+        torch.cuda.empty_cache()
+
+    def reset_kv_cache(
+        self,
+        use_cache: bool,
+        batch_size: Optional[int] = None,
+        max_seq_len: Optional[int] = None,
+        dtype: Optional[torch.dtype] = torch.float32,
+    ) -> None:
+        # Fast path when KV caching is disabled.
+        if not use_cache:
+            self.last_value = None
+            return
+
+        if batch_size is None:
+            raise ValueError("batch_size must be provided if use_cache is True")
+        if max_seq_len is None:
+            raise ValueError("max_seq_len must be provided if use_cache is True")
+        if dtype is None:
+            raise ValueError("dtype must be provided if use_cache is True")
+
+        # Attempt to reuse an existing cache that satisfies the requested size and dtype requirements.
+        if (
+            hasattr(self, "last_value")
+            and self.last_value is not None
+            and self.last_value.shape[0] == batch_size
+            and self.last_value.dtype == dtype
+        ):
+            # The kv cache is reusable, so we just reset it.
+            self.last_value.zero_()
+            return
+
+        if (
+            hasattr(self, "last_value")
+            and self.last_value is not None
+        ):
+            # cache exists, why did reuse fail?
+            reasons = []
+            if self.last_value.shape[0] != batch_size:
+                reasons.append(f"batch_size mismatch: {self.last_value.shape[0]} != {batch_size}")
+            if self.last_value.dtype != dtype:
+                reasons.append(f"dtype mismatch: {self.ssm_state.dtype} != {dtype}")
+            if reasons:
+                log.info(f"KV cache reuse failed: {', '.join(reasons)}")
+
+        self.free_kv_cache()  # free the old cache to avoid OOMs
+        self.last_value = self.allocate_kv_cache(
+            batch_size, max_seq_len, dtype
+        )
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -180,26 +252,44 @@ class HNetBoundaryPredictor(nn.Module):
         epsilon: float = 1e-3,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         if hidden_states.shape[1] == 1:
-            raise NotImplementedError("Generation is not implemented for HNetBoundaryPredictor.")
+            assert self.last_value is not None
 
-        cos_sim = torch.einsum(
-            "b l d, b l d -> b l",
-            F.normalize(self.q_proj_layer(hidden_states[:, :-1]), dim=-1),
-            F.normalize(self.k_proj_layer(hidden_states[:, 1:]), dim=-1),
-        )
-        boundary_logprobs = torch.log1p(-cos_sim.float().clip(max=1.0 - epsilon)) - math.log(2)
-        PAD_LOGPROB = 0.0
-        boundary_logprobs = F.pad(boundary_logprobs, (1, 0), "constant", PAD_LOGPROB)
+            hidden_states = hidden_states.squeeze(1)
+            cos_sim = torch.einsum(
+                "b d, b d -> b",
+                F.normalize(self.q_proj_layer(self.last_value), dim=-1),
+                F.normalize(self.k_proj_layer(hidden_states), dim=-1),
+            )
+            boundary_logprob = torch.log1p(-cos_sim.float().clip(max=1.0 - epsilon)) - math.log(2)
+            self.last_value.copy_(hidden_states)
 
-        boundary_logprobs_for_loss, boundary_logprobs = _teacher_force_interpolate(
-            boundary_logprobs,
-            patch_lens,
-            teacher_force_interpolation_ratio
-        )
+            boundary_logprob = boundary_logprob.unsqueeze(1)
 
-        boundary_mask = _compute_boundary_mask(boundary_logprobs, boundary_threshold)
+            boundary_mask = _compute_boundary_mask(boundary_logprob, boundary_threshold)
+            return boundary_logprob, boundary_logprob, boundary_mask
+        else:
+            cos_sim = torch.einsum(
+                "b l d, b l d -> b l",
+                F.normalize(self.q_proj_layer(hidden_states[:, :-1]), dim=-1),
+                F.normalize(self.k_proj_layer(hidden_states[:, 1:]), dim=-1),
+            )
 
-        return boundary_logprobs_for_loss, boundary_logprobs, boundary_mask
+            if hasattr(self, "last_value") and self.last_value is not None:
+                self.last_value.copy_(hidden_states[:, -1])
+
+            boundary_logprobs = torch.log1p(-cos_sim.float().clip(max=1.0 - epsilon)) - math.log(2)
+            PAD_LOGPROB = 0.0
+            boundary_logprobs = F.pad(boundary_logprobs, (1, 0), "constant", PAD_LOGPROB)
+
+            boundary_logprobs_for_loss, boundary_logprobs = _teacher_force_interpolate(
+                boundary_logprobs,
+                patch_lens,
+                teacher_force_interpolation_ratio
+            )
+
+            boundary_mask = _compute_boundary_mask(boundary_logprobs, boundary_threshold)
+
+            return boundary_logprobs_for_loss, boundary_logprobs, boundary_mask
 
 
 class CrossAttention(nn.Module):
@@ -372,6 +462,23 @@ class LocalEncoder(nn.Module):
             )
         else:
             self.out_projection = None
+
+    def free_kv_cache(self):
+        return self.boundary_predictor_module.free_kv_cache() if self.boundary_predictor_module is not None else None
+
+    def reset_kv_cache(
+        self,
+        use_cache: bool,
+        batch_size: Optional[int] = None,
+        max_seq_len: Optional[int] = None,
+        dtype: Optional[torch.dtype] = torch.float32,
+    ) -> None:
+        return self.boundary_predictor_module.reset_kv_cache(
+            use_cache=use_cache,
+            batch_size=batch_size,
+            max_seq_len=max_seq_len,
+            dtype=dtype,
+        ) if self.boundary_predictor_module is not None else None
 
     def apply_fsdp(
         self,
@@ -551,12 +658,15 @@ class LocalEncoder(nn.Module):
         if teacher_force_boundaries:
             index = (torch.cumsum(patch_lens, dim=1) - 1).unsqueeze(-1).expand(-1, -1, h.shape[-1])
         else:
+            assert boundary_mask is not None
+
             L = pool_out.shape[1]
             token_idx = (
                 torch.arange(L, device=pool_out.device)[None, :] + (~boundary_mask).long() * L  # type: ignore
             )
             seq_sorted_indices = torch.argsort(token_idx, dim=1)
-            index = seq_sorted_indices[:, :patch_lens.shape[1], None].expand(
+            # :boundary_mask[0].sum(-1) GENERATE DEBUG ONLY!!!
+            index = seq_sorted_indices[:, :boundary_mask[0].sum(-1), None].expand(
                 -1, -1, pool_out.shape[-1]
             )
 
