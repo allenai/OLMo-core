@@ -405,7 +405,7 @@ def memmap_to_write(
     file until the context exists successfully.
     """
     path.parent.mkdir(exist_ok=True, parents=True)
-    tmp_path = path.with_suffix(f".{random.randint(0,2**32)}.npy.tmp")
+    tmp_path = path.with_suffix(f".{random.randint(0, 2**32)}.npy.tmp")
     mmap = np.memmap(tmp_path, dtype=dtype, mode="w+", shape=shape)
     try:
         yield mmap
@@ -895,3 +895,36 @@ def pack_documents_into_instances(
     # Pack documents into instances.
     instance_packer = InstancePacker(max_sequence_length)
     return instance_packer.pack_documents(document_indices)
+
+
+def attention_mask_to_cache_leftpad(
+    attention_mask: torch.Tensor,
+) -> torch.Tensor:
+    """Convert a left-padding attention mask into a cache leftpad for Flash-Attention.
+
+    The mask is expected to be a boolean or 0/1 tensor of shape ``(batch, seq_len)`` where
+    ``True``/1 indicates a *valid* token and the padding is on the **left** side of the
+    sequence (i.e. all padding tokens come *before* all valid tokens).
+
+    Returns:
+        cache_leftpad: (batch_size,), dtype torch.int32. The index that the KV cache starts.
+    """
+    if attention_mask.ndim != 2:
+        raise ValueError(
+            f"expected 2-D attention_mask (batch, seq_len), got shape {attention_mask.shape}"
+        )
+    if attention_mask.dtype != torch.bool:
+        attention_mask = attention_mask != 0
+
+    # Verify prefix-padding property
+    # Check that once we see a valid token (True), we don't see any padding tokens (False) after it
+    prefix_ok = (attention_mask.cummax(dim=1).values & ~attention_mask).any().item() is False
+    if not prefix_ok:
+        raise ValueError(
+            "attention_mask must represent *prefix padding* (all padding tokens precede valid tokens) "
+            "for conversion to flash attention cache leftpad."
+        )
+
+    # Find the first True value in each row (where valid tokens start)
+    cache_leftpad = attention_mask.int().argmax(dim=-1).int()  # (B,)
+    return cache_leftpad

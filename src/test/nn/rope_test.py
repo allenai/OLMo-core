@@ -67,14 +67,18 @@ def test_rope_with_past_key_values(device, head_first):
 @requires_gpu
 @requires_flash_attn
 @pytest.mark.parametrize(
-    "dtype", [pytest.param(torch.bfloat16, id="bf16"), pytest.param(torch.float32, id="fp32")]
+    "dtype",
+    [pytest.param(torch.bfloat16, id="bf16"), pytest.param(torch.float32, id="fp32")],
 )
 def test_fused_rope(dtype):
     B, T, d_model, n_heads = 2, 12, 32, 4
     fused_rope = FusedRotaryEmbedding(head_size=d_model // n_heads)
     rope = RotaryEmbedding(head_size=d_model // n_heads)
 
-    with torch.no_grad(), torch.autocast("cuda", dtype=dtype, enabled=dtype != torch.float32):
+    with (
+        torch.no_grad(),
+        torch.autocast("cuda", dtype=dtype, enabled=dtype != torch.float32),
+    ):
         qkv = torch.rand(B, T, 3, n_heads, d_model // n_heads, device="cuda", dtype=dtype)
         q, k, _ = qkv.split(1, dim=2)
         q, k = q.squeeze(2), k.squeeze(2)
@@ -293,7 +297,8 @@ def test_rope_scaling_with_different_seq_lengths(seq_len):
         pytest.param(ABFRoPEScalingConfig(new_theta=8_000_000), id="abf"),
         pytest.param(PIRoPEScalingConfig(factor=2.0), id="pi"),
         pytest.param(
-            PIRoPEScalingConfig(factor=4.0, attention_rescale_factor=1.2), id="pi_rescale"
+            PIRoPEScalingConfig(factor=4.0, attention_rescale_factor=1.2),
+            id="pi_rescale",
         ),
         pytest.param(StepwiseRoPEScalingConfig(factor=16.0), id="perfreq"),
         pytest.param(YaRNRoPEScalingConfig(factor=8.0), id="yarn"),
@@ -327,11 +332,13 @@ def test_rope_scaling_attention_rescale_factor():
 
     # Test with custom attention rescale factor
     rope_rescaled = RotaryEmbedding(
-        head_size=head_size, scaling=PIRoPEScalingConfig(factor=2.0, attention_rescale_factor=1.5)
+        head_size=head_size,
+        scaling=PIRoPEScalingConfig(factor=2.0, attention_rescale_factor=1.5),
     )
 
     rope_normal = RotaryEmbedding(
-        head_size=head_size, scaling=PIRoPEScalingConfig(factor=2.0, attention_rescale_factor=1.0)
+        head_size=head_size,
+        scaling=PIRoPEScalingConfig(factor=2.0, attention_rescale_factor=1.0),
     )
 
     with torch.no_grad():
@@ -347,3 +354,115 @@ def test_rope_scaling_attention_rescale_factor():
 
         torch.testing.assert_close(q2, expected_q2, rtol=1e-5, atol=1e-5)
         torch.testing.assert_close(k2, expected_k2, rtol=1e-5, atol=1e-5)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize(
+    "head_first",
+    [pytest.param(True, id="head_first"), pytest.param(False, id="seq_first")],
+)
+@pytest.mark.parametrize(
+    "rope_cls",
+    [
+        pytest.param(RotaryEmbedding, id="default"),
+        pytest.param(ComplexRotaryEmbedding, id="complex"),
+    ],
+)
+def test_rope_start_pos_zero_matches_default(device, head_first, rope_cls):
+    B, T, d_model, n_heads = 2, 12, 16, 4
+    head_size = d_model // n_heads
+    rope = rope_cls(head_size=head_size)
+
+    with torch.no_grad():
+        q = torch.rand(B, n_heads, T, head_size, device=device)
+        k = torch.rand(B, n_heads, T, head_size, device=device)
+        if not head_first:
+            q, k = q.transpose(1, 2), k.transpose(1, 2)
+
+        # Default behavior
+        q_def, k_def = rope(q.clone(), k.clone(), head_first=head_first)
+
+        # Explicit start_pos = 0 should match default
+        q_zero, k_zero = rope(q.clone(), k.clone(), head_first=head_first, start_pos=0)
+
+        torch.testing.assert_close(q_def, q_zero)
+        torch.testing.assert_close(k_def, k_zero)
+
+
+@requires_gpu
+@requires_flash_attn
+def test_fused_rope_start_pos_zero_matches_default():
+    B, T, d_model, n_heads = 2, 12, 16, 4
+    head_size = d_model // n_heads
+    rope = FusedRotaryEmbedding(head_size=head_size)
+
+    with torch.no_grad():
+        qkv = torch.rand(B, T, 3, n_heads, head_size, device="cuda")
+        qkv_default = rope(qkv.clone())
+        qkv_zero = rope(qkv.clone(), start_pos=0)
+        torch.testing.assert_close(qkv_default, qkv_zero)
+
+        qkv = torch.rand(B, T, 3, n_heads, head_size, device="cuda")
+        _ = rope(qkv.clone(), start_pos=2)  # just check it doesnt break
+
+
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize(
+    "head_first",
+    [pytest.param(True, id="head_first"), pytest.param(False, id="seq_first")],
+)
+def test_rope_tensor_start_pos(device, head_first):
+    # Test that passing an int for start_pos works and gives expected offset
+    B, T, d_model, n_heads = 2, 8, 16, 4
+    head_size = d_model // n_heads
+    rope = RotaryEmbedding(head_size=head_size)
+
+    with torch.no_grad():
+        q = torch.rand(B, n_heads, T, head_size, device=device)
+        k = torch.rand(B, n_heads, T, head_size, device=device)
+        if not head_first:
+            q = q.transpose(1, 2)
+            k = k.transpose(1, 2)
+
+        # Compute with start_pos=0 (should be default)
+        q0, k0 = rope(q.clone(), k.clone(), head_first=head_first, start_pos=0)
+        q_def, k_def = rope(q.clone(), k.clone(), head_first=head_first)
+        torch.testing.assert_close(q0, q_def)
+        torch.testing.assert_close(k0, k_def)
+
+        # Compute with start_pos > 0, should be offset in position encoding
+        start_pos = 2
+        q2, k2 = rope(q.clone(), k.clone(), head_first=head_first, start_pos=start_pos)
+
+        # To check correctness: compare to slicing the buffer
+        buffers = rope.get_buffers(T + start_pos, device)
+        pos_sin = buffers.pos_sin
+        pos_cos = buffers.pos_cos
+        assert pos_sin is not None
+        assert pos_cos is not None
+
+        if head_first:
+            q_expected = rope._apply_rotary_pos_emb(
+                pos_sin[start_pos : start_pos + T, :][None, None, :, :],
+                pos_cos[start_pos : start_pos + T, :][None, None, :, :],
+                q.float(),
+            )
+            k_expected = rope._apply_rotary_pos_emb(
+                pos_sin[start_pos : start_pos + T, :][None, None, :, :],
+                pos_cos[start_pos : start_pos + T, :][None, None, :, :],
+                k.float(),
+            )
+        else:
+            q_expected = rope._apply_rotary_pos_emb(
+                pos_sin[start_pos : start_pos + T, :][None, :, None, :],
+                pos_cos[start_pos : start_pos + T, :][None, :, None, :],
+                q.float(),
+            )
+            k_expected = rope._apply_rotary_pos_emb(
+                pos_sin[start_pos : start_pos + T, :][None, :, None, :],
+                pos_cos[start_pos : start_pos + T, :][None, :, None, :],
+                k.float(),
+            )
+
+        torch.testing.assert_close(q2, q_expected)
+        torch.testing.assert_close(k2, k_expected)
