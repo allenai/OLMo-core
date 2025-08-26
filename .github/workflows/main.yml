@@ -255,12 +255,14 @@ jobs:
             dist/*
 
       - name: Add PR comments on release
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           ./src/scripts/release/add_pr_comments_on_release.sh
 
       - name: Send Slack notifications about release
+        continue-on-error: true
         run: |
           . .venv/bin/activate
           python ./src/scripts/release/slack_notification.py '${{ secrets.SLACK_WEBHOOK_URL}}'
