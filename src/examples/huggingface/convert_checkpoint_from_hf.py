@@ -123,7 +123,10 @@ def convert_checkpoint_from_hf(
             validate = False
 
     if validate:
-        if model_config.block.attention.use_flash and model_config.block.attention.name != AttentionType.fused:
+        if (
+            model_config.block.attention.use_flash
+            and model_config.block.attention.name != AttentionType.fused
+        ):
             log.info(
                 "Flash attention can cause minor changes in outputs, switching to SDPA to stop validation from failing."
             )
@@ -344,9 +347,7 @@ def validate_conversion(
         log.info(f"hf_state keys: {hf_state.keys()}")
         log.info(f"olmo_core_state keys: {olmo_core_state.keys()}")
 
-        for hf_state_name, (_, hf_tensor) in sorted(
-            hf_state.items(), key=lambda item: item[1][0]
-        ):
+        for hf_state_name, (_, hf_tensor) in sorted(hf_state.items(), key=lambda item: item[1][0]):
             hf_key, state_type = hf_state_name.split("|")
             if hf_key in simple_module_name_mapping:
                 hf_module_name = hf_key
@@ -373,7 +374,9 @@ def validate_conversion(
                         f"Unable to chunk olmo_core state {olmo_core_state_name} into {len(olmo_core_param_names)} pieces"
                     )
                     continue
-                olmo_core_tensor = olmo_core_tensor.tensor_split(len(olmo_core_param_names), dim=0)[i_key]
+                olmo_core_tensor = olmo_core_tensor.tensor_split(len(olmo_core_param_names), dim=0)[
+                    i_key
+                ]
 
                 if hf_tensor.shape != olmo_core_tensor.shape:
                     log.info(
@@ -412,9 +415,7 @@ def load_config(config_path: PathOrStr) -> Optional[dict]:
         config_dict = json.load(f)
 
     if "model" not in config_dict:
-        log.warning(
-            f"Config file at {config_path} is not an OLMo core experiment config, ignoring"
-        )
+        log.warning(f"Config file at {config_path} is not an OLMo core experiment config, ignoring")
         return None
 
     return config_dict
