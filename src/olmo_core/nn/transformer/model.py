@@ -2070,7 +2070,8 @@ class BLTDistillTransformer(BLTTransformer):
                     raise ValueError("MSE loss not implemented for ALM-style distillation")
 
                 noised_mask = torch.zeros(input_ids.shape[0], device=self.device, dtype=torch.bool)
-                noised_mask[noised_indices] = True
+                if noised_indices is not None:
+                    noised_mask[noised_indices] = True
                 non_noised_indices = torch.where(~noised_mask)[0]
 
                 # use an ALM-style loss over non-noised examples
@@ -2205,6 +2206,8 @@ class BLTDistillTransformer(BLTTransformer):
                 loss = loss + ratio_loss * loss_weight * schedule_multiplier
             else:
                 raise ValueError(f"Unknown distillation loss '{loss_name}'")
+
+        import ipdb; ipdb.set_trace()
 
         output = LMOutputWithLoss(
             logits=logits,
