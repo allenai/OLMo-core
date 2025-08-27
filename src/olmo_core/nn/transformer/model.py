@@ -1984,7 +1984,7 @@ class BLTDistillTransformer(BLTTransformer):
         patch_mask = shifted_patch_lens != 0
 
         patch_end_indices = torch.cumsum(local_encoder_kwargs["patch_lens"], dim=1) - 1
-        patch_start_indices = torch.cumsum(local_encoder_kwargs["patch_lens"], dim=1)
+        patch_start_indices = torch.cumsum(local_encoder_kwargs["patch_lens"], dim=1)[:, :-1] # last is OOB
 
         if blt_config.boundary_mode == "patch_end":
             boundary_labels = torch.zeros_like(byte_mask, dtype=torch.float32)
