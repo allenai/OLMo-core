@@ -292,7 +292,7 @@ class SkipStepAdamWConfig(OptimConfig):
 
     @classmethod
     def mup_optimizer_type(cls) -> Optional[MuPOptimizerType]:
-        return MuPOptimizerType.adam
+        return MuPOptimizerType.adam_coupled_wd
 
     @classmethod
     def optimizer(cls) -> Type[SkipStepAdamW]:
