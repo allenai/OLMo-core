@@ -10,6 +10,10 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
 from typing import List, Optional, Set, Tuple
+import os
+from contextlib import closing
+import os, socket
+from typing import List
 
 from beaker import (
     Beaker,
@@ -285,12 +289,35 @@ class BeakerLaunchConfig(Config):
                 env_vars.append((name, val))
         return env_vars
 
+
+    def _free_port(self) -> int:
+        with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
+            s.bind(("", 0))
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            return s.getsockname()[1]
+    
+
     def _get_torchrun_cmd(self) -> List[str]:
         assert self.num_nodes >= 1
 
         torchrun: List[str]
         if self.num_nodes == 1:
-            torchrun = ["torchrun", f"--nproc-per-node={self.num_gpus}"]
+            # Pick distinct free ports at runtime (this process)
+            rdzv_port = self._free_port()
+            master_port = self._free_port()
+            # Ensure the training code that uses init_method='env://' has a port
+            os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
+            os.environ["MASTER_PORT"] = str(master_port)
+            # Also set the default that torch.distributed sometimes consults
+            os.environ["TORCH_DISTRIBUTED_DEFAULT_PORT"] = str(rdzv_port)
+
+            torchrun = [
+                "torchrun",
+                f"--nproc-per-node={self.num_gpus}",
+                "--standalone",
+                "--rdzv_backend=c10d",
+                f"--rdzv_endpoint=127.0.0.1:{rdzv_port}",
+            ]
         else:
             torchrun = [
                 "torchrun",
