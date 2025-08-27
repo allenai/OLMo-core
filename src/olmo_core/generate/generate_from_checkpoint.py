@@ -123,7 +123,7 @@ def generate_text(
         input_ids,
         attention_mask=attention_mask,
         completions_only=True,
-        log_timing=True,
+        log_timing=False,
         stream=stream,
         until=["<|endoftext|>"]
     )
@@ -150,12 +150,16 @@ def generate_text(
 
 
 def run_interactive_mode(
-    generation_module: TransformerGenerationModule, tokenizer, device: torch.device
+    generation_module: TransformerGenerationModule,
+    tokenizer,
+    device: torch.device,
 ):
-    """Run interactive generation mode. This is a simple chatbot that can be used to test the model. Does not support conversation history."""
+    """Run interactive generation mode."""
     print("\n=== Interactive Generation Mode ===")
     print("Enter prompts to generate text. Type 'quit' or 'exit' to stop.")
     print("Type 'help' for commands.\n")
+
+    history = ""
 
     while True:
         try:
@@ -168,13 +172,18 @@ def run_interactive_mode(
                 print("Commands:")
                 print("  quit, exit - Exit the program")
                 print("  help - Show this help message")
+                print("  reset - Reset the chat history")
                 print("  Any other text - Generate response")
+                continue
+            elif prompt.lower() == "reset":
+                history = ""
                 continue
             elif not prompt:
                 continue
 
-            response = generate_text(generation_module, prompt, tokenizer, device, batch_size=1)
-            print(f"Response: {response}\n")
+            response = generate_text(generation_module, prompt, tokenizer, device, stream=True, batch_size=1)
+            history += prompt + response[0]
+            #print(f"Response: {response}\n")
 
         except KeyboardInterrupt:
             print("\nGoodbye!")
@@ -238,3 +247,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+ 

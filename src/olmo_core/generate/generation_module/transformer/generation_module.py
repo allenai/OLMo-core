@@ -825,7 +825,7 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                 for x in generation_config.stop_token_ids
             ]
 
-        pbar = tqdm(desc="Generating tokens", disable=False)
+        pbar = tqdm(desc="Generating tokens", disable=True)
         while True:
             token_start_time = time.perf_counter()
 
@@ -940,15 +940,16 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                 GREEN = "\033[0;32m"
                 RESET = "\033[0;0m"
 
-                tokens_to_print = generated[0][:-1].tolist() if tokens_generated == 1 else generated[0][-2:-1].tolist()
+                if tokens_generated != 1:
+                    tokens_to_print = generated[0][:-1].tolist() if tokens_generated == 1 else generated[0][-2:-1].tolist()
 
-                if last_token_is_boundary and tokens_generated > 1:
-                    print(RED + self.tokenizer.decode(tokens_to_print) + RESET, end="", flush=True)
-                else:
-                    if tokens_generated > 1:
-                        print(GREEN + self.tokenizer.decode(tokens_to_print) + RESET, end="", flush=True)
+                    if last_token_is_boundary and tokens_generated > 1:
+                        print(RED + self.tokenizer.decode(tokens_to_print) + RESET, end="", flush=True)
                     else:
-                        print(self.tokenizer.decode(tokens_to_print), end="", flush=True)
+                        if tokens_generated > 1:
+                            print(GREEN + self.tokenizer.decode(tokens_to_print) + RESET, end="", flush=True)
+                        else:
+                            print(self.tokenizer.decode(tokens_to_print), end="", flush=True)
 
         if stream:
             RED = "\033[0;31m"
