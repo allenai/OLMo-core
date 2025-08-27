@@ -23,14 +23,14 @@ INITIAL_GLOBAL_BATCH_SIZE = 4 * 1024 * 1024
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
-    config = TransformerConfig.olmo2_7B( #llama3_8B(
+    config = TransformerConfig.llama3_8B(
         vocab_size=common.tokenizer.padded_vocab_size(),
     )
     config.block.attention.use_flash = True
     return config
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
-    rank_microbatch_size = SEQUENCE_LENGTH * 2
+    rank_microbatch_size = SEQUENCE_LENGTH 
     if common.launch is not None:
         gpus = {CLUSTER_TO_GPU_TYPE.get(c, "unknown") for c in common.launch.clusters}
         if all("B200" in g for g in gpus):
@@ -53,8 +53,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
-            wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
-            shard_degree=32
+            wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
         ),
         float8_config=Float8Config(
             enabled=False
