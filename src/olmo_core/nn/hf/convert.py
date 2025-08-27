@@ -265,6 +265,54 @@ OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS: Dict[str, StateMappingTemplate] = {
 }
 
 
+#: Map of OLMo Core keys to Hugging Face keys, that is used to determine how OLMo Core state
+#: maps to HF state. This map captures overrides of the standard mappings in
+#: :data:`OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS`, in case a given OLMo Core key can refer to
+#: different HF states depending on the HF model. You may configure this to change how OLMo Core
+#: state maps to HF state.
+MODEL_TYPE_SPECIFIC_OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS: Dict[
+    str, Dict[str, StateMappingTemplate]
+] = {
+    "flex_olmo": {
+        f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w1": StateMappingTemplate(
+            f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w1",
+            f"model.layers.{LAYER}.mlp.experts.{EXPERT}.gate_proj.weight",
+            dest_key_per_placeholder=TemplatePlaceholder.EXPERT,
+            source_concat_dim=0,
+            dims_permutation=(1, 0),
+            dest_chunk_dim=1,
+        ),
+        f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w2": StateMappingTemplate(
+            f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w2",
+            f"model.layers.{LAYER}.mlp.experts.{EXPERT}.down_proj.weight",
+            dest_key_per_placeholder=TemplatePlaceholder.EXPERT,
+            source_concat_dim=0,
+            dims_permutation=(1, 0),
+            dest_chunk_dim=1,
+        ),
+        f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w3": StateMappingTemplate(
+            f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w3",
+            f"model.layers.{LAYER}.mlp.experts.{EXPERT}.up_proj.weight",
+            dest_key_per_placeholder=TemplatePlaceholder.EXPERT,
+            source_concat_dim=0,
+            dims_permutation=(1, 0),
+            dest_chunk_dim=1,
+        ),
+        f"blocks.{LAYER}.feed_forward_moe.router.weight": StateMappingTemplate(
+            f"blocks.{LAYER}.feed_forward_moe.router.weight",
+            f"model.layers.{LAYER}.mlp.gate.weight",
+            unflatten_dim=(0, (TemplatePlaceholder.EXPERT, -1)),
+        ),
+        f"blocks.{LAYER}.feed_forward_moe.router": StateMappingTemplate(
+            f"blocks.{LAYER}.feed_forward_moe.router",
+            f"model.layers.{LAYER}.mlp.gate",
+            state_type=StateType.module,
+            unflatten_dim=(0, (TemplatePlaceholder.EXPERT, -1)),
+        ),
+    }
+}
+
+
 def _get_hf_model_to_olmo_core_one_to_one_templates(
     model_id: str | None = None,
 ) -> List[StateMappingTemplate]:
@@ -274,19 +322,25 @@ def _get_hf_model_to_olmo_core_one_to_one_templates(
     }
 
     for hf_key, olmo_core_key in HF_TO_OLMO_CORE_MODULE_MAPPINGS.items():
-        mapping_templates[hf_key] = StateMappingTemplate(hf_key, olmo_core_key, state_type=StateType.module)
+        mapping_templates[hf_key] = StateMappingTemplate(
+            hf_key, olmo_core_key, state_type=StateType.module
+        )
 
     if model_id in MODEL_SPECIFIC_HF_TO_OLMO_CORE_WEIGHT_MAPPINGS:
         model_specific_mapping_templates = {
             hf_key: StateMappingTemplate(hf_key, olmo_core_key, state_type=StateType.weight)
-            for hf_key, olmo_core_key in MODEL_SPECIFIC_HF_TO_OLMO_CORE_WEIGHT_MAPPINGS[model_id].items()
+            for hf_key, olmo_core_key in MODEL_SPECIFIC_HF_TO_OLMO_CORE_WEIGHT_MAPPINGS[
+                model_id
+            ].items()
         }
         mapping_templates.update(model_specific_mapping_templates)
 
     if model_id in MODEL_SPECIFIC_HF_TO_OLMO_CORE_MODULE_MAPPINGS:
         model_specific_mapping_templates = {
             hf_key: StateMappingTemplate(hf_key, olmo_core_key, state_type=StateType.module)
-            for hf_key, olmo_core_key in MODEL_SPECIFIC_HF_TO_OLMO_CORE_MODULE_MAPPINGS[model_id].items()
+            for hf_key, olmo_core_key in MODEL_SPECIFIC_HF_TO_OLMO_CORE_MODULE_MAPPINGS[
+                model_id
+            ].items()
         }
         mapping_templates.update(model_specific_mapping_templates)
 
@@ -336,22 +390,30 @@ def convert_state_from_hf(
     return converter.convert(hf_state, placeholder_bounds)
 
 
-def _get_converter_to_hf() -> StateConverter:
-    mapping_templates = [
-        StateMappingTemplate(olmo_core_key, hf_key, state_type=StateType.module)
+def _get_converter_to_hf(model_type: str | None = None) -> StateConverter:
+    mapping_templates = {
+        olmo_core_key: StateMappingTemplate(olmo_core_key, hf_key, state_type=StateType.module)
         for olmo_core_key, hf_key in OLMO_CORE_TO_HF_MODULE_MAPPINGS.items()
-    ]
-    mapping_templates += [
-        StateMappingTemplate(olmo_core_key, hf_key, state_type=StateType.weight)
-        for olmo_core_key, hf_key in OLMO_CORE_TO_HF_WEIGHT_MAPPINGS.items()
-    ]
-    mapping_templates += list(OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS.values())
-    return StateConverter(mapping_templates)
+    }
+    mapping_templates.update(
+        {
+            olmo_core_key: StateMappingTemplate(olmo_core_key, hf_key, state_type=StateType.weight)
+            for olmo_core_key, hf_key in OLMO_CORE_TO_HF_WEIGHT_MAPPINGS.items()
+        }
+    )
+    mapping_templates.update(OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS)
+
+    if model_type:
+        mapping_templates.update(
+            MODEL_TYPE_SPECIFIC_OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS.get(model_type, {})
+        )
+
+    return StateConverter(list(mapping_templates.values()))
 
 
 @beta_feature
-def get_converter_to_hf() -> StateConverter:
-    return _get_converter_to_hf()
+def get_converter_to_hf(model_type: str | None = None) -> StateConverter:
+    return _get_converter_to_hf(model_type)
 
 
 @beta_feature
@@ -366,7 +428,7 @@ def convert_state_to_hf(
         :class:`DTensor` or :class:`ShardedTensor`
     """
 
-    converter = _get_converter_to_hf()
+    converter = _get_converter_to_hf(getattr(config, "model_type", None))
 
     if not hasattr(config, "num_hidden_layers"):
         raise ValueError(f"Number of hidden layers missing in HF config: {config}")
