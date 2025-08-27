@@ -33,7 +33,7 @@ from ..exceptions import BeakerExperimentFailedError, OLMoConfigurationError
 from ..train.callbacks.beaker import BEAKER_RESULT_DIR
 from ..utils import LOG_FILTER_TYPE_ENV_VAR, LogFilterType
 from ..version import VERSION
-from .select_beaker_hosts import get_host_name_constraints
+from .select_beaker_hosts import get_beaker_hostname_constraints
 from .utils import GIT_BRANCH_ENV_VAR, GIT_REF_ENV_VAR, GIT_REPO_URL_ENV_VAR, GitConfig
 
 log = logging.getLogger(__name__)
@@ -242,6 +242,24 @@ class BeakerLaunchConfig(Config):
     The directory of the Beaker results dataset.
     """
 
+    use_hostname_constraints: bool = False
+    """
+    Uses hostname constraints to restrict the hostnames on which the experiment runs. This is currently
+    only supported for Augusta clusters, and can benefit performance by forcing the use of colocated nodes.
+
+    This is NOT recommended to be used with lower priority preemptible jobs, since hostname constraints are not
+    updated on preemption.
+    """
+
+    num_execution_units: Optional[int] = None
+    """
+    Number of "execution units", defaults to ``max(1, num_nodes // 32)``. An "execution unit" is abstraction
+    for any node-using entity of which 1 or more copies are run, where each unit wants its nodes to be
+    from colocated hardware (e.g., a model replica for large jobs, or a full distributed model for small jobs).
+
+    For internal experiments, this defaults to the number of data-parallel model replicas instead.
+    """
+
     # NOTE: don't assign a type here because omegaconf can't validate arbitrary classes
     #  _beaker: Optional[Beaker] = None
     _beaker = None
@@ -404,9 +422,23 @@ class BeakerLaunchConfig(Config):
 
         entrypoint_dataset = self._create_script_dataset("entrypoint.sh", entrypoint_script)
 
-        if len(self.clusters) == 1 and "augusta" in self.clusters[0]:
-            host_name_constraints = get_host_name_constraints(
-                self.num_nodes, min(32, self.num_nodes), 1
+        if (
+            self.use_hostname_constraints
+            and len(self.clusters) == 1
+            and "augusta" in self.clusters[0]
+        ):
+            if self.retries is not None and self.retries > 0:
+                raise OLMoConfigurationError(
+                    "Hostname constraints cannot be used for beaker jobs with retries, since constraints do not update on retry."
+                )
+
+            host_name_constraints = get_beaker_hostname_constraints(
+                self.num_nodes,
+                self.num_execution_units or max(1, self.num_nodes // 32),
+                1,
+                "us-central1-b",
+                beaker_cluster=self.clusters[0],
+                beaker_priority=self.priority,
             )
             assert (
                 len(host_name_constraints) == 1 and len(host_name_constraints[0]) >= self.num_nodes
