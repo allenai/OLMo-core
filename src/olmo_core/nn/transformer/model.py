@@ -1986,13 +1986,13 @@ class BLTDistillTransformer(BLTTransformer):
         patch_end_indices = torch.cumsum(local_encoder_kwargs["patch_lens"], dim=1) - 1
         patch_start_indices = torch.cumsum(local_encoder_kwargs["patch_lens"], dim=1)
 
-        if blt_config.boundary_mode == "patch_start":
+        if blt_config.boundary_mode == "patch_end":
             boundary_labels = torch.zeros_like(byte_mask, dtype=torch.float32)
             boundary_labels.scatter_(1, patch_end_indices, 1.0)
 
             if blt_config.teacher_force_interpolation_steps != 0:
                 raise NotImplementedError("teacher_force_interpolation_steps with patch_start boundaries is not implemented")
-        elif blt_config.boundary_mode == "patch_end":
+        elif blt_config.boundary_mode == "patch_start":
             boundary_labels = torch.zeros_like(byte_mask, dtype=torch.float32)
             boundary_labels.scatter_(1, patch_start_indices, 1.0)
         else:
