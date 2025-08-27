@@ -2207,8 +2207,6 @@ class BLTDistillTransformer(BLTTransformer):
             else:
                 raise ValueError(f"Unknown distillation loss '{loss_name}'")
 
-        import ipdb; ipdb.set_trace()
-
         output = LMOutputWithLoss(
             logits=logits,
             loss=loss,  # type: ignore
