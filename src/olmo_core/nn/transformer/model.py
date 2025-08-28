@@ -1765,10 +1765,12 @@ class BLTDistillTransformer(BLTTransformer):
                 input_ids_for_teacher_repeated = torch.gather(
                     input_ids_for_teacher,
                     dim=1,
-                    index=(local_encoder_kwargs["patch_ids"] - 1).clip(min=0),
+                    index=(local_encoder_kwargs["patch_ids"] - 1).clip(min=0, max=input_ids_for_teacher.shape[1] - 1),
                 )
 
                 # [:, 1:] to skip bos
+                assert seq_sorted_indices.max().item() < input_ids_for_teacher_repeated.shape[1]
+                assert seq_sorted_indices.max().item() < n_boundary_mistakes.shape[1]
                 input_ids_for_teacher_selected = torch.gather(
                     input_ids_for_teacher_repeated,
                     dim=1,
@@ -1898,20 +1900,21 @@ class BLTDistillTransformer(BLTTransformer):
             assert teacher_embeds is not None
 
             # the offset is OLMo specific: we use a <bos> token, but OLMo doesn't so shift by one.
+            # shift by another one since h_patch is patch start representation (not end)
             elementwise_local_encoder_loss = rep_compare_fn(
-                h_patch[:, 1:],
-                teacher_embeds,
+                h_patch[:, 2:],
+                teacher_embeds[:, :-1],
             )
-            local_encoder_loss = (elementwise_local_encoder_loss * patch_mask[:, 1:].float()).mean()
-            metrics["blt/local_encoder_loss"] = local_encoder_loss / patch_mask[:, 1:].float().mean()
+            local_encoder_loss = (elementwise_local_encoder_loss * patch_mask[:, 2:].float()).mean()
+            metrics["blt/local_encoder_loss"] = local_encoder_loss / patch_mask[:, 2:].float().mean()
             metrics["blt/local_encoder_cos_sim"] = (F.cosine_similarity(
-                h_patch[:, 1:].float(),
-                teacher_embeds.float(),
+                h_patch[:, 2:].float(),
+                teacher_embeds[:, :-1].float(),
                 dim=-1,
-            ) * patch_mask[:, 1:].float()).mean() / patch_mask[:, 1:].float().mean()
+            ) * patch_mask[:, 2:].float()).mean() / patch_mask[:, 2:].float().mean()
 
             # add lookahead (FuLA-style) losses
-            h_lookahead = h_patch[:, 1:]  # skip <bos> token
+            h_lookahead = h_patch[:, 2:]  # skip <bos> token
 
             for lookahead_idx in range(blt_config.encoder_loss_lookahead):
                 assert teacher_hidden_states is not None
@@ -1920,15 +1923,15 @@ class BLTDistillTransformer(BLTTransformer):
 
                 elementwise_local_encoder_loss = rep_compare_fn(
                     h_lookahead,
-                    teacher_hidden_states[lookahead_idx],
+                    teacher_hidden_states[lookahead_idx][:, :-1],
                 )
-                local_encoder_loss_lookahead = (elementwise_local_encoder_loss * patch_mask[:, 1:].float()).mean()
-                metrics[f"blt/local_encoder_loss_lookahead_{lookahead_idx}"] = local_encoder_loss_lookahead / patch_mask[:, 1:].float().mean()
+                local_encoder_loss_lookahead = (elementwise_local_encoder_loss * patch_mask[:, 2:].float()).mean()
+                metrics[f"blt/local_encoder_loss_lookahead_{lookahead_idx}"] = local_encoder_loss_lookahead / patch_mask[:, 2:].float().mean()
                 metrics[f"blt/local_encoder_cos_sim_lookahead_{lookahead_idx}"] = (F.cosine_similarity(
                     h_lookahead.float(),
-                    teacher_hidden_states[lookahead_idx].float(),
+                    teacher_hidden_states[lookahead_idx][:, :-1].float(),
                     dim=-1,
-                ) * patch_mask[:, 1:].float()).mean() / patch_mask[:, 1:].float().mean()
+                ) * patch_mask[:, 2:].float()).mean() / patch_mask[:, 2:].float().mean()
 
                 local_encoder_loss += local_encoder_loss_lookahead * blt_config.encoder_loss_lookahead_weights[lookahead_idx]
         else:
