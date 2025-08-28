@@ -1036,7 +1036,6 @@ class BLTTransformer(Transformer):
         init_seed: int = 0,
         init_std: float = 0.02,
         block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None,
-        prepend_embedding_to_global: bool = False,
     ):
         # accessed in super() so we need a placeholder
         self.num_non_embedding_params = -1
@@ -1068,11 +1067,6 @@ class BLTTransformer(Transformer):
 
         self.local_encoder = local_encoder.build(vocab_size, d_global_model=d_model)
         self.local_decoder = local_decoder.build(vocab_size, d_global_model=d_model)
-
-        if prepend_embedding_to_global:
-            self.prepend_embedding = nn.Embedding(1, self.d_model, dtype=self.dtype)
-        else:
-            self.prepend_embedding = None
 
          # TODO(benjaminm): generalize
         self.space_mask_dolma2 = blt_utils.get_dolma2_space_mask()
@@ -1212,8 +1206,6 @@ class BLTTransformer(Transformer):
         patch_lens: Optional[torch.Tensor] = None
         patch_ids: Optional[torch.Tensor] = None
         original_input_ids: Optional[torch.Tensor] = None
-        encoder_cross_attn_mask: Optional[BlockMask] = None
-        decoder_cross_attn_mask: Optional[BlockMask] = None
 
         if (patch_lens := kwargs.pop("patch_lens", None)) is not None:
             if blt_config is not None and blt_config.patching == "space":
@@ -1224,29 +1216,10 @@ class BLTTransformer(Transformer):
             patch_ids = blt_utils.lengths_to_ids(patch_lens, input_ids.shape[-1])
             original_input_ids = kwargs.pop("original_input_ids", None) # must be present if patch_lens is present
 
-            encoder_cross_attn_mask = blt_utils.cross_attn_mask(
-                patch_ids,
-                patch_lens,
-                patches_as_queries=True,
-                cross_attn_k=self.local_encoder.blt_k or 1,  # type: ignore
-                block_mask=True,
-            )
-
-            _decoder_patch_ids = blt_utils.lengths_to_ids(patch_lens[:, 1:], input_ids.shape[-1])
-            decoder_cross_attn_mask = blt_utils.cross_attn_mask(
-                _decoder_patch_ids,
-                patch_lens,
-                patches_as_queries=False,
-                cross_attn_k=self.local_decoder.blt_k or 1,  # type: ignore
-                block_mask=True,
-            )
-
         local_encoder_kwargs["patch_lens"] = patch_lens
         local_encoder_kwargs["patch_ids"] = patch_ids
-        local_encoder_kwargs["cross_attn_mask"] = encoder_cross_attn_mask
         local_decoder_kwargs["patch_lens"] = patch_lens
         local_decoder_kwargs["patch_ids"] = patch_ids
-        local_decoder_kwargs["cross_attn_mask"] = decoder_cross_attn_mask
         extra_kwargs["original_input_ids"] = move_to_device(original_input_ids, self.device)
 
         if (constituent_input_ids := kwargs.pop("constituent_input_ids", None)) is not None:
@@ -1328,21 +1301,12 @@ class BLTTransformer(Transformer):
         # TEMP DEBUG
         h_patch_global = h_patch.to(torch.bfloat16)
 
-        if self.prepend_embedding is not None:
-            h_patch_global = torch.cat([
-                self.prepend_embedding.weight.unsqueeze(0).expand(h_patch_global.shape[0], -1, -1),
-                h_patch_global,
-            ], dim=1)
-
         # Run each block.
         for block in self.blocks.values():
             # Mark sizes as dynamic for torch.compile().
             if self.compile_enabled:
                 mark_dynamic(h_patch, (0, 1), strict=False)
             h_patch_global = block(h_patch_global, **block_kwargs)
-
-        if self.prepend_embedding is not None:
-            h_patch_global = h_patch_global[:, 1:]
 
         h_patch = h_patch_global.to(h_patch.dtype)
 
@@ -1441,9 +1405,6 @@ class BLTDistillTransformer(BLTTransformer):
         :returns: The logits if ``labels`` is ``None`` or the losses if ``labels`` is not ``None``.
         """
         out_hidden_states = []
-
-        if hidden_states_to_return is not None:
-            hidden_states_to_return = [i if i >= 0 else len(self.blocks) + i for i in hidden_states_to_return]
 
         if isinstance(self.teacher, BLTTransformer):
             input_ids, labels, block_kwargs, lm_head_kwargs, local_encoder_kwargs, local_decoder_kwargs, extra_kwargs = self.teacher._prepare_inputs(
@@ -1560,6 +1521,76 @@ class BLTDistillTransformer(BLTTransformer):
     def fix_init(self, embedding_init_path: Optional[str] = None):
         self.local_encoder.fix_init(embedding_init_path, self.teacher.embeddings.weight)  # type: ignore
 
+    def _rep_compare_fn(self, blt_config: BLTConfig):
+        if blt_config.rep_compare_fn == "l2":
+            def l2_compare_fn(x, y):
+                return torch.linalg.norm(x - y, dim=-1) / math.sqrt(x.shape[-1])
+
+            rep_compare_fn = l2_compare_fn
+        elif blt_config.rep_compare_fn == "cos_dist":
+            def cos_dist_compare_fn(x, y):
+                return 1 - F.cosine_similarity(x, y, dim=-1)
+
+            rep_compare_fn = cos_dist_compare_fn
+        elif blt_config.rep_compare_fn == "l2_rmsnorm":
+            def l2_rmsnorm_compare_fn(x, y):
+                uncentered_y_std = torch.sqrt(
+                    torch.mean(torch.square(y), dim=-1, keepdim=True).clip(blt_config.epsilon)
+                )
+
+                return torch.linalg.norm((x - y) / uncentered_y_std, dim=-1) / math.sqrt(x.shape[-1])
+
+            rep_compare_fn = l2_rmsnorm_compare_fn
+        else:
+            raise ValueError(f"Unknown distillation rep_compare_fn '{blt_config.rep_compare_fn}'")
+
+        return rep_compare_fn
+
+    def _compute_hnet_embed_loss(
+        self,
+        h_byte,
+        teacher_embeds,
+        byte_mask,
+        true_patch_ids,
+        blt_config,
+        metrics={},
+    ):
+        rep_compare_fn = self._rep_compare_fn(blt_config)
+
+        teacher_embs_repeated = torch.gather(
+            teacher_embeds,
+            dim=1,
+            index=(true_patch_ids[:, 1:] - 1).clip(max=teacher_embeds.shape[1] - 1).unsqueeze(-1).expand(-1, -1, teacher_embeds.shape[-1]),
+        )
+
+        elementwise_hnet_embed_loss = rep_compare_fn(
+            h_byte[:, 1:], # skip first embedding to produce offset as in H-Net paper (match first patch byte to prev emb)
+            teacher_embs_repeated
+        )
+        hnet_embed_loss_mask = byte_mask[:, 1:]
+
+        hnet_embed_loss = (elementwise_hnet_embed_loss * hnet_embed_loss_mask.float()).mean()
+        metrics[f"blt/hnet_embed_loss"] = hnet_embed_loss / hnet_embed_loss_mask.float().mean()
+        return hnet_embed_loss
+
+    def _compute_ratio_loss(
+        self,
+        boundary_logprobs,
+        boundary_mask,
+        byte_mask,
+        blt_config,
+        metrics={},
+    ):
+        true_ratio = (boundary_mask * byte_mask).float().mean() / byte_mask.float().mean()
+        average_prob = (torch.exp(boundary_logprobs) * byte_mask).float().mean() / byte_mask.float().mean()
+
+        ratio_loss = (
+            (1 - true_ratio) * (1 - average_prob) +
+            (true_ratio) * (average_prob) * (blt_config.target_ratio - 1)
+        ) * blt_config.target_ratio / (blt_config.target_ratio - 1)
+        metrics["blt/ratio_loss"] = ratio_loss
+        return ratio_loss
+
     def _compute_alm_style_loss(
         self,
         logprobs: torch.Tensor,
@@ -1568,8 +1599,8 @@ class BLTDistillTransformer(BLTTransformer):
         teacher_main_path_logprobs: torch.Tensor,
         byte_mask: torch.Tensor,
         patch_mask: torch.Tensor,
-        patch_ids: torch.Tensor,
-        patch_start_indices: torch.Tensor,
+        true_patch_ids: torch.Tensor,
+        true_patch_lens: torch.Tensor,
         blt_config: BLTConfig,
         metrics,
     ):
@@ -1610,16 +1641,22 @@ class BLTDistillTransformer(BLTTransformer):
         main_path_patch_logprobs = torch.zeros((patch_mask.shape[0], patch_mask.shape[1]), device=main_path_logprobs.device, dtype=main_path_logprobs.dtype)
         #assert (patch_ids[:, 2:] - 1).max().item() < main_path_patch_logprobs.shape[1]
         #assert (patch_ids[:, 2:] - 1).min().item() >= 0
+        offset_true_patch_ids = true_patch_ids[:, 1:] - 1
+        patch_ids_to_select = torch.where(
+            offset_true_patch_ids >= 0,
+            offset_true_patch_ids,
+            torch.full_like(offset_true_patch_ids, fill_value=main_path_patch_logprobs.shape[1] - 1)
+        )
         main_path_patch_logprobs = main_path_patch_logprobs.scatter_reduce(
-            src=main_path_logprobs[:, :-1],
+            src=main_path_logprobs,
             dim=1,
-            index=(patch_ids[:, 2:] - 1), # 1: skip bos, 1: shift to remove start/end mismatch
+            index=patch_ids_to_select,
             reduce="sum",
             include_self=False,
         )
 
-        y_hat = main_path_patch_logprobs[:, 1:-2]
-        y_true = teacher_main_path_logprobs[:, :-1]
+        y_hat = main_path_patch_logprobs[:, :-2]
+        y_true = teacher_main_path_logprobs[:, 1:]
 
         if blt_config.do_alm_debiasing:
             space_mask_padded_blt = F.pad(
@@ -1632,28 +1669,125 @@ class BLTDistillTransformer(BLTTransformer):
                 (0, teacher_logprobs.shape[-1] - len(self.space_mask_dolma2)),
                 value=0
             )
-            patch_end_indices = patch_start_indices - 1 # `patch_start_indices` does not include bos
+            patch_end_indices = torch.cumsum(true_patch_lens, dim=1) - 1
             y_space_hat_all = torch.log(torch.einsum('ijk,k->ij', torch.exp(logprobs), space_mask_padded_blt.float()))
-            y_space_hat = torch.gather(y_space_hat_all, dim=1, index=patch_end_indices[:, 1:-2])
+            y_space_hat = torch.gather(y_space_hat_all, dim=1, index=patch_end_indices[:, 1:-1])
             y_space_true = torch.log(torch.einsum('ijk,k->ij', torch.exp(teacher_logprobs[:, 1:-1]), space_mask_padded_dolma2.float()))
 
             y_hat += y_space_hat
             y_true += y_space_true
 
-        local_decoder_loss_simple = (div_fn(y_true, y_hat) * patch_mask[:, 1:-2]).mean()
-        metrics["blt/local_decoder_teacher_mean_p_simple"] = (torch.exp(y_true) * patch_mask[:, 1:-2]).mean() / (patch_mask[:, 1:-2].float().mean() + blt_config.epsilon)
-        metrics["blt/local_decoder_loss_simple"] = local_decoder_loss_simple / (patch_mask[:, 1:-2].float().mean() + blt_config.epsilon)
-        metrics["blt/local_decoder_mae_simple"] = (torch.abs(y_true - y_hat) * patch_mask[:, 1:-2]).mean() / (patch_mask[:, 1:-2].float().mean() + blt_config.epsilon)
+        local_decoder_loss_simple = (div_fn(y_true, y_hat) * patch_mask[:, :-2]).mean()
+        metrics["blt/local_decoder_teacher_mean_p_simple"] = (torch.exp(y_true) * patch_mask[:, :-2]).mean() / (patch_mask[:, :-2].float().mean() + blt_config.epsilon)
+        metrics["blt/local_decoder_loss_simple"] = local_decoder_loss_simple / (patch_mask[:, :-2].float().mean() + blt_config.epsilon)
+        metrics["blt/local_decoder_mae_simple"] = (torch.abs(y_true - y_hat) * patch_mask[:, :-2]).mean() / (patch_mask[:, :-2].float().mean() + blt_config.epsilon)
 
         return local_decoder_loss_simple, metrics
 
-    @lru_cache(maxsize=100_000)
-    def _backend_tokenize(self, byte_str):
-        if not hasattr(self, "_tokenizer"):
-            # hardcode for now
-            self._tokenizer = ByteTokenizerConfig.blt().build()
+    def _compute_local_encoder_loss(
+        self,
+        h_patch,
+        teacher_embeds,
+        patch_mask,
+        seq_sorted_indices,
+        true_patch_ids,
+        blt_config,
+        student_hidden_states=None,
+        teacher_hidden_states=None,
+        metrics={}
+    ):
+        teacher_indices_to_select = torch.gather(
+            true_patch_ids,
+            dim=1,
+            index=seq_sorted_indices,
+        )
+        mask = patch_mask & (teacher_indices_to_select < teacher_embeds.shape[1])
+        teacher_indices_to_select = torch.where(
+            mask,
+            teacher_indices_to_select,
+            torch.zeros_like(teacher_indices_to_select),
+        ).unsqueeze(-1).expand(-1, -1, teacher_embeds.shape[-1])
+        aligned_teacher_embeds = torch.gather(
+            teacher_embeds,
+            dim=1,
+            index=teacher_indices_to_select,
+        )
 
-        return tuple(x.id for x in self._tokenizer.hf_tokenizer.backend_tokenizer.model.tokenize(byte_str))
+        rep_compare_fn = self._rep_compare_fn(blt_config)
+
+        elementwise_local_encoder_loss = rep_compare_fn(h_patch, aligned_teacher_embeds)
+        local_encoder_loss = (elementwise_local_encoder_loss * mask.float()).mean()
+        metrics["blt/local_encoder_loss"] = local_encoder_loss / (mask.float().mean() + blt_config.epsilon)
+        metrics["blt/local_encoder_cos_sim"] = (F.cosine_similarity(
+            h_patch.float(),
+            aligned_teacher_embeds.float(),
+            dim=-1,
+        ) * mask.float()).mean() / (mask.float().mean() + blt_config.epsilon)
+
+        for lookahead_idx in range(blt_config.encoder_loss_lookahead):
+            assert student_hidden_states is not None
+            assert teacher_hidden_states is not None
+            
+            current_aligned_teacher_embeds = torch.gather(
+                teacher_hidden_states[lookahead_idx],
+                dim=1,
+                index=teacher_indices_to_select,
+            )
+
+            elementwise_local_encoder_loss = rep_compare_fn(
+                student_hidden_states[lookahead_idx],
+                current_aligned_teacher_embeds,
+            )
+            local_encoder_loss_lookahead = (elementwise_local_encoder_loss * mask.float()).mean()
+            metrics[f"blt/local_encoder_loss_lookahead_{lookahead_idx}"] = local_encoder_loss_lookahead / (mask.float().mean() + blt_config.epsilon)
+            metrics[f"blt/local_encoder_cos_sim_lookahead_{lookahead_idx}"] = (F.cosine_similarity(
+                student_hidden_states[lookahead_idx].float(),
+                current_aligned_teacher_embeds.float(),
+                dim=-1,
+            ) * mask.float()).mean() / (mask.float().mean() + blt_config.epsilon)
+
+            local_encoder_loss += local_encoder_loss_lookahead * blt_config.encoder_loss_lookahead_weights[lookahead_idx]
+
+        import ipdb; ipdb.set_trace()
+
+        return local_encoder_loss
+
+    def _block_forward(
+        self,
+        h_patch: torch.Tensor,
+        blt_config: BLTConfig,
+        hidden_states_to_return: Optional[list[int]] = None,
+        **block_kwargs,
+    ) -> tuple[torch.Tensor, list[torch.Tensor]]:
+        h_patch_global = h_patch
+        skip = None
+
+        out_hidden_states = []
+
+        for block_idx, block in self.blocks.items():
+            block_idx = int(block_idx)
+
+            # Mark sizes as dynamic for torch.compile().
+            if self.compile_enabled:
+                mark_dynamic(h_patch_global, (0, 1), strict=False)
+
+            # TODO(benjaminm): possibly no_grad for non-trainable layers
+            h_patch_global = block(h_patch_global, **block_kwargs)
+
+            if blt_config.skip_connection is not None:
+                if block_idx == blt_config.skip_connection[0]:
+                    skip = h_patch_global
+
+                if block_idx == blt_config.skip_connection[1]:
+                    assert skip is not None
+                    # TODO(benjaminm): try RMSNorm of residual or non-residual to get on same scale
+                    # TODO(benjaminm): is /2 problematic?
+                    h_patch_global = (h_patch_global + skip) / 2
+
+            if int(block_idx) in (hidden_states_to_return or []):
+                out_hidden_states.append(h_patch_global.detach().clone())
+
+        return h_patch_global, out_hidden_states
 
     def forward(  # type: ignore[override]
         self,
@@ -1675,7 +1809,6 @@ class BLTDistillTransformer(BLTTransformer):
         skip_blocks = blt_config.skip_blocks
         skip_teacher_blocks = blt_config.skip_teacher_blocks
         skip_teacher = blt_config.skip_teacher
-        use_oracle_patch_reps = blt_config.use_oracle_patch_reps
 
         input_ids, labels, block_kwargs, lm_head_kwargs, local_encoder_kwargs, local_decoder_kwargs, extra_kwargs = self._prepare_inputs(
             input_ids,
@@ -1705,11 +1838,11 @@ class BLTDistillTransformer(BLTTransformer):
         patch_start_indices = torch.where(
             patch_start_indices < byte_mask.shape[1],
             patch_start_indices,
-            torch.ones_like(patch_start_indices), # effectively mask out, index 1 is always start due to bos
+            torch.zeros_like(patch_start_indices), # effectively mask out, index 0 is always start
         )
 
         boundary_labels = torch.zeros_like(byte_mask, dtype=torch.float32)
-        boundary_labels[:, 0] = 1.0  # <bos> is always a boundary
+        boundary_labels[:, 0] = 1.0  # first token is always a boundary
         boundary_labels.scatter_(1, patch_start_indices, 1.0)
 
         if blt_config.teacher_force_interpolation_steps != 0:
@@ -1772,37 +1905,14 @@ class BLTDistillTransformer(BLTTransformer):
                             dtype=extra_kwargs["original_input_ids"].dtype,
                             device=extra_kwargs["original_input_ids"].device
                         ),
-                        extra_kwargs["original_input_ids"]
+                        extra_kwargs["original_input_ids"][:, :-1]
                     ],
                     1,
                 )
-
-                input_ids_for_teacher_repeated = torch.gather(
-                    input_ids_for_teacher,
-                    dim=1,
-                    # -1: start patch must get previous patch embedding
-                    index=(local_encoder_kwargs["patch_ids"] - 1).clip(min=0, max=input_ids_for_teacher.shape[1] - 1),
-                )
-
-                # [:, 1:] to skip bos
-                #assert seq_sorted_indices.max().item() < input_ids_for_teacher_repeated.shape[1]
-                #assert seq_sorted_indices.max().item() < n_boundary_mistakes.shape[1]
-                input_ids_for_teacher_selected = torch.gather(
-                    input_ids_for_teacher_repeated,
-                    dim=1,
-                    index=seq_sorted_indices,
-                )[:, 1:]
-                n_boundary_mistakes_at_teacher_pos = torch.gather(
-                    n_boundary_mistakes,
-                    dim=1,
-                    index=seq_sorted_indices,
-                )[:, 1:]
-                teacher_loss_mask = patch_mask.clone()
-                # 1: skip bos
-                teacher_loss_mask[:, 1:-1] &= (n_boundary_mistakes_at_teacher_pos[:, :-1] == n_boundary_mistakes_at_teacher_pos[:, 1:])
+                teacher_loss_mask = shifted_patch_lens != 0
 
                 teacher_logits, (teacher_hidden_states, teacher_last_hidden_state, teacher_embeds) = self._teacher_forward(
-                    input_ids_for_teacher_selected,
+                    input_ids_for_teacher,
                     labels=None, # we will compute loss ourselves
                     return_logits=True,
                     skip_blocks=skip_blocks or skip_teacher_blocks,
@@ -1812,7 +1922,7 @@ class BLTDistillTransformer(BLTTransformer):
                 )
                 if teacher_logits is not None:
                     teacher_logprobs = F.log_softmax(teacher_logits.float() / blt_config.temperature, dim=-1) # type: ignore
-                    teacher_main_path_logprobs = torch.gather(teacher_logprobs[:, :-1], -1, input_ids_for_teacher_selected[:, 1:].unsqueeze(-1)).squeeze(-1)
+                    teacher_main_path_logprobs = torch.gather(teacher_logprobs[:, :-1], -1, input_ids_for_teacher[:, 1:].unsqueeze(-1)).squeeze(-1)
                 else:
                     teacher_logprobs = None
                     teacher_main_path_logprobs = None
@@ -1826,31 +1936,12 @@ class BLTDistillTransformer(BLTTransformer):
 
         # Run each block.
         if not skip_blocks:
-            if use_oracle_patch_reps:
-                if teacher_last_hidden_state is None:
-                    raise ValueError("`last_hidden_state` must be provided when `use_oracle_patch_reps` is True")
-                h_patch_after_global = torch.zeros_like(h_patch)
-                h_patch_after_global[:, 1:] = teacher_last_hidden_state
-            else:
-                # need to start with the first token since <bos> token is not known to the global transformer
-                # and for consistency with the use_oracle_patch_reps=True case.
-                if self.prepend_embedding is not None:
-                    h_patch_global = h_patch.clone()
-                    h_patch_global[:, 0] = self.prepend_embedding.weight.expand(h_patch.shape[0], -1)
-                else:
-                    h_patch_global = h_patch[:, 1:]
-
-                for block in self.blocks.values():
-                    # Mark sizes as dynamic for torch.compile().
-                    if self.compile_enabled:
-                        mark_dynamic(h_patch_global, (0, 1), strict=False)
-                    h_patch_global = block(h_patch_global, **block_kwargs)
-
-                if self.prepend_embedding is not None:
-                    h_patch_global = h_patch_global[:, 1:]
-
-                h_patch_after_global = torch.zeros_like(h_patch)
-                h_patch_after_global[:, 1:] = h_patch_global
+            h_patch_after_global, student_hidden_states = self._block_forward(
+                h_patch,
+                blt_config, 
+                hidden_states_to_return=list(range(blt_config.encoder_loss_lookahead)),
+                **block_kwargs,
+            )
 
             if blt_config.decoder_backprop_through_encoder:
                 h_byte_for_decoder = h_byte
@@ -1876,6 +1967,7 @@ class BLTDistillTransformer(BLTTransformer):
             logprobs = F.log_softmax(logits.float() / blt_config.temperature, dim=-1)
             main_path_logprobs = torch.gather(logprobs[:, :-1], -1, input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
         else:
+            student_hidden_states = None
             h_out = None
             logits = None
             logprobs = None
@@ -1888,66 +1980,19 @@ class BLTDistillTransformer(BLTTransformer):
         else:
             ce_loss = torch.nan
 
-        if blt_config.rep_compare_fn == "l2":
-            def l2_compare_fn(x, y):
-                return torch.linalg.norm(x - y, dim=-1) / math.sqrt(x.shape[-1])
-
-            rep_compare_fn = l2_compare_fn
-        elif blt_config.rep_compare_fn == "cos_dist":
-            def cos_dist_compare_fn(x, y):
-                return 1 - F.cosine_similarity(x, y, dim=-1)
-
-            rep_compare_fn = cos_dist_compare_fn
-        elif blt_config.rep_compare_fn == "l2_rmsnorm":
-            def l2_rmsnorm_compare_fn(x, y):
-                uncentered_y_std = torch.sqrt(
-                    torch.mean(torch.square(y), dim=-1, keepdim=True).clip(blt_config.epsilon)
-                )
-
-                return torch.linalg.norm((x - y) / uncentered_y_std, dim=-1) / math.sqrt(x.shape[-1])
-
-            rep_compare_fn = l2_rmsnorm_compare_fn
-        else:
-            raise ValueError(f"Unknown distillation rep_compare_fn '{blt_config.rep_compare_fn}'")
-
         # could also have some version of the encoder loss for BLT teacher but not implemented for now
-        if not skip_teacher and not isinstance(self.teacher, BLTTransformer):
-            assert teacher_embeds is not None
-
-            # the offset is OLMo specific: we use a <bos> token, but OLMo doesn't so shift by one.
-            elementwise_local_encoder_loss = rep_compare_fn(
-                h_patch[:, 1:],
-                teacher_embeds,
+        if not skip_teacher and not isinstance(self.teacher, BLTTransformer) and teacher_embeds is not None:
+            local_encoder_loss = self._compute_local_encoder_loss(
+                h_patch=h_patch,
+                teacher_embeds=teacher_embeds,
+                patch_mask=patch_mask,
+                seq_sorted_indices=seq_sorted_indices,
+                true_patch_ids=local_encoder_kwargs["patch_ids"],
+                blt_config=blt_config,
+                student_hidden_states=student_hidden_states,
+                teacher_hidden_states=teacher_hidden_states,
+                metrics=metrics,
             )
-            local_encoder_loss = (elementwise_local_encoder_loss * patch_mask[:, 1:].float()).mean()
-            metrics["blt/local_encoder_loss"] = local_encoder_loss / (patch_mask[:, 1:].float().mean() + blt_config.epsilon)
-            metrics["blt/local_encoder_cos_sim"] = (F.cosine_similarity(
-                h_patch[:, 1:].float(),
-                teacher_embeds.float(),
-                dim=-1,
-            ) * patch_mask[:, 1:].float()).mean() / (patch_mask[:, 1:].float().mean() + blt_config.epsilon)
-
-            # add lookahead (FuLA-style) losses
-            h_lookahead = h_patch[:, 1:]  # skip <bos> token
-
-            for lookahead_idx in range(blt_config.encoder_loss_lookahead):
-                assert teacher_hidden_states is not None
-
-                h_lookahead = self.blocks[str(lookahead_idx)](h_lookahead, **block_kwargs)
-
-                elementwise_local_encoder_loss = rep_compare_fn(
-                    h_lookahead,
-                    teacher_hidden_states[lookahead_idx],
-                )
-                local_encoder_loss_lookahead = (elementwise_local_encoder_loss * patch_mask[:, 1:].float()).mean()
-                metrics[f"blt/local_encoder_loss_lookahead_{lookahead_idx}"] = local_encoder_loss_lookahead / (patch_mask[:, 1:].float().mean() + blt_config.epsilon)
-                metrics[f"blt/local_encoder_cos_sim_lookahead_{lookahead_idx}"] = (F.cosine_similarity(
-                    h_lookahead.float(),
-                    teacher_hidden_states[lookahead_idx].float(),
-                    dim=-1,
-                ) * patch_mask[:, 1:].float()).mean() / (patch_mask[:, 1:].float().mean() + blt_config.epsilon)
-
-                local_encoder_loss += local_encoder_loss_lookahead * blt_config.encoder_loss_lookahead_weights[lookahead_idx]
         else:
             local_encoder_loss = torch.nan
 
@@ -1959,88 +2004,44 @@ class BLTDistillTransformer(BLTTransformer):
             assert teacher_embeds is not None
             assert teacher_loss_mask is not None
 
-            if isinstance(self.teacher, BLTTransformer):
-                elementwise_mse_local_decoder_loss = rep_compare_fn(
-                    h_out,
-                    teacher_last_hidden_state,
-                )
-                mse_local_decoder_loss = (elementwise_mse_local_decoder_loss * byte_mask).mean()
-
-                # we can use standard KL!
-                elementwise_kl_local_decoder_loss = F.kl_div(
-                    logprobs.float(),
-                    teacher_logprobs.float(),
-                    reduction="none",
-                    log_target=True,
-                ).sum(-1)
-                kl_local_decoder_loss = (elementwise_kl_local_decoder_loss * byte_mask).mean()
-
-                if blt_config.decoder_use_mse_loss:
-                    local_decoder_loss = mse_local_decoder_loss
-                else:
-                    local_decoder_loss = kl_local_decoder_loss
-
-                metrics["blt/mse_local_decoder_loss"] = mse_local_decoder_loss / byte_mask.float().mean()
-                metrics["blt/kl_local_decoder_loss"] = kl_local_decoder_loss / byte_mask.float().mean()
-                metrics["blt/kl_local_decoder_teacher_mean_p"] = (
-                    (torch.exp(teacher_main_path_logprobs) * byte_mask[:, 1:].float()).mean() / byte_mask[:, 1:].float().mean()
-                )
-                metrics["blt/kl_local_decoder_acc"] = (
-                    ((logprobs.argmax(-1) == teacher_logprobs.argmax(-1)) * byte_mask).float().mean()
-                ) / byte_mask.float().mean()
-            else:
-                if blt_config.decoder_use_mse_loss:
-                    raise ValueError("MSE loss not implemented for ALM-style distillation")
-
-                # use an ALM-style loss over non-noised examples
-                local_decoder_loss, metrics = self._compute_alm_style_loss(
-                    logprobs,
-                    main_path_logprobs,
-                    teacher_logprobs,
-                    teacher_main_path_logprobs,
-                    byte_mask,
-                    teacher_loss_mask,
-                    patch_ids,
-                    patch_start_indices,
-                    blt_config,
-                    metrics,
-                )
+            # use an ALM-style loss over non-noised examples
+            local_decoder_loss, metrics = self._compute_alm_style_loss(
+                logprobs,
+                main_path_logprobs,
+                teacher_logprobs,
+                teacher_main_path_logprobs,
+                byte_mask,
+                teacher_loss_mask,
+                local_encoder_kwargs["patch_ids"],
+                local_encoder_kwargs["patch_lens"],
+                blt_config,
+                metrics,
+            )
         else:
             local_decoder_loss = torch.nan
 
         # H-Net style embedding loss
         if teacher_embeds is not None and not isinstance(self.teacher, BLTTransformer):
-            teacher_embs_repeated = torch.gather(
-                teacher_embeds,
-                dim=1,
-                index=(local_encoder_kwargs["patch_ids"][:, 1:] - 1).clip(max=teacher_embeds.shape[1] - 1).unsqueeze(-1).expand(-1, -1, teacher_embeds.shape[-1]),
+            hnet_embed_loss = self._compute_hnet_embed_loss(
+                h_byte=h_byte,
+                teacher_embeds=teacher_embeds,
+                byte_mask=byte_mask,
+                true_patch_ids=local_encoder_kwargs["patch_ids"],
+                blt_config=blt_config,
+                metrics=metrics,
             )
-
-            if blt_config.hnet_embed_loss_use_offset:
-                elementwise_hnet_embed_loss = rep_compare_fn(
-                    h_byte[:, 2:], # skip bos and first embedding to produce offset as in H-Net paper (match first patch byte to prev emb)
-                    teacher_embs_repeated[:, :-1]
-                )
-                hnet_embed_loss_mask = byte_mask[:, 2:]
-            else:
-                elementwise_hnet_embed_loss = rep_compare_fn(h_byte[:, 1:], teacher_embs_repeated)
-                hnet_embed_loss_mask = byte_mask[:, 1:]
-
-            hnet_embed_loss = (elementwise_hnet_embed_loss * hnet_embed_loss_mask.float()).mean()
-            metrics[f"blt/hnet_embed_loss"] = hnet_embed_loss / hnet_embed_loss_mask.float().mean()
         else:
             hnet_embed_loss = torch.nan
 
         # H-Net ratio loss
         if boundary_logprobs is not None:
-            true_ratio = (boundary_mask * byte_mask).float().mean() / byte_mask.float().mean()
-            average_prob = (torch.exp(boundary_logprobs) * byte_mask).float().mean() / byte_mask.float().mean()
-
-            ratio_loss = (
-                (1 - true_ratio) * (1 - average_prob) +
-                (true_ratio) * (average_prob) * (blt_config.target_ratio - 1)
-            ) * blt_config.target_ratio / (blt_config.target_ratio - 1)
-            metrics["blt/ratio_loss"] = ratio_loss
+            ratio_loss = self._compute_ratio_loss(
+                boundary_logprobs,
+                boundary_mask,
+                byte_mask,
+                blt_config,
+                metrics=metrics,
+            )
         else:
             ratio_loss = torch.nan
 
@@ -2048,14 +2049,14 @@ class BLTDistillTransformer(BLTTransformer):
         # NOTE: loss_div_factor is at *byte sequence level*.
         if loss_div_factor is not None:
             loss_div_factor = loss_div_factor / (h_byte.shape[0] * h_byte.shape[1])
-        
+
         if patch_loss_div_factor is not None:
             patch_loss_div_factor = patch_loss_div_factor / (h_patch.shape[0] * h_patch.shape[1])
 
+        # TODO(benjaminm): fix if possible by accumulating div factor across batches and dividing at the end
         ce_loss = self._finalize_loss(ce_loss, loss_div_factor=loss_div_factor)
         boundary_loss = self._finalize_loss(boundary_loss, loss_div_factor=loss_div_factor)
         local_encoder_loss = self._finalize_loss(local_encoder_loss, loss_div_factor=patch_loss_div_factor)
-        # TODO: check div factor after update / take constituent_input_ids -100's into account
         local_decoder_loss = self._finalize_loss(local_decoder_loss, loss_div_factor=loss_div_factor)
         hnet_embed_loss = self._finalize_loss(hnet_embed_loss, loss_div_factor=loss_div_factor)
 
@@ -2117,7 +2118,7 @@ class BLTDistillTransformer(BLTTransformer):
         **kwargs,
     ):
         if blt_config is None:
-            raise ValueError("`blt_config` must be provided for original_trunk_forward")
+            raise ValueError("`blt_config` must be provided for student_forward")
 
         input_ids, labels, block_kwargs, lm_head_kwargs, local_encoder_kwargs, local_decoder_kwargs, extra_kwargs = self._prepare_inputs(
             input_ids,
@@ -2138,191 +2139,21 @@ class BLTDistillTransformer(BLTTransformer):
             **local_encoder_kwargs
         )
 
-        if self.prepend_embedding is not None:
-            h_patch_global = h_patch.clone()
-            h_patch_global[:, 0] = self.prepend_embedding.weight.expand(h_patch.shape[0], -1)
-        else:
-            h_patch_global = h_patch[:, 1:]  # skip the first token, which is <bos>
-
-        for block in self.blocks.values():
-            # Mark sizes as dynamic for torch.compile().
-            if self.compile_enabled:
-                mark_dynamic(h_patch_global, (0, 1), strict=False)
-            h_patch_global = block(h_patch_global, **block_kwargs)
-
-        h_patch_after_global = h_patch_global
-
-        if self.prepend_embedding is not None:
-            h_patch_after_global = h_patch_after_global[:, 1:]
-
-        h_patch = torch.zeros_like(h_patch)
-        h_patch[:, 1:] = h_patch_after_global
+        h_patch_after_global, _ = self._block_forward(h_patch, blt_config, **block_kwargs)
 
         h_out = self.local_decoder(
             embeds=h_byte,
-            patch_embeds=h_patch,
+            patch_embeds=h_patch_after_global,
             boundary_logprobs=None if blt_config.teacher_force_boundaries else boundary_logprobs,
             boundary_mask=None if blt_config.teacher_force_boundaries else boundary_mask,
             **local_decoder_kwargs,
         )
         logits = self.lm_head(h_out, **lm_head_kwargs)
 
-        if blt_config.eval_add_boundary_logp:
-            raise NotImplementedError("`eval_add_boundary_logp` is not implemented for student_forward")
-
         ce_loss, _ = cross_entropy_loss(logits.view(-1, logits.shape[-1]), labels.view(-1))  # type: ignore
 
         return LMOutputWithLoss(
             logits=logits,
-            loss=ce_loss,
-            ce_loss=ce_loss,
-            z_loss=None,
-        ), {}
-
-    def original_head_forward(
-        self,
-        input_ids: torch.Tensor,
-        *,
-        labels: Optional[torch.Tensor] = None,
-        ignore_index: int = -100,
-        loss_reduction: Literal["mean", "sum", "none"] = "mean",
-        z_loss_multiplier: Optional[float] = None,
-        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
-        return_logits: Optional[bool] = None,
-        blt_config: Optional[BLTConfig] = None,
-        **kwargs,
-    ):
-        if self.prepend_embedding is not None:
-            raise NotImplementedError("`prepend_embedding` is not implemented for original_head_forward")
-
-        if self.teacher is None or isinstance(self.teacher, BLTTransformer):
-            raise ValueError("`teacher` must be provided and be a subword-level transformer for original_trunk_forward.")
-
-        input_ids, labels, block_kwargs, lm_head_kwargs, local_encoder_kwargs, local_decoder_kwargs, extra_kwargs = self._prepare_inputs(
-            input_ids,
-            labels,
-            ignore_index=ignore_index,
-            loss_reduction=loss_reduction,
-            z_loss_multiplier=z_loss_multiplier,
-            loss_div_factor=loss_div_factor,
-            blt_config=blt_config,
-            return_logits=True,  # needed for distillation
-            **kwargs,
-        )
-
-        h_byte, h_patch, _, _ = self.local_encoder(input_ids, **local_encoder_kwargs)
-
-        teacher_logits: torch.Tensor
-        teacher_logits, (_, _, teacher_embeds) = self._teacher_forward(  # type: ignore
-            extra_kwargs["original_input_ids"],
-            # this could leak information since we take the true last embedding
-            # but not a problem for log likelihood eval since last token logits are unused
-            inputs_embeds=h_patch[:, 1:],
-            labels=None, # we will compute loss ourselves
-            return_logits=True,
-            skip_blocks=False,
-            **kwargs,
-        )
-        teacher_labels = get_labels({"input_ids": extra_kwargs["original_input_ids"]}, label_ignore_index=ignore_index)
-        ce_loss, _ = cross_entropy_loss(teacher_logits.view(-1, teacher_logits.shape[-1]), teacher_labels.view(-1))
-
-        return LMOutputWithLoss(
-            logits=teacher_logits,
-            loss=ce_loss,
-            ce_loss=ce_loss,
-            z_loss=None,
-        ), {}
-
-    def original_trunk_forward(
-        self,
-        input_ids: torch.Tensor,
-        *,
-        labels: Optional[torch.Tensor] = None,
-        ignore_index: int = -100,
-        loss_reduction: Literal["mean", "sum", "none"] = "mean",
-        z_loss_multiplier: Optional[float] = None,
-        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
-        return_logits: Optional[bool] = None,
-        blt_config: Optional[BLTConfig] = None,
-        **kwargs,
-    ):
-        if self.prepend_embedding is not None:
-            raise NotImplementedError("`prepend_embedding` is not implemented for original_head_forward")
-
-        if blt_config is None:
-            raise ValueError("`blt_config` must be provided for original_trunk_forward")
-
-        if self.teacher is None or isinstance(self.teacher, BLTTransformer):
-            raise ValueError("`teacher` must be provided and be a subword-level transformer for original_trunk_forward.")
-
-        input_ids, labels, block_kwargs, lm_head_kwargs, local_encoder_kwargs, local_decoder_kwargs, extra_kwargs = self._prepare_inputs(
-            input_ids,
-            labels,
-            ignore_index=ignore_index,
-            loss_reduction=loss_reduction,
-            z_loss_multiplier=z_loss_multiplier,
-            loss_div_factor=loss_div_factor,
-            blt_config=blt_config,
-            return_logits=True,  # needed for distillation
-            **kwargs,
-        )
-
-        teacher_logits: torch.Tensor
-        teacher_embeds: torch.Tensor
-        teacher_logits, (_, teacher_last_hidden_state, teacher_embeds) = self._teacher_forward(  # type: ignore
-            extra_kwargs["original_input_ids"],
-            # this could leak information since we take the true last embedding
-            # but not a problem for log likelihood eval since last token logits are unused
-            labels=None, # we will compute loss ourselves
-            skip_blocks=False,
-            **kwargs,
-        )
-        assert teacher_last_hidden_state is not None, "Teacher forward must return last_hidden_state if skip_blocks=False"
-
-        h_byte, h_patch, (_, boundary_logprobs), boundary_mask = self.local_encoder(input_ids, **local_encoder_kwargs)
-
-        h_patch[:, 1:] = teacher_last_hidden_state[:, :-1]
-
-        h_out = self.local_decoder(
-            embeds=h_byte,
-            patch_embeds=h_patch,
-            **local_decoder_kwargs,
-        )
-
-        logits = self.lm_head(h_out, **lm_head_kwargs)
-        logprobs = F.log_softmax(logits.float(), dim=-1)
-        main_path_logprobs = torch.gather(logprobs[:, :-1], -1, input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
-
-        main_path_patch_logprobs = torch.zeros((teacher_embeds.shape[0], teacher_embeds.shape[1]), device=logprobs.device, dtype=logprobs.dtype)
-        main_path_patch_logprobs = main_path_patch_logprobs.scatter_reduce(
-            src=main_path_logprobs,
-            dim=1,
-            index=local_encoder_kwargs["patch_ids"][:, 1:] - 1,
-            reduce="sum",
-            include_self=False,
-        )
-        y_hat = main_path_patch_logprobs[:, 1:-1]
-
-        if boundary_logprobs is not None:
-            patch_end_indices = torch.cumsum(local_encoder_kwargs["patch_lens"], dim=1) - 1
-            if blt_config.eval_add_boundary_logp:
-                y_hat = y_hat + torch.gather(boundary_logprobs, -1, patch_end_indices)[:, 2:]
-
-        remaining_logpmass = log1mexp(y_hat)
-        remaining_logp_uniform = remaining_logpmass - math.log(teacher_logits.shape[2] - 1)  # -1 to skip the main path token
-
-        teacher_logits.zero_()
-        teacher_logits[:, :-2, :] = remaining_logp_uniform.unsqueeze(-1)
-        teacher_logits.scatter_(
-            -1,
-            extra_kwargs["original_input_ids"][:, 1:-1].unsqueeze(-1),
-            y_hat.to(teacher_logits.dtype).unsqueeze(-1),
-        )
-        teacher_labels = get_labels({"input_ids": extra_kwargs["original_input_ids"]}, label_ignore_index=ignore_index)
-        ce_loss, _ = cross_entropy_loss(teacher_logits.view(-1, teacher_logits.shape[-1]), teacher_labels.view(-1))
-
-        return LMOutputWithLoss(
-            logits=teacher_logits,
             loss=ce_loss,
             ce_loss=ce_loss,
             z_loss=None,

@@ -82,19 +82,19 @@ class TransformerBLTTrainModule(TransformerTrainModule):
                 # input ids: `"High jump: We see a black opening screen. We see a blue track with people running on it. We then see a man do a high jump at 5\'9` (missing the final `".`)
                 # so reconstruct input ids from ctx + cont.
                 # + [0] since skip_last=True
-                original_input_ids = batch["ctx"][idx].tolist()[:prev_ctx_len] + batch["continuation"][idx].tolist()[:prev_cont_len] + [0]
+                original_input_ids = batch["ctx"][idx].tolist()[:prev_ctx_len] + batch["continuation"][idx].tolist()[:prev_cont_len]
                 input_ids, patch_lens = self.tokenizer.get_tokens_and_patch_lengths(
-                    original_input_ids, add_bos=True, skip_last=True,
+                    original_input_ids, add_bos=False, skip_last=False,
                 )
                 space_patch_lens = self.tokenizer.get_space_patch_lengths(input_ids)
                 while len(space_patch_lens) < len(patch_lens):
                     space_patch_lens.append(0)
 
                 dc_input_ids, _ = self.tokenizer.get_tokens_and_patch_lengths(
-                    batch["dc_input_ids"][idx].tolist()[:prev_dc_len], add_bos=True
+                    batch["dc_input_ids"][idx].tolist()[:prev_dc_len], add_bos=False
                 )
                 ctx, _ = self.tokenizer.get_tokens_and_patch_lengths(
-                    batch["ctx"][idx].tolist()[:prev_ctx_len], add_bos=True
+                    batch["ctx"][idx].tolist()[:prev_ctx_len], add_bos=False
                 )
                 continuation, _ = self.tokenizer.get_tokens_and_patch_lengths(
                     batch["continuation"][idx].tolist()[:prev_cont_len], add_bos=False

@@ -236,9 +236,9 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         local_encoder=local_encoder,
         local_decoder=local_decoder,
         teacher_config=teacher_model_config,
-        share_blocks_between_teacher_and_student=True,
+        share_blocks_between_teacher_and_student=False,
         freeze_params=[
-            "blocks*" # freeze inner transformer layers
+            "teacher.*" # freeze inner teacher transformer layers
         ]
     )
 
@@ -347,14 +347,6 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     all_eval_names = []
     all_eval_batch_kwargs = []
 
-    if TRAIN_MODE in {"local_encoder_only", "full_stage_1"}:
-        all_eval_tasks += eval_tasks
-        all_eval_names += [f"downstream_orig_head" for _ in eval_tasks]
-        all_eval_batch_kwargs += [{"eval_mode": "orig_head"} for _ in eval_tasks]
-    if TRAIN_MODE in {"local_decoder_only", "full_stage_1"}:
-        all_eval_tasks += eval_tasks
-        all_eval_names += [f"downstream_orig_trunk" for _ in eval_tasks]
-        all_eval_batch_kwargs += [{"eval_mode": "orig_trunk"} for _ in eval_tasks]
     if TRAIN_MODE == "full_stage_1":
         all_eval_tasks += eval_tasks
         all_eval_names += [f"downstream" for _ in eval_tasks]
@@ -422,6 +414,16 @@ def main(run_name: str, overrides: List[str]):
     # Set RNG states on all devices.
     seed_all(config.init_seed)
 
+    if config.train_module.blt_config is not None and config.train_module.blt_config.skip_connection is not None:
+        skip_start, skip_end = config.train_module.blt_config.skip_connection
+        config.model = config.model.replace(
+            freeze_params=(config.model.freeze_params or []) + [f"blocks.{i}.*" for i in range(skip_start + 1, skip_end + 1)]
+        )
+    else:
+        config.model = config.model.replace(
+            freeeze_params=(config.model.freeze_params or []) + ["blocks.*"]
+        )
+
     # Build components.
     model = config.model.build(init_device="meta")
     train_module = config.train_module.build(model)
@@ -443,14 +445,28 @@ def main(run_name: str, overrides: List[str]):
     cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
 
     # Load OLMo 1B checkpoint.
-    # assume share_blocks=True, so we don't have to map/duplicate block weights
     random_init_keys = {"local_encoder", "boundary_predictor", "local_decoder"}
+    prefixes_to_duplicate = ["blocks"]
+
     key_mapping = {
         key: None for key in model.state_dict().keys() if any(key.startswith(x) for x in random_init_keys)
     } | {
         f"teacher.{key}": key for key in model.teacher.state_dict().keys()  # type: ignore
     }
-    incompatible_keys = load_model_and_optim_state(OLMO_CKPT_PATH, model, key_mapping=key_mapping, strict=False)
+    extend_key_mapping = {}
+    for prefix in prefixes_to_duplicate:
+        extend_key_mapping.update({
+            key: key.replace(f"{prefix}", f"teacher.{prefix}")
+            for key in model.state_dict().keys() if key.startswith(prefix)
+        })
+
+    incompatible_keys = load_model_and_optim_state(
+        OLMO_CKPT_PATH,
+        model,
+        key_mapping=key_mapping,
+        extend_key_mapping=extend_key_mapping,
+        strict=False
+    )
 
     if len(incompatible_keys.unexpected_keys) > 0:
         raise ValueError(f"Unexpected keys when loading checkpoint: {incompatible_keys.unexpected_keys} (assume we use all teacher weights)")
@@ -463,8 +479,6 @@ def main(run_name: str, overrides: List[str]):
 
     # TODO(benjaminm): this is not a nice place?
     register_fsdp_forward_method(model, "student_forward")
-    register_fsdp_forward_method(model, "original_head_forward")
-    register_fsdp_forward_method(model, "original_trunk_forward")
     register_fsdp_forward_method(model.local_encoder, "pool")  # type: ignore
 
     # Train.

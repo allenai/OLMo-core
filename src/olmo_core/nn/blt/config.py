@@ -22,7 +22,7 @@ class BLTConfig(Config):
     distill_offset_weights: list[float] = field(default_factory=lambda: [1.0] * 8)
     use_exhaustive_decoder_loss: bool = False
     rep_compare_fn: str = "l2"
-    hnet_embed_loss_use_offset: bool = True
+    skip_connection: Optional[tuple[int, int]] = None
     target_ratio: float = 4.5
     encoder_loss_lookahead: int = 0
     encoder_loss_lookahead_weights: list[float] = field(default_factory=lambda: [])
@@ -33,12 +33,10 @@ class BLTConfig(Config):
     skip_teacher: bool = False
     use_oracle_patch_reps: bool = False
     add_boundary_logp: bool = True
-    eval_add_boundary_logp: bool = False
     decoder_backprop_through_encoder: bool = True
     decoder_backprop_through_boundary_predictor: bool = True
     boundary_predictor_backprop_through_encoder: bool = True
     decoder_backprop_through_add_boundary_logp: bool = True
-    decoder_use_mse_loss: bool = False
     teacher_force_boundaries: bool = True
     teacher_force_interpolation_steps: int = 0
     p_boundary_noise: float = 0.0

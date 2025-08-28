@@ -546,7 +546,7 @@ class LocalEncoder(nn.Module):
         h: torch.Tensor,
         patch_lens: torch.Tensor,
         patch_ids: torch.Tensor,
-        cross_attn_mask: BlockMask | None,
+        cross_attn_mask: BlockMask | None = None,
         reduction: str = "amax",
     ):
         if self.cross_attention is None or self.patch_embedding_projection is None or self.blt_k is None:
@@ -596,7 +596,7 @@ class LocalEncoder(nn.Module):
         h: torch.Tensor,
         patch_lens: torch.Tensor,
         patch_ids: torch.Tensor,
-        cross_attn_mask: BlockMask | None,
+        cross_attn_mask: BlockMask | None = None,
         smooth: bool = False,
         teacher_force_boundaries: bool = True,
         boundary_logprobs: torch.Tensor | None = None,
@@ -634,7 +634,7 @@ class LocalEncoder(nn.Module):
         tokens: torch.Tensor,
         patch_lens: torch.Tensor,
         patch_ids: torch.Tensor,
-        cross_attn_mask: BlockMask | None,
+        cross_attn_mask: BlockMask | None = None,
         smooth: bool = False,
         teacher_force_boundaries: bool = True,
         boundary_predictor_backprop_through_encoder: bool = True,
@@ -918,7 +918,7 @@ class LocalDecoder(nn.Module):
         self,
         embeds: torch.Tensor,
         patch_embeds: torch.Tensor,
-        cross_attn_mask: BlockMask | None,
+        cross_attn_mask: BlockMask | None = None,
     ) -> torch.Tensor:
         if self.patch_embedding_projection is None or self.blt_k is None:
             raise ValueError("Patch embedding projection is not defined, can not depool with BLT method.")
