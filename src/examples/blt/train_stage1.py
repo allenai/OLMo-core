@@ -421,7 +421,7 @@ def main(run_name: str, overrides: List[str]):
         )
     else:
         config.model = config.model.replace(
-            freeeze_params=(config.model.freeze_params or []) + ["blocks.*"]
+            freeze_params=(config.model.freeze_params or []) + ["blocks.*"]
         )
 
     # Build components.
