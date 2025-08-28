@@ -172,6 +172,11 @@ class Trainer:
     The strategy for loading a checkpoint prior to training.
     """
 
+    load_trainer_state: bool = True
+    """
+    Whether to load trainer state (step count, epoch, scheduler state, etc.) when loading checkpoints.
+    """
+
     metrics_collect_interval: int = 5
     """
     How often (in steps) to collect, reduce, and pass on metrics to the
@@ -618,12 +623,12 @@ class Trainer:
             and self.load_strategy != LoadStrategy.never
         ):
             # Try loading from the save folder first.
-            self.maybe_load_checkpoint(self.save_folder)
+            self.maybe_load_checkpoint(self.save_folder, load_trainer_state=self.load_trainer_state)
 
             # Then fallback to the load path, if provided.
             if self.load_path is not None:
                 if not self.checkpoint_loaded:
-                    self.maybe_load_checkpoint(self.load_path)
+                    self.maybe_load_checkpoint(self.load_path, load_trainer_state=self.load_trainer_state)
                 else:
                     log.warning(
                         f"Ignoring load path ('{self.load_path}') since checkpoint was found in save folder"
