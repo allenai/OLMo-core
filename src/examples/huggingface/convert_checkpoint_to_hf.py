@@ -105,7 +105,7 @@ def convert_checkpoint_to_hf(
             model_config.block.attention.use_flex_attn = False
 
     model = model_config.build()
-    model.to_empty(device=device or torch.device("cpu"))
+    model.to_empty(device=torch.device("cpu"))
 
     tokenizer_config = TokenizerConfig.from_dict(tokenizer_config_dict)
     vocab_size = tokenizer_config.vocab_size
@@ -181,6 +181,14 @@ def _register_debug_hooks(hf_model: torch.nn.Module, model: Transformer):
             # Special casing for HF moe
             assert isinstance(output[0], torch.Tensor), (name, output)
             output = output[0]
+        if model_type == "hf" and re.match(r"model.layers.\d+.mlp.gate", name):
+            # Special casing for HF moe router
+            assert isinstance(output, torch.Tensor), (name, output)
+            router_logits = output.detach().clone()
+            routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float)
+            # Like topk, but we keep all the data. This will hopefully go ok.
+            routing_weights, routing_indices = torch.sort(routing_weights, descending=True, dim=-1)
+            output = routing_weights
         if model_type == "hf" and re.match(r"model.layers.\d+.block_sparse_moe.gate", name):
             # Special casing for HF moe router
             assert isinstance(output, torch.Tensor), (name, output)
@@ -273,6 +281,7 @@ def validate_conversion(
 
     if dtype:
         model = model.to(dtype.as_pt())
+    model = model.to(device=device)
     if is_sliding and sliding_window is not None:
         for block in model.blocks.values():
             if block.attention.window_size != (-1, -1):
@@ -282,7 +291,7 @@ def validate_conversion(
         logits = model(input_ids=input_ids)
 
     if debug:
-        state_converter = get_converter_to_hf()
+        state_converter = get_converter_to_hf(config.model_type)
         if not hasattr(hf_config, "num_hidden_layers"):
             raise ValueError(f"Number of hidden layers missing in HF config: {hf_config}")
         n_layers: int = hf_config.num_hidden_layers
