@@ -86,7 +86,6 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             cancel_check_interval=1,
             load_strategy=LoadStrategy.always,
             load_path='gs://ai2-llm/checkpoints/OLMo25-from476838/step500680',
-            load_trainer_state=False
         )
         .with_callback(
             "checkpointer",

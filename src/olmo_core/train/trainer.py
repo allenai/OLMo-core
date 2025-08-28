@@ -172,7 +172,7 @@ class Trainer:
     The strategy for loading a checkpoint prior to training.
     """
 
-    load_trainer_state: bool = True
+    load_trainer_state: bool = False
     """
     Whether to load trainer state (step count, epoch, scheduler state, etc.) when loading checkpoints.
     """
