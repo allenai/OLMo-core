@@ -1663,19 +1663,20 @@ class BLTDistillTransformer(BLTTransformer):
                 self.space_mask_blt.to(y_hat.device),
                 (0, logprobs.shape[-1] - len(self.space_mask_blt)),
                 value=0
-            )
+            )[None, None, :]
             space_mask_padded_dolma2 = F.pad(
                 self.space_mask_dolma2.to(y_true.device),
                 (0, teacher_logprobs.shape[-1] - len(self.space_mask_dolma2)),
                 value=0
-            )
+            )[None, None, :]
             patch_end_indices = torch.cumsum(true_patch_lens, dim=1) - 1
-            y_space_hat_all = torch.log(torch.einsum('ijk,k->ij', torch.exp(logprobs), space_mask_padded_blt.float()))
+            minus_inf = torch.tensor(float('-inf'), device=logprobs.device)
+            y_space_hat_all = torch.where(space_mask_padded_blt.bool(), logprobs, minus_inf).logsumexp(dim=-1)  
             y_space_hat = torch.gather(y_space_hat_all, dim=1, index=patch_end_indices[:, 1:-1])
-            y_space_true = torch.log(torch.einsum('ijk,k->ij', torch.exp(teacher_logprobs[:, 1:-1]), space_mask_padded_dolma2.float()))
+            y_space_true = torch.where(space_mask_padded_dolma2.bool(), teacher_logprobs[:, 1:-1], minus_inf).logsumexp(dim=-1)
 
-            y_hat += y_space_hat
-            y_true += y_space_true
+            y_hat = y_hat + y_space_hat
+            y_true = y_true + y_space_true
 
         local_decoder_loss_simple = (div_fn(y_true, y_hat) * patch_mask[:, :-2]).mean()
         metrics["blt/local_decoder_teacher_mean_p_simple"] = (torch.exp(y_true) * patch_mask[:, :-2]).mean() / (patch_mask[:, :-2].float().mean() + blt_config.epsilon)
