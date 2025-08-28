@@ -1605,6 +1605,8 @@ class BLTDistillTransformer(BLTTransformer):
 
         # TODO(benjaminm): very correctness of this (+ debiasing) after change
         main_path_patch_logprobs = torch.zeros((patch_mask.shape[0], patch_mask.shape[1]), device=main_path_logprobs.device, dtype=main_path_logprobs.dtype)
+        assert (patch_ids[:, 2:] - 1).max().item() < main_path_patch_logprobs.shape[1]
+        assert (patch_ids[:, 2:] - 1).min().item() >= 0
         main_path_patch_logprobs = main_path_patch_logprobs.scatter_reduce(
             src=main_path_logprobs[:, :-1],
             dim=1,
@@ -1640,9 +1642,9 @@ class BLTDistillTransformer(BLTTransformer):
             y_true += y_space_true
 
         local_decoder_loss_simple = (div_fn(y_true, y_hat) * patch_mask[:, 1:-1]).mean()
-        metrics["blt/local_decoder_teacher_mean_p_simple"] = (torch.exp(y_true) * patch_mask[:, 1:-1]).mean() / patch_mask[:, 1:-1].float().mean()
-        metrics["blt/local_decoder_loss_simple"] = local_decoder_loss_simple / patch_mask[:, 1:-1].float().mean()
-        metrics["blt/local_decoder_mae_simple"] = (torch.abs(y_true - y_hat) * patch_mask[:, 1:-1]).mean() / patch_mask[:, 1:-1].float().mean()
+        metrics["blt/local_decoder_teacher_mean_p_simple"] = (torch.exp(y_true) * patch_mask[:, 1:-1]).mean() / (patch_mask[:, 1:-1].float().mean() + blt_config.epsilon)
+        metrics["blt/local_decoder_loss_simple"] = local_decoder_loss_simple / (patch_mask[:, 1:-1].float().mean() + blt_config.epsilon)
+        metrics["blt/local_decoder_mae_simple"] = (torch.abs(y_true - y_hat) * patch_mask[:, 1:-1]).mean() / (patch_mask[:, 1:-1].float().mean() + blt_config.epsilon)
 
         return local_decoder_loss_simple, metrics
 
@@ -1906,12 +1908,12 @@ class BLTDistillTransformer(BLTTransformer):
                 teacher_embeds[:, :-1],
             )
             local_encoder_loss = (elementwise_local_encoder_loss * patch_mask[:, 2:].float()).mean()
-            metrics["blt/local_encoder_loss"] = local_encoder_loss / patch_mask[:, 2:].float().mean()
+            metrics["blt/local_encoder_loss"] = local_encoder_loss / (patch_mask[:, 2:].float().mean() + blt_config.epsilon)
             metrics["blt/local_encoder_cos_sim"] = (F.cosine_similarity(
                 h_patch[:, 2:].float(),
                 teacher_embeds[:, :-1].float(),
                 dim=-1,
-            ) * patch_mask[:, 2:].float()).mean() / patch_mask[:, 2:].float().mean()
+            ) * patch_mask[:, 2:].float()).mean() / (patch_mask[:, 2:].float().mean() + blt_config.epsilon)
 
             # add lookahead (FuLA-style) losses
             h_lookahead = h_patch[:, 2:]  # skip <bos> token
@@ -1926,12 +1928,12 @@ class BLTDistillTransformer(BLTTransformer):
                     teacher_hidden_states[lookahead_idx][:, :-1],
                 )
                 local_encoder_loss_lookahead = (elementwise_local_encoder_loss * patch_mask[:, 2:].float()).mean()
-                metrics[f"blt/local_encoder_loss_lookahead_{lookahead_idx}"] = local_encoder_loss_lookahead / patch_mask[:, 2:].float().mean()
+                metrics[f"blt/local_encoder_loss_lookahead_{lookahead_idx}"] = local_encoder_loss_lookahead / (patch_mask[:, 2:].float().mean() + blt_config.epsilon)
                 metrics[f"blt/local_encoder_cos_sim_lookahead_{lookahead_idx}"] = (F.cosine_similarity(
                     h_lookahead.float(),
                     teacher_hidden_states[lookahead_idx][:, :-1].float(),
                     dim=-1,
-                ) * patch_mask[:, 2:].float()).mean() / patch_mask[:, 2:].float().mean()
+                ) * patch_mask[:, 2:].float()).mean() / (patch_mask[:, 2:].float().mean() + blt_config.epsilon)
 
                 local_encoder_loss += local_encoder_loss_lookahead * blt_config.encoder_loss_lookahead_weights[lookahead_idx]
         else:
