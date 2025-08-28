@@ -79,6 +79,9 @@ def convert_checkpoint_to_hf(
 
     model_config = TransformerConfig.from_dict(transformer_config_dict)
 
+    if torch.cuda.is_available():
+        torch.cuda.init()
+
     validation_device = device or get_default_device()
 
     # Check if validation is being performed and flash attn is requested but cannot run.
