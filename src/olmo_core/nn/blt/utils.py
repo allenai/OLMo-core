@@ -276,3 +276,25 @@ class Noiser:
         text = self.subword_tokenizer.decode(subword_input_ids)
 
         return self.subword_tokenizer_with_bpe_dropout.encode(text)
+
+def get_dolma2_space_mask():
+    DOLMA2_TOKENIZER = AutoTokenizer.from_pretrained("allenai/dolma2-tokenizer")
+
+    space_mask = torch.zeros(len(DOLMA2_TOKENIZER), dtype=torch.bool)
+
+    for token, token_id in DOLMA2_TOKENIZER.get_vocab().items():
+        if token.startswith("Ġ") or token.startswith("Ċ") or token.startswith("ĉ"):
+            space_mask[token_id] = True
+
+    return space_mask
+
+def get_blt_space_mask():
+    offset = 4
+
+    space_mask = torch.zeros(256 + offset, dtype=torch.bool)
+    space_ids = [i + offset for i in list(" \t\n".encode("utf-8"))]
+
+    for space_id in space_ids:
+        space_mask[space_id] = True
+
+    return space_mask
