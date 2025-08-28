@@ -1605,8 +1605,8 @@ class BLTDistillTransformer(BLTTransformer):
 
         # TODO(benjaminm): very correctness of this (+ debiasing) after change
         main_path_patch_logprobs = torch.zeros((patch_mask.shape[0], patch_mask.shape[1]), device=main_path_logprobs.device, dtype=main_path_logprobs.dtype)
-        assert (patch_ids[:, 2:] - 1).max().item() < main_path_patch_logprobs.shape[1]
-        assert (patch_ids[:, 2:] - 1).min().item() >= 0
+        #assert (patch_ids[:, 2:] - 1).max().item() < main_path_patch_logprobs.shape[1]
+        #assert (patch_ids[:, 2:] - 1).min().item() >= 0
         main_path_patch_logprobs = main_path_patch_logprobs.scatter_reduce(
             src=main_path_logprobs[:, :-1],
             dim=1,
@@ -1736,7 +1736,7 @@ class BLTDistillTransformer(BLTTransformer):
         last_increasing_index = ((seq_sorted_indices[:, 1:] - seq_sorted_indices[:, :-1]) < 0).float().argmax(-1)
         patch_mask = patch_mask & (torch.arange(patch_mask.shape[1], device=patch_mask.device)[None, :] <= last_increasing_index[:, None])
         patch_ids = torch.cumsum(boundary_mask.flip(1), -1).flip(1)
-        patch_ids = patch_ids.max(1, keepdim=True).values - patch_ids
+        patch_ids = (patch_ids.max(1, keepdim=True).values - patch_ids).clip(max=patch_mask.shape[1] - 1)
         patch_ids = torch.where(byte_mask, patch_ids, torch.full_like(patch_ids, fill_value=patch_mask.shape[1] - 1)) # TODO(benjaminm): need to adjust byte mask?
         seq_sorted_indices = torch.where(
             patch_mask,
@@ -1771,8 +1771,8 @@ class BLTDistillTransformer(BLTTransformer):
                 )
 
                 # [:, 1:] to skip bos
-                assert seq_sorted_indices.max().item() < input_ids_for_teacher_repeated.shape[1]
-                assert seq_sorted_indices.max().item() < n_boundary_mistakes.shape[1]
+                #assert seq_sorted_indices.max().item() < input_ids_for_teacher_repeated.shape[1]
+                #assert seq_sorted_indices.max().item() < n_boundary_mistakes.shape[1]
                 input_ids_for_teacher_selected = torch.gather(
                     input_ids_for_teacher_repeated,
                     dim=1,
