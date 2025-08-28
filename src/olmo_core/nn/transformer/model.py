@@ -1749,8 +1749,6 @@ class BLTDistillTransformer(BLTTransformer):
 
             local_encoder_loss += local_encoder_loss_lookahead * blt_config.encoder_loss_lookahead_weights[lookahead_idx]
 
-        import ipdb; ipdb.set_trace()
-
         return local_encoder_loss
 
     def _block_forward(
