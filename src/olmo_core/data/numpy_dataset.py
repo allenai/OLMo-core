@@ -753,7 +753,7 @@ class NumpyByteFSLDataset(NumpyFSLDataset):
         item = super().__getitem__(index)
         original_input_ids = self.noise_fn(item["input_ids"])
 
-        byte_tokens, patch_lengths = self.tokenizer.get_tokens_and_patch_lengths(original_input_ids, add_bos=False, skip_last=False)
+        byte_tokens, patch_lengths = self.tokenizer.get_tokens_and_patch_lengths(original_input_ids, add_bos=True, skip_last=True)
         space_patch_lengths = self.tokenizer.get_space_patch_lengths(byte_tokens)
 
         new_input_ids = torch.tensor(byte_tokens, dtype=torch.int32)

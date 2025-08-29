@@ -1641,12 +1641,7 @@ class BLTDistillTransformer(BLTTransformer):
         main_path_patch_logprobs = torch.zeros((patch_mask.shape[0], patch_mask.shape[1]), device=main_path_logprobs.device, dtype=main_path_logprobs.dtype)
         #assert (patch_ids[:, 2:] - 1).max().item() < main_path_patch_logprobs.shape[1]
         #assert (patch_ids[:, 2:] - 1).min().item() >= 0
-        offset_true_patch_ids = true_patch_ids[:, 1:] - 1
-        patch_ids_to_select = torch.where(
-            offset_true_patch_ids >= 0,
-            offset_true_patch_ids,
-            torch.full_like(offset_true_patch_ids, fill_value=main_path_patch_logprobs.shape[1] - 1)
-        )
+        patch_ids_to_select = true_patch_ids[:, 1:] - 1
         main_path_patch_logprobs = main_path_patch_logprobs.scatter_reduce(
             src=main_path_logprobs,
             dim=1,
@@ -1655,8 +1650,8 @@ class BLTDistillTransformer(BLTTransformer):
             include_self=False,
         )
 
-        y_hat = main_path_patch_logprobs[:, :-2]
-        y_true = teacher_main_path_logprobs[:, 1:]
+        y_hat = main_path_patch_logprobs[:, :-1]
+        y_true = teacher_main_path_logprobs
 
         if blt_config.do_alm_debiasing:
             space_mask_padded_blt = F.pad(
@@ -1672,16 +1667,16 @@ class BLTDistillTransformer(BLTTransformer):
             patch_end_indices = torch.cumsum(true_patch_lens, dim=1) - 1
             minus_inf = torch.tensor(float('-inf'), device=logprobs.device)
             y_space_hat_all = torch.where(space_mask_padded_blt.bool(), logprobs, minus_inf).logsumexp(dim=-1)  
-            y_space_hat = torch.gather(y_space_hat_all, dim=1, index=patch_end_indices[:, 1:-1])
-            y_space_true = torch.where(space_mask_padded_dolma2.bool(), teacher_logprobs[:, 2:], minus_inf).logsumexp(dim=-1)
+            y_space_hat = torch.gather(y_space_hat_all, dim=1, index=patch_end_indices[:, 1:])
+            y_space_true = torch.where(space_mask_padded_dolma2.bool(), teacher_logprobs[:, 1:], minus_inf).logsumexp(dim=-1)
 
             y_hat = y_hat + y_space_hat
             y_true = y_true + y_space_true
 
-        local_decoder_loss_simple = (div_fn(y_true, y_hat) * patch_mask[:, :-2]).mean()
-        metrics["blt/local_decoder_teacher_mean_p_simple"] = (torch.exp(y_true) * patch_mask[:, :-2]).mean() / (patch_mask[:, :-2].float().mean() + blt_config.epsilon)
-        metrics["blt/local_decoder_loss_simple"] = local_decoder_loss_simple / (patch_mask[:, :-2].float().mean() + blt_config.epsilon)
-        metrics["blt/local_decoder_mae_simple"] = (torch.abs(y_true - y_hat) * patch_mask[:, :-2]).mean() / (patch_mask[:, :-2].float().mean() + blt_config.epsilon)
+        local_decoder_loss_simple = (div_fn(y_true, y_hat) * patch_mask[:, :-1]).mean()
+        metrics["blt/local_decoder_teacher_mean_p_simple"] = (torch.exp(y_true) * patch_mask[:, :-1]).mean() / (patch_mask[:, :-1].float().mean() + blt_config.epsilon)
+        metrics["blt/local_decoder_loss_simple"] = local_decoder_loss_simple / (patch_mask[:, :-1].float().mean() + blt_config.epsilon)
+        metrics["blt/local_decoder_mae_simple"] = (torch.abs(y_true - y_hat) * patch_mask[:, :-1]).mean() / (patch_mask[:, :-1].float().mean() + blt_config.epsilon)
 
         return local_decoder_loss_simple, metrics
 
@@ -1700,7 +1695,7 @@ class BLTDistillTransformer(BLTTransformer):
         teacher_indices_to_select = torch.gather(
             true_patch_ids,
             dim=1,
-            index=seq_sorted_indices,
+            index=seq_sorted_indices - 1,
         )
         mask = patch_mask & (teacher_indices_to_select < teacher_embeds.shape[1])
         teacher_indices_to_select = torch.where(
@@ -1841,7 +1836,7 @@ class BLTDistillTransformer(BLTTransformer):
         )
 
         boundary_labels = torch.zeros_like(byte_mask, dtype=torch.float32)
-        boundary_labels[:, 0] = 1.0  # first token is always a boundary
+        boundary_labels[:, 0] = 0.0  # bos is never a boundary
         boundary_labels.scatter_(1, patch_start_indices, 1.0)
 
         if blt_config.teacher_force_interpolation_steps != 0:
@@ -1886,7 +1881,6 @@ class BLTDistillTransformer(BLTTransformer):
         )
         boundary_loss = (elementwise_boundary_loss * boundary_byte_mask).mean()
         elementwise_boundary_acc = boundary_mask == (boundary_labels > 0)
-        n_boundary_mistakes = torch.cumsum((~elementwise_boundary_acc) * boundary_byte_mask, dim=1)
         boundary_acc = (elementwise_boundary_acc * boundary_byte_mask).float().mean()
         metrics["blt/boundary_loss"] = boundary_loss / boundary_byte_mask.float().mean()
         metrics["blt/boundary_acc"] = boundary_acc / boundary_byte_mask.float().mean()

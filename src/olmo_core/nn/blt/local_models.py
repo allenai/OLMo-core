@@ -119,8 +119,11 @@ class DTPBoundaryPredictor(nn.Module):
         else:
             boundary_logprobs = F.logsigmoid(self.mlp(x)).squeeze(-1).float()
 
-        # make sure boundary at first
-        boundary_logprobs[:, 0] = 0.0
+        # make sure boundary at second / no boundary at first
+        POSITIVE_LOGPROB = 0.0
+        NEGATIVE_LOGPROB = -100_000
+        boundary_logprobs[:, 0] = NEGATIVE_LOGPROB
+        boundary_logprobs[:, 1] = POSITIVE_LOGPROB
 
         boundary_logprobs_for_loss, boundary_logprobs = _teacher_force_interpolate(
             boundary_logprobs,
@@ -150,12 +153,14 @@ class HNetBoundaryPredictor(nn.Module):
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         cos_sim = torch.einsum(
             "b l d, b l d -> b l",
-            F.normalize(self.q_proj_layer(hidden_states[:, :-1]), dim=-1),
-            F.normalize(self.k_proj_layer(hidden_states[:, 1:]), dim=-1),
+            F.normalize(self.q_proj_layer(hidden_states[:, :-2]), dim=-1),
+            F.normalize(self.k_proj_layer(hidden_states[:, 2:]), dim=-1),
         )
         boundary_logprobs = torch.log1p(-cos_sim.float().clip(max=1.0 - epsilon)) - math.log(2)
-        PAD_LOGPROB = 0.0
-        boundary_logprobs = F.pad(boundary_logprobs, (1, 0), "constant", PAD_LOGPROB)
+        POSITIVE_LOGPROB = 0.0
+        NEGATIVE_LOGPROB = -100_000
+        boundary_logprobs = F.pad(boundary_logprobs, (1, 0), "constant", POSITIVE_LOGPROB)
+        boundary_logprobs = F.pad(boundary_logprobs, (1, 0), "constant", NEGATIVE_LOGPROB)
 
         boundary_logprobs_for_loss, boundary_logprobs = _teacher_force_interpolate(
             boundary_logprobs,
@@ -522,7 +527,7 @@ class LocalEncoder(nn.Module):
                 torch.arange(L, device=pool_out.device)[None, :] + (~boundary_mask).long() * L  # type: ignore
             )
             seq_sorted_indices = torch.argsort(token_idx, dim=1)
-            index = seq_sorted_indices[:, :patch_lens.shape[1], None].expand(
+            index = (seq_sorted_indices[:, :patch_lens.shape[1], None] - 1).expand(
                 -1, -1, pool_out.shape[-1]
             )
 
@@ -887,7 +892,11 @@ class LocalDecoder(nn.Module):
         depool_out = cast(torch.Tensor, depool_out)
 
         # TODO(benjaminm): clipping is problematic if it happens too much; track clip %.
-        plug_back_idx = (torch.cumsum(boundary_mask, dim=1) - 1).clip(max=depool_out.shape[1] - 1)
+        plug_back_idx = (torch.cumsum(boundary_mask[:, 1:], dim=1) - 1).clip(max=depool_out.shape[1] - 1)
+        plug_back_idx = torch.cat([
+            plug_back_idx,
+            plug_back_idx.max(1, keepdim=True).values
+        ], 1)
         depool_out = torch.gather(
             depool_out,
             dim=1,
