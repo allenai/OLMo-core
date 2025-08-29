@@ -18,6 +18,7 @@ class BLTConfig(Config):
     div_fn: str = "tvd_temp_limit"
     do_alm_debiasing: bool = False
     boundary_mode: str = "patch_end"
+    with_shift: bool = False
     n_distill_offsets: int = 8
     distill_offset_weights: list[float] = field(default_factory=lambda: [1.0] * 8)
     use_exhaustive_decoder_loss: bool = False

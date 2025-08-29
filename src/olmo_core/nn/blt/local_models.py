@@ -834,7 +834,8 @@ class LocalDecoder(nn.Module):
         block_size: int = 256,
         headdim: int = 32,
         epsilon: float = 1e-3,
-    ) -> torch.Tensor:
+        with_shift: bool = False,
+    ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
         from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
 
         h_patch = patch_embeds[..., :self.d_model] # global d -> local d
@@ -879,7 +880,7 @@ class LocalDecoder(nn.Module):
         c = torch.ones_like(b)
 
         # trust the HNet source...
-        depool_out = mamba_chunk_scan_combined(
+        prepool_out = mamba_chunk_scan_combined(
             rearrange(x, "b l (h p) -> b l h p", p=headdim),
             repeat(dt, "b l -> b l h", h=n_heads),
             A,
@@ -888,20 +889,30 @@ class LocalDecoder(nn.Module):
             chunk_size=block_size,
             seq_idx=None,
         ).to(h_patch.dtype)
-        depool_out = rearrange(depool_out, "b l h p -> b l (h p)")
-        depool_out = cast(torch.Tensor, depool_out)
+        prepool_out = rearrange(prepool_out, "b l h p -> b l (h p)")
+        prepool_out = cast(torch.Tensor, prepool_out)
 
         # TODO(benjaminm): clipping is problematic if it happens too much; track clip %.
-        plug_back_idx = (torch.cumsum(boundary_mask[:, 1:], dim=1) - 1).clip(max=depool_out.shape[1] - 1)
+        plug_back_idx = (torch.cumsum(boundary_mask[:, 1:], dim=1) - 1).clip(max=prepool_out.shape[1] - 1)
         plug_back_idx = torch.cat([
             plug_back_idx,
             plug_back_idx.max(1, keepdim=True).values
         ], 1)
         depool_out = torch.gather(
-            depool_out,
+            prepool_out,
             dim=1,
             index=plug_back_idx.unsqueeze(-1).expand(-1, -1, self.d_model),
         )
+
+        if with_shift:
+            plug_back_idx_shift = (torch.cumsum(boundary_mask, dim=1) - 1).clip(min=0, max=depool_out.shape[1] - 1)
+            depool_out_shift = torch.gather(
+                prepool_out,
+                dim=1,
+                index=plug_back_idx_shift.unsqueeze(-1).expand(-1, -1, self.d_model),
+            )
+        else:
+            depool_out_shift = None
 
         if self.hnet_modulate and boundary_logprobs is not None:
             boundary_probs = torch.exp(boundary_logprobs)
@@ -912,16 +923,30 @@ class LocalDecoder(nn.Module):
             )
             # TODO(benjaminm): do we want to train this? or detach selected boundary probs?
             depool_out_modulated = depool_out * ste_func(selected_boundary_probs).unsqueeze(-1)
+            if depool_out_shift is not None:
+                depool_out_shift_modulated = depool_out_shift * ste_func(selected_boundary_probs).unsqueeze(-1)
+            else:
+                depool_out_shift_modulated = None
         else:
             depool_out_modulated = depool_out
+            depool_out_shift_modulated = depool_out_shift
 
         h = depool_out_modulated + embeds
+        if depool_out_shift_modulated is not None:
+            h_shift = depool_out_shift_modulated + embeds
+        else:
+            h_shift = None
 
         for block_idx in range(self.n_layers):
             block = self.blocks[str(block_idx)]
             h = block(h)
 
-        return h
+        if h_shift is not None:
+            for block_idx in range(self.n_layers):
+                block = self.blocks[str(block_idx)]
+                h_shift = block(h_shift)
+
+        return h, h_shift
 
     def _depool_blt(
         self,
@@ -960,11 +985,12 @@ class LocalDecoder(nn.Module):
         cross_attn_mask: BlockMask | None = None,
         boundary_logprobs: torch.Tensor | None = None,
         boundary_mask: torch.Tensor | None = None,
-    ) -> torch.Tensor:
+        with_shift: bool = False,
+    ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
         if self.depooling == "cross_attn":
-            return self._depool_blt(embeds, patch_embeds, cross_attn_mask)
+            return self._depool_blt(embeds, patch_embeds, cross_attn_mask), None
         elif self.depooling == "hnet":
-            return self._depool_hnet(embeds, patch_embeds, patch_lens, boundary_logprobs, boundary_mask)
+            return self._depool_hnet(embeds, patch_embeds, patch_lens, boundary_logprobs, boundary_mask, with_shift=with_shift)
         else:
             raise ValueError(f"Unknown depooling method: {self.depooling}. Supported methods are 'cross_attn' and 'hnet'.")
 
@@ -977,7 +1003,8 @@ class LocalDecoder(nn.Module):
         cross_attn_mask: BlockMask | None = None,
         boundary_logprobs: torch.Tensor | None = None,
         boundary_mask: torch.Tensor | None = None,
-    ) -> torch.Tensor:
+        with_shift: bool = False,
+    ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
         if self.residual_norm is not None:
             h = self.residual_norm(embeds)
         else:
@@ -998,4 +1025,5 @@ class LocalDecoder(nn.Module):
             cross_attn_mask=cross_attn_mask,
             boundary_logprobs=boundary_logprobs,
             boundary_mask=boundary_mask,
+            with_shift=with_shift,
         )

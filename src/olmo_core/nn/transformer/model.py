@@ -1959,19 +1959,37 @@ class BLTDistillTransformer(BLTTransformer):
             logits = self.lm_head(h_out, **lm_head_kwargs)
             logprobs = F.log_softmax(logits.float() / blt_config.temperature, dim=-1)
             main_path_logprobs = torch.gather(logprobs[:, :-1], -1, input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
+
+            if blt_config.with_shift:
+                h_out_shift = self.local_decoder(
+                    embeds=h_byte_for_decoder,
+                    patch_embeds=h_patch_for_decoder,
+                    boundary_logprobs=None if blt_config.teacher_force_boundaries else boundary_logprobs_for_decoder,
+                    boundary_mask=None if blt_config.teacher_force_boundaries else boundary_mask,
+                    with_shift=True,
+                    **local_decoder_kwargs,
+                )
+                logits_shift = self.lm_head(h_out_shift, **lm_head_kwargs)
         else:
             student_hidden_states = None
             h_out = None
             logits = None
             logprobs = None
             main_path_logprobs = None
+            logits_shift = None
 
         # compute CE
         if not skip_blocks:
             ce_loss, _ = cross_entropy_loss(logits.view(-1, logits.shape[-1]), labels.view(-1))  # type: ignore
             metrics["blt/ce_loss"] = ce_loss
+
+            if blt_config.with_shift:
+                ce_loss_shift, _ = cross_entropy_loss(logits_shift.view(-1, logits_shift.shape[-1]), labels.view(-1))  # type: ignore
+            else:
+                ce_loss_shift = torch.nan
         else:
             ce_loss = torch.nan
+            ce_loss_shift = torch.nan
 
         # could also have some version of the encoder loss for BLT teacher but not implemented for now
         if not skip_teacher and not isinstance(self.teacher, BLTTransformer) and teacher_embeds is not None:
@@ -2048,6 +2066,7 @@ class BLTDistillTransformer(BLTTransformer):
 
         # TODO(benjaminm): fix if possible by accumulating div factor across batches and dividing at the end
         ce_loss = self._finalize_loss(ce_loss, loss_div_factor=loss_div_factor)
+        ce_loss_shift = self._finalize_loss(ce_loss_shift, loss_div_factor=loss_div_factor)
         boundary_loss = self._finalize_loss(boundary_loss, loss_div_factor=loss_div_factor)
         local_encoder_loss = self._finalize_loss(local_encoder_loss, loss_div_factor=patch_loss_div_factor)
         local_decoder_loss = self._finalize_loss(local_decoder_loss, loss_div_factor=loss_div_factor)
@@ -2075,6 +2094,8 @@ class BLTDistillTransformer(BLTTransformer):
                 continue
             if loss_name == "ce":
                 loss = loss + ce_loss * loss_weight * schedule_multiplier
+            elif loss_name == "ce_shift":
+                loss = loss + ce_loss_shift * loss_weight * schedule_multiplier
             elif loss_name == "local_encoder":
                 loss = loss + local_encoder_loss * loss_weight * schedule_multiplier
             elif loss_name == "local_decoder":
