@@ -1870,7 +1870,7 @@ class BLTDistillTransformer(BLTTransformer):
         seq_sorted_indices = torch.where(
             patch_mask,
             seq_sorted_indices,
-            torch.zeros_like(seq_sorted_indices),
+            torch.ones_like(seq_sorted_indices),
         )
 
         # compute the boundary loss
