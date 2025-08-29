@@ -527,7 +527,7 @@ class LocalEncoder(nn.Module):
                 torch.arange(L, device=pool_out.device)[None, :] + (~boundary_mask).long() * L  # type: ignore
             )
             seq_sorted_indices = torch.argsort(token_idx, dim=1)
-            index = (seq_sorted_indices[:, :patch_lens.shape[1], None] - 1).expand(
+            index = (seq_sorted_indices[:, :patch_lens.shape[1], None] - 1).clip(min=0).expand(
                 -1, -1, pool_out.shape[-1]
             )
 
