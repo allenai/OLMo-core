@@ -1560,7 +1560,7 @@ class BLTDistillTransformer(BLTTransformer):
         teacher_embs_repeated = torch.gather(
             teacher_embeds,
             dim=1,
-            index=(true_patch_ids[:, 1:] - 1).clip(max=teacher_embeds.shape[1] - 1).unsqueeze(-1).expand(-1, -1, teacher_embeds.shape[-1]),
+            index=true_patch_ids.clip(max=teacher_embeds.shape[1] - 1).unsqueeze(-1).expand(-1, -1, teacher_embeds.shape[-1]),
         )
 
         elementwise_hnet_embed_loss = rep_compare_fn(
