@@ -1859,10 +1859,10 @@ class BLTDistillTransformer(BLTTransformer):
             torch.arange(L, device=byte_mask.device)[None, :] + (~boundary_mask).long() * L  # type: ignore
         )
         seq_sorted_indices = torch.argsort(token_idx, dim=1)[:, :patch_mask.shape[1]]
-        last_increasing_index = ((seq_sorted_indices[:, 1:] - seq_sorted_indices[:, :-1]) < 0).float().argmax(-1)
+        last_increasing_index = ((seq_sorted_indices[:, 1:] - seq_sorted_indices[:, :-1]) < 0).max(-1)
         patch_mask = (
-            (torch.arange(patch_mask.shape[1], device=patch_mask.device)[None, :] <= last_increasing_index[:, None]) |
-            (torch.zeros_like(patch_mask) == last_increasing_index[:, None]) # case where last_increasing_index == 0 (no padding)
+            (torch.arange(patch_mask.shape[1], device=patch_mask.device)[None, :] <= last_increasing_index.indices[:, None]) |
+            (torch.zeros_like(patch_mask) == last_increasing_index.values[:, None]) # case where never not increasing (no padding)
         )
         patch_ids = torch.cumsum(boundary_mask.flip(1), -1).flip(1)
         patch_ids = (patch_ids.max(1, keepdim=True).values - patch_ids).clip(max=patch_mask.shape[1] - 1)
