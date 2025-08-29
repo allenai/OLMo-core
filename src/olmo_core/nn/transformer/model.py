@@ -1673,7 +1673,7 @@ class BLTDistillTransformer(BLTTransformer):
             minus_inf = torch.tensor(float('-inf'), device=logprobs.device)
             y_space_hat_all = torch.where(space_mask_padded_blt.bool(), logprobs, minus_inf).logsumexp(dim=-1)  
             y_space_hat = torch.gather(y_space_hat_all, dim=1, index=patch_end_indices[:, 1:-1])
-            y_space_true = torch.where(space_mask_padded_dolma2.bool(), teacher_logprobs[:, 1:-1], minus_inf).logsumexp(dim=-1)
+            y_space_true = torch.where(space_mask_padded_dolma2.bool(), teacher_logprobs[:, 2:], minus_inf).logsumexp(dim=-1)
 
             y_hat = y_hat + y_space_hat
             y_true = y_true + y_space_true
