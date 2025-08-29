@@ -1565,7 +1565,7 @@ class BLTDistillTransformer(BLTTransformer):
 
         elementwise_hnet_embed_loss = rep_compare_fn(
             h_byte[:, 1:], # skip first embedding to produce offset as in H-Net paper (match first patch byte to prev emb)
-            teacher_embs_repeated
+            teacher_embs_repeated[:, :-1]
         )
         hnet_embed_loss_mask = byte_mask[:, 1:]
 
