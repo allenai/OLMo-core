@@ -1204,6 +1204,7 @@ def _get_flex_attn_mask_mod(
     doc_lens: Optional[Tuple[int, ...]] = None,
     device: Optional[torch.device] = None,
     num_sink_tokens: int = 0,
+    seq_len: Optional[int] = None,  # Need seq_len to know where sinks start
 ) -> Callable[[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor], torch.Tensor]:
     if device is None:
         raise ValueError("Device is required")
@@ -1218,31 +1219,55 @@ def _get_flex_attn_mask_mod(
         )
 
     def total_mask_mod(B: torch.Tensor, H: torch.Tensor, q_idx: torch.Tensor, kv_idx: torch.Tensor) -> torch.Tensor:
-        is_sink = kv_idx < num_sink_tokens
-        adjusted_kv_idx = kv_idx - num_sink_tokens
-        
-        is_regular = kv_idx >= num_sink_tokens
-        causal = adjusted_kv_idx <= q_idx
-        
-        regular_mask = is_regular & causal
-        
-        if has_window and window_size is not None:
-            within_window = (q_idx - adjusted_kv_idx) <= window_size[0]
-            regular_mask = regular_mask & within_window
-        
-        if has_docs and document_ids is not None:
-            max_idx = len(document_ids) - 1
-            valid_q = q_idx <= max_idx
-            valid_kv = (adjusted_kv_idx >= 0) & (adjusted_kv_idx <= max_idx)
+        if num_sink_tokens > 0 and seq_len is not None:
+            # Sinks are at the END, starting at seq_len
+            sink_start_idx = seq_len
+            is_sink = kv_idx >= sink_start_idx
             
-            q_safe = torch.clamp(q_idx, min=0, max=max_idx)
-            kv_safe = torch.clamp(adjusted_kv_idx, min=0, max=max_idx)
-            same_doc = document_ids[q_safe] == document_ids[kv_safe]
+            # Regular causal mask for non-sink tokens
+            causal = kv_idx <= q_idx
             
-            doc_mask = (valid_q & valid_kv & same_doc) | ~(valid_q & valid_kv)
-            regular_mask = regular_mask & doc_mask
-        
-        return is_sink | regular_mask
+            # Apply sliding window if specified (only to non-sink tokens)
+            if has_window and window_size is not None:
+                window_mask = (q_idx - kv_idx) <= window_size[0]
+                regular_mask = causal & window_mask & ~is_sink
+            else:
+                regular_mask = causal & ~is_sink
+            
+            # Apply document boundaries if specified
+            if has_docs and document_ids is not None:
+                max_idx = len(document_ids) - 1
+                q_safe = torch.clamp(q_idx, min=0, max=max_idx)
+                kv_safe = torch.clamp(kv_idx, min=0, max=max_idx)
+                
+                # Only apply doc constraint to non-sink tokens
+                same_doc = torch.where(
+                    ~is_sink,
+                    document_ids[q_safe] == document_ids[kv_safe],
+                    torch.ones_like(is_sink)  # Sinks always pass doc check
+                )
+                regular_mask = regular_mask & same_doc
+            
+            # Always allow sinks OR regular tokens that pass constraints
+            return is_sink | regular_mask
+        else:
+            # No sink tokens, standard causal masking
+            causal = kv_idx <= q_idx
+            
+            if has_window and window_size is not None:
+                window_mask = (q_idx - kv_idx) <= window_size[0]
+                mask = causal & window_mask
+            else:
+                mask = causal
+            
+            if has_docs and document_ids is not None:
+                max_idx = len(document_ids) - 1
+                q_safe = torch.clamp(q_idx, min=0, max=max_idx)
+                kv_safe = torch.clamp(kv_idx, min=0, max=max_idx)
+                same_doc = document_ids[q_safe] == document_ids[kv_safe]
+                mask = mask & same_doc
+            
+            return mask
     return total_mask_mod
 
 
@@ -1261,7 +1286,8 @@ def _get_flex_attn_causal_block_mask(
 
         # For intra-document masking, we merge the batch size dimension into the sequence dimension.
         return create_block_mask(
-            _get_flex_attn_mask_mod(window_size, doc_lens=doc_lens, device=device, num_sink_tokens=num_sink_tokens),
+            _get_flex_attn_mask_mod(window_size, doc_lens=doc_lens, device=device, 
+                                    num_sink_tokens=num_sink_tokens, seq_len=token_count),
             B=1,
             H=None,
             Q_LEN=token_count,
@@ -1272,7 +1298,7 @@ def _get_flex_attn_causal_block_mask(
 
     else:
         return create_block_mask(
-            _get_flex_attn_mask_mod(window_size, device=device, num_sink_tokens=num_sink_tokens),
+            _get_flex_attn_mask_mod(window_size, device=device, num_sink_tokens=num_sink_tokens, seq_len=seq_len),
             B=None,
             H=None,
             Q_LEN=seq_len,
@@ -1293,12 +1319,13 @@ def get_flex_attn_causal_block_mask(
 ) -> Union[BlockMask, Tuple[BlockMask, Callable]]:
     if doc_lens is not None:
         doc_lens_list = tuple(doc_lens.flatten().tolist())
-        mask_fn = _get_flex_attn_mask_mod(window_size, doc_lens=doc_lens_list, device=device, num_sink_tokens=num_sink_tokens)
+        mask_fn = _get_flex_attn_mask_mod(window_size, doc_lens=doc_lens_list, device=device, 
+                                          num_sink_tokens=num_sink_tokens, seq_len=seq_len)
         block_mask = _get_flex_attn_causal_block_mask(
             seq_len, device, window_size, doc_lens_list, block_size, num_sink_tokens=num_sink_tokens
         )
     else:
-        mask_fn = _get_flex_attn_mask_mod(window_size, device=device, num_sink_tokens=num_sink_tokens)
+        mask_fn = _get_flex_attn_mask_mod(window_size, device=device, num_sink_tokens=num_sink_tokens, seq_len=seq_len)
         block_mask = _get_flex_attn_causal_block_mask(
             seq_len, device, window_size, doc_lens=None, block_size=block_size, num_sink_tokens=num_sink_tokens
         )
