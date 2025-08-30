@@ -506,8 +506,10 @@ class Attention(AttentionBase):
                 v = torch.cat([v, sink_v], dim=1)
                 kv_len = S_kv + num_sink_tokens
 
-                if self.window_size is not None:
-                    mask_mod = self._get_sliding_window_with_sink_mask_mod(self.window_size, sink_idx)
+                if self.window_size is not None and self.window_size != (-1, -1):
+                    # window_size is a tuple (left, right), we use the left window
+                    window = self.window_size[0] if isinstance(self.window_size, tuple) else self.window_size
+                    mask_mod = self._get_sliding_window_with_sink_mask_mod(window, sink_idx)
                 else:
                     mask_mod = self._get_causal_with_sink_mask_mod(sink_idx)
 
@@ -530,8 +532,10 @@ class Attention(AttentionBase):
             else:
                 num_sink_tokens = 0
                 kv_len = S_kv
-                if self.window_size is not None:
-                    mask_mod = self._get_sliding_window_mask_mod(self.window_size)
+                if self.window_size is not None and self.window_size != (-1, -1):
+                    # window_size is a tuple (left, right), we use the left window
+                    window = self.window_size[0] if isinstance(self.window_size, tuple) else self.window_size
+                    mask_mod = self._get_sliding_window_mask_mod(window)
                 else:
                     mask_mod = self._get_causal_mask_mod()
 
