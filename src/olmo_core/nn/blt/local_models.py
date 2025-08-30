@@ -870,7 +870,6 @@ class LocalDecoder(nn.Module):
             if self.hnet_smooth:
                 p = torch.gather(torch.exp(boundary_logprobs).float().clip(min=epsilon, max=1 - epsilon), dim=1, index=seq_sorted_indices)
             else:
-                seq_sorted_indices = None
                 p = torch.full((h_patch.shape[0], h_patch.shape[1]), 1 - epsilon, device=h_patch.device, dtype=torch.float32)
 
         dt = torch.log(1 / (1 - p)).float()
