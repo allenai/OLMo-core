@@ -572,59 +572,33 @@ class Attention(AttentionBase):
                 else:
                     local_sinks = sinks
                 
-                # Append dummy sink tokens at the END like TorchTitan
+                # For now, keep sinks at the beginning as the block mask expects
+                # We'll need to adjust K/V back to the original approach
                 B, H_kv, S_kv, D = k.shape
-                sink_idx = S_kv  # Sink is at the end position
                 
-                # Create dummy sink K/V tokens (zeros)
+                # Create dummy sink K/V tokens at the BEGINNING (zeros)
                 sink_k = k.new_zeros(B, H_kv, num_sink_tokens, D)
                 sink_v = v.new_zeros(B, H_kv, num_sink_tokens, D)
                 
-                # Concatenate sinks at the end
-                k = torch.cat([k, sink_k], dim=2)  # (B, H_kv, S_kv+num_sink_tokens, D)
-                v = torch.cat([v, sink_v], dim=2)
+                # Concatenate sinks at the beginning (original approach)
+                k = torch.cat([sink_k, k], dim=2)  # (B, H_kv, num_sink_tokens+S_kv, D)
+                v = torch.cat([sink_v, v], dim=2)
                 
-                # Get window_size from block_mask if available
-                if hasattr(block_mask, 'window_size'):
-                    mask_window_size = block_mask.window_size
-                else:
-                    mask_window_size = None
-                
-                # Create mask mod for sinks at the end
-                if mask_window_size is not None and mask_window_size != (-1, -1):
-                    # Use sliding window with sink
-                    mask_mod = _get_sliding_window_with_sink_mask_mod(
-                        mask_window_size[0] if isinstance(mask_window_size, tuple) else mask_window_size, 
-                        sink_idx, 
-                        num_sinks=num_sink_tokens
-                    )
-                else:
-                    # Use causal with sink
-                    mask_mod = _get_causal_with_sink_mask_mod(sink_idx, num_sinks=num_sink_tokens)
-                
-                # Create new block mask with sinks at the end
-                from torch.nn.attention.flex_attention import create_block_mask
-                B_q, H_q, S_q, _ = q.shape
-                block_mask = create_block_mask(
-                    mask_mod, B_q, H_q, S_q, S_kv + num_sink_tokens,
-                    device=q.device.type  # Ensure block mask is on same device as tensors
-                )
-                
-                # Score mod to set actual sink weights
+                # Score mod to set actual sink weights (sinks at beginning)
                 if local_sinks.ndim == 1:
                     def score_mod_fn(score, batch_idx, head_idx, q_idx, kv_idx):
-                        # For single sink at the end
+                        # For single sink at the beginning
+                        is_sink = kv_idx < num_sink_tokens
                         return torch.where(
-                            kv_idx == sink_idx,
+                            is_sink,
                             local_sinks[head_idx].to(score.dtype) + 0.0,  # cast + keep grad
                             score
                         )
                 elif local_sinks.ndim == 2:
                     def score_mod_fn(score, batch_idx, head_idx, q_idx, kv_idx):
-                        # For multiple sinks at the end
-                        sink_offset = kv_idx - sink_idx
-                        is_sink = kv_idx >= sink_idx
-                        safe_sink_idx = torch.clamp(sink_offset, 0, num_sink_tokens - 1)
+                        # For multiple sinks at the beginning
+                        is_sink = kv_idx < num_sink_tokens
+                        safe_sink_idx = torch.clamp(kv_idx, 0, num_sink_tokens - 1)
                         sink_logit = local_sinks[head_idx, safe_sink_idx].to(score.dtype)
                         return torch.where(is_sink, sink_logit, score)
 
@@ -1300,55 +1274,40 @@ def _get_flex_attn_mask_mod(
         )
 
     def total_mask_mod(B: torch.Tensor, H: torch.Tensor, q_idx: torch.Tensor, kv_idx: torch.Tensor) -> torch.Tensor:
-        if num_sink_tokens > 0 and seq_len is not None:
-            # Sinks are at the END, starting at seq_len
-            sink_start_idx = seq_len
-            is_sink = kv_idx >= sink_start_idx
+        # Sinks are at the BEGINNING (first num_sink_tokens positions)
+        is_sink = kv_idx < num_sink_tokens
+        
+        # For regular tokens, adjust kv_idx 
+        adjusted_kv_idx = kv_idx - num_sink_tokens
+        
+        # Basic causal mask for regular tokens
+        is_regular = kv_idx >= num_sink_tokens
+        causal = adjusted_kv_idx <= q_idx
+        
+        # Build mask step by step
+        regular_mask = is_regular & causal
+        
+        # Apply sliding window if specified
+        if has_window and window_size is not None:
+            # Only keep tokens within window
+            within_window = (q_idx - adjusted_kv_idx) <= window_size[0]
+            regular_mask = regular_mask & within_window
+        
+        # Apply document boundaries if specified
+        if has_docs and document_ids is not None:
+            # Clamp indices to valid range
+            max_idx = len(document_ids) - 1
+            q_clamped = torch.clamp(q_idx, min=0, max=max_idx)
+            kv_clamped = torch.clamp(adjusted_kv_idx, min=0, max=max_idx)
             
-            # Regular causal mask for non-sink tokens
-            causal = kv_idx <= q_idx
+            # Check if in same document (only for regular tokens)
+            same_doc = document_ids[q_clamped] == document_ids[kv_clamped]
             
-            # Apply sliding window if specified (only to non-sink tokens)
-            if has_window and window_size is not None:
-                window_mask = (q_idx - kv_idx) <= window_size[0]
-                regular_mask = causal & window_mask & ~is_sink
-            else:
-                regular_mask = causal & ~is_sink
-            
-            # Apply document boundaries if specified
-            if has_docs and document_ids is not None:
-                max_idx = len(document_ids) - 1
-                q_safe = torch.clamp(q_idx, min=0, max=max_idx)
-                kv_safe = torch.clamp(kv_idx, min=0, max=max_idx)
-                
-                # Only apply doc constraint to non-sink tokens
-                same_doc = torch.where(
-                    ~is_sink,
-                    document_ids[q_safe] == document_ids[kv_safe],
-                    torch.ones_like(is_sink)  # Sinks always pass doc check
-                )
-                regular_mask = regular_mask & same_doc
-            
-            # Always allow sinks OR regular tokens that pass constraints
-            return is_sink | regular_mask
-        else:
-            # No sink tokens, standard causal masking
-            causal = kv_idx <= q_idx
-            
-            if has_window and window_size is not None:
-                window_mask = (q_idx - kv_idx) <= window_size[0]
-                mask = causal & window_mask
-            else:
-                mask = causal
-            
-            if has_docs and document_ids is not None:
-                max_idx = len(document_ids) - 1
-                q_safe = torch.clamp(q_idx, min=0, max=max_idx)
-                kv_safe = torch.clamp(kv_idx, min=0, max=max_idx)
-                same_doc = document_ids[q_safe] == document_ids[kv_safe]
-                mask = mask & same_doc
-            
-            return mask
+            # Apply doc constraint only to regular tokens
+            regular_mask = regular_mask & ((kv_idx < num_sink_tokens) | same_doc)
+        
+        # Final mask: always allow sinks OR regular tokens that pass all constraints
+        return is_sink | regular_mask
     return total_mask_mod
 
 
