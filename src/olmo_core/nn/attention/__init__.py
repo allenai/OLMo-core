@@ -563,17 +563,65 @@ class Attention(AttentionBase):
                 q, k, v = q.bfloat16(), k.bfloat16(), v.bfloat16()
 
             score_mod_fn = None
-            if sinks is not None:
+            if sinks is not None and num_sink_tokens > 0:
+                # Get local sinks tensor first
+                if hasattr(sinks, 'to_local'):
+                    local_sinks = sinks.to_local()
+                elif hasattr(sinks, '_local_tensor'):
+                    local_sinks = sinks._local_tensor
+                else:
+                    local_sinks = sinks
+                
+                # Append dummy sink tokens at the END like TorchTitan
+                B, H_kv, S_kv, D = k.shape
+                sink_idx = S_kv  # Sink is at the end position
+                
+                # Create dummy sink K/V tokens (zeros)
+                sink_k = k.new_zeros(B, H_kv, num_sink_tokens, D)
+                sink_v = v.new_zeros(B, H_kv, num_sink_tokens, D)
+                
+                # Concatenate sinks at the end
+                k = torch.cat([k, sink_k], dim=2)  # (B, H_kv, S_kv+num_sink_tokens, D)
+                v = torch.cat([v, sink_v], dim=2)
+                
+                # Get window_size from block_mask if available
+                if hasattr(block_mask, 'window_size'):
+                    mask_window_size = block_mask.window_size
+                else:
+                    mask_window_size = None
+                
+                # Create mask mod for sinks at the end
+                if mask_window_size is not None and mask_window_size != (-1, -1):
+                    # Use sliding window with sink
+                    mask_mod = _get_sliding_window_with_sink_mask_mod(mask_window_size[0] if isinstance(mask_window_size, tuple) else mask_window_size, sink_idx)
+                else:
+                    # Use causal with sink
+                    mask_mod = _get_causal_with_sink_mask_mod(sink_idx)
+                
+                # Create new block mask with sinks at the end
+                from torch.nn.attention.flex_attention import create_block_mask
+                compiled_create_block_mask = torch.compile(create_block_mask)
+                B_q, H_q, S_q, _ = q.shape
+                block_mask = compiled_create_block_mask(
+                    mask_mod, B_q, H_q, S_q, S_kv + num_sink_tokens
+                )
+                
+                # Score mod to set actual sink weights
                 if local_sinks.ndim == 1:
                     def score_mod_fn(score, batch_idx, head_idx, q_idx, kv_idx):
-                        is_sink = kv_idx < num_sink_tokens
-                        sink_logit = local_sinks[head_idx].to(score.dtype)
-                        return torch.where(is_sink, sink_logit, score)
+                        # For single sink at the end
+                        return torch.where(
+                            kv_idx == sink_idx,
+                            local_sinks[head_idx].to(score.dtype) + 0.0,  # cast + keep grad
+                            score
+                        )
                 elif local_sinks.ndim == 2:
                     def score_mod_fn(score, batch_idx, head_idx, q_idx, kv_idx):
-                        is_sink = kv_idx < num_sink_tokens
-                        safe_kv_idx = torch.clamp(kv_idx, 0, num_sink_tokens - 1)
-                        sink_logit = local_sinks[head_idx, safe_kv_idx].to(score.dtype)
+                        # For multiple sinks at the end
+                        sink_offset = kv_idx - sink_idx
+                        is_sink = kv_idx >= sink_idx
+                        safe_sink_idx = torch.clamp(sink_offset, 0, num_sink_tokens - 1)
+                        sink_logit = local_sinks[head_idx, safe_sink_idx].to(score.dtype)
                         return torch.where(is_sink, sink_logit, score)
 
             with torch.autocast(enabled=False, device_type=q.device.type):
@@ -1197,6 +1245,32 @@ def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
 #         return is_sink | (is_regular & regular_mask)
 
 #     return total_mask_mod
+
+
+def _get_causal_with_sink_mask_mod(sink_idx: int) -> Callable:
+    """
+    Returns a mask_mod function that:
+    - only allows kv_idx <= q_idx (causal)
+    - or if kv_idx == sink_idx (always allow the sink)
+    """
+    def causal_with_sink(b: torch.Tensor, h: torch.Tensor, q_idx: torch.Tensor, kv_idx: torch.Tensor) -> torch.Tensor:
+        return (q_idx >= kv_idx) | (kv_idx == sink_idx)
+    return causal_with_sink
+
+
+def _get_sliding_window_with_sink_mask_mod(window: int, sink_idx: int) -> Callable:
+    """
+    Returns a mask_mod function that:
+    - only allows kv_idx <= q_idx (causal)
+    - and only if (q_idx - kv_idx) <= window
+    - or if kv_idx == sink_idx (always allow the sink)
+    """
+    def sliding_mod(b: torch.Tensor, h: torch.Tensor, q_idx: torch.Tensor, kv_idx: torch.Tensor) -> torch.Tensor:
+        # Causal within window
+        keep = (kv_idx <= q_idx) & (q_idx - kv_idx <= window)
+        # Always allow the sink slot
+        return keep | (kv_idx == sink_idx)
+    return sliding_mod
 
 
 def _get_flex_attn_mask_mod(
