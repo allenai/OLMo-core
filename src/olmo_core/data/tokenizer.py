@@ -25,6 +25,11 @@ class TokenizerName(StrEnum):
     The dolma2 tokenizer.
     """
 
+    dolma2_sigdig = "allenai/dolma2-tokenizer-sigdig"
+    """
+    The R2L dolma2 tokenizer.
+    """
+
     gpt_neox_olmo_dolma_v1_5 = "allenai/gpt-neox-olmo-dolma-v1_5"
     """
     A modified GPT NeoX tokenizer.
@@ -84,6 +89,19 @@ class TokenizerConfig(Config):
             eos_token_id=100257,
             pad_token_id=100277,
             identifier=TokenizerName.dolma2,
+        )
+
+    @classmethod
+    def dolma2_sigdig(cls) -> "TokenizerConfig":
+        """
+        Get a :data:`~TokenizerName.dolma2_sigdig` tokenizer config.
+        """
+        return cls(
+            vocab_size=100278,
+            eos_token_id=100257,
+            pad_token_id=100277,
+            bos_token_id=100257,
+            identifier=TokenizerName.dolma2_sigdig,
         )
 
     @classmethod

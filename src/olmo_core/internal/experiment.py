@@ -65,6 +65,7 @@ class ExperimentConfig(Config):
     train_module: TransformerTrainModuleConfig
     trainer: TrainerConfig
     init_seed: int = 12536
+    backend: Optional[str] = "cpu:gloo,cuda:nccl"
 
 
 class SubCmd(StrEnum):
@@ -75,11 +76,11 @@ class SubCmd(StrEnum):
     launch_prep = "launch_prep"
     dry_run = "dry_run"
 
-    def prepare_environment(self):
+    def prepare_environment(self, config: ExperimentConfig):
         if self in (SubCmd.launch, SubCmd.dry_run, SubCmd.prep, SubCmd.launch_prep):
             prepare_cli_environment()
         elif self == SubCmd.train:
-            prepare_training_environment()
+            prepare_training_environment(backend=config.backend)
         elif self == SubCmd.train_single:
             prepare_training_environment(backend=None)
         else:
@@ -143,6 +144,8 @@ def build_common_components(
     beaker_image: str = OLMoCoreBeakerImage.stable,
     num_nodes: int = 1,
     beaker_workspace: str = "ai2/OLMo-core",
+    use_hostname_constraints: bool = False,
+    num_execution_units: Optional[int] = None,
 ) -> CommonComponents:
     root_dir = get_root_dir(cluster)
 
@@ -158,10 +161,12 @@ def build_common_components(
             root_dir=root_dir,
             cmd=[script, cmd_to_launch, run_name, cluster, *overrides],
             cluster=cluster,
-            nccl_debug=False,
+            nccl_debug=True,
             beaker_image=beaker_image,
             num_nodes=num_nodes,
             workspace=beaker_workspace,
+            use_hostname_constraints=use_hostname_constraints,
+            num_execution_units=num_execution_units,
         )
 
     tokenizer_config = TokenizerConfig.dolma2()
@@ -239,6 +244,36 @@ def build_common_components(
     )
 
 
+def _set_beaker_execution_units(config: ExperimentConfig):
+    # When running on Augusta with hostname constraints enabled, setting more beaker
+    # execution units than model replicas may result in the replicas being split across
+    # Augusta hardware blocks.
+    if (
+        config.launch
+        and config.launch.use_hostname_constraints
+        and any("augusta" in cluster for cluster in config.launch.clusters)
+        and (dp_config := config.train_module.dp_config) is not None
+    ):
+        if dp_config.num_replicas is not None:
+            num_model_replicas = dp_config.num_replicas
+        elif dp_config.shard_degree is not None:
+            nodes_per_replica = max(1, dp_config.shard_degree // config.launch.num_gpus)
+            num_model_replicas = config.launch.num_nodes // nodes_per_replica
+        else:
+            return
+
+        if config.launch.num_execution_units is None:
+            log.info(f"Setting number of execution units to {num_model_replicas}.")
+            config.launch.num_execution_units = num_model_replicas
+        elif config.launch.num_execution_units > num_model_replicas:
+            log.warning(
+                f"Number of execution units {config.launch.num_execution_units} exceeds number of model replicas {num_model_replicas}. "
+                "On Augusta, this may result in suboptimal performance due to model replicas being split "
+                "across hardware blocks. To resolve, decrease num_execution_units in beaker launch config, "
+                "increase number of model replicas or disable use_hostname_constraints in beaker launch config."
+            )
+
+
 def build_config(
     script: str,
     cmd: SubCmd,
@@ -272,6 +307,8 @@ def build_config(
     )
 
     config = config.merge(overrides)
+
+    _set_beaker_execution_units(config)
 
     if finalize_config is not None:
         finalize_config(config)
@@ -332,6 +369,8 @@ def main(
     beaker_image: str = OLMoCoreBeakerImage.stable,
     num_nodes: int = 1,
     beaker_workspace: str = "ai2/OLMo-core",
+    use_hostname_constraints: bool = False,
+    num_execution_units: Optional[int] = None,
 ):
     usage = f"""
 [yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]{'|'.join(SubCmd)}[/] [i b]RUN_NAME CLUSTER[/] [i][OVERRIDES...][/]
@@ -358,7 +397,6 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/pluto-cirrascale --launch.nu
     script, cmd, run_name, cluster, *overrides = sys.argv
 
     cmd = SubCmd(cmd)
-    cmd.prepare_environment()
 
     config = build_config(
         script,
@@ -378,6 +416,9 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/pluto-cirrascale --launch.nu
         beaker_image=beaker_image,
         num_nodes=num_nodes,
         beaker_workspace=beaker_workspace,
+        use_hostname_constraints=use_hostname_constraints,
+        num_execution_units=num_execution_units,
     )
 
+    cmd.prepare_environment(config)
     cmd.run(config)

@@ -149,7 +149,7 @@ def convert_checkpoint_from_hf(
 
     with tempfile.NamedTemporaryFile(mode="w") as temp_file:
         json.dump(experiment_config_dict, temp_file)
-        temp_file.flush()
+        temp_file.flush()  # make sure data is written to disk, json.dump doesn't flush.
         copy_file(temp_file.name, config_path, save_overwrite=True)
         log.info(f"Successfully wrote partial experiment config to '{config_path}'")
 
