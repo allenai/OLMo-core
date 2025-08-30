@@ -1210,7 +1210,8 @@ def _get_flex_attn_mask_mod(
 
     has_window = window_size is not None and window_size != (-1, -1)
     has_docs = doc_lens is not None
-
+    
+    document_ids = None
     if has_docs:
         document_ids = torch.cat(
             [torch.full((int(doc_len),), i, device=device, dtype=torch.long) for i, doc_len in enumerate(doc_lens)]
@@ -1219,22 +1220,24 @@ def _get_flex_attn_mask_mod(
     def total_mask_mod(B: torch.Tensor, H: torch.Tensor, q_idx: torch.Tensor, kv_idx: torch.Tensor) -> torch.Tensor:
         is_sink = kv_idx < num_sink_tokens
         adjusted_kv_idx = kv_idx - num_sink_tokens
-        is_regular = kv_idx >= num_sink_tokens
-        causal_mask = q_idx >= adjusted_kv_idx
         
-        if has_window:
+        # Start with causal mask
+        mask = q_idx >= adjusted_kv_idx
+        
+        # Apply window constraints if specified
+        if has_window and window_size is not None:
             window_mask = (q_idx - adjusted_kv_idx <= window_size[0]) & (adjusted_kv_idx - q_idx <= window_size[1])
-        else:
-            window_mask = torch.ones_like(causal_mask, dtype=torch.bool)
+            mask = mask & window_mask
         
-        if has_docs:
+        # Apply document constraints if specified  
+        if has_docs and document_ids is not None:
             clamped_idx = torch.clamp(adjusted_kv_idx, min=0, max=len(document_ids) - 1)
             doc_mask = document_ids[q_idx] == document_ids[clamped_idx]
-        else:
-            doc_mask = torch.ones_like(causal_mask, dtype=torch.bool)
+            mask = mask & doc_mask
         
-        regular_mask = causal_mask & window_mask & doc_mask
-        return is_sink | (is_regular & regular_mask)
+        # Only apply regular mask to non-sink tokens
+        regular_tokens = kv_idx >= num_sink_tokens
+        return is_sink | (regular_tokens & mask)
 
     return total_mask_mod
 
