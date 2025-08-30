@@ -801,6 +801,8 @@ class LocalDecoder(nn.Module):
         else:
             self.in_projection = None
 
+        self.boundary_embedding = nn.Embedding(1, d_model, device=init_device)
+
     def apply_fsdp(
         self,
         dp_mesh: Optional[DeviceMesh] = None,
@@ -834,7 +836,7 @@ class LocalDecoder(nn.Module):
         block_size: int = 256,
         headdim: int = 32,
         epsilon: float = 1e-3,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
 
         h_patch = patch_embeds[..., :self.d_model] # global d -> local d
@@ -854,6 +856,7 @@ class LocalDecoder(nn.Module):
                 index=torch.cumsum(patch_lens, dim=1) - 1,
                 src=torch.ones_like(patch_lens, dtype=torch.bool),
             )
+            seq_sorted_indices = None
         else:
             assert boundary_mask is not None
             B, L = boundary_mask.shape
@@ -866,6 +869,7 @@ class LocalDecoder(nn.Module):
                 seq_sorted_indices = torch.argsort(token_idx, dim=1)[:, :patch_embeds.shape[1]]
                 p = torch.gather(torch.exp(boundary_logprobs).float().clip(min=epsilon, max=1 - epsilon), dim=1, index=seq_sorted_indices)
             else:
+                seq_sorted_indices = None
                 p = torch.full((h_patch.shape[0], h_patch.shape[1]), 1 - epsilon, device=h_patch.device, dtype=torch.float32)
 
         dt = torch.log(1 / (1 - p)).float()
@@ -878,8 +882,7 @@ class LocalDecoder(nn.Module):
         b = p.float()
         c = torch.ones_like(b)
 
-        # trust the HNet source...
-        depool_out = mamba_chunk_scan_combined(
+        prepool_out = mamba_chunk_scan_combined(
             rearrange(x, "b l (h p) -> b l h p", p=headdim),
             repeat(dt, "b l -> b l h", h=n_heads),
             A,
@@ -888,17 +891,17 @@ class LocalDecoder(nn.Module):
             chunk_size=block_size,
             seq_idx=None,
         ).to(h_patch.dtype)
-        depool_out = rearrange(depool_out, "b l h p -> b l (h p)")
-        depool_out = cast(torch.Tensor, depool_out)
+        prepool_out = rearrange(prepool_out, "b l h p -> b l (h p)")
+        prepool_out = cast(torch.Tensor, prepool_out)
 
         # TODO(benjaminm): clipping is problematic if it happens too much; track clip %.
-        plug_back_idx = (torch.cumsum(boundary_mask[:, 1:], dim=1) - 1).clip(max=depool_out.shape[1] - 1)
+        plug_back_idx = (torch.cumsum(boundary_mask[:, 1:], dim=1) - 1).clip(max=prepool_out.shape[1] - 1)
         plug_back_idx = torch.cat([
             plug_back_idx,
             plug_back_idx.max(1, keepdim=True).values
         ], 1)
         depool_out = torch.gather(
-            depool_out,
+            prepool_out,
             dim=1,
             index=plug_back_idx.unsqueeze(-1).expand(-1, -1, self.d_model),
         )
@@ -917,18 +920,52 @@ class LocalDecoder(nn.Module):
 
         h = depool_out_modulated + embeds
 
+        assert seq_sorted_indices is not None
+        h_with_b = torch.zeros(
+            (h.shape[0], h.shape[1] + patch_embeds.shape[1], h.shape[2]),
+            device=h.device,
+            dtype=h.dtype
+        )
+
+        non_b_indices = torch.arange(len(h[0]), device=h.device).unsqueeze(0).repeat(len(h), 1)
+        non_b_indices += plug_back_idx
+        b_indices = seq_sorted_indices[:, 1:] - 1 + torch.arange(patch_embeds.shape[1] - 1, device=h.device).unsqueeze(0)
+
+        h_with_b.scatter_(
+            1,
+            non_b_indices.unsqueeze(-1).expand(-1, -1, self.d_model),
+            h
+        )
+
+        h_with_b.scatter_(
+            1,
+            b_indices.unsqueeze(-1).expand(-1, -1, self.d_model),
+            self.boundary_embedding.weight.unsqueeze(0) + prepool_out[:, :-1]
+        )
+
         for block_idx in range(self.n_layers):
             block = self.blocks[str(block_idx)]
-            h = block(h)
+            h_with_b = block(h_with_b)
 
-        return h
+        h_for_boundaries = torch.gather(
+            h_with_b,
+            dim=1,
+            index=(b_indices - 1).unsqueeze(-1).expand(-1, -1, self.d_model),
+        )
+        h_for_logits = torch.gather(
+            h_with_b,
+            dim=1,
+            index=(non_b_indices[:, 1:] - 1).unsqueeze(-1).expand(-1, -1, self.d_model),
+        )
+
+        return h_for_boundaries, h_for_logits
 
     def _depool_blt(
         self,
         embeds: torch.Tensor,
         patch_embeds: torch.Tensor,
         cross_attn_mask: BlockMask | None = None,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         if self.patch_embedding_projection is None or self.blt_k is None:
             raise ValueError("Patch embedding projection is not defined, can not depool with BLT method.")
 
@@ -950,7 +987,7 @@ class LocalDecoder(nn.Module):
             h = h * residual_factor + h_cross
             h = block(h)
 
-        return h
+        return h, h
 
     def depool(
         self,
@@ -960,7 +997,7 @@ class LocalDecoder(nn.Module):
         cross_attn_mask: BlockMask | None = None,
         boundary_logprobs: torch.Tensor | None = None,
         boundary_mask: torch.Tensor | None = None,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         if self.depooling == "cross_attn":
             return self._depool_blt(embeds, patch_embeds, cross_attn_mask)
         elif self.depooling == "hnet":
@@ -977,7 +1014,7 @@ class LocalDecoder(nn.Module):
         cross_attn_mask: BlockMask | None = None,
         boundary_logprobs: torch.Tensor | None = None,
         boundary_mask: torch.Tensor | None = None,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         if self.residual_norm is not None:
             h = self.residual_norm(embeds)
         else:

@@ -1072,6 +1072,7 @@ class BLTTransformer(Transformer):
         self.space_mask_dolma2 = blt_utils.get_dolma2_space_mask()
         self.eos_token_dolma2 = 100257
         self.space_mask_blt = blt_utils.get_blt_space_mask()
+        self.end_of_subword_token_blt = 3
 
     def apply_fsdp(
         self,
@@ -1948,7 +1949,7 @@ class BLTDistillTransformer(BLTTransformer):
             else:
                 boundary_logprobs_for_decoder = boundary_logprobs.detach() if boundary_logprobs is not None else None
 
-            h_out = self.local_decoder(
+            h_out_for_boundaries, h_out_for_logits = self.local_decoder(
                 embeds=h_byte_for_decoder,
                 patch_embeds=h_patch_for_decoder,
                 boundary_logprobs=None if blt_config.teacher_force_boundaries else boundary_logprobs_for_decoder,
@@ -1956,20 +1957,46 @@ class BLTDistillTransformer(BLTTransformer):
                 **local_decoder_kwargs,
             )
 
-            logits = self.lm_head(h_out, **lm_head_kwargs)
+            boundary_logits = self.lm_head(h_out_for_boundaries, **lm_head_kwargs)
+            logits = self.lm_head(h_out_for_logits, **lm_head_kwargs)
             logprobs = F.log_softmax(logits.float() / blt_config.temperature, dim=-1)
-            main_path_logprobs = torch.gather(logprobs[:, :-1], -1, input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
+            main_path_logprobs = torch.gather(logprobs, -1, input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
         else:
             student_hidden_states = None
-            h_out = None
+            boundary_logits = None
             logits = None
             logprobs = None
             main_path_logprobs = None
 
         # compute CE
         if not skip_blocks:
-            ce_loss, _ = cross_entropy_loss(logits.view(-1, logits.shape[-1]), labels.view(-1))  # type: ignore
+            assert boundary_logits is not None
+            assert logits is not None
+            assert labels is not None
+
+            ce_loss, _ = cross_entropy_loss(logits.view(-1, logits.shape[-1]), labels[:, :-1].reshape(-1))
             metrics["blt/ce_loss"] = ce_loss
+
+            boundary_ce_loss, _ = cross_entropy_loss(
+                boundary_logits.view(-1, boundary_logits.shape[-1]),
+                torch.full(
+                    (boundary_logits.shape[0] * boundary_logits.shape[1],),
+                    fill_value=self.end_of_subword_token_blt,
+                    device=boundary_logits.device,
+                    dtype=torch.long
+                ),
+            )
+            metrics["blt/boundary_ce_loss"] = ce_loss
+            metrics["blt/boundary_true_positives"] = (
+                ((boundary_logits.argmax(-1) == self.end_of_subword_token_blt) * patch_mask[:, :-1]).float().mean()
+                / patch_mask[:, :-1].float().mean()
+            )
+            metrics["blt/boundary_true_negatives"] = (
+                ((logits.argmax(-1) != self.end_of_subword_token_blt) * byte_mask[:, :-1]).float().mean()
+                / byte_mask[:, :-1].float().mean()
+            )
+
+            ce_loss = ce_loss + boundary_ce_loss * patch_mask.shape[1] / byte_mask.shape[1]
         else:
             ce_loss = torch.nan
 
@@ -2046,8 +2073,13 @@ class BLTDistillTransformer(BLTTransformer):
         if patch_loss_div_factor is not None:
             patch_loss_div_factor = patch_loss_div_factor / (h_patch.shape[0] * h_patch.shape[1])
 
+        if loss_div_factor is not None and patch_loss_div_factor is not None:
+            combined_loss_div_factor = loss_div_factor + patch_loss_div_factor
+        else:
+            combined_loss_div_factor = None
+
         # TODO(benjaminm): fix if possible by accumulating div factor across batches and dividing at the end
-        ce_loss = self._finalize_loss(ce_loss, loss_div_factor=loss_div_factor)
+        ce_loss = self._finalize_loss(ce_loss, loss_div_factor=combined_loss_div_factor)
         boundary_loss = self._finalize_loss(boundary_loss, loss_div_factor=loss_div_factor)
         local_encoder_loss = self._finalize_loss(local_encoder_loss, loss_div_factor=patch_loss_div_factor)
         local_decoder_loss = self._finalize_loss(local_decoder_loss, loss_div_factor=loss_div_factor)
