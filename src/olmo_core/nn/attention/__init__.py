@@ -317,10 +317,6 @@ class Attention(AttentionBase):
     :param dtype: The default data type to use for parameters.
     :param init_device: The device to initialize weights on.
     """
-    flex_attn: ClassVar[Callable] = torch.compile(
-        flex_attention, mode="max-autotune-no-cudagraphs"
-    )
-    compiled_create_block_mask: ClassVar[Callable] = torch.compile(create_block_mask)
 
     def __init__(
         self,
@@ -519,9 +515,9 @@ class Attention(AttentionBase):
                     mask_mod = self._get_sliding_window_with_sink_mask_mod(window, sink_idx)
                 else:
                     mask_mod = self._get_causal_with_sink_mask_mod(sink_idx)
-
-                block_mask = Attention.compiled_create_block_mask(
-                    mask_mod, B, n_heads, S_q, kv_len
+                from torch.nn.attention.flex_attention import create_block_mask
+                block_mask = create_block_mask(
+                    mask_mod, B, n_heads, S_q, kv_len, device=q.device.type
                 )
 
                 if hasattr(self.sinks, 'to_local'):
@@ -546,13 +542,13 @@ class Attention(AttentionBase):
                 else:
                     mask_mod = self._get_causal_mask_mod()
 
-                block_mask = Attention.compiled_create_block_mask(
-                    mask_mod, B, n_heads, S_q, kv_len
+                block_mask = create_block_mask(
+                    mask_mod, B, n_heads, S_q, kv_len, device=q.device.type
                 )
 
             with torch.autocast(enabled=False, device_type=q.device.type):
                 # q, k, v are already (B, H, S, D)
-                flex_att = Attention.flex_attn(
+                flex_att = flex_attention(
                     q, k, v, block_mask=block_mask, scale=scale, score_mod=score_mod_fn, enable_gqa=True
                 )
                 assert isinstance(flex_att, torch.Tensor)
