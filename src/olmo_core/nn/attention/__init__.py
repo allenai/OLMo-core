@@ -494,16 +494,23 @@ class Attention(AttentionBase):
 
             B, S_q, n_heads, head_dim = q.shape
             _, S_kv, n_kv_heads, _ = k.shape
+            
+            # Transpose to (B, H, S, D) for flex_attention
+            q = q.transpose(1, 2)
+            k = k.transpose(1, 2)
+            v = v.transpose(1, 2)
 
             score_mod_fn = None
             mask_mod = None
             if self.sinks is not None:
                 num_sink_tokens = 1
                 sink_idx = S_kv  # Sink at end
-                sink_k = k.new_zeros(B, num_sink_tokens, n_kv_heads, head_dim)
-                sink_v = v.new_zeros(B, num_sink_tokens, n_kv_heads, head_dim)
-                k = torch.cat([k, sink_k], dim=1)
-                v = torch.cat([v, sink_v], dim=1)
+                # Now tensors are (B, H, S, D), so create sinks accordingly
+                sink_k = k.new_zeros(B, n_kv_heads, num_sink_tokens, head_dim)
+                sink_v = v.new_zeros(B, n_kv_heads, num_sink_tokens, head_dim)
+                # Concatenate along sequence dimension (dim=2 now)
+                k = torch.cat([k, sink_k], dim=2)
+                v = torch.cat([v, sink_v], dim=2)
                 kv_len = S_kv + num_sink_tokens
 
                 if self.window_size is not None and self.window_size != (-1, -1):
@@ -544,12 +551,14 @@ class Attention(AttentionBase):
                 )
 
             with torch.autocast(enabled=False, device_type=q.device.type):
+                # q, k, v are already (B, H, S, D)
                 flex_att = Attention.flex_attn(
                     q, k, v, block_mask=block_mask, scale=scale, score_mod=score_mod_fn, enable_gqa=True
                 )
                 assert isinstance(flex_att, torch.Tensor)
                 att = flex_att
 
+            # Transpose back to (B, S, H, D)
             att = att.transpose(1, 2).contiguous()
 
         else:
