@@ -1251,7 +1251,7 @@ def _get_flex_attn_causal_block_mask(
             Q_LEN=token_count,
             KV_LEN=token_count + num_sink_tokens,
             device=device.type,
-            BLOCK_SIZE=block_size,
+            # BLOCK_SIZE=block_size,
         )
 
     else:
@@ -1262,7 +1262,7 @@ def _get_flex_attn_causal_block_mask(
             Q_LEN=seq_len,
             KV_LEN=seq_len + num_sink_tokens,
             device=device.type,
-            BLOCK_SIZE=block_size,
+            # BLOCK_SIZE=block_size,
         )
 
 
@@ -1271,7 +1271,7 @@ def get_flex_attn_causal_block_mask(
     device: torch.device,
     window_size: Optional[Tuple[int, int]] = None,
     doc_lens: Optional[torch.Tensor] = None,
-    block_size: int = 128,
+    # block_size: int = 128,
     return_mask_fn: bool = False,
     num_sink_tokens: int = 0,
 ) -> Union[BlockMask, Tuple[BlockMask, Callable]]:
@@ -1279,12 +1279,12 @@ def get_flex_attn_causal_block_mask(
         doc_lens_list = tuple(doc_lens.flatten().tolist())
         mask_fn = _get_flex_attn_mask_mod(window_size, doc_lens=doc_lens_list, device=device, num_sink_tokens=num_sink_tokens)
         block_mask = _get_flex_attn_causal_block_mask(
-            seq_len, device, window_size, doc_lens_list, block_size, num_sink_tokens=num_sink_tokens
+            seq_len, device, window_size, doc_lens_list, num_sink_tokens=num_sink_tokens
         )
     else:
         mask_fn = _get_flex_attn_mask_mod(window_size, device=device, num_sink_tokens=num_sink_tokens)
         block_mask = _get_flex_attn_causal_block_mask(
-            seq_len, device, window_size, doc_lens=None, block_size=block_size, num_sink_tokens=num_sink_tokens
+            seq_len, device, window_size, doc_lens=None, num_sink_tokens=num_sink_tokens
         )
 
     if return_mask_fn:
