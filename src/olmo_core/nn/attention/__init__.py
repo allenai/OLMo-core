@@ -1220,23 +1220,29 @@ def _get_flex_attn_mask_mod(
     def total_mask_mod(B: torch.Tensor, H: torch.Tensor, q_idx: torch.Tensor, kv_idx: torch.Tensor) -> torch.Tensor:
         is_sink = kv_idx < num_sink_tokens
         adjusted_kv_idx = kv_idx - num_sink_tokens
-        causal_mask = (kv_idx >= num_sink_tokens) & (adjusted_kv_idx <= q_idx)
+        
+        is_regular = kv_idx >= num_sink_tokens
+        causal = adjusted_kv_idx <= q_idx
+        
+        regular_mask = is_regular & causal
         
         if has_window and window_size is not None:
             within_window = (q_idx - adjusted_kv_idx) <= window_size[0]
-            causal_mask = causal_mask & within_window
+            regular_mask = regular_mask & within_window
         
         if has_docs and document_ids is not None:
-            max_doc_idx = len(document_ids) - 1
-            same_doc = torch.where(
-                (kv_idx >= num_sink_tokens) & (adjusted_kv_idx <= max_doc_idx) & (q_idx <= max_doc_idx),
-                document_ids[torch.clamp(q_idx, max=max_doc_idx)] == 
-                document_ids[torch.clamp(adjusted_kv_idx, max=max_doc_idx)],
-                torch.zeros_like(causal_mask)
-            )
-            causal_mask = causal_mask & same_doc
-        return is_sink | causal_mask
-
+            max_idx = len(document_ids) - 1
+            valid_q = q_idx <= max_idx
+            valid_kv = (adjusted_kv_idx >= 0) & (adjusted_kv_idx <= max_idx)
+            
+            q_safe = torch.clamp(q_idx, min=0, max=max_idx)
+            kv_safe = torch.clamp(adjusted_kv_idx, min=0, max=max_idx)
+            same_doc = document_ids[q_safe] == document_ids[kv_safe]
+            
+            doc_mask = (valid_q & valid_kv & same_doc) | ~(valid_q & valid_kv)
+            regular_mask = regular_mask & doc_mask
+        
+        return is_sink | regular_mask
     return total_mask_mod
 
 
