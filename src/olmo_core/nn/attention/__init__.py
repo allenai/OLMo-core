@@ -1,7 +1,7 @@
 import math
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import Callable, ClassVar, List, Optional, Tuple, Union
+from typing import Callable, List, Optional, Tuple, Union
 
 import torch
 import torch.distributed as dist
@@ -12,7 +12,7 @@ from torch.distributed.tensor import Placement, Replicate, Shard
 from torch.distributed.tensor.parallel import parallelize_module
 from torch.nn.attention.flex_attention import (
     BlockMask,
-    _mask_mod_signature,
+    and_masks,
     create_block_mask,
     flex_attention,
 )
@@ -460,7 +460,7 @@ class Attention(AttentionBase):
                 dropout_p=self.dropout_p,
                 causal=True,
                 softmax_scale=scale,
-                window_size=(self.window_size, 0) if self.window_size is not None else (-1, -1),
+                window_size=self.window_size,
             )
         elif self.use_flash:
             if sinks is not None:
@@ -479,81 +479,112 @@ class Attention(AttentionBase):
                     dropout_p=self.dropout_p,
                     softmax_scale=scale,
                     causal=True,
-                    window_size=(self.window_size, 0) if self.window_size is not None else (-1, -1),
+                    window_size=self.window_size,
                 )
         elif self.use_flex:
             if self.dropout_p != 0:
                 raise NotImplementedError("Our flex attention does not yet support dropout.")
+            if block_mask is None:
+                raise ValueError("Block mask missing during flex attention.")
 
-            if cu_doc_lens is not None or max_doc_len is not None:
-                raise NotImplementedError("Intra-document masking not supported in simplified flex.")
-
-            B, S_q, n_heads, head_dim = q.shape
-            _, S_kv, n_kv_heads, _ = k.shape
+            original_total_tokens_q = q.shape[0] * q.shape[1]
+            original_total_tokens_kv = k.shape[0] * k.shape[1]
             
-            # Transpose to (B, H, S, D) for flex_attention
-            q = q.transpose(1, 2)
-            k = k.transpose(1, 2)
-            v = v.transpose(1, 2)
-
-            score_mod_fn = None
-            mask_mod = None
-            if self.sinks is not None:
-                num_sink_tokens = 1
-                sink_idx = S_kv  # Sink at end
-                # Now tensors are (B, H, S, D), so create sinks accordingly
-                sink_k = k.new_zeros(B, n_kv_heads, num_sink_tokens, head_dim)
-                sink_v = v.new_zeros(B, n_kv_heads, num_sink_tokens, head_dim)
-                # Concatenate along sequence dimension (dim=2 now)
-                k = torch.cat([k, sink_k], dim=2)
-                v = torch.cat([v, sink_v], dim=2)
-                kv_len = S_kv + num_sink_tokens
-
-                if self.window_size is not None and self.window_size != (-1, -1):
-                    # window_size is a tuple (left, right), we use the left window
-                    window = self.window_size[0] if isinstance(self.window_size, tuple) else self.window_size
-                    mask_mod = self._get_sliding_window_with_sink_mask_mod(window, sink_idx)
+            # Reshape (batch_size, seq_len) so that the seq_len matches that of the block mask.
+            # This is needed for intra-document masking, in which case the block mask sequence
+            # length is batch_size * seq_len.
+            q = q.view(
+                original_total_tokens_q // block_mask.seq_lengths[0],
+                block_mask.seq_lengths[0],
+                *q.shape[2:],
+            )
+            
+            # For K/V, we need to account for the fact that the block mask KV length includes sinks
+            # but our current tensor doesn't have sinks yet
+            if sinks is not None:
+                if sinks.ndim == 1:
+                    num_sink_tokens = 1
+                elif sinks.ndim == 2:
+                    num_sink_tokens = sinks.size(1)
                 else:
-                    mask_mod = self._get_causal_with_sink_mask_mod(sink_idx)
-                block_mask = create_block_mask(
-                    mask_mod, B, n_heads, S_q, kv_len, device=q.device.type
+                    raise ValueError("Sinks must have shape (n_heads,) or (n_heads, num_sinks)")
+                
+                # The block mask KV length includes sinks, so we reshape to the non-sink length first
+                kv_seq_len_without_sinks = block_mask.seq_lengths[1] - num_sink_tokens
+                k = k.view(
+                    original_total_tokens_kv // kv_seq_len_without_sinks,
+                    kv_seq_len_without_sinks,
+                    *k.shape[2:],
                 )
-
-                if hasattr(self.sinks, 'to_local'):
-                    local_sinks = self.sinks.to_local()
-                elif hasattr(self.sinks, '_local_tensor'):
-                    local_sinks = self.sinks._local_tensor
+                v = v.view(
+                    original_total_tokens_kv // kv_seq_len_without_sinks,
+                    kv_seq_len_without_sinks,
+                    *v.shape[2:],
+                )
+                
+                batch_size, seq_len, n_kv_heads, head_dim = k.shape
+                
+                if hasattr(sinks, 'to_local'):
+                    local_sinks = sinks.to_local()
+                elif hasattr(sinks, '_local_tensor'):
+                    local_sinks = sinks._local_tensor
                 else:
-                    local_sinks = self.sinks
-
-                def score_mod_fn(score, batch_idx, head_idx, q_idx, kv_idx):
-                    is_sink = kv_idx == sink_idx
-                    sink_logit = local_sinks[head_idx]
-                    return torch.where(is_sink, sink_logit + 0.0, score)
-
+                    local_sinks = sinks
+                
+                # Dummy zeros for sink k and v
+                sink_k = k.new_zeros(batch_size, num_sink_tokens, n_kv_heads, head_dim)
+                sink_v = v.new_zeros(batch_size, num_sink_tokens, n_kv_heads, head_dim)
+                
+                k = torch.cat([sink_k, k], dim=1)
+                v = torch.cat([sink_v, v], dim=1)
             else:
                 num_sink_tokens = 0
-                kv_len = S_kv
-                if self.window_size is not None and self.window_size != (-1, -1):
-                    # window_size is a tuple (left, right), we use the left window
-                    window = self.window_size[0] if isinstance(self.window_size, tuple) else self.window_size
-                    mask_mod = self._get_sliding_window_mask_mod(window)
-                else:
-                    mask_mod = self._get_causal_mask_mod()
-
-                block_mask = create_block_mask(
-                    mask_mod, B, n_heads, S_q, kv_len, device=q.device.type
+                k = k.view(
+                    original_total_tokens_kv // block_mask.seq_lengths[1],
+                    block_mask.seq_lengths[1],
+                    *k.shape[2:],
+                )
+                v = v.view(
+                    original_total_tokens_kv // block_mask.seq_lengths[1],
+                    block_mask.seq_lengths[1],
+                    *v.shape[2:],
                 )
 
+            # PyTorch's flex attn expects the number of heads to come before the sequence dimension.
+            # shape: (batch_size, n_heads, seq_len, head_dim),
+            #        (batch_size, n_kv_heads, seq_len, head_dim),
+            #        (batch_size, n_kv_heads, seq_len, head_dim)
+            q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
+
+            # Use bfloat16 for flex attention to save memory, but only on CUDA to avoid precision issues on CPU
+            cast_to_bf16 = q.device.type == 'cuda'
+            og_dtype = q.dtype
+            if cast_to_bf16:
+                q, k, v = q.bfloat16(), k.bfloat16(), v.bfloat16()
+
+            score_mod_fn = None
+            if sinks is not None:
+                if local_sinks.ndim == 1:
+                    def score_mod_fn(score, batch_idx, head_idx, q_idx, kv_idx):
+                        is_sink = kv_idx < num_sink_tokens
+                        sink_logit = local_sinks[head_idx].to(score.dtype)
+                        return torch.where(is_sink, sink_logit, score)
+                elif local_sinks.ndim == 2:
+                    def score_mod_fn(score, batch_idx, head_idx, q_idx, kv_idx):
+                        is_sink = kv_idx < num_sink_tokens
+                        safe_kv_idx = torch.clamp(kv_idx, 0, num_sink_tokens - 1)
+                        sink_logit = local_sinks[head_idx, safe_kv_idx].to(score.dtype)
+                        return torch.where(is_sink, sink_logit, score)
+
             with torch.autocast(enabled=False, device_type=q.device.type):
-                # q, k, v are already (B, H, S, D)
+                # shape: (batch_size, n_heads, seq_len, head_dim)
                 flex_att = flex_attention(
                     q, k, v, block_mask=block_mask, scale=scale, score_mod=score_mod_fn, enable_gqa=True
                 )
-                assert isinstance(flex_att, torch.Tensor)
-                att = flex_att
+            assert isinstance(flex_att, torch.Tensor)
+            att = flex_att if not cast_to_bf16 else flex_att.to(og_dtype)
 
-            # Transpose back to (B, S, H, D)
+            # shape: (batch_size, seq_len, n_heads, head_dim)
             att = att.transpose(1, 2).contiguous()
 
         else:
@@ -572,20 +603,24 @@ class Attention(AttentionBase):
                 raise RuntimeError(
                     f"{self.__class__.__name__} requires flash-attn (use_flash=True) for intra-document masking"
                 )
+
             # NOTE: PyTorch's SDPA doesn't support GQA, so we have to do this.
             # shape: (batch_size, n_heads, seq_len, head_dim)
             k = repeat_kv(k, self.n_rep)
             v = repeat_kv(v, self.n_rep)
+
             # PyTorch's SDPA expects the head dimension to come before the sequence dimension.
             # shape: (batch_size, n_heads, seq_len, head_dim),
-            # (batch_size, n_kv_heads, seq_len, head_dim),
-            # (batch_size, n_kv_heads, seq_len, head_dim)
+            #        (batch_size, n_kv_heads, seq_len, head_dim),
+            #        (batch_size, n_kv_heads, seq_len, head_dim)
             q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
+
             if sinks is None:
                 # shape: (batch_size, n_heads, seq_len, head_dim)
                 att = F.scaled_dot_product_attention(
                     q, k, v, dropout_p=self.dropout_p, is_causal=True, scale=scale
                 )
+
             else:
                 batch_size, n_heads, seq_len, _ = q.shape
                 attn_logits = torch.matmul(
@@ -593,6 +628,7 @@ class Attention(AttentionBase):
                 )  # (batch_size, n_heads, seq_len, seq_len)
                 if scale is not None:
                     attn_logits *= scale
+
                 if mask_fn is not None:
                     attention_mask = materialize_dense_mask(
                         mask_fn, seq_len, q.device, batch_size, n_heads
@@ -603,12 +639,14 @@ class Attention(AttentionBase):
                         q.new_full((seq_len, seq_len), -float("inf")), diagonal=1
                     )
                     attn_logits = attn_logits + causal_mask[None, None, :, :]
+
                 if hasattr(sinks, 'to_local'):
                     local_sinks = sinks.to_local()
                 elif hasattr(sinks, '_local_tensor'):
                     local_sinks = sinks._local_tensor
                 else:
                     local_sinks = sinks
+                
                 if local_sinks.ndim == 1:
                     S = local_sinks.numel()
                     sink_logits = (
@@ -626,6 +664,7 @@ class Attention(AttentionBase):
                     )
                 else:
                     raise ValueError("Sinks must have shape (S) or (n_heads, S)")
+
                 combined_logits = torch.cat(
                     [attn_logits, sink_logits], dim=-1
                 )  # (batch_size, n_heads, head_dim, head_dim + seq_len)
@@ -635,10 +674,12 @@ class Attention(AttentionBase):
                 probs = combined_probs[..., :seq_len]
                 probs = F.dropout(probs, p=self.dropout_p)
                 att = torch.matmul(probs, v)
+
             # shape: (batch_size, seq_len, n_heads, head_dim)
             att = att.transpose(1, 2).contiguous()
+
         return att
-    
+
     def forward(
         self,
         x: torch.Tensor,
@@ -737,32 +778,6 @@ class Attention(AttentionBase):
 
         # shape: (batch_size, seq_len, d_model)
         return self.w_out(att)
-
-    @staticmethod
-    def _get_causal_mask_mod() -> _mask_mod_signature:
-        def causal_mask(b, h, q_idx, kv_idx):
-            return q_idx >= kv_idx
-        return causal_mask
-
-    @staticmethod
-    def _get_sliding_window_mask_mod(window: int) -> _mask_mod_signature:
-        def sliding_mod(b, h, q_idx, kv_idx):
-            return (kv_idx <= q_idx) & (q_idx - kv_idx <= window)
-        return sliding_mod
-
-    @staticmethod
-    def _get_causal_with_sink_mask_mod(sink_idx: int) -> _mask_mod_signature:
-        orig = Attention._get_causal_mask_mod()
-        def causal_with_sink(b, h, q_idx, kv_idx):
-            return orig(b, h, q_idx, kv_idx) | (kv_idx == sink_idx)
-        return causal_with_sink
-
-    @staticmethod
-    def _get_sliding_window_with_sink_mask_mod(window: int, sink_idx: int) -> _mask_mod_signature:
-        def sliding_mod(b, h, q_idx, kv_idx):
-            keep = (kv_idx <= q_idx) & (q_idx - kv_idx <= window)
-            return keep | (kv_idx == sink_idx)
-        return sliding_mod
 
     def apply_tp(
         self,
@@ -1144,53 +1159,11 @@ def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
     )
 
 
-# def _get_flex_attn_mask_mod(
-#     window_size: Optional[Tuple[int, int]] = None,
-#     doc_lens: Optional[Tuple[int, ...]] = None,
-#     device: Optional[torch.device] = None,
-#     num_sink_tokens: int = 0,
-# ) -> Callable[[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor], torch.Tensor]:
-#     if device is None:
-#         raise ValueError("Device is required")
-
-#     has_window = window_size is not None and window_size != (-1, -1)
-#     has_docs = doc_lens is not None
-
-#     if has_docs:
-#         document_ids = torch.cat(
-#             [torch.full((int(doc_len),), i, device=device, dtype=torch.long) for i, doc_len in enumerate(doc_lens)]
-#         )
-
-#     def total_mask_mod(B: torch.Tensor, H: torch.Tensor, q_idx: torch.Tensor, kv_idx: torch.Tensor) -> torch.Tensor:
-#         is_sink = kv_idx < num_sink_tokens
-#         adjusted_kv_idx = kv_idx - num_sink_tokens
-#         is_regular = kv_idx >= num_sink_tokens
-#         causal_mask = q_idx >= adjusted_kv_idx
-        
-#         if has_window:
-#             window_mask = (q_idx - adjusted_kv_idx <= window_size[0]) & (adjusted_kv_idx - q_idx <= window_size[1])  # type: ignore
-#         else:
-#             window_mask = torch.ones_like(causal_mask, dtype=torch.bool)
-        
-#         if has_docs:
-#             clamped_idx = torch.clamp(adjusted_kv_idx, min=0, max=len(document_ids) - 1)
-#             doc_mask = document_ids[q_idx] == document_ids[clamped_idx]
-#         else:
-#             doc_mask = torch.ones_like(causal_mask, dtype=torch.bool)
-        
-#         regular_mask = causal_mask & window_mask & doc_mask
-#         return is_sink | (is_regular & regular_mask)
-
-#     return total_mask_mod
-
-
-
 def _get_flex_attn_mask_mod(
     window_size: Optional[Tuple[int, int]] = None,
     doc_lens: Optional[Tuple[int, ...]] = None,
     device: Optional[torch.device] = None,
     num_sink_tokens: int = 0,
-    seq_len: Optional[int] = None,  # Need seq_len to know where sinks start
 ) -> Callable[[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor], torch.Tensor]:
     if device is None:
         raise ValueError("Device is required")
@@ -1198,47 +1171,31 @@ def _get_flex_attn_mask_mod(
     has_window = window_size is not None and window_size != (-1, -1)
     has_docs = doc_lens is not None
 
-    document_ids = None
     if has_docs:
         document_ids = torch.cat(
             [torch.full((int(doc_len),), i, device=device, dtype=torch.long) for i, doc_len in enumerate(doc_lens)]
         )
 
     def total_mask_mod(B: torch.Tensor, H: torch.Tensor, q_idx: torch.Tensor, kv_idx: torch.Tensor) -> torch.Tensor:
-        # Sinks are at the BEGINNING (first num_sink_tokens positions)
         is_sink = kv_idx < num_sink_tokens
-        
-        # For regular tokens, adjust kv_idx 
         adjusted_kv_idx = kv_idx - num_sink_tokens
-        
-        # Basic causal mask for regular tokens
         is_regular = kv_idx >= num_sink_tokens
-        causal = adjusted_kv_idx <= q_idx
+        causal_mask = q_idx >= adjusted_kv_idx
         
-        # Build mask step by step
-        regular_mask = is_regular & causal
+        if has_window:
+            window_mask = (q_idx - adjusted_kv_idx <= window_size[0]) & (adjusted_kv_idx - q_idx <= window_size[1])  # type: ignore
+        else:
+            window_mask = torch.ones_like(causal_mask, dtype=torch.bool)
         
-        # Apply sliding window if specified
-        if has_window and window_size is not None:
-            # Only keep tokens within window
-            within_window = (q_idx - adjusted_kv_idx) <= window_size[0]
-            regular_mask = regular_mask & within_window
+        if has_docs:
+            clamped_idx = torch.clamp(adjusted_kv_idx, min=0, max=len(document_ids) - 1)
+            doc_mask = document_ids[q_idx] == document_ids[clamped_idx]
+        else:
+            doc_mask = torch.ones_like(causal_mask, dtype=torch.bool)
         
-        # Apply document boundaries if specified
-        if has_docs and document_ids is not None:
-            # Clamp indices to valid range
-            max_idx = len(document_ids) - 1
-            q_clamped = torch.clamp(q_idx, min=0, max=max_idx)
-            kv_clamped = torch.clamp(adjusted_kv_idx, min=0, max=max_idx)
-            
-            # Check if in same document (only for regular tokens)
-            same_doc = document_ids[q_clamped] == document_ids[kv_clamped]
-            
-            # Apply doc constraint only to regular tokens
-            regular_mask = regular_mask & ((kv_idx < num_sink_tokens) | same_doc)
-        
-        # Final mask: always allow sinks OR regular tokens that pass all constraints
-        return is_sink | regular_mask
+        regular_mask = causal_mask & window_mask & doc_mask
+        return is_sink | (is_regular & regular_mask)
+
     return total_mask_mod
 
 
@@ -1257,8 +1214,7 @@ def _get_flex_attn_causal_block_mask(
 
         # For intra-document masking, we merge the batch size dimension into the sequence dimension.
         return create_block_mask(
-            _get_flex_attn_mask_mod(window_size, doc_lens=doc_lens, device=device, 
-                                    num_sink_tokens=num_sink_tokens, seq_len=token_count),
+            _get_flex_attn_mask_mod(window_size, doc_lens=doc_lens, device=device, num_sink_tokens=num_sink_tokens),
             B=1,
             H=None,
             Q_LEN=token_count,
@@ -1269,7 +1225,7 @@ def _get_flex_attn_causal_block_mask(
 
     else:
         return create_block_mask(
-            _get_flex_attn_mask_mod(window_size, device=device, num_sink_tokens=num_sink_tokens, seq_len=seq_len),
+            _get_flex_attn_mask_mod(window_size, device=device, num_sink_tokens=num_sink_tokens),
             B=None,
             H=None,
             Q_LEN=seq_len,
@@ -1290,13 +1246,12 @@ def get_flex_attn_causal_block_mask(
 ) -> Union[BlockMask, Tuple[BlockMask, Callable]]:
     if doc_lens is not None:
         doc_lens_list = tuple(doc_lens.flatten().tolist())
-        mask_fn = _get_flex_attn_mask_mod(window_size, doc_lens=doc_lens_list, device=device, 
-                                          num_sink_tokens=num_sink_tokens, seq_len=seq_len)
+        mask_fn = _get_flex_attn_mask_mod(window_size, doc_lens=doc_lens_list, device=device, num_sink_tokens=num_sink_tokens)
         block_mask = _get_flex_attn_causal_block_mask(
             seq_len, device, window_size, doc_lens_list, block_size, num_sink_tokens=num_sink_tokens
         )
     else:
-        mask_fn = _get_flex_attn_mask_mod(window_size, device=device, num_sink_tokens=num_sink_tokens, seq_len=seq_len)
+        mask_fn = _get_flex_attn_mask_mod(window_size, device=device, num_sink_tokens=num_sink_tokens)
         block_mask = _get_flex_attn_causal_block_mask(
             seq_len, device, window_size, doc_lens=None, block_size=block_size, num_sink_tokens=num_sink_tokens
         )
@@ -1313,6 +1268,21 @@ def materialize_dense_mask(
     batch_size: int = 1,
     n_heads: int = 1,
 ) -> torch.Tensor:
+    """
+    Convert a flex attention mask function to a dense boolean mask.
+
+    Args:
+        mask_fn: The mask function from _get_flex_attn_mask_mod
+        seq_len: Sequence length
+        device: Device to create tensors on
+        batch_size: Batch size (for broadcasting)
+        n_heads: Number of heads (for broadcasting)
+
+    Returns:
+        Dense boolean mask of shape (batch_size, n_heads, seq_len, seq_len)
+        True means attention is allowed, False means masked out.
+    """
+
     q_indices = torch.arange(seq_len, device=device)
     kv_indices = torch.arange(seq_len, device=device)
     q_idx, kv_idx = torch.meshgrid(q_indices, kv_indices, indexing="ij")

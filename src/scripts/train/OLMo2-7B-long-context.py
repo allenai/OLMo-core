@@ -27,7 +27,7 @@ log = logging.getLogger(__name__)
 
 
 CONTEXT_LENGTH = 4 * 16_384
-INTRA_DOCUMENT_MASKING = False
+INTRA_DOCUMENT_MASKING = True
 # 64K length, 32 GPUs, FP8, no intra-doc masking -> 2,750 TPS
 # 64K length, 32 GPUs, no FP8, intra-doc masking -> 3,250 TPS
 # 64K length, 32 GPUs, FP8, intra-doc masking    -> 3,500 TPS
