@@ -861,12 +861,13 @@ class LocalDecoder(nn.Module):
             assert boundary_mask is not None
             B, L = boundary_mask.shape
 
+            token_idx = (
+                torch.arange(L, device=patch_embeds.device)[None, :]
+                + (~boundary_mask).long() * L
+            )
+            seq_sorted_indices = torch.argsort(token_idx, dim=1)[:, :patch_embeds.shape[1]]
+
             if self.hnet_smooth:
-                token_idx = (
-                    torch.arange(L, device=patch_embeds.device)[None, :]
-                    + (~boundary_mask).long() * L
-                )
-                seq_sorted_indices = torch.argsort(token_idx, dim=1)[:, :patch_embeds.shape[1]]
                 p = torch.gather(torch.exp(boundary_logprobs).float().clip(min=epsilon, max=1 - epsilon), dim=1, index=seq_sorted_indices)
             else:
                 seq_sorted_indices = None
