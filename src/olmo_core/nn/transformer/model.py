@@ -1546,7 +1546,7 @@ class BLTDistillTransformer(BLTTransformer):
             else:
                 return None, (out_hidden_states, h_out, h_emb)
         elif isinstance(self.teacher, Transformer):
-            input_ids, labels, block_kwargs, lm_head_kwargs = self.teacher._prepare_inputs(
+            input_ids, labels, block_kwargs, _, lm_head_kwargs = self.teacher._prepare_inputs(
                 input_ids,
                 labels,
                 ignore_index=ignore_index,
@@ -2246,7 +2246,7 @@ class BLTDistillTransformer(BLTTransformer):
 
         h_patch_after_global, _ = self._block_forward(h_patch, blt_config, **block_kwargs)
 
-        h_out = self.local_decoder(
+        _, h_out = self.local_decoder(
             embeds=h_byte,
             patch_embeds=h_patch_after_global,
             boundary_logprobs=None if blt_config.teacher_force_boundaries else boundary_logprobs,
@@ -2254,6 +2254,10 @@ class BLTDistillTransformer(BLTTransformer):
             **local_decoder_kwargs,
         )
         logits = self.lm_head(h_out, **lm_head_kwargs)
+        logits = torch.concatenate([
+            logits,
+            torch.zeros((logits.shape[0], 1, logits.shape[2]), device=logits.device, dtype=logits.dtype)
+        ], dim=1)
 
         ce_loss, _ = cross_entropy_loss(logits.view(-1, logits.shape[-1]), labels.view(-1))  # type: ignore
 

@@ -919,8 +919,15 @@ class LocalDecoder(nn.Module):
             depool_out_modulated = depool_out
 
         h = depool_out_modulated + embeds
+        h_b = self.boundary_embedding.weight.unsqueeze(0) + prepool_out[:, :-1]
 
         assert seq_sorted_indices is not None
+        last_increasing_index = ((seq_sorted_indices[:, 1:] - seq_sorted_indices[:, :-1]) < 0).max(-1)
+        patch_mask = (
+            (torch.arange(patch_embeds.shape[1], device=patch_embeds.device)[None, :] <= last_increasing_index.indices[:, None]) |
+            (torch.zeros(patch_embeds.shape[:2], dtype=torch.bool, device=patch_embeds.device) == last_increasing_index.values[:, None]) # case where never not increasing (no padding)
+        )
+
         h_with_b = torch.zeros(
             (h.shape[0], h.shape[1] + patch_embeds.shape[1], h.shape[2]),
             device=h.device,
@@ -930,17 +937,25 @@ class LocalDecoder(nn.Module):
         non_b_indices = torch.arange(len(h[0]), device=h.device).unsqueeze(0).repeat(len(h), 1)
         non_b_indices += plug_back_idx
         b_indices = seq_sorted_indices[:, 1:] - 1 + torch.arange(patch_embeds.shape[1] - 1, device=h.device).unsqueeze(0)
+        b_indices = torch.where(
+            patch_mask[:, 1:],
+            b_indices,
+            torch.ones_like(b_indices)
+        )
 
         h_with_b.scatter_(
             1,
             non_b_indices.unsqueeze(-1).expand(-1, -1, self.d_model),
             h
         )
-
-        h_with_b.scatter_(
+        h_with_b.scatter_add_(
             1,
             b_indices.unsqueeze(-1).expand(-1, -1, self.d_model),
-            self.boundary_embedding.weight.unsqueeze(0) + prepool_out[:, :-1]
+            torch.where(
+                patch_mask[:, 1:].unsqueeze(-1),
+                h_b,
+                torch.zeros_like(h_b),
+            )
         )
 
         for block_idx in range(self.n_layers):
