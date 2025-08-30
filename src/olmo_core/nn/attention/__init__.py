@@ -604,9 +604,8 @@ class Attention(AttentionBase):
                 
                 # Create new block mask with sinks at the end
                 from torch.nn.attention.flex_attention import create_block_mask
-                compiled_create_block_mask = torch.compile(create_block_mask)
                 B_q, H_q, S_q, _ = q.shape
-                block_mask = compiled_create_block_mask(
+                block_mask = create_block_mask(
                     mask_mod, B_q, H_q, S_q, S_kv + num_sink_tokens,
                     device=q.device.type  # Ensure block mask is on same device as tensors
                 )
