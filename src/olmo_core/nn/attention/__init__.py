@@ -1209,7 +1209,7 @@ def _get_flex_attn_mask_mod(
         raise ValueError("Device is required")
 
     has_window = window_size is not None and window_size != (-1, -1)
-    has_docs = doc_lens is not None
+    has_docs = False #doc_lens is not None
 
     if has_docs:
         document_ids = torch.cat(
