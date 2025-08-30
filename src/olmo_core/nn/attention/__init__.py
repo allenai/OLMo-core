@@ -1219,15 +1219,22 @@ def _get_flex_attn_mask_mod(
     def total_mask_mod(B: torch.Tensor, H: torch.Tensor, q_idx: torch.Tensor, kv_idx: torch.Tensor) -> torch.Tensor:
         is_sink = kv_idx < num_sink_tokens
         adjusted_kv_idx = kv_idx - num_sink_tokens
-        mask = q_idx >= adjusted_kv_idx
+        is_regular = kv_idx >= num_sink_tokens
+        causal_mask = q_idx >= adjusted_kv_idx
+        
         if has_window:
-            window_mask = ((q_idx - adjusted_kv_idx <= window_size[0]) & (adjusted_kv_idx - q_idx <= window_size[1]))
-            mask = mask & window_mask
+            window_mask = (q_idx - adjusted_kv_idx <= window_size[0]) & (adjusted_kv_idx - q_idx <= window_size[1])
+        else:
+            window_mask = torch.ones_like(causal_mask, dtype=torch.bool)
+        
         if has_docs:
             clamped_idx = torch.clamp(adjusted_kv_idx, min=0, max=len(document_ids) - 1)
             doc_mask = document_ids[q_idx] == document_ids[clamped_idx]
-            mask = mask & doc_mask
-        return is_sink | mask
+        else:
+            doc_mask = torch.ones_like(causal_mask, dtype=torch.bool)
+        
+        regular_mask = causal_mask & window_mask & doc_mask
+        return is_sink | (is_regular & regular_mask)
 
     return total_mask_mod
 
