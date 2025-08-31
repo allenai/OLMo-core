@@ -60,10 +60,14 @@ class FlexAttention(torch.nn.Module):
 
     # We registered flex_attention related attributes as class variables as we
     # need to amortize the cost of compilation.
-    flex_attn: ClassVar[Callable] = torch.compile(
-        flex_attention, mode="max-autotune-no-cudagraphs"
-    )
-    compiled_create_block_mask: ClassVar[Callable] = torch.compile(create_block_mask)
+    # Disable compilation to avoid inductor issues
+    # flex_attn: ClassVar[Callable] = torch.compile(
+    #     flex_attention, mode="max-autotune-no-cudagraphs"
+    # )
+    flex_attn: ClassVar[Callable] = flex_attention  # Use uncompiled version
+    # Also disable compilation for create_block_mask if needed
+    # compiled_create_block_mask: ClassVar[Callable] = torch.compile(create_block_mask)
+    compiled_create_block_mask: ClassVar[Callable] = create_block_mask  # Use uncompiled version
     used_attn_mask_types: ClassVar[set[FLEX_ATTN_MASK_T]] = set()
     # Attention mask type to the created BlockMask.
     # This allows us to keep track the created block masks for each
