@@ -86,8 +86,10 @@ if DATA_SOURCE == "dclm":
     _DATA_SOURCES = open(Path(__file__).parent / "data_sources.txt").read().strip().splitlines()
 elif DATA_SOURCE == "dolmino":
     _DATA_SOURCES = open(Path(__file__).parent / "data_sources_dolmino.txt").read().strip().splitlines()
+elif DATA_SOURCE == "dolma2_string":
+    _DATA_SOURCES = open(Path(__file__).parent / "data_sources_dolma2_string.txt").read().strip().splitlines()
 else:
-    raise ValueError(f"Unknown DATA_SOURCE: {DATA_SOURCE}. Must be one of 'dclm', 'dolmino'.")
+    raise ValueError(f"Unknown DATA_SOURCE: {DATA_SOURCE}. Must be one of 'dclm', 'dolmino', 'dolma2_string'.")
 
 OLMO_CKPT_PATH = os.environ.get(
     "OLMO_CKPT_PATH",
