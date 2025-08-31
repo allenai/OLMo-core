@@ -64,6 +64,7 @@ class LocalEncoderConfig(Config):
     add_norm_after_pool: bool = False
     add_out_projection: bool = False
     boundary_predictor: Optional[str] = None
+    boundary_predictor_lookahead: int = 1
     blt_k: Optional[int] = None  # used in blt
     blt_compat: bool = False # for compat with BLT checkpoints
 
@@ -87,6 +88,7 @@ class LocalEncoderConfig(Config):
             add_norm_after_pool=self.add_norm_after_pool,
             add_out_projection=self.add_out_projection,
             boundary_predictor=self.boundary_predictor,
+            boundary_predictor_lookahead=self.boundary_predictor_lookahead,
             blt_k=self.blt_k,
             blt_compat=self.blt_compat,
         )

@@ -137,9 +137,10 @@ class DTPBoundaryPredictor(nn.Module):
 
 # cosine-similarity based boundary predictor as in H-Net
 class HNetBoundaryPredictor(nn.Module):
-    def __init__(self, d_model: int, init_device: str = "cpu"):
+    def __init__(self, d_model: int, boundary_predictor_lookahead: int = 1, init_device: str = "cpu"):
         super().__init__()
         self.d_model = d_model
+        self.boundary_predictor_lookahead = boundary_predictor_lookahead
         self.q_proj_layer = nn.Linear(d_model, d_model, bias=False, device=init_device)
         self.k_proj_layer = nn.Linear(d_model, d_model, bias=False, device=init_device)
 
@@ -153,14 +154,15 @@ class HNetBoundaryPredictor(nn.Module):
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         cos_sim = torch.einsum(
             "b l d, b l d -> b l",
-            F.normalize(self.q_proj_layer(hidden_states[:, :-2]), dim=-1),
-            F.normalize(self.k_proj_layer(hidden_states[:, 2:]), dim=-1),
+            F.normalize(self.q_proj_layer(hidden_states[:, 1:-self.boundary_predictor_lookahead]), dim=-1),
+            F.normalize(self.k_proj_layer(hidden_states[:, 1 + self.boundary_predictor_lookahead:]), dim=-1),
         )
         boundary_logprobs = torch.log1p(-cos_sim.float().clip(max=1.0 - epsilon)) - math.log(2)
         POSITIVE_LOGPROB = 0.0
         NEGATIVE_LOGPROB = -100_000
         boundary_logprobs = F.pad(boundary_logprobs, (1, 0), "constant", POSITIVE_LOGPROB)
         boundary_logprobs = F.pad(boundary_logprobs, (1, 0), "constant", NEGATIVE_LOGPROB)
+        boundary_logprobs = F.pad(boundary_logprobs, (0, self.boundary_predictor_lookahead - 1), "constant", NEGATIVE_LOGPROB)
 
         boundary_logprobs_for_loss, boundary_logprobs = _teacher_force_interpolate(
             boundary_logprobs,
@@ -235,6 +237,7 @@ class LocalEncoder(nn.Module):
             add_norm_after_pool: bool,
             add_out_projection: bool,
             boundary_predictor: Optional[str] = None,
+            boundary_predictor_lookahead: int = 1,
             blt_k: Optional[int] = None,
             blt_compat: bool = False,  # for compat with BLT checkpoints
             init_device: str = "cpu",
@@ -257,6 +260,7 @@ class LocalEncoder(nn.Module):
         self.add_out_projection = add_out_projection
         self.init_device = init_device
         self.boundary_predictor = boundary_predictor
+        self.boundary_predictor_lookahead = boundary_predictor_lookahead
         self.blt_k = blt_k
         self.blt_compat = blt_compat
 
@@ -265,7 +269,11 @@ class LocalEncoder(nn.Module):
         elif self.boundary_predictor == "dtp_chonky":
             self.boundary_predictor_module = DTPBoundaryPredictor(d_model, use_transformer_style_mlp=True, init_device=init_device)
         elif self.boundary_predictor == "hnet":
-            self.boundary_predictor_module = HNetBoundaryPredictor(d_model, init_device=init_device)
+            self.boundary_predictor_module = HNetBoundaryPredictor(
+                d_model,
+                boundary_predictor_lookahead=boundary_predictor_lookahead,
+                init_device=init_device
+            )
         elif self.boundary_predictor is not None:
             raise ValueError(f"Unknown boundary predictor: {self.boundary_predictor}")
         else:
@@ -426,6 +434,7 @@ class LocalEncoder(nn.Module):
             add_norm_after_pool=self.add_norm_after_pool,
             add_out_projection=self.add_out_projection,
             boundary_predictor=self.boundary_predictor,
+            boundary_predictor_lookahead=self.boundary_predictor_lookahead,
             blt_k=self.blt_k,
             blt_compat=self.blt_compat,
             init_device=device,

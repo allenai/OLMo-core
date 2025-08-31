@@ -1956,6 +1956,8 @@ class BLTDistillTransformer(BLTTransformer):
 
         # compute the boundary loss
         boundary_byte_mask = byte_mask.clone()
+        if self.local_encoder.boundary_predictor_lookahead > 1:  # type: ignore
+            boundary_byte_mask[:, -self.local_encoder.boundary_predictor_lookahead - 1:] = 0  # type: ignore
         elementwise_boundary_loss = blt_utils.binary_cross_entropy_with_logprobs(
             boundary_logprobs_for_loss,
             boundary_labels,
