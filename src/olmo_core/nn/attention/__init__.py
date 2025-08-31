@@ -374,7 +374,6 @@ class Attention(AttentionBase):
         else:
             self.sinks = None
 
-        # Translate window size so that we only look left, not right.
         if window_size is not None:
             if not use_flash and not use_flex:
                 raise OLMoConfigurationError(
@@ -382,7 +381,6 @@ class Attention(AttentionBase):
                 )
             if window_size <= 0:
                 raise OLMoConfigurationError(f"'window_size' must be positive (got {window_size})")
-            # Flash attn window is [i - window_size[0], i + window_size[1]] inclusive
             self.window_size = (window_size - 1, 0)
         else:
             self.window_size = (-1, -1)
@@ -394,7 +392,6 @@ class Attention(AttentionBase):
                     f"fused RoPE is not compatible with {self.__class__.__name__}"
                 )
 
-            # On layers with sliding windows, we don't do rope extension.
             uses_full_attention = self.window_size == (-1, -1)
             uses_sliding_window = not uses_full_attention
             if uses_sliding_window and rope.scaling is not None:
@@ -409,7 +406,7 @@ class Attention(AttentionBase):
         self.use_flex = use_flex
 
         self._flex_attn_api: Optional[FlexAttentionAPI] = None
-        if use_flex and (use_sinks or (window_size is not None and window_size[0] >= 0)):
+        if use_flex and use_sinks:
             self._flex_attn_api = FlexAttentionAPI(attn_mask_type="causal")
 
         self._cp_pg: Optional[dist.ProcessGroup] = None
@@ -487,16 +484,14 @@ class Attention(AttentionBase):
                     window_size=self.window_size,
                 )
         elif self.use_flex:
-            # Use the new FlexAttention API if available (for sinks and sliding window)
-            if self._flex_attn_api is not None and (sinks is not None or self.window_size != (-1, -1)):
-                # Get the original shape info
+            # Use FlexAttentionAPI if it's initialized (happens when use_sinks=True)
+            if self._flex_attn_api is not None:
                 batch_size = q.shape[0]
                 seq_len_q = q.shape[1]
                 n_heads_q = q.shape[2]
                 n_kv_heads = k.shape[2]
                 head_dim = q.shape[3]
                 
-                # Reshape if needed for document masking
                 if block_mask is not None and hasattr(block_mask, 'seq_lengths'):
                     original_total_tokens_q = batch_size * seq_len_q
                     original_total_tokens_kv = k.shape[0] * k.shape[1]
@@ -521,7 +516,6 @@ class Attention(AttentionBase):
                     )
                     batch_size = q.shape[0]
                 
-                # Transpose to (B, H, S, D) for FlexAttention API
                 q = q.transpose(1, 2)
                 k = k.transpose(1, 2)
                 v = v.transpose(1, 2)
@@ -536,12 +530,10 @@ class Attention(AttentionBase):
                     else:
                         sink_weights = sinks
                 
-                # Determine sliding window
                 sliding_window = None
                 if self.window_size != (-1, -1):
-                    sliding_window = self.window_size[0]  # Use the left window size
+                    sliding_window = self.window_size[0]
                 
-                # Apply FlexAttention API
                 att = self._flex_attn_api(
                     q, k, v,
                     sink_weights=sink_weights,
@@ -549,115 +541,8 @@ class Attention(AttentionBase):
                     enable_gqa=(n_kv_heads != n_heads_q)
                 )
                 
-                # Transpose back to (B, S, H, D)
                 att = att.transpose(1, 2).contiguous()
                 
-            # Fall back to original implementation if not using the new API
-            else:
-                if self.dropout_p != 0:
-                    raise NotImplementedError("Our flex attention does not yet support dropout.")
-                if block_mask is None:
-                    raise ValueError("Block mask missing during flex attention.")
-
-                original_total_tokens_q = q.shape[0] * q.shape[1]
-                original_total_tokens_kv = k.shape[0] * k.shape[1]
-                
-                # Reshape (batch_size, seq_len) so that the seq_len matches that of the block mask.
-                # This is needed for intra-document masking, in which case the block mask sequence
-                # length is batch_size * seq_len.
-                q = q.view(
-                    original_total_tokens_q // block_mask.seq_lengths[0],
-                    block_mask.seq_lengths[0],
-                    *q.shape[2:],
-                )
-                
-                # For K/V, we need to account for the fact that the block mask KV length includes sinks
-                # but our current tensor doesn't have sinks yet
-                if sinks is not None:
-                    if sinks.ndim == 1:
-                        num_sink_tokens = 1
-                    elif sinks.ndim == 2:
-                        num_sink_tokens = sinks.size(1)
-                    else:
-                        raise ValueError("Sinks must have shape (n_heads,) or (n_heads, num_sinks)")
-                    
-                    # The block mask KV length includes sinks, so we reshape to the non-sink length first
-                    kv_seq_len_without_sinks = block_mask.seq_lengths[1] - num_sink_tokens
-                    k = k.view(
-                        original_total_tokens_kv // kv_seq_len_without_sinks,
-                        kv_seq_len_without_sinks,
-                        *k.shape[2:],
-                    )
-                    v = v.view(
-                        original_total_tokens_kv // kv_seq_len_without_sinks,
-                        kv_seq_len_without_sinks,
-                        *v.shape[2:],
-                    )
-                    
-                    batch_size, seq_len, n_kv_heads, head_dim = k.shape
-                    
-                    if hasattr(sinks, 'to_local'):
-                        local_sinks = sinks.to_local()
-                    elif hasattr(sinks, '_local_tensor'):
-                        local_sinks = sinks._local_tensor
-                    else:
-                        local_sinks = sinks
-                    
-                    # Dummy zeros for sink k and v
-                    sink_k = k.new_zeros(batch_size, num_sink_tokens, n_kv_heads, head_dim)
-                    sink_v = v.new_zeros(batch_size, num_sink_tokens, n_kv_heads, head_dim)
-                    
-                    k = torch.cat([sink_k, k], dim=1)
-                    v = torch.cat([sink_v, v], dim=1)
-                else:
-                    num_sink_tokens = 0
-                    k = k.view(
-                        original_total_tokens_kv // block_mask.seq_lengths[1],
-                        block_mask.seq_lengths[1],
-                        *k.shape[2:],
-                    )
-                    v = v.view(
-                        original_total_tokens_kv // block_mask.seq_lengths[1],
-                        block_mask.seq_lengths[1],
-                        *v.shape[2:],
-                    )
-
-                # PyTorch's flex attn expects the number of heads to come before the sequence dimension.
-                # shape: (batch_size, n_heads, seq_len, head_dim),
-                #        (batch_size, n_kv_heads, seq_len, head_dim),
-                #        (batch_size, n_kv_heads, seq_len, head_dim)
-                q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
-
-                # Use bfloat16 for flex attention to save memory, but only on CUDA to avoid precision issues on CPU
-                cast_to_bf16 = q.device.type == 'cuda'
-                og_dtype = q.dtype
-                if cast_to_bf16:
-                    q, k, v = q.bfloat16(), k.bfloat16(), v.bfloat16()
-
-                score_mod_fn = None
-                if sinks is not None:
-                    if local_sinks.ndim == 1:
-                        def score_mod_fn(score, batch_idx, head_idx, q_idx, kv_idx):
-                            is_sink = kv_idx < num_sink_tokens
-                            sink_logit = local_sinks[head_idx].to(score.dtype)
-                            return torch.where(is_sink, sink_logit, score)
-                    elif local_sinks.ndim == 2:
-                        def score_mod_fn(score, batch_idx, head_idx, q_idx, kv_idx):
-                            is_sink = kv_idx < num_sink_tokens
-                            safe_kv_idx = torch.clamp(kv_idx, 0, num_sink_tokens - 1)
-                            sink_logit = local_sinks[head_idx, safe_kv_idx].to(score.dtype)
-                            return torch.where(is_sink, sink_logit, score)
-
-                with torch.autocast(enabled=False, device_type=q.device.type):
-                    # shape: (batch_size, n_heads, seq_len, head_dim)
-                    flex_att = flex_attention(
-                        q, k, v, block_mask=block_mask, scale=scale, score_mod=score_mod_fn, enable_gqa=True
-                    )
-                assert isinstance(flex_att, torch.Tensor)
-                att = flex_att if not cast_to_bf16 else flex_att.to(og_dtype)
-
-                # shape: (batch_size, seq_len, n_heads, head_dim)
-                att = att.transpose(1, 2).contiguous()
 
         else:
             # Fall back to PyTorch's SDPA...
