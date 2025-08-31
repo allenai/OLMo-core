@@ -61,16 +61,14 @@ class FlexAttention(torch.nn.Module):
     # We registered flex_attention related attributes as class variables as we
     # need to amortize the cost of compilation.
     # Disable CUDA graphs to avoid tensor overwriting issues
-    # Use default mode without cudagraphs for stability
+    # Using options only (can't use both mode and options together)
     flex_attn: ClassVar[Callable] = torch.compile(
         flex_attention, 
-        mode="default",
         options={"triton.cudagraphs": False}  # Explicitly disable CUDA graphs
     )
     # Same for create_block_mask - disable CUDA graphs
     compiled_create_block_mask: ClassVar[Callable] = torch.compile(
         create_block_mask, 
-        mode="default",
         options={"triton.cudagraphs": False}  # Explicitly disable CUDA graphs
     )
     used_attn_mask_types: ClassVar[set[FLEX_ATTN_MASK_T]] = set()
