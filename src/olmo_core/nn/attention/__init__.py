@@ -484,7 +484,6 @@ class Attention(AttentionBase):
                     window_size=self.window_size,
                 )
         elif self.use_flex:
-            # Use FlexAttentionAPI if it's initialized (happens when use_sinks=True)
             if self._flex_attn_api is not None:
                 batch_size = q.shape[0]
                 seq_len_q = q.shape[1]
@@ -492,29 +491,6 @@ class Attention(AttentionBase):
                 n_kv_heads = k.shape[2]
                 head_dim = q.shape[3]
                 
-                if block_mask is not None and hasattr(block_mask, 'seq_lengths'):
-                    original_total_tokens_q = batch_size * seq_len_q
-                    original_total_tokens_kv = k.shape[0] * k.shape[1]
-                    
-                    q = q.view(
-                        original_total_tokens_q // block_mask.seq_lengths[0],
-                        block_mask.seq_lengths[0],
-                        n_heads_q,
-                        head_dim,
-                    )
-                    k = k.view(
-                        original_total_tokens_kv // block_mask.seq_lengths[1],
-                        block_mask.seq_lengths[1],
-                        n_kv_heads,
-                        head_dim,
-                    )
-                    v = v.view(
-                        original_total_tokens_kv // block_mask.seq_lengths[1],
-                        block_mask.seq_lengths[1],
-                        n_kv_heads,
-                        head_dim,
-                    )
-                    batch_size = q.shape[0]
                 
                 q = q.transpose(1, 2)
                 k = k.transpose(1, 2)
