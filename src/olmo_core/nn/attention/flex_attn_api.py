@@ -60,14 +60,18 @@ class FlexAttention(torch.nn.Module):
 
     # We registered flex_attention related attributes as class variables as we
     # need to amortize the cost of compilation.
-    # Use a less aggressive compilation mode to avoid inductor issues while preventing OOM
-    # Options: "default", "reduce-overhead", "max-autotune", "max-autotune-no-cudagraphs"
+    # Disable CUDA graphs to avoid tensor overwriting issues
+    # Use default mode without cudagraphs for stability
     flex_attn: ClassVar[Callable] = torch.compile(
-        flex_attention, mode="reduce-overhead"  # More stable, still optimizes memory
+        flex_attention, 
+        mode="default",
+        options={"triton.cudagraphs": False}  # Explicitly disable CUDA graphs
     )
-    # Use reduce-overhead mode for create_block_mask as well
+    # Same for create_block_mask - disable CUDA graphs
     compiled_create_block_mask: ClassVar[Callable] = torch.compile(
-        create_block_mask, mode="reduce-overhead"
+        create_block_mask, 
+        mode="default",
+        options={"triton.cudagraphs": False}  # Explicitly disable CUDA graphs
     )
     used_attn_mask_types: ClassVar[set[FLEX_ATTN_MASK_T]] = set()
     # Attention mask type to the created BlockMask.
