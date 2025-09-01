@@ -1776,7 +1776,7 @@ class BLTDistillTransformer(BLTTransformer):
         teacher_indices_to_select = torch.gather(
             true_patch_ids,
             dim=1,
-            index=seq_sorted_indices - 1,
+            index=seq_sorted_indices,
         )
         mask = patch_mask & (teacher_indices_to_select < teacher_embeds.shape[1])
         teacher_indices_to_select = torch.where(
@@ -1909,16 +1909,15 @@ class BLTDistillTransformer(BLTTransformer):
         )
         patch_mask = shifted_patch_lens != 0
 
-        patch_start_indices = torch.cumsum(local_encoder_kwargs["patch_lens"], dim=1)
-        patch_start_indices = torch.where(
-            patch_start_indices < byte_mask.shape[1],
-            patch_start_indices,
-            torch.zeros_like(patch_start_indices), # effectively mask out, index 0 is always start
+        patch_end_indices = torch.cumsum(local_encoder_kwargs["patch_lens"], dim=1) - 1
+        patch_end_indices = torch.where(
+            patch_end_indices < byte_mask.shape[1],
+            patch_end_indices,
+            torch.zeros_like(patch_end_indices), # effectively mask out, index 0 is always start
         )
 
         boundary_labels = torch.zeros_like(byte_mask, dtype=torch.float32)
-        boundary_labels[:, 0] = 0.0  # bos is never a boundary
-        boundary_labels.scatter_(1, patch_start_indices, 1.0)
+        boundary_labels.scatter_(1, patch_end_indices, 1.0)
 
         if blt_config.teacher_force_interpolation_steps != 0:
             teacher_force_interpolation_ratio = min(kwargs["step"] / blt_config.teacher_force_interpolation_steps, 1.0)
@@ -1955,19 +1954,16 @@ class BLTDistillTransformer(BLTTransformer):
         )
 
         # compute the boundary loss
-        boundary_byte_mask = byte_mask.clone()
-        if self.local_encoder.boundary_predictor_lookahead > 1:  # type: ignore
-            boundary_byte_mask[:, -self.local_encoder.boundary_predictor_lookahead - 1:] = 0  # type: ignore
         elementwise_boundary_loss = blt_utils.binary_cross_entropy_with_logprobs(
             boundary_logprobs_for_loss,
             boundary_labels,
         )
-        boundary_loss = (elementwise_boundary_loss * boundary_byte_mask).mean()
+        boundary_loss = (elementwise_boundary_loss * byte_mask).mean()
         elementwise_boundary_acc = boundary_mask == (boundary_labels > 0)
-        boundary_acc = (elementwise_boundary_acc * boundary_byte_mask).float().mean()
-        metrics["blt/boundary_loss"] = boundary_loss / boundary_byte_mask.float().mean()
-        metrics["blt/boundary_acc"] = boundary_acc / boundary_byte_mask.float().mean()
-        metrics["blt/boundary_mean"] = (boundary_mask * boundary_byte_mask).float().mean() / boundary_byte_mask.float().mean()
+        boundary_acc = (elementwise_boundary_acc * byte_mask).float().mean()
+        metrics["blt/boundary_loss"] = boundary_loss / byte_mask.float().mean()
+        metrics["blt/boundary_acc"] = boundary_acc / byte_mask.float().mean()
+        metrics["blt/boundary_mean"] = (boundary_mask * byte_mask).float().mean() / byte_mask.float().mean()
 
         # First, run the teacher.
         if not skip_teacher:

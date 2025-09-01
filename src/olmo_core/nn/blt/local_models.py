@@ -154,15 +154,14 @@ class HNetBoundaryPredictor(nn.Module):
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         cos_sim = torch.einsum(
             "b l d, b l d -> b l",
-            F.normalize(self.q_proj_layer(hidden_states[:, 1:-self.boundary_predictor_lookahead]), dim=-1),
-            F.normalize(self.k_proj_layer(hidden_states[:, 1 + self.boundary_predictor_lookahead:]), dim=-1),
+            F.normalize(self.q_proj_layer(hidden_states[:, :-self.boundary_predictor_lookahead]), dim=-1),
+            F.normalize(self.k_proj_layer(hidden_states[:, self.boundary_predictor_lookahead:]), dim=-1),
         )
         boundary_logprobs = torch.log1p(-cos_sim.float().clip(max=1.0 - epsilon)) - math.log(2)
         POSITIVE_LOGPROB = 0.0
         NEGATIVE_LOGPROB = -100_000
-        boundary_logprobs = F.pad(boundary_logprobs, (1, 0), "constant", POSITIVE_LOGPROB)
-        boundary_logprobs = F.pad(boundary_logprobs, (1, 0), "constant", NEGATIVE_LOGPROB)
-        boundary_logprobs = F.pad(boundary_logprobs, (0, self.boundary_predictor_lookahead - 1), "constant", NEGATIVE_LOGPROB)
+        boundary_logprobs[:, 0] = POSITIVE_LOGPROB
+        boundary_logprobs = F.pad(boundary_logprobs, (0, self.boundary_predictor_lookahead), "constant", NEGATIVE_LOGPROB)
 
         boundary_logprobs_for_loss, boundary_logprobs = _teacher_force_interpolate(
             boundary_logprobs,
@@ -536,7 +535,7 @@ class LocalEncoder(nn.Module):
                 torch.arange(L, device=pool_out.device)[None, :] + (~boundary_mask).long() * L  # type: ignore
             )
             seq_sorted_indices = torch.argsort(token_idx, dim=1)
-            index = (seq_sorted_indices[:, :patch_lens.shape[1], None] - 1).clip(min=0).expand(
+            index = seq_sorted_indices[:, :patch_lens.shape[1], None].expand(
                 -1, -1, pool_out.shape[-1]
             )
 
@@ -904,11 +903,7 @@ class LocalDecoder(nn.Module):
         prepool_out = cast(torch.Tensor, prepool_out)
 
         # TODO(benjaminm): clipping is problematic if it happens too much; track clip %.
-        plug_back_idx = (torch.cumsum(boundary_mask[:, 1:], dim=1) - 1).clip(max=prepool_out.shape[1] - 1)
-        plug_back_idx = torch.cat([
-            plug_back_idx,
-            plug_back_idx.max(1, keepdim=True).values
-        ], 1)
+        plug_back_idx = (torch.cumsum(boundary_mask, dim=1) - 1).clip(max=prepool_out.shape[1] - 1)
         depool_out = torch.gather(
             prepool_out,
             dim=1,
@@ -945,7 +940,7 @@ class LocalDecoder(nn.Module):
 
         non_b_indices = torch.arange(len(h[0]), device=h.device).unsqueeze(0).repeat(len(h), 1)
         non_b_indices += plug_back_idx
-        b_indices = seq_sorted_indices[:, 1:] - 1 + torch.arange(patch_embeds.shape[1] - 1, device=h.device).unsqueeze(0)
+        b_indices = seq_sorted_indices[:, 1:] + torch.arange(patch_embeds.shape[1] - 1, device=h.device).unsqueeze(0)
         b_indices = torch.where(
             patch_mask[:, 1:],
             b_indices,

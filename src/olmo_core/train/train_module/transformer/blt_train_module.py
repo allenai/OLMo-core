@@ -106,6 +106,9 @@ class TransformerBLTTrainModule(TransformerTrainModule):
                 dc_len = len(dc_input_ids)
                 cont_len = len(continuation)
 
+                # append \n since boundary predictor has lookahead
+                input_ids += self.tokenizer.encode("\n" * self.model.local_encoder.boundary_predictor_lookahead) # type: ignore
+
                 all_original_input_ids.append(torch.tensor(original_input_ids, dtype=torch.long))
                 all_input_ids.append(torch.tensor(input_ids, dtype=torch.long))
                 all_patch_lens.append(torch.tensor(patch_lens, dtype=torch.long))
