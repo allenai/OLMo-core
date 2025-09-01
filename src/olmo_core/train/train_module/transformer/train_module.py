@@ -2,7 +2,7 @@ import contextlib
 import logging
 from dataclasses import replace
 from functools import cached_property
-from typing import Any, Dict, Generator, Optional, Tuple, Union
+from typing import Any, Dict, Generator, Literal, Optional, Tuple, Union
 
 import torch
 import torch.distributed as dist
@@ -167,6 +167,7 @@ class TransformerTrainModule(TrainModule):
             ep_config=ep_config,
             ac_config=ac_config,
         )
+        self._model_mode: Optional[Literal["train", "eval"]] = None
 
         self._dp_config = dp_config
         self._cp_config = cp_config
@@ -323,7 +324,7 @@ class TransformerTrainModule(TrainModule):
 
     def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
         # Set model to train mode if it isn't already.
-        self.model.train()
+        self._set_model_mode("train")
 
         # Generate labels.
         if "labels" not in batch:
@@ -335,9 +336,15 @@ class TransformerTrainModule(TrainModule):
                 "train/masked instances (%)", (~instance_mask).float().mean(), ReduceType.mean
             )
 
-        # Calculate how many tokens are going to be used in the loss.
+        # Calculate and record how many tokens are going to be used in the loss.
+        batch_num_tokens = batch["labels"].numel()
         batch_num_tokens_for_loss = move_to_device(
             (batch["labels"] != self.label_ignore_index).sum(), self.device
+        )
+        self.record_metric(
+            "train/masked labels (%)",
+            (batch_num_tokens - batch_num_tokens_for_loss) / batch_num_tokens,
+            ReduceType.mean,
         )
 
         # Batch losses to record.
@@ -448,7 +455,7 @@ class TransformerTrainModule(TrainModule):
 
         input_ids, labels, model_kwargs = self._prepare_batch(batch, labels)
 
-        self.model.eval()
+        self._set_model_mode("eval")
 
         with self._eval_batch_context():
             return self.model_forward(
@@ -581,3 +588,13 @@ class TransformerTrainModule(TrainModule):
         if "doc_lens" in batch and "max_doc_lens" in batch:
             log_once(log, "intra-document masking enabled")
         return input_ids, labels, batch
+
+    def _set_model_mode(self, mode: Literal["train", "eval"]):
+        if self._model_mode != mode:
+            if mode == "train":
+                self.model.train()
+            elif mode == "eval":
+                self.model.eval()
+            else:
+                raise ValueError(f"Invalid model mode: {mode}")
+            self._model_mode = mode

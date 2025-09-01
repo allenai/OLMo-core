@@ -11,7 +11,7 @@ from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig
 from olmo_core.optim.scheduler import WSD
-from olmo_core.train import Duration, TrainerConfig
+from olmo_core.train import Duration, LoadStrategy, TrainerConfig
 from olmo_core.train.callbacks import (
     BatchSizeSchedulerCallback,
     CheckpointerCallback,
@@ -23,8 +23,9 @@ from olmo_core.train.train_module import (
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
+from olmo_core.train.train_module.transformer.config import TransformerTensorParallelConfig
 
-SEQUENCE_LENGTH = 8192
+SEQUENCE_LENGTH = 4096
 GLOBAL_BATCH_SIZE = (
     1024 * 4096
 )  # batch size at step 0, let's keep this independent of the sequence length in case we change it.
@@ -53,7 +54,8 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         # NOTE: 4097 instead of 4096 to reproduce with the off-by-one bug.
         pattern=[4097, 4097, 4097, -1],
     )
-    config.block.attention.use_flash = True
+    config.block.attention.use_flex = True
+    config.block.attention.use_sinks = True
     config.block.attention.use_head_qk_norm = True
 
     return config
@@ -95,7 +97,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
                 int(ANNEAL_TOKENS / GLOBAL_BATCH_SIZE)
             ),  # TODO: This isn't right because it doesn't take batchwup into account.
             decay_fraction=None,
-        ),
+        )
     )
 
 
@@ -115,6 +117,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             metrics_collect_interval=10,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(MAX_DURATION),
+            load_strategy=LoadStrategy.never,
         )
         .with_callback(
             "checkpointer",

@@ -365,6 +365,54 @@ def test_numpy_packed_fsl_dataset_with_label_mask(tmp_path: Path, long_doc_strat
         raise ValueError(long_doc_strategy)
 
 
+def test_numpy_packed_fsl_dataset_with_source_grouping(tmp_path: Path):
+    data1 = np.array(
+        [1, 2, 3, 0, 11, 12, 13, 14, 15, 0, 21, 22, 23, 24, 25, 0, 31, 32, 33, 0, 41, 42, 0],
+    )
+    mmap1 = np.memmap(tmp_path / "mmap1.npy", mode="w+", dtype=np.uint16, shape=(len(data1),))
+    mmap1[:] = data1
+    mmap1.flush()
+
+    data2 = [51, 52, 0, 61, 62, 63, 64, 65, 66, 67, 0]
+    mmap2 = np.memmap(tmp_path / "mmap2.npy", mode="w+", dtype=np.uint16, shape=(len(data2),))
+    mmap2[:] = data2
+    mmap2.flush()
+
+    data3 = [71, 72, 73, 74, 75, 76, 77, 78, 79, 0, 81, 82, 0]
+    mmap3 = np.memmap(tmp_path / "mmap3.npy", mode="w+", dtype=np.uint16, shape=(len(data3),))
+    mmap3[:] = data3
+    mmap3.flush()
+
+    data4 = [91, 92, 93, 94, 0]
+    mmap4 = np.memmap(tmp_path / "mmap4.npy", mode="w+", dtype=np.uint16, shape=(len(data4),))
+    mmap4[:] = data4
+    mmap4.flush()
+
+    ds = NumpyPackedFSLDataset(
+        tmp_path / "mmap1.npy",
+        tmp_path / "mmap2.npy",
+        tmp_path / "mmap3.npy",
+        tmp_path / "mmap4.npy",
+        sequence_length=8,
+        pad_token_id=-1,
+        eos_token_id=0,
+        vocab_size=32_000,
+        source_group_size=2,
+    )
+    ds.prepare()
+
+    # NOTE: potentially brittle test here!
+    # Hard-coding exactly what the instances should be to ensure it's deterministic.
+    assert len(ds) == 7
+    assert ds[0]["input_ids"].tolist() == [61, 62, 63, 64, 65, 66, 67, 0]
+    assert ds[1]["input_ids"].tolist() == [11, 12, 13, 14, 15, 0, -1, -1]
+    assert ds[2]["input_ids"].tolist() == [21, 22, 23, 24, 25, 0, -1, -1]
+    assert ds[3]["input_ids"].tolist() == [1, 2, 3, 0, 31, 32, 33, 0]
+    assert ds[4]["input_ids"].tolist() == [41, 42, 0, 51, 52, 0, -1, -1]
+    assert ds[5]["input_ids"].tolist() == [71, 72, 73, 74, 75, 76, 77, 78]
+    assert ds[6]["input_ids"].tolist() == [91, 92, 93, 94, 0, 81, 82, 0]
+
+
 def test_numpy_fsl_mixture_dataset(tmp_path: Path):
     # NOTE: At small token counts the take_ratio can be finicky so we test at small but real world-ish scale
     npdtype = np.uint16

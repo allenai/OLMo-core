@@ -82,7 +82,7 @@ log = logging.getLogger(__name__)
 def prepare_training_environment(
     *,
     seed: Optional[int] = None,
-    backend: Optional[str] = "cpu:gloo,cuda:nccl",
+    backend: Optional[str] = "nccl",
     timeout: timedelta = timedelta(minutes=30),
     log_filter_type: Optional[LogFilterType] = None,
 ):

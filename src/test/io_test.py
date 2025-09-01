@@ -1,3 +1,5 @@
+from glob import glob
+
 import pytest
 
 from olmo_core.io import (
@@ -5,6 +7,7 @@ from olmo_core.io import (
     copy_file,
     deserialize_from_tensor,
     file_exists,
+    glob_directory,
     list_directory,
     remove_file,
     serialize_to_tensor,
@@ -45,9 +48,9 @@ def test_local_functionality(tmp_path):
 def _run_remote_functionality(tmp_path, remote_dir):
     (tmp_path / "file1.json").touch()
     (tmp_path / "dir1").mkdir()
-    (tmp_path / "dir1" / "file2").touch()
+    (tmp_path / "dir1" / "file2.json").touch()
 
-    assert not file_exists(f"{remote_dir}/dir1/file2")
+    assert not file_exists(f"{remote_dir}/dir1/file2.json")
 
     for path in tmp_path.glob("**/*"):
         if not path.is_file():
@@ -67,27 +70,38 @@ def _run_remote_functionality(tmp_path, remote_dir):
     assert set(list_directory(remote_dir, recurse=True)) == {
         f"{remote_dir}/file1.json",
         f"{remote_dir}/dir1",
-        f"{remote_dir}/dir1/file2",
+        f"{remote_dir}/dir1/file2.json",
+    }
+
+    # Should list top-level json files.
+    assert set(glob_directory(f"{remote_dir}/*.json")) == {
+        f"{remote_dir}/file1.json",
+    }
+
+    # Should list all json files.
+    assert set(glob_directory(f"{remote_dir}/**/*.json")) == {
+        f"{remote_dir}/file1.json",
+        f"{remote_dir}/dir1/file2.json",
     }
 
     # Try copying to a file that already exists.
     with pytest.raises(FileExistsError):
-        copy_file(f"{remote_dir}/dir1/file2", tmp_path / "dir1/file2")
-    copy_file(f"{remote_dir}/dir1/file2", tmp_path / "dir1/file2", save_overwrite=True)
+        copy_file(f"{remote_dir}/dir1/file2.json", tmp_path / "dir1/file2.json")
+    copy_file(f"{remote_dir}/dir1/file2.json", tmp_path / "dir1/file2.json", save_overwrite=True)
 
     # Copy to a new file that doesn't exist.
-    copy_file(f"{remote_dir}/dir1/file2", tmp_path / "dir2/file2")
-    assert (tmp_path / "dir2/file2").is_file()
+    copy_file(f"{remote_dir}/dir1/file2.json", tmp_path / "dir2/file2.json")
+    assert (tmp_path / "dir2/file2.json").is_file()
 
     # Copy dir.
     copy_dir(f"{remote_dir}", tmp_path / "dir3")
-    assert (tmp_path / "dir3/dir1/file2").is_file()
+    assert (tmp_path / "dir3/dir1/file2.json").is_file()
 
     # Remove a file from the remote dir.
     remove_file(f"{remote_dir}/file1.json")
     assert set(list_directory(remote_dir, recurse=True)) == {
         f"{remote_dir}/dir1",
-        f"{remote_dir}/dir1/file2",
+        f"{remote_dir}/dir1/file2.json",
     }
 
 
@@ -107,3 +121,10 @@ def test_gcs_functionality(tmp_path, gcs_checkpoint_dir):
         _run_remote_functionality(tmp_path, gcs_checkpoint_dir)
     except DefaultCredentialsError:
         pytest.skip("Requires authentication with Google Cloud")
+
+
+def test_glob_directory():
+    assert set(glob("*.md")) == set(glob_directory("*.md"))
+    assert set(glob("src/examples/**/*.py", recursive=True)) == set(
+        glob_directory("src/examples/**/*.py")
+    )

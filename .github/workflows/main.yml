@@ -38,7 +38,7 @@ jobs:
 
           - name: Test
             run: |
-              pytest -v --color=yes --durations=3 -n auto --dist=load \
+              pytest -v --color=yes --durations=3 \
                 --ignore-glob='src/test/distributed/checkpoint*' \
                 src/test/
 

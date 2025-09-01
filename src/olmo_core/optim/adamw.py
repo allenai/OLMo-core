@@ -2,15 +2,16 @@ from dataclasses import dataclass
 from typing import Optional, Tuple, Type, Union
 
 import torch
-import torch.nn as nn
 
 from ..config import DType
+from ..distributed.utils import get_local_tensor
 from .config import OptimConfig
 from .skip_step_optimizer import SkipStepOptimizer
 
 
 def adamw_step(
-    p: nn.Parameter,
+    p: torch.Tensor,
+    grad: torch.Tensor,
     *,
     lr: float,
     betas: Tuple[float, float],
@@ -22,18 +23,15 @@ def adamw_step(
     step_factor: torch.Tensor,
     step_increment_bugfix: bool = True,
 ):
-    if p.grad is None:
-        return
-
     beta1, beta2 = betas
 
     # Perform step weight decay.
     p.mul_(1 - step_factor * (lr * weight_decay))
 
     # Decay the first and second moment running average coefficient.
-    exp_avg.lerp_(p.grad.type_as(exp_avg), (step_factor * (1 - beta1)).type_as(exp_avg))
+    exp_avg.lerp_(grad.type_as(exp_avg), (step_factor * (1 - beta1)).type_as(exp_avg))
     exp_avg_sq.mul_(1 - step_factor * (1 - beta2))
-    exp_avg_sq.add_(step_factor * p.grad * p.grad, alpha=1 - beta2)
+    exp_avg_sq.add_(step_factor * grad * grad, alpha=1 - beta2)
 
     bias_correction1 = 1 - beta1 ** (step + 1)
     bias_correction2 = 1 - beta2 ** (step + 1)
@@ -171,13 +169,14 @@ class SkipStepAdamW(SkipStepOptimizer):
                     state["exp_avg_sq"] = torch.zeros_like(p, dtype=self.dtype)
 
                 adamw_step(
-                    p,
+                    get_local_tensor(p),
+                    get_local_tensor(p.grad),
                     lr=group["lr"],
                     betas=group["betas"],
                     eps=group["eps"],
                     weight_decay=group["weight_decay"],
-                    exp_avg=state["exp_avg"],
-                    exp_avg_sq=state["exp_avg_sq"],
+                    exp_avg=get_local_tensor(state["exp_avg"]),
+                    exp_avg_sq=get_local_tensor(state["exp_avg_sq"]),
                     step=state["step"],
                     step_factor=step_factor,
                     step_increment_bugfix=self.stepfix,
@@ -207,10 +206,10 @@ class SkipStepAdamW(SkipStepOptimizer):
                     state["exp_avg"] = torch.zeros_like(p, dtype=self.dtype)
                     state["exp_avg_sq"] = torch.zeros_like(p, dtype=self.dtype)
 
-                params_with_grad.append(p)
-                grads.append(p.grad)
-                exp_avgs.append(state["exp_avg"])
-                exp_avg_sqs.append(state["exp_avg_sq"])
+                params_with_grad.append(get_local_tensor(p))
+                grads.append(get_local_tensor(p.grad))
+                exp_avgs.append(get_local_tensor(state["exp_avg"]))
+                exp_avg_sqs.append(get_local_tensor(state["exp_avg_sq"]))
                 steps_list.append(state["step"])
 
             if not params_with_grad:
