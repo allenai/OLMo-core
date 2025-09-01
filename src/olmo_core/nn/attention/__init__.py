@@ -484,41 +484,42 @@ class Attention(AttentionBase):
                     window_size=self.window_size,
                 )
         elif self.use_flex:
-            if self._flex_attn_api is not None:
-                batch_size = q.shape[0]
-                seq_len_q = q.shape[1]
-                n_heads_q = q.shape[2]
-                n_kv_heads = k.shape[2]
-                head_dim = q.shape[3]
-                
-                
-                q = q.transpose(1, 2)
-                k = k.transpose(1, 2)
-                v = v.transpose(1, 2)
-                
-                # Prepare sink weights
-                sink_weights = None
-                if sinks is not None:
-                    if hasattr(sinks, 'to_local'):
-                        sink_weights = sinks.to_local()
-                    elif hasattr(sinks, '_local_tensor'):
-                        sink_weights = sinks._local_tensor
-                    else:
-                        sink_weights = sinks
-                
-                sliding_window = None
-                if self.window_size != (-1, -1):
-                    sliding_window = self.window_size[0]
-                
-                att = self._flex_attn_api(
-                    q, k, v,
-                    sink_weights=sink_weights,
-                    sliding_window=sliding_window,
-                    enable_gqa=(n_kv_heads != n_heads_q)
-                )
-                
-                att = att.transpose(1, 2).contiguous()
-                
+            if self._flex_attn_api is None:
+                raise RuntimeError()
+            batch_size = q.shape[0]
+            seq_len_q = q.shape[1]
+            n_heads_q = q.shape[2]
+            n_kv_heads = k.shape[2]
+            head_dim = q.shape[3]
+
+            q = q.transpose(1, 2)
+            k = k.transpose(1, 2)
+            v = v.transpose(1, 2)
+
+            # Prepare sink weights
+            sink_weights = None
+            if sinks is not None:
+                if hasattr(sinks, "to_local"):
+                    sink_weights = sinks.to_local()
+                elif hasattr(sinks, "_local_tensor"):
+                    sink_weights = sinks._local_tensor
+                else:
+                    sink_weights = sinks
+
+            sliding_window = None
+            if self.window_size != (-1, -1):
+                sliding_window = self.window_size[0]
+
+            att = self._flex_attn_api(
+                q,
+                k,
+                v,
+                sink_weights=sink_weights,
+                sliding_window=sliding_window,
+                enable_gqa=(n_kv_heads != n_heads_q),
+            )
+
+            att = att.transpose(1, 2).contiguous()
 
         else:
             # Fall back to PyTorch's SDPA...
@@ -573,13 +574,13 @@ class Attention(AttentionBase):
                     )
                     attn_logits = attn_logits + causal_mask[None, None, :, :]
 
-                if hasattr(sinks, 'to_local'):
+                if hasattr(sinks, "to_local"):
                     local_sinks = sinks.to_local()
-                elif hasattr(sinks, '_local_tensor'):
+                elif hasattr(sinks, "_local_tensor"):
                     local_sinks = sinks._local_tensor
                 else:
                     local_sinks = sinks
-                
+
                 if local_sinks.ndim == 1:
                     S = local_sinks.numel()
                     sink_logits = (
@@ -685,9 +686,9 @@ class Attention(AttentionBase):
             q, k = self.rope(
                 q, k, head_first=False, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis
             )
-        assert (
-            not self.use_flex or block_mask is not None
-        ), "Block mask cannot be null for flex attention layer"
+        assert not self.use_flex or block_mask is not None, (
+            "Block mask cannot be null for flex attention layer"
+        )
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
         att = self.sdpa(
@@ -753,6 +754,7 @@ class Attention(AttentionBase):
             plan["k_norm"] = SequenceParallel(use_local_output=True, output_layouts=Shard(2))
         if self.sinks is not None:
             from torch.distributed.tensor import distribute_tensor
+
             self.sinks = nn.Parameter(distribute_tensor(self.sinks.data, tp_mesh, [Shard(0)]))
         parallelize_module(
             module=self,
@@ -1106,26 +1108,33 @@ def _get_flex_attn_mask_mod(
 
     if has_docs:
         document_ids = torch.cat(
-            [torch.full((int(doc_len),), i, device=device, dtype=torch.long) for i, doc_len in enumerate(doc_lens)]
+            [
+                torch.full((int(doc_len),), i, device=device, dtype=torch.long)
+                for i, doc_len in enumerate(doc_lens)
+            ]
         )
 
-    def total_mask_mod(B: torch.Tensor, H: torch.Tensor, q_idx: torch.Tensor, kv_idx: torch.Tensor) -> torch.Tensor:
+    def total_mask_mod(
+        B: torch.Tensor, H: torch.Tensor, q_idx: torch.Tensor, kv_idx: torch.Tensor
+    ) -> torch.Tensor:
         is_sink = kv_idx < num_sink_tokens
         adjusted_kv_idx = kv_idx - num_sink_tokens
         is_regular = kv_idx >= num_sink_tokens
         causal_mask = q_idx >= adjusted_kv_idx
-        
+
         if has_window:
-            window_mask = (q_idx - adjusted_kv_idx <= window_size[0]) & (adjusted_kv_idx - q_idx <= window_size[1])  # type: ignore
+            window_mask = (q_idx - adjusted_kv_idx <= window_size[0]) & (
+                adjusted_kv_idx - q_idx <= window_size[1]
+            )  # type: ignore
         else:
             window_mask = torch.ones_like(causal_mask, dtype=torch.bool)
-        
+
         if has_docs:
             clamped_idx = torch.clamp(adjusted_kv_idx, min=0, max=len(document_ids) - 1)
             doc_mask = document_ids[q_idx] == document_ids[clamped_idx]
         else:
             doc_mask = torch.ones_like(causal_mask, dtype=torch.bool)
-        
+
         regular_mask = causal_mask & window_mask & doc_mask
         return is_sink | (is_regular & regular_mask)
 
@@ -1147,7 +1156,9 @@ def _get_flex_attn_causal_block_mask(
 
         # For intra-document masking, we merge the batch size dimension into the sequence dimension.
         return create_block_mask(
-            _get_flex_attn_mask_mod(window_size, doc_lens=doc_lens, device=device, num_sink_tokens=num_sink_tokens),
+            _get_flex_attn_mask_mod(
+                window_size, doc_lens=doc_lens, device=device, num_sink_tokens=num_sink_tokens
+            ),
             B=1,
             H=None,
             Q_LEN=token_count,
@@ -1179,14 +1190,23 @@ def get_flex_attn_causal_block_mask(
 ) -> Union[BlockMask, Tuple[BlockMask, Callable]]:
     if doc_lens is not None:
         doc_lens_list = tuple(doc_lens.flatten().tolist())
-        mask_fn = _get_flex_attn_mask_mod(window_size, doc_lens=doc_lens_list, device=device, num_sink_tokens=num_sink_tokens)
+        mask_fn = _get_flex_attn_mask_mod(
+            window_size, doc_lens=doc_lens_list, device=device, num_sink_tokens=num_sink_tokens
+        )
         block_mask = _get_flex_attn_causal_block_mask(
             seq_len, device, window_size, doc_lens_list, block_size, num_sink_tokens=num_sink_tokens
         )
     else:
-        mask_fn = _get_flex_attn_mask_mod(window_size, device=device, num_sink_tokens=num_sink_tokens)
+        mask_fn = _get_flex_attn_mask_mod(
+            window_size, device=device, num_sink_tokens=num_sink_tokens
+        )
         block_mask = _get_flex_attn_causal_block_mask(
-            seq_len, device, window_size, doc_lens=None, block_size=block_size, num_sink_tokens=num_sink_tokens
+            seq_len,
+            device,
+            window_size,
+            doc_lens=None,
+            block_size=block_size,
+            num_sink_tokens=num_sink_tokens,
         )
 
     if return_mask_fn:
