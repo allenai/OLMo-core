@@ -72,7 +72,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
             shard_degree=4,
         ),
-        float8_config=Float8Config(enabled=True),
+        float8_config=Float8Config(enabled=False),
         max_grad_norm=1.0,
         scheduler=CosWithWarmup(warmup_steps=2000),
         tp_config=TransformerTensorParallelConfig(
