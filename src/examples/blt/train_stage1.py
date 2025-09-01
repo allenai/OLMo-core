@@ -69,7 +69,7 @@ from olmo_core.utils import seed_all
 
 NUM_WORKERS = 32
 SEQUENCE_LENGTH = 1024
-QUICK_DEBUG = False
+QUICK_DEBUG = True
 GLOBAL_BATCH_SIZE = 64
 LOCAL_BATCH_SIZE = 64
 EVAL_BATCH_SIZE = 16
@@ -79,7 +79,7 @@ GLOBAL_MODEL_LEARNING_RATE = os.environ.get("GLOBAL_MODEL_LEARNING_RATE", "")
 DATA_SOURCE = os.environ.get("DATA_SOURCE", "dclm")
 LR_SCHEDULE = os.environ.get("LR_SCHEDULE", "linear_with_warmup")
 TOKEN_NOISE_STR = os.environ.get("TOKEN_NOISE_STR", "")
-ADD_HASH_EMBEDDINGS = os.environ.get("ADD_HASH_EMBEDDINGS", "").lower() in {"1", "true", "yes"}
+ADD_HASH_EMBEDDINGS = os.environ.get("ADD_HASH_EMBEDDINGS", "true").lower() in {"1", "true", "yes"}
 OLMO_ARCH = os.environ.get("OLMO_ARCH", "olmo2_1B_v2")
 
 if DATA_SOURCE == "dclm":
@@ -239,7 +239,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         local_encoder=local_encoder,
         local_decoder=local_decoder,
         teacher_config=teacher_model_config,
-        share_blocks_between_teacher_and_student=False,
+        share_blocks_between_teacher_and_student=True,
         freeze_params=[
             "teacher.*" # freeze inner teacher transformer layers
         ]
@@ -426,16 +426,6 @@ def main(run_name: str, overrides: List[str]):
     # Set RNG states on all devices.
     seed_all(config.init_seed)
 
-    if config.train_module.blt_config is not None and config.train_module.blt_config.skip_connection is not None:
-        skip_start, skip_end = config.train_module.blt_config.skip_connection
-        config.model = config.model.replace(
-            freeze_params=(config.model.freeze_params or []) + [f"blocks.{i}.*" for i in range(skip_start + 1, skip_end + 1)]
-        )
-    else:
-        config.model = config.model.replace(
-            freeze_params=(config.model.freeze_params or []) + ["blocks.*"]
-        )
-
     # Build components.
     model = config.model.build(init_device="meta")
     train_module = config.train_module.build(model)
@@ -458,25 +448,17 @@ def main(run_name: str, overrides: List[str]):
 
     # Load OLMo 1B checkpoint.
     random_init_keys = {"local_encoder", "boundary_predictor", "local_decoder"}
-    prefixes_to_duplicate = ["blocks"]
 
     key_mapping = {
         key: None for key in model.state_dict().keys() if any(key.startswith(x) for x in random_init_keys)
     } | {
         f"teacher.{key}": key for key in model.teacher.state_dict().keys()  # type: ignore
     }
-    extend_key_mapping = {}
-    for prefix in prefixes_to_duplicate:
-        extend_key_mapping.update({
-            key: key.replace(f"{prefix}", f"teacher.{prefix}")
-            for key in model.state_dict().keys() if key.startswith(prefix)
-        })
 
     incompatible_keys = load_model_and_optim_state(
         OLMO_CKPT_PATH,
         model,
         key_mapping=key_mapping,
-        extend_key_mapping=extend_key_mapping,
         strict=False
     )
 

@@ -1299,8 +1299,6 @@ class BLTTransformer(Transformer):
 
         local_encoder_kwargs["patch_lens"] = patch_lens
         local_encoder_kwargs["patch_ids"] = patch_ids
-        local_decoder_kwargs["patch_lens"] = patch_lens
-        local_decoder_kwargs["patch_ids"] = patch_ids
         extra_kwargs["original_input_ids"] = move_to_device(original_input_ids, self.device)
 
         if (constituent_input_ids := kwargs.pop("constituent_input_ids", None)) is not None:
@@ -1488,63 +1486,7 @@ class BLTDistillTransformer(BLTTransformer):
         out_hidden_states = []
 
         if isinstance(self.teacher, BLTTransformer):
-            input_ids, labels, block_kwargs, lm_head_kwargs, local_encoder_kwargs, local_decoder_kwargs, extra_kwargs = self.teacher._prepare_inputs(
-                input_ids,
-                labels,
-                ignore_index=ignore_index,
-                loss_reduction=loss_reduction,
-                z_loss_multiplier=z_loss_multiplier,
-                loss_div_factor=loss_div_factor,
-                return_logits=return_logits,
-                **kwargs,
-            )
-
-            h_byte, h_patch, _, _ = self.teacher.local_encoder(input_ids, **local_encoder_kwargs)
-            h_emb = h_patch
-
-            if skip_blocks:
-                return None, ([], None, h_emb)
-
-            if self.share_blocks:
-                blocks = self.blocks
-            else:
-                blocks = self.teacher.blocks
-
-            if self.teacher_embeddings is not None:
-                h_patch_global = self.teacher_embeddings(extra_kwargs["original_input_ids"][:, :-1])
-            elif zero_bos:
-                h_patch_global = h_patch[:, 1:]
-            else:
-                h_patch_global = h_patch
-
-            # Run each block.
-            for block_idx, block in blocks.items():
-                # Mark sizes as dynamic for torch.compile().
-                if self.compile_enabled:
-                    mark_dynamic(h_patch_global, (0, 1), strict=False)
-                h_patch_global = block(h_patch_global, **block_kwargs)
-
-                if int(block_idx) in (hidden_states_to_return or []):
-                    out_hidden_states.append(h_patch_global.detach().clone())
-
-            if zero_bos:
-                h_patch_after_global = torch.zeros_like(h_patch)
-                h_patch_after_global[:, 1:] = h_patch_global
-            else:
-                h_patch_after_global = h_patch_global
-
-            h_out = self.teacher.local_decoder(
-                embeds=h_byte,
-                patch_embeds=h_patch_after_global,
-                **local_decoder_kwargs,
-            )
-
-            if self.teacher.lm_head is not None:
-                if labels is not None:
-                    lm_head_kwargs["labels"] = labels
-                return self.teacher.lm_head(h_out, **lm_head_kwargs), (out_hidden_states, h_out, h_emb)
-            else:
-                return None, (out_hidden_states, h_out, h_emb)
+            raise NotImplementedError()
         elif isinstance(self.teacher, Transformer):
             input_ids, labels, block_kwargs, _, lm_head_kwargs = self.teacher._prepare_inputs(
                 input_ids,
@@ -1682,8 +1624,9 @@ class BLTDistillTransformer(BLTTransformer):
         patch_mask: torch.Tensor,
         true_patch_ids: torch.Tensor,
         true_patch_lens: torch.Tensor,
+        debiasing_logprobs: Optional[torch.Tensor],
         blt_config: BLTConfig,
-        metrics,
+        metrics={},
     ):
         if blt_config.div_fn == "kl":
             def kl_div_fn(log_y_true, log_y_pred):
@@ -1735,24 +1678,27 @@ class BLTDistillTransformer(BLTTransformer):
         y_true = teacher_main_path_logprobs
 
         if blt_config.do_alm_debiasing:
-            space_mask_padded_blt = F.pad(
-                self.space_mask_blt.to(y_hat.device),
-                (0, logprobs.shape[-1] - len(self.space_mask_blt)),
-                value=0
-            )[None, None, :]
-            space_mask_padded_dolma2 = F.pad(
-                self.space_mask_dolma2.to(y_true.device),
-                (0, teacher_logprobs.shape[-1] - len(self.space_mask_dolma2)),
-                value=0
-            )[None, None, :]
-            patch_end_indices = torch.cumsum(true_patch_lens, dim=1) - 1
-            minus_inf = torch.tensor(float('-inf'), device=logprobs.device)
-            y_space_hat_all = torch.where(space_mask_padded_blt.bool(), logprobs, minus_inf).logsumexp(dim=-1)  
-            y_space_hat = torch.gather(y_space_hat_all, dim=1, index=patch_end_indices[:, 1:])
-            y_space_true = torch.where(space_mask_padded_dolma2.bool(), teacher_logprobs[:, 1:], minus_inf).logsumexp(dim=-1)
+            if debiasing_logprobs is None:
+                space_mask_padded_blt = F.pad(
+                    self.space_mask_blt.to(y_hat.device),
+                    (0, logprobs.shape[-1] - len(self.space_mask_blt)),
+                    value=0
+                )[None, None, :]
+                space_mask_padded_dolma2 = F.pad(
+                    self.space_mask_dolma2.to(y_true.device),
+                    (0, teacher_logprobs.shape[-1] - len(self.space_mask_dolma2)),
+                    value=0
+                )[None, None, :]
+                patch_end_indices = torch.cumsum(true_patch_lens, dim=1) - 1
+                minus_inf = torch.tensor(float('-inf'), device=logprobs.device)
+                y_space_hat_all = torch.where(space_mask_padded_blt.bool(), logprobs, minus_inf).logsumexp(dim=-1)  
+                y_space_hat = torch.gather(y_space_hat_all, dim=1, index=patch_end_indices[:, 1:])
+                y_space_true = torch.where(space_mask_padded_dolma2.bool(), teacher_logprobs[:, 1:], minus_inf).logsumexp(dim=-1)
 
-            y_hat = y_hat + y_space_hat
-            y_true = y_true + y_space_true
+                y_hat = y_hat + y_space_hat
+                y_true = y_true + y_space_true
+            else:
+                y_hat = y_hat + debiasing_logprobs
 
         local_decoder_loss_simple = (div_fn(y_true, y_hat) * patch_mask[:, :-1]).mean()
         metrics["blt/local_decoder_teacher_mean_p_simple"] = (torch.exp(y_true) * patch_mask[:, :-1]).mean() / (patch_mask[:, :-1].float().mean() + blt_config.epsilon)
@@ -1830,17 +1776,19 @@ class BLTDistillTransformer(BLTTransformer):
     def _block_forward(
         self,
         h_patch: torch.Tensor,
-        blt_config: BLTConfig,
         hidden_states_to_return: Optional[list[int]] = None,
+        limit: Optional[int] = None,
         **block_kwargs,
     ) -> tuple[torch.Tensor, list[torch.Tensor]]:
         h_patch_global = h_patch
-        skip = None
 
         out_hidden_states = []
 
         for block_idx, block in self.blocks.items():
             block_idx = int(block_idx)
+
+            if limit is not None and block_idx + 1 > limit:
+                break
 
             # Mark sizes as dynamic for torch.compile().
             if self.compile_enabled:
@@ -1849,18 +1797,8 @@ class BLTDistillTransformer(BLTTransformer):
             # TODO(benjaminm): possibly no_grad for non-trainable layers
             h_patch_global = block(h_patch_global, **block_kwargs)
 
-            if blt_config.skip_connection is not None:
-                if block_idx == blt_config.skip_connection[0]:
-                    skip = h_patch_global
-
-                if block_idx == blt_config.skip_connection[1]:
-                    assert skip is not None
-                    # TODO(benjaminm): try RMSNorm of residual or non-residual to get on same scale
-                    # TODO(benjaminm): is /2 problematic?
-                    h_patch_global = (h_patch_global + skip) / 2
-
             if int(block_idx) in (hidden_states_to_return or []):
-                out_hidden_states.append(h_patch_global.detach().clone())
+                out_hidden_states.append(h_patch_global)
 
         return h_patch_global, out_hidden_states
 
@@ -1919,18 +1857,12 @@ class BLTDistillTransformer(BLTTransformer):
         boundary_labels = torch.zeros_like(byte_mask, dtype=torch.float32)
         boundary_labels.scatter_(1, patch_end_indices, 1.0)
 
-        if blt_config.teacher_force_interpolation_steps != 0:
-            teacher_force_interpolation_ratio = min(kwargs["step"] / blt_config.teacher_force_interpolation_steps, 1.0)
-            metrics[f"blt/teacher_force_interpolation_ratio"] = teacher_force_interpolation_ratio
-        else:
-            teacher_force_interpolation_ratio = None
-
-        h_byte, h_patch, (boundary_logprobs_for_loss, boundary_logprobs), boundary_mask = self.local_encoder(
+        h_byte, h_patch, boundary_logprobs, boundary_mask = self.local_encoder(
             input_ids,
             boundary_predictor_backprop_through_encoder=blt_config.boundary_predictor_backprop_through_encoder,
             teacher_force_boundaries=blt_config.teacher_force_boundaries,
             boundary_threshold=blt_config.boundary_threshold,
-            teacher_force_interpolation_ratio=teacher_force_interpolation_ratio,
+            true_boundary_mask=boundary_labels > 0.5,
             **local_encoder_kwargs,
         )
 
@@ -1955,7 +1887,7 @@ class BLTDistillTransformer(BLTTransformer):
 
         # compute the boundary loss
         elementwise_boundary_loss = blt_utils.binary_cross_entropy_with_logprobs(
-            boundary_logprobs_for_loss,
+            boundary_logprobs,
             boundary_labels,
         )
         boundary_loss = (elementwise_boundary_loss * byte_mask).mean()
@@ -2008,12 +1940,23 @@ class BLTDistillTransformer(BLTTransformer):
 
         # Run each block.
         if not skip_blocks:
-            h_patch_after_global, student_hidden_states = self._block_forward(
-                h_patch,
-                blt_config, 
-                hidden_states_to_return=list(range(blt_config.encoder_loss_lookahead)),
-                **block_kwargs,
-            )
+            if blt_config.use_oracle_patch_reps:
+                assert teacher_last_hidden_state is not None
+                assert blt_config.teacher_force_boundaries
+
+                h_patch_after_global = teacher_last_hidden_state
+                _, student_hidden_states = self._block_forward(
+                    h_patch,
+                    hidden_states_to_return=list(range(blt_config.encoder_loss_lookahead)),
+                    limit=blt_config.encoder_loss_lookahead,
+                    **block_kwargs,
+                )
+            else:
+                h_patch_after_global, student_hidden_states = self._block_forward(
+                    h_patch,
+                    hidden_states_to_return=list(range(blt_config.encoder_loss_lookahead)),
+                    **block_kwargs,
+                )
 
             if blt_config.decoder_backprop_through_encoder:
                 h_byte_for_decoder = h_byte
@@ -2030,8 +1973,8 @@ class BLTDistillTransformer(BLTTransformer):
             h_out_for_boundaries, h_out_for_logits = self.local_decoder(
                 embeds=h_byte_for_decoder,
                 patch_embeds=h_patch_for_decoder,
-                boundary_logprobs=None if blt_config.teacher_force_boundaries else boundary_logprobs_for_decoder,
-                boundary_mask=None if blt_config.teacher_force_boundaries else boundary_mask,
+                boundary_logprobs=boundary_logprobs_for_decoder,
+                boundary_mask=boundary_mask,
                 **local_decoder_kwargs,
             )
 
@@ -2101,8 +2044,16 @@ class BLTDistillTransformer(BLTTransformer):
             assert teacher_main_path_logprobs is not None
             assert teacher_embeds is not None
             assert teacher_loss_mask is not None
+            assert boundary_logits is not None
 
-            # use an ALM-style loss over non-noised examples
+            if blt_config.teacher_force_boundaries:
+                debiasing_logprobs = F.log_softmax(
+                    boundary_logits.float() / blt_config.temperature,
+                    dim=-1
+                )[..., self.end_of_subword_token_blt]  # type: ignore
+            else:
+                debiasing_logprobs = None
+
             local_decoder_loss, metrics = self._compute_alm_style_loss(
                 logprobs,
                 main_path_logprobs,
@@ -2112,6 +2063,7 @@ class BLTDistillTransformer(BLTTransformer):
                 teacher_loss_mask,
                 local_encoder_kwargs["patch_ids"],
                 local_encoder_kwargs["patch_lens"],
+                debiasing_logprobs,
                 blt_config,
                 metrics,
             )
@@ -2235,20 +2187,20 @@ class BLTDistillTransformer(BLTTransformer):
             **kwargs,
         )
 
-        h_byte, h_patch, (_, boundary_logprobs), boundary_mask = self.local_encoder(
+        h_byte, h_patch, boundary_logprobs, boundary_mask = self.local_encoder(
             input_ids,
             teacher_force_boundaries=blt_config.teacher_force_boundaries,
             boundary_threshold=blt_config.boundary_threshold,
             **local_encoder_kwargs
         )
 
-        h_patch_after_global, _ = self._block_forward(h_patch, blt_config, **block_kwargs)
+        h_patch_after_global, _ = self._block_forward(h_patch, **block_kwargs)
 
         _, h_out = self.local_decoder(
             embeds=h_byte,
             patch_embeds=h_patch_after_global,
-            boundary_logprobs=None if blt_config.teacher_force_boundaries else boundary_logprobs,
-            boundary_mask=None if blt_config.teacher_force_boundaries else boundary_mask,
+            boundary_logprobs=boundary_logprobs,
+            boundary_mask=boundary_mask,
             **local_decoder_kwargs,
         )
         logits = self.lm_head(h_out, **lm_head_kwargs)

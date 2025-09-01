@@ -17,12 +17,7 @@ class BLTConfig(Config):
     temperature: float = 1.0
     div_fn: str = "tvd_temp_limit"
     do_alm_debiasing: bool = False
-    boundary_mode: str = "patch_end"
-    n_distill_offsets: int = 8
-    distill_offset_weights: list[float] = field(default_factory=lambda: [1.0] * 8)
-    use_exhaustive_decoder_loss: bool = False
     rep_compare_fn: str = "l2"
-    skip_connection: Optional[tuple[int, int]] = None
     target_ratio: float = 4.5
     encoder_loss_lookahead: int = 0
     encoder_loss_lookahead_weights: list[float] = field(default_factory=lambda: [])
@@ -32,20 +27,11 @@ class BLTConfig(Config):
     skip_teacher_blocks: bool = False
     skip_teacher: bool = False
     use_oracle_patch_reps: bool = False
-    add_boundary_logp: bool = True
     decoder_backprop_through_encoder: bool = True
     decoder_backprop_through_boundary_predictor: bool = True
     boundary_predictor_backprop_through_encoder: bool = True
-    decoder_backprop_through_add_boundary_logp: bool = True
     teacher_force_boundaries: bool = True
-    teacher_force_interpolation_steps: int = 0
-    p_boundary_noise: float = 0.0
     boundary_threshold: str = "sample:0" # sample:<temperature> or topk:<value>
-    # stage1 smoothing options
-    smooth_encoder_out: bool = False
-    smooth_decoder_in: bool = False
-    smooth_boundary_means: tuple[float, float] = (0.1, 0.9)
-    smooth_boundary_stds: tuple[float, float] = (0.1, 0.1)
 
 
 @dataclass

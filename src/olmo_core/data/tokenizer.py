@@ -247,6 +247,10 @@ class ByteTokenizer:
         for key, value in self.hf_tokenizer.get_vocab().items():
             if key in self.config.special_tokens:
                 byte_sequence = [self.special_tokens_offset + self.config.special_tokens.index(key)]
+            elif key == self.hf_tokenizer.eos_token_id and self.eos_token_id is not None:
+                byte_sequence = [self.eos_token_id]
+            elif key == self.hf_tokenizer.bos_token_id and self.bos_token_id is not None:
+                byte_sequence = [self.bos_token_id]
             else:
                 byte_sequence = [self.offset + i for i in blt_utils.chars_to_bytes(key)]
 
