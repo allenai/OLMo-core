@@ -100,6 +100,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         .with_callback(
             "checkpointer",
             CheckpointerCallback(
+                enabled=False,
                 save_interval=10_000,
                 ephemeral_save_interval=250,
                 save_async=True,
@@ -111,7 +112,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 name=common.run_name,
                 workspace="ai2",
                 project="OLMo-core-7B",
-                enabled=True,
+                enabled=False,
                 cancel_check_interval=10,
             ),
         )
