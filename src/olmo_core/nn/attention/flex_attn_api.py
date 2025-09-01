@@ -1,21 +1,19 @@
 from typing import Callable, ClassVar
 
 import torch
-import torch.nn.functional as F
-from torch.nn.attention import sdpa_kernel, SDPBackend
+from torch._utils import _get_available_device_type, _get_device_module
 from torch.nn.attention.flex_attention import (
-    _mask_mod_signature,
     BlockMask,
+    _mask_mod_signature,
     create_block_mask,
     flex_attention,
 )
-
-from torch._utils import _get_available_device_type, _get_device_module
 
 # FlexAttention mask type. For each mask type, we initialize it at most once per
 # batch. To record what it is initialized, FLEX_ATTN_MASK_T is used as the key to
 # track the initialized mask.
 FLEX_ATTN_MASK_T = tuple[str, int | None]
+
 
 def has_cuda_capability(major: int, minor: int) -> bool:
     return torch.cuda.is_available() and torch.cuda.get_device_capability() >= (
@@ -31,6 +29,7 @@ def get_device_info() -> tuple[str, torch.device]:
 
 
 device_type, device_module = get_device_info()
+
 
 class FlexAttention(torch.nn.Module):
     """FlexAttention module that uses torch.nn.attention.flex_attention.
@@ -51,21 +50,18 @@ class FlexAttention(torch.nn.Module):
     """
 
     flex_attn: ClassVar[Callable] = torch.compile(
-        flex_attention, 
-        options={"triton.cudagraphs": False}  
+        flex_attention, options={"triton.cudagraphs": False}
     )
     compiled_create_block_mask: ClassVar[Callable] = torch.compile(
-        create_block_mask, 
-        options={"triton.cudagraphs": False}
+        create_block_mask, options={"triton.cudagraphs": False}
     )
     used_attn_mask_types: ClassVar[set[FLEX_ATTN_MASK_T]] = set()
     block_masks: ClassVar[dict[FLEX_ATTN_MASK_T, BlockMask]] = {}
+    sink_mask_cache: ClassVar[dict[tuple, BlockMask]] = {}
 
     attn_mask_type: str
 
-    def __init__(
-        self, attn_mask_type: str, fixed_block_size: int | None = None
-    ) -> None:
+    def __init__(self, attn_mask_type: str, fixed_block_size: int | None = None) -> None:
         super().__init__()
         if attn_mask_type not in ["causal", "block_causal"]:
             raise ValueError(f"Unrecognized attn_mask_type {attn_mask_type}.")
@@ -77,6 +73,10 @@ class FlexAttention(torch.nn.Module):
     @property
     def mask_key(self) -> FLEX_ATTN_MASK_T:
         return (self.attn_mask_type, self.fixed_block_size)
+
+    @classmethod
+    def clear_sink_mask_cache(cls):
+        cls.sink_mask_cache.clear()
 
     def forward(self, q, k, v, sink_weights=None, sliding_window=0, enable_gqa=False):
         """
@@ -93,37 +93,44 @@ class FlexAttention(torch.nn.Module):
 
         B, H_q, S_q, D = q.shape
         _, H_kv, S_kv, _ = k.shape
-        sink_idx = S_kv # sink occupies final key slot
+        sink_idx = S_kv  # sink occupies final key slot
 
-        sink_k = k.new_zeros(B, H_kv, 1, D) # this needn't be 0's since it's overwritten
-        sink_v = v.new_zeros(B, H_kv, 1, D) # 0 value nullifies sink weight in output
+        sink_k = k.new_empty(B, H_kv, 1, D)  # Faster - no initialization needed
+        sink_v = v.new_zeros(B, H_kv, 1, D)  # Keep zeros for sink_v (needed for nullifying)
 
         k_ext = torch.cat([k, sink_k], dim=2)
         v_ext = torch.cat([v, sink_v], dim=2)
 
-        # masks ensure sinks are included in softmax
-        if sliding_window is not None and sliding_window > 0:
-            mask_mod = FlexAttention._get_sliding_window_with_sink_mask_mod(sliding_window, sink_idx)
-        else:
-            mask_mod = FlexAttention._get_causal_with_sink_mask_mod(sink_idx)
+        mask_cache_key = (B, H_q, S_q, S_kv + 1, sliding_window if sliding_window else -1)
 
-        block_mask = FlexAttention.compiled_create_block_mask(
-            mask_mod, B, H_q, S_q, S_kv+1
-        )
+        if mask_cache_key not in FlexAttention.sink_mask_cache:
+            if len(FlexAttention.sink_mask_cache) > 32:
+                FlexAttention.sink_mask_cache.clear()
+
+            # masks ensure sinks are included in softmax
+            if sliding_window is not None and sliding_window > 0:
+                mask_mod = FlexAttention._get_sliding_window_with_sink_mask_mod(
+                    sliding_window, sink_idx
+                )
+            else:
+                mask_mod = FlexAttention._get_causal_with_sink_mask_mod(sink_idx)
+
+            FlexAttention.sink_mask_cache[
+                mask_cache_key
+            ] = FlexAttention.compiled_create_block_mask(mask_mod, B, H_q, S_q, S_kv + 1)
+
+        block_mask = FlexAttention.sink_mask_cache[mask_cache_key]
 
         # overwrite the dummy sink scores with actual sink weights
         def score_mod(score, b, h_q, q_idx, kv_idx):
             return torch.where(
                 kv_idx == sink_idx,
                 sink_weights[h_q].to(score.dtype) + 0.0,  # cast + keep grad
-                score
+                score,
             )
 
         return FlexAttention.flex_attn(
-            q, k_ext, v_ext,
-            block_mask=block_mask,
-            score_mod=score_mod,
-            enable_gqa=enable_gqa
+            q, k_ext, v_ext, block_mask=block_mask, score_mod=score_mod, enable_gqa=enable_gqa
         )
 
     @staticmethod
@@ -134,8 +141,10 @@ class FlexAttention(torch.nn.Module):
         - or if kv_idx == sink_idx (always allow the sink)
         """
         orig = FlexAttention._get_causal_mask_mod()
+
         def causal_with_sink(b, h, q_idx, kv_idx):
             return orig(b, h, q_idx, kv_idx) | (kv_idx == sink_idx)
+
         return causal_with_sink
 
     @staticmethod
@@ -146,11 +155,13 @@ class FlexAttention(torch.nn.Module):
         - and only if (q_idx - kv_idx) ≤ window
         - or if kv_idx == sink_idx (always allow the sink)
         """
+
         def sliding_mod(b, h, q_idx, kv_idx):
             # causal within window
             keep = (kv_idx <= q_idx) & (q_idx - kv_idx <= window)
             # always allow the sink slot
             return keep | (kv_idx == sink_idx)
+
         return sliding_mod
 
     @staticmethod
@@ -163,14 +174,14 @@ class FlexAttention(torch.nn.Module):
         return causal_mask
 
     @staticmethod
-    def _get_block_causal_mask_mod(
-        batch: torch.Tensor, eos_id: int
-    ) -> _mask_mod_signature:
+    def _get_block_causal_mask_mod(batch: torch.Tensor, eos_id: int) -> _mask_mod_signature:
         # batch is [b, s, h, d] shape
         mask = batch == eos_id
         mask[:, -1] = True
         acc_mask = torch.cumsum(torch.where(mask, 1, 0), dim=1)
-        seq_idx = torch.zeros_like(acc_mask, dtype=torch.int32)
+        # Optimize: use empty_like for faster initialization
+        seq_idx = torch.empty_like(acc_mask, dtype=torch.int32)
+        seq_idx[:, 0] = 0  # Only first position needs to be 0
         seq_idx[:, 1:] = acc_mask[:, :-1]
 
         def block_causal_mask(
@@ -203,9 +214,7 @@ class FlexAttention(torch.nn.Module):
             # Only allow attention within the same block
             same_block = q_block == kv_block
             # Apply the original mask mod
-            inner_mask = mask_mod(
-                b, h, q_idx % fixed_block_size, kv_idx % fixed_block_size
-            )
+            inner_mask = mask_mod(b, h, q_idx % fixed_block_size, kv_idx % fixed_block_size)
 
             return same_block & inner_mask
 
@@ -231,18 +240,14 @@ class FlexAttention(torch.nn.Module):
                     mask_mod = FlexAttention._get_causal_mask_mod()
                 case "block_causal":
                     if eos_id is None:
-                        raise RuntimeError(
-                            "eos_id must be provided for block_causal mask."
-                        )
+                        raise RuntimeError("eos_id must be provided for block_causal mask.")
                     batch_dimension = batch.shape[0]
                     mask_mod = FlexAttention._get_block_causal_mask_mod(batch, eos_id)
                 case _:
                     raise RuntimeError(f"Shouldn't reach here. {attn_mask_type}")
 
             if fixed_block_size is not None and fixed_block_size > 0:
-                mask_mod = FlexAttention._fixed_block_mask_mod(
-                    mask_mod, fixed_block_size
-                )
+                mask_mod = FlexAttention._fixed_block_mask_mod(mask_mod, fixed_block_size)
 
             seq_len = batch.shape[1]
             block_mask = FlexAttention.compiled_create_block_mask(

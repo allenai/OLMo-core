@@ -628,7 +628,9 @@ class Trainer:
             # Then fallback to the load path, if provided.
             if self.load_path is not None:
                 if not self.checkpoint_loaded:
-                    self.maybe_load_checkpoint(self.load_path, load_trainer_state=self.load_trainer_state)
+                    self.maybe_load_checkpoint(
+                        self.load_path, load_trainer_state=self.load_trainer_state
+                    )
                 else:
                     log.warning(
                         f"Ignoring load path ('{self.load_path}') since checkpoint was found in save folder"

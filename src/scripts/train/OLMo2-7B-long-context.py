@@ -8,8 +8,8 @@ from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
 from olmo_core.internal.experiment import CommonComponents, main
-from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
+from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
 from olmo_core.train import LoadStrategy, TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
@@ -20,8 +20,9 @@ from olmo_core.train.train_module import (
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
-from olmo_core.train.train_module.transformer.config import TransformerTensorParallelConfig
-
+from olmo_core.train.train_module.transformer.config import (
+    TransformerTensorParallelConfig,
+)
 
 log = logging.getLogger(__name__)
 

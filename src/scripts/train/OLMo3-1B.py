@@ -23,7 +23,9 @@ from olmo_core.train.train_module import (
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
-from olmo_core.train.train_module.transformer.config import TransformerTensorParallelConfig
+from olmo_core.train.train_module.transformer.config import (
+    TransformerTensorParallelConfig,
+)
 
 SEQUENCE_LENGTH = 4096
 GLOBAL_BATCH_SIZE = (
@@ -97,7 +99,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
                 int(ANNEAL_TOKENS / GLOBAL_BATCH_SIZE)
             ),  # TODO: This isn't right because it doesn't take batchwup into account.
             decay_fraction=None,
-        )
+        ),
     )
 
 
