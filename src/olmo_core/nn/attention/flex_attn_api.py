@@ -1,11 +1,3 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
-#
-# Copyright (c) Meta Platforms, Inc. All Rights Reserved.
-
 from typing import Callable, ClassVar
 
 import torch
@@ -58,28 +50,17 @@ class FlexAttention(torch.nn.Module):
             to the keys within the same block.
     """
 
-    # We registered flex_attention related attributes as class variables as we
-    # need to amortize the cost of compilation.
-    # Disable CUDA graphs to avoid tensor overwriting issues
-    # Using options only (can't use both mode and options together)
     flex_attn: ClassVar[Callable] = torch.compile(
         flex_attention, 
-        options={"triton.cudagraphs": False}  # Explicitly disable CUDA graphs
+        options={"triton.cudagraphs": False}  
     )
-    # Same for create_block_mask - disable CUDA graphs
     compiled_create_block_mask: ClassVar[Callable] = torch.compile(
         create_block_mask, 
-        options={"triton.cudagraphs": False}  # Explicitly disable CUDA graphs
+        options={"triton.cudagraphs": False}
     )
     used_attn_mask_types: ClassVar[set[FLEX_ATTN_MASK_T]] = set()
-    # Attention mask type to the created BlockMask.
-    # This allows us to keep track the created block masks for each
-    # new batch. We will use this to update the block mask when a
-    # new batch is created. This also allows user to create different
-    # block masks for different layers.
     block_masks: ClassVar[dict[FLEX_ATTN_MASK_T, BlockMask]] = {}
 
-    # Instance variables.
     attn_mask_type: str
 
     def __init__(
@@ -268,62 +249,3 @@ class FlexAttention(torch.nn.Module):
                 mask_mod, batch_dimension, None, seq_len, seq_len
             )
             FlexAttention.block_masks[mask_key] = block_mask
-
-
-class ScaledDotProductAttention(torch.nn.Module):
-    backends: ClassVar[list[SDPBackend]] = []
-
-    def __init__(self, attn_mask_type: str) -> None:
-        super().__init__()
-        if attn_mask_type != "causal":
-            raise ValueError(
-                "TorchTitan with SDPA currently only supports causal mask."
-            )
-
-        ScaledDotProductAttention._init_backend()
-
-    @classmethod
-    def _init_backend(cls) -> None:
-        if cls.backends:
-            return
-
-        # Add CuDNN on B200 w/ highest priority
-        cls.backends = [
-            SDPBackend.FLASH_ATTENTION,
-            SDPBackend.EFFICIENT_ATTENTION,
-            SDPBackend.MATH,
-        ]
-        if has_cuda_capability(10, 0):
-            cls.backends.insert(0, SDPBackend.CUDNN_ATTENTION)
-
-    def forward(
-        self,
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
-        scale: float | None = None,
-    ) -> torch.Tensor:
-        assert self.backends, "SDPA Backends should not be empty."
-        with sdpa_kernel(self.backends, set_priority=True):
-            return F.scaled_dot_product_attention(q, k, v, is_causal=True, scale=scale)
-
-
-def build_attention(
-    use_flex_attn: bool, attn_mask_type: str, fixed_block_size: int | None = None
-):
-    if use_flex_attn:
-        return FlexAttention(attn_mask_type, fixed_block_size)
-    else:
-        if fixed_block_size is not None:
-            raise ValueError(
-                "TorchTitan with SDPA currently does not support fixed_block_size."
-            )
-        if attn_mask_type != "causal":
-            raise ValueError(
-                "TorchTitan with SDPA currently only supports causal mask."
-            )
-        return ScaledDotProductAttention(attn_mask_type)
-
-
-def init_attention_mask(batch: torch.Tensor, eos_id: int | None) -> None:
-    FlexAttention.init_attention_mask(batch, eos_id)

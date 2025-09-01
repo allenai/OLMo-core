@@ -12,9 +12,7 @@ from torch.distributed.tensor import Placement, Replicate, Shard
 from torch.distributed.tensor.parallel import parallelize_module
 from torch.nn.attention.flex_attention import (
     BlockMask,
-    and_masks,
     create_block_mask,
-    flex_attention,
 )
 
 from olmo_core.config import Config, DType, StrEnum
@@ -496,7 +494,6 @@ class Attention(AttentionBase):
                 k = k.transpose(1, 2)
                 v = v.transpose(1, 2)
                 
-                # Prepare sink weights
                 sink_weights = None
                 if sinks is not None:
                     if hasattr(sinks, 'to_local'):
