@@ -50,10 +50,10 @@ class FlexAttention(torch.nn.Module):
     """
 
     flex_attn: ClassVar[Callable] = torch.compile(
-        flex_attention, options={"triton.cudagraphs": False}
+        flex_attention, mode="max-autotune", options={"triton.cudagraphs": False}
     )
     compiled_create_block_mask: ClassVar[Callable] = torch.compile(
-        create_block_mask, options={"triton.cudagraphs": False}
+        create_block_mask, mode="max-autotune", options={"triton.cudagraphs": False}
     )
     used_attn_mask_types: ClassVar[set[FLEX_ATTN_MASK_T]] = set()
     block_masks: ClassVar[dict[FLEX_ATTN_MASK_T, BlockMask]] = {}
