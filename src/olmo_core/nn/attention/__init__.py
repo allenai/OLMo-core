@@ -492,9 +492,7 @@ class Attention(AttentionBase):
 
                 sink_weights = None
                 if sinks is not None:
-                    if hasattr(sinks, "to_local"):
-                        sink_weights = sinks.to_local()
-                    elif hasattr(sinks, "_local_tensor"):
+                    if hasattr(sinks, "_local_tensor"):
                         sink_weights = sinks._local_tensor
                     else:
                         sink_weights = sinks
@@ -567,9 +565,7 @@ class Attention(AttentionBase):
                     )
                     attn_logits = attn_logits + causal_mask[None, None, :, :]
 
-                if hasattr(sinks, "to_local"):
-                    local_sinks = sinks.to_local()
-                elif hasattr(sinks, "_local_tensor"):
+                if hasattr(sinks, "_local_tensor"):
                     local_sinks = sinks._local_tensor
                 else:
                     local_sinks = sinks
@@ -748,7 +744,7 @@ class Attention(AttentionBase):
         if self.sinks is not None:
             from torch.distributed.tensor import distribute_tensor
 
-            self.sinks = nn.Parameter(distribute_tensor(self.sinks.data, tp_mesh, [Shard(0)]))
+            self.sinks = nn.Parameter(distribute_tensor(self.sinks.data, tp_mesh, [Replicate()]))
         parallelize_module(
             module=self,
             device_mesh=tp_mesh,
