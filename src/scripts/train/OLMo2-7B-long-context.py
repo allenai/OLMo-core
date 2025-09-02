@@ -9,7 +9,7 @@ from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
 from olmo_core.internal.experiment import CommonComponents, main
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
-from olmo_core.nn.lm_head import LMLossImplementation
+from olmo_core.nn.lm_head import LMLossImplementation 
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import CosWithWarmup, OptimGroupOverride
 from olmo_core.optim.adamw import SkipStepAdamWConfig
@@ -50,7 +50,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     )
     config.block.attention.use_flex = True
     config.block.attention.use_sinks = True
-    config.lm_head.loss_implementation = LMLossImplementation.fused_linear
+    # config.lm_head.loss_implementation = LMLossImplementation.fused_linear  # Disabled to avoid NCCL errors when loading checkpoints
     return config
 
 
