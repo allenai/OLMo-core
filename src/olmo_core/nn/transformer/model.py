@@ -1439,6 +1439,24 @@ class BLTDistillTransformer(BLTTransformer):
 
         return loss
 
+    def apply_fp8(self, float8_config: Float8Config):
+        """
+        Use an FP8 recipe on the (potentially frozen) backbone layers.
+        Do not use FP8 for local encoder / decoder.
+        This is mainly to speed up Stage 1 training (where the backbone is frozen).
+        """
+        if not float8_config.enabled:
+            return
+
+        float8_config.apply_float8_linear(self.blocks)
+        if self.teacher is not None:
+            float8_config.apply_float8_linear(self.teacher.blocks)
+
+        self._fp8_enabled = True
+        self._precompute_float8_dynamic_scale_for_fsdp = (
+            float8_config.should_precompute_float8_dynamic_scale_for_fsdp
+        )
+
     def apply_compile(self):
         """
         Apply ``torch.compile()`` to each transformer block, which makes compilation efficient
