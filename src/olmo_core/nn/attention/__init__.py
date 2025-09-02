@@ -368,7 +368,7 @@ class Attention(AttentionBase):
 
         self.use_sinks = use_sinks
         if use_sinks is not None and use_sinks:
-            self.sinks = nn.Parameter(torch.empty(self.n_heads, dtype=dtype, device=init_device))
+            self.sinks = nn.Parameter(torch.randn(self.n_heads, dtype=dtype, device=init_device) * 0.02)
         else:
             self.sinks = None
 

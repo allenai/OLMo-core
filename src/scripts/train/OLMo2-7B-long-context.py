@@ -50,7 +50,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     )
     config.block.attention.use_flex = True
     config.block.attention.use_sinks = True
-    # config.lm_head.loss_implementation = LMLossImplementation.fused_linear  # Disabled to avoid NCCL errors when loading checkpoints
+    config.lm_head.loss_implementation = LMLossImplementation.fused_linear
     return config
 
 
