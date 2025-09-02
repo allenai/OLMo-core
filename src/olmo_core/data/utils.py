@@ -227,8 +227,8 @@ def iter_document_indices(
 
         with gzip.open(metadata_path, "rt") as f:
             for line in f:
-                start_index, end_index, *_ = line.split(",")
-                start_index, end_index = int(start_index), int(end_index)
+                start_index_str, end_index_str, *_ = line.split(",")
+                start_index, end_index = int(start_index_str), int(end_index_str)
                 if total_tokens is not None:
                     if start_index >= total_tokens:
                         raise RuntimeError(
