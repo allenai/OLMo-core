@@ -12,7 +12,9 @@ from torch.distributed.tensor import Placement, Replicate, Shard
 from torch.distributed.tensor.parallel import parallelize_module
 from torch.nn.attention.flex_attention import (
     BlockMask,
+    and_masks,
     create_block_mask,
+    flex_attention,
 )
 
 from olmo_core.config import Config, DType, StrEnum
@@ -368,7 +370,7 @@ class Attention(AttentionBase):
 
         self.use_sinks = use_sinks
         if use_sinks is not None and use_sinks:
-            self.sinks = nn.Parameter(torch.zeros(self.n_heads, dtype=dtype, device=init_device))
+            self.sinks = nn.Parameter(torch.empty(self.n_heads, dtype=dtype, device=init_device))
         else:
             self.sinks = None
 

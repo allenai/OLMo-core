@@ -9,7 +9,7 @@ from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
 from olmo_core.internal.experiment import CommonComponents, main
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
-from olmo_core.nn.lm_head import LMLossImplementation 
+from olmo_core.nn.lm_head import LMLossImplementation
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import CosWithWarmup, OptimGroupOverride
 from olmo_core.optim.adamw import SkipStepAdamWConfig
@@ -24,9 +24,7 @@ from olmo_core.train.train_module import (
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
-from olmo_core.train.train_module.transformer.config import (
-    TransformerTensorParallelConfig,
-)
+from olmo_core.train.train_module.transformer.config import TransformerTensorParallelConfig
 
 log = logging.getLogger(__name__)
 
@@ -97,9 +95,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=1,
+            load_strategy=LoadStrategy.never,
             max_duration=Duration.steps(25),
-            load_path='gs://ai2-llm/checkpoints/OLMo25-from476838/step500680',
-            load_strategy=LoadStrategy.always,
+            # load_path='gs://ai2-llm/checkpoints/OLMo25-from476838/step500680',
         )
         .with_callback(
             "checkpointer",
@@ -141,7 +139,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     #             skip_first=3,
     #         ),
     #     )
-    )
+    # )
 
 
 if __name__ == "__main__":
