@@ -26,19 +26,26 @@ GLOBAL_BATCH_SIZE = 1024 * SEQUENCE_LENGTH
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     config = TransformerConfig.olmo2_7B(vocab_size=common.tokenizer.padded_vocab_size())
-    config.block.attention.sliding_window = SlidingWindowAttentionConfig(
-        force_full_attention_on_first_layer=False,
-        force_full_attention_on_last_layer=True,
-        pattern=[4096, 4096, 4096, -1],
-    )
-    config.block.attention.use_flash = True
+
+    # We don't do SWA because Amanda found it doesn't retrofit well.
+
+    #config.block.attention.sliding_window = SlidingWindowAttentionConfig(
+    #    force_full_attention_on_first_layer=False,
+    #    force_full_attention_on_last_layer=True,
+    #    pattern=[4096, 4096, 4096, -1],
+    #)
+    #config.block.attention.use_flash = True
+
+
+    # We don't do RoPE scaling because the old Retrofit didn't have it due to a bug.
 
     # RoPE scaling
-    OLD_SEQUENCE_LENGTH = 4096
-    config.block.attention.rope.scaling = RoPEScalingConfig(
-        old_context_len=OLD_SEQUENCE_LENGTH,
-        factor=SEQUENCE_LENGTH / OLD_SEQUENCE_LENGTH
-    )
+    #OLD_SEQUENCE_LENGTH = 4096
+    #config.block.attention.rope.scaling = RoPEScalingConfig(
+    #    old_context_len=OLD_SEQUENCE_LENGTH,
+    #    factor=SEQUENCE_LENGTH / OLD_SEQUENCE_LENGTH
+    #)
+
 
     # We cannot use headwise QK norm or GQA, because those can't be retrofit.
 
