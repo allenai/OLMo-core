@@ -95,9 +95,10 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=1,
-            load_strategy=LoadStrategy.never,
             max_duration=Duration.steps(25),
-            # load_path='gs://ai2-llm/checkpoints/OLMo25-from476838/step500680',
+            load_path='gs://ai2-llm/checkpoints/OLMo25-from476838/step500680',
+            load_strategy=LoadStrategy.always,
+
         )
         .with_callback(
             "checkpointer",
