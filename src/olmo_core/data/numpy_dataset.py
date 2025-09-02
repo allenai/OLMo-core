@@ -1174,7 +1174,9 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
             source_path: Optional[PathOrStr] = None
             label_mask_path: Optional[PathOrStr] = None
             source_start = 0
-            for i, (source_path, source_size) in enumerate(zip(source_paths, source_sizes)):
+            for i, (source_path, source_size) in enumerate(
+                zip(source_paths, source_sizes, strict=True)
+            ):
                 if source_start <= document_start < (source_start + source_size):
                     document_start -= source_start
                     document_end -= source_start
@@ -1184,7 +1186,11 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
                 else:
                     source_start += source_size
             else:
-                raise RuntimeError("we shouldn't be here!")
+                raise RuntimeError(
+                    f"Document start index {document_start} does not fall within any source file range. "
+                    f"Source paths: {source_paths}, Source sizes: {source_sizes}, "
+                    f"Source start: {source_start}, Document indices: ({document_start}, {document_end})"
+                )
 
             assert source_path is not None
             document_token_ids.append(
@@ -2360,7 +2366,7 @@ class NumpyDatasetConfig(Config):
     """
     The number of documents to interleave per instance in
     :class:`NumpyInterleavedFSLDataset`.
-    
+
     Dataset document are truncated down to length ``sequence_length // docs_per_instance``, so
     that the overall sequence length after interleaving is up to ``sequence_length``.
     """
