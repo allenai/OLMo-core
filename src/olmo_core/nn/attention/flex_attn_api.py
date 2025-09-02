@@ -15,11 +15,6 @@ from torch.nn.attention.flex_attention import (
 FLEX_ATTN_MASK_T = tuple[str, int | None]
 
 
-def has_cuda_capability(major: int, minor: int) -> bool:
-    return torch.cuda.is_available() and torch.cuda.get_device_capability() >= (
-        major,
-        minor,
-    )
 
 
 def get_device_info() -> tuple[str, torch.device]:
@@ -207,6 +202,10 @@ class FlexAttention(torch.nn.Module):
         )
 
         return blocked_mask_mod
+
+    @staticmethod
+    def reset_cached_state() -> None:
+        FlexAttention.block_masks.clear()
 
     @staticmethod
     @torch.no_grad()

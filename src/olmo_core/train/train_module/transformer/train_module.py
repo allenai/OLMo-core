@@ -313,6 +313,9 @@ class TransformerTrainModule(TrainModule):
             options=self.state_dict_load_opts,
         )
         gc_cuda()
+        
+        from olmo_core.nn.attention.flex_attn_api import FlexAttention
+        FlexAttention.reset_cached_state()
         if load_optim:
             dist_cp_sd.set_optimizer_state_dict(
                 self.model,
