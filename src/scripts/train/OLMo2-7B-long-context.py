@@ -141,7 +141,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     #             skip_first=3,
     #         ),
     #     )
-    # )
+    )
 
 
 if __name__ == "__main__":
