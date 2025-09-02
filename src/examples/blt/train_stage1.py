@@ -75,7 +75,6 @@ LOCAL_BATCH_SIZE = 64
 EVAL_BATCH_SIZE = 16
 LOCAL_MODEL_STYLE = os.environ.get("LOCAL_MODEL_STYLE", "hnet")
 TRAIN_MODE = os.environ.get("TRAIN_MODE", "full_stage_1")
-GLOBAL_MODEL_LEARNING_RATE = os.environ.get("GLOBAL_MODEL_LEARNING_RATE", "")
 DATA_SOURCE = os.environ.get("DATA_SOURCE", "dclm")
 LR_SCHEDULE = os.environ.get("LR_SCHEDULE", "linear_with_warmup")
 TOKEN_NOISE_STR = os.environ.get("TOKEN_NOISE_STR", "")
@@ -241,7 +240,8 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         teacher_config=teacher_model_config,
         share_blocks_between_teacher_and_student=True,
         freeze_params=[
-            "teacher.*" # freeze inner teacher transformer layers
+            "blocks*", # freeze all blocks
+            "teacher*" # freeze teacher params
         ]
     )
 
@@ -264,16 +264,6 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             opts=dict(weight_decay=0.0)
         )
     ]
-
-    if GLOBAL_MODEL_LEARNING_RATE:
-        group_overrides.append(
-            OptimGroupOverride(
-                params=[
-                    "blocks.*"
-                ],
-                opts=dict(lr=float(GLOBAL_MODEL_LEARNING_RATE))
-            )
-        )
 
     optim = AdamWConfig(lr=1e-3, group_overrides=group_overrides)
 
