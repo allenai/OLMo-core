@@ -1890,12 +1890,14 @@ class BLTDistillTransformer(BLTTransformer):
             boundary_logprobs,
             boundary_labels,
         )
-        boundary_loss = (elementwise_boundary_loss * byte_mask).mean()
-        elementwise_boundary_acc = boundary_mask == (boundary_labels > 0)
-        boundary_acc = (elementwise_boundary_acc * byte_mask).float().mean()
-        metrics["blt/boundary_loss"] = boundary_loss / byte_mask.float().mean()
-        metrics["blt/boundary_acc"] = boundary_acc / byte_mask.float().mean()
-        metrics["blt/boundary_mean"] = (boundary_mask * byte_mask).float().mean() / byte_mask.float().mean()
+        boundary_byte_mask = byte_mask.clone()
+        boundary_byte_mask[:, byte_mask.shape[1]-self.local_encoder.boundary_predictor_lookahead:] = False  # type: ignore
+        boundary_loss = (elementwise_boundary_loss * boundary_byte_mask).mean()
+        elementwise_boundary_acc = (torch.exp(boundary_logprobs) > 0.5) == (boundary_labels > 0)
+        boundary_acc = (elementwise_boundary_acc * boundary_byte_mask).float().mean()
+        metrics["blt/boundary_loss"] = boundary_loss / boundary_byte_mask.float().mean()
+        metrics["blt/boundary_acc"] = boundary_acc / boundary_byte_mask.float().mean()
+        metrics["blt/boundary_mean"] = (boundary_mask * boundary_byte_mask).float().mean() / boundary_byte_mask.float().mean()
 
         # First, run the teacher.
         if not skip_teacher:
@@ -2187,10 +2189,21 @@ class BLTDistillTransformer(BLTTransformer):
             **kwargs,
         )
 
+        byte_mask = labels != ignore_index
+        patch_end_indices = torch.cumsum(local_encoder_kwargs["patch_lens"], dim=1) - 1
+        patch_end_indices = torch.where(
+            patch_end_indices < byte_mask.shape[1],
+            patch_end_indices,
+            torch.zeros_like(patch_end_indices), # effectively mask out, index 0 is always start
+        )
+        boundary_labels = torch.zeros_like(byte_mask, dtype=torch.float32)
+        boundary_labels.scatter_(1, patch_end_indices, 1.0)
+
         h_byte, h_patch, boundary_logprobs, boundary_mask = self.local_encoder(
             input_ids,
             teacher_force_boundaries=blt_config.teacher_force_boundaries,
             boundary_threshold=blt_config.boundary_threshold,
+            true_boundary_mask=boundary_labels > 0.5,
             **local_encoder_kwargs
         )
 
