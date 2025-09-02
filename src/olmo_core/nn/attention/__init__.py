@@ -10,7 +10,10 @@ import torch.nn.functional as F
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import Placement, Replicate, Shard
 from torch.distributed.tensor.parallel import parallelize_module
-from torch.nn.attention.flex_attention import BlockMask, create_block_mask
+from torch.nn.attention.flex_attention import (
+    BlockMask,
+    create_block_mask,
+)
 
 from olmo_core.config import Config, DType, StrEnum
 from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
