@@ -22,7 +22,6 @@ dependencies = [
     "omegaconf",
     "safetensors",
     "importlib_resources",
-    "ai2-olmo-eval==0.8.5",
 ]
 
 [project.urls]
@@ -32,33 +31,41 @@ Changelog = "https://github.com/allenai/OLMo-core/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = [
-    "ruff",
-    "mypy>=1.0,<1.4",
     "black>=23.1,<24.0",
+    "boto3",
+    "build",
+    "furo==2024.8.6",
+    "google-cloud-storage",
     "isort>=5.12,<5.14",
+    "mypy>=1.0,<1.4",
+    "myst-parser>=1.0",
     "pytest",
     "pytest-memray",
     "pytest-sphinx",
     "pytest-xdist",
-    "twine>=1.11.0",
+    "ruff",
     "setuptools",
     "wheel",
     "build",
     "boto3",
+    "google-cloud-compute",
     "google-cloud-storage",
     "Sphinx>=6.0,<9.0",
-    "furo==2024.8.6",
-    "myst-parser>=1.0",
-    "sphinx-copybutton",
     "sphinx-autobuild",
     "sphinx-autodoc-typehints==1.23.3",
+    "sphinx-copybutton",
     "sphinx-inline-tabs",
+    "twine>=1.11.0",
+    "wheel",
 ]
 beaker = ["beaker-py>=1.36.0,<2.0", "GitPython>=3.0,<4.0"]
-wandb = ["wandb"]
 comet = ["comet_ml"]
+eval = ["ai2-olmo-eval==0.8.5"]
+torchao = ["torchao"]
 transformers = ["transformers"]
-all = ["ai2-olmo-core[dev,beaker,wandb,comet,transformers]"]
+wandb = ["wandb"]
+all = ["ai2-olmo-core[dev,beaker,comet,eval,torchao,transformers,wandb]"]
+
 
 [tool.setuptools]
 include-package-data = true
@@ -136,7 +143,7 @@ reportPrivateImportUsage = false
 ignore_missing_imports = true
 no_site_packages = true
 check_untyped_defs = true
-no_namespace_packages = true
+namespace_packages = false
 disable_error_code = "has-type"
 
 [[tool.mypy.overrides]]

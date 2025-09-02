@@ -23,7 +23,12 @@ from cached_path.schemes import S3Client, SchemeClient, add_scheme_client
 from rich.progress import track
 
 from .aliases import PathOrStr
-from .exceptions import OLMoEnvironmentError, OLMoNetworkError
+from .exceptions import (
+    OLMoEnvironmentError,
+    OLMoInvalidRangeRequestError,
+    OLMoNetworkError,
+    OLMoUploadError,
+)
 
 log = logging.getLogger(__name__)
 
@@ -155,6 +160,7 @@ def upload(source: PathOrStr, target: str, save_overwrite: bool = False, quiet: 
     if not quiet:
         log.info(f"Uploading {_format_bytes(num_bytes)} from '{source}' to '{target}'...")
     parsed = urlparse(target)
+
     if parsed.scheme == "gs":
         _gcs_upload(source, parsed.netloc, parsed.path.strip("/"), save_overwrite=save_overwrite)
     elif parsed.scheme in ("s3", "r2", "weka"):
@@ -167,6 +173,7 @@ def upload(source: PathOrStr, target: str, save_overwrite: bool = False, quiet: 
         )
     else:
         raise NotImplementedError(f"Upload not implemented for '{parsed.scheme}' scheme")
+
     if not quiet:
         log.info(f"Uploaded {_format_bytes(num_bytes)} to '{target}'")
 
@@ -430,6 +437,30 @@ def list_directory(
             )
 
 
+def glob_directory(pattern: str) -> Generator[str, None, None]:
+    """
+    Similar to ``glob.glob()`` from the standard library, but works with remote directories as well.
+
+    .. warning::
+        Only a subset of glob patterns are supported. Specifically, ``*`` and ``**`` wildcards,
+        which the follow the semantics defined here https://docs.python.org/3/library/pathlib.html#pattern-language.
+    """
+    # Pull out base directory from pattern.
+    dir = pattern.split("*", 1)[0]
+
+    # Translate the glob pattern into a regex.
+    # For example, "src/examples/**/*.py" --> "^src/examples/.*[^/]*\\.py$".
+    regex = re.compile(
+        "^"
+        + re.escape(pattern).replace(r"\*\*/", ".*").replace(r"\*\*", ".*").replace(r"\*", "[^/]*")
+        + "$"
+    )
+
+    for path in list_directory(dir, recurse="**" in pattern):
+        if regex.match(path):
+            yield path
+
+
 def init_client(remote_path: str):
     """
     Initialize the right client for the given remote resource. This is helpful to avoid threading issues
@@ -580,13 +611,16 @@ def _get_gcs_client():
 
 
 def _gcs_is_retriable(exc: Exception) -> bool:
-    from google.api_core.exceptions import BadRequest
+    from google.api_core.exceptions import BadRequest, GatewayTimeout
     from google.api_core.retry import if_transient_error
 
-    return (
-        if_transient_error(exc)
-        or isinstance(exc, requests.exceptions.Timeout)
-        or isinstance(exc, BadRequest)  # Weird choice, but Google throws this transiently
+    return if_transient_error(exc) or isinstance(
+        exc,
+        (
+            requests.exceptions.Timeout,
+            BadRequest,  # Weird choice, but Google throws this transiently
+            GatewayTimeout,
+        ),
     )
 
 
@@ -600,15 +634,6 @@ def _get_gcs_retry():
         multiplier=2.0,
         timeout=600.0,
     )
-
-
-def _get_gcs_conditional_retry():
-    from google.cloud.storage.retry import (
-        ConditionalRetryPolicy,
-        is_generation_specified,
-    )
-
-    return ConditionalRetryPolicy(_get_gcs_retry(), is_generation_specified, ["query_params"])
 
 
 @retriable(retry_condition=_gcs_is_retriable)
@@ -665,23 +690,22 @@ def _gcs_upload(source: Path, bucket_name: str, key: str, save_overwrite: bool =
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(key)
 
-    generation: int = 0
-    if blob.exists(retry=_get_gcs_retry()):
-        if not save_overwrite:
-            raise FileExistsError(
-                f"gs://{bucket_name}/{key} already exists. Use save_overwrite to overwrite it."
-            )
+    if blob.exists(retry=_get_gcs_retry()) and not save_overwrite:
+        raise FileExistsError(
+            f"gs://{bucket_name}/{key} already exists. Use save_overwrite to overwrite it."
+        )
 
-        blob.reload(retry=_get_gcs_retry())
-        assert blob.generation is not None
-        generation = blob.generation
-
-    blob.upload_from_filename(
-        source,
-        if_generation_match=generation,
-        retry=_get_gcs_conditional_retry(),
-        checksum=None,
-    )
+    try:
+        blob.upload_from_filename(
+            source,
+            # NOTE: mypy and language servers may complain about the type here, but it does
+            # not in fact need to be a ConditionalRetry, a plain old Retry is fine.
+            retry=_get_gcs_retry(),  # type: ignore
+        )
+    except Exception as e:
+        raise OLMoUploadError(
+            f"Failed to upload '{source}' to '{key}' in GCS bucket '{bucket_name}'"
+        ) from e
 
 
 @retriable(retry_condition=_gcs_is_retriable)
@@ -876,6 +900,10 @@ def _s3_get_bytes_range(
     except ClientError as e:
         if e.response["ResponseMetadata"]["HTTPStatusCode"] == 404:
             raise FileNotFoundError(f"{scheme}://{bucket_name}/{key}") from e
+        elif e.response["Error"]["Code"] == "InvalidRange":
+            raise OLMoInvalidRangeRequestError(
+                f"Invalid range request to '{scheme}://{bucket_name}/{key}' ({bytes_start=}, {num_bytes=})"
+            )
         else:
             raise
 
