@@ -1,4 +1,3 @@
-import functools as ft
 import gzip
 import math
 import os
@@ -6,7 +5,6 @@ import random
 from collections import defaultdict, deque
 from contextlib import contextmanager
 from dataclasses import dataclass
-from itertools import islice
 from pathlib import Path
 from typing import (
     Any,
@@ -19,7 +17,6 @@ from typing import (
     Sequence,
     Tuple,
     Type,
-    TypeVar,
     Union,
 )
 
@@ -28,13 +25,7 @@ import torch
 import torch.nn.functional as F
 
 from olmo_core.aliases import PathOrStr
-from olmo_core.io import (
-    add_cached_path_clients,
-    get_bytes_range,
-    get_file_size,
-    is_url,
-    resource_path,
-)
+from olmo_core.io import add_cached_path_clients, get_bytes_range, is_url, resource_path
 from olmo_core.utils import capped_powers_of_2
 
 from .types import LongDocStrategy
@@ -680,21 +671,6 @@ def find_periodic_sequences(
                 yield out
 
 
-T = TypeVar("T")
-
-
-def _take(n: int, iterable: Iterable[T]) -> List[T]:
-    return list(islice(iterable, n))
-
-
-def chunked(iterable: Iterable[T], n: int) -> Iterable[List[T]]:
-    """
-    Group items in the iterable into chunks of size `n`, at most. This is equivalent to the function
-    from ``more-itertools`` with the same name and ``strict=False``.
-    """
-    return iter(ft.partial(_take, n, iter(iterable)), [])
-
-
 #########################################################################################################################
 # Implementation of the Optimized Best-Fit Decreasing (OBFD) bin packing algorithm from https://arxiv.org/pdf/2404.10830.
 # See Appendix B for a detailed illustration of the algorithm.
@@ -843,7 +819,8 @@ class InstancePacker:
 
 
 def pack_documents_into_instances(
-    *paths: PathOrStr,
+    path: PathOrStr,
+    *,
     max_sequence_length: int,
     eos_token_id: int,
     dtype: Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]],
@@ -853,11 +830,10 @@ def pack_documents_into_instances(
     long_doc_strategy: LongDocStrategy = LongDocStrategy.truncate,
 ) -> Tuple[List[List[int]], np.ndarray, int]:
     """
-    Pack document from source files into instances of at most ``max_sequence_length`` using
+    Pack document from a source file into instances of at most ``max_sequence_length`` using
     a best-fit-decreasing algorithm described in https://arxiv.org/pdf/2404.10830.
 
-    :param paths: Paths/URLs to the source files of token IDs. When multiple sources are given, they'll
-        be treated as if they've been concatenated together into a single source file.
+    :param path: Path/URL to the source file of token IDs.
     :param max_sequence_length: The maximum sequence length of each *instance*.
     :param eos_token_id: The EOS token ID, used to find document boundaries.
     :param dtype: The numpy datatype of the source file.
@@ -872,25 +848,19 @@ def pack_documents_into_instances(
         of the corresponding document start and end indices, with shape ``(num_documents, 2)``,
         and the total number of tokens packed into instances.
     """
-    if len(paths) == 0:
-        raise RuntimeError("At least one source path must be provided")
-
-    def doc_idx_gen() -> Generator[int, None, None]:
-        start_offset = 0
-        for path in paths:
-            for start_idx, end_idx in iter_document_indices_with_max_sequence_length(
-                path,
-                max_sequence_length,
-                eos_token_id=eos_token_id,
-                dtype=dtype,
-                long_doc_strategy=long_doc_strategy,
-            ):
-                yield start_offset + start_idx
-                yield start_offset + end_idx
-            start_offset += get_file_size(path) // dtype(0).itemsize
-
+    doc_idx_gen = (
+        idx
+        for (start_idx, end_idx) in iter_document_indices_with_max_sequence_length(
+            path,
+            max_sequence_length,
+            eos_token_id=eos_token_id,
+            dtype=dtype,
+            long_doc_strategy=long_doc_strategy,
+        )
+        for idx in (start_idx, end_idx)
+    )
     # shape: (num_docs, 2)
-    document_indices = np.fromiter(doc_idx_gen(), dtype=indices_dtype).reshape(-1, 2)
+    document_indices = np.fromiter(doc_idx_gen, dtype=indices_dtype).reshape(-1, 2)
 
     # Pack documents into instances.
     instance_packer = InstancePacker(max_sequence_length)

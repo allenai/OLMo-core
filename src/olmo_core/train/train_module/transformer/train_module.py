@@ -324,15 +324,9 @@ class TransformerTrainModule(TrainModule):
                 "train/masked instances (%)", (~instance_mask).float().mean(), ReduceType.mean
             )
 
-        # Calculate and record how many tokens are going to be used in the loss.
-        batch_num_tokens = batch["labels"].numel()
+        # Calculate how many tokens are going to be used in the loss.
         batch_num_tokens_for_loss = move_to_device(
             (batch["labels"] != self.label_ignore_index).sum(), self.device
-        )
-        self.record_metric(
-            "train/masked labels (%)",
-            (batch_num_tokens - batch_num_tokens_for_loss) / batch_num_tokens,
-            ReduceType.mean,
         )
 
         # Batch losses to record.
