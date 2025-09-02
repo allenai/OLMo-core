@@ -27,7 +27,7 @@ BEAKER_HOSTNAME_ENV_VAR = "BEAKER_NODE_HOSTNAME"
 log = logging.getLogger(__name__)
 
 
-def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minutes=30), **kwargs):
+def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minutes=90), **kwargs):
     """
     Initialize the distributed process group with the given backend(s) and check/set the
     relevant environment variables.
