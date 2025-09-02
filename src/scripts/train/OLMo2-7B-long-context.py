@@ -97,9 +97,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=1,
-            load_strategy=LoadStrategy.never,
-            # max_duration=Duration.steps(25),
-            # load_path='gs://ai2-llm/checkpoints/OLMo25-from476838/step500680',
+            load_strategy=LoadStrategy.always,
+            max_duration=Duration.steps(25),
+            load_path='gs://ai2-llm/checkpoints/OLMo25-from476838/step500680',
         )
         .with_callback(
             "checkpointer",
@@ -130,18 +130,18 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 cancel_check_interval=10,
             ),
         )
-        .with_callback(
-            "profiler",
-            ProfilerCallback(
-                enabled=True,
-                wait=15,
-                warmup=2,
-                active=2,
-                repeat=1,
-                skip_first=3,
-            ),
-        )
-    )
+    #     .with_callback(
+    #         "profiler",
+    #         ProfilerCallback(
+    #             enabled=True,
+    #             wait=15,
+    #             warmup=2,
+    #             active=2,
+    #             repeat=1,
+    #             skip_first=3,
+    #         ),
+    #     )
+    # )
 
 
 if __name__ == "__main__":
