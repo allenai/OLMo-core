@@ -316,6 +316,8 @@ class TransformerTrainModule(TrainModule):
         
         from olmo_core.nn.attention.flex_attn_api import FlexAttention
         FlexAttention.reset_cached_state()
+        if torch.distributed.is_initialized():
+            torch.distributed.barrier()
         if load_optim:
             dist_cp_sd.set_optimizer_state_dict(
                 self.model,

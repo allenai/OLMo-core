@@ -100,7 +100,8 @@ class FlexAttention(torch.nn.Module):
         else:
             mask_mod = FlexAttention._get_causal_with_sink_mask_mod(sink_idx)
 
-        block_mask = FlexAttention.compiled_create_block_mask(mask_mod, B, H_q, S_q, S_kv + 1)
+        with torch.no_grad():
+            block_mask = FlexAttention.compiled_create_block_mask(mask_mod, B, H_q, S_q, S_kv + 1)
 
         # overwrite the dummy sink scores with actual sink weights
         def score_mod(score, b, h_q, q_idx, kv_idx):
