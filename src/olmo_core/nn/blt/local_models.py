@@ -230,6 +230,7 @@ class LocalEncoder(nn.Module):
             add_out_projection: bool,
             boundary_predictor: Optional[str] = None,
             boundary_predictor_lookahead: int = 1,
+            represent_bytes_with_embeddings: bool = False,
             blt_k: Optional[int] = None,
             blt_compat: bool = False,  # for compat with BLT checkpoints
             init_device: str = "cpu",
@@ -254,6 +255,7 @@ class LocalEncoder(nn.Module):
         self.boundary_predictor = boundary_predictor
         self.boundary_predictor_lookahead = boundary_predictor_lookahead
         self.blt_k = blt_k
+        self.represent_bytes_with_embeddings = represent_bytes_with_embeddings
         self.blt_compat = blt_compat
 
         if self.boundary_predictor == "dtp":
@@ -427,6 +429,7 @@ class LocalEncoder(nn.Module):
             add_out_projection=self.add_out_projection,
             boundary_predictor=self.boundary_predictor,
             boundary_predictor_lookahead=self.boundary_predictor_lookahead,
+            represent_bytes_with_embeddings=self.represent_bytes_with_embeddings,
             blt_k=self.blt_k,
             blt_compat=self.blt_compat,
             init_device=device,
@@ -658,6 +661,9 @@ class LocalEncoder(nn.Module):
             boundary_mask=boundary_mask,
             cross_attn_mask=cross_attn_mask,
         )
+
+        if self.represent_bytes_with_embeddings:
+            h = embeddings
 
         return h, patch_embeddings, boundary_logprobs, boundary_mask
 

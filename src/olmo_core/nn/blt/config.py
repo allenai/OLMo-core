@@ -16,6 +16,7 @@ class BLTConfig(Config):
     binarization_temp: float = 1.0
     temperature: float = 1.0
     div_fn: str = "tvd_temp_limit"
+    eval_add_boundary_logp: bool = False
     do_alm_debiasing: bool = False
     rep_compare_fn: str = "l2"
     target_ratio: float = 4.5
@@ -51,6 +52,7 @@ class LocalEncoderConfig(Config):
     add_out_projection: bool = False
     boundary_predictor: Optional[str] = None
     boundary_predictor_lookahead: int = 1
+    represent_bytes_with_embeddings: bool = False
     blt_k: Optional[int] = None  # used in blt
     blt_compat: bool = False # for compat with BLT checkpoints
 
@@ -75,6 +77,7 @@ class LocalEncoderConfig(Config):
             add_out_projection=self.add_out_projection,
             boundary_predictor=self.boundary_predictor,
             boundary_predictor_lookahead=self.boundary_predictor_lookahead,
+            represent_bytes_with_embeddings=self.represent_bytes_with_embeddings,
             blt_k=self.blt_k,
             blt_compat=self.blt_compat,
         )

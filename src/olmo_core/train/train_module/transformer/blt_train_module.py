@@ -288,9 +288,9 @@ class TransformerBLTTrainModule(TransformerTrainModule):
         with self._eval_batch_context():
             eval_mode = model_kwargs.get("eval_mode", None)
 
-            if eval_mode == "orig_head":
+            if eval_mode == "subword":
                 with self._model_forward_context():
-                    out, _ = self.model.original_head_forward(  # type: ignore
+                    out, _ = self.model.subword_forward(  # type: ignore
                         input_ids,
                         labels=labels,
                         ignore_index=self.label_ignore_index,
@@ -298,24 +298,7 @@ class TransformerBLTTrainModule(TransformerTrainModule):
                         return_logits=True,
                         **model_kwargs,
                     )
-                # original_head_forward gives us logits over the original (Dolma2) tokens.
-                # so we need to change the batch tokens / token info back to subword token space from byte space.
-                batch["input_ids"] = batch["original_input_ids"]
-                batch["ctx"] = orig_batch["ctx"]
-                batch["continuation"] = orig_batch["continuation"]
-                batch["ctx_len"] = orig_batch["ctx_len"]
-                batch["cont_len"] = orig_batch["cont_len"]
-            elif eval_mode == "orig_trunk":
-                with self._model_forward_context():
-                    out, _ = self.model.original_trunk_forward(  # type: ignore
-                        input_ids,
-                        labels=labels,
-                        ignore_index=self.label_ignore_index,
-                        loss_reduction="none",
-                        return_logits=True,
-                        **model_kwargs,
-                    )
-                # original_trunk_forward gives us logits over the original (Dolma2) tokens.
+                # subword_forward gives us logits over the original (Dolma2) tokens.
                 # so we need to change the batch tokens / token info back to subword token space from byte space.
                 batch["input_ids"] = batch["original_input_ids"]
                 batch["ctx"] = orig_batch["ctx"]
@@ -334,16 +317,5 @@ class TransformerBLTTrainModule(TransformerTrainModule):
                         return_logits=True,
                         **model_kwargs,
                     )
-
-            # move to CPU so we don't OOM (shouldn't be much slower)
-            out = LMOutputWithLoss(
-                logits=out.logits.cpu() if out.logits is not None else None,
-                loss=out.loss.cpu(),
-                ce_loss=out.loss.cpu(),
-                z_loss=out.z_loss.cpu() if out.z_loss is not None else None,
-            )
-            for key in batch.keys():
-                if isinstance(batch[key], torch.Tensor):
-                    batch[key] = batch[key].cpu()
 
             return out

@@ -353,6 +353,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         all_eval_tasks += eval_tasks
         all_eval_names += [f"downstream" for _ in eval_tasks]
         all_eval_batch_kwargs += [{} for _ in eval_tasks]
+        # all_eval_batch_kwargs += [{"eval_mode": "subword"} for _ in eval_tasks]
 
     trainer_config = (
         TrainerConfig(
@@ -385,7 +386,6 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         )
         .with_callback("config_saver", ConfigSaverCallback())
         .with_callback("profiler", ProfilerCallback(enabled=False))
-        #  FIXME: make byte tokenizer work for eval
         .with_callback(
             "downstream_evaluator",
             DownstreamEvaluatorCallbackConfig(
@@ -463,6 +463,7 @@ def main(run_name: str, overrides: List[str]):
 
     # TODO(benjaminm): this is not a nice place?
     register_fsdp_forward_method(model, "student_forward")
+    register_fsdp_forward_method(model, "subword_forward")
     register_fsdp_forward_method(model.local_encoder, "pool")  # type: ignore
 
     # Train.
