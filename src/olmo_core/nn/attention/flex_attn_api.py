@@ -49,12 +49,13 @@ class FlexAttention(torch.nn.Module):
             to the keys within the same block.
     """
 
-    flex_attn: ClassVar[Callable] = torch.compile(
-        flex_attention, options={"triton.cudagraphs": False}
-    )
-    compiled_create_block_mask: ClassVar[Callable] = torch.compile(
-        create_block_mask, options={"triton.cudagraphs": False}
-    )
+    # We registered flex_attention related attributes as class variables as we
+    # need to amortize the cost of compilation.
+    # Disable CUDA graphs to avoid tensor overwriting issues
+    # Using options only (can't use both mode and options together)
+    flex_attn: ClassVar[Callable] = torch.compile(flex_attention)
+    # Same for create_block_mask - disable CUDA graphs
+    compiled_create_block_mask: ClassVar[Callable] = torch.compile(create_block_mask)
     used_attn_mask_types: ClassVar[set[FLEX_ATTN_MASK_T]] = set()
     block_masks: ClassVar[dict[FLEX_ATTN_MASK_T, BlockMask]] = {}
     sink_mask_cache: ClassVar[dict[tuple, BlockMask]] = {}

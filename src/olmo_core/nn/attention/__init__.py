@@ -479,38 +479,42 @@ class Attention(AttentionBase):
                     window_size=self.window_size,
                 )
         elif self.use_flex:
-            if self._flex_attn_api is not None:
-                batch_size = q.shape[0]
-                seq_len_q = q.shape[1]
-                n_heads_q = q.shape[2]
-                n_kv_heads = k.shape[2]
-                head_dim = q.shape[3]
+            if self._flex_attn_api is None:
+                raise RuntimeError()
+            batch_size = q.shape[0]
+            seq_len_q = q.shape[1]
+            n_heads_q = q.shape[2]
+            n_kv_heads = k.shape[2]
+            head_dim = q.shape[3]
 
-                q = q.transpose(1, 2)
-                k = k.transpose(1, 2)
-                v = v.transpose(1, 2)
+            q = q.transpose(1, 2)
+            k = k.transpose(1, 2)
+            v = v.transpose(1, 2)
 
-                sink_weights = None
-                if sinks is not None:
-                    if hasattr(sinks, "_local_tensor"):
-                        sink_weights = sinks._local_tensor
-                    else:
-                        sink_weights = sinks
+            # Prepare sink weights
+            sink_weights = None
+            if sinks is not None:
+                if hasattr(sinks, "to_local"):
+                    sink_weights = sinks.to_local()
+                elif hasattr(sinks, "_local_tensor"):
+                    sink_weights = sinks._local_tensor
+                else:
+                    sink_weights = sinks
 
-                sliding_window = None
-                if self.window_size != (-1, -1):
-                    sliding_window = self.window_size[0]
+            sliding_window = None
+            if self.window_size != (-1, -1):
+                sliding_window = self.window_size[0]
 
-                att = self._flex_attn_api(
-                    q,
-                    k,
-                    v,
-                    sink_weights=sink_weights,
-                    sliding_window=sliding_window,
-                    enable_gqa=(n_kv_heads != n_heads_q),
-                )
+            att = self._flex_attn_api(
+                q,
+                k,
+                v,
+                sink_weights=sink_weights,
+                sliding_window=sliding_window,
+                enable_gqa=(n_kv_heads != n_heads_q),
+            )
 
-                att = att.transpose(1, 2).contiguous()
+            att = att.transpose(1, 2).contiguous()
 
         else:
             # Fall back to PyTorch's SDPA...
@@ -565,7 +569,9 @@ class Attention(AttentionBase):
                     )
                     attn_logits = attn_logits + causal_mask[None, None, :, :]
 
-                if hasattr(sinks, "_local_tensor"):
+                if hasattr(sinks, "to_local"):
+                    local_sinks = sinks.to_local()
+                elif hasattr(sinks, "_local_tensor"):
                     local_sinks = sinks._local_tensor
                 else:
                     local_sinks = sinks
@@ -675,9 +681,9 @@ class Attention(AttentionBase):
             q, k = self.rope(
                 q, k, head_first=False, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis
             )
-        assert (
-            not self.use_flex or block_mask is not None
-        ), "Block mask cannot be null for flex attention layer"
+        assert not self.use_flex or block_mask is not None, (
+            "Block mask cannot be null for flex attention layer"
+        )
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
         att = self.sdpa(
@@ -744,7 +750,7 @@ class Attention(AttentionBase):
         if self.sinks is not None:
             from torch.distributed.tensor import distribute_tensor
 
-            self.sinks = nn.Parameter(distribute_tensor(self.sinks.data, tp_mesh, [Replicate()]))
+            self.sinks = nn.Parameter(distribute_tensor(self.sinks.data, tp_mesh, [Shard(0)]))
         parallelize_module(
             module=self,
             device_mesh=tp_mesh,
@@ -1112,7 +1118,9 @@ def _get_flex_attn_mask_mod(
         causal_mask = q_idx >= adjusted_kv_idx
 
         if has_window:
-            window_mask = (q_idx - adjusted_kv_idx <= window_size[0]) & (adjusted_kv_idx - q_idx <= window_size[1])  # type: ignore
+            window_mask = (q_idx - adjusted_kv_idx <= window_size[0]) & (
+                adjusted_kv_idx - q_idx <= window_size[1]
+            )  # type: ignore
         else:
             window_mask = torch.ones_like(causal_mask, dtype=torch.bool)
 
