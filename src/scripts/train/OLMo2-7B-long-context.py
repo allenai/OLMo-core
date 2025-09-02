@@ -47,7 +47,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         pattern=[4096, 4096, 4096, -1],
     )
     config.block.attention.use_flex = True
-    config.block.attention.use_sinks = True
+    config.block.attention.use_sinks = False
     config.lm_head.loss_implementation = LMLossImplementation.fused_linear
     return config
 
