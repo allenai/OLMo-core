@@ -868,22 +868,18 @@ class LocalDecoder(nn.Module):
             depool_out_modulated = depool_out
 
         h = depool_out_modulated + embeds
-        h_b = self.boundary_embedding.weight.unsqueeze(0) + prepool_out[:, :-1]
+        h_b = self.boundary_embedding.weight.unsqueeze(0) + prepool_out
 
         h_with_b = torch.zeros(
-            (h.shape[0], h.shape[1] + patch_embeds.shape[1] - 1, h.shape[2]),
+            (h.shape[0], h.shape[1] + patch_embeds.shape[1], h.shape[2]),
             device=h.device,
             dtype=h.dtype
         )
 
         non_b_indices = torch.arange(len(h[0]), device=h.device).unsqueeze(0).repeat(len(h), 1)
-        non_b_indices += plug_back_idx
-        b_indices = seq_sorted_indices[:, 1:] + torch.arange(patch_embeds.shape[1] - 1, device=h.device).unsqueeze(0)
-        b_indices = torch.where(
-            patch_mask[:, 1:],
-            b_indices,
-            torch.ones_like(b_indices)
-        )
+        non_b_indices += plug_back_idx + 1 # offset by bos
+        b_indices = seq_sorted_indices + torch.arange(patch_embeds.shape[1], device=h.device).unsqueeze(0)
+        b_indices = torch.where(patch_mask, b_indices, torch.zeros_like(b_indices))
 
         h_with_b.scatter_(
             1,
@@ -893,11 +889,7 @@ class LocalDecoder(nn.Module):
         h_with_b.scatter_add_(
             1,
             b_indices.unsqueeze(-1).expand(-1, -1, self.d_model),
-            torch.where(
-                patch_mask[:, 1:].unsqueeze(-1),
-                h_b,
-                torch.zeros_like(h_b),
-            )
+            torch.where(patch_mask.unsqueeze(-1), h_b, torch.zeros_like(h_b))
         )
 
         for block_idx in range(self.n_layers):
@@ -907,7 +899,8 @@ class LocalDecoder(nn.Module):
         h_for_true_boundaries = torch.gather(
             h_with_b,
             dim=1,
-            index=(b_indices - 1).unsqueeze(-1).expand(-1, -1, self.d_model),
+            # can't predict first boundary / bos
+            index=(b_indices[:, 1:] - 1).unsqueeze(-1).expand(-1, -1, self.d_model),
         )
         h_for_all_boundaries = torch.gather(
             h_with_b,
@@ -917,7 +910,7 @@ class LocalDecoder(nn.Module):
         h_for_logits = torch.gather(
             h_with_b,
             dim=1,
-            index=(non_b_indices[:, 1:] - 1).unsqueeze(-1).expand(-1, -1, self.d_model),
+            index=(non_b_indices - 1).unsqueeze(-1).expand(-1, -1, self.d_model),
         )
 
         return (h_for_true_boundaries, h_for_all_boundaries), h_for_logits, h_with_b
