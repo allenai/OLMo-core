@@ -90,8 +90,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=cancel_check_interval,
-            # Will changed this to 100B tokens.
-            max_duration=Duration.tokens(int(10 * N_TOKENS)),  # willm: train past N_TOKENS
+            max_duration=Duration.tokens(int(10 * N_TOKENS)),  # willm: 1 * N_TOKENS is original
             hard_stop=Duration.tokens(int(2.5e12 + GLOBAL_BATCH_SIZE * (WARMUP_STEPS / 2))), # After this, we switch to a longer cosine to reach 6T.
         )
         .with_callback(
