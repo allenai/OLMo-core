@@ -867,7 +867,8 @@ class LocalDecoder(nn.Module):
         else:
             depool_out_modulated = depool_out
 
-        h = depool_out_modulated + embeds
+        # skip bos - considered boundary
+        h = depool_out_modulated[:, :-1] + embeds[:, 1:]
         h_b = self.boundary_embedding.weight.unsqueeze(0) + prepool_out
 
         h_with_b = torch.zeros(
@@ -884,7 +885,7 @@ class LocalDecoder(nn.Module):
         h_with_b.scatter_(
             1,
             non_b_indices[:, :-1].unsqueeze(-1).expand(-1, -1, self.d_model), # skip bos - considered boundary
-            h[:, 1:]
+            h
         )
         h_with_b.scatter_add_(
             1,
