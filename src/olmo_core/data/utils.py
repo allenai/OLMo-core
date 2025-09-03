@@ -303,7 +303,10 @@ def load_array_slice_into_tensor(
 
 
 def get_document_lengths(
-    input_ids: torch.Tensor, eos_token_id: int, bos_token_id: Optional[int] = None
+    input_ids: torch.Tensor,
+    eos_token_id: int,
+    bos_token_id: Optional[int] = None,
+    chunk_size: Optional[int] = None,
 ) -> torch.Tensor:
     """
     Get the length of documents.
@@ -312,6 +315,7 @@ def get_document_lengths(
     :param eos_token_id: The ID of the EOS token (use to denote document boundaries).
     :param bos_token_id: The ID of the BOS token (use to denote document boundaries). When provided,
         every document must start with a BOS token.
+    :param chunk_size: When provided, returns the largest document boundary within each slice of chunk_size tokens.
     """
 
     if bos_token_id is None:
@@ -336,7 +340,32 @@ def get_document_lengths(
             ]
         )
 
-    return doc_boundaries[1:] - doc_boundaries[:-1]
+    doc_lengths = doc_boundaries[1:] - doc_boundaries[:-1]
+
+    if chunk_size is None:
+        return doc_lengths
+
+    # we process find doc splits in cases where we have a chunk size in three steps:
+
+    # 1. no matter what, always include the last document boundary
+    last_item_boundary = torch.zeros_like(doc_lengths, dtype=torch.int32)
+    last_item_boundary[-1] = 1
+
+    # 2. find all end of document boundaries that fall exactly at chunk size
+    doc_lengths_cumsum = doc_lengths.cumsum(dim=0)
+    boundaries_exactly_at_chunk_size = (doc_lengths_cumsum % chunk_size == 0).to(dtype=torch.int32)
+
+    # 3. for each chunk, find the largest document boundary within the chunk
+    closest_boundaries = (doc_lengths_cumsum // chunk_size) - boundaries_exactly_at_chunk_size + last_item_boundary
+    boundaries_closest_to_chunk_size = ((closest_boundaries.roll(-1) - closest_boundaries) > 0).to(dtype=torch.int32)
+
+    # put all the boundaries together
+    chunk_boundaries, *_ = (boundaries_exactly_at_chunk_size + boundaries_closest_to_chunk_size + last_item_boundary).nonzero(as_tuple=True)
+
+    # to find the new lengths, get the difference between the boundaries
+    new_doc_lengths = doc_lengths_cumsum[chunk_boundaries] - torch.cat([torch.tensor([0], dtype=torch.int32), doc_lengths_cumsum[chunk_boundaries[:-1]]])
+
+    return new_doc_lengths
 
 
 def get_cumulative_document_lengths(doc_lens: torch.Tensor) -> torch.Tensor:
