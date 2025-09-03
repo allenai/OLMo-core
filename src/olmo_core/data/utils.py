@@ -303,7 +303,7 @@ def load_array_slice_into_tensor(
 
 
 def _shift_by_one_without_wrap(x: torch.Tensor) -> torch.Tensor:
-    """ Like :func:`torch.roll(x, 1)` but without wrapping around. """
+    """Like :func:`torch.roll(x, 1)` but without wrapping around."""
     return x.roll(1).index_fill(0, torch.tensor([0], device=x.device), 0)
 
 
@@ -356,30 +356,29 @@ def get_document_lengths(
     doc_lengths_cumsum = doc_lengths.cumsum(dim=0)
     doc_lengths_cumsum_doc_length_multiples = doc_lengths_cumsum // min_doc_length
     doc_lengths_above_min_mask = (
+        # these are the position where quotient increments by 1
         (
-            # these are the position where quotient increments by 1
-            (
-                doc_lengths_cumsum_doc_length_multiples -
-                _shift_by_one_without_wrap(doc_lengths_cumsum_doc_length_multiples)
-            )
-            # but we exclude any position where the start quotient is 0; we want at least min_doc_length tokens
-            * (doc_lengths_cumsum_doc_length_multiples >= 0).to(dtype=torch.int32)
+            doc_lengths_cumsum_doc_length_multiples
+            - _shift_by_one_without_wrap(doc_lengths_cumsum_doc_length_multiples)
+        )
+        # but we exclude any position where the start quotient is 0; we want at least min_doc_length tokens
+        * (doc_lengths_cumsum_doc_length_multiples >= 0).to(dtype=torch.int32)
         # > 0 means we have a new boundary
-        ) > 0
-    )
+    ) > 0
 
     # we manually set the last boundary to 1 so that we are always taking the last document
     doc_lengths_above_min_mask[-1] = True
 
     # we also make sure that any document that is above min_doc_length is not unified with a shorter document
-    doc_lengths_above_min_mask = torch.logical_or(doc_lengths_above_min_mask, doc_lengths > min_doc_length)
+    doc_lengths_above_min_mask = torch.logical_or(
+        doc_lengths_above_min_mask, doc_lengths > min_doc_length
+    )
 
     # find the locations of the documents that are above min_doc_length, and calculate the new lengths by
     # subtracting the cumulative sum of the document lengths up to the previous document
     doc_lengths_above_min_locs = doc_lengths_above_min_mask.nonzero(as_tuple=True)[0]
-    new_doc_lengths = (
-        doc_lengths_cumsum[doc_lengths_above_min_locs] -
-        torch.cat([torch.tensor([0], dtype=torch.int32), doc_lengths_cumsum[doc_lengths_above_min_locs[:-1]]])
+    new_doc_lengths = doc_lengths_cumsum[doc_lengths_above_min_locs] - torch.cat(
+        [torch.tensor([0], dtype=torch.int32), doc_lengths_cumsum[doc_lengths_above_min_locs[:-1]]]
     )
 
     return new_doc_lengths

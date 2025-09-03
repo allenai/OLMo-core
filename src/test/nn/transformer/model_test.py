@@ -13,7 +13,10 @@ from olmo_core.distributed.checkpoint import (
     save_model_and_optim_state,
 )
 from olmo_core.distributed.parallel import build_world_mesh
-from olmo_core.distributed.parallel.data_parallel import DataParallelConfig, DataParallelType
+from olmo_core.distributed.parallel.data_parallel import (
+    DataParallelConfig,
+    DataParallelType,
+)
 from olmo_core.distributed.utils import get_full_tensor, get_world_size
 from olmo_core.nn.attention import (
     AttentionConfig,

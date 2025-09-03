@@ -362,7 +362,7 @@ class NumpyFSLDatasetBase(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         metadata: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None,
         include_instance_metadata: Optional[bool] = None,
         generate_doc_lengths: bool = False,
-        doc_length_chunk_size: Optional[int] = None,
+        min_doc_length: Optional[int] = None,
         bos_token_id: Optional[int] = None,
         instance_filter_config: Optional[InstanceFilterConfig] = None,
         label_mask_paths: Optional[List[PathOrStr]] = None,
@@ -395,7 +395,7 @@ class NumpyFSLDatasetBase(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         self._sequence_length = sequence_length
         self._include_instance_metadata = include_instance_metadata
         self._generate_doc_lengths = generate_doc_lengths
-        self._doc_length_chunk_size = doc_length_chunk_size
+        self._doc_length_chunk_size = min_doc_length
         self.instance_filter_config = instance_filter_config
         self._label_mask_paths = label_mask_paths
         self._label_mask_path_to_source_path: Dict[PathOrStr, PathOrStr] = {}
@@ -475,7 +475,7 @@ class NumpyFSLDataset(NumpyFSLDatasetBase):
         metadata: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None,
         include_instance_metadata: Optional[bool] = None,
         generate_doc_lengths: bool = False,
-        doc_length_chunk_size: Optional[int] = None,
+        min_doc_length: Optional[int] = None,
         bos_token_id: Optional[int] = None,
         max_target_sequence_length: Optional[int] = None,
         instance_filter_config: Optional[InstanceFilterConfig] = None,
@@ -491,7 +491,7 @@ class NumpyFSLDataset(NumpyFSLDatasetBase):
             metadata=metadata,
             include_instance_metadata=include_instance_metadata,
             generate_doc_lengths=generate_doc_lengths,
-            doc_length_chunk_size=doc_length_chunk_size,
+            min_doc_length=min_doc_length,
             bos_token_id=bos_token_id,
             instance_filter_config=instance_filter_config,
             label_mask_paths=label_mask_paths,
@@ -691,7 +691,7 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
         metadata: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None,
         include_instance_metadata: Optional[bool] = None,
         generate_doc_lengths: bool = False,
-        doc_length_chunk_size: Optional[int] = None,
+        min_doc_length: Optional[int] = None,
         bos_token_id: Optional[int] = None,
         max_target_sequence_length: Optional[int] = None,
         instance_filter_config: Optional[InstanceFilterConfig] = None,
@@ -725,7 +725,7 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
             metadata=metadata,
             include_instance_metadata=include_instance_metadata,
             generate_doc_lengths=generate_doc_lengths,
-            doc_length_chunk_size=doc_length_chunk_size,
+            min_doc_length=min_doc_length,
             bos_token_id=bos_token_id,
             max_target_sequence_length=max_target_sequence_length,
         )
@@ -989,7 +989,7 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
         metadata: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None,
         include_instance_metadata: Optional[bool] = None,
         generate_doc_lengths: bool = False,
-        doc_length_chunk_size: Optional[int] = None,
+        min_doc_length: Optional[int] = None,
         bos_token_id: Optional[int] = None,
         instance_filter_config: Optional[InstanceFilterConfig] = None,
         label_mask_paths: Optional[List[PathOrStr]] = None,
@@ -2288,7 +2288,7 @@ class NumpyDatasetConfig(Config):
     When :data:`generate_doc_lengths` is True, the chunk size to use when generating doc length. At most one
     document split is preserved for each chunk.
     """
-    doc_length_chunk_size: Optional[int] = None
+    min_doc_length: Optional[int] = None
     """
     Include individual document lengths in the instances returned from
     :meth:`NumpyDatasetBase.__getitem__()`.
@@ -2468,9 +2468,9 @@ class NumpyDatasetConfig(Config):
                 metadata = [{"label": label} for label in labels]
             label_mask_paths = cast(Optional[List[PathOrStr]], self.label_mask_paths)
 
-        if self.doc_length_chunk_size is not None and self.generate_doc_lengths is False:
+        if self.min_doc_length is not None and self.generate_doc_lengths is False:
             raise OLMoConfigurationError(
-                "'doc_length_chunk_size' is only valid when 'generate_doc_lengths' is True"
+                "'min_doc_length' is only valid when 'generate_doc_lengths' is True"
             )
 
         dataset: NumpyDatasetBase
@@ -2531,7 +2531,7 @@ class NumpyDatasetConfig(Config):
                     metadata=self.metadata,
                     include_instance_metadata=self.include_instance_metadata,
                     generate_doc_lengths=self.generate_doc_lengths,
-                    doc_length_chunk_size=self.doc_length_chunk_size,
+                    min_doc_length=self.min_doc_length,
                     bos_token_id=self.tokenizer.bos_token_id,
                     path_offset_index=mixture.to_index(),
                     instance_filter_config=self.instance_filter_config,
@@ -2548,7 +2548,7 @@ class NumpyDatasetConfig(Config):
                     metadata=metadata,
                     include_instance_metadata=self.include_instance_metadata,
                     generate_doc_lengths=self.generate_doc_lengths,
-                    doc_length_chunk_size=self.doc_length_chunk_size,
+                    min_doc_length=self.min_doc_length,
                     bos_token_id=self.tokenizer.bos_token_id,
                     instance_filter_config=self.instance_filter_config,
                     label_mask_paths=label_mask_paths,
@@ -2662,7 +2662,7 @@ class NumpyDatasetConfig(Config):
                 metadata=metadata,
                 include_instance_metadata=self.include_instance_metadata,
                 generate_doc_lengths=self.generate_doc_lengths,
-                doc_length_chunk_size=self.doc_length_chunk_size,
+                min_doc_length=self.min_doc_length,
                 bos_token_id=self.tokenizer.bos_token_id,
                 instance_filter_config=self.instance_filter_config,
                 long_doc_strategy=self.long_doc_strategy or LongDocStrategy.truncate,
