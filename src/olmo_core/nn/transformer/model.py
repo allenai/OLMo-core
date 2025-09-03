@@ -2065,7 +2065,7 @@ class BLTDistillTransformer(BLTTransformer):
 
                 metrics["blt/output_boundary_logmae"] = (
                     torch.abs(all_output_boundary_logprobs[:, :-1] - boundary_logprobs[:, 1:]) * boundary_byte_mask[:, 1:]
-                ) / (boundary_byte_mask[:, 1:].float().mean() + blt_config.epsilon)
+                ).mean() / (boundary_byte_mask[:, 1:].float().mean() + blt_config.epsilon)
 
             true_boundary_positives = boundary_mask[:, 1:] & boundary_byte_mask[:, 1:]
             true_boundary_negatives = (~boundary_mask[:, 1:]) & boundary_byte_mask[:, 1:]
