@@ -693,6 +693,10 @@ class NumpyByteFSLDataset(NumpyFSLDataset):
 
             self.constituent_map[token_id] = constituents
 
+        # manually remove fim middle ID and retokenize - not needed for byte level models since
+        # no tokenization bias.
+        self.fim_middle_id = self.tokenizer.hf_tokenizer.get_vocab()["<|fim_middle|>"]
+
         # slightly convoluted to make picklable
         self._noiser = None
         self._noise_fn_name = ""
@@ -756,7 +760,20 @@ class NumpyByteFSLDataset(NumpyFSLDataset):
 
     def __getitem__(self, index: int) -> Dict[str, Any]:
         item = super().__getitem__(index)
-        original_input_ids = self.noise_fn(item["input_ids"])
+
+        if self.fim_middle_id in item["input_ids"]:
+            # remove FIM middle and retokenize
+            input_ids = item["input_ids"].tolist()
+            input_ids = [x for x in input_ids if x != self.fim_middle_id]
+            original_input_ids = self.tokenizer.hf_tokenizer.encode(self.tokenizer.hf_tokenizer.decode(input_ids))
+            while len(original_input_ids) < len(item["input_ids"]):
+                original_input_ids.append(self.tokenizer.hf_tokenizer.pad_token_id)
+
+            original_input_ids = torch.tensor(original_input_ids, dtype=item["input_ids"].dtype)
+        else:
+            original_input_ids = item["input_ids"]
+
+        original_input_ids = self.noise_fn(original_input_ids)
 
         byte_tokens, patch_lengths = self.tokenizer.get_tokens_and_patch_lengths(original_input_ids, add_bos=True, skip_last=True)
         space_patch_lengths = self.tokenizer.get_space_patch_lengths(byte_tokens)
