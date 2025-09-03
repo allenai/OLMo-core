@@ -2071,11 +2071,11 @@ class BLTDistillTransformer(BLTTransformer):
             true_boundary_negatives = (~boundary_mask[:, 1:]) & boundary_byte_mask[:, 1:]
 
             metrics["blt/boundary_true_positives"] = (
-                ((all_boundary_logits[:, :-1].argmax(-1) == self.end_of_subword_token_blt) & true_boundary_positives).float().mean()
+                ((all_boundary_logits.argmax(-1) == self.end_of_subword_token_blt) & true_boundary_positives).float().mean()
                 / (true_boundary_positives.float().mean() + blt_config.epsilon)
             )
             metrics["blt/boundary_true_negatives"] = (
-                ((all_boundary_logits[:, :-1].argmax(-1) != self.end_of_subword_token_blt) & true_boundary_negatives).float().mean()
+                ((all_boundary_logits.argmax(-1) != self.end_of_subword_token_blt) & true_boundary_negatives).float().mean()
                 / (true_boundary_negatives.float().mean() + blt_config.epsilon)
             )
         else:
