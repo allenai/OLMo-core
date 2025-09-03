@@ -137,4 +137,5 @@ if __name__ == "__main__":
         include_instance_filter=False,  # We use SkipStepOptimizer for this problem.
         include_default_evals=False,
         intra_document_masking=False,
+        beaker_workspace="ai2/willm-ppt2",
     )
