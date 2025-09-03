@@ -878,13 +878,13 @@ class LocalDecoder(nn.Module):
         )
 
         non_b_indices = torch.arange(len(h[0]), device=h.device).unsqueeze(0).repeat(len(h), 1)
-        non_b_indices += plug_back_idx + 1 # offset by bos
+        non_b_indices += plug_back_idx[:, :-1] + 1 # offset by bos
         b_indices = seq_sorted_indices + torch.arange(patch_embeds.shape[1], device=h.device).unsqueeze(0)
         b_indices = torch.where(patch_mask, b_indices, torch.ones_like(b_indices))
 
         h_with_b.scatter_(
             1,
-            non_b_indices[:, :-1].unsqueeze(-1).expand(-1, -1, self.d_model), # skip bos - considered boundary
+            non_b_indices.unsqueeze(-1).expand(-1, -1, self.d_model), # skip bos - considered boundary
             h
         )
         h_with_b.scatter_add_(
