@@ -883,8 +883,8 @@ class LocalDecoder(nn.Module):
 
         h_with_b.scatter_(
             1,
-            non_b_indices.unsqueeze(-1).expand(-1, -1, self.d_model),
-            h
+            non_b_indices[:, :-1].unsqueeze(-1).expand(-1, -1, self.d_model), # skip bos - considered boundary
+            h[:, 1:]
         )
         h_with_b.scatter_add_(
             1,
