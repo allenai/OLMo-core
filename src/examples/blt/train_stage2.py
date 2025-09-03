@@ -516,8 +516,6 @@ def main(run_name: str, overrides: List[str]):
 
     # TODO(benjaminm): this is not a nice place?
     register_fsdp_forward_method(model, "student_forward")
-    register_fsdp_forward_method(model, "original_head_forward")
-    register_fsdp_forward_method(model, "original_trunk_forward")
     register_fsdp_forward_method(model.local_encoder, "pool")  # type: ignore
 
     # Train.
