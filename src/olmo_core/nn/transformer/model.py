@@ -2027,7 +2027,7 @@ class BLTDistillTransformer(BLTTransformer):
             assert logits is not None
             assert labels is not None
 
-            ce_loss, _ = cross_entropy_loss(logits.view(-1, logits.shape[-1]), labels.view(-1))
+            ce_loss, _ = cross_entropy_loss(logits.view(-1, logits.shape[-1]), labels[:, :-1].reshape(-1))
             metrics["blt/ce_loss"] = ce_loss
 
             if blt_config.merge_boundary_loss:
@@ -2049,7 +2049,7 @@ class BLTDistillTransformer(BLTTransformer):
 
                 if blt_config.use_output_boundary_jsd:
                     elementwise_boundary_jsd_loss = blt_utils.jsd(
-                        all_output_boundary_logprobs[:, :-1],
+                        all_output_boundary_logprobs,
                         boundary_logprobs[:, 1:],
                     )
                     output_boundary_loss = (elementwise_boundary_jsd_loss * boundary_byte_mask[:, 1:]).mean()
@@ -2057,14 +2057,14 @@ class BLTDistillTransformer(BLTTransformer):
                 else:
                     # shift one
                     elementwise_boundary_ce_loss = blt_utils.binary_cross_entropy_with_logprobs(
-                        all_output_boundary_logprobs[:, :-1],
+                        all_output_boundary_logprobs,
                         boundary_mask[:, 1:],
                     )
                     output_boundary_loss = (elementwise_boundary_ce_loss * boundary_byte_mask[:, 1:]).mean()
                     metrics["blt/output_boundary_loss"] = output_boundary_loss / (boundary_byte_mask[:, 1:].float().mean() + blt_config.epsilon)
 
                 metrics["blt/output_boundary_logmae"] = (
-                    torch.abs(all_output_boundary_logprobs[:, :-1] - boundary_logprobs[:, 1:]) * boundary_byte_mask[:, 1:]
+                    torch.abs(all_output_boundary_logprobs - boundary_logprobs[:, 1:]) * boundary_byte_mask[:, 1:]
                 ).mean() / (boundary_byte_mask[:, 1:].float().mean() + blt_config.epsilon)
 
             true_boundary_positives = boundary_mask[:, 1:] & boundary_byte_mask[:, 1:]
