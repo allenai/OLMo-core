@@ -204,8 +204,8 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             cross_attn_n_heads=0,
             block_config=local_block,
             add_norm_after_last_block=True,
+            boundary_predictor="hnet",
             add_out_projection=True,
-            boundary_predictor="dtp",
             pooling="hnet",
         )
         local_decoder = LocalDecoderConfig(
