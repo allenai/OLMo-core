@@ -478,6 +478,12 @@ class LocalEncoder(nn.Module):
         #     cross_attn_mask=None, # fine not to mask since mask does not change out magnitude
         # )
 
+    def prepare_inference_cache(self, batch_size: int, max_seq_len: int):
+        pass
+
+    def free_inference_cache(self):
+        pass
+
     def _pool_hnet(
         self,
         h: torch.Tensor,
@@ -781,6 +787,12 @@ class LocalDecoder(nn.Module):
         #fully_shard(self.patch_embedding_projection, mesh=dp_mesh, **fsdp_kwargs)
         fully_shard(self, mesh=dp_mesh, **fsdp_kwargs)
 
+    def prepare_inference_cache(self, batch_size: int, max_seq_len: int):
+        pass
+
+    def free_inference_cache(self):
+        pass
+
     def _depool_hnet(
         self,
         embeds: torch.Tensor,
@@ -790,7 +802,7 @@ class LocalDecoder(nn.Module):
         block_size: int = 256,
         headdim: int = 32,
         epsilon: float = 1e-3,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
 
         h_patch = patch_embeds[..., :self.d_model] # global d -> local d
@@ -859,7 +871,7 @@ class LocalDecoder(nn.Module):
         h_b = self.boundary_embedding.weight.unsqueeze(0) + prepool_out[:, :-1]
 
         h_with_b = torch.zeros(
-            (h.shape[0], h.shape[1] + patch_embeds.shape[1], h.shape[2]),
+            (h.shape[0], h.shape[1] + patch_embeds.shape[1] - 1, h.shape[2]),
             device=h.device,
             dtype=h.dtype
         )
@@ -903,14 +915,14 @@ class LocalDecoder(nn.Module):
             index=(non_b_indices[:, 1:] - 1).unsqueeze(-1).expand(-1, -1, self.d_model),
         )
 
-        return h_for_boundaries, h_for_logits
+        return h_for_boundaries, h_for_logits, h_with_b
 
     def _depool_blt(
         self,
         embeds: torch.Tensor,
         patch_embeds: torch.Tensor,
         cross_attn_mask: BlockMask | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         if self.patch_embedding_projection is None or self.blt_k is None:
             raise ValueError("Patch embedding projection is not defined, can not depool with BLT method.")
 
@@ -932,7 +944,7 @@ class LocalDecoder(nn.Module):
             h = h * residual_factor + h_cross
             h = block(h)
 
-        return h, h
+        return h, h, h
 
     def depool(
         self,
@@ -942,7 +954,7 @@ class LocalDecoder(nn.Module):
         boundary_mask: torch.Tensor,
         cross_attn_mask: BlockMask | None = None,
 
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         if self.depooling == "cross_attn":
             return self._depool_blt(embeds, patch_embeds, cross_attn_mask)
         elif self.depooling == "hnet":
@@ -957,7 +969,7 @@ class LocalDecoder(nn.Module):
         boundary_logprobs: torch.Tensor,
         boundary_mask: torch.Tensor,
         cross_attn_mask: BlockMask | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         if self.residual_norm is not None:
             h = self.residual_norm(embeds)
         else:
