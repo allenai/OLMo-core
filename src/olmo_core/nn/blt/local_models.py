@@ -879,7 +879,7 @@ class LocalDecoder(nn.Module):
         non_b_indices = torch.arange(len(h[0]), device=h.device).unsqueeze(0).repeat(len(h), 1)
         non_b_indices += plug_back_idx + 1 # offset by bos
         b_indices = seq_sorted_indices + torch.arange(patch_embeds.shape[1], device=h.device).unsqueeze(0)
-        b_indices = torch.where(patch_mask, b_indices, torch.zeros_like(b_indices))
+        b_indices = torch.where(patch_mask, b_indices, torch.ones_like(b_indices))
 
         h_with_b.scatter_(
             1,
