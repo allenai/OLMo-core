@@ -601,7 +601,7 @@ class NumpyFSLDataset(NumpyFSLDatasetBase):
                 input_ids,
                 self.eos_token_id,
                 bos_token_id=self.bos_token_id,
-                chunk_size=self._doc_length_chunk_size,
+                min_doc_length=self._doc_length_chunk_size,
             )
 
         return out
@@ -1159,7 +1159,7 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
                 input_ids,
                 self.eos_token_id,
                 bos_token_id=self.bos_token_id,
-                chunk_size=self._doc_length_chunk_size,
+                min_doc_length=self._doc_length_chunk_size,
             )
         return out
 

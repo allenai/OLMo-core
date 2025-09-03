@@ -302,11 +302,16 @@ def load_array_slice_into_tensor(
         return torch.tensor(array.astype(np.int_), dtype=torch.long)
 
 
+def _shift_by_one_without_wrap(x: torch.Tensor) -> torch.Tensor:
+    """ Like :func:`torch.roll(x, 1)` but without wrapping around. """
+    return x.roll(1).index_fill(0, torch.tensor([0], device=x.device), 0)
+
+
 def get_document_lengths(
     input_ids: torch.Tensor,
     eos_token_id: int,
     bos_token_id: Optional[int] = None,
-    chunk_size: Optional[int] = None,
+    min_doc_length: Optional[int] = None,
 ) -> torch.Tensor:
     """
     Get the length of documents.
@@ -315,7 +320,9 @@ def get_document_lengths(
     :param eos_token_id: The ID of the EOS token (use to denote document boundaries).
     :param bos_token_id: The ID of the BOS token (use to denote document boundaries). When provided,
         every document must start with a BOS token.
-    :param chunk_size: When provided, returns the largest document boundary within each slice of chunk_size tokens.
+    :param min_doc_length: When provided, ensures that the length of most documents is at least min_doc_length
+        tokens by unifying shorter documents under the same mask. The only exceptions are documents that precede
+        a document that is above `min_doc_length` tokens, and the last document.
     """
 
     if bos_token_id is None:
@@ -342,28 +349,38 @@ def get_document_lengths(
 
     doc_lengths = doc_boundaries[1:] - doc_boundaries[:-1]
 
-    if chunk_size is None:
+    if min_doc_length is None:
         return doc_lengths
 
-    # we process find doc splits in cases where we have a chunk size in three steps:
-
-    # 1. no matter what, always include the last document boundary
-    last_item_boundary = torch.zeros_like(doc_lengths, dtype=torch.int32)
-    last_item_boundary[-1] = 1
-
-    # 2. find all end of document boundaries that fall exactly at chunk size
+    # we process doc lengths to find position where the quotient of sum of doc lengths increments by 1
     doc_lengths_cumsum = doc_lengths.cumsum(dim=0)
-    boundaries_exactly_at_chunk_size = (doc_lengths_cumsum % chunk_size == 0).to(dtype=torch.int32)
+    doc_lengths_cumsum_doc_length_multiples = doc_lengths_cumsum // min_doc_length
+    doc_lengths_above_min_mask = (
+        (
+            # these are the position where quotient increments by 1
+            (
+                doc_lengths_cumsum_doc_length_multiples -
+                _shift_by_one_without_wrap(doc_lengths_cumsum_doc_length_multiples)
+            )
+            # but we exclude any position where the start quotient is 0; we want at least min_doc_length tokens
+            * (doc_lengths_cumsum_doc_length_multiples >= 0).to(dtype=torch.int32)
+        # > 0 means we have a new boundary
+        ) > 0
+    )
 
-    # 3. for each chunk, find the largest document boundary within the chunk
-    closest_boundaries = (doc_lengths_cumsum // chunk_size) - boundaries_exactly_at_chunk_size + last_item_boundary
-    boundaries_closest_to_chunk_size = ((closest_boundaries.roll(-1) - closest_boundaries) > 0).to(dtype=torch.int32)
+    # we manually set the last boundary to 1 so that we are always taking the last document
+    doc_lengths_above_min_mask[-1] = True
 
-    # put all the boundaries together
-    chunk_boundaries, *_ = (boundaries_exactly_at_chunk_size + boundaries_closest_to_chunk_size + last_item_boundary).nonzero(as_tuple=True)
+    # we also make sure that any document that is above min_doc_length is not unified with a shorter document
+    doc_lengths_above_min_mask = torch.logical_or(doc_lengths_above_min_mask, doc_lengths > min_doc_length)
 
-    # to find the new lengths, get the difference between the boundaries
-    new_doc_lengths = doc_lengths_cumsum[chunk_boundaries] - torch.cat([torch.tensor([0], dtype=torch.int32), doc_lengths_cumsum[chunk_boundaries[:-1]]])
+    # find the locations of the documents that are above min_doc_length, and calculate the new lengths by
+    # subtracting the cumulative sum of the document lengths up to the previous document
+    doc_lengths_above_min_locs = doc_lengths_above_min_mask.nonzero(as_tuple=True)[0]
+    new_doc_lengths = (
+        doc_lengths_cumsum[doc_lengths_above_min_locs] -
+        torch.cat([torch.tensor([0], dtype=torch.int32), doc_lengths_cumsum[doc_lengths_above_min_locs[:-1]]])
+    )
 
     return new_doc_lengths
 

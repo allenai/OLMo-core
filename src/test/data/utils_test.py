@@ -161,16 +161,16 @@ def test_document_lengths_with_min_document_length():
         eos_token_id,   # should ignore this doc boundary
         4,
         5,
-        eos_token_id,   # should keep this since it's last before chunk
-        7,
-        0,
         eos_token_id,   # should ignore this doc boundary
+        7,
+        0,
+        eos_token_id,   # should keep this! first one above chunk size
         2,
         3,
         4,
         5,
         6,
-        eos_token_id,   # nice, this one falls exactly at chunk
+        eos_token_id,   # split here! this document is not above chunk size, but the next doc by itself.
         0,
         1,
         2,
@@ -181,19 +181,24 @@ def test_document_lengths_with_min_document_length():
         7,
         0,
         1,
-        eos_token_id,   # should ignore this doc boundary; note that there is no boundary in previous chunk
+        eos_token_id,   # this is a long doc, gets combined with previous one for a super long doc!
         3,
         4,
-        eos_token_id,   # this is the last boundary, so should keep it
-        6,              # note how we dont have perfect multiples of chunk_size
+        5,
+        6,
+        7,
+        0,
+        1,
+        eos_token_id,   # a document that is exactly at chunk size! keep
+        3,              # this is the last boundary, so should keep it
     ]
 
     doc_lengths = get_document_lengths(
         torch.tensor(tokens, dtype=torch.int32),
         eos_token_id=eos_token_id,
-        chunk_size=chunk_size,
+        min_doc_length=chunk_size,
     )
-    assert doc_lengths.tolist() == [7, 9, 14, 1]
+    assert doc_lengths.tolist() == [10, 6, 11, 8, 1]
 
 
 
