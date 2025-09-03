@@ -2059,7 +2059,7 @@ class BLTDistillTransformer(BLTTransformer):
                     all_output_boundary_labels,
                 )
                 boundary_ce_loss = (elementwise_boundary_ce_loss * mask).mean()
-                metrics["boundary_ce_loss"] = boundary_ce_loss / (mask.float().mean() + blt_config.epsilon)
+                metrics["blt/boundary_ce_loss"] = boundary_ce_loss / (mask.float().mean() + blt_config.epsilon)
 
             metrics["blt/boundary_true_positives"] = (
                 ((boundary_logits.argmax(-1) == self.end_of_subword_token_blt) * patch_mask[:, :-1]).float().mean()
