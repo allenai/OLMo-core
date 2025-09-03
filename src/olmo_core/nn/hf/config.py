@@ -84,6 +84,10 @@ def _get_moe_hf_config(model: MoETransformer) -> PretrainedConfig:
     else:
         intermediate_size = moe_block.feed_forward.hidden_size
 
+    # Handle RoPE scaling validation
+    all_blocks = list(model.blocks.values())
+    rope_scaling = _validate_rope_scaling_config(all_blocks)
+
     config: PretrainedConfig = Olmoe2Config(
         vocab_size=model.vocab_size,
         hidden_size=model.d_model,
@@ -95,6 +99,7 @@ def _get_moe_hf_config(model: MoETransformer) -> PretrainedConfig:
         max_position_embeddings=-1,
         attention_bias=moe_block.attention.w_out.bias is not None,
         rope_theta=moe_block.attention.rope.theta,
+        rope_scaling=rope_scaling,
         pad_token_id=None,  # type: ignore
         bos_token_id=None,
         eos_token_id=None,  # type: ignore
@@ -139,17 +144,7 @@ def get_hf_config(model: Transformer) -> PretrainedConfig:
             f"Attention does not use rope, unable to build HF config for {model.__class__.__name__}"
         )
 
-    rope_scaling = None
-    if any(block.attention.rope.scaling is not None for block in blocks):
-        rope_scaling_configs: list[RoPEScalingConfig] = [
-            block.attention.rope.scaling
-            for block in blocks
-            if block.attention.rope.scaling is not None
-        ]
-        assert len(rope_scaling_configs) > 0
-        rope_scaling_config = rope_scaling_configs[0]
-
-        rope_scaling = rope_scaling_config.to_hf_dict()
+    rope_scaling = _get_and_validate_rope_scaling_config(blocks)
 
     if blocks[0].attention.use_head_qk_norm:
         return Olmo3Config(
@@ -225,3 +220,72 @@ def get_hf_config(model: Transformer) -> PretrainedConfig:
             rms_norm_eps=blocks[0].feed_forward_norm.eps,
             tie_word_embeddings=False,
         )
+
+
+def _get_and_validate_rope_scaling_config(blocks) -> dict | None:
+    """
+    Validate RoPE scaling configuration across transformer blocks.
+
+    :param blocks: The list of transformer blocks to validate.
+    :returns: The validated RoPE scaling config dict for HF, or None if no scaling.
+    :raises NotImplementedError: If RoPE scaling is applied to sliding window layers or if
+                               full attention layers have different RoPE scaling configs.
+    """
+    # Separate full attention layers from sliding window layers
+    full_attention_layers = [
+        (idx, block)
+        for idx, block in enumerate(blocks)
+        if block.attention.sliding_window is None
+        or not blocks.attention.sliding_window.should_use_swa(idx, len(blocks))
+    ]
+    sliding_window_layers = [
+        (idx, block)
+        for idx, block in enumerate(blocks)
+        if (
+            block.attention.sliding_window is not None
+            and block.attention.sliding_window.should_use_swa(idx, len(blocks))
+        )
+    ]
+
+    # Check for RoPE scaling on sliding window layers (not allowed)
+    sliding_with_scaling = [
+        (idx, block)
+        for idx, block in sliding_window_layers
+        if block.attention.rope.scaling is not None
+    ]
+    if sliding_with_scaling:
+        sliding_indices = [idx for idx, _ in sliding_with_scaling]
+        raise NotImplementedError(
+            f"RoPE scaling is configured on sliding window attention layers {sliding_indices}, "
+            f"but HuggingFace only supports RoPE scaling on full attention layers. "
+            f"Please remove RoPE scaling from sliding window layers or convert them to full attention."
+        )
+
+    # Collect RoPE scaling configs from full attention layers only
+    full_layers_with_scaling = [
+        (idx, block)
+        for idx, block in full_attention_layers
+        if block.attention.rope.scaling is not None
+    ]
+    if not full_layers_with_scaling:
+        return None
+
+    rope_scaling_configs: list[RoPEScalingConfig] = [
+        block.attention.rope.scaling for _, block in full_layers_with_scaling
+    ]
+
+    # Validate that all full attention layers with RoPE scaling use the same configuration
+    first_config = rope_scaling_configs[0]
+    first_config_dict = first_config.to_hf_dict()
+
+    for i, rope_config in enumerate(rope_scaling_configs[1:], 1):
+        config_dict = rope_config.to_hf_dict()
+        if config_dict != first_config_dict:
+            scaling_indices = [idx for idx, _ in full_layers_with_scaling]
+            raise NotImplementedError(
+                f"Full attention layers have different RoPE scaling configurations but HuggingFace "
+                f"only supports model-wide RoPE scaling. Full attention layers with scaling: {scaling_indices}. "
+                f"First config: {first_config_dict}, Different config at layer {i}: {config_dict}"
+            )
+
+    return first_config_dict
