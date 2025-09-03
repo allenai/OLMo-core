@@ -16,7 +16,8 @@ class BLTConfig(Config):
     binarization_temp: float = 1.0
     temperature: float = 1.0
     div_fn: str = "tvd_temp_limit"
-    merge_boundary_loss: bool = True
+    merge_boundary_loss: bool = False
+    use_output_boundary_jsd: bool = False
     eval_add_boundary_logp: bool = False
     do_alm_debiasing: bool = False
     rep_compare_fn: str = "l2"

@@ -163,6 +163,26 @@ def log1mexp(x):
     return torch.where(x < log_half, torch.log1p(-torch.exp(x)), torch.log(-torch.expm1(x)))
 
 
+def jsd(logprobs, logtargets, epsilon=1e-3):
+    log_p = logprobs.clip(max=-epsilon)
+    log_1mp = log1mexp(log_p)
+
+    log_q = logtargets.clip(max=-epsilon)
+    log_1mq = log1mexp(log_q)
+
+    logP = torch.stack([log_p, log_1mp], dim=-1)
+    logQ = torch.stack([log_q, log_1mq], dim=-1)
+
+    stacked = torch.stack([logP, logQ], dim=0)  # [2, B, T, 2]
+    # log mixture: logM = log(0.5 * (exp(logP) + exp(logQ)))
+    logM = torch.logsumexp(stacked, dim=0) - math.log(2.0)
+
+    kl_PM = (logP.exp() * (logP - logM)).sum(dim=-1)
+    kl_QM = (logQ.exp() * (logQ - logM)).sum(dim=-1)
+
+    return 0.5 * (kl_PM + kl_QM)
+
+
 def binary_cross_entropy_with_logprobs(logprobs, targets, epsilon=1e-3):
     logprobs = logprobs.float().clip(max=-epsilon)
     targets = targets.float()

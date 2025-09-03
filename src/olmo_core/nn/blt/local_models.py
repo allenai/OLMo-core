@@ -802,7 +802,7 @@ class LocalDecoder(nn.Module):
         block_size: int = 256,
         headdim: int = 32,
         epsilon: float = 1e-3,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[tuple[torch.Tensor, torch.Tensor], torch.Tensor, torch.Tensor]:
         from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
 
         h_patch = patch_embeds[..., :self.d_model] # global d -> local d
@@ -904,10 +904,15 @@ class LocalDecoder(nn.Module):
             block = self.blocks[str(block_idx)]
             h_with_b = block(h_with_b)
 
-        h_for_boundaries = torch.gather(
+        h_for_true_boundaries = torch.gather(
             h_with_b,
             dim=1,
             index=(b_indices - 1).unsqueeze(-1).expand(-1, -1, self.d_model),
+        )
+        h_for_all_boundaries = torch.gather(
+            h_with_b,
+            dim=1,
+            index=non_b_indices.unsqueeze(-1).expand(-1, -1, self.d_model),
         )
         h_for_logits = torch.gather(
             h_with_b,
@@ -915,14 +920,14 @@ class LocalDecoder(nn.Module):
             index=(non_b_indices[:, 1:] - 1).unsqueeze(-1).expand(-1, -1, self.d_model),
         )
 
-        return h_for_boundaries, h_for_logits, h_with_b
+        return (h_for_true_boundaries, h_for_all_boundaries), h_for_logits, h_with_b
 
     def _depool_blt(
         self,
         embeds: torch.Tensor,
         patch_embeds: torch.Tensor,
         cross_attn_mask: BlockMask | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[tuple[torch.Tensor, torch.Tensor], torch.Tensor, torch.Tensor]:
         if self.patch_embedding_projection is None or self.blt_k is None:
             raise ValueError("Patch embedding projection is not defined, can not depool with BLT method.")
 
@@ -944,7 +949,7 @@ class LocalDecoder(nn.Module):
             h = h * residual_factor + h_cross
             h = block(h)
 
-        return h, h, h
+        return (h, h), h, h
 
     def depool(
         self,
@@ -953,8 +958,7 @@ class LocalDecoder(nn.Module):
         boundary_logprobs: torch.Tensor,
         boundary_mask: torch.Tensor,
         cross_attn_mask: BlockMask | None = None,
-
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[tuple[torch.Tensor, torch.Tensor], torch.Tensor, torch.Tensor]:
         if self.depooling == "cross_attn":
             return self._depool_blt(embeds, patch_embeds, cross_attn_mask)
         elif self.depooling == "hnet":
@@ -969,7 +973,7 @@ class LocalDecoder(nn.Module):
         boundary_logprobs: torch.Tensor,
         boundary_mask: torch.Tensor,
         cross_attn_mask: BlockMask | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[tuple[torch.Tensor, torch.Tensor], torch.Tensor, torch.Tensor]:
         if self.residual_norm is not None:
             h = self.residual_norm(embeds)
         else:
