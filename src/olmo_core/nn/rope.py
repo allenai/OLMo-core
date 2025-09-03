@@ -64,6 +64,11 @@ class RoPEScalingConfig(Config):
         """Compute the scaled inverse frequencies for RoPE, and the attention rescaling factor."""
         raise NotImplementedError
 
+    @abstractmethod
+    def to_hf_dict(self) -> dict:
+        """Convert to HuggingFace rope_scaling format."""
+        raise NotImplementedError
+
 
 @dataclass
 class ABFRoPEScalingConfig(RoPEScalingConfig):
@@ -76,6 +81,10 @@ class ABFRoPEScalingConfig(RoPEScalingConfig):
     ) -> tuple["torch.Tensor", float]:
         inv_freq = compute_inv_freqs(self.new_theta, dim, device)
         return inv_freq, self.attention_rescale_factor
+
+    def to_hf_dict(self) -> dict:
+        """ABF scaling doesn't have a direct HF equivalent (just modify the config's base frequency)."""
+        raise NotImplementedError
 
 
 @dataclass
@@ -102,6 +111,10 @@ class PIRoPEScalingConfig(RoPEScalingConfig):
             inv_freq = inv_freq / self.factor
 
         return inv_freq, self.attention_rescale_factor
+
+    def to_hf_dict(self) -> dict:
+        """PI scaling corresponds to HF's linear scaling."""
+        return {"rope_type": "linear", "factor": self.factor}
 
 
 @dataclass
@@ -167,6 +180,16 @@ class StepwiseRoPEScalingConfig(RoPEScalingConfig):
 
         return torch.where(is_mid_band, smoothed_inv_freq, inv_freq), self.attention_rescale_factor
 
+    def to_hf_dict(self) -> dict:
+        """Stepwise scaling corresponds to HF's llama3 scaling."""
+        return {
+            "rope_type": "llama3",
+            "factor": self.factor,
+            "original_max_position_embeddings": self.old_context_len,
+            "low_freq_factor": 1.0 / (1 - self.low_freq_proportion),
+            "high_freq_factor": 1.0 / self.high_freq_proportion,
+        }
+
 
 @dataclass
 class YaRNRoPEScalingConfig(RoPEScalingConfig):
@@ -174,7 +197,7 @@ class YaRNRoPEScalingConfig(RoPEScalingConfig):
 
     Reference: https://arxiv.org/abs/2309.00071
 
-    Eextends a model’s context window by *blending* two sets of inverse frequencies:
+    Extends a model’s context window by *blending* two sets of inverse frequencies:
 
     1. **Interpolation frequencies** – the original RoPE frequencies divided
        by ``factor``.  These allow the model to *compress* positions and hence
@@ -233,6 +256,17 @@ class YaRNRoPEScalingConfig(RoPEScalingConfig):
         attention_rescale_factor = 0.1 * math.log(self.factor) + 1.0
 
         return inv_freq, attention_rescale_factor
+
+    def to_hf_dict(self) -> dict:
+        """YaRN scaling corresponds to HF's yarn scaling."""
+        return {
+            "rope_type": "yarn",
+            "factor": self.factor,
+            "original_max_position_embeddings": self.old_context_len,
+            "beta_fast": self.beta_fast,
+            "beta_slow": self.beta_slow,
+            "attention_factor": 0.1 * math.log(self.factor) + 1.0,  # From YaRN paper
+        }
 
 
 @dataclass
