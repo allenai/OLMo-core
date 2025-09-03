@@ -84,7 +84,7 @@ def _get_moe_hf_config(model: MoETransformer) -> PretrainedConfig:
     else:
         intermediate_size = moe_block.feed_forward.hidden_size
 
-    return Olmoe2Config(
+    config: PretrainedConfig = Olmoe2Config(
         vocab_size=model.vocab_size,
         hidden_size=model.d_model,
         intermediate_size=intermediate_size,
@@ -111,6 +111,7 @@ def _get_moe_hf_config(model: MoETransformer) -> PretrainedConfig:
             for block in model.blocks.values()
         ],
     )
+    return config
 
 
 @beta_feature
@@ -148,13 +149,7 @@ def get_hf_config(model: Transformer) -> PretrainedConfig:
         assert len(rope_scaling_configs) > 0
         rope_scaling_config = rope_scaling_configs[0]
 
-        rope_scaling = {
-            "rope_type": "llama3",
-            "factor": rope_scaling_config.factor,
-            "original_max_position_embeddings": rope_scaling_config.old_context_len,
-            "low_freq_factor": rope_scaling_config.low_freq_factor,
-            "high_freq_factor": rope_scaling_config.high_freq_factor,
-        }
+        rope_scaling = rope_scaling_config.to_hf_dict()
 
     if blocks[0].attention.use_head_qk_norm:
         return Olmo3Config(
