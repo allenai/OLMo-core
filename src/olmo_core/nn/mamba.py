@@ -5,7 +5,7 @@ from mamba_ssm.modules.mamba2 import Mamba2 as _Mamba2
 import torch
 from torch import nn
 
-from olmo_core.config import Config
+from olmo_core.config import Config, DType
 
 log = logging.getLogger(__name__)
 
@@ -14,6 +14,8 @@ class Mamba(_Mamba2):
     def __init__(self, *args, **kwargs):
         # layer_idx not None required to enable caching
         super().__init__(*args, **kwargs, layer_idx=0)  # type: ignore
+        # not cast to dtype in _Mamba2.__init__
+        self.D = nn.Parameter(self.D.to(self.conv1d.weight.dtype))
 
         self.mamba_cache_manager = None
 
@@ -104,6 +106,7 @@ class MambaConfig(Config):
     d_conv: int
     d_state: int
     expand: int
+    dtype: DType = DType.float32
 
     def build(self, d_model: int, init_device) -> Mamba:
         return Mamba(
@@ -113,4 +116,5 @@ class MambaConfig(Config):
             d_state=self.d_state,
             expand=self.expand,
             device=init_device,
+            dtype=self.dtype.as_pt(),
         )

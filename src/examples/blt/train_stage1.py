@@ -76,6 +76,7 @@ EVAL_BATCH_SIZE = 16
 LOCAL_MODEL_STYLE = os.environ.get("LOCAL_MODEL_STYLE", "hnet")
 TRAIN_MODE = os.environ.get("TRAIN_MODE", "full_stage_1")
 DATA_SOURCE = os.environ.get("DATA_SOURCE", "dclm")
+DTYPE = os.environ.get("DTYPE", "float32")
 LR_SCHEDULE = os.environ.get("LR_SCHEDULE", "linear_with_warmup")
 TOKEN_NOISE_STR = os.environ.get("TOKEN_NOISE_STR", "")
 ADD_HASH_EMBEDDINGS = os.environ.get("ADD_HASH_EMBEDDINGS", "true").lower() in {"1", "true", "yes"}
@@ -139,7 +140,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     model_style_tags = LOCAL_MODEL_STYLE.split(":")[1:]
     teacher_model_config = getattr(TransformerConfig, OLMO_ARCH)(
         vocab_size=subword_tokenizer_config.padded_vocab_size(),
-        dtype=DType.bfloat16 if "attention_encoder" in model_style_tags or "attention_decoder" in model_style_tags else DType.float32,
+        dtype=getattr(DType, DTYPE),
         freeze_params=["*"], # don't train teacher
     )
 
@@ -200,6 +201,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
                 d_conv=4,
                 d_state=128,
                 expand=2,
+                dtype=teacher_model_config.dtype,
             ),
             feed_forward=None,
             layer_norm=teacher_model_config.block.layer_norm,

@@ -32,6 +32,7 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
         "OLMO_ARCH",
         "TRAIN_MODE",
         "DATA_SOURCE",
+        "DTYPE",
         "SAVE_FOLDER",
         "BYTE_EXPANSION_FACTOR",
         "LOCAL_MODEL_STYLE",
@@ -77,6 +78,8 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
         image = "benjaminm/titan_blt_train"
         # slow setup (need appropriate torch / cuda build)
         setup_steps = list(DEFAULT_SETUP_STEPS)
+
+    setup_steps += ["pip install flash-attn --no-build-isolation"]
 
     if stage == "stage1":
         launch_script = "src/examples/blt/train_stage1.py"
