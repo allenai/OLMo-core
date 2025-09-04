@@ -381,7 +381,7 @@ class LocalEncoder(nn.Module):
             fully_shard(self.cross_attention, mesh=dp_mesh, **fsdp_kwargs)
         fully_shard(self, mesh=dp_mesh, **fsdp_kwargs)
 
-    def fix_init(self, embedding_init_path: Optional[str], target_embeddings, n_estimate=10_000, cache_dir: Optional[str] = None):
+    def fix_init(self, embedding_init_path: Optional[str], target_embeddings, n_estimate=8192, cache_dir: Optional[str] = None):
         """
         Rescale such that the local encoder outputs (given random inputs) have the same mean and std as the provided embeddings.
         
@@ -1086,8 +1086,9 @@ class LocalDecoder(nn.Module):
             h = depool_out_modulated[:, :-1] + embeds[:, 1:]
             h_b = self.boundary_embedding.weight.unsqueeze(0) + prepool_out
 
+            # +1 to keep multiple of
             h_with_b = torch.zeros(
-                (h.shape[0], h.shape[1] + patch_embeds.shape[1], h.shape[2]),
+                (h.shape[0], h.shape[1] + patch_embeds.shape[1] + 1, h.shape[2]),
                 device=h.device,
                 dtype=h.dtype
             )
@@ -1140,7 +1141,8 @@ class LocalDecoder(nn.Module):
                 index=(non_b_indices - 1).unsqueeze(-1).expand(-1, -1, self.d_model),
             )
 
-            return (h_for_true_boundaries, h_for_all_boundaries), h_for_logits, h_with_b
+            # [:-1] to strip multiple of
+            return (h_for_true_boundaries, h_for_all_boundaries), h_for_logits, h_with_b[:, :-1]
 
     def _depool_blt(
         self,

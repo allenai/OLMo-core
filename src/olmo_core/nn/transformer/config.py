@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Dict, List, Optional
 from olmo_core.config import Config, DType, StrEnum
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.nn.xlstm import XLSTMConfig
 from olmo_core.utils import ensure_multiple_of
 
 from ..attention import AttentionConfig, AttentionType
@@ -137,6 +138,7 @@ class TransformerBlockType(StrEnum):
     ➡️ :class:`MoEHybridReorderedNormTransformerBlock`
     """
     mamba = "mamba"
+    xlstm = "xlstm"
 
 
 @dataclass
@@ -162,6 +164,7 @@ class TransformerBlockConfig(Config):
     The config for the MoE feed-forward layer. Required for MoE blocks.
     """
     mamba: Optional[MambaConfig] = None
+    xlstm: Optional[XLSTMConfig] = None
     name: TransformerBlockType = TransformerBlockType.default
     """
     The block type.
@@ -189,6 +192,7 @@ class TransformerBlockConfig(Config):
             ReorderedNormTransformerBlock,
             TransformerBlock,
             MambaBlock,
+            XLSTMBlock,
         )
 
         kwargs = self.as_dict(exclude_none=True, recurse=False)
@@ -219,6 +223,9 @@ class TransformerBlockConfig(Config):
             elif self.name == TransformerBlockType.mamba:
                 kwargs.pop("attention")  # Mamba does not use attention
                 return MambaBlock(**kwargs)
+            elif self.name == TransformerBlockType.xlstm:
+                kwargs.pop("attention")  # XLSTM does not use attention
+                return XLSTMBlock(**kwargs)
             else:
                 raise NotImplementedError(self.name)
         except TypeError as e:

@@ -12,6 +12,7 @@ from torch.distributed.tensor.parallel import PrepareModuleInput, parallelize_mo
 from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
 from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.doc_utils import beta_feature
+from olmo_core.nn.xlstm import XLSTMConfig
 from olmo_core.ops import attach_auxiliary_loss
 
 from ..attention import AttentionConfig, RingAttentionLoadBalancerType
@@ -966,7 +967,7 @@ class MambaBlock(TransformerBlockBase):
             return h
         else:
             return h + self.dropout(self.feed_forward(self.feed_forward_norm(h)))
-        
+
     def apply_compile(self):
         # without dynamic=False mamba runs into weird "'math' is not defined" errors akin to https://github.com/pytorch/pytorch/issues/100972
         # this might slow down eval due to recompiles? but seems fine from initial tries.
@@ -982,6 +983,77 @@ class MambaBlock(TransformerBlockBase):
     ):
         if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
             fsdp_mamba = cast(FSDPModule, fully_shard(self.mamba, mesh=dp_mesh, **fsdp_kwargs))
+            if self.feed_forward is not None:
+                fsdp_mlp = cast(FSDPModule, fully_shard(self.feed_forward, mesh=dp_mesh, **fsdp_kwargs))
+            else:
+                fsdp_mlp = None
+            fsdp_root = cast(FSDPModule, fully_shard(self, mesh=dp_mesh, **fsdp_kwargs))
+            if prefetch_factor > 0:
+                fsdp_root.set_modules_to_forward_prefetch([fsdp_mamba])
+                if self.feed_forward is not None:
+                    fsdp_mamba.set_modules_to_forward_prefetch([fsdp_mlp])  # type: ignore
+        else:
+            fully_shard(self, mesh=dp_mesh, **fsdp_kwargs)
+
+
+class XLSTMBlock(TransformerBlockBase):
+    def __init__(
+        self,
+        *,
+        d_model: int,
+        block_idx: int,
+        n_layers: int,
+        xlstm: XLSTMConfig,
+        layer_norm: LayerNormConfig,
+        feed_forward: Optional[FeedForwardConfig] = None,
+        dropout: float = 0.0,
+        init_device: str = "cpu",
+        cache: Optional[BufferCache] = None,
+    ):
+        super().__init__(n_layers=n_layers)
+        self.d_model = d_model
+        self.block_idx = block_idx
+        self.xlstm = xlstm.build(
+            d_model, init_device=init_device
+        )
+        self.xlstm_norm = layer_norm.build(d_model, init_device=init_device)
+        if feed_forward is not None:
+            self.feed_forward = feed_forward.build(d_model=d_model, init_device=init_device)
+            self.feed_forward_norm = layer_norm.build(d_model, init_device=init_device)
+        else:
+            self.feed_forward = None
+            self.feed_forward_norm = None
+
+        self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        del loss_div_factor
+        h = x + self.dropout(self.xlstm(self.xlstm_norm(x), **kwargs)[0])
+
+        if self.feed_forward is None or self.feed_forward_norm is None:
+            assert self.feed_forward is None and self.feed_forward_norm is None
+            return h
+        else:
+            return h + self.dropout(self.feed_forward(self.feed_forward_norm(h)))
+
+    def apply_compile(self):
+        return self.compile(fullgraph=False, dynamic=False)
+
+    def apply_fsdp(
+        self,
+        dp_mesh: Optional[DeviceMesh] = None,
+        prefetch_factor: int = 0,
+        wrapping_strategy: TransformerDataParallelWrappingStrategy = TransformerDataParallelWrappingStrategy.full,
+        **fsdp_kwargs,
+    ):
+        if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
+            fsdp_mamba = cast(FSDPModule, fully_shard(self.xlstm, mesh=dp_mesh, **fsdp_kwargs))
             if self.feed_forward is not None:
                 fsdp_mlp = cast(FSDPModule, fully_shard(self.feed_forward, mesh=dp_mesh, **fsdp_kwargs))
             else:

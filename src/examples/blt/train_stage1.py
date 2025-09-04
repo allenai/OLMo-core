@@ -39,6 +39,7 @@ from olmo_core.nn.transformer import (
 )
 from olmo_core.nn.attention import AttentionConfig, SlidingWindowAttentionConfig
 from olmo_core.nn.mamba import MambaConfig
+from olmo_core.nn.xlstm import XLSTMConfig
 from olmo_core.nn.feed_forward import FeedForwardConfig
 from olmo_core.nn.blt.config import LocalEncoderConfig, LocalDecoderConfig
 from olmo_core.optim import AdamWConfig, OptimGroupOverride
@@ -206,6 +207,17 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             feed_forward=None,
             layer_norm=teacher_model_config.block.layer_norm,
         )
+
+        if "xlstm" in model_style_tags:
+            local_encoder_block = local_decoder_block = TransformerBlockConfig(
+                name=TransformerBlockType.xlstm,
+                attention=AttentionConfig(), # not used
+                xlstm=XLSTMConfig(
+                    num_heads=16,                
+                ),
+                feed_forward=None,
+                layer_norm=teacher_model_config.block.layer_norm,
+            )
 
         if "attention_encoder" in model_style_tags:
             local_encoder_block = teacher_model_config.block.replace(
