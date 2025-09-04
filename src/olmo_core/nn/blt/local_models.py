@@ -1084,8 +1084,8 @@ class LocalDecoder(nn.Module):
                 depool_out_modulated = depool_out
 
             # skip bos - considered boundary
-            h = depool_out_modulated[:, :-1] + embeds[:, 1:]
-            h_b = self.boundary_embedding.weight.unsqueeze(0) + prepool_out
+            h = (depool_out_modulated[:, :-1] + embeds[:, 1:]).float()
+            h_b = (self.boundary_embedding.weight.unsqueeze(0) + prepool_out).float()
 
             # +1 to keep multiple of
             h_with_b = torch.zeros(
@@ -1106,7 +1106,7 @@ class LocalDecoder(nn.Module):
             h_with_b.scatter_(
                 1,
                 non_b_indices.unsqueeze(-1).expand(-1, -1, self.d_model), # skip bos - considered boundary
-                h
+                h.float()
             )
             h_with_b.scatter_add_(
                 1,
@@ -1114,7 +1114,7 @@ class LocalDecoder(nn.Module):
                 torch.where(patch_mask.unsqueeze(-1), h_b, torch.zeros_like(h_b))
             )
 
-            dtype = h_with_b.dtype
+            dtype = patch_embeds.dtype
             block_dtype = torch.bfloat16 if hasattr(self.blocks["0"], "attention") and self.blocks["0"].attention.use_flash else dtype  # type: ignore
 
             h_with_b = h_with_b.to(block_dtype)
@@ -1123,27 +1123,27 @@ class LocalDecoder(nn.Module):
                 block = self.blocks[str(block_idx)]
                 h_with_b = block(h_with_b)
 
-            h_with_b = h_with_b.to(dtype)
+            h_with_b = h_with_b.float()
 
             h_for_true_boundaries = torch.gather(
                 h_with_b,
                 dim=1,
                 # can't predict first boundary / bos
                 index=(b_indices[:, 1:] - 1).unsqueeze(-1).expand(-1, -1, self.d_model),
-            )
+            ).to(dtype)
             h_for_all_boundaries = torch.gather(
                 h_with_b,
                 dim=1,
                 index=non_b_indices.unsqueeze(-1).expand(-1, -1, self.d_model),
-            )
+            ).to(dtype)
             h_for_logits = torch.gather(
                 h_with_b,
                 dim=1,
                 index=(non_b_indices - 1).unsqueeze(-1).expand(-1, -1, self.d_model),
-            )
+            ).to(dtype)
 
             # [:-1] to strip multiple of
-            return (h_for_true_boundaries, h_for_all_boundaries), h_for_logits, h_with_b[:, :-1]
+            return (h_for_true_boundaries, h_for_all_boundaries), h_for_logits, h_with_b[:, :-1].to(dtype)
 
     def _depool_blt(
         self,
