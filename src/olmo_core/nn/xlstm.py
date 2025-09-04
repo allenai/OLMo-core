@@ -3,6 +3,7 @@ import logging
 import torch
 from torch import nn
 from xlstm.xlstm_large import mLSTMLayer, mLSTMLayerConfig
+from mlstm_kernels.torch.backend_module import mLSTMBackendConfig
 
 from olmo_core.config import Config, DType
 
@@ -26,4 +27,12 @@ class XLSTMConfig(Config):
         return XLSTM(mLSTMLayerConfig(
             embedding_dim=d_model,
             num_heads=self.num_heads,
+            mlstm_backend=mLSTMBackendConfig(
+                chunkwise_kernel="chunkwise--triton_limit_chunk",
+                sequence_kernel="native_sequence__triton",
+                step_kernel="triton",
+                mode="train",
+                return_last_states=True,
+                autocast_kernel_dtype="float32",
+            )
         )).to(init_device)
