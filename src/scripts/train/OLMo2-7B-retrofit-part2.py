@@ -2,10 +2,11 @@ import math
 from datetime import datetime
 
 from olmo_core.config import DType
+from olmo_core.data import DataMix
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
-from olmo_core.internal.experiment import CommonComponents, main
+from olmo_core.internal.experiment import CommonComponents, main, build_common_components
 from olmo_core.nn.transformer import TransformerConfig, TransformerActivationCheckpointingMode
 from olmo_core.nn.rope import YaRNRoPEScalingConfig
 from olmo_core.optim import OptimGroupOverride, SkipStepAdamWConfig
@@ -103,7 +104,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     assert len(common.launch.clusters) == 1
     cluster = common.launch.clusters[0]
 
-    run_name = f"{common.run_name}-{datetime.now().astimezone().strftime('%Y%m%dT%H%M%S%z')}"
+    run_name = f"{common.run_name}-{datetime.now().astimezone().strftime('%Y%m%dT%H%M%z')}"
 
     config = (
         TrainerConfig(
@@ -157,10 +158,19 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     return config
 
 
+def build_common_config(*args, **kwargs):
+    components = build_common_components(*args, **kwargs)
+    components.data_loader.num_workers = 8
+    components.dataset.max_target_sequence_length = 64 * 1024
+    components.dataset.mix = DataMix.OLMo_mix_0625
+    return components
+
+
 if __name__ == "__main__":
     main(
         global_batch_size=GLOBAL_BATCH_SIZE,
         sequence_length=SEQUENCE_LENGTH,
+        common_config_builder=build_common_config,
         model_config_builder=build_model_config,
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
