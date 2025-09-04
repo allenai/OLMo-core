@@ -12,7 +12,8 @@ log = logging.getLogger(__name__)
 
 class Mamba(_Mamba2):
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)  # type: ignore
+        # layer_idx not None required to enable caching
+        super().__init__(*args, **kwargs, layer_idx=0)  # type: ignore
 
         self.mamba_cache_manager = None
 
@@ -28,12 +29,12 @@ class Mamba(_Mamba2):
             # writes to cache inplace
             # Mamba2 expects it in this format
             inference_params = SimpleNamespace(
-                key_value_memory_dict={0: (self.conv_state, self.ssm_state)},
-                seqlen_offset=self.seqlen_offset,
+                key_value_memory_dict={0: (self.mamba_cache_manager.conv_state, self.mamba_cache_manager.ssm_state)},
+                seqlen_offset=self.mamba_cache_manager.current_position(),
             )
+            out = super().forward(x, inference_params=inference_params)
             self.mamba_cache_manager.update_seqlen(x.shape[1])
-
-            return super().forward(x, inference_params=inference_params)
+            return out
         elif self.mamba_cache_manager is not None:
             return self._step(x, (self.mamba_cache_manager.conv_state, self.mamba_cache_manager.ssm_state))
         else:
@@ -41,6 +42,8 @@ class Mamba(_Mamba2):
         
     # from HNet repo
     def _step(self, hidden_states, inference_params):  # type: ignore
+        assert self.mamba_cache_manager is not None
+
         conv_state, ssm_state = inference_params
         result, conv_state, ssm_state = super().step(
             hidden_states, conv_state, ssm_state
@@ -49,7 +52,7 @@ class Mamba(_Mamba2):
         # Update the state cache in-place
         inference_params[0].copy_(conv_state)
         inference_params[1].copy_(ssm_state)
-        self.seqlen_offset += 1
+        self.mamba_cache_manager.update_seqlen(hidden_states.shape[1])
         return result
 
 class MambaCacheManager(nn.Module):
@@ -59,6 +62,8 @@ class MambaCacheManager(nn.Module):
         batch_size: int,
         dtype: torch.dtype = torch.bfloat16,
     ):
+        super().__init__()
+
         self.layer = layer
 
         self.conv_state, self.ssm_state = layer.allocate_inference_cache(

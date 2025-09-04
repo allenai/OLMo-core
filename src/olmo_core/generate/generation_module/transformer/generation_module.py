@@ -579,7 +579,7 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                     attn.init_kv_cache_manager(batch_size, max_seq_len)
                 else:
                     attn.kv_cache_manager.reset(batch_size, max_seq_len)
-            elif hasattr(block, "maba") and isinstance(block.mamba, Mamba):
+            elif hasattr(block, "mamba") and isinstance(block.mamba, Mamba):
                 mamba = block.mamba
                 if mamba.mamba_cache_manager is None:
                     mamba.init_mamba_cache_manager(batch_size)
