@@ -1037,30 +1037,31 @@ class LocalDecoder(nn.Module):
 
             if self.hnet_smooth:
                 p = torch.gather(torch.exp(boundary_logprobs).float().clip(min=epsilon, max=1 - epsilon), dim=1, index=seq_sorted_indices)
+
+                dt = torch.log(1 / (1 - p)).float()
+                x = (h_patch.float() / dt[..., None])
+
+                n_heads = self.d_model // headdim
+                A = -torch.ones(
+                    (n_heads,), device=h_patch.device, dtype=torch.float32
+                )
+                b = p.float()
+                c = torch.ones_like(b)
+
+                prepool_out = mamba_chunk_scan_combined(
+                    rearrange(x, "b l (h p) -> b l h p", p=headdim),
+                    repeat(dt, "b l -> b l h", h=n_heads),
+                    A,
+                    rearrange(b, "b l -> b l 1 1"),
+                    rearrange(c, "b l -> b l 1 1"),
+                    chunk_size=block_size,
+                    seq_idx=None,
+                ).to(h_patch.dtype) # type: ignore
+
+                prepool_out = rearrange(prepool_out, "b l h p -> b l (h p)")
+                prepool_out = cast(torch.Tensor, prepool_out)
             else:
-                p = torch.full((h_patch.shape[0], h_patch.shape[1]), 1 - epsilon, device=h_patch.device, dtype=torch.float32)
-
-            dt = torch.log(1 / (1 - p)).float()
-            x = (h_patch.float() / dt[..., None])
-
-            n_heads = self.d_model // headdim
-            A = -torch.ones(
-                (n_heads,), device=h_patch.device, dtype=torch.float32
-            )
-            b = p.float()
-            c = torch.ones_like(b)
-
-            prepool_out = mamba_chunk_scan_combined(
-                rearrange(x, "b l (h p) -> b l h p", p=headdim),
-                repeat(dt, "b l -> b l h", h=n_heads),
-                A,
-                rearrange(b, "b l -> b l 1 1"),
-                rearrange(c, "b l -> b l 1 1"),
-                chunk_size=block_size,
-                seq_idx=None,
-            ).to(h_patch.dtype)
-            prepool_out = rearrange(prepool_out, "b l h p -> b l (h p)")
-            prepool_out = cast(torch.Tensor, prepool_out)
+                prepool_out = h_patch
 
             # TODO(benjaminm): clipping is problematic if it happens too much; track clip %.
             plug_back_idx = (torch.cumsum(boundary_mask, dim=1) - 1).clip(max=prepool_out.shape[1] - 1)
