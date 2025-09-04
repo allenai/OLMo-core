@@ -42,8 +42,10 @@ class LocalEncoderConfig(Config):
     sliding_window_size: int
     d_model: int
     n_layers: int
-    cross_attn_n_heads: int
     block_config: Config
+    cross_attn_n_heads: int
+    cross_attn_do_project: bool = True
+    cross_attn_init_pooling: str = "amax"
     pooling: str = "cross_attn"
     add_hash_embeddings: bool = True
     hash_byte_group_size: list[int] | None = None
@@ -68,6 +70,8 @@ class LocalEncoderConfig(Config):
             d_global_model=d_global_model,
             n_layers=self.n_layers,
             cross_attn_n_heads=self.cross_attn_n_heads,
+            cross_attn_do_project=self.cross_attn_do_project,
+            cross_attn_init_pooling=self.cross_attn_init_pooling,
             block_config=self.block_config,
             add_hash_embeddings=self.add_hash_embeddings,
             hash_byte_group_size=self.hash_byte_group_size,

@@ -16,6 +16,7 @@ from olmo_core.config import Config
 from olmo_core.io import resource_path
 from olmo_core.nn.transformer.config import TransformerDataParallelWrappingStrategy
 from olmo_core.nn.transformer.block import TransformerBlockBase
+import olmo_core.nn.blt.utils as blt_utils
 from olmo_core.nn.buffer_cache import BufferCache
 from .embed import add_hash_embeddings
 from .utils import log1mexp
@@ -202,7 +203,8 @@ class CrossAttention(nn.Module):
         v = v.view(bsz, kv_len, self.n_heads, self.head_dim).transpose(1, 2)
     
         # TODO(benjaminm): somehow export needs flex_attention instead of flex_attention_comp? why?
-        output = flex_attention_comp(q, k, v, block_mask=mask)
+        # why :X?
+        output = flex_attention_comp(q[:len(q)], k[:len(k)], v[:len(v)], block_mask=mask[:mask.shape[0]])
         # B H S D -> B S H D
         output = output.transpose(1, 2).contiguous()  # type: ignore
 
@@ -219,6 +221,8 @@ class LocalEncoder(nn.Module):
             d_global_model: int,
             n_layers: int,
             cross_attn_n_heads: int,
+            cross_attn_do_project: bool,
+            cross_attn_init_pooling: str,
             block_config,
             add_hash_embeddings: bool,
             hash_byte_group_size: list[int] | None,
@@ -245,6 +249,8 @@ class LocalEncoder(nn.Module):
         self.d_global_model = d_global_model
         self.n_layers = n_layers
         self.cross_attn_n_heads = cross_attn_n_heads
+        self.cross_attn_do_project = cross_attn_do_project
+        self.cross_attn_init_pooling = cross_attn_init_pooling
         self.block_config = block_config
         self.add_hash_embeddings = add_hash_embeddings
         self.pooling = pooling
@@ -420,6 +426,8 @@ class LocalEncoder(nn.Module):
             d_global_model=self.d_global_model,
             n_layers=self.n_layers,
             cross_attn_n_heads=self.cross_attn_n_heads,
+            cross_attn_do_project=self.cross_attn_do_project,
+            cross_attn_init_pooling=self.cross_attn_init_pooling,
             block_config=self.block_config,
             add_hash_embeddings=self.add_hash_embeddings,
             hash_byte_group_size=self.hash_byte_group_size,
@@ -549,12 +557,39 @@ class LocalEncoder(nn.Module):
         self,
         h: torch.Tensor,
         patch_lens: torch.Tensor,
-        patch_ids: torch.Tensor,
-        cross_attn_mask: BlockMask | None = None,
-        reduction: str = "amax",
+        boundary_mask: torch.Tensor,
     ):
         if self.cross_attention is None or self.patch_embedding_projection is None or self.blt_k is None:
             raise ValueError("Cross attention is disabled, can not pool with BLT method.")
+
+        B, L = boundary_mask.shape
+
+        token_idx = (
+            torch.arange(L, device=h.device)[None, :]
+            + (~boundary_mask).long() * L
+        )
+        seq_sorted_indices = torch.argsort(token_idx, dim=1)[:, :patch_lens.shape[1]]
+        last_increasing_index = ((seq_sorted_indices[:, 1:] - seq_sorted_indices[:, :-1]) < 0).max(-1)
+        patch_mask = (
+            (torch.arange(patch_lens.shape[1], device=patch_lens.device)[None, :] <= last_increasing_index.indices[:, None]) |
+            (torch.zeros(patch_lens.shape[:2], dtype=torch.bool, device=patch_lens.device) == last_increasing_index.values[:, None]) # case where never not increasing (no padding)
+        )
+        patch_lens = torch.ones_like(seq_sorted_indices)
+        # bos always one
+        patch_lens[:, 1:] = seq_sorted_indices[:, 1:] - seq_sorted_indices[:, :-1]
+        patch_lens = torch.where(
+            patch_mask,
+            patch_lens,
+            torch.zeros_like(patch_lens),
+        )
+        patch_ids = blt_utils.lengths_to_ids(patch_lens, h.shape[1])
+        cross_attn_mask = blt_utils.cross_attn_mask(
+            patch_ids,
+            patch_lens,
+            patches_as_queries=True,
+            cross_attn_k=self.blt_k,
+            block_mask=True,
+        )
 
         # downsample h
         # DIVERGENCE FROM BLT: + 1 for padding
@@ -565,7 +600,7 @@ class LocalEncoder(nn.Module):
             src=h,
             dim=1,
             index=patch_ids.unsqueeze(-1).expand(-1, -1, h.shape[-1]),
-            reduce=reduction,
+            reduce=self.cross_attn_init_pooling,
             include_self=False,
         )
         reduced_h = reduced_h[:, :-1, :]  # DIVERGENCE FROM BLT: remove padding
@@ -573,9 +608,12 @@ class LocalEncoder(nn.Module):
         # expand seq length by a factor of k (k=2 or 4 in BLT released checkpoints)
         # i.e. per patch, conduct k cross attentions (each with h heads)
         # NOTE: the need for an upprojection seems to imply an unwanted information bottleneck?
-        patch_embedding_init = self.patch_embedding_projection(reduced_h).reshape(
-            reduced_h.shape[0], reduced_h.shape[1] * self.blt_k, reduced_h.shape[2]
-        )
+        if self.cross_attn_do_project:
+            patch_embedding_init = self.patch_embedding_projection(reduced_h).reshape(
+                reduced_h.shape[0], reduced_h.shape[1] * self.blt_k, reduced_h.shape[2]
+            )
+        else:
+            patch_embedding_init = reduced_h
 
         # apply cross attention
         residual = self.cross_attention(
@@ -601,15 +639,13 @@ class LocalEncoder(nn.Module):
         patch_lens: torch.Tensor,
         patch_ids: torch.Tensor,
         boundary_mask: torch.Tensor | None,
-        cross_attn_mask: BlockMask | None = None,
         last_token_is_boundary: bool = False,
     ):
         if self.pooling == "cross_attn":
             patch_embeddings = self._pool_blt(
                 h=h,
                 patch_lens=patch_lens,
-                patch_ids=patch_ids,
-                cross_attn_mask=cross_attn_mask,
+                boundary_mask=boundary_mask,  # type: ignore
             )
         elif self.pooling == "hnet":
             patch_embeddings = self._pool_hnet(
@@ -706,7 +742,6 @@ class LocalEncoder(nn.Module):
             patch_lens=patch_lens,
             patch_ids=patch_ids,
             boundary_mask=boundary_mask,
-            cross_attn_mask=cross_attn_mask,
         )
 
         if self.represent_bytes_with_embeddings:
