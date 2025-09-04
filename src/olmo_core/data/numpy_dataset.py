@@ -766,6 +766,8 @@ class NumpyByteFSLDataset(NumpyFSLDataset):
             input_ids = item["input_ids"].tolist()
             input_ids = [x for x in input_ids if x != self.fim_middle_id]
             original_input_ids = self.tokenizer.hf_tokenizer.encode(self.tokenizer.hf_tokenizer.decode(input_ids))
+            # can be longer in extreme edge cases (this actually happens! less than once every 1k batches)
+            original_input_ids = original_input_ids[:len(item["input_ids"])]
             while len(original_input_ids) < len(item["input_ids"]):
                 original_input_ids.append(self.tokenizer.hf_tokenizer.pad_token_id)
 
