@@ -122,6 +122,9 @@ class TransformerGenerationModule(GenerationModule):
         for block in self.model.blocks.values():
             assert isinstance(block.attention, Attention)
             attn = cast(Attention, block.attention)
+            # Skip KV cache initialization for flex attention with sinks
+            if attn.use_flex and attn.use_sinks:
+                continue
             if attn.kv_cache_manager is None:
                 attn.init_kv_cache_manager(batch_size, max_seq_len)
             else:
