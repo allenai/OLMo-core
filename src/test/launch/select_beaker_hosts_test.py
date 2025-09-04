@@ -44,6 +44,22 @@ def test_get_hostname_constraints_one_insufficient_block():
         assert exc_info.match("Could not satisfy task number 0, only got 10 hosts")
 
 
+def test_get_hostname_constraints_one_block_too_occupied():
+    num_hosts_by_block = [25]
+    num_hosts_per_replica = 4
+    num_tasks = 1
+    num_hosts_per_task = 16
+
+    hosts_metadata = create_hosts_metadata(num_hosts_by_block)
+    occupied_hosts = set(list(hosts_metadata.keys())[:10])
+
+    with pytest.raises(BeakerInsufficientResourcesError) as exc_info:
+        get_hostname_constraints(
+            hosts_metadata, num_hosts_per_replica, num_hosts_per_task, num_tasks, occupied_hosts
+        )
+        assert exc_info.match("Could not satisfy task number 0, only got 10 hosts")
+
+
 def test_get_hostname_constraints_multiple_blocks():
     num_hosts_by_block = [5, 13]
     num_hosts_per_replica = 4
@@ -73,5 +89,24 @@ def test_get_hostname_constraints_multiple_insufficient_blocks():
     with pytest.raises(BeakerInsufficientResourcesError) as exc_info:
         get_hostname_constraints(
             hosts_metadata, num_hosts_per_replica, num_hosts_per_task, num_tasks
+        )
+        assert exc_info.match("Could not satisfy task number 0, only got 12 hosts")
+
+
+def test_get_hostname_constraints_multiple_blocks_too_occupied():
+    num_hosts_by_block = [9, 16]
+    num_hosts_per_replica = 4
+    num_tasks = 1
+    num_hosts_per_task = 16
+
+    hosts_metadata = create_hosts_metadata(num_hosts_by_block)
+    occupied_hosts = set(
+        [host for host, metadata in hosts_metadata.items() if metadata.block == "0"][:6]
+        + [host for host, metadata in hosts_metadata.items() if metadata.block == "1"][:11]
+    )
+
+    with pytest.raises(BeakerInsufficientResourcesError) as exc_info:
+        get_hostname_constraints(
+            hosts_metadata, num_hosts_per_replica, num_hosts_per_task, num_tasks, occupied_hosts
         )
         assert exc_info.match("Could not satisfy task number 0, only got 12 hosts")
