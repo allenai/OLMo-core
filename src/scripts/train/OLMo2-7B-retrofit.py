@@ -110,6 +110,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             metrics_collect_interval=10,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(int(150e9)),
+            hard_stop=Duration.tokens(int(100e9)),
             load_path="gs://ai2-llm/checkpoints/shanea/OLMo-medium/peteish7/step928646/model_and_optim/",
             load_strategy=LoadStrategy.always,
         )
@@ -118,7 +119,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             CheckpointerCallback(
                 save_interval=10_000,
                 ephemeral_save_interval=250,
-                save_async=True,
+                save_async=False,
             ),
         )
         .with_callback(
