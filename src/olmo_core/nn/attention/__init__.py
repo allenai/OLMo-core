@@ -890,21 +890,23 @@ class Attention(AttentionBase):
         """
         FlexAttention with KV caching support for generation with sinks.
         """
-        B, T_q, _ = q.shape
-        _, T_kv, _ = k.shape
+        B, H, T_q, D = q.shape
+        _, _, T_kv, _ = k.shape
         
         cache_pos = self.kv_cache_manager.current_position().item()
         
-        self.kv_cache_manager.k_cache[:B, cache_pos:cache_pos+T_kv] = k
-        self.kv_cache_manager.v_cache[:B, cache_pos:cache_pos+T_kv] = v
+        k_for_cache = k.transpose(1, 2)
+        v_for_cache = v.transpose(1, 2)
         
-        # full KV from cache (up to current position + new tokens)
+        self.kv_cache_manager.k_cache[:B, cache_pos:cache_pos+T_kv] = k_for_cache
+        self.kv_cache_manager.v_cache[:B, cache_pos:cache_pos+T_kv] = v_for_cache
+        
         seq_len = cache_pos + T_kv
         k_cached = self.kv_cache_manager.k_cache[:B, :seq_len]
-        v_cached = self.kv_cache_manager.v_cache[:B, :seq_len]
+        v_cached = self.kv_cache_manager.v_cache[:B, :seq_len]  # (B, seq_len, H, D)
         
-        q = q.transpose(1, 2)
-        k_cached = k_cached.transpose(1, 2) 
+
+        k_cached = k_cached.transpose(1, 2)
         v_cached = v_cached.transpose(1, 2)
         
         if q.device.type == 'cuda':
