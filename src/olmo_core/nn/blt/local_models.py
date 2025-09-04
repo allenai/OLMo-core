@@ -698,7 +698,8 @@ class LocalEncoder(nn.Module):
         h = embeddings
 
         dtype = h.dtype
-        block_dtype = torch.bfloat16 if hasattr(self.blocks["0"], "attention") and self.blocks["0"].attention.use_flash else dtype  # type: ignore
+        # need this check due to the local_encoder_copy(..) in fix_init, seems to be fine otherwise with the usual check
+        block_dtype = next(self.blocks["0"].parameters()).dtype
 
         h = h.to(block_dtype)
 
