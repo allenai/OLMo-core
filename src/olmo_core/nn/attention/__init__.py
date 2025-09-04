@@ -439,26 +439,35 @@ class Attention(AttentionBase):
                 raise RuntimeError(
                     f"'{self.__class__.__name__}' does not support KV caching with context parallelism"
                 )
-            if not self.use_flash:
+            if not self.use_flash and not (self.use_flex and self.use_sinks):
                 raise RuntimeError(
-                    f"'{self.__class__.__name__}' requires flash (use_flash=True) for KV caching"
+                    f"'{self.__class__.__name__}' requires flash (use_flash=True) or flex (use_flex=True) for KV caching"
                 )
 
             self.kv_cache_manager.record_leftpad(cache_leftpad)
-            att = dispatch_flash_attn_with_kvcache(
-                q,
-                k=k,
-                v=v,
-                softmax_scale=scale,
-                causal=True,
-                window_size=self.window_size,
-                k_cache=self.kv_cache_manager.k_cache,  # updated in-place
-                v_cache=self.kv_cache_manager.v_cache,  # updated in-place
-                cache_leftpad=self.kv_cache_manager.cache_leftpad,
-                cache_seqlens=self.kv_cache_manager.cache_seqlens.expand(
-                    self.kv_cache_manager.cache_leftpad.shape[0]
-                ).contiguous(),
-            )
+            
+            if self.use_flash:
+                # Flash attention KV cache path
+                att = dispatch_flash_attn_with_kvcache(
+                    q,
+                    k=k,
+                    v=v,
+                    softmax_scale=scale,
+                    causal=True,
+                    window_size=self.window_size,
+                    k_cache=self.kv_cache_manager.k_cache,  # updated in-place
+                    v_cache=self.kv_cache_manager.v_cache,  # updated in-place
+                    cache_leftpad=self.kv_cache_manager.cache_leftpad,
+                    cache_seqlens=self.kv_cache_manager.cache_seqlens.expand(
+                        self.kv_cache_manager.cache_leftpad.shape[0]
+                    ).contiguous(),
+                )
+            else:
+                # FlexAttention with sinks KV cache path
+                att = self._flex_attention_with_kv_cache(
+                    q, k, v, scale=scale, block_mask=block_mask, sinks=sinks, mask_fn=mask_fn
+                )
+            
             self.kv_cache_manager.update_seqlen(q.shape[1])
 
         elif self.cp_enabled:
@@ -867,6 +876,63 @@ class Attention(AttentionBase):
             device_mesh=tp_mesh,
             parallelize_plan=plan,
         )
+    
+    def _flex_attention_with_kv_cache(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor, 
+        v: torch.Tensor,
+        scale: Optional[float] = None,
+        block_mask: Optional[BlockMask] = None,
+        sinks: Optional[torch.Tensor] = None,
+        mask_fn: Optional[Callable] = None,
+    ) -> torch.Tensor:
+        """
+        FlexAttention with KV caching support for generation with sinks.
+        """
+        B, T_q, _ = q.shape
+        _, T_kv, _ = k.shape
+        
+        cache_pos = self.kv_cache_manager.current_position().item()
+        
+        self.kv_cache_manager.k_cache[:B, cache_pos:cache_pos+T_kv] = k
+        self.kv_cache_manager.v_cache[:B, cache_pos:cache_pos+T_kv] = v
+        
+        # full KV from cache (up to current position + new tokens)
+        seq_len = cache_pos + T_kv
+        k_cached = self.kv_cache_manager.k_cache[:B, :seq_len]
+        v_cached = self.kv_cache_manager.v_cache[:B, :seq_len]
+        
+        q = q.transpose(1, 2)
+        k_cached = k_cached.transpose(1, 2) 
+        v_cached = v_cached.transpose(1, 2)
+        
+        if q.device.type == 'cuda':
+            og_dtype = q.dtype
+            q, k_cached, v_cached = q.bfloat16(), k_cached.bfloat16(), v_cached.bfloat16()
+        
+        score_mod_fn = None
+        if sinks is not None:
+            num_sink_tokens = sinks.shape[-1] if sinks.ndim > 1 else 1
+            
+            def score_mod_fn(score, batch_idx, head_idx, q_idx, kv_idx):
+                is_sink = kv_idx < num_sink_tokens
+                sink_logit = sinks[head_idx].to(score.dtype) if sinks.ndim > 1 else sinks[0].to(score.dtype)
+                return torch.where(is_sink, sink_logit, score)
+        
+        att = flex_attention(
+            q, k_cached, v_cached,
+            score_mod=score_mod_fn,
+            block_mask=block_mask,
+            scale=scale
+        )
+        
+        if q.device.type == 'cuda':
+            att = att.to(og_dtype)
+         
+        att = att.transpose(1, 2)
+        
+        return att
 
     def apply_cp(
         self,
