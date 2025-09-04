@@ -736,11 +736,12 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
                 "into a fixed sequence length dataset"
             )
 
-        if state_dict["max_target_sequence_length"] != self.dataset.max_target_sequence_length:
-            raise RuntimeError(
-                "Restoring an FSL dataset state with a different 'max_target_sequence_length' "
-                "is not supported"
-            )
+        # HACK: We know it's not supported, but we want to do it anyways.
+        #if state_dict["max_target_sequence_length"] != self.dataset.max_target_sequence_length:
+        #    raise RuntimeError(
+        #        "Restoring an FSL dataset state with a different 'max_target_sequence_length' "
+        #        "is not supported"
+        #    )
 
 
 class NumpyVSLDataLoader(NumpyDataLoaderBase):
