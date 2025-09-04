@@ -743,8 +743,8 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         )
         forward_start_time = None
         last_token_is_boundary = False
+        is_first_forward = True
         while not ((max_length is not None and generated.shape[1] >= max_length) or finished.all()):
-            is_first_forward = generated.shape[1] == prompt_len
             input_ids_for_model = (
                 generated
                 if (is_first_forward or not generation_config.use_cache)
@@ -768,6 +768,7 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                 blt_config=self.blt_config,
                 cache_leftpad=cache_leftpad if generation_config.use_cache else None,
             )
+            is_first_forward = False
 
             next_tokens = select_next_token(
                 next_token_logits.squeeze(1),

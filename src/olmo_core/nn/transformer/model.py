@@ -2486,6 +2486,9 @@ class BLTDistillTransformer(BLTTransformer):
         )
 
         byte_mask = torch.ones_like(input_ids, dtype=torch.bool) # temp
+        if not last_token_is_boundary:
+            local_encoder_kwargs["patch_lens"] = local_encoder_kwargs["patch_lens"][:, :-1]
+
         patch_end_indices = torch.cumsum(local_encoder_kwargs["patch_lens"], dim=1) - 1
         patch_end_indices = torch.where(
             patch_end_indices < byte_mask.shape[1],
@@ -2494,30 +2497,29 @@ class BLTDistillTransformer(BLTTransformer):
         )
         boundary_labels = torch.zeros_like(byte_mask, dtype=torch.float32)
         boundary_labels.scatter_(1, patch_end_indices, 1.0)
-        boundary_labels[:, -1] = last_token_is_boundary
 
-        h_byte, h_patch, boundary_logprobs, boundary_mask = self.local_encoder(
+        h_byte, h_patch, boundary_logprobs, boundary_mask = self.local_encoder.inference_forward(  # type: ignore
             input_ids,
             teacher_force_boundaries=blt_config.teacher_force_boundaries,
             boundary_threshold=blt_config.boundary_threshold,
             true_boundary_mask=boundary_labels > 0.5,
+            last_token_is_boundary=last_token_is_boundary,
             **local_encoder_kwargs
         )
 
-        h_patch_after_global, _ = self._block_forward(h_patch.to(torch.bfloat16), **block_kwargs)
-        h_patch_after_global = h_patch_after_global.to(h_patch.dtype)
+        if h_patch.shape[1] > 0:
+            h_patch_after_global, _ = self._block_forward(h_patch.to(torch.bfloat16), **block_kwargs)
+            h_patch_after_global = h_patch_after_global.to(h_patch.dtype)
+        else:
+            h_patch_after_global = h_patch
 
-        _, _, h_out = self.local_decoder(
+        _, _, h_out = self.local_decoder.inference_forward(  # type: ignore
             embeds=h_byte,
             patch_embeds=h_patch_after_global,
             boundary_logprobs=boundary_logprobs,
             boundary_mask=boundary_mask,
             **local_decoder_kwargs,
         )
-        if last_token_is_boundary:
-            logits = self.lm_head(h_out, **lm_head_kwargs)
-        else:
-            # check token before last boundary pos
-            logits = self.lm_head(h_out[:, :-1], **lm_head_kwargs)
+        logits = self.lm_head(h_out, **lm_head_kwargs)
 
         return logits
