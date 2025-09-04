@@ -233,18 +233,10 @@ def _get_and_validate_rope_scaling_config(blocks) -> dict | None:
     """
     # Separate full attention layers from sliding window layers
     full_attention_layers = [
-        (idx, block)
-        for idx, block in enumerate(blocks)
-        if block.attention.sliding_window is None
-        or not blocks.attention.sliding_window.should_use_swa(idx, len(blocks))
+        (idx, block) for idx, block in enumerate(blocks) if block.attention.window_size == (-1, -1)
     ]
     sliding_window_layers = [
-        (idx, block)
-        for idx, block in enumerate(blocks)
-        if (
-            block.attention.sliding_window is not None
-            and block.attention.sliding_window.should_use_swa(idx, len(blocks))
-        )
+        (idx, block) for idx, block in enumerate(blocks) if block.attention.window_size != (-1, -1)
     ]
 
     # Check for RoPE scaling on sliding window layers (not allowed)
