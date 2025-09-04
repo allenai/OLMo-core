@@ -13,7 +13,7 @@ authors = [
 requires-python = ">=3.9"
 license = { file = "LICENSE" }
 dependencies = [
-    "numpy<2.0",
+    "numpy",
     "torch>=2.6.0",
     "cached-path>=1.7.2",
     "requests",
@@ -22,7 +22,7 @@ dependencies = [
     "omegaconf",
     "safetensors",
     "importlib_resources",
-    "ai2-olmo-eval==0.8.4",
+    "ai2-olmo-eval==0.8.5",
 ]
 
 [project.urls]
