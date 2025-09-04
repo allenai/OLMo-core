@@ -1,5 +1,7 @@
 """
 Train a 1B OLMo model. Run this script without any arguments to see usage info.
+
+TODO: Point to custom data: gs://allennlp-willm/ppt2/shuffle-dyck.npy
 """
 
 from datetime import datetime
@@ -13,11 +15,19 @@ from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import Duration, TrainerConfig
-from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
+from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback, ConfigSaverCallback
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
+)
+
+from olmo_core.utils import seed_all
+from typing import List, cast
+import sys
+from olmo_core.train import (
+    prepare_training_environment,
+    teardown_training_environment,
 )
 
 # === willm: taken from https://arxiv.org/abs/2502.19249 ===
@@ -132,15 +142,54 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     )
 
 
+def main(run_name: str, overrides: List[str]):
+    """Custom main training function.
+    
+    Cf. https://github.com/allenai/OLMo-core/blob/willm/ppt2/src/examples/llama/train.py
+    """
+    # TODO: Fix this
+    config = build_config(run_name, overrides)
+
+    # Set RNG states on all devices.
+    seed_all(config.init_seed)
+
+    # Build components.
+    model = config.model.build(init_device="meta")
+    train_module = config.train_module.build(model)
+    dataset = config.dataset.build()
+    data_loader = config.data_loader.build(dataset, dp_process_group=train_module.dp_process_group)
+    trainer = config.trainer.build(train_module, data_loader)
+
+    # Save config to W&B and each checkpoint dir.
+    config_dict = config.as_config_dict()
+    cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
+
+    # Train.
+    trainer.fit()
+
+
 if __name__ == "__main__":
-    main(
-        global_batch_size=GLOBAL_BATCH_SIZE,
-        sequence_length=SEQUENCE_LENGTH,
-        model_config_builder=build_model_config,
-        train_module_config_builder=build_train_module_config,
-        trainer_config_builder=build_trainer_config,
-        include_instance_filter=False,  # We use SkipStepOptimizer for this problem.
-        include_default_evals=False,
-        intra_document_masking=False,
-        beaker_workspace="ai2/willm-ppt2",
-    )
+    if len(sys.argv) < 2:
+        print(f"Usage: python {sys.argv[0]} run_name [OVERRIDES...]")
+        sys.exit(1)
+
+    run_name, *overrides = sys.argv[1:]
+
+    prepare_training_environment()
+    try:
+        main(run_name, overrides=overrides)
+    finally:
+        teardown_training_environment()
+
+# if __name__ == "__main__":
+#     main(
+#         global_batch_size=GLOBAL_BATCH_SIZE,
+#         sequence_length=SEQUENCE_LENGTH,
+#         model_config_builder=build_model_config,
+#         train_module_config_builder=build_train_module_config,
+#         trainer_config_builder=build_trainer_config,
+#         include_instance_filter=False,  # We use SkipStepOptimizer for this problem.
+#         include_default_evals=False,
+#         intra_document_masking=False,
+#         beaker_workspace="ai2/willm-ppt2",
+#     )
