@@ -179,7 +179,7 @@ class NumpyDatasetBase(ABC):
         """
         The version of the :data:`fingerprint`.
         """
-        return "v2.0"
+        return "v2.1_hack_for_retrofit_do_not_merge_into_main"
 
     @property
     def fingerprint_fields(self) -> Tuple[str, ...]:
