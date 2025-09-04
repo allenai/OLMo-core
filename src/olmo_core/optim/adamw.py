@@ -20,7 +20,6 @@ def adamw_step(
     exp_avg_sq: torch.Tensor,
     step: torch.Tensor,
     step_factor: torch.Tensor,
-    step_increment_bugfix: bool = True,
 ):
     if p.grad is None:
         return
@@ -45,8 +44,7 @@ def adamw_step(
     update = -step_size * torch.div(exp_avg, denom)
     update.mul_(step_factor)
     p.add_(update)
-    if step_increment_bugfix:
-        step.add_(step_factor)
+    # step.add_(step_factor)
 
 
 def foreach_adamw_step(
@@ -61,7 +59,6 @@ def foreach_adamw_step(
     eps: float,
     weight_decay: float,
     step_factor: torch.Tensor,
-    step_increment_bugfix: bool = True,
 ):
     """Perform a single AdamW update with multi-tensor (*foreach*) kernels."""
     if not params:
@@ -78,14 +75,16 @@ def foreach_adamw_step(
     # foreach_lerp_ has issues when DTensor is enabled (see https://github.com/pytorch/pytorch/issues/132017).
     # Implement the lerp(a, b, w) = a + w * (b - a) with basic _foreach_mul_/add_ ops instead:
     w1 = step_factor * (1 - beta1)
-    torch._foreach_mul_(exp_avgs, 1.0 - w1)
-    torch._foreach_add_(exp_avgs, torch._foreach_mul(grads, w1))
+    torch._foreach_mul_(exp_avgs, 1.0 - w1)  # exp_avg *= (1 - w1)
+    torch._foreach_add_(exp_avgs, torch._foreach_mul(grads, w1))  # exp_avg += w1 * grad
 
     grad_squares = torch._foreach_mul(grads, grads)
 
     w2 = step_factor * (1 - beta2)
-    torch._foreach_mul_(exp_avg_sqs, 1.0 - w2)
-    torch._foreach_add_(exp_avg_sqs, torch._foreach_mul(grad_squares, w2))
+    torch._foreach_mul_(exp_avg_sqs, 1.0 - w2)  # exp_avg_sq *= (1 - w2)
+    torch._foreach_add_(
+        exp_avg_sqs, torch._foreach_mul(grad_squares, w2)
+    )  # exp_avg_sq += w2 * grad^2
 
     steps_t = torch.stack(steps)
     bias_corrections1 = 1 - torch.pow(beta1, steps_t + 1)
@@ -100,8 +99,7 @@ def foreach_adamw_step(
     updates = torch._foreach_div(exp_avgs, denoms)
     torch._foreach_mul_(updates, (-step_factor * step_sizes).unbind())
     torch._foreach_add_(params, updates)
-    if step_increment_bugfix:
-        torch._foreach_add_(steps, [step_factor] * len(steps))
+    # torch._foreach_add_(steps, [step_factor] * len(steps))
 
 
 class SkipStepAdamW(SkipStepOptimizer):
@@ -120,7 +118,6 @@ class SkipStepAdamW(SkipStepOptimizer):
         sigma_factor: int = 6,
         dtype: Optional[Union[torch.dtype, DType]] = None,
         foreach: bool = False,
-        step_increment_bugfix: bool = True,
     ) -> None:
         assert lr > 0.0
         assert all([0.0 <= beta <= 1.0 for beta in betas])
@@ -135,7 +132,6 @@ class SkipStepAdamW(SkipStepOptimizer):
             dtype = dtype.as_pt()
         self.dtype = dtype
         self.foreach = foreach
-        self.stepfix = step_increment_bugfix
         self._step_skipped: Optional[torch.Tensor] = None
 
     @property
@@ -166,7 +162,7 @@ class SkipStepAdamW(SkipStepOptimizer):
 
                 state = self.state[p]
                 if len(state) == 0:
-                    state["step"] = torch.zeros((), dtype=torch.float32, device=p.device)
+                    state["step"] = torch.tensor(0.0, dtype=torch.float32, device=p.device)
                     state["exp_avg"] = torch.zeros_like(p, dtype=self.dtype)
                     state["exp_avg_sq"] = torch.zeros_like(p, dtype=self.dtype)
 
@@ -180,7 +176,6 @@ class SkipStepAdamW(SkipStepOptimizer):
                     exp_avg_sq=state["exp_avg_sq"],
                     step=state["step"],
                     step_factor=step_factor,
-                    step_increment_bugfix=self.stepfix,
                 )
 
     def _step_foreach(self, closure=None) -> None:
@@ -203,7 +198,7 @@ class SkipStepAdamW(SkipStepOptimizer):
 
                 state = self.state[p]
                 if len(state) == 0:
-                    state["step"] = torch.zeros((), dtype=torch.float32, device=p.device)
+                    state["step"] = torch.tensor(0.0, dtype=torch.float32, device=p.device)
                     state["exp_avg"] = torch.zeros_like(p, dtype=self.dtype)
                     state["exp_avg_sq"] = torch.zeros_like(p, dtype=self.dtype)
 
@@ -227,7 +222,6 @@ class SkipStepAdamW(SkipStepOptimizer):
                 eps=group["eps"],
                 weight_decay=group["weight_decay"],
                 step_factor=step_factor,
-                step_increment_bugfix=self.stepfix,
             )
 
 
@@ -259,31 +253,10 @@ class SkipStepAdamWConfig(OptimConfig):
     betas: Tuple[float, float] = (0.9, 0.999)
     eps: float = 1e-8
     weight_decay: float = 1e-2
-    dtype: Optional[DType] = None
-    foreach: bool = True
-    """
-    Whether to use multi-tensor (*foreach*) kernels for the AdamW update.
-    Faster than the non-foreach version.
-    """
-
-    step_increment_bugfix: bool = True
-    """
-    Whether or not to fix the step-incrementing bug discovered in SkipStepAdamW.
-
-    If this flag is set to False, the step will not be incremented, which
-    gives the optimizer an effective lr that is 2.2x higher than the specified lr,
-    and no bias correction is applied.
-    """
-
     rolling_interval_length: int = 128
-    """
-    The length of the rolling interval to use for computing the mean and standard deviation of the loss.
-    """
-
     sigma_factor: int = 6
-    """
-    The number of standard deviations above the mean loss to skip a step.
-    """
+    dtype: Optional[DType] = None
+    foreach: bool = False
 
     @classmethod
     def optimizer(cls) -> Type[SkipStepAdamW]:

@@ -5,7 +5,6 @@ from typing import List, Optional
 import torch
 from beaker import Beaker, BeakerError, SecretNotFound
 
-from olmo_core.distributed.utils import is_distributed
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.io import is_url
 from olmo_core.launch.beaker import (
@@ -54,17 +53,16 @@ def beaker_secret_exists(secret: str, workspace: Optional[str] = None) -> bool:
 def _to_beaker_env_secret(
     name: str, secret: str, *, workspace: Optional[str] = None, required: bool = True
 ) -> Optional[BeakerEnvSecret]:
-    # Assume beaker secret exists if we are in a distributed setting (e.g., during a training job)
-    # so that we don't DOS beaker.
-    if is_distributed() or beaker_secret_exists(secret, workspace=workspace):
-        return BeakerEnvSecret(name=name, secret=secret)
-    elif required:
-        raise OLMoConfigurationError(
-            f"Secret {secret} not configured in beaker workspace {workspace}"
-        )
-    else:
-        log.info(f"Secret {secret} not configured in beaker workspace {workspace}")
-        return None
+    # if beaker_secret_exists(secret, workspace=workspace):
+    #     return BeakerEnvSecret(name=name, secret=secret)
+    # elif required:
+    #     raise OLMoConfigurationError(
+    #         f"Secret {secret} not configured in beaker workspace {workspace}"
+    #     )
+    # else:
+    #     log.info(f"Secret {secret} not configured in beaker workspace {workspace}")
+    #     return None
+    return BeakerEnvSecret(name=name, secret=secret)
 
 
 def get_root_dir(cluster: str) -> str:
@@ -95,9 +93,8 @@ def build_launch_config(
     cluster: str,
     task_name: str = "train",
     workspace: str = "ai2/OLMo-core",
-    budget: str = "ai2/oe-base",
+    budget: str = "ai2/oe-training",
     nccl_debug: bool = False,
-    cuda_launch_blocking: bool = False,
     beaker_image: str = OLMoCoreBeakerImage.stable,
     num_nodes: int = 1,
 ) -> BeakerLaunchConfig:
@@ -134,7 +131,7 @@ def build_launch_config(
         _to_beaker_env_secret(
             name="COMET_API_KEY",
             secret=f"{beaker_user}_COMET_API_KEY",
-            required=False,
+            required=True,
             workspace=workspace,
         ),
         _to_beaker_env_secret(
@@ -174,10 +171,7 @@ def build_launch_config(
         num_gpus=8,
         shared_filesystem=not is_url(root_dir),
         allow_dirty=False,
-        env_vars=[
-            BeakerEnvVar(name="NCCL_DEBUG", value="INFO" if nccl_debug else "WARN"),
-            BeakerEnvVar(name="CUDA_LAUNCH_BLOCKING", value="1" if cuda_launch_blocking else "0"),
-        ],
+        env_vars=[BeakerEnvVar(name="NCCL_DEBUG", value="INFO" if nccl_debug else "WARN")],
         env_secrets=[env_secret for env_secret in env_secrets if env_secret is not None],
         setup_steps=[
             # Clone repo.

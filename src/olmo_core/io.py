@@ -310,30 +310,6 @@ def file_exists(path: PathOrStr) -> bool:
         return Path(path).exists()
 
 
-def remove_file(path: PathOrStr):
-    """
-    Remove a local or remote file.
-
-    :param path: The path or URL to the file.
-
-    :raises FileNotFoundError: If the file doesn't exist.
-    """
-    path = normalize_path(path)
-
-    if is_url(path):
-        from urllib.parse import urlparse
-
-        parsed = urlparse(str(path))
-        if parsed.scheme == "gs":
-            return _gcs_remove_file(parsed.netloc, parsed.path.strip("/"))
-        elif parsed.scheme in ("s3", "r2", "weka"):
-            return _s3_remove_file(parsed.scheme, parsed.netloc, parsed.path.strip("/"))
-        else:
-            raise NotImplementedError(f"remove_file not implemented for '{parsed.scheme}' files")
-    else:
-        Path(path).unlink()
-
-
 def clear_directory(dir: PathOrStr, force: bool = False):
     """
     Clear out the contents of a local or remote directory.
@@ -582,16 +558,15 @@ def _get_gcs_client():
 
 
 def _gcs_is_retriable(exc: Exception) -> bool:
-    from google.api_core.exceptions import BadRequest, GatewayTimeout
+    from google.api_core.exceptions import BadRequest
     from google.api_core.retry import if_transient_error
-
-    return if_transient_error(exc) or isinstance(
-        exc,
-        (
-            requests.exceptions.Timeout,
-            BadRequest,  # Weird choice, but Google throws this transiently
-            GatewayTimeout,
-        ),
+    from google.api_core.exceptions import GatewayTimeout
+    
+    return (
+        if_transient_error(exc)
+        or isinstance(exc, requests.exceptions.Timeout)
+        or isinstance(exc, BadRequest)  # Weird choice, but Google throws this transiently
+        or isinstance(exc, GatewayTimeout)
     )
 
 
@@ -620,20 +595,6 @@ def _gcs_file_size(bucket_name: str, key: str) -> int:
         raise FileNotFoundError(f"gs://{bucket_name}/{key}")
     assert blob.size is not None
     return blob.size
-
-
-@retriable(retry_condition=_gcs_is_retriable)
-def _gcs_remove_file(bucket_name: str, key: str):
-    from google.api_core.exceptions import NotFound
-
-    storage_client = _get_gcs_client()
-    bucket = storage_client.bucket(bucket_name)
-    blob = bucket.blob(key)
-    try:
-        blob.reload(retry=_get_gcs_retry())
-        bucket.delete_blob(blob.name)
-    except NotFound:
-        raise FileNotFoundError(f"gs://{bucket_name}/{key}")
 
 
 @retriable(retry_condition=_gcs_is_retriable)
@@ -834,20 +795,7 @@ def _s3_file_size(scheme: str, bucket_name: str, key: str) -> int:
         return _get_s3_client(scheme).head_object(Bucket=bucket_name, Key=key)["ContentLength"]
     except ClientError as e:
         if e.response["ResponseMetadata"]["HTTPStatusCode"] == 404:
-            raise FileNotFoundError(f"{scheme}://{bucket_name}/{key}") from e
-        else:
-            raise
-
-
-@retriable(retry_condition=_s3_retry_condition)
-def _s3_remove_file(scheme: str, bucket_name: str, key: str):
-    from botocore.exceptions import ClientError
-
-    try:
-        return _get_s3_client(scheme).delete_object(Bucket=bucket_name, Key=key)
-    except ClientError as e:
-        if e.response["ResponseMetadata"]["HTTPStatusCode"] == 404:
-            raise FileNotFoundError(f"{scheme}://{bucket_name}/{key}") from e
+            raise FileNotFoundError(f"s3://{bucket_name}/{key}") from e
         else:
             raise
 
@@ -870,7 +818,7 @@ def _s3_get_bytes_range(
         )
     except ClientError as e:
         if e.response["ResponseMetadata"]["HTTPStatusCode"] == 404:
-            raise FileNotFoundError(f"{scheme}://{bucket_name}/{key}") from e
+            raise FileNotFoundError(f"s3://{bucket_name}/{key}") from e
         else:
             raise
 

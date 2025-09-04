@@ -44,10 +44,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     #  config.block.name = TransformerBlockType.default
     #  config.block.attention.qk_norm = None
     config.block.attention.sliding_window = SlidingWindowAttentionConfig(
-        force_full_attention_on_first_layer=False,
-        force_full_attention_on_last_layer=True,
-        # NOTE: 4097 instead of 4096 to reproduce with the off-by-one bug.
-        pattern=[4097, 4097, 4097, -1],
+        force_first=False, pattern=[False, False, False, True]
     )
     config.block.attention.use_flash = True
     config.block.attention.use_head_qk_norm = True

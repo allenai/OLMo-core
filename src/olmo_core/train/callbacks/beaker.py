@@ -132,8 +132,7 @@ class BeakerCallback(Callback):
             self._set_description,
             self.trainer.training_progress,
             op_name="beaker_set_description",
-            allow_multiple=False,
-            distributed=False,
+            cancel_in_progress=True,
         )
         self._last_update = time.monotonic()
 

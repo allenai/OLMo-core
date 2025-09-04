@@ -4,7 +4,6 @@ from typing import Optional, cast
 
 import pytest
 import torch
-import torch.distributed as dist
 import torch.nn as nn
 from torch.distributed.tensor import DTensor, Shard, init_device_mesh
 
@@ -13,11 +12,8 @@ from olmo_core.distributed.checkpoint import (
     load_model_and_optim_state,
     save_model_and_optim_state,
 )
-from olmo_core.distributed.parallel import (
-    DataParallelConfig,
-    DataParallelType,
-    build_world_mesh,
-)
+from olmo_core.distributed.parallel import build_world_mesh
+from olmo_core.distributed.parallel.data_parallel import DataParallelConfig, DataParallelType
 from olmo_core.distributed.utils import get_full_tensor, get_world_size
 from olmo_core.nn.attention import (
     AttentionConfig,
@@ -302,7 +298,7 @@ def test_context_parallel_transformer(architecture: str, tmp_path):
 
 
 def run_init_with_hsdp():
-    assert dist.get_world_size() == 4
+    assert torch.dist.get_world_size() == 4
     mesh = build_world_mesh(
         dp=DataParallelConfig(name=DataParallelType.hsdp, shard_degree=2, num_replicas=2)
     )
@@ -315,7 +311,7 @@ def run_init_with_hsdp():
     for name, param in model.named_parameters():
         full_param = get_full_tensor(param).detach()
         full_param_avg = full_param / 4
-        dist.all_reduce(full_param_avg)
+        torch.dist.all_reduce(full_param_avg)
         torch.testing.assert_close(
             full_param_avg,
             full_param,

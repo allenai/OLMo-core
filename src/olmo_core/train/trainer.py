@@ -3,7 +3,6 @@ import math
 import signal
 import time
 import uuid
-import warnings
 from collections import OrderedDict, defaultdict
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -43,7 +42,7 @@ from ..distributed.utils import (
 )
 from ..exceptions import OLMoConfigurationError
 from ..io import copy_file, file_exists, is_url, join_path, normalize_path
-from ..utils import cuda_sync_debug_mode, gc_cuda, get_default_thread_count
+from ..utils import cuda_sync_debug_mode, gc_cuda
 from .callbacks import (
     Callback,
     CheckpointerCallback,
@@ -263,8 +262,7 @@ class Trainer:
     _canceling_rank: Optional[int] = None
     _error: Optional[BaseException] = None
     _rank_batch_size: Optional[int] = None
-    _multi_thread_pool: Optional[ThreadPoolExecutor] = None
-    _single_thread_pool: Optional[ThreadPoolExecutor] = None
+    _thread_pool: Optional[ThreadPoolExecutor] = None
     # maps bookkeeping operation name to an ordereddict of operation ID to operation Future
     _bookkeeping_queue: Dict[str, Dict[str, Future]] = field(
         default_factory=lambda: defaultdict(OrderedDict)
@@ -516,27 +514,13 @@ class Trainer:
         return self._bookkeeping_pg
 
     @property
-    def multi_thread_pool(self) -> ThreadPoolExecutor:
+    def thread_pool(self) -> ThreadPoolExecutor:
         """
-        A multi-threaded executor for bookkeeping tasks that don't involve distributed communication.
+        A thread that can be used by callbacks to run bookkeeping tasks without blocking training.
         """
-        if self._multi_thread_pool is None:
-            self._multi_thread_pool = ThreadPoolExecutor(
-                max_workers=get_default_thread_count(),
-                thread_name_prefix="trainer-multi-thread-pool",
-            )
-        return self._multi_thread_pool
-
-    @property
-    def single_thread_pool(self) -> ThreadPoolExecutor:
-        """
-        A single-threaded executor for bookkeeping tasks that involve distributed communication.
-        """
-        if self._single_thread_pool is None:
-            self._single_thread_pool = ThreadPoolExecutor(
-                max_workers=1, thread_name_prefix="trainer-single-thread-pool"
-            )
-        return self._single_thread_pool
+        if self._thread_pool is None:
+            self._thread_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="trainer")
+        return self._thread_pool
 
     @property
     def checkpoint_loaded(self) -> bool:
@@ -597,10 +581,7 @@ class Trainer:
         Asynchronously check if the run is canceled. Use :data:`is_canceled` to see the result.
         This needs to be called by all ranks at the same point in the training loop.
         """
-        # NOTE: Do not set `allow_multiple` to `False` here!
-        # That could result in a situation where this op is canceled on one rank while it's running
-        # on another rank, leading to a deadlock.
-        self.run_bookkeeping_op(self._check_if_canceled)
+        self.run_bookkeeping_op(self._check_if_canceled, cancel_in_progress=True)
 
     def fit(self):
         """
@@ -651,13 +632,12 @@ class Trainer:
 
         log.info("Callback order:")
         for i, callback_name in enumerate(self.callbacks.keys()):
-            log.info(f"  - Callback {i + 1}: {callback_name}")
+            log.info(f"  - Callback {i+1}: {callback_name}")
 
         log.info(f"Training for {self.max_steps:,d} steps")
 
         for callback in self._iter_callbacks():
             callback.pre_train()
-        self.train_module.pre_train()
 
         barrier()
 
@@ -695,12 +675,8 @@ class Trainer:
 
     def _shutdown(self):
         self._log_metrics()
-        if self._multi_thread_pool is not None:
-            self._multi_thread_pool.shutdown(wait=True, cancel_futures=False)
-            self._multi_thread_pool = None
-        if self._single_thread_pool is not None:
-            self._single_thread_pool.shutdown(wait=True, cancel_futures=False)
-            self._single_thread_pool = None
+        self.thread_pool.shutdown(wait=True, cancel_futures=False)
+        self._thread_pool = None
         gc_cuda()
         barrier()
 
@@ -779,19 +755,10 @@ class Trainer:
 
         # NOTE: to avoid making a ton of client requests (S3 or otherwise) we only make those
         # requests from rank 0 then scatter the result to the other ranks.
-        dir_to_scatter: Optional[PathOrStr] = dir
-        error: Optional[Exception] = None
         if get_rank() == 0 and not self.checkpointer.dir_is_checkpoint(dir):
-            try:
-                dir_to_scatter = self.checkpointer.latest_checkpoint(dir)
-            except FileNotFoundError as e:  # defer raising until after the scatter
-                dir_to_scatter, error = None, e
-        dir_to_scatter = scatter_object(dir_to_scatter)
-        if dir_to_scatter is None:
-            if error is None:
-                raise FileNotFoundError(f"No checkpoints found in '{dir}'")
-            raise error
-        dir = dir_to_scatter
+            # Try to find the latest checkpoint in the directory.
+            dir = self.checkpointer.latest_checkpoint(dir)
+        dir = scatter_object(dir)
 
         log.info(f"Loading checkpoint from '{dir}'...")
         trainer_state = self.checkpointer.load(
@@ -824,7 +791,10 @@ class Trainer:
             should_load = self.checkpointer.contains_checkpoint(dir)
         should_load = scatter_object(should_load)
         if should_load:
-            self.load_checkpoint(dir, load_trainer_state=load_trainer_state)
+            self.load_checkpoint(
+                dir,
+                load_trainer_state=load_trainer_state,
+            )
             assert self.checkpoint_loaded
             return True
         else:
@@ -1063,79 +1033,44 @@ class Trainer:
         *args,
         cb: Optional[Callable[[T], None]] = None,
         op_name: Optional[str] = None,
-        cancel_in_progress: Optional[bool] = None,  # deprecated
-        allow_multiple: bool = True,
-        soft_timeout: Optional[int] = None,
-        distributed: bool = True,
+        cancel_in_progress: bool = False,
         **kwargs,
     ):
-        """
-        Run a bookkeeping operation, potentially in a background thread.
-
-        :param op: The operation to run.
-        :param args: Positional arguments to pass to the operation.
-        :param kwargs: Keyword arguments to pass to the operation.
-        :param cb: A callback to call with the result of the operation when it finishes.
-        :param op_name: A name for the operation, used for logging, debugging, and potentially canceling
-            old invocations of the same operation when ``allow_multiple`` is ``False``.
-        :param allow_multiple: If ``False``, only one bookkeeping operation with the given name is allowed
-            to run, so if there are other ops with the same name that are queued, those will be canceled,
-            and if there's another one that's already running, the current invocation will be ignored.
-        :param soft_timeout: A soft timeout, in seconds, to wait for the operation to finish. If the op
-            takes longer than this a warning will be issued.
-        :param distributed: This should only be set to ``False`` if the op doesn't use distributed
-            communication, in which case it will be allowed to run concurrently with other ops.
-        """
-        if cancel_in_progress is not None:
-            warnings.warn(
-                "'cancel_in_progress' argument to 'Trainer.run_bookkeeping_op' is deprecated, use 'allow_multiple' instead",
-                DeprecationWarning,
-            )
-            allow_multiple = not cancel_in_progress
-
         if op_name is None:
             op_name = op.__qualname__
-
-        if soft_timeout is None:
-            soft_timeout = self.bookkeeping_soft_timeout
+        op_id = uuid.uuid4().hex
 
         def wrapped_op(*args, **kwargs):
             start_time = time.perf_counter()
-            assert soft_timeout is not None  # for mypy
             try:
                 return op(*args, **kwargs)
             finally:
-                if (runtime := int(time.perf_counter() - start_time)) > soft_timeout:
+                if (
+                    runtime := int(time.perf_counter() - start_time)
+                ) > self.bookkeeping_soft_timeout:
                     log.warning(
-                        f"Bookeeping op '{op_name}' took longer than {soft_timeout} "
+                        f"Bookeeping op '{op_name}' took longer than {self.bookkeeping_soft_timeout} "
                         f"seconds ({runtime:,d} seconds)!"
                     )
 
-        if not distributed or (
+        if (
             self.async_bookkeeping
             and self.bookkeeping_device.type == "cpu"
             and self.bookkeeping_pg is not None
         ):
-            if not allow_multiple:
-                for op_id in list(self._bookkeeping_queue[op_name].keys()):
-                    future = self._bookkeeping_queue[op_name][op_id]
-                    if future.cancel() or future.done():
-                        self._bookkeeping_queue[op_name].pop(op_id)
-                    else:
+            if cancel_in_progress:
+                for future in self._bookkeeping_queue[op_name].values():
+                    if future.cancel():
+                        self._bookkeeping_queue[op_name].clear()
+                    elif not future.done():
                         log.warning(
-                            f"Attempted to submit bookkeeping op '{op_name}' while a previous invocation was already in progress. "
-                            "Since 'allow_multiple' is set to 'False' for this op, the current invocation will be canceled.\n"
-                            "If you see this message frequently, the op in question may be taking longer than expected or is "
-                            "being submitted too often."
+                            f"Attempted to cancel bookkeeping op '{op_name}' which was already in progress. "
+                            "If you see this message frequently, the op in question may be creating a backlog "
+                            "in the bookkeeping queue."
                         )
-                        return
 
-            if distributed:
-                future = self.single_thread_pool.submit(wrapped_op, *args, **kwargs)
-            else:
-                future = self.multi_thread_pool.submit(wrapped_op, *args, **kwargs)
-
-            op_id = uuid.uuid4().hex
+            # Can safely run in the thread pool.
+            future = self.thread_pool.submit(wrapped_op, *args, **kwargs)
             self._bookkeeping_queue[op_name][op_id] = future
 
             def callback(fut: Future[T]):
@@ -1146,7 +1081,7 @@ class Trainer:
                     log.exception(e)
                     self._error = e
                 finally:
-                    # Remove the completed op from the queue.
+                    # Removed the completed op from the queue.
                     assert op_name is not None  # for mypy
                     self._bookkeeping_queue[op_name].pop(op_id, None)
 
