@@ -890,38 +890,37 @@ class Attention(AttentionBase):
         """
         FlexAttention with KV caching support for generation with sinks.
         """
-        B, H, T_q, D = q.shape
-        _, _, T_kv, _ = k.shape
+        batch_size, num_heads, seq_len_q, head_dim = q.shape
+        _, _, seq_len_kv, _ = k.shape
         
         cache_pos = self.kv_cache_manager.current_position().item()
         
         k_for_cache = k.transpose(1, 2)
         v_for_cache = v.transpose(1, 2)
         
-        self.kv_cache_manager.k_cache[:B, cache_pos:cache_pos+T_kv] = k_for_cache
-        self.kv_cache_manager.v_cache[:B, cache_pos:cache_pos+T_kv] = v_for_cache
-        
-        seq_len = cache_pos + T_kv
-        k_cached = self.kv_cache_manager.k_cache[:B, :seq_len]
-        v_cached = self.kv_cache_manager.v_cache[:B, :seq_len]  # (B, seq_len, H, D)
-        
+        cache_slice = slice(cache_pos, cache_pos + seq_len_kv)
+        self.kv_cache_manager.k_cache[:batch_size, cache_slice, :num_heads] = k_for_cache
+        self.kv_cache_manager.v_cache[:batch_size, cache_slice, :num_heads] = v_for_cache
+
+        seq_len = cache_pos + seq_len_kv
+        k_cached = self.kv_cache_manager.k_cache[:batch_size, :seq_len, :num_heads]
+        v_cached = self.kv_cache_manager.v_cache[:batch_size, :seq_len, :num_heads]
 
         k_cached = k_cached.transpose(1, 2)
         v_cached = v_cached.transpose(1, 2)
-        
+        og_dtype = None
         if q.device.type == 'cuda':
             og_dtype = q.dtype
             q, k_cached, v_cached = q.bfloat16(), k_cached.bfloat16(), v_cached.bfloat16()
-        
         score_mod_fn = None
         if sinks is not None:
             num_sink_tokens = sinks.shape[-1] if sinks.ndim > 1 else 1
             
             def score_mod_fn(score, batch_idx, head_idx, q_idx, kv_idx):
                 is_sink = kv_idx < num_sink_tokens
-                sink_logit = sinks[head_idx].to(score.dtype) if sinks.ndim > 1 else sinks[0].to(score.dtype)
+                sink_val = sinks[head_idx] if sinks.ndim > 1 else sinks[0]
+                sink_logit = sink_val.to(score.dtype)
                 return torch.where(is_sink, sink_logit, score)
-        
         att = flex_attention(
             q, k_cached, v_cached,
             score_mod=score_mod_fn,
@@ -929,11 +928,10 @@ class Attention(AttentionBase):
             scale=scale
         )
         
-        if q.device.type == 'cuda':
+        if og_dtype is not None:
             att = att.to(og_dtype)
-         
         att = att.transpose(1, 2)
-        
+
         return att
 
     def apply_cp(
