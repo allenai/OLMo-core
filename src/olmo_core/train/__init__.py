@@ -122,6 +122,10 @@ def prepare_training_environment(
     except RuntimeError as e:
         print(f"failed to set multiprocessing start method: {e}")
 
+    # Initialize CUDA
+    if torch.cuda.is_available():
+        torch.cuda.init()
+
     # Initialize process group.
     if backend is not None:
         init_distributed(backend=backend, timeout=timeout)
