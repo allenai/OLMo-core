@@ -246,6 +246,7 @@ def build_config(
     cluster: str,
     overrides: List[str],
     *,
+    common_config_builder: Callable[..., CommonComponents] = build_common_components,
     model_config_builder: Callable[[CommonComponents], TransformerConfig],
     train_module_config_builder: Callable[[CommonComponents], TransformerTrainModuleConfig],
     trainer_config_builder: Callable[[CommonComponents], TrainerConfig],
@@ -253,7 +254,7 @@ def build_config(
     init_seed: int = 12536,
     **kwargs,
 ) -> ExperimentConfig:
-    common = build_common_components(script, cmd, run_name, cluster, overrides, **kwargs)
+    common = common_config_builder(script, cmd, run_name, cluster, overrides, **kwargs)
 
     model = model_config_builder(common)
 
@@ -323,6 +324,7 @@ def train(config: ExperimentConfig):
 def main(
     *,
     global_batch_size: int,
+    common_config_builder: Callable[..., CommonComponents] = build_common_components,
     model_config_builder: Callable[[CommonComponents], TransformerConfig],
     train_module_config_builder: Callable[[CommonComponents], TransformerTrainModuleConfig],
     trainer_config_builder: Callable[[CommonComponents], TrainerConfig],
@@ -369,6 +371,7 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/pluto-cirrascale --launch.nu
         cluster,
         overrides,
         global_batch_size=global_batch_size,
+        common_config_builder=common_config_builder,
         model_config_builder=model_config_builder,
         train_module_config_builder=train_module_config_builder,
         trainer_config_builder=trainer_config_builder,
