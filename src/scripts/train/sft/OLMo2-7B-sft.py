@@ -27,7 +27,8 @@ from olmo_core.internal.common import (
 from olmo_core.io import list_directory
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
-from olmo_core.nn.transformer import TransformerConfig
+from olmo_core.nn.rope import YaRNRoPEScalingConfig
+from olmo_core.nn.transformer import TransformerConfig, TransformerBlockConfig
 from olmo_core.optim import LinearWithWarmup, SkipStepAdamWConfig
 from olmo_core.train import (
     Duration,
@@ -260,6 +261,41 @@ class SFTConfig(Config):
                 pattern=[4096, 4096, 4096, -1],
             )
             model.block.attention.use_flash = True
+        elif model_name == "olmo2.5-7b-yarn":
+            # @soldni: copied from https://github.com/allenai/olmo-cookbook/blob/fe0d0ef5bbef7ad2caa2c91047d88062cf565df9/src/cookbook/model/config.py#L200-L206
+            model = TransformerConfig.olmo2_7B(vocab_size=tokenizer_config.padded_vocab_size())
+            model.block.attention.sliding_window = SlidingWindowAttentionConfig(
+                force_full_attention_on_first_layer=False,
+                force_full_attention_on_last_layer=True,
+                pattern=[4096, 4096, 4096, -1],
+            )
+            model.block.attention.use_flash = True
+            model.block.attention.rope.scaling = YaRNRoPEScalingConfig(
+                factor=8, beta_fast=32, beta_slow=1, old_context_len=8192
+            )
+        elif model_name == "olmo2.5-7b-yarn-fullonly":
+            # @soldni: copied from https://github.com/allenai/olmo-cookbook/blob/fe0d0ef5bbef7ad2caa2c91047d88062cf565df9/src/cookbook/model/config.py#L209-L224
+            model = TransformerConfig.olmo2_7B(vocab_size=tokenizer_config.padded_vocab_size())
+            model.block.attention.sliding_window = SlidingWindowAttentionConfig(
+                force_full_attention_on_first_layer=False,
+                force_full_attention_on_last_layer=True,
+                pattern=[4096, 4096, 4096, -1],
+            )
+            model.block.attention.use_flash = True
+            model.block.attention.rope.scaling = YaRNRoPEScalingConfig(
+                factor=8, beta_fast=32, beta_slow=1, old_context_len=8192
+            )
+            def no_rope_scaling(block: TransformerBlockConfig) -> TransformerBlockConfig:
+                rope_config = block.attention.rope
+                if rope_config is not None:
+                    rope_config.scaling = None
+                    block.attention.rope = rope_config
+                return block
+            model.block_overrides = {
+                i: no_rope_scaling(model.block.copy())
+                for i in range(model.n_layers)
+                if model.block.attention.sliding_window.should_use_swa(i, model.n_layers)
+            }
         elif model_name == "olmo2.9-7b":
             model = TransformerConfig.olmo2_7B(
                     vocab_size=tokenizer_config.padded_vocab_size(),
