@@ -660,6 +660,12 @@ class LocalEncoder(nn.Module):
 
         # pass through encoder layers
         h = embeddings
+
+        dtype = h.dtype
+        block_dtype = torch.bfloat16 if hasattr(self.blocks["0"], "attention") and self.blocks["0"].attention.use_flash else dtype  # type: ignore
+
+        h = h.to(block_dtype)
+
         for block in self.blocks.values():
             # TODO(benjaminm): do we need mark_dynamic here / in general?
             # Mark sizes as dynamic for torch.compile().
@@ -667,6 +673,8 @@ class LocalEncoder(nn.Module):
             #    mark_dynamic(h, (0, 1), strict=False)
             # TODO(benjaminm): do we need local_block_kwargs?
             h = block(h)
+
+        h = h.to(dtype)
 
         if self.post_last_block_norm is not None:
             h = self.post_last_block_norm(h)
@@ -960,9 +968,16 @@ class LocalDecoder(nn.Module):
             else:
                 h = embeds + self.last_value.unsqueeze(1)
 
+            dtype = h.dtype
+            block_dtype = torch.bfloat16 if hasattr(self.blocks["0"], "attention") and self.blocks["0"].attention.use_flash else dtype  # type: ignore
+
+            h = h.to(block_dtype)
+
             for block_idx in range(self.n_layers):
                 block = self.blocks[str(block_idx)]
                 h = block(h)
+
+            h = h.to(dtype)
 
             # TODO(benjaminm): clean up / return None / don't return so many things?
             return (h, h), h, h
@@ -1061,9 +1076,16 @@ class LocalDecoder(nn.Module):
                 torch.where(patch_mask.unsqueeze(-1), h_b, torch.zeros_like(h_b))
             )
 
+            dtype = h_with_b.dtype
+            block_dtype = torch.bfloat16 if hasattr(self.blocks["0"], "attention") and self.blocks["0"].attention.use_flash else dtype  # type: ignore
+
+            h_with_b = h_with_b.to(block_dtype)
+
             for block_idx in range(self.n_layers):
                 block = self.blocks[str(block_idx)]
                 h_with_b = block(h_with_b)
+
+            h_with_b = h_with_b.to(dtype)
 
             h_for_true_boundaries = torch.gather(
                 h_with_b,

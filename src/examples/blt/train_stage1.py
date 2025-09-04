@@ -37,7 +37,7 @@ from olmo_core.nn.transformer import (
     TransformerBlockConfig,
     TransformerBlockType,
 )
-from olmo_core.nn.attention import AttentionConfig
+from olmo_core.nn.attention import AttentionConfig, SlidingWindowAttentionConfig
 from olmo_core.nn.mamba import MambaConfig
 from olmo_core.nn.feed_forward import FeedForwardConfig
 from olmo_core.nn.blt.config import LocalEncoderConfig, LocalDecoderConfig
@@ -136,11 +136,11 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         GLOBAL_BATCH_SIZE = 4
         LOCAL_BATCH_SIZE = 4
 
+    model_style_tags = LOCAL_MODEL_STYLE.split(":")[1:]
     teacher_model_config = getattr(TransformerConfig, OLMO_ARCH)(
-        vocab_size=subword_tokenizer_config.padded_vocab_size()
-    )
-    teacher_model_config = teacher_model_config.replace(
-        freeze_params=["*"] # don't train teacher
+        vocab_size=subword_tokenizer_config.padded_vocab_size(),
+        dtype=DType.bfloat16 if "attention_encoder" in model_style_tags or "attention_decoder" in model_style_tags else DType.float32,
+        freeze_params=["*"], # don't train teacher
     )
 
     if LOCAL_MODEL_STYLE == "blt":
@@ -182,7 +182,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             block_config=local_block,
             blt_k=2,
         )
-    elif LOCAL_MODEL_STYLE == "hnet":
+    elif LOCAL_MODEL_STYLE.startswith("hnet"):
         if OLMO_ARCH == "olmo2_1B_v2":
             local_d_model = 2048
         elif OLMO_ARCH == "olmo2_7B":
@@ -192,7 +192,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
 
         local_encoder_n_layers = 4
         local_decoder_n_layers = 4
-        local_block = TransformerBlockConfig(
+        local_encoder_block = local_decoder_block = TransformerBlockConfig(
             name=TransformerBlockType.mamba,
             attention=AttentionConfig(), # not used
             mamba=MambaConfig(
@@ -205,6 +205,39 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             layer_norm=teacher_model_config.block.layer_norm,
         )
 
+        if "attention_encoder" in model_style_tags:
+            local_encoder_block = teacher_model_config.block.replace(
+                attention=teacher_model_config.block.attention.replace(
+                    n_heads=16,
+                    use_flash=True,
+                    sliding_window=SlidingWindowAttentionConfig(
+                        pattern=[512] * local_encoder_n_layers,
+                        force_full_attention_on_first_layer=False,
+                        force_full_attention_on_last_layer=False,
+                    ),
+                ),
+                feed_forward=teacher_model_config.block.feed_forward.replace(
+                    hidden_size=local_d_model,
+                    bias=False,
+                ),
+            )
+        if "attention_decoder" in model_style_tags:
+            local_decoder_block = teacher_model_config.block.replace(
+                attention=teacher_model_config.block.attention.replace(
+                    n_heads=16,
+                    use_flash=True,
+                    sliding_window=SlidingWindowAttentionConfig(
+                        pattern=[512] * local_decoder_n_layers,
+                        force_full_attention_on_first_layer=False,
+                        force_full_attention_on_last_layer=False,
+                    ),
+                ),
+                feed_forward=teacher_model_config.block.feed_forward.replace(
+                    hidden_size=local_d_model,
+                    bias=False,
+                ),
+            )
+
         local_encoder = LocalEncoderConfig(
             add_hash_embeddings=ADD_HASH_EMBEDDINGS,
             hash_byte_group_size=[3, 4, 5, 6, 7, 8],
@@ -214,7 +247,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             n_layers=local_encoder_n_layers,
             sliding_window_size=0,
             cross_attn_n_heads=0,
-            block_config=local_block,
+            block_config=local_encoder_block,
             add_norm_after_last_block=True,
             boundary_predictor="hnet",
             add_out_projection=True,
@@ -225,7 +258,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             n_layers=local_decoder_n_layers,
             sliding_window_size=0,
             cross_attn_n_heads=0,
-            block_config=local_block,
+            block_config=local_decoder_block,
             add_norm_before_first_block=True,
             add_norm_onto_residual=False,
             add_in_projection=True,
