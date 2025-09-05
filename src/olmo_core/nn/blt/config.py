@@ -23,6 +23,7 @@ class BLTConfig(Config):
     rep_compare_fn: str = "l2"
     target_ratio: float = 4.5
     encoder_loss_lookahead: int = 0
+    encoder_loss_no_lookahead_weight: float = 1.0
     encoder_loss_lookahead_weights: list[float] = field(default_factory=lambda: [])
     patching: str = "dolma2"
     epsilon: float = 1e-6

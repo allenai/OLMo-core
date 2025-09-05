@@ -1776,6 +1776,8 @@ class BLTDistillTransformer(BLTTransformer):
             dim=-1,
         ) * mask.float()).mean() / (mask.float().mean() + blt_config.epsilon)
 
+        local_encoder_loss *= blt_config.encoder_loss_no_lookahead_weight
+
         for lookahead_idx in range(blt_config.encoder_loss_lookahead):
             assert student_hidden_states is not None
             assert teacher_hidden_states is not None
