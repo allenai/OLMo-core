@@ -867,6 +867,7 @@ class LocalDecoder(nn.Module):
         add_norm_before_first_block: bool,
         add_norm_onto_residual: bool,
         add_in_projection: bool,
+        add_projected_patch_residuals: bool = False,
         hnet_smooth: bool = True,
         hnet_modulate: bool = True,
         blt_k: Optional[int] = None,
@@ -881,6 +882,7 @@ class LocalDecoder(nn.Module):
         self.add_norm_before_first_block = add_norm_before_first_block
         self.add_norm_onto_residual = add_norm_onto_residual
         self.add_in_projection = add_in_projection
+        self.add_projected_patch_residuals = add_projected_patch_residuals
         self.hnet_smooth = hnet_smooth
         self.hnet_modulate = hnet_modulate
         self.blt_k = blt_k
@@ -940,6 +942,14 @@ class LocalDecoder(nn.Module):
             )
         else:
             self.in_projection = None
+
+        if self.add_projected_patch_residuals:
+            self.patch_residuals_projection = nn.Linear(
+                d_global_model,
+                d_global_model,
+            )
+        else:
+            self.patch_residuals_projection = None
 
         self.boundary_embedding = nn.Embedding(1, d_model, device=init_device)
         self.has_cache = False
@@ -1193,6 +1203,7 @@ class LocalDecoder(nn.Module):
         self,
         embeds: torch.Tensor,
         patch_embeds: torch.Tensor,
+        patch_residuals: torch.Tensor,
         boundary_logprobs: torch.Tensor,
         boundary_mask: torch.Tensor,
         cross_attn_mask: BlockMask | None = None,
@@ -1209,6 +1220,9 @@ class LocalDecoder(nn.Module):
             h_patch = self.initial_norm(patch_embeds)
         else:
             h_patch = patch_embeds
+
+        if self.patch_residuals_projection is not None:
+            h_patch = h_patch + self.patch_residuals_projection(patch_residuals)
 
         return self.depool(
             embeds=h,

@@ -1384,14 +1384,15 @@ class BLTTransformer(Transformer):
         for block in self.blocks.values():
             # Mark sizes as dynamic for torch.compile().
             if self.compile_enabled:
-                mark_dynamic(h_patch, (0, 1), strict=False)
+                mark_dynamic(h_patch_global, (0, 1), strict=False)
             h_patch_global = block(h_patch_global, **block_kwargs)
 
-        h_patch = h_patch_global.to(h_patch.dtype)
+        h_patch_after_global = h_patch_global.to(h_patch.dtype)
 
         h_out = self.local_decoder(
             embeds=h_byte,
-            patch_embeds=h_patch,
+            patch_embeds=h_patch_after_global,
+            patch_residuals=h_patch,
             boundary_logprobs=boundary_logprobs,
             boundary_mask=boundary_mask,
             **local_decoder_kwargs,
@@ -1989,10 +1990,12 @@ class BLTDistillTransformer(BLTTransformer):
 
             if blt_config.decoder_backprop_through_encoder:
                 h_byte_for_decoder = h_byte
-                h_patch_for_decoder = h_patch_after_global
+                h_patch_after_global_for_decoder = h_patch_after_global
+                h_patch_for_decoder = h_patch
             else:
                 h_byte_for_decoder = h_byte.detach()
-                h_patch_for_decoder = h_patch_after_global.detach()
+                h_patch_after_global_for_decoder = h_patch_after_global.detach()
+                h_patch_for_decoder = h_patch.detach()
 
             if blt_config.decoder_backprop_through_boundary_predictor:
                 boundary_logprobs_for_decoder = boundary_logprobs if boundary_logprobs is not None else None
@@ -2001,7 +2004,8 @@ class BLTDistillTransformer(BLTTransformer):
 
             (h_out_for_true_boundaries, h_out_for_all_boundaries), h_out_for_logits, _ = self.local_decoder(
                 embeds=h_byte_for_decoder,
-                patch_embeds=h_patch_for_decoder,
+                patch_embeds=h_patch_after_global_for_decoder,
+                patch_residuals=h_patch_for_decoder,
                 boundary_logprobs=boundary_logprobs_for_decoder,
                 boundary_mask=boundary_mask,
                 **local_decoder_kwargs,
@@ -2298,6 +2302,7 @@ class BLTDistillTransformer(BLTTransformer):
         (h_out_for_boundaries, _), h_out_for_logits, _ = self.local_decoder(
             embeds=h_byte,
             patch_embeds=h_patch_after_global,
+            patch_residuals=h_patch,
             boundary_logprobs=boundary_logprobs,
             boundary_mask=boundary_mask,
             **local_decoder_kwargs,
@@ -2421,6 +2426,7 @@ class BLTDistillTransformer(BLTTransformer):
         (h_out_for_boundaries, _), h_out_for_logits, _ = self.local_decoder(
             embeds=h_byte,
             patch_embeds=h_patch_after_global,
+            patch_residuals=h_patch,
             boundary_logprobs=boundary_logprobs,
             boundary_mask=boundary_mask,
             **local_decoder_kwargs,
@@ -2516,6 +2522,7 @@ class BLTDistillTransformer(BLTTransformer):
         _, _, h_out = self.local_decoder.inference_forward(  # type: ignore
             embeds=h_byte,
             patch_embeds=h_patch_after_global,
+            patch_residuals=h_patch,
             boundary_logprobs=boundary_logprobs,
             boundary_mask=boundary_mask,
             **local_decoder_kwargs,

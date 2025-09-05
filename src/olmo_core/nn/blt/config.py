@@ -100,6 +100,7 @@ class LocalDecoderConfig(Config):
     add_norm_before_first_block: bool = False
     add_norm_onto_residual: bool = False
     add_in_projection: bool = False
+    add_projected_patch_residuals: bool = False
     hnet_smooth: bool = True
     hnet_modulate: bool = True
     blt_k: Optional[int] = None  # used in blt
@@ -120,6 +121,7 @@ class LocalDecoderConfig(Config):
             add_norm_before_first_block=self.add_norm_before_first_block,
             add_norm_onto_residual=self.add_norm_onto_residual,
             add_in_projection=self.add_in_projection,
+            add_projected_patch_residuals=self.add_projected_patch_residuals,
             hnet_smooth=self.hnet_smooth,
             hnet_modulate=self.hnet_modulate,
             blt_k=self.blt_k,
