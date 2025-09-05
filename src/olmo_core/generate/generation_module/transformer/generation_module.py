@@ -519,9 +519,17 @@ class TransformerGenerationModule(GenerationModule):
                 lambda c: setattr(c, "dtype", dtype) if hasattr(c, "dtype") else None
             )
 
+        # DEBUG force enable flash attention
+        transformer_config.block.attention.use_flash = True
+
         log_or_print(log, f"{transformer_config}")
         log_or_print(log, f"{generation_config}")
         model = transformer_config.build()
+
+        # DEBUG flash attention needs bf16
+        for block in model.blocks.values():
+            block.to(torch.bfloat16)
+        
         generation_module = cls(model, generation_config, **kwargs)
 
         # Load checkpoint
@@ -865,7 +873,12 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                 )
             # last logit is potentially wrong since last_token_is_boundary=True in reference, so skip it
             assert (torch.argmax(logits[:, -tokens_generated-1:], -1) == reference_out.logits[:, -tokens_generated-1:-1].argmax(-1)).all()
-            assert torch.allclose(logits[:, -tokens_generated-1:], reference_out.logits[:, -tokens_generated-1:-1], rtol=1e-1, atol=1)
+            assert torch.allclose(
+                F.softmax(logits[:, -tokens_generated-1:], -1),
+                F.softmax(reference_out.logits[:, -tokens_generated-1:-1], -1),
+                rtol=1e-1,
+                atol=0.05, # accept max 5% prob diff (highest observed ~1.6%)
+            )
         if return_logprobs and all_logprobs:
             logprobs = torch.cat(all_logprobs, dim=1)
 

@@ -38,18 +38,24 @@ class Mamba(_Mamba2):
             self.mamba_cache_manager.update_seqlen(x.shape[1])
             return out
         elif self.mamba_cache_manager is not None:
-            return self._step(x, (self.mamba_cache_manager.conv_state, self.mamba_cache_manager.ssm_state))
+            return self.step(x, (self.mamba_cache_manager.conv_state, self.mamba_cache_manager.ssm_state))
         else:
             return super().forward(x)
-        
-    # from HNet repo
-    def _step(self, hidden_states, inference_params):  # type: ignore
+
+    def step(self, hidden_states, inference_params):  # type: ignore
         assert self.mamba_cache_manager is not None
 
         conv_state, ssm_state = inference_params
-        result, conv_state, ssm_state = super().step(
-            hidden_states, conv_state, ssm_state
-        )
+
+        # Mamba2 'Only support[s] decoding with 1 token at a time for now' so we have to loop
+        results = []
+        for i in range(hidden_states.shape[1]):
+            result, conv_state, ssm_state = super().step(
+                hidden_states[:, [i]], conv_state, ssm_state
+            )
+            results.append(result)
+
+        result = torch.cat(results, dim=1)
 
         # Update the state cache in-place
         inference_params[0].copy_(conv_state)

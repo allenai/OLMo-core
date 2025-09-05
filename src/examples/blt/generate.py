@@ -110,7 +110,7 @@ def generate_text(
     tokenizer,
     device: torch.device,
     batch_size: int,
-    stream: bool = True,
+    stream: bool = False,
 ) -> list[str]:
     """Generate text from a prompt."""
     # Tokenize the prompt
@@ -119,13 +119,20 @@ def generate_text(
     attention_mask = inputs["attention_mask"].to(device)
 
     # Generate
+    if isinstance(generation_module, BLTTransformerGenerationModule):
+        kwargs = {
+            "stream": stream,
+            "until": ["<|endoftext|>"]
+        }
+    else:
+        kwargs = {}
+
     output_ids, _, _ = generation_module.generate_batch(
         input_ids,
         attention_mask=attention_mask,
         completions_only=True,
         log_timing=True,
-        stream=stream,
-        until=["<|endoftext|>"]
+        **kwargs,
     )
 
     # Decode the generated tokens
