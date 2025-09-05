@@ -215,7 +215,10 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
                 xlstm=XLSTMConfig(
                     num_heads=16,                
                 ),
-                feed_forward=None,
+                feed_forward=teacher_model_config.block.feed_forward.replace(
+                    hidden_size=local_d_model * 2,
+                    bias=False,
+                ),
                 layer_norm=teacher_model_config.block.layer_norm,
             )
 
