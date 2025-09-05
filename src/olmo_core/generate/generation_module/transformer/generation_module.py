@@ -50,8 +50,6 @@ from olmo_core.utils import get_default_device, log_or_print, move_to_device
 
 log = logging.getLogger(__name__)
 
-BYTE_EXPANSION_FACTOR = int(os.environ.get("BYTE_EXPANSION_FACTOR", "4"))
-
 class TransformerGenerationModule(GenerationModule):
     """Module for autoregressive text generation with transformer models."""
 
@@ -654,6 +652,7 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         log_timing: bool = True,
         stream: bool = False,
         verify: bool = False,
+        force_boundary_every: Optional[int] = None,
         **generation_kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
         """
@@ -684,10 +683,6 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
 
         byte_input_ids = torch.tensor([byte_input_ids], dtype=torch.long, device=input_ids.device)
         patch_lens = torch.tensor([patch_lens], dtype=torch.long, device=input_ids.device)
-        # TODO(benjaminm): our 'budget' of global tokens. we set it to the worst case (n_tokens == n_bytes)
-        # but this is probably quite inefficient. do better?
-        if not self.blt_config.teacher_force_boundaries:
-            patch_lens = torch.ones_like(byte_input_ids, dtype=torch.long, device=input_ids.device)
 
         # Replace generation config with any overrides.
         generation_config = self._generation_config.replace(**generation_kwargs)
@@ -703,18 +698,18 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         all_logits: Optional[List[torch.Tensor]] = [] if return_logits else None
         all_logprobs: Optional[List[torch.Tensor]] = [] if return_logprobs else None
 
-
         # Timing stats
         time_to_first_token = None
         decode_start_time = None
         setup_time = None
-        tokens_generated = 0
+        tokens_generated_plus_prefilled = 0 # can not know how many boundaries before prefill
+        bytes_generated = 0
 
-        # TODO(benjaminm): should probably get rid of BYTE_EXPANSION_FACTOR and handle length diff on the caller side
+        # max length *in tokens*, not bytes
         if generation_config.max_new_tokens is not None:
-            max_length = prompt_len + generation_config.max_new_tokens * BYTE_EXPANSION_FACTOR
+            max_length = prompt_len + generation_config.max_new_tokens
         elif generation_config.max_length is not None:
-            max_length = generation_config.max_length * BYTE_EXPANSION_FACTOR
+            max_length = generation_config.max_length
         else:
             max_length = None  # Generate until EOS or stop tokens or OOM...
 
@@ -760,7 +755,8 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         forward_start_time = None
         last_token_is_boundary = False
         is_first_forward = True
-        while not ((max_length is not None and generated.shape[1] >= max_length) or finished.all()):
+
+        while not ((max_length is not None and tokens_generated_plus_prefilled >= max_length) or finished.all()):
             input_ids_for_model = (
                 generated
                 if (is_first_forward or not generation_config.use_cache)
@@ -776,7 +772,7 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
             ) if not is_first_forward and generation_config.use_cache else patch_lens
 
             forward_start_time = time.perf_counter()
-            next_token_logits = self.model.inference_forward(  # type: ignore
+            next_token_logits, n_new_tokens_from_forward = self.model.inference_forward(  # type: ignore
                 input_ids_for_model,
                 patch_lens=patch_lens_for_model,
                 last_token_is_boundary=last_token_is_boundary,
@@ -784,6 +780,7 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                 blt_config=self.blt_config,
                 cache_leftpad=cache_leftpad if generation_config.use_cache else None,
             )
+            tokens_generated_plus_prefilled += n_new_tokens_from_forward
             is_first_forward = False
 
             next_tokens = select_next_token(
@@ -794,11 +791,19 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                 top_p=generation_config.top_p,
             )
 
+            # for debugging
+            if force_boundary_every is not None:
+                if (bytes_generated + 1) % force_boundary_every == 0 and not last_token_is_boundary:
+                    next_tokens[0] = self.model.end_of_subword_token_blt # type: ignore
+                elif next_tokens[0].item() == self.model.end_of_subword_token_blt:
+                    next_tokens[0] = 36  # doesn't matter but 36 is whitespace in blt tokenizer
+
             if next_tokens[0].item() == self.model.end_of_subword_token_blt:
                 # possible but two consecutive boundaries are never seen during training
                 # do we need to handle this case / forbid consecutive boundaries?
                 assert not last_token_is_boundary
                 last_token_is_boundary = True
+                pbar.update(1)
             else:
                 if last_token_is_boundary:
                     # start of a new patch
@@ -833,26 +838,25 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                 # Append next tokens
                 generated = torch.cat([generated, next_tokens.unsqueeze(-1)], dim=1)
 
-                if log_timing and tokens_generated == 0:
+                if log_timing and bytes_generated == 0:
                     torch.cuda.synchronize()
                     decode_start_time = time.perf_counter()
                     time_to_first_token = decode_start_time - forward_start_time
                     setup_time = forward_start_time - start_time
-                tokens_generated += 1
-                pbar.update(1)
+                bytes_generated += 1
 
                 if stream:
                     RED = "\033[0;31m"
                     GREEN = "\033[0;32m"
                     RESET = "\033[0;0m"
 
-                    if tokens_generated != 1:
-                        tokens_to_print = generated[0][:-1].tolist() if tokens_generated == 1 else generated[0][-2:-1].tolist()
+                    if bytes_generated != 1:
+                        tokens_to_print = generated[0][:-1].tolist() if bytes_generated == 1 else generated[0][-2:-1].tolist()
 
-                        if last_token_is_boundary and tokens_generated > 1:
+                        if last_token_is_boundary and bytes_generated > 1:
                             print(RED + self.tokenizer.decode(tokens_to_print) + RESET, end="", flush=True)
                         else:
-                            if tokens_generated > 1:
+                            if bytes_generated > 1:
                                 print(GREEN + self.tokenizer.decode(tokens_to_print) + RESET, end="", flush=True)
                             else:
                                 print(self.tokenizer.decode(tokens_to_print), end="", flush=True)
@@ -881,10 +885,10 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                         blt_config=self.blt_config,
                     )
                 # last logit is potentially wrong since last_token_is_boundary=True in reference, so skip it
-                assert (torch.argmax(logits[:, -tokens_generated-1:], -1) == reference_out.logits[:, -tokens_generated-1:-1].argmax(-1)).all()
+                assert (torch.argmax(logits[:, -bytes_generated-1:], -1) == reference_out.logits[:, -bytes_generated-1:-1].argmax(-1)).all()
                 assert torch.allclose(
-                    F.softmax(logits[:, -tokens_generated-1:], -1),
-                    F.softmax(reference_out.logits[:, -tokens_generated-1:-1], -1),
+                    F.softmax(logits[:, -bytes_generated-1:], -1),
+                    F.softmax(reference_out.logits[:, -bytes_generated-1:-1], -1),
                     rtol=1e-1,
                     atol=0.05, # accept max 5% prob diff (highest observed ~1.6%)
                 )
@@ -897,9 +901,9 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
             total_time = end_time - start_time
             total_tokens = generated.numel()
             prefill_tokens = prompt_len * batch_size
-            completion_tokens = tokens_generated * batch_size
+            completion_tokens = bytes_generated * batch_size
             tokens_per_sec_total = total_tokens / total_time
-            tokens_per_sec_per_seq = tokens_generated / total_time
+            tokens_per_sec_per_seq = bytes_generated / total_time
             pad_count = (generated == pad).sum().item()
             pad_percentage = (pad_count / total_tokens) * 100 if total_tokens > 0 else 0.0
 
@@ -907,8 +911,8 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                 f"\n{'=' * 60}",
                 "GENERATION STATISTICS",
                 f"  Batch size: {batch_size:,} | Prompt len: {prompt_len:,} bytes",
-                f"  Bytes generated: {tokens_generated:,} per sequence | Total: {total_tokens:,}",
-                f"  Seq length: {prompt_len:,} → {prompt_len + tokens_generated:,}",
+                f"  Bytes generated: {bytes_generated:,} per sequence | Total: {total_tokens:,}",
+                f"  Seq length: {prompt_len:,} → {prompt_len + bytes_generated:,}",
                 f"  Padding stats: {pad_count:,} / {total_tokens:,} ({pad_percentage:.1f}%)",
             ]
             if decode_start_time and forward_start_time and time_to_first_token:
@@ -919,7 +923,7 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                     f"    Setup: {setup_time:.3f}s | Prefill: {time_to_first_token:.3f}s | Decode: {decode_time:.3f}s | Total: {total_time:.3f}s\n"
                     f"    Overall BPS: {tokens_per_sec_per_seq:.1f} /seq | {tokens_per_sec_total:.1f} /total\n"
                     f"    Prefill BPS: {prompt_len / time_to_first_token:.1f} /seq | {prefill_tokens / time_to_first_token:.1f} /total\n"
-                    f"    Completion BPS: {tokens_generated / completion_time:.1f} /seq | {completion_tokens / completion_time:.1f} /total",
+                    f"    Completion BPS: {bytes_generated / completion_time:.1f} /seq | {completion_tokens / completion_time:.1f} /total",
                 )
 
             stats_lines.append(f"{'=' * 60}")

@@ -537,7 +537,7 @@ class LocalEncoder(nn.Module):
     def _pool_blt(
         self,
         h: torch.Tensor,
-        patch_lens: torch.Tensor,
+        n_patches: int,
         boundary_mask: torch.Tensor,
     ):
         if self.cross_attention is None or self.patch_embedding_projection is None or self.blt_k is None:
@@ -549,11 +549,11 @@ class LocalEncoder(nn.Module):
             torch.arange(L, device=h.device)[None, :]
             + (~boundary_mask).long() * L
         )
-        seq_sorted_indices = torch.argsort(token_idx, dim=1)[:, :patch_lens.shape[1]]
+        seq_sorted_indices = torch.argsort(token_idx, dim=1)[:, :n_patches]
         last_increasing_index = ((seq_sorted_indices[:, 1:] - seq_sorted_indices[:, :-1]) < 0).max(-1)
         patch_mask = (
-            (torch.arange(patch_lens.shape[1], device=patch_lens.device)[None, :] <= last_increasing_index.indices[:, None]) |
-            (torch.zeros(patch_lens.shape[:2], dtype=torch.bool, device=patch_lens.device) == last_increasing_index.values[:, None]) # case where never not increasing (no padding)
+            (torch.arange(seq_sorted_indices.shape[1], device=h.device)[None, :] <= last_increasing_index.indices[:, None]) |
+            (torch.zeros(seq_sorted_indices.shape[:2], dtype=torch.bool, device=h.device) == last_increasing_index.values[:, None]) # case where never not increasing (no padding)
         )
         patch_lens = torch.ones_like(seq_sorted_indices)
         # bos always one
@@ -617,22 +617,21 @@ class LocalEncoder(nn.Module):
     def pool(
         self,
         h: torch.Tensor,
-        patch_lens: torch.Tensor,
-        patch_ids: torch.Tensor,
         boundary_mask: torch.Tensor | None,
+        n_patches: int,
         last_token_is_boundary: bool = False,
     ):
         if self.pooling == "cross_attn":
             patch_embeddings = self._pool_blt(
                 h=h,
-                patch_lens=patch_lens,
+                n_patches=n_patches,
                 boundary_mask=boundary_mask,  # type: ignore
             )
         elif self.pooling == "hnet":
             patch_embeddings = self._pool_hnet(
                 h=h,
                 boundary_mask=boundary_mask,
-                n_patches=patch_lens.shape[1],
+                n_patches=n_patches,
                 last_token_is_boundary=last_token_is_boundary,
             )
         else:
@@ -721,9 +720,8 @@ class LocalEncoder(nn.Module):
         # HNet: select + padding
         patch_embeddings = self.pool(
             h=h,
-            patch_lens=patch_lens,
-            patch_ids=patch_ids,
             boundary_mask=boundary_mask,
+            n_patches=patch_lens.shape[1],
         )
 
         if self.represent_bytes_with_embeddings:
@@ -826,9 +824,8 @@ class LocalEncoder(nn.Module):
 
                 patch_embeddings = self.pool(
                     h=h,
-                    patch_lens=patch_lens,
-                    patch_ids=patch_ids,
                     boundary_mask=None,
+                    n_patches=1,
                     last_token_is_boundary=last_token_is_boundary,
                 )
 
@@ -864,15 +861,17 @@ class LocalEncoder(nn.Module):
                     teacher_force_boundaries=teacher_force_boundaries,
                     true_boundary_mask=true_boundary_mask,
                 )
+                if not last_token_is_boundary:
+                    # must not be a boundary
+                    boundary_mask[:, -1] = False
             else:
                 boundary_logprobs = None
                 boundary_mask = None
 
             patch_embeddings = self.pool(
                 h=h,
-                patch_lens=patch_lens,
-                patch_ids=patch_ids,
                 boundary_mask=boundary_mask,
+                n_patches=boundary_mask[0].sum().item() if boundary_mask is not None else 1, # not compatible with batching!!
                 last_token_is_boundary=last_token_is_boundary,
             )
 

@@ -2542,4 +2542,4 @@ class BLTDistillTransformer(BLTTransformer):
         )
         logits = self.lm_head(h_out, **lm_head_kwargs)
 
-        return logits
+        return logits, h_patch.shape[1]
