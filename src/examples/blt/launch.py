@@ -80,6 +80,8 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
         setup_steps = list(DEFAULT_SETUP_STEPS)
 
     setup_steps += ["pip install flash-attn --no-build-isolation"]
+    setup_steps += ["pip install mlstm_kernels"]
+    setup_steps += ["pip install xlstm"]
 
     if stage == "stage1":
         launch_script = "src/examples/blt/train_stage1.py"
