@@ -40,6 +40,7 @@ from olmo_core.nn.attention import Attention
 from olmo_core.nn.blt.config import BLTConfig
 import olmo_core.nn.blt.utils as blt_utils
 from olmo_core.nn.mamba import Mamba
+from olmo_core.nn.xlstm import XLSTM
 from olmo_core.nn.transformer import Transformer, TransformerConfig, TransformerType
 from olmo_core.train.train_module.transformer.common import parallelize_model
 from olmo_core.train.train_module.transformer.config import (
@@ -593,6 +594,12 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                     mamba.init_mamba_cache_manager(batch_size)
                 else:
                     mamba.mamba_cache_manager.reset(batch_size)
+            elif hasattr(block, "xlstm") and isinstance(block.xlstm, XLSTM):
+                xlstm = block.xlstm
+                if xlstm.xlstm_cache_manager is None:
+                    xlstm.init_xlstm_cache_manager(batch_size)
+                else:
+                    xlstm.xlstm_cache_manager.reset(batch_size)
 
         self.model.local_encoder.prepare_inference_cache(batch_size, max_seq_len)  # type: ignore
         self.model.local_decoder.prepare_inference_cache(batch_size, max_seq_len)  # type: ignore
@@ -646,6 +653,7 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         completions_only: bool = False,
         log_timing: bool = True,
         stream: bool = False,
+        verify: bool = False,
         **generation_kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
         """
@@ -863,22 +871,23 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
             logits = torch.cat(all_logits, dim=1)
 
             # check if greedy
-            self.free_inference_cache()
-            with torch.no_grad():
-                reference_out, _ = self.model.student_forward(  # type: ignore
-                    input_ids=generated,
-                    labels=get_labels({"input_ids": generated}),
-                    patch_lens=patch_lens,
-                    blt_config=self.blt_config,
+            if verify:
+                self.free_inference_cache()
+                with torch.no_grad():
+                    reference_out, _ = self.model.student_forward(  # type: ignore
+                        input_ids=generated,
+                        labels=get_labels({"input_ids": generated}),
+                        patch_lens=patch_lens,
+                        blt_config=self.blt_config,
+                    )
+                # last logit is potentially wrong since last_token_is_boundary=True in reference, so skip it
+                assert (torch.argmax(logits[:, -tokens_generated-1:], -1) == reference_out.logits[:, -tokens_generated-1:-1].argmax(-1)).all()
+                assert torch.allclose(
+                    F.softmax(logits[:, -tokens_generated-1:], -1),
+                    F.softmax(reference_out.logits[:, -tokens_generated-1:-1], -1),
+                    rtol=1e-1,
+                    atol=0.05, # accept max 5% prob diff (highest observed ~1.6%)
                 )
-            # last logit is potentially wrong since last_token_is_boundary=True in reference, so skip it
-            assert (torch.argmax(logits[:, -tokens_generated-1:], -1) == reference_out.logits[:, -tokens_generated-1:-1].argmax(-1)).all()
-            assert torch.allclose(
-                F.softmax(logits[:, -tokens_generated-1:], -1),
-                F.softmax(reference_out.logits[:, -tokens_generated-1:-1], -1),
-                rtol=1e-1,
-                atol=0.05, # accept max 5% prob diff (highest observed ~1.6%)
-            )
         if return_logprobs and all_logprobs:
             logprobs = torch.cat(all_logprobs, dim=1)
 
@@ -897,8 +906,8 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
             stats_lines = [
                 f"\n{'=' * 60}",
                 "GENERATION STATISTICS",
-                f"  Batch size: {batch_size:,} | Prompt len: {prompt_len:,} tokens",
-                f"  Tokens generated: {tokens_generated:,} per sequence | Total: {total_tokens:,}",
+                f"  Batch size: {batch_size:,} | Prompt len: {prompt_len:,} bytes",
+                f"  Bytes generated: {tokens_generated:,} per sequence | Total: {total_tokens:,}",
                 f"  Seq length: {prompt_len:,} → {prompt_len + tokens_generated:,}",
                 f"  Padding stats: {pad_count:,} / {total_tokens:,} ({pad_percentage:.1f}%)",
             ]
@@ -908,9 +917,9 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                 stats_lines.append(
                     f"  Throughput:\n"
                     f"    Setup: {setup_time:.3f}s | Prefill: {time_to_first_token:.3f}s | Decode: {decode_time:.3f}s | Total: {total_time:.3f}s\n"
-                    f"    Overall TPS: {tokens_per_sec_per_seq:.1f} /seq | {tokens_per_sec_total:.1f} /total\n"
-                    f"    Prefill TPS: {prompt_len / time_to_first_token:.1f} /seq | {prefill_tokens / time_to_first_token:.1f} /total\n"
-                    f"    Completion TPS: {tokens_generated / completion_time:.1f} /seq | {completion_tokens / completion_time:.1f} /total",
+                    f"    Overall BPS: {tokens_per_sec_per_seq:.1f} /seq | {tokens_per_sec_total:.1f} /total\n"
+                    f"    Prefill BPS: {prompt_len / time_to_first_token:.1f} /seq | {prefill_tokens / time_to_first_token:.1f} /total\n"
+                    f"    Completion BPS: {tokens_generated / completion_time:.1f} /seq | {completion_tokens / completion_time:.1f} /total",
                 )
 
             stats_lines.append(f"{'=' * 60}")

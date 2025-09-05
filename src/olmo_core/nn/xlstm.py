@@ -14,8 +14,27 @@ class XLSTM(mLSTMLayer):
     def __init__(self, config):
         super().__init__(config)  # type: ignore
 
+        self.xlstm_cache_manager = None
+
+    def init_xlstm_cache_manager(self, batch_size: int):
+        self.xlstm_cache_manager = XLSTMCacheManager()
+
     def forward(self, x: torch.Tensor):  # type: ignore
-        return super().forward(x)
+        if self.xlstm_cache_manager is not None:
+            # assume inference
+            prev_mode = self.mlstm_backend.config.mode
+            self.mlstm_backend.config.mode = "inference"
+            state = self.xlstm_cache_manager.state
+
+            h, state = super().forward(x, state)
+
+            self.xlstm_cache_manager.state = state  # type: ignore
+            self.mlstm_backend.config.mode = prev_mode
+
+            return h
+        else:
+            h, _ = super().forward(x)
+            return h
 
 
 @dataclass
@@ -36,3 +55,28 @@ class XLSTMConfig(Config):
                 autocast_kernel_dtype="float32",
             )
         )).to(init_device)
+
+class XLSTMCacheManager(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+        # not designed to be managed externally - cant easily allocate beforehand
+        # so we just init to none and let the prefill allocate the state
+        self.state = None
+
+    def zero_cache(self):
+        raise NotImplementedError()
+
+    def reallocate(self, batch_size: int):
+        self.state = None
+
+    def is_reusable(self, batch_size: int) -> bool:
+        # not implemented
+        return False
+
+    def reset(self, batch_size: int):
+        if self.is_reusable(batch_size):
+            self.zero_cache()
+        else:
+            log.debug("Unreusable XLSTM cache, reallocating")
+            self.reallocate(batch_size)
