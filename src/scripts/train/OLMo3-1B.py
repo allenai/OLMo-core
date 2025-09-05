@@ -9,7 +9,7 @@ from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
 from olmo_core.internal.experiment import CommonComponents, main
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.optim import OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig
+from olmo_core.optim import OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig, MuonAdamWConfig
 from olmo_core.optim.scheduler import WSD
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
@@ -69,15 +69,25 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
     return TransformerTrainModuleConfig(
         rank_microbatch_size=rank_microbatch_size,
         max_sequence_length=common.dataset.effective_sequence_length,
-        optim=SkipStepAdamWConfig(
+        # optim=SkipStepAdamWConfig(
+        #     lr=LR,
+        #     weight_decay=0.033,
+        #     betas=(0.9, 0.95),
+        #     group_overrides=[
+        #         OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
+        #     ],
+        #     compile=False,
+        #     step_increment_bugfix=False,
+        # ),
+        optim=MuonAdamWConfig(
             lr=LR,
             weight_decay=0.033,
             betas=(0.9, 0.95),
+            ns_steps=5,
+            nesterov=True,
             group_overrides=[
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
             ],
-            compile=False,
-            step_increment_bugfix=False,
         ),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
