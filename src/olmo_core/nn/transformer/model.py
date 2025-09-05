@@ -1568,6 +1568,11 @@ class BLTDistillTransformer(BLTTransformer):
     def fix_init(self, embedding_init_path: Optional[str] = None):
         self.local_encoder.fix_init(embedding_init_path, self.teacher.embeddings.weight)  # type: ignore
 
+        for block in list(self.local_encoder.blocks.values()) + list(self.local_decoder.blocks.values()):  # type: ignore
+            if hasattr(block, "xlstm"):
+                # as in xLSTM 7B paper
+                block.xlstm.igate_preact.bias.data.fill_(-10.0)  # type: ignore
+
     def _rep_compare_fn(self, blt_config: BLTConfig):
         if blt_config.rep_compare_fn == "l2":
             def l2_compare_fn(x, y):
