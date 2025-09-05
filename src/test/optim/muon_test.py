@@ -26,6 +26,7 @@ class MyModel(nn.Module):
         x = x + self.bias
         return x
 
+
 @pytest.mark.parametrize("device", DEVICES)
 def test_muon_optimizer_basic(device: torch.device):
     model = MyModel().to(device)
@@ -48,9 +49,9 @@ def test_muon_optimizer_basic(device: torch.device):
     for param in model.parameters():
         if param in optimizer.state:
             state = optimizer.state[param]
-            if 'momentum_buffer' in state:
+            if "momentum_buffer" in state:
                 has_momentum = True
-            if 'exp_avg' in state:
+            if "exp_avg" in state:
                 has_exp_avg = True
 
     assert has_momentum, "Should have momentum buffers for matrix parameters"
@@ -64,9 +65,9 @@ def test_muon_config_build(device: torch.device):
     optimizer = config.build(model)
 
     assert isinstance(optimizer, MuonAdamW)
-    assert optimizer.defaults['lr'] == 0.02
-    assert optimizer.defaults['weight_decay'] == 0.1
-    assert optimizer.defaults['ns_steps'] == 3
+    assert optimizer.defaults["lr"] == 0.02
+    assert optimizer.defaults["weight_decay"] == 0.1
+    assert optimizer.defaults["ns_steps"] == 3
 
 
 @pytest.mark.parametrize("device", DEVICES)
@@ -86,15 +87,13 @@ def test_muon_parameter_selection(device: torch.device):
             state = optimizer.state[param]
             name = param_to_name.get(param, "unknown")
 
-            if (param.ndim >= 2 and
-                'embed' not in name.lower() and
-                'head' not in name.lower()):
-                assert 'momentum_buffer' in state, f"Parameter {name} should use Muon"
-                assert 'exp_avg' not in state, f"{name} should not have AdamW state"
+            if param.ndim >= 2 and "embed" not in name.lower() and "head" not in name.lower():
+                assert "momentum_buffer" in state, f"Parameter {name} should use Muon"
+                assert "exp_avg" not in state, f"{name} should not have AdamW state"
             else:
-                assert 'exp_avg' in state, f"Parameter {name} should use AdamW"
-                assert 'exp_avg_sq' in state, f"{name} should have AdamW second moment"
-                assert 'momentum_buffer' not in state, f"{name} should not have Muon state"
+                assert "exp_avg" in state, f"Parameter {name} should use AdamW"
+                assert "exp_avg_sq" in state, f"{name} should have AdamW second moment"
+                assert "momentum_buffer" not in state, f"{name} should not have Muon state"
 
 
 @pytest.mark.parametrize("device", DEVICES)
@@ -102,12 +101,12 @@ def test_muon_newton_schulz_convergence(device: torch.device):
     optimizer = MuonAdamW([], lr=0.01)
 
     torch.manual_seed(42)
-    grad_matrix = torch.randn(32, 16, device=device) 
+    grad_matrix = torch.randn(32, 16, device=device)
     result = optimizer.zeropower_via_newtonschulz5(grad_matrix, steps=5)
 
     assert not torch.isnan(result).any(), "Result contains NaN values"
     assert not torch.allclose(result, torch.zeros_like(result)), "Result is all zeros"
-    
+
     col_norms = torch.norm(result, dim=0)
 
     assert torch.all(col_norms > 0.1), f"Some columns have very small norms: {col_norms}"

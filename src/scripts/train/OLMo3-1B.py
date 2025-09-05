@@ -9,7 +9,12 @@ from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
 from olmo_core.internal.experiment import CommonComponents, main
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.optim import OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig, MuonAdamWConfig
+from olmo_core.optim import (
+    MuonAdamWConfig,
+    OptimGroupOverride,
+    SchedulerUnits,
+    SkipStepAdamWConfig,
+)
 from olmo_core.optim.scheduler import WSD
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
