@@ -889,14 +889,17 @@ class Attention(AttentionBase):
     ) -> torch.Tensor:
         """
         FlexAttention with KV caching support for generation with sinks.
+        
+        Input tensors are in (B, T, H, D) format as they come from the attention layer.
         """
-        batch_size, num_heads, seq_len_q, head_dim = q.shape
-        _, _, seq_len_kv, _ = k.shape
+        batch_size, seq_len_q, num_heads, head_dim = q.shape
+        _, seq_len_kv, _, _ = k.shape
         
         cache_pos = self.kv_cache_manager.current_position().item()
         
-        k_for_cache = k.transpose(1, 2)
-        v_for_cache = v.transpose(1, 2)
+        # k, v are already in (B, T, H, D) format, perfect for KV cache storage
+        k_for_cache = k
+        v_for_cache = v
         
         cache_slice = slice(cache_pos, cache_pos + seq_len_kv)
         self.kv_cache_manager.k_cache[:batch_size, cache_slice, :num_heads] = k_for_cache
@@ -906,12 +909,18 @@ class Attention(AttentionBase):
         k_cached = self.kv_cache_manager.k_cache[:batch_size, :seq_len, :num_heads]
         v_cached = self.kv_cache_manager.v_cache[:batch_size, :seq_len, :num_heads]
 
-        k_cached = k_cached.transpose(1, 2)
-        v_cached = v_cached.transpose(1, 2)
+        # FlexAttention expects (B, H, T, D), so we need to transpose
+        q_flex = q.transpose(1, 2)  # (B, T, H, D) -> (B, H, T, D)
+        k_cached_flex = k_cached.transpose(1, 2)  # (B, T, H, D) -> (B, H, T, D)
+        v_cached_flex = v_cached.transpose(1, 2)  # (B, T, H, D) -> (B, H, T, D)
+
         og_dtype = None
         if q.device.type == 'cuda':
-            og_dtype = q.dtype
-            q, k_cached, v_cached = q.bfloat16(), k_cached.bfloat16(), v_cached.bfloat16()
+            og_dtype = q_flex.dtype
+            q_flex = q_flex.bfloat16()
+            k_cached_flex = k_cached_flex.bfloat16()
+            v_cached_flex = v_cached_flex.bfloat16()
+
         score_mod_fn = None
         if sinks is not None:
             num_sink_tokens = sinks.shape[-1] if sinks.ndim > 1 else 1
@@ -921,8 +930,9 @@ class Attention(AttentionBase):
                 sink_val = sinks[head_idx] if sinks.ndim > 1 else sinks[0]
                 sink_logit = sink_val.to(score.dtype)
                 return torch.where(is_sink, sink_logit, score)
+
         att = flex_attention(
-            q, k_cached, v_cached,
+            q_flex, k_cached_flex, v_cached_flex,
             score_mod=score_mod_fn,
             block_mask=block_mask,
             scale=scale
@@ -930,6 +940,8 @@ class Attention(AttentionBase):
         
         if og_dtype is not None:
             att = att.to(og_dtype)
+            
+        # FlexAttention returns (B, H, T, D), convert back to (B, T, H, D)
         att = att.transpose(1, 2)
 
         return att
