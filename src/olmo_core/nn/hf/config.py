@@ -33,7 +33,7 @@ def get_hf_config(model: Transformer) -> PretrainedConfig:
         )
 
     if blocks[0].attention.use_head_qk_norm:
-        return Olmo3Config(
+        config = Olmo3Config(
             vocab_size=model.vocab_size,
             hidden_size=model.d_model,
             intermediate_size=blocks[0].feed_forward.hidden_size,
@@ -55,13 +55,25 @@ def get_hf_config(model: Transformer) -> PretrainedConfig:
                 for block in blocks
             ],
         )
+        
+        if blocks[0].attention.use_sinks:
+            config.use_sinks = True
+            if hasattr(blocks[0].attention, 'sinks') and blocks[0].attention.sinks is not None:
+                sinks_shape = blocks[0].attention.sinks.shape
+                if len(sinks_shape) == 1:
+                    config.sinks_shape = "per_head"
+                elif len(sinks_shape) == 2:
+                    config.sinks_shape = "per_head_per_token"
+                    config.num_sink_tokens = sinks_shape[1]
+            
+        return config
     else:
         if any(block.attention.window_size != (-1, -1) for block in blocks):
             raise NotImplementedError(
                 f"Sliding window attention is not supported without head qk norm, unable to build HF config for {model.__class__.__name__}"
             )
 
-        return Olmo2Config(
+        config = Olmo2Config(
             vocab_size=model.vocab_size,
             hidden_size=model.d_model,
             intermediate_size=blocks[0].feed_forward.hidden_size,
@@ -78,3 +90,15 @@ def get_hf_config(model: Transformer) -> PretrainedConfig:
             rms_norm_eps=blocks[0].feed_forward_norm.eps,
             tie_word_embeddings=False,
         )
+         
+        if blocks[0].attention.use_sinks:
+            config.use_sinks = True
+            if hasattr(blocks[0].attention, 'sinks') and blocks[0].attention.sinks is not None:
+                sinks_shape = blocks[0].attention.sinks.shape
+                if len(sinks_shape) == 1:
+                    config.sinks_shape = "per_head" 
+                elif len(sinks_shape) == 2:
+                    config.sinks_shape = "per_head_per_token"
+                    config.num_sink_tokens = sinks_shape[1]
+            
+        return config

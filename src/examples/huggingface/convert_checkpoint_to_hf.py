@@ -92,7 +92,7 @@ def convert_checkpoint_to_hf(
                 "Flash attention or cuda is unavailable, switching to flex attention to stop validation from failing."
             )
             attention["use_flash"] = False
-            attention["use_flex_attn"] = True
+            attention["use_flex"] = True
 
     model_config = TransformerConfig.from_dict(transformer_config_dict)
     model = model_config.build()
@@ -145,7 +145,7 @@ def convert_checkpoint_to_hf(
             debug=debug,
             dtype=dtype,
             device=device,
-            use_flex_attn=model_config.block.attention.use_flex_attn or False,
+            use_flex=model_config.block.attention.use_flex or False,
             sliding_window=validation_sliding_window,
         )
         log.info("Validation completed successful")
@@ -192,7 +192,7 @@ def validate_conversion(
     debug: bool = False,
     dtype: DType | None = None,
     device: torch.device | None = None,
-    use_flex_attn: bool = False,
+    use_flex: bool = False,
     sliding_window: int | None = None,
 ):
     if torch.cuda.is_available():
@@ -203,7 +203,10 @@ def validate_conversion(
     B, T = 1, 60
     input_ids = torch.randint(0, vocab_size, (B, T)).to(device)
 
-    attn_implementation = "sdpa"
+    if use_flex:
+        attn_implementation = "flex_attention"
+    else:
+        attn_implementation = "sdpa"
 
     is_sliding = any(
         hasattr(block.attention, "window_size") and block.attention.window_size != (-1, -1)
@@ -252,7 +255,7 @@ def validate_conversion(
     with contextlib.ExitStack() as stack:
         stack.enter_context(torch.no_grad())
         # Flex attention matches SDPA maths backend
-        if use_flex_attn:
+        if use_flex:
             stack.enter_context(
                 torch.nn.attention.sdpa_kernel(torch.nn.attention.SDPBackend.MATH)
             )
