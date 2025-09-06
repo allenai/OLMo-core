@@ -85,10 +85,12 @@ if DATA_SOURCE == "dclm":
     _DATA_SOURCES = open(Path(__file__).parent / "data_sources.txt").read().strip().splitlines()
 elif DATA_SOURCE == "dolmino":
     _DATA_SOURCES = open(Path(__file__).parent / "data_sources_dolmino.txt").read().strip().splitlines()
+elif DATA_SOURCE == "dolma2_code_string":
+    _DATA_SOURCES = open(Path(__file__).parent / "data_sources_dolma2_code_string.txt").read().strip().splitlines()
 elif DATA_SOURCE == "dolmino_code_string":
     _DATA_SOURCES = open(Path(__file__).parent / "data_sources_dolmino_code_string.txt").read().strip().splitlines()
 else:
-    raise ValueError(f"Unknown DATA_SOURCE: {DATA_SOURCE}. Must be one of 'dclm', 'dolmino'.")
+    raise ValueError(f"Unknown DATA_SOURCE: {DATA_SOURCE}. Must be one of 'dclm', 'dolmino', 'dolma2_code_string', 'dolmino_code_string'.")
 
 OLMO_CKPT_PATH = os.environ.get("OLMO_CKPT_PATH", "") # for baseline
 STAGE1_CKPT_PATH = os.environ.get("STAGE1_CKPT_PATH", "")
@@ -184,8 +186,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         local_decoder_n_layers = 4
         local_block = TransformerBlockConfig(
             name=TransformerBlockType.mamba,
-            attention=AttentionConfig(), # not used
-            mamba=MambaConfig(
+            attention=MambaConfig(
                 chunk_size=256,
                 d_conv=4,
                 d_state=128,
