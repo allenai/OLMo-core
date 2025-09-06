@@ -1571,7 +1571,16 @@ class BLTDistillTransformer(BLTTransformer):
         else:
             return None, ([], None, None)
 
-    def fix_init(self, embedding_init_path: Optional[str] = None):
+    def fix_init(self, blt_config, embedding_init_path: Optional[str] = None):
+        # fsdp requires fwd through root first
+        dummy_size = 128
+        self(
+            input_ids=torch.zeros((1, dummy_size), dtype=torch.long, device=self.device),
+            labels=torch.zeros((1, dummy_size), dtype=torch.long, device=self.device),
+            patch_lens=torch.ones((1, dummy_size), dtype=torch.long, device=self.device),
+            original_input_ids=torch.zeros((1, dummy_size), dtype=torch.long, device=self.device),
+            blt_config=blt_config
+        )
         self.local_encoder.fix_init(embedding_init_path, self.teacher.embeddings.weight)  # type: ignore
 
         for block in list(self.local_encoder.blocks.values()) + list(self.local_decoder.blocks.values()):  # type: ignore

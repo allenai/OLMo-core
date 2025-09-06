@@ -363,6 +363,16 @@ class LocalEncoder(nn.Module):
 
         if self.cross_attention is not None:
             fully_shard(self.cross_attention, mesh=dp_mesh, **fsdp_kwargs)
+
+        if self.out_projection is not None:
+            fully_shard(self.out_projection, mesh=dp_mesh, **fsdp_kwargs)
+
+        if self.boundary_predictor is not None:
+            fully_shard(self.boundary_predictor_module, mesh=dp_mesh, **fsdp_kwargs)  # type: ignore
+
+        if self.post_last_block_norm is not None:
+            fully_shard(self.post_last_block_norm, mesh=dp_mesh, **fsdp_kwargs)
+
         fully_shard(self, mesh=dp_mesh, **fsdp_kwargs)
 
     def fix_init(self, embedding_init_path: Optional[str], target_embeddings, n_estimate=8192, cache_dir: Optional[str] = None):
@@ -402,41 +412,10 @@ class LocalEncoder(nn.Module):
         patch_lens = torch.ones((1, n_estimate), dtype=torch.long, device=dummy_input.device)
         patch_ids = torch.arange(n_estimate, device=dummy_input.device).unsqueeze(0)
 
-        # this is annoying but didn't find a better way to make it compatible with FSDP2
-        local_encoder_copy = LocalEncoder(
-            vocab_size=self.vocab_size,
-            sliding_window_size=self.sliding_window_size,
-            d_model=self.d_model,
-            d_global_model=self.d_global_model,
-            n_layers=self.n_layers,
-            cross_attn_n_heads=self.cross_attn_n_heads,
-            cross_attn_do_project=self.cross_attn_do_project,
-            cross_attn_init_pooling=self.cross_attn_init_pooling,
-            block_config=self.block_config,
-            add_hash_embeddings=self.add_hash_embeddings,
-            hash_byte_group_size=self.hash_byte_group_size,
-            hash_byte_group_vocab=self.hash_byte_group_vocab,
-            hash_byte_group_nb_functions=self.hash_byte_group_nb_functions,
-            pooling=self.pooling,
-            add_norm_after_last_block=self.add_norm_after_last_block,
-            add_norm_after_pool=self.add_norm_after_pool,
-            add_out_projection=self.add_out_projection,
-            boundary_predictor=self.boundary_predictor,
-            boundary_predictor_lookahead=self.boundary_predictor_lookahead,
-            represent_bytes_with_embeddings=self.represent_bytes_with_embeddings,
-            blt_k=self.blt_k,
-            blt_compat=self.blt_compat,
-            init_device=device,
-        )
-        local_encoder_copy.load_state_dict({
-            k: v.full_tensor() if isinstance(v, DTensor) else v for k, v in self.state_dict().items()
-        })
-
-        _, h_patch, _, _ = local_encoder_copy(
+        _, h_patch, _, _ = self(
             tokens=dummy_input,
             patch_lens=patch_lens,
             patch_ids=patch_ids,
-            cross_attn_mask=None, # fine not to mask since mask does not change out magnitude
         )
 
         def maybe_distribute(tensor: torch.Tensor) -> DTensor | torch.Tensor:
@@ -462,10 +441,7 @@ class LocalEncoder(nn.Module):
             self.boundary_predictor_module.k_proj_layer.weight.data[:] = maybe_distribute(torch.eye(self.d_model, device=device))
 
         # verify
-        # local_encoder_copy.load_state_dict({
-        #     k: v.full_tensor() if isinstance(v, DTensor) else v for k, v in self.state_dict().items()
-        # })
-        # _, h_patch_fixed = local_encoder_copy(
+        # _, h_patch_fixed, _, _ = self(
         #     tokens=dummy_input,
         #     patch_lens=patch_lens,
         #     patch_ids=patch_ids,
@@ -684,7 +660,7 @@ class LocalEncoder(nn.Module):
 
         dtype = h.dtype
         # need this check due to the local_encoder_copy(..) in fix_init, seems to be fine otherwise with the usual check
-        block_dtype = next(self.blocks["0"].parameters()).dtype
+        block_dtype = torch.bfloat16 if hasattr(self.blocks["0"], "attention") and self.blocks["0"].attention.use_flash else dtype  # type: ignore
 
         h = h.to(block_dtype)
 
