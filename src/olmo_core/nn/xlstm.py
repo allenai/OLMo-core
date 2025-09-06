@@ -54,7 +54,11 @@ class XLSTMConfig(Config):
                 return_last_states=True,
                 autocast_kernel_dtype="float32",
             )
-        )).to(init_device)
+        )).to(device=init_device, dtype=self.dtype.as_pt())
+
+    def num_params(self):
+        raise NotImplementedError()
+
 
 class XLSTMCacheManager(nn.Module):
     def __init__(self):

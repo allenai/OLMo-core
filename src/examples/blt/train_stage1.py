@@ -40,6 +40,7 @@ from olmo_core.nn.transformer import (
 from olmo_core.nn.attention import AttentionConfig, SlidingWindowAttentionConfig
 from olmo_core.nn.mamba import MambaConfig
 from olmo_core.nn.xlstm import XLSTMConfig
+from olmo_core.nn.fla import FLAConfig
 from olmo_core.nn.feed_forward import FeedForwardConfig
 from olmo_core.nn.blt.config import LocalEncoderConfig, LocalDecoderConfig
 from olmo_core.optim import AdamWConfig, OptimGroupOverride
@@ -213,7 +214,8 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
                 name=TransformerBlockType.xlstm,
                 attention=AttentionConfig(), # not used
                 xlstm=XLSTMConfig(
-                    num_heads=16,                
+                    num_heads=16,
+                    dtype=teacher_model_config.dtype,              
                 ),
                 feed_forward=teacher_model_config.block.feed_forward.replace(
                     hidden_size=local_d_model * 2,
@@ -221,38 +223,16 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
                 ),
                 layer_norm=teacher_model_config.block.layer_norm,
             )
-
-        if "attention_encoder" in model_style_tags:
-            local_encoder_block = teacher_model_config.block.replace(
-                attention=teacher_model_config.block.attention.replace(
-                    n_heads=16,
-                    use_flash=True,
-                    sliding_window=SlidingWindowAttentionConfig(
-                        pattern=[512] * local_encoder_n_layers,
-                        force_full_attention_on_first_layer=False,
-                        force_full_attention_on_last_layer=False,
-                    ),
+        elif "fla" in model_style_tags:
+            local_encoder_block = local_decoder_block = TransformerBlockConfig(
+                name=TransformerBlockType.fla,
+                attention=AttentionConfig(), # not used,
+                fla=FLAConfig(
+                    name="GatedDeltaNet",
+                    dtype=teacher_model_config.dtype,
                 ),
-                feed_forward=teacher_model_config.block.feed_forward.replace(
-                    hidden_size=local_d_model,
-                    bias=False,
-                ),
-            )
-        if "attention_decoder" in model_style_tags:
-            local_decoder_block = teacher_model_config.block.replace(
-                attention=teacher_model_config.block.attention.replace(
-                    n_heads=16,
-                    use_flash=True,
-                    sliding_window=SlidingWindowAttentionConfig(
-                        pattern=[512] * local_decoder_n_layers,
-                        force_full_attention_on_first_layer=False,
-                        force_full_attention_on_last_layer=False,
-                    ),
-                ),
-                feed_forward=teacher_model_config.block.feed_forward.replace(
-                    hidden_size=local_d_model,
-                    bias=False,
-                ),
+                feed_forward=None,
+                layer_norm=teacher_model_config.block.layer_norm,
             )
 
         local_encoder = LocalEncoderConfig(

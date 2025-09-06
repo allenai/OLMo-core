@@ -124,3 +124,6 @@ class MambaConfig(Config):
             device=init_device,
             dtype=self.dtype.as_pt(),
         )
+
+    def num_params(self):
+        raise NotImplementedError()

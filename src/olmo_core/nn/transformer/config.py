@@ -7,11 +7,12 @@ from typing import TYPE_CHECKING, Dict, List, Optional
 from olmo_core.config import Config, DType, StrEnum
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.nn.xlstm import XLSTMConfig
 from olmo_core.utils import ensure_multiple_of
 
 from ..attention import AttentionConfig, AttentionType
 from ..mamba import MambaConfig
+from ..xlstm import XLSTMConfig
+from ..fla import FLAConfig
 from ..buffer_cache import BufferCache
 from ..feed_forward import FeedForwardConfig, FeedForwardType
 from ..layer_norm import LayerNormConfig, LayerNormType
@@ -139,6 +140,7 @@ class TransformerBlockType(StrEnum):
     """
     mamba = "mamba"
     xlstm = "xlstm"
+    fla = "fla"
 
 
 @dataclass
@@ -165,6 +167,7 @@ class TransformerBlockConfig(Config):
     """
     mamba: Optional[MambaConfig] = None
     xlstm: Optional[XLSTMConfig] = None
+    fla: Optional[FLAConfig] = None
     name: TransformerBlockType = TransformerBlockType.default
     """
     The block type.
@@ -193,6 +196,7 @@ class TransformerBlockConfig(Config):
             TransformerBlock,
             MambaBlock,
             XLSTMBlock,
+            FLABlock,
         )
 
         kwargs = self.as_dict(exclude_none=True, recurse=False)
@@ -226,6 +230,9 @@ class TransformerBlockConfig(Config):
             elif self.name == TransformerBlockType.xlstm:
                 kwargs.pop("attention")  # XLSTM does not use attention
                 return XLSTMBlock(**kwargs)
+            elif self.name == TransformerBlockType.fla:
+                kwargs.pop("attention")  # FLA does not use attention
+                return FLABlock(**kwargs)
             else:
                 raise NotImplementedError(self.name)
         except TypeError as e:

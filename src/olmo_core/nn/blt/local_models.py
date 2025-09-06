@@ -476,10 +476,10 @@ class LocalEncoder(nn.Module):
         device = next(self.parameters()).device
         self.has_cache = True
 
-        self.cache_seqlens = torch.zeros((), dtype=torch.int32, device=device)
+        self.cache_seqlens = 0
         self.rolling_past_tokens = torch.zeros((batch_size, self.cache_n_last_tokens), dtype=torch.long, device=device)
-        self.n_rolling_past_tokens = torch.zeros((), dtype=torch.int32, device=device)
-        self.n_tokens_since_last_boundary = torch.zeros((), dtype=torch.int32, device=device)
+        self.n_rolling_past_tokens = 0
+        self.n_tokens_since_last_boundary = 0
         self.last_h = torch.zeros((batch_size, self.d_model), dtype=torch.float32, device=device)
 
     def free_inference_cache(self):
@@ -502,7 +502,7 @@ class LocalEncoder(nn.Module):
         n_patches: int,
         last_token_is_boundary: bool = False,
     ):
-        if self.has_cache and self.cache_seqlens.item() > 0:
+        if self.has_cache and self.cache_seqlens > 0:
             if last_token_is_boundary:
                 reduced_h = h[:, -1:, :]
             else:
@@ -645,17 +645,7 @@ class LocalEncoder(nn.Module):
 
         return patch_embeddings
 
-    def forward(
-        self,
-        tokens: torch.Tensor,
-        patch_lens: torch.Tensor,
-        patch_ids: torch.Tensor,
-        cross_attn_mask: BlockMask | None = None,
-        boundary_predictor_backprop_through_encoder: bool = True,
-        boundary_threshold: str = "sample:0",
-        teacher_force_boundaries: bool = False,
-        true_boundary_mask: Optional[torch.Tensor] = None,
-    ) -> tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor], torch.Tensor]:
+    def _embed(self, tokens):
         embeddings = self.embedding(tokens)
         if self.add_hash_embeddings:
             assert (
@@ -673,6 +663,21 @@ class LocalEncoder(nn.Module):
                 self.hash_byte_group_size,
                 self.hash_byte_group_vocab,
             )
+
+        return embeddings
+
+    def forward(
+        self,
+        tokens: torch.Tensor,
+        patch_lens: torch.Tensor,
+        patch_ids: torch.Tensor,
+        cross_attn_mask: BlockMask | None = None,
+        boundary_predictor_backprop_through_encoder: bool = True,
+        boundary_threshold: str = "sample:0",
+        teacher_force_boundaries: bool = False,
+        true_boundary_mask: Optional[torch.Tensor] = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor], torch.Tensor]:
+        embeddings = self._embed(tokens)
 
         # pass through encoder layers
         h = embeddings
@@ -740,9 +745,7 @@ class LocalEncoder(nn.Module):
         true_boundary_mask: Optional[torch.Tensor] = None,
         last_token_is_boundary: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor], torch.Tensor | None]:
-        embeddings = self.embedding(tokens)
-
-        if self.has_cache and self.cache_seqlens.item() == 0:
+        if self.has_cache and self.cache_seqlens == 0:
             tokens_to_cache = tokens[:, min(tokens.shape[1]-self.rolling_past_tokens.shape[1],0):]
             self.rolling_past_tokens[:, -tokens_to_cache.shape[1]:] = tokens[:, max(tokens.shape[1]-self.rolling_past_tokens.shape[1],0):]
             self.n_rolling_past_tokens += tokens_to_cache.shape[1]
@@ -752,64 +755,28 @@ class LocalEncoder(nn.Module):
             if self.n_rolling_past_tokens < self.rolling_past_tokens.shape[1]:
                 self.n_rolling_past_tokens += 1
 
-        if self.add_hash_embeddings:
-            assert (
-                self.hash_embeddings is not None and 
-                self.hash_byte_group_nb_functions is not None and 
-                self.hash_byte_group_size is not None and 
-                self.hash_byte_group_vocab is not None
-            )
-
-            if self.has_cache and self.cache_seqlens.item() > 0:
-                assert tokens.shape[1] == 1
-                n_tokens_to_retrieve = min(self.n_rolling_past_tokens.item(), max(self.hash_byte_group_size))
-
-                embeddings = add_hash_embeddings(
-                    self.embedding(self.rolling_past_tokens[:, -n_tokens_to_retrieve:]),
-                    self.rolling_past_tokens[:, -n_tokens_to_retrieve:],
-                    self.hash_embeddings,
-                    self.hash_byte_group_nb_functions,
-                    self.hash_byte_group_size,
-                    self.hash_byte_group_vocab,
-                )[:, -1:]
-            else:
-                embeddings = add_hash_embeddings(
-                    embeddings,
-                    tokens,
-                    self.hash_embeddings,
-                    self.hash_byte_group_nb_functions,
-                    self.hash_byte_group_size,
-                    self.hash_byte_group_vocab,
-                )
-
-        if self.use_toucan_fast_path and self.represent_bytes_with_embeddings and self.has_cache and self.cache_seqlens.item() > 0:
+        if self.use_toucan_fast_path and self.represent_bytes_with_embeddings and self.has_cache and self.cache_seqlens > 0:
             if last_token_is_boundary:
                 # special case - first token is boundary (or consecutive boundaries?)
-                if self.n_tokens_since_last_boundary.item() == 0:
+                if self.n_tokens_since_last_boundary == 0:
+                    assert tokens.shape[1] == 1
+                    if self.add_hash_embeddings:
+                        assert self.hash_byte_group_size is not None
+                        n_tokens_to_retrieve = min(self.n_rolling_past_tokens, max(self.hash_byte_group_size))
+                    else:
+                        n_tokens_to_retrieve = 1
+
+                    embeddings = self._embed(self.rolling_past_tokens[:, -n_tokens_to_retrieve:])[:, -1:]
                     h = self.last_h.unsqueeze(1)
                 else:
-                    n_tokens_to_retrieve = self.n_tokens_since_last_boundary.item()
+                    n_tokens_to_retrieve = self.n_tokens_since_last_boundary
                     total_n_tokens_to_retrieve = n_tokens_to_retrieve + max(self.hash_byte_group_size) if self.hash_byte_group_size is not None else n_tokens_to_retrieve
                     assert total_n_tokens_to_retrieve <= self.rolling_past_tokens.shape[1]
 
                     if self.add_hash_embeddings:
-                        assert (
-                            self.hash_embeddings is not None and 
-                            self.hash_byte_group_nb_functions is not None and 
-                            self.hash_byte_group_size is not None and 
-                            self.hash_byte_group_vocab is not None
-                        )
-
-                        embeddings = add_hash_embeddings(
-                            self.embedding(self.rolling_past_tokens[:, -total_n_tokens_to_retrieve:]),
-                            self.rolling_past_tokens[:, -total_n_tokens_to_retrieve:],
-                            self.hash_embeddings,
-                            self.hash_byte_group_nb_functions,
-                            self.hash_byte_group_size,
-                            self.hash_byte_group_vocab,
-                        )[:, -n_tokens_to_retrieve:]
+                        embeddings = self._embed(self.rolling_past_tokens[:, -total_n_tokens_to_retrieve:])[:, -n_tokens_to_retrieve:]
                     else:
-                        embeddings = self.embedding(self.rolling_past_tokens[:, -n_tokens_to_retrieve:])
+                        embeddings = self._embed(self.rolling_past_tokens[:, -n_tokens_to_retrieve:])
 
                     h = embeddings
 
@@ -817,7 +784,7 @@ class LocalEncoder(nn.Module):
                         h = block(h)
 
                     self.last_h.copy_(h[:, -1, :])
-                    self.n_tokens_since_last_boundary.fill_(0)
+                    self.n_tokens_since_last_boundary = 0
 
                 if self.post_last_block_norm is not None:
                     h = self.post_last_block_norm(h)
@@ -834,10 +801,30 @@ class LocalEncoder(nn.Module):
 
                 return embeddings, patch_embeddings, None, None
             else:
+                assert tokens.shape[1] == 1
+                if self.add_hash_embeddings:
+                    assert self.hash_byte_group_size is not None
+                    n_tokens_to_retrieve = min(self.n_rolling_past_tokens, max(self.hash_byte_group_size))
+                else:
+                    n_tokens_to_retrieve = 1
+
+                embeddings = self._embed(self.rolling_past_tokens[:, -n_tokens_to_retrieve:])[:, -1:]
                 self.n_tokens_since_last_boundary += 1
 
                 return embeddings, self.last_h.unsqueeze(1)[:, [], :], None, None
         else:
+            if self.has_cache and self.cache_seqlens > 0:
+                assert tokens.shape[1] == 1
+                if self.add_hash_embeddings:
+                    assert self.hash_byte_group_size is not None
+                    n_tokens_to_retrieve = min(self.n_rolling_past_tokens, max(self.hash_byte_group_size))
+                else:
+                    n_tokens_to_retrieve = 1
+
+                embeddings = self._embed(self.rolling_past_tokens[:, -n_tokens_to_retrieve:])[:, -1:]
+            else:
+                embeddings = self._embed(tokens)
+
             # pass through encoder layers
             h = embeddings
 
@@ -854,7 +841,7 @@ class LocalEncoder(nn.Module):
                 h = self.post_last_block_norm(h)
 
             # only use this boundary predictor for prefilling
-            if self.boundary_predictor_module is not None and (not self.has_cache or self.cache_seqlens.item() == 0):
+            if self.boundary_predictor_module is not None and (not self.has_cache or self.cache_seqlens == 0):
                 boundary_logprobs, boundary_mask = self.boundary_predictor_module(
                     h,
                     boundary_threshold,
