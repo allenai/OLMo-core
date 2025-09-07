@@ -108,8 +108,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=cancel_check_interval,
-            max_duration=Duration.tokens(int(250e9)),
-            hard_stop=Duration.tokens(int(200e9)),
+            max_duration=Duration.tokens(int(350e9)),
+            hard_stop=Duration.tokens(int(300e9)),
             load_path="gs://ai2-llm/checkpoints/dirkg/OLMo2-7B-retrofit3-part2/step23842/",
             load_strategy=LoadStrategy.always,
         )
