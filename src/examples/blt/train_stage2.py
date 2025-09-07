@@ -177,7 +177,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             cross_attn_n_heads=local_cross_attn_n_heads,
             block_config=local_block,
         )
-    elif LOCAL_MODEL_STYLE == "hnet":
+    elif LOCAL_MODEL_STYLE.startswith("hnet"):
         if OLMO_ARCH == "olmo2_1B_v2":
             local_d_model = 2048
         elif OLMO_ARCH == "olmo2_7B":
