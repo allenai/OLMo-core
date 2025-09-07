@@ -31,6 +31,7 @@ from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_rank
 from olmo_core.distributed.checkpoint import load_model_and_optim_state
 from olmo_core.float8 import Float8Config
+from olmo_core.nn.fla import FLAConfig
 from olmo_core.nn.transformer import (
     TransformerConfig,
     TransformerType,
@@ -41,6 +42,7 @@ from olmo_core.nn.attention import AttentionConfig
 from olmo_core.nn.mamba import MambaConfig
 from olmo_core.nn.feed_forward import FeedForwardConfig
 from olmo_core.nn.blt.config import LocalEncoderConfig, LocalDecoderConfig
+from olmo_core.nn.xlstm import XLSTMConfig
 from olmo_core.optim import AdamWConfig, OptimGroupOverride
 from olmo_core.optim.scheduler import WSD, LinearWithWarmup, ConstantScheduler
 from olmo_core.train import (
@@ -130,6 +132,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         GLOBAL_BATCH_SIZE = 4
         LOCAL_BATCH_SIZE = 4
 
+    model_style_tags = LOCAL_MODEL_STYLE.split(":")[1:]
     teacher_model_config = getattr(TransformerConfig, OLMO_ARCH)(
         vocab_size=subword_tokenizer_config.padded_vocab_size()
     )
@@ -184,9 +187,10 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
 
         local_encoder_n_layers = 4
         local_decoder_n_layers = 4
-        local_block = TransformerBlockConfig(
+        local_encoder_block = local_decoder_block = TransformerBlockConfig(
             name=TransformerBlockType.mamba,
-            attention=MambaConfig(
+            attention=AttentionConfig(), # not used
+            mamba=MambaConfig(
                 chunk_size=256,
                 d_conv=4,
                 d_state=128,
@@ -195,6 +199,32 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             feed_forward=None,
             layer_norm=teacher_model_config.block.layer_norm,
         )
+
+        if "xlstm" in model_style_tags:
+            local_encoder_block = local_decoder_block = TransformerBlockConfig(
+                name=TransformerBlockType.xlstm,
+                attention=AttentionConfig(), # not used
+                xlstm=XLSTMConfig(
+                    num_heads=16,
+                    dtype=teacher_model_config.dtype,              
+                ),
+                feed_forward=teacher_model_config.block.feed_forward.replace(
+                    hidden_size=local_d_model * 2,
+                    bias=False,
+                ),
+                layer_norm=teacher_model_config.block.layer_norm,
+            )
+        elif "fla" in model_style_tags:
+            local_encoder_block = local_decoder_block = TransformerBlockConfig(
+                name=TransformerBlockType.fla,
+                attention=AttentionConfig(), # not used,
+                fla=FLAConfig(
+                    name="GatedDeltaNet",
+                    dtype=teacher_model_config.dtype,
+                ),
+                feed_forward=None,
+                layer_norm=teacher_model_config.block.layer_norm,
+            )
 
         local_encoder = LocalEncoderConfig(
             add_hash_embeddings=ADD_HASH_EMBEDDINGS,
@@ -205,7 +235,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             n_layers=local_encoder_n_layers,
             sliding_window_size=0,
             cross_attn_n_heads=0,
-            block_config=local_block,
+            block_config=local_encoder_block,
             add_norm_after_last_block=True,
             boundary_predictor="hnet",
             add_out_projection=True,
@@ -216,7 +246,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             n_layers=local_decoder_n_layers,
             sliding_window_size=0,
             cross_attn_n_heads=0,
-            block_config=local_block,
+            block_config=local_decoder_block,
             add_norm_before_first_block=True,
             add_norm_onto_residual=False,
             add_in_projection=True,
