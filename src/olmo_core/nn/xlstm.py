@@ -20,10 +20,13 @@ class XLSTM(mLSTMLayer):
         self.xlstm_cache_manager = XLSTMCacheManager()
 
     def forward(self, x: torch.Tensor):  # type: ignore
-        if self.xlstm_cache_manager is not None:
-            # assume inference
-            prev_mode = self.mlstm_backend.config.mode
+        if self.training:
+            self.mlstm_backend.config.mode = "train"
+        else:
             self.mlstm_backend.config.mode = "inference"
+
+        if self.xlstm_cache_manager is not None:
+            prev_mode = self.mlstm_backend.config.mode
             state = self.xlstm_cache_manager.state
 
             h, state = super().forward(x, state)

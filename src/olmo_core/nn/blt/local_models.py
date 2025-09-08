@@ -722,8 +722,8 @@ class LocalEncoder(nn.Module):
         last_token_is_boundary: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor], torch.Tensor | None]:
         if self.has_cache and self.cache_seqlens == 0:
-            tokens_to_cache = tokens[:, min(tokens.shape[1]-self.rolling_past_tokens.shape[1],0):]
-            self.rolling_past_tokens[:, -tokens_to_cache.shape[1]:] = tokens[:, max(tokens.shape[1]-self.rolling_past_tokens.shape[1],0):]
+            tokens_to_cache = tokens[:, max(tokens.shape[1]-self.rolling_past_tokens.shape[1],0):]
+            self.rolling_past_tokens[:, -tokens_to_cache.shape[1]:] = tokens_to_cache
             self.n_rolling_past_tokens += tokens_to_cache.shape[1]
         elif self.has_cache and not last_token_is_boundary:
             self.rolling_past_tokens.copy_(torch.roll(self.rolling_past_tokens, shifts=-1, dims=1))

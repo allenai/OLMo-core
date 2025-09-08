@@ -139,8 +139,17 @@ class TransformerBlockType(StrEnum):
     ➡️ :class:`MoEHybridReorderedNormTransformerBlock`
     """
     mamba = "mamba"
+    """
+    ➡️ :class:`MambaBlock`
+    """
     xlstm = "xlstm"
+    """
+    ➡️ :class:`XLSTMBlock`
+    """
     fla = "fla"
+    """
+    ➡️ :class:`FLABlock`
+    """
 
 
 @dataclass

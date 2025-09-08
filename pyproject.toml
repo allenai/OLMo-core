@@ -72,7 +72,14 @@ mamba = [
     "optree",
     "regex",
 ]
-all = ["ai2-olmo-core[dev,beaker,comet,eval,torchao,transformers,wandb,mamba]"]
+xlstm = [
+    "mlstm_kernels",
+    "xlstm",
+]
+fla = [
+    "flash-linear-attention",
+]
+all = ["ai2-olmo-core[dev,beaker,comet,eval,torchao,transformers,wandb,mamba,xlstm,fla]"]
 
 
 [tool.setuptools]

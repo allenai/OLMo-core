@@ -2175,7 +2175,7 @@ class BLTDistillTransformer(BLTTransformer):
             ratio_loss = self._compute_ratio_loss(
                 boundary_logprobs,
                 boundary_mask,
-                byte_mask,
+                boundary_byte_mask,
                 blt_config,
                 metrics=metrics,
             )

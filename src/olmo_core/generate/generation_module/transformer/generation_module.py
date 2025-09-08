@@ -464,7 +464,6 @@ class TransformerGenerationModule(GenerationModule):
         # TODO(benjaminm): this does not seem like a good place..
         if transformer_config.name in {TransformerType.blt, TransformerType.blt_distill}:  # type: ignore
             if transformer_config.name == TransformerType.blt_distill:  # type: ignore
-                pass
                 # don't need teacher
                 transformer_config.teacher_config = None  # type: ignore
 
@@ -619,18 +618,40 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         self.model.local_decoder.free_inference_cache()  # type: ignore
 
     @torch.inference_mode()
-    def model_forward(self, input_ids: torch.Tensor, **kwargs):
-        raise NotImplementedError() # need to restore
-
+    def model_forward(
+        self,
+        input_ids: torch.Tensor,
+        pad_to_multiple_of: int = 128,
+        n_extra_global_tokens: int = 32, # probably needs a better solution than a fixed extra budget
+        **kwargs
+    ):
         self._set_model_mode("eval")
+
+        original_length = input_ids.shape[1]
+        if original_length % pad_to_multiple_of != 0:
+            new_length = math.ceil(original_length / pad_to_multiple_of) * pad_to_multiple_of
+            pad_length = new_length - original_length
+            input_ids = F.pad(input_ids, (0, pad_length), value=self.tokenizer.pad_token_id)
+
+        # compute patch lengths
+        # if teacher_force_boundaries=False, only patch_lens.shape[1] is used as the budget of patches
+        patch_lens = []
+        for example_idx in range(input_ids.shape[0]):
+            text = self.tokenizer.decode(input_ids[example_idx].tolist())
+            subword_tokens = self.tokenizer.hf_tokenizer.encode(text)
+            _, example_patch_lens = self.tokenizer.get_tokens_and_patch_lengths(subword_tokens, add_bos=True)
+            patch_lens.append(example_patch_lens)
+
+        pad_to = max(len(x) for x in patch_lens) + n_extra_global_tokens
+        for example_idx in range(input_ids.shape[0]):
+            while len(patch_lens[example_idx]) < pad_to:
+                patch_lens[example_idx].append(0)
+
+        patch_lens = torch.tensor(patch_lens, dtype=torch.long, device=input_ids.device)
         input_ids = move_to_device(input_ids, self.device)
+        patch_lens = move_to_device(patch_lens, self.device)
 
-        # dummy patch lengths - not used
-        patch_lens = torch.ones_like(input_ids)
-
-        labels = F.pad(
-            input_ids[..., 1:], (0, 1, 0, 0), value=-100
-        )
+        labels = F.pad(input_ids[:, 1:], (0, 1), value=-100)
 
         return self.model.student_forward(  # type: ignore
             input_ids,
@@ -638,7 +659,7 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
             patch_lens=patch_lens,
             blt_config=self.blt_config,
             **kwargs
-        )[0].logits
+        )[0].logits[:, :original_length, :]
 
     @torch.inference_mode()
     def generate_batch(
@@ -653,6 +674,7 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         stream: bool = False,
         verify: bool = False,
         force_boundary_every: Optional[int] = None,
+        max_patch_length_decode: Optional[int] = 128, # 128 is longest dolma2 tokenizer token
         **generation_kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
         """
@@ -673,6 +695,7 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
             - ``logits``: Full logits if ``return_logits=True``, else ``None``. Shape: ``(batch_size, output_length, vocab_size)``.
             - ``logprobs``: Log probabilities of generated tokens if ``return_logprobs=True``, else ``None``. Shape: ``(batch_size, output_length)``.
         """
+        self._set_model_mode("eval")
         start_time = time.perf_counter()
 
         # convert to byte ids and compute patch lengths
@@ -748,13 +771,14 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
             desc="Generating tokens",
             unit="tokens",
             total=(max_length - prompt_len) if max_length is not None else None,
-            disable=True, # TEMP DEBUG
+            disable=not log_timing,
             miniters=10,
             colour="blue",
         )
         forward_start_time = None
         last_token_is_boundary = False
         is_first_forward = True
+        bytes_generated_at_last_boundary = 0
 
         while not ((max_length is not None and tokens_generated_plus_prefilled >= max_length) or finished.all()):
             input_ids_for_model = (
@@ -798,12 +822,19 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                 elif next_tokens[0].item() == self.model.end_of_subword_token_blt:
                     next_tokens[0] = 36  # doesn't matter but 36 is whitespace in blt tokenizer
 
+            if max_patch_length_decode is not None and not last_token_is_boundary:
+                if bytes_generated - bytes_generated_at_last_boundary >= max_patch_length_decode:
+                    log.warning(f"Forcing boundary since patch exceeds length {max_patch_length_decode}.")
+                    next_tokens[0] = self.model.end_of_subword_token_blt # type: ignore
+
+            pbar.update(1)
+
             if next_tokens[0].item() == self.model.end_of_subword_token_blt:
                 # possible but two consecutive boundaries are never seen during training
                 # do we need to handle this case / forbid consecutive boundaries?
                 assert not last_token_is_boundary
                 last_token_is_boundary = True
-                pbar.update(1)
+                bytes_generated_at_last_boundary = bytes_generated
             else:
                 if last_token_is_boundary:
                     # start of a new patch
@@ -827,16 +858,17 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                 # Force EOS for (previously) finished sequences
                 next_tokens = torch.where(finished, torch.full_like(next_tokens, eos), next_tokens)
 
+                # Append next tokens
+                generated = torch.cat([generated, next_tokens.unsqueeze(-1)], dim=1)
+
                 # Handle finished sequences
                 stop_hit = next_tokens.eq(eos)
+
                 # Also check for stop tokens if provided
                 for stop_sequence in stop_token_sequences:
                     stop_hit |= (generated[:, -len(stop_sequence):] == stop_sequence).all(dim=1)
 
                 finished |= stop_hit
-
-                # Append next tokens
-                generated = torch.cat([generated, next_tokens.unsqueeze(-1)], dim=1)
 
                 if log_timing and bytes_generated == 0:
                     torch.cuda.synchronize()
@@ -936,14 +968,23 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         # decoding errors could be a problem here - but not really a way around
         generated_text = self.tokenizer.decode(generated[0].tolist())
         generated_subword_ids = torch.tensor([self.tokenizer.hf_tokenizer.encode(generated_text)], dtype=torch.int64, device=self.device)
-        _, patch_lens = self.tokenizer.get_tokens_and_patch_lengths(generated_subword_ids[0].tolist(), add_bos=False)
-        patch_lens = torch.tensor([patch_lens], dtype=torch.int32, device=self.device)
-        patch_ids = blt_utils.lengths_to_ids(patch_lens, generated.shape[-1] - 1).to(self.device)
 
         if return_logits or return_logprobs:
             assert logits is not None and logprobs is not None
 
-            main_path_patch_logprobs = torch.zeros((1, generated_subword_ids.shape[1]), device=self.device, dtype=torch.float32)
+            if not completions_only:
+                generated_completion = generated[0, prompt_len:]
+                generated_text_completion = self.tokenizer.decode(generated_completion.tolist())
+                generated_subword_ids_completion = torch.tensor([self.tokenizer.hf_tokenizer.encode(generated_text_completion)], dtype=torch.int64, device=self.device)
+            else:
+                generated_completion = generated[0]
+                generated_subword_ids_completion = generated_subword_ids
+
+            _, patch_lens = self.tokenizer.get_tokens_and_patch_lengths(generated_subword_ids_completion[0].tolist(), add_bos=False)
+            patch_lens = torch.tensor([patch_lens], dtype=torch.int32, device=self.device)
+            patch_ids = blt_utils.lengths_to_ids(patch_lens, generated_completion.shape[-1]).to(self.device)
+
+            main_path_patch_logprobs = torch.zeros((1, generated_subword_ids_completion.shape[1]), device=self.device, dtype=torch.float32)
             main_path_patch_logprobs = main_path_patch_logprobs.scatter_reduce(
                 src=logprobs.float(),
                 dim=1,
@@ -953,14 +994,14 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
             )
 
             # we can't compute token-level logits, but logprobs should be fine since F.log_softmax(logprobs, -1) == logprobs
-            patch_logits = torch.zeros((1, generated_subword_ids.shape[1] + 1, len(self.tokenizer.hf_tokenizer)), device=self.device, dtype=torch.float32)
+            patch_logits = torch.zeros((1, generated_subword_ids_completion.shape[1] + 1, len(self.tokenizer.hf_tokenizer)), device=self.device, dtype=torch.float32)
             remaining_logpmass = blt_utils.log1mexp(main_path_patch_logprobs)
             remaining_logp_uniform = remaining_logpmass - math.log(patch_logits.shape[2] - 1)  # -1 to skip the main path token
 
             patch_logits[:, :-1, :] = remaining_logp_uniform.unsqueeze(-1)
             patch_logits.scatter_(
                 -1,
-                generated_subword_ids.unsqueeze(-1),
+                generated_subword_ids_completion.unsqueeze(-1),
                 main_path_patch_logprobs.to(patch_logits.dtype).unsqueeze(-1),
             )
         else:
