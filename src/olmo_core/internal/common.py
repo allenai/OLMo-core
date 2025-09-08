@@ -69,9 +69,9 @@ def _to_beaker_env_secret(
 
 def get_root_dir(cluster: str) -> str:
     root_dir: str = "weka://oe-training-default/ai2-llm"
-    if "cirrascale" in cluster or cluster == "ai2/test-h100":
+    if "jupiter" in cluster or cluster == "ai2/test-h100":
         root_dir = "/weka/oe-training-default/ai2-llm"
-    elif "google" in cluster:
+    elif "augusta" in cluster:
         root_dir = "gs://ai2-llm"
     elif "local" in cluster:
         root_dir = "gs://ai2-llm"
