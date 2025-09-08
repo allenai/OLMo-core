@@ -462,11 +462,6 @@ class Attention(AttentionBase):
                         self.kv_cache_manager.cache_leftpad.shape[0]
                     ).contiguous(),
                 )
-            else:
-                # FlexAttention with sinks KV cache path
-                att = self._flex_attention_with_kv_cache(
-                    q, k, v, scale=scale, block_mask=block_mask, sinks=sinks, mask_fn=mask_fn
-                )
             
             self.kv_cache_manager.update_seqlen(q.shape[1])
 
@@ -877,75 +872,6 @@ class Attention(AttentionBase):
             parallelize_plan=plan,
         )
     
-    def _flex_attention_with_kv_cache(
-        self,
-        q: torch.Tensor,
-        k: torch.Tensor, 
-        v: torch.Tensor,
-        scale: Optional[float] = None,
-        block_mask: Optional[BlockMask] = None,
-        sinks: Optional[torch.Tensor] = None,
-        mask_fn: Optional[Callable] = None,
-    ) -> torch.Tensor:
-        """
-        FlexAttention with KV caching support for generation with sinks.
-        
-        Input tensors are in (B, T, H, D) format as they come from the attention layer.
-        """
-        batch_size, seq_len_q, num_heads, head_dim = q.shape
-        _, seq_len_kv, _, _ = k.shape
-        
-        cache_pos = self.kv_cache_manager.current_position().item()
-        
-        # k, v are already in (B, T, H, D) format, perfect for KV cache storage
-        k_for_cache = k
-        v_for_cache = v
-        
-        cache_slice = slice(cache_pos, cache_pos + seq_len_kv)
-        self.kv_cache_manager.k_cache[:batch_size, cache_slice, :num_heads] = k_for_cache
-        self.kv_cache_manager.v_cache[:batch_size, cache_slice, :num_heads] = v_for_cache
-
-        seq_len = cache_pos + seq_len_kv
-        k_cached = self.kv_cache_manager.k_cache[:batch_size, :seq_len, :num_heads]
-        v_cached = self.kv_cache_manager.v_cache[:batch_size, :seq_len, :num_heads]
-
-        # FlexAttention expects (B, H, T, D), so we need to transpose
-        q_flex = q.transpose(1, 2)  # (B, T, H, D) -> (B, H, T, D)
-        k_cached_flex = k_cached.transpose(1, 2)  # (B, T, H, D) -> (B, H, T, D)
-        v_cached_flex = v_cached.transpose(1, 2)  # (B, T, H, D) -> (B, H, T, D)
-
-        og_dtype = None
-        if q.device.type == 'cuda':
-            og_dtype = q_flex.dtype
-            q_flex = q_flex.bfloat16()
-            k_cached_flex = k_cached_flex.bfloat16()
-            v_cached_flex = v_cached_flex.bfloat16()
-
-        score_mod_fn = None
-        if sinks is not None:
-            num_sink_tokens = sinks.shape[-1] if sinks.ndim > 1 else 1
-            
-            def score_mod_fn(score, batch_idx, head_idx, q_idx, kv_idx):
-                is_sink = kv_idx < num_sink_tokens
-                sink_val = sinks[head_idx] if sinks.ndim > 1 else sinks[0]
-                sink_logit = sink_val.to(score.dtype)
-                return torch.where(is_sink, sink_logit, score)
-
-        att = flex_attention(
-            q_flex, k_cached_flex, v_cached_flex,
-            score_mod=score_mod_fn,
-            block_mask=block_mask,
-            scale=scale
-        )
-        
-        if og_dtype is not None:
-            att = att.to(og_dtype)
-            
-        # FlexAttention returns (B, H, T, D), convert back to (B, T, H, D)
-        att = att.transpose(1, 2)
-
-        return att
-
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
