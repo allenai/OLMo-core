@@ -40,11 +40,11 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     config = TransformerConfig.olmo2_7B(
         vocab_size=common.tokenizer.padded_vocab_size(),
     )
-    config.block.attention.sliding_window = SlidingWindowAttentionConfig(
-        force_full_attention_on_first_layer=False,
-        force_full_attention_on_last_layer=True,
-        pattern=[4096, 4096, 4096, -1],
-    )
+    # config.block.attention.sliding_window = SlidingWindowAttentionConfig(
+    #     force_full_attention_on_first_layer=False,
+    #     force_full_attention_on_last_layer=True,
+    #     pattern=[4096, 4096, 4096, -1],
+    # )
     config.block.attention.use_flex = True
     config.block.attention.use_sinks = True
     config.lm_head.loss_implementation = LMLossImplementation.fused_linear
@@ -95,7 +95,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             metrics_collect_interval=10,
             cancel_check_interval=1,
             max_duration=Duration.steps(25),
-            load_path='gs://ai2-llm/checkpoints/OLMo25-from476838/step500680-unsharded',
+            load_path='gs://ai2-llm/checkpoints/OLMo25-from476838/step500680',
             load_strategy=LoadStrategy.always,
 
         )
