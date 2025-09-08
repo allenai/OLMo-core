@@ -7,8 +7,8 @@ from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
 from olmo_core.internal.experiment import CommonComponents, main
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
-from olmo_core.train import Duration, TrainerConfig
+from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig, SchedulerUnits
+from olmo_core.train import Duration, TrainerConfig, LoadStrategy
 from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
@@ -66,7 +66,9 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
-        scheduler=CosWithWarmup(warmup_steps=2000),
+        scheduler=CosWithWarmup(
+            units=SchedulerUnits.tokens,    # mandatory with batch size warmup
+            warmup_steps=2000 * INITIAL_GLOBAL_BATCH_SIZE),
     )
 
 
@@ -85,11 +87,13 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
     return (
         TrainerConfig(
+            load_path="ai2-llm/checkpoints/amandab/OLMo2.8-correctdata-noheadnorm/step0",
+            load_strategy=LoadStrategy.always,
             save_folder=f"gs://ai2-llm/checkpoints/amandab/{common.run_name}/",
             save_overwrite=True,
-            metrics_collect_interval=10,
+            metrics_collect_interval=50,
             cancel_check_interval=cancel_check_interval,
-            max_duration=Duration.tokens(int(5e12)),
+            max_duration=Duration.tokens(int(7e12)),
             hard_stop=Duration.tokens(int(145e9)) # stop at 145B tokens for this run 
         )
         .with_callback(
