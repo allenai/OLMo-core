@@ -4,6 +4,9 @@ from dataclasses import dataclass
 from fnmatch import fnmatch
 from typing import TYPE_CHECKING, Dict, List, Optional
 
+from transformers import AutoModelForCausalLM
+from transformers.configuration_utils import PretrainedConfig
+
 from olmo_core.config import Config, DType, StrEnum
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
@@ -85,6 +88,11 @@ class TransformerType(StrEnum):
     moe = "moe"
     """
     ➡️ :class:`MoETransformer`
+    """
+
+    linear_rnn = "linear_rnn"
+    """
+    ➡️ :class:`LinearRNNTransformer`
     """
 
 
@@ -185,6 +193,8 @@ class TransformerBlockConfig(Config):
         cache: Optional[BufferCache] = None,
     ) -> "TransformerBlockBase":
         from .block import (
+            FLABlock,
+            MambaBlock,
             MoEHybridReorderedNormTransformerBlock,
             MoEHybridTransformerBlock,
             MoEReorderedNormTransformerBlock,
@@ -192,9 +202,7 @@ class TransformerBlockConfig(Config):
             NormalizedTransformerBlock,
             ReorderedNormTransformerBlock,
             TransformerBlock,
-            MambaBlock,
             XLSTMBlock,
-            FLABlock,
         )
 
         kwargs = self.as_dict(exclude_none=True, recurse=False)
@@ -295,6 +303,7 @@ class TransformerConfig(Config):
     init_std: float = 0.02
     freeze_params: Optional[List[str]] = None
     block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None
+    fla_config: Optional[PretrainedConfig] = None
 
     def build(
         self,
@@ -356,6 +365,8 @@ class TransformerConfig(Config):
                 init_std=self.init_std,
                 block_overrides=self.block_overrides,
             )
+        elif self.name == TransformerType.linear_rnn:
+            model = AutoModelForCausalLM.from_config(self.fla_config)
         else:
             raise NotImplementedError(self.name)
 
@@ -1026,9 +1037,11 @@ class TransformerConfig(Config):
                 hidden_size=expert_hidden_size,
                 capacity_factor=capacity_factor,
                 router=MoERouterConfig(top_k=top_k),
-                shared_mlp=None
-                if shared_expert_hidden_size is None
-                else FeedForwardConfig(hidden_size=shared_expert_hidden_size, bias=False),
+                shared_mlp=(
+                    None
+                    if shared_expert_hidden_size is None
+                    else FeedForwardConfig(hidden_size=shared_expert_hidden_size, bias=False)
+                ),
                 lb_loss_weight=lb_loss_weight,
                 z_loss_weight=z_loss_weight,
             ),
@@ -1088,4 +1101,45 @@ class TransformerConfig(Config):
             dtype=dtype,
             init_method=InitMethod.normalized,
             **kwargs,
+        )
+
+    @classmethod
+    def fla(cls, fla_model_name: str, **kwargs) -> "TransformerConfig":
+
+        # Try to use FLA's native config system
+        if fla_model_name == "path_attn":
+            from fla.models import PaTHAttentionConfig
+
+            config_cls = PaTHAttentionConfig
+
+        elif fla_model_name == "rwkv7":
+            from fla.models import RWKV7Config
+
+            config_cls = RWKV7Config
+
+        elif fla_model_name == "deltanet":
+            from fla.models import DeltaNetConfig
+
+            config_cls = DeltaNetConfig
+
+        elif fla_model_name == "deltaproduct":
+            from fla.models import GatedDeltaProductConfig
+
+            config_cls = GatedDeltaProductConfig
+
+        else:
+            raise ValueError(f"Unsupported FLA model name: {fla_model_name}")
+
+        fla_config = config_cls(**kwargs)
+
+        # TODO: Change this config?
+        return cls(
+            d_model=None,
+            vocab_size=None,
+            n_layers=None,
+            block=None,
+            lm_head=None,
+            dtype=None,
+            block_overrides=None,
+            fla_config=fla_config,
         )

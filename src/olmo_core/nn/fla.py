@@ -1,10 +1,10 @@
-from dataclasses import dataclass
 import logging
-from types import SimpleNamespace
+from dataclasses import dataclass, field
+
 import fla.layers
 import torch
 from torch import nn
-from dataclasses import field
+
 from olmo_core.config import Config, DType
 
 log = logging.getLogger(__name__)
@@ -22,11 +22,11 @@ class FLA(nn.Module):
 
     def forward(self, x: torch.Tensor):
         if self.kv_cache_manager is not None and self.kv_cache_manager.current_position() == 0:
-            raise NotImplementedError() # prefill
+            raise NotImplementedError()  # prefill
         elif self.kv_cache_manager is not None:
-            raise NotImplementedError() # generate step
+            raise NotImplementedError()  # generate step
         else:
-            return self.inner(x)[0] # returns out, ?, cache
+            return self.inner(x)[0]  # returns out, ?, cache
 
 
 @dataclass
