@@ -1,5 +1,5 @@
 """
-Train a FLA model. Run this script without any arguments to see usage info.
+Train a FLA DeltaNet model. Run this script without any arguments to see usage info.
 """
 
 from datetime import datetime
@@ -29,9 +29,9 @@ GLOBAL_BATCH_SIZE = (
     1024 * 4096
 )  # batch size at step 0, let's keep this independent of the sequence length in case we change it.
 MAX_DURATION = int(
-    10e12
+    100e9
 )  # Setting this higher than 6T (expected run time), in case we get to run longer since 1) we're using WSD and 2) our anneal will use different data
-ANNEAL_TOKENS = int(100e9)
+ANNEAL_TOKENS = int(1e9)
 LR = (
     4.4e-5 * 2
 )  # Based on 6T tokens with 100B anneal, don't forget to adjust when max duration or anneal length changes.
@@ -40,14 +40,18 @@ EVAL_INTERVAL = 1000
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
-    # Use FLA model instead of standard transformer
-    return TransformerConfig.fla(
+    config = TransformerConfig.fla(
         fla_model_name="deltanet",
         vocab_size=common.tokenizer.padded_vocab_size(),
-        d_model=2048,  # Model dimension, adjust as needed
-        n_layers=16,  # Number of layers, adjust as needed
-        # Add any additional FLA-specific kwargs here as required by the FLA library
+        hidden_size=2048,
+        num_layers=16,
+        num_heads=16,
+        pad_token_id=common.tokenizer.pad_token_id,
+        bos_token_id=common.tokenizer.bos_token_id,
+        eos_token_id=common.tokenizer.eos_token_id,
     )
+
+    return config
 
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
@@ -111,7 +115,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "checkpointer",
             CheckpointerCallback(
                 save_interval=SAVE_INTERVAL,
-                ephemeral_save_interval=None,
+                ephemeral_save_interval=100,
                 save_async=True,
             ),
         )
@@ -130,7 +134,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             WandBCallback(
                 name=run_name,
                 group=common.run_name,
-                entity="anej",
+                entity="ai2-llm",
                 project="olmo3",
                 enabled=True,
                 cancel_check_interval=cancel_check_interval,
