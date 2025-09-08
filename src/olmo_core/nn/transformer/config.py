@@ -7,6 +7,9 @@ from typing import TYPE_CHECKING, Dict, List, Optional
 from olmo_core.config import Config, DType, StrEnum
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.nn.fla import FLAConfig
+from olmo_core.nn.mamba import MambaConfig
+from olmo_core.nn.xlstm import XLSTMConfig
 from olmo_core.utils import ensure_multiple_of
 
 from ..attention import AttentionConfig, AttentionType
@@ -124,6 +127,18 @@ class TransformerBlockType(StrEnum):
     """
     ➡️ :class:`MoEHybridReorderedNormTransformerBlock`
     """
+    mamba = "mamba"
+    """
+    ➡️ :class:`MambaBlock`
+    """
+    xlstm = "xlstm"
+    """
+    ➡️ :class:`XLSTMBlock`
+    """
+    fla = "fla"
+    """
+    ➡️ :class:`FLABlock`
+    """
 
 
 @dataclass
@@ -148,6 +163,9 @@ class TransformerBlockConfig(Config):
     """
     The config for the MoE feed-forward layer. Required for MoE blocks.
     """
+    mamba: Optional[MambaConfig] = None
+    xlstm: Optional[XLSTMConfig] = None
+    fla: Optional[FLAConfig] = None
     name: TransformerBlockType = TransformerBlockType.default
     """
     The block type.
@@ -174,6 +192,9 @@ class TransformerBlockConfig(Config):
             NormalizedTransformerBlock,
             ReorderedNormTransformerBlock,
             TransformerBlock,
+            MambaBlock,
+            XLSTMBlock,
+            FLABlock,
         )
 
         kwargs = self.as_dict(exclude_none=True, recurse=False)
@@ -201,6 +222,15 @@ class TransformerBlockConfig(Config):
                 return MoEHybridTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.moe_hybrid_reordered_norm:
                 return MoEHybridReorderedNormTransformerBlock(**kwargs)
+            elif self.name == TransformerBlockType.mamba:
+                kwargs.pop("attention")  # Mamba does not use attention
+                return MambaBlock(**kwargs)
+            elif self.name == TransformerBlockType.xlstm:
+                kwargs.pop("attention")  # XLSTM does not use attention
+                return XLSTMBlock(**kwargs)
+            elif self.name == TransformerBlockType.fla:
+                kwargs.pop("attention")  # FLA does not use attention
+                return FLABlock(**kwargs)
             else:
                 raise NotImplementedError(self.name)
         except TypeError as e:
