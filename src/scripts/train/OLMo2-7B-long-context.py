@@ -20,6 +20,8 @@ from olmo_core.train.train_module import (
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
+from olmo_core.nn.lm_head import LMLossImplementation
+from olmo_core.train.common import Duration
 from olmo_core.train.train_module.transformer.config import TransformerTensorParallelConfig
 
 
@@ -45,6 +47,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     # )
     config.block.attention.use_flex = True
     config.block.attention.use_sinks = True
+    config.lm_head.loss_implementation = LMLossImplementation.fused_linear
     return config
 
 
@@ -68,7 +71,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
-            shard_degree=8,
+            shard_degree=4,
         ),
         float8_config=Float8Config(enabled=False),
         max_grad_norm=1.0,
@@ -77,8 +80,8 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             degree=8,
         ),
         ac_config=TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.selected_modules,
-            modules=["blocks.*.attention"],
+            mode=TransformerActivationCheckpointingMode.budget,
+            activation_memory_budget=0.5,
         ),
         state_dict_load_opts={"strict": False},
     )
@@ -92,6 +95,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             metrics_collect_interval=10,
             cancel_check_interval=1,
             load_strategy=LoadStrategy.never,
+            max_duration=Duration.steps(25)
             # load_path='gs://ai2-llm/checkpoints/OLMo25-from476838/step500680',
         )
         .with_callback(
