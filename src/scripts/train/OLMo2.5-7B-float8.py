@@ -8,7 +8,7 @@ from olmo_core.internal.experiment import CommonComponents, main
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
-from olmo_core.train import Duration, TrainerConfig
+from olmo_core.train import Duration, TrainerConfig, LoadStrategy
 from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
@@ -86,6 +86,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
     return (
         TrainerConfig(
+            load_path="gs://ai2-llm/checkpoints/OLMo25/step0",
+            load_strategy=LoadStrategy.always,
             save_folder=f"gs://ai2-llm/checkpoints/amandab/{common.run_name}/",
             save_overwrite=True,
             metrics_collect_interval=10,

@@ -87,7 +87,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
     return (
         TrainerConfig(
-            load_path="ai2-llm/checkpoints/amandab/OLMo2.8-correctdata-noheadnorm/step0",
+            load_path="gs://ai2-llm/checkpoints/amandab/OLMo2.8-correctdata-noheadnorm/step0",
             load_strategy=LoadStrategy.always,
             save_folder=f"gs://ai2-llm/checkpoints/amandab/{common.run_name}/",
             save_overwrite=True,
