@@ -68,7 +68,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         max_grad_norm=1.0,
         scheduler=CosWithWarmup(
             units=SchedulerUnits.tokens,    # mandatory with batch size warmup
-            warmup_steps=2000 * INITIAL_GLOBAL_BATCH_SIZE),
+            warmup_steps=2000 * GLOBAL_BATCH_SIZE),
     )
 
 
