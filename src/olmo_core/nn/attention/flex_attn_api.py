@@ -74,7 +74,7 @@ class FlexAttention(torch.nn.Module):
     # block masks for different layers.
     block_masks: ClassVar[dict[FLEX_ATTN_MASK_T, BlockMask]] = {}
     # Cache for sink block masks to avoid recompilation
-    sink_block_masks: ClassVar[dict[tuple[int, int, int, int, int], BlockMask]] = {}
+    # sink_block_masks: ClassVar[dict[tuple[int, int, int, int, int], BlockMask]] = {}
 
     # Instance variables.
     attn_mask_type: str
@@ -117,22 +117,32 @@ class FlexAttention(torch.nn.Module):
 
         # Create cache key for sink block mask
         # Use sliding_window value and sequence lengths as key
-        cache_key = (B, H_q, S_q, S_kv + 1, sliding_window if sliding_window else -1)
+        # cache_key = (B, H_q, S_q, S_kv + 1, sliding_window if sliding_window else -1)
         
-        # Check if we already have this block mask cached
-        if cache_key not in FlexAttention.sink_block_masks:
-            # masks ensure sinks are included in softmax
-            if sliding_window is not None and sliding_window > 0:
-                mask_mod = FlexAttention._get_sliding_window_with_sink_mask_mod(
-                    sliding_window, sink_idx
-                )
-            else:
-                mask_mod = FlexAttention._get_causal_with_sink_mask_mod(sink_idx)
+        # # Check if we already have this block mask cached
+        # if cache_key not in FlexAttention.sink_block_masks:
+        #     # masks ensure sinks are included in softmax
+        #     if sliding_window is not None and sliding_window > 0:
+        #         mask_mod = FlexAttention._get_sliding_window_with_sink_mask_mod(
+        #             sliding_window, sink_idx
+        #         )
+        #     else:
+        #         mask_mod = FlexAttention._get_causal_with_sink_mask_mod(sink_idx)
 
-            block_mask = FlexAttention.compiled_create_block_mask(mask_mod, B, H_q, S_q, S_kv + 1)
-            FlexAttention.sink_block_masks[cache_key] = block_mask
+        #     block_mask = FlexAttention.compiled_create_block_mask(mask_mod, B, H_q, S_q, S_kv + 1)
+        #     FlexAttention.sink_block_masks[cache_key] = block_mask
+        # else:
+        #     block_mask = FlexAttention.sink_block_masks[cache_key]
+
+                # masks ensure sinks are included in softmax
+        if sliding_window is not None and sliding_window > 0:
+            mask_mod = FlexAttention._get_sliding_window_with_sink_mask_mod(
+                sliding_window, sink_idx
+            )
         else:
-            block_mask = FlexAttention.sink_block_masks[cache_key]
+            mask_mod = FlexAttention._get_causal_with_sink_mask_mod(sink_idx)
+
+        block_mask = FlexAttention.compiled_create_block_mask(mask_mod, B, H_q, S_q, S_kv + 1)
 
         # overwrite the dummy sink scores with actual sink weights
         def score_mod(score, b, h_q, q_idx, kv_idx):
@@ -146,10 +156,10 @@ class FlexAttention(torch.nn.Module):
             q, k_ext, v_ext, block_mask=block_mask, score_mod=score_mod, enable_gqa=enable_gqa
         )
 
-    @classmethod
-    def clear_sink_mask_cache(cls):
-        """Clear the cached sink block masks to free memory."""
-        cls.sink_block_masks.clear()
+    # @classmethod
+    # def clear_sink_mask_cache(cls):
+    #     """Clear the cached sink block masks to free memory."""
+    #     cls.sink_block_masks.clear()
     
     @staticmethod
     def _get_causal_with_sink_mask_mod(sink_idx):
