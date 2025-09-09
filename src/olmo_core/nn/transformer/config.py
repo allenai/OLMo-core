@@ -11,7 +11,6 @@ from olmo_core.config import Config, DType, StrEnum
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.fla import FLAConfig
-from olmo_core.nn.xlstm import XLSTMConfig
 from olmo_core.utils import ensure_multiple_of
 
 from ..attention import AttentionConfig, AttentionType
@@ -134,10 +133,6 @@ class TransformerBlockType(StrEnum):
     """
     ➡️ :class:`MoEHybridReorderedNormTransformerBlock`
     """
-    xlstm = "xlstm"
-    """
-    ➡️ :class:`XLSTMBlock`
-    """
     fla = "fla"
     """
     ➡️ :class:`FLABlock`
@@ -166,7 +161,6 @@ class TransformerBlockConfig(Config):
     """
     The config for the MoE feed-forward layer. Required for MoE blocks.
     """
-    xlstm: Optional[XLSTMConfig] = None
     fla: Optional[FLAConfig] = None
     name: TransformerBlockType = TransformerBlockType.default
     """
@@ -195,7 +189,6 @@ class TransformerBlockConfig(Config):
             NormalizedTransformerBlock,
             ReorderedNormTransformerBlock,
             TransformerBlock,
-            XLSTMBlock,
         )
 
         kwargs = self.as_dict(exclude_none=True, recurse=False)
@@ -223,9 +216,6 @@ class TransformerBlockConfig(Config):
                 return MoEHybridTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.moe_hybrid_reordered_norm:
                 return MoEHybridReorderedNormTransformerBlock(**kwargs)
-            elif self.name == TransformerBlockType.xlstm:
-                kwargs.pop("attention")  # XLSTM does not use attention
-                return XLSTMBlock(**kwargs)
             elif self.name == TransformerBlockType.fla:
                 kwargs.pop("attention")  # FLA does not use attention
                 return FLABlock(**kwargs)

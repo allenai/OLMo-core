@@ -64,14 +64,10 @@ eval = ["ai2-olmo-eval @ git+https://github.com/allenai/OLMo-in-loop-evals.git@9
 torchao = ["torchao"]
 transformers = ["transformers"]
 wandb = ["wandb"]
-xlstm = [
-    "mlstm_kernels",
-    "xlstm",
-]
 fla = [
     "flash-linear-attention",
 ]
-all = ["ai2-olmo-core[dev,beaker,comet,eval,torchao,transformers,wandb,xlstm,fla]"]
+all = ["ai2-olmo-core[dev,beaker,comet,eval,torchao,transformers,wandb,fla]"]
 
 
 [tool.setuptools]
