@@ -824,9 +824,8 @@ class LocalEncoder(nn.Module):
                     teacher_force_boundaries=teacher_force_boundaries,
                     true_boundary_mask=true_boundary_mask,
                 )
-                if not last_token_is_boundary:
-                    # must not be a boundary
-                    boundary_mask[:, -1] = False
+                # can't predict through encoder - must be through prev local decoder step
+                boundary_mask[:, -1] = last_token_is_boundary
             else:
                 boundary_logprobs = None
                 boundary_mask = None

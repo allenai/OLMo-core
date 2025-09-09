@@ -804,7 +804,9 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                 blt_config=self.blt_config,
                 cache_leftpad=cache_leftpad if generation_config.use_cache else None,
             )
-            tokens_generated_plus_prefilled += n_new_tokens_from_forward
+            # count prefill tokens
+            if is_first_forward:
+                tokens_generated_plus_prefilled += n_new_tokens_from_forward
             is_first_forward = False
 
             next_tokens = select_next_token(
@@ -835,6 +837,7 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                 assert not last_token_is_boundary
                 last_token_is_boundary = True
                 bytes_generated_at_last_boundary = bytes_generated
+                tokens_generated_plus_prefilled += 1
             else:
                 if last_token_is_boundary:
                     # start of a new patch

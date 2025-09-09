@@ -36,7 +36,7 @@ def parse_args():
         help="Device to run on (auto, cpu, cuda, cuda:0, etc.)",
     )
     parser.add_argument(
-        "--max-length", type=int, default=100, help="Maximum sequence length for generation"
+        "--max-new-tokens", type=int, default=100, help="Maximum number of new tokens to generate"
     )
     parser.add_argument(
         "--temperature", type=float, default=0.0, help="Sampling temperature (0.0 for greedy)"
@@ -110,7 +110,7 @@ def generate_text(
     tokenizer,
     device: torch.device,
     batch_size: int,
-    stream: bool = False,
+    stream: bool = True,
 ) -> list[str]:
     """Generate text from a prompt."""
     # Tokenize the prompt
@@ -131,7 +131,7 @@ def generate_text(
         input_ids,
         attention_mask=attention_mask,
         completions_only=True,
-        log_timing=True,
+        log_timing=not stream,
         **kwargs,
     )
 
@@ -215,7 +215,7 @@ def main():
 
     # Setup generation config
     generation_config = GenerationConfig(
-        max_length=args.max_length,
+        max_new_tokens=args.max_new_tokens,
         temperature=args.temperature,
         top_k=args.top_k,
         top_p=args.top_p,
@@ -247,7 +247,27 @@ def main():
         run_interactive_mode(generation_module, tokenizer, device)
     else:
         # Single generation example
-        test_prompt = "The quick brown fox jumped"
+        test_prompt = """
+def incr_list(l: list):
+    \"\"\"Return list with elements incremented by 1.
+    >>> incr_list([1, 2, 3]) 
+    [2, 3, 4]
+    >>> incr_list([5, 3, 5, 2, 3, 3, 9, 0, 123])
+    [6, 4, 6, 3, 4, 4, 10, 1, 124]
+    \"\"\"
+Here is the completed function:
+
+```python
+
+
+def incr_list(l: list):
+    \"\"\"Return list with elements incremented by 1.
+    >>> incr_list([1, 2, 3]) 
+    [2, 3, 4]
+    >>> incr_list([5, 3, 5, 2, 3, 3, 9, 0, 123])
+    [6, 4, 6, 3, 4, 4, 10, 1, 124]
+    \"\"\"
+""".strip()
         responses = generate_text(
             generation_module, test_prompt, tokenizer, device, args.batch_size
         )
