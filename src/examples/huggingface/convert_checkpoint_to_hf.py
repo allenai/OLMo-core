@@ -90,6 +90,10 @@ def convert_checkpoint_to_hf(
                 "Flash attention or cuda is unavailable, turning off flash attention to stop validation from failing."
             )
             attention["use_flash"] = False
+            if (block_overrides := transformer_config_dict.get("block")) is not None:
+                assert isinstance(block_overrides, dict)
+                for block_override in block_overrides.values():
+                    block_override["attention"]["use_flash"] = False
 
     model = TransformerConfig.from_dict(transformer_config_dict).build()
     model.to_empty(device=device)
