@@ -64,14 +64,6 @@ eval = ["ai2-olmo-eval @ git+https://github.com/allenai/OLMo-in-loop-evals.git@9
 torchao = ["torchao"]
 transformers = ["transformers"]
 wandb = ["wandb"]
-mamba = [
-    "triton>=3.2.0",
-    "mamba_ssm @ git+https://github.com/state-spaces/mamba.git@a6a1dae6efbf804c9944a0c2282b437deb4886d8",
-    "causal_conv1d @ git+https://github.com/Dao-AILab/causal-conv1d.git@e940ead2fd962c56854455017541384909ca669f",
-    "einops",
-    "optree",
-    "regex",
-]
 xlstm = [
     "mlstm_kernels",
     "xlstm",
@@ -79,7 +71,7 @@ xlstm = [
 fla = [
     "flash-linear-attention",
 ]
-all = ["ai2-olmo-core[dev,beaker,comet,eval,torchao,transformers,wandb,mamba,xlstm,fla]"]
+all = ["ai2-olmo-core[dev,beaker,comet,eval,torchao,transformers,wandb,xlstm,fla]"]
 
 
 [tool.setuptools]
