@@ -181,8 +181,19 @@ class ByteDataCollator(DataCollator):
             space_patch_lengths = x.get("space_patch_lens") if isinstance(x, dict) else None
 
             if expanded_input_ids is not None:
-                # already padded in dset
-                all_expanded_input_ids.append(expanded_input_ids)
+                pad_shape = (
+                    (batch["input_ids"].shape[1] - len(expanded_input_ids), 0)
+                    if self.pad_direction == PaddingDirection.left
+                    else (0, batch["input_ids"].shape[1] - len(expanded_input_ids))
+                )
+
+                expanded_input_ids = F.pad(
+                    expanded_input_ids,
+                    pad_shape,
+                    mode="constant",
+                    value=self.pad_token_id,
+                )
+                all_expanded_input_ids.append(expanded_input_ids.to(dtype=torch.long))
 
             if original_input_ids is not None:
                 # both or neither
