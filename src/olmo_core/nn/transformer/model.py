@@ -1577,6 +1577,7 @@ class BLTDistillTransformer(BLTTransformer):
         dummy_size = 128
         self(
             input_ids=torch.zeros((1, dummy_size), dtype=torch.long, device=self.device),
+            expanded_input_ids=torch.zeros((1, dummy_size), dtype=torch.long, device=self.device),
             labels=torch.zeros((1, dummy_size), dtype=torch.long, device=self.device),
             patch_lens=torch.ones((1, dummy_size), dtype=torch.long, device=self.device),
             original_input_ids=torch.zeros((1, dummy_size), dtype=torch.long, device=self.device),
