@@ -8,7 +8,7 @@ from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
 from olmo_core.internal.experiment import CommonComponents, main
-from olmo_core.nn.transformer import TransformerConfig
+from olmo_core.nn.transformer import TransformerConfig, TransformerBlockType
 from olmo_core.optim import OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig
 from olmo_core.optim.scheduler import WSD
 from olmo_core.train import Duration, TrainerConfig
@@ -50,14 +50,14 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     )
 
     # Update the config to use an FLA block.
-    # config.block.name = TransformerBlockType.fla
+    config.block.name = TransformerBlockType.fla
     # config.block.attention = AttentionConfig()  # not used
     config.block.fla = FLAConfig(
         name="GatedDeltaNet",
         dtype=config.dtype,
         fla_layer_kwargs={
-            "hidden_size": config.hidden_size,
-            "num_heads": config.block.num_attention_heads,
+            "hidden_size": config.d_model,
+            "num_heads": config.block.attention.n_heads,
         },
     )
 

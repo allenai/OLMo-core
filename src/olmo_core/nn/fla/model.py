@@ -15,8 +15,7 @@ class FLAModel(torch.nn.Module):
     def forward(self, x: torch.Tensor):
         # TODO: Run the model, ignoring the lm_head
         # The transformer part will do the lm_head
-
-        return self.model(x)
+        return NotImplementedError()
 
 
 @dataclass
