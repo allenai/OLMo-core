@@ -123,7 +123,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "comet",
             CometCallback(
                 name=run_name,
-                workspace="ai2/linear-rnns",
+                workspace="ai2",
                 project="linear-rnns",
                 enabled=True,
                 cancel_check_interval=cancel_check_interval,
@@ -168,4 +168,5 @@ if __name__ == "__main__":
         include_instance_filter=False,  # We use SkipStepOptimizer for this problem.
         include_default_evals=False,
         intra_document_masking=True,
+        beaker_workspace="ai2/linear-rnns",
     )
