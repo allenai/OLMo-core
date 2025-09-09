@@ -8,12 +8,14 @@ from transformers import AutoModelForCausalLM
 
 
 class FLAModel(torch.nn.Module):
-    def __init__(self, model: torch.nn.Module):
+    def __init__(self, model):
         super().__init__()
         self.model = model
 
     def forward(self, x: torch.Tensor):
-        # FIXME: adapt inputs/outputs as needed
+        # TODO: Run the model, ignoring the lm_head
+        # The transformer part will do the lm_head
+
         return self.model(x)
 
 
@@ -26,5 +28,5 @@ class FLAModelConfig(Config):
         config_cls = getattr(fla.models, self.fla_model_name + "Config", None)
         assert config_cls is not None, f"Unknown FLA model name: {self.fla_model_name}"
         config = config_cls(**self.kwargs)
-        model = AutoModelForCausalLM.from_config(config)
-        return FLAModel(model)
+        causal_lm = AutoModelForCausalLM.from_config(config)
+        return FLAModel(causal_lm.model)

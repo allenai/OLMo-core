@@ -24,6 +24,8 @@ from olmo_core.train.train_module import (
     TransformerTrainModuleConfig,
 )
 
+from olmo_core.nn.fla.layer import FLAConfig
+
 SEQUENCE_LENGTH = 8192
 GLOBAL_BATCH_SIZE = (
     1024 * 4096
@@ -40,16 +42,36 @@ EVAL_INTERVAL = 1000
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
-    config = TransformerConfig.fla(
-        fla_model_name="GatedDeltaNet",
+    # Initialize the standard OLMo 1B config as a starting point.
+    config = TransformerConfig.olmo2_1B(
         vocab_size=common.tokenizer.padded_vocab_size(),
-        hidden_size=2048,
-        num_hidden_layers=16,
-        num_heads=16,
-        pad_token_id=common.tokenizer.pad_token_id,
-        bos_token_id=common.tokenizer.bos_token_id,
-        eos_token_id=common.tokenizer.eos_token_id,
+        n_layers=16,
+        hidden_size_multiple_of=1024,
     )
+
+    # Update the config to use an FLA block.
+    # config.block.name = TransformerBlockType.fla
+    # config.block.attention = AttentionConfig()  # not used
+    config.block.fla = FLAConfig(
+        name="GatedDeltaNet",
+        dtype=config.dtype,
+        fla_layer_kwargs={
+            "hidden_size": config.hidden_size,
+            "num_heads": config.block.num_attention_heads,
+        },
+    )
+
+    # # This is how we were doing it before at the model level.
+    # config = TransformerConfig.fla(
+    #     fla_model_name="GatedDeltaNet",
+    #     vocab_size=common.tokenizer.padded_vocab_size(),
+    #     hidden_size=2048,
+    #     num_hidden_layers=16,
+    #     num_heads=16,
+    #     pad_token_id=common.tokenizer.pad_token_id,
+    #     bos_token_id=common.tokenizer.bos_token_id,
+    #     eos_token_id=common.tokenizer.eos_token_id,
+    # )
 
     return config
 
