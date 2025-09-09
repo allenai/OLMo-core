@@ -123,7 +123,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "comet",
             CometCallback(
                 name=run_name,
-                workspace="ai2",
+                workspace="ai2/linear-rnns",
                 project="linear-rnns",
                 enabled=True,
                 cancel_check_interval=cancel_check_interval,
