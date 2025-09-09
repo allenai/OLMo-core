@@ -41,7 +41,7 @@ EVAL_INTERVAL = 1000
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     config = TransformerConfig.fla(
-        fla_model_name="deltanet",
+        fla_model_name="GatedDeltaNet",
         vocab_size=common.tokenizer.padded_vocab_size(),
         hidden_size=2048,
         num_hidden_layers=16,

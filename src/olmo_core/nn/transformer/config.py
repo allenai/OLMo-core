@@ -1085,31 +1085,9 @@ class TransformerConfig(Config):
 
     @classmethod
     def fla(cls, fla_model_name: str, **kwargs) -> "TransformerConfig":
-
-        # Try to use FLA's native config system
-        if fla_model_name == "path_attn":
-            from fla.models import PaTHAttentionConfig
-
-            config_cls = PaTHAttentionConfig
-
-        elif fla_model_name == "rwkv7":
-            from fla.models import RWKV7Config
-
-            config_cls = RWKV7Config
-
-        elif fla_model_name == "deltanet":
-            from fla.models import DeltaNetConfig
-
-            config_cls = DeltaNetConfig
-
-        elif fla_model_name == "deltaproduct":
-            from fla.models import GatedDeltaProductConfig
-
-            config_cls = GatedDeltaProductConfig
-
-        else:
-            raise ValueError(f"Unsupported FLA model name: {fla_model_name}")
-
+        import fla.models
+        config_cls = getattr(fla.models, fla_model_name + "Config", None)
+        assert config_cls is not None, f"Unknown FLA model name: {fla_model_name}"
         fla_config = config_cls(**kwargs)
 
         # TODO: Change this config?
