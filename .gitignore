@@ -60,3 +60,4 @@ site/
 /scratch/
 core
 /dataset-cache/
+/plotdevice_wandb_artifacts/
