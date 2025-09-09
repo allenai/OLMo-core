@@ -2,7 +2,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from fnmatch import fnmatch
-from typing import TYPE_CHECKING, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from transformers import AutoModelForCausalLM
 from transformers.configuration_utils import PretrainedConfig
@@ -283,7 +283,7 @@ class TransformerConfig(Config):
     init_std: float = 0.02
     freeze_params: Optional[List[str]] = None
     block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None
-    fla_config: Optional[PretrainedConfig] = None
+    fla_config: Optional[FLAModelConfig] = None
 
     def build(
         self,
@@ -346,7 +346,8 @@ class TransformerConfig(Config):
                 block_overrides=self.block_overrides,
             )
         elif self.name == TransformerType.linear_rnn:
-            model = AutoModelForCausalLM.from_config(self.fla_config)
+            # model = AutoModelForCausalLM.from_config(self.fla_config)
+            model = self.fla_config.build()
         else:
             raise NotImplementedError(self.name)
 
@@ -1085,12 +1086,6 @@ class TransformerConfig(Config):
 
     @classmethod
     def fla(cls, fla_model_name: str, **kwargs) -> "TransformerConfig":
-        import fla.models
-        config_cls = getattr(fla.models, fla_model_name + "Config", None)
-        assert config_cls is not None, f"Unknown FLA model name: {fla_model_name}"
-        fla_config = config_cls(**kwargs)
-
-        # TODO: Change this config?
         return cls(
             d_model=0,
             vocab_size=0,
@@ -1099,5 +1094,5 @@ class TransformerConfig(Config):
             lm_head=LMHeadConfig(),
             dtype=DType.float32,
             block_overrides=None,
-            fla_config=fla_config,
+            fla_config=FLAModelConfig(fla_model_name=fla_model_name, kwargs=kwargs),
         )
