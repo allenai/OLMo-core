@@ -10,25 +10,11 @@ from olmo_core.data.utils import get_labels, split_batch
 from olmo_core.utils import move_to_device
 from olmo_core.optim import OptimConfig, SkipStepOptimizer
 from olmo_core.nn.blt.config import BLTConfig
+from olmo_core.nn.blt import utils as blt_utils
 from olmo_core.nn.lm_head import LMOutputWithLoss
 
 from ...common import ReduceType
 from .train_module import TransformerTrainModule
-
-
-def _pad_right(
-    tensors: List[torch.Tensor],
-    multiple_of: int = 128
-):
-    max_len = max(t.size(0) for t in tensors)
-    if multiple_of > 1:
-        # Round up max_len to the nearest multiple_of
-        max_len = ((max_len + multiple_of - 1) // multiple_of) * multiple_of
-    padded = []
-    for t in tensors:
-        pad_shape = (0, max_len - t.size(0))
-        padded.append(F.pad(t, pad_shape, value=0))
-    return torch.stack(padded, dim=0)
 
 
 class TransformerBLTTrainModule(TransformerTrainModule):
@@ -59,6 +45,7 @@ class TransformerBLTTrainModule(TransformerTrainModule):
             # assumes ICLMultiChoiceTaskDataset collation
             all_original_input_ids = []
             all_input_ids = []
+            all_expanded_input_ids = []
             all_patch_lens = []
             all_space_patch_lens = []
             all_dc_input_ids = []
@@ -108,9 +95,11 @@ class TransformerBLTTrainModule(TransformerTrainModule):
 
                 # append \n since boundary predictor has lookahead
                 input_ids += self.tokenizer.encode("\n" * self.model.local_encoder.boundary_predictor_lookahead) # type: ignore
-
+                expanded_input_ids = self.tokenizer.expand_byte_ids(input_ids)
+    
                 all_original_input_ids.append(torch.tensor(original_input_ids, dtype=torch.long))
                 all_input_ids.append(torch.tensor(input_ids, dtype=torch.long))
+                all_expanded_input_ids.append(torch.tensor(expanded_input_ids, dtype=torch.long))
                 all_patch_lens.append(torch.tensor(patch_lens, dtype=torch.long))
                 all_space_patch_lens.append(torch.tensor(space_patch_lens, dtype=torch.long))
                 all_dc_input_ids.append(torch.tensor(dc_input_ids, dtype=torch.long))
@@ -120,14 +109,15 @@ class TransformerBLTTrainModule(TransformerTrainModule):
                 all_dc_len.append(dc_len)
                 all_cont_len.append(cont_len)
 
-            batch["original_input_ids"] = _pad_right(all_original_input_ids).to(device)
-            batch["input_ids"] = _pad_right(all_input_ids).to(device)
-            batch["attention_mask"] = _pad_right([torch.ones_like(t) for t in all_input_ids]).to(device)
-            batch["patch_lens"] = _pad_right(all_patch_lens).to(device)
-            batch["space_patch_lens"] = _pad_right(all_space_patch_lens).to(device)
-            batch["dc_input_ids"] = _pad_right(all_dc_input_ids).to(device)
-            batch["ctx"] = _pad_right(all_ctx).to(device)
-            batch["continuation"] = _pad_right(all_continuation).to(device)
+            batch["original_input_ids"] = blt_utils.pad_right(all_original_input_ids).to(device)
+            batch["input_ids"] = blt_utils.pad_right(all_input_ids).to(device)
+            batch["expanded_input_ids"] = blt_utils.pad_right(all_expanded_input_ids).to(device)
+            batch["attention_mask"] = blt_utils.pad_right([torch.ones_like(t) for t in all_input_ids]).to(device)
+            batch["patch_lens"] = blt_utils.pad_right(all_patch_lens).to(device)
+            batch["space_patch_lens"] = blt_utils.pad_right(all_space_patch_lens).to(device)
+            batch["dc_input_ids"] = blt_utils.pad_right(all_dc_input_ids).to(device)
+            batch["ctx"] = blt_utils.pad_right(all_ctx).to(device)
+            batch["continuation"] = blt_utils.pad_right(all_continuation).to(device)
             batch["ctx_len"] = torch.tensor(all_ctx_len, dtype=torch.long).to(device)
             batch["dc_len"] = torch.tensor(all_dc_len, dtype=torch.long).to(device)
             batch["cont_len"] = torch.tensor(all_cont_len, dtype=torch.long).to(device)
