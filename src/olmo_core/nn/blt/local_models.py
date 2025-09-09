@@ -428,6 +428,7 @@ class LocalEncoder(nn.Module):
 
         _, h_patch, _, _ = self(
             tokens=dummy_input,
+            expanded_input_ids=dummy_input if self.add_expanded_embeddings else None,
             patch_lens=patch_lens,
             patch_ids=patch_ids,
         )
