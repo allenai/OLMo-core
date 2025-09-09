@@ -1114,12 +1114,12 @@ class TransformerConfig(Config):
 
         # TODO: Change this config?
         return cls(
-            d_model=None,
-            vocab_size=None,
-            n_layers=None,
+            d_model=0,
+            vocab_size=0,
+            n_layers=0,
             block=None,
             lm_head=None,
-            dtype=None,
+            dtype=DType.float32,
             block_overrides=None,
             fla_config=fla_config,
         )
