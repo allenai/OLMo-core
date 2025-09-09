@@ -14,7 +14,7 @@ from olmo_core.utils import generate_uuid, prepare_cli_environment
 def build_config(command: List[str], overrides: List[str]) -> BeakerLaunchConfig:
     return BeakerLaunchConfig(
         name=f"olmo-core-test-{generate_uuid()[:8]}",
-        budget="ai2/oe-training",
+        budget="ai2/oe-base",
         cmd=command,
         task_name="test",
         workspace="ai2/OLMo-core",
