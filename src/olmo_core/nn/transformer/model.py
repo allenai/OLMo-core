@@ -1307,8 +1307,10 @@ class BLTTransformer(Transformer):
         local_encoder_kwargs["patch_ids"] = patch_ids
         extra_kwargs["original_input_ids"] = move_to_device(original_input_ids, self.device)
 
-        if (constituent_input_ids := kwargs.pop("constituent_input_ids", None)) is not None:
-            extra_kwargs["constituent_input_ids"] = move_to_device(constituent_input_ids, self.device)
+        if (expanded_input_ids := kwargs.pop("expanded_input_ids", None)) is not None:
+            local_encoder_kwargs["expanded_input_ids"] = move_to_device(expanded_input_ids, self.device)
+        else:
+            local_encoder_kwargs["expanded_input_ids"] = None
 
         if (teacher_inputs_embeds := kwargs.pop("teacher_inputs_embeds", None)) is not None:
             extra_kwargs["teacher_inputs_embeds"] = move_to_device(teacher_inputs_embeds, self.device)
@@ -1316,7 +1318,6 @@ class BLTTransformer(Transformer):
         if blt_config is not None and blt_config.patching != "dolma2":
             # can't use attributes relying on dolma2 patching
             extra_kwargs["original_input_ids"] = None
-            extra_kwargs["constituent_input_ids"] = None
 
         return (
             input_ids,

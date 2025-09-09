@@ -204,6 +204,7 @@ class LocalEncoder(nn.Module):
             cross_attn_init_pooling: str,
             block_config,
             add_hash_embeddings: bool,
+            add_expanded_embeddings: bool,
             hash_byte_group_size: list[int] | None,
             hash_byte_group_vocab: list[int] | None,
             hash_byte_group_nb_functions: int | None,
@@ -214,6 +215,7 @@ class LocalEncoder(nn.Module):
             boundary_predictor: Optional[str] = None,
             boundary_predictor_lookahead: int = 1,
             represent_bytes_with_embeddings: bool = False,
+            subword_vocab_size: Optional[int] = 100278, # dolma2 tokenizer specific!
             blt_k: Optional[int] = None,
             blt_compat: bool = False,  # for compat with BLT checkpoints
             cache_n_last_tokens: int = 256,
@@ -233,6 +235,7 @@ class LocalEncoder(nn.Module):
         self.cross_attn_init_pooling = cross_attn_init_pooling
         self.block_config = block_config
         self.add_hash_embeddings = add_hash_embeddings
+        self.add_expanded_embeddings = add_expanded_embeddings
         self.pooling = pooling
         self.add_norm_after_last_block = add_norm_after_last_block
         self.add_norm_after_pool = add_norm_after_pool
@@ -243,6 +246,9 @@ class LocalEncoder(nn.Module):
         self.blt_k = blt_k
         self.represent_bytes_with_embeddings = represent_bytes_with_embeddings
         self.blt_compat = blt_compat
+
+        if self.add_hash_embeddings + self.add_expanded_embeddings > 1:
+            raise ValueError("Only one of add_hash_embeddings and add_expanded_embeddings can be True.")
 
         if self.boundary_predictor == "dtp":
             self.boundary_predictor_module = DTPBoundaryPredictor(d_model, init_device=init_device)
@@ -269,8 +275,13 @@ class LocalEncoder(nn.Module):
             self.hash_embeddings = nn.ModuleList([
                 nn.Embedding(hash_byte_group_vocab[hash_embed_idx], d_model, device=init_device) for hash_embed_idx in range(total_hash_embeddings)
             ])
+        elif self.add_expanded_embeddings:
+            assert subword_vocab_size is not None
+            self.expanded_embeddings = nn.Embedding(subword_vocab_size, d_model, device=init_device)
+            self.hash_embeddings = None
         else:
             self.hash_embeddings = None
+            self.expanded_embeddings = None
 
         cache = BufferCache()
         self.blocks = nn.ModuleDict()
@@ -381,7 +392,7 @@ class LocalEncoder(nn.Module):
         
         Also inits HNetBoundaryPredictor q and k to weights to identity following HNet.
 
-        """
+        """            
         if embedding_init_path is not None:
             # load embedding inits (computed via compute_hash_embedding_init.py)
             if isinstance(self.embedding.weight.data, DTensor):
@@ -403,6 +414,9 @@ class LocalEncoder(nn.Module):
                         )
                     else:
                         hash_embedding.weight.data[:] = torch.load(resource_path(embedding_init_path, f"hash_embedding_init_{i}.pth", local_cache=cache_dir))  # type: ignore
+
+        if self.expanded_embeddings is not None:
+            self.expanded_embeddings.weight.data[:] = target_embeddings[:self.expanded_embeddings.weight.shape[0]]
 
         te_mean = target_embeddings.mean(0)
         # .std not supported for DTensor
@@ -621,7 +635,7 @@ class LocalEncoder(nn.Module):
 
         return patch_embeddings
 
-    def _embed(self, tokens):
+    def _embed(self, tokens, expanded_input_ids: Optional[torch.Tensor] = None):
         embeddings = self.embedding(tokens)
         if self.add_hash_embeddings:
             assert (
@@ -639,6 +653,9 @@ class LocalEncoder(nn.Module):
                 self.hash_byte_group_size,
                 self.hash_byte_group_vocab,
             )
+        elif self.add_expanded_embeddings:
+            assert expanded_input_ids is not None and self.expanded_embeddings is not None
+            embeddings = embeddings + self.expanded_embeddings(expanded_input_ids)
 
         return embeddings
 
@@ -647,13 +664,14 @@ class LocalEncoder(nn.Module):
         tokens: torch.Tensor,
         patch_lens: torch.Tensor,
         patch_ids: torch.Tensor,
+        expanded_input_ids: Optional[torch.Tensor] = None,
         cross_attn_mask: BlockMask | None = None,
         boundary_predictor_backprop_through_encoder: bool = True,
         boundary_threshold: str = "sample:0",
         teacher_force_boundaries: bool = False,
         true_boundary_mask: Optional[torch.Tensor] = None,
     ) -> tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor], torch.Tensor]:
-        embeddings = self._embed(tokens)
+        embeddings = self._embed(tokens, expanded_input_ids)
 
         # pass through encoder layers
         h = embeddings

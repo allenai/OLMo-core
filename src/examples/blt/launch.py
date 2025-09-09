@@ -39,6 +39,7 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
         "LR_SCHEDULE",
         "TOKEN_NOISE_STR",
         "ADD_HASH_EMBEDDINGS",
+        "ADD_EXPANDED_EMBEDDINGS",
         "TEACHER_MODE",
         "GLOBAL_MODEL_LEARNING_RATE",
     ]:

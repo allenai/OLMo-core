@@ -49,6 +49,7 @@ class LocalEncoderConfig(Config):
     cross_attn_init_pooling: str = "amax"
     pooling: str = "cross_attn"
     add_hash_embeddings: bool = True
+    add_expanded_embeddings: bool = False
     hash_byte_group_size: list[int] | None = None
     hash_byte_group_vocab: list[int] | None = None
     hash_byte_group_nb_functions: int | None = None
@@ -75,6 +76,7 @@ class LocalEncoderConfig(Config):
             cross_attn_init_pooling=self.cross_attn_init_pooling,
             block_config=self.block_config,
             add_hash_embeddings=self.add_hash_embeddings,
+            add_expanded_embeddings=self.add_expanded_embeddings,
             hash_byte_group_size=self.hash_byte_group_size,
             hash_byte_group_vocab=self.hash_byte_group_vocab,
             hash_byte_group_nb_functions=self.hash_byte_group_nb_functions,

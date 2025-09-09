@@ -777,10 +777,12 @@ class NumpyByteFSLDataset(NumpyFSLDataset):
 
         original_input_ids = self.noise_fn(original_input_ids)
 
-        byte_tokens, patch_lengths = self.tokenizer.get_tokens_and_patch_lengths(original_input_ids, add_bos=True, skip_last=True)
+        byte_tokens, patch_lengths = self.tokenizer.get_tokens_and_patch_lengths(original_input_ids.tolist(), add_bos=True, skip_last=True)
         space_patch_lengths = self.tokenizer.get_space_patch_lengths(byte_tokens)
+        expanded_byte_tokens = self.tokenizer.expand_byte_ids(byte_tokens)
 
         new_input_ids = torch.tensor(byte_tokens, dtype=torch.int32)
+        expanded_input_ids = torch.tensor(expanded_byte_tokens, dtype=torch.int32)
         new_attention_mask = torch.ones_like(new_input_ids, dtype=torch.bool)
         patch_lengths = torch.tensor(patch_lengths, dtype=torch.int32)
         space_patch_lengths = torch.tensor(space_patch_lengths, dtype=torch.int32)[:len(patch_lengths)]
@@ -804,22 +806,9 @@ class NumpyByteFSLDataset(NumpyFSLDataset):
             space_patch_lengths,
         )
 
-        constituent_input_ids = []
-        for token_id in original_input_ids:
-            constituent_input_ids.extend(self.constituent_map[int(token_id)])
-
-        constituent_input_ids = torch.tensor(constituent_input_ids, dtype=torch.int32)[:self.byte_sequence_length]
-
-        if constituent_input_ids.shape[0] < self.byte_sequence_length:
-            n_pad = self.byte_sequence_length - constituent_input_ids.shape[0]
-            constituent_input_ids = F.pad(
-                constituent_input_ids,
-                (0, n_pad),
-                value=-100,
-            )
-
         if new_input_ids.shape[0] > self.byte_sequence_length:
             new_input_ids = new_input_ids[:self.byte_sequence_length]
+            expanded_input_ids = expanded_input_ids[:self.byte_sequence_length]
             new_attention_mask = new_attention_mask[:self.byte_sequence_length]
         elif new_input_ids.shape[0] < self.byte_sequence_length:
             n_pad = self.byte_sequence_length - new_input_ids.shape[0]
@@ -835,8 +824,8 @@ class NumpyByteFSLDataset(NumpyFSLDataset):
             )
 
         item["original_input_ids"] = original_input_ids
-        item["constituent_input_ids"] = constituent_input_ids
         item["input_ids"] = new_input_ids
+        item["expanded_input_ids"] = expanded_input_ids
         item["attention_mask"] = new_attention_mask
         item["patch_lens"] = patch_lengths
         item["space_patch_lens"] = space_patch_lengths

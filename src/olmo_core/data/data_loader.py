@@ -570,16 +570,16 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
             )
 
             out["patch_lens"] = out["space_patch_lens"] = patch_lengths
+            out["expanded_input_ids"] = torch.randint(
+                0,
+                100_000,
+                input_ids.shape,
+                device=input_ids.device,
+            )
             out["original_input_ids"] = torch.randint(
                 0,
                 100_000,
                 patch_lengths.shape,
-                device=input_ids.device,
-            )
-            out["constituent_input_ids"] = torch.randint(
-                0,
-                100_000,
-                input_ids.shape,
                 device=input_ids.device,
             )
 

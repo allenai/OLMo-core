@@ -204,7 +204,7 @@ class ByteTokenizerConfig(TokenizerConfig):
             special_tokens=special_tokens,
             bos_token_id=special_tokens.index("<bos>"),
             pad_token_id=special_tokens.index("<pad>"),
-            eos_token_id=special_tokens.index("<eos>"),
+            eos_token_id=special_tokens.index("<bos>"), # DIVERGENCE FROM BLT. set bos and eos to the same
             # slightly hacky, but this must match the dataset tokenizer, so dolma2
             original_identifier=TokenizerConfig.dolma2().identifier,
         )
@@ -232,6 +232,8 @@ class ByteTokenizerConfig(TokenizerConfig):
 
 
 class ByteTokenizer:
+    TOKEN_ID_KEY = -1
+
     def __init__(self, tokenizer_config: ByteTokenizerConfig):
         self.config = tokenizer_config
         self.hf_tokenizer = AutoTokenizer.from_pretrained(tokenizer_config.original_identifier)
@@ -247,15 +249,25 @@ class ByteTokenizer:
         for key, value in self.hf_tokenizer.get_vocab().items():
             if key in self.config.special_tokens:
                 byte_sequence = [self.special_tokens_offset + self.config.special_tokens.index(key)]
-            elif key == self.hf_tokenizer.eos_token_id and self.eos_token_id is not None:
+            elif value == self.hf_tokenizer.eos_token_id and self.eos_token_id is not None:
                 byte_sequence = [self.eos_token_id]
-            elif key == self.hf_tokenizer.bos_token_id and self.bos_token_id is not None:
+            elif value == self.hf_tokenizer.bos_token_id and self.bos_token_id is not None:
                 byte_sequence = [self.bos_token_id]
             else:
                 byte_sequence = [self.offset + i for i in blt_utils.chars_to_bytes(key)]
 
             assert self.byte_sequences.get(value) is None
             self.byte_sequences[value] = byte_sequence
+
+        self.byte_trie = {}
+
+        for token_id, byte_sequence in self.byte_sequences.items():
+            current_dict = self.byte_trie
+            for byte in byte_sequence[::-1]: # retrieved from the back so store in reverse order
+                if byte not in current_dict:
+                    current_dict[byte] = {}
+                current_dict = current_dict[byte]
+            current_dict[ByteTokenizer.TOKEN_ID_KEY] = token_id
 
     @property
     def bos_token_id(self):
@@ -268,6 +280,27 @@ class ByteTokenizer:
     @property
     def pad_token_id(self):
         return self.config.pad_token_id
+
+    def expand_byte_ids(self, byte_ids: list[int]) -> list[int]:
+        # search in the byte tree for the longest matching token at every byte position
+        expanded_ids = []
+        for i in range(len(byte_ids)):
+            current_dict = self.byte_trie
+            current_expansion = None
+
+            for i in range(i, -1, -1):
+                byte = byte_ids[i]
+                try:
+                    current_dict = current_dict[byte]
+                    if ByteTokenizer.TOKEN_ID_KEY in current_dict:
+                        current_expansion = current_dict[ByteTokenizer.TOKEN_ID_KEY]
+                except KeyError:
+                    assert current_expansion is not None
+                    break
+
+            expanded_ids.append(current_expansion)
+
+        return expanded_ids
 
     def patch_ids_to_byte_ids(self, input_ids: list[int]):
         return [byte_token_id for token_id in input_ids for byte_token_id in self.byte_sequences[token_id]]
