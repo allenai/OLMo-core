@@ -3,7 +3,7 @@ from olmo_core.utils import get_or_init_stream
 from typing import Any, Dict, List, Optional, Tuple
 from typing import cast
 # LAST_STREAM_ID = None
-@torch.compiler.disable()         # helper runs eagerly, 
+@torch.compiler.disable         # helper runs eagerly, 
 def async_copy_to_cpu(gpu_buf, event=None, return_event=True) -> Tuple[torch.Tensor, torch.cuda.Stream, Optional[torch.cuda.Event]]:
     # *** async copy to CPU for future GroupedGEMM ***
     # start a new stream for the copy
@@ -36,7 +36,7 @@ def async_copy_to_cpu(gpu_buf, event=None, return_event=True) -> Tuple[torch.Ten
     
     return cpu_buf, dtoh_stream, None
 
-@torch._dynamo.disable()        # helper runs eagerly,
+@torch._dynamo.disable        # helper runs eagerly,
 def wait_stream_no_compile(this_stream: torch.cuda.Stream, other_stream: torch.cuda.Stream):
     this_stream.wait_stream(other_stream)
     
@@ -48,22 +48,15 @@ from transformer_engine.pytorch.permutation import (
 )
 
 # disable compile for permute
-@torch.compiler.disable()
-def moe_permute_no_compile(inp: torch.Tensor,
-    routing_map: torch.Tensor,
-    num_out_tokens: int = -1,
-    max_token_num: int = -1,
-    map_type: str = "mask",
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    return moe_permute(
-        inp, routing_map, num_out_tokens=num_out_tokens, max_token_num=max_token_num, map_type=map_type
-    )
+@torch.compiler.disable
+def moe_permute_no_compile(*args, **kwargs):
+    return moe_permute(*args, **kwargs)
 
-@torch.compiler.disable()
+@torch.compiler.disable
 def moe_unpermute_no_compile(*args, **kwargs):
     return moe_unpermute(*args, **kwargs)    
 
-@torch.compiler.disable()
+@torch.compiler.disable
 def moe_sort_chunks_by_index_no_compile(*args, **kwargs):
     return moe_sort_chunks_by_index(*args, **kwargs)
 

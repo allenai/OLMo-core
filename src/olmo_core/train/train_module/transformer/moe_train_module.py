@@ -28,8 +28,6 @@ from olmo_core.distributed.checkpoint import (
 )
 from olmo_core.distributed.parallel import (
     DataParallelType,
-    build_world_mesh,
-    get_dp_process_group,
 )
 from olmo_core.distributed.utils import (
     get_local_tensor,
@@ -103,7 +101,9 @@ class MoEV2TransformerTrainModule(TrainModule):
         reduce_scatter_grads: bool = True
     ):
         super().__init__()
-
+        from olmo_core.nn.moe.v2.model import MoEFusedV2Transformer
+        assert isinstance(model, MoEFusedV2Transformer), "MoEV2TransformerTrainModule only supports MoEFusedV2Transformer model"
+        
         ######################### Validate arguments. [BEGIN] #########################
         if rank_microbatch_size % max_sequence_length != 0:
             raise OLMoConfigurationError(
@@ -113,7 +113,7 @@ class MoEV2TransformerTrainModule(TrainModule):
 
         # Build world mesh.
         self.device = device or get_default_device()
-        self.world_mesh: Optional[Dict[str, Optional[DeviceMesh]]] = None
+        self.world_mesh: Dict[str, Optional[DeviceMesh]] = {}
         self.pp_group = None
         self.dp_group = None
         self.tp_group = None
@@ -134,8 +134,8 @@ class MoEV2TransformerTrainModule(TrainModule):
         if cp_config is not None:
             assert cp_config.degree > 1, "Context parallelism requires a degree > 1, otherwise use None"
             raise NotImplementedError("Context parallelism is not implemented")
-        if ac_config is not None:
-            raise OLMoConfigurationError("In MoEV2TransformerTrainModule, activation checkpointing is controlled by the model, not the train module.")
+        # if ac_config is not None:
+        #     raise OLMoConfigurationError("In MoEV2TransformerTrainModule, activation checkpointing is controlled by the model, not the train module.")
         if float8_config is not None:
             raise NotImplementedError("Float8 quantization is not implemented")
 
@@ -145,7 +145,7 @@ class MoEV2TransformerTrainModule(TrainModule):
         ########################## Validate arguments. [END] ##########################
 
         if is_distributed():
-            self.build_world_mesh(
+            self._build_world_mesh(
                 dp=dp_config, tp=tp_config, cp=cp_config, ep=ep_config, pp=pp_config, device_type=self.device.type
             )
             log.info(f"Data parallel world size = {get_world_size(self.dp_process_group):,d}")
@@ -155,17 +155,20 @@ class MoEV2TransformerTrainModule(TrainModule):
             )
 
         # Parallelize model.
-        self.model = self.parallelize_model(
-            model,
-            compile_model=compile_model,
-            float8_config=float8_config,
-            dp_config=dp_config,
-            tp_config=tp_config,
-            cp_config=cp_config,
-            ep_config=ep_config,
-            ac_config=ac_config,
-            pp_config=pp_config
-        )
+        self.model: MoEFusedV2Transformer = cast(
+            MoEFusedV2Transformer, 
+                self.parallelize_model(
+                    model,
+                    compile_model=compile_model,
+                    float8_config=float8_config,
+                    dp_config=dp_config,
+                    tp_config=tp_config,
+                    cp_config=cp_config,
+                    ep_config=ep_config,
+                    ac_config=ac_config,
+                    pp_config=pp_config
+                )
+            )
 
         self.init_model_weights(
             max_sequence_length=max_sequence_length,
@@ -228,7 +231,7 @@ class MoEV2TransformerTrainModule(TrainModule):
                 for p in model.parameters():
                     p.data = p.data.to(torch.bfloat16)
 
-    def build_world_mesh(
+    def _build_world_mesh(
         self,
         *,
         dp: Optional[DataParallelConfig] = None,
@@ -269,7 +272,7 @@ class MoEV2TransformerTrainModule(TrainModule):
         :returns: The world mesh with a shape compatible with the given parallel configs.
         """
 
-        if self.world_mesh is not None:
+        if len(self.world_mesh) > 0:
             raise RuntimeError("world mesh already exists! You can only call 'build_world_mesh' once!")
 
         device_type = device_type or get_default_device().type
@@ -504,27 +507,27 @@ class MoEV2TransformerTrainModule(TrainModule):
         if load_optim:
             self.optim.load_state_dict(state_dict["optim"])
 
-            debug_model1 = torch.load(f'tmp.model.{dist.get_rank()}.pt')
-            debug_model2 = self.model.state_dict()
+            # debug_model1 = torch.load(f'tmp.model.{dist.get_rank()}.pt')
+            # debug_model2 = self.model.state_dict()
 
-            # compare
-            for key in debug_model1.keys():
-                if not torch.equal(debug_model1[key], debug_model2[key]):
-                    print(f"Difference found in key: {key}")
+            # # compare
+            # for key in debug_model1.keys():
+            #     if not torch.equal(debug_model1[key], debug_model2[key]):
+            #         print(f"Difference found in key: {key}")
 
-            debug_optim1 = torch.load(f'tmp.optim.{dist.get_rank()}.pt')
+            # debug_optim1 = torch.load(f'tmp.optim.{dist.get_rank()}.pt')
 
-            debug_optim2 = torch.optim.Optimizer.state_dict(self.optim)
-            debug_optim2['_flat_main_dp'] = self.optim._flat_main_dp
-            debug_optim2['_flat_main_ep_dp '] = self.optim._flat_main_ep_dp 
-            debug_optim2['_flat_exp_avg_dp '] = self.optim._flat_exp_avg_dp 
-            debug_optim2['_flat_exp_avg_ep_dp'] = self.optim._flat_exp_avg_ep_dp
-            debug_optim2['_flat_exp_avg_sq_dp '] = self.optim._flat_exp_avg_sq_dp 
-            debug_optim2['_flat_exp_avg_sq_ep_dp  '] = self.optim._flat_exp_avg_sq_ep_dp 
-            # compare
-            for key in debug_optim1.keys():
-                if key.startswith('_') and not torch.equal(debug_optim1[key], debug_optim2[key]):
-                    print(f"Difference found in key: {key}")
+            # debug_optim2 = torch.optim.Optimizer.state_dict(self.optim)
+            # debug_optim2['_flat_main_dp'] = self.optim._flat_main_dp
+            # debug_optim2['_flat_main_ep_dp '] = self.optim._flat_main_ep_dp 
+            # debug_optim2['_flat_exp_avg_dp '] = self.optim._flat_exp_avg_dp 
+            # debug_optim2['_flat_exp_avg_ep_dp'] = self.optim._flat_exp_avg_ep_dp
+            # debug_optim2['_flat_exp_avg_sq_dp '] = self.optim._flat_exp_avg_sq_dp 
+            # debug_optim2['_flat_exp_avg_sq_ep_dp  '] = self.optim._flat_exp_avg_sq_ep_dp 
+            # # compare
+            # for key in debug_optim1.keys():
+            #     if key.startswith('_') and not torch.equal(debug_optim1[key], debug_optim2[key]):
+            #         print(f"Difference found in key: {key}")
 
             gc_cuda()
 
@@ -563,6 +566,8 @@ class MoEV2TransformerTrainModule(TrainModule):
 
         dbg_mem_before_fwd0 = torch.cuda.memory_allocated()/1024**3
 
+        dbg_mem_activation_usage_all = []
+        dbg_mem_activation_freed_all = []
         # Train one micro-batch at a time.
         for micro_batch_idx, micro_batch in enumerate(micro_batches):
             with self._train_microbatch_context(micro_batch_idx, num_micro_batches):
@@ -583,6 +588,7 @@ class MoEV2TransformerTrainModule(TrainModule):
                     )
                     dbg_mem_after_fwd = torch.cuda.memory_allocated()/1024**3
                     dbg_mem_activation_usage = dbg_mem_after_fwd - dbg_mem_before_fwd
+                    dbg_mem_activation_usage_all.append(dbg_mem_activation_usage)
                     # Update total batch CE and Z loss.
                     ce_batch_loss += get_local_tensor(ce_loss.detach())
                     del ce_loss
@@ -595,11 +601,22 @@ class MoEV2TransformerTrainModule(TrainModule):
                     # Run backward pass.
                     dbg_mem_before_bwd = torch.cuda.memory_allocated()/1024**3
                     loss.backward()
+                    # self.model.reset_offload_handler()
+
                     dbg_mem_after_bwd = torch.cuda.memory_allocated()/1024**3
+                    dbg_mem_activation_freed = dbg_mem_before_bwd - dbg_mem_after_bwd
+                    dbg_mem_activation_freed_all.append(dbg_mem_activation_freed)
                     pass
 
 
         del batch  # In case this helps with memory utilization.
+        if dry_run:
+            print("activation: ", dbg_mem_activation_usage_all)
+            print("freed:      ", dbg_mem_activation_freed_all)
+            for (tag, mem) in self.model._debug_alloc_mem_layer_logs:
+                print(f"Alloc - {tag}: {mem:.2f} GB")
+            for (tag, mem) in self.model._debug_max_alloc_mem_layer_logs:
+                print(f"Max - {tag}: {mem:.2f} GB")
 
         self.model.post_batch(dry_run=dry_run)
 
@@ -765,6 +782,12 @@ class MoEV2TransformerTrainModule(TrainModule):
 
         # Step optimizer.
         self.optim.step()
+        total_grad_norm = self.optim.latest_grad_norm
+        if self.reduce_scatter_grads:
+             if total_grad_norm is not None:
+                self.trainer.record_metric(
+                        "total grad norm", total_grad_norm, reduce_type=None, namespace="optim"
+                    )
         if isinstance(self.optim, MoEFusedV2Optimizer):
             self.record_metric("step skipped", self.optim.step_skipped, namespace="optim")
 
@@ -863,7 +886,7 @@ class MoEV2TransformerTrainModule(TrainModule):
         # wrap it in dtensor so that it works with checkpointer
         wrapped_model_sd = OrderedDict()
         for k, v in plain_model_sd.items():
-            if isinstance(v, torch.Tensor) and "routed_experts." in k:
+            if self.ep_enabled and isinstance(v, torch.Tensor) and "routed_experts." in k:
                 assert self.world_mesh is not None
                 assert self.world_mesh['moe'] is not None
                 wrapped_model_sd[k] = DTensor.from_local(v, device_mesh=self.world_mesh['moe']['ep_dp', 'ep_mp'] , placements=(Replicate(), Shard(0)))
@@ -983,6 +1006,17 @@ class MoEV2TransformerTrainModule(TrainModule):
             for m in model_parts:
                 cast(MoEFusedV2Transformer, m).apply_ddp(dp_mesh=dp_mesh, compile_enabled=compile_model, param_dtype=param_dtype)
             log.info(f"Applied DDP to the model with {get_device_mesh_info(dp_mesh)}")
+
+            # Maybe apply activation checkpointing.
+        if ac_config is not None:
+            for m in model_parts:
+                m.apply_activation_checkpointing(
+                    ac_config.mode,
+                    block_interval=ac_config.block_interval,
+                    modules=ac_config.modules,
+                    activation_memory_budget=ac_config.activation_memory_budget,
+                )
+            log.info(f"Applied '{ac_config.mode}' activation checkpointing to the model")
 
         return model
 

@@ -57,30 +57,31 @@ log = logging.getLogger(__name__)
 
 
 SEQUENCE_LENGTH = 8192
-GLOBAL_BATCH_SIZE_SEQ=512
+GLOBAL_BATCH_SIZE_SEQ=128
 GLOBAL_BATCH_SIZE = (
     (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
 )  
 MAX_DURATION = int(1000e9)  # int(6e12), don't forget to adjust the LR when you increase this
 EVAL_INTERVAL = 1000
-LR= 5e-3
+LR= 1e-4
 
-NUM_EXPERTS = 16
-TOP_K = 4
-D_MODEL=2048
-MOE_HIDDEN_SIZE = 2048
-NUM_SHARED_EXPERTS = 2  # Number of shared experts in the shared MLP
+NUM_EXPERTS = 64
+TOP_K = 8
+D_MODEL=2048  
+MOE_HIDDEN_SIZE = 1024 + 1024 
+NUM_SHARED_EXPERTS = 1  # Number of shared experts in the shared MLP
 SHARED_MLP_HIDDEN_SIZE = 2048  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
-MICRO_BSZ = 4
-NUM_LAYERS= 6
+MICRO_BSZ = 8
+NUM_LAYERS= 12
 # DP_DIM=2
-EP_DIM=2
+EP_DIM=8
 PP_DIM=1
 SPLIT_POINTS = None
 USE_COMPILE=True
-     
-TAG=f'dev'
+USE_AC=False
+
+TAG=f'dev-ep{EP_DIM}-uni'
 from olmo_core.nn.lm_head import LMHeadConfig, LMHeadType
 from olmo_core.nn.rope import RoPEConfig, RoPEScalingConfig, RoPEType
 from olmo_core.nn.attention import AttentionConfig, AttentionType
@@ -134,7 +135,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                 num_experts=NUM_EXPERTS,
                 top_k=TOP_K,
                 gating_function=MoERouterGatingFunction.sigmoid,
-                uniform_expert_assignment=False,
+                uniform_expert_assignment=True,
                 lb_loss_weight=0.005,
                 z_loss_weight=None,
                 lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
@@ -146,7 +147,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                 num_experts=NUM_SHARED_EXPERTS,
                 bias=False,
                 dtype=dtype
-            ),
+            ) if NUM_SHARED_EXPERTS > 0 else None,
             shared_experts_router=MoERouterConfigV2(
                 d_model=d_model,
                 num_experts=NUM_SHARED_EXPERTS,
@@ -157,7 +158,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                 z_loss_weight=None,
                 lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
                 dtype=dtype,
-            ),
+            ) if NUM_SHARED_EXPERTS > 1 else None, # only need router if > 1 expert
             feed_forward_norm=layer_norm,
         ),
         lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype),
@@ -175,7 +176,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         pattern=[WINDOW_SIZE, WINDOW_SIZE, WINDOW_SIZE, -1]
     )
     # config.block.attention.use_flash = True
-    config.block.attention.use_head_qk_norm = True
+    # config.block.attention.use_head_qk_norm = True
     
     # First block will be a regular transformer block (no MoE component).
     config.block_overrides = {
@@ -193,7 +194,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                     dtype=dtype,
                 ),
                 feed_forward_moe=None,
-                feed_forward=FeedForwardConfig(hidden_size=( TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE) * 2, bias=False), # dense mlp is twice as fast as moe mlp
+                feed_forward=FeedForwardConfig(hidden_size=( TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS) * 2, bias=False), # dense mlp is twice as fast as moe mlp
                 attention_norm=layer_norm,
                 feed_forward_norm=layer_norm,
             ) 
@@ -213,6 +214,7 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
             betas=(0.9, 0.95),
             group_overrides=[
                 OptimGroupOverride(params=["embeddings.weight", "*_norm.weight"], opts=dict(weight_decay=0.0))
+                # OptimGroupOverride(params=["embeddings.weight", ], opts=dict(weight_decay=0.0)) #TODO: fix
             ],
             #TODO: weight decay for norm?
             # fused=True,
@@ -221,12 +223,14 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
             # foreach=True
         ),
         compile_model=USE_COMPILE,
-        
+        ac_config=TransformerActivationCheckpointingConfig(
+            mode=TransformerActivationCheckpointingMode.full,
+        ) if USE_AC else None,
         # FSDP
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.ddp,
-            param_dtype=DType.bfloat16,
-            reduce_dtype=DType.float32,
+            param_dtype=DType.bfloat16,  # TODO: not used?
+            reduce_dtype=DType.float32, # TODO: not used?
             shard_degree=None,
         ),
         ep_config=TransformerExpertParallelConfig(degree=EP_DIM) if EP_DIM != 1 else None, # EP=1 means no expert parallel
@@ -277,7 +281,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 save_interval=1000,
                 ephemeral_save_interval=200,
                 save_async=False,
-                pre_train_checkpoint=True,
+                pre_train_checkpoint=False,
             ),
         )
         .with_callback(
@@ -321,8 +325,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 def finalize_config(config: ExperimentConfig):
     # config.dataset.mix = 'OLMo-mix-0625' # new dataset mix
     # config.dataset.mix_base_dir = "gs://ai2-llm" # only avail on Google Cloud
-    config.dataset.mix = "OLMoE-mix-0824-dev"
-    config.data_loader.num_workers = 1
+    # config.dataset.mix = "OLMoE-mix-0824-dev"
+    # config.data_loader.num_workers = 1
     # add active & total params to the wandb name
     total_params_in_B = config.model.num_params/1000/1000/1000
     active_params_in_B = config.model.num_active_params/1000/1000/1000
@@ -331,7 +335,7 @@ def finalize_config(config: ExperimentConfig):
     wandb_cb = cast(WandBCallback, config.trainer.callbacks['wandb'])
     assert isinstance(wandb_cb.name, str), "WandB callback name must be initialized"
     wandb_cb.name += f"_{active_params_in_B:.2f}@{total_params_in_B:.2f}B"
-    wandb_cb.name += f"_{TOP_K}K{NUM_EXPERTS}N{NUM_SHARED_EXPERTS}S"
+    wandb_cb.name += f"_{TOP_K}K{NUM_EXPERTS}N{NUM_SHARED_EXPERTS}S_{TAG}"
 
 if __name__ == "__main__":
     main(

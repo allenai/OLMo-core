@@ -266,59 +266,64 @@ class InitMethod(StrEnum):
             ep_generator = generator
 
         # router
-        _apply_init(
-            nn.init.trunc_normal_,
-            b.shared_experts_router.weight,
-            mean=0.0,
-            std=std,
-            a=-3 * std,
-            b=3 * std,
-            generator=generator,
-        )
-        _apply_init(
-            nn.init.trunc_normal_,
-            b.routed_experts_router.weight,
-            mean=0.0,
-            std=std,
-            a=-3 * std,
-            b=3 * std,
-            generator=generator,
-        )
+        if b.shared_experts_router:
+            _apply_init(
+                nn.init.trunc_normal_,
+                b.shared_experts_router.weight,
+                mean=0.0,
+                std=std,
+                a=-3 * std,
+                b=3 * std,
+                generator=generator,
+            )
+        if b.routed_experts_router:
+            _apply_init(
+                nn.init.trunc_normal_,
+                b.routed_experts_router.weight,
+                mean=0.0,
+                std=std,
+                a=-3 * std,
+                b=3 * std,
+                generator=generator,
+            )
         # routed experts
-        _apply_init(
-            nn.init.trunc_normal_,
-            b.routed_experts.w_up_gate,
-            mean=0.0,
-            std=std,
-            a=-3 * std,
-            b=3 * std,
-            generator=ep_generator, # might be sharded, use ep_generator
-        )
-        _apply_init(
-            nn.init.trunc_normal_,
-            b.routed_experts.w_down,
-            mean=0.0,
-            std=std,
-            a=-3 * std,
-            b=3 * std,
-            generator=ep_generator, # might be sharded, use ep_generator
-        )
+        if b.routed_experts:
+            _apply_init(
+                nn.init.trunc_normal_,
+                b.routed_experts.w_up_gate,
+                mean=0.0,
+                std=std,
+                a=-3 * std,
+                b=3 * std,
+                generator=ep_generator, # might be sharded, use ep_generator
+            )
+            _apply_init(
+                nn.init.trunc_normal_,
+                b.routed_experts.w_down,
+                mean=0.0,
+                std=std,
+                a=-3 * std,
+                b=3 * std,
+                generator=ep_generator, # might be sharded, use ep_generator
+            )
         # shared experts
-        _apply_init(
-            nn.init.trunc_normal_,
-            b.shared_experts.w_up_gate,
-            mean=0.0,
-            std=std,
-            a=-3 * std,
-            b=3 * std,
-            generator=generator,
-        )
-        _apply_init(
-            nn.init.trunc_normal_,
-            b.shared_experts.w_down,
-            mean=0.0,
-            std=std,
-            a=-3 * std,
-            b=3 * std,
-            generator=generator,
-        )
+        if b.shared_experts:
+            _apply_init(
+                nn.init.trunc_normal_,
+                b.shared_experts.w_up_gate,
+                mean=0.0,
+                std=std,
+                a=-3 * std,
+                b=3 * std,
+                generator=generator,
+            )
+            _apply_init(
+                nn.init.trunc_normal_,
+                b.shared_experts.w_down,
+                mean=0.0,
+                std=std,
+                a=-3 * std,
+                b=3 * std,
+                generator=generator,
+            )
+            

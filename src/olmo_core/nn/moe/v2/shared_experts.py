@@ -133,7 +133,7 @@ class SharedExperts(nn.Module):
 
     #     return out.view(E, B, S, D)  # (E, B, S, D)
         
-    @nvtx.annotate("SharedExperts.forward", color='purple')
+    @nvtx.annotate("SharedExperts.forward", color='pink')
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         x: (B, S, D) -> out: (E, B, S, D)

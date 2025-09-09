@@ -664,7 +664,7 @@ class ParallelDroplessMLP(ParallelMLPBase):
         batch_size_per_expert: torch.Tensor,
         batch_size_per_expert_cpu: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        assert False, "This function Not Used"
+        # assert False, "This function Not Used"
         """
         :param x: The input of shape ``(N, d_model)``.
         :param expert_weights: Expert weights of shape ``(N, top_k)``.
@@ -686,7 +686,7 @@ class ParallelDroplessMLP(ParallelMLPBase):
         x = x.view(-1, x.shape[-1])
         
         ################
-        use_te = True
+        use_te = False
         if use_te:
             # assert False
             bsz, n_token_per_batch, d_model = in_shape
@@ -760,7 +760,7 @@ class ParallelDroplessMLP(ParallelMLPBase):
             x = ops.gather(x, indices, bin_ids, bins_bounds, self.top_k)
             
             # Perform the expert computation.
-            x = self.mlp(x, batch_size_per_expert)
+            x = self.mlp(x, batch_size_per_expert.cpu().tolist())
             
             # Un-route the data for the MoE output.
             x = ops.scatter(x, indices, bin_ids, expert_weights, bins_bounds, self.top_k)

@@ -29,6 +29,21 @@ from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
 from olmo_core.utils import get_default_device, mark_dynamic, move_to_device
 from .block import MoEFusedV2TransformerBlock, MoEFusedV2TransformerBlockConfig
+from olmo_core.ops import moe as ops
+from ...lm_head import LMHeadConfig, LMOutputWithLoss
+import nvtx
+from torch.utils.checkpoint import checkpoint, CheckpointFunction
+
+from ..utils import (
+    moe_unpermute_no_compile,
+    moe_permute_no_compile,
+    moe_sort_chunks_by_index_no_compile,
+)
+from .te.cpu_offload import (
+    get_cpu_offload_context,
+    CpuOffloadHook
+)
+
 if TYPE_CHECKING:
     from olmo_core.train.common import ReduceType
 log = logging.getLogger(__name__)
@@ -42,6 +57,50 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.ep_enabled = False # default
+        self.tbo = True
+
+        if self.tbo:
+            self.first_moe_idx = self._check_tbo_requirements()
+        else:
+            self.first_moe_idx = None
+
+        self._debug_alloc_mem_layer_logs = []
+        self._debug_max_alloc_mem_layer_logs = []
+    #     self.cpu_offload = True
+
+    #     self.offload_context, self.offload_sync_func = get_cpu_offload_context(
+    #         enabled=self.cpu_offload,
+    #         num_layers=4,
+    #         model_layers=self.n_layers,
+    #     )
+
+    # def reset_offload_handler(self):
+    #     if self.cpu_offload:
+    #         assert isinstance(self.offload_context, CpuOffloadHook)
+    #         self.offload_context.offload_handler.groupid_reset()
+
+    def _log_debug_mem(self, tag: str):
+        self._debug_alloc_mem_layer_logs.append((tag, torch.cuda.memory_allocated()/1024**3))
+        self._debug_max_alloc_mem_layer_logs.append((tag, torch.cuda.max_memory_allocated()/1024**3))
+    def _reset_debug_mem_logs(self):
+        self._debug_alloc_mem_layer_logs = []
+        self._debug_max_alloc_mem_layer_logs = []
+
+    def _check_tbo_requirements(self):
+        # make sure dense blocks only appear before moe blocks
+        
+        found_moe = False
+        first_moe_idx = None
+        for idx, block in enumerate(self.blocks.values()):
+            if found_moe and not block.is_moe:
+                raise OLMoConfigurationError(
+                    "When TBO is enabled, all dense blocks must appear before MoE blocks."
+                )
+            if block.is_moe and not found_moe:
+                found_moe = True
+                first_moe_idx = idx
+        
+        return first_moe_idx
 
     @property
     def is_moe(self) -> bool:
@@ -90,6 +149,10 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
 
     def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
         raise OLMoConfigurationError("Do not use `apply_ep`, use `apply_epdp` instead.")
+
+    def apply_compile(self):
+        super().apply_compile()
+        self._tbo_last_step = torch.compile(self._tbo_last_step)
 
     def apply_ddp(
         self,
@@ -335,6 +398,295 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             )
 
         return generator
+
+    def forward_tbo(
+            self,
+        input_ids: torch.Tensor,
+        *,
+        labels: Optional[torch.Tensor] = None,
+        ignore_index: int = -100,
+        loss_reduction: Literal["mean", "sum", "none"] = "mean",
+        z_loss_multiplier: Optional[float] = None,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        return_logits: Optional[bool] = None,
+        **kwargs,
+    ) -> Union[torch.Tensor, LMOutputWithLoss]:
+        assert self.ep_enabled, "TBO requires EP to be enabled."
+            
+        input_ids, labels, block_kwargs, lm_head_kwargs = self._prepare_inputs(
+            input_ids,
+            labels,
+            ignore_index=ignore_index,
+            loss_reduction=loss_reduction,
+            z_loss_multiplier=z_loss_multiplier,
+            loss_div_factor=loss_div_factor,
+            return_logits=return_logits,
+            **kwargs,
+        )
+        assert input_ids.size(0) % 2 == 0, "When TBO is enabled, the batch size must be even."
+        self._log_debug_mem('before embed')
+
+        # Get embeddings but pass-through for non-existent layers to allow easy
+        # pipeline parallel configuration.
+        h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
+
+        # forward dense blocks
+        for block_idx, block in enumerate(self.blocks.values()):
+            if block.is_moe: 
+                assert self.first_moe_idx == block_idx
+                break
+            # Mark sizes as dynamic for torch.compile().
+            if self.compile_enabled:
+                mark_dynamic(h, (0, 1), strict=False)
+            with nvtx.annotate(f"fwd_block_{block_idx}", color="blue"):
+                # with self.offload_context:
+                # h = block(h, **block_kwargs)
+                h = checkpoint(
+                    block,
+                    h,
+                    use_reentrant=False,
+                    **block_kwargs,
+                )
+                h = cast(torch.Tensor, h)
+                self._log_debug_mem(f'{block_idx}')
+
+
+
+            # commit cpu offload
+            # if torch.is_grad_enabled() and self.offload_sync_func is not None:
+            #     h = self.offload_sync_func(h)
+            #     h = cast(torch.Tensor, h)
+
+        # forward moe blocks with TBO
+        x0, x1 = h.chunk(2, dim=0) # assume even batch size
+        labels0, labels1 = None, None
+        if labels is not None:
+            labels0, labels1 = labels.chunk(2, dim=0)
+            del labels
+        del h
+        # Mark sizes as dynamic for torch.compile().
+        if self.compile_enabled:
+            mark_dynamic(x0, (0, 1), strict=False)
+            mark_dynamic(x1, (0, 1), strict=False)
+        x1_is_fresh = True # x1 is always fresh in the beginning
+        x1_ctx = {
+            "x1": x1,
+        }
+        for block_idx, block in enumerate(self.blocks.values()):
+            # skip dense blocks
+            if not block.is_moe:
+                continue
+
+            with nvtx.annotate(f"fwd_block_{block_idx}", color="blue"):
+                block = cast(MoEFusedV2TransformerBlock, block)
+                # with self.offload_context:
+                x0, x1_ctx = block.checkpointed_combined_forward_ep_tbo(x0, x1_ctx, x1_is_fresh, **block_kwargs)
+                x1_is_fresh = False # after the first TBO block, x1 is no longer fresh
+                self._log_debug_mem(f'{block_idx}')
+
+
+
+
+            # if torch.is_grad_enabled() and self.offload_sync_func is not None:
+            #     x0 = self.offload_sync_func(x0)
+            #     x0 = cast(torch.Tensor, x0)
+
+
+        # finish x1 last steps
+        h0, h1 = self._tbo_last_step(x0, x1_ctx, lm_head_kwargs, labels0, labels1)
+        self._log_debug_mem(f'last_step')
+
+        # merge h0 h1
+        if self.lm_head is None:
+            h = torch.cat([h0, h1], dim=0)
+            return h
+        else:
+            merged = LMOutputWithLoss(
+                None,
+                h0[1] + h1[1],
+                h0[2] + h1[2],
+                h0[3] + h1[3],
+            )
+            return merged
+
+    # @torch.compile
+    def _tbo_last_step(self, x0, x1_ctx: Dict[str, Any], lm_head_kwargs: Dict[str, Any], labels0: Optional[torch.Tensor], labels1: Optional[torch.Tensor]):
+        with nvtx.annotate("TBO-1", color='orange'):
+            global_x1 = x1_ctx['global_x1']
+            send_counts1 = cast(List, x1_ctx['send_counts1'])
+            recv_counts1 = cast(List, x1_ctx['recv_counts1'])
+
+
+            last_block = cast(MoEFusedV2TransformerBlock, x1_ctx['last_block'])
+
+            assert last_block.routed_experts_router is not None
+            # finish reverse all2all and other ops for x1
+            with nvtx.annotate("reverse_all_to_all", color='green'):
+                global_x1 = cast(torch.Tensor, global_x1)
+                local_x1, local_x_handle1 = ops.all_to_all_async(
+                # local_x1, local_x_handle1 = ops.all_to_all(
+                    global_x1,
+                    send_counts1,
+                    recv_counts1,
+                    group=last_block.ep_pg,
+                    # async_op=True,
+                )
+            
+            reversed_local_x_permutation_mapping1 = x1_ctx['reversed_local_x_permutation_mapping1']
+            local_x_global_routed_expert_weights1 = x1_ctx['local_x_global_routed_expert_weights1']
+            hidden_shape_before_permute1 = x1_ctx['hidden_shape_before_permute1']
+            in_shape1 = cast(torch.Size, x1_ctx['in_shape1'])
+            mixed_shared_out1 = x1_ctx['mixed_shared_out1']
+            attn_res_out1 = x1_ctx['attn_res_out1']
+            
+            assert last_block is not None
+            assert local_x_handle1 is not None
+            assert last_block.routed_experts_router is not None
+            
+        # x0 lm head
+        h0 = self.maybe_forward_lm_head(x0, lm_head_kwargs, labels=labels0)
+
+
+        with nvtx.annotate("TBO-1", color='orange'):
+            # local_x_handle1.wait()
+            local_x1 = ops.all_to_all_wait(local_x1, local_x_handle1)
+
+
+            ## 9. Unpermute the (local) tokens returned by all-to-all communication ##
+            with nvtx.annotate("Unpermute-Merge local tokens", color='green'):
+                local_x1 = moe_unpermute_no_compile(
+                    inp=local_x1,
+                    row_id_map=reversed_local_x_permutation_mapping1,
+                    merging_probs=local_x_global_routed_expert_weights1.view(-1, last_block.routed_experts_router.top_k),
+                    restore_shape=hidden_shape_before_permute1,
+                    map_type='index',
+                )
+            ## end
+        
+            
+            local_x1 = local_x1.view(in_shape1)
+
+            # weighted sum of the shared experts and routed experts
+            if last_block.shared_experts is not None:
+                assert mixed_shared_out1 is not None
+                shared_out_factor1 = last_block.shared_experts.num_experts / (last_block.routed_experts_router.top_k + last_block.shared_experts.num_experts)
+                routed_out_factor1 = last_block.routed_experts_router.top_k / (last_block.routed_experts_router.top_k + last_block.shared_experts.num_experts)
+                mlp_out1 = last_block.merge_shared_and_routed_out(
+                    shared_out= mixed_shared_out1,
+                    shared_factor=shared_out_factor1,
+                    routed_out=local_x1,
+                    routed_factor=routed_out_factor1
+                )
+            else:
+                mlp_out1 = local_x1
+
+            x1 = attn_res_out1 + last_block.feed_forward_norm(mlp_out1)
+
+        # Get final logits but again pass-through in case of pipeline parallelism.
+        h1 = self.maybe_forward_lm_head(x1, lm_head_kwargs, labels=labels1)
+
+        return h0, h1
+
+    def maybe_forward_lm_head(
+        self,
+        x: torch.Tensor,
+        lm_head_kwargs: Dict[str, Any],
+        labels: Optional[torch.Tensor] = None,
+    ):
+        if self.lm_head is not None:
+            if self.compile_enabled:
+                mark_dynamic(x, (0, 1), strict=False)
+                if labels is not None:
+                    mark_dynamic(labels, (0, 1), strict=False)
+            # NOTE: When TP is active we can't pass 'labels=None' or the hook from 'PrepareModuleInput'
+            # will throw an exception.
+            if labels is not None:
+                lm_head_kwargs["labels"] = labels
+            h0 = self.lm_head(x, **lm_head_kwargs)
+        else:
+            h0 = x
+        return h0
+
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        *,
+        labels: Optional[torch.Tensor] = None,
+        ignore_index: int = -100,
+        loss_reduction: Literal["mean", "sum", "none"] = "mean",
+        z_loss_multiplier: Optional[float] = None,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        return_logits: Optional[bool] = None,
+        **kwargs,
+    ) -> Union[torch.Tensor, LMOutputWithLoss]:
+        """
+        Run the transformer on the token input IDs.
+
+        :param input_ids: The token input IDs, shape ``(batch_size, seq_len)``.
+
+        :returns: The logits if ``labels`` is ``None`` or the losses if ``labels`` is not ``None``.
+        """
+        self._reset_debug_mem_logs()
+        if self.tbo:
+            return self.forward_tbo(
+                input_ids,
+                labels=labels,
+                ignore_index=ignore_index,
+                loss_reduction=loss_reduction,
+                z_loss_multiplier=z_loss_multiplier,
+                loss_div_factor=loss_div_factor,
+                return_logits=return_logits,
+                **kwargs,
+            )
+        # with torch.no_grad():
+        #     tbo_dbg = self.forward_tbo(
+        #         input_ids,
+        #         labels=labels,
+        #         ignore_index=ignore_index,
+        #         loss_reduction=loss_reduction,
+        #         z_loss_multiplier=z_loss_multiplier,
+        #         loss_div_factor=loss_div_factor,
+        #         return_logits=return_logits,
+        #         **kwargs,
+        #     )
+
+        input_ids, labels, block_kwargs, lm_head_kwargs = self._prepare_inputs(
+            input_ids,
+            labels,
+            ignore_index=ignore_index,
+            loss_reduction=loss_reduction,
+            z_loss_multiplier=z_loss_multiplier,
+            loss_div_factor=loss_div_factor,
+            return_logits=return_logits,
+            **kwargs,
+        )
+
+        # Get embeddings but pass-through for non-existent layers to allow easy
+        # pipeline parallel configuration.
+        h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
+
+        # Run each block.
+        for block_idx, block in enumerate(self.blocks.values()):
+            # Mark sizes as dynamic for torch.compile().
+            if self.compile_enabled:
+                mark_dynamic(h, (0, 1), strict=False)
+            with nvtx.annotate(f"fwd_block_{block_idx}", color="blue"):
+                h = block(h, **block_kwargs)
+
+        # Get final logits but again pass-through in case of pipeline parallelism.
+        if self.lm_head is not None:
+            if self.compile_enabled:
+                mark_dynamic(h, (0, 1), strict=False)
+                if labels is not None:
+                    mark_dynamic(labels, (0, 1), strict=False)
+            # NOTE: When TP is active we can't pass 'labels=None' or the hook from 'PrepareModuleInput'
+            # will throw an exception.
+            if labels is not None:
+                lm_head_kwargs["labels"] = labels
+            out = self.lm_head(h, **lm_head_kwargs)
+        else:
+            out = h
+        return out
 
 def _hide_cpu_inputs_from_torch(m, args, kwargs) -> Optional[Tuple[Any, Dict[str, Any]]]:
     del m
