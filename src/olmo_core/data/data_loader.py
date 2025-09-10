@@ -27,6 +27,7 @@ from .collator import DataCollator
 from .numpy_dataset import (
     NumpyDatasetBase,
     NumpyDatasetType,
+    NumpyByteFSLDataset,
     NumpyFSLDatasetBase,
     NumpyVSLDataset,
 )
@@ -347,6 +348,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
         dp_world_size: int = 1,
         dp_rank: int = 0,
         fs_local_rank: int = 0,
+        allow_vlen: bool = False,
     ):
         super().__init__(
             collator=collator,
@@ -364,6 +366,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
         self.prefetch_factor = prefetch_factor
         self.target_device_type = target_device_type
         self._global_indices: Optional[np.ndarray] = None
+        self.allow_vlen = allow_vlen
 
     @classmethod
     def wrap_numpy_dataset(
@@ -382,6 +385,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
         prefetch_factor: Optional[int] = None,
         target_device_type: str = "cpu",
         shuffle: bool = True,
+        allow_vlen: bool = False,
     ) -> "NumpyDataLoaderBase":
         """
         Construct the corresponding :class:`NumpyDataLoaderBase` instance for the given :class:`NumpyDatasetBase`.
@@ -401,6 +405,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
             prefetch_factor=prefetch_factor,
             target_device_type=target_device_type,
             shuffle=shuffle,
+            allow_vlen=allow_vlen,
         )
         data_loader: DataLoaderBase
         if isinstance(dataset, NumpyFSLDatasetBase):
@@ -413,6 +418,8 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
                     dataset.max_target_sequence_length // dataset.sequence_length
                 )
         elif isinstance(dataset, NumpyVSLDataset):
+            kwargs.pop("allow_vlen", None)  # NumpyVSLDataLoader does not support variable-length sequences
+
             data_loader = NumpyVSLDataLoader(
                 dataset,
                 **kwargs,  # type: ignore
@@ -543,6 +550,39 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
                 [splits, self.dataset.max_sequence_length - splits], dim=1
             )
             out["max_doc_lens"] = torch.max(out["doc_lens"], dim=-1).values.tolist()
+        if isinstance(self.dataset, NumpyByteFSLDataset):
+            byte_to_patch_ratio = self.dataset.sequence_length // self.dataset.patch_sequence_length
+
+            # random lengths for debugging,
+            patch_lengths = torch.randint(
+                int(byte_to_patch_ratio * 0.5),
+                int(byte_to_patch_ratio * 1.5),
+                (input_ids.shape[0], self.dataset.patch_sequence_length),
+                device=input_ids.device
+            )
+            # first patch must be length 1 (<bos>)
+            patch_lengths[:, 0] = 1
+
+            patch_lengths = torch.where(
+                (torch.cumsum(patch_lengths, dim=-1) - patch_lengths) > self.dataset.max_sequence_length,
+                torch.zeros_like(patch_lengths),
+                patch_lengths,
+            )
+
+            out["patch_lens"] = out["space_patch_lens"] = patch_lengths
+            out["expanded_input_ids"] = torch.randint(
+                0,
+                100_000,
+                input_ids.shape,
+                device=input_ids.device,
+            )
+            out["original_input_ids"] = torch.randint(
+                0,
+                100_000,
+                patch_lengths.shape,
+                device=input_ids.device,
+            )
+
         return out
 
     def _iter_batches(self) -> Iterable[Dict[str, Any]]:
@@ -572,6 +612,16 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
                     log.info("Batch size has changed, reinitializing data loading workers...")
                 current_global_batch_size = self.global_batch_size
                 batch_iterator = _build_batch_iterator()
+
+    def __iter__(self) -> Iterator[Dict[str, Any]]:
+        for batch in super().__iter__():
+            if not self.allow_vlen and batch["input_ids"].numel() != self.rank_batch_size:
+                raise RuntimeError(
+                    f"Expected batch size of {self.rank_batch_size:,d} tokens on rank {self.dp_rank}, "
+                    f"got input IDs with shape {tuple(batch['input_ids'].shape)} = {batch['input_ids'].numel():,d} tokens"
+                )
+            self.tokens_processed += self.global_batch_size
+            yield batch
 
     def _get_dataset_item(self, idx: int) -> Dict[str, Any]:
         item = self.dataset[idx]
@@ -1067,6 +1117,7 @@ class NumpyDataLoaderConfig(Config):
     num_workers: int = 0
     prefetch_factor: Optional[int] = None
     target_device_type: Optional[str] = None
+    allow_vlen: bool = False
 
     def build(
         self,
@@ -1106,5 +1157,6 @@ class NumpyDataLoaderConfig(Config):
             num_workers=self.num_workers,
             prefetch_factor=self.prefetch_factor,
             target_device_type=self.target_device_type or get_default_device().type,
+            allow_vlen=self.allow_vlen,
         )
         return data_loader

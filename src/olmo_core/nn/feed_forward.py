@@ -47,6 +47,7 @@ class FeedForwardConfig(Config):
     """
     bias: Optional[bool] = None
     dtype: Optional[DType] = None
+    act_name: str = "silu"
 
     def num_params(self, d_model: int) -> int:
         """
@@ -110,11 +111,18 @@ class FeedForward(nn.Module):
         hidden_size: int,
         bias: bool = True,
         dtype: torch.dtype = torch.float32,
+        act_name: str = "silu",
         init_device: str = "cpu",
     ):
         super().__init__()
         self.d_model = d_model
         self.hidden_size = hidden_size
+        if act_name == "swiglu":
+            from flash_attn.ops.activations import swiglu
+            self.act_fn = swiglu
+        else:
+            fn = getattr(F, act_name)
+            self.act_fn = lambda gate, y: fn(gate) * y
         self.w1 = nn.Linear(d_model, hidden_size, bias=bias, dtype=dtype, device=init_device)
         self.w2 = nn.Linear(hidden_size, d_model, bias=bias, dtype=dtype, device=init_device)
         self.w3 = nn.Linear(d_model, hidden_size, bias=bias, dtype=dtype, device=init_device)
@@ -125,7 +133,7 @@ class FeedForward(nn.Module):
 
         :param x: The input of shape ``(*, d_model)``.
         """
-        return self.w2(F.silu(self.w1(x)) * self.w3(x))
+        return self.w2(self.act_fn(self.w1(x), self.w3(x)))
 
     def apply_tp(
         self,

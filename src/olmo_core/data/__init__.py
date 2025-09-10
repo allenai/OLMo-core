@@ -11,7 +11,7 @@ builder, build your data loader with the :class:`~olmo_core.data.data_loader.Num
 builder, and pass it to :meth:`TrainerConfig.build() <olmo_core.train.TrainerConfig.build>`.
 """
 
-from .collator import DataCollator, PaddingDirection
+from .collator import DataCollator, PaddingDirection, ByteDataCollator
 from .data_loader import (
     DataLoaderBase,
     NumpyDataLoaderBase,
@@ -25,6 +25,7 @@ from .numpy_dataset import (
     InstanceFilterConfig,
     NumpyDatasetBase,
     NumpyDatasetConfig,
+    NumpyByteFSLDataset,
     NumpyFSLDataset,
     NumpyFSLDatasetBase,
     NumpyPackedFSLDataset,
@@ -38,13 +39,14 @@ from .numpy_dataset import (
     VSLGrowthCurriculum,
     VSLNaturalCurriculum,
 )
-from .tokenizer import TokenizerConfig, TokenizerName
+from .tokenizer import ByteTokenizerConfig, ByteTokenizer, TokenizerConfig, TokenizerName
 from .types import LongDocStrategy, NumpyDatasetDType, NumpyDatasetType
 
 __all__ = [
     "NumpyDatasetBase",
     "NumpyFSLDatasetBase",
     "NumpyFSLDataset",
+    "NumpyByteFSLDataset",
     "NumpyPaddedFSLDataset",
     "NumpyPackedFSLDataset",
     "NumpyVSLDataset",
@@ -60,6 +62,9 @@ __all__ = [
     "VSLCurriculumConfig",
     "NumpyDatasetDType",
     "TokenizerConfig",
+    "ByteDataCollator",
+    "ByteTokenizerConfig",
+    "ByteTokenizer",
     "TokenizerName",
     "DataMixBase",
     "DataMix",

@@ -26,13 +26,16 @@ from typing import (
     Union,
     cast,
 )
+import random
 
 import numpy as np
 import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset
+from transformers import AutoTokenizer
 
 from olmo_core.exceptions import OLMoConfigurationError, OLMoEnvironmentError
+import olmo_core.nn.blt.utils as blt_utils
 
 from ..aliases import PathOrStr
 from ..config import Config, StrEnum
@@ -40,7 +43,7 @@ from ..distributed.utils import barrier, get_fs_local_rank
 from ..io import _get_s3_client, get_file_size, glob_directory
 from .mixes import DataMix, DataMixBase
 from .source_mixture import SourceMixtureDatasetConfig
-from .tokenizer import TokenizerConfig
+from .tokenizer import TokenizerConfig, ByteTokenizerConfig
 from .types import LongDocStrategy, NumpyDatasetDType, NumpyDatasetType, NumpyUIntTypes
 from .utils import (
     bucket_documents,
@@ -63,6 +66,7 @@ __all__ = [
     "NumpyDatasetBase",
     "NumpyFSLDatasetBase",
     "NumpyFSLDataset",
+    "NumpyByteFSLDataset",
     "NumpyPaddedFSLDataset",
     "NumpyPackedFSLDataset",
     "NumpyInterleavedFSLDataset",
@@ -668,6 +672,177 @@ class NumpyFSLDataset(NumpyFSLDatasetBase):
             )
         else:
             raise RuntimeError("invalid 'max_target_sequence_length' or 'sequence_length'")
+
+
+class NumpyByteFSLDataset(NumpyFSLDataset):
+    def __init__(self, *args, tokenizer_config: ByteTokenizerConfig, byte_sequence_length: int, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.tokenizer = tokenizer_config.build()
+        self.byte_sequence_length = byte_sequence_length
+
+        self.constituent_map = {}
+        vocab = self.tokenizer.hf_tokenizer.get_vocab()
+        for token, token_id in vocab.items():
+            constituents = []
+
+            for i in range(1, len(token) + 1):
+                if token[:i] in vocab:
+                    constituents.append(vocab[token[:i]])
+                else:
+                    constituents.append(-100)
+
+            self.constituent_map[token_id] = constituents
+
+        # manually remove fim middle ID and retokenize - not needed for byte level models since
+        # no tokenization bias.
+        self.fim_middle_id = self.tokenizer.hf_tokenizer.get_vocab()["<|fim_middle|>"]
+
+        # slightly convoluted to make picklable
+        self._noiser = None
+        self._noise_fn_name = ""
+        self._noise_p = None
+
+    def noise_fn(self, x: torch.Tensor) -> torch.Tensor:
+        if self._noiser is None or self._noise_p is None:
+            return x
+
+        if random.random() < self._noise_p:
+            noised_x = getattr(self._noiser, self._noise_fn_name)(x)[:len(x)]
+            # typically at least as long as x, but could be shorter in an edge case?
+            while len(noised_x) < len(x):
+                noised_x.append(self.tokenizer.hf_tokenizer.pad_token_id)
+
+            return torch.tensor(noised_x, dtype=x.dtype, device=x.device)
+        else:
+            return x
+
+    def set_noise_fn(self, noise_str: str):
+        kind, p, fn_p = noise_str.split(":")
+        p = float(p)
+        fn_p = float(fn_p)
+
+        if kind == "bpe_dropout":
+            self._noiser = blt_utils.Noiser(self.tokenizer.hf_tokenizer, p_bpe_dropout=fn_p)
+            self._noise_fn_name = "noise_bpe_dropout"
+        elif kind == "ctrl_char":
+            self._noiser = blt_utils.Noiser(self.tokenizer.hf_tokenizer, p_ctrl_char=fn_p)
+            self._noise_fn_name = "noise_ctrl_char"
+        else:
+            raise ValueError(f"Unknown noise kind: {kind}")
+
+        self._noise_p = p
+
+    def reset_noise_fn(self):
+        self._noiser = None
+        self._noise_fn_name = ""
+        self._noise_p = None
+
+    def _read_chunk_from_array(self, path: PathOrStr, index: int, dtype=None) -> torch.Tensor:
+        start_idx = index * self.patch_sequence_length # patch <-> sub/superword sequence length
+        return load_array_slice_into_tensor(
+            path,
+            start_idx,
+            start_idx + self.patch_sequence_length,
+            dtype or self.dtype,
+        )
+
+    def _get_file_size_and_length(self, path: PathOrStr, idx: int, dtype=None) -> Tuple[int, int]:
+        del idx
+        dtype = dtype or self.dtype
+        item_size = dtype(0).itemsize
+        file_size = get_file_size(path)
+        if self.max_target_sequence_length is not None:
+            raise NotImplementedError(
+                "max_target_sequence_length is not supported for NumpyByteFSLDataset."
+            )
+
+        return file_size, file_size // (item_size * self.patch_sequence_length)
+
+    def __getitem__(self, index: int) -> Dict[str, Any]:
+        item = super().__getitem__(index)
+
+        if self.fim_middle_id in item["input_ids"]:
+            # remove FIM middle and retokenize
+            input_ids = item["input_ids"].tolist()
+            input_ids = [x for x in input_ids if x != self.fim_middle_id]
+            original_input_ids = self.tokenizer.hf_tokenizer.encode(self.tokenizer.hf_tokenizer.decode(input_ids))
+            # can be longer in extreme edge cases (this actually happens! less than once every 1k batches)
+            original_input_ids = original_input_ids[:len(item["input_ids"])]
+            while len(original_input_ids) < len(item["input_ids"]):
+                original_input_ids.append(self.tokenizer.hf_tokenizer.pad_token_id)
+
+            original_input_ids = torch.tensor(original_input_ids, dtype=item["input_ids"].dtype)
+        else:
+            original_input_ids = item["input_ids"]
+
+        original_input_ids = self.noise_fn(original_input_ids)
+
+        byte_tokens, patch_lengths = self.tokenizer.get_tokens_and_patch_lengths(original_input_ids.tolist(), add_bos=True, skip_last=True)
+        space_patch_lengths = self.tokenizer.get_space_patch_lengths(byte_tokens)
+        expanded_byte_tokens = self.tokenizer.expand_byte_ids(byte_tokens)
+
+        new_input_ids = torch.tensor(byte_tokens, dtype=torch.int32)
+        expanded_input_ids = torch.tensor(expanded_byte_tokens, dtype=torch.int32)
+        new_attention_mask = torch.ones_like(new_input_ids, dtype=torch.bool)
+        patch_lengths = torch.tensor(patch_lengths, dtype=torch.int32)
+        space_patch_lengths = torch.tensor(space_patch_lengths, dtype=torch.int32)[:len(patch_lengths)]
+
+        if len(space_patch_lengths) < len(patch_lengths):
+            space_patch_lengths = F.pad(
+                space_patch_lengths,
+                (0, len(patch_lengths) - len(space_patch_lengths)),
+                value=0,
+            )
+
+        # make sure lengths do not surpass byte_sequence_length
+        patch_lengths = torch.where(
+            torch.cumsum(patch_lengths, dim=0) > self.byte_sequence_length,
+            torch.zeros_like(patch_lengths),
+            patch_lengths,
+        )
+        space_patch_lengths = torch.where(
+            torch.cumsum(space_patch_lengths, dim=0) > self.byte_sequence_length,
+            torch.zeros_like(space_patch_lengths),
+            space_patch_lengths,
+        )
+
+        if new_input_ids.shape[0] > self.byte_sequence_length:
+            new_input_ids = new_input_ids[:self.byte_sequence_length]
+            expanded_input_ids = expanded_input_ids[:self.byte_sequence_length]
+            new_attention_mask = new_attention_mask[:self.byte_sequence_length]
+        elif new_input_ids.shape[0] < self.byte_sequence_length:
+            n_pad = self.byte_sequence_length - new_input_ids.shape[0]
+            new_input_ids = F.pad(
+                new_input_ids,
+                (0, n_pad),
+                value=self.pad_token_id,
+            )
+            new_attention_mask = F.pad(
+                new_attention_mask,
+                (0, n_pad),
+                value=False,
+            )
+
+        item["original_input_ids"] = original_input_ids
+        item["input_ids"] = new_input_ids
+        item["expanded_input_ids"] = expanded_input_ids
+        item["attention_mask"] = new_attention_mask
+        item["patch_lens"] = patch_lengths
+        item["space_patch_lens"] = space_patch_lengths
+
+        return item
+
+    @property
+    def patch_sequence_length(self) -> int:
+        return super().sequence_length
+
+    @property
+    def sequence_length(self) -> int:
+        return self.byte_sequence_length
+
+    @property
+    def max_sequence_length(self) -> int:
+        return self.byte_sequence_length
 
 
 class NumpyFSLDatasetMixture(NumpyFSLDataset):
@@ -2908,6 +3083,63 @@ class NumpyDatasetConfig(Config):
                 include_instance_metadata=self.include_instance_metadata,
                 instance_filter_config=self.instance_filter_config,
             )
+        elif self.name == NumpyDatasetType.byte_fsl:
+            if self.sequence_length is None:
+                raise OLMoConfigurationError("'sequence_length' is required for FSL dataset")
+            if self.max_sequence_length is None:
+                raise OLMoConfigurationError(
+                    "'max_sequence_length' required for ByteFSL dataset to determine the max. byte sequence length."
+                )
+            if self.min_sequence_length is not None:
+                raise OLMoConfigurationError(
+                    "'min_sequence_length' is only a valid field for VSL datasets"
+                )
+            if self.vsl_curriculum is not None:
+                raise OLMoConfigurationError(
+                    "'vsl_curriculum' is only a valid field for VSL datasets"
+                )
+            if self.long_doc_strategy is not None:
+                raise OLMoConfigurationError(
+                    "'long_doc_strategy' is only a valid field for the packed FSL dataset"
+                )
+            if self.docs_per_instance is not None:
+                raise OLMoConfigurationError(
+                    "'docs_per_instance' is only valid for the interleaved FSL dataset"
+                )
+            if self.chunks_per_doc is not None:
+                raise OLMoConfigurationError(
+                    "'chunks_per_doc' is only valid for the interleaved FSL dataset"
+                )
+            if self.seed is not None:
+                raise OLMoConfigurationError("'seed' is only valid for the interleaved FSL dataset")
+            if self.interleaving_exempt_paths is not None:
+                raise OLMoConfigurationError(
+                    "'interleaving_exempt_paths' is only valid for the interleaved FSL dataset"
+                )
+            if self.source_mixture_config:
+                raise NotImplementedError(
+                    "Source mixtures are not yet supported for the byte FSL dataset"
+                )
+            else:
+                dataset = NumpyByteFSLDataset(
+                    *paths,
+                    sequence_length=self.sequence_length,
+                    max_target_sequence_length=self.max_target_sequence_length,
+                    byte_sequence_length=self.max_sequence_length,
+                    tokenizer_config=self.tokenizer,  # type: ignore
+                    pad_token_id=self.tokenizer.pad_token_id,
+                    eos_token_id=self.tokenizer.eos_token_id,
+                    vocab_size=self.tokenizer.vocab_size,
+                    # self.get_dtype(), self.get_dtype() wrongly selects uint16 since the byte tokenizer has a vocab < 65536.
+                    # hardcode uint32 for now but this is not robust.
+                    dtype=np.uint32,
+                    metadata=metadata,
+                    include_instance_metadata=self.include_instance_metadata,
+                    generate_doc_lengths=self.generate_doc_lengths,
+                    bos_token_id=self.tokenizer.bos_token_id,
+                    instance_filter_config=self.instance_filter_config,
+                    label_mask_paths=label_mask_paths,
+                )
         else:
             raise NotImplementedError(self.name)
 
