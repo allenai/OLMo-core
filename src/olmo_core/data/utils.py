@@ -1,3 +1,4 @@
+import functools as ft
 import gzip
 import math
 import os
@@ -5,6 +6,7 @@ import random
 from collections import defaultdict, deque
 from contextlib import contextmanager
 from dataclasses import dataclass
+from itertools import islice
 from pathlib import Path
 from typing import (
     Any,
@@ -17,6 +19,7 @@ from typing import (
     Sequence,
     Tuple,
     Type,
+    TypeVar,
     Union,
 )
 
@@ -25,7 +28,13 @@ import torch
 import torch.nn.functional as F
 
 from olmo_core.aliases import PathOrStr
-from olmo_core.io import add_cached_path_clients, get_bytes_range, is_url, resource_path
+from olmo_core.io import (
+    add_cached_path_clients,
+    get_bytes_range,
+    get_file_size,
+    is_url,
+    resource_path,
+)
 from olmo_core.utils import capped_powers_of_2
 
 from .types import LongDocStrategy
@@ -212,10 +221,26 @@ def iter_document_indices(
                 "indices can be inferred from the source file."
             ) from e
 
+        total_tokens: Optional[int] = None
+        if dtype is not None:
+            total_tokens = get_file_size(data_path) // dtype(0).itemsize
+
         with gzip.open(metadata_path, "rt") as f:
             for line in f:
-                start_index, end_index, *_ = line.split(",")
-                yield int(start_index), int(end_index)
+                start_index_str, end_index_str, *_ = line.split(",")
+                start_index, end_index = int(start_index_str), int(end_index_str)
+                if total_tokens is not None:
+                    if start_index >= total_tokens:
+                        raise RuntimeError(
+                            f"Document start index {start_index:,d} from metadata file "
+                            f"for source '{data_path}' with {total_tokens:,d} tokens is out-of-bounds"
+                        )
+                    if end_index > total_tokens:
+                        raise RuntimeError(
+                            f"Document end index {end_index:,d} from metadata file "
+                            f"for source '{data_path}' with {total_tokens:,d} tokens is out-of-bounds"
+                        )
+                yield start_index, end_index
 
 
 def iter_document_indices_with_max_sequence_length(
@@ -396,7 +421,7 @@ def memmap_to_write(
     file until the context exists successfully.
     """
     path.parent.mkdir(exist_ok=True, parents=True)
-    tmp_path = path.with_suffix(f".{random.randint(0,2**32)}.npy.tmp")
+    tmp_path = path.with_suffix(f".{random.randint(0, 2**32)}.npy.tmp")
     mmap = np.memmap(tmp_path, dtype=dtype, mode="w+", shape=shape)
     try:
         yield mmap
@@ -671,6 +696,21 @@ def find_periodic_sequences(
                 yield out
 
 
+T = TypeVar("T")
+
+
+def _take(n: int, iterable: Iterable[T]) -> List[T]:
+    return list(islice(iterable, n))
+
+
+def chunked(iterable: Iterable[T], n: int) -> Iterable[List[T]]:
+    """
+    Group items in the iterable into chunks of size `n`, at most. This is equivalent to the function
+    from ``more-itertools`` with the same name and ``strict=False``.
+    """
+    return iter(ft.partial(_take, n, iter(iterable)), [])
+
+
 #########################################################################################################################
 # Implementation of the Optimized Best-Fit Decreasing (OBFD) bin packing algorithm from https://arxiv.org/pdf/2404.10830.
 # See Appendix B for a detailed illustration of the algorithm.
@@ -819,8 +859,7 @@ class InstancePacker:
 
 
 def pack_documents_into_instances(
-    path: PathOrStr,
-    *,
+    *paths: PathOrStr,
     max_sequence_length: int,
     eos_token_id: int,
     dtype: Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]],
@@ -830,10 +869,11 @@ def pack_documents_into_instances(
     long_doc_strategy: LongDocStrategy = LongDocStrategy.truncate,
 ) -> Tuple[List[List[int]], np.ndarray, int]:
     """
-    Pack document from a source file into instances of at most ``max_sequence_length`` using
+    Pack document from source files into instances of at most ``max_sequence_length`` using
     a best-fit-decreasing algorithm described in https://arxiv.org/pdf/2404.10830.
 
-    :param path: Path/URL to the source file of token IDs.
+    :param paths: Paths/URLs to the source files of token IDs. When multiple sources are given, they'll
+        be treated as if they've been concatenated together into a single source file.
     :param max_sequence_length: The maximum sequence length of each *instance*.
     :param eos_token_id: The EOS token ID, used to find document boundaries.
     :param dtype: The numpy datatype of the source file.
@@ -848,20 +888,59 @@ def pack_documents_into_instances(
         of the corresponding document start and end indices, with shape ``(num_documents, 2)``,
         and the total number of tokens packed into instances.
     """
-    doc_idx_gen = (
-        idx
-        for (start_idx, end_idx) in iter_document_indices_with_max_sequence_length(
-            path,
-            max_sequence_length,
-            eos_token_id=eos_token_id,
-            dtype=dtype,
-            long_doc_strategy=long_doc_strategy,
-        )
-        for idx in (start_idx, end_idx)
-    )
+    if len(paths) == 0:
+        raise RuntimeError("At least one source path must be provided")
+
+    def doc_idx_gen() -> Generator[int, None, None]:
+        start_offset = 0
+        for path in paths:
+            for start_idx, end_idx in iter_document_indices_with_max_sequence_length(
+                path,
+                max_sequence_length,
+                eos_token_id=eos_token_id,
+                dtype=dtype,
+                long_doc_strategy=long_doc_strategy,
+            ):
+                yield start_offset + start_idx
+                yield start_offset + end_idx
+            start_offset += get_file_size(path) // dtype(0).itemsize
+
     # shape: (num_docs, 2)
-    document_indices = np.fromiter(doc_idx_gen, dtype=indices_dtype).reshape(-1, 2)
+    document_indices = np.fromiter(doc_idx_gen(), dtype=indices_dtype).reshape(-1, 2)
 
     # Pack documents into instances.
     instance_packer = InstancePacker(max_sequence_length)
     return instance_packer.pack_documents(document_indices)
+
+
+def attention_mask_to_cache_leftpad(
+    attention_mask: torch.Tensor,
+) -> torch.Tensor:
+    """Convert a left-padding attention mask into a cache leftpad for Flash-Attention.
+
+    The mask is expected to be a boolean or 0/1 tensor of shape ``(batch, seq_len)`` where
+    ``True``/1 indicates a *valid* token and the padding is on the **left** side of the
+    sequence (i.e. all padding tokens come *before* all valid tokens).
+
+    Returns:
+        cache_leftpad: (batch_size,), dtype torch.int32. The index that the KV cache starts.
+    """
+    if attention_mask.ndim != 2:
+        raise ValueError(
+            f"expected 2-D attention_mask (batch, seq_len), got shape {attention_mask.shape}"
+        )
+    if attention_mask.dtype != torch.bool:
+        attention_mask = attention_mask != 0
+
+    # Verify prefix-padding property
+    # Check that once we see a valid token (True), we don't see any padding tokens (False) after it
+    prefix_ok = (attention_mask.cummax(dim=1).values & ~attention_mask).any().item() is False
+    if not prefix_ok:
+        raise ValueError(
+            "attention_mask must represent *prefix padding* (all padding tokens precede valid tokens) "
+            "for conversion to flash attention cache leftpad."
+        )
+
+    # Find the first True value in each row (where valid tokens start)
+    cache_leftpad = attention_mask.int().argmax(dim=-1).int()  # (B,)
+    return cache_leftpad

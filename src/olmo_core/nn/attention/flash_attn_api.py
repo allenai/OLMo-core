@@ -1,3 +1,4 @@
+import logging
 from typing import Optional, Tuple
 
 import torch
@@ -14,6 +15,8 @@ try:
     import ring_flash_attn  # type: ignore
 except ImportError:
     ring_flash_attn = None
+
+log = logging.getLogger(__name__)
 
 
 def _flatten_batch_dim(x: torch.Tensor) -> torch.Tensor:
@@ -113,6 +116,36 @@ def dispatch_flash_attn_qkvpacked(
 
 
 @torch._dynamo.disable()
+def dispatch_flash_attn_with_kvcache(
+    q: torch.Tensor,
+    k_cache: torch.Tensor,
+    v_cache: torch.Tensor,
+    k: Optional[torch.Tensor] = None,
+    v: Optional[torch.Tensor] = None,
+    cache_seqlens: Optional[torch.Tensor] = None,
+    cache_leftpad: Optional[torch.Tensor] = None,
+    softmax_scale: Optional[float] = None,
+    causal: bool = False,
+    window_size: Tuple[int, int] = (-1, -1),
+) -> torch.Tensor:
+    if flash_attn is None:
+        raise RuntimeError("flash-attn is required!")
+
+    return flash_attn.flash_attn_with_kvcache(
+        q,
+        k_cache,  # updated in-place if k/v are provided
+        v_cache,  # updated in-place if k/v are provided
+        k=k,
+        v=v,
+        cache_seqlens=cache_seqlens,
+        cache_leftpad=cache_leftpad,
+        softmax_scale=softmax_scale,
+        causal=causal,
+        window_size=window_size,
+    )
+
+
+@torch._dynamo.disable()
 def dispatch_ring_flash_attn(
     q: torch.Tensor,
     k: torch.Tensor,
@@ -144,6 +177,12 @@ def dispatch_ring_flash_attn(
 
         if local_k_slice is not None:
             raise RuntimeError(f"'local_k_slice' is invalid for {strategy} load balancing strategy")
+
+        if window_size != (-1, -1):
+            # See https://github.com/zhuzilin/ring-flash-attention/issues/35
+            raise RuntimeError(
+                f"SWA is currently not supported for {strategy} load balancing strategy"
+            )
 
         if cu_seqlens is not None and max_seqlen is not None:
             out = ring_flash_attn.zigzag_ring_flash_attn_varlen_func(

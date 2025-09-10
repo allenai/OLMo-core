@@ -7,7 +7,8 @@ from typing import List, Optional
 import torch
 
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.optim import INITIAL_LR_FIELD, LR_FIELD, Scheduler, SkipStepAdamW
+from olmo_core.optim import INITIAL_LR_FIELD, LR_FIELD, SkipStepAdamW
+from olmo_core.optim.scheduler import WSD, ConstantScheduler, Scheduler
 
 from ..common import Duration
 from ..train_module import TransformerPipelineTrainModule, TransformerTrainModule
@@ -35,13 +36,15 @@ class BatchSizeSchedulerCallback(Callback):
     Defines the schedule at which to apply each batch size.
     """
 
+    enabled: bool = True
+
     def __post_init__(self):
         if len(self.batch_sizes) != len(self.schedule):
             raise OLMoConfigurationError(
                 "batch_sizes and schedules should have the same number of items"
             )
 
-        if not self.schedule:
+        if not self.schedule or not self.enabled:
             return
 
         if len({duration.unit for duration in self.schedule}) > 1:
@@ -82,6 +85,33 @@ class BatchSizeSchedulerCallback(Callback):
         return self.trainer.data_loader.global_batch_size
 
     def post_attach(self):
+        if not self.schedule:
+            return
+
+        scheduler: Optional[Scheduler] = None
+        if isinstance(self.trainer.train_module, TransformerTrainModule):
+            scheduler = self.trainer.train_module.scheduler
+        elif isinstance(self.trainer.train_module, TransformerPipelineTrainModule):
+            scheduler = self.trainer.train_module.scheduler
+
+        # If we have an LR scheduler, we need to make sure that the value it uses for `t_max`
+        # (the end point of the schedule) won't be changed by this callback, since that would
+        # lead to unexpected/discontinuous behavior in the schedule.
+        # For example, if the scheduler doesn't have its own `self.t_max` set and its unit are in
+        # steps, then it takes `t_max` to be `trainer.max_steps`, which will change when this callback
+        # updates the batch size (unless the trainer's max duration is set in steps).
+        if (
+            scheduler is not None
+            and not isinstance(scheduler, (ConstantScheduler, WSD))
+            and getattr(scheduler, "t_max", None) is None
+            and self.trainer.max_duration.unit != "steps"
+            and scheduler.units != "tokens"
+        ):
+            raise OLMoConfigurationError(
+                f"Batch size scheduler requires the {scheduler.__class__.__name__} LR scheduler's "
+                "units to be set to 'tokens' unless 't_max' is set."
+            )
+
         self._maybe_update_batch_size_and_lr()
 
     def post_checkpoint_loaded(self, *args):
@@ -98,6 +128,8 @@ class BatchSizeSchedulerCallback(Callback):
         self.trainer.record_metric("train/global batch size", self.current_batch_size)
 
     def _maybe_update_batch_size_and_lr(self):
+        if not self.enabled:
+            return
         # Find latest event in the schedule to apply.
         for target_batch_size, event_start in reversed(list(zip(self.batch_sizes, self.schedule))):
             if event_start.due(
