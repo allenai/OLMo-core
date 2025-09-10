@@ -227,4 +227,4 @@ if __name__ == "__main__":
     try:
         main(run_name, overrides=overrides)
     finally:
-        teardown_training_environment() 
+        teardown_training_environment()
