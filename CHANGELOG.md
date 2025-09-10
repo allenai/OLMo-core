@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Fixed parsing username+password git remote URLs in `launch.beaker` module.
 
+### Changed
+
+- Increased NCCL_FASTRAK_PLUGIN_ACCEPT_TIMEOUT_MS from 10 minutes to 30 minutes.
+
 ## [v2.2.0](https://github.com/allenai/OLMo-core/releases/tag/v2.2.0) - 2025-08-26
 
 ### Added

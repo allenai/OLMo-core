@@ -190,7 +190,7 @@ jobs:
             --ref ${{ env.COMMIT_SHA }} \
             --branch ${{ env.BRANCH_NAME }} \
             --beaker-image ${{ matrix.task.image }} \
-            --budget ai2/oe-training \
+            --budget ai2/oe-base \
             --priority normal \
             --preemptible \
             --gpus ${{ matrix.task.gpus }} \
