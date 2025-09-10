@@ -300,37 +300,39 @@ class BeakerLaunchConfig(Config):
     def _get_torchrun_cmd(self) -> List[str]:
         assert self.num_nodes >= 1
 
-        torchrun: List[str]
         if self.num_nodes == 1:
-            # Pick distinct free ports at runtime (this process)
-            rdzv_port = self._free_port()
-            master_port = self._free_port()
-            # Ensure the training code that uses init_method='env://' has a port
-            os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
-            os.environ["MASTER_PORT"] = str(master_port)
-            # Also set the default that torch.distributed sometimes consults
-            os.environ["TORCH_DISTRIBUTED_DEFAULT_PORT"] = str(rdzv_port)
+            # 1) Pick distinct free ports
+            rdzv_port = self._free_port()  # rendezvous (elastic TCPStore)
+            pg_port   = self._free_port()  # process-group (env://)
 
-            torchrun = [
+            # 2) Ensure env:// init in user code has an address/port
+            os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
+            os.environ["MASTER_PORT"] = str(pg_port)
+
+            # (Optional) set default PG port for libs that read it
+            os.environ["TORCH_DISTRIBUTED_DEFAULT_PORT"] = str(pg_port)
+
+            # 3) Torchrun args — be explicit about BOTH ports
+            return [
                 "torchrun",
-                f"--nproc-per-node={self.num_gpus}",
+                f"--nproc_per_node={self.num_gpus}",
                 "--standalone",
                 "--rdzv_backend=c10d",
                 f"--rdzv_endpoint=127.0.0.1:{rdzv_port}",
+                f"--master_port={rdzv_port}",              # <— forces the elastic store port (works even with 2.7.0 quirks)
             ]
         else:
-            torchrun = [
+            return [
                 "torchrun",
                 f"--nnodes={self.num_nodes}:{self.num_nodes}",
-                f"--nproc-per-node={self.num_gpus}",
+                f"--nproc_per_node={self.num_gpus}",
                 "--rdzv_id=12347",
                 "--rdzv_backend=static",
                 '--rdzv_endpoint="${BEAKER_LEADER_REPLICA_HOSTNAME}:29400"',
                 '--node_rank="${BEAKER_REPLICA_RANK}"',
-                "--rdzv_conf='read_timeout=420'",
+                "--rdzv_conf=read_timeout=420",
             ]
 
-        return torchrun
 
     def _create_script_dataset(self, script_name: str, script: List[str]) -> Dataset:
         workspace_id = self.beaker.workspace.get(self.workspace).id
