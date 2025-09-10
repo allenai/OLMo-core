@@ -71,7 +71,9 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
             set_env_var("CUDA_VISIBLE_DEVICES", "0,1,2,3,4,5,6,7")
             set_env_var("NCCL_NET_GDR_LEVEL", "PIX")
             set_env_var("NCCL_FASTRAK_ENABLE_HOTPATH_LOGGING", "0")
-            set_env_var("NCCL_FASTRAK_PLUGIN_ACCEPT_TIMEOUT_MS", "1800000")
+            set_env_var(
+                "NCCL_FASTRAK_PLUGIN_ACCEPT_TIMEOUT_MS", str(int(timeout.total_seconds() * 1000))
+            )
             set_env_var("NCCL_NVLS_ENABLE", "0")
             set_env_var("NCCL_USE_SNAP", "1")
             set_env_var("NCCL_FASTRAK_USE_LLCM", "1")
