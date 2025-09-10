@@ -4,6 +4,7 @@ from typing import Optional, cast
 import math
 
 from einops import repeat, rearrange
+from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
@@ -35,8 +36,46 @@ class STE(torch.autograd.Function):
         grad_x = grad_output
         return grad_x
 
+class STESelect(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x, y):
+        return y
+
+    @staticmethod
+    def backward(ctx, grad_output):  # type: ignore
+        grad_x = grad_output
+        return grad_x, None
+
 def ste_func(x: torch.Tensor) -> torch.Tensor:
     return STE.apply(x)  # type: ignore
+
+def ste_select_func(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+    return STESelect.apply(x, y)  # type: ignore
+
+
+def ema_pool(x: torch.Tensor, p: torch.Tensor, headdim: int, block_size: int) -> torch.Tensor:
+    dt = torch.log(1 / (1 - p)).float()
+    x = (x.float() / dt[..., None])
+
+    n_heads = x.shape[-1] // headdim
+    A = -torch.ones(
+        (n_heads,), device=x.device, dtype=torch.float32
+    )
+    b = p.float()
+    c = torch.ones_like(b)
+
+    out = mamba_chunk_scan_combined(
+        rearrange(x, "b l (h p) -> b l h p", p=headdim),
+        repeat(dt, "b l -> b l h", h=n_heads),
+        A,
+        rearrange(b, "b l -> b l 1 1"),
+        rearrange(c, "b l -> b l 1 1"),
+        chunk_size=block_size,
+        seq_idx=None,
+    ).to(x.dtype) # type: ignore
+
+    out = rearrange(out, "b l h p -> b l (h p)")
+    return out
 
 
 def _compute_boundary_mask(boundary_logprobs: torch.Tensor, boundary_threshold: str) -> torch.Tensor:
@@ -275,10 +314,11 @@ class LocalEncoder(nn.Module):
             self.hash_embeddings = nn.ModuleList([
                 nn.Embedding(hash_byte_group_vocab[hash_embed_idx], d_model, device=init_device) for hash_embed_idx in range(total_hash_embeddings)
             ])
+            self.expanded_embeddings = None
         elif self.add_expanded_embeddings:
             assert subword_vocab_size is not None
-            self.expanded_embeddings = nn.Embedding(subword_vocab_size, d_model, device=init_device)
             self.hash_embeddings = None
+            self.expanded_embeddings = nn.Embedding(subword_vocab_size, d_model, device=init_device)
         else:
             self.hash_embeddings = None
             self.expanded_embeddings = None
@@ -880,6 +920,7 @@ class LocalDecoder(nn.Module):
         add_in_projection: bool,
         add_projected_patch_residuals: bool = False,
         hnet_smooth: bool = True,
+        hnet_smooth_ste: bool = False,
         hnet_modulate: bool = True,
         blt_k: Optional[int] = None,
         blt_compat: bool = False,  # for compat with BLT checkpoints
@@ -895,6 +936,7 @@ class LocalDecoder(nn.Module):
         self.add_in_projection = add_in_projection
         self.add_projected_patch_residuals = add_projected_patch_residuals
         self.hnet_smooth = hnet_smooth
+        self.hnet_smooth_ste = hnet_smooth_ste
         self.hnet_modulate = hnet_modulate
         self.blt_k = blt_k
         self.blt_compat = blt_compat
@@ -1012,8 +1054,6 @@ class LocalDecoder(nn.Module):
         headdim: int = 32,
         epsilon: float = 1e-3,
     ) -> tuple[tuple[torch.Tensor, torch.Tensor], torch.Tensor, torch.Tensor]:
-        from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
-
         if self.has_cache and self.cache_seqlens.item() > 0:
             assert not self.hnet_smooth and not self.hnet_modulate # not implemented for now
 
@@ -1059,28 +1099,9 @@ class LocalDecoder(nn.Module):
             if self.hnet_smooth:
                 p = torch.gather(torch.exp(boundary_logprobs).float().clip(min=epsilon, max=1 - epsilon), dim=1, index=seq_sorted_indices)
 
-                dt = torch.log(1 / (1 - p)).float()
-                x = (h_patch.float() / dt[..., None])
-
-                n_heads = self.d_model // headdim
-                A = -torch.ones(
-                    (n_heads,), device=h_patch.device, dtype=torch.float32
-                )
-                b = p.float()
-                c = torch.ones_like(b)
-
-                prepool_out = mamba_chunk_scan_combined(
-                    rearrange(x, "b l (h p) -> b l h p", p=headdim),
-                    repeat(dt, "b l -> b l h", h=n_heads),
-                    A,
-                    rearrange(b, "b l -> b l 1 1"),
-                    rearrange(c, "b l -> b l 1 1"),
-                    chunk_size=block_size,
-                    seq_idx=None,
-                ).to(h_patch.dtype) # type: ignore
-
-                prepool_out = rearrange(prepool_out, "b l h p -> b l (h p)")
-                prepool_out = cast(torch.Tensor, prepool_out)
+                prepool_out = ema_pool(h_patch, p, block_size=block_size, headdim=headdim)
+                if self.hnet_smooth_ste:
+                    prepool_out = ste_select_func(prepool_out, h_patch.detach())
             else:
                 prepool_out = h_patch
 

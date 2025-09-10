@@ -105,6 +105,7 @@ class LocalDecoderConfig(Config):
     add_in_projection: bool = False
     add_projected_patch_residuals: bool = False
     hnet_smooth: bool = True
+    hnet_smooth_ste: bool = False
     hnet_modulate: bool = True
     blt_k: Optional[int] = None  # used in blt
     blt_compat: bool = False # for compat with BLT checkpoints
@@ -126,6 +127,7 @@ class LocalDecoderConfig(Config):
             add_in_projection=self.add_in_projection,
             add_projected_patch_residuals=self.add_projected_patch_residuals,
             hnet_smooth=self.hnet_smooth,
+            hnet_smooth_ste=self.hnet_smooth_ste,
             hnet_modulate=self.hnet_modulate,
             blt_k=self.blt_k,
             blt_compat=self.blt_compat,
