@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Fixed
+
+- Fixed parsing username+password git remote URLs in `launch.beaker` module.
+- Cluster names in Beaker have changed.
+
+### Changed
+
+- Increased NCCL_FASTRAK_PLUGIN_ACCEPT_TIMEOUT_MS from 10 minutes to 30 minutes.
+
+
+## [v2.2.0](https://github.com/allenai/OLMo-core/releases/tag/v2.2.0) - 2025-08-26
+
 ### Added
 
 - Added option to set LR scheduler based on tokens instead of steps (e.g. `--train_module.scheduler.units=tokens`).
@@ -15,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a "interleaved" numpy FSL variant that interleaves several documents into sequences following the work from [LongSkywork: A Training Recipe for Efficiently Extending Context Length in Large Language Models](https://arxiv.org/pdf/2406.00605).
 - Added sliding window attention as a feature
 - Added `BatchSizeSchedulerCallback` for setting a batch size schedule over the course of a training run.
+- Added optional `TrainModule` method, `.pre_train()`, which runs right after `Callback.pre_train()`.
 - The `BeakerCallback` will save the config and Python requirements to the results dataset.
 - Added `from_file` method to `Config` class.
 - Added in-loop evals for OLMES basic skills eval
@@ -30,6 +43,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added support for revisions in `convert_checkpoint_from_hf.py` and the `load_hf_model` method of `olmo_core.nn.hf.checkpoint`.
 - `foreach` support in `SkipStepAdamW`.
 - Added `budget` mode for activation checkpointing configuration.
+- Added `io.remove_file()` and `io.glob_directory` functions.
+- Added ABF, PI, and YaRN rope scaling strategies.
+- Added a script to compare two WandB runs
+- Added `namespace` option to `nn.buffer_cache.BufferCache`.
+- Added the option to configure `head_stride` for context parallelism with ring-flash-attn.
+- Added the option to group multiple npy source files together for packing with the packed FSL dataset by setting `source_group_size` to an integer greater than 1.
+- Added `load_optim_state: Optional[bool]` option to `Trainer.load_checkpoint()`.
+- Added `GenerationModule` for OLMo-core native autoregressive generation with support for kv caching.
+- Added optional hostname constraints for beaker experiments on Google clusters.
 
 ### Changed
 
@@ -40,6 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Changed default cluster to `saturn` in `src/examples/llama/train_launch.py`.
 - Made some beaker secrets optional for internal experiments.
 - Changed `SlidingWindowAttentionConfig` to improve clarity.
+- Changed the default Beaker budget
 
 ### Fixed
 
@@ -58,6 +81,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Ensure sharded parameters are initialized differently on separate ranks.
 - Fixed fingerprinting for FSL datasets
 - Fixed bug where `step` state in `SkipStepAdamW` was not incremented, biasing the optimizer steps. Added option to restore the bug for backwards compatibility.
+- Removed `sklearn` from upstream dependency `ai2-olmo-eval`.
+- Made removing ephemeral checkpoints more robust.
+- Made running bookkeeping operations more robust.
+- Ensure RoPE modules with different settings use a unique sub-cache for their buffers.
+- Fixed bug with context parallelism where every transformer block would use the same RoPE buffers even if their RoPE was configured differently.
+- Fixed MFU computation to work with FSDP, corrected some device specs.
+- Optimization: avoid redundant calls to `model.train()` in `TransformerTrainModule`.
+- `NumpyDatasetConfig.expand_glob` now works with remote directories.
+- Fixed Attention block sharding when TP and head-wise QK norm are both applied.
 
 ## [v2.1.0](https://github.com/allenai/OLMo-core/releases/tag/v2.1.0) - 2025-04-14
 

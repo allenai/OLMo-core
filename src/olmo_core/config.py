@@ -1,3 +1,4 @@
+import copy
 import json
 from dataclasses import dataclass, fields, is_dataclass, replace
 from enum import Enum
@@ -202,6 +203,12 @@ class Config:
         """
         return replace(self, **changes)
 
+    def copy(self, deep: bool = True) -> Self:
+        """
+        Creates a new object of the same type, with the same values.
+        """
+        return copy.deepcopy(self) if deep else copy.copy(self)
+
     @classmethod
     def from_dict(cls: Type[C], data: Dict[str, Any], overrides: Optional[List[str]] = None) -> C:
         """
@@ -223,6 +230,10 @@ class Config:
 
         def clean_data(d: Any, prefix: str) -> Any:
             if isinstance(d, dict):
+                # HACK: Try to convert string keys to int if they look like integers. Handles cases
+                # where integer keys were serialized as strings (eg "block_overrides")
+                d = {(int(k) if isinstance(k, str) and k.isdigit() else k): v for k, v in d.items()}
+
                 new_dict = {
                     k: clean_data(v, f"{prefix}.{k}" if prefix else k)
                     for k, v in d.items()

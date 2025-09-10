@@ -33,6 +33,7 @@ from ..exceptions import BeakerExperimentFailedError, OLMoConfigurationError
 from ..train.callbacks.beaker import BEAKER_RESULT_DIR
 from ..utils import LOG_FILTER_TYPE_ENV_VAR, LogFilterType
 from ..version import VERSION
+from .select_beaker_hosts import get_beaker_hostname_constraints
 from .utils import GIT_BRANCH_ENV_VAR, GIT_REF_ENV_VAR, GIT_REPO_URL_ENV_VAR, GitConfig
 
 log = logging.getLogger(__name__)
@@ -241,6 +242,24 @@ class BeakerLaunchConfig(Config):
     The directory of the Beaker results dataset.
     """
 
+    use_hostname_constraints: bool = False
+    """
+    Uses hostname constraints to restrict the hostnames on which the experiment runs. This is currently
+    only supported for Augusta clusters, and can benefit performance by forcing the use of colocated nodes.
+
+    This is NOT recommended to be used with lower priority preemptible jobs, since hostname constraints are not
+    updated on preemption.
+    """
+
+    num_execution_units: Optional[int] = None
+    """
+    Number of "execution units", defaults to ``max(1, num_nodes // 32)``. An "execution unit" is abstraction
+    for any node-using entity of which 1 or more copies are run, where each unit wants its nodes to be
+    from colocated hardware (e.g., a model replica for large jobs, or a full distributed model for small jobs).
+
+    For internal experiments, this defaults to the number of data-parallel model replicas instead.
+    """
+
     # NOTE: don't assign a type here because omegaconf can't validate arbitrary classes
     #  _beaker: Optional[Beaker] = None
     _beaker = None
@@ -389,6 +408,7 @@ class BeakerLaunchConfig(Config):
                 entrypoint_script.append(
                     "BEAKER_REPLICA_RANK=$("
                     "python -m olmo_core.launch.reorder_ranks_in_gcp "
+                    "--verbose "
                     "${BEAKER_REPLICA_RANK} "
                     "${BEAKER_REPLICA_COUNT} "
                     "${BEAKER_LEADER_REPLICA_HOSTNAME}"
@@ -401,6 +421,31 @@ class BeakerLaunchConfig(Config):
             entrypoint_script.append(f'{entrypoint} "$@"')
 
         entrypoint_dataset = self._create_script_dataset("entrypoint.sh", entrypoint_script)
+
+        if (
+            self.use_hostname_constraints
+            and len(self.clusters) == 1
+            and "augusta" in self.clusters[0]
+        ):
+            if self.retries is not None and self.retries > 0:
+                raise OLMoConfigurationError(
+                    "Hostname constraints cannot be used for beaker jobs with retries, since constraints do not update on retry."
+                )
+
+            host_name_constraints = get_beaker_hostname_constraints(
+                self.num_nodes,
+                self.num_execution_units or max(1, self.num_nodes // 32),
+                1,
+                "us-central1-b",
+                beaker_cluster=self.clusters[0],
+                beaker_priority=self.priority,
+            )
+            assert (
+                len(host_name_constraints) == 1 and len(host_name_constraints[0]) >= self.num_nodes
+            )
+            constraints_kwargs = {"hostname": host_name_constraints[0]}
+        else:
+            constraints_kwargs = {"cluster": self.clusters}
 
         task_spec = (
             TaskSpec.new(
@@ -420,14 +465,14 @@ class BeakerLaunchConfig(Config):
                         or any(["augusta" in cluster for cluster in self.clusters])
                     )
                 ),
-                propagate_failure=False if self.num_nodes > 1 else None,
+                propagate_failure=True if self.num_nodes > 1 else None,
                 propagate_preemption=True if self.num_nodes > 1 else None,
                 synchronized_start_timeout="90m" if self.num_nodes > 1 else None,
                 resources=TaskResources(gpu_count=self.num_gpus, shared_memory=self.shared_memory),
                 result_path=self.result_dir,
             )
             .with_dataset("/olmo-core", beaker=entrypoint_dataset.id)
-            .with_constraint(cluster=self.clusters)
+            .with_constraint(**constraints_kwargs)
             .with_env_var(GIT_REPO_URL_ENV_VAR, self.git.repo_url)
             .with_env_var(GIT_REF_ENV_VAR, self.git.ref)
         )

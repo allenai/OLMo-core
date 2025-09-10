@@ -241,7 +241,7 @@ class TransformerPipelineTrainModule(TrainModule):
         del labels
         return output
 
-    def on_attach(self):
+    def pre_train(self):
         # Validate batch size.
         dp_ws = get_world_size(self.trainer.dp_process_group)
         if self.trainer.global_batch_size % (self.rank_microbatch_size * dp_ws) != 0:
@@ -269,40 +269,52 @@ class TransformerPipelineTrainModule(TrainModule):
             num_microbatches=num_microbatches,
         )
 
-    def state_dict(self, *, optim: bool = True) -> Dict[str, Any]:
+    def state_dict(self, *, optim: Optional[bool] = None) -> Dict[str, Any]:
+        if optim is None:
+            optim = True
         return self._get_state_dict(self.state_dict_save_opts, optim=optim)
 
-    def state_dict_to_load(self, metadata: Metadata, *, optim: bool = True) -> Dict[str, Any]:
-        load_opts = self.state_dict_load_opts
-
-        if "optim.param_groups.0.params" in metadata.state_dict_metadata:
-            # unflattened optimizer state
-            if load_opts.flatten_optimizer_state_dict:
-                log.warning(
-                    "Loading checkpoint with an unflattened optimizer state even though "
-                    "'flatten_optimizer_state_dict=True' in train module's 'state_dict_load_opts', "
-                    "automatically switching to 'flatten_optimizer_state_dict=False'."
-                )
-                load_opts = replace(load_opts, flatten_optimizer_state_dict=False)
-        else:
-            # flattened optimizer state
-            if not load_opts.flatten_optimizer_state_dict:
-                log.warning(
-                    "Loading checkpoint with a flattened optimizer state even though "
-                    "'flatten_optimizer_state_dict=False' in train module's 'state_dict_load_opts', "
-                    "automatically switching to 'flatten_optimizer_state_dict=True'."
-                )
-                load_opts = replace(load_opts, flatten_optimizer_state_dict=True)
-
+    def state_dict_to_load(
+        self, metadata: Metadata, *, optim: Optional[bool] = None
+    ) -> Dict[str, Any]:
         has_optim_state: bool = False
         for key in metadata.state_dict_metadata.keys():
             if key.startswith("optim."):
                 has_optim_state = True
                 break
 
-        if optim and not has_optim_state:
-            log.warning("No optimizer state found in checkpoint")
-            optim = False
+        if optim is None:
+            if not has_optim_state:
+                log.warning("No optimizer state found in checkpoint")
+                optim = False
+            else:
+                optim = True
+
+        load_opts = self.state_dict_load_opts
+        if optim:
+            if not has_optim_state:
+                raise RuntimeError(
+                    "Checkpoint does not contain optimizer state, but 'optim=True' was requested"
+                )
+
+            if "optim.param_groups.0.params" in metadata.state_dict_metadata:
+                # unflattened optimizer state
+                if load_opts.flatten_optimizer_state_dict:
+                    log.warning(
+                        "Loading checkpoint with an unflattened optimizer state even though "
+                        "'flatten_optimizer_state_dict=True' in train module's 'state_dict_load_opts', "
+                        "automatically switching to 'flatten_optimizer_state_dict=False'."
+                    )
+                    load_opts = replace(load_opts, flatten_optimizer_state_dict=False)
+            else:
+                # flattened optimizer state
+                if not load_opts.flatten_optimizer_state_dict:
+                    log.warning(
+                        "Loading checkpoint with a flattened optimizer state even though "
+                        "'flatten_optimizer_state_dict=False' in train module's 'state_dict_load_opts', "
+                        "automatically switching to 'flatten_optimizer_state_dict=True'."
+                    )
+                    load_opts = replace(load_opts, flatten_optimizer_state_dict=True)
 
         state_dict = self._get_state_dict(load_opts, optim=optim)
         if self.load_key_mapping is not None:
@@ -316,7 +328,9 @@ class TransformerPipelineTrainModule(TrainModule):
 
         return state_dict
 
-    def state_dict_to_save(self, *, optim: bool = True) -> Dict[str, Any]:
+    def state_dict_to_save(self, *, optim: Optional[bool] = None) -> Dict[str, Any]:
+        if optim is None:
+            optim = True
         return self._get_state_dict(self.state_dict_save_opts, optim=optim)
 
     def load_state_dict(self, state_dict: Dict[str, Any]) -> None:

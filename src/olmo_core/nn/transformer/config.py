@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from fnmatch import fnmatch
 from typing import TYPE_CHECKING, Dict, List, Optional
@@ -876,6 +877,9 @@ class TransformerConfig(Config):
         fused_ops: bool = False,
         use_flash: bool = False,
         block_name: TransformerBlockType = TransformerBlockType.default,
+        block_mods: Optional[
+            Dict[int, Callable[[TransformerBlockConfig], TransformerBlockConfig]]
+        ] = None,
         dtype: DType = DType.float32,
         rope_scaling: Optional[RoPEScalingConfig] = None,
         feed_forward: Optional[FeedForwardConfig] = None,
@@ -889,6 +893,7 @@ class TransformerConfig(Config):
         :param hidden_size_multiplier: Custom multiplier for the FFN hidden size.
         :param fused_ops: Use fused operations where possible.
         :param use_flash: Use flash-attn.
+        :param block_mods: A dictionary of block indices to functions that take the base block config and return a modified block config.
         :param dtype: The default data type to use for all parameters.
         """
         # Resolve hidden size of FFN in blocks.
@@ -935,6 +940,16 @@ class TransformerConfig(Config):
             layer_norm=layer_norm,
         )
 
+        if block_mods and kwargs.get("block_overrides"):
+            raise OLMoConfigurationError(
+                "`block_mods` and `block_overrides` cannot be used together."
+            )
+        block_overrides = None
+        if block_mods:
+            block_overrides = {i: block_mods[i](block.copy()) for i in block_mods}
+        elif kwargs.get("block_overrides"):
+            block_overrides = kwargs.get("block_overrides")
+
         return cls(
             d_model=d_model,
             vocab_size=vocab_size,
@@ -942,6 +957,7 @@ class TransformerConfig(Config):
             block=block,
             lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype),
             dtype=dtype,
+            block_overrides=block_overrides,
             **kwargs,
         )
 
