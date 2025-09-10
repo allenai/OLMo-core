@@ -7,10 +7,6 @@ namespace so you can easily run it side-by-side with a baseline run.
 Launch this with torchrun:
 
     torchrun --nproc-per-node=4 src/examples/llama_lns/train.py run_name [OVERRIDES...]
-
-Note: the default TransformerBlock now applies LNS by default, so no special configuration is
-required. If you later make LNS configurable (e.g. a ``use_lns`` flag on the block), you can
-enable/disable it from the command line via an override such as ``model.block.use_lns=true``.
 """
 
 # ... existing code ...
