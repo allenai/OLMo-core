@@ -8,7 +8,8 @@ from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
 from olmo_core.internal.experiment import CommonComponents, main
-from olmo_core.nn.transformer import TransformerConfig, TransformerBlockType
+from olmo_core.nn.fla.layer import FLAConfig
+from olmo_core.nn.transformer import TransformerBlockType, TransformerConfig
 from olmo_core.optim import OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig
 from olmo_core.optim.scheduler import WSD
 from olmo_core.train import Duration, TrainerConfig
@@ -23,8 +24,6 @@ from olmo_core.train.train_module import (
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
-
-from olmo_core.nn.fla.layer import FLAConfig
 
 SEQUENCE_LENGTH = 8192
 GLOBAL_BATCH_SIZE = (
@@ -143,16 +142,16 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 save_async=True,
             ),
         )
-        .with_callback(
-            "comet",
-            CometCallback(
-                name=run_name,
-                workspace="ai2",
-                project="linear-rnns",
-                enabled=True,
-                cancel_check_interval=cancel_check_interval,
-            ),
-        )
+        # .with_callback(
+        #     "comet",
+        #     CometCallback(
+        #         name=run_name,
+        #         workspace="ai2",
+        #         project="linear-rnns",
+        #         enabled=True,
+        #         cancel_check_interval=cancel_check_interval,
+        #     ),
+        # )
         .with_callback(
             "wandb",
             WandBCallback(

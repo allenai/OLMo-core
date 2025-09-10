@@ -1,6 +1,7 @@
 """
 Train a 1B OLMo model. Run this script without any arguments to see usage info.
 """
+
 from datetime import datetime
 
 from olmo_core.config import DType
@@ -112,7 +113,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         TrainerConfig(
             # Previously was gs://ai2-llm/..
             # That requires GOOGLE_CREDENTIALS secret
-            save_folder=f"/weka/ai2-llm/checkpoints/willm/linear-rnns/{common.run_name}/",            save_overwrite=True,
+            save_folder=f"/weka/ai2-llm/checkpoints/willm/linear-rnns/{common.run_name}/",
+            save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(MAX_DURATION),
@@ -125,16 +127,16 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 save_async=True,
             ),
         )
-        .with_callback(
-            "comet",
-            CometCallback(
-                name=run_name,
-                workspace="ai2",
-                project="linear-rnns",
-                enabled=True,
-                cancel_check_interval=cancel_check_interval,
-            ),
-        )
+        # .with_callback(
+        #     "comet",
+        #     CometCallback(
+        #         name=run_name,
+        #         workspace="ai2",
+        #         project="linear-rnns",
+        #         enabled=True,
+        #         cancel_check_interval=cancel_check_interval,
+        #     ),
+        # )
         .with_callback(
             "wandb",
             WandBCallback(
