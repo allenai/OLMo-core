@@ -54,10 +54,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     config.block.fla = FLAConfig(
         name="GatedDeltaNet",
         dtype=config.dtype,
-        fla_layer_kwargs={
-            "hidden_size": config.d_model,
-            "num_heads": config.block.attention.n_heads,
-        },
+        fla_layer_kwargs=dict(),
     )
 
     # # This is how we were doing it before at the model level.

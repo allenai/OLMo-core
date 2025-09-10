@@ -35,9 +35,10 @@ class FLAConfig(Config):
     fla_layer_kwargs: dict = field(default_factory=dict)
     dtype: DType = DType.float32
 
-    def build(self, d_model: int, init_device) -> FLA:
+    def build(self, d_model: int, n_heads: int, init_device) -> FLA:
         layer = getattr(fla.layers, self.name)(
             hidden_size=d_model,
+            num_heads=n_heads,
             **self.fla_layer_kwargs,
         ).to(device=init_device, dtype=self.dtype.as_pt())
 

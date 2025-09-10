@@ -925,6 +925,7 @@ class FLABlock(TransformerBlockBase):
     def __init__(
         self,
         *,
+        n_heads: int,
         d_model: int,
         block_idx: int,
         n_layers: int,
@@ -938,7 +939,7 @@ class FLABlock(TransformerBlockBase):
         super().__init__(n_layers=n_layers)
         self.d_model = d_model
         self.block_idx = block_idx
-        self.fla = fla.build(d_model, init_device=init_device)
+        self.fla = fla.build(d_model, n_heads, init_device=init_device)
         self.fla_norm = layer_norm.build(d_model, init_device=init_device)
         if feed_forward is not None:
             self.feed_forward = feed_forward.build(d_model=d_model, init_device=init_device)

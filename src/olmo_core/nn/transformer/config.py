@@ -217,8 +217,9 @@ class TransformerBlockConfig(Config):
             elif self.name == TransformerBlockType.moe_hybrid_reordered_norm:
                 return MoEHybridReorderedNormTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.fla:
+                n_heads = self.attention.n_heads
                 kwargs.pop("attention")  # FLA does not use attention
-                return FLABlock(**kwargs)
+                return FLABlock(n_heads=n_heads, **kwargs)
             else:
                 raise NotImplementedError(self.name)
         except TypeError as e:
