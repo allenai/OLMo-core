@@ -106,7 +106,7 @@ def load_generation_module(
 
 def generate_text(
     generation_module: TransformerGenerationModule,
-    prompt: str,
+    prompt: str | list[str],
     tokenizer,
     device: torch.device,
     batch_size: int,
@@ -114,7 +114,7 @@ def generate_text(
 ) -> list[str]:
     """Generate text from a prompt."""
     # Tokenize the prompt
-    inputs = tokenizer([prompt] * batch_size, return_tensors="pt", padding_side="left")
+    inputs = tokenizer([prompt] * batch_size if isinstance(prompt, str) else prompt, return_tensors="pt", padding_side="left")
     input_ids = inputs["input_ids"].to(device)
     attention_mask = inputs["attention_mask"].to(device)
 
@@ -129,7 +129,7 @@ def generate_text(
 
     output_ids, _, _ = generation_module.generate_batch(
         input_ids,
-        attention_mask=attention_mask,
+        attention_mask=None, # for now
         completions_only=True,
         log_timing=not stream,
         **kwargs,
@@ -247,27 +247,7 @@ def main():
         run_interactive_mode(generation_module, tokenizer, device)
     else:
         # Single generation example
-        test_prompt = """
-def incr_list(l: list):
-    \"\"\"Return list with elements incremented by 1.
-    >>> incr_list([1, 2, 3]) 
-    [2, 3, 4]
-    >>> incr_list([5, 3, 5, 2, 3, 3, 9, 0, 123])
-    [6, 4, 6, 3, 4, 4, 10, 1, 124]
-    \"\"\"
-Here is the completed function:
-
-```python
-
-
-def incr_list(l: list):
-    \"\"\"Return list with elements incremented by 1.
-    >>> incr_list([1, 2, 3]) 
-    [2, 3, 4]
-    >>> incr_list([5, 3, 5, 2, 3, 3, 9, 0, 123])
-    [6, 4, 6, 3, 4, 4, 10, 1, 124]
-    \"\"\"
-""".strip()
+        test_prompt = ["A quick brown fo", "Once upon a time"]
         responses = generate_text(
             generation_module, test_prompt, tokenizer, device, args.batch_size
         )

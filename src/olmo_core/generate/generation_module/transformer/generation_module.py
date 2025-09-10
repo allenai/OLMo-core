@@ -38,6 +38,7 @@ from olmo_core.generate.utils import selective_log_softmax
 from olmo_core.io import is_url, join_path, normalize_path
 from olmo_core.nn.attention import Attention
 from olmo_core.nn.blt.config import BLTConfig
+from olmo_core.nn.blt import utils as blt_utils
 import olmo_core.nn.blt.utils as blt_utils
 from olmo_core.nn.mamba import Mamba
 from olmo_core.nn.xlstm import XLSTM
@@ -661,6 +662,11 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
             **kwargs
         )[0].logits[:, :original_length, :]
 
+    def _get_last_non_boundary_token(self, input_ids: torch.Tensor):
+        input_ids = input_ids.flip(1)
+        first_non_boundary_idx = (input_ids != self.model.end_of_subword_token_blt).float().argmax(dim=1)  # type: ignore
+        return torch.take_along_dim(input_ids, first_non_boundary_idx.unsqueeze(1), 1)
+
     @torch.inference_mode()
     def generate_batch(
         self,
@@ -699,34 +705,28 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         start_time = time.perf_counter()
 
         # convert to byte ids and compute patch lengths
-        # support only bs=1 for now.
-        assert input_ids.shape[0] == 1, "Only batch size of 1 is supported for BLT"
-        attention_mask = None # not needed for bs=1
-        byte_input_ids, patch_lens = self.tokenizer.get_tokens_and_patch_lengths(input_ids[0].tolist(), add_bos=True)
+        byte_input_ids = []
+        patch_lens = []
 
-        byte_input_ids = torch.tensor([byte_input_ids], dtype=torch.long, device=input_ids.device)
-        patch_lens = torch.tensor([patch_lens], dtype=torch.long, device=input_ids.device)
+        assert attention_mask is None, "BLT generation does not support attention_mask for now"
+
+        for example_idx in range(input_ids.shape[0]):
+            current_byte_input_ids, current_patch_lens = self.tokenizer.get_tokens_and_patch_lengths(input_ids[example_idx].tolist(), add_bos=True)
+            byte_input_ids.append(torch.tensor(current_byte_input_ids, dtype=torch.long))
+            patch_lens.append(torch.tensor(current_patch_lens, dtype=torch.long))
+
+        byte_input_ids = blt_utils.pad_right(byte_input_ids, multiple_of=1)
+        patch_lens = blt_utils.pad_right(patch_lens, multiple_of=1)
+
+        byte_input_ids = move_to_device(byte_input_ids, self.device)
+        patch_lens = move_to_device(patch_lens, self.device)
+        batch_size, prompt_len = byte_input_ids.shape
+        finished = torch.zeros(batch_size, dtype=torch.bool, device=self.device)
 
         # Replace generation config with any overrides.
         generation_config = self._generation_config.replace(**generation_kwargs)
         eos = self.tokenizer.eos_token_id
         pad = self.tokenizer.pad_token_id
-
-        byte_input_ids = move_to_device(byte_input_ids, self.device)
-        batch_size, prompt_len = byte_input_ids.shape
-        finished = torch.zeros(batch_size, dtype=torch.bool, device=self.device)
-
-        # Output containers
-        generated = byte_input_ids
-        all_logits: Optional[List[torch.Tensor]] = [] if return_logits else None
-        all_logprobs: Optional[List[torch.Tensor]] = [] if return_logprobs else None
-
-        # Timing stats
-        time_to_first_token = None
-        decode_start_time = None
-        setup_time = None
-        tokens_generated_plus_prefilled = 0 # can not know how many boundaries before prefill
-        bytes_generated = 0
 
         # max length *in tokens*, not bytes
         if generation_config.max_new_tokens is not None:
@@ -735,12 +735,6 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
             max_length = generation_config.max_length
         else:
             max_length = None  # Generate until EOS or stop tokens or OOM...
-
-        prefill_cache_leftpad = None
-        if generation_config.use_cache:
-            if attention_mask is None:
-                attention_mask = torch.ones_like(byte_input_ids, dtype=torch.bool, device=self.device)
-            prefill_cache_leftpad = attention_mask_to_cache_leftpad(attention_mask).to(self.device)
 
         # Initialize/Reset the inference cache
         if generation_config.use_cache:
@@ -751,6 +745,33 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
             self.prepare_inference_cache(batch_size, max_length)
         else:
             self.free_inference_cache()
+
+        boundary_mask, cached_encoder_outputs = self.model.prefill_boundary_prediction_forward(  # type: ignore
+            byte_input_ids,
+            patch_lens=patch_lens,
+            blt_config=self.blt_config,
+        )
+
+        # Output containers
+        generated = byte_input_ids
+        all_logits: Optional[List[List[torch.Tensor]]] = [[] for _ in range(input_ids.shape[0])] if return_logits else None
+        all_logprobs: Optional[List[List[torch.Tensor]]] = [[] for _ in range(input_ids.shape[0])] if return_logprobs else None
+
+        # Timing stats
+        time_to_first_token = None
+        decode_start_time = None
+        setup_time = None
+        max_n_prefill_patches = boundary_mask.sum(-1).max().item()
+        tokens_generated_plus_prefilled = max_n_prefill_patches
+        bytes_generated = 0
+
+        prefill_cache_leftpad = None
+        if generation_config.use_cache:
+            attention_mask = (
+                torch.arange(max_n_prefill_patches, device=byte_input_ids.device).unsqueeze(0).repeat(batch_size, 1)
+                < boundary_mask.sum(-1, keepdim=True)
+            )
+            prefill_cache_leftpad = attention_mask_to_cache_leftpad(attention_mask).to(self.device)
 
         # BLT divergence: allow .until and handle stop token sequences
         stop_token_sequences = []
@@ -776,125 +797,118 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
             colour="blue",
         )
         forward_start_time = None
-        last_token_is_boundary = False
+        last_token_is_boundary: torch.Tensor = torch.zeros(batch_size, dtype=torch.bool, device=self.device)
+        bytes_generated_at_last_boundary = torch.zeros(batch_size, dtype=torch.long, device=self.device)
         is_first_forward = True
-        bytes_generated_at_last_boundary = 0
 
         while not ((max_length is not None and tokens_generated_plus_prefilled >= max_length) or finished.all()):
             input_ids_for_model = (
                 generated
                 if (is_first_forward or not generation_config.use_cache)
-                else generated[:, -1:]
+                else self._get_last_non_boundary_token(generated)
             )
             cache_leftpad = (
                 prefill_cache_leftpad if is_first_forward and generation_config.use_cache else None
             )
-            patch_lens_for_model = torch.tensor(
-                [[1]],
-                device=patch_lens.device,
-                dtype=patch_lens.dtype
-            ) if not is_first_forward and generation_config.use_cache else patch_lens
-
             forward_start_time = time.perf_counter()
-            next_token_logits, n_new_tokens_from_forward = self.model.inference_forward(  # type: ignore
+            next_token_logits = self.model.inference_forward(  # type: ignore
                 input_ids_for_model,
-                patch_lens=patch_lens_for_model,
+                cached_encoder_outputs=cached_encoder_outputs if is_first_forward else None,
                 last_token_is_boundary=last_token_is_boundary,
                 logits_to_keep=1,
                 blt_config=self.blt_config,
                 cache_leftpad=cache_leftpad if generation_config.use_cache else None,
             )
-            # count prefill tokens
-            if is_first_forward:
-                tokens_generated_plus_prefilled += n_new_tokens_from_forward
+            next_token_mask = ~last_token_is_boundary
+            if last_token_is_boundary.all().item():
+                next_token_mask[:] = True
+
             is_first_forward = False
 
-            next_tokens = select_next_token(
+            new_next_tokens = select_next_token(
                 next_token_logits.squeeze(1),
                 do_sample=generation_config.do_sample,
                 temperature=generation_config.temperature,
                 top_k=generation_config.top_k,
                 top_p=generation_config.top_p,
             )
+            next_tokens = torch.full((input_ids.shape[0],), self.model.end_of_subword_token_blt, device=self.device, dtype=torch.long)  # type: ignore
+            next_tokens[next_token_mask] = new_next_tokens
 
             # for debugging
             if force_boundary_every is not None:
-                if (bytes_generated + 1) % force_boundary_every == 0 and not last_token_is_boundary:
-                    next_tokens[0] = self.model.end_of_subword_token_blt # type: ignore
-                elif next_tokens[0].item() == self.model.end_of_subword_token_blt:
-                    next_tokens[0] = 36  # doesn't matter but 36 is whitespace in blt tokenizer
+                if (bytes_generated + 1) % force_boundary_every == 0:
+                    next_tokens[:] = self.model.end_of_subword_token_blt # type: ignore
+                else:
+                    # doesn't matter but 36 is whitespace in blt tokenizer
+                    next_tokens[next_tokens == self.model.end_of_subword_token_blt] = 36
 
-            if max_patch_length_decode is not None and not last_token_is_boundary:
-                if bytes_generated - bytes_generated_at_last_boundary >= max_patch_length_decode:
+            if max_patch_length_decode is not None:
+                stop_mask = bytes_generated - bytes_generated_at_last_boundary >= max_patch_length_decode
+                next_tokens[stop_mask] = self.model.end_of_subword_token_blt # type: ignore
+
+                if stop_mask.any().item():  # type: ignore
                     log.warning(f"Forcing boundary since patch exceeds length {max_patch_length_decode}.")
-                    next_tokens[0] = self.model.end_of_subword_token_blt # type: ignore
 
             pbar.update(1)
 
-            if next_tokens[0].item() == self.model.end_of_subword_token_blt:
-                # possible but two consecutive boundaries are never seen during training
-                # do we need to handle this case / forbid consecutive boundaries?
-                assert not last_token_is_boundary
-                last_token_is_boundary = True
-                bytes_generated_at_last_boundary = bytes_generated
-                tokens_generated_plus_prefilled += 1
-            else:
-                if last_token_is_boundary:
-                    # start of a new patch
-                    patch_lens = torch.cat(
-                        [patch_lens, torch.tensor([[1]], device=patch_lens.device, dtype=patch_lens.dtype)],
-                        dim=1,
-                    )
-                else:
-                    # patch gets longer
-                    patch_lens[:, -1] += 1
+            last_token_is_boundary = next_tokens == self.model.end_of_subword_token_blt  # type: ignore
+            bytes_generated_at_last_boundary[last_token_is_boundary] = bytes_generated
 
-                last_token_is_boundary = False
+            if all_logits is not None:
+                j = 0
+                for i, select in enumerate(next_token_mask):
+                    if select:
+                        all_logits[i].append(next_token_logits[j])
+                        j += 1
+            if all_logprobs is not None:
+                next_token_logprobs = selective_log_softmax(next_token_logits, new_next_tokens.unsqueeze(-1))
 
-                if all_logits is not None:
-                    all_logits.append(next_token_logits)
-                if all_logprobs is not None:
-                    all_logprobs.append(
-                        selective_log_softmax(next_token_logits, next_tokens.unsqueeze(-1))
-                    )
+                j = 0
+                for i, select in enumerate(next_token_mask):
+                    if select:
+                        all_logprobs[i].append(next_token_logprobs[j])
+                        j += 1
 
-                # Force EOS for (previously) finished sequences
-                next_tokens = torch.where(finished, torch.full_like(next_tokens, eos), next_tokens)
+                
 
-                # Append next tokens
-                generated = torch.cat([generated, next_tokens.unsqueeze(-1)], dim=1)
+            # Force EOS for (previously) finished sequences
+            next_tokens = torch.where(finished, torch.full_like(next_tokens, eos), next_tokens)
 
-                # Handle finished sequences
-                stop_hit = next_tokens.eq(eos)
+            # Append next tokens
+            generated = torch.cat([generated, next_tokens.unsqueeze(-1)], dim=1)
 
-                # Also check for stop tokens if provided
-                for stop_sequence in stop_token_sequences:
-                    stop_hit |= (generated[:, -len(stop_sequence):] == stop_sequence).all(dim=1)
+            # Handle finished sequences
+            stop_hit = next_tokens.eq(eos)
 
-                finished |= stop_hit
+            # Also check for stop tokens if provided
+            for stop_sequence in stop_token_sequences:
+                stop_hit |= (generated[:, -len(stop_sequence):] == stop_sequence).all(dim=1)
 
-                if log_timing and bytes_generated == 0:
-                    torch.cuda.synchronize()
-                    decode_start_time = time.perf_counter()
-                    time_to_first_token = decode_start_time - forward_start_time
-                    setup_time = forward_start_time - start_time
-                bytes_generated += 1
+            finished |= stop_hit
 
-                if stream:
-                    RED = "\033[0;31m"
-                    GREEN = "\033[0;32m"
-                    RESET = "\033[0;0m"
+            if log_timing and bytes_generated == 0:
+                torch.cuda.synchronize()
+                decode_start_time = time.perf_counter()
+                time_to_first_token = decode_start_time - forward_start_time
+                setup_time = forward_start_time - start_time
+            bytes_generated += 1
 
-                    if bytes_generated != 1:
-                        tokens_to_print = generated[0][:-1].tolist() if bytes_generated == 1 else generated[0][-2:-1].tolist()
+            if stream:
+                RED = "\033[0;31m"
+                GREEN = "\033[0;32m"
+                RESET = "\033[0;0m"
 
-                        if last_token_is_boundary and bytes_generated > 1:
-                            print(RED + self.tokenizer.decode(tokens_to_print) + RESET, end="", flush=True)
+                if bytes_generated != 1:
+                    tokens_to_print = generated[0][:-1].tolist() if bytes_generated == 1 else generated[0][-2:-1].tolist()
+
+                    if last_token_is_boundary[0].item() and bytes_generated > 1:
+                        print(RED + self.tokenizer.decode(tokens_to_print) + RESET, end="", flush=True)
+                    else:
+                        if bytes_generated > 1:
+                            print(GREEN + self.tokenizer.decode(tokens_to_print) + RESET, end="", flush=True)
                         else:
-                            if bytes_generated > 1:
-                                print(GREEN + self.tokenizer.decode(tokens_to_print) + RESET, end="", flush=True)
-                            else:
-                                print(self.tokenizer.decode(tokens_to_print), end="", flush=True)
+                            print(self.tokenizer.decode(tokens_to_print), end="", flush=True)
 
         pbar.close()
 
@@ -905,30 +919,31 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
             print(RED + self.tokenizer.decode(generated[0][-1:].tolist()) + RESET, end="", flush=True)
             print()
 
-        logits = logprobs = None
-        if return_logits and all_logits:
-            logits = torch.cat(all_logits, dim=1)
+        # TODO(benjaminm): restore
+        # logits = logprobs = None
+        # if return_logits and all_logits:
+        #     logits = torch.cat(all_logits, dim=1)
 
-            # check if greedy
-            if verify:
-                self.free_inference_cache()
-                with torch.no_grad():
-                    reference_out, _ = self.model.student_forward(  # type: ignore
-                        input_ids=generated,
-                        labels=get_labels({"input_ids": generated}),
-                        patch_lens=patch_lens,
-                        blt_config=self.blt_config,
-                    )
-                # last logit is potentially wrong since last_token_is_boundary=True in reference, so skip it
-                assert (torch.argmax(logits[:, -bytes_generated-1:], -1) == reference_out.logits[:, -bytes_generated-1:-1].argmax(-1)).all()
-                assert torch.allclose(
-                    F.softmax(logits[:, -bytes_generated-1:], -1),
-                    F.softmax(reference_out.logits[:, -bytes_generated-1:-1], -1),
-                    rtol=1e-1,
-                    atol=0.05, # accept max 5% prob diff (highest observed ~1.6%)
-                )
-        if return_logprobs and all_logprobs:
-            logprobs = torch.cat(all_logprobs, dim=1)
+        #     # check if greedy
+        #     if verify:
+        #         self.free_inference_cache()
+        #         with torch.no_grad():
+        #             reference_out, _ = self.model.student_forward(  # type: ignore
+        #                 input_ids=generated,
+        #                 labels=get_labels({"input_ids": generated}),
+        #                 patch_lens=patch_lens,
+        #                 blt_config=self.blt_config,
+        #             )
+        #         # last logit is potentially wrong since last_token_is_boundary=True in reference, so skip it
+        #         assert (torch.argmax(logits[:, -bytes_generated-1:], -1) == reference_out.logits[:, -bytes_generated-1:-1].argmax(-1)).all()
+        #         assert torch.allclose(
+        #             F.softmax(logits[:, -bytes_generated-1:], -1),
+        #             F.softmax(reference_out.logits[:, -bytes_generated-1:-1], -1),
+        #             rtol=1e-1,
+        #             atol=0.05, # accept max 5% prob diff (highest observed ~1.6%)
+        #         )
+        # if return_logprobs and all_logprobs:
+        #     logprobs = torch.cat(all_logprobs, dim=1)
 
         if log_timing:
             torch.cuda.synchronize()
@@ -973,6 +988,8 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         generated_subword_ids = torch.tensor([self.tokenizer.hf_tokenizer.encode(generated_text)], dtype=torch.int64, device=self.device)
 
         if return_logits or return_logprobs:
+            raise NotImplementedError("logits/logprobs not implemented yet for batched BLT")
+
             assert logits is not None and logprobs is not None
 
             if not completions_only:

@@ -1,8 +1,9 @@
 from dataclasses import dataclass
 import logging
+from typing import Optional, cast
 import torch
 from torch import nn
-from xlstm.xlstm_large import mLSTMLayer, mLSTMLayerConfig
+from xlstm.xlstm_large.model import mLSTMLayer, mLSTMLayerConfig, mLSTMLayerStateType
 from mlstm_kernels.torch.backend_module import mLSTMBackendConfig
 
 from olmo_core.config import Config, DType
@@ -19,7 +20,7 @@ class XLSTM(mLSTMLayer):
     def init_xlstm_cache_manager(self, batch_size: int):
         self.xlstm_cache_manager = XLSTMCacheManager()
 
-    def forward(self, x: torch.Tensor):  # type: ignore
+    def forward(self, x: torch.Tensor, cache_mask: Optional[torch.Tensor] = None):  # type: ignore
         if self.training:
             self.mlstm_backend.config.mode = "train"
         else:
@@ -29,7 +30,20 @@ class XLSTM(mLSTMLayer):
             prev_mode = self.mlstm_backend.config.mode
             state = self.xlstm_cache_manager.state
 
-            h, state = super().forward(x, state)
+            if cache_mask is not None:
+                state_for_model = cast(mLSTMLayerStateType, tuple(x[cache_mask] for x in state) if state is not None else None)
+            else:
+                state_for_model = state
+
+            h, new_state = super().forward(x, state_for_model)
+            assert new_state is not None
+
+            if state is None or cache_mask is None:
+                state = new_state
+            else:
+                if cache_mask is not None:
+                    for i in range(len(state)):
+                        state[i][cache_mask] = new_state[i]
 
             self.xlstm_cache_manager.state = state  # type: ignore
             self.mlstm_backend.config.mode = prev_mode
@@ -69,7 +83,7 @@ class XLSTMCacheManager(nn.Module):
 
         # not designed to be managed externally - cant easily allocate beforehand
         # so we just init to none and let the prefill allocate the state
-        self.state = None
+        self.state: Optional[mLSTMLayerStateType] = None
 
     def zero_cache(self):
         raise NotImplementedError()

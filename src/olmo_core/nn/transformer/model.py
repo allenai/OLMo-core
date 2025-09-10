@@ -2502,7 +2502,7 @@ class BLTDistillTransformer(BLTTransformer):
             z_loss=None,
         ), {}
 
-    def inference_forward(
+    def prefill_boundary_prediction_forward(
         self,
         input_ids: torch.Tensor,
         blt_config: BLTConfig,
@@ -2528,16 +2528,43 @@ class BLTDistillTransformer(BLTTransformer):
         boundary_labels = torch.zeros_like(byte_mask, dtype=torch.float32)
         boundary_labels.scatter_(1, patch_end_indices, 1.0)
 
+        # TODO(benjaminm): reuse h_byte, h_patch, etc.
         h_byte, h_patch, boundary_logprobs, boundary_mask = self.local_encoder.inference_forward(  # type: ignore
             input_ids,
             teacher_force_boundaries=blt_config.teacher_force_boundaries,
             boundary_threshold=blt_config.boundary_threshold,
             true_boundary_mask=boundary_labels > 0.5,
-            last_token_is_boundary=last_token_is_boundary,
+            last_token_is_boundary=torch.full((input_ids.shape[0],), fill_value=last_token_is_boundary, device=input_ids.device, dtype=torch.bool),
             **local_encoder_kwargs
         )
 
-        if h_patch.shape[1] > 0:
+        return boundary_mask, (h_byte, h_patch, boundary_logprobs, boundary_mask)
+
+    def inference_forward(
+        self,
+        input_ids: torch.Tensor,
+        blt_config: BLTConfig,
+        last_token_is_boundary: torch.Tensor,
+        cached_encoder_outputs: Optional[Any] = None,
+        **kwargs,
+    ):
+        input_ids, labels, block_kwargs, lm_head_kwargs, local_encoder_kwargs, local_decoder_kwargs, extra_kwargs = self._prepare_inputs(
+            input_ids,
+            blt_config=blt_config,
+            **kwargs,
+        )
+
+        if cached_encoder_outputs is not None:
+            h_byte, h_patch, boundary_logprobs, boundary_mask = cached_encoder_outputs
+        else:
+            h_byte, h_patch, _, _ = self.local_encoder.inference_forward(  # type: ignore
+                input_ids,
+                last_token_is_boundary=last_token_is_boundary,
+                **local_encoder_kwargs
+            )
+            boundary_logprobs = boundary_mask = None
+
+        if h_patch.numel() > 0:
             h_patch_after_global, _ = self._block_forward(h_patch.to(torch.bfloat16), **block_kwargs)
             h_patch_after_global = h_patch_after_global.to(h_patch.dtype)
         else:
@@ -2549,8 +2576,9 @@ class BLTDistillTransformer(BLTTransformer):
             patch_residuals=h_patch,
             boundary_logprobs=boundary_logprobs,
             boundary_mask=boundary_mask,
+            last_token_is_boundary=last_token_is_boundary,
             **local_decoder_kwargs,
         )
         logits = self.lm_head(h_out, **lm_head_kwargs)
 
-        return logits, h_patch.shape[1]
+        return logits

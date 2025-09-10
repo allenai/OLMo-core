@@ -1031,11 +1031,12 @@ class XLSTMBlock(TransformerBlockBase):
         self,
         x: torch.Tensor,
         *,
+        cache_mask: Optional[torch.Tensor] = None,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         **kwargs,
     ) -> torch.Tensor:
         del loss_div_factor
-        h = x + self.dropout(self.xlstm(self.xlstm_norm(x), **kwargs))
+        h = x + self.dropout(self.xlstm(self.xlstm_norm(x), cache_mask=cache_mask, **kwargs))
 
         if self.feed_forward is None or self.feed_forward_norm is None:
             assert self.feed_forward is None and self.feed_forward_norm is None
