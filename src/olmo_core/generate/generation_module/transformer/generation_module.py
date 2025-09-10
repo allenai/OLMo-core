@@ -708,18 +708,21 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         byte_input_ids = []
         patch_lens = []
 
-        assert attention_mask is None, "BLT generation does not support attention_mask for now"
-
         for example_idx in range(input_ids.shape[0]):
-            current_byte_input_ids, current_patch_lens = self.tokenizer.get_tokens_and_patch_lengths(input_ids[example_idx].tolist(), add_bos=True)
+            current_byte_input_ids, current_patch_lens = self.tokenizer.get_tokens_and_patch_lengths(
+                input_ids[example_idx].tolist(),
+                add_bos=True,
+                strip_pad=True
+            )
             byte_input_ids.append(torch.tensor(current_byte_input_ids, dtype=torch.long))
             patch_lens.append(torch.tensor(current_patch_lens, dtype=torch.long))
 
-        byte_input_ids = blt_utils.pad_right(byte_input_ids, multiple_of=1)
-        patch_lens = blt_utils.pad_right(patch_lens, multiple_of=1)
+        byte_input_ids = blt_utils.pad_left(byte_input_ids, value=self.tokenizer.pad_token_id, multiple_of=1)
+        patch_lens = blt_utils.pad_left(patch_lens, value=1, multiple_of=1)
 
         byte_input_ids = move_to_device(byte_input_ids, self.device)
         patch_lens = move_to_device(patch_lens, self.device)
+        sequence_start_indices = (byte_input_ids == self.tokenizer.pad_token_id).sum(-1)
         batch_size, prompt_len = byte_input_ids.shape
         finished = torch.zeros(batch_size, dtype=torch.bool, device=self.device)
 
@@ -749,6 +752,7 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         boundary_mask, cached_encoder_outputs = self.model.prefill_boundary_prediction_forward(  # type: ignore
             byte_input_ids,
             patch_lens=patch_lens,
+            sequence_start_indices=sequence_start_indices,
             blt_config=self.blt_config,
         )
 
@@ -767,10 +771,12 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
 
         prefill_cache_leftpad = None
         if generation_config.use_cache:
-            attention_mask = (
+            n_boundaries = boundary_mask.sum(-1)
+            attention_mask: torch.Tensor = (
                 torch.arange(max_n_prefill_patches, device=byte_input_ids.device).unsqueeze(0).repeat(batch_size, 1)
-                < boundary_mask.sum(-1, keepdim=True)
+                < n_boundaries[:, None]
             )
+            attention_mask = attention_mask.flip(1)
             prefill_cache_leftpad = attention_mask_to_cache_leftpad(attention_mask).to(self.device)
 
         # BLT divergence: allow .until and handle stop token sequences
@@ -815,12 +821,14 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                 input_ids_for_model,
                 cached_encoder_outputs=cached_encoder_outputs if is_first_forward else None,
                 last_token_is_boundary=last_token_is_boundary,
+                sequence_start_indices=sequence_start_indices,
                 logits_to_keep=1,
                 blt_config=self.blt_config,
                 cache_leftpad=cache_leftpad if generation_config.use_cache else None,
             )
             next_token_mask = ~last_token_is_boundary
             if last_token_is_boundary.all().item():
+                tokens_generated_plus_prefilled += 1
                 next_token_mask[:] = True
 
             is_first_forward = False
@@ -869,8 +877,6 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                     if select:
                         all_logprobs[i].append(next_token_logprobs[j])
                         j += 1
-
-                
 
             # Force EOS for (previously) finished sequences
             next_tokens = torch.where(finished, torch.full_like(next_tokens, eos), next_tokens)

@@ -114,7 +114,13 @@ def generate_text(
 ) -> list[str]:
     """Generate text from a prompt."""
     # Tokenize the prompt
-    inputs = tokenizer([prompt] * batch_size if isinstance(prompt, str) else prompt, return_tensors="pt", padding_side="left")
+    inputs = tokenizer(
+        [prompt] * batch_size if isinstance(prompt, str) else prompt,
+        return_tensors="pt",
+        padding_side="left",
+        padding=True,
+        truncation=True,
+    )
     input_ids = inputs["input_ids"].to(device)
     attention_mask = inputs["attention_mask"].to(device)
 
@@ -129,7 +135,7 @@ def generate_text(
 
     output_ids, _, _ = generation_module.generate_batch(
         input_ids,
-        attention_mask=None, # for now
+        attention_mask=attention_mask,
         completions_only=True,
         log_timing=not stream,
         **kwargs,
@@ -247,7 +253,7 @@ def main():
         run_interactive_mode(generation_module, tokenizer, device)
     else:
         # Single generation example
-        test_prompt = ["A quick brown fo", "Once upon a time"]
+        test_prompt = ["A quick brown fo", "Once upon a time in a land far"]
         responses = generate_text(
             generation_module, test_prompt, tokenizer, device, args.batch_size
         )

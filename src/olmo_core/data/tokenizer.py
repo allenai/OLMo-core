@@ -253,6 +253,8 @@ class ByteTokenizer:
                 byte_sequence = [self.eos_token_id]
             elif value == self.hf_tokenizer.bos_token_id and self.bos_token_id is not None:
                 byte_sequence = [self.bos_token_id]
+            elif value == self.hf_tokenizer.pad_token_id and self.pad_token_id is not None:
+                byte_sequence = [self.pad_token_id]
             else:
                 byte_sequence = [self.offset + i for i in blt_utils.chars_to_bytes(key)]
 

@@ -319,7 +319,7 @@ def get_blt_space_mask():
 
     return space_mask
 
-def _pad(tensors: list[torch.Tensor], multiple_of: int, direction: str):
+def _pad(tensors: list[torch.Tensor], multiple_of: int, direction: str, value):
     max_len = max(t.size(0) for t in tensors)
     if multiple_of > 1:
         # Round up max_len to the nearest multiple_of
@@ -332,17 +332,19 @@ def _pad(tensors: list[torch.Tensor], multiple_of: int, direction: str):
             pad_shape = (0, max_len - t.size(0))
         else:
             raise ValueError(f"Unknown direction: {direction}. Must be 'left' or 'right'.")
-        padded.append(F.pad(t, pad_shape, value=0))
+        padded.append(F.pad(t, pad_shape, value=value))
     return torch.stack(padded, dim=0)
 
 def pad_right(
     tensors: list[torch.Tensor],
-    multiple_of: int = 128
+    multiple_of: int = 128,
+    value=0,
 ):
-    return _pad(tensors, multiple_of, direction="right")
+    return _pad(tensors, multiple_of, direction="right", value=value)
 
 def pad_left(
     tensors: list[torch.Tensor],
-    multiple_of: int = 128
+    multiple_of: int = 128,
+    value=0,
 ):
-    return _pad(tensors, multiple_of, direction="left")
+    return _pad(tensors, multiple_of, direction="left", value=value)

@@ -2507,6 +2507,7 @@ class BLTDistillTransformer(BLTTransformer):
         input_ids: torch.Tensor,
         blt_config: BLTConfig,
         last_token_is_boundary: bool = False,
+        sequence_start_indices: Optional[torch.Tensor] = None,
         **kwargs,
     ):
         input_ids, labels, block_kwargs, lm_head_kwargs, local_encoder_kwargs, local_decoder_kwargs, extra_kwargs = self._prepare_inputs(
@@ -2535,6 +2536,7 @@ class BLTDistillTransformer(BLTTransformer):
             boundary_threshold=blt_config.boundary_threshold,
             true_boundary_mask=boundary_labels > 0.5,
             last_token_is_boundary=torch.full((input_ids.shape[0],), fill_value=last_token_is_boundary, device=input_ids.device, dtype=torch.bool),
+            sequence_start_indices=sequence_start_indices,
             **local_encoder_kwargs
         )
 
@@ -2545,6 +2547,7 @@ class BLTDistillTransformer(BLTTransformer):
         input_ids: torch.Tensor,
         blt_config: BLTConfig,
         last_token_is_boundary: torch.Tensor,
+        sequence_start_indices: Optional[torch.Tensor] = None,
         cached_encoder_outputs: Optional[Any] = None,
         **kwargs,
     ):
@@ -2560,13 +2563,29 @@ class BLTDistillTransformer(BLTTransformer):
             h_byte, h_patch, _, _ = self.local_encoder.inference_forward(  # type: ignore
                 input_ids,
                 last_token_is_boundary=last_token_is_boundary,
+                sequence_start_indices=sequence_start_indices,
                 **local_encoder_kwargs
             )
             boundary_logprobs = boundary_mask = None
 
         if h_patch.numel() > 0:
+            # we need to convert from right-pad to left-pad and back for prefill
+            # since flash attention expects left-pad and local/enc dec expect right-pad global tokens
+            # should add better left-pad support but this only affects prefill so OK for now
+            if boundary_mask is not None: # prefill
+                n_boundaries = boundary_mask.sum(-1)
+
+                for i, current_n_boundaries in enumerate(n_boundaries):
+                    h_patch[i, -current_n_boundaries:] = h_patch[i, :current_n_boundaries]
+
             h_patch_after_global, _ = self._block_forward(h_patch.to(torch.bfloat16), **block_kwargs)
             h_patch_after_global = h_patch_after_global.to(h_patch.dtype)
+
+            if boundary_mask is not None: # prefill
+                n_boundaries = boundary_mask.sum(-1)
+
+                for i, current_n_boundaries in enumerate(n_boundaries):
+                    h_patch_after_global[i, :current_n_boundaries] = h_patch_after_global[i, -current_n_boundaries:]
         else:
             h_patch_after_global = h_patch
 
@@ -2577,6 +2596,7 @@ class BLTDistillTransformer(BLTTransformer):
             boundary_logprobs=boundary_logprobs,
             boundary_mask=boundary_mask,
             last_token_is_boundary=last_token_is_boundary,
+            sequence_start_indices=sequence_start_indices,
             **local_decoder_kwargs,
         )
         logits = self.lm_head(h_out, **lm_head_kwargs)
