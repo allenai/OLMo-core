@@ -127,7 +127,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
     config = (
         TrainerConfig(
-            save_folder=f"gs://ai2-llm/checkpoints/{common.run_name}/",
+            # Previously was gs://ai2-llm/..
+            # That requires GOOGLE_CREDENTIALS secret
+            save_folder=f"/weka/ai2-llm/checkpoints/willm/linear-rnns/{common.run_name}/",
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=cancel_check_interval,
