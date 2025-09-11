@@ -16,7 +16,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Increased NCCL_FASTRAK_PLUGIN_ACCEPT_TIMEOUT_MS from 10 minutes to 30 minutes.
-- Makes it possible to override the common config builder when specifying experiments
 
 ### Added
 
