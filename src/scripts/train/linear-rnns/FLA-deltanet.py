@@ -2,7 +2,6 @@
 Train a FLA DeltaNet model. Run this script without any arguments to see usage info.
 """
 
-from cmath import sqrt
 from datetime import datetime
 
 from olmo_core.config import DType
@@ -43,7 +42,7 @@ EVAL_INTERVAL = 1000
 
 # FLA uses more memory, so we reduce the batch size.
 GLOBAL_BATCH_SIZE //= 2
-LR *= sqrt(2)
+LR *= 1.4
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
