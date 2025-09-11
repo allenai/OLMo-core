@@ -2,6 +2,7 @@
 Train a FLA DeltaNet model. Run this script without any arguments to see usage info.
 """
 
+from cmath import sqrt
 from datetime import datetime
 
 from olmo_core.config import DType
@@ -40,6 +41,10 @@ LR = (
 SAVE_INTERVAL = 10000
 EVAL_INTERVAL = 1000
 
+# FLA uses more memory, so we reduce the batch size.
+GLOBAL_BATCH_SIZE //= 2
+LR *= sqrt(2)
+
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     # Initialize the standard OLMo 1B config as a starting point.
@@ -53,8 +58,8 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     config.block.name = TransformerBlockType.fla
     config.block.attention = AttentionConfig()  # not used
     # 6d^2 for GatedDeltaNet vs. 3d^2 for attention
-    # config.block.d_model = 1024
-    config.block.d_model = 256  # CUDA memory issues
+    config.block.d_model = 1024
+    # config.block.d_model = 256  # CUDA memory issues
     config.block.n_heads = 16
     config.block.fla = FLAConfig(
         name="GatedDeltaNet",
