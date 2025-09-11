@@ -134,6 +134,7 @@ if __name__ == "__main__":
     main(
         global_batch_size=GLOBAL_BATCH_SIZE,
         sequence_length=SEQUENCE_LENGTH,
+        common_config_builder=build_common_config,
         model_config_builder=build_model_config,
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
