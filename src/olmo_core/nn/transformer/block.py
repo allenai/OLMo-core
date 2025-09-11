@@ -198,6 +198,58 @@ class TransformerBlock(TransformerBlockBase):
             fully_shard(self, mesh=dp_mesh, **fsdp_kwargs)
 
 
+class LayerNormScaledTransformerBlock(TransformerBlock):
+    """
+    A variant of ``TransformerBlock`` that applies LayerNorm Scaling (LNS).
+
+    Each LayerNorm output is multiplied by ``1 / sqrt(layer_id)`` where ``layer_id`` is the
+    1-based position of the block inside the transformer. Keeping this logic in a dedicated
+    subclass ensures that the vanilla ``TransformerBlock`` remains simple and easy to reason
+    about.
+    """
+
+    def __init__(
+        self,
+        *,
+        d_model: int,
+        block_idx: int,
+        n_layers: int,
+        attention: AttentionConfig,
+        feed_forward: FeedForwardConfig,
+        layer_norm: LayerNormConfig,
+        dropout: float = 0.0,
+        init_device: str = "cpu",
+        cache: Optional[BufferCache] = None,
+    ):
+        super().__init__(
+            d_model=d_model,
+            block_idx=block_idx,
+            n_layers=n_layers,
+            attention=attention,
+            feed_forward=feed_forward,
+            layer_norm=layer_norm,
+            dropout=dropout,
+            init_device=init_device,
+            cache=cache,
+        )
+
+        # LayerNorm scaling factor 1/sqrt(layer_id), where layer_id is 1-based.
+        ln_scale_value = 1.0 / math.sqrt(block_idx + 1)
+        self.register_buffer("ln_scale", torch.tensor(ln_scale_value, dtype=torch.float32))
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        del loss_div_factor
+        scale = self.ln_scale.to(dtype=x.dtype, device=x.device)
+        h = x + self.dropout(self.attention(self.attention_norm(x) * scale, **kwargs))
+        return h + self.dropout(self.feed_forward(self.feed_forward_norm(h) * scale))
+
+
 class ReorderedNormTransformerBlock(TransformerBlock):
     """
     Like :class:`TransformerBlock` except that the attention norm is applied on the output
