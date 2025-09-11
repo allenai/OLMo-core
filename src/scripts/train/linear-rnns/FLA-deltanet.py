@@ -52,11 +52,16 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     # Update the config to use an FLA block.
     config.block.name = TransformerBlockType.fla
     config.block.attention = AttentionConfig()  # not used
+    # 6d^2 for GatedDeltaNet vs. 3d^2 for attention
+    # num_heads * head_dim = 0.75 * hidden_size
     config.block.d_model = 1448  # FIXME: Clean up
+    config.block.n_heads = 6
     config.block.fla = FLAConfig(
         name="GatedDeltaNet",
         dtype=config.dtype,
-        fla_layer_kwargs=dict(),
+        fla_layer_kwargs={
+            "head_dim": int(0.75 * config.block.d_model / config.block.n_heads),
+        },
     )
 
     # # This is how we were doing it before at the model level.
