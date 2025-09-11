@@ -3,7 +3,7 @@ from typing import Optional
 
 from torch import nn
 
-from olmo_core.config import Config
+from olmo_core.config import Config, DType
 from olmo_core.data.tokenizer import ByteTokenizerConfig
 
 @dataclass
@@ -61,6 +61,7 @@ class LocalEncoderConfig(Config):
     represent_bytes_with_embeddings: bool = False
     blt_k: Optional[int] = None  # used in blt
     blt_compat: bool = False # for compat with BLT checkpoints
+    dtype: DType = DType.float32
 
     def build(self, vocab_size: int, d_global_model: int) -> nn.Module:
         from .local_models import LocalEncoder
@@ -89,6 +90,7 @@ class LocalEncoderConfig(Config):
             represent_bytes_with_embeddings=self.represent_bytes_with_embeddings,
             blt_k=self.blt_k,
             blt_compat=self.blt_compat,
+            dtype=self.dtype.as_pt(),
         )
 
 
@@ -108,6 +110,7 @@ class LocalDecoderConfig(Config):
     hnet_modulate: bool = True
     blt_k: Optional[int] = None  # used in blt
     blt_compat: bool = False # for compat with BLT checkpoints
+    dtype: DType = DType.float32
 
     def build(self, vocab_size: int, d_global_model: int) -> nn.Module:
         from .local_models import LocalDecoder
@@ -129,4 +132,5 @@ class LocalDecoderConfig(Config):
             hnet_modulate=self.hnet_modulate,
             blt_k=self.blt_k,
             blt_compat=self.blt_compat,
+            dtype=self.dtype.as_pt(),
         )

@@ -506,8 +506,6 @@ class Transformer(nn.Module):
         h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
 
         dtype = h.dtype
-        block_dtype = torch.bfloat16 if hasattr(self.blocks["0"], "attention") and self.blocks["0"].attention.use_flash else dtype  # type: ignore
-        h = h.to(block_dtype)
 
         # Run each block.
         for block_key, block in self.blocks.items():
@@ -517,8 +515,6 @@ class Transformer(nn.Module):
             if self.compile_enabled:
                 mark_dynamic(h, (0, 1), strict=False)
             h = block(h, **all_block_kwargs, **block_kwargs)
-
-        h = h.to(dtype=dtype)
 
         # Get final logits but again pass-through in case of pipeline parallelism.
         if self.lm_head is not None:
@@ -2572,11 +2568,12 @@ class BLTDistillTransformer(BLTTransformer):
             # we need to convert from right-pad to left-pad and back for prefill
             # since flash attention expects left-pad and local/enc dec expect right-pad global tokens
             # should add better left-pad support but this only affects prefill so OK for now
+            # although super inefficient!
             if boundary_mask is not None: # prefill
                 n_boundaries = boundary_mask.sum(-1)
 
                 for i, current_n_boundaries in enumerate(n_boundaries):
-                    h_patch[i, -current_n_boundaries:] = h_patch[i, :current_n_boundaries]
+                    h_patch[i, -current_n_boundaries:] = h_patch[i, :current_n_boundaries].clone()
 
             h_patch_after_global, _ = self._block_forward(h_patch.to(torch.bfloat16), **block_kwargs)
             h_patch_after_global = h_patch_after_global.to(h_patch.dtype)
@@ -2585,7 +2582,7 @@ class BLTDistillTransformer(BLTTransformer):
                 n_boundaries = boundary_mask.sum(-1)
 
                 for i, current_n_boundaries in enumerate(n_boundaries):
-                    h_patch_after_global[i, :current_n_boundaries] = h_patch_after_global[i, -current_n_boundaries:]
+                    h_patch_after_global[i, :current_n_boundaries] = h_patch_after_global[i, -current_n_boundaries:].clone()
         else:
             h_patch_after_global = h_patch
 

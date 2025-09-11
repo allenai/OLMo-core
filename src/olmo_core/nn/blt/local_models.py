@@ -60,7 +60,13 @@ def _compute_boundary_mask(boundary_logprobs: torch.Tensor, boundary_threshold: 
 
 # 2-layer MLP as in DTP
 class DTPBoundaryPredictor(nn.Module):
-    def __init__(self, d_model: int, use_transformer_style_mlp: bool = False, init_device: str = "cpu"):
+    def __init__(
+        self,
+        d_model: int,
+        use_transformer_style_mlp: bool = False,
+        init_device: str = "cpu",
+        dtype: torch.dtype = torch.float32,
+    ):
         super().__init__()
         self.d_model = d_model
         self.use_transformer_style_mlp = use_transformer_style_mlp
@@ -69,17 +75,17 @@ class DTPBoundaryPredictor(nn.Module):
         hidden_size = d_model * expansion_factor
 
         if use_transformer_style_mlp:
-            self.feed_forward_norm = nn.RMSNorm(d_model, eps=1e-5, device=init_device)
-            self.w1 = nn.Linear(d_model, hidden_size, bias=False, device=init_device)
-            self.w2 = nn.Linear(hidden_size, d_model, bias=False, device=init_device)
-            self.w3 = nn.Linear(d_model, hidden_size, bias=False, device=init_device)
-            self.final_norm = nn.RMSNorm(d_model, eps=1e-5, device=init_device)
-            self.out_proj = nn.Linear(d_model, 1, device=init_device)
+            self.feed_forward_norm = nn.RMSNorm(d_model, eps=1e-5, dtype=dtype, device=init_device)
+            self.w1 = nn.Linear(d_model, hidden_size, bias=False, dtype=dtype, device=init_device)
+            self.w2 = nn.Linear(hidden_size, d_model, bias=False, dtype=dtype, device=init_device)
+            self.w3 = nn.Linear(d_model, hidden_size, bias=False, dtype=dtype, device=init_device)
+            self.final_norm = nn.RMSNorm(d_model, eps=1e-5, dtype=dtype, device=init_device)
+            self.out_proj = nn.Linear(d_model, 1, dtype=dtype, device=init_device)
         else:
             self.mlp = nn.Sequential(
-                nn.Linear(d_model, d_model * expansion_factor, device=init_device),
+                nn.Linear(d_model, d_model * expansion_factor, dtype=dtype, device=init_device),
                 nn.SiLU(),
-                nn.Linear(d_model * expansion_factor, 1, device=init_device),
+                nn.Linear(d_model * expansion_factor, 1, dtype=dtype, device=init_device),
             )
 
     def forward(
@@ -112,12 +118,18 @@ class DTPBoundaryPredictor(nn.Module):
 
 # cosine-similarity based boundary predictor as in H-Net
 class HNetBoundaryPredictor(nn.Module):
-    def __init__(self, d_model: int, boundary_predictor_lookahead: int = 1, init_device: str = "cpu"):
+    def __init__(
+        self,
+        d_model: int,
+        boundary_predictor_lookahead: int = 1,
+        init_device: str = "cpu",
+        dtype: torch.dtype = torch.float32,
+    ):
         super().__init__()
         self.d_model = d_model
         self.boundary_predictor_lookahead = boundary_predictor_lookahead
-        self.q_proj_layer = nn.Linear(d_model, d_model, bias=False, device=init_device)
-        self.k_proj_layer = nn.Linear(d_model, d_model, bias=False, device=init_device)
+        self.q_proj_layer = nn.Linear(d_model, d_model, bias=False, dtype=dtype, device=init_device)
+        self.k_proj_layer = nn.Linear(d_model, d_model, bias=False, dtype=dtype, device=init_device)
 
     def forward(
         self,
@@ -156,20 +168,27 @@ class HNetBoundaryPredictor(nn.Module):
 
 class CrossAttention(nn.Module):
     # TODO(benjaminm): make norm_eps config arg without default?
-    def __init__(self, d_model: int, n_heads: int, norm_eps: float = 1e-5, init_device: str = "cpu"):
+    def __init__(
+        self,
+        d_model: int,
+        n_heads: int,
+        norm_eps: float = 1e-5,
+        init_device: str = "cpu",
+        dtype: torch.dtype = torch.float32,
+    ):
         super().__init__()
 
         self.d_model = d_model
         self.n_heads = n_heads
         self.head_dim = d_model // n_heads
 
-        self.w_q = nn.Linear(d_model, d_model, bias=False, device=init_device)
-        self.w_k = nn.Linear(d_model, d_model, bias=False, device=init_device)
-        self.w_v = nn.Linear(d_model, d_model, bias=False, device=init_device)
-        self.w_out = nn.Linear(d_model, d_model, bias=False, device=init_device)
+        self.w_q = nn.Linear(d_model, d_model, bias=False, dtype=dtype, device=init_device)
+        self.w_k = nn.Linear(d_model, d_model, bias=False, dtype=dtype, device=init_device)
+        self.w_v = nn.Linear(d_model, d_model, bias=False, dtype=dtype, device=init_device)
+        self.w_out = nn.Linear(d_model, d_model, bias=False, dtype=dtype, device=init_device)
 
-        self.q_norm = nn.RMSNorm(d_model, eps=norm_eps, device=init_device)
-        self.kv_norm = nn.RMSNorm(d_model, eps=norm_eps, device=init_device)
+        self.q_norm = nn.RMSNorm(d_model, eps=norm_eps, dtype=dtype, device=init_device)
+        self.kv_norm = nn.RMSNorm(d_model, eps=norm_eps, dtype=dtype, device=init_device)
 
     def forward(self, q: torch.Tensor, kv: torch.Tensor, mask: BlockMask) -> torch.Tensor:
         # B S D
@@ -227,6 +246,7 @@ class LocalEncoder(nn.Module):
             blt_compat: bool = False,  # for compat with BLT checkpoints
             cache_n_last_tokens: int = 256,
             init_device: str = "cpu",
+            dtype: torch.dtype = torch.float32,
     ):
         super().__init__()
         self.vocab_size = vocab_size
@@ -253,26 +273,37 @@ class LocalEncoder(nn.Module):
         self.blt_k = blt_k
         self.represent_bytes_with_embeddings = represent_bytes_with_embeddings
         self.blt_compat = blt_compat
+        self.dtype = dtype
 
         if self.add_hash_embeddings + self.add_expanded_embeddings > 1:
             raise ValueError("Only one of add_hash_embeddings and add_expanded_embeddings can be True.")
 
         if self.boundary_predictor == "dtp":
-            self.boundary_predictor_module = DTPBoundaryPredictor(d_model, init_device=init_device)
+            self.boundary_predictor_module = DTPBoundaryPredictor(
+                d_model,
+                init_device=init_device,
+                dtype=dtype,
+            )
         elif self.boundary_predictor == "dtp_chonky":
-            self.boundary_predictor_module = DTPBoundaryPredictor(d_model, use_transformer_style_mlp=True, init_device=init_device)
+            self.boundary_predictor_module = DTPBoundaryPredictor(
+                d_model,
+                use_transformer_style_mlp=True,
+                init_device=init_device,
+                dtype=dtype,
+            )
         elif self.boundary_predictor == "hnet":
             self.boundary_predictor_module = HNetBoundaryPredictor(
                 d_model,
                 boundary_predictor_lookahead=boundary_predictor_lookahead,
-                init_device=init_device
+                init_device=init_device,
+                dtype=dtype,
             )
         elif self.boundary_predictor is not None:
             raise ValueError(f"Unknown boundary predictor: {self.boundary_predictor}")
         else:
             self.boundary_predictor_module = None
 
-        self.embedding = nn.Embedding(vocab_size, d_model, device=init_device)
+        self.embedding = nn.Embedding(vocab_size, d_model, dtype=dtype, device=init_device)
 
         if self.add_hash_embeddings:
             if hash_byte_group_size is None or hash_byte_group_vocab is None or hash_byte_group_nb_functions is None:
@@ -280,11 +311,16 @@ class LocalEncoder(nn.Module):
 
             total_hash_embeddings = hash_byte_group_nb_functions * len(hash_byte_group_size)
             self.hash_embeddings = nn.ModuleList([
-                nn.Embedding(hash_byte_group_vocab[hash_embed_idx], d_model, device=init_device) for hash_embed_idx in range(total_hash_embeddings)
+                nn.Embedding(
+                    hash_byte_group_vocab[hash_embed_idx],
+                    d_model,
+                    dtype=dtype,
+                    device=init_device
+                ) for hash_embed_idx in range(total_hash_embeddings)
             ])
         elif self.add_expanded_embeddings:
             assert subword_vocab_size is not None
-            self.expanded_embeddings = nn.Embedding(subword_vocab_size, d_model, device=init_device)
+            self.expanded_embeddings = nn.Embedding(subword_vocab_size, d_model, dtype=dtype, device=init_device)
             self.hash_embeddings = None
         else:
             self.hash_embeddings = None
@@ -307,17 +343,18 @@ class LocalEncoder(nn.Module):
             self.patch_embedding_projection = nn.Linear(
                 d_model,
                 d_model * self.blt_k,
+                dtype=dtype,
                 device=init_device,
                 bias=False,
             )
-            self.cross_attention = CrossAttention(d_model, cross_attn_n_heads, init_device=init_device)
+            self.cross_attention = CrossAttention(d_model, cross_attn_n_heads, dtype=dtype, init_device=init_device)
             self.padding_parameters = None
         elif self.pooling == "hnet":
             self.patch_embedding_projection = None
             self.cross_attention = None
             if d_global_model > d_model:
                 self.padding_parameters = nn.Parameter(
-                    torch.zeros(d_global_model - d_model, device=init_device),
+                    torch.zeros(d_global_model - d_model, dtype=dtype, device=init_device),
                 )
             else:
                 self.padding_parameters = None
@@ -326,6 +363,7 @@ class LocalEncoder(nn.Module):
             self.post_last_block_norm = nn.RMSNorm(
                 d_model,
                 eps=1e-5,  # TODO: make hparam
+                dtype=dtype,
                 device=init_device,
             )
         else:
@@ -335,6 +373,7 @@ class LocalEncoder(nn.Module):
             self.post_pool_norm = nn.RMSNorm(
                 d_global_model,
                 eps=1e-5,  # TODO: make hparam
+                dtype=dtype,
                 device=init_device,
             )
         else:
@@ -344,6 +383,7 @@ class LocalEncoder(nn.Module):
             self.out_projection = nn.Linear(
                 d_model * self.blt_k if self.blt_k is not None else d_global_model,
                 d_global_model,
+                dtype=dtype,
                 device=init_device,
                 bias=not blt_compat,
             )
@@ -477,7 +517,7 @@ class LocalEncoder(nn.Module):
         self.rolling_past_tokens = torch.zeros((batch_size, self.cache_n_last_tokens), dtype=torch.long, device=device)
         self.n_rolling_past_tokens = 0
         self.n_tokens_since_last_boundary = 0
-        self.last_h = torch.zeros((batch_size, self.d_model), dtype=torch.float32, device=device)
+        self.last_h = torch.zeros((batch_size, self.d_model), dtype=self.dtype, device=device)
 
     def free_inference_cache(self):
         self.has_cache = False
@@ -685,10 +725,6 @@ class LocalEncoder(nn.Module):
         h = embeddings
 
         dtype = h.dtype
-        # need this check due to the local_encoder_copy(..) in fix_init, seems to be fine otherwise with the usual check
-        block_dtype = torch.bfloat16 if hasattr(self.blocks["0"], "attention") and self.blocks["0"].attention.use_flash else dtype  # type: ignore
-
-        h = h.to(block_dtype)
 
         for block in self.blocks.values():
             # TODO(benjaminm): do we need mark_dynamic here / in general?
@@ -697,8 +733,6 @@ class LocalEncoder(nn.Module):
             #    mark_dynamic(h, (0, 1), strict=False)
             # TODO(benjaminm): do we need local_block_kwargs?
             h = block(h)
-
-        h = h.to(dtype)
 
         if self.post_last_block_norm is not None:
             h = self.post_last_block_norm(h)
@@ -849,6 +883,7 @@ class LocalDecoder(nn.Module):
         blt_k: Optional[int] = None,
         blt_compat: bool = False,  # for compat with BLT checkpoints
         init_device: str = "cpu",
+        dtype: torch.dtype = torch.float32,
     ):
         super().__init__()
         self.sliding_window_size = sliding_window_size
@@ -863,6 +898,7 @@ class LocalDecoder(nn.Module):
         self.hnet_modulate = hnet_modulate
         self.blt_k = blt_k
         self.blt_compat = blt_compat
+        self.dtype = dtype
 
         if self.depooling == "cross_attn":
             assert self.blt_k is not None
@@ -870,6 +906,7 @@ class LocalDecoder(nn.Module):
             self.patch_embedding_projection = nn.Linear(
                 d_global_model,
                 self.d_model * self.blt_k,
+                dtype=dtype,
                 device=init_device,
                 bias=False,
             )
@@ -889,12 +926,18 @@ class LocalDecoder(nn.Module):
                 cache=cache,
             )
             if self.depooling == "cross_attn":
-                self.cross_attentions[str(block_idx)] = CrossAttention(d_model, cross_attn_n_heads, init_device=init_device)
+                self.cross_attentions[str(block_idx)] = CrossAttention(
+                    d_model,
+                    cross_attn_n_heads,
+                    dtype=dtype,
+                    init_device=init_device,
+                )
 
         if self.add_norm_before_first_block:
             self.initial_norm = nn.RMSNorm(
                 d_global_model,
                 eps=1e-5,  # TODO: make hparam
+                dtype=dtype,
                 device=init_device,
             )
         else:
@@ -904,6 +947,7 @@ class LocalDecoder(nn.Module):
             self.residual_norm = nn.RMSNorm(
                 d_model,
                 eps=1e-5,  # TODO: make hparam
+                dtype=dtype,
                 device=init_device,
             )
         else:
@@ -913,6 +957,7 @@ class LocalDecoder(nn.Module):
             self.in_projection = nn.Linear(
                 d_model,
                 d_model,
+                dtype=dtype,
                 device=init_device,
                 bias=True,
             )
@@ -923,11 +968,12 @@ class LocalDecoder(nn.Module):
             self.patch_residuals_projection = nn.Linear(
                 d_global_model,
                 d_global_model,
+                dtype=dtype,
             )
         else:
             self.patch_residuals_projection = None
 
-        self.boundary_embedding = nn.Embedding(1, d_model, device=init_device)
+        self.boundary_embedding = nn.Embedding(1, d_model, dtype=dtype, device=init_device)
         self.has_cache = False
 
     def apply_fsdp(
@@ -958,7 +1004,7 @@ class LocalDecoder(nn.Module):
         self.has_cache = True
 
         self.cache_seqlens = torch.zeros((), dtype=torch.int32, device=device)
-        self.last_value = torch.zeros((batch_size, self.d_model), dtype=torch.float32, device=device)
+        self.last_value = torch.zeros((batch_size, self.d_model), dtype=self.dtype, device=device)
 
     def free_inference_cache(self):
         self.has_cache = False
@@ -998,17 +1044,12 @@ class LocalDecoder(nn.Module):
             if patch_embeds.numel() > 0:
                 mask[:] = True
 
-            dtype = h.dtype
-            block_dtype = torch.bfloat16 if hasattr(self.blocks["0"], "attention") and self.blocks["0"].attention.use_flash else dtype  # type: ignore
-
-            h = h[mask].to(block_dtype)
+            h = h[mask]
 
             if h.shape[0] > 0:
                 for block_idx in range(self.n_layers):
                     block = self.blocks[str(block_idx)]
                     h = block(h, cache_mask=mask)
-
-            h = h.to(dtype)
 
             # TODO(benjaminm): clean up / return None / don't return so many things?
             return (h, h), h, h
@@ -1067,7 +1108,7 @@ class LocalDecoder(nn.Module):
             )
 
             if self.hnet_modulate and boundary_logprobs is not None:
-                boundary_probs = torch.exp(boundary_logprobs)
+                boundary_probs = torch.exp(boundary_logprobs).to(depool_out.dtype)
                 selected_boundary_probs = torch.where(
                     boundary_probs > 0.5,
                     boundary_probs,
@@ -1117,16 +1158,9 @@ class LocalDecoder(nn.Module):
                 torch.where(patch_mask.unsqueeze(-1), h_b, torch.zeros_like(h_b))
             )
 
-            dtype = patch_embeds.dtype
-            block_dtype = torch.bfloat16 if hasattr(self.blocks["0"], "attention") and self.blocks["0"].attention.use_flash else dtype  # type: ignore
-
-            h_with_b = h_with_b.to(block_dtype)
-
             for block_idx in range(self.n_layers):
                 block = self.blocks[str(block_idx)]
                 h_with_b = block(h_with_b, sequence_start_indices=sequence_start_indices)
-
-            h_with_b = h_with_b.to(dtype)
 
             h_for_true_boundaries = torch.gather(
                 h_with_b,

@@ -733,7 +733,8 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
 
         # max length *in tokens*, not bytes
         if generation_config.max_new_tokens is not None:
-            max_length = prompt_len + generation_config.max_new_tokens
+            # input_ids.shape[1] is not accurate but we don't yet know how many prefill tokens
+            max_length = input_ids.shape[1] + generation_config.max_new_tokens
         elif generation_config.max_length is not None:
             max_length = generation_config.max_length
         else:
@@ -765,7 +766,8 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         time_to_first_token = None
         decode_start_time = None
         setup_time = None
-        max_n_prefill_patches = boundary_mask.sum(-1).max().item()
+        # input_ids.shape[1] not accurate but needs to be in line with kv cache size
+        max_n_prefill_patches = input_ids.shape[1]#boundary_mask.sum(-1).max().item()
         tokens_generated_plus_prefilled = max_n_prefill_patches
         bytes_generated = 0
 
@@ -828,6 +830,7 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
             )
             next_token_mask = ~last_token_is_boundary
             if last_token_is_boundary.all().item():
+                pbar.update(1)
                 tokens_generated_plus_prefilled += 1
                 next_token_mask[:] = True
 
@@ -857,8 +860,6 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
 
                 if stop_mask.any().item():  # type: ignore
                     log.warning(f"Forcing boundary since patch exceeds length {max_patch_length_decode}.")
-
-            pbar.update(1)
 
             last_token_is_boundary = next_tokens == self.model.end_of_subword_token_blt  # type: ignore
             bytes_generated_at_last_boundary[last_token_is_boundary] = bytes_generated
