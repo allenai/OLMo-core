@@ -172,6 +172,7 @@ class TransformerBlockConfig(Config):
         cache: Optional[BufferCache] = None,
     ) -> "TransformerBlockBase":
         from .block import (
+            LayerNormScaledTransformerBlock,
             MoEHybridReorderedNormTransformerBlock,
             MoEHybridTransformerBlock,
             MoEReorderedNormTransformerBlock,
@@ -179,7 +180,6 @@ class TransformerBlockConfig(Config):
             NormalizedTransformerBlock,
             ReorderedNormTransformerBlock,
             TransformerBlock,
-            LayerNormScaledTransformerBlock,
         )
 
         kwargs = self.as_dict(exclude_none=True, recurse=False)
