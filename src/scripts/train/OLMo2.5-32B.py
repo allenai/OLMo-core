@@ -62,7 +62,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             mode=TransformerActivationCheckpointingMode.budget,
             activation_memory_budget=0.5
         ),
-        float8_config=Float8Config(enabled=False),
+        float8_config=Float8Config(enabled=True),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
         scheduler=CosWithWarmup(warmup_steps=2000),
