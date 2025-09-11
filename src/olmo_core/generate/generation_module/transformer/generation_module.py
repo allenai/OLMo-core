@@ -166,6 +166,7 @@ class TransformerGenerationModule(GenerationModule):
         return_logprobs: bool = False,
         completions_only: bool = False,
         log_timing: bool = True,
+        profile: bool = False,
         **generation_kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
         """
@@ -244,6 +245,21 @@ class TransformerGenerationModule(GenerationModule):
             miniters=10,
             colour="blue",
         )
+
+        if profile:
+            prof = torch.profiler.profile(
+                activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
+                record_shapes=True,
+                with_stack=True,
+                profile_memory=True,
+                with_flops=True,
+                schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=2),
+                on_trace_ready=torch.profiler.tensorboard_trace_handler('./log/blt_transformer_generation_module'),
+            )
+            prof.__enter__()
+        else:
+            prof = None
+
         while not ((max_length is not None and generated.shape[1] >= max_length) or finished.all()):
             # Determine model inputs based on if we are prefilling or decoding
             is_first_forward = generated.shape[1] == prompt_len
@@ -272,6 +288,9 @@ class TransformerGenerationModule(GenerationModule):
                 top_p=generation_config.top_p,
             )
 
+            if prof is not None:
+                prof.step()
+
             if all_logits is not None:
                 all_logits.append(next_token_logits)
             if all_logprobs is not None:
@@ -299,6 +318,9 @@ class TransformerGenerationModule(GenerationModule):
             tokens_generated += 1
             pbar.update(1)
         pbar.close()
+
+        if prof is not None:
+            prof.__exit__(None, None, None)
 
         logits = logprobs = None
         if return_logits and all_logits:
@@ -681,6 +703,7 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         verify: bool = False,
         force_boundary_every: Optional[int] = None,
         max_patch_length_decode: Optional[int] = 128, # 128 is longest dolma2 tokenizer token
+        profile: bool = False,
         **generation_kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
         """
@@ -805,9 +828,23 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
             colour="blue",
         )
         forward_start_time = None
-        last_token_is_boundary: torch.Tensor = torch.zeros(batch_size, dtype=torch.bool, device=self.device)
+        boundary_state = blt_utils.MaskState(torch.zeros(batch_size, dtype=torch.bool, device=self.device))
         bytes_generated_at_last_boundary = torch.zeros(batch_size, dtype=torch.long, device=self.device)
         is_first_forward = True
+
+        if profile:
+            prof = torch.profiler.profile(
+                activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
+                record_shapes=True,
+                with_stack=True,
+                profile_memory=True,
+                with_flops=True,
+                schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=2),
+                on_trace_ready=torch.profiler.tensorboard_trace_handler('./log/blt_transformer_generation_module'),
+            )
+            prof.__enter__()
+        else:
+            prof = None
 
         while not ((max_length is not None and tokens_generated_plus_prefilled >= max_length) or finished.all()):
             input_ids_for_model = (
@@ -822,19 +859,12 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
             next_token_logits = self.model.inference_forward(  # type: ignore
                 input_ids_for_model,
                 cached_encoder_outputs=cached_encoder_outputs if is_first_forward else None,
-                last_token_is_boundary=last_token_is_boundary,
+                boundary_state=boundary_state,
                 sequence_start_indices=sequence_start_indices,
                 logits_to_keep=1,
                 blt_config=self.blt_config,
                 cache_leftpad=cache_leftpad if generation_config.use_cache else None,
             )
-            next_token_mask = ~last_token_is_boundary
-            if last_token_is_boundary.all().item():
-                pbar.update(1)
-                tokens_generated_plus_prefilled += 1
-                next_token_mask[:] = True
-
-            is_first_forward = False
 
             new_next_tokens = select_next_token(
                 next_token_logits.squeeze(1),
@@ -843,8 +873,19 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                 top_k=generation_config.top_k,
                 top_p=generation_config.top_p,
             )
-            next_tokens = torch.full((input_ids.shape[0],), self.model.end_of_subword_token_blt, device=self.device, dtype=torch.long)  # type: ignore
-            next_tokens[next_token_mask] = new_next_tokens
+
+            if boundary_state.all():
+                if prof is not None:
+                    prof.step()
+                pbar.update(1)
+                tokens_generated_plus_prefilled += 1
+                
+                next_tokens = new_next_tokens
+            else:
+                next_tokens = torch.full((input_ids.shape[0],), self.model.end_of_subword_token_blt, device=self.device, dtype=torch.long)  # type: ignore
+                boundary_state.selective_put(new_next_tokens, next_tokens, inv=True)
+
+            is_first_forward = False
 
             # for debugging
             if force_boundary_every is not None:
@@ -852,7 +893,7 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                     next_tokens[:] = self.model.end_of_subword_token_blt # type: ignore
                 else:
                     # doesn't matter but 36 is whitespace in blt tokenizer
-                    next_tokens[next_tokens == self.model.end_of_subword_token_blt] = 36
+                    next_tokens[:] = 36
 
             if max_patch_length_decode is not None:
                 stop_mask = bytes_generated - bytes_generated_at_last_boundary >= max_patch_length_decode
@@ -861,23 +902,8 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                 if stop_mask.any().item():  # type: ignore
                     log.warning(f"Forcing boundary since patch exceeds length {max_patch_length_decode}.")
 
-            last_token_is_boundary = next_tokens == self.model.end_of_subword_token_blt  # type: ignore
-            bytes_generated_at_last_boundary[last_token_is_boundary] = bytes_generated
-
-            if all_logits is not None:
-                j = 0
-                for i, select in enumerate(next_token_mask):
-                    if select:
-                        all_logits[i].append(next_token_logits[j])
-                        j += 1
-            if all_logprobs is not None:
-                next_token_logprobs = selective_log_softmax(next_token_logits, new_next_tokens.unsqueeze(-1))
-
-                j = 0
-                for i, select in enumerate(next_token_mask):
-                    if select:
-                        all_logprobs[i].append(next_token_logprobs[j])
-                        j += 1
+            boundary_state = blt_utils.MaskState(next_tokens == self.model.end_of_subword_token_blt)  # type: ignore
+            boundary_state.selective_put(bytes_generated, bytes_generated_at_last_boundary)
 
             # Force EOS for (previously) finished sequences
             next_tokens = torch.where(finished, torch.full_like(next_tokens, eos), next_tokens)
@@ -909,7 +935,7 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                 if bytes_generated != 1:
                     tokens_to_print = generated[0][:-1].tolist() if bytes_generated == 1 else generated[0][-2:-1].tolist()
 
-                    if last_token_is_boundary[0].item() and bytes_generated > 1:
+                    if boundary_state.mask[0].item() and bytes_generated > 1:
                         print(RED + self.tokenizer.decode(tokens_to_print) + RESET, end="", flush=True)
                     else:
                         if bytes_generated > 1:
@@ -918,6 +944,8 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                             print(self.tokenizer.decode(tokens_to_print), end="", flush=True)
 
         pbar.close()
+        if prof is not None:
+            prof.__exit__(None, None, None)
 
         if stream:
             RED = "\033[0;31m"

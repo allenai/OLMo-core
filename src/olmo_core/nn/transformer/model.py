@@ -2531,7 +2531,7 @@ class BLTDistillTransformer(BLTTransformer):
             teacher_force_boundaries=blt_config.teacher_force_boundaries,
             boundary_threshold=blt_config.boundary_threshold,
             true_boundary_mask=boundary_labels > 0.5,
-            last_token_is_boundary=torch.full((input_ids.shape[0],), fill_value=last_token_is_boundary, device=input_ids.device, dtype=torch.bool),
+            boundary_state=blt_utils.MaskState(torch.full((input_ids.shape[0],), fill_value=last_token_is_boundary, device=input_ids.device, dtype=torch.bool)),
             sequence_start_indices=sequence_start_indices,
             **local_encoder_kwargs
         )
@@ -2542,7 +2542,7 @@ class BLTDistillTransformer(BLTTransformer):
         self,
         input_ids: torch.Tensor,
         blt_config: BLTConfig,
-        last_token_is_boundary: torch.Tensor,
+        boundary_state: torch.Tensor,
         sequence_start_indices: Optional[torch.Tensor] = None,
         cached_encoder_outputs: Optional[Any] = None,
         **kwargs,
@@ -2558,7 +2558,7 @@ class BLTDistillTransformer(BLTTransformer):
         else:
             h_byte, h_patch, _, _ = self.local_encoder.inference_forward(  # type: ignore
                 input_ids,
-                last_token_is_boundary=last_token_is_boundary,
+                boundary_state=boundary_state,
                 sequence_start_indices=sequence_start_indices,
                 **local_encoder_kwargs
             )
@@ -2592,7 +2592,7 @@ class BLTDistillTransformer(BLTTransformer):
             patch_residuals=h_patch,
             boundary_logprobs=boundary_logprobs,
             boundary_mask=boundary_mask,
-            last_token_is_boundary=last_token_is_boundary,
+            boundary_state=boundary_state,
             sequence_start_indices=sequence_start_indices,
             **local_decoder_kwargs,
         )

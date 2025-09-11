@@ -7,6 +7,7 @@ from xlstm.xlstm_large.model import mLSTMLayer, mLSTMLayerConfig, mLSTMLayerStat
 from mlstm_kernels.torch.backend_module import mLSTMBackendConfig
 
 from olmo_core.config import Config, DType
+from olmo_core.nn.blt.utils import MaskState
 
 log = logging.getLogger(__name__)
 
@@ -108,7 +109,7 @@ class XLSTM(mLSTMLayer):
         self,
         x: torch.Tensor,
         sequence_start_indices: Optional[torch.Tensor] = None,
-        cache_mask: Optional[torch.Tensor] = None
+        cache_mask: Optional[MaskState] = None
     ):
         if self.training:
             self.mlstm_backend.config.mode = "train"
@@ -120,7 +121,7 @@ class XLSTM(mLSTMLayer):
             state = self.xlstm_cache_manager.state
 
             if cache_mask is not None:
-                state_for_model = cast(mLSTMLayerStateType, tuple(x[cache_mask] for x in state) if state is not None else None)
+                state_for_model = cast(mLSTMLayerStateType, tuple(cache_mask.selective_get(x, inv=True) for x in state) if state is not None else None)
             else:
                 state_for_model = state
 
@@ -136,7 +137,7 @@ class XLSTM(mLSTMLayer):
             else:
                 if cache_mask is not None:
                     for i in range(len(state)):
-                        state[i][cache_mask] = new_state[i]
+                        cache_mask.selective_put(new_state[i], state[i], inv=True)
 
             self.xlstm_cache_manager.state = state  # type: ignore
             self.mlstm_backend.config.mode = prev_mode

@@ -19,7 +19,7 @@ from olmo_core.nn.transformer.block import TransformerBlockBase
 import olmo_core.nn.blt.utils as blt_utils
 from olmo_core.nn.buffer_cache import BufferCache
 from .embed import add_hash_embeddings
-from .utils import log1mexp
+from .utils import MaskState, log1mexp
 
 # matching BLT, seems necessary but why?
 flex_attention_comp = torch.compile(flex_attention)
@@ -390,6 +390,8 @@ class LocalEncoder(nn.Module):
         else:
             self.out_projection = None
 
+        self.use_rolling_past_tokens = True
+
         self.has_cache = False
         self.cache_n_last_tokens = cache_n_last_tokens # for toucan-style decoding all at once
         if self.hash_byte_group_size is not None:
@@ -514,9 +516,12 @@ class LocalEncoder(nn.Module):
         self.has_cache = True
 
         self.cache_seqlens = 0
-        self.rolling_past_tokens = torch.zeros((batch_size, self.cache_n_last_tokens), dtype=torch.long, device=device)
-        self.n_rolling_past_tokens = 0
-        self.n_tokens_since_last_boundary = 0
+        if self.use_rolling_past_tokens:
+            self.rolling_past_tokens = torch.zeros((batch_size, self.cache_n_last_tokens), dtype=torch.long, device=device)
+            self.n_rolling_past_tokens = 0
+        else:
+            self.rolling_past_tokens = None
+            self.n_rolling_past_tokens = 0
         self.last_h = torch.zeros((batch_size, self.d_model), dtype=self.dtype, device=device)
 
     def free_inference_cache(self):
@@ -527,8 +532,6 @@ class LocalEncoder(nn.Module):
             del self.rolling_past_tokens
         if hasattr(self, "n_rolling_past_tokens"):
             del self.n_rolling_past_tokens
-        if hasattr(self, "n_tokens_since_last_boundary"):
-            del self.n_tokens_since_last_boundary
         if hasattr(self, "last_h"):
             del self.last_h
 
@@ -537,12 +540,13 @@ class LocalEncoder(nn.Module):
         h: torch.Tensor,
         boundary_mask: torch.Tensor | None,
         n_patches: int,
-        last_token_is_boundary: Optional[torch.Tensor] = None,
+        boundary_state: Optional[MaskState] = None,
     ):
         if self.has_cache and self.cache_seqlens > 0:
-            assert last_token_is_boundary is not None
-            if last_token_is_boundary.all().item():
-                reduced_h = h[:, -1:, :]
+            assert boundary_state is not None
+            if boundary_state.all():
+                assert h.shape[1] == 1
+                reduced_h = h
             else:
                 reduced_h = h[[], :, :]
         else:
@@ -657,7 +661,7 @@ class LocalEncoder(nn.Module):
         h: torch.Tensor,
         boundary_mask: torch.Tensor | None,
         n_patches: int,
-        last_token_is_boundary: Optional[torch.Tensor] = None,
+        boundary_state: Optional[MaskState] = None,
     ):
         if self.pooling == "cross_attn":
             patch_embeddings = self._pool_blt(
@@ -670,7 +674,7 @@ class LocalEncoder(nn.Module):
                 h=h,
                 boundary_mask=boundary_mask,
                 n_patches=n_patches,
-                last_token_is_boundary=last_token_is_boundary,
+                boundary_state=boundary_state,
             )
         else:
             raise ValueError(f"Unknown pooling method: {self.pooling}. Supported methods are 'cross_attn' and 'hnet'.")
@@ -775,7 +779,7 @@ class LocalEncoder(nn.Module):
         tokens: torch.Tensor,
         patch_lens: torch.Tensor,
         patch_ids: torch.Tensor,
-        last_token_is_boundary: torch.Tensor,
+        boundary_state: MaskState,
         expanded_input_ids: Optional[torch.Tensor] = None,
         cross_attn_mask: BlockMask | None = None,
         sequence_start_indices: Optional[torch.Tensor] = None,
@@ -783,19 +787,30 @@ class LocalEncoder(nn.Module):
         teacher_force_boundaries: bool = False,
         true_boundary_mask: Optional[torch.Tensor] = None,
     ) -> tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor], torch.Tensor | None]:
-        if self.has_cache and self.cache_seqlens == 0:
-            tokens_to_cache = tokens[:, max(tokens.shape[1]-self.rolling_past_tokens.shape[1],0):]
-            self.rolling_past_tokens[:, -tokens_to_cache.shape[1]:] = tokens_to_cache
-            self.n_rolling_past_tokens += tokens_to_cache.shape[1]
-        elif self.has_cache:
-            self.rolling_past_tokens[~last_token_is_boundary, :] = torch.roll(self.rolling_past_tokens[~last_token_is_boundary], shifts=-1, dims=1)
-            self.rolling_past_tokens[~last_token_is_boundary, -1] = tokens[~last_token_is_boundary, -1]
+        if self.use_rolling_past_tokens:
+            assert self.rolling_past_tokens is not None
+
+            if self.has_cache and self.cache_seqlens == 0:
+                tokens_to_cache = tokens[:, max(tokens.shape[1]-self.rolling_past_tokens.shape[1],0):]
+                self.rolling_past_tokens[:, -tokens_to_cache.shape[1]:] = tokens_to_cache
+                self.n_rolling_past_tokens += tokens_to_cache.shape[1]
+            elif self.has_cache:
+                boundary_state.selective_put(
+                    torch.roll(boundary_state.selective_get(self.rolling_past_tokens, inv=True), shifts=-1, dims=1),
+                    self.rolling_past_tokens,
+                    inv=True,
+                )
+                boundary_state.selective_put(
+                    boundary_state.selective_get(tokens[:, -1], inv=True),
+                    self.rolling_past_tokens[:, -1],
+                    inv=True,
+                )
             # TODO(benjaminm): update n_rolling_past_tokens / adapt to the extended embeddings case
             #if self.n_rolling_past_tokens < self.rolling_past_tokens.shape[1]:
             #    self.n_rolling_past_tokens += 1
 
-        if self.has_cache and self.cache_seqlens > 0:
-            assert tokens.shape[1] == 1
+        if self.has_cache and self.cache_seqlens > 0 and self.use_rolling_past_tokens:
+            assert tokens.shape[1] == 1 and self.rolling_past_tokens is not None
             if self.add_hash_embeddings:
                 assert self.hash_byte_group_size is not None
                 n_tokens_to_retrieve = min(self.n_rolling_past_tokens, max(self.hash_byte_group_size))
@@ -808,30 +823,27 @@ class LocalEncoder(nn.Module):
 
         # pass through encoder layers
         if self.has_cache and self.cache_seqlens > 0:
-            h_after_blocks = self.last_h
+            if not boundary_state.all():
+                h = boundary_state.selective_get(embeddings, inv=True)
 
-            h = embeddings[~last_token_is_boundary]
-
-            if h.shape[0] > 0:
                 for block in self.blocks.values():
-                    h = block(h, cache_mask=~last_token_is_boundary)
+                    h = block(h, cache_mask=boundary_state)
 
-                h_after_blocks[~last_token_is_boundary] = h[:, -1, :]
+                if self.post_last_block_norm is not None:
+                    h = self.post_last_block_norm(h)
 
-            if self.has_cache:
-                self.last_h.copy_(h_after_blocks)
-            
-            h = h_after_blocks.unsqueeze(1)
+                boundary_state.selective_put(h[:, -1, :], self.last_h, inv=True)
+
+            h = self.last_h.unsqueeze(1)
         else:
             h = embeddings
             for block in self.blocks.values():
                 h = block(h, sequence_start_indices=sequence_start_indices)
 
-            if self.has_cache:
-                self.last_h.copy_(h[:, -1, :])
+            if self.post_last_block_norm is not None:
+                h = self.post_last_block_norm(h)
 
-        if self.post_last_block_norm is not None:
-            h = self.post_last_block_norm(h)
+            self.last_h.copy_(h[:, -1, :])
 
         # only use this boundary predictor for prefilling
         if self.boundary_predictor_module is not None and (not self.has_cache or self.cache_seqlens == 0):
@@ -843,7 +855,7 @@ class LocalEncoder(nn.Module):
                 sequence_start_indices=sequence_start_indices,
             )
             # can't predict through encoder - must be through prev local decoder step
-            boundary_mask[:, -1] = last_token_is_boundary
+            boundary_mask[:, -1] = boundary_state.mask
         else:
             boundary_logprobs = None
             boundary_mask = None
@@ -852,7 +864,7 @@ class LocalEncoder(nn.Module):
             h=h,
             boundary_mask=boundary_mask,
             n_patches=boundary_mask.sum(-1).max().item() if boundary_mask is not None else 1,
-            last_token_is_boundary=last_token_is_boundary,
+            boundary_state=boundary_state,
         )
 
         if self.represent_bytes_with_embeddings:
@@ -1003,7 +1015,7 @@ class LocalDecoder(nn.Module):
         device = next(self.parameters()).device
         self.has_cache = True
 
-        self.cache_seqlens = torch.zeros((), dtype=torch.int32, device=device)
+        self.cache_seqlens = 0
         self.last_value = torch.zeros((batch_size, self.d_model), dtype=self.dtype, device=device)
 
     def free_inference_cache(self):
@@ -1019,7 +1031,7 @@ class LocalDecoder(nn.Module):
         patch_embeds: torch.Tensor,
         boundary_logprobs: torch.Tensor,
         boundary_mask: Optional[torch.Tensor],
-        last_token_is_boundary: Optional[torch.Tensor] = None,
+        boundary_state: Optional[MaskState] = None,
         sequence_start_indices: Optional[torch.Tensor] = None,
         block_size: int = 256,
         headdim: int = 32,
@@ -1027,8 +1039,8 @@ class LocalDecoder(nn.Module):
     ) -> tuple[tuple[torch.Tensor, torch.Tensor], torch.Tensor, torch.Tensor]:
         from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
 
-        if self.has_cache and self.cache_seqlens.item() > 0:
-            assert last_token_is_boundary is not None
+        if self.has_cache and self.cache_seqlens > 0:
+            assert boundary_state is not None
             assert not self.hnet_smooth # not implemented for now
 
             if patch_embeds.numel() > 0:
@@ -1040,16 +1052,15 @@ class LocalDecoder(nn.Module):
                 h = embeds + self.last_value.unsqueeze(1)
 
             # skip positions where we have a boundary until we get a new value from the global model
-            mask = ~last_token_is_boundary
-            if patch_embeds.numel() > 0:
-                mask[:] = True
-
-            h = h[mask]
+            if patch_embeds.numel() == 0:
+                h = boundary_state.selective_get(h, inv=True)
+            else:
+                boundary_state = None
 
             if h.shape[0] > 0:
                 for block_idx in range(self.n_layers):
                     block = self.blocks[str(block_idx)]
-                    h = block(h, cache_mask=mask)
+                    h = block(h, cache_mask=boundary_state)
 
             # TODO(benjaminm): clean up / return None / don't return so many things?
             return (h, h), h, h
@@ -1218,7 +1229,7 @@ class LocalDecoder(nn.Module):
         boundary_logprobs: torch.Tensor,
         boundary_mask: torch.Tensor | None,
         cross_attn_mask: BlockMask | None = None,
-        last_token_is_boundary: Optional[torch.Tensor] = None,
+        boundary_state: Optional[MaskState] = None,
         sequence_start_indices: Optional[torch.Tensor] = None,
     ) -> tuple[tuple[torch.Tensor, torch.Tensor], torch.Tensor, torch.Tensor]:
         if self.depooling == "cross_attn":
@@ -1229,7 +1240,7 @@ class LocalDecoder(nn.Module):
                 patch_embeds,
                 boundary_logprobs,
                 boundary_mask,
-                last_token_is_boundary,
+                boundary_state,
                 sequence_start_indices,
             )
         else:
@@ -1274,7 +1285,7 @@ class LocalDecoder(nn.Module):
         patch_embeds: torch.Tensor,
         patch_residuals: torch.Tensor,
         boundary_logprobs: torch.Tensor,
-        last_token_is_boundary: torch.Tensor,
+        boundary_state: MaskState,
         boundary_mask: torch.Tensor | None,
         cross_attn_mask: BlockMask | None = None,
         sequence_start_indices: Optional[torch.Tensor] = None,
@@ -1301,6 +1312,6 @@ class LocalDecoder(nn.Module):
             boundary_logprobs=boundary_logprobs,
             boundary_mask=boundary_mask,
             cross_attn_mask=cross_attn_mask,
-            last_token_is_boundary=last_token_is_boundary,
+            boundary_state=boundary_state,
             sequence_start_indices=sequence_start_indices,
         )
