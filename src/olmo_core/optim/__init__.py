@@ -7,12 +7,12 @@ from .scheduler import (
     ConstantScheduler,
     ConstantWithWarmup,
     CosWithWarmup,
+    HalfCosWithWarmup,
     InvSqrtWithWarmup,
     LinearWithWarmup,
     Scheduler,
     SchedulerUnits,
     SequentialScheduler,
-    HalfCosWithWarmup,
 )
 from .skip_step_optimizer import SkipStepOptimizer
 
