@@ -54,7 +54,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     config.block.attention = AttentionConfig()  # not used
     # 6d^2 for GatedDeltaNet vs. 3d^2 for attention
     # config.block.d_model = 1024
-    config.block.d_model = 512  # CUDA memory issues
+    config.block.d_model = 256  # CUDA memory issues
     config.block.n_heads = 16
     config.block.fla = FLAConfig(
         name="GatedDeltaNet",
