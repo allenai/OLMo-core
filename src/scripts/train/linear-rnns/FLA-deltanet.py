@@ -41,8 +41,8 @@ SAVE_INTERVAL = 10000
 EVAL_INTERVAL = 1000
 
 # FLA uses more memory, so we reduce the batch size.
-GLOBAL_BATCH_SIZE //= 2
-LR *= 1.4
+GLOBAL_BATCH_SIZE //= 4
+LR *= 2
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
