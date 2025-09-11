@@ -1,3 +1,4 @@
+import math
 from pathlib import Path
 from typing import List
 
@@ -427,9 +428,12 @@ def test_numpy_fsl_mixture_dataset(tmp_path: Path):
         pad_token_id=-1,
     )
 
+    bsz = 32
+    max_tokens = 10_000
+
     mixture_config = SourceMixtureDatasetConfig(
         render_tables=False,
-        max_tokens=10_000,
+        max_tokens=max_tokens,
         sequence_length=sequence_length,
         source_configs=[
             SourceMixtureConfig(
@@ -446,6 +450,7 @@ def test_numpy_fsl_mixture_dataset(tmp_path: Path):
         dtype=NumpyDatasetDType.uint16,
         processes=1,
         seed=seed,
+        global_batch_size=sequence_length * bsz,
     )
 
     ds = NumpyDatasetConfig(
@@ -462,13 +467,14 @@ def test_numpy_fsl_mixture_dataset(tmp_path: Path):
     # first_src_sequence = mmap1[0][1][:sequence_length].tolist()
     # Note that changing the seed here could result in the inclusion of the first sequence from the mock data.
     # assert not np.array_equal(first_src_sequence, first_ds_item)
-    expected = "49249ad2"
+    expected = "aff421"
     assert ds.fingerprint.endswith(
         expected
     ), f"Fingerprint mismatch, expected {expected}, got {ds.fingerprint[-6:]}...Do you need to update expected fingerprint?"
     assert first_ds_item == [56423, 24546, 15796, 52203]  # stable because we pass a seed
-    assert ds.num_tokens == 10_000
-    assert len(ds) == 2500
+    assert ds.num_tokens == 10_112  # oversamples to handle rounding error
+    assert len(ds) == 2528
+    assert len(ds) / bsz >= math.ceil(max_tokens / (sequence_length * bsz))
 
 
 def test_numpy_fsl_mixture_dataset_with_repetition(tmp_path: Path):
@@ -504,9 +510,12 @@ def test_numpy_fsl_mixture_dataset_with_repetition(tmp_path: Path):
 
     source1_paths = [str(i[0]) for i in mmap1] * 2  # duplicate the paths
 
+    bsz = 32
+    max_tokens = 40_000
+
     mixture_config = SourceMixtureDatasetConfig(
         render_tables=False,
-        max_tokens=40_000,
+        max_tokens=max_tokens,
         sequence_length=sequence_length,
         source_configs=[
             SourceMixtureConfig(
@@ -521,6 +530,7 @@ def test_numpy_fsl_mixture_dataset_with_repetition(tmp_path: Path):
         dtype=NumpyDatasetDType.uint16,
         processes=1,
         seed=seed,
+        global_batch_size=sequence_length * bsz,  # 10k sequences of length 4
     )
 
     ds = NumpyDatasetConfig(
@@ -531,7 +541,7 @@ def test_numpy_fsl_mixture_dataset_with_repetition(tmp_path: Path):
     ).build()
     ds.prepare()
 
-    expected_fingerprint = "46705466"
+    expected_fingerprint = "c8f8fc"
     first_ds_item = ds[0]["input_ids"].tolist()
 
     # NOTE: This is commented out until we fix behavior of the source mixture dataset
@@ -548,8 +558,8 @@ def test_numpy_fsl_mixture_dataset_with_repetition(tmp_path: Path):
         63252,
         65373,
     ]  # stable because we pass a seed
-    assert ds.num_tokens == 40_000
-    assert len(ds) == 10000
+    assert ds.num_tokens == 40_064  # oversamples to handle rounding error
+    assert len(ds) / bsz == math.ceil(max_tokens / (sequence_length * bsz))
 
 
 def write_data_file(data: List[int], path: Path, dtype, eos_token_id: int):
