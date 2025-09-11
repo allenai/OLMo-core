@@ -53,8 +53,8 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     config.block.name = TransformerBlockType.fla
     config.block.attention = AttentionConfig()  # not used
     # 6d^2 for GatedDeltaNet vs. 3d^2 for attention
-    config.block.d_model = 1448  # FIXME: Clean up
-    config.block.n_heads = 6
+    config.block.d_model = 1024  # FIXME: Clean up
+    config.block.n_heads = 4
     config.block.fla = FLAConfig(
         name="GatedDeltaNet",
         dtype=config.dtype,
