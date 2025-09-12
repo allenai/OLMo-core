@@ -40,7 +40,7 @@ LR = (
 SAVE_INTERVAL = 10000
 EVAL_INTERVAL = 1000
 
-MICROBATCH_DISCOUNT = 2  # FLA uses more memory, so we reduce the batch size.
+MICROBATCH_DISCOUNT = 1  # FLA uses more memory, so we reduce the batch size.
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
@@ -54,16 +54,13 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     # Update the config to use an FLA block.
     config.block.name = TransformerBlockType.fla
     config.block.attention = AttentionConfig()  # not used
-    # 6d^2 for GatedDeltaNet vs. 3d^2 for attention
-    config.block.d_model = 2048
+    # https://github.com/fla-org/flash-linear-attention/blob/main/fla/layers/path_attn.py
+    config.block.d_model = 2048  # Default is 1024
     config.block.n_heads = 16
     config.block.fla = FLAConfig(
-        name="GatedDeltaNet",
+        name="RWKV7Attention",
         dtype=config.dtype,
-        fla_layer_kwargs={
-            # FLA repo says num_heads * head_dim = 0.75 * hidden_size
-            "head_dim": int(0.75 * config.block.d_model / config.block.n_heads),
-        },
+        fla_layer_kwargs={},
     )
 
     # # This is how we were doing it before at the model level.
