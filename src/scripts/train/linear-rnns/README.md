@@ -3,5 +3,10 @@
 ```shell
 python src/scripts/train/linear-rnns/control.py launch control-test ai2/jupiter-cirrascale-2
 
-python src/scripts/train/linear-rnns/FLA-deltanet.py launch deltanet-test ai2/jupiter-cirrascale-2
+python src/scripts/train/linear-rnns/deltanet.py launch deltanet-test ai2/jupiter-cirrascale-2
+
+python src/scripts/train/linear-rnns/rwkv7.py launch rwkv7-test ai2/jupiter-cirrascale-2
+
+# FIXME: Some kind of low-level eror right now
+python src/scripts/train/linear-rnns/path-attention.py launch path-attn-test ai2/jupiter-cirrascale-2
 ```
