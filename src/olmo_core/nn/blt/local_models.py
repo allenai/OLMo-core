@@ -434,6 +434,20 @@ class LocalEncoder(nn.Module):
 
         fully_shard(self, mesh=dp_mesh, **fsdp_kwargs)
 
+    def apply_compile(self):
+        for block in self.blocks.values():  # type: ignore
+            block = cast(TransformerBlockBase, block)
+            block.apply_compile()
+
+        if self.out_projection is not None:
+            self.out_projection.compile(fullgraph=True, dynamic=True)
+
+        if self.boundary_predictor_module is not None:
+            self.boundary_predictor_module.compile(fullgraph=False, dynamic=True)
+
+        if self.post_last_block_norm is not None:
+            self.post_last_block_norm.compile(fullgraph=True, dynamic=True)
+
     def fix_init(self, embedding_init_path: Optional[str], target_embeddings, n_estimate=8192, cache_dir: Optional[str] = None):
         """
         Rescale such that the local encoder outputs (given random inputs) have the same mean and std as the provided embeddings.
@@ -1010,6 +1024,20 @@ class LocalDecoder(nn.Module):
         # should we shard the patch embedding projection?
         #fully_shard(self.patch_embedding_projection, mesh=dp_mesh, **fsdp_kwargs)
         fully_shard(self, mesh=dp_mesh, **fsdp_kwargs)
+
+    def apply_compile(self):
+        for block in self.blocks.values():
+            block = cast(TransformerBlockBase, block)
+            block.apply_compile()
+
+        if self.initial_norm is not None:
+            self.initial_norm.compile(fullgraph=True, dynamic=True)
+
+        if self.residual_norm is not None:
+            self.residual_norm.compile(fullgraph=True, dynamic=True)
+        
+        if self.in_projection is not None:
+            self.in_projection.compile(fullgraph=True, dynamic=True)
 
     def prepare_inference_cache(self, batch_size: int, max_seq_len: int):
         device = next(self.parameters()).device

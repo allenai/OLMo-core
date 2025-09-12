@@ -164,6 +164,7 @@ class TransformerGenerationModule(GenerationModule):
         attention_mask: Optional[torch.Tensor] = None,
         return_logits: bool = False,
         return_logprobs: bool = False,
+        return_timing: bool = False,
         completions_only: bool = False,
         log_timing: bool = True,
         profile: bool = False,
@@ -254,7 +255,7 @@ class TransformerGenerationModule(GenerationModule):
                 profile_memory=True,
                 with_flops=True,
                 schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=2),
-                on_trace_ready=torch.profiler.tensorboard_trace_handler('./log/blt_transformer_generation_module'),
+                on_trace_ready=torch.profiler.tensorboard_trace_handler('./log/transformer_generation_module'),
             )
             prof.__enter__()
         else:
@@ -328,6 +329,8 @@ class TransformerGenerationModule(GenerationModule):
         if return_logprobs and all_logprobs:
             logprobs = torch.cat(all_logprobs, dim=1)
 
+        timings = {}
+
         if log_timing:
             torch.cuda.synchronize()
             end_time = time.perf_counter()
@@ -350,14 +353,19 @@ class TransformerGenerationModule(GenerationModule):
             ]
             if decode_start_time and forward_start_time and time_to_first_token:
                 decode_time = end_time - decode_start_time
-                completion_time = end_time - decode_start_time
                 stats_lines.append(
                     f"  Throughput:\n"
                     f"    Setup: {setup_time:.3f}s | Prefill: {time_to_first_token:.3f}s | Decode: {decode_time:.3f}s | Total: {total_time:.3f}s\n"
                     f"    Overall TPS: {tokens_per_sec_per_seq:.1f} /seq | {tokens_per_sec_total:.1f} /total\n"
                     f"    Prefill TPS: {prompt_len / time_to_first_token:.1f} /seq | {prefill_tokens / time_to_first_token:.1f} /total\n"
-                    f"    Completion TPS: {tokens_generated / completion_time:.1f} /seq | {completion_tokens / completion_time:.1f} /total",
+                    f"    Completion TPS: {tokens_generated / decode_time:.1f} /seq | {completion_tokens / decode_time:.1f} /total",
                 )
+
+                timings["setup_time"] = setup_time
+                timings["decode_time"] = decode_time
+                timings["tokens_generated"] = completion_tokens
+                timings["ttft"] = time_to_first_token
+                timings["tpot"] = decode_time / completion_tokens if completion_tokens > 0 else None
 
             stats_lines.append(f"{'=' * 60}")
             log_or_print(log, "\n".join(stats_lines))
@@ -365,7 +373,11 @@ class TransformerGenerationModule(GenerationModule):
         if completions_only:
             generated = generated[:, prompt_len:]
             # NOTE: completions_only does not apply to logits/logprobs. They are already computed only for completions.
-        return generated, logits, logprobs
+        
+        if return_timing:
+            return generated, logits, logprobs, timings
+        else:
+            return generated, logits, logprobs
 
     def load_checkpoint(
         self,
@@ -697,6 +709,7 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         attention_mask: Optional[torch.Tensor] = None,
         return_logits: bool = True,
         return_logprobs: bool = True,
+        return_timing: bool = False,
         completions_only: bool = False,
         log_timing: bool = True,
         stream: bool = False,
@@ -829,6 +842,9 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         )
         forward_start_time = None
         boundary_state = blt_utils.MaskState(torch.zeros(batch_size, dtype=torch.bool, device=self.device))
+        next_tokens = torch.full((input_ids.shape[0],), self.model.end_of_subword_token_blt, device=self.device, dtype=torch.long)  # type: ignore
+        non_boundary_next_tokens = byte_input_ids[:, -1:].clone()
+
         bytes_generated_at_last_boundary = torch.zeros(batch_size, dtype=torch.long, device=self.device)
         is_first_forward = True
 
@@ -850,7 +866,7 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
             input_ids_for_model = (
                 generated
                 if (is_first_forward or not generation_config.use_cache)
-                else self._get_last_non_boundary_token(generated)
+                else non_boundary_next_tokens
             )
             cache_leftpad = (
                 prefill_cache_leftpad if is_first_forward and generation_config.use_cache else None
@@ -865,7 +881,6 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                 blt_config=self.blt_config,
                 cache_leftpad=cache_leftpad if generation_config.use_cache else None,
             )
-
             new_next_tokens = select_next_token(
                 next_token_logits.squeeze(1),
                 do_sample=generation_config.do_sample,
@@ -879,11 +894,13 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                     prof.step()
                 pbar.update(1)
                 tokens_generated_plus_prefilled += 1
-                
+
                 next_tokens = new_next_tokens
+                non_boundary_next_tokens = next_tokens.unsqueeze(1).clone() # clone necessary?
             else:
-                next_tokens = torch.full((input_ids.shape[0],), self.model.end_of_subword_token_blt, device=self.device, dtype=torch.long)  # type: ignore
+                next_tokens[:] = self.model.end_of_subword_token_blt # type: ignore
                 boundary_state.selective_put(new_next_tokens, next_tokens, inv=True)
+                boundary_state.selective_put(new_next_tokens, non_boundary_next_tokens[:, -1], inv=True)
 
             is_first_forward = False
 
@@ -980,6 +997,8 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         # if return_logprobs and all_logprobs:
         #     logprobs = torch.cat(all_logprobs, dim=1)
 
+        timings = {}
+
         if log_timing:
             torch.cuda.synchronize()
             end_time = time.perf_counter()
@@ -1002,14 +1021,19 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
             ]
             if decode_start_time and forward_start_time and time_to_first_token:
                 decode_time = end_time - decode_start_time
-                completion_time = end_time - decode_start_time
                 stats_lines.append(
                     f"  Throughput:\n"
                     f"    Setup: {setup_time:.3f}s | Prefill: {time_to_first_token:.3f}s | Decode: {decode_time:.3f}s | Total: {total_time:.3f}s\n"
                     f"    Overall BPS: {tokens_per_sec_per_seq:.1f} /seq | {tokens_per_sec_total:.1f} /total\n"
                     f"    Prefill BPS: {prompt_len / time_to_first_token:.1f} /seq | {prefill_tokens / time_to_first_token:.1f} /total\n"
-                    f"    Completion BPS: {bytes_generated / completion_time:.1f} /seq | {completion_tokens / completion_time:.1f} /total",
+                    f"    Completion BPS: {bytes_generated / decode_time:.1f} /seq | {completion_tokens / decode_time:.1f} /total",
                 )
+
+                timings["setup_time"] = setup_time
+                timings["decode_time"] = decode_time
+                timings["bytes_generated"] = completion_tokens
+                timings["ttft"] = time_to_first_token
+                timings["tpot"] = decode_time / completion_tokens if completion_tokens > 0 else None
 
             stats_lines.append(f"{'=' * 60}")
             log_or_print(log, "\n".join(stats_lines))
@@ -1063,7 +1087,10 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
             main_path_patch_logprobs = None
             patch_logits = None
 
-        return generated_subword_ids, patch_logits, main_path_patch_logprobs
+        if return_timing:
+            return generated, patch_logits, main_path_patch_logprobs, timings
+        else:
+            return generated, patch_logits, main_path_patch_logprobs
 
     @classmethod
     def from_checkpoint(

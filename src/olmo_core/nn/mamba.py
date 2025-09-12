@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 import logging
-from types import SimpleNamespace
 from mamba_ssm.modules.mamba2 import Mamba2 as _Mamba2
+from mamba_ssm.utils.generation import InferenceParams
 import torch
 from torch import nn
 
@@ -30,7 +30,9 @@ class Mamba(_Mamba2):
         if self.mamba_cache_manager is not None and self.mamba_cache_manager.current_position() == 0:
             # writes to cache inplace
             # Mamba2 expects it in this format
-            inference_params = SimpleNamespace(
+            inference_params = InferenceParams(
+                max_seqlen=x.shape[1], # not used
+                max_batch_size = x.shape[0], # not used
                 key_value_memory_dict={0: (self.mamba_cache_manager.conv_state, self.mamba_cache_manager.ssm_state)},
                 seqlen_offset=self.mamba_cache_manager.current_position(),
             )
@@ -77,12 +79,12 @@ class MambaCacheManager(nn.Module):
         self.conv_state, self.ssm_state = layer.allocate_inference_cache(
             batch_size, max_seqlen=None, dtype=dtype # max seqlen not used
         )
-        self.cache_seqlens = torch.zeros((), dtype=torch.int32, device=self.conv_state.device)
+        self.cache_seqlens = 0
 
     def update_seqlen(self, seqlen: int):
-        self.cache_seqlens.add_(seqlen)
+        self.cache_seqlens += seqlen
 
-    def current_position(self) -> torch.Tensor:
+    def current_position(self) -> int:
         return self.cache_seqlens
 
     def zero_cache(self):

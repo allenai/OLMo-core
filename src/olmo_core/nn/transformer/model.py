@@ -1336,13 +1336,8 @@ class BLTTransformer(Transformer):
         """
         super().apply_compile()
 
-        for block in self.local_encoder.blocks.values():  # type: ignore
-            block = cast(TransformerBlockBase, block)
-            block.apply_compile()
-
-        for block in self.local_decoder.blocks.values():  # type: ignore
-            block = cast(TransformerBlockBase, block)
-            block.apply_compile()
+        self.local_encoder.apply_compile()  # type: ignore
+        self.local_decoder.apply_compile()  # type: ignore
 
     def forward(
         self,
