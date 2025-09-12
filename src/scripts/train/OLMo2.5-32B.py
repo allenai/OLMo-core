@@ -60,7 +60,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         ),
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.budget,
-            activation_memory_budget=0.4
+            activation_memory_budget=0.25
         ),
         float8_config=Float8Config(enabled=True),
         z_loss_multiplier=1e-5,
