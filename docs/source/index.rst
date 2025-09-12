@@ -28,6 +28,7 @@ specific to your environment. Then you can install OLMo-core from PyPI with:
    :maxdepth: 2
    :caption: Guides
 
+   guides/all_in_one_for_researchers.md
    guides/data_loading.rst
 
 .. toctree::
