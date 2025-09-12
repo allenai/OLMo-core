@@ -67,7 +67,7 @@ class SubCmd(StrEnum):
                 # real benchmark
                 algbw_gather = []
                 for i in range(TRIALS):
-                    log.info(f"{i+1}")
+                    log.info(f"{i + 1}")
                     algbw_gather += timed_allreduce(mat, start_event, end_event)
 
                 algbw = torch.mean(torch.stack(algbw_gather))
@@ -79,9 +79,9 @@ class SubCmd(StrEnum):
                 busbw = algbw * (2 * (n - 1) / n)
 
                 log.info(
-                    f"The average bandwidth of all_reduce with a {M*N*4/1e9}GB payload ({TRIALS} trials, {n} ranks):\n"
-                    f"algbw: {algbw/1e9:.3f} GBps ({algbw*8/1e9:.1f} Gbps)\n"
-                    f"busbw: {busbw/1e9:.3f} GBps ({busbw*8/1e9:.1f} Gbps)\n"
+                    f"The average bandwidth of all_reduce with a {M * N * 4 / 1e9}GB payload ({TRIALS} trials, {n} ranks):\n"
+                    f"algbw: {algbw / 1e9:.3f} GBps ({algbw * 8 / 1e9:.1f} Gbps)\n"
+                    f"busbw: {busbw / 1e9:.3f} GBps ({busbw * 8 / 1e9:.1f} Gbps)\n"
                 )
             finally:
                 teardown_training_environment()
@@ -97,7 +97,7 @@ class BenchmarkConfig(Config):
 def build_config(script: str, run_name: str, cluster: str, overrides: List[str]) -> BenchmarkConfig:
     launch_config = BeakerLaunchConfig(
         name=f"{run_name}-{generate_uuid()[:8]}",
-        budget="ai2/oe-training",
+        budget="ai2/oe-base",
         cmd=[script, SubCmd.run, run_name, cluster, *overrides],
         task_name="benchmark",
         workspace="ai2/OLMo-core",
@@ -143,7 +143,7 @@ def timed_allreduce(mat, start_event, end_event):
 
 def main():
     usage = f"""
-[yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]{'|'.join(SubCmd)}[/] [i b]RUN_NAME CLUSTER[/] [i][OVERRIDES...][/]
+[yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]{"|".join(SubCmd)}[/] [i b]RUN_NAME CLUSTER[/] [i][OVERRIDES...][/]
 
 [b]Subcommands[/]
 [b magenta]launch:[/]      Launch the benchmark on Beaker with the [b magenta]run[/] subcommand.
