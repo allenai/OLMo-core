@@ -142,5 +142,3 @@ if __name__ == "__main__":
         include_instance_filter=False,  # We use SkipStepOptimizer for this problem.
         include_default_evals=False,
     )
-
-# TODO: set data
