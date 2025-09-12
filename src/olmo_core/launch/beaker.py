@@ -4,13 +4,15 @@ Launch experiments on `Beaker <https://beaker.org>`_.
 
 import hashlib
 import logging
+import os
 import tempfile
 import time
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
-from typing import List, Optional, Set, Tuple
+from typing import List, Literal, Optional, Set, Tuple
 
+import requests
 from beaker import (
     Beaker,
     Dataset,
@@ -504,7 +506,11 @@ class BeakerLaunchConfig(Config):
         )
 
     def launch(
-        self, follow: bool = False, torchrun: bool = True, entrypoint: Optional[str] = None
+        self,
+        follow: bool = False,
+        torchrun: bool = True,
+        entrypoint: Optional[str] = None,
+        slack_webhook_url: Optional[str] = None,
     ) -> Experiment:
         """
         Launch a Beaker experiment using this config.
@@ -517,6 +523,9 @@ class BeakerLaunchConfig(Config):
         :param torchrun: Launch the target command with ``torchrun``.
         :param entrypoint: Provide an optional entrypoint program if ``torchrun`` is ``False``.
             Defaults to 'python'.
+        :param slack_webhook_url: If provided, send notifications to this Slack webhook URL
+            when the experiment starts, fails, or succeeds. Only used if ``follow=True``.
+            If not given explicitly, this will check for the env var ``OLMO_CORE_SLACK_WEBHOOK_URL``.
 
         :returns: The Beaker experiment.
         """
@@ -527,8 +536,11 @@ class BeakerLaunchConfig(Config):
         if not follow:
             return experiment
 
+        if slack_webhook_url is None:
+            slack_webhook_url = os.environ.get("OLMO_CORE_SLACK_WEBHOOK_URL")
+
         try:
-            follow_experiment(self.beaker, experiment)
+            follow_experiment(self.beaker, experiment, slack_webhook_url=slack_webhook_url)
         except KeyboardInterrupt:
             log.warning("Caught keyboard interrupt...")
             if Confirm.ask("Would you like to cancel the experiment?"):
@@ -543,7 +555,12 @@ class BeakerLaunchConfig(Config):
         return experiment
 
 
-def follow_experiment(beaker: Beaker, experiment: Experiment, tail: bool = False):
+def follow_experiment(
+    beaker: Beaker,
+    experiment: Experiment,
+    tail: bool = False,
+    slack_webhook_url: Optional[str] = None,
+):
     # Wait for job to start...
     job: Optional[Job] = beaker.experiment.tasks(experiment.id)[0].latest_job  # type: ignore
     if job is None:
@@ -569,6 +586,9 @@ def follow_experiment(beaker: Beaker, experiment: Experiment, tail: bool = False
             continue
         break
 
+    if slack_webhook_url is not None:
+        _send_slack_notification_for_event(beaker, experiment, "started", slack_webhook_url)
+
     # Stream logs...
     log.info("Showing logs:")
     print()
@@ -589,13 +609,40 @@ def follow_experiment(beaker: Beaker, experiment: Experiment, tail: bool = False
     exit_code = job.status.exit_code
 
     if exit_code is None:
+        if slack_webhook_url is not None:
+            _send_slack_notification_for_event(beaker, experiment, "failed", slack_webhook_url)
         raise BeakerExperimentFailedError(
             f"Experiment failed, see {beaker.experiment.url(experiment)} for details"
         )
     elif exit_code > 0:
+        if slack_webhook_url is not None:
+            _send_slack_notification_for_event(beaker, experiment, "failed", slack_webhook_url)
         raise BeakerExperimentFailedError(
             f"Experiment exited with non-zero code ({exit_code}), "
             f"see {beaker.experiment.url(experiment)} for details"
         )
     else:
         log.info(f"Experiment completed successfully: {beaker.experiment.url(experiment)}")
+        if slack_webhook_url is not None:
+            _send_slack_notification_for_event(beaker, experiment, "succeeded", slack_webhook_url)
+
+
+def _send_slack_notification_for_event(
+    beaker: Beaker,
+    experiment: Experiment,
+    event: Literal["started", "succeeded", "failed"],
+    webhook_url: str,
+):
+    workload_name = experiment.full_name
+    workload_url = beaker.experiment.url(experiment)
+
+    if event == "started":
+        text = f":check: Workload <{workload_url}|*{workload_name}*> has started! :runner:"
+    elif event == "failed":
+        text = f":check-failed: Workload <{workload_url}|*{workload_name}*> failed!"
+    elif event == "succeeded":
+        text = f":check: Workload <{workload_url}|*{workload_name}*> succeeded!"
+    else:
+        raise ValueError(f"Unknown event: {event}")
+
+    requests.post(webhook_url, json={"text": text})
