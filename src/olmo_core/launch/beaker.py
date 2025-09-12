@@ -31,7 +31,11 @@ from rich.prompt import Confirm
 
 from ..config import Config, StrEnum
 from ..distributed.utils import OLMO_SHARED_FS_ENV_VAR
-from ..exceptions import BeakerExperimentFailedError, OLMoConfigurationError
+from ..exceptions import (
+    BeakerExperimentFailedError,
+    OLMoConfigurationError,
+    OLMoEnvironmentError,
+)
 from ..train.callbacks.beaker import BEAKER_RESULT_DIR
 from ..utils import LOG_FILTER_TYPE_ENV_VAR, LogFilterType
 from ..version import VERSION
@@ -510,7 +514,7 @@ class BeakerLaunchConfig(Config):
         follow: bool = False,
         torchrun: bool = True,
         entrypoint: Optional[str] = None,
-        slack_webhook_url: Optional[str] = None,
+        slack_notifications: Optional[bool] = None,
     ) -> Experiment:
         """
         Launch a Beaker experiment using this config.
@@ -523,21 +527,33 @@ class BeakerLaunchConfig(Config):
         :param torchrun: Launch the target command with ``torchrun``.
         :param entrypoint: Provide an optional entrypoint program if ``torchrun`` is ``False``.
             Defaults to 'python'.
-        :param slack_webhook_url: If provided, send notifications to this Slack webhook URL
-            when the experiment starts, fails, or succeeds. Only used if ``follow=True``.
-            If not given explicitly, this will check for the env var ``OLMO_CORE_SLACK_WEBHOOK_URL``.
+        :param slack_notifications: If ``follow=True``, send Slack notifications when the run launches,
+            fails, or succeeds. This requires the env var ``SLACK_WEBHOOK_URL``.
 
         :returns: The Beaker experiment.
         """
+        # Check for webhook URL env var if needed.
+        slack_webhook_url: Optional[str] = None
+        if follow and slack_notifications is not False:
+            from olmo_core.train.callbacks.slack_notifier import (
+                SLACK_WEBHOOK_URL_ENV_VAR,
+            )
+
+            if slack_notifications is None:
+                slack_notifications = SLACK_WEBHOOK_URL_ENV_VAR in os.environ
+            elif slack_notifications and SLACK_WEBHOOK_URL_ENV_VAR not in os.environ:
+                raise OLMoEnvironmentError(
+                    f"Missing env var '{SLACK_WEBHOOK_URL_ENV_VAR}' for Slack notifications"
+                )
+
+            slack_webhook_url = os.environ.get(SLACK_WEBHOOK_URL_ENV_VAR)
+
         spec = self.build_experiment_spec(torchrun=torchrun, entrypoint=entrypoint)
         experiment = self.beaker.experiment.create(self.name, spec)
         log.info(f"Experiment submitted, see progress at {self.beaker.experiment.url(experiment)}")
 
         if not follow:
             return experiment
-
-        if slack_webhook_url is None:
-            slack_webhook_url = os.environ.get("OLMO_CORE_SLACK_WEBHOOK_URL")
 
         try:
             follow_experiment(self.beaker, experiment, slack_webhook_url=slack_webhook_url)
@@ -587,7 +603,7 @@ def follow_experiment(
         break
 
     if slack_webhook_url is not None:
-        _send_slack_notification_for_event(beaker, experiment, "started", slack_webhook_url)
+        _send_slack_notification_for_event(beaker, experiment, "launched", slack_webhook_url)
 
     # Stream logs...
     log.info("Showing logs:")
@@ -630,19 +646,22 @@ def follow_experiment(
 def _send_slack_notification_for_event(
     beaker: Beaker,
     experiment: Experiment,
-    event: Literal["started", "succeeded", "failed"],
+    event: Literal["launched", "succeeded", "failed"],
     webhook_url: str,
 ):
     workload_name = experiment.full_name
     workload_url = beaker.experiment.url(experiment)
 
-    if event == "started":
-        text = f":check: Workload <{workload_url}|*{workload_name}*> has started! :runner:"
+    if event == "launched":
+        text = f":check: Run <{workload_url}|*{workload_name}*> has launched! :runner:"
     elif event == "failed":
-        text = f":check-failed: Workload <{workload_url}|*{workload_name}*> failed!"
+        text = f":check-failed: Run <{workload_url}|*{workload_name}*> failed!"
     elif event == "succeeded":
-        text = f":check: Workload <{workload_url}|*{workload_name}*> succeeded!"
+        text = f":check: Run <{workload_url}|*{workload_name}*> succeeded!"
     else:
         raise ValueError(f"Unknown event: {event}")
 
-    requests.post(webhook_url, json={"text": text})
+    try:
+        requests.post(webhook_url, json={"text": text})
+    except Exception as e:
+        log.exception(f"Failed to send Slack notification: {e}")
