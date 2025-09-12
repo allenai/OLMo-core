@@ -6,7 +6,7 @@ from datetime import datetime
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
-from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
+from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE, get_root_dir
 from olmo_core.internal.experiment import CommonComponents, main
 from olmo_core.nn.attention import AttentionConfig
 from olmo_core.nn.fla.layer import FLAConfig
@@ -135,9 +135,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
     config = (
         TrainerConfig(
-            # Previously was gs://ai2-llm/..
-            # That requires GOOGLE_CREDENTIALS secret
-            save_folder=f"/weka/ai2-llm/checkpoints/willm/linear-rnns/{common.run_name}/",
+            # Previously was gs://ai2-llm/..., which required GOOGLE_CREDENTIALS secret
+            save_folder=f"{get_root_dir(cluster)}/checkpoints/willm/linear-rnns/{common.run_name}/",
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=cancel_check_interval,
