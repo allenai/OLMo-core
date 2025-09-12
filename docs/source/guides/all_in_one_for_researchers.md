@@ -16,3 +16,4 @@ Next you should create or activate a Python virtual environment with a Python ve
 We recommend using [uv](https://docs.astral.sh/uv/) for that, but any other virtual environment system will suffice as well, including conda.
 
 Now once you've `cd`-ed into the root directory of your clone of OLMo-core *and* activated your virtual environment, install [PyTorch](https://pytorch.org) according the directions for your environment and hardware (a CPU-only distribution is fine for development).
+Then install
