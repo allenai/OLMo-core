@@ -76,7 +76,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     assert len(common.launch.clusters) == 1
     cluster = common.launch.clusters[0]
 
-    run_name = f"{common.run_name}-{datetime.now().astimezone().strftime('%Y%m%dT%H%M%S%z')}"
+    run_name = f"{common.run_name}-{datetime.now().astimezone().strftime('%Y%m%dT%H%M%z')}"
 
     return (
         TrainerConfig(
