@@ -225,6 +225,17 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
                 ),
                 layer_norm=teacher_model_config.block.layer_norm,
             )
+        elif "xlstm_no_ffn" in model_style_tags:
+            local_encoder_block = local_decoder_block = TransformerBlockConfig(
+                name=TransformerBlockType.xlstm,
+                attention=AttentionConfig(), # not used
+                xlstm=XLSTMConfig(
+                    num_heads=16,
+                    dtype=teacher_model_config.dtype,              
+                ),
+                feed_forward=None,
+                layer_norm=teacher_model_config.block.layer_norm,
+            )
         elif "fla" in model_style_tags:
             local_encoder_block = local_decoder_block = TransformerBlockConfig(
                 name=TransformerBlockType.fla,
