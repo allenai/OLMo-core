@@ -43,12 +43,12 @@ RUN chmod +x ~/miniconda.sh && \
 
 # Install PyTorch core ecosystem.
 ARG CUDA_VERSION_PATH
-ARG TORCH_VERSION=2.7.1
+ARG TORCH_VERSION=2.8.0
 ARG INSTALL_CHANNEL=whl
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/${INSTALL_CHANNEL}/${CUDA_VERSION_PATH}/ \
     torch==${TORCH_VERSION} torchao torchvision torchaudio
 
-ENV TORCH_CUDA_ARCH_LIST="8.0 9.0"
+ENV TORCH_CUDA_ARCH_LIST="8.0 9.0 10.0"
 
 # Install grouped-gemm.
 # NOTE: right now we need to build with CUTLASS so we can pass batch sizes on GPU.
@@ -58,15 +58,15 @@ ARG GROUPED_GEMM_VERSION="grouped_gemm @ git+https://git@github.com/tgale96/grou
 RUN pip install --no-build-isolation --no-cache-dir "${GROUPED_GEMM_VERSION}"
 
 # Install flash-attn.
-ARG FLASH_ATTN_VERSION=2.7.4.post1
+ARG FLASH_ATTN_VERSION=2.8.2
 RUN pip install --no-build-isolation --no-cache-dir flash-attn==${FLASH_ATTN_VERSION}
 
 # Install ring-flash-attn.
-ARG RING_FLASH_ATTN_VERSION=0.1.5
+ARG RING_FLASH_ATTN_VERSION=0.1.6
 RUN pip install --no-build-isolation --no-cache-dir ring-flash-attn==${RING_FLASH_ATTN_VERSION}
 
 # Install liger-kernel.
-ARG LIGER_KERNEL_VERSION=0.5.10
+ARG LIGER_KERNEL_VERSION=0.6.1
 RUN pip install --no-build-isolation --no-cache-dir liger-kernel==${LIGER_KERNEL_VERSION}
 
 # Install direct dependencies, but not source code.
