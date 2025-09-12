@@ -109,6 +109,7 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
         num_nodes=int(os.environ.get("BEAKER_NUM_NODES", "1")),
         num_gpus=int(os.environ.get("BEAKER_NUM_GPUS", "1")),
         priority=cast(Priority, os.environ.get("BEAKER_PRIORITY", "normal")),
+        preemptible=os.environ.get("BEAKER_PREEMPTIBLE", "true").lower() in {"1", "true", "yes"},
         shared_filesystem=shared_filesystem,
         allow_dirty=True,
         beaker_image=image,

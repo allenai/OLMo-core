@@ -12,6 +12,7 @@ from torch.distributed.tensor.parallel import PrepareModuleInput, parallelize_mo
 from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
 from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.doc_utils import beta_feature
+from olmo_core.nn.blt.utils import MaskState
 from olmo_core.nn.xlstm import XLSTMConfig
 from olmo_core.ops import attach_auxiliary_loss
 
@@ -957,6 +958,8 @@ class MambaBlock(TransformerBlockBase):
         self,
         x: torch.Tensor,
         *,
+        sequence_start_indices: Optional[torch.Tensor] = None,
+        cache_mask: Optional[MaskState] = None,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         **kwargs,
     ) -> torch.Tensor:
@@ -973,7 +976,7 @@ class MambaBlock(TransformerBlockBase):
         # without dynamic=False mamba runs into weird "'math' is not defined" errors akin to https://github.com/pytorch/pytorch/issues/100972
         # this might slow down eval due to recompiles? but seems fine from initial tries.
         # if this is too slow an alternative is setting torch.compiler.set_stance to disable compile in eval
-        return self.compile(fullgraph=False, dynamic=False)
+        self.compile(fullgraph=False, dynamic=False)
 
     def apply_fsdp(
         self,
@@ -1031,11 +1034,20 @@ class XLSTMBlock(TransformerBlockBase):
         self,
         x: torch.Tensor,
         *,
+        sequence_start_indices: Optional[torch.Tensor] = None,
+        cache_mask: Optional[MaskState] = None,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         **kwargs,
     ) -> torch.Tensor:
         del loss_div_factor
-        h = x + self.dropout(self.xlstm(self.xlstm_norm(x), **kwargs))
+        h = x + self.dropout(
+            self.xlstm(
+                self.xlstm_norm(x),
+                sequence_start_indices=sequence_start_indices,
+                cache_mask=cache_mask,
+                **kwargs
+            )
+        )
 
         if self.feed_forward is None or self.feed_forward_norm is None:
             assert self.feed_forward is None and self.feed_forward_norm is None
@@ -1044,7 +1056,7 @@ class XLSTMBlock(TransformerBlockBase):
             return h + self.dropout(self.feed_forward(self.feed_forward_norm(h)))
 
     def apply_compile(self):
-        return self.compile(fullgraph=False, dynamic=False)
+        self.compile(fullgraph=False, dynamic=False)
 
     def apply_fsdp(
         self,
@@ -1115,7 +1127,7 @@ class FLABlock(TransformerBlockBase):
             return h + self.dropout(self.feed_forward(self.feed_forward_norm(h)))
 
     def apply_compile(self):
-        return self.compile(fullgraph=False, dynamic=False)
+        self.compile(fullgraph=False, dynamic=False)
 
     def apply_fsdp(
         self,

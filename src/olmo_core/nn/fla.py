@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 import logging
-from types import SimpleNamespace
 import fla.layers
 import torch
 from torch import nn
