@@ -1579,7 +1579,7 @@ class BLTDistillTransformer(BLTTransformer):
         for block in list(self.local_encoder.blocks.values()) + list(self.local_decoder.blocks.values()):  # type: ignore
             if hasattr(block, "xlstm"):
                 # disable input gate
-                block.xlstm.igate_preact.bias.data.fill_(-100_000.0)  # type: ignore
+                block.xlstm.igate_preact.bias.data.fill_(blt_config.xlstm_igate_bias_init)  # type: ignore
 
     def _rep_compare_fn(self, blt_config: BLTConfig):
         if blt_config.rep_compare_fn == "l2":
