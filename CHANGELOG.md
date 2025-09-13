@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Increased NCCL_FASTRAK_PLUGIN_ACCEPT_TIMEOUT_MS from 10 minutes to 30 minutes.
+- Set `fused_linear_cross_entropy_loss accum_dtype` to fp32 in `LMHead`.
 
 ### Added
 

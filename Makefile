@@ -49,7 +49,7 @@ INSTALL_CHANNEL = whl
 GROUPED_GEMM_VERSION = "grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@main"
 FLASH_ATTN_VERSION = 2.7.4.post1
 RING_FLASH_ATTN_VERSION = 0.1.5
-LIGER_KERNEL_VERSION = 0.5.10
+LIGER_KERNEL_VERSION = 0.6.2
 
 #--------------#
 # Build naming #
