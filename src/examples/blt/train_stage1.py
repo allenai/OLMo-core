@@ -70,7 +70,7 @@ from olmo_core.train.train_module import (
 from olmo_core.utils import seed_all
 
 NUM_WORKERS = 32
-SEQUENCE_LENGTH = 1024
+SEQUENCE_LENGTH = int(os.environ.get("SEQUENCE_LENGTH", 1024))
 QUICK_DEBUG = False
 GLOBAL_BATCH_SIZE = 64
 LOCAL_BATCH_SIZE = 64
@@ -80,7 +80,6 @@ TRAIN_MODE = os.environ.get("TRAIN_MODE", "full_stage_1")
 DATA_SOURCE = os.environ.get("DATA_SOURCE", "dclm")
 DTYPE = os.environ.get("DTYPE", "float32")
 LR_SCHEDULE = os.environ.get("LR_SCHEDULE", "linear_with_warmup")
-TOKEN_NOISE_STR = os.environ.get("TOKEN_NOISE_STR", "")
 ADD_HASH_EMBEDDINGS = os.environ.get("ADD_HASH_EMBEDDINGS", "true").lower() in {"1", "true", "yes"}
 ADD_EXPANDED_EMBEDDINGS = os.environ.get("ADD_EXPANDED_EMBEDDINGS", "false").lower() in {"1", "true", "yes"}
 OLMO_ARCH = os.environ.get("OLMO_ARCH", "olmo2_1B_v2")
@@ -471,8 +470,8 @@ def main(run_name: str, overrides: List[str]):
 
     dataset = config.dataset.build()
 
-    if TOKEN_NOISE_STR:
-        dataset.set_noise_fn(TOKEN_NOISE_STR)  # type: ignore
+    if train_module.blt_config.gradual_boundary_compression_kind == "bpe":  # type: ignore
+        dataset.enable_compute_bpe_merges()  # type: ignore
 
     data_loader = config.data_loader.build(
         dataset,
