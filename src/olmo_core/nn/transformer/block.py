@@ -961,7 +961,7 @@ class MambaBlock(TransformerBlockBase):
         sequence_start_indices: Optional[torch.Tensor] = None,
         cache_mask: Optional[MaskState] = None,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
-        return_mixed_out: bool = False
+        return_mixed_out: bool = False,
         **kwargs,
     ) -> torch.Tensor:
         del loss_div_factor
