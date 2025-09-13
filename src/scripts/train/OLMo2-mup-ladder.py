@@ -44,7 +44,7 @@ class BaselineModelLadder(ModelLadder):
         ModelSize.size_370M: 4 * 4096,
         # ===============================,
         ModelSize.size_970M: 8 * 4096,
-        ModelSize.size_7B: 4 * 4096,
+        ModelSize.size_7B: 2 * 4096,
     }
 
     MODEL_OVERRIDES: ClassVar[Dict[ModelSize, Dict[str, Any]]] = {
