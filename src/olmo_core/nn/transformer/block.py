@@ -961,16 +961,25 @@ class MambaBlock(TransformerBlockBase):
         sequence_start_indices: Optional[torch.Tensor] = None,
         cache_mask: Optional[MaskState] = None,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        return_mixed_out: bool = False
         **kwargs,
     ) -> torch.Tensor:
         del loss_div_factor
-        h = x + self.dropout(self.mamba(self.mamba_norm(x), **kwargs))
+        mixed_h = x + self.dropout(self.mamba(self.mamba_norm(x), **kwargs))
 
         if self.feed_forward is None or self.feed_forward_norm is None:
             assert self.feed_forward is None and self.feed_forward_norm is None
-            return h
+            if return_mixed_out:
+                return mixed_h, mixed_h
+            else:
+                return mixed_h
         else:
-            return h + self.dropout(self.feed_forward(self.feed_forward_norm(h)))
+            h = mixed_h + self.dropout(self.feed_forward(self.feed_forward_norm(mixed_h)))
+
+            if return_mixed_out:
+                return h, mixed_h
+            else:
+                return h
 
     def apply_compile(self):
         # without dynamic=False mamba runs into weird "'math' is not defined" errors akin to https://github.com/pytorch/pytorch/issues/100972
@@ -1037,10 +1046,11 @@ class XLSTMBlock(TransformerBlockBase):
         sequence_start_indices: Optional[torch.Tensor] = None,
         cache_mask: Optional[MaskState] = None,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        return_mixed_out: bool = False,
         **kwargs,
     ) -> torch.Tensor:
         del loss_div_factor
-        h = x + self.dropout(
+        mixed_h = x + self.dropout(
             self.xlstm(
                 self.xlstm_norm(x),
                 sequence_start_indices=sequence_start_indices,
@@ -1051,9 +1061,17 @@ class XLSTMBlock(TransformerBlockBase):
 
         if self.feed_forward is None or self.feed_forward_norm is None:
             assert self.feed_forward is None and self.feed_forward_norm is None
-            return h
+            if return_mixed_out:
+                return mixed_h, mixed_h
+            else:
+                return mixed_h
         else:
-            return h + self.dropout(self.feed_forward(self.feed_forward_norm(h)))
+            h = mixed_h + self.dropout(self.feed_forward(self.feed_forward_norm(mixed_h)))
+
+            if return_mixed_out:
+                return h, mixed_h
+            else:
+                return h
 
     def apply_compile(self):
         self.compile(fullgraph=False, dynamic=False)

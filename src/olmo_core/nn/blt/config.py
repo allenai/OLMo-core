@@ -21,7 +21,10 @@ class BLTConfig(Config):
     eval_add_boundary_logp: bool = False
     do_alm_debiasing: bool = False
     rep_compare_fn: str = "l2"
-    target_ratio: float = 4.5
+    start_ratio: float = 4.3
+    target_ratio: float = 4.3
+    gradual_boundary_compression_kind: str | None = None
+    gradual_boundary_compression_steps: int = 150_000
     encoder_loss_lookahead: int = 0
     encoder_loss_no_lookahead_weight: float = 1.0
     encoder_loss_lookahead_weights: list[float] = field(default_factory=lambda: [])
@@ -59,6 +62,7 @@ class LocalEncoderConfig(Config):
     boundary_predictor: Optional[str] = None
     boundary_predictor_lookahead: int = 1
     represent_bytes_with_embeddings: bool = False
+    represent_bytes_with_last_mixed_out: bool = False
     blt_k: Optional[int] = None  # used in blt
     blt_compat: bool = False # for compat with BLT checkpoints
     dtype: DType = DType.float32
@@ -88,6 +92,7 @@ class LocalEncoderConfig(Config):
             boundary_predictor=self.boundary_predictor,
             boundary_predictor_lookahead=self.boundary_predictor_lookahead,
             represent_bytes_with_embeddings=self.represent_bytes_with_embeddings,
+            represent_bytes_with_last_mixed_out=self.represent_bytes_with_last_mixed_out,
             blt_k=self.blt_k,
             blt_compat=self.blt_compat,
             dtype=self.dtype.as_pt(),

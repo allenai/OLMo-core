@@ -280,6 +280,7 @@ class LocalEncoder(nn.Module):
             boundary_predictor: Optional[str] = None,
             boundary_predictor_lookahead: int = 1,
             represent_bytes_with_embeddings: bool = False,
+            represent_bytes_with_last_mixed_out: bool = False,
             subword_vocab_size: Optional[int] = 100278, # dolma2 tokenizer specific!
             blt_k: Optional[int] = None,
             blt_compat: bool = False,  # for compat with BLT checkpoints
@@ -311,6 +312,7 @@ class LocalEncoder(nn.Module):
         self.boundary_predictor_lookahead = boundary_predictor_lookahead
         self.blt_k = blt_k
         self.represent_bytes_with_embeddings = represent_bytes_with_embeddings
+        self.represent_bytes_with_last_mixed_out = represent_bytes_with_last_mixed_out
         self.blt_compat = blt_compat
         self.dtype = dtype
 
@@ -780,7 +782,7 @@ class LocalEncoder(nn.Module):
         embeddings = self._embed(tokens, expanded_input_ids)
 
         # pass through encoder layers
-        h = embeddings
+        h = h_mixed = embeddings
 
         dtype = h.dtype
 
@@ -790,7 +792,7 @@ class LocalEncoder(nn.Module):
             #if self.compile_enabled:
             #    mark_dynamic(h, (0, 1), strict=False)
             # TODO(benjaminm): do we need local_block_kwargs?
-            h = block(h)
+            h, h_mixed = block(h, return_mixed_out=True)
 
         if self.post_last_block_norm is not None:
             h = self.post_last_block_norm(h)
@@ -825,6 +827,8 @@ class LocalEncoder(nn.Module):
 
         if self.represent_bytes_with_embeddings:
             h = embeddings
+        elif self.represent_bytes_with_last_mixed_out:
+            h = h_mixed
 
         return h, patch_embeddings, boundary_logprobs, boundary_mask
 
