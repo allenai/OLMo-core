@@ -33,86 +33,87 @@ class TransformerBLTTrainModule(TransformerTrainModule):
         self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any]]:
         batch["blt_config"] = self.blt_config
-        batch["step"] = self.trainer.global_step
-
-        if self.blt_config.gradual_boundary_compression_kind == "bpe":
-            if "bpe_merges" not in batch:
-                raise ValueError("To use bpe gradual boundary compression, bpe_merges must be computed and included in the batch.")
-
-            if self.trainer.global_step >= self.blt_config.gradual_boundary_compression_steps:
-                current_ratio = self.blt_config.target_ratio
-            else:
-                current_ratio = self.blt_config.start_ratio + (self.blt_config.target_ratio - self.blt_config.start_ratio) * (self.trainer.global_step / self.blt_config.gradual_boundary_compression_steps)
-
-            patch_lens = [[l for l in lengths if l > 0] for lengths in batch["patch_lens"].tolist()]
-            n_bytes = (batch["labels"] != self.label_ignore_index).sum(dim=1)
-
-            for example_bpe_merges, example_patch_lens, example_n_bytes in zip(batch["bpe_merges"], patch_lens, n_bytes):
-                for merge_idx in example_bpe_merges:
-                    if example_n_bytes / len(example_patch_lens) >= current_ratio:
-                        break
-
-                    if merge_idx + 2 >= len(example_patch_lens):
-                        continue
-
-                    # offset by one due to bos
-                    example_patch_lens[merge_idx + 1] = example_patch_lens[merge_idx + 1] + example_patch_lens[merge_idx + 2]
-                    del example_patch_lens[merge_idx + 2]
-
-            patch_lens = blt_utils.pad_right([torch.tensor(lengths) for lengths in patch_lens])
-
-            batch["patch_lens"].zero_()
-            batch["patch_lens"][:, :patch_lens.shape[1]] = patch_lens
-
-            batch["original_input_ids"] = None # can't use
-        elif self.blt_config.gradual_boundary_compression_kind == "space":
-            epsilon = 1e-6
-
-            if self.trainer.global_step >= self.blt_config.gradual_boundary_compression_steps:
-                current_ratio = self.blt_config.target_ratio
-            else:
-                current_ratio = self.blt_config.start_ratio + (self.blt_config.target_ratio - self.blt_config.start_ratio) * (self.trainer.global_step / self.blt_config.gradual_boundary_compression_steps)
-            
-            n_bytes = (batch["labels"] != self.label_ignore_index).sum(dim=1)
-
-            subword_ratio = n_bytes / (batch["patch_lens"] > 0).sum(-1)
-            space_ratio = n_bytes / (batch["space_patch_lens"] > 0).sum(-1)
-
-            interp = (current_ratio - subword_ratio) / (space_ratio - subword_ratio).clamp(min=epsilon)
-            interp = torch.clamp(interp, 0.0, 1.0)
-
-            patch_lens = []
-
-            for example_interp, example_subword_patch_lens, example_space_patch_lens in zip(interp, batch["patch_lens"], batch["space_patch_lens"]):
-                example_interp = example_interp.item()
-
-                subword_patch_end_indices = set((torch.cumsum(example_subword_patch_lens, dim=0) - 1).tolist())
-                space_patch_end_indices = set((torch.cumsum(example_space_patch_lens, dim=0) - 1).tolist())
-
-                subword_intersect = subword_patch_end_indices - space_patch_end_indices
-                space_intersect = space_patch_end_indices - subword_patch_end_indices
-    
-                patch_end_indices = (
-                    (subword_patch_end_indices & space_patch_end_indices) |
-                    set(random.sample(list(subword_intersect), int(len(subword_intersect) * (1 - example_interp)))) |
-                    set(random.sample(list(space_intersect), int(len(space_intersect) * example_interp)))
-                )
-                patch_end_indices = torch.tensor(sorted(list(patch_end_indices)), dtype=torch.long)
-                example_patch_lens = torch.zeros_like(patch_end_indices)
-                example_patch_lens[0] = 1
-                example_patch_lens[1:] = patch_end_indices[1:] - patch_end_indices[:-1]
-
-                patch_lens.append(example_patch_lens)
-
-            patch_lens = blt_utils.pad_right(patch_lens)
-
-            batch["patch_lens"].zero_()
-            batch["patch_lens"][:, :patch_lens.shape[1]] = patch_lens
-
-            batch["original_input_ids"] = None # can't use    
+        batch["step"] = self.trainer.global_step 
 
         # this has had the byte collator + ByteFSLDataset applied, no need to patch
         if "patch_lens" in batch:
+            # apply gradual boundary compression - only during training
+            if self.blt_config.gradual_boundary_compression_kind == "bpe":
+                if "bpe_merges" not in batch:
+                    raise ValueError("To use bpe gradual boundary compression, bpe_merges must be computed and included in the batch.")
+
+                if self.trainer.global_step >= self.blt_config.gradual_boundary_compression_steps:
+                    current_ratio = self.blt_config.target_ratio
+                else:
+                    current_ratio = self.blt_config.start_ratio + (self.blt_config.target_ratio - self.blt_config.start_ratio) * (self.trainer.global_step / self.blt_config.gradual_boundary_compression_steps)
+
+                patch_lens = [[l for l in lengths if l > 0] for lengths in batch["patch_lens"].tolist()]
+                n_bytes = (batch["labels"] != self.label_ignore_index).sum(dim=1)
+
+                for example_bpe_merges, example_patch_lens, example_n_bytes in zip(batch["bpe_merges"], patch_lens, n_bytes):
+                    for merge_idx in example_bpe_merges:
+                        if example_n_bytes / len(example_patch_lens) >= current_ratio:
+                            break
+
+                        if merge_idx + 2 >= len(example_patch_lens):
+                            continue
+
+                        # offset by one due to bos
+                        example_patch_lens[merge_idx + 1] = example_patch_lens[merge_idx + 1] + example_patch_lens[merge_idx + 2]
+                        del example_patch_lens[merge_idx + 2]
+
+                patch_lens = blt_utils.pad_right([torch.tensor(lengths) for lengths in patch_lens])
+
+                batch["patch_lens"].zero_()
+                batch["patch_lens"][:, :patch_lens.shape[1]] = patch_lens
+
+                batch["original_input_ids"] = None # can't use
+            elif self.blt_config.gradual_boundary_compression_kind == "space":
+                epsilon = 1e-6
+
+                if self.trainer.global_step >= self.blt_config.gradual_boundary_compression_steps:
+                    current_ratio = self.blt_config.target_ratio
+                else:
+                    current_ratio = self.blt_config.start_ratio + (self.blt_config.target_ratio - self.blt_config.start_ratio) * (self.trainer.global_step / self.blt_config.gradual_boundary_compression_steps)
+                
+                n_bytes = (batch["labels"] != self.label_ignore_index).sum(dim=1)
+
+                subword_ratio = n_bytes / (batch["patch_lens"] > 0).sum(-1)
+                space_ratio = n_bytes / (batch["space_patch_lens"] > 0).sum(-1)
+
+                interp = (current_ratio - subword_ratio) / (space_ratio - subword_ratio).clamp(min=epsilon)
+                interp = torch.clamp(interp, 0.0, 1.0)
+
+                patch_lens = []
+
+                for example_interp, example_subword_patch_lens, example_space_patch_lens in zip(interp, batch["patch_lens"], batch["space_patch_lens"]):
+                    example_interp = example_interp.item()
+
+                    subword_patch_end_indices = set((torch.cumsum(example_subword_patch_lens, dim=0) - 1).tolist())
+                    space_patch_end_indices = set((torch.cumsum(example_space_patch_lens, dim=0) - 1).tolist())
+
+                    subword_intersect = subword_patch_end_indices - space_patch_end_indices
+                    space_intersect = space_patch_end_indices - subword_patch_end_indices
+        
+                    patch_end_indices = (
+                        (subword_patch_end_indices & space_patch_end_indices) |
+                        set(random.sample(list(subword_intersect), int(len(subword_intersect) * (1 - example_interp)))) |
+                        set(random.sample(list(space_intersect), int(len(space_intersect) * example_interp)))
+                    )
+                    patch_end_indices = torch.tensor(sorted(list(patch_end_indices)), dtype=torch.long)
+                    example_patch_lens = torch.zeros_like(patch_end_indices)
+                    example_patch_lens[0] = 1
+                    example_patch_lens[1:] = patch_end_indices[1:] - patch_end_indices[:-1]
+
+                    patch_lens.append(example_patch_lens)
+
+                patch_lens = blt_utils.pad_right(patch_lens)
+
+                batch["patch_lens"].zero_()
+                batch["patch_lens"][:, :patch_lens.shape[1]] = patch_lens
+
+                batch["original_input_ids"] = None # can't use   
+
             input_ids = batch.pop("input_ids")
             labels = labels if labels is not None else batch.pop("labels", None)
 
