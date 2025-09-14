@@ -81,6 +81,7 @@ LOCAL_MODEL_STYLE = os.environ.get("LOCAL_MODEL_STYLE", "hnet")
 DATA_SOURCE = os.environ.get("DATA_SOURCE", "dclm")
 LR_SCHEDULE = os.environ.get("LR_SCHEDULE", "linear_with_warmup")
 ADD_HASH_EMBEDDINGS = os.environ.get("ADD_HASH_EMBEDDINGS", "true").lower() in {"1", "true", "yes"}
+ADD_EXPANDED_EMBEDDINGS = os.environ.get("ADD_EXPANDED_EMBEDDINGS", "false").lower() in {"1", "true", "yes"}
 OLMO_ARCH = os.environ.get("OLMO_ARCH", "olmo2_1B_v2")
 
 if DATA_SOURCE == "dclm":
@@ -159,6 +160,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
 
         local_encoder = LocalEncoderConfig(
             add_hash_embeddings=ADD_HASH_EMBEDDINGS,
+            add_expanded_embeddings=ADD_EXPANDED_EMBEDDINGS,
             hash_byte_group_size=[3, 4, 5, 6, 7, 8],
             hash_byte_group_vocab=[1536, 3072, 6144, 12288, 24576, 49152],
             hash_byte_group_nb_functions=1,
@@ -228,6 +230,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
 
         local_encoder = LocalEncoderConfig(
             add_hash_embeddings=ADD_HASH_EMBEDDINGS,
+            add_expanded_embeddings=ADD_EXPANDED_EMBEDDINGS,
             hash_byte_group_size=[3, 4, 5, 6, 7, 8],
             hash_byte_group_vocab=[1536, 3072, 6144, 12288, 24576, 49152],
             hash_byte_group_nb_functions=1,
@@ -299,9 +302,11 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         OptimGroupOverride(
             params=[
                 "local_encoder.embedding.weight",
-            ] + [
+            ] + ([
                 "local_encoder.hash_embeddings.*.weight"
-            ] if ADD_HASH_EMBEDDINGS else [],
+            ] if ADD_HASH_EMBEDDINGS else []) + ([
+                "local_encoder.expanded_embeddings.weight"
+            ] if ADD_EXPANDED_EMBEDDINGS else []),
             opts=dict(weight_decay=0.0)
         )
     ]

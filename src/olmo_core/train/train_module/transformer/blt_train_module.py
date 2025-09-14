@@ -52,6 +52,9 @@ class TransformerBLTTrainModule(TransformerTrainModule):
                     if example_n_bytes / len(example_patch_lens) >= current_ratio:
                         break
 
+                    if merge_idx + 2 >= len(example_patch_lens):
+                        continue
+
                     # offset by one due to bos
                     example_patch_lens[merge_idx + 1] = example_patch_lens[merge_idx + 1] + example_patch_lens[merge_idx + 2]
                     del example_patch_lens[merge_idx + 2]
