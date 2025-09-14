@@ -455,6 +455,10 @@ def main(run_name: str, overrides: List[str]):
     train_module = config.train_module.build(model)
 
     dataset = config.dataset.build()
+
+    if train_module.blt_config.gradual_boundary_compression_kind == "bpe":  # type: ignore
+        dataset.enable_compute_bpe_merges()  # type: ignore
+    
     data_loader = config.data_loader.build(
         dataset,
         collator=ByteDataCollator(pad_token_id=dataset.pad_token_id) if isinstance(dataset, NumpyByteFSLDataset) else None,
