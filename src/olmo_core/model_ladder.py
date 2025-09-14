@@ -76,6 +76,10 @@ class ModelSize(StrEnum):
     """
     1B parameters.
     """
+    size_2140M = "2140M"
+    """
+    2140M parameters.
+    """
     size_3B = "3B"
     """
     3B parameters.
@@ -87,6 +91,10 @@ class ModelSize(StrEnum):
     size_13B = "13B"
     """
     13B parameters.
+    """
+    size_32B = "32B"
+    """
+    32B parameters.
     """
 
     @property

@@ -681,7 +681,7 @@ class TransformerConfig(Config):
         """
         A 32B OLMo model config.
         """
-        d_model = 5120
+        d_model = kwargs.pop("d_model", 5120)
         return cls.llama_like(
             vocab_size=vocab_size,
             d_model=d_model,
@@ -694,6 +694,24 @@ class TransformerConfig(Config):
             hidden_size_multiple_of=kwargs.pop("hidden_size_multiple_of", 512),
             hidden_size_multiplier=kwargs.pop("hidden_size_multiplier", 27648 / (8 * d_model / 3)),
             layer_norm_eps=1e-6,
+            **kwargs,
+        )
+    
+    @classmethod
+    def olmo2_32Bmup_2140M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        return cls.olmo2_32B(
+            vocab_size=vocab_size,
+            d_model=1280,
+            hidden_size_multiplier=2.025,
+            n_heads=kwargs.pop("n_heads", 20),
+            n_kv_heads=kwargs.pop("n_kv_heads", 4),
+            **kwargs,
+        )
+    
+    @classmethod
+    def olmo2_32Bmup_32B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        return cls.olmo2_32B(
+            vocab_size=vocab_size,
             **kwargs,
         )
 
