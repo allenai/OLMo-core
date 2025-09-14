@@ -169,9 +169,13 @@ class ByteDataCollator(DataCollator):
         all_expanded_input_ids = []
         all_patch_lengths = []
         all_space_patch_lengths = []
+        all_bpe_merges = []
 
         max_original_len = max(
             len(x["original_input_ids"]) if isinstance(x, dict) and "original_input_ids" in x else math.nan for x in items
+        )
+        max_bpe_merges_len = max(
+            len(x["bpe_merges"]) if isinstance(x, dict) and "bpe_merges" in x else math.nan for x in items
         )
 
         for x in items:
@@ -179,6 +183,16 @@ class ByteDataCollator(DataCollator):
             expanded_input_ids = x.get("expanded_input_ids") if isinstance(x, dict) else None
             patch_lengths = x.get("patch_lens") if isinstance(x, dict) else None
             space_patch_lengths = x.get("space_patch_lens") if isinstance(x, dict) else None
+            bpe_merges = x.get("bpe_merges") if isinstance(x, dict) else None
+
+            if bpe_merges is not None:
+                assert isinstance(max_bpe_merges_len, int)
+                bpe_merges = F.pad(
+                    torch.tensor(bpe_merges, dtype=torch.long),
+                    (0, max_bpe_merges_len - len(bpe_merges)),
+                    value=-1,
+                )
+                all_bpe_merges.append(bpe_merges)
 
             if expanded_input_ids is not None:
                 pad_shape = (
@@ -239,5 +253,7 @@ class ByteDataCollator(DataCollator):
             batch["patch_lens"] = torch.stack(all_patch_lengths, dim=0)
         if all_space_patch_lengths:
             batch["space_patch_lens"] = torch.stack(all_space_patch_lengths, dim=0)
+        if all_bpe_merges:
+            batch["bpe_merges"] = torch.stack(all_bpe_merges, dim=0)
 
         return batch

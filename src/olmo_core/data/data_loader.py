@@ -570,6 +570,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
             )
 
             out["patch_lens"] = out["space_patch_lens"] = patch_lengths
+            out["bpe_merges"] = torch.zeros((input_ids.shape[0], 0), dtype=torch.int32)
             out["expanded_input_ids"] = torch.randint(
                 0,
                 100_000,

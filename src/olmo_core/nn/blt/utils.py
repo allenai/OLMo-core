@@ -397,3 +397,63 @@ class MaskState:
                 return
             else:
                 out[self.mask] = x
+
+def compute_bpe_merges(input_ids: list[int], max_compression_ratio: float) -> list[int]:
+    if not input_ids or len(input_ids) == 1:
+        return []
+
+    original_length = len(input_ids)
+    current_ids = input_ids.copy()
+    merge_indices = []
+
+    while len(current_ids) > 1:
+        # Check compression ratio
+        current_ratio = len(current_ids) / original_length
+        if current_ratio <= max_compression_ratio:
+            break
+
+        # Count all adjacent pairs
+        pair_counts = {}
+        for i in range(len(current_ids) - 1):
+            pair = (current_ids[i], current_ids[i + 1])
+            pair_counts[pair] = pair_counts.get(pair, 0) + 1
+        
+        if not pair_counts:
+            break
+
+        # Find the most frequent pair - break ties randomly
+        max_count = max(pair_counts.values())
+        candidates = [pair for pair, count in pair_counts.items() if count == max_count]
+        most_frequent_pair = random.choice(candidates)
+        
+        # Apply the merge and collect merge indices
+        new_ids = []
+        i = 0
+
+        while i < len(current_ids):
+            # Check if we can merge at this position
+            if (i < len(current_ids) - 1 and 
+                current_ids[i] == most_frequent_pair[0] and 
+                current_ids[i + 1] == most_frequent_pair[1]):
+                
+                # Record the index where this merge occurs
+                merge_indices.append(len(new_ids))
+
+                # Create a new token ID for the merged pair
+                max_id = max(max(current_ids), max(new_ids) if new_ids else 0)
+                merged_token_id = max_id + hash(most_frequent_pair) % 10000 + 1
+                
+                new_ids.append(merged_token_id)
+                i += 2  # Skip both tokens that were merged
+            else:
+                new_ids.append(current_ids[i])
+                i += 1
+
+        # Update for next iteration
+        current_ids = new_ids
+        
+        # If no merge was actually applied, break
+        if len(current_ids) == len(input_ids):
+            break
+    
+    return merge_indices
