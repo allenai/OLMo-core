@@ -492,7 +492,7 @@ class ModelLadder(Config, metaclass=ABCMeta):
                 name=f"{self.name}-{size}-{run_duration}",
                 workspace="ai2",
                 project=self.project,
-                enabled=True,
+                enabled=False,
                 cancel_check_interval=5,
             ),
         )
@@ -502,7 +502,7 @@ class ModelLadder(Config, metaclass=ABCMeta):
                 name=f"{self.name}-{size}-{run_duration}",
                 entity="ai2",
                 project=self.project,
-                enabled=False,
+                enabled=True,
                 cancel_check_interval=5,
             ),
         )
