@@ -159,7 +159,7 @@ def build_sft_dataset(
         local_rank = get_local_rank()
         if local_rank == 0:
             print(f"Rank {local_rank}: Downloading dataset from GCS...")
-            subprocess.run(["gcloud", "storage", "rsync", "--recursive", f"'{clean_path}/'", "/tmp/sft_dataset/"], check=True)
+            subprocess.run(["gcloud", "storage", "rsync", "--recursive", f"{clean_path}/", "/tmp/sft_dataset/"], check=True)
             print(f"Rank {local_rank}: Data downloaded to /tmp/sft_dataset/")
             clean_path = "/tmp/sft_dataset"
         else:
