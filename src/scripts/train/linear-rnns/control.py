@@ -36,7 +36,7 @@ ANNEAL_TOKENS = int(1e9)
 LR = (
     4.4e-5 * 2
 )  # Based on 6T tokens with 100B anneal, don't forget to adjust when max duration or anneal length changes.
-SAVE_INTERVAL = 10000
+SAVE_INTERVAL = 1000
 EVAL_INTERVAL = 1000
 
 
