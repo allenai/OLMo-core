@@ -22,6 +22,7 @@ from olmo_core.data import (
     TokenizerConfig,
 )
 from olmo_core.distributed.parallel import DataParallelType
+from olmo_core.distributed.utils import get_rank
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
 from olmo_core.train import (
@@ -201,7 +202,8 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
 
 def main(run_name: str, overrides: List[str]):
     config = build_config(run_name, overrides)
-    rich.print(config)
+    if get_rank() == 0:
+        rich.print(config)
 
     # Set RNG states on all devices.
     seed_all(config.init_seed)
