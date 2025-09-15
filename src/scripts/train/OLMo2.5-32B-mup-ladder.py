@@ -38,7 +38,7 @@ class BaselineModelLadder(ModelLadder):
     MBZ_SIZES: ClassVar[Dict[ModelSize, int]] = {
         # TODO: may need to tune these
         # ===============================
-        ModelSize.size_2140M: 8 * 4096,
+        ModelSize.size_2140M: 4 * 4096,
         ModelSize.size_32B: 2 * 4096,
     }
 
