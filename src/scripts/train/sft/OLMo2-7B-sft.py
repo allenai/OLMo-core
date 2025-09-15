@@ -58,6 +58,7 @@ from olmo_core.utils import prepare_cli_environment, seed_all
 from pathlib import Path
 import shutil
 import subprocess
+import torch.distributed
 
 log = logging.getLogger(__name__)
 
@@ -155,10 +156,16 @@ def build_sft_dataset(
 ) -> NumpyDatasetConfig:
     clean_path = dataset_path.rstrip("/")
     if dataset_path.startswith("gs://"):
-        print("Downloading dataset from GCS...")
-        subprocess.run(["gcloud", "storage", "rsync", "--recursive", f"'{clean_path}/'", "/tmp/sft_dataset/"], check=True)
-        print("Data downloaded to /tmp/sft_dataset/")
-        clean_path = "/tmp/sft_dataset"
+        local_rank = get_local_rank()
+        if local_rank == 0:
+            print(f"Rank {local_rank}: Downloading dataset from GCS...")
+            subprocess.run(["gcloud", "storage", "rsync", "--recursive", f"'{clean_path}/'", "/tmp/sft_dataset/"], check=True)
+            print(f"Rank {local_rank}: Data downloaded to /tmp/sft_dataset/")
+            clean_path = "/tmp/sft_dataset"
+        else:
+            print(f"Rank {local_rank}: Waiting for rank 0 to download dataset from GCS...")
+        torch.distributed.barrier()
+        print(f"{local_rank}: All ranks proceeding after dataset download.")
         # contents = list_directory(dataset_path)
         # # TODO: This does not work yet! GCS support is an active work in progress, nearly complete
         # print("GCS support not working yet!")
