@@ -155,29 +155,29 @@ def build_sft_dataset(
     dataset_path: Optional[str],
 ) -> NumpyDatasetConfig:
     clean_path = dataset_path.rstrip("/")
-    if dataset_path.startswith("gs://"):
-        local_rank = get_local_rank()
-        if local_rank == 0:
-            print(f"Rank {local_rank}: Downloading dataset from GCS...")
-            subprocess.run(["gcloud", "storage", "rsync", "--recursive", f"{clean_path}/", "/tmp/sft_dataset/"], check=True)
-            print(f"Rank {local_rank}: Data downloaded to /tmp/sft_dataset/")
-            clean_path = "/tmp/sft_dataset"
-        else:
-            print(f"Rank {local_rank}: Waiting for rank 0 to download dataset from GCS...")
-        torch.distributed.barrier()
-        print(f"{local_rank}: All ranks proceeding after dataset download.")
-        # contents = list_directory(dataset_path)
-        # # TODO: This does not work yet! GCS support is an active work in progress, nearly complete
-        # print("GCS support not working yet!")
-        # token_id_paths = []
-        # label_mask_paths = []
-        # for elem in contents:
-        #     if "token_ids_part" in elem and elem.endswith(".npy"):
-        #         token_id_paths.append(elem)
-        #     if "labels_mask" in elem and elem.endswith(".npy"):
-        #         label_mask_paths.append(elem)
-        # expand_glob = False
-    #else:
+    #     if dataset_path.startswith("gs://"):
+    #     local_rank = get_local_rank()
+    #     if local_rank == 0:
+    #         print(f"Rank {local_rank}: Downloading dataset from GCS...")
+    #         subprocess.run(["gcloud", "storage", "rsync", "--recursive", f"{clean_path}/", "/tmp/sft_dataset/"], check=True)
+    #         print(f"Rank {local_rank}: Data downloaded to /tmp/sft_dataset/")
+    #         clean_path = "/tmp/sft_dataset"
+    #     else:
+    #         print(f"Rank {local_rank}: Waiting for rank 0 to download dataset from GCS...")
+    #     torch.distributed.barrier()
+    #     print(f"{local_rank}: All ranks proceeding after dataset download.")
+    #     # contents = list_directory(dataset_path)
+    #     # # TODO: This does not work yet! GCS support is an active work in progress, nearly complete
+    #     # print("GCS support not working yet!")
+    #     # token_id_paths = []
+    #     # label_mask_paths = []
+    #     # for elem in contents:
+    #     #     if "token_ids_part" in elem and elem.endswith(".npy"):
+    #     #         token_id_paths.append(elem)
+    #     #     if "labels_mask" in elem and elem.endswith(".npy"):
+    #     #         label_mask_paths.append(elem)
+    #     # expand_glob = False
+    # #else:
     token_id_paths = [f"{clean_path}/token_ids_part_*.npy"]
     label_mask_paths = [f"{clean_path}/labels_mask_*.npy"]
     expand_glob = True
@@ -242,7 +242,12 @@ class SFTConfig(Config):
         user_name = get_beaker_username()
 
         tokenizer_config = TokenizerConfig.dolma2()
-        dataset_config = build_sft_dataset(root_dir, tokenizer_config, seq_len, dataset_path)
+        dataset_config = build_sft_dataset(
+            root_dir=root_dir,
+            tokenizer_config=tokenizer_config,
+            sequence_length=seq_len,
+            dataset_path=dataset_path,
+        )
         gpu_type = CLUSTER_TO_GPU_TYPE[cluster]
 
         bs_config = BatchSizeConfig(
