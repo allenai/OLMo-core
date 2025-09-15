@@ -57,6 +57,7 @@ from olmo_core.train.train_module.transformer.config import (
 from olmo_core.utils import prepare_cli_environment, seed_all
 from pathlib import Path
 import shutil
+import subprocess
 
 log = logging.getLogger(__name__)
 
@@ -154,7 +155,9 @@ def build_sft_dataset(
 ) -> NumpyDatasetConfig:
     clean_path = dataset_path.rstrip("/")
     if dataset_path.startswith("gs://"):
+        print("Downloading dataset from GCS...")
         subprocess.run(["gcloud", "storage", "rsync", "--recursive", f"'{clean_path}/'", "/tmp/sft_dataset/"], check=True)
+        print("Data downloaded to /tmp/sft_dataset/")
         clean_path = "/tmp/sft_dataset"
         # contents = list_directory(dataset_path)
         # # TODO: This does not work yet! GCS support is an active work in progress, nearly complete
