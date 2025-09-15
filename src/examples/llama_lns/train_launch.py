@@ -1,8 +1,8 @@
 """
-An example of how to launch the training script on Beaker.
+An example of how to launch the LNS training script on Beaker.
 Run this with:
 
-    python src/examples/llama/train_launch.py run_name [OVERRIDES...]
+    python src/examples/llama_lns/train_launch.py run_name [OVERRIDES...]
 """
 
 import sys
@@ -14,12 +14,12 @@ from olmo_core.utils import generate_uuid, prepare_cli_environment
 
 def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
     return BeakerLaunchConfig(
-        name=f"olmo-core-test-{generate_uuid()[:8]}",
-        budget="ai2/oe-base",
-        cmd=["src/examples/llama/train.py", run_name, *overrides],
-        task_name="train",
+        name=f"olmo-core-lns-{generate_uuid()[:8]}",
+        budget="ai2/oe-training",
+        cmd=["src/examples/llama_lns/train.py", run_name, *overrides],
+        task_name="train_lns",
         workspace="ai2/OLMo-core",
-        description="Testing OLMo-core launch utilities",
+        description="OLMo-core LNS training example",
         clusters=["ai2/saturn-cirrascale"],
         num_nodes=1,
         num_gpus=4,

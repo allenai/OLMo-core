@@ -125,6 +125,11 @@ class TransformerBlockType(StrEnum):
     ➡️ :class:`MoEHybridReorderedNormTransformerBlock`
     """
 
+    default_scaled = "default_scaled"
+    """
+    ➡️ :class:`LayerNormScaledTransformerBlock` (applies LayerNorm Scaling)
+    """
+
 
 @dataclass
 class TransformerBlockConfig(Config):
@@ -167,6 +172,7 @@ class TransformerBlockConfig(Config):
         cache: Optional[BufferCache] = None,
     ) -> "TransformerBlockBase":
         from .block import (
+            LayerNormScaledTransformerBlock,
             MoEHybridReorderedNormTransformerBlock,
             MoEHybridTransformerBlock,
             MoEReorderedNormTransformerBlock,
@@ -189,6 +195,8 @@ class TransformerBlockConfig(Config):
         try:
             if self.name == TransformerBlockType.default:
                 return TransformerBlock(**kwargs)
+            elif self.name == TransformerBlockType.default_scaled:
+                return LayerNormScaledTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.reordered_norm:
                 return ReorderedNormTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.normalized:

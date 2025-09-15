@@ -221,10 +221,26 @@ def iter_document_indices(
                 "indices can be inferred from the source file."
             ) from e
 
+        total_tokens: Optional[int] = None
+        if dtype is not None:
+            total_tokens = get_file_size(data_path) // dtype(0).itemsize
+
         with gzip.open(metadata_path, "rt") as f:
             for line in f:
-                start_index, end_index, *_ = line.split(",")
-                yield int(start_index), int(end_index)
+                start_index_str, end_index_str, *_ = line.split(",")
+                start_index, end_index = int(start_index_str), int(end_index_str)
+                if total_tokens is not None:
+                    if start_index >= total_tokens:
+                        raise RuntimeError(
+                            f"Document start index {start_index:,d} from metadata file "
+                            f"for source '{data_path}' with {total_tokens:,d} tokens is out-of-bounds"
+                        )
+                    if end_index > total_tokens:
+                        raise RuntimeError(
+                            f"Document end index {end_index:,d} from metadata file "
+                            f"for source '{data_path}' with {total_tokens:,d} tokens is out-of-bounds"
+                        )
+                yield start_index, end_index
 
 
 def iter_document_indices_with_max_sequence_length(
