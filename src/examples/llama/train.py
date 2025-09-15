@@ -12,6 +12,8 @@ import sys
 from dataclasses import dataclass
 from typing import List, cast
 
+import rich
+
 from olmo_core.config import Config, DType
 from olmo_core.data import (
     NumpyDataLoaderConfig,
@@ -199,6 +201,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
 
 def main(run_name: str, overrides: List[str]):
     config = build_config(run_name, overrides)
+    rich.print(config)
 
     # Set RNG states on all devices.
     seed_all(config.init_seed)
