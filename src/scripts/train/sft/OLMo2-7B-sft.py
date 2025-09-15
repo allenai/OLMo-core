@@ -154,21 +154,23 @@ def build_sft_dataset(
 ) -> NumpyDatasetConfig:
     clean_path = dataset_path.rstrip("/")
     if dataset_path.startswith("gs://"):
-        contents = list_directory(dataset_path)
-        # TODO: This does not work yet! GCS support is an active work in progress, nearly complete
-        print("GCS support not working yet!")
-        token_id_paths = []
-        label_mask_paths = []
-        for elem in contents:
-            if "token_ids_part" in elem and elem.endswith(".npy"):
-                token_id_paths.append(elem)
-            if "labels_mask" in elem and elem.endswith(".npy"):
-                label_mask_paths.append(elem)
-        expand_glob = False
-    else:
-        token_id_paths = [f"{clean_path}/token_ids_part_*.npy"]
-        label_mask_paths = [f"{clean_path}/labels_mask_*.npy"]
-        expand_glob = True
+        subprocess.run(["gcloud", "storage", "rsync", "--recursive", f"'{clean_path}/'", "/tmp/sft_dataset/"], check=True)
+        clean_path = "/tmp/sft_dataset"
+        # contents = list_directory(dataset_path)
+        # # TODO: This does not work yet! GCS support is an active work in progress, nearly complete
+        # print("GCS support not working yet!")
+        # token_id_paths = []
+        # label_mask_paths = []
+        # for elem in contents:
+        #     if "token_ids_part" in elem and elem.endswith(".npy"):
+        #         token_id_paths.append(elem)
+        #     if "labels_mask" in elem and elem.endswith(".npy"):
+        #         label_mask_paths.append(elem)
+        # expand_glob = False
+    #else:
+    token_id_paths = [f"{clean_path}/token_ids_part_*.npy"]
+    label_mask_paths = [f"{clean_path}/labels_mask_*.npy"]
+    expand_glob = True
 
     dataset = NumpyDatasetConfig(
         # general config
