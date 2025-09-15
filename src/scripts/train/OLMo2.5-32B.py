@@ -51,7 +51,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         rank_microbatch_size=rank_microbatch_size,
         max_sequence_length=common.dataset.effective_sequence_length,
         optim=SkipStepAdamWConfig(
-            lr=6e-4,
+            lr=4e-4,
             weight_decay=0.1,
             betas=(0.9, 0.95),
             group_overrides=[
