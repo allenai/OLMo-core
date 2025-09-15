@@ -45,9 +45,17 @@ from olmo_core.utils import seed_all
 
 SEQUENCE_LENGTH = 1024
 
-# This will read stream data from the public endpoints by default, but that might be a lot slower
-# than reading data locally.
-DATA_ROOT = os.environ.get("OLMO_DATA_ROOT", "http://olmo-data.org/examples/c4-en/gpt2").rstrip("/")
+# Check for the data on common Ai2 drives. If those don't exist we'll stream the data over the internet,
+# which can be a lot slower.
+DEFAULT_DATA_ROOT = "http://olmo-data.org/examples/c4-en/gpt2"
+for dir in (
+    "/net/nfs/allennlp/llm-data/c4/en/",
+    "/weka/oe-training-default/ai2-llm/examples/c4-en/gpt2/",
+):
+    if os.path.exists(dir):
+        DEFAULT_DATA_ROOT = dir
+        break
+DATA_ROOT = os.environ.get("OLMO_DATA_ROOT", DEFAULT_DATA_ROOT).rstrip("/")
 DATA_PATHS = [
     f"{DATA_ROOT}/c4-train.00000-00099.npy",
     f"{DATA_ROOT}/c4-train.00100-00199.npy",

@@ -9,7 +9,11 @@ from typing import List
 
 from beaker import Priority as BeakerJobPriority
 
-from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
+from olmo_core.launch.beaker import (
+    BeakerLaunchConfig,
+    BeakerWekaBucket,
+    OLMoCoreBeakerImage,
+)
 from olmo_core.utils import generate_uuid, prepare_cli_environment
 
 
@@ -28,6 +32,9 @@ def build_config(opts, overrides: List[str]) -> BeakerLaunchConfig:
         beaker_image=opts.beaker_image,
         workspace=opts.workspace,
         allow_dirty=opts.allow_dirty,
+        weka_buckets=[
+            BeakerWekaBucket(bucket=bucket, mount=f"/weka/{bucket}") for bucket in opts.weka
+        ],
     )
 
 
@@ -63,7 +70,7 @@ def parse_args():
         "--cluster",
         type=str,
         nargs="*",
-        default=["ai2/jupiter", "ai2/augusta"],
+        default=["ai2/jupiter", "ai2/ceres", "ai2/saturn", "ai2/allennlp"],
         help="""Clusters to launch on (multiple allowed).""",
     )
     parser.add_argument(
@@ -73,7 +80,8 @@ def parse_args():
         help="The priority level.",
     )
     parser.add_argument(
-        "--preemptible/--not-preemptible",
+        "--preemptible",
+        "--not-preemptible",
         action="store_true",
         help="""If the job should be preemptible.""",
         default=True,
@@ -90,6 +98,7 @@ def parse_args():
         default=OLMoCoreBeakerImage.stable,
         help="""The Beaker image to use.""",
     )
+    parser.add_argument("--weka", type=str, nargs="*", help="Weka buckets to mount at '/weka/'.")
     parser.parse_known_args()
     return parser.parse_known_args()
 

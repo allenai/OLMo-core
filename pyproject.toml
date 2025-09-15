@@ -53,7 +53,7 @@ dev = [
     "twine>=1.11.0",
     "wheel",
 ]
-beaker = ["beaker-py>=1.36.0,<2.0", "GitPython>=3.0,<4.0", "google-cloud-compute"]
+beaker = ["beaker-py>=1.37.0,<2.0", "GitPython>=3.0,<4.0", "google-cloud-compute"]
 comet = ["comet_ml"]
 eval = ["ai2-olmo-eval==0.8.5"]
 torchao = ["torchao"]
