@@ -272,7 +272,7 @@ class TransformerConfig(Config):
     init_seed: int = 0
     init_std: float = 0.02
     freeze_params: Optional[List[str]] = None
-    block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None
+    block_overrides: Optional[Dict[str, TransformerBlockConfig]] = None
 
     def build(
         self,
