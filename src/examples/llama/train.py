@@ -43,10 +43,12 @@ from olmo_core.train.train_module import (
 )
 from olmo_core.utils import seed_all
 
+# The sequence length to train and eval on.
 SEQUENCE_LENGTH = 1024
 
 # Check for the data on common Ai2 drives. If those don't exist we'll stream the data over the internet,
-# which can be a lot slower.
+# which can be a lot slower. Alternatively you can download the files with wget, for example:
+#  > wget http://olmo-data.org/examples/c4-en/gpt2/c4-train.00000-00099.npy
 DEFAULT_DATA_ROOT = "http://olmo-data.org/examples/c4-en/gpt2"
 for dir in (
     "/net/nfs/allennlp/llm-data/c4/en/",
