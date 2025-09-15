@@ -1,24 +1,20 @@
 from datetime import datetime
-from math import ceil
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
 from olmo_core.internal.experiment import CommonComponents, main
-from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.optim.scheduler import WSD, SchedulerUnits
-from olmo_core.train import Duration, TrainerConfig, LoadStrategy
+from olmo_core.train import Duration, LoadStrategy, TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
-
-from olmo_core.nn.rope import RoPEScalingConfig
 
 SEQUENCE_LENGTH = 4096
 GLOBAL_BATCH_SIZE = 4 * 1024 * 1024
@@ -56,16 +52,13 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
-            shard_degree=32
+            shard_degree=32,
         ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
         scheduler=WSD(
-            units=SchedulerUnits.tokens,
-            warmup=0,
-            decay=LENGTH_IN_TOKENS,
-            decay_fraction=None
+            units=SchedulerUnits.tokens, warmup=0, decay=LENGTH_IN_TOKENS, decay_fraction=None
         ),
     )
 
@@ -87,7 +80,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(LENGTH_IN_TOKENS),
             load_path="gs://ai2-llm/checkpoints/shanea/OLMo-medium/peteish7/step928646/model_and_optim/",
-            load_strategy=LoadStrategy.always
+            load_strategy=LoadStrategy.always,
         )
         .with_callback(
             "checkpointer",
@@ -118,12 +111,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 cancel_check_interval=cancel_check_interval,
             ),
         )
-        .with_recommended_evals(
-            common.tokenizer,
-            SEQUENCE_LENGTH,
-            cluster,
-            task_set="fast"
-        )
+        .with_recommended_evals(common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast")
     )
 
 

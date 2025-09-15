@@ -38,7 +38,7 @@ jobs:
 
           - name: Test
             run: |
-              pytest -v --color=yes --durations=3 -n auto --dist=load \
+              pytest -v --color=yes --durations=3 \
                 --ignore-glob='src/test/distributed/checkpoint*' \
                 src/test/
 
@@ -112,6 +112,8 @@ jobs:
     name: ${{ matrix.task.name }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      GANTRY_GITHUB_TESTING: 'true'  # force better logging for CI
     strategy:
       fail-fast: false
       matrix:
@@ -147,14 +149,21 @@ jobs:
               pytest -v --color=yes --durations=3 -m gpu \
                 src/test/nn/moe*
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
         with:
-          python-version: '3.11'
+          ref: ${{ github.event.pull_request.head.sha }}  # check out PR head commit instead of merge commit
 
-      - name: Set env vars
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install Gantry
+        run:
+          # uv tool install git+https://github.com/allenai/beaker-gantry
+          uv tool install 'beaker-gantry>=3.1,<4.0'
+
+      - name: Determine Beaker workspace
+        if: env.BEAKER_TOKEN != ''
         run: |
           echo "BEAKER_WORKSPACE=$(make get-beaker-workspace)" >> $GITHUB_ENV
 
@@ -162,69 +171,41 @@ jobs:
         if: github.event_name == 'pull_request'
         run: |
           echo "COMMIT_SHA=${{ github.event.pull_request.head.sha }}" >> $GITHUB_ENV
+          echo "BRANCH_NAME=${{ github.head_ref }}" >> $GITHUB_ENV
 
       - name: Determine current commit SHA (push)
         if: github.event_name != 'pull_request'
         run: |
           echo "COMMIT_SHA=$GITHUB_SHA" >> $GITHUB_ENV
-
-      - uses: allenai/setup-beaker@v2
-        if: env.BEAKER_TOKEN != ''
-        with:
-          token: ${{ env.BEAKER_TOKEN }}
-          workspace: ${{ env.BEAKER_WORKSPACE }}
+          echo "BRANCH_NAME=${{ github.ref_name }}" >> $GITHUB_ENV
 
       - name: GPU Tests
-        uses: allenai/beaker-run-action@v1.2
         if: env.BEAKER_TOKEN != ''
-        with:
-          spec: |
-            version: v2
-            description: OLMo-core ${{ matrix.task.name }}
-            budget: ai2/oe-training
-            tasks:
-              - name: tests
-                image:
-                  beaker: ${{ matrix.task.image }}
-                context:
-                  priority: normal
-                  preemptible: true
-                resources:
-                  gpuCount: ${{ matrix.task.gpus }}
-                timeout: 8m
-                hostNetworking: true
-                constraints:
-                  cluster:
-                    # H100 clusters
-                    - ai2/jupiter-cirrascale-2
-                    - ai2/augusta-google-1
-                    - ai2/ceres-cirrascale
-                    # A100 clusters
-                    - ai2/saturn-cirrascale
-                    # - ai2/allennlp-elanding-a100-40g
-                envVars:
-                  - name: CUBLAS_WORKSPACE_CONFIG
-                    value: ":16:8"
-                  - name: TOKENIZERS_PARALLELISM
-                    value: "false"
-                  - name: AWS_ACCESS_KEY_ID
-                    secret: AWS_ACCESS_KEY_ID
-                  - name: AWS_SECRET_ACCESS_KEY
-                    secret: AWS_SECRET_ACCESS_KEY
-                  - name: GOOGLE_APPLICATION_CREDENTIALS
-                    value: "/.google/credentials.json"
-                datasets:
-                  - mountPath:  "/.google/credentials.json"
-                    source:
-                      secret: GOOGLE_CREDENTIALS
-                command:
-                  - "bash"
-                  - "-c"
-                  - "git clone https://github.com/allenai/OLMo-core.git && cd OLMo-core && git checkout ${{ env.COMMIT_SHA }} && pip install -e .[all] && ${{ matrix.task.run }}"
-                result:
-                  path: /unused
-          token: ${{ env.BEAKER_TOKEN }}
-          workspace: ${{ env.BEAKER_WORKSPACE }}
+        run: |
+          gantry run \
+            --show-logs \
+            --yes \
+            --workspace ${{ env.BEAKER_WORKSPACE }} \
+            --description 'OLMo-core ${{ matrix.task.name }}' \
+            --ref ${{ env.COMMIT_SHA }} \
+            --branch ${{ env.BRANCH_NAME }} \
+            --beaker-image ${{ matrix.task.image }} \
+            --budget ai2/oe-base \
+            --priority normal \
+            --preemptible \
+            --gpus ${{ matrix.task.gpus }} \
+            --task-timeout 8m \
+            --host-networking \
+            --gpu-type h100 \
+            --gpu-type a100 \
+            --system-python \
+            --dataset-secret 'GOOGLE_CREDENTIALS:/.google/credentials.json' \
+            --env 'GOOGLE_APPLICATION_CREDENTIALS=/.google/credentials.json' \
+            --env 'TOKENIZERS_PARALLELISM=false' \
+            --env 'CUBLAS_WORKSPACE_CONFIG=:16:8' \
+            --env-secret 'AWS_ACCESS_KEY_ID=AWS_ACCESS_KEY_ID' \
+            --env-secret 'AWS_SECRET_ACCESS_KEY=AWS_SECRET_ACCESS_KEY' \
+            -- ${{ matrix.task.run }}
 
   release:
     name: Release
@@ -274,12 +255,14 @@ jobs:
             dist/*
 
       - name: Add PR comments on release
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           ./src/scripts/release/add_pr_comments_on_release.sh
 
       - name: Send Slack notifications about release
+        continue-on-error: true
         run: |
           . .venv/bin/activate
           python ./src/scripts/release/slack_notification.py '${{ secrets.SLACK_WEBHOOK_URL}}'

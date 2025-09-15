@@ -36,6 +36,10 @@ class TransformerBlockBase(nn.Module):
         super().__init__()
         self.n_layers = n_layers
 
+    @property
+    def is_moe(self) -> bool:
+        return False
+
     @abstractmethod
     def forward(
         self,
@@ -61,7 +65,12 @@ class TransformerBlockBase(nn.Module):
         raise NotImplementedError
 
     @abstractmethod
-    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType):
+    def apply_cp(
+        self,
+        cp_mesh: DeviceMesh,
+        load_balancer: RingAttentionLoadBalancerType,
+        head_stride: int = 1,
+    ):
         raise NotImplementedError
 
     def apply_compile(self):
@@ -163,8 +172,13 @@ class TransformerBlock(TransformerBlockBase):
 
         parallelize_module(self.dropout, device_mesh=tp_mesh, parallelize_plan=SequenceParallel())
 
-    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType):
-        self.attention.apply_cp(cp_mesh, load_balancer)
+    def apply_cp(
+        self,
+        cp_mesh: DeviceMesh,
+        load_balancer: RingAttentionLoadBalancerType,
+        head_stride: int = 1,
+    ):
+        self.attention.apply_cp(cp_mesh, load_balancer, head_stride=head_stride)
 
     def apply_fsdp(
         self,
@@ -182,6 +196,58 @@ class TransformerBlock(TransformerBlockBase):
                 fsdp_att.set_modules_to_forward_prefetch([fsdp_mlp])
         else:
             fully_shard(self, mesh=dp_mesh, **fsdp_kwargs)
+
+
+class LayerNormScaledTransformerBlock(TransformerBlock):
+    """
+    A variant of ``TransformerBlock`` that applies LayerNorm Scaling (LNS).
+
+    Each LayerNorm output is multiplied by ``1 / sqrt(layer_id)`` where ``layer_id`` is the
+    1-based position of the block inside the transformer. Keeping this logic in a dedicated
+    subclass ensures that the vanilla ``TransformerBlock`` remains simple and easy to reason
+    about.
+    """
+
+    def __init__(
+        self,
+        *,
+        d_model: int,
+        block_idx: int,
+        n_layers: int,
+        attention: AttentionConfig,
+        feed_forward: FeedForwardConfig,
+        layer_norm: LayerNormConfig,
+        dropout: float = 0.0,
+        init_device: str = "cpu",
+        cache: Optional[BufferCache] = None,
+    ):
+        super().__init__(
+            d_model=d_model,
+            block_idx=block_idx,
+            n_layers=n_layers,
+            attention=attention,
+            feed_forward=feed_forward,
+            layer_norm=layer_norm,
+            dropout=dropout,
+            init_device=init_device,
+            cache=cache,
+        )
+
+        # LayerNorm scaling factor 1/sqrt(layer_id), where layer_id is 1-based.
+        ln_scale_value = 1.0 / math.sqrt(block_idx + 1)
+        self.register_buffer("ln_scale", torch.tensor(ln_scale_value, dtype=torch.float32))
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        del loss_div_factor
+        scale = self.ln_scale.to(dtype=x.dtype, device=x.device)
+        h = x + self.dropout(self.attention(self.attention_norm(x) * scale, **kwargs))
+        return h + self.dropout(self.feed_forward(self.feed_forward_norm(h) * scale))
 
 
 class ReorderedNormTransformerBlock(TransformerBlock):
@@ -282,8 +348,13 @@ class NormalizedTransformerBlock(TransformerBlockBase):
             "TP is not implemented yet for the normalized transformer block variant"
         )
 
-    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType):
-        self.attention.apply_cp(cp_mesh, load_balancer)
+    def apply_cp(
+        self,
+        cp_mesh: DeviceMesh,
+        load_balancer: RingAttentionLoadBalancerType,
+        head_stride: int = 1,
+    ):
+        self.attention.apply_cp(cp_mesh, load_balancer, head_stride=head_stride)
 
     def apply_fsdp(
         self,
@@ -359,6 +430,10 @@ class MoETransformerBlock(TransformerBlockBase):
         self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
         self._ep_enabled = False
         self._tp_enabled = False
+
+    @property
+    def is_moe(self) -> bool:
+        return True
 
     @property
     def router(self) -> MoERouter:
@@ -451,8 +526,13 @@ class MoETransformerBlock(TransformerBlockBase):
 
         self._tp_enabled = True
 
-    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType):
-        self.attention.apply_cp(cp_mesh, load_balancer)
+    def apply_cp(
+        self,
+        cp_mesh: DeviceMesh,
+        load_balancer: RingAttentionLoadBalancerType,
+        head_stride: int = 1,
+    ):
+        self.attention.apply_cp(cp_mesh, load_balancer, head_stride=head_stride)
         self.feed_forward_moe.apply_cp(cp_mesh)
 
     def apply_fsdp(
@@ -621,6 +701,18 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
         wrapping_strategy: TransformerDataParallelWrappingStrategy = TransformerDataParallelWrappingStrategy.full,
         **fsdp_kwargs,
     ):
+        from torch.distributed.fsdp import MixedPrecisionPolicy
+
+        # Force router to be full-precision.
+        fsdp_router = cast(
+            FSDPModule,
+            fully_shard(
+                self.feed_forward_moe.router,
+                mesh=dp_mesh,
+                mp_policy=MixedPrecisionPolicy(param_dtype=torch.float32),
+            ),
+        )
+
         if wrapping_strategy == TransformerDataParallelWrappingStrategy.fine_grained:
             if not self.use_combined_forward:
                 fsdp_att = cast(
@@ -634,7 +726,7 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
                 )
                 fsdp_root = cast(FSDPModule, fully_shard(self, mesh=dp_mesh, **fsdp_kwargs))
                 if prefetch_factor > 0:
-                    fsdp_root.set_modules_to_forward_prefetch([fsdp_moe, fsdp_att])
+                    fsdp_root.set_modules_to_forward_prefetch([fsdp_router, fsdp_moe, fsdp_att])
                     fsdp_att.set_modules_to_forward_prefetch([fsdp_mlp])
             else:
                 fsdp_att = cast(
@@ -643,10 +735,10 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
                 fsdp_mlp = cast(
                     FSDPModule, fully_shard(self.feed_forward, mesh=dp_mesh, **fsdp_kwargs)
                 )
-                fsdp_moe = cast(
-                    FSDPModule,
-                    fully_shard(self.feed_forward_moe.experts.mlp, mesh=dp_mesh, **fsdp_kwargs),
-                )
+                #  fsdp_moe = cast(
+                #      FSDPModule,
+                #      fully_shard(self.feed_forward_moe.experts.mlp, mesh=dp_mesh, **fsdp_kwargs),
+                #  )
                 fsdp_shared_mlp = (
                     None
                     if self.feed_forward_moe.shared_mlp is None
@@ -658,7 +750,8 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
                 fsdp_root = cast(FSDPModule, fully_shard(self, mesh=dp_mesh, **fsdp_kwargs))
 
                 if prefetch_factor > 0:
-                    fsdp_root.set_modules_to_forward_prefetch([fsdp_att, fsdp_moe])
+                    #  fsdp_root.set_modules_to_forward_prefetch([fsdp_att, fsdp_moe])
+                    fsdp_root.set_modules_to_forward_prefetch([fsdp_att, fsdp_router])
                     if fsdp_shared_mlp is not None:
                         fsdp_att.set_modules_to_forward_prefetch([fsdp_mlp, fsdp_shared_mlp])
                     else:

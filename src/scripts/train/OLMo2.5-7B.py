@@ -85,8 +85,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "checkpointer",
             CheckpointerCallback(
                 save_interval=1000,
-                ephemeral_save_interval=250,
-                save_async=True,
+                ephemeral_save_interval=None,
+                save_async=False,
             ),
         )
         .with_callback(
@@ -110,12 +110,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 cancel_check_interval=cancel_check_interval,
             ),
         )
-        .with_recommended_evals(
-            common.tokenizer,
-            SEQUENCE_LENGTH,
-            cluster,
-            task_set="fast"
-        )
+        .with_recommended_evals(common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast")
     )
 
 

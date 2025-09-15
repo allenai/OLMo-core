@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 import torch
 
-from ..config import StrEnum
+from ..config import Config, StrEnum
 from ..exceptions import OLMoConfigurationError
 from .config import INITIAL_LR_FIELD, LR_FIELD
 
@@ -23,7 +23,7 @@ class SchedulerUnits(StrEnum):
 
 
 @dataclass
-class Scheduler(metaclass=ABCMeta):
+class Scheduler(Config, metaclass=ABCMeta):
     """
     Learning rate scheduler base class.
     """
@@ -184,7 +184,9 @@ class WSD(Scheduler):
             )
 
         if (self.decay_fraction is None) == (self.decay is None):
-            raise OLMoConfigurationError("Either 'decay_fraction' or 'decay' must be specified.")
+            raise OLMoConfigurationError(
+                "Either 'decay_fraction' or 'decay' must be specified. Never both."
+            )
 
         if self.decay_fraction is not None and (self.decay_fraction < 0 or self.decay_fraction > 1):
             raise OLMoConfigurationError("decay_fraction must be between 0 and 1.")
@@ -359,6 +361,62 @@ class CosWithWarmup(Scheduler):
         else:
             current = current - warmup
             t_max = t_max - warmup
+            return eta_min + (initial_lr - eta_min) * (1 + cos(pi * current / t_max)) / 2
+
+
+@dataclass
+class HalfCosWithWarmup(Scheduler):
+    """
+    Second half of a cosine learning rate schedule, with a warmup before that.
+    Note: This assumes that the peak LR set is for the full cosine schedule.
+    """
+
+    warmup: Optional[int] = None
+    warmup_steps: Optional[int] = None  # deprecated, use 'warmup' instead.
+    warmup_fraction: Optional[float] = None
+    alpha_f: float = 0.1
+    t_max: Optional[int] = None
+    warmup_min_lr: float = 0.0
+
+    def __post_init__(self):
+        if self.warmup is None and self.warmup_steps is not None:
+            self.warmup = self.warmup_steps
+            self.warmup_steps = None
+            warnings.warn(
+                f"'{self.__class__.__name__}.warmup_steps' is deprecated, please use '.warmup' instead.",
+                DeprecationWarning,
+            )
+
+        if (self.warmup_fraction is None) == (self.warmup is None):
+            raise OLMoConfigurationError("Either 'warmup_fraction' or 'warmup' must be specified.")
+
+        if self.warmup_fraction is not None and (
+            self.warmup_fraction < 0 or self.warmup_fraction > 1
+        ):
+            raise OLMoConfigurationError("warmup_fraction must be between 0 and 1.")
+
+    def get_lr(
+        self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
+    ) -> Union[float, torch.Tensor]:
+        t_max = t_max if self.t_max is None else self.t_max
+        eta_min = initial_lr * self.alpha_f
+
+        if self.warmup is None:
+            assert self.warmup_fraction is not None
+            warmup = round(t_max * self.warmup_fraction)
+        else:
+            warmup = self.warmup
+
+        if current < warmup:
+            max_lr = eta_min + (initial_lr - eta_min) / 2
+            return _linear_warmup(max_lr, current, warmup, self.warmup_min_lr)
+        elif current >= t_max:
+            return eta_min
+        else:
+            current = current - warmup
+            t_max = t_max - warmup
+            current += t_max
+            t_max *= 2
             return eta_min + (initial_lr - eta_min) * (1 + cos(pi * current / t_max)) / 2
 
 

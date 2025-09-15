@@ -4,13 +4,15 @@ Launch experiments on `Beaker <https://beaker.org>`_.
 
 import hashlib
 import logging
+import os
 import tempfile
 import time
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
-from typing import List, Optional, Set, Tuple
+from typing import List, Literal, Optional, Set, Tuple
 
+import requests
 from beaker import (
     Beaker,
     Dataset,
@@ -29,10 +31,15 @@ from rich.prompt import Confirm
 
 from ..config import Config, StrEnum
 from ..distributed.utils import OLMO_SHARED_FS_ENV_VAR
-from ..exceptions import BeakerExperimentFailedError, OLMoConfigurationError
+from ..exceptions import (
+    BeakerExperimentFailedError,
+    OLMoConfigurationError,
+    OLMoEnvironmentError,
+)
 from ..train.callbacks.beaker import BEAKER_RESULT_DIR
 from ..utils import LOG_FILTER_TYPE_ENV_VAR, LogFilterType
 from ..version import VERSION
+from .select_beaker_hosts import get_beaker_hostname_constraints
 from .utils import GIT_BRANCH_ENV_VAR, GIT_REF_ENV_VAR, GIT_REPO_URL_ENV_VAR, GitConfig
 
 log = logging.getLogger(__name__)
@@ -241,6 +248,24 @@ class BeakerLaunchConfig(Config):
     The directory of the Beaker results dataset.
     """
 
+    use_hostname_constraints: bool = False
+    """
+    Uses hostname constraints to restrict the hostnames on which the experiment runs. This is currently
+    only supported for Augusta clusters, and can benefit performance by forcing the use of colocated nodes.
+
+    This is NOT recommended to be used with lower priority preemptible jobs, since hostname constraints are not
+    updated on preemption.
+    """
+
+    num_execution_units: Optional[int] = None
+    """
+    Number of "execution units", defaults to ``max(1, num_nodes // 32)``. An "execution unit" is abstraction
+    for any node-using entity of which 1 or more copies are run, where each unit wants its nodes to be
+    from colocated hardware (e.g., a model replica for large jobs, or a full distributed model for small jobs).
+
+    For internal experiments, this defaults to the number of data-parallel model replicas instead.
+    """
+
     # NOTE: don't assign a type here because omegaconf can't validate arbitrary classes
     #  _beaker: Optional[Beaker] = None
     _beaker = None
@@ -389,6 +414,7 @@ class BeakerLaunchConfig(Config):
                 entrypoint_script.append(
                     "BEAKER_REPLICA_RANK=$("
                     "python -m olmo_core.launch.reorder_ranks_in_gcp "
+                    "--verbose "
                     "${BEAKER_REPLICA_RANK} "
                     "${BEAKER_REPLICA_COUNT} "
                     "${BEAKER_LEADER_REPLICA_HOSTNAME}"
@@ -401,6 +427,31 @@ class BeakerLaunchConfig(Config):
             entrypoint_script.append(f'{entrypoint} "$@"')
 
         entrypoint_dataset = self._create_script_dataset("entrypoint.sh", entrypoint_script)
+
+        if (
+            self.use_hostname_constraints
+            and len(self.clusters) == 1
+            and "augusta" in self.clusters[0]
+        ):
+            if self.retries is not None and self.retries > 0:
+                raise OLMoConfigurationError(
+                    "Hostname constraints cannot be used for beaker jobs with retries, since constraints do not update on retry."
+                )
+
+            host_name_constraints = get_beaker_hostname_constraints(
+                self.num_nodes,
+                self.num_execution_units or max(1, self.num_nodes // 32),
+                1,
+                "us-central1-b",
+                beaker_cluster=self.clusters[0],
+                beaker_priority=self.priority,
+            )
+            assert (
+                len(host_name_constraints) == 1 and len(host_name_constraints[0]) >= self.num_nodes
+            )
+            constraints_kwargs = {"hostname": host_name_constraints[0]}
+        else:
+            constraints_kwargs = {"cluster": self.clusters}
 
         task_spec = (
             TaskSpec.new(
@@ -420,14 +471,14 @@ class BeakerLaunchConfig(Config):
                         or any(["augusta" in cluster for cluster in self.clusters])
                     )
                 ),
-                propagate_failure=False if self.num_nodes > 1 else None,
+                propagate_failure=True if self.num_nodes > 1 else None,
                 propagate_preemption=True if self.num_nodes > 1 else None,
                 synchronized_start_timeout="90m" if self.num_nodes > 1 else None,
                 resources=TaskResources(gpu_count=self.num_gpus, shared_memory=self.shared_memory),
                 result_path=self.result_dir,
             )
             .with_dataset("/olmo-core", beaker=entrypoint_dataset.id)
-            .with_constraint(cluster=self.clusters)
+            .with_constraint(**constraints_kwargs)
             .with_env_var(GIT_REPO_URL_ENV_VAR, self.git.repo_url)
             .with_env_var(GIT_REF_ENV_VAR, self.git.ref)
         )
@@ -459,7 +510,11 @@ class BeakerLaunchConfig(Config):
         )
 
     def launch(
-        self, follow: bool = False, torchrun: bool = True, entrypoint: Optional[str] = None
+        self,
+        follow: bool = False,
+        torchrun: bool = True,
+        entrypoint: Optional[str] = None,
+        slack_notifications: Optional[bool] = None,
     ) -> Experiment:
         """
         Launch a Beaker experiment using this config.
@@ -472,9 +527,27 @@ class BeakerLaunchConfig(Config):
         :param torchrun: Launch the target command with ``torchrun``.
         :param entrypoint: Provide an optional entrypoint program if ``torchrun`` is ``False``.
             Defaults to 'python'.
+        :param slack_notifications: If ``follow=True``, send Slack notifications when the run launches,
+            fails, or succeeds. This requires the env var ``SLACK_WEBHOOK_URL``.
 
         :returns: The Beaker experiment.
         """
+        # Check for webhook URL env var if needed.
+        slack_webhook_url: Optional[str] = None
+        if follow and slack_notifications is not False:
+            from olmo_core.train.callbacks.slack_notifier import (
+                SLACK_WEBHOOK_URL_ENV_VAR,
+            )
+
+            if slack_notifications is None:
+                slack_notifications = SLACK_WEBHOOK_URL_ENV_VAR in os.environ
+            elif slack_notifications and SLACK_WEBHOOK_URL_ENV_VAR not in os.environ:
+                raise OLMoEnvironmentError(
+                    f"Missing env var '{SLACK_WEBHOOK_URL_ENV_VAR}' for Slack notifications"
+                )
+
+            slack_webhook_url = os.environ.get(SLACK_WEBHOOK_URL_ENV_VAR)
+
         spec = self.build_experiment_spec(torchrun=torchrun, entrypoint=entrypoint)
         experiment = self.beaker.experiment.create(self.name, spec)
         log.info(f"Experiment submitted, see progress at {self.beaker.experiment.url(experiment)}")
@@ -483,7 +556,7 @@ class BeakerLaunchConfig(Config):
             return experiment
 
         try:
-            follow_experiment(self.beaker, experiment)
+            follow_experiment(self.beaker, experiment, slack_webhook_url=slack_webhook_url)
         except KeyboardInterrupt:
             log.warning("Caught keyboard interrupt...")
             if Confirm.ask("Would you like to cancel the experiment?"):
@@ -498,7 +571,12 @@ class BeakerLaunchConfig(Config):
         return experiment
 
 
-def follow_experiment(beaker: Beaker, experiment: Experiment, tail: bool = False):
+def follow_experiment(
+    beaker: Beaker,
+    experiment: Experiment,
+    tail: bool = False,
+    slack_webhook_url: Optional[str] = None,
+):
     # Wait for job to start...
     job: Optional[Job] = beaker.experiment.tasks(experiment.id)[0].latest_job  # type: ignore
     if job is None:
@@ -524,6 +602,9 @@ def follow_experiment(beaker: Beaker, experiment: Experiment, tail: bool = False
             continue
         break
 
+    if slack_webhook_url is not None:
+        _send_slack_notification_for_event(beaker, experiment, "launched", slack_webhook_url)
+
     # Stream logs...
     log.info("Showing logs:")
     print()
@@ -544,13 +625,43 @@ def follow_experiment(beaker: Beaker, experiment: Experiment, tail: bool = False
     exit_code = job.status.exit_code
 
     if exit_code is None:
+        if slack_webhook_url is not None:
+            _send_slack_notification_for_event(beaker, experiment, "failed", slack_webhook_url)
         raise BeakerExperimentFailedError(
             f"Experiment failed, see {beaker.experiment.url(experiment)} for details"
         )
     elif exit_code > 0:
+        if slack_webhook_url is not None:
+            _send_slack_notification_for_event(beaker, experiment, "failed", slack_webhook_url)
         raise BeakerExperimentFailedError(
             f"Experiment exited with non-zero code ({exit_code}), "
             f"see {beaker.experiment.url(experiment)} for details"
         )
     else:
         log.info(f"Experiment completed successfully: {beaker.experiment.url(experiment)}")
+        if slack_webhook_url is not None:
+            _send_slack_notification_for_event(beaker, experiment, "succeeded", slack_webhook_url)
+
+
+def _send_slack_notification_for_event(
+    beaker: Beaker,
+    experiment: Experiment,
+    event: Literal["launched", "succeeded", "failed"],
+    webhook_url: str,
+):
+    workload_name = experiment.full_name
+    workload_url = beaker.experiment.url(experiment)
+
+    if event == "launched":
+        text = f":check: Run <{workload_url}|*{workload_name}*> has launched! :runner:"
+    elif event == "failed":
+        text = f":check-failed: Run <{workload_url}|*{workload_name}*> failed!"
+    elif event == "succeeded":
+        text = f":check: Run <{workload_url}|*{workload_name}*> succeeded!"
+    else:
+        raise ValueError(f"Unknown event: {event}")
+
+    try:
+        requests.post(webhook_url, json={"text": text})
+    except Exception as e:
+        log.exception(f"Failed to send Slack notification: {e}")
