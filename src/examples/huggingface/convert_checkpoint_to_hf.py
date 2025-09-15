@@ -5,6 +5,7 @@ Note that this script is architecture-dependent, meaning it may only work for OL
 architectures that have support in the `transformers` library.
 """
 
+import contextlib
 import json
 import logging
 from argparse import ArgumentParser
@@ -49,6 +50,7 @@ def convert_checkpoint_to_hf(
     validate: bool = True,
     debug: bool = False,
     device: torch.device | None = None,
+    validation_sliding_window: int | None = None,
 ) -> None:
     """
     Convert a checkpoint to a different OLMo core compatible format.
@@ -87,12 +89,14 @@ def convert_checkpoint_to_hf(
             validate = False
         elif attention["use_flash"]:
             log.info(
-                "Flash attention or cuda is unavailable, turning off flash attention to stop validation from failing."
+                "Flash attention or cuda is unavailable, switching to flex attention to stop validation from failing."
             )
             attention["use_flash"] = False
+            attention["use_flex"] = True
 
-    model = TransformerConfig.from_dict(transformer_config_dict).build()
-    model.to_empty(device=device)
+    model_config = TransformerConfig.from_dict(transformer_config_dict)
+    model = model_config.build()
+    model.to_empty(device=device or torch.device("cpu"))
 
     tokenizer_config = TokenizerConfig.from_dict(tokenizer_config_dict)
     vocab_size = tokenizer_config.vocab_size
@@ -135,7 +139,15 @@ def convert_checkpoint_to_hf(
     if validate:
         log.info("Validating converted model")
         validate_conversion(
-            output_path, model, tokenizer_config.vocab_size, debug=debug, dtype=dtype, device=device
+            output_path,
+            model,
+            tokenizer_config.vocab_size,
+            debug=debug,
+            dtype=dtype,
+            device=device,
+            # use_flex=model_config.block.attention.use_flex or False,
+            use_flex=True,
+            sliding_window=validation_sliding_window,
         )
         log.info("Validation completed successful")
 
@@ -181,17 +193,45 @@ def validate_conversion(
     debug: bool = False,
     dtype: DType | None = None,
     device: torch.device | None = None,
+    use_flex: bool = False,
+    sliding_window: int | None = None,
 ):
     if torch.cuda.is_available():
         torch.cuda.init()
 
     device = device or get_default_device()
 
-    B, T = 1, 120
+    B, T = 1, 60
     input_ids = torch.randint(0, vocab_size, (B, T)).to(device)
 
+    if use_flex:
+        attn_implementation = "flex_attention"
+    else:
+        attn_implementation = "sdpa"
+
+    is_sliding = any(
+        hasattr(block.attention, "window_size") and block.attention.window_size != (-1, -1)
+        for block in model.blocks.values()
+    )
+
     log.info("Loading converted checkpoint for validation...")
-    hf_model = AutoModelForCausalLM.from_pretrained(hf_path, torch_dtype="auto").to(device).eval()
+    kwargs = {}
+    if is_sliding and sliding_window is not None:
+        kwargs["sliding_window"] = sliding_window
+    config = AutoConfig.from_pretrained(
+        hf_path,
+        **kwargs,
+    )
+    hf_model = (
+        AutoModelForCausalLM.from_pretrained(
+            hf_path,
+            torch_dtype="auto",
+            config=config,
+            attn_implementation=attn_implementation,
+        )
+        .to(device)
+        .eval()
+    )
 
     olmo_core_state, hf_state = {}, {}
     state_mapping = None
@@ -213,13 +253,24 @@ def validate_conversion(
         state_mapping = state_converter.get_mappings(model.state_dict(), placeholder_bounds)
 
     log.info("Running OLMo core and HF models for validation...")
-    with torch.no_grad():
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(torch.no_grad())
+        # Flex attention matches SDPA maths backend
+        if use_flex:
+            stack.enter_context(
+                torch.nn.attention.sdpa_kernel(torch.nn.attention.SDPBackend.MATH)
+            )
+
         hf_logits, *_ = hf_model(input_ids=input_ids, return_dict=False)
 
     del hf_model
 
     if dtype:
         model = model.to(dtype.as_pt())
+    if is_sliding and sliding_window is not None:
+        for block in model.blocks.values():
+            if block.attention.window_size != (-1, -1):
+                block.attention.window_size = (sliding_window - 1, 0)
     model.eval()
     with torch.no_grad():
         logits = model(input_ids=input_ids)
@@ -338,6 +389,11 @@ def parse_args():
         help="The torch dtype that model weights should be saved as. Defaults to bfloat16 due to https://github.com/allenai/olmo-cookbook/issues/60.",
         type=DType,
         default=DType.bfloat16,
+    )
+    parser.add_argument(
+        "--validation-sliding-window",
+        help="If set, overrides the model's sliding window size during validation. Useful for checking that sliding window is correctly implemented.",
+        type=int,
     )
     return parser.parse_args()
 
