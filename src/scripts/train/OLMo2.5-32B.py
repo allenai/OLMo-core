@@ -5,16 +5,24 @@ from olmo_core.data import DataMix
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
-from olmo_core.internal.experiment import CommonComponents, main, build_common_components
+from olmo_core.internal.experiment import (
+    CommonComponents,
+    build_common_components,
+    main,
+)
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
-from olmo_core.nn.transformer import TransformerConfig, TransformerActivationCheckpointingMode
+from olmo_core.nn.transformer import (
+    TransformerActivationCheckpointingMode,
+    TransformerConfig,
+)
 from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
 from olmo_core.train.train_module import (
+    TransformerActivationCheckpointingConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
-    TransformerTrainModuleConfig, TransformerActivationCheckpointingConfig,
+    TransformerTrainModuleConfig,
 )
 
 SEQUENCE_LENGTH = 8 * 1024
@@ -59,8 +67,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             shard_degree=32,
         ),
         ac_config=TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.budget,
-            activation_memory_budget=0.5
+            mode=TransformerActivationCheckpointingMode.budget, activation_memory_budget=0.5
         ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
@@ -115,7 +122,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 cancel_check_interval=cancel_check_interval,
             ),
         )
-        .with_recommended_evals(common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=1000)
+        .with_recommended_evals(
+            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=1000
+        )
     )
 
 
@@ -139,6 +148,7 @@ if __name__ == "__main__":
         model_config_builder=build_model_config,
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
+        beaker_image="petew/olmo-core-tch270cu128-2025-05-16",
         include_instance_filter=False,  # We use SkipStepOptimizer for this problem.
         include_default_evals=False,
     )
