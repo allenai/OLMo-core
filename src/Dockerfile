@@ -66,7 +66,7 @@ ARG RING_FLASH_ATTN_VERSION=0.1.6
 RUN pip install --no-build-isolation --no-cache-dir ring-flash-attn==${RING_FLASH_ATTN_VERSION}
 
 # Install liger-kernel.
-ARG LIGER_KERNEL_VERSION=0.6.1
+ARG LIGER_KERNEL_VERSION=0.6.2
 RUN pip install --no-build-isolation --no-cache-dir liger-kernel==${LIGER_KERNEL_VERSION}
 
 # Install direct dependencies, but not source code.
