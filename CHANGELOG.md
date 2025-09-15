@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Set `fused_linear_cross_entropy_loss accum_dtype` to fp32 in `LMHead`.
 - Increased `NCCL_FASTRAK_PLUGIN_ACCEPT_TIMEOUT_MS` from 10 minutes to 30 minutes.
 - `SlackNotifierCallback` will now notify on checkpoint saved and post epoch events.
 - `BeakerLaunchConfig.launch()` will now send Slack notifications by default when `follow=True` if the env var `SLACK_WEBHOOK_URL` is set.
