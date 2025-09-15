@@ -404,16 +404,18 @@ class BeakerLaunchConfig(Config):
 
         entrypoint_dataset = self._create_script_dataset("entrypoint.sh", entrypoint_script)
 
-        if len(self.clusters) == 1 and "augusta" in self.clusters[0] and self.priority == Priority.high:
-            host_name_constraints = get_host_name_constraints(
-                self.num_nodes, min(32, self.num_nodes), 1
-            )
-            assert (
-                len(host_name_constraints) == 1 and len(host_name_constraints[0]) >= self.num_nodes
-            )
-            constraints_kwargs = {"hostname": host_name_constraints[0]}
-        else:
-            constraints_kwargs = {"cluster": self.clusters}
+        # if len(self.clusters) == 1 and "augusta" in self.clusters[0] and self.priority == Priority.high:
+        #     host_name_constraints = get_host_name_constraints(
+        #         self.num_nodes, min(32, self.num_nodes), 1
+        #     )
+        #     assert (
+        #         len(host_name_constraints) == 1 and len(host_name_constraints[0]) >= self.num_nodes
+        #     )
+        #     constraints_kwargs = {"hostname": host_name_constraints[0]}
+        # else:
+        #     constraints_kwargs = {"cluster": self.clusters}
+
+        constraints_kwargs = {"cluster": self.clusters}
 
         task_spec = (
             TaskSpec.new(
