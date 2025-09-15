@@ -58,16 +58,17 @@ for dir in (
 DATA_ROOT = os.environ.get("OLMO_DATA_ROOT", DEFAULT_DATA_ROOT).rstrip("/")
 DATA_PATHS = [
     f"{DATA_ROOT}/c4-train.00000-00099.npy",
-    f"{DATA_ROOT}/c4-train.00100-00199.npy",
-    f"{DATA_ROOT}/c4-train.00200-00299.npy",
-    f"{DATA_ROOT}/c4-train.00300-00399.npy",
-    f"{DATA_ROOT}/c4-train.00400-00499.npy",
-    f"{DATA_ROOT}/c4-train.00500-00599.npy",
-    f"{DATA_ROOT}/c4-train.00600-00699.npy",
-    f"{DATA_ROOT}/c4-train.00700-00799.npy",
-    f"{DATA_ROOT}/c4-train.00800-00899.npy",
-    f"{DATA_ROOT}/c4-train.00900-00999.npy",
-    f"{DATA_ROOT}/c4-train.01000-01023.npy",
+    # Uncomment for full dataset which might not be available on NFS or Weka.
+    #  f"{DATA_ROOT}/c4-train.00100-00199.npy",
+    #  f"{DATA_ROOT}/c4-train.00200-00299.npy",
+    #  f"{DATA_ROOT}/c4-train.00300-00399.npy",
+    #  f"{DATA_ROOT}/c4-train.00400-00499.npy",
+    #  f"{DATA_ROOT}/c4-train.00500-00599.npy",
+    #  f"{DATA_ROOT}/c4-train.00600-00699.npy",
+    #  f"{DATA_ROOT}/c4-train.00700-00799.npy",
+    #  f"{DATA_ROOT}/c4-train.00800-00899.npy",
+    #  f"{DATA_ROOT}/c4-train.00900-00999.npy",
+    #  f"{DATA_ROOT}/c4-train.01000-01023.npy",
 ]
 EVAL_DATA_PATHS = [f"{DATA_ROOT}/c4-validation.00000-00008.npy"]
 DATA_WORK_DIR = "/tmp/dataset-cache"
