@@ -22,6 +22,7 @@ from ..config import Config
 from ..distributed.parallel import get_dp_process_group
 from ..distributed.utils import barrier, get_fs_local_rank, get_rank, get_world_size
 from ..exceptions import OLMoConfigurationError
+from ..io import is_url, normalize_path
 from ..utils import get_default_device, roundrobin, threaded_generator
 from .collator import DataCollator
 from .numpy_dataset import (
@@ -66,7 +67,7 @@ class DataLoaderBase(ABC):
             # Reset internal bookkeeping.
             data_loader.reset()
 
-    :param work_dir: The working directory. Should be shared among local ranks.
+    :param work_dir: The working directory. Should be a local directory shared among local ranks.
     :param global_batch_size: The global batch size. The units for this depend on the data loader
         implementation.
     :param dp_world_size: The data parallel world size.
@@ -83,7 +84,11 @@ class DataLoaderBase(ABC):
         dp_rank: int = 0,
         fs_local_rank: int = 0,
     ):
-        self.work_dir = work_dir
+        if is_url(work_dir):
+            raise OLMoConfigurationError(
+                f"'work_dir' should be a local path, not a URL ('{work_dir}')."
+            )
+        self.work_dir = Path(normalize_path(work_dir))
         self._global_batch_size = global_batch_size
         assert dp_rank < dp_world_size
         self.dp_world_size = dp_world_size
@@ -635,7 +640,7 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
             chunk=self.chunk_size if self.chunk_size > 1 else None,
             v=1,  # tick if logic changes
         )
-        return Path(self.work_dir) / f"{global_indices_fname}.npy"
+        return self.work_dir / f"{global_indices_fname}.npy"
 
     def _build_global_indices(self) -> np.ndarray:
         assert len(self.dataset) < np.iinfo(np.uint32).max
@@ -798,7 +803,7 @@ class NumpyVSLDataLoader(NumpyDataLoaderBase):
             bz=self.global_batch_size,
         )
         return (
-            Path(self.work_dir)
+            self.work_dir
             / f"dataset-{self.dataset.fingerprint}"
             / self.dataset.curriculum.short_str
             / f"{global_indices_fname}.npy"
@@ -813,7 +818,7 @@ class NumpyVSLDataLoader(NumpyDataLoaderBase):
             epoch=self.epoch if self.shuffle else None,
         )
         return (
-            Path(self.work_dir)
+            self.work_dir
             / f"dataset-{self.dataset.fingerprint}"
             / self.dataset.curriculum.short_str
             / f"{bucket_indices_fname}.npy"
@@ -1085,8 +1090,13 @@ class NumpyDataLoaderConfig(Config):
             Alternatively you can pass the ``dp_process_group`` instead.
         :param dp_process_group: The data parallel process group.
         """
-        if self.work_dir is not None and not dataset.work_dir_set:
-            dataset.work_dir = Path(self.work_dir)
+        if self.work_dir is not None:
+            if is_url(self.work_dir):
+                raise OLMoConfigurationError(
+                    f"'work_dir' should be a local path, not a URL ('{self.work_dir}')."
+                )
+            if not dataset.work_dir_set:
+                dataset.work_dir = Path(normalize_path(self.work_dir))
 
         if dp_process_group is None and mesh is not None:
             dp_process_group = get_dp_process_group(mesh)

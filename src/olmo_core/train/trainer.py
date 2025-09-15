@@ -286,8 +286,12 @@ class Trainer:
                 "or set 'FS_LOCAL_RANK' to the global rank for each process."
             )
 
-        # Configure working directory.
-        self.work_dir = Path(self.work_dir)
+        # Validate working directory.
+        if is_url(self.work_dir):
+            raise OLMoConfigurationError(
+                f"Trainer working directory must be a local path, got a URL instead ('{self.work_dir}')."
+            )
+        self.work_dir = Path(normalize_path(self.work_dir))
 
         # Ensure save folder and working directory exist.
         if get_fs_local_rank() == 0:

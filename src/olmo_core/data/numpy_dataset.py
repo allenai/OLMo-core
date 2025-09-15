@@ -37,7 +37,7 @@ from olmo_core.exceptions import OLMoConfigurationError, OLMoEnvironmentError
 from ..aliases import PathOrStr
 from ..config import Config, StrEnum
 from ..distributed.utils import barrier, get_fs_local_rank
-from ..io import _get_s3_client, get_file_size, glob_directory
+from ..io import _get_s3_client, get_file_size, glob_directory, is_url, normalize_path
 from .mixes import DataMix, DataMixBase
 from .source_mixture import SourceMixtureDatasetConfig
 from .tokenizer import TokenizerConfig
@@ -221,7 +221,11 @@ class NumpyDatasetBase(ABC):
 
     @work_dir.setter
     def work_dir(self, work_dir: PathOrStr):
-        self._work_dir = Path(work_dir)
+        if is_url(work_dir):
+            raise OLMoConfigurationError(
+                f"'work_dir' should be a local path, not a URL ('{work_dir}')."
+            )
+        self._work_dir = Path(normalize_path(work_dir))
         self._work_dir_set = True
 
     @property

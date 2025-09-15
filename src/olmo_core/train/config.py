@@ -273,6 +273,10 @@ class TrainerConfig(Config):
                 work_dir = self.save_folder
             else:
                 work_dir = os.path.join(tempfile.gettempdir(), os.path.basename(self.save_folder))
+        elif is_url(work_dir):
+            raise OLMoConfigurationError(
+                f"Trainer 'work_dir' must be a local path, not a URL ('{work_dir}')"
+            )
 
         checkpointer_kwargs = {}
         if self.checkpointer.save_overwrite is None:
