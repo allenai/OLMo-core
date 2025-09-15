@@ -875,9 +875,13 @@ class LocalEncoder(nn.Module):
             else:
                 n_tokens_to_retrieve = 1
 
-            embeddings = self._embed(self.rolling_past_tokens[:, -n_tokens_to_retrieve:])[:, -1:]
+            embeddings = self._embed(
+                self.rolling_past_tokens[:, -n_tokens_to_retrieve:],
+                # a bit hacky, storing past tokens unnecessary so expand to match shape
+                expanded_input_ids=expanded_input_ids.expand(-1, n_tokens_to_retrieve) if expanded_input_ids is not None else None,
+                )[:, -1:]
         else:
-            embeddings = self._embed(tokens)
+            embeddings = self._embed(tokens, expanded_input_ids)
 
         # pass through encoder layers
         if self.has_cache and self.cache_seqlens > 0:

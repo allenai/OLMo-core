@@ -162,6 +162,7 @@ class ByteTokenizerConfig(TokenizerConfig):
     special_tokens: list[str] = field(default_factory=lambda: [])
     special_tokens_first: bool = True
     original_identifier: Optional[str] = None
+    bpe_token_end_id: Optional[int] = None
 
     @classmethod
     def from_tokenizer_config(cls, tokenizer_config):
@@ -205,6 +206,7 @@ class ByteTokenizerConfig(TokenizerConfig):
             bos_token_id=special_tokens.index("<bos>"),
             pad_token_id=special_tokens.index("<pad>"),
             eos_token_id=special_tokens.index("<bos>"), # DIVERGENCE FROM BLT. set bos and eos to the same
+            bpe_token_end_id=special_tokens.index("<bpe_token_end>"),
             # slightly hacky, but this must match the dataset tokenizer, so dolma2
             original_identifier=TokenizerConfig.dolma2().identifier,
         )
@@ -283,15 +285,28 @@ class ByteTokenizer:
     def pad_token_id(self):
         return self.config.pad_token_id
 
-    def expand_byte_ids(self, byte_ids: list[int]) -> list[int]:
+    @property
+    def bpe_token_end_id(self):
+        # TODO(benjaminm): backwards compat, remove once new checkpoints
+        return self.config.bpe_token_end_id if self.config.bpe_token_end_id is not None else 3
+
+    def expand_byte_ids(self, byte_ids: list[int], n_last: Optional[int] = None) -> list[int]:
         # search in the byte tree for the longest matching token at every byte position
         expanded_ids = []
         for i in range(len(byte_ids)):
+            if n_last is not None and i < len(byte_ids) - n_last:
+                continue
+
             current_dict = self.byte_trie
             current_expansion = None
 
             for i in range(i, -1, -1):
                 byte = byte_ids[i]
+
+                if byte == self.bpe_token_end_id:
+                    # skip bpe token end markers, needed for generation
+                    continue
+
                 try:
                     current_dict = current_dict[byte]
                     if ByteTokenizer.TOKEN_ID_KEY in current_dict:

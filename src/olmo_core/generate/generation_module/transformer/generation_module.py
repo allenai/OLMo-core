@@ -740,8 +740,11 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         self._set_model_mode("eval")
         start_time = time.perf_counter()
 
+        expand_input_ids = self.model.local_encoder.add_expanded_embeddings  # type: ignore
+
         # convert to byte ids and compute patch lengths
         byte_input_ids = []
+        expanded_input_ids = []
         patch_lens = []
 
         for example_idx in range(input_ids.shape[0]):
@@ -751,6 +754,8 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                 strip_pad=True
             )
             byte_input_ids.append(torch.tensor(current_byte_input_ids, dtype=torch.long))
+            if expand_input_ids:
+                expanded_input_ids.append(torch.tensor(self.tokenizer.expand_byte_ids(current_byte_input_ids), dtype=torch.long))
             patch_lens.append(torch.tensor(current_patch_lens, dtype=torch.long))
 
         byte_input_ids = blt_utils.pad_left(byte_input_ids, value=self.tokenizer.pad_token_id, multiple_of=1)
@@ -758,6 +763,13 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
 
         byte_input_ids = move_to_device(byte_input_ids, self.device)
         patch_lens = move_to_device(patch_lens, self.device)
+        
+        if expanded_input_ids:
+            expanded_input_ids = blt_utils.pad_left(expanded_input_ids, value=self.tokenizer.pad_token_id, multiple_of=1)
+            expanded_input_ids = move_to_device(expanded_input_ids, self.device)
+        else:
+            expanded_input_ids = None
+
         sequence_start_indices = (byte_input_ids == self.tokenizer.pad_token_id).sum(-1)
         batch_size, prompt_len = byte_input_ids.shape
         finished = torch.zeros(batch_size, dtype=torch.bool, device=self.device)
@@ -789,21 +801,19 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         boundary_mask, cached_encoder_outputs = self.model.prefill_boundary_prediction_forward(  # type: ignore
             byte_input_ids,
             patch_lens=patch_lens,
+            expanded_input_ids=expanded_input_ids,
             sequence_start_indices=sequence_start_indices,
             blt_config=self.blt_config,
         )
 
         # Output containers
         generated = byte_input_ids
-        all_logits: Optional[List[List[torch.Tensor]]] = [[] for _ in range(input_ids.shape[0])] if return_logits else None
-        all_logprobs: Optional[List[List[torch.Tensor]]] = [[] for _ in range(input_ids.shape[0])] if return_logprobs else None
 
         # Timing stats
         time_to_first_token = None
         decode_start_time = None
         setup_time = None
-        # input_ids.shape[1] not accurate but needs to be in line with kv cache size
-        max_n_prefill_patches = input_ids.shape[1]#boundary_mask.sum(-1).max().item()
+        max_n_prefill_patches = boundary_mask.sum(-1).max().item()
         tokens_generated_plus_prefilled = max_n_prefill_patches
         bytes_generated = 0
 
@@ -868,12 +878,23 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                 if (is_first_forward or not generation_config.use_cache)
                 else non_boundary_next_tokens
             )
+            if expand_input_ids:
+                expanded_input_ids_for_model = torch.zeros_like(input_ids_for_model)
+                for i in range(input_ids_for_model.shape[0]):
+                    expanded_input_ids_for_model[i, :] = torch.tensor(self.tokenizer.expand_byte_ids(
+                        generated[i, :].tolist(),
+                        n_last=input_ids_for_model.shape[1],
+                    ), device=expanded_input_ids_for_model.device, dtype=expanded_input_ids_for_model.dtype)
+            else:
+                expanded_input_ids_for_model = None
+
             cache_leftpad = (
                 prefill_cache_leftpad if is_first_forward and generation_config.use_cache else None
             )
             forward_start_time = time.perf_counter()
             next_token_logits = self.model.inference_forward(  # type: ignore
                 input_ids_for_model,
+                expanded_input_ids=expanded_input_ids_for_model,
                 cached_encoder_outputs=cached_encoder_outputs if is_first_forward else None,
                 boundary_state=boundary_state,
                 sequence_start_indices=sequence_start_indices,
@@ -1038,59 +1059,36 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
             stats_lines.append(f"{'=' * 60}")
             log_or_print(log, "\n".join(stats_lines))
 
-        if completions_only:
-            generated = generated[:, prompt_len:]
-
         # convert to token-level ids / logits / logprobs
         # decoding errors could be a problem here - but not really a way around
-        generated_text = self.tokenizer.decode(generated[0].tolist())
-        generated_subword_ids = torch.tensor([self.tokenizer.hf_tokenizer.encode(generated_text)], dtype=torch.int64, device=self.device)
+        generated_subword_ids = []
+
+        for example_idx in range(generated.shape[0]):
+            completion_text = self.tokenizer.decode(generated[example_idx, prompt_len:].tolist())
+            completion_subword_tokens = self.tokenizer.hf_tokenizer.encode(completion_text)
+
+            if completions_only:
+                subword_tokens = completion_subword_tokens
+            else:
+                subword_tokens = input_ids[example_idx].tolist() + completion_subword_tokens
+
+            generated_subword_ids.append(torch.tensor(subword_tokens, device=input_ids.device, dtype=torch.long))
+
+        generated_subword_ids = blt_utils.pad_right(
+            generated_subword_ids,
+            value=self.tokenizer.hf_tokenizer.pad_token_id,
+            multiple_of=1,
+        )
 
         if return_logits or return_logprobs:
-            raise NotImplementedError("logits/logprobs not implemented yet for batched BLT")
-
-            assert logits is not None and logprobs is not None
-
-            if not completions_only:
-                generated_completion = generated[0, prompt_len:]
-                generated_text_completion = self.tokenizer.decode(generated_completion.tolist())
-                generated_subword_ids_completion = torch.tensor([self.tokenizer.hf_tokenizer.encode(generated_text_completion)], dtype=torch.int64, device=self.device)
-            else:
-                generated_completion = generated[0]
-                generated_subword_ids_completion = generated_subword_ids
-
-            _, patch_lens = self.tokenizer.get_tokens_and_patch_lengths(generated_subword_ids_completion[0].tolist(), add_bos=False)
-            patch_lens = torch.tensor([patch_lens], dtype=torch.int32, device=self.device)
-            patch_ids = blt_utils.lengths_to_ids(patch_lens, generated_completion.shape[-1]).to(self.device)
-
-            main_path_patch_logprobs = torch.zeros((1, generated_subword_ids_completion.shape[1]), device=self.device, dtype=torch.float32)
-            main_path_patch_logprobs = main_path_patch_logprobs.scatter_reduce(
-                src=logprobs.float(),
-                dim=1,
-                index=patch_ids,
-                reduce="sum",
-                include_self=False,
-            )
-
-            # we can't compute token-level logits, but logprobs should be fine since F.log_softmax(logprobs, -1) == logprobs
-            patch_logits = torch.zeros((1, generated_subword_ids_completion.shape[1] + 1, len(self.tokenizer.hf_tokenizer)), device=self.device, dtype=torch.float32)
-            remaining_logpmass = blt_utils.log1mexp(main_path_patch_logprobs)
-            remaining_logp_uniform = remaining_logpmass - math.log(patch_logits.shape[2] - 1)  # -1 to skip the main path token
-
-            patch_logits[:, :-1, :] = remaining_logp_uniform.unsqueeze(-1)
-            patch_logits.scatter_(
-                -1,
-                generated_subword_ids_completion.unsqueeze(-1),
-                main_path_patch_logprobs.to(patch_logits.dtype).unsqueeze(-1),
-            )
+            logits = logprobs = torch.zeros((batch_size, 0)) # not implemented
         else:
-            main_path_patch_logprobs = None
-            patch_logits = None
+            logits = logprobs = None
 
         if return_timing:
-            return generated, patch_logits, main_path_patch_logprobs, timings
+            return generated_subword_ids, logits, logprobs, timings
         else:
-            return generated, patch_logits, main_path_patch_logprobs
+            return generated_subword_ids, logits, logprobs
 
     @classmethod
     def from_checkpoint(

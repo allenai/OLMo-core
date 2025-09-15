@@ -53,7 +53,7 @@ from olmo_core.train.train_module import (
 from olmo_core.utils import seed_all
 
 NUM_WORKERS = 16
-SEQUENCE_LENGTH = 1024
+SEQUENCE_LENGTH = int(os.environ.get("SEQUENCE_LENGTH", 1024))
 QUICK_DEBUG = False
 GLOBAL_BATCH_SIZE = 64
 LOCAL_BATCH_SIZE = 64
