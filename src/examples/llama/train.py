@@ -6,6 +6,7 @@ Launch this with torchrun:
     torchrun --nproc-per-node=4 src/examples/llama/train.py run_name [OVERRIDES...]
 """
 
+import logging
 import os
 import sys
 from dataclasses import dataclass
@@ -42,6 +43,8 @@ from olmo_core.train.train_module import (
     TransformerTrainModuleConfig,
 )
 from olmo_core.utils import seed_all
+
+log = logging.getLogger(__name__)
 
 # The sequence length to train and eval on.
 SEQUENCE_LENGTH = 1024
@@ -93,6 +96,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         vocab_size=tokenizer_config.padded_vocab_size(),  # a little bigger than actual vocab size to make it a multiple of 128
     )
 
+    log.info(f"Using data root: {DATA_ROOT}")
     dataset_config = NumpyDatasetConfig(
         paths=DATA_PATHS,
         name=NumpyDatasetType.fsl,
