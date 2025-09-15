@@ -130,7 +130,7 @@ class BeakerLaunchConfig(Config):
     The command to run in the container via ``torchrun``.
     """
 
-    budget: str
+    budget: Optional[str] = None
     """
     The budget group to assign.
     """
