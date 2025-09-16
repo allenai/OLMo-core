@@ -17,7 +17,8 @@ from olmo_core.nn.transformer import (
 )
 from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import Duration, TrainerConfig
-from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback, SlackNotifierCallback
+from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback, SlackNotifierCallback, \
+    SlackNotificationSetting
 from olmo_core.train.train_module import (
     TransformerActivationCheckpointingConfig,
     TransformerDataParallelConfig,
@@ -126,7 +127,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "slack_notifier",
             SlackNotifierCallback(
                 name=run_name,
-                enabled=True
+                enabled=True,
+                notifications=SlackNotificationSetting.all
             )
         )
         .with_recommended_evals(
