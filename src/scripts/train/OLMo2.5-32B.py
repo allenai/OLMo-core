@@ -131,7 +131,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         .with_callback(
             "slack_notifier",
             SlackNotifierCallback(
-                name=run_name, enabled=True, notifications=SlackNotificationSetting.all
+                name=run_name,
+                enabled=True,
             ),
         )
         .with_recommended_evals(
