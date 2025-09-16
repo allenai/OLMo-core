@@ -149,7 +149,7 @@ def build_common_config(*args, **kwargs):
     # This setting would be tempting, so that we can seamlessly extend the
     # context length at the end, but it decreases diversity in the batch.
 
-    components.dataset.mix = DataMix.OLMo_mix_0625
+    components.dataset.mix = DataMix.OLMo_mix_0925
     return components
 
 
