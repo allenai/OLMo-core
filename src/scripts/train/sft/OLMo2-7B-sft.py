@@ -7,7 +7,7 @@ import argparse
 import logging
 import sys
 from dataclasses import dataclass, field
-from typing import List, Optional, cast
+from typing import List, Optional, cast, Tuple
 
 from rich import print
 
@@ -57,8 +57,9 @@ from olmo_core.train.train_module.transformer.config import (
 from olmo_core.utils import prepare_cli_environment, seed_all
 from pathlib import Path
 import shutil
-import subprocess
-import torch.distributed
+from urllib.parse import urlparse
+import fnmatch
+
 
 log = logging.getLogger(__name__)
 
@@ -148,6 +149,50 @@ class BatchSizeConfig:
         )
 
 
+
+def _separate_prefix_and_glob(prefix: str) -> Tuple[str, str]:
+    if any(char in prefix for char in ["*", "?", "[", "]"]):
+        parts = prefix.split("/")
+        base_parts = []
+        for part in parts:
+            if any(char in part for char in ["*", "?", "[", "]"]):
+                break
+            base_parts.append(part)
+    else:
+        base_parts = prefix.split("/")
+    if not base_parts:
+        return ".", prefix
+
+    new_prefix = "/".join(base_parts)
+    glob_str = prefix[len(new_prefix) :]
+
+    return new_prefix, glob_str.lstrip("/")
+
+
+def glob_remote_dataset(prefix: str) -> List[str]:
+    parsed_path = urlparse(prefix)
+    scheme, bucket, parsed_prefix = parsed_path.scheme, parsed_path.netloc, parsed_path.path.lstrip("/")
+    parsed_prefix_pre_glob, glob_str = _separate_prefix_and_glob(parsed_prefix)
+    base_prefix_without_scheme = Path(f"{bucket}/{parsed_prefix_pre_glob}")
+
+    paths: List[str] = []
+
+    for path in list_directory(f"{scheme}://{base_prefix_without_scheme}"):
+        parsed_path = urlparse(path)
+        path_without_scheme = Path(parsed_path.netloc) / parsed_path.path.lstrip('/')
+        relative_to_base_prefix = path_without_scheme.relative_to(base_prefix_without_scheme)
+
+        if glob_str and not fnmatch.fnmatch(str(relative_to_base_prefix), glob_str):
+            # must match the glob if a glob was provided
+            continue
+
+        # path was valid!
+        paths.append(path)
+
+    return paths
+
+
+
 def build_sft_dataset(
     root_dir: str,
     tokenizer_config: TokenizerConfig,
@@ -155,32 +200,14 @@ def build_sft_dataset(
     dataset_path: Optional[str],
 ) -> NumpyDatasetConfig:
     clean_path = dataset_path.rstrip("/")
-    #     if dataset_path.startswith("gs://"):
-    #     local_rank = get_local_rank()
-    #     if local_rank == 0:
-    #         print(f"Rank {local_rank}: Downloading dataset from GCS...")
-    #         subprocess.run(["gcloud", "storage", "rsync", "--recursive", f"{clean_path}/", "/tmp/sft_dataset/"], check=True)
-    #         print(f"Rank {local_rank}: Data downloaded to /tmp/sft_dataset/")
-    #         clean_path = "/tmp/sft_dataset"
-    #     else:
-    #         print(f"Rank {local_rank}: Waiting for rank 0 to download dataset from GCS...")
-    #     torch.distributed.barrier()
-    #     print(f"{local_rank}: All ranks proceeding after dataset download.")
-    #     # contents = list_directory(dataset_path)
-    #     # # TODO: This does not work yet! GCS support is an active work in progress, nearly complete
-    #     # print("GCS support not working yet!")
-    #     # token_id_paths = []
-    #     # label_mask_paths = []
-    #     # for elem in contents:
-    #     #     if "token_ids_part" in elem and elem.endswith(".npy"):
-    #     #         token_id_paths.append(elem)
-    #     #     if "labels_mask" in elem and elem.endswith(".npy"):
-    #     #         label_mask_paths.append(elem)
-    #     # expand_glob = False
-    # #else:
-    token_id_paths = [f"{clean_path}/token_ids_part_*.npy"]
-    label_mask_paths = [f"{clean_path}/labels_mask_*.npy"]
-    expand_glob = True
+    if dataset_path.startswith("gs://") or dataset_path.startswith("s3://"):
+        token_id_paths = glob_remote_dataset(f"{clean_path}/token_ids_part_*.npy")
+        label_mask_paths = glob_remote_dataset(f"{clean_path}/token_ids_part_*.npy")
+        expand_glob = False
+    else:
+        token_id_paths = [f"{clean_path}/token_ids_part_*.npy"]
+        label_mask_paths = [f"{clean_path}/labels_mask_*.npy"]
+        expand_glob = True
 
     dataset = NumpyDatasetConfig(
         # general config
