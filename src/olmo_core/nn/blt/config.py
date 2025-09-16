@@ -17,6 +17,7 @@ class BLTConfig(Config):
     temperature: float = 1.0
     div_fn: str = "tvd_temp_limit"
     merge_boundary_loss: bool = False
+    boundary_mode: str = "patch_end"  # "patch_start" or "patch_end"
     use_output_boundary_jsd: bool = False
     eval_add_boundary_logp: bool = False
     do_alm_debiasing: bool = False
