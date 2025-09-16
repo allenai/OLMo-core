@@ -45,7 +45,7 @@ dev = [
     "pytest-xdist",
     "ruff",
     "setuptools",
-    "Sphinx>=6.0,<9.0",
+    "Sphinx>=6.0,<=8.1.3",
     "sphinx-autobuild",
     "sphinx-autodoc-typehints==1.23.3",
     "sphinx-copybutton",
