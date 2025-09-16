@@ -39,7 +39,7 @@ def build_config(opts, overrides: List[str]) -> BeakerLaunchConfig:
         workspace=opts.workspace,
         allow_dirty=opts.allow_dirty,
         weka_buckets=[
-            BeakerWekaBucket(bucket=bucket, mount=f"/weka/{bucket}") for bucket in opts.weka
+            BeakerWekaBucket(bucket=bucket, mount=f"/weka/{bucket}") for bucket in (opts.weka or [])
         ],
     )
 
@@ -87,10 +87,8 @@ def parse_args():
     )
     parser.add_argument(
         "--preemptible",
-        "--not-preemptible",
         action="store_true",
         help="""If the job should be preemptible.""",
-        default=True,
     )
     parser.add_argument(
         "--allow-dirty",
@@ -116,7 +114,7 @@ def parse_args():
 def main():
     prepare_cli_environment()
     opts, overrides = parse_args()
-    build_config(opts, overrides).launch(follow=True)
+    print(build_config(opts, overrides))  # .launch(follow=True)
 
 
 if __name__ == "__main__":

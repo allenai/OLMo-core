@@ -217,7 +217,7 @@ A complete guide on the matter is well beyond the scope of this document, so thi
 
 But for more in-depth information on the topic we recommend checking out the [Scaling Book](https://jax-ml.github.io/scaling-book).
 
-At the time of writing, the `TransformerTrainModule` supports 3 dimensions of parallelism: data parallelism through FSDP or DDP, tensor parallelism (TP), and context parallelism (CP).
+At the time of writing, the `TransformerTrainModule` supports 3 dimensions of parallelism for dense models, namely data parallelism through FSDP or DDP, tensor parallelism (TP), and context parallelism (CP), as well as expert parallelism (EP) for MoEs.
 There's also experimental support for pipeline parallelism (PP) in the {class}`~olmo_core.train.train_module.TransformerPipelineTrainModule`,
 but if you follow these general guidelines you should be able to train up to 70B parameter dense models at a reasonable MFU without pipelining.
 
