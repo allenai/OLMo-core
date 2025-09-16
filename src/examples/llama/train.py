@@ -82,6 +82,7 @@ EVAL_DATA_PATHS = [f"{DATA_ROOT}/c4-validation.00000-00008.npy"]
 DATA_WORK_DIR = "/tmp/dataset-cache"
 
 
+# docs: start-define-config
 @dataclass
 class ExperimentConfig(Config):
     model: TransformerConfig
@@ -90,6 +91,8 @@ class ExperimentConfig(Config):
     train_module: TransformerTrainModuleConfig
     trainer: TrainerConfig
     init_seed: int = 12536
+    dry_run: bool = False
+    # docs: end-define-config
 
 
 def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
@@ -191,17 +194,23 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         )
     )
 
-    return ExperimentConfig(
+    config = ExperimentConfig(
         model=model_config,
         dataset=dataset_config,
         data_loader=data_loader_config,
         train_module=train_module_config,
         trainer=trainer_config,
-    ).merge(overrides)
+    )
+
+    # Apply overrides.
+    # docs: start-config-merge
+    config = config.merge(overrides)
+    # docs: end-config-merge
+
+    return config
 
 
-def main(run_name: str, overrides: List[str]):
-    config = build_config(run_name, overrides)
+def train(config: ExperimentConfig):
     if get_rank() == 0:
         rich.print(config)
 
@@ -223,15 +232,24 @@ def main(run_name: str, overrides: List[str]):
     trainer.fit()
 
 
-if __name__ == "__main__":
+def main():
     if len(sys.argv) < 2:
         print(f"Usage: python {sys.argv[0]} run_name [OVERRIDES...]")
         sys.exit(1)
 
     run_name, *overrides = sys.argv[1:]
+    config = build_config(run_name, overrides)
+
+    if config.dry_run:
+        rich.print(config)
+        return
 
     prepare_training_environment()
     try:
-        main(run_name, overrides=overrides)
+        train(config)
     finally:
         teardown_training_environment()
+
+
+if __name__ == "__main__":
+    main()

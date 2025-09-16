@@ -56,6 +56,7 @@ specific to your environment. Then you can install OLMo-core from PyPI with:
    model_ladder
    nn/index
    optim
+   testing
    train/index
    utils
 

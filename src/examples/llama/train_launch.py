@@ -10,6 +10,7 @@ from typing import List
 from beaker import Priority as BeakerJobPriority
 
 from olmo_core.launch.beaker import (
+    BeakerEnvVar,
     BeakerLaunchConfig,
     BeakerWekaBucket,
     OLMoCoreBeakerImage,
@@ -18,10 +19,15 @@ from olmo_core.utils import generate_uuid, prepare_cli_environment
 
 
 def build_config(opts, overrides: List[str]) -> BeakerLaunchConfig:
+    env_vars: List[BeakerEnvVar] = []
+    if opts.debug:
+        env_vars.append(BeakerEnvVar(name="CUDA_LAUNCH_BLOCKING", value="1"))
+        env_vars.append(BeakerEnvVar(name="NCCL_DEBUG", value="INFO"))
     return BeakerLaunchConfig(
         name=f"{opts.run_name}-{generate_uuid()[:8]}",
         budget=opts.budget,
         cmd=["src/examples/llama/train.py", opts.run_name, *overrides],
+        env_vars=env_vars,
         task_name="train",
         description=opts.description,
         clusters=opts.cluster,
@@ -70,7 +76,7 @@ def parse_args():
         "--cluster",
         type=str,
         nargs="*",
-        default=["ai2/jupiter", "ai2/ceres", "ai2/saturn", "ai2/allennlp"],
+        default=["ai2/jupiter", "ai2/ceres", "ai2/saturn", "ai2/prometheus"],
         help="""Clusters to launch on (multiple allowed).""",
     )
     parser.add_argument(
@@ -99,6 +105,11 @@ def parse_args():
         help="""The Beaker image to use.""",
     )
     parser.add_argument("--weka", type=str, nargs="*", help="Weka buckets to mount at '/weka/'.")
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="""Set debugging env vars, like `CUDA_LAUNCH_BLOCKING=1`.""",
+    )
     parser.parse_known_args()
     return parser.parse_known_args()
 

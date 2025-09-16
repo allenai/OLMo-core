@@ -1009,6 +1009,9 @@ class Trainer:
         return target
 
     def add_callback(self, name: str, callback: Callback):
+        """
+        Add a callback to the trainer.
+        """
         if name in self.callbacks:
             raise OLMoConfigurationError(f"A callback with name '{name}' already exists!")
         callback.trainer = self
