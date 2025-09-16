@@ -110,7 +110,6 @@ def parse_args():
         action="store_true",
         help="""Set debugging env vars, like `CUDA_LAUNCH_BLOCKING=1`.""",
     )
-    parser.parse_known_args()
     return parser.parse_known_args()
 
 
