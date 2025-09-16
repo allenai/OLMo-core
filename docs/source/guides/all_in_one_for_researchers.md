@@ -8,6 +8,7 @@ We will show you:
 - How to customize different components of the training loop, such as the model, data loader, optimizer, etc.
 - How to troubleshoot common issues.
 - How to scale up to larger models while maintaining high MFU.
+- Additional topics, such as how to fine-tune from weights HuggingFace.
 
 ```{attention}
 If you run into any issues with tutorial, don't hesitate to [open an issue on GitHub](https://github.com/allenai/OLMo-core/issues/new/choose) or reach out on Slack in the [#olmo-core-users](https://allenai.slack.com/archives/C08AU86NMCM) channel.
@@ -55,6 +56,18 @@ We also recommend making this new workspace your default for now to avoid accide
 ```
 beaker config set default_workspace ai2/WORKSPACE_NAME
 ```
+
+We have official Beaker images for OLMo-core that include all dependencies.
+The most up-to-date versions are defined in the {class}`~olmo_core.launch.beaker.OLMoCoreBeakerImage` enum,
+and a complete list can be found in the [OLMo-core workspace](https://beaker.allen.ai/orgs/ai2/workspaces/OLMo-core/images).
+
+If you need to build a custom image, see the instructions below.
+
+### Docker
+
+We maintain a [Dockerfile](https://github.com/allenai/OLMo-core/blob/main/src/Dockerfile) for building official images with all of OLMo-core's dependencies.
+You can build one yourself by running `make docker-image` from the repository root.
+See the [Makefile](https://github.com/allenai/OLMo-core/blob/main/Makefile) for all the different build arguments that you can modify.
 
 ## Run your first experiment
 
@@ -256,3 +269,22 @@ but if you follow these general guidelines you should be able to train up to 70B
   --train_module.ac_config='{mode: budget, activation_memory_budget: 0.90}'
   ```
 - Always use `torch.compile` (set `compile_model=True`, or `--train_module.compile_model=true` from the command-line). Not only will this make your model run faster, but it typically reduces peak CUDA memory usage as well.
+
+## Additional topics and resources
+
+### Reproducing official OLMo runs
+
+When new OLMo models are published we provide public versions of the training scripts in [`src/scripts/official`](https://github.com/allenai/OLMo-core/tree/main/src/scripts/official) which can be launched with `torchrun`. If you have access to Beaker you could also use any of the internal scripts in [`src/scripts/train`](https://github.com/allenai/OLMo-core/tree/main/src/scripts/train), which are updated more often and generally have very good default settings for optimal throughput on Ai2's Beaker clusters.
+
+### Fine-tuning from HuggingFace weights
+
+OLMo-core's `Trainer` can be used for fine-tuning just as well as pretraining.
+The only additional steps needed are to convert to the pretrained weights into a format that the `Trainer` expects and then to tell the `Trainer` to load those weights at the beginning of your run.
+For an example of the former with HuggingFace models, see [this HF conversion guide](../examples/huggingface.rst).
+Add for the latter, you just need to add something like this to your training script prior to the call to `Trainer.fit()`:
+
+```{literalinclude} ../../../src/examples/llama/train.py
+:language: py
+:start-after: '    # docs: start-load-path'
+:end-before: '    # docs: end-load-path'
+```
