@@ -127,10 +127,7 @@ def is_running_in_beaker() -> bool:
     # There's a number of different environment variables set by the Beaker executor.
     # Checking any one of these would suffice, but we check a couple to reduce the
     # risk of false positives.
-    if "BEAKER_JOB_ID" in os.environ and "BEAKER_NODE_ID" in os.environ:
-        return True
-    else:
-        return False
+    return "BEAKER_JOB_ID" in os.environ and "BEAKER_NODE_ID" in os.environ
 
 
 def is_running_in_beaker_batch_job() -> bool:
