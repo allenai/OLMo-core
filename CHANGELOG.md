@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed parsing username+password git remote URLs in `launch.beaker` module.
 - Cluster names in Beaker have changed.
 - Fixed mixture rounding error with `SourceMixtureDataset`, which was previously causing samples to be repeated at the end of training.
+- Don't DDOS Beaker from big jobs.
 
 ### Changed
 
