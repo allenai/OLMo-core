@@ -81,7 +81,7 @@ def get_occupied_beaker_hosts(
             continue
 
         if node.cordoned is not None:
-            # Treat cordonned node as occupied since it might be uncordonned later.
+            # Treat cordoned node as occupied since it might be uncordoned later.
             occupied_hosts.add(host)
             continue
 
