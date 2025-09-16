@@ -83,8 +83,10 @@ def get_occupied_beaker_hosts(
 
         if (
             job.is_running
-            and job.execution
-            and job.execution.spec.resources.gpu_count > 0
+            and job.execution is not None
+            and (resources := job.execution.spec.resources) is not None
+            and resources.gpu_count is not None
+            and resources.gpu_count > 0
             and not _is_job_preemptible(job, beaker_priority)
         ):
             occupied_hosts.add(host)
