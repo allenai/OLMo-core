@@ -112,7 +112,7 @@ Notice the value we set for `--trainer.hard_stop` is a JSON/YAML mapping. This w
 #### Launching on Beaker
 
 For Beaker users, you'll find a separate launch script in the same directory as the training script: [`src/examples/llama/train_launch.py`](https://github.com/allenai/OLMo-core/blob/main/src/examples/llama/train_launch.py).
-This is a just a thing CLI wrapper around the `olmo_core.launch.beaker` functionality with some settings specific to the corresponding training script.
+This is a just a thin CLI wrapper around the `olmo_core.launch.beaker` functionality with some settings specific to the corresponding training script.
 This script takes a few of its own command-line options (such as `--gpus`, `--preemptible/--not-preemptible`, `--priority`, and `--weka`) and the rest will be passed on as overrides to the training script.
 
 So, to launch the job on Beaker, run this command from the root of your repository:
