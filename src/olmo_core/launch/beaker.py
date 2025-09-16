@@ -4,13 +4,15 @@ Launch experiments on `Beaker <https://beaker.org>`_.
 
 import hashlib
 import logging
+import os
 import tempfile
 import time
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
-from typing import List, Optional, Set, Tuple
+from typing import List, Literal, Optional, Set, Tuple
 
+import requests
 from beaker import (
     Beaker,
     Dataset,
@@ -29,7 +31,11 @@ from rich.prompt import Confirm
 
 from ..config import Config, StrEnum
 from ..distributed.utils import OLMO_SHARED_FS_ENV_VAR
-from ..exceptions import BeakerExperimentFailedError, OLMoConfigurationError
+from ..exceptions import (
+    BeakerExperimentFailedError,
+    OLMoConfigurationError,
+    OLMoEnvironmentError,
+)
 from ..train.callbacks.beaker import BEAKER_RESULT_DIR
 from ..utils import LOG_FILTER_TYPE_ENV_VAR, LogFilterType
 from ..version import VERSION
@@ -51,7 +57,7 @@ __all__ = [
 
 BeakerPriority = Priority
 
-_DEFAULT_TORCH = "2.7.0".replace(".", "")
+_DEFAULT_TORCH = "2.7.1".replace(".", "")
 _DEFAULT_CUDA = "12.8".replace(".", "")
 
 
@@ -66,17 +72,17 @@ class OLMoCoreBeakerImage(StrEnum):
 
     # NOTE: when updating default images here, should also update images used in tests at .github/workflows/main.yml
 
-    stable = f"olmo-core-tch{_DEFAULT_TORCH}cu{_DEFAULT_CUDA}-2025-05-16"
+    stable = f"olmo-core-tch{_DEFAULT_TORCH}cu{_DEFAULT_CUDA}-2025-09-15"
     """
     Built with the latest compatible stable version of PyTorch.
     """
 
-    stable_cu126 = f"olmo-core-tch{_DEFAULT_TORCH}cu126-2025-05-16"
+    stable_cu126 = f"olmo-core-tch{_DEFAULT_TORCH}cu126-2025-09-15"
     """
     The stable image with CUDA pinned to 12.6.
     """
 
-    stable_cu128 = f"olmo-core-tch{_DEFAULT_TORCH}cu128-2025-05-16"
+    stable_cu128 = f"olmo-core-tch{_DEFAULT_TORCH}cu128-2025-09-15"
     """
     The stable image with CUDA pinned to 12.8.
     """
@@ -504,7 +510,11 @@ class BeakerLaunchConfig(Config):
         )
 
     def launch(
-        self, follow: bool = False, torchrun: bool = True, entrypoint: Optional[str] = None
+        self,
+        follow: bool = False,
+        torchrun: bool = True,
+        entrypoint: Optional[str] = None,
+        slack_notifications: Optional[bool] = None,
     ) -> Experiment:
         """
         Launch a Beaker experiment using this config.
@@ -517,9 +527,27 @@ class BeakerLaunchConfig(Config):
         :param torchrun: Launch the target command with ``torchrun``.
         :param entrypoint: Provide an optional entrypoint program if ``torchrun`` is ``False``.
             Defaults to 'python'.
+        :param slack_notifications: If ``follow=True``, send Slack notifications when the run launches,
+            fails, or succeeds. This requires the env var ``SLACK_WEBHOOK_URL``.
 
         :returns: The Beaker experiment.
         """
+        # Check for webhook URL env var if needed.
+        slack_webhook_url: Optional[str] = None
+        if follow and slack_notifications is not False:
+            from olmo_core.train.callbacks.slack_notifier import (
+                SLACK_WEBHOOK_URL_ENV_VAR,
+            )
+
+            if slack_notifications is None:
+                slack_notifications = SLACK_WEBHOOK_URL_ENV_VAR in os.environ
+            elif slack_notifications and SLACK_WEBHOOK_URL_ENV_VAR not in os.environ:
+                raise OLMoEnvironmentError(
+                    f"Missing env var '{SLACK_WEBHOOK_URL_ENV_VAR}' for Slack notifications"
+                )
+
+            slack_webhook_url = os.environ.get(SLACK_WEBHOOK_URL_ENV_VAR)
+
         spec = self.build_experiment_spec(torchrun=torchrun, entrypoint=entrypoint)
         experiment = self.beaker.experiment.create(self.name, spec)
         log.info(f"Experiment submitted, see progress at {self.beaker.experiment.url(experiment)}")
@@ -528,7 +556,7 @@ class BeakerLaunchConfig(Config):
             return experiment
 
         try:
-            follow_experiment(self.beaker, experiment)
+            follow_experiment(self.beaker, experiment, slack_webhook_url=slack_webhook_url)
         except KeyboardInterrupt:
             log.warning("Caught keyboard interrupt...")
             if Confirm.ask("Would you like to cancel the experiment?"):
@@ -543,7 +571,12 @@ class BeakerLaunchConfig(Config):
         return experiment
 
 
-def follow_experiment(beaker: Beaker, experiment: Experiment, tail: bool = False):
+def follow_experiment(
+    beaker: Beaker,
+    experiment: Experiment,
+    tail: bool = False,
+    slack_webhook_url: Optional[str] = None,
+):
     # Wait for job to start...
     job: Optional[Job] = beaker.experiment.tasks(experiment.id)[0].latest_job  # type: ignore
     if job is None:
@@ -569,6 +602,9 @@ def follow_experiment(beaker: Beaker, experiment: Experiment, tail: bool = False
             continue
         break
 
+    if slack_webhook_url is not None:
+        _send_slack_notification_for_event(beaker, experiment, "launched", slack_webhook_url)
+
     # Stream logs...
     log.info("Showing logs:")
     print()
@@ -589,13 +625,43 @@ def follow_experiment(beaker: Beaker, experiment: Experiment, tail: bool = False
     exit_code = job.status.exit_code
 
     if exit_code is None:
+        if slack_webhook_url is not None:
+            _send_slack_notification_for_event(beaker, experiment, "failed", slack_webhook_url)
         raise BeakerExperimentFailedError(
             f"Experiment failed, see {beaker.experiment.url(experiment)} for details"
         )
     elif exit_code > 0:
+        if slack_webhook_url is not None:
+            _send_slack_notification_for_event(beaker, experiment, "failed", slack_webhook_url)
         raise BeakerExperimentFailedError(
             f"Experiment exited with non-zero code ({exit_code}), "
             f"see {beaker.experiment.url(experiment)} for details"
         )
     else:
         log.info(f"Experiment completed successfully: {beaker.experiment.url(experiment)}")
+        if slack_webhook_url is not None:
+            _send_slack_notification_for_event(beaker, experiment, "succeeded", slack_webhook_url)
+
+
+def _send_slack_notification_for_event(
+    beaker: Beaker,
+    experiment: Experiment,
+    event: Literal["launched", "succeeded", "failed"],
+    webhook_url: str,
+):
+    workload_name = experiment.full_name
+    workload_url = beaker.experiment.url(experiment)
+
+    if event == "launched":
+        text = f":check: Run <{workload_url}|*{workload_name}*> has launched! :runner:"
+    elif event == "failed":
+        text = f":check-failed: Run <{workload_url}|*{workload_name}*> failed!"
+    elif event == "succeeded":
+        text = f":check: Run <{workload_url}|*{workload_name}*> succeeded!"
+    else:
+        raise ValueError(f"Unknown event: {event}")
+
+    try:
+        requests.post(webhook_url, json={"text": text})
+    except Exception as e:
+        log.exception(f"Failed to send Slack notification: {e}")
