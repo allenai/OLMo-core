@@ -3,8 +3,8 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
-from .callback import Callback
 from ...aliases import PathOrStr
+from .callback import Callback
 
 log = logging.getLogger(__name__)
 
