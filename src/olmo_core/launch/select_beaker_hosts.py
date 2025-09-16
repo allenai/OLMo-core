@@ -72,24 +72,31 @@ def get_occupied_beaker_hosts(
     occupied_hosts = set()
 
     cluster = beaker.cluster.get(beaker_cluster)
-    jobs = beaker.job.list(cluster=cluster)
-    for job in jobs:
-        if job.node is None:
+    nodes = beaker.cluster.nodes(cluster)
+    for node in sorted(nodes, key=lambda node: node.hostname):
+        host = node.hostname
+        assert host not in occupied_hosts, f"Host {host} is somehow already in occupied hosts"
+        if host not in hosts_metadata:
+            log.warning(f"No metadata found for beaker host {host}")
             continue
 
-        host = beaker.node.get(job.node).hostname
-        if host not in hosts_metadata or host in occupied_hosts:
-            continue
-
-        if (
-            job.is_running
-            and job.execution is not None
-            and (resources := job.execution.spec.resources) is not None
-            and resources.gpu_count is not None
-            and resources.gpu_count > 0
-            and not _is_job_preemptible(job, beaker_priority)
-        ):
+        if node.cordoned is not None:
+            # Treat cordoned node as occupied since it might be uncordoned later.
             occupied_hosts.add(host)
+            continue
+
+        jobs = beaker.job.list(node=node)
+        for job in jobs:
+            if (
+                job.is_running
+                and job.execution is not None
+                and (resources := job.execution.spec.resources) is not None
+                and resources.gpu_count is not None
+                and resources.gpu_count > 0
+                and not _is_job_preemptible(job, beaker_priority)
+            ):
+                occupied_hosts.add(host)
+                break
 
     return occupied_hosts
 
@@ -261,7 +268,6 @@ def main():
     parser.add_argument(
         "--credentials-path",
         type=Path,
-        required=True,
         help="The path to GCP credetials.",
     )
     args = parser.parse_args()
