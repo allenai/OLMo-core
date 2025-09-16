@@ -813,7 +813,7 @@ class Trainer:
 
     def maybe_load_checkpoint(
         self,
-        dir: PathOrStr,
+        dir: Optional[PathOrStr] = None,
         *,
         load_trainer_state: Optional[bool] = None,
         load_optim_state: Optional[bool] = None,
@@ -826,6 +826,8 @@ class Trainer:
 
         :returns: If a checkpoint was loaded.
         """
+        if dir is None:
+            dir = self.save_folder
         should_load: bool = True
         if get_rank() == 0:
             should_load = self.checkpointer.contains_checkpoint(dir)

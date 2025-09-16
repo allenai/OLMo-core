@@ -10,7 +10,7 @@ import logging
 import os
 import sys
 from dataclasses import dataclass
-from typing import List, cast
+from typing import List, Optional, cast
 
 import rich
 
@@ -91,6 +91,7 @@ class ExperimentConfig(Config):
     train_module: TransformerTrainModuleConfig
     trainer: TrainerConfig
     init_seed: int = 12536
+    load_path: Optional[str] = None
     dry_run: bool = False
     # docs: end-define-config
 
@@ -227,6 +228,14 @@ def train(config: ExperimentConfig):
     # Save config to W&B and each checkpoint dir.
     config_dict = config.as_config_dict()
     cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
+
+    # If we have a load path set and there is no checkpoint in the save folder, load the
+    # checkpoint from the load path.
+    if not trainer.no_checkpoints and not trainer.maybe_load_checkpoint() and config.load_path:
+        log.info(
+            f"Loading checkpoint from {config.load_path} since no checkpoints were found in the save folder..."
+        )
+        trainer.load_checkpoint(config.load_path)
 
     # Train.
     trainer.fit()
