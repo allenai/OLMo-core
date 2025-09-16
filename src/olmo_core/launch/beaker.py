@@ -120,6 +120,23 @@ DEFAULT_SETUP_STEPS = (
 )
 
 
+def is_running_in_beaker() -> bool:
+    """
+    Check if the current process is running inside of a Beaker job (batch or session).
+    """
+    # There's a number of different environment variables set by the Beaker executor.
+    # Checking any one of these would suffice, but we check a couple to reduce the
+    # risk of false positives.
+    return "BEAKER_JOB_ID" in os.environ and "BEAKER_NODE_ID" in os.environ
+
+
+def is_running_in_beaker_batch_job() -> bool:
+    """
+    Check if the current process is running inside a Beaker batch job (as opposed to a session).
+    """
+    return is_running_in_beaker() and os.environ.get("BEAKER_JOB_KIND") == "batch"
+
+
 @dataclass
 class BeakerLaunchConfig(Config):
     """
