@@ -38,7 +38,7 @@ dev = [
     "google-cloud-storage",
     "isort>=5.12,<5.14",
     "mypy>=1.0,<1.4",
-    "myst-parser>=1.0",
+    "myst-parser>=1.0,<3.0",
     "pytest",
     "pytest-memray",
     "pytest-sphinx",
