@@ -1196,124 +1196,6 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
             long_doc_strategy=self._long_doc_strategy,
         )
 
-        # Calculate document length statistics
-        document_lengths = document_indices[:, 1] - document_indices[:, 0]
-
-        # Log detailed document length information
-        log.info(f"Document length statistics for '{source_path}':")
-        log.info(f"  Total documents: {len(document_lengths):,d}")
-        log.info(f"  Min length: {int(document_lengths.min()):,d} tokens")
-        log.info(f"  Max length: {int(document_lengths.max()):,d} tokens")
-        log.info(f"  Mean length: {float(document_lengths.mean()):.1f} tokens")
-        log.info(f"  Median length: {float(np.median(document_lengths)):.1f} tokens")
-        log.info(f"  Std deviation: {float(document_lengths.std()):.1f} tokens")
-
-        # Log percentiles
-        percentiles = [10, 25, 75, 90, 95, 99]
-        percentile_values = np.percentile(document_lengths, percentiles)
-        for p, v in zip(percentiles, percentile_values):
-            log.info(f"  {p}th percentile: {int(v):,d} tokens")
-
-        # Log distribution by length ranges
-        length_ranges = [
-            (0, 100, "0-100"),
-            (101, 500, "101-500"),
-            (501, 1000, "501-1K"),
-            (1001, 2000, "1K-2K"),
-            (2001, 4000, "2K-4K"),
-            (4001, 8000, "4K-8K"),
-            (8001, float("inf"), "8K+"),
-        ]
-
-        log.info("  Document length distribution:")
-        for min_len, max_len, range_name in length_ranges:
-            if max_len == float("inf"):
-                count = np.sum(document_lengths > min_len)
-            else:
-                count = np.sum((document_lengths >= min_len) & (document_lengths <= max_len))
-            percentage = (count / len(document_lengths)) * 100
-            log.info(f"    {range_name}: {count:,d} documents ({percentage:.1f}%)")
-
-        # Log label mask statistics if label masks are provided
-        if self._label_mask_paths is not None:
-            # Find the corresponding label mask path for this source path
-            source_path_idx = self._array_paths.index(source_path)
-            if source_path_idx < len(self._label_mask_paths):
-                label_mask_path = self._label_mask_paths[source_path_idx]
-                log.info(f"Label mask statistics for '{label_mask_path}':")
-
-                # Load and analyze label mask data for each document
-                total_tokens_analyzed = 0
-                total_masked_tokens = 0
-                total_unmasked_tokens = 0
-                doc_mask_ratios = []
-
-                for start_idx, end_idx in document_indices:
-                    # Load the label mask for this document
-                    doc_mask = load_array_slice(
-                        label_mask_path, int(start_idx), int(end_idx), np.bool_
-                    )
-
-                    doc_tokens = len(doc_mask)
-                    doc_unmasked = int(np.sum(doc_mask))
-                    doc_masked = doc_tokens - doc_unmasked
-
-                    total_tokens_analyzed += doc_tokens
-                    total_masked_tokens += doc_masked
-                    total_unmasked_tokens += doc_unmasked
-
-                    if doc_tokens > 0:
-                        doc_mask_ratios.append(doc_unmasked / doc_tokens)
-
-                # Calculate overall statistics
-                overall_mask_ratio = (
-                    total_unmasked_tokens / total_tokens_analyzed
-                    if total_tokens_analyzed > 0
-                    else 0
-                )
-                doc_mask_ratios = np.array(doc_mask_ratios)
-
-                log.info(f"  Total tokens analyzed: {total_tokens_analyzed:,d}")
-                log.info(
-                    f"  Unmasked (training) tokens: {total_unmasked_tokens:,d} ({overall_mask_ratio * 100:.1f}%)"
-                )
-                log.info(
-                    f"  Masked (ignored) tokens: {total_masked_tokens:,d} ({(1 - overall_mask_ratio) * 100:.1f}%)"
-                )
-
-                if len(doc_mask_ratios) > 0:
-                    log.info(f"  Document-level mask ratio statistics:")
-                    log.info(f"    Mean unmasked ratio: {float(doc_mask_ratios.mean()):.3f}")
-                    log.info(f"    Median unmasked ratio: {float(np.median(doc_mask_ratios)):.3f}")
-                    log.info(f"    Min unmasked ratio: {float(doc_mask_ratios.min()):.3f}")
-                    log.info(f"    Max unmasked ratio: {float(doc_mask_ratios.max()):.3f}")
-                    log.info(f"    Std deviation: {float(doc_mask_ratios.std()):.3f}")
-
-                    # Log distribution of mask ratios
-                    fully_masked_docs = np.sum(doc_mask_ratios == 0.0)
-                    fully_unmasked_docs = np.sum(doc_mask_ratios == 1.0)
-                    partially_masked_docs = (
-                        len(doc_mask_ratios) - fully_masked_docs - fully_unmasked_docs
-                    )
-
-                    log.info(f"  Document mask distribution:")
-                    log.info(
-                        f"    Fully masked documents: {fully_masked_docs:,d} ({(fully_masked_docs / len(doc_mask_ratios)) * 100:.1f}%)"
-                    )
-                    log.info(
-                        f"    Fully unmasked documents: {fully_unmasked_docs:,d} ({(fully_unmasked_docs / len(doc_mask_ratios)) * 100:.1f}%)"
-                    )
-                    log.info(
-                        f"    Partially masked documents: {partially_masked_docs:,d} ({(partially_masked_docs / len(doc_mask_ratios)) * 100:.1f}%)"
-                    )
-
-                    # Log percentiles for mask ratios
-                    mask_percentiles = [10, 25, 50, 75, 90, 95, 99]
-                    mask_percentile_values = np.percentile(doc_mask_ratios, mask_percentiles)
-                    log.info(f"  Unmasked ratio percentiles:")
-                    for p, v in zip(mask_percentiles, mask_percentile_values):
-                        log.info(f"    {p}th percentile: {float(v):.3f}")
-
         document_indices = document_indices.reshape(-1)
 
         instance_start_offset = 0
@@ -1330,11 +1212,8 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
         # shape: (num_documents,)
         docs_by_instance = np.array(documents_by_instance_list, dtype=self.indices_dtype)
 
-        log.info(f"Writing document indices to: {document_indices_path}")
         write_array_to_disk(document_indices, document_indices_path)
-        log.info(f"Writing instance offsets to: {instance_offsets_path}")
         write_array_to_disk(instance_offsets, instance_offsets_path)
-        log.info(f"Writing documents by instance to: {docs_by_instance_path}")
         write_array_to_disk(docs_by_instance, docs_by_instance_path)
 
         return len(instances), total_tokens
@@ -1376,135 +1255,11 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
                     total_instances, total_tokens = future.result()
                     total_padding = self.sequence_length * total_instances - total_tokens
                     avg_padding = total_padding / total_instances
-                    packing_efficiency = (
-                        100 * total_tokens / (self.sequence_length * total_instances)
-                    )
-
                     log.info(
-                        f"Packed {total_tokens:,} tokens from '{source_path}' into {total_instances:,d} instances "
+                        f"Packed {total_tokens:,} tokens from {source_path} into {total_instances:,d} instances "
                         f"of sequence length {self.sequence_length:,d} using an average of "
                         f"{avg_padding:.1f} padding tokens per instance."
                     )
-                    log.info(f"  Packing efficiency: {packing_efficiency:.1f}% (higher is better)")
-                    log.info(f"  Total padding tokens: {total_padding:,d}")
-                    log.info(
-                        f"  Padding ratio: {(total_padding / total_tokens) * 100:.1f}% of content tokens"
-                    )
-
-                    # Log label mask summary if label masks are provided
-                    if self._label_mask_paths is not None:
-                        source_path_idx = self._array_paths.index(source_path)
-                        if source_path_idx < len(self._label_mask_paths):
-                            label_mask_path = self._label_mask_paths[source_path_idx]
-
-                            # Calculate total label mask statistics across all instances
-                            total_unmasked_in_instances = 0
-                            total_tokens_in_instances = 0
-
-                            # Load instance data to calculate mask statistics
-                            docs_by_instance_path = self._get_docs_by_instance_path(source_path)
-                            instance_offsets_path = self._get_instance_offsets_path(source_path)
-                            document_indices_path = self._get_document_indices_path(source_path)
-
-                            log.info(f"    Reading cached files for label mask analysis:")
-                            log.info(f"      Instance offsets: {instance_offsets_path}")
-                            instance_offsets = np.memmap(
-                                instance_offsets_path, dtype=self.indices_dtype, mode="r"
-                            )
-                            instance_offsets = instance_offsets.reshape(-1, 2)
-                            log.info(f"      Documents by instance: {docs_by_instance_path}")
-                            docs_by_instance = np.memmap(
-                                docs_by_instance_path, dtype=self.indices_dtype, mode="r"
-                            )
-                            log.info(f"      Document indices: {document_indices_path}")
-                            document_indices = np.memmap(
-                                document_indices_path, dtype=self.indices_dtype, mode="r"
-                            )
-                            document_indices = document_indices.reshape(-1, 2)
-
-                            for instance_start, instance_end in instance_offsets:
-                                instance_doc_ids = docs_by_instance[instance_start:instance_end]
-                                instance_tokens = 0
-                                instance_unmasked = 0
-
-                                for doc_id in instance_doc_ids:
-                                    doc_start, doc_end = document_indices[doc_id]
-                                    doc_mask = load_array_slice(
-                                        label_mask_path, int(doc_start), int(doc_end), np.bool_
-                                    )
-                                    instance_tokens += len(doc_mask)
-                                    instance_unmasked += int(np.sum(doc_mask))
-
-                                # Add padding tokens as masked (False in label mask)
-                                padding_in_instance = self.sequence_length - instance_tokens
-                                instance_tokens = self.sequence_length  # Include padding
-
-                                total_tokens_in_instances += instance_tokens
-                                total_unmasked_in_instances += instance_unmasked
-
-                            if total_tokens_in_instances > 0:
-                                instance_mask_ratio = (
-                                    total_unmasked_in_instances / total_tokens_in_instances
-                                )
-                                total_masked_in_instances = (
-                                    total_tokens_in_instances - total_unmasked_in_instances
-                                )
-
-                                log.info(f"  Label mask summary for packed instances:")
-                                log.info(
-                                    f"    Total tokens in instances (including padding): {total_tokens_in_instances:,d}"
-                                )
-                                log.info(
-                                    f"    Unmasked (training) tokens: {total_unmasked_in_instances:,d} ({instance_mask_ratio * 100:.1f}%)"
-                                )
-                                log.info(
-                                    f"    Masked tokens (content + padding): {total_masked_in_instances:,d} ({(1 - instance_mask_ratio) * 100:.1f}%)"
-                                )
-                                log.info(
-                                    f"    Effective training tokens per instance: {total_unmasked_in_instances / total_instances:.1f}"
-                                )
-
-                            del instance_offsets, docs_by_instance, document_indices
-
-                    # Calculate and log documents per instance statistics
-                    docs_by_instance_path = self._get_docs_by_instance_path(source_path)
-                    instance_offsets_path = self._get_instance_offsets_path(source_path)
-
-                    # Load instance offsets to calculate documents per instance
-                    log.info(f"  Reading cached file for documents per instance analysis:")
-                    log.info(f"    Instance offsets: {instance_offsets_path}")
-                    instance_offsets = np.memmap(
-                        instance_offsets_path, dtype=self.indices_dtype, mode="r"
-                    )
-                    instance_offsets = instance_offsets.reshape(-1, 2)
-                    docs_per_instance = instance_offsets[:, 1] - instance_offsets[:, 0]
-
-                    log.info(f"  Documents per instance statistics:")
-                    log.info(f"    Min docs per instance: {int(docs_per_instance.min())}")
-                    log.info(f"    Max docs per instance: {int(docs_per_instance.max())}")
-                    log.info(f"    Mean docs per instance: {float(docs_per_instance.mean()):.1f}")
-                    log.info(
-                        f"    Median docs per instance: {float(np.median(docs_per_instance)):.1f}"
-                    )
-
-                    # Log distribution of documents per instance
-                    single_doc_instances = np.sum(docs_per_instance == 1)
-                    multi_doc_instances = np.sum(docs_per_instance > 1)
-                    log.info(
-                        f"    Single-document instances: {single_doc_instances:,d} ({(single_doc_instances / total_instances) * 100:.1f}%)"
-                    )
-                    log.info(
-                        f"    Multi-document instances: {multi_doc_instances:,d} ({(multi_doc_instances / total_instances) * 100:.1f}%)"
-                    )
-
-                    # Log instances with many documents (potential over-packing indicators)
-                    high_doc_instances = np.sum(docs_per_instance >= 10)
-                    if high_doc_instances > 0:
-                        log.info(
-                            f"    Instances with 10+ documents: {high_doc_instances:,d} ({(high_doc_instances / total_instances) * 100:.1f}%)"
-                        )
-
-                    del instance_offsets, docs_per_instance
 
 
 class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
