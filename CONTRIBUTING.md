@@ -5,14 +5,18 @@ Thank you for your interest in contributing to OLMo-core! This guide will help y
 ## Setting up your development environment
 
 1. For rapid experimentation we recommend forking OLMo-core for your project instead of installing it as a dependency. Start by [creating a fork](https://github.com/allenai/OLMo-core/fork) if you haven't already, and then cloning your fork to the computer where you'll be doing the development.
-2. Create or activate a Python virtual environment with Python 3.10 or newer. We recommend [uv](https://docs.astral.sh/uv/): `uv venv && source .venv/bin/activate`. Any other virtual environment manager (such as `python -m venv` or conda) works as well.
+2. Create or activate a Python virtual environment with Python 3.10 or newer. We recommend [uv](https://docs.astral.sh/uv/): `uv venv --python 3.11 && source .venv/bin/activate`. Any other virtual environment manager (such as `python -m venv` or conda) works as well.
 3. Once you've `cd`-ed into the root directory of your clone of OLMo-core *and* activated your virtual environment, install [PyTorch](https://pytorch.org) according to the directions specific to your operating system and hardware (a CPU-only distribution is fine for local development). Finally, install OLMo-core in editable mode by running:
 
-```bash
-pip install -e '.[all]'
-```
+    ```bash
+    pip install -e '.[all]'
+    ```
 
-Or an equivalent `uv` command, such as `uv pip install -e '.[all]'` or `uv sync --all-extras`.
+    or, if using `uv`:
+
+    ```bash
+    uv sync --all-extras
+    ```
 
 If you plan to build the documentation locally you'll also need Sphinx: both commands above install the `docs` extra automatically because it is part of `all`.
 
@@ -34,7 +38,7 @@ The best way to find relevant code is to start in `src/olmo_core` and look for a
 ## Making a change
 
 1. Start by opening or finding an issue describing the problem you are solving. If none exists, consider filing one so maintainers are aware of the context.
-2. Create a feature branch from `main` in your fork and make your changes. Keep commits focused and descriptive.
+2. Create a feature branch from `main` in your fork and make your changes.
 3. Update or add docstrings when you introduce new functionality. Docstrings are automatically incorporated into OLMo-core's [documentation](https://olmo-core.readthedocs.io/en/latest/overview/introduction.html).
 4. Add or update tests in `src/test` to cover your changes. Favor fast, deterministic tests that can run on CPU-only environments whenever possible.
 5. Update`CHANGELOG.md` with a quick description of your change.
@@ -49,7 +53,6 @@ pytest -v src/test
 
 You can target a subset of tests by passing a file path (for example `pytest src/test/nn/rope_test.py`) or a keyword expression (for example `pytest -k rope`). All tests should pass before you open a PR. Some tests exercise GPU-specific code paths; they automatically skip themselves if the required hardware is unavailable.
 
-which runs the style, lint, and type-checking commands described below.
 
 ### Test conventions
 
@@ -73,7 +76,7 @@ which runs the style, lint, and type-checking commands described below.
 
 1. Push your branch to your fork, then [create a PR](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/creating-a-pull-request-from-a-fork) targeting `allenai/OLMo-core:main`.
 2. In the PR description, summarize the change, highlight any user-facing impact, and call out areas where you would like reviewer attention.
-3. Confirm that you've run the relevant checks (`pytest`, `make checks`, and documentation builds if applicable) and include any notable failures or skips.
+3. Confirm that you've run the relevant checks (`pytest`, `make checks`, and documentation builds if applicable) and include any notable failures or skips. Ensure that all GitHub actions that are triggered are passing.
 4. Respond to review feedback promptly and keep the PR focused. If a review uncovers additional work beyond the scope, consider creating follow-up issues.
 
 If you have questions or need guidance, feel free to open a GitHub issue.
