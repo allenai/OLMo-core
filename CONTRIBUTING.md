@@ -37,7 +37,7 @@ The best way to find relevant code is to start in `src/olmo_core` and look for a
 2. Create a feature branch from `main` in your fork and make your changes. Keep commits focused and descriptive.
 3. Update or add docstrings when you introduce new functionality. Docstrings are automatically incorporated into OLMo-core's [documentation](https://olmo-core.readthedocs.io/en/latest/overview/introduction.html).
 4. Add or update tests in `src/test` to cover your changes. Favor fast, deterministic tests that can run on CPU-only environments whenever possible.
-5. If your change affects user-facing behavior, configuration defaults, or release notes, update `docs/` and `CHANGELOG.md` as appropriate.
+5. Update`CHANGELOG.md` with a quick description of your change.
 
 ## Running tests
 
@@ -49,13 +49,18 @@ pytest -v src/test
 
 You can target a subset of tests by passing a file path (for example `pytest src/test/nn/rope_test.py`) or a keyword expression (for example `pytest -k rope`). All tests should pass before you open a PR. Some tests exercise GPU-specific code paths; they automatically skip themselves if the required hardware is unavailable.
 
-For larger changes consider running the full quality gate:
-
-```bash
-make checks
-```
-
 which runs the style, lint, and type-checking commands described below.
+
+### Test conventions
+
+- Place new test modules under `src/test` and name them `*_test.py` so that `pytest` discovers them automatically. Mirror the package structure of the code you are testing when it makes sense (e.g., tests for `src/olmo_core/nn/rope.py` live in `src/test/nn/rope_test.py`).
+- Name individual test functions `test_*` and prefer `pytest.mark.parametrize` to cover multiple inputs or configurations without duplicating code. Parametrized tests keep runtime manageable while exercising the variations OLMo-core supports.
+
+### CPU, GPU, and multi-GPU runs
+
+- GPU-only scenarios use the `gpu` marker applied by helpers such as `@requires_gpu`. These tests skip automatically when CUDA is unavailable. To focus on them explicitly run `pytest -m gpu`; to exclude them on CPU-only machines run `pytest -m "not gpu"`.
+- Multi-GPU suites use `@requires_multi_gpu` and the `run_distributed_test(...)` helper to launch distributed workers. Reserve at least two visible devices before running them, for example `CUDA_VISIBLE_DEVICES=0,1 pytest -m gpu src/test/nn/transformer/model_test.py`.
+- Some GPU tests depend on optional libraries like `flash-attn` or `grouped_gemm`. Install the full extras (`pip install -e '.[all]'`) and confirm the libraries load if you need to exercise those paths.
 
 ## Formatting and Linting
 
@@ -71,4 +76,4 @@ which runs the style, lint, and type-checking commands described below.
 3. Confirm that you've run the relevant checks (`pytest`, `make checks`, and documentation builds if applicable) and include any notable failures or skips.
 4. Respond to review feedback promptly and keep the PR focused. If a review uncovers additional work beyond the scope, consider creating follow-up issues.
 
-If you have questions or need guidance, feel free to open a GitHub issue or start a discussion in the [AllenAI Discord](https://discord.gg/sZq3jTNVNG).
+If you have questions or need guidance, feel free to open a GitHub issue.
