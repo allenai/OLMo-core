@@ -5,7 +5,6 @@ from typing import List, Optional
 import torch
 from beaker import Beaker, BeakerError, SecretNotFound
 
-from olmo_core.distributed.utils import is_distributed
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.io import is_url
 from olmo_core.launch.beaker import (
@@ -14,6 +13,7 @@ from olmo_core.launch.beaker import (
     BeakerLaunchConfig,
     BeakerWekaBucket,
     OLMoCoreBeakerImage,
+    is_running_in_beaker_batch_job,
 )
 from olmo_core.utils import generate_uuid
 
@@ -54,9 +54,9 @@ def beaker_secret_exists(secret: str, workspace: Optional[str] = None) -> bool:
 def _to_beaker_env_secret(
     name: str, secret: str, *, workspace: Optional[str] = None, required: bool = True
 ) -> Optional[BeakerEnvSecret]:
-    # Assume beaker secret exists if we are in a distributed setting (e.g., during a training job)
+    # Assume beaker secret exists if we are running in a batch job (e.g., during a training job)
     # so that we don't DOS beaker.
-    if is_distributed() or beaker_secret_exists(secret, workspace=workspace):
+    if is_running_in_beaker_batch_job() or beaker_secret_exists(secret, workspace=workspace):
         return BeakerEnvSecret(name=name, secret=secret)
     elif required:
         raise OLMoConfigurationError(
