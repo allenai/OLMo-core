@@ -114,7 +114,7 @@ def parse_args():
 def main():
     prepare_cli_environment()
     opts, overrides = parse_args()
-    print(build_config(opts, overrides))  # .launch(follow=True)
+    build_config(opts, overrides).launch(follow=True)
 
 
 if __name__ == "__main__":
