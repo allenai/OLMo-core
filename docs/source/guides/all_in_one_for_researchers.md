@@ -30,7 +30,7 @@ And finally, install OLMo-core in editable mode by running
 pip install -e '.[all]'
 ```
 
-or the equivalent `uv` command.
+or an equivalent `uv` command, such as `uv pip install -e '.[all]'` or `uv sync --all-extras`.
 
 ### Beaker
 
