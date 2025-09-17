@@ -1190,7 +1190,7 @@ class NumpyBytePaddedFSLDataset(NumpyPaddedFSLDataset):
         return data
 
     def __getitem__(self, index: int) -> Dict[str, Any]:
-        item = super().__getitem__(index)
+        item = super(NumpyPaddedFSLDataset, self).__getitem__(index)
         # pad to fixed amount of subword per example
         pad_shape = (0, self.patch_sequence_length - len(item["input_ids"]))
         if "label_mask" in item:
