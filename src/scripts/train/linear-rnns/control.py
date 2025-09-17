@@ -7,7 +7,7 @@ from datetime import datetime
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE, get_root_dir
-from olmo_core.internal.experiment import CommonComponents, main
+from olmo_core.internal.experiment import CommonComponents, ExperimentConfig, main
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig
@@ -38,6 +38,9 @@ LR = (
 )  # Based on 6T tokens with 100B anneal, don't forget to adjust when max duration or anneal length changes.
 SAVE_INTERVAL = 1000
 EVAL_INTERVAL = 1000
+
+# Use this to change whether the job is preemptible or not.
+PREEMPTIBLE = False
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
@@ -167,6 +170,11 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     return config
 
 
+def set_preemptible(config: ExperimentConfig) -> None:
+    if config.launch is not None:
+        config.launch.preemptible = PREEMPTIBLE
+
+
 if __name__ == "__main__":
     main(
         global_batch_size=GLOBAL_BATCH_SIZE,
@@ -174,6 +182,7 @@ if __name__ == "__main__":
         model_config_builder=build_model_config,
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
+        finalize_config=set_preemptible,
         include_instance_filter=False,  # We use SkipStepOptimizer for this problem.
         include_default_evals=False,
         intra_document_masking=True,
