@@ -37,8 +37,7 @@ specific to your environment. Then you can install OLMo-core from PyPI with:
    :caption: Examples
 
    examples/huggingface.rst
-   examples/llama.rst
-   examples/ngpt.rst
+   examples/llm.rst
 
 .. toctree::
    :hidden:

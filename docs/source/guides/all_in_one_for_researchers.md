@@ -73,7 +73,7 @@ See the [Makefile](https://github.com/allenai/OLMo-core/blob/main/Makefile) for 
 We'll start by launching a short language model pretraining run with a small transformer (271M params) on a subset of c4.
 This will only take a few minutes on as little as 2 NVIDIA 40GB A100s.
 
-We'll be using the script [`src/examples/llama/train.py`](https://github.com/allenai/OLMo-core/blob/main/src/examples/llama/train.py),
+We'll be using the script [`src/examples/llm/train.py`](https://github.com/allenai/OLMo-core/blob/main/src/examples/llm/train.py),
 which is intended to be run with `torchrun`, either directly or indirectly through Beaker or something like Slurm.
 But before we actually launch the training run, let's look at how the key components/hyperparameters of the run are defined.
 
@@ -81,7 +81,7 @@ But before we actually launch the training run, let's look at how the key compon
 
 Near the top of the script you'll find a custom config dataclass:
 
-```{literalinclude} ../../../src/examples/llama/train.py
+```{literalinclude} ../../../src/examples/llm/train.py
 :language: py
 :lineno-match:
 :start-after: '# docs: start-define-config'
@@ -92,7 +92,7 @@ Near the top of the script you'll find a custom config dataclass:
 1. First, it gives us a good way to keep track of all the hyperparameters of each experiment. Since the config inherits from OLMo-core's {class}`~olmo_core.config.Config` baseclass, it comes with useful methods to serialize it to JSON which, for example, could be uploaded to Weights & Biases or saved to the run's checkpoint directory.
 2. Second, it gives us a command-line argument parser that maps args directly to fields in the config for free due to the use of the {meth}`Config.merge() <olmo_core.config.Config.merge>` method on this line:
 
-   ```{literalinclude} ../../../src/examples/llama/train.py
+   ```{literalinclude} ../../../src/examples/llm/train.py
    :language: py
    :lineno-match:
    :start-after: '    # docs: start-config-merge'
@@ -108,7 +108,7 @@ Near the top of the script you'll find a custom config dataclass:
 
 The components of the config class are then used to construct the model, data loader, trainer, etc, as you can see here:
 
-```{literalinclude} ../../../src/examples/llama/train.py
+```{literalinclude} ../../../src/examples/llm/train.py
 :language: py
 :lineno-match:
 :start-after: '    # docs: start-build-components'
@@ -116,13 +116,13 @@ The components of the config class are then used to construct the model, data lo
 ```
 
 The script also includes a dry-run mode that you can use to validate that your overrides are applied correctly.
-Let's try that right now by passing in the `--dry-run=true` override (or just `--dry-run`).
+Let's try that right now by passing in the `--dry-run` flag.
 Also note the script expects one positional argument, the name of the run (this is used in multiple parts of the config so we require it before the overrides).
 
 Here's the full dry-run command:
 
 ```fish
-python src/examples/llama/train.py tutorial-run-01 --dry-run=true
+python src/examples/llm/train.py tutorial-run-01 --dry-run
 ```
 
 ### Launching the run
@@ -157,8 +157,11 @@ To actually launch this test run on Beaker, run this command:
 python -m olmo_core.launch.beaker \
   --gpus=2 \
   --weka=oe-training-default \
-  -- src/examples/llama/train.py \
+  --shared-filesystem \
+  -- src/examples/llm/train.py \
     tutorial-run-01 \
+    --save-folder="/weka/oe-training-default/$USER/tutorial-run-01" \
+    --work-dir="/weka/oe-training-default/$USER/dataset-cache" \
     --trainer.callbacks.lm_evaluator.enabled=false \
     --trainer.callbacks.downstream_evaluator.enabled=false \
     --trainer.no_checkpoints \
@@ -169,15 +172,17 @@ If the launch is successful it will print a link to the Beaker workload and then
 
 Some things to note:
 - We tell the launch module to request 2 GPUs and mount the weka bucket `oe-training-default` to the container at `/weka/oe-training-default`.
-  This gives us access to a copy of the data on weka, which will be much faster to read than streaming over HTTP.
+  This allows us to save checkpoints to weka and also gives us access to a copy of the data on weka, which will be much faster to read than streaming over HTTP.
+- We also add the flag `--shared-filesystem` since we'll be using weka for the `--save-folder` and `--work-dir`, which tells OLMo-core that each rank has access to the same filesystem that these directories are in.
 - Everything after the bare double dashes (`--`) is the command that the launch module will actually run on Beaker (if you've used gantry this should look familiar).
+- We set the `--save-folder` and `--work-dir` options to paths on weka, using our username as part of each path to avoid collisions.
 
 #### Launching locally with torchrun
 
 For non-Beaker users, the script can be run directly with `torchrun`. Assuming you have 2 GPUs available, the command would be:
 
 ```fish
-torchrun --nproc-per-node=2 src/examples/llama/train.py tutorial-run-01 \
+torchrun --nproc-per-node=2 src/examples/llm/train.py tutorial-run-01 \
   --trainer.callbacks.lm_evaluator.enabled=false \
   --trainer.callbacks.downstream_evaluator.enabled=false \
   --trainer.no_checkpoints \
@@ -193,7 +198,7 @@ The first thing you probably want to change is the model.
 And as long as you intend to use a text-based {class}`~olmo_core.nn.transformer.Transformer`, all you need to change in this script is the {class}`~olmo_core.nn.transformer.TransformerConfig` settings.
 For example, to switch from the Llama 271M model to an OLMo2 1B model, change these lines
 
-```{literalinclude} ../../../src/examples/llama/train.py
+```{literalinclude} ../../../src/examples/llm/train.py
 :language: py
 :lineno-match:
 :start-after: '    # docs: start-model-config'
@@ -217,7 +222,7 @@ There's just two additional steps you need to take:
   See [this HF conversion guide](../examples/huggingface.rst) for an example of converting weights from HuggingFace into the right format.
 2. Then you need to tell the `Trainer` to load those weights at the beginning of your run.
   Our example script already does this when the `--load-path` option is set, as you can see here:
-  ```{literalinclude} ../../../src/examples/llama/train.py
+  ```{literalinclude} ../../../src/examples/llm/train.py
   :language: py
   :lineno-match:
   :start-after: '    # docs: start-load-path'

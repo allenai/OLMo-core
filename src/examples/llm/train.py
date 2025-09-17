@@ -1,11 +1,12 @@
 """
-Example of how to train a Llama transformer language model.
+Example of how to train a transformer language model.
 
 Launch this with torchrun:
 
-    torchrun --nproc-per-node=4 src/examples/llama/train.py run_name [OVERRIDES...]
+    torchrun --nproc-per-node=4 src/examples/llm/train.py run_name [OVERRIDES...]
 """
 
+import argparse
 import logging
 import os
 import sys
@@ -49,9 +50,6 @@ from olmo_core.utils import seed_all
 
 log = logging.getLogger(__name__)
 
-# The sequence length to train and eval on.
-SEQUENCE_LENGTH = 1024
-
 # Check for the data on common Ai2 drives. If those don't exist we'll stream the data over the internet,
 # which can be a lot slower. Alternatively you can download the files with wget, for example:
 #  > wget http://olmo-data.org/examples/c4-en/gpt2/c4-train.00000-00099.npy
@@ -79,7 +77,6 @@ DATA_PATHS = [
     #  f"{DATA_ROOT}/c4-train.01000-01023.npy",
 ]
 EVAL_DATA_PATHS = [f"{DATA_ROOT}/c4-validation.00000-00008.npy"]
-DATA_WORK_DIR = "/tmp/dataset-cache"
 
 
 # docs: start-define-config
@@ -104,126 +101,7 @@ class ExperimentConfig(Config):
     """Whether to load the trainer state (including data loader state) when loading from `load_path`.
     This only makes sense when trainer state is available in the checkpoint and you're resuming
     on the same dataset."""
-    dry_run: bool = False
-    """If true, print the config and exit."""
     # docs: end-define-config
-
-
-def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
-    tokenizer_config = TokenizerConfig.gpt2()
-
-    # docs: start-model-config
-    model_config = TransformerConfig.llama2_271M(
-        vocab_size=tokenizer_config.padded_vocab_size(),  # a little bigger than actual vocab size to make it a multiple of 128
-    )
-    # docs: end-model-config
-
-    log.info(f"Using data root: {DATA_ROOT}")
-    dataset_config = NumpyDatasetConfig(
-        paths=DATA_PATHS,
-        name=NumpyDatasetType.fsl,
-        sequence_length=SEQUENCE_LENGTH,
-        max_target_sequence_length=8192,
-        tokenizer=tokenizer_config,
-        work_dir=DATA_WORK_DIR,
-    )
-
-    data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=256 * SEQUENCE_LENGTH,
-        seed=0,
-        num_workers=4,
-    )
-
-    train_module_config = TransformerTrainModuleConfig(
-        rank_microbatch_size=16 * SEQUENCE_LENGTH,
-        max_sequence_length=dataset_config.effective_sequence_length,
-        optim=AdamWConfig(
-            lr=1e-3,
-            group_overrides=[
-                OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
-            ],
-        ),
-        compile_model=True,
-        dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
-        ),
-        max_grad_norm=1.0,
-        scheduler=CosWithWarmup(warmup_steps=100),
-    )
-
-    trainer_config = (
-        TrainerConfig(
-            save_folder=f"/tmp/{run_name}",
-            save_overwrite=True,
-            metrics_collect_interval=5,
-            cancel_check_interval=5,
-        )
-        .with_callback("gpu_monitor", GPUMemoryMonitorCallback())
-        .with_callback(
-            "checkpointer",
-            CheckpointerCallback(
-                save_interval=1000,
-                ephemeral_save_interval=100,
-                save_async=True,
-            ),
-        )
-        .with_callback(
-            "comet",
-            CometCallback(
-                name=run_name,
-                cancel_check_interval=10,
-                enabled=False,  # change to true to enable
-            ),
-        )
-        .with_callback(
-            "wandb",
-            WandBCallback(
-                name=run_name,
-                cancel_check_interval=10,
-                enabled=False,  # change to true to enable
-            ),
-        )
-        .with_callback("config_saver", ConfigSaverCallback())
-        .with_callback("profiler", ProfilerCallback(enabled=False))
-        .with_callback(
-            "lm_evaluator",
-            LMEvaluatorCallbackConfig(
-                eval_dataset=NumpyDatasetConfig(
-                    paths=EVAL_DATA_PATHS,
-                    metadata=[{"label": "c4-validation"}],
-                    name=NumpyDatasetType.padded_fsl,
-                    sequence_length=SEQUENCE_LENGTH,
-                    tokenizer=tokenizer_config,
-                    work_dir=DATA_WORK_DIR,
-                ),
-                eval_interval=250,
-                eval_duration=Duration.steps(50),
-            ),
-        )
-        .with_callback(
-            "downstream_evaluator",
-            DownstreamEvaluatorCallbackConfig(
-                tasks=["hellaswag"],
-                tokenizer=tokenizer_config,
-                eval_interval=250,
-            ),
-        )
-    )
-
-    config = ExperimentConfig(
-        model=model_config,
-        dataset=dataset_config,
-        data_loader=data_loader_config,
-        train_module=train_module_config,
-        trainer=trainer_config,
-    )
-
-    # Apply overrides.
-    # docs: start-config-merge
-    config = config.merge(overrides)
-    # docs: end-config-merge
-
-    return config
 
 
 def train(config: ExperimentConfig):
@@ -260,15 +138,170 @@ def train(config: ExperimentConfig):
     trainer.fit()
 
 
+def build_config(opts, overrides: List[str]) -> ExperimentConfig:
+    save_folder = opts.save_folder
+    if not save_folder:
+        save_folder = f"/tmp/{opts.run_name}"
+
+    work_dir = opts.work_dir
+    if not work_dir:
+        work_dir = "/tmp/dataset-cache"
+
+    tokenizer_config = TokenizerConfig.gpt2()
+
+    # docs: start-model-config
+    model_config = TransformerConfig.llama2_271M(
+        vocab_size=tokenizer_config.padded_vocab_size(),  # a little bigger than actual vocab size to make it a multiple of 128
+    )
+    # docs: end-model-config
+
+    log.info(f"Using data root: {DATA_ROOT}")
+    dataset_config = NumpyDatasetConfig(
+        paths=DATA_PATHS,
+        name=NumpyDatasetType.fsl,
+        sequence_length=opts.sequence_length,
+        tokenizer=tokenizer_config,
+        work_dir=work_dir,
+    )
+
+    data_loader_config = NumpyDataLoaderConfig(
+        global_batch_size=256 * 1024,  # NOTE: this is specified in tokens, not instances
+        seed=0,
+        num_workers=4,
+    )
+
+    train_module_config = TransformerTrainModuleConfig(
+        rank_microbatch_size=16 * 1024,  # NOTE: this is specified in tokens, not instances
+        max_sequence_length=dataset_config.effective_sequence_length,
+        optim=AdamWConfig(
+            lr=1e-3,
+            group_overrides=[
+                OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
+            ],
+        ),
+        compile_model=True,
+        dp_config=TransformerDataParallelConfig(
+            name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
+        ),
+        max_grad_norm=1.0,
+        scheduler=CosWithWarmup(warmup_steps=100),
+    )
+
+    trainer_config = (
+        TrainerConfig(
+            save_folder=save_folder,
+            save_overwrite=True,
+            metrics_collect_interval=5,
+            cancel_check_interval=5,
+        )
+        .with_callback("gpu_monitor", GPUMemoryMonitorCallback())
+        .with_callback(
+            "checkpointer",
+            CheckpointerCallback(
+                save_interval=1000,
+                ephemeral_save_interval=100,
+                save_async=True,
+            ),
+        )
+        .with_callback(
+            "comet",
+            CometCallback(
+                name=opts.run_name,
+                cancel_check_interval=10,
+                enabled=False,  # change to true to enable
+            ),
+        )
+        .with_callback(
+            "wandb",
+            WandBCallback(
+                name=opts.run_name,
+                cancel_check_interval=10,
+                enabled=False,  # change to true to enable
+            ),
+        )
+        .with_callback("config_saver", ConfigSaverCallback())
+        .with_callback("profiler", ProfilerCallback(enabled=False))
+        .with_callback(
+            "lm_evaluator",
+            LMEvaluatorCallbackConfig(
+                eval_dataset=NumpyDatasetConfig(
+                    paths=EVAL_DATA_PATHS,
+                    metadata=[{"label": "c4-validation"}],
+                    name=NumpyDatasetType.padded_fsl,
+                    sequence_length=opts.sequence_length,
+                    tokenizer=tokenizer_config,
+                    work_dir=work_dir,
+                ),
+                eval_interval=250,
+                eval_duration=Duration.steps(50),
+            ),
+        )
+        .with_callback(
+            "downstream_evaluator",
+            DownstreamEvaluatorCallbackConfig(
+                tasks=["hellaswag"],
+                tokenizer=tokenizer_config,
+                eval_interval=250,
+            ),
+        )
+    )
+
+    config = ExperimentConfig(
+        model=model_config,
+        dataset=dataset_config,
+        data_loader=data_loader_config,
+        train_module=train_module_config,
+        trainer=trainer_config,
+    )
+
+    # Apply overrides.
+    # docs: start-config-merge
+    config = config.merge(overrides)
+    # docs: end-config-merge
+
+    return config
+
+
+def parser_args():
+    parser = argparse.ArgumentParser(
+        prog=sys.argv[0],
+        usage=f"python {sys.argv[0]} RUN_NAME [OPTIONS...] [CONFIG_OVERRIDES...]",
+        description="Train a transformer language model on c4.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument("run_name", type=str, help="""The name of the run.""")
+    parser.add_argument(
+        "--sequence-length",
+        type=int,
+        default=2048,
+        help="""The sequence length to train and eval on.""",
+    )
+    parser.add_argument(
+        "--save-folder",
+        type=str,
+        help="""A local or remote directory to save checkpoints to.
+        Defaults to a temporary directory if not provided.""",
+    )
+    parser.add_argument(
+        "--work-dir",
+        type=str,
+        help="""A local working directory for dataset preprocessing.
+        Defaults to a temporary directory if not provided.""",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="""Print the config and exit.""",
+    )
+    opts, overrides = parser.parse_known_args()
+    return opts, overrides
+
+
 def main():
-    if len(sys.argv) < 2:
-        print(f"Usage: python {sys.argv[0]} run_name [OVERRIDES...]")
-        sys.exit(1)
+    opts, overrides = parser_args()
+    config = build_config(opts, overrides)
 
-    run_name, *overrides = sys.argv[1:]
-    config = build_config(run_name, overrides)
-
-    if config.dry_run:
+    if opts.dry_run:
         rich.print(config)
         return
 
