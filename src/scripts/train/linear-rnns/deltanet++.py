@@ -41,7 +41,7 @@ SAVE_INTERVAL = 1000
 EVAL_INTERVAL = 1000
 
 # Reduce per-device batch size to save on memory.
-MICROBATCH_DISCOUNT = 2
+MICROBATCH_DISCOUNT = 1
 
 # Use this to change whether the job is preemptible or not.
 PREEMPTIBLE = False
