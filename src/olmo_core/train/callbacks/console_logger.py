@@ -88,7 +88,7 @@ class ConsoleLoggerCallback(Callback):
 
     def _should_log_metrics(self, step: int) -> bool:
         metrics_log_interval = self.metrics_log_interval or self.log_interval
-        if step >= 1 and step % metrics_log_interval != 0:
-            return False
-        else:
+        if step == 1 or (step > 1 and step % metrics_log_interval == 0):
             return True
+        else:
+            return False
