@@ -322,7 +322,10 @@ class BeakerLaunchConfig(Config):
         The Beaker client.
         """
         if self._beaker is None:
-            self._beaker = Beaker.from_env(default_workspace=self.workspace)
+            kwargs = {}
+            if self.workspace:
+                kwargs["default_workspace"] = self.workspace
+            self._beaker = Beaker.from_env(**kwargs)
         return self._beaker
 
     def _get_env_vars(self) -> List[Tuple[str, str]]:
