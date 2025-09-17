@@ -3,10 +3,11 @@
 ```shell
 python src/scripts/train/linear-rnns/control.py launch control ai2/jupiter
 
-python src/scripts/train/linear-rnns/deltanet.py launch deltanet ai2/jupiter
-python src/scripts/train/linear-rnns/deltanet++.py launch deltanet-neg ai2/jupiter
+# Runs of different DeltaNet variants.
 python src/scripts/train/linear-rnns/gated_deltanet.py launch gated-deltanet ai2/jupiter
 python src/scripts/train/linear-rnns/gated_deltanet++.py launch gated-deltanet-neg ai2/jupiter
+python src/scripts/train/linear-rnns/deltanet.py launch deltanet ai2/jupiter
+python src/scripts/train/linear-rnns/deltanet++.py launch deltanet-neg ai2/jupiter
 
 python src/scripts/train/linear-rnns/mamba2.py launch mamba2 ai2/jupiter
 
