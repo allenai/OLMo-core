@@ -6,9 +6,8 @@ We will show you:
 - How to launch your first experiment with a small transformer model on Beaker, or locally with `torchrun`.
   This example will be a good foundation to build your own projects on top of.
 - How to customize different components of the training loop, such as the model, data loader, optimizer, etc.
-- How to troubleshoot common issues.
 - How to scale up to larger models while maintaining high MFU.
-- Additional topics, such as how to fine-tune from weights HuggingFace.
+- How to troubleshoot common issues.
 
 ```{attention}
 If you run into any issues with tutorial, don't hesitate to [open an issue on GitHub](https://github.com/allenai/OLMo-core/issues/new/choose) or reach out on Slack in the [#olmo-core-users](https://allenai.slack.com/archives/C08AU86NMCM) channel.
@@ -170,14 +169,13 @@ python -m olmo_core.launch.beaker \
 If the launch is successful it will print a link to the Beaker workload and then stream the logs to your terminal for the duration of the run.
 
 Some things to note:
-- We tell the launch module to request 2 GPUs and attach the weka bucket `oe-training-default`, which get mounted to the container at `/weka/oe-training-default`.
-  This gives us access to a copy of the data on weka, which will be much faster to read than
-  streaming over HTTP.
+- We tell the launch module to request 2 GPUs and mount the weka bucket `oe-training-default` to the container at `/weka/oe-training-default`.
+  This gives us access to a copy of the data on weka, which will be much faster to read than streaming over HTTP.
 - Everything after the bare double dashes (`--`) is the command that the launch module will actually run on Beaker (if you've used gantry this should look familiar).
 
 #### Launching locally with torchrun
 
-For non-Beaker users, the script can also be run locally via `torchrun`. Assuming you're using 2 local GPUs, the command would be:
+For non-Beaker users, the script can be run directly with `torchrun`. Assuming you're using 2 local GPUs, the command would be:
 
 ```fish
 torchrun --nproc-per-node=2 src/examples/llama/train.py tutorial-run-01 \
@@ -187,15 +185,48 @@ torchrun --nproc-per-node=2 src/examples/llama/train.py tutorial-run-01 \
   --trainer.hard_stop='{value: 100, unit: steps}'
 ```
 
-## Customizing components
+### Changing the model and other components
 
 Now that you've run your first experiment and have a way to test changes, let's look at how to customize different components of the training loop.
 
-The first thing you should know is that the {class}`~olmo_core.train.Trainer` class is actually a general-purpose trainer, i.e. it can be adapted to pretty much any deep learning task by providing a custom {class}`~olmo_core.train.train_module.TrainModule` as the {data}`~olmo_core.train.Trainer.train_module` argument.
+The first you probably want to change is the model.
+And as long as you intend to use a text-based {class}`~olmo_core.nn.transformer.Transformer`, all you need to change in this script is the {class}`~olmo_core.nn.transformer.TransformerConfig` settings.
+For example, to switch from the Llama 271M model to an OLMo2 1B model, change these lines
+
+```{literalinclude} ../../../src/examples/llama/train.py
+:language: py
+:lineno-match:
+:start-after: '    # docs: start-model-config'
+:end-before: '    # docs: end-model-config'
+```
+
+to use the {meth}`TransformerConfig.olmo2_1B(...) <olmo_core.nn.transformer.TransformerConfig.olmo2_1B>`
+constructor instead of `TransformerConfig.llama2_271M(...)`.
+Similarly the optimizer, dataset, and other components can be changed by modifying their corresponding part of the config.
+See the [Going deeper](#going-deeper) section below for more on customization.
+
+### Fine-tuning from HuggingFace weights
+
+This script and the {class}`~olmo_core.train.Trainer` in general can be used for fine-tuning just as well as pretraining.
+There's just two additional steps you need to take:
+1. You need to convert the pretrained weights into a format that the `Trainer` expects.
+  See [this HF conversion guide](../examples/huggingface.rst) for an example of converting weights from HuggingFace into the right format.
+2. Then you need to tell the `Trainer` to load those weights at the beginning of your run.
+  Our example script already does this when the `--load-path` option is set, as you can see here:
+  ```{literalinclude} ../../../src/examples/llama/train.py
+  :language: py
+  :lineno-match:
+  :start-after: '    # docs: start-load-path'
+  :end-before: '    # docs: end-load-path'
+  ```
+
+## Going deeper
+
+The {class}`~olmo_core.train.Trainer` class is a general-purpose trainer in it can be adapted to pretty much any deep learning task by providing a custom {class}`~olmo_core.train.train_module.TrainModule` as the {data}`~olmo_core.train.Trainer.train_module` argument.
 
 ### TrainModule (model and optimizer)
 
-A `TrainModule` abstracts away the model, optimizer, and checkpointing details from the trainer.
+A {class}`~olmo_core.train.train_module.TrainModule` abstracts away the model, optimizer, and checkpointing details from the trainer.
 
 The example script we used above made use of the {class}`~olmo_core.train.train_module.TransformerTrainModule` implementation that's designed specifically for training any {class}`olmo_core.nn.transformer.Transformer` type model on text data.
 So if that sounds like your use-case, the `TransformerTrainModule` will probably work just fine out-of-the-box for you.
@@ -204,9 +235,9 @@ Otherwise you should look at the source code for the {class}`~olmo_core.train.tr
 ### Callbacks
 
 The behavior of the training loop can also be customized through the trainer's rich callback API.
-A callback is just a subclass of the base {class}`~olmo_core.train.callbacks.Callback` class, and you can add any number of callbacks to the trainer via the {data}`~olmo_core.train.Trainer.callbacks` argument (a mapping of callback name to callback instance), or by using the {meth}`~olmo_core.train.Trainer.add_callback()` trainer method.
+A callback is just a subclass of the base {class}`~olmo_core.train.callbacks.Callback` class, and you can add any number of callbacks to the trainer via the {data}`~olmo_core.train.Trainer.callbacks` argument (a mapping of callback name to callback instance), or by using the {meth}`Trainer.add_callback() <olmo_core.train.Trainer.add_callback>` method.
 
-There's a number of helpful callbacks that come with OLMo-core, which you can find in the {mod}`olmo_core.train.callbacks` module, such as the {class}`~olmo_core.train.callbacks.WandBCallback` for logging training metrics to Weights & Biases.
+OLMo-core comes with a number of helpful callbacks that you can find in the {mod}`olmo_core.train.callbacks` module, such as the {class}`~olmo_core.train.callbacks.WandBCallback` for logging training metrics to Weights & Biases.
 
 Several of these callbacks are considered mandatory and are automatically added to the trainer unless you provide them on your own. These include:
 - a {class}`~olmo_core.train.callbacks.ConsoleLoggerCallback` for logging progress to the terminal,
@@ -220,39 +251,6 @@ Data loading can be customized by providing a custom {class}`~olmo_core.data.dat
 The API supports both mapped- (known length) and iterable-style (unknown length) datasets.
 It's the user's responsibility to ensure that the data loader is compatible with distributed training if using more than one GPU.
 See the [data loading guide](./data_loading.rst) for more details.
-
-## Troubleshooting
-
-Sooner or later you're likely to run into issues with your training runs, especially when adding custom components, so here are a few tips to help you troubleshoot them.
-
-### Low-level kernel errors
-
-Due to the [asynchronous execution](https://docs.pytorch.org/docs/stable/notes/cuda.html#asynchronous-execution) of CUDA kernels, the stack traces that are reported at the Python level when a kernel fails are often misleading.
-To get a more informative stacktrace you can force synchronous kernel execution by setting the environment variable `CUDA_LAUNCH_BLOCKING=1`.
-The launch script in the example above comes with a flag (`--debug`) that will automatically set this for you in the Beaker job.
-
-### CUDA OOM errors
-
-When you run into CUDA out-of-memory (OOM) errors, the first thing you should try to do is reduce the training micro-batch size (see the {data}`~olmo_core.train.train_module.TransformerTrainModule.rank_microbatch_size` argument to the `TransformerTrainModule` for example).
-If that's already as small as it can be, consider other options such as activation checkpointing.
-See the [scaling](#scaling) section below for more ideas.
-
-### Poor throughput or MFU
-
-When you're trying to pinpoint a bottleneck in your training loop, it's a good idea to first look at the time spent loading each batch from your data loader,
-which is a metric that's logged by the {class}`~olmo_core.train.callbacks.SpeedMonitorCallback`.
-
-If data loading is not the issue, consider using the {class}`~olmo_core.train.callbacks.ProfilerCallback` to get a trace which can be viewed with [Perfetto UI](https://ui.perfetto.dev/).
-And see the [scaling](#scaling) section below for more ideas.
-
-### Other bugs
-
-For other bugs unrelated to CUDA, it's always a good idea to try to isolate the code that causes the issue.
-If you can reproduce the issue in a small standalone script, it will be much easier to debug and fix.
-And if that bug can be reproduced from a single process you could run it with a debugging like [pdb](https://docs.python.org/3/library/pdb.html).
-
-Issues that only manifest in a distributed setting can be harder to debug.
-Consider writing a distributed unit test with the {func}`~olmo_core.testing.run_distributed_test` helper function.
 
 ## Scaling
 
@@ -301,37 +299,35 @@ but if you follow these general guidelines you should be able to train up to 70B
   ```
 - Always use `torch.compile` (set `compile_model=True`, or `--train_module.compile_model=true` from the command-line). Not only will this make your model run faster, but it typically reduces peak CUDA memory usage as well.
 
-## Additional topics and resources
+## Troubleshooting
 
-### Training OLMo models
+Sooner or later you're likely to run into issues with your training runs, especially when adding custom components, so here are a few tips to help you troubleshoot them.
 
-When new OLMo models are published we provide public versions of the training scripts in [`src/scripts/official`](https://github.com/allenai/OLMo-core/tree/main/src/scripts/official) which can be launched with `torchrun`.
-If you have access to Beaker you could, in theory, use any of the internal scripts in [`src/scripts/train`](https://github.com/allenai/OLMo-core/tree/main/src/scripts/train), which are updated more often and generally have very good default settings for optimal throughput on Ai2's Beaker clusters.
-Though they are harder to understand and modify since they rely on internal APIs and require specific Beaker secrets.
-Alternatively, we recommend just copying the scripts from the example above into a new folder and changing the configuration there. 
+### Low-level kernel errors
 
-For example, to switch from the Llama-like 271M model to an OLMo2 1B model, change these lines
+Due to the [asynchronous execution](https://docs.pytorch.org/docs/stable/notes/cuda.html#asynchronous-execution) of CUDA kernels, the stack traces that are reported at the Python level when a kernel fails are often misleading.
+To get a more informative stacktrace you can force synchronous kernel execution by setting the environment variable `CUDA_LAUNCH_BLOCKING=1`.
+The `olmo_core.launch.beaker` module we used in the example above comes with a flag (`--debug`) that will automatically set this for you in the Beaker job.
 
-```{literalinclude} ../../../src/examples/llama/train.py
-:language: py
-:lineno-match:
-:start-after: '    # docs: start-model-config'
-:end-before: '    # docs: end-model-config'
-```
+### CUDA OOM errors
 
-to use the {meth}`TransformerConfig.olmo2_1B() <olmo_core.nn.transformer.TransformerConfig.olmo2_1B>`
-constructor instead of `TransformerConfig.llama2_271M()`.
+When you run into CUDA out-of-memory (OOM) errors, the first thing you should try to do is reduce the training micro-batch size (see the {data}`~olmo_core.train.train_module.TransformerTrainModule.rank_microbatch_size` argument to the {class}`~olmo_core.train.train_module.TransformerTrainModule` for example).
+If that's already as small as it can be, consider other options such as activation checkpointing.
+See the [scaling](#scaling) section for more ideas.
 
-### Fine-tuning from HuggingFace weights
+### Poor throughput or MFU
 
-OLMo-core's `Trainer` can be used for fine-tuning just as well as pretraining.
-The only additional steps needed are to convert to the pretrained weights into a format that the `Trainer` expects and then to tell the `Trainer` to load those weights at the beginning of your run.
-For an example of the former with HuggingFace models, see [this HF conversion guide](../examples/huggingface.rst).
-Add for the latter, you just need to add something like this from the above training to your own training script prior to the call to `Trainer.fit()`:
+When you're trying to pinpoint a bottleneck in your training loop, it's a good idea to first look at the time spent loading each batch from your data loader,
+which is a metric that's logged by the {class}`~olmo_core.train.callbacks.SpeedMonitorCallback`.
 
-```{literalinclude} ../../../src/examples/llama/train.py
-:language: py
-:lineno-match:
-:start-after: '    # docs: start-load-path'
-:end-before: '    # docs: end-load-path'
-```
+If data loading is not the issue, consider using the {class}`~olmo_core.train.callbacks.ProfilerCallback` to get a trace which can be viewed with [Perfetto UI](https://ui.perfetto.dev/).
+And see the [scaling](#scaling) section for more ideas.
+
+### Other bugs
+
+For other bugs unrelated to CUDA, it's always a good idea to try to isolate the code that causes the issue.
+If you can reproduce the issue in a small standalone script, it will be much easier to debug and fix.
+And if that bug can be reproduced from a single process you could run it with a debugging like [pdb](https://docs.python.org/3/library/pdb.html).
+
+Issues that only manifest in a distributed setting can be harder to debug.
+Consider writing a distributed unit test with the {func}`~olmo_core.testing.run_distributed_test` helper function.
