@@ -155,7 +155,6 @@ To actually launch this test run on Beaker, run this command:
 
 ```fish
 python -m olmo_core.launch.beaker \
-  --name=tutorial-run \
   --gpus=2 \
   --weka=oe-training-default \
   -- src/examples/llama/train.py \
@@ -203,10 +202,14 @@ For example, to switch from the Llama 271M model to an OLMo2 1B model, change th
 
 to use the {meth}`TransformerConfig.olmo2_1B(...) <olmo_core.nn.transformer.TransformerConfig.olmo2_1B>`
 constructor instead of `TransformerConfig.llama2_271M(...)`.
+
+Keep in mind that as you scale to larger models you will probably need to adjust some performance settings such as the micro-batch size (`--train_module.rank_microbatch_size`).
+See the [scaling](#scaling) section below for more on that.
+
 Similarly the optimizer, dataset, and other components can be changed by modifying their corresponding part of the config.
 See the [Going deeper](#going-deeper) section below for more on customization.
 
-### Fine-tuning from HuggingFace weights
+### Fine-tuning pretrained models
 
 This script and the {class}`~olmo_core.train.Trainer` in general can be used for fine-tuning just as well as pretraining.
 There's just two additional steps you need to take:
@@ -267,7 +270,7 @@ but if you follow these general guidelines you should be able to train up to 70B
 ### Guidelines
 
 - For models with 1B or more parameters you should use FSDP instead of DDP.
-  This can be configured by setting the `dp_config` option as follows:
+  This can be configured by setting the {class}`dp_config <olmo_core.train.train_module.TransformerDataParallelConfig>` option as follows:
   ```python
   TransformerTrainModule(
       dp_config=TransformerDataParallelConfig(name="fsdp", param_dtype="bfloat16"),
@@ -286,10 +289,14 @@ but if you follow these general guidelines you should be able to train up to 70B
   )
   ```
 - Don't use TP, CP, or activation checkpointing (AC) unless you get OOMs with a rank micro-batch size of a single instance, and always use the biggest micro-batch size you can fit.
-- When you can't fit a single-instance micro-batch, try enabling a minimal amount of activation checkpointing first. A good strategy is to set the `ac_config` option to
+- When you can't fit a single-instance micro-batch, try enabling a minimal amount of activation checkpointing first.
+  A good strategy is to set the {class}`ac_config <olmo_core.train.train_module.TransformerActivationCheckpointingConfig>` like this
   ```python
   TransformerTrainModule(
-      ac_config=TransformerActivationCheckpointingConfig(mode="budget", activation_memory_budget=0.90),
+      ac_config=TransformerActivationCheckpointingConfig(
+          mode="budget",
+          activation_memory_budget=0.90,
+      ),
       ...
   )
   ```

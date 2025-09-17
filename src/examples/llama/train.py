@@ -86,13 +86,26 @@ DATA_WORK_DIR = "/tmp/dataset-cache"
 @dataclass
 class ExperimentConfig(Config):
     model: TransformerConfig
+    """Model config."""
     dataset: NumpyDatasetConfig
+    """Dataset config."""
     data_loader: NumpyDataLoaderConfig
-    train_module: TransformerTrainModuleConfig
+    """Data loader config."""
     trainer: TrainerConfig
+    """Trainer config."""
+    train_module: TransformerTrainModuleConfig
+    """Train module config. Contains settings for optimizer."""
     init_seed: int = 12536
+    """Random seed to initialize model weights."""
     load_path: Optional[str] = None
+    """Path to load checkpoint from if no checkpoint is found in the save folder.
+    Mainly used when you want to fine-tune from a pretrained model."""
+    load_trainer_state: bool = False
+    """Whether to load the trainer state (including data loader state) when loading from `load_path`.
+    This only makes sense when trainer state is available in the checkpoint and you're resuming
+    on the same dataset."""
     dry_run: bool = False
+    """If true, print the config and exit."""
     # docs: end-define-config
 
 
@@ -240,7 +253,7 @@ def train(config: ExperimentConfig):
         log.info(
             f"Loading checkpoint from {config.load_path} since no checkpoints were found in the save folder..."
         )
-        trainer.load_checkpoint(config.load_path)
+        trainer.load_checkpoint(config.load_path, load_trainer_state=config.load_trainer_state)
     # docs: end-load-path
 
     # Train.
