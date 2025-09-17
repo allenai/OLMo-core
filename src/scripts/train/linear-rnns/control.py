@@ -125,8 +125,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             CheckpointerCallback(
                 save_interval=SAVE_INTERVAL,
                 ephemeral_save_interval=100,
-                save_async=False,
-                # save_async=True,  # Might be failing silently
+                save_async=True,
             ),
         )
         # .with_callback(
