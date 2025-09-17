@@ -61,7 +61,8 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         dtype=config.dtype,
         fla_layer_kwargs={
             # TODO(willm): Double check this is right for Mamba.
-            "head_dim": int(config.block.d_model / config.block.n_heads),
+            # Error before, so I commented this out to keep defaults.
+            # "head_dim": int(config.block.d_model / config.block.n_heads),
         },
     )
 
