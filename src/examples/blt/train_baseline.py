@@ -55,9 +55,9 @@ from olmo_core.utils import seed_all
 NUM_WORKERS = 16
 SEQUENCE_LENGTH = int(os.environ.get("SEQUENCE_LENGTH", 1024))
 QUICK_DEBUG = False
-GLOBAL_BATCH_SIZE = 64
-LOCAL_BATCH_SIZE = 64
-EVAL_BATCH_SIZE = 16
+GLOBAL_BATCH_SIZE = int(64)
+LOCAL_BATCH_SIZE = int(64 / 4)  # for 4 hosts
+EVAL_BATCH_SIZE = 16 * 16 # let's use them gpus
 DATA_SOURCE = os.environ.get("DATA_SOURCE", "dclm")
 OLMO_ARCH = os.environ.get("OLMO_ARCH", "olmo2_1B_v2")
 
@@ -176,8 +176,6 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         ]
 
     all_eval_tasks = eval_tasks
-    all_eval_names = ["downstream" for _ in eval_tasks]
-    all_eval_batch_kwargs = [{} for _ in eval_tasks]
 
     trainer_config = (
        TrainerConfig(
@@ -214,8 +212,6 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             "downstream_evaluator",
             DownstreamEvaluatorCallbackConfig(
                 tasks=all_eval_tasks,
-                names=all_eval_names,
-                batch_kwargs=all_eval_batch_kwargs,
                 tokenizer=tokenizer_config,
                 eval_interval=5000,
                 eval_on_startup=False,
@@ -225,13 +221,18 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         )
     )
 
-    return ExperimentConfig(
+    config = ExperimentConfig(
         model=model_config,
         dataset=dataset_config,  # type: ignore
         data_loader=data_loader_config,
         train_module=train_module_config,
         trainer=trainer_config,
     ).merge(overrides)
+
+    from rich import print
+    print(config)
+
+    return config
 
 
 def main(run_name: str, overrides: List[str]):
@@ -275,6 +276,6 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"An error occurred during training: {e}")
         traceback.print_exc()
-        import ipdb; ipdb.post_mortem()
+        # import ipdb; ipdb.post_mortem()
     finally:
         teardown_training_environment()

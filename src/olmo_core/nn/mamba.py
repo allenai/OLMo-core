@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 import logging
-from mamba_ssm.modules.mamba2 import Mamba2 as _Mamba2
-from mamba_ssm.utils.generation import InferenceParams
+# from mamba_ssm.modules.mamba2 import Mamba2 as _Mamba2
+# from mamba_ssm.utils.generation import InferenceParams
 import torch
 from torch import nn
 
@@ -10,7 +10,7 @@ from olmo_core.config import Config, DType
 log = logging.getLogger(__name__)
 
 
-class Mamba(_Mamba2):
+class Mamba():
     def __init__(self, *args, **kwargs):
         # layer_idx not None required to enable caching
         super().__init__(*args, **kwargs, layer_idx=0)  # type: ignore

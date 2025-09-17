@@ -477,7 +477,8 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
         for task_idx, task in enumerate(self.tasks):
             evaluators.append(
                 DownstreamEvaluator(
-                    name="downstream" if self.names is None else self.names[task_idx],
+                    # name="downstream" if self.names is None else self.names[task_idx],
+                    name="downstream" if self.tasks is None else self.tasks[task_idx],
                     task=task,
                     batch_spec=batch_spec,
                     tokenizer=tokenizer,

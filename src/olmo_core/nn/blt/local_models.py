@@ -4,7 +4,7 @@ from typing import Optional, cast
 import math
 
 from einops import repeat, rearrange
-from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
+# from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
 import torch
 import torch.nn as nn
 from torch.nn import functional as F

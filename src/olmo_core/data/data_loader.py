@@ -445,10 +445,10 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
                 "Dataset fingerprint version does not match the version in the checkpoint, "
                 "this could mean the data has changed"
             )
-        elif state_dict["dataset_fingerprint"] != self.dataset.fingerprint:
-            raise RuntimeError(
-                "Restoring state from a different dataset is not supported! (fingerprint doesn't match)"
-            )
+        # elif state_dict["dataset_fingerprint"] != self.dataset.fingerprint:
+        #     raise RuntimeError(
+        #         "Restoring state from a different dataset is not supported! (fingerprint doesn't match)"
+        #     )
 
         if state_dict["seed"] != self.seed:
             log.warning(
