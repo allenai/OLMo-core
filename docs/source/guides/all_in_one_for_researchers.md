@@ -195,11 +195,16 @@ torchrun --nproc-per-node=2 src/examples/llm/train.py \
 ### Changing the model and other components
 
 Now that you've run your first experiment and have a way to test changes, let's look at how to customize different components of the training loop.
-But before you do that we recommend copying and renaming the example script to a new directory of your choice, such as one in `src/scripts/train/`.
+
+```{tip}
+If you're going to change any code in the script itself we recommend copying and renaming the it to a new directory of your choice, such as one in `src/scripts/train/`.
+```
 
 The first thing you probably want to change is the model.
-And as long as you intend to use a text-based {class}`~olmo_core.nn.transformer.Transformer`, all you need to change in this script is the {class}`~olmo_core.nn.transformer.TransformerConfig` settings.
-For example, to switch from the Llama 271M model to an OLMo2 1B model, change these lines
+The script already lets you choose between a number of different preset model configs with the `--model-factory` argument.
+The valid choices for this argument come from the various classmethods on the {class}`~olmo_core.nn.transformer.TransformerConfig`.
+However, you could also just replace the following lines with a manually constructed `TransformerConfig` instance.
+For example, to hard-code in an OLMo2 1B model, replace these lines
 
 ```{literalinclude} ../../../src/examples/llm/train.py
 :language: py
@@ -207,9 +212,12 @@ For example, to switch from the Llama 271M model to an OLMo2 1B model, change th
 :start-after: '    # docs: start-model-config'
 :end-before: '    # docs: end-model-config'
 ```
-
-to use the {meth}`TransformerConfig.olmo2_1B(...) <olmo_core.nn.transformer.TransformerConfig.olmo2_1B>`
-constructor instead of `TransformerConfig.llama2_271M(...)`.
+with something like this:
+```python
+    model_config = TransformerConfig.olmo2_1B(
+        vocab_size=tokenizer_config.padded_vocab_size()
+    )
+```
 
 Keep in mind that as you scale to larger models you will probably need to adjust some performance settings such as the micro-batch size (`--train_module.rank_microbatch_size`).
 See the [scaling](#scaling) section below for more on that.

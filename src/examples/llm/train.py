@@ -150,7 +150,11 @@ def build_config(opts, overrides: List[str]) -> ExperimentConfig:
     tokenizer_config = TokenizerConfig.gpt2()
 
     # docs: start-model-config
-    model_config = TransformerConfig.llama2_271M(
+    try:
+        factory = getattr(TransformerConfig, opts.model_factory)
+    except AttributeError:
+        raise ValueError(f"Unknown model factory: {opts.model_factory}")
+    model_config = factory(
         vocab_size=tokenizer_config.padded_vocab_size(),  # a little bigger than actual vocab size to make it a multiple of 128
     )
     # docs: end-model-config
@@ -270,6 +274,13 @@ def parser_args():
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("run_name", type=str, help="""The name of the run.""")
+    parser.add_argument(
+        "--model-factory",
+        type=str,
+        default="llama2_271M",
+        help="""The name of the model factory to use.
+        This can be any classmethod on the TransformerConfig class.""",
+    )
     parser.add_argument(
         "--sequence-length",
         type=int,
