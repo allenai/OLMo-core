@@ -90,7 +90,7 @@ Near the top of the script you'll find a custom config dataclass:
 
 *The structure of the config class is arbitrary*, and creating one isn't strictly necessary to use OLMo-core, but it has several benefits:
 1. First, it gives us a good way to keep track of all the hyperparameters of each experiment. Since the config inherits from OLMo-core's {class}`~olmo_core.config.Config` baseclass, it comes with useful methods to serialize it to JSON which, for example, could be uploaded to Weights & Biases or saved to the run's checkpoint directory.
-2. Second, it gives us a command-line argument parser that maps args directly to fields in the config for free due to this line in the script:
+2. Second, it gives us a command-line argument parser that maps args directly to fields in the config for free due to the use of the {meth}`Config.merge() <olmo_core.config.Config.merge>` method on this line:
 
    ```{literalinclude} ../../../src/examples/llama/train.py
    :language: py
