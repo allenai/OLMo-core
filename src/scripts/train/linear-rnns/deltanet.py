@@ -40,7 +40,8 @@ LR = (
 SAVE_INTERVAL = 1000
 EVAL_INTERVAL = 1000
 
-MICROBATCH_DISCOUNT = 2  # FLA uses more memory, so we reduce the batch size.
+# Reduce per-device batch size to save on memory.
+MICROBATCH_DISCOUNT = 2
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
@@ -65,18 +66,6 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
             "head_dim": int(0.75 * config.block.d_model / config.block.n_heads),
         },
     )
-
-    # # This is how we were doing it before at the model level.
-    # config = TransformerConfig.fla(
-    #     fla_model_name="GatedDeltaNet",
-    #     vocab_size=common.tokenizer.padded_vocab_size(),
-    #     hidden_size=2048,
-    #     num_hidden_layers=16,
-    #     num_heads=16,
-    #     pad_token_id=common.tokenizer.pad_token_id,
-    #     bos_token_id=common.tokenizer.bos_token_id,
-    #     eos_token_id=common.tokenizer.eos_token_id,
-    # )
 
     return config
 

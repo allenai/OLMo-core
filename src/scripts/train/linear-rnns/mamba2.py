@@ -40,7 +40,6 @@ LR = (
 SAVE_INTERVAL = 1000
 EVAL_INTERVAL = 1000
 
-# Reduce per-device batch size to save on memory.
 MICROBATCH_DISCOUNT = 1
 
 
@@ -55,13 +54,15 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     # Update the config to use an FLA block.
     config.block.name = TransformerBlockType.fla
     config.block.attention = AttentionConfig()  # not used
-    # https://github.com/fla-org/flash-linear-attention/blob/main/fla/layers/path_attn.py
-    config.block.d_model = 2048  # Default is 1024
+    config.block.d_model = 2048
     config.block.n_heads = 16
     config.block.fla = FLAConfig(
-        name="RWKV7Attention",
+        name="Mamba2",
         dtype=config.dtype,
-        fla_layer_kwargs={},
+        fla_layer_kwargs={
+            # TODO(willm): Double check this is right for Mamba.
+            "head_dim": int(config.block.d_model / config.block.n_heads),
+        },
     )
 
     return config
@@ -123,6 +124,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     config = (
         TrainerConfig(
             # Previously was gs://ai2-llm/..., which required GOOGLE_CREDENTIALS secret
+            # save_folder=f"{get_root_dir(cluster)}/checkpoints/willm/linear-rnns/{common.run_name}/",
             save_folder=f"{root_dir}/checkpoints/willm/linear-rnns/{common.run_name}/",
             save_overwrite=True,
             metrics_collect_interval=10,
