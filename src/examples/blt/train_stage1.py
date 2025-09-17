@@ -23,6 +23,7 @@ from olmo_core.data import (
     NumpyDatasetConfig,
     NumpyDatasetType,
     NumpyByteFSLDataset,
+    NumpyBytePaddedFSLDataset,
     ByteTokenizerConfig,
     TokenizerConfig,
     ByteDataCollator,
@@ -474,9 +475,10 @@ def main(run_name: str, overrides: List[str]):
     if train_module.blt_config.gradual_boundary_compression_kind == "bpe":  # type: ignore
         dataset.enable_compute_bpe_merges()  # type: ignore
 
+    use_byte_collator = isinstance(dataset, NumpyByteFSLDataset) or isinstance(dataset, NumpyBytePaddedFSLDataset)
     data_loader = config.data_loader.build(
         dataset,
-        collator=ByteDataCollator(pad_token_id=dataset.pad_token_id) if isinstance(dataset, NumpyByteFSLDataset) else None,
+        collator=ByteDataCollator(pad_token_id=dataset.pad_token_id) if use_byte_collator else None,
         dp_process_group=train_module.dp_process_group
     )
     trainer = config.trainer.build(train_module, data_loader)

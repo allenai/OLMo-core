@@ -42,6 +42,11 @@ class NumpyDatasetType(StrEnum):
     Byte detokenized FSL dataset ➡️ :class:`NumpyByteFSLDataset`.
     """
 
+    byte_padded_fsl = "byte_padded_fsl"
+    """
+    Byte detokenized padded FSL dataset ➡️ :class:`NumpyBytePaddedFSLDataset`.
+    """
+
 class LongDocStrategy(StrEnum):
     """
     Specifies how to handle documents that are longer than the max sequence length when packing.

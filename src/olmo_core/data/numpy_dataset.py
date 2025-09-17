@@ -43,7 +43,7 @@ from ..distributed.utils import barrier, get_fs_local_rank
 from ..io import _get_s3_client, get_file_size, glob_directory
 from .mixes import DataMix, DataMixBase
 from .source_mixture import SourceMixtureDatasetConfig
-from .tokenizer import TokenizerConfig, ByteTokenizerConfig
+from .tokenizer import TokenizerConfig, ByteTokenizerConfig, ByteTokenizer
 from .types import LongDocStrategy, NumpyDatasetDType, NumpyDatasetType, NumpyUIntTypes
 from .utils import (
     bucket_documents,
@@ -673,6 +673,96 @@ class NumpyFSLDataset(NumpyFSLDatasetBase):
         else:
             raise RuntimeError("invalid 'max_target_sequence_length' or 'sequence_length'")
 
+def prepare_byte_example(
+    item,
+    tokenizer: ByteTokenizer,
+    byte_sequence_length,
+    pad_token_id,
+    compute_bpe_merges=False,
+    fim_middle_id=None,
+):
+    if fim_middle_id is not None and fim_middle_id in item["input_ids"]:
+        # remove FIM middle and retokenize
+        input_ids = item["input_ids"].tolist()
+        input_ids = [x for x in input_ids if x != fim_middle_id]
+        original_input_ids = tokenizer.hf_tokenizer.encode(tokenizer.hf_tokenizer.decode(input_ids))
+        # can be longer in extreme edge cases (this actually happens! less than once every 1k batches)
+        original_input_ids = original_input_ids[:len(item["input_ids"])]
+        while len(original_input_ids) < len(item["input_ids"]):
+            original_input_ids.append(tokenizer.hf_tokenizer.pad_token_id)
+
+        original_input_ids = torch.tensor(original_input_ids, dtype=item["input_ids"].dtype)
+    else:
+        original_input_ids = item["input_ids"]
+
+    byte_tokens, patch_lengths = tokenizer.get_tokens_and_patch_lengths(original_input_ids.tolist(), add_bos=True, skip_last=True)
+    space_patch_lengths = tokenizer.get_space_patch_lengths(byte_tokens)
+    expanded_byte_tokens = tokenizer.expand_byte_ids(byte_tokens)
+
+    new_input_ids = torch.tensor(byte_tokens, dtype=torch.int32)
+    expanded_input_ids = torch.tensor(expanded_byte_tokens, dtype=torch.int32)
+    new_attention_mask = new_input_ids != pad_token_id
+    patch_lengths = torch.tensor(patch_lengths, dtype=torch.int32)
+    space_patch_lengths = torch.tensor(space_patch_lengths, dtype=torch.int32)[:len(patch_lengths)]
+
+    if len(space_patch_lengths) < len(patch_lengths):
+        space_patch_lengths = F.pad(
+            space_patch_lengths,
+            (0, len(patch_lengths) - len(space_patch_lengths)),
+            value=0,
+        )
+
+    if "label_mask" in item:
+        # label mask must be prefix-padding
+        assert torch.diff(item["label_mask"].to(torch.int32)).max().item() <= 0, "label mask must be prefix padding"
+        label_mask_byte_length = (patch_lengths * item["label_mask"].to(torch.int32)).sum().item()
+        item["label_mask"] = torch.arange(byte_sequence_length) < label_mask_byte_length
+
+        effective_byte_sequence_length = min(byte_sequence_length, label_mask_byte_length)
+    else:
+        effective_byte_sequence_length = byte_sequence_length
+
+    # make sure lengths do not surpass byte_sequence_length
+    patch_lengths = torch.where(
+        torch.cumsum(patch_lengths, dim=0) > effective_byte_sequence_length,
+        torch.zeros_like(patch_lengths),
+        patch_lengths,
+    )
+    space_patch_lengths = torch.where(
+        torch.cumsum(space_patch_lengths, dim=0) > effective_byte_sequence_length,
+        torch.zeros_like(space_patch_lengths),
+        space_patch_lengths,
+    )
+
+    if new_input_ids.shape[0] > byte_sequence_length:
+        new_input_ids = new_input_ids[:byte_sequence_length]
+        expanded_input_ids = expanded_input_ids[:byte_sequence_length]
+        new_attention_mask = new_attention_mask[:byte_sequence_length]
+    elif new_input_ids.shape[0] < byte_sequence_length:
+        n_pad = byte_sequence_length - new_input_ids.shape[0]
+        new_input_ids = F.pad(
+            new_input_ids,
+            (0, n_pad),
+            value=pad_token_id,
+        )
+        new_attention_mask = F.pad(
+            new_attention_mask,
+            (0, n_pad),
+            value=False,
+        )
+
+    item["original_input_ids"] = original_input_ids
+    item["input_ids"] = new_input_ids
+    item["expanded_input_ids"] = expanded_input_ids
+    item["attention_mask"] = new_attention_mask
+    item["patch_lens"] = patch_lengths
+    item["space_patch_lens"] = space_patch_lengths
+
+    if compute_bpe_merges:
+        # hardcode max compression to 0.5 for now
+        item["bpe_merges"] = blt_utils.compute_bpe_merges(original_input_ids.tolist(), max_compression_ratio=0.5)
+
+    return item
 
 class NumpyByteFSLDataset(NumpyFSLDataset):
     def __init__(self, *args, tokenizer_config: ByteTokenizerConfig, byte_sequence_length: int, **kwargs):
@@ -728,78 +818,14 @@ class NumpyByteFSLDataset(NumpyFSLDataset):
     def __getitem__(self, index: int) -> Dict[str, Any]:
         item = super().__getitem__(index)
 
-        if self.fim_middle_id in item["input_ids"]:
-            # remove FIM middle and retokenize
-            input_ids = item["input_ids"].tolist()
-            input_ids = [x for x in input_ids if x != self.fim_middle_id]
-            original_input_ids = self.tokenizer.hf_tokenizer.encode(self.tokenizer.hf_tokenizer.decode(input_ids))
-            # can be longer in extreme edge cases (this actually happens! less than once every 1k batches)
-            original_input_ids = original_input_ids[:len(item["input_ids"])]
-            while len(original_input_ids) < len(item["input_ids"]):
-                original_input_ids.append(self.tokenizer.hf_tokenizer.pad_token_id)
-
-            original_input_ids = torch.tensor(original_input_ids, dtype=item["input_ids"].dtype)
-        else:
-            original_input_ids = item["input_ids"]
-
-        byte_tokens, patch_lengths = self.tokenizer.get_tokens_and_patch_lengths(original_input_ids.tolist(), add_bos=True, skip_last=True)
-        space_patch_lengths = self.tokenizer.get_space_patch_lengths(byte_tokens)
-        expanded_byte_tokens = self.tokenizer.expand_byte_ids(byte_tokens)
-
-        new_input_ids = torch.tensor(byte_tokens, dtype=torch.int32)
-        expanded_input_ids = torch.tensor(expanded_byte_tokens, dtype=torch.int32)
-        new_attention_mask = torch.ones_like(new_input_ids, dtype=torch.bool)
-        patch_lengths = torch.tensor(patch_lengths, dtype=torch.int32)
-        space_patch_lengths = torch.tensor(space_patch_lengths, dtype=torch.int32)[:len(patch_lengths)]
-
-        if len(space_patch_lengths) < len(patch_lengths):
-            space_patch_lengths = F.pad(
-                space_patch_lengths,
-                (0, len(patch_lengths) - len(space_patch_lengths)),
-                value=0,
-            )
-
-        # make sure lengths do not surpass byte_sequence_length
-        patch_lengths = torch.where(
-            torch.cumsum(patch_lengths, dim=0) > self.byte_sequence_length,
-            torch.zeros_like(patch_lengths),
-            patch_lengths,
+        return prepare_byte_example(
+            item,
+            self.tokenizer,
+            byte_sequence_length=self.byte_sequence_length,
+            pad_token_id=self.tokenizer.pad_token_id,
+            compute_bpe_merges=self.compute_bpe_merges,
+            fim_middle_id=self.fim_middle_id,
         )
-        space_patch_lengths = torch.where(
-            torch.cumsum(space_patch_lengths, dim=0) > self.byte_sequence_length,
-            torch.zeros_like(space_patch_lengths),
-            space_patch_lengths,
-        )
-
-        if new_input_ids.shape[0] > self.byte_sequence_length:
-            new_input_ids = new_input_ids[:self.byte_sequence_length]
-            expanded_input_ids = expanded_input_ids[:self.byte_sequence_length]
-            new_attention_mask = new_attention_mask[:self.byte_sequence_length]
-        elif new_input_ids.shape[0] < self.byte_sequence_length:
-            n_pad = self.byte_sequence_length - new_input_ids.shape[0]
-            new_input_ids = F.pad(
-                new_input_ids,
-                (0, n_pad),
-                value=self.pad_token_id,
-            )
-            new_attention_mask = F.pad(
-                new_attention_mask,
-                (0, n_pad),
-                value=False,
-            )
-
-        item["original_input_ids"] = original_input_ids
-        item["input_ids"] = new_input_ids
-        item["expanded_input_ids"] = expanded_input_ids
-        item["attention_mask"] = new_attention_mask
-        item["patch_lens"] = patch_lengths
-        item["space_patch_lens"] = space_patch_lengths
-
-        if self.compute_bpe_merges:
-            # hardcode max compression to 0.5 for now
-            item["bpe_merges"] = blt_utils.compute_bpe_merges(original_input_ids.tolist(), max_compression_ratio=0.5)
-
-        return item
 
     @property
     def patch_sequence_length(self) -> int:
@@ -1116,6 +1142,85 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
                         f"Created {total_instances:,d} instances of sequence length up to "
                         f"{self.sequence_length} from '{path}'"
                     )
+
+
+class NumpyBytePaddedFSLDataset(NumpyPaddedFSLDataset):
+    def __init__(self, *args, tokenizer_config: ByteTokenizerConfig, byte_sequence_length: int, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.tokenizer = tokenizer_config.build()
+        self.byte_sequence_length = byte_sequence_length
+
+        self.constituent_map = {}
+        vocab = self.tokenizer.hf_tokenizer.get_vocab()
+        for token, token_id in vocab.items():
+            constituents = []
+
+            for i in range(1, len(token) + 1):
+                if token[:i] in vocab:
+                    constituents.append(vocab[token[:i]])
+                else:
+                    constituents.append(-100)
+
+            self.constituent_map[token_id] = constituents
+
+        # manually remove fim middle ID and retokenize - not needed for byte level models since
+        # no tokenization bias.
+        self.fim_middle_id = self.tokenizer.hf_tokenizer.get_vocab()["<|fim_middle|>"]
+        self.compute_bpe_merges = False
+
+        # make sure we pad the subword sequence with the correct (subword) pad ID
+        self._pad_token_id = self.tokenizer.hf_tokenizer.pad_token_id
+        # make sure None is passed as eos_token_id to segment_documents_into_instances
+        # since instruct doc contains extra eos tokens so we need to use metadata to compute doc boundaries
+        self._eos_token_id = None 
+
+    def enable_compute_bpe_merges(self):
+        self.compute_bpe_merges = True
+
+    def disable_compute_bpe_merges(self):
+        self.compute_bpe_merges = False
+
+    def _read_chunk_from_array(self, path: PathOrStr, index: int, dtype=None) -> torch.Tensor:
+        indices_path = self._get_instance_indices_path(path)
+        indices = load_array_slice_into_tensor(
+            indices_path, index * 2, index * 2 + 2, self.indices_dtype
+        )
+        start_idx, end_idx = indices
+        data = load_array_slice_into_tensor(path, int(start_idx), int(end_idx), dtype or self.dtype)
+        return data
+
+    def __getitem__(self, index: int) -> Dict[str, Any]:
+        item = super().__getitem__(index)
+        # pad to fixed amount of subword per example
+        pad_shape = (0, self.patch_sequence_length - len(item["input_ids"]))
+        if "label_mask" in item:
+            item["label_mask"] = F.pad(item["label_mask"], pad_shape, value=False)
+        else:
+            item["label_mask"] = F.pad(
+                torch.ones_like(item["input_ids"], dtype=torch.bool), pad_shape, value=False
+            )
+        item["input_ids"] = F.pad(item["input_ids"], pad_shape, value=self.pad_token_id)
+
+        return prepare_byte_example(
+            item,
+            self.tokenizer,
+            byte_sequence_length=self.byte_sequence_length,
+            pad_token_id=self.tokenizer.pad_token_id,
+            compute_bpe_merges=self.compute_bpe_merges,
+            fim_middle_id=self.fim_middle_id,
+        )
+
+    @property
+    def patch_sequence_length(self) -> int:
+        return super().sequence_length
+
+    @property
+    def sequence_length(self) -> int:
+        return self.byte_sequence_length
+
+    @property
+    def max_sequence_length(self) -> int:
+        return self.byte_sequence_length
 
 
 class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
@@ -3052,7 +3157,7 @@ class NumpyDatasetConfig(Config):
                 include_instance_metadata=self.include_instance_metadata,
                 instance_filter_config=self.instance_filter_config,
             )
-        elif self.name == NumpyDatasetType.byte_fsl:
+        elif self.name in {NumpyDatasetType.byte_fsl, NumpyDatasetType.byte_padded_fsl}:
             if self.sequence_length is None:
                 raise OLMoConfigurationError("'sequence_length' is required for FSL dataset")
             if self.max_sequence_length is None:
@@ -3090,10 +3195,19 @@ class NumpyDatasetConfig(Config):
                     "Source mixtures are not yet supported for the byte FSL dataset"
                 )
             else:
-                dataset = NumpyByteFSLDataset(
+                if self.name == NumpyDatasetType.byte_fsl:
+                    cls = NumpyByteFSLDataset
+                    kwargs = {
+                        "max_target_sequence_length": self.max_target_sequence_length,
+                        "generate_doc_lengths": self.generate_doc_lengths,
+                    }
+                else:
+                    cls = NumpyBytePaddedFSLDataset
+                    kwargs = {}
+
+                dataset = cls(
                     *paths,
                     sequence_length=self.sequence_length,
-                    max_target_sequence_length=self.max_target_sequence_length,
                     byte_sequence_length=self.max_sequence_length,
                     tokenizer_config=self.tokenizer,  # type: ignore
                     pad_token_id=self.tokenizer.pad_token_id,
@@ -3104,10 +3218,10 @@ class NumpyDatasetConfig(Config):
                     dtype=np.uint32,
                     metadata=metadata,
                     include_instance_metadata=self.include_instance_metadata,
-                    generate_doc_lengths=self.generate_doc_lengths,
                     bos_token_id=self.tokenizer.bos_token_id,
                     instance_filter_config=self.instance_filter_config,
                     label_mask_paths=label_mask_paths,
+                    **kwargs,
                 )
         else:
             raise NotImplementedError(self.name)
