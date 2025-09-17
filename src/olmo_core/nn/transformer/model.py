@@ -2257,13 +2257,28 @@ class BLTDistillTransformer(BLTTransformer):
         patch_mask = shifted_patch_lens != 0
 
         patch_end_indices = torch.cumsum(local_encoder_kwargs["patch_lens"], dim=1) - 1
+        patch_start_indices = torch.cumsum(local_encoder_kwargs["patch_lens"], dim=1)
+        patch_start_indices = torch.where(
+            patch_start_indices < byte_mask.shape[1],
+            patch_start_indices,
+            torch.zeros_like(patch_start_indices), # effectively mask out, index 0 is always start
+        )
         patch_end_indices = torch.where(
             patch_end_indices < byte_mask.shape[1],
             patch_end_indices,
             torch.zeros_like(patch_end_indices), # effectively mask out, index 0 is always start
         )
-        boundary_labels = torch.zeros_like(byte_mask, dtype=torch.float32)
-        boundary_labels.scatter_(1, patch_end_indices, 1.0)
+
+        if blt_config.boundary_mode == "patch_start":
+            boundary_labels = torch.zeros_like(byte_mask, dtype=torch.float32)
+            boundary_labels.scatter_(1, patch_start_indices, 1.0)
+            boundary_labels[:, 0] = 1.0 # bos
+        elif blt_config.boundary_mode == "patch_end":
+            boundary_labels = torch.zeros_like(byte_mask, dtype=torch.float32)
+            boundary_labels.scatter_(1, patch_end_indices, 1.0)
+            boundary_labels[:, 0] = 1.0 # bos
+        else:
+            raise ValueError(f"Unknown boundary mode: {blt_config.boundary_mode} (must be patch_start or patch_end)")
 
         h_byte, h_patch, boundary_logprobs, boundary_mask = self.local_encoder(
             input_ids,
