@@ -65,7 +65,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
             # With use_gate=False, num_heads * head_dim = hidden_size
             "head_dim": int(config.block.d_model / config.block.n_heads),
             "use_gate": False,
-            "allow_neg_eigval": False,
+            "allow_neg_eigval": True,
         },
     )
 

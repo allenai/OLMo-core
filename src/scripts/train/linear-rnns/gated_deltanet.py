@@ -62,9 +62,9 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         name="GatedDeltaNet",
         dtype=config.dtype,
         fla_layer_kwargs={
-            # With use_gate=False, num_heads * head_dim = hidden_size
-            "head_dim": int(config.block.d_model / config.block.n_heads),
-            "use_gate": False,
+            # FLA repo says num_heads * head_dim = 0.75 * hidden_size
+            "head_dim": int(0.75 * config.block.d_model / config.block.n_heads),
+            "use_gate": True,
             "allow_neg_eigval": False,
         },
     )

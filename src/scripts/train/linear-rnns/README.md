@@ -1,13 +1,16 @@
 # Commands to launch
 
 ```shell
-python src/scripts/train/linear-rnns/control.py launch control-test ai2/jupiter
+python src/scripts/train/linear-rnns/control.py launch control ai2/jupiter
 
-python src/scripts/train/linear-rnns/deltanet.py launch deltanet-test ai2/jupiter
+python src/scripts/train/linear-rnns/deltanet.py launch deltanet ai2/jupiter
+python src/scripts/train/linear-rnns/deltanet++.py launch deltanet++ ai2/jupiter
+python src/scripts/train/linear-rnns/gated_deltanet.py launch gated_deltanet ai2/jupiter
+python src/scripts/train/linear-rnns/gated_deltanet++.py launch gated_deltanet++ ai2/jupiter
 
-python src/scripts/train/linear-rnns/mamba2.py launch mamba2-test ai2/jupiter
+python src/scripts/train/linear-rnns/mamba2.py launch mamba2 ai2/jupiter
 
-python src/scripts/train/linear-rnns/rwkv7.py launch rwkv7-test ai2/jupiter
+python src/scripts/train/linear-rnns/rwkv7.py launch rwkv7 ai2/jupiter
 
-python src/scripts/train/linear-rnns/path-attention.py launch path-attn-test ai2/jupiter
+python src/scripts/train/linear-rnns/path-attention.py launch path-attention ai2/jupiter
 ```
