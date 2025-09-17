@@ -728,6 +728,9 @@ def _parse_args():
     parser.add_argument(
         "--name", type=str, default="olmo-core-test", help="A name to assign to the run."
     )
+    parser.add_argument(
+        "--task-name", type=str, default="main", help="A name to assign to the task."
+    )
     parser.add_argument("--gpus", type=int, default=0, help="The number of GPUs per node/replica.")
     parser.add_argument("--nodes", type=int, default=1, help="The number of nodes/replicas.")
     parser.add_argument("--budget", type=str, help="The Beaker budget account to use.")
@@ -764,6 +767,12 @@ def _parse_args():
         type=str,
         default=OLMoCoreBeakerImage.stable,
         help="""The Beaker image to use.""",
+    )
+    parser.add_argument(
+        "--shared-filesystem",
+        action="store_true",
+        help="""Use this flag if the save folder and working directory for each node is part of a global
+        shared filesystem (like weka or NFS).""",
     )
     parser.add_argument("--weka", type=str, nargs="*", help="Weka buckets to mount at '/weka/'.")
     parser.add_argument(
@@ -804,7 +813,7 @@ def _build_config(opts, command: List[str]) -> BeakerLaunchConfig:
         budget=opts.budget,
         cmd=command,
         env_vars=env_vars,
-        task_name="train",
+        task_name=opts.task_name,
         description=opts.description,
         clusters=opts.cluster,
         num_nodes=opts.nodes,
@@ -814,6 +823,7 @@ def _build_config(opts, command: List[str]) -> BeakerLaunchConfig:
         beaker_image=opts.beaker_image,
         workspace=opts.workspace,
         allow_dirty=opts.allow_dirty,
+        shared_filesystem=opts.shared_filesystem,
         weka_buckets=[
             BeakerWekaBucket(bucket=bucket, mount=f"/weka/{bucket}") for bucket in (opts.weka or [])
         ],
