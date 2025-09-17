@@ -40,7 +40,7 @@ SAVE_INTERVAL = 1000
 EVAL_INTERVAL = 1000
 
 # Use this to change whether the job is preemptible or not.
-PREEMPTIBLE = False
+PREEMPTIBLE = True
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:

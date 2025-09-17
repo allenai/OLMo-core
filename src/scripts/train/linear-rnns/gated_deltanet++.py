@@ -44,7 +44,7 @@ EVAL_INTERVAL = 1000
 MICROBATCH_DISCOUNT = 2
 
 # Use this to change whether the job is preemptible or not.
-PREEMPTIBLE = False
+PREEMPTIBLE = True
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
