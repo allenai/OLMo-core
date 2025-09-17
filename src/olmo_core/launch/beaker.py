@@ -456,6 +456,8 @@ class BeakerLaunchConfig(Config):
             entrypoint_script.append(" ".join(self._get_torchrun_cmd()) + ' "$@"')
         elif entrypoint:
             entrypoint_script.append(f'{entrypoint} "$@"')
+        elif self.cmd and os.path.isfile(self.cmd[0]) and self.cmd[0].endswith(".py"):
+            entrypoint_script.append('python "$@"')
         else:
             entrypoint_script.append('exec "$@"')
 
