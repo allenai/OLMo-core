@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added a custom block that does LayerNorm scaling.
 - Added the `HalfCos` learning rate scheduler.
+- Added a lightweight, gantry-like Beaker launch CLI: `python -m olmo_core.launch.beaker`.
 
 ## [v2.2.0](https://github.com/allenai/OLMo-core/releases/tag/v2.2.0) - 2025-08-26
 

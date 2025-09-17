@@ -74,8 +74,9 @@ See the [Makefile](https://github.com/allenai/OLMo-core/blob/main/Makefile) for 
 We'll start by launching a short language model pretraining run with a small transformer (271M params) on a subset of c4.
 This will only take a few minutes on as little as 2 NVIDIA 40GB A100s.
 
-We'll be using the script [`src/examples/llama/train.py`](https://github.com/allenai/OLMo-core/blob/main/src/examples/llama/train.py).
-But before we actually launch the training run, let's look at how the key components/hyperparameters of the training run are defined.
+We'll be using the script [`src/examples/llama/train.py`](https://github.com/allenai/OLMo-core/blob/main/src/examples/llama/train.py),
+which is intended to be run with `torchrun`, either directly or indirectly through Beaker or something like Slurm.
+But before we actually launch the training run, let's look at how the key components/hyperparameters of the run are defined.
 
 ### Defining a config
 
@@ -83,33 +84,52 @@ Near the top of the script you'll find a custom config dataclass:
 
 ```{literalinclude} ../../../src/examples/llama/train.py
 :language: py
+:lineno-match:
 :start-after: '# docs: start-define-config'
 :end-before: '    # docs: end-define-config'
 ```
 
-The structure of the config class is arbitrary, and creating one isn't strictly necessary to use OLMo-core, but it has several benefits:
+*The structure of the config class is arbitrary*, and creating one isn't strictly necessary to use OLMo-core, but it has several benefits:
 1. First, it gives us a good way to keep track of all the hyperparameters of each experiment. Since the config inherits from OLMo-core's {class}`~olmo_core.config.Config` baseclass, it comes with useful methods to serialize it to JSON which, for example, could be uploaded to Weights & Biases or saved to the run's checkpoint directory.
-2. Second, due to this line in the script:
+2. Second, it gives us a command-line argument parser that maps args directly to fields in the config for free, which is due to this line in the script:
 
    ```{literalinclude} ../../../src/examples/llama/train.py
    :language: py
+   :lineno-match:
    :start-after: '    # docs: start-config-merge'
    :end-before: '    # docs: end-config-merge'
    ```
 
-   we can override fields in the config at runtime via command-line options in dot-notation.
-   For example, you can add the option `--data_loader.prefetch_factor=4` to update the `prefetch_factor` field within the `data_loader` part of the config.
-
-   ```{tip}
-   The script includes a dry-run mode that you can use to validate that your overrides are applied correctly.
-   Just add the overrides option `--dry-run` and the script will print out the config and exit without actually training.
-   If you pass an invalid overrides option (wrong type or invalid field name) the script will raise an exception.
+   This allows us to override fields in the config at runtime via command-line options, even nested fields using dot-notation.
+   For example, you could add
    ```
+   --data_loader.prefetch_factor=4
+   ```
+   to the command to update the `prefetch_factor` field within the `data_loader` part of the config.
+
+The components of the config class are then used to construct the model, data loader, trainer, etc, as you can see here:
+
+```{literalinclude} ../../../src/examples/llama/train.py
+:language: py
+:lineno-match:
+:start-after: '    # docs: start-build-components'
+:end-before: '    # docs: end-build-components'
+```
+
+The script also includes a dry-run mode that you can use to validate that your overrides are applied correctly.
+Let's try that right now by passing in the `--dry-run=true` override (or just `--dry-run`).
+Also note the script expects one positional argument, the name of the run (this is used in multiple parts of the config so we require it before the overrides).
+
+So here's the full dry-run command to run:
+
+```fish
+python src/examples/llama/train.py tutorial-run-01 --dry-run=true
+```
 
 ### Launching the run
 
 Now that we know how to change settings on the fly we're ready to launch the run.
-And in order to get it running as fast as possible we're going to turn off a few features from the command-line that we'd normally want on, such as checkpointing and in-loop evals.
+And in order to get it running as fast as possible we're going to turn off a few features that we'd normally want on, such as checkpointing and in-loop evals.
 We're also going to tell the trainer to stop at step 100.
 So the overrides we'll pass in are:
 
@@ -124,25 +144,36 @@ Notice the value we set for `--trainer.hard_stop` is a JSON/YAML mapping. This w
 
 #### Launching on Beaker
 
-For Beaker users, you'll find a separate launch script in the same directory as the training script: [`src/examples/llama/train_launch.py`](https://github.com/allenai/OLMo-core/blob/main/src/examples/llama/train_launch.py).
-This is a just a thin CLI wrapper around the `olmo_core.launch.beaker` functionality with some settings specific to the corresponding training script.
-This script takes a few of its own command-line options (such as `--gpus`, `--preemptible/--not-preemptible`, `--priority`, and `--weka`) and the rest will be passed on as overrides to the training script.
+For Beaker users, you can either use [beaker-gantry](https://github.com/allenai/beaker-gantry) or OLMo-core's own lightweight, gantry-like CLI.
+In this case we'll use the latter, which is in the module `olmo_core.launch.beaker`.
+Try running
+```fish
+python -m olmo_core.launch.beaker --help
+```
+to get familiar with the options.
 
-So, to launch the job on Beaker, run this command from the root of your repository:
+To actually launch this test run on Beaker, run this command:
 
 ```fish
-python src/examples/llama/train_launch.py tutorial-run-01 \
+python -m olmo_core.launch.beaker \
+  --name=tutorial-run \
   --gpus=2 \
-  --not-preemptible \
-  --priority=normal \
   --weka=oe-training-default \
-  --trainer.callbacks.lm_evaluator.enabled=false \
-  --trainer.callbacks.downstream_evaluator.enabled=false \
-  --trainer.no_checkpoints \
-  --trainer.hard_stop='{value: 100, unit: steps}'
+  -- src/examples/llama/train.py \
+    tutorial-run-01 \
+    --trainer.callbacks.lm_evaluator.enabled=false \
+    --trainer.callbacks.downstream_evaluator.enabled=false \
+    --trainer.no_checkpoints \
+    --trainer.hard_stop='{value: 100, unit: steps}'
 ```
 
 If the launch is successful it will print a link to the Beaker workload and then stream the logs to your terminal for the duration of the run.
+
+Some things to note:
+- We tell the launch module to request 2 GPUs and attach the weka bucket `oe-training-default`, which get mounted to the container at `/weka/oe-training-default`.
+  This gives us access to a copy of the data on weka, which will be much faster to read than
+  streaming over HTTP.
+- Everything after the bare double dashes (`--`) is the command that the launch module will actually run on Beaker (if you've used gantry this should look familiar).
 
 #### Launching locally with torchrun
 
@@ -272,19 +303,35 @@ but if you follow these general guidelines you should be able to train up to 70B
 
 ## Additional topics and resources
 
-### Reproducing official OLMo runs
+### Training OLMo models
 
-When new OLMo models are published we provide public versions of the training scripts in [`src/scripts/official`](https://github.com/allenai/OLMo-core/tree/main/src/scripts/official) which can be launched with `torchrun`. If you have access to Beaker you could also use any of the internal scripts in [`src/scripts/train`](https://github.com/allenai/OLMo-core/tree/main/src/scripts/train), which are updated more often and generally have very good default settings for optimal throughput on Ai2's Beaker clusters.
+When new OLMo models are published we provide public versions of the training scripts in [`src/scripts/official`](https://github.com/allenai/OLMo-core/tree/main/src/scripts/official) which can be launched with `torchrun`.
+If you have access to Beaker you could, in theory, use any of the internal scripts in [`src/scripts/train`](https://github.com/allenai/OLMo-core/tree/main/src/scripts/train), which are updated more often and generally have very good default settings for optimal throughput on Ai2's Beaker clusters.
+Though they are harder to understand and modify since they rely on internal APIs and require specific Beaker secrets.
+Alternatively, we recommend just copying the scripts from the example above into a new folder and changing the configuration there. 
+
+For example, to switch from the Llama-like 271M model to an OLMo2 1B model, change these lines
+
+```{literalinclude} ../../../src/examples/llama/train.py
+:language: py
+:lineno-match:
+:start-after: '    # docs: start-model-config'
+:end-before: '    # docs: end-model-config'
+```
+
+to use the {meth}`TransformerConfig.olmo2_1B() <olmo_core.nn.transformer.TransformerConfig.olmo2_1B>`
+constructor instead of `TransformerConfig.llama2_271M()`.
 
 ### Fine-tuning from HuggingFace weights
 
 OLMo-core's `Trainer` can be used for fine-tuning just as well as pretraining.
 The only additional steps needed are to convert to the pretrained weights into a format that the `Trainer` expects and then to tell the `Trainer` to load those weights at the beginning of your run.
 For an example of the former with HuggingFace models, see [this HF conversion guide](../examples/huggingface.rst).
-Add for the latter, you just need to add something like this to your training script prior to the call to `Trainer.fit()`:
+Add for the latter, you just need to add something like this from the above training to your own training script prior to the call to `Trainer.fit()`:
 
 ```{literalinclude} ../../../src/examples/llama/train.py
 :language: py
+:lineno-match:
 :start-after: '    # docs: start-load-path'
 :end-before: '    # docs: end-load-path'
 ```

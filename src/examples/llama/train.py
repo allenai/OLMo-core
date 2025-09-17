@@ -99,9 +99,11 @@ class ExperimentConfig(Config):
 def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     tokenizer_config = TokenizerConfig.gpt2()
 
+    # docs: start-model-config
     model_config = TransformerConfig.llama2_271M(
         vocab_size=tokenizer_config.padded_vocab_size(),  # a little bigger than actual vocab size to make it a multiple of 128
     )
+    # docs: end-model-config
 
     log.info(f"Using data root: {DATA_ROOT}")
     dataset_config = NumpyDatasetConfig(
@@ -218,12 +220,14 @@ def train(config: ExperimentConfig):
     # Set RNG states on all devices.
     seed_all(config.init_seed)
 
+    # docs: start-build-components
     # Build components.
     model = config.model.build(init_device="meta")
     train_module = config.train_module.build(model)
     dataset = config.dataset.build()
     data_loader = config.data_loader.build(dataset, dp_process_group=train_module.dp_process_group)
     trainer = config.trainer.build(train_module, data_loader)
+    # docs: end-build-components
 
     # Save config to W&B and each checkpoint dir.
     config_dict = config.as_config_dict()
