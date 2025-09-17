@@ -90,7 +90,7 @@ Near the top of the script you'll find a custom config dataclass:
 
 *The structure of the config class is arbitrary*, and creating one isn't strictly necessary to use OLMo-core, but it has several benefits:
 1. First, it gives us a good way to keep track of all the hyperparameters of each experiment. Since the config inherits from OLMo-core's {class}`~olmo_core.config.Config` baseclass, it comes with useful methods to serialize it to JSON which, for example, could be uploaded to Weights & Biases or saved to the run's checkpoint directory.
-2. Second, it gives us a command-line argument parser that maps args directly to fields in the config for free, which is due to this line in the script:
+2. Second, it gives us a command-line argument parser that maps args directly to fields in the config for free due to this line in the script:
 
    ```{literalinclude} ../../../src/examples/llama/train.py
    :language: py
@@ -119,7 +119,7 @@ The script also includes a dry-run mode that you can use to validate that your o
 Let's try that right now by passing in the `--dry-run=true` override (or just `--dry-run`).
 Also note the script expects one positional argument, the name of the run (this is used in multiple parts of the config so we require it before the overrides).
 
-So here's the full dry-run command to run:
+Here's the full dry-run command:
 
 ```fish
 python src/examples/llama/train.py tutorial-run-01 --dry-run=true
@@ -175,7 +175,7 @@ Some things to note:
 
 #### Launching locally with torchrun
 
-For non-Beaker users, the script can be run directly with `torchrun`. Assuming you're using 2 local GPUs, the command would be:
+For non-Beaker users, the script can be run directly with `torchrun`. Assuming you have 2 GPUs available, the command would be:
 
 ```fish
 torchrun --nproc-per-node=2 src/examples/llama/train.py tutorial-run-01 \
@@ -188,8 +188,9 @@ torchrun --nproc-per-node=2 src/examples/llama/train.py tutorial-run-01 \
 ### Changing the model and other components
 
 Now that you've run your first experiment and have a way to test changes, let's look at how to customize different components of the training loop.
+But before you do that we recommend copying and renaming the example script to a new directory of your choice, such as one in `src/scripts/train/`.
 
-The first you probably want to change is the model.
+The first thing you probably want to change is the model.
 And as long as you intend to use a text-based {class}`~olmo_core.nn.transformer.Transformer`, all you need to change in this script is the {class}`~olmo_core.nn.transformer.TransformerConfig` settings.
 For example, to switch from the Llama 271M model to an OLMo2 1B model, change these lines
 
