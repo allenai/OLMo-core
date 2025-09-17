@@ -182,7 +182,10 @@ Some things to note:
 For non-Beaker users, the script can be run directly with `torchrun`. Assuming you have 2 GPUs available, the command would be:
 
 ```fish
-torchrun --nproc-per-node=2 src/examples/llm/train.py tutorial-run-01 \
+torchrun --nproc-per-node=2 src/examples/llm/train.py \
+  tutorial-run-01 \
+  --save-folder=/tmp/tutorial-run-01 \
+  --work-dir=/tmp/dataset-cache \
   --trainer.callbacks.lm_evaluator.enabled=false \
   --trainer.callbacks.downstream_evaluator.enabled=false \
   --trainer.no_checkpoints \
