@@ -10,7 +10,7 @@ ARG DEVEL_BASE_IMAGE=nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION}
 # Build image
 #########################################################################
 
-FROM ${DEVEL_BASE_IMAGE} as build
+FROM ${DEVEL_BASE_IMAGE} AS build
 
 WORKDIR /app/build
 
@@ -81,7 +81,7 @@ RUN pip install --no-cache-dir '.[all]' && \
 # Release image
 #########################################################################
 
-FROM ${BASE_IMAGE} as release
+FROM ${BASE_IMAGE} AS release
 
 # Install system dependencies.
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
