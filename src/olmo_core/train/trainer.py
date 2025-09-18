@@ -286,8 +286,12 @@ class Trainer:
                 "or set 'FS_LOCAL_RANK' to the global rank for each process."
             )
 
-        # Configure working directory.
-        self.work_dir = Path(self.work_dir)
+        # Validate working directory.
+        if is_url(self.work_dir):
+            raise OLMoConfigurationError(
+                f"Trainer working directory must be a local path, got a URL instead ('{self.work_dir}')."
+            )
+        self.work_dir = Path(normalize_path(self.work_dir))
 
         # Ensure save folder and working directory exist.
         if get_fs_local_rank() == 0:
@@ -809,7 +813,7 @@ class Trainer:
 
     def maybe_load_checkpoint(
         self,
-        dir: PathOrStr,
+        dir: Optional[PathOrStr] = None,
         *,
         load_trainer_state: Optional[bool] = None,
         load_optim_state: Optional[bool] = None,
@@ -822,6 +826,8 @@ class Trainer:
 
         :returns: If a checkpoint was loaded.
         """
+        if dir is None:
+            dir = self.save_folder
         should_load: bool = True
         if get_rank() == 0:
             should_load = self.checkpointer.contains_checkpoint(dir)
@@ -1005,6 +1011,9 @@ class Trainer:
         return target
 
     def add_callback(self, name: str, callback: Callback):
+        """
+        Add a callback to the trainer.
+        """
         if name in self.callbacks:
             raise OLMoConfigurationError(f"A callback with name '{name}' already exists!")
         callback.trainer = self
