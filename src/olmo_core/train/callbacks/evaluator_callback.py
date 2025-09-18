@@ -62,7 +62,7 @@ class EvaluatorCallback(Callback):
 
     cancel_after_first_eval: bool = False
     """
-    If ``True``, cancel the run after running evals for the first time. 
+    If ``True``, cancel the run after running evals for the first time.
     This combined with ``eval_on_startup=True`` is useful if you just want to run in-loop evals
     without training any longer.
     """
