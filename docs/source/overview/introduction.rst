@@ -50,4 +50,5 @@ Most users will likely follow a workflow that looks like this:
 
      torchrun --nproc-per-node=8 train_script.py ...
 
-You can find a complete example of this workflow in the `Train a Llama model <../examples/llama.html>`_ example.
+You can find a complete example of this workflow in the `Train an LLM <../examples/llm.html>`_ example.
+And for a more comprehensive overview, see the `All-in-one for researchers <../guides/all_in_one_for_researchers.html>`_.

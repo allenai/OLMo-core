@@ -28,6 +28,7 @@ specific to your environment. Then you can install OLMo-core from PyPI with:
    :maxdepth: 2
    :caption: Guides
 
+   guides/all_in_one_for_researchers.md
    guides/data_loading.rst
 
 .. toctree::
@@ -36,8 +37,7 @@ specific to your environment. Then you can install OLMo-core from PyPI with:
    :caption: Examples
 
    examples/huggingface.rst
-   examples/llama.rst
-   examples/ngpt.rst
+   examples/llm.rst
 
 .. toctree::
    :hidden:
@@ -55,6 +55,7 @@ specific to your environment. Then you can install OLMo-core from PyPI with:
    model_ladder
    nn/index
    optim
+   testing
    train/index
    utils
 

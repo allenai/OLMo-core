@@ -10,22 +10,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Fixed parsing username+password git remote URLs in `launch.beaker` module.
+- Fixed bug with default setup steps in `launch.beaker.BeakerLaunchConfig` when a branch can't be resolved.
 - Cluster names in Beaker have changed.
 - Fixed mixture rounding error with `SourceMixtureDataset`, which was previously causing samples to be repeated at the end of training.
 - Don't DDOS Beaker from big jobs.
+- A configuration error is now raised if you pass in a URL for the trainer or dataset's working directory.
+  Previously the URL would just get mangled into a local path, leading to unexpected behavior.
+- Fixed an issue where the `ConsoleLoggerCallback` would attempt to log before the first step.
 
 ### Changed
 
+- The `dir` option to `Trainer.maybe_load_checkpoint()` is now optional and defaults to the `save_folder`.
 - Set `fused_linear_cross_entropy_loss accum_dtype` to fp32 in `LMHead`.
 - Increased `NCCL_FASTRAK_PLUGIN_ACCEPT_TIMEOUT_MS` from 10 minutes to 30 minutes.
 - `SlackNotifierCallback` will now notify on checkpoint saved and post epoch events.
 - `BeakerLaunchConfig.launch()` will now send Slack notifications by default when `follow=True` if the env var `SLACK_WEBHOOK_URL` is set.
+- `src/examples/llama/` has been renamed to `src/examples/llm/`.
 
 ### Added
 
-- Adds a custom block that does LayerNorm Scaling
-- Adds the `HalfCos` learning rate scheduler
-- `CONTRIBUTING.md` guidelines.
+- Added a custom block that does LayerNorm scaling.
+- Added the `HalfCos` learning rate scheduler.
+- Added `CONTRIBUTING.md` guidelines.
+- Added a lightweight, gantry-like Beaker launch CLI: `python -m olmo_core.launch.beaker`.
 
 ## [v2.2.0](https://github.com/allenai/OLMo-core/releases/tag/v2.2.0) - 2025-08-26
 
