@@ -3,13 +3,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Generator, List, Tuple
 
-from olmo_core.data import NumpyDatasetConfig
 from olmo_core.data.mixes import DataMixBase
-from olmo_core.data.source_mixture import (
-    SourceMixtureConfig,
-    SourceMixtureDatasetConfig,
-)
-from olmo_core.data.types import NumpyDatasetDType
 
 __all__ = ["CustomDataMix"]
 

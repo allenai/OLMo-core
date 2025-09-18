@@ -48,6 +48,7 @@ from olmo_core.train.callbacks import (
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerTrainModuleConfig,
+    TransformerDataParallelWrappingStrategy,
 )
 from olmo_core.utils import seed_all
 
@@ -186,26 +187,33 @@ def build_config(opts, overrides: List[str]) -> ExperimentConfig:
     )
 
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=256 * 1024,  # NOTE: this is specified in tokens, not instances
+        global_batch_size=1024 * 4096,  # NOTE: this is specified in tokens, not instances
         seed=0,
         num_workers=4,
     )
 
     train_module_config = TransformerTrainModuleConfig(
-        rank_microbatch_size=16 * 1024,  # NOTE: this is specified in tokens, not instances
+        rank_microbatch_size=2 * 4096,  # NOTE: this is specified in tokens, not instances
         max_sequence_length=dataset_config.effective_sequence_length,
         optim=AdamWConfig(
-            lr=1e-3,
+            lr=4e-4,
+            weight_decay=0.1,
+            betas=(0.9, 0.95),
             group_overrides=[
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
             ],
+            fused=True,
         ),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
+            name=DataParallelType.fsdp,
+            param_dtype=DType.bfloat16,
+            reduce_dtype=DType.float32,
+            wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
         ),
+        z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
-        scheduler=CosWithWarmup(warmup_steps=100),
+        scheduler=CosWithWarmup(warmup_steps=2000),
     )
 
     trainer_config = (
