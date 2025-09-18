@@ -229,7 +229,6 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         data_loader=data_loader_config,
         train_module=train_module_config,
         trainer=trainer_config,
-        load_path=opts.checkpoint,
     ).merge(overrides)
 
 
