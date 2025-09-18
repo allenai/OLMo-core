@@ -1,5 +1,7 @@
 """
-This script can be used to launch an SFT run for the 7B model on Beaker, focusing only on router weights.
+This script can be used to launch an SFT run for MoE models on Beaker, focusing only on router weights.
+This script is specifically designed for Mixture of Experts (MoE) models and will freeze all parameters
+except the router weights. For dense models, use the regular SFT script instead.
 Run the script without any arguments to see usage info. See the README for more details.
 """
 
@@ -151,6 +153,9 @@ def build_sft_dataset(
     sequence_length: int,
     dataset_path: Optional[str],
 ) -> NumpyDatasetConfig:
+    if dataset_path is None:
+        raise OLMoConfigurationError("dataset_path cannot be None")
+    
     clean_path = dataset_path.rstrip("/")
     if dataset_path.startswith("gs://"):
         contents = list_directory(dataset_path)
@@ -386,7 +391,29 @@ def freeze_non_router_weights(model):
     router_params = 0
     frozen_params = 0
     
+    # First, let's log all parameter names to debug what we're working with
+    if get_local_rank() == 0:
+        log.info("All model parameters:")
+        for name, param in model.named_parameters():
+            log.info(f"  {name}: shape={param.shape}, requires_grad={param.requires_grad}")
+    
+    # Check if this is an MoE model by looking for router parameters
+    has_router_params = False
     for name, param in model.named_parameters():
+        if "router" in name:
+            has_router_params = True
+            break
+    
+    if not has_router_params:
+        raise OLMoConfigurationError(
+            "This model does not appear to be an MoE model and has no router parameters. "
+            "Router-only SFT is only applicable to MoE models. "
+            "Please use a MoE model configuration or use the regular SFT script for dense models."
+        )
+    
+    for name, param in model.named_parameters():
+        # Look for router parameters in MoE models
+        # Router parameters are typically named like: blocks.*.feed_forward_moe.router.weight
         if "router" in name:
             param.requires_grad = True
             router_params += 1
@@ -401,6 +428,9 @@ def freeze_non_router_weights(model):
         log.info(f"  - Trainable router parameters: {router_params}")
         log.info(f"  - Frozen parameters: {frozen_params}")
         log.info(f"  - Total parameters: {router_params + frozen_params}")
+        
+        if router_params == 0:
+            log.warning("No router parameters found! This may indicate the model is not MoE.")
 
 
 def train(checkpoint: str, config: SFTRouterConfig, save_tokenizer: bool):
@@ -413,6 +443,9 @@ def train(checkpoint: str, config: SFTRouterConfig, save_tokenizer: bool):
     
     # Freeze all non-router weights
     freeze_non_router_weights(model)
+    
+    if config.dataset is None:
+        raise OLMoConfigurationError("Dataset configuration is None")
     
     dataset = config.dataset.build()
     data_loader = config.data_loader.build(dataset, dp_process_group=train_module.dp_process_group)
@@ -450,12 +483,17 @@ def train(checkpoint: str, config: SFTRouterConfig, save_tokenizer: bool):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="SFT the 7B model router weights only.",
+        description="SFT MoE model router weights only (freezes all other parameters).",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python %(prog)s dry_run test my-dataset-name /path/to/ckpt ai2/cluster
-  python %(prog)s launch run01 OpenThoughts3-1.2M /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_final_anneal/step11921 ai2/jupiter-cirrascale-2 --seq_len=4096 --num_nodes=2 --launch.priority=high
+  python %(prog)s dry_run test my-dataset-name /path/to/ckpt ai2/cluster --model_name olmoe-1b-7b
+  python %(prog)s launch run01 OpenThoughts3-1.2M /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_final_anneal/step11921 ai2/jupiter-cirrascale-2 --seq_len=4096 --num_nodes=2 --launch.priority=high --model_name olmoe-1b-7b
+
+Note: This script requires MoE models. Available model options:
+  - olmo2-7b: MoE variant of OLMo2-7B
+  - olmo3-7b: MoE variant of OLMo3-7B  
+  - olmoe-1b-7b: Pre-configured OLMoE model
 """,
     )
 
