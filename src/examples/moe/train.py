@@ -89,6 +89,9 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     model_config = TransformerConfig.smallmoe(
         vocab_size=tokenizer_config.padded_vocab_size(),  # a little bigger than actual vocab size to make it a multiple of 128
     )
+    # model_config = TransformerConfig.olmoe_1B_7B(
+    #     vocab_size=tokenizer_config.padded_vocab_size(),  # a little bigger than actual vocab size to make it a multiple of 128
+    # )
 
     dataset_config = NumpyDatasetConfig(
         paths=DATA_PATHS,
