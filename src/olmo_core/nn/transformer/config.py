@@ -138,6 +138,11 @@ class TransformerBlockType(StrEnum):
     ➡️ :class:`FLABlock`
     """
 
+    fla_hybrid = "fla_hybrid"
+    """
+    ➡️ :class:`Union[FLABlock, TransformerBlock]` alternating FLA and standard blocks
+    """
+
     default_scaled = "default_scaled"
     """
     ➡️ :class:`LayerNormScaledTransformerBlock` (applies LayerNorm Scaling)
@@ -228,6 +233,13 @@ class TransformerBlockConfig(Config):
                 n_heads = self.attention.n_heads
                 kwargs.pop("attention")  # FLA does not use attention
                 return FLABlock(n_heads=n_heads, **kwargs)
+            elif self.name == TransformerBlockType.fla_hybrid:
+                # TODO: Abstract to allow custom interleaved block types
+                # TODO: Also abstract callback for different allocation strategies
+                if block_idx % 2 == 0:
+                    return ReorderedNormTransformerBlock(**kwargs)
+                else:
+                    return FLABlock(n_heads=n_heads, **kwargs)
             else:
                 raise NotImplementedError(self.name)
         except TypeError as e:
