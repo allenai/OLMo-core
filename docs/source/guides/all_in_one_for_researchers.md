@@ -129,6 +129,14 @@ Here's the full dry-run command:
 python src/examples/llm/train.py tutorial-run-01 --dry-run
 ```
 
+And now let's try that again while overriding a few config options:
+
+```fish
+python src/examples/llm/train.py tutorial-run-01 --dry-run \
+  --data_loader.prefetch_factor=4 \
+  --trainer.callbacks.wandb.enabled=true
+```
+
 ### Launching the run
 
 Now that we know how to change settings on the fly we're ready to launch the run.
