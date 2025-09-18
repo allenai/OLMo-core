@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `SlackNotifierCallback` will now notify on checkpoint saved and post epoch events.
 - `BeakerLaunchConfig.launch()` will now send Slack notifications by default when `follow=True` if the env var `SLACK_WEBHOOK_URL` is set.
 - `src/examples/llama/` has been renamed to `src/examples/llm/`.
+- Refactored eval task groups into `task_groups.py`
 
 ### Added
 
