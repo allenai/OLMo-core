@@ -219,7 +219,7 @@ with something like this:
     )
 ```
 
-Keep in mind that as you scale to larger models you will probably need to adjust some performance settings such as the micro-batch size (`--train_module.rank_microbatch_size`).
+Keep in mind that as you change the model size and architecture you'll need to adjust hyperparameters like the learning rate, and potentially performance settings such as the micro-batch size (`--train_module.rank_microbatch_size`).
 See the [scaling](#scaling) section below for more on that.
 
 Similarly the optimizer, dataset, and other components can be changed by modifying their corresponding part of the config.

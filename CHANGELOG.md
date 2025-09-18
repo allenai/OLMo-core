@@ -10,9 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Fixed parsing username+password git remote URLs in `launch.beaker` module.
+- Fixed bug with default setup steps in `launch.beaker.BeakerLaunchConfig` when a branch can't be resolved.
 - Cluster names in Beaker have changed.
 - Fixed mixture rounding error with `SourceMixtureDataset`, which was previously causing samples to be repeated at the end of training.
 - Don't DDOS Beaker from big jobs.
+- A configuration error is now raised if you pass in a URL for the trainer or dataset's working directory.
+  Previously the URL would just get mangled into a local path, leading to unexpected behavior.
+- Fixed an issue where the `ConsoleLoggerCallback` would attempt to log before the first step.
 
 ### Changed
 
@@ -21,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Increased `NCCL_FASTRAK_PLUGIN_ACCEPT_TIMEOUT_MS` from 10 minutes to 30 minutes.
 - `SlackNotifierCallback` will now notify on checkpoint saved and post epoch events.
 - `BeakerLaunchConfig.launch()` will now send Slack notifications by default when `follow=True` if the env var `SLACK_WEBHOOK_URL` is set.
+- `src/examples/llama/` has been renamed to `src/examples/llm/`.
 
 ### Added
 
