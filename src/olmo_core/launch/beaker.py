@@ -96,6 +96,11 @@ class OLMoCoreBeakerImage(StrEnum):
     The stable image with CUDA pinned to 12.8.
     """
 
+    tch280_cu128 = "olmo-core-tch280cu128-2025-09-18"
+    """
+    Built with torch 2.8.0 and CUDA 12.8.
+    """
+
 
 @dataclass
 class BeakerEnvVar(Config):
