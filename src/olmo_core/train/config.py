@@ -8,7 +8,7 @@ from typing import Dict, Optional
 import torch
 import torch.distributed as dist
 
-from olmo_core.eval.task_groups import FAST_TASKS, FULL_TASKS, TASK_GROUPS
+from olmo_core.eval.task_groups import TASK_GROUPS
 
 from ..config import Config
 from ..data import DataLoaderBase, TokenizerConfig
