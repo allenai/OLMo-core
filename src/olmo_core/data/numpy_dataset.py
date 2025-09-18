@@ -692,8 +692,16 @@ def prepare_byte_example(
             original_input_ids.append(tokenizer.hf_tokenizer.pad_token_id)
 
         original_input_ids = torch.tensor(original_input_ids, dtype=item["input_ids"].dtype)
+        import ipdb; ipdb.set_trace()
     else:
         original_input_ids = item["input_ids"]
+
+    while original_input_ids[0].item() == tokenizer.hf_tokenizer.eos_token_id:
+        # we manually add eos at the start so strip any existing ones
+        # inefficient impl for >1 but we expect =1 or =0 almost always
+        original_input_ids = torch.cat(
+            [original_input_ids[1:], torch.tensor([tokenizer.hf_tokenizer.pad_token_id], dtype=original_input_ids.dtype)]
+        )
 
     byte_tokens, patch_lengths = tokenizer.get_tokens_and_patch_lengths(original_input_ids.tolist(), add_bos=True, skip_last=True)
     space_patch_lengths = tokenizer.get_space_patch_lengths(byte_tokens)
