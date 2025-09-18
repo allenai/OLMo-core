@@ -692,7 +692,6 @@ def prepare_byte_example(
             original_input_ids.append(tokenizer.hf_tokenizer.pad_token_id)
 
         original_input_ids = torch.tensor(original_input_ids, dtype=item["input_ids"].dtype)
-        import ipdb; ipdb.set_trace()
     else:
         original_input_ids = item["input_ids"]
 
