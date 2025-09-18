@@ -397,13 +397,28 @@ def freeze_non_router_weights(model):
         for name, param in model.named_parameters():
             log.info(f"  {name}: shape={param.shape}, requires_grad={param.requires_grad}")
     
-    # Apply the freezing logic from your config:
-    # "freeze_params": ["embeddings.*", "blocks.*.attention*", "blocks.*.feed_forward_norm.*", "lm_head.*", "blocks.*.feed_forward_moe.experts*"]
-    # This means only router parameters (in feed_forward_moe but not experts) should be trainable
+    # Debug: Print all parameters to see what's actually in the model
+    if get_local_rank() == 0:
+        log.info("=== ALL PARAMETERS ===")
+        for name, param in model.named_parameters():
+            log.info(f"{name}: {param.shape} (requires_grad={param.requires_grad})")
+        
+        log.info("\n=== ROUTER PARAMETERS ===")
+        router_found = False
+        for name, param in model.named_parameters():
+            if "router" in name:
+                log.info(f"{name}: {param.shape} (requires_grad={param.requires_grad})")
+                router_found = True
+        
+        if not router_found:
+            log.warning("No router parameters found! Looking for MoE-related parameters...")
+            for name, param in model.named_parameters():
+                if any(pattern in name.lower() for pattern in ["moe", "feed_forward_moe", "expert"]):
+                    log.info(f"MoE-related: {name}: {param.shape} (requires_grad={param.requires_grad})")
     
     import fnmatch
     
-    # Patterns that should be frozen (adapted to your actual parameter names)
+    # Patterns that should definitely be frozen (from your config)
     freeze_patterns = [
         "embeddings.*",
         "blocks.*.attention*", 
@@ -412,8 +427,16 @@ def freeze_non_router_weights(model):
         "blocks.*.feed_forward._checkpoint_wrapped_module.*"  # Expert weights
     ]
     
+    # Look for router parameters - the expected naming pattern
+    router_patterns = [
+        "blocks.*.feed_forward_moe.router.*",
+        "blocks.*.feed_forward_moe.gate.*",
+        "blocks.*.feed_forward_moe.gating.*"
+    ]
+    
     for name, param in model.named_parameters():
         should_freeze = False
+        param_size = param.numel()
         
         # Check if this parameter matches any freeze pattern
         for pattern in freeze_patterns:
@@ -421,9 +444,20 @@ def freeze_non_router_weights(model):
                 should_freeze = True
                 break
         
-        # Special case: if it's in feed_forward but NOT in the checkpoint_wrapped_module AND NOT feed_forward_norm, it's likely a router
-        if "feed_forward" in name and "_checkpoint_wrapped_module" not in name and "feed_forward_norm" not in name:
-            should_freeze = False  # This is likely a router parameter
+        # Check if this is a router parameter
+        is_router = False
+        for pattern in router_patterns:
+            if fnmatch.fnmatch(name, pattern):
+                is_router = True
+                break
+        
+        # Also check for explicit router patterns
+        if "router" in name.lower() or "gate" in name.lower():
+            is_router = True
+        
+        # If it's a router parameter, keep it trainable
+        if is_router:
+            should_freeze = False
         
         if should_freeze:
             param.requires_grad = False
@@ -434,7 +468,7 @@ def freeze_non_router_weights(model):
             param.requires_grad = True
             router_params += 1
             if get_local_rank() == 0:
-                log.info(f"Keeping parameter trainable: {name}")
+                log.info(f"Keeping parameter trainable: {name} (size: {param_size})")
     
     if get_local_rank() == 0:
         log.info(f"Router SFT setup complete:")
