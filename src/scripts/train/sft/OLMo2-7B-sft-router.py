@@ -397,31 +397,45 @@ def freeze_non_router_weights(model):
         for name, param in model.named_parameters():
             log.info(f"  {name}: shape={param.shape}, requires_grad={param.requires_grad}")
     
-    # Check if this is an MoE model by looking for router parameters
-    has_router_params = False
-    for name, param in model.named_parameters():
-        if "router" in name:
-            has_router_params = True
-            break
+    # Since you mentioned your original training only trained router weights,
+    # let's look for parameters that are currently trainable (requires_grad=True)
+    # These should be the router parameters from your previous training
     
-    if not has_router_params:
-        raise OLMoConfigurationError(
-            "This model does not appear to be an MoE model and has no router parameters. "
-            "Router-only SFT is only applicable to MoE models. "
-            "Please use a MoE model configuration or use the regular SFT script for dense models."
-        )
-    
+    currently_trainable = []
     for name, param in model.named_parameters():
-        # Look for router parameters in MoE models
-        # Router parameters are typically named like: blocks.*.feed_forward_moe.router.weight
-        if "router" in name:
-            param.requires_grad = True
-            router_params += 1
-            if get_local_rank() == 0:
-                log.info(f"Keeping router parameter trainable: {name}")
-        else:
-            param.requires_grad = False
-            frozen_params += 1
+        if param.requires_grad:
+            currently_trainable.append(name)
+    
+    if get_local_rank() == 0:
+        log.info(f"Currently trainable parameters ({len(currently_trainable)}):")
+        for name in currently_trainable:
+            log.info(f"  {name}")
+    
+    # If no parameters are currently trainable, we need to identify router parameters
+    # by looking for common router patterns
+    if not currently_trainable:
+        router_patterns = ["router", "feed_forward_moe", "gating", "gate"]
+        
+        for name, param in model.named_parameters():
+            if any(pattern in name for pattern in router_patterns):
+                param.requires_grad = True
+                router_params += 1
+                if get_local_rank() == 0:
+                    log.info(f"Found and keeping router parameter trainable: {name}")
+            else:
+                param.requires_grad = False
+                frozen_params += 1
+    else:
+        # Use the currently trainable parameters (which should be router weights)
+        for name, param in model.named_parameters():
+            if param.requires_grad:
+                param.requires_grad = True  # Keep them trainable
+                router_params += 1
+                if get_local_rank() == 0:
+                    log.info(f"Keeping previously trainable parameter: {name}")
+            else:
+                param.requires_grad = False
+                frozen_params += 1
     
     if get_local_rank() == 0:
         log.info(f"Router SFT setup complete:")
