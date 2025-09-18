@@ -9,6 +9,10 @@ We will show you:
 - How to scale up to larger models while maintaining high MFU.
 - How to troubleshoot common issues.
 
+If you're looking to reproduce an official OLMo training run we still recommend starting with this tutorial to get familiar with the library.
+Then you can look in [`src/scripts/official/`](https://github.com/allenai/OLMo-core/tree/main/src/scripts/official) to find public versions of the training scripts,
+or [`src/scripts/train/`](https://github.com/allenai/OLMo-core/tree/main/src/scripts/train) for the original Ai2 internal versions (Beaker access required to run them).
+
 ```{attention}
 If you run into any issues with tutorial, don't hesitate to [open an issue on GitHub](https://github.com/allenai/OLMo-core/issues/new/choose) or reach out on Slack in the [#olmo-core-users](https://allenai.slack.com/archives/C08AU86NMCM) channel.
 ```
