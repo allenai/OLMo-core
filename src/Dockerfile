@@ -62,7 +62,7 @@ ARG FLASH_ATTN_VERSION=2.8.2
 RUN pip install --no-build-isolation --no-cache-dir flash-attn==${FLASH_ATTN_VERSION}
 
 # Install ring-flash-attn.
-ARG RING_FLASH_ATTN_VERSION=0.1.6
+ARG RING_FLASH_ATTN_VERSION=0.1.8
 RUN pip install --no-build-isolation --no-cache-dir ring-flash-attn==${RING_FLASH_ATTN_VERSION}
 
 # Install liger-kernel.
