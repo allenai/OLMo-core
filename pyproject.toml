@@ -81,6 +81,8 @@ fla = [
 ]
 all = ["ai2-olmo-core[dev,beaker,comet,eval,torchao,transformers,wandb,mamba,xlstm,fla]"]
 
+[tool.uv.extra-build-dependencies]
+causal-conv1d = ["torch"]
 
 [tool.setuptools]
 include-package-data = true
