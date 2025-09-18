@@ -59,7 +59,9 @@ RUN pip install --no-build-isolation --no-cache-dir "${GROUPED_GEMM_VERSION}"
 
 # Install flash-attn.
 ARG FLASH_ATTN_VERSION=2.7.4.post1
-RUN pip install --no-build-isolation --no-cache-dir flash-attn==${FLASH_ATTN_VERSION}
+# RUN pip install --no-build-isolation --no-cache-dir flash-attn==${FLASH_ATTN_VERSION}
+RUN pip install --no-cache-dir https://github.com/tyler-romero/flash-attention/releases/download/v3.0.0b0/flash_attn_3-3.0.0b1-cp39-abi3-linux_x86_64.whl
+
 
 # Install ring-flash-attn.
 ARG RING_FLASH_ATTN_VERSION=0.1.5
