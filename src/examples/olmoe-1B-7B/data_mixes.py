@@ -55,10 +55,13 @@ class CustomDataMix(DataMixBase):
 
 @contextmanager
 def _get_data_mix_path(name: str) -> Generator[Path, None, None]:
-    import importlib_resources
-
+    # Get the directory where this file is located
+    current_file_dir = Path(__file__).parent
+    
+    # Construct path to the mixes directory relative to current file
+    mix_file_path = current_file_dir / "mixes" / f"{os.path.basename(name)}.txt"
+    
     try:
-        with importlib_resources.as_file(f"{CURRENT_DIR}/mixes/{os.path.basename(name)}.txt") as path:
-            yield path
+        yield mix_file_path
     finally:
         pass
