@@ -421,8 +421,8 @@ def freeze_non_router_weights(model):
                 should_freeze = True
                 break
         
-        # Special case: if it's in feed_forward but NOT in the checkpoint_wrapped_module, it's likely a router
-        if "feed_forward" in name and "_checkpoint_wrapped_module" not in name:
+        # Special case: if it's in feed_forward but NOT in the checkpoint_wrapped_module AND NOT feed_forward_norm, it's likely a router
+        if "feed_forward" in name and "_checkpoint_wrapped_module" not in name and "feed_forward_norm" not in name:
             should_freeze = False  # This is likely a router parameter
         
         if should_freeze:
