@@ -17,28 +17,49 @@
 
 # more details: https://olmo-core.readthedocs.io/en/researcher-quick-start/guides/all_in_one_for_researchers.html
 
-runname="olmo1B-pretrain-01"
+#runname="olmo1B-pretrain-01"
+#python -m olmo_core.launch.beaker \
+#	--name $runname \
+#	--gpus 2 \
+#	--nodes 1 \
+#	--budget ai2/oe-base \
+#	--workspace ai2/flex2 \
+#	--cluster ai2/jupiter \
+#	--priority urgent \
+#	--preemptible \
+#	--allow-dirty \
+#	--weka=oe-training-default \
+#	-- src/examples/llm/train.py \
+#		$runname \
+#		--trainer.save_folder=/oe-training-default/sewonm/${runname} \
+#		--trainer.max_duration='{value: 130_000_000_000, unit: tokens}' \
+#		--trainer.callbacks.wandb='{enabled: true, entity: sewonm, project: olmo1B, name: $runname}' \
+#		--trainer.callbacks.lm_evaluator.enabled=false \
+#		--trainer.callbacks.downstream_evaluator.enabled=false \
+#		--trainer.no_checkpoints \
+#		--trainer.hard_stop='{value: 100, unit: steps}'
 
+#	--trainer.callbacks.wandb='{enabled: true, entity=sewonm, project=olmo1B, name=$runname}' \
+
+
+runname="olmoe-pretrain-01"
 python -m olmo_core.launch.beaker \
-	--name $runname \
-	--gpus 2 \
-	--nodes 1 \
-	--budget ai2/oe-base \
+  	--name $runname \
+	--gpus 4 \
+    	--nodes 1 \
+	--weka=oe-training-default \
+      	--shared-filesystem \
 	--workspace ai2/flex2 \
 	--cluster ai2/jupiter \
-	--priority urgent \
-	--preemptible \
 	--allow-dirty \
-	--weka=oe-training-default \
-	-- src/examples/llm/train.py \
-		$runname \
-		--trainer.save_folder=/oe-training-default/sewonm/${runname} \
-		--trainer.max_duration='{value: 130_000_000_000, unit: tokens}' \
-		--trainer.callbacks.wandb='{enabled: true, entity: sewonm, project: olmo1B, name: $runname}' \
-		--trainer.callbacks.lm_evaluator.enabled=false \
-		--trainer.callbacks.downstream_evaluator.enabled=false \
+	--priority urgent \
+	-- src/examples/olmoe-1B-7B/train.py \
+       		$runname \
+		--dataset.mix=OLMo_mix_0625 \
+		--save-folder="/weka/oe-training-default/$USER/$runname" \
+		--work-dir="/weka/oe-training-default/$USER/dataset-cache" \
 		--trainer.no_checkpoints \
 		--trainer.hard_stop='{value: 100, unit: steps}'
 
-#	--trainer.callbacks.wandb='{enabled: true, entity=sewonm, project=olmo1B, name=$runname}' \
+
 

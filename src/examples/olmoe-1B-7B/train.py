@@ -52,7 +52,8 @@ from olmo_core.train.train_module import (
 )
 from olmo_core.utils import seed_all
 
-from data_mixes import CustomDataMix
+from olmo_core.data.mixes import DataMix
+#from data_mixes import CustomDataMix
 
 log = logging.getLogger(__name__)
 
@@ -171,7 +172,7 @@ def build_config(opts, overrides: List[str]) -> ExperimentConfig:
     log.info(f"Using data root: {DATA_ROOT}")
 
     dataset_config = NumpyDatasetConfig.from_data_mix(
-        CustomDataMix.test_mix,
+        DataMix.v3_small_ppl_validation,
         tokenizer=tokenizer_config,
         mix_base_dir=DATA_ROOT,
         sequence_length=opts.sequence_length,
