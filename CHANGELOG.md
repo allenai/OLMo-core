@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added the `HalfCos` learning rate scheduler.
 - Added `CONTRIBUTING.md` guidelines.
 - Added a lightweight, gantry-like Beaker launch CLI: `python -m olmo_core.launch.beaker`.
+- Added [Beaker images with torch 2.8](https://beaker.allen.ai/orgs/ai2/workspaces/OLMo-core/images?searchQuery=tch280). There is `olmo-core-tch280cu128-2025-09-18` and `olmo-core-tch280cu129-2025-09-18` for CUDA 12.8 and 12.9, respectively.
 
 ## [v2.2.0](https://github.com/allenai/OLMo-core/releases/tag/v2.2.0) - 2025-08-26
 
