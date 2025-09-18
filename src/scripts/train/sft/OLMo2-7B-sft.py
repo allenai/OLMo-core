@@ -378,13 +378,57 @@ class SFTConfig(Config):
         return config
 
 
-def train(checkpoint: str, config: SFTConfig, save_tokenizer: bool):
+def freeze_parameters_except(model, keep_trainable_patterns=None):
+    """
+    Freeze all parameters except those matching the specified patterns.
+    
+    Args:
+        model: The model to freeze parameters for
+        keep_trainable_patterns: List of patterns to keep trainable (e.g., ["lm_head.*", "blocks.31.*"])
+    """
+    if keep_trainable_patterns is None:
+        keep_trainable_patterns = []
+    
+    import fnmatch
+    
+    trainable_params = 0
+    frozen_params = 0
+    
+    for name, param in model.named_parameters():
+        should_be_trainable = False
+        for pattern in keep_trainable_patterns:
+            if fnmatch.fnmatch(name, pattern):
+                should_be_trainable = True
+                break
+        
+        if should_be_trainable:
+            param.requires_grad = True
+            trainable_params += 1
+            if get_local_rank() == 0:
+                log.info(f"Keeping parameter trainable: {name}")
+        else:
+            param.requires_grad = False
+            frozen_params += 1
+    
+    if get_local_rank() == 0:
+        log.info(f"Parameter freezing complete:")
+        log.info(f"  - Trainable parameters: {trainable_params}")
+        log.info(f"  - Frozen parameters: {frozen_params}")
+        log.info(f"  - Total parameters: {trainable_params + frozen_params}")
+
+
+def train(checkpoint: str, config: SFTConfig, save_tokenizer: bool, keep_trainable_patterns=None):
     # Set RNG states on all devices.
     seed_all(config.init_seed)
 
     # Build components.
     model = config.model.build(init_device="meta")
     train_module = config.train_module.build(model)
+    
+    # Freeze parameters if patterns are specified
+    if keep_trainable_patterns:
+        freeze_parameters_except(model, keep_trainable_patterns)
+    
     dataset = config.dataset.build()
     data_loader = config.data_loader.build(dataset, dp_process_group=train_module.dp_process_group)
     trainer = config.trainer.build(train_module, data_loader)
@@ -472,6 +516,11 @@ Examples:
     parser.add_argument("--budget", help="The beaker budget to use.")
     parser.add_argument("--workspace", help="The workspace to run in.")
     parser.add_argument("--dataset_path", help="The path to the pre-tokenized SFT dataset.")
+    parser.add_argument(
+        "--keep_trainable", 
+        nargs="*", 
+        help="Patterns for parameters to keep trainable (e.g., 'lm_head.*' 'blocks.31.*'). If not specified, all parameters are trainable."
+    )
 
     # Parse known args to get positional arguments and cmd
     args, overrides = parser.parse_known_args()
@@ -511,7 +560,7 @@ Examples:
         config.launch.launch(follow=args.follow)
     elif args.cmd == "train":
         try:
-            train(args.pretrain_checkpoint, config, args.save_tokenizer)
+            train(args.pretrain_checkpoint, config, args.save_tokenizer, args.keep_trainable)
         finally:
             teardown_training_environment()
     else:
