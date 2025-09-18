@@ -271,6 +271,16 @@ class SFTRouterConfig(Config):
             )
             model.block.attention.use_flash = True
             model.block.attention.use_head_qk_norm = True
+        elif model_name == "olmoe-4x7b":
+            # MoE model configuration for router SFT
+            model = TransformerConfig.olmoe_nx7b(  # Use MoE configuration
+                vocab_size=tokenizer_config.padded_vocab_size(),
+                num_experts=4,
+                top_k=4,
+                lb_loss_weight=0.0,
+                z_loss_weight=0.001,
+                freeze_params=[],  # Don't freeze anything initially - we'll do it manually
+            )
         else:
             raise OLMoConfigurationError(f"Must set a valid model_name: {model_name}")
 
@@ -424,7 +434,8 @@ def freeze_non_router_weights(model):
         "blocks.*.attention*", 
         "blocks.*.feed_forward_norm.*",
         "lm_head.*",
-        "blocks.*.feed_forward._checkpoint_wrapped_module.*"  # Expert weights
+        "blocks.*.feed_forward_moe.experts.*",  # Expert weights
+        "blocks.*.feed_forward._checkpoint_wrapped_module.*"  # Expert weights (fallback)
     ]
     
     # Look for router parameters - the expected naming pattern
