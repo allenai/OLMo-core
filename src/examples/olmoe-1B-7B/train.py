@@ -17,10 +17,13 @@ import rich
 
 from olmo_core.config import Config, DType
 from olmo_core.data import (
+    InstanceFilterConfig,
     NumpyDataLoaderConfig,
     NumpyDatasetConfig,
     NumpyDatasetType,
     TokenizerConfig,
+    VSLCurriculumConfig,
+    VSLCurriculumType,
 )
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_rank
@@ -52,33 +55,35 @@ from .data_mixes import CustomDataMix
 
 log = logging.getLogger(__name__)
 
-# Check for the data on common Ai2 drives. If those don't exist we'll stream the data over the internet,
-# which can be a lot slower. Alternatively you can download the files with wget, for example:
-#  > wget http://olmo-data.org/examples/c4-en/gpt2/c4-train.00000-00099.npy
-DEFAULT_DATA_ROOT = "http://olmo-data.org/examples/c4-en/gpt2"
-for dir in (
-    "/net/nfs/allennlp/llm-data/c4/en/",
-    "/weka/oe-training-default/ai2-llm/examples/c4-en/gpt2/",
-):
-    if os.path.exists(dir):
-        DEFAULT_DATA_ROOT = dir
-        break
-DATA_ROOT = os.environ.get("OLMO_DATA_ROOT", DEFAULT_DATA_ROOT).rstrip("/")
-DATA_PATHS = [
-    f"{DATA_ROOT}/c4-train.00000-00099.npy",
-    # Uncomment for full dataset which might not be available on NFS or Weka.
-    #  f"{DATA_ROOT}/c4-train.00100-00199.npy",
-    #  f"{DATA_ROOT}/c4-train.00200-00299.npy",
-    #  f"{DATA_ROOT}/c4-train.00300-00399.npy",
-    #  f"{DATA_ROOT}/c4-train.00400-00499.npy",
-    #  f"{DATA_ROOT}/c4-train.00500-00599.npy",
-    #  f"{DATA_ROOT}/c4-train.00600-00699.npy",
-    #  f"{DATA_ROOT}/c4-train.00700-00799.npy",
-    #  f"{DATA_ROOT}/c4-train.00800-00899.npy",
-    #  f"{DATA_ROOT}/c4-train.00900-00999.npy",
-    #  f"{DATA_ROOT}/c4-train.01000-01023.npy",
-]
-EVAL_DATA_PATHS = [f"{DATA_ROOT}/c4-validation.00000-00008.npy"]
+# # Check for the data on common Ai2 drives. If those don't exist we'll stream the data over the internet,
+# # which can be a lot slower. Alternatively you can download the files with wget, for example:
+# #  > wget http://olmo-data.org/examples/c4-en/gpt2/c4-train.00000-00099.npy
+# DEFAULT_DATA_ROOT = "http://olmo-data.org/examples/c4-en/gpt2"
+# for dir in (
+#     "/net/nfs/allennlp/llm-data/c4/en/",
+#     "/weka/oe-training-default/ai2-llm/examples/c4-en/gpt2/",
+# ):
+#     if os.path.exists(dir):
+#         DEFAULT_DATA_ROOT = dir
+#         break
+# DATA_ROOT = os.environ.get("OLMO_DATA_ROOT", DEFAULT_DATA_ROOT).rstrip("/")
+# DATA_PATHS = [
+#     f"{DATA_ROOT}/c4-train.00000-00099.npy",
+#     # Uncomment for full dataset which might not be available on NFS or Weka.
+#     #  f"{DATA_ROOT}/c4-train.00100-00199.npy",
+#     #  f"{DATA_ROOT}/c4-train.00200-00299.npy",
+#     #  f"{DATA_ROOT}/c4-train.00300-00399.npy",
+#     #  f"{DATA_ROOT}/c4-train.00400-00499.npy",
+#     #  f"{DATA_ROOT}/c4-train.00500-00599.npy",
+#     #  f"{DATA_ROOT}/c4-train.00600-00699.npy",
+#     #  f"{DATA_ROOT}/c4-train.00700-00799.npy",
+#     #  f"{DATA_ROOT}/c4-train.00800-00899.npy",
+#     #  f"{DATA_ROOT}/c4-train.00900-00999.npy",
+#     #  f"{DATA_ROOT}/c4-train.01000-01023.npy",
+# ]
+# EVAL_DATA_PATHS = [f"{DATA_ROOT}/c4-validation.00000-00008.npy"]
+
+DATA_ROOT = "/weka/oe-training-default/ai2-llm"
 
 
 # docs: start-define-config
@@ -163,15 +168,22 @@ def build_config(opts, overrides: List[str]) -> ExperimentConfig:
     # docs: end-model-config
 
     log.info(f"Using data root: {DATA_ROOT}")
-    dataset_config = NumpyDatasetConfig(
-        paths=DATA_PATHS,
-        name=NumpyDatasetType.fsl,
-        sequence_length=opts.sequence_length,
-        tokenizer=tokenizer_config,
-        work_dir=work_dir,
-    )
 
-    dataset_config.mix = CustomDataMix.test_mix
+    dataset_config = NumpyDatasetConfig.from_data_mix(
+        CustomDataMix.test_mix,
+        tokenizer=tokenizer_config,
+        mix_base_dir=DATA_ROOT,
+        sequence_length=opts.sequence_length,
+        max_target_sequence_length=max(8192, opts.sequence_length),
+        min_sequence_length=min(256, opts.sequence_length),
+        max_sequence_length=max(8192, opts.sequence_length),
+        vsl_curriculum=VSLCurriculumConfig(
+            name=VSLCurriculumType.grow_p2, num_cycles=8, balanced=False
+        ),
+        work_dir=work_dir,
+        generate_doc_lengths=False,
+        instance_filter_config=None
+    )
 
     data_loader_config = NumpyDataLoaderConfig(
         global_batch_size=256 * 1024,  # NOTE: this is specified in tokens, not instances
@@ -230,29 +242,29 @@ def build_config(opts, overrides: List[str]) -> ExperimentConfig:
         )
         .with_callback("config_saver", ConfigSaverCallback())
         .with_callback("profiler", ProfilerCallback(enabled=False))
-        .with_callback(
-            "lm_evaluator",
-            LMEvaluatorCallbackConfig(
-                eval_dataset=NumpyDatasetConfig(
-                    paths=EVAL_DATA_PATHS,
-                    metadata=[{"label": "c4-validation"}],
-                    name=NumpyDatasetType.padded_fsl,
-                    sequence_length=opts.sequence_length,
-                    tokenizer=tokenizer_config,
-                    work_dir=work_dir,
-                ),
-                eval_interval=250,
-                eval_duration=Duration.steps(50),
-            ),
-        )
-        .with_callback(
-            "downstream_evaluator",
-            DownstreamEvaluatorCallbackConfig(
-                tasks=["hellaswag"],
-                tokenizer=tokenizer_config,
-                eval_interval=250,
-            ),
-        )
+        # .with_callback(
+        #     "lm_evaluator",
+        #     LMEvaluatorCallbackConfig(
+        #         eval_dataset=NumpyDatasetConfig(
+        #             paths=EVAL_DATA_PATHS,
+        #             metadata=[{"label": "c4-validation"}],
+        #             name=NumpyDatasetType.padded_fsl,
+        #             sequence_length=opts.sequence_length,
+        #             tokenizer=tokenizer_config,
+        #             work_dir=work_dir,
+        #         ),
+        #         eval_interval=250,
+        #         eval_duration=Duration.steps(50),
+        #     ),
+        # )
+        # .with_callback(
+        #     "downstream_evaluator",
+        #     DownstreamEvaluatorCallbackConfig(
+        #         tasks=["hellaswag"],
+        #         tokenizer=tokenizer_config,
+        #         eval_interval=250,
+        #     ),
+        # )
     )
 
     config = ExperimentConfig(
