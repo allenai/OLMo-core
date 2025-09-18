@@ -27,7 +27,12 @@ BEAKER_HOSTNAME_ENV_VAR = "BEAKER_NODE_HOSTNAME"
 log = logging.getLogger(__name__)
 
 
-def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minutes=30), **kwargs):
+def init_distributed(
+    backend: str = "nccl",
+    timeout: timedelta = timedelta(minutes=30),
+    shared_filesytem: Optional[bool] = True,
+    **kwargs,
+):
     """
     Initialize the distributed process group with the given backend(s) and check/set the
     relevant environment variables.
@@ -39,6 +44,9 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
 
     # Force processes to synchronize at init process group.
     set_env_var("TORCH_DIST_INIT_BARRIER", "1")
+
+    if shared_filesytem:
+        set_env_var(OLMO_SHARED_FS_ENV_VAR, "1")
 
     # Set host-specific env var defaults.
     if _running_in_beaker():
