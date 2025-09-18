@@ -51,7 +51,7 @@ from olmo_core.train.train_module import (
 )
 from olmo_core.utils import seed_all
 
-from .data_mixes import CustomDataMix
+from data_mixes import CustomDataMix
 
 log = logging.getLogger(__name__)
 
