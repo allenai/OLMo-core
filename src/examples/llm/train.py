@@ -18,8 +18,8 @@ import rich
 from olmo_core.config import Config, DType
 from olmo_core.data import (
     NumpyDataLoaderConfig,
-    NumpyDatasetConfig,
-    NumpyDatasetType,
+    NumpyFSLDatasetConfig,
+    NumpyPaddedFSLDatasetConfig,
     TokenizerConfig,
 )
 from olmo_core.distributed.parallel import DataParallelType
@@ -84,7 +84,7 @@ EVAL_DATA_PATHS = [f"{DATA_ROOT}/c4-validation.00000-00008.npy"]
 class ExperimentConfig(Config):
     model: TransformerConfig
     """Model config."""
-    dataset: NumpyDatasetConfig
+    dataset: NumpyFSLDatasetConfig
     """Dataset config."""
     data_loader: NumpyDataLoaderConfig
     """Data loader config."""
@@ -160,9 +160,8 @@ def build_config(opts, overrides: List[str]) -> ExperimentConfig:
     # docs: end-model-config
 
     log.info(f"Using data root: {DATA_ROOT}")
-    dataset_config = NumpyDatasetConfig(
+    dataset_config = NumpyFSLDatasetConfig(
         paths=DATA_PATHS,
-        name=NumpyDatasetType.fsl,
         sequence_length=opts.sequence_length,
         tokenizer=tokenizer_config,
         work_dir=work_dir,
@@ -228,10 +227,9 @@ def build_config(opts, overrides: List[str]) -> ExperimentConfig:
         .with_callback(
             "lm_evaluator",
             LMEvaluatorCallbackConfig(
-                eval_dataset=NumpyDatasetConfig(
+                eval_dataset=NumpyPaddedFSLDatasetConfig(
                     paths=EVAL_DATA_PATHS,
                     metadata=[{"label": "c4-validation"}],
-                    name=NumpyDatasetType.padded_fsl,
                     sequence_length=opts.sequence_length,
                     tokenizer=tokenizer_config,
                     work_dir=work_dir,

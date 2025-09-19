@@ -8,7 +8,7 @@ import torch.distributed as dist
 from torch.utils.data import DataLoader, DistributedSampler
 
 from olmo_core.data import (
-    NumpyDatasetConfig,
+    NumpyDatasetConfigBase,
     NumpyPaddedFSLDataset,
     TextDataLoaderBase,
     TokenizerConfig,
@@ -192,7 +192,7 @@ class EvaluatorCallback(Callback):
 
 @dataclass
 class LMEvaluatorCallbackConfig(CallbackConfig):
-    eval_dataset: NumpyDatasetConfig
+    eval_dataset: NumpyDatasetConfigBase
     eval_interval: int = 1000
     eval_on_startup: bool = False
     cancel_after_first_eval: bool = False

@@ -7,12 +7,14 @@ import torch
 from rich import print
 
 from olmo_core.config import Config, StrEnum
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.data import (
     DataMix,
     InstanceFilterConfig,
     NumpyDataLoaderConfig,
-    NumpyDatasetConfig,
-    NumpyDatasetType,
+    NumpyDatasetConfigBase,
+    NumpyPaddedFSLDatasetConfig,
+    NumpyVSLDatasetConfig,
     TokenizerConfig,
     VSLCurriculumConfig,
     VSLCurriculumType,
@@ -50,7 +52,7 @@ class CommonComponents(Config):
     save_folder: str
     launch: Optional[BeakerLaunchConfig]
     tokenizer: TokenizerConfig
-    dataset: NumpyDatasetConfig
+    dataset: NumpyDatasetConfigBase
     data_loader: NumpyDataLoaderConfig
     callbacks: Dict[str, Callback]
 
@@ -60,7 +62,7 @@ class ExperimentConfig(Config):
     run_name: str
     launch: Optional[BeakerLaunchConfig]
     model: TransformerConfig
-    dataset: NumpyDatasetConfig
+    dataset: NumpyDatasetConfigBase
     data_loader: NumpyDataLoaderConfig
     train_module: TransformerTrainModuleConfig
     trainer: TrainerConfig
@@ -167,19 +169,21 @@ def build_common_components(
 
     tokenizer_config = TokenizerConfig.dolma2()
 
-    dataset_config = NumpyDatasetConfig.from_data_mix(
+    if intra_document_masking:
+        raise OLMoConfigurationError(
+            "Intra-document masking is only supported with fixed-sequence datasets"
+        )
+
+    dataset_config = NumpyVSLDatasetConfig.from_data_mix(
         DataMix.OLMoE_mix_0824,
         tokenizer=tokenizer_config,
         mix_base_dir=root_dir,
-        sequence_length=sequence_length,
-        max_target_sequence_length=max(8192, sequence_length),
         min_sequence_length=min(256, sequence_length),
         max_sequence_length=max(8192, sequence_length),
         vsl_curriculum=VSLCurriculumConfig(
             name=VSLCurriculumType.grow_p2, num_cycles=8, balanced=False
         ),
         work_dir=get_work_dir(root_dir),
-        generate_doc_lengths=intra_document_masking,
         instance_filter_config=None
         if not include_instance_filter
         else InstanceFilterConfig(
@@ -207,9 +211,8 @@ def build_common_components(
 
     if include_default_evals:
         callbacks["lm_evaluator"] = LMEvaluatorCallbackConfig(
-            eval_dataset=NumpyDatasetConfig.from_data_mix(
+            eval_dataset=NumpyPaddedFSLDatasetConfig.from_data_mix(
                 DataMix.v3_small_ppl_validation,
-                name=NumpyDatasetType.padded_fsl,
                 mix_base_dir=root_dir,
                 sequence_length=dataset_config.effective_sequence_length,
                 tokenizer=tokenizer_config,

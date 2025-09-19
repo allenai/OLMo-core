@@ -7,7 +7,7 @@ import pytest
 
 from olmo_core.data import (
     LongDocStrategy,
-    NumpyDatasetConfig,
+    NumpyFSLDatasetConfig,
     NumpyFSLDataset,
     NumpyPackedFSLDataset,
     NumpyPaddedFSLDataset,
@@ -453,7 +453,7 @@ def test_numpy_fsl_mixture_dataset(tmp_path: Path):
         global_batch_size=sequence_length * bsz,
     )
 
-    ds = NumpyDatasetConfig(
+    ds = NumpyFSLDatasetConfig(
         source_mixture_config=mixture_config,
         sequence_length=sequence_length,
         tokenizer=tokenizer,
@@ -533,7 +533,7 @@ def test_numpy_fsl_mixture_dataset_with_repetition(tmp_path: Path):
         global_batch_size=sequence_length * bsz,  # 10k sequences of length 4
     )
 
-    ds = NumpyDatasetConfig(
+    ds = NumpyFSLDatasetConfig(
         source_mixture_config=mixture_config,
         sequence_length=sequence_length,
         tokenizer=tokenizer,
@@ -919,8 +919,8 @@ def test_numpy_interleaved_fsl_dataset_with_interleaving_exempt_paths(tmp_path: 
 
 
 def test_guess_dtype():
-    config = NumpyDatasetConfig(paths=[], sequence_length=1024, tokenizer=TokenizerConfig.gpt2())
+    config = NumpyFSLDatasetConfig(paths=[], sequence_length=1024, tokenizer=TokenizerConfig.gpt2())
     assert config.get_dtype() == np.uint16
 
-    config = NumpyDatasetConfig(paths=[], sequence_length=1024, tokenizer=TokenizerConfig.dolma2())
+    config = NumpyFSLDatasetConfig(paths=[], sequence_length=1024, tokenizer=TokenizerConfig.dolma2())
     assert config.get_dtype() == np.uint32

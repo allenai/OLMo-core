@@ -12,8 +12,9 @@ from .config import Config, StrEnum
 from .data import (
     DataMix,
     NumpyDataLoaderConfig,
-    NumpyDatasetConfig,
-    NumpyDatasetType,
+    NumpyDatasetConfigBase,
+    NumpyFSLDatasetConfig,
+    NumpyPaddedFSLDatasetConfig,
     TokenizerConfig,
 )
 from .doc_utils import beta_feature
@@ -231,13 +232,13 @@ class ModelLadder(Config, metaclass=ABCMeta):
         """
         raise NotImplementedError
 
-    def get_dataset_config(self) -> NumpyDatasetConfig:
+    def get_dataset_config(self) -> NumpyDatasetConfigBase:
         """
         Get the train dataset config.
 
         :param kwargs: Extra kwargs to pass to the dataset config constructor.
         """
-        return NumpyDatasetConfig.from_data_mix(
+        return NumpyFSLDatasetConfig.from_data_mix(
             self.data_mix,
             tokenizer=self.tokenizer,
             mix_base_dir=self.mix_base_dir,
@@ -402,9 +403,8 @@ class ModelLadder(Config, metaclass=ABCMeta):
         config = config.with_callback(
             "lm_evaluator",
             LMEvaluatorCallbackConfig(
-                eval_dataset=NumpyDatasetConfig.from_data_mix(
+                eval_dataset=NumpyPaddedFSLDatasetConfig.from_data_mix(
                     DataMix.v3_small_ppl_validation,
-                    name=NumpyDatasetType.padded_fsl,
                     mix_base_dir=self.mix_base_dir,
                     sequence_length=self.sequence_length,
                     tokenizer=self.tokenizer,

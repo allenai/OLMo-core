@@ -8,7 +8,7 @@ import rich
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import Config
-from olmo_core.data import NumpyDataLoaderConfig, NumpyDatasetConfig
+from olmo_core.data import NumpyDataLoaderConfig, NumpyDatasetConfigBase
 from olmo_core.distributed.checkpoint import get_checkpoint_metadata, load_state_dict
 from olmo_core.io import is_url, join_path, normalize_path
 from olmo_core.nn.transformer import TransformerConfig
@@ -27,7 +27,7 @@ log = logging.getLogger(__name__)
 @dataclass
 class ExperimentConfig(Config):
     model: TransformerConfig
-    dataset: NumpyDatasetConfig
+    dataset: NumpyDatasetConfigBase
     data_loader: NumpyDataLoaderConfig
     train_module: TransformerTrainModuleConfig
     trainer: TrainerConfig

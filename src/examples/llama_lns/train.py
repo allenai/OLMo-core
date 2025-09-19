@@ -19,8 +19,8 @@ from typing import List, cast
 from olmo_core.config import Config, DType
 from olmo_core.data import (
     NumpyDataLoaderConfig,
-    NumpyDatasetConfig,
-    NumpyDatasetType,
+    NumpyFSLDatasetConfig,
+    NumpyPaddedFSLDatasetConfig,
     TokenizerConfig,
 )
 from olmo_core.distributed.parallel import DataParallelType
@@ -73,7 +73,7 @@ DATA_WORK_DIR = "/tmp/dataset-cache"
 @dataclass
 class ExperimentConfig(Config):
     model: TransformerConfig
-    dataset: NumpyDatasetConfig
+    dataset: NumpyFSLDatasetConfig
     data_loader: NumpyDataLoaderConfig
     train_module: TransformerTrainModuleConfig
     trainer: TrainerConfig
@@ -90,9 +90,8 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     # Select the LayerNorm-Scaled transformer block implementation.
     model_config.block.name = TransformerBlockType.default_scaled
 
-    dataset_config = NumpyDatasetConfig(
+    dataset_config = NumpyFSLDatasetConfig(
         paths=DATA_PATHS,
-        name=NumpyDatasetType.fsl,
         sequence_length=SEQUENCE_LENGTH,
         max_target_sequence_length=8192,
         tokenizer=tokenizer_config,
@@ -159,10 +158,9 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         .with_callback(
             "lm_evaluator",
             LMEvaluatorCallbackConfig(
-                eval_dataset=NumpyDatasetConfig(
+                eval_dataset=NumpyPaddedFSLDatasetConfig(
                     paths=EVAL_DATA_PATHS,
                     metadata=[{"label": "c4-validation"}],
-                    name=NumpyDatasetType.padded_fsl,
                     sequence_length=SEQUENCE_LENGTH,
                     tokenizer=tokenizer_config,
                     work_dir=DATA_WORK_DIR,
