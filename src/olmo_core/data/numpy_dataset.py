@@ -2303,17 +2303,14 @@ class NumpyDatasetConfigBase(Config, ABC):
     dtype: Optional[NumpyDatasetDType] = None
     metadata: Optional[List[Dict[str, Any]]] = None
     include_instance_metadata: bool = True
-    work_dir: Optional[str] = None
     instance_filter_config: Optional[InstanceFilterConfig] = None
     source_permutation_seed: Optional[int] = None
+    work_dir: Optional[str] = None
 
     @property
     @abstractmethod
-    def dataset_type(self) -> NumpyDatasetType: ...
-
-    @property
-    @abstractmethod
-    def effective_sequence_length(self) -> int: ...
+    def effective_sequence_length(self) -> int:
+        raise NotImplementedError
 
     def get_dtype(self) -> NumpyUIntTypes:
         if self.dtype is not None:
@@ -2347,7 +2344,7 @@ class NumpyDatasetConfigBase(Config, ABC):
         self,
         *,
         allow_mix: bool,
-        label_mask_paths: Optional[List[str]] = None,
+        label_mask_paths: Optional[List[PathOrStr]] = None,
     ) -> Tuple[List[str], Optional[List[Dict[str, Any]]], Optional[List[PathOrStr]]]:
         if self.paths is not None and self.mix is not None:
             raise OLMoConfigurationError("Only one of 'paths' or 'mix' can be set")
@@ -2460,10 +2457,6 @@ class NumpyFSLDatasetConfig(NumpyDatasetConfigBase):
             )
 
     @property
-    def dataset_type(self) -> NumpyDatasetType:
-        return NumpyDatasetType.fsl
-
-    @property
     def effective_sequence_length(self) -> int:
         return self.sequence_length
 
@@ -2518,10 +2511,6 @@ class NumpyPaddedFSLDatasetConfig(NumpyDatasetConfigBase):
     label_mask_paths: Optional[List[str]] = None
 
     @property
-    def dataset_type(self) -> NumpyDatasetType:
-        return NumpyDatasetType.padded_fsl
-
-    @property
     def effective_sequence_length(self) -> int:
         return self.sequence_length
 
@@ -2557,10 +2546,6 @@ class NumpyPackedFSLDatasetConfig(NumpyDatasetConfigBase):
     label_mask_paths: Optional[List[str]] = None
     long_doc_strategy: LongDocStrategy = LongDocStrategy.truncate
     source_group_size: int = 1
-
-    @property
-    def dataset_type(self) -> NumpyDatasetType:
-        return NumpyDatasetType.packed_fsl
 
     @property
     def effective_sequence_length(self) -> int:
@@ -2608,10 +2593,6 @@ class NumpyInterleavedFSLDatasetConfig(NumpyDatasetConfigBase):
     interleaving_exempt_paths: Optional[List[str]] = None
 
     @property
-    def dataset_type(self) -> NumpyDatasetType:
-        return NumpyDatasetType.interleaved_fsl
-
-    @property
     def effective_sequence_length(self) -> int:
         return self.sequence_length
 
@@ -2657,10 +2638,6 @@ class NumpyVSLDatasetConfig(NumpyDatasetConfigBase):
     max_sequence_length: int
     min_sequence_length: int
     vsl_curriculum: Optional[VSLCurriculumConfig] = None
-
-    @property
-    def dataset_type(self) -> NumpyDatasetType:
-        return NumpyDatasetType.vsl
 
     @property
     def effective_sequence_length(self) -> int:

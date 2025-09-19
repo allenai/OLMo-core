@@ -409,19 +409,13 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
         )
         data_loader: DataLoaderBase
         if isinstance(dataset, NumpyFSLDatasetBase):
-            data_loader = NumpyFSLDataLoader(
-                dataset,
-                **kwargs,  # type: ignore
-            )
+            data_loader = NumpyFSLDataLoader(dataset, **kwargs)  # type: ignore
             if dataset.max_target_sequence_length is not None:
                 data_loader.chunk_size = (
                     dataset.max_target_sequence_length // dataset.sequence_length
                 )
         elif isinstance(dataset, NumpyVSLDataset):
-            data_loader = NumpyVSLDataLoader(
-                dataset,
-                **kwargs,  # type: ignore
-            )
+            data_loader = NumpyVSLDataLoader(dataset, **kwargs)  # type: ignore
         else:
             raise NotImplementedError
 
@@ -720,7 +714,7 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
     def state_dict(self) -> Dict[str, Any]:
         state_dict = super().state_dict()
         assert isinstance(self.dataset, NumpyFSLDatasetBase)
-        state_dict["dataset_type"] = str(NumpyDatasetType.fsl)
+        state_dict["dataset_type"] = "fsl"
         state_dict["sequence_length"] = self.dataset.sequence_length
         state_dict["max_target_sequence_length"] = self.dataset.max_target_sequence_length
         return state_dict
@@ -735,7 +729,7 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
         )
 
         assert isinstance(self.dataset, NumpyFSLDatasetBase)
-        if state_dict["dataset_type"] != NumpyDatasetType.fsl:
+        if state_dict["dataset_type"] != "fsl":
             raise RuntimeError(
                 "Dataset type mismatch: attempting to restore state from a variable sequence length dataset "
                 "into a fixed sequence length dataset"
@@ -938,9 +932,9 @@ class NumpyVSLDataLoader(NumpyDataLoaderBase):
                 bucket_indices_file, instance_start_index, instance_end_index, np.uint32
             )
 
-        assert (
-            local_instance_indices.shape[0] == instances_per_rank
-        ), f"Expected {instances_per_rank} instances, got {local_instance_indices.shape[0]}"
+        assert local_instance_indices.shape[0] == instances_per_rank, (
+            f"Expected {instances_per_rank} instances, got {local_instance_indices.shape[0]}"
+        )
 
         return local_instance_indices
 
@@ -957,7 +951,7 @@ class NumpyVSLDataLoader(NumpyDataLoaderBase):
     def state_dict(self) -> Dict[str, Any]:
         state_dict = super().state_dict()
         assert isinstance(self.dataset, NumpyVSLDataset)
-        state_dict["dataset_type"] = str(NumpyDatasetType.vsl)
+        state_dict["dataset_type"] = "vsl"
         state_dict["vsl_curriculum"] = self.dataset.curriculum.short_str
         state_dict["max_sequence_length"] = self.dataset.max_sequence_length
         state_dict["min_sequence_length"] = self.dataset.min_sequence_length
@@ -970,7 +964,7 @@ class NumpyVSLDataLoader(NumpyDataLoaderBase):
         )
 
         assert isinstance(self.dataset, NumpyVSLDataset)
-        if state_dict["dataset_type"] != NumpyDatasetType.vsl:
+        if state_dict["dataset_type"] != "vsl":
             raise RuntimeError(
                 "Dataset type mismatch: attempting to restore state from a fixed sequence length dataset "
                 "into a variable sequence length dataset"
