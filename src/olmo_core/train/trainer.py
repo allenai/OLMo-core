@@ -664,10 +664,12 @@ class Trainer:
                 callback.pre_train()
             self.train_module.pre_train()
         except BaseException as exc:
+            self._error = exc
             log.error(f"pre-train setup failed due to:\n{exc}")
+            self._check_if_canceled()
             raise
-
-        barrier()
+        else:
+            self._check_if_canceled()
 
         # Quick check if the run has already been canceled.
         if self.is_canceled:
@@ -686,6 +688,7 @@ class Trainer:
             while not self.training_complete:
                 self._fit_epoch()
         except BaseException as exc:
+            self._error = exc
             log.error(f"Training failed due to:\n{exc}")
             for callback in self._iter_callbacks():
                 callback.on_error(exc)
