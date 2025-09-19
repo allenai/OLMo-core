@@ -1,7 +1,5 @@
 from dataclasses import dataclass
 import logging
-from mamba_ssm.modules.mamba2 import Mamba2 as _Mamba2
-from mamba_ssm.utils.generation import InferenceParams
 import torch
 from torch import nn
 
@@ -10,12 +8,15 @@ from olmo_core.config import Config, DType
 log = logging.getLogger(__name__)
 
 
-class Mamba(_Mamba2):
+class Mamba(nn.Module):
     def __init__(self, *args, **kwargs):
-        # layer_idx not None required to enable caching
-        super().__init__(*args, **kwargs, layer_idx=0)  # type: ignore
+        from mamba_ssm.modules.mamba2 import Mamba2
+
+        super().__init__()
+        self.inner = Mamba2(*args, **kwargs, layer_idx=0)
+
         # not cast to dtype in _Mamba2.__init__
-        self.D = nn.Parameter(self.D.to(self.conv1d.weight.dtype))
+        self.inner.D = nn.Parameter(self.inner.D.to(self.inner.conv1d.weight.dtype))
 
         self.mamba_cache_manager = None
 
@@ -23,11 +24,13 @@ class Mamba(_Mamba2):
         self.mamba_cache_manager = MambaCacheManager(
             self,
             batch_size,
-            dtype=self.conv1d.weight.dtype,
+            dtype=self.inner.conv1d.weight.dtype,
         )
 
     def forward(self, x: torch.Tensor):  # type: ignore
         if self.mamba_cache_manager is not None and self.mamba_cache_manager.current_position() == 0:
+            from mamba_ssm.utils.generation import InferenceParams
+
             # writes to cache inplace
             # Mamba2 expects it in this format
             inference_params = InferenceParams(
@@ -36,13 +39,13 @@ class Mamba(_Mamba2):
                 key_value_memory_dict={0: (self.mamba_cache_manager.conv_state, self.mamba_cache_manager.ssm_state)},
                 seqlen_offset=self.mamba_cache_manager.current_position(),
             )
-            out = super().forward(x, inference_params=inference_params)
+            out = self.inner.forward(x, inference_params=inference_params)
             self.mamba_cache_manager.update_seqlen(x.shape[1])
             return out
         elif self.mamba_cache_manager is not None:
             return self.step(x, (self.mamba_cache_manager.conv_state, self.mamba_cache_manager.ssm_state))
         else:
-            return super().forward(x)
+            return self.inner.forward(x)
 
     def step(self, hidden_states, inference_params):  # type: ignore
         assert self.mamba_cache_manager is not None
@@ -52,7 +55,7 @@ class Mamba(_Mamba2):
         # Mamba2 'Only support[s] decoding with 1 token at a time for now' so we have to loop
         results = []
         for i in range(hidden_states.shape[1]):
-            result, conv_state, ssm_state = super().step(
+            result, conv_state, ssm_state = self.inner.step(
                 hidden_states[:, [i]], conv_state, ssm_state
             )
             results.append(result)
@@ -76,7 +79,7 @@ class MambaCacheManager(nn.Module):
 
         self.layer = layer
 
-        self.conv_state, self.ssm_state = layer.allocate_inference_cache(
+        self.conv_state, self.ssm_state = layer.inner.allocate_inference_cache(
             batch_size, max_seqlen=None, dtype=dtype # max seqlen not used
         )
         self.cache_seqlens = 0
@@ -93,7 +96,7 @@ class MambaCacheManager(nn.Module):
 
     def reallocate(self, batch_size: int):
         # TODO(benjaminm): support / properly propagate dtype
-        self.conv_state, self.ssm_state = self.layer.allocate_inference_cache(
+        self.conv_state, self.ssm_state = self.layer.inner.allocate_inference_cache(
             batch_size, max_seqlen=None, dtype=self.conv_state.dtype
         )
 

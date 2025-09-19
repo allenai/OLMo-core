@@ -28,6 +28,7 @@ from .numpy_dataset import (
     NumpyDatasetBase,
     NumpyDatasetType,
     NumpyByteFSLDataset,
+    NumpyBytePaddedFSLDataset,
     NumpyFSLDatasetBase,
     NumpyVSLDataset,
 )
@@ -550,7 +551,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
                 [splits, self.dataset.max_sequence_length - splits], dim=1
             )
             out["max_doc_lens"] = torch.max(out["doc_lens"], dim=-1).values.tolist()
-        if isinstance(self.dataset, NumpyByteFSLDataset):
+        if isinstance(self.dataset, NumpyByteFSLDataset) or isinstance(self.dataset, NumpyBytePaddedFSLDataset):
             byte_to_patch_ratio = self.dataset.sequence_length // self.dataset.patch_sequence_length
 
             # random lengths for debugging,

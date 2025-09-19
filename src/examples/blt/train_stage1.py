@@ -23,6 +23,7 @@ from olmo_core.data import (
     NumpyDatasetConfig,
     NumpyDatasetType,
     NumpyByteFSLDataset,
+    NumpyBytePaddedFSLDataset,
     ByteTokenizerConfig,
     TokenizerConfig,
     ByteDataCollator,
@@ -92,13 +93,13 @@ elif DATA_SOURCE == "dolma2_code_string":
     _DATA_SOURCES = open(Path(__file__).parent / "data_sources_dolma2_code_string.txt").read().strip().splitlines()
 elif DATA_SOURCE == "dolmino_code_string":
     _DATA_SOURCES = open(Path(__file__).parent / "data_sources_dolmino_code_string.txt").read().strip().splitlines()
+elif DATA_SOURCE == "tulu3":
+    _DATA_SOURCES = open(Path(__file__).parent / "data_sources_tulu3.txt").read().strip().splitlines()
 else:
     raise ValueError(f"Unknown DATA_SOURCE: {DATA_SOURCE}. Must be one of 'dclm', 'dolmino', 'dolma2_code_string', 'dolmino_code_string'.")
 
-OLMO_CKPT_PATH = os.environ.get(
-    "OLMO_CKPT_PATH",
-    "/weka/oe-training-default/benjaminm/checkpoints/olmo2_1b/model_and_optim",
-)
+OLMO_CKPT_PATH = os.environ.get("OLMO_CKPT_PATH", "")
+STAGE1_CKPT_PATH = os.environ.get("STAGE1_CKPT_PATH", "")
 DATA_PATHS = ["/weka/oe-training-default/" + x for x in _DATA_SOURCES]
 EMBEDDING_INIT_PATH = os.environ.get(
     "EMBEDDING_INIT_PATH",
@@ -107,6 +108,7 @@ EMBEDDING_INIT_PATH = os.environ.get(
 
 if not os.environ.get("HAS_WEKA"):
     OLMO_CKPT_PATH = OLMO_CKPT_PATH.replace("/weka/oe-training-default/", "gs://ai2-llm/")
+    STAGE1_CKPT_PATH = STAGE1_CKPT_PATH.replace("/weka/oe-training-default/", "gs://ai2-llm/")
     DATA_PATHS = [x.replace("/weka/oe-training-default/", "gs://") for x in DATA_PATHS] # slight inconsistency
     EMBEDDING_INIT_PATH = EMBEDDING_INIT_PATH.replace("/weka/oe-training-default/", "gs://ai2-llm/")
 
@@ -473,9 +475,10 @@ def main(run_name: str, overrides: List[str]):
     if train_module.blt_config.gradual_boundary_compression_kind == "bpe":  # type: ignore
         dataset.enable_compute_bpe_merges()  # type: ignore
 
+    use_byte_collator = isinstance(dataset, NumpyByteFSLDataset) or isinstance(dataset, NumpyBytePaddedFSLDataset)
     data_loader = config.data_loader.build(
         dataset,
-        collator=ByteDataCollator(pad_token_id=dataset.pad_token_id) if isinstance(dataset, NumpyByteFSLDataset) else None,
+        collator=ByteDataCollator(pad_token_id=dataset.pad_token_id) if use_byte_collator else None,
         dp_process_group=train_module.dp_process_group
     )
     trainer = config.trainer.build(train_module, data_loader)
@@ -484,30 +487,40 @@ def main(run_name: str, overrides: List[str]):
     config_dict = config.as_config_dict()
     cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
 
-    # Load OLMo 1B checkpoint.
-    random_init_keys = {"local_encoder", "boundary_predictor", "local_decoder"}
+    if OLMO_CKPT_PATH:
+        if STAGE1_CKPT_PATH:
+            raise ValueError("Cannot use both OLMO_CKPT_PATH and STAGE1_CKPT_PATH. Please set only one of them.")
+        # Load OLMo 1B checkpoint.
+        random_init_keys = {"local_encoder", "boundary_predictor", "local_decoder"}
 
-    key_mapping = {
-        key: None for key in model.state_dict().keys() if any(key.startswith(x) for x in random_init_keys)
-    } | {
-        f"teacher.{key}": key for key in model.teacher.state_dict().keys()  # type: ignore
-    }
+        key_mapping = {
+            key: None for key in model.state_dict().keys() if any(key.startswith(x) for x in random_init_keys)
+        } | {
+            f"teacher.{key}": key for key in model.teacher.state_dict().keys()  # type: ignore
+        }
 
-    incompatible_keys = load_model_and_optim_state(
-        OLMO_CKPT_PATH,
-        model,
-        key_mapping=key_mapping,
-        strict=False
-    )
+        incompatible_keys = load_model_and_optim_state(
+            OLMO_CKPT_PATH,
+            model,
+            key_mapping=key_mapping,
+            strict=False
+        )
 
-    if len(incompatible_keys.unexpected_keys) > 0:
-        raise ValueError(f"Unexpected keys when loading checkpoint: {incompatible_keys.unexpected_keys} (assume we use all teacher weights)")
+        if len(incompatible_keys.unexpected_keys) > 0:
+            raise ValueError(f"Unexpected keys when loading checkpoint: {incompatible_keys.unexpected_keys} (assume we use all teacher weights)")
 
-    for missing_key in incompatible_keys.missing_keys:
-        log.info(f"Key {missing_key} was not found in checkpoint, is randomly initialized (this is expected for local encoder/decoder and student lm head).")
+        for missing_key in incompatible_keys.missing_keys:
+            log.info(f"Key {missing_key} was not found in checkpoint, is randomly initialized (this is expected for local encoder/decoder and student lm head).")
 
-    # init embeddings + scale appropriately
-    model.fix_init(trainer.train_module.blt_config, EMBEDDING_INIT_PATH)  # type: ignore
+        # init embeddings + scale appropriately
+        model.fix_init(trainer.train_module.blt_config, EMBEDDING_INIT_PATH)  # type: ignore
+    else:
+        if OLMO_CKPT_PATH:
+            raise ValueError("Cannot use both OLMO_CKPT_PATH and STAGE1_CKPT_PATH. Please set only one of them.")
+
+        # Load BOLMo checkpoint. all keys must match.
+        incompatible_keys = load_model_and_optim_state(STAGE1_CKPT_PATH, model)
+        log.info(f"{incompatible_keys}")
 
     # TODO(benjaminm): this is not a nice place?
     register_fsdp_forward_method(model, "student_forward")

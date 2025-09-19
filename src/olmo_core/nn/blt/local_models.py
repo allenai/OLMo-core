@@ -4,7 +4,6 @@ from typing import Optional, cast
 import math
 
 from einops import repeat, rearrange
-from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
@@ -54,6 +53,8 @@ def ste_select_func(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
 
 
 def ema_pool(x: torch.Tensor, p: torch.Tensor, headdim: int, block_size: int) -> torch.Tensor:
+    from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
+
     dt = torch.log(1 / (1 - p)).float()
     x = (x.float() / dt[..., None])
 

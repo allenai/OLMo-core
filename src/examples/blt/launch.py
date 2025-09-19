@@ -26,6 +26,7 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
     shared_filesystem = False
 
     for transparent_env_var in [
+        "SEQUENCE_LENGTH",
         "STAGE1_CKPT_PATH",
         "EMBEDDING_INIT_PATH",
         "OLMO_CKPT_PATH",

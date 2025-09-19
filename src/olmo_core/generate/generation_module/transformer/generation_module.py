@@ -682,6 +682,17 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
             while len(patch_lens[example_idx]) < pad_to:
                 patch_lens[example_idx].append(0)
 
+        expand_input_ids = self.model.local_encoder.add_expanded_embeddings  # type: ignore
+
+        if expand_input_ids:
+            expanded_input_ids = []
+            for example_idx in range(input_ids.shape[0]):
+                expanded_input_ids.append(torch.tensor(self.tokenizer.expand_byte_ids(input_ids[example_idx].tolist()), dtype=torch.long))
+            expanded_input_ids = blt_utils.pad_right(expanded_input_ids, value=self.tokenizer.pad_token_id, multiple_of=1)
+            expanded_input_ids = move_to_device(expanded_input_ids, self.device)
+        else:
+            expanded_input_ids = None
+
         patch_lens = torch.tensor(patch_lens, dtype=torch.long, device=input_ids.device)
         input_ids = move_to_device(input_ids, self.device)
         patch_lens = move_to_device(patch_lens, self.device)
@@ -692,6 +703,7 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
             input_ids,
             labels=labels,
             patch_lens=patch_lens,
+            expanded_input_ids=expanded_input_ids,
             blt_config=self.blt_config,
             **kwargs
         )[0].logits[:, :original_length, :]
@@ -716,6 +728,7 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         verify: bool = False,
         force_boundary_every: Optional[int] = None,
         max_patch_length_decode: Optional[int] = 128, # 128 is longest dolma2 tokenizer token
+        stop_on_exceed_patch_length: bool = True, # chances are slim to produce something useful
         profile: bool = False,
         **generation_kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
@@ -832,15 +845,12 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
 
         if generation_config.until is not None:
             stop_token_sequences += [
-                torch.tensor(self.tokenizer.encode(x), device=self.model.device, dtype=torch.long)
+                self.tokenizer.encode(x)
                 for x in generation_config.until
             ]
 
         if generation_config.stop_token_ids is not None:
-            stop_token_sequences += [
-                torch.tensor([x], device=self.model.device, dtype=torch.long)
-                for x in generation_config.stop_token_ids
-            ]
+            stop_token_sequences += [[x] for x in generation_config.stop_token_ids]
 
         pbar = tqdm(
             desc="Generating tokens",
@@ -853,7 +863,7 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         forward_start_time = None
         boundary_state = blt_utils.MaskState(torch.zeros(batch_size, dtype=torch.bool, device=self.device))
         next_tokens = torch.full((input_ids.shape[0],), self.model.end_of_subword_token_blt, device=self.device, dtype=torch.long)  # type: ignore
-        non_boundary_next_tokens = byte_input_ids[:, -1:].clone()
+        non_boundary_generated_tokens = [[input_ids[example_idx, -1].item()] for example_idx in range(input_ids.shape[0])]
 
         bytes_generated_at_last_boundary = torch.zeros(batch_size, dtype=torch.long, device=self.device)
         is_first_forward = True
@@ -876,8 +886,9 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
             input_ids_for_model = (
                 generated
                 if (is_first_forward or not generation_config.use_cache)
-                else non_boundary_next_tokens
+                else torch.tensor([x[-1] for x in non_boundary_generated_tokens], device=generated.device, dtype=generated.dtype).unsqueeze(1)
             )
+            assert not (input_ids_for_model == self.model.end_of_subword_token_blt).any().item()  # type: ignore
             if expand_input_ids:
                 expanded_input_ids_for_model = torch.zeros_like(input_ids_for_model)
                 for i in range(input_ids_for_model.shape[0]):
@@ -917,11 +928,18 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                 tokens_generated_plus_prefilled += 1
 
                 next_tokens = new_next_tokens
-                non_boundary_next_tokens = next_tokens.unsqueeze(1).clone() # clone necessary?
+                next_tokens_cpu = next_tokens.cpu()
+                for example_idx in range(batch_size):
+                    assert next_tokens_cpu[example_idx].item() != self.model.end_of_subword_token_blt  # type: ignore
+                    non_boundary_generated_tokens[example_idx].append(next_tokens_cpu[example_idx].item())
             else:
                 next_tokens[:] = self.model.end_of_subword_token_blt # type: ignore
                 boundary_state.selective_put(new_next_tokens, next_tokens, inv=True)
-                boundary_state.selective_put(new_next_tokens, non_boundary_next_tokens[:, -1], inv=True)
+                next_tokens_cpu = next_tokens.cpu()
+
+                for example_idx in range(batch_size):
+                    if next_tokens_cpu[example_idx].item() != self.model.end_of_subword_token_blt: # type: ignore
+                        non_boundary_generated_tokens[example_idx].append(next_tokens_cpu[example_idx].item())
 
             is_first_forward = False
 
@@ -937,10 +955,15 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                 stop_mask = bytes_generated - bytes_generated_at_last_boundary >= max_patch_length_decode
                 next_tokens[stop_mask] = self.model.end_of_subword_token_blt # type: ignore
 
+                if stop_on_exceed_patch_length:
+                    finished |= stop_mask
+
                 if stop_mask.any().item():  # type: ignore
                     log.warning(f"Forcing boundary since patch exceeds length {max_patch_length_decode}.")
 
-            boundary_state = blt_utils.MaskState(next_tokens == self.model.end_of_subword_token_blt)  # type: ignore
+            boundary_state = blt_utils.MaskState(
+                (next_tokens == self.model.end_of_subword_token_blt) | finished
+            )  # type: ignore
             boundary_state.selective_put(bytes_generated, bytes_generated_at_last_boundary)
 
             # Force EOS for (previously) finished sequences
@@ -953,8 +976,19 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
             stop_hit = next_tokens.eq(eos)
 
             # Also check for stop tokens if provided
-            for stop_sequence in stop_token_sequences:
-                stop_hit |= (generated[:, -len(stop_sequence):] == stop_sequence).all(dim=1)
+            # TODO(benjaminm): this is very annoying due to the boundaries
+            # make better
+            if len(stop_token_sequences) > 0:
+                for example_idx in range(input_ids.shape[0]):
+                    if finished[example_idx] or len(non_boundary_generated_tokens[example_idx]) <= 1:
+                        continue
+
+                    for stop_sequence in stop_token_sequences:
+                        if all(x == y for x, y in zip(
+                            non_boundary_generated_tokens[example_idx][-len(stop_sequence):], stop_sequence
+                        )):
+                            stop_hit[example_idx] = True
+                            break
 
             finished |= stop_hit
 
