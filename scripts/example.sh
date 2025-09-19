@@ -55,11 +55,12 @@ python -m olmo_core.launch.beaker \
 	--priority urgent \
 	-- src/examples/olmoe-1B-7B/train.py \
        		$runname \
-		--dataset.mix=OLMo_mix_0625 \
 		--save-folder="/weka/oe-training-default/$USER/$runname" \
 		--work-dir="/weka/oe-training-default/$USER/dataset-cache" \
 		--trainer.no_checkpoints \
 		--trainer.hard_stop='{value: 100, unit: steps}'
 
-
+		--dataset.mix=OLMo_mix_0625 \
+		--dataset.mix=v3-small-ppl-validation \
+	
 

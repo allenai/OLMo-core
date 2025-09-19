@@ -172,7 +172,7 @@ def build_config(opts, overrides: List[str]) -> ExperimentConfig:
     log.info(f"Using data root: {DATA_ROOT}")
 
     dataset_config = NumpyDatasetConfig.from_data_mix(
-        DataMix.v3_small_ppl_validation,
+        DataMix.OLMo_mix_0625,
         tokenizer=tokenizer_config,
         mix_base_dir=DATA_ROOT,
         sequence_length=opts.sequence_length,
