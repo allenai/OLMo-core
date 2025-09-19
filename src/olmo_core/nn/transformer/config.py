@@ -240,6 +240,7 @@ class TransformerBlockConfig(Config):
                     kwargs.pop("fla")
                     return ReorderedNormTransformerBlock(**kwargs)
                 else:
+                    n_heads = self.attention.n_heads
                     kwargs.pop("attention")
                     return FLABlock(n_heads=n_heads, **kwargs)
             else:
