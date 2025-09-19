@@ -85,6 +85,13 @@ log = logging.getLogger(__name__)
 T = TypeVar("T")
 
 
+@dataclass
+class InstanceFilterConfig(Config):
+    repetition_max_period: int = 13
+    repetition_min_period: int = 1
+    repetition_max_count: int = 32
+
+
 class NumpyDatasetBase(ABC):
     """
     An abstract base class for datasets backed by numpy arrays on disk of token IDs.
@@ -100,8 +107,8 @@ class NumpyDatasetBase(ABC):
         main process before doing anything else.
 
     .. tip::
-        Use :class:`NumpyDatasetConfig` to configure and construct datasets instead of constructing
-        them directly.
+        Use the dataset config helpers (e.g. :class:`NumpyFSLDatasetConfig`) to configure and
+        construct datasets instead of constructing them directly.
     """
 
     def __init__(
@@ -345,16 +352,9 @@ class NumpyDatasetBase(ABC):
         return True
 
 
-@dataclass
-class InstanceFilterConfig(Config):
-    repetition_max_period: int = 13
-    repetition_min_period: int = 1
-    repetition_max_count: int = 32
-
-
 class NumpyFSLDatasetBase(NumpyDatasetBase, Dataset[Dict[str, Any]]):
     """
-    A base class for fixed sequence length (FSL) numpy array-backed dataset.
+    A base class for fixed sequence length (FSL) numpy array-backed datasets.
     """
 
     def __init__(
@@ -466,9 +466,12 @@ class NumpyFSLDataset(NumpyFSLDatasetBase):
         with the same number of items as there are paths.
     :param include_instance_metadata: If ``True`` (the default), each instance returned from
         :meth:`__getitem__()` will include the metadata from its source.
-    :param max_target_sequence_length: If using sequence length warm-up throughput training, this
-        should be set to the maximum/final target sequence length to ensure consistent
-        data order.
+    :param max_target_sequence_length: Optional upper bound used when precomputing cached offsets.
+        If you're planning a sequence-length warm-up, set this to the final chunk size so future
+        datasets with larger ``sequence_length`` values can reuse the exact same document ordering.
+        The current dataset still returns ``sequence_length``-token windows; this hint simply keeps
+        token boundaries and cache files deterministic across warm-up stages. Leave ``None`` if you
+        won't rebuild at a larger length.
     """
 
     def __init__(
@@ -705,17 +708,6 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
                 "'max_target_sequence_length' should be a multiple of 'sequence_length'"
             )
 
-        if include_instance_metadata is None and metadata:
-            include_instance_metadata = True
-
-        if isinstance(metadata, list):
-            if len(metadata) != len(paths):
-                raise OLMoConfigurationError(
-                    "'metadata' should have the same length as the number of file paths"
-                )
-        else:
-            metadata = [metadata or {}] * len(paths)
-
         super().__init__(
             *paths,
             pad_token_id=pad_token_id,
@@ -729,15 +721,12 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
             bos_token_id=bos_token_id,
             max_target_sequence_length=max_target_sequence_length,
         )
-        self._metadata = tuple(metadata)
-        self._include_instance_metadata = include_instance_metadata
         self._num_instances: Optional[int] = None
         self._array_offsets: Optional[Tuple[Tuple[int, int], ...]] = None
         self._lengths_dtype: Optional[NumpyUIntTypes] = None
         self._instances_per_bucket: Optional[Tuple[Tuple[int, int], ...]] = None
         self._path_offset_index = path_offset_index
         self._seed = seed
-        self.instance_filter_config = instance_filter_config
 
     @property
     def indices_dtype(
@@ -989,6 +978,12 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
         are usually large enough for OBFD to achieve very good compactness (minimal padding tokens)
         and so that we can parallelize the packing. However, you can pack instances from multiple
         consecutive source files together by setting ``source_group_size`` to a value greater than 1.
+
+    .. tip::
+        Although this shares much of its option plumbing with :class:`NumpyFSLDataset`, it bypasses
+        that subclass and derives from :class:`NumpyFSLDatasetBase` so it can provide its own packing
+        caches, offsets, and item materialisation logic. Subclassing :class:`NumpyFSLDataset` would
+        require overriding nearly every behavior defined there.
     """
 
     def __init__(
@@ -1027,23 +1022,14 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
         self._long_doc_strategy = long_doc_strategy
         self._source_group_size = source_group_size
 
-        if label_mask_paths is not None and len(label_mask_paths) != len(paths):
-            raise OLMoConfigurationError(
-                "There must be the same number of 'label_mask_paths' as there are 'paths'"
-            )
-
         self._source_path_groups = list(chunked(self.paths, self.source_group_size))
         self._label_mask_path_groups: Optional[List[List[PathOrStr]]] = None
         self._metadata_groups = list(chunked(self._metadata, self.source_group_size))
 
-        self._label_mask_paths = label_mask_paths
-        self._label_mask_path_to_source_path: Dict[PathOrStr, PathOrStr] = {}
         if self._label_mask_paths:
             self._label_mask_path_groups = list(
                 chunked(self._label_mask_paths, self.source_group_size)
             )
-            for label_mask_path, source_path in zip(self._label_mask_paths, self._array_paths):
-                self._label_mask_path_to_source_path[label_mask_path] = source_path
 
         self._source_sizes: Optional[List[int]] = None
         self._source_size_groups: Optional[List[List[int]]] = None
@@ -2215,15 +2201,11 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         return self._instances_per_bucket
 
     @property
-    def indices_dtype(
-        self,
-    ) -> NumpyUIntTypes:
+    def indices_dtype(self) -> NumpyUIntTypes:
         return np.uint32
 
     @property
-    def lengths_dtype(
-        self,
-    ) -> NumpyUIntTypes:
+    def lengths_dtype(self) -> NumpyUIntTypes:
         if self._lengths_dtype is None:
             for dtype in (
                 np.uint8,
@@ -2279,33 +2261,28 @@ class VSLCurriculumConfig(Config):
                 raise OLMoConfigurationError(
                     f"'num_cycles' is not a valid field for the {self.name} curriculum"
                 )
-            elif self.balanced is not None:
+            if self.balanced is not None:
                 raise OLMoConfigurationError(
                     f"'balanced' is not a valid field for the {self.name} curriculum"
                 )
             return VSLNaturalCurriculum()
-        elif self.name == VSLCurriculumType.grow_p2:
+
+        if self.name in (VSLCurriculumType.grow_p2, VSLCurriculumType.grow_linear):
             if self.num_cycles is None:
                 raise OLMoConfigurationError(
                     f"'num_cycles' is required for the {self.name} curriculum"
                 )
-            elif self.balanced is None:
+            if self.balanced is None:
                 raise OLMoConfigurationError(
                     f"'balanced' is required for the {self.name} curriculum"
                 )
-            return VSLGrowP2Curriculum(num_cycles=self.num_cycles, balanced=self.balanced)
-        elif self.name == VSLCurriculumType.grow_linear:
-            if self.num_cycles is None:
-                raise OLMoConfigurationError(
-                    f"'num_cycles' is required for the {self.name} curriculum"
-                )
-            elif self.balanced is None:
-                raise OLMoConfigurationError(
-                    f"'balanced' is required for the {self.name} curriculum"
-                )
-            return VSLGrowLinearCurriculum(num_cycles=self.num_cycles, balanced=self.balanced)
-        else:
-            raise NotImplementedError(self.name)
+
+            if self.name == VSLCurriculumType.grow_p2:
+                return VSLGrowP2Curriculum(num_cycles=self.num_cycles, balanced=self.balanced)
+            else:  # grow_linear
+                return VSLGrowLinearCurriculum(num_cycles=self.num_cycles, balanced=self.balanced)
+
+        raise NotImplementedError(self.name)
 
 
 @dataclass
@@ -2412,6 +2389,9 @@ class NumpyDatasetConfig(Config):
         all of you runs.
     """
     instance_filter_config: Optional[InstanceFilterConfig] = None
+    """
+    Configuration for filtering instances based on specific criteria, such as repetition.
+    """
     label_mask_paths: Optional[List[str]] = None
     """
     The paths/URLs to numpy bool files indicating which tokens should be masked.
@@ -2484,9 +2464,7 @@ class NumpyDatasetConfig(Config):
             )
         return cls(mix=mix, tokenizer=tokenizer, **kwargs)
 
-    def get_dtype(
-        self,
-    ) -> NumpyUIntTypes:
+    def get_dtype(self) -> NumpyUIntTypes:
         if self.dtype is not None:
             return NumpyDatasetDType(self.dtype).as_np_dtype()
 
@@ -2507,9 +2485,12 @@ class NumpyDatasetConfig(Config):
         """
         Construct the corresponding :class:`NumpyDatasetBase`.
         """
-        if (self.paths is None) == (self.mix is None) == (self.source_mixture_config is None):
+        num_source_options = sum(
+            [self.paths is not None, self.mix is not None, self.source_mixture_config is not None]
+        )
+        if num_source_options != 1:
             raise OLMoConfigurationError(
-                "Exactly one of 'paths' or 'mix' or 'source_mixture' is required"
+                "Exactly one of 'paths', 'mix', or 'source_mixture_config' must be provided"
             )
 
         paths: List[str] = []
