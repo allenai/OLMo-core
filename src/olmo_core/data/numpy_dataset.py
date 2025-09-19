@@ -2289,21 +2289,60 @@ class VSLCurriculumConfig(Config):
         raise NotImplementedError(self.name)
 
 
+ConfigT = TypeVar("ConfigT", bound="NumpyDatasetConfigBase")
+
+
 @dataclass(kw_only=True)
 class NumpyDatasetConfigBase(Config, ABC):
     """Shared helpers for configuring :class:`NumpyDatasetBase` datasets."""
 
     tokenizer: TokenizerConfig
+    """
+    The tokenizer config.
+    """
     paths: Optional[List[str]] = None
+    """
+    The paths/URLs to the numpy token ID arrays.
+    """
     mix: Optional[Union[str, DataMixBase]] = None
+    """
+    The name of a data mix (e.g. ``"dolma17"``).
+    """
     mix_base_dir: Optional[str] = None
+    """
+    The base directory of the data mix.
+    """
     expand_glob: bool = False
+    """
+    If True, treat the :data:`paths` as globs.
+    """
     dtype: Optional[NumpyDatasetDType] = None
+    """
+    The numpy datatype of the token ID arrays.
+    """
     metadata: Optional[List[Dict[str, Any]]] = None
+    """
+    Metadata for the numpy arrays.
+    """
     include_instance_metadata: bool = True
+    """
+    Whether or not to include the :data:`metadata` in the instances returned from
+    :meth:`NumpyDatasetBase.__getitem__()`.
+    """
     instance_filter_config: Optional[InstanceFilterConfig] = None
     source_permutation_seed: Optional[int] = None
+    """
+    Used to shuffle the source files before handing off to the dataset class.
+    """
     work_dir: Optional[str] = None
+    """
+    The dataset working directory. This is used to cache working files like shuffled indices,
+    instance buckets, etc.
+
+    .. tip::
+        You can save a lot of time and disk space by setting this to a common directory across
+        all of you runs.
+    """
 
     @property
     @abstractmethod
@@ -2346,7 +2385,7 @@ class NumpyDatasetConfigBase(Config, ABC):
         self,
         *,
         allow_mix: bool,
-        label_mask_paths: Optional[List[PathOrStr]] = None,
+        label_mask_paths: Optional[Sequence[PathOrStr]] = None,
     ) -> Tuple[List[str], Optional[List[Dict[str, Any]]], Optional[List[PathOrStr]]]:
         if self.paths is not None and self.mix is not None:
             raise OLMoConfigurationError("Only one of 'paths' or 'mix' can be set")
@@ -2355,13 +2394,17 @@ class NumpyDatasetConfigBase(Config, ABC):
         resolved_label_masks: Optional[List[PathOrStr]] = None
 
         if self.paths is not None:
-            paths = list(self.paths)
+            raw_paths = [str(path) for path in self.paths]
             if self.expand_glob:
-                paths = self._expand_globs(paths)
+                paths = self._expand_globs(raw_paths)
                 if label_mask_paths is not None:
-                    resolved_label_masks = self._expand_globs(label_mask_paths)
+                    mask_patterns = [str(path) for path in label_mask_paths]
+                    expanded_masks = self._expand_globs(mask_patterns)
+                    resolved_label_masks = [cast(PathOrStr, mask) for mask in expanded_masks]
             else:
-                resolved_label_masks = cast(Optional[List[PathOrStr]], label_mask_paths)
+                paths = raw_paths
+                if label_mask_paths is not None:
+                    resolved_label_masks = [cast(PathOrStr, path) for path in label_mask_paths]
         else:
             if self.mix is None:
                 raise OLMoConfigurationError("Either 'paths' or 'mix' must be set")
@@ -2379,9 +2422,11 @@ class NumpyDatasetConfigBase(Config, ABC):
             if not isinstance(mix, DataMixBase):
                 mix = DataMix(mix)
             paths, labels = mix.build(self.mix_base_dir, self.tokenizer.identifier)
+            paths = [str(path) for path in paths]
             if metadata is None:
                 metadata = [{"label": label} for label in labels]
-            resolved_label_masks = cast(Optional[List[PathOrStr]], label_mask_paths)
+            if label_mask_paths is not None:
+                resolved_label_masks = [cast(PathOrStr, path) for path in label_mask_paths]
 
         if self.source_permutation_seed is not None:
             order = list(range(len(paths)))
@@ -2401,7 +2446,7 @@ class NumpyDatasetConfigBase(Config, ABC):
         return dataset
 
     @classmethod
-    def glob(cls, *glob_paths: str, **kwargs: Any) -> "NumpyDatasetConfigBase":
+    def glob(cls: Type[ConfigT], *glob_paths: str, **kwargs: Any) -> ConfigT:
         """
         Initialize a dataset config with glob paths.
 
@@ -2416,8 +2461,12 @@ class NumpyDatasetConfigBase(Config, ABC):
 
     @classmethod
     def from_data_mix(
-        cls, mix: Union[str, DataMixBase], *, tokenizer: TokenizerConfig, **kwargs: Any
-    ) -> "NumpyDatasetConfigBase":
+        cls: Type[ConfigT],
+        mix: Union[str, DataMixBase],
+        *,
+        tokenizer: TokenizerConfig,
+        **kwargs: Any,
+    ) -> ConfigT:
         """
         Initialize a dataset config from an official data mix.
 
@@ -2436,10 +2485,32 @@ class NumpyDatasetConfigBase(Config, ABC):
 @dataclass
 class NumpyFSLDatasetConfig(NumpyDatasetConfigBase):
     sequence_length: int
+    """
+    The length of a single instance. Generally this should correspond to your model's maximum input length.
+    """
     max_target_sequence_length: Optional[int] = None
+    """
+    Optional upper bound used when precomputing cached offsets.
+
+    If you're planning a sequence-length warm-up, set this to the final chunk size so future
+    datasets with larger ``sequence_length`` values can reuse the exact same document ordering.
+    The current dataset still returns ``sequence_length``-token windows; this hint simply keeps
+    token boundaries and cache files deterministic across warm-up stages. Leave ``None`` if you
+    won't rebuild at a larger length.
+    """
     source_mixture_config: Optional[SourceMixtureDatasetConfig] = None
+    """
+    A source mixture dataset config. If set, the dataset will be built from a mixture of sources.
+    """
     generate_doc_lengths: bool = False
+    """
+    Include individual document lengths in the instances returned from
+    :meth:`NumpyDatasetBase.__getitem__()`.
+    """
     label_mask_paths: Optional[List[str]] = None
+    """
+    The paths/URLs to numpy bool files indicating which tokens should be masked.
+    """
 
     def validate(self):
         if self.sequence_length <= 0:
@@ -2453,10 +2524,6 @@ class NumpyFSLDatasetConfig(NumpyDatasetConfigBase):
                 raise OLMoConfigurationError(
                     "'label_mask_paths' is not supported alongside 'source_mixture_config'"
                 )
-        if self.label_mask_paths is not None and self.source_mixture_config is not None:
-            raise OLMoConfigurationError(
-                "'label_mask_paths' is not supported alongside 'source_mixture_config'"
-            )
 
     @property
     def effective_sequence_length(self) -> int:
@@ -2510,7 +2577,13 @@ class NumpyFSLDatasetConfig(NumpyDatasetConfigBase):
 @dataclass(kw_only=True)
 class NumpyPaddedFSLDatasetConfig(NumpyDatasetConfigBase):
     sequence_length: int
+    """
+    The length of a single instance. Generally this should correspond to your model's maximum input length.
+    """
     label_mask_paths: Optional[List[str]] = None
+    """
+    The paths/URLs to numpy bool files indicating which tokens should be masked.
+    """
 
     @property
     def effective_sequence_length(self) -> int:
@@ -2544,10 +2617,26 @@ class NumpyPaddedFSLDatasetConfig(NumpyDatasetConfigBase):
 @dataclass(kw_only=True)
 class NumpyPackedFSLDatasetConfig(NumpyDatasetConfigBase):
     sequence_length: int
+    """
+    The length of a single instance. Generally this should correspond to your model's maximum input length.
+    """
     generate_doc_lengths: bool = False
+    """
+    Include individual document lengths in the instances returned from
+    :meth:`NumpyDatasetBase.__getitem__()`.
+    """
     label_mask_paths: Optional[List[str]] = None
+    """
+    The paths/URLs to numpy bool files indicating which tokens should be masked.
+    """
     long_doc_strategy: LongDocStrategy = LongDocStrategy.truncate
+    """
+    The strategy to use for handling long documents.
+    """
     source_group_size: int = 1
+    """
+    The number of source npy files to process together when packing.
+    """
 
     @property
     def effective_sequence_length(self) -> int:
@@ -2588,11 +2677,29 @@ class NumpyPackedFSLDatasetConfig(NumpyDatasetConfigBase):
 @dataclass(kw_only=True)
 class NumpyInterleavedFSLDatasetConfig(NumpyDatasetConfigBase):
     sequence_length: int
+    """
+    The length of a single instance. Generally this should correspond to your model's maximum input length.
+    """
     docs_per_instance: int
+    """
+    The number of documents to include in each instance.
+    """
     chunks_per_doc: int
+    """
+    The number of chunks to include in each document.
+    """
     seed: int
+    """
+    The seed to use for the random number generator.
+    """
     label_mask_paths: Optional[List[str]] = None
+    """
+    The paths/URLs to numpy bool files indicating which tokens should be masked.
+    """
     interleaving_exempt_paths: Optional[List[str]] = None
+    """
+    The paths/URLs to numpy bool files indicating which tokens should be exempt from interleaving.
+    """
 
     @property
     def effective_sequence_length(self) -> int:
@@ -2638,8 +2745,17 @@ class NumpyInterleavedFSLDatasetConfig(NumpyDatasetConfigBase):
 @dataclass(kw_only=True)
 class NumpyVSLDatasetConfig(NumpyDatasetConfigBase):
     max_sequence_length: int
+    """
+    The maximum sequence length. Generally this should correspond to your model's maximum input length.
+    """
     min_sequence_length: int
+    """
+    The minimum sequence length.
+    """
     vsl_curriculum: Optional[VSLCurriculumConfig] = None
+    """
+    The VSL curriculum config.
+    """
 
     @property
     def effective_sequence_length(self) -> int:
