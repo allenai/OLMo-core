@@ -39,7 +39,6 @@
 #		--trainer.no_checkpoints \
 #		--trainer.hard_stop='{value: 100, unit: steps}'
 
-#	--trainer.callbacks.wandb='{enabled: true, entity=sewonm, project=olmo1B, name=$runname}' \
 
 
 runname="olmoe-pretrain-01"
@@ -53,14 +52,21 @@ python -m olmo_core.launch.beaker \
 	--cluster ai2/jupiter \
 	--allow-dirty \
 	--priority urgent \
+	--env-secret WANDB_API_KEY=SEWONM_WANDB_API_KEY \
 	-- src/examples/olmoe-1B-7B/train.py \
        		$runname \
 		--save-folder="/weka/oe-training-default/$USER/$runname" \
+		--dataset.mix=OLMoE-mix-0824 \
 		--work-dir="/weka/oe-training-default/$USER/dataset-cache" \
 		--trainer.no_checkpoints \
-		--trainer.hard_stop='{value: 100, unit: steps}'
+		--trainer.hard_stop='{value: 100, unit: steps}' \
+		--trainer.max_duration='{value: 130_000_000_000, unit: tokens}' \
+		--trainer.callbacks.wandb.enabled=true \
+		--trainer.callbacks.wandb.project="olmoe-modular"
 
-		--dataset.mix=OLMo_mix_0625 \
-		--dataset.mix=v3-small-ppl-validation \
-	
+
+
+
+
+
 
