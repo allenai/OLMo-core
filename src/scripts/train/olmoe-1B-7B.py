@@ -44,6 +44,7 @@ from olmo_core.train.callbacks import (
     LMEvaluatorCallbackConfig,
     ProfilerCallback,
     WandBCallback,
+    BeakerCallback
 )
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
@@ -248,6 +249,10 @@ def build_config(opts, overrides: List[str]) -> ExperimentConfig:
                 cancel_check_interval=10,
                 enabled=False,  # change to true to enable
             ),
+        )
+        .with_callback(
+            "beaker",
+            BeakerCallback()
         )
         .with_callback("config_saver", ConfigSaverCallback())
         .with_callback("profiler", ProfilerCallback(enabled=False))
