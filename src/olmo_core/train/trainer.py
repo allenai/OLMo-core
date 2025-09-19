@@ -659,28 +659,20 @@ class Trainer:
 
         log.info(f"Training for {self.max_steps:,d} steps")
 
-        try:
-            for callback in self._iter_callbacks():
-                callback.pre_train()
-            self.train_module.pre_train()
-        except BaseException as exc:
-            self._error = exc
-            log.error(f"pre-train setup failed due to:\n{exc}")
-            self._check_if_canceled()
-            raise
-        else:
-            self._check_if_canceled()
-
-        # Quick check if the run has already been canceled.
-        if self.is_canceled:
-            self._shutdown()
-            return
-
         # Install SIGTERM + SIGINT handlers.
         og_sigterm_handler = signal.signal(signal.SIGTERM, self._handle_os_signal)
         og_sigint_handler = signal.signal(signal.SIGINT, self._handle_os_signal)
 
         try:
+            for callback in self._iter_callbacks():
+                callback.pre_train()
+            self.train_module.pre_train()
+
+            # Quick check if the run has already been canceled.
+            if self.is_canceled:
+                self._shutdown()
+                return
+
             # Do a dry-run for compiling and catch OOMs.
             self._dry_run_batch()
 
@@ -689,7 +681,7 @@ class Trainer:
                 self._fit_epoch()
         except BaseException as exc:
             self._error = exc
-            log.error(f"Training failed due to:\n{exc}")
+            log.error(f"Training failed due to:\n{type(exc).__name__}: {exc}")
             for callback in self._iter_callbacks():
                 callback.on_error(exc)
             raise
