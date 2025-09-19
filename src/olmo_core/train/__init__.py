@@ -85,6 +85,7 @@ def prepare_training_environment(
     backend: Optional[str] = "cpu:gloo,cuda:nccl",
     timeout: timedelta = timedelta(minutes=30),
     log_filter_type: Optional[LogFilterType] = None,
+    shared_filesystem: Optional[bool] = None,
 ):
     """
     Prepare the environment for training, including setting up the distributed process group
@@ -115,6 +116,8 @@ def prepare_training_environment(
 
         .. note::
             All ranks will always emit messages at the ``WARNING`` level or higher.
+    :param shared_filesystem: Should be set to ``True`` if the checkpoint and working directories
+        are in a local filesystem shared by all ranks, e.g. on an NFS drive.
     """
     # Setting the mp start method to "spawn" avoids some data loader segfaults on LUMI.
     try:
@@ -124,7 +127,7 @@ def prepare_training_environment(
 
     # Initialize process group.
     if backend is not None:
-        init_distributed(backend=backend, timeout=timeout)
+        init_distributed(backend=backend, timeout=timeout, shared_filesytem=shared_filesystem)
     else:
         torch.set_default_device(get_default_device())
 

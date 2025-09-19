@@ -806,6 +806,20 @@ def _parse_args():
         action="store_true",
         help="""Do a dry run where the launch config is printed.""",
     )
+    parser.add_argument(
+        "--env",
+        type=str,
+        nargs="*",
+        help="""Environment variables to add to the Beaker experiment.
+        Should be in the form '{NAME}={VALUE}'. Multiple allowed, space separated.""",
+    )
+    parser.add_argument(
+        "--env-secret",
+        type=str,
+        nargs="*",
+        help="""Environment variables to add to the Beaker experiment from Beaker secrets.
+        Should be in the form '{NAME}={SECRET_NAME}'. Multiple allowed, space separated.""",
+    )
 
     if len(sys.argv) < 3 or "--" not in sys.argv:
         parser.print_help()
@@ -818,16 +832,28 @@ def _parse_args():
     return opts, command
 
 
-def _build_config(opts, command: List[str]) -> BeakerLaunchConfig:
+def _build_config(opts: argparse.Namespace, command: List[str]) -> BeakerLaunchConfig:
     env_vars: List[BeakerEnvVar] = []
     if opts.debug:
         env_vars.append(BeakerEnvVar(name="CUDA_LAUNCH_BLOCKING", value="1"))
         env_vars.append(BeakerEnvVar(name="NCCL_DEBUG", value="INFO"))
+    for e in opts.env or []:
+        if "=" not in e:
+            raise ValueError(f"Invalid env var '{e}', must be in the form NAME=VALUE")
+        name, value = e.split("=", 1)
+        env_vars.append(BeakerEnvVar(name=name, value=value))
+    env_secrets: List[BeakerEnvSecret] = []
+    for e in opts.env_secret or []:
+        if "=" not in e:
+            raise ValueError(f"Invalid env secret '{e}', must be in the form NAME=SECRET_NAME")
+        name, secret = e.split("=", 1)
+        env_secrets.append(BeakerEnvSecret(name=name, secret=secret))
     return BeakerLaunchConfig(
         name=f"{opts.name}-{generate_uuid()[:8]}",
         budget=opts.budget,
         cmd=command,
         env_vars=env_vars,
+        env_secrets=env_secrets,
         task_name=opts.task_name,
         description=opts.description,
         clusters=opts.cluster,
