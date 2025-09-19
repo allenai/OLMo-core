@@ -8,7 +8,7 @@ from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE, get_root_dir
 from olmo_core.internal.experiment import CommonComponents, ExperimentConfig, main
-from olmo_core.nn.attention import AttentionConfig
+from olmo_core.nn.attention import AttentionConfig, SlidingWindowAttentionConfig
 from olmo_core.nn.fla.layer import FLAConfig
 from olmo_core.nn.transformer import TransformerBlockType, TransformerConfig
 from olmo_core.optim import OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig
@@ -57,10 +57,21 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
     # Update the config to use an FLA block.
     config.block.name = TransformerBlockType.fla_hybrid
-    # config.block.attention = AttentionConfig()  # not used
-    # 6d^2 for GatedDeltaNet vs. 3d^2 for attention
     config.block.d_model = 2048
     config.block.n_heads = 16
+
+    # We need to set attention properties because it will be used!
+    #  config.block.attention.qk_norm = None
+    config.block.attention.sliding_window = SlidingWindowAttentionConfig(
+        force_full_attention_on_first_layer=False,
+        force_full_attention_on_last_layer=True,
+        # NOTE: 4097 instead of 4096 to reproduce with the off-by-one bug.
+        pattern=[4097, 4097, 4097, -1],
+    )
+    config.block.attention.use_flash = True
+    config.block.attention.use_head_qk_norm = True
+
+    # Configure the non-attention part of the block to be a DeltaNet.
     config.block.fla = FLAConfig(
         name="GatedDeltaNet",
         dtype=config.dtype,

@@ -238,9 +238,9 @@ class TransformerBlockConfig(Config):
                 # TODO: Also abstract callback for different allocation strategies
                 if block_idx % 2 == 0:
                     kwargs.pop("fla")
-                    # return ReorderedNormTransformerBlock(**kwargs)
+                    return ReorderedNormTransformerBlock(**kwargs)
                     # It looks like the type is in fact default???
-                    return TransformerBlock(**kwargs)
+                    # return TransformerBlock(**kwargs)
                 else:
                     n_heads = self.attention.n_heads
                     kwargs.pop("attention")
