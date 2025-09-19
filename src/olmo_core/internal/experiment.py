@@ -171,7 +171,7 @@ def build_common_components(
 
     if intra_document_masking:
         raise OLMoConfigurationError(
-            "Intra-document masking is only supported with fixed-sequence datasets"
+            "Intra-document masking is only supported with fixed-sequence-length datasets"
         )
 
     dataset_config = NumpyVSLDatasetConfig.from_data_mix(
@@ -374,7 +374,7 @@ def main(
     num_execution_units: Optional[int] = None,
 ):
     usage = f"""
-[yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]{'|'.join(SubCmd)}[/] [i b]RUN_NAME CLUSTER[/] [i][OVERRIDES...][/]
+[yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]{"|".join(SubCmd)}[/] [i b]RUN_NAME CLUSTER[/] [i][OVERRIDES...][/]
 
 [b]Subcommands[/]
 [b magenta]launch:[/]      Launch the script on Beaker with the [b magenta]train[/] subcommand.

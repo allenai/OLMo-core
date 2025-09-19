@@ -30,7 +30,6 @@ from typing import (
 import numpy as np
 import torch
 import torch.nn.functional as F
-from this import d
 from torch.utils.data import Dataset
 
 from olmo_core.exceptions import OLMoConfigurationError, OLMoEnvironmentError
@@ -42,7 +41,7 @@ from ..io import _get_s3_client, get_file_size, glob_directory, is_url, normaliz
 from .mixes import DataMix, DataMixBase
 from .source_mixture import SourceMixtureDatasetConfig
 from .tokenizer import TokenizerConfig
-from .types import LongDocStrategy, NumpyDatasetDType, NumpyDatasetType, NumpyUIntTypes
+from .types import LongDocStrategy, NumpyDatasetDType, NumpyUIntTypes
 from .utils import (
     bucket_documents,
     chunk_array,
@@ -79,7 +78,6 @@ __all__ = [
     "NumpyPackedFSLDatasetConfig",
     "NumpyInterleavedFSLDatasetConfig",
     "NumpyVSLDatasetConfig",
-    "NumpyDatasetType",
     "VSLCurriculumType",
     "VSLCurriculumConfig",
 ]
@@ -2310,6 +2308,10 @@ class NumpyDatasetConfigBase(Config, ABC):
     @property
     @abstractmethod
     def effective_sequence_length(self) -> int:
+        raise NotImplementedError
+
+    @abstractmethod
+    def build(self) -> NumpyDatasetBase:
         raise NotImplementedError
 
     def get_dtype(self) -> NumpyUIntTypes:

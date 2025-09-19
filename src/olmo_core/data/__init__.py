@@ -46,7 +46,7 @@ from .numpy_dataset import (
     VSLNaturalCurriculum,
 )
 from .tokenizer import TokenizerConfig, TokenizerName
-from .types import LongDocStrategy, NumpyDatasetDType, NumpyDatasetType
+from .types import LongDocStrategy, NumpyDatasetDType
 
 __all__ = [
     "NumpyDatasetBase",
@@ -66,7 +66,6 @@ __all__ = [
     "NumpyPackedFSLDatasetConfig",
     "NumpyInterleavedFSLDatasetConfig",
     "NumpyVSLDatasetConfig",
-    "NumpyDatasetType",
     "InstanceFilterConfig",
     "VSLCurriculumType",
     "VSLCurriculumConfig",

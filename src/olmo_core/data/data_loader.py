@@ -27,7 +27,6 @@ from ..utils import get_default_device, roundrobin, threaded_generator
 from .collator import DataCollator
 from .numpy_dataset import (
     NumpyDatasetBase,
-    NumpyDatasetType,
     NumpyFSLDatasetBase,
     NumpyVSLDataset,
 )
@@ -932,9 +931,9 @@ class NumpyVSLDataLoader(NumpyDataLoaderBase):
                 bucket_indices_file, instance_start_index, instance_end_index, np.uint32
             )
 
-        assert (
-            local_instance_indices.shape[0] == instances_per_rank
-        ), f"Expected {instances_per_rank} instances, got {local_instance_indices.shape[0]}"
+        assert local_instance_indices.shape[0] == instances_per_rank, (
+            f"Expected {instances_per_rank} instances, got {local_instance_indices.shape[0]}"
+        )
 
         return local_instance_indices
 
