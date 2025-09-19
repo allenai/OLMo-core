@@ -15,7 +15,7 @@
 
 ##############################################################
 
-runname="olmoe-pretrain-01"
+runname="olmoe-pretrain-02"
 python -m olmo_core.launch.beaker \
   	--name $runname \
 	--gpus 4 \
@@ -24,6 +24,7 @@ python -m olmo_core.launch.beaker \
       	--shared-filesystem \
 	--workspace ai2/flex2 \
 	--cluster ai2/jupiter \
+	--preemptible \
 	--allow-dirty \
 	--priority urgent \
 	--env-secret WANDB_API_KEY=SEWONM_WANDB_API_KEY \

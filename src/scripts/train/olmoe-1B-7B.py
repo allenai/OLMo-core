@@ -250,10 +250,10 @@ def build_config(opts, overrides: List[str]) -> ExperimentConfig:
                 enabled=False,  # change to true to enable
             ),
         )
-        .with_callback(
-            "beaker",
-            BeakerCallback()
-        )
+        #.with_callback(
+        #    "beaker",
+        #    BeakerCallback()
+        #)
         .with_callback("config_saver", ConfigSaverCallback())
         .with_callback("profiler", ProfilerCallback(enabled=False))
         # .with_callback(
