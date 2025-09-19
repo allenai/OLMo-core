@@ -659,9 +659,13 @@ class Trainer:
 
         log.info(f"Training for {self.max_steps:,d} steps")
 
-        for callback in self._iter_callbacks():
-            callback.pre_train()
-        self.train_module.pre_train()
+        try:
+            for callback in self._iter_callbacks():
+                callback.pre_train()
+            self.train_module.pre_train()
+        except BaseException as exc:
+            log.error(f"pre-train setup failed due to:\n{exc}")
+            raise
 
         barrier()
 
@@ -674,10 +678,11 @@ class Trainer:
         og_sigterm_handler = signal.signal(signal.SIGTERM, self._handle_os_signal)
         og_sigint_handler = signal.signal(signal.SIGINT, self._handle_os_signal)
 
-        # Do a dry-run for compiling and catch OOMs.
-        self._dry_run_batch()
-
         try:
+            # Do a dry-run for compiling and catch OOMs.
+            self._dry_run_batch()
+
+            # Iterate over epochs until done.
             while not self.training_complete:
                 self._fit_epoch()
         except BaseException as exc:
