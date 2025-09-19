@@ -12,7 +12,6 @@ from copy import deepcopy
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from this import d
 from typing import (
     Any,
     Callable,
@@ -31,6 +30,7 @@ from typing import (
 import numpy as np
 import torch
 import torch.nn.functional as F
+from this import d
 from torch.utils.data import Dataset
 
 from olmo_core.exceptions import OLMoConfigurationError, OLMoEnvironmentError

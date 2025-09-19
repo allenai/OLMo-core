@@ -7,7 +7,6 @@ import torch
 from rich import print
 
 from olmo_core.config import Config, StrEnum
-from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.data import (
     DataMix,
     InstanceFilterConfig,
@@ -20,6 +19,7 @@ from olmo_core.data import (
     VSLCurriculumType,
 )
 from olmo_core.distributed.utils import get_local_rank
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.train import (

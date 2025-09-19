@@ -7,8 +7,8 @@ import pytest
 
 from olmo_core.data import (
     LongDocStrategy,
-    NumpyFSLDatasetConfig,
     NumpyFSLDataset,
+    NumpyFSLDatasetConfig,
     NumpyPackedFSLDataset,
     NumpyPaddedFSLDataset,
     NumpyVSLDataset,
@@ -922,5 +922,7 @@ def test_guess_dtype():
     config = NumpyFSLDatasetConfig(paths=[], sequence_length=1024, tokenizer=TokenizerConfig.gpt2())
     assert config.get_dtype() == np.uint16
 
-    config = NumpyFSLDatasetConfig(paths=[], sequence_length=1024, tokenizer=TokenizerConfig.dolma2())
+    config = NumpyFSLDatasetConfig(
+        paths=[], sequence_length=1024, tokenizer=TokenizerConfig.dolma2()
+    )
     assert config.get_dtype() == np.uint32
