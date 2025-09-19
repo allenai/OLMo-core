@@ -25,11 +25,7 @@ from ..exceptions import OLMoConfigurationError
 from ..io import is_url, normalize_path
 from ..utils import get_default_device, roundrobin, threaded_generator
 from .collator import DataCollator
-from .numpy_dataset import (
-    NumpyDatasetBase,
-    NumpyFSLDatasetBase,
-    NumpyVSLDataset,
-)
+from .numpy_dataset import NumpyDatasetBase, NumpyFSLDatasetBase, NumpyVSLDataset
 from .utils import get_rng, iter_batched, load_array_slice, memmap_to_write
 
 __all__ = [
@@ -931,9 +927,9 @@ class NumpyVSLDataLoader(NumpyDataLoaderBase):
                 bucket_indices_file, instance_start_index, instance_end_index, np.uint32
             )
 
-        assert local_instance_indices.shape[0] == instances_per_rank, (
-            f"Expected {instances_per_rank} instances, got {local_instance_indices.shape[0]}"
-        )
+        assert (
+            local_instance_indices.shape[0] == instances_per_rank
+        ), f"Expected {instances_per_rank} instances, got {local_instance_indices.shape[0]}"
 
         return local_instance_indices
 
