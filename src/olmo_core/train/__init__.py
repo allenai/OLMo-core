@@ -22,16 +22,17 @@ For example::
 
     if __name__ == "__main__":
         prepare_training_environment()
-        try:
-            # Build train module and data loader...
 
-            # Build trainer.
-            trainer = trainer_config.build(train_module, data_loader)
+        # Build train module and data loader...
 
-            # Run the trainer.
-            trainer.fit()
-        finally:
-            teardown_training_environment()
+        # Build trainer.
+        trainer = trainer_config.build(train_module, data_loader)
+
+        # Run the trainer.
+        trainer.fit()
+
+        # Clean up.
+        teardown_training_environment()
 
 See the `train a language model <examples/train.html>`_ example for a complete, run-able demonstration.
 

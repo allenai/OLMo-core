@@ -265,10 +265,8 @@ Launch the training run locally (e.g. in a Beaker interactive session):
     log.info(config)
 
     if cmd == "train":
-        try:
-            train(config)
-        finally:
-            teardown_training_environment()
+        train(config)
+        teardown_training_environment()
     elif cmd == "launch":
         launch(config)
     elif cmd == "dry_run":

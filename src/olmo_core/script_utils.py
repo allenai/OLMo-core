@@ -112,37 +112,36 @@ def main(
         return
 
     prepare_training_environment(shared_filesystem=not is_url(opts.save_folder))
-    try:
-        # Set RNG states on all devices.
-        seed_all(config.init_seed)
 
-        # Build components.
-        model = config.model.build(init_device="meta")
-        train_module = config.train_module.build(model)
-        dataset = config.dataset.build()
-        data_loader = config.data_loader.build(
-            dataset, dp_process_group=train_module.dp_process_group
+    # Set RNG states on all devices.
+    seed_all(config.init_seed)
+
+    # Build components.
+    model = config.model.build(init_device="meta")
+    train_module = config.train_module.build(model)
+    dataset = config.dataset.build()
+    data_loader = config.data_loader.build(dataset, dp_process_group=train_module.dp_process_group)
+    trainer = config.trainer.build(train_module, data_loader)
+
+    # Save config to W&B and each checkpoint dir.
+    for callback in trainer.callbacks.values():
+        if isinstance(callback, ConfigSaverCallback):
+            callback.config = config.as_config_dict()
+            break
+
+    # If we have a load path set and there is no checkpoint in the save folder, load the
+    # checkpoint from the load path.
+    if not trainer.no_checkpoints and not trainer.maybe_load_checkpoint() and config.load_path:
+        log.info(
+            f"Loading checkpoint from {config.load_path} since no checkpoints were found in the save folder..."
         )
-        trainer = config.trainer.build(train_module, data_loader)
+        trainer.load_checkpoint(config.load_path, load_trainer_state=False)
 
-        # Save config to W&B and each checkpoint dir.
-        for callback in trainer.callbacks.values():
-            if isinstance(callback, ConfigSaverCallback):
-                callback.config = config.as_config_dict()
-                break
+    # Train.
+    trainer.fit()
 
-        # If we have a load path set and there is no checkpoint in the save folder, load the
-        # checkpoint from the load path.
-        if not trainer.no_checkpoints and not trainer.maybe_load_checkpoint() and config.load_path:
-            log.info(
-                f"Loading checkpoint from {config.load_path} since no checkpoints were found in the save folder..."
-            )
-            trainer.load_checkpoint(config.load_path, load_trainer_state=False)
-
-        # Train.
-        trainer.fit()
-    finally:
-        teardown_training_environment()
+    # Tear-down distributed backend.
+    teardown_training_environment()
 
 
 def get_lr_from_checkpoint(

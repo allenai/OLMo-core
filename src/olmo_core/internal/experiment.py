@@ -100,10 +100,8 @@ class SubCmd(StrEnum):
         elif self == SubCmd.dry_run:
             pass
         elif self == SubCmd.train:
-            try:
-                train(config)
-            finally:
-                teardown_training_environment()
+            train(config)
+            teardown_training_environment()
         elif self == SubCmd.train_single:
             if config.train_module.dp_config is not None:
                 log.warning(
@@ -117,10 +115,8 @@ class SubCmd(StrEnum):
                     config.train_module.dp_config,
                 )
                 config.train_module.tp_config = None
-            try:
-                train(config)
-            finally:
-                teardown_training_environment()
+            train(config)
+            teardown_training_environment()
         elif self == SubCmd.prep:
             prep(config)
         elif self == SubCmd.launch_prep:
