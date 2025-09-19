@@ -317,10 +317,8 @@ def main():
         return
 
     prepare_training_environment()
-    try:
-        train(config)
-    finally:
-        teardown_training_environment()
+    train(config)
+    teardown_training_environment()
 
 
 if __name__ == "__main__":
