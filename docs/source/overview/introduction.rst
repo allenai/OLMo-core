@@ -35,10 +35,8 @@ Most users will likely follow a workflow that looks like this:
 
      if __name__ == "__main__":
          prepare_training_environment(seed=SEED)
-         try:
-             main()
-         finally:
-             teardown_training_environment()
+         main()
+         teardown_training_environment()
 
 3. Launch their training script with a :mod:`~olmo_core.launch` config, like the :class:`~olmo_core.launch.beaker.BeakerLaunchConfig`.
    For example::

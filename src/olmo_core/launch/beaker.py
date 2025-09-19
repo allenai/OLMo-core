@@ -799,7 +799,7 @@ def _parse_args():
     parser.add_argument(
         "--debug",
         action="store_true",
-        help="""Set debugging env vars, like `CUDA_LAUNCH_BLOCKING=1`.""",
+        help="""Set debugging env vars, like 'CUDA_LAUNCH_BLOCKING=1'.""",
     )
     parser.add_argument(
         "--dry-run",

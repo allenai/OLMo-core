@@ -219,7 +219,5 @@ if __name__ == "__main__":
     run_name, *overrides = sys.argv[1:]
 
     prepare_training_environment()
-    try:
-        main(run_name, overrides=overrides)
-    finally:
-        teardown_training_environment()
+    main(run_name, overrides=overrides)
+    teardown_training_environment()

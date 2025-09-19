@@ -401,9 +401,7 @@ $ [i]python {sys.argv[0]} launch run01 gs://ai2-llm/checkpoints/peteish32/step41
     elif cmd == "launch":
         config.launch.launch(follow=True)
     elif cmd == "train":
-        try:
-            train(checkpoint, config)
-        finally:
-            teardown_training_environment()
+        train(checkpoint, config)
+        teardown_training_environment()
     else:
         raise NotImplementedError(cmd)
