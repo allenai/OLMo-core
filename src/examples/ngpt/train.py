@@ -12,12 +12,7 @@ from dataclasses import dataclass
 from typing import List, cast
 
 from olmo_core.config import Config, DType
-from olmo_core.data import (
-    NumpyDataLoaderConfig,
-    NumpyDatasetConfig,
-    NumpyDatasetType,
-    TokenizerConfig,
-)
+from olmo_core.data import NumpyDataLoaderConfig, NumpyFSLDatasetConfig, TokenizerConfig
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamConfig, CosWithWarmup
@@ -64,7 +59,7 @@ DATA_PATHS = [
 @dataclass
 class ExperimentConfig(Config):
     model: TransformerConfig
-    dataset: NumpyDatasetConfig
+    dataset: NumpyFSLDatasetConfig
     data_loader: NumpyDataLoaderConfig
     train_module: TransformerTrainModuleConfig
     trainer: TrainerConfig
@@ -78,9 +73,8 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         vocab_size=tokenizer_config.padded_vocab_size(),  # a little bigger than actual vocab size to make it a multiple of 128
     )
 
-    dataset_config = NumpyDatasetConfig(
+    dataset_config = NumpyFSLDatasetConfig(
         paths=DATA_PATHS,
-        name=NumpyDatasetType.fsl,
         sequence_length=SEQUENCE_LENGTH,
         max_target_sequence_length=8192,
         tokenizer=tokenizer_config,

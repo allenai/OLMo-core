@@ -6,7 +6,7 @@ from typing import Callable, List, cast
 from rich import print
 
 from olmo_core.config import Config, StrEnum
-from olmo_core.data import NumpyDataLoaderConfig, NumpyDatasetConfig
+from olmo_core.data import NumpyDataLoaderConfig, NumpyDatasetConfigBase
 from olmo_core.distributed.utils import get_local_rank
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.model_ladder import ModelLadder, ModelSize, RunDuration
@@ -30,7 +30,7 @@ class LadderRunConfig(Config):
     launch: BeakerLaunchConfig
     ladder: ModelLadder
     model: TransformerConfig
-    dataset: NumpyDatasetConfig
+    dataset: NumpyDatasetConfigBase
     data_loader: NumpyDataLoaderConfig
     train_module: TransformerTrainModuleConfig
     trainer: TrainerConfig

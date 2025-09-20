@@ -18,7 +18,7 @@ Most users will likely follow a workflow that looks like this:
 
      model_config = TransformerConfig.llama2_7B(...)
      train_module_config = TransformerTrainModuleConfig(...)
-     data_config = NumpyDatasetConfig(...)
+     data_config = NumpyFSLDatasetConfig(...)
      data_loader_config = NumpyDataLoaderConfig(...)
      trainer_config = TrainerConfig(...)
 

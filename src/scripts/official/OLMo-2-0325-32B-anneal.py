@@ -10,7 +10,7 @@ from olmo_core.config import DType
 from olmo_core.data import (
     DataMixBase,
     NumpyDataLoaderConfig,
-    NumpyDatasetConfig,
+    NumpyFSLDatasetConfig,
     TokenizerConfig,
     TokenizerName,
 )
@@ -84,7 +84,7 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
 
     config = ExperimentConfig(
         model=TransformerConfig.olmo2_32B(vocab_size=tokenizer_config.padded_vocab_size()),
-        dataset=NumpyDatasetConfig.from_data_mix(
+        dataset=NumpyFSLDatasetConfig.from_data_mix(
             AnnealingDataMix.dolmino100,
             tokenizer=tokenizer_config,
             mix_base_dir=opts.data_root,
