@@ -2300,7 +2300,7 @@ class NumpyDatasetConfigBase(Config, ABC):
     """
     The tokenizer config.
     """
-    paths: Optional[List[str]] = None
+    paths: Optional[List[PathOrStr]] = None
     """
     The paths/URLs to the numpy token ID arrays.
     """
@@ -2369,13 +2369,14 @@ class NumpyDatasetConfigBase(Config, ABC):
 
         raise ValueError("vocab size too big!")
 
-    def _expand_globs(self, patterns: Sequence[str]) -> List[str]:
+    def _expand_globs(self, patterns: Sequence[PathOrStr]) -> List[str]:
         expanded: List[str] = []
         for pattern in patterns:
-            log.info(f"Expanding '{pattern}'...")
-            matches = sorted(glob_directory(pattern))
+            pattern_str = str(pattern)
+            log.info(f"Expanding '{pattern_str}'...")
+            matches = sorted(glob_directory(pattern_str))
             if not matches:
-                raise FileNotFoundError(pattern)
+                raise FileNotFoundError(pattern_str)
             for match in matches:
                 log.info(f" - '{match}'")
             expanded.extend(matches)
@@ -2386,7 +2387,7 @@ class NumpyDatasetConfigBase(Config, ABC):
         *,
         allow_mix: bool,
         label_mask_paths: Optional[Sequence[PathOrStr]] = None,
-    ) -> Tuple[List[str], Optional[List[Dict[str, Any]]], Optional[List[PathOrStr]]]:
+    ) -> Tuple[List[PathOrStr], Optional[List[Dict[str, Any]]], Optional[List[PathOrStr]]]:
         if self.paths is not None and self.mix is not None:
             raise OLMoConfigurationError("Only one of 'paths' or 'mix' can be set")
 
@@ -2394,15 +2395,15 @@ class NumpyDatasetConfigBase(Config, ABC):
         resolved_label_masks: Optional[List[PathOrStr]] = None
 
         if self.paths is not None:
-            raw_paths = [str(path) for path in self.paths]
+            candidate_paths: List[PathOrStr] = list(self.paths)
             if self.expand_glob:
-                paths = self._expand_globs(raw_paths)
+                expanded_paths = self._expand_globs(candidate_paths)
+                paths = [cast(PathOrStr, path) for path in expanded_paths]
                 if label_mask_paths is not None:
-                    mask_patterns = [str(path) for path in label_mask_paths]
-                    expanded_masks = self._expand_globs(mask_patterns)
+                    expanded_masks = self._expand_globs(label_mask_paths)
                     resolved_label_masks = [cast(PathOrStr, mask) for mask in expanded_masks]
             else:
-                paths = raw_paths
+                paths = candidate_paths
                 if label_mask_paths is not None:
                     resolved_label_masks = [cast(PathOrStr, path) for path in label_mask_paths]
         else:
@@ -2422,7 +2423,7 @@ class NumpyDatasetConfigBase(Config, ABC):
             if not isinstance(mix, DataMixBase):
                 mix = DataMix(mix)
             paths, labels = mix.build(self.mix_base_dir, self.tokenizer.identifier)
-            paths = [str(path) for path in paths]
+            paths = [cast(PathOrStr, path) for path in paths]
             if metadata is None:
                 metadata = [{"label": label} for label in labels]
             if label_mask_paths is not None:
@@ -2507,7 +2508,7 @@ class NumpyFSLDatasetConfig(NumpyDatasetConfigBase):
     Include individual document lengths in the instances returned from
     :meth:`NumpyDatasetBase.__getitem__()`.
     """
-    label_mask_paths: Optional[List[str]] = None
+    label_mask_paths: Optional[List[PathOrStr]] = None
     """
     The paths/URLs to numpy bool files indicating which tokens should be masked.
     """
@@ -2580,7 +2581,7 @@ class NumpyPaddedFSLDatasetConfig(NumpyDatasetConfigBase):
     """
     The length of a single instance. Generally this should correspond to your model's maximum input length.
     """
-    label_mask_paths: Optional[List[str]] = None
+    label_mask_paths: Optional[List[PathOrStr]] = None
     """
     The paths/URLs to numpy bool files indicating which tokens should be masked.
     """
@@ -2625,7 +2626,7 @@ class NumpyPackedFSLDatasetConfig(NumpyDatasetConfigBase):
     Include individual document lengths in the instances returned from
     :meth:`NumpyDatasetBase.__getitem__()`.
     """
-    label_mask_paths: Optional[List[str]] = None
+    label_mask_paths: Optional[List[PathOrStr]] = None
     """
     The paths/URLs to numpy bool files indicating which tokens should be masked.
     """
@@ -2692,7 +2693,7 @@ class NumpyInterleavedFSLDatasetConfig(NumpyDatasetConfigBase):
     """
     The seed to use for the random number generator.
     """
-    label_mask_paths: Optional[List[str]] = None
+    label_mask_paths: Optional[List[PathOrStr]] = None
     """
     The paths/URLs to numpy bool files indicating which tokens should be masked.
     """
