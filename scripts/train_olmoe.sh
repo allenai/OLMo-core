@@ -27,8 +27,7 @@ python -m olmo_core.launch.beaker \
 	--preemptible \
 	--allow-dirty \
 	--priority urgent \
-	--env-secret WANDB_API_KEY=SEWONM_WANDB_API_KEY \
-	--env-secret BEAKER_TOKEN=sewonm_BEAKER_TOKEN \
+	--env-secret "WANDB_API_KEY=SEWONM_WANDB_API_KEY" "BEAKER_TOKEN=sewonm_BEAKER_TOKEN" \
 	-- src/scripts/train/olmoe-1B-7B.py \
        		$runname \
 		--save-folder="/weka/oe-training-default/$USER/$runname" \
