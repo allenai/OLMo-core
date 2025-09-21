@@ -44,12 +44,21 @@ log = logging.getLogger(__name__)
 
 
 @dataclass
+class CliContext(Config):
+    script: str
+    cmd: "SubCmd"
+    run_name: str
+    cluster: str
+    overrides: List[str]
+
+
+@dataclass
 class CommonComponents(Config):
     run_name: str
     root_dir: str
+    work_dir: str
     save_folder: str
     launch: Optional[BeakerLaunchConfig]
-    callbacks: Dict[str, Callback]
 
 
 @dataclass
@@ -129,29 +138,14 @@ class SubCmd(StrEnum):
             raise NotImplementedError(self)
 
 
-ConfigBuilder = Callable[
-    [str, SubCmd, str, str, list[str]],
-    ExperimentConfig,
-]
-"""Type alias for a function that builds an ExperimentConfig.
-
-A ConfigBuilder takes the following parameters:
-- script: The path to the script being executed
-- cmd: The subcommand being run (launch, train, prep, etc.)
-- run_name: The name of the experimental run
-- cluster: The cluster where the experiment will run
-- overrides: List of configuration overrides
-
-Returns an ExperimentConfig instance.
+ConfigBuilder = Callable[[CliContext], ExperimentConfig]
+"""
+Type alias for a function that builds an ExperimentConfig based on a CliContext.
 """
 
 
 def build_common_components(
-    script: str,
-    cmd: SubCmd,
-    run_name: str,
-    cluster: str,
-    overrides: List[str],
+    cli_context: CliContext,
     *,
     beaker_image: str = OLMoCoreBeakerImage.stable,
     num_nodes: int = 1,
@@ -159,20 +153,27 @@ def build_common_components(
     use_hostname_constraints: bool = False,
     num_execution_units: Optional[int] = None,
 ) -> CommonComponents:
-    root_dir = get_root_dir(cluster)
+    root_dir = get_root_dir(cli_context.cluster)
 
+    # TODO: can this be factored better? Why are launch commands relevant here?
     cmd_to_launch = SubCmd.train
-    if cmd == SubCmd.launch_prep:
+    if cli_context.cmd == SubCmd.launch_prep:
         cmd_to_launch = SubCmd.prep
 
     beaker_user = get_beaker_username()
     launch_config: Optional[BeakerLaunchConfig] = None
     if beaker_user is not None:
         launch_config = build_launch_config(
-            name=f"{run_name}-{cmd_to_launch}",
+            name=f"{cli_context.run_name}-{cmd_to_launch}",
             root_dir=root_dir,
-            cmd=[script, cmd_to_launch, run_name, cluster, *overrides],
-            cluster=cluster,
+            cmd=[
+                cli_context.script,
+                cmd_to_launch,
+                cli_context.run_name,
+                cli_context.cluster,
+                *cli_context.overrides,
+            ],
+            cluster=cli_context.cluster,
             nccl_debug=True,
             beaker_image=beaker_image,
             num_nodes=num_nodes,
@@ -181,75 +182,41 @@ def build_common_components(
             num_execution_units=num_execution_units,
         )
 
-    callbacks: Dict[str, Callback] = {
-        "config_saver": ConfigSaverCallback(),
-        "profiler": ProfilerCallback(enabled=False),
-        "garbage_collector": GarbageCollectorCallback(),
-        "slack_notifier": SlackNotifierCallback(name=run_name, enabled=False),
-    }
     if beaker_user is not None:
-        callbacks["beaker"] = BeakerCallback()
-
-    if torch.cuda.is_available():
-        callbacks["gpu_monitor"] = GPUMemoryMonitorCallback()
-
-    # if include_default_evals:
-    #     callbacks["lm_evaluator"] = LMEvaluatorCallbackConfig(
-    #         eval_dataset=NumpyDatasetConfig.from_data_mix(
-    #             DataMix.v3_small_ppl_validation,
-    #             name=NumpyDatasetType.padded_fsl,
-    #             mix_base_dir=root_dir,
-    #             sequence_length=dataset_config.effective_sequence_length,
-    #             tokenizer=tokenizer_config,
-    #             work_dir=get_work_dir(root_dir),
-    #         ),
-    #         eval_interval=1000,
-    #     )
-    #     callbacks["downstream_evaluator"] = DownstreamEvaluatorCallbackConfig(
-    #         tasks=["hellaswag"],
-    #         tokenizer=tokenizer_config,
-    #         eval_interval=1000,
-    #     )
-
-    save_folder: str
-    if beaker_user is not None:
-        save_folder = f"{root_dir}/checkpoints/{beaker_user.lower()}/{run_name}"
+        save_folder = f"{root_dir}/checkpoints/{beaker_user.lower()}/{cli_context.run_name}"
     else:
-        save_folder = f"{root_dir}/checkpoints/{run_name}"
+        save_folder = f"{root_dir}/checkpoints/{cli_context.run_name}"
 
     return CommonComponents(
-        run_name=run_name,
+        run_name=cli_context.run_name,
         root_dir=root_dir,
+        work_dir=get_work_dir(root_dir),
         save_folder=save_folder,
         launch=launch_config,
-        callbacks=callbacks,
     )
 
 
-def build_data_components(
+def build_default_data_components(
     common: CommonComponents,
     global_batch_size: int,
-    sequence_length: int = 4096,
+    max_sequence_length: int = 8192,
     intra_document_masking: bool = False,
     include_instance_filter: bool = False,
 ) -> DataComponents:
-    root_dir = common.root_dir
     tokenizer_config = TokenizerConfig.dolma2()
 
     dataset_config = NumpyFSLDatasetConfig.from_data_mix(
         DataMix.OLMoE_mix_0824,
         tokenizer=tokenizer_config,
-        mix_base_dir=root_dir,
-        sequence_length=sequence_length,
-        max_target_sequence_length=max(8192, sequence_length),
+        mix_base_dir=common.root_dir,
+        sequence_length=max_sequence_length,
+        max_target_sequence_length=max_sequence_length,
+        work_dir=common.work_dir,
         generate_doc_lengths=intra_document_masking,
-        work_dir=get_work_dir(root_dir),
         instance_filter_config=None
         if not include_instance_filter
         else InstanceFilterConfig(
-            repetition_max_period=13,
-            repetition_min_period=1,
-            repetition_max_count=32,
+            repetition_max_period=13, repetition_min_period=1, repetition_max_count=32
         ),
     )
 
@@ -260,6 +227,42 @@ def build_data_components(
     return DataComponents(
         tokenizer=tokenizer_config, dataset=dataset_config, data_loader=data_loader_config
     )
+
+
+def build_required_callbacks(common: CommonComponents) -> Dict[str, Callback]:
+    callbacks = {
+        "config_saver": ConfigSaverCallback(),
+        "profiler": ProfilerCallback(enabled=False),
+        "garbage_collector": GarbageCollectorCallback(),
+        "slack_notifier": SlackNotifierCallback(name=common.run_name, enabled=False),
+    }
+    if common.launch is not None:
+        callbacks["beaker"] = BeakerCallback()
+    if torch.cuda.is_available():
+        callbacks["gpu_monitor"] = GPUMemoryMonitorCallback()
+    return callbacks
+
+
+def build_default_eval_callbacks(
+    common: CommonComponents, data: DataComponents
+) -> Dict[str, Callback]:
+    return {
+        "lm_evaluator": LMEvaluatorCallbackConfig(
+            eval_dataset=NumpyPaddedFSLDatasetConfig.from_data_mix(
+                DataMix.v3_small_ppl_validation,
+                mix_base_dir=common.root_dir,
+                sequence_length=data.dataset.effective_sequence_length,
+                tokenizer=data.tokenizer,
+                work_dir=common.work_dir,
+            ),
+            eval_interval=1000,
+        ),
+        "downstream_evaluator": DownstreamEvaluatorCallbackConfig(
+            tasks=["hellaswag"],
+            tokenizer=data.tokenizer,
+            eval_interval=1000,
+        ),
+    }
 
 
 def _set_beaker_execution_units(config: ExperimentConfig):
@@ -293,15 +296,11 @@ def _set_beaker_execution_units(config: ExperimentConfig):
 
 
 def build_config(
-    script: str,
-    cmd: SubCmd,
-    run_name: str,
-    cluster: str,
-    overrides: List[str],
+    cli_context: CliContext,
     *,
     common_config_builder: Callable[..., CommonComponents] = build_common_components,
-    data_config_builder: Callable[..., DataComponents] = build_data_components,
-    model_config_builder: Callable[[CommonComponents], TransformerConfig],
+    data_config_builder: Callable[..., DataComponents] = build_default_data_components,
+    model_config_builder: Callable[[TokenizerConfig], TransformerConfig],
     train_module_config_builder: Callable[[CommonComponents], TransformerTrainModuleConfig],
     trainer_config_builder: Callable[[CommonComponents], TrainerConfig],
     finalize_config: Optional[Callable[[ExperimentConfig], None]] = None,
@@ -311,15 +310,12 @@ def build_config(
     use_hostname_constraints: bool = False,
     num_execution_units: Optional[int] = None,
     global_batch_size: int,
-    sequence_length: int = 4096,
+    max_sequence_length: int = 4096,
+    include_default_evals: bool = False,
     **kwargs,
 ) -> ExperimentConfig:
     common = common_config_builder(
-        script,
-        cmd,
-        run_name,
-        cluster,
-        overrides,
+        cli_context,
         beaker_image,
         num_nodes,
         beaker_workspace,
@@ -327,28 +323,34 @@ def build_config(
         num_execution_units,
     )
 
-    data = data_config_builder(common, global_batch_size, sequence_length, **kwargs)
+    data = data_config_builder(common, global_batch_size, max_sequence_length, **kwargs)
 
-    model = model_config_builder(common)  # requires tokenizer knowledge
+    model = model_config_builder(data.tokenizer)
 
-    trainer = trainer_config_builder(common)  # requires data knowledge
-    for name, cb in common.callbacks.items():
+    trainer = trainer_config_builder(common)
+    callbacks_to_add = build_required_callbacks(common)
+    if include_default_evals:
+        default_evals = build_default_eval_callbacks(common, data)
+        callbacks_to_add.update(default_evals)
+    for name, cb in callbacks_to_add.items():
         if name not in trainer.callbacks:
             trainer.add_callback(name, cb)
 
+    train_module = train_module_config_builder(
+        common
+    )  # requires data knowledge -> effective_sequence_length
+
     config = ExperimentConfig(
-        run_name=run_name,
+        run_name=cli_context.run_name,
         launch=common.launch,
         model=model,
         dataset=data.dataset,
         data_loader=data.data_loader,
-        train_module=train_module_config_builder(
-            common
-        ),  # requires tokenizer knowledge for recommended evals
+        train_module=train_module,
         trainer=trainer,
     )
 
-    config = config.merge(overrides)
+    config = config.merge(cli_context.overrides)
 
     _set_beaker_execution_units(config)
 
@@ -432,10 +434,10 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/pluto-cirrascale --launch.nu
         sys.exit(1)
 
     script, cmd, run_name, cluster, *overrides = sys.argv
-
     cmd = SubCmd(cmd)
+    cli_context = CliContext(script, cmd, run_name, cluster, overrides)
 
-    config: ExperimentConfig = config_builder(script, cmd, run_name, cluster, overrides)
+    config: ExperimentConfig = config_builder(cli_context)
 
     cmd.prepare_environment(config)
     cmd.run(config)
