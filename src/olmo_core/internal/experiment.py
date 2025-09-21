@@ -18,6 +18,7 @@ from olmo_core.data import (
     VSLCurriculumConfig,
     VSLCurriculumType,
 )
+from olmo_core.data.numpy_dataset import NumpyFSLDatasetConfig
 from olmo_core.distributed.utils import get_local_rank
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
@@ -169,20 +170,13 @@ def build_common_components(
 
     tokenizer_config = TokenizerConfig.dolma2()
 
-    if intra_document_masking:
-        raise OLMoConfigurationError(
-            "Intra-document masking is only supported with fixed-sequence-length datasets"
-        )
-
-    dataset_config = NumpyVSLDatasetConfig.from_data_mix(
+    dataset_config = NumpyFSLDatasetConfig.from_data_mix(
         DataMix.OLMoE_mix_0824,
         tokenizer=tokenizer_config,
         mix_base_dir=root_dir,
-        min_sequence_length=min(256, sequence_length),
-        max_sequence_length=max(8192, sequence_length),
-        vsl_curriculum=VSLCurriculumConfig(
-            name=VSLCurriculumType.grow_p2, num_cycles=8, balanced=False
-        ),
+        sequence_length=sequence_length,
+        max_target_sequence_length=max(8192, sequence_length),
+        generate_doc_lengths=intra_document_masking,
         work_dir=get_work_dir(root_dir),
         instance_filter_config=None
         if not include_instance_filter
