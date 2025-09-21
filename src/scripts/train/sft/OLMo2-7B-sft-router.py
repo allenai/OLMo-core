@@ -292,8 +292,6 @@ class SFTRouterConfig(Config):
                 qk_norm=True,
                 rope_theta=500_000,
                 layer_norm_eps=1e-6,
-                name=TransformerType.moe,  # Important: specify MoE type
-                block_name=TransformerBlockType.moe_reordered_norm,
                 freeze_params=[],  # Don't freeze initially - we'll do it manually
                 use_flash=True,  # Enable flash attention for intra-document masking
             )
