@@ -29,7 +29,7 @@ from olmo_core.internal.common import (
 from olmo_core.io import list_directory
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
-from olmo_core.nn.transformer import TransformerConfig, TransformerBlockType
+from olmo_core.nn.transformer import TransformerConfig, TransformerBlockType, TransformerType
 from olmo_core.optim import LinearWithWarmup, SkipStepAdamWConfig
 from olmo_core.train import (
     Duration,
@@ -62,32 +62,6 @@ import shutil
 log = logging.getLogger(__name__)
 
 
-def olmoe_nx7b(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
-    """Create an OLMoE Nx7B model configuration."""
-    # Possibly more OOM due to imbalance with dropless=True
-    dropless = kwargs.pop("dropless", False)
-    return cls.llama_like_moe(
-        d_model=kwargs.pop("d_model", 4096),
-        n_layers=kwargs.pop("n_layers", 32),
-        n_heads=kwargs.pop("n_heads", 32),
-        num_experts=kwargs.pop("num_experts", 2),
-        top_k=kwargs.pop("top_k", 1),
-        expert_hidden_size=kwargs.pop("expert_hidden_size", 11008),
-        vocab_size=vocab_size,
-        dropless=dropless,
-        capacity_factor=None if dropless else 1.2,  # adjust as needed
-        lb_loss_weight=kwargs.pop("lb_loss_weight", 0.01),
-        z_loss_weight=kwargs.pop("z_loss_weight", 0.001),
-        reordered_norm=kwargs.pop("reordered_norm", True),
-        qk_norm=kwargs.pop("qk_norm", True),
-        rope_theta=kwargs.pop("rope_theta", 500_000),
-        layer_norm_eps=kwargs.pop("layer_norm_eps", 1e-6),
-        **kwargs,
-    )
-
-
-# Add the method to TransformerConfig
-TransformerConfig.olmoe_nx7b = classmethod(olmoe_nx7b)  # type: ignore
 
 
 DEFAULT_SEQUENCE_LENGTH = 16_384
@@ -301,14 +275,27 @@ class SFTRouterConfig(Config):
             model.block.attention.use_flash = True
             model.block.attention.use_head_qk_norm = True
         elif model_name == "olmoe-4x7b":
-            # MoE model configuration for router SFT
-            model = TransformerConfig.olmoe_nx7b(  # Use MoE configuration
+            # Build MoE configuration manually to match your training
+            model = TransformerConfig.llama_like_moe(
+                d_model=4096,
+                n_layers=32,
+                n_heads=32,
+                num_experts=4,  # 4 experts for 4x7B
+                top_k=4,  # Use all 4 experts
+                expert_hidden_size=11008,
                 vocab_size=tokenizer_config.padded_vocab_size(),
-                num_experts=4,  # Override default of 2
-                top_k=4,  # Override default of 1
-                lb_loss_weight=0.0,
-                z_loss_weight=0.001,
-                freeze_params=[],  # Don't freeze anything initially - we'll do it manually
+                dropless=False,
+                capacity_factor=1.2,
+                lb_loss_weight=0.0,  # No load balancing loss
+                z_loss_weight=0.001,  # Z-loss for stability
+                reordered_norm=True,
+                qk_norm=True,
+                rope_theta=500_000,
+                layer_norm_eps=1e-6,
+                name=TransformerType.moe,  # Important: specify MoE type
+                block_name=TransformerBlockType.moe_reordered_norm,
+                freeze_params=[],  # Don't freeze initially - we'll do it manually
+                use_flash=True,  # Enable flash attention for intra-document masking
             )
         else:
             raise OLMoConfigurationError(f"Must set a valid model_name: {model_name}")
@@ -375,7 +362,7 @@ class SFTRouterConfig(Config):
                 ),
                 ac_config=TransformerActivationCheckpointingConfig(
                     mode=TransformerActivationCheckpointingMode.selected_modules,
-                    modules=["blocks.*.feed_forward"],
+                    modules=["blocks.*.attention.*", "blocks.*.feed_forward_moe.experts.*"],  # ✅ For MoE
                 ),
                 scheduler=LinearWithWarmup(
                     warmup_fraction=0.03,
