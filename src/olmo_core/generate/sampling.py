@@ -64,7 +64,7 @@ def top_p_filtering(logits: torch.Tensor, top_p: float) -> torch.Tensor:
 def select_next_token(
     logits: torch.Tensor,
     do_sample: bool = True,
-    temperature: float = 0.0,
+    temperature: float | torch.Tensor = 0.0,
     top_k: int = -1,
     top_p: float = 1.0,
     dtype: torch.dtype = torch.float32,
@@ -87,7 +87,7 @@ def select_next_token(
 
     :returns: Sampled token indices of shape ``(...)``.
     """
-    if not do_sample or temperature == 0:
+    if not do_sample or (isinstance(temperature, float) and temperature == 0):
         return greedy_selection(logits)
 
     nan_mask = torch.isnan(logits)
