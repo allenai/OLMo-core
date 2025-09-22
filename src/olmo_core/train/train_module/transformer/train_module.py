@@ -364,7 +364,7 @@ class TransformerTrainModule(TrainModule):
             # anyways. They will count as tokens with a zero loss. This means we get an artificially
             # low loss for these batches. But it is really hard (and slow) to do this properly in a
             # distributed setup.
-            batch_num_tokens_for_loss += instance_mask.sum() * batch["labels"].shape[1]
+            batch_num_tokens_for_loss += (~instance_mask.sum()) * batch["labels"].shape[1]
 
         # Batch losses to record.
         ce_batch_loss = move_to_device(torch.tensor(0.0), self.device)
