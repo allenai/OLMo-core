@@ -2301,7 +2301,7 @@ class NumpyDatasetConfigBase(Config, ABC):
     """
     The tokenizer config.
     """
-    paths: Optional[List[PathOrStr]] = None
+    paths: Optional[List[str]] = None
     """
     The paths/URLs to the numpy token ID arrays.
     """
@@ -2370,14 +2370,13 @@ class NumpyDatasetConfigBase(Config, ABC):
 
         raise ValueError("vocab size too big!")
 
-    def _expand_globs(self, patterns: Sequence[PathOrStr]) -> List[str]:
+    def _expand_globs(self, patterns: Sequence[str]) -> List[str]:
         expanded: List[str] = []
         for pattern in patterns:
-            pattern_str = str(pattern)
-            log.info(f"Expanding '{pattern_str}'...")
-            matches = sorted(glob_directory(pattern_str))
+            log.info(f"Expanding '{pattern}'...")
+            matches = sorted(glob_directory(pattern))
             if not matches:
-                raise FileNotFoundError(pattern_str)
+                raise FileNotFoundError(pattern)
             for match in matches:
                 log.info(f" - '{match}'")
             expanded.extend(matches)
@@ -2388,7 +2387,7 @@ class NumpyDatasetConfigBase(Config, ABC):
         *,
         allow_mix: bool,
         label_mask_paths: Optional[Sequence[PathOrStr]] = None,
-    ) -> Tuple[List[PathOrStr], Optional[List[Dict[str, Any]]], Optional[List[PathOrStr]]]:
+    ) -> Tuple[List[str], Optional[List[Dict[str, Any]]], Optional[List[PathOrStr]]]:
         if self.paths is not None and self.mix is not None:
             raise OLMoConfigurationError("Only one of 'paths' or 'mix' can be set")
 
@@ -2396,15 +2395,15 @@ class NumpyDatasetConfigBase(Config, ABC):
         resolved_label_masks: Optional[List[PathOrStr]] = None
 
         if self.paths is not None:
-            candidate_paths: List[PathOrStr] = list(self.paths)
+            raw_paths = [str(path) for path in self.paths]
             if self.expand_glob:
-                expanded_paths = self._expand_globs(candidate_paths)
-                paths = [cast(PathOrStr, path) for path in expanded_paths]
+                paths = self._expand_globs(raw_paths)
                 if label_mask_paths is not None:
-                    expanded_masks = self._expand_globs(label_mask_paths)
+                    mask_patterns = [str(path) for path in label_mask_paths]
+                    expanded_masks = self._expand_globs(mask_patterns)
                     resolved_label_masks = [cast(PathOrStr, mask) for mask in expanded_masks]
             else:
-                paths = candidate_paths
+                paths = raw_paths
                 if label_mask_paths is not None:
                     resolved_label_masks = [cast(PathOrStr, path) for path in label_mask_paths]
         else:
@@ -2424,7 +2423,7 @@ class NumpyDatasetConfigBase(Config, ABC):
             if not isinstance(mix, DataMixBase):
                 mix = DataMix(mix)
             paths, labels = mix.build(self.mix_base_dir, self.tokenizer.identifier)
-            paths = [cast(PathOrStr, path) for path in paths]
+            paths = [str(path) for path in paths]
             if metadata is None:
                 metadata = [{"label": label} for label in labels]
             if label_mask_paths is not None:
