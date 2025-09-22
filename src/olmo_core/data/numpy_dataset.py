@@ -1019,6 +1019,7 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
             generate_doc_lengths=generate_doc_lengths,
             bos_token_id=bos_token_id,
             instance_filter_config=instance_filter_config,
+            label_mask_paths=label_mask_paths,
         )
 
         assert source_group_size >= 1

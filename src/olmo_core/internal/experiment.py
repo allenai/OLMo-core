@@ -13,14 +13,10 @@ from olmo_core.data import (
     NumpyDataLoaderConfig,
     NumpyDatasetConfigBase,
     NumpyPaddedFSLDatasetConfig,
-    NumpyVSLDatasetConfig,
     TokenizerConfig,
-    VSLCurriculumConfig,
-    VSLCurriculumType,
 )
 from olmo_core.data.numpy_dataset import NumpyFSLDatasetConfig
 from olmo_core.distributed.utils import get_local_rank
-from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.train import (
