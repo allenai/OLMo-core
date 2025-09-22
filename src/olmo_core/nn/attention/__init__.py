@@ -1,8 +1,9 @@
 import logging
 import math
+import warnings
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import List, Optional, Union
+from typing import List, Optional, Tuple, Union
 
 import torch
 import torch.distributed as dist
@@ -34,6 +35,7 @@ from .flash_attn_api import (
     dispatch_flash_attn_with_kvcache,
     dispatch_ring_flash_attn,
     dispatch_ring_flash_attn_qkvpacked,
+    has_flash_attn,
 )
 from .ring import (
     RingAttentionLlama3LoadBalancer,
@@ -44,6 +46,10 @@ from .ring import (
 
 __all__ = [
     "AttentionType",
+    "AttentionBackendName",
+    "AttentionBackend",
+    "TorchAttentionBackend",
+    "FlashAttentionBackend",
     "AttentionConfig",
     "AttentionBase",
     "Attention",
@@ -135,6 +141,66 @@ class AttentionType(StrEnum):
     """
 
 
+class AttentionBackendName(StrEnum):
+    """
+    An enumeration of the different attention backends.
+    """
+
+    torch = "torch"
+    """
+    PyTorch's built-in SDPA ➡️ :class:`TorchAttentionBackend`
+    """
+    flash = "flash"
+    """
+    Flash attention from the `flash-attn <https://github.com/Dao-AILab/flash-attention>`_ library.
+    To use this with context-parallelism, `ring-flash-attn <https://github.com/zhuzilin/ring-flash-attention>`_
+    is also required. ➡️ :class:`FlashAttentionBackend`
+    """
+
+    def build(
+        self,
+        *,
+        head_dim: int,
+        n_heads: int,
+        n_kv_heads: Optional[int] = None,
+        scale: Optional[float] = None,
+        dropout_p: float = 0.0,
+        window_size: Tuple[int, int] = (-1, -1),
+    ) -> "AttentionBackend":
+        if self == self.torch:
+            return TorchAttentionBackend(
+                head_dim=head_dim,
+                n_heads=n_heads,
+                n_kv_heads=n_kv_heads,
+                scale=scale,
+                dropout_p=dropout_p,
+                window_size=window_size,
+            )
+        elif self == self.flash:
+            return FlashAttentionBackend(
+                head_dim=head_dim,
+                n_heads=n_heads,
+                n_kv_heads=n_kv_heads,
+                scale=scale,
+                dropout_p=dropout_p,
+                window_size=window_size,
+            )
+        else:
+            raise NotImplementedError(self)
+
+    def is_supported(self) -> bool:
+        if self == AttentionBackendName.flash:
+            return has_flash_attn()
+        else:
+            return True
+
+    def supports_swa(self) -> bool:
+        if self in (AttentionBackendName.flash,):
+            return True
+        else:
+            return False
+
+
 @dataclass
 class AttentionConfig(Config):
     """
@@ -155,6 +221,7 @@ class AttentionConfig(Config):
     qk_norm: Optional[LayerNormConfig] = None
     dropout: Optional[float] = None
     use_flash: Optional[bool] = None
+    backend: Optional[AttentionBackendName] = None
     dtype: DType = DType.float32
     sliding_window: Optional[SlidingWindowAttentionConfig] = None
     use_head_qk_norm: Optional[bool] = None
@@ -259,6 +326,255 @@ class AttentionConfig(Config):
             ) from e
 
 
+class AttentionBackend(nn.Module):
+    """
+    Encapsulates a backend for the scaled dot-product attention (SDPA) operation.
+    """
+
+    def __init__(
+        self,
+        *,
+        head_dim: int,
+        n_heads: int,
+        n_kv_heads: Optional[int] = None,
+        scale: Optional[float] = None,
+        dropout_p: float = 0.0,
+        window_size: Tuple[int, int] = (-1, -1),
+    ):
+        super().__init__()
+        self.head_dim = head_dim
+        self.n_heads = n_heads
+        self.n_kv_heads = n_kv_heads or n_heads
+        self.scale = scale
+        self.dropout_p = dropout_p
+        self.window_size = window_size
+        self.cp_pg: Optional[dist.ProcessGroup] = None
+        self.cp_enabled = False
+        self.cp_load_balancer: Optional[RingAttentionLoadBalancerType] = None
+        self.head_stride: int = 1
+
+    @abstractmethod
+    def forward(
+        self,
+        qkv: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
+        cu_doc_lens: Optional[torch.Tensor] = None,
+        cu_doc_lens_q: Optional[torch.Tensor] = None,
+        cu_doc_lens_k: Optional[torch.Tensor] = None,
+        max_doc_len: Optional[int] = None,
+        max_doc_len_q: Optional[int] = None,
+        max_doc_len_k: Optional[int] = None,
+        local_k_slice: Optional[slice] = None,
+        kv_cache_manager: Optional[KVCacheManager] = None,
+    ) -> torch.Tensor:
+        """
+        Run the attention operation.
+        """
+        raise NotImplementedError
+
+    def apply_cp(
+        self,
+        cp_mesh: DeviceMesh,
+        load_balancer: RingAttentionLoadBalancerType,
+        head_stride: int = 1,
+    ):
+        """
+        Apply context parallelism, if supported by the backend.
+        """
+        self.cp_pg = cp_mesh.get_group()
+        self.cp_load_balancer = load_balancer
+        self.cp_enabled = True
+        self.cp_head_stride = head_stride
+
+
+class TorchAttentionBackend(AttentionBackend):
+    """
+    PyTorch's built-in scaled dot-product attention (SDPA) backend.
+    """
+
+    def apply_cp(
+        self,
+        cp_mesh: DeviceMesh,
+        load_balancer: RingAttentionLoadBalancerType,
+        head_stride: int = 1,
+    ):
+        del cp_mesh, load_balancer, head_stride
+        raise RuntimeError(f"'{self.__class__.__name__}' doesn't support context parallelism")
+
+    def forward(
+        self,
+        qkv: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
+        cu_doc_lens: Optional[torch.Tensor] = None,
+        cu_doc_lens_q: Optional[torch.Tensor] = None,
+        cu_doc_lens_k: Optional[torch.Tensor] = None,
+        max_doc_len: Optional[int] = None,
+        max_doc_len_q: Optional[int] = None,
+        max_doc_len_k: Optional[int] = None,
+        local_k_slice: Optional[slice] = None,
+        kv_cache_manager: Optional[KVCacheManager] = None,
+    ) -> torch.Tensor:
+        del local_k_slice
+
+        if isinstance(qkv, torch.Tensor):
+            raise RuntimeError(f"'{self.__class__.__name__}' doesn't support packed QKV")
+
+        q, k, v = qkv
+
+        if kv_cache_manager is not None:
+            raise RuntimeError(f"'{self.__class__.__name__}' doesn't support KV caching")
+
+        if self.window_size != (-1, -1):
+            raise RuntimeError(
+                f"'{self.__class__.__name__}' doesn't support sliding window attention"
+            )
+
+        if any(
+            opt is not None
+            for opt in (
+                cu_doc_lens,
+                cu_doc_lens_q,
+                cu_doc_lens_k,
+                max_doc_len,
+                max_doc_len_q,
+                max_doc_len_k,
+            )
+        ):
+            raise RuntimeError(
+                f"'{self.__class__.__name__}' doesn't support intra-document masking"
+            )
+
+        # NOTE: PyTorch's SDPA doesn't support GQA, so we have to do this.
+        n_rep = self.n_heads // self.n_kv_heads
+        # shape: (batch_size, seq_len, n_heads, head_dim)
+        k = repeat_kv(k, n_rep)
+        v = repeat_kv(v, n_rep)
+
+        # PyTorch's SDPA expects the head dimension to come before the sequence dimension.
+        # shape: (batch_size, n_heads, seq_len, head_dim),
+        #        (batch_size, n_kv_heads, seq_len, head_dim),
+        #        (batch_size, n_kv_heads, seq_len, head_dim)
+        q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
+
+        # shape: (batch_size, n_heads, seq_len, head_dim)
+        att = F.scaled_dot_product_attention(
+            q, k, v, dropout_p=self.dropout_p, is_causal=True, scale=self.scale
+        )
+
+        # shape: (batch_size, seq_len, n_heads, head_dim)
+        return att.transpose(1, 2).contiguous()
+
+
+class FlashAttentionBackend(AttentionBackend):
+    """
+    SDPA from the flash-attn package.
+    """
+
+    def forward(
+        self,
+        qkv: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
+        cu_doc_lens: Optional[torch.Tensor] = None,
+        cu_doc_lens_q: Optional[torch.Tensor] = None,
+        cu_doc_lens_k: Optional[torch.Tensor] = None,
+        max_doc_len: Optional[int] = None,
+        max_doc_len_q: Optional[int] = None,
+        max_doc_len_k: Optional[int] = None,
+        local_k_slice: Optional[slice] = None,
+        kv_cache_manager: Optional[KVCacheManager] = None,
+    ) -> torch.Tensor:
+        if isinstance(qkv, torch.Tensor):
+            if kv_cache_manager is not None:
+                raise RuntimeError(
+                    f"'{self.__class__.__name__}' doesn't support packed QKV with KV caching"
+                )
+
+            if self.window_size != (-1, -1):
+                raise RuntimeError(
+                    f"'{self.__class__.__name__}' doesn't support packed QKV with sliding window attention"
+                )
+
+            if self.cp_enabled:
+                assert self.cp_pg is not None and self.cp_load_balancer is not None
+                return dispatch_ring_flash_attn_qkvpacked(
+                    qkv,
+                    group=self.cp_pg,
+                    strategy=self.cp_load_balancer,
+                    cu_seqlens=cu_doc_lens,
+                    max_seqlen=max_doc_len,
+                    dropout_p=self.dropout_p,
+                    softmax_scale=self.scale,
+                    causal=True,
+                )
+            else:
+                return dispatch_flash_attn_qkvpacked(
+                    qkv,
+                    cu_seqlens=cu_doc_lens,
+                    max_seqlen=max_doc_len,
+                    dropout_p=self.dropout_p,
+                    softmax_scale=self.scale,
+                    causal=True,
+                )
+
+        q, k, v = qkv
+
+        if kv_cache_manager:
+            if self.cp_enabled:
+                raise RuntimeError(
+                    f"'{self.__class__.__name__}' doesn't support KV caching with context parallelism"
+                )
+
+            return dispatch_flash_attn_with_kvcache(
+                q,
+                k=k,
+                v=v,
+                softmax_scale=self.scale,
+                causal=True,
+                window_size=self.window_size,
+                k_cache=kv_cache_manager.k_cache,  # updated in-place
+                v_cache=kv_cache_manager.v_cache,  # updated in-place
+                cache_leftpad=kv_cache_manager.cache_leftpad,
+                cache_seqlens=kv_cache_manager.cache_seqlens.expand(
+                    kv_cache_manager.cache_leftpad.shape[0]
+                ).contiguous(),
+            )
+
+        if self.cp_enabled:
+            assert self.cp_pg is not None and self.cp_load_balancer is not None
+            return dispatch_ring_flash_attn(
+                q,
+                k,
+                v,
+                group=self.cp_pg,
+                strategy=self.cp_load_balancer,
+                cu_seqlens=cu_doc_lens,
+                cu_seqlens_q=cu_doc_lens_q,
+                cu_seqlens_k=cu_doc_lens_k,
+                max_seqlen=max_doc_len,
+                max_seqlen_q=max_doc_len_q,
+                max_seqlen_k=max_doc_len_k,
+                heads_k_stride=self.cp_head_stride,
+                local_k_slice=local_k_slice,
+                dropout_p=self.dropout_p,
+                causal=True,
+                softmax_scale=self.scale,
+                window_size=self.window_size,
+            )
+
+        return dispatch_flash_attn(
+            q,
+            k,
+            v,
+            cu_seqlens=cu_doc_lens,
+            cu_seqlens_q=cu_doc_lens_q,
+            cu_seqlens_k=cu_doc_lens_k,
+            max_seqlen=max_doc_len,
+            max_seqlen_q=max_doc_len_q,
+            max_seqlen_k=max_doc_len_k,
+            dropout_p=self.dropout_p,
+            softmax_scale=self.scale,
+            causal=True,
+            window_size=self.window_size,
+        )
+
+
 class AttentionBase(nn.Module):
     """
     Base class for attention modules.
@@ -291,8 +607,8 @@ class Attention(AttentionBase):
     and grouped-query (GQA) attention.
 
     Intra-document masking is also supported by passing in the
-    ``max_doc_len`` and ``cu_doc_lens`` parameters to :meth:`forward()`. Currently this requires
-    `flash-attn <https://github.com/Dao-AILab/flash-attention>`_ (``use_flash=True``).
+    ``max_doc_len`` and ``cu_doc_lens`` parameters to :meth:`forward()`. This requires
+    a backend that supports it, like the flash backend.
 
     .. seealso::
         :class:`FusedAttention` if you have flash-attn installed and you're not using MQA or GQA.
@@ -305,8 +621,8 @@ class Attention(AttentionBase):
     :param clip_qkv: Clip QKV to this value, if set.
     :param qk_norm: Configuration a layer norm for queries and keys.
     :param dropout: Dropout probability.
-    :param use_flash: Use flash attention.
-        This requires `flash-attn <https://github.com/Dao-AILab/flash-attention>`_ to be installed.
+    :param use_flash: Deprecated, use ``backend="flash"`` instead.
+    :param backend: The attention backend to use. If not set, it will be chosen automatically.
     :param dtype: The default data type to use for parameters.
     :param init_device: The device to initialize weights on.
     """
@@ -322,7 +638,9 @@ class Attention(AttentionBase):
         clip_qkv: Optional[float] = None,
         qk_norm: Optional[LayerNormConfig] = None,
         dropout: float = 0.0,
-        use_flash: bool = False,
+        softmax_scale: Optional[float] = None,
+        use_flash: Optional[bool] = None,
+        backend: Optional[AttentionBackendName] = None,
         window_size: Optional[int] = None,
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
@@ -333,7 +651,6 @@ class Attention(AttentionBase):
 
         self.n_heads = n_heads
         self.n_kv_heads = n_kv_heads or n_heads
-        self.n_rep = self.n_heads // self.n_kv_heads
         self.head_dim = d_model // n_heads
         self.w_q = nn.Linear(d_model, d_model, bias=bias, dtype=dtype, device=init_device)
         self.w_k = nn.Linear(
@@ -344,7 +661,6 @@ class Attention(AttentionBase):
         )
         self.w_out = nn.Linear(d_model, d_model, bias=bias, dtype=dtype, device=init_device)
         self.clip_qkv = clip_qkv
-        self.dropout_p = dropout
         self.use_head_qk_norm = use_head_qk_norm
 
         self.q_norm: Optional[LayerNorm] = None
@@ -359,18 +675,35 @@ class Attention(AttentionBase):
                     size=self.n_kv_heads * self.head_dim, init_device=init_device
                 )
 
-        # Translate window size so that we only look left, not right.
-        if window_size is not None:
-            if not use_flash:
+        if backend is not None:
+            backend = AttentionBackendName(backend)
+
+        if use_flash:
+            if backend is not None and backend != AttentionBackendName.flash:
                 raise OLMoConfigurationError(
-                    f"'window_size' is only supported with 'use_flash=True' (got {use_flash})"
+                    f"'use_flash' is only compatible with 'flash' backend (got '{backend}')"
                 )
+            elif backend is None:
+                warnings.warn(
+                    "'use_flash' is deprecated, use 'backend=flash' instead", DeprecationWarning
+                )
+                backend = AttentionBackendName.flash
+
+        # Translate window size so that we only look left, not right.
+        window_size_tuple: Tuple[int, int] = (-1, -1)
+        if window_size is not None:
             if window_size <= 0:
                 raise OLMoConfigurationError(f"'window_size' must be positive (got {window_size})")
+
+            if backend is None:
+                backend = AttentionBackendName.flash
+            elif not backend.supports_swa():
+                raise OLMoConfigurationError(
+                    f"'window_size' is not supported by the '{backend}' backend"
+                )
+
             # Flash attn window is [i - window_size[0], i + window_size[1]] inclusive
-            self.window_size = (window_size - 1, 0)
-        else:
-            self.window_size = (-1, -1)
+            window_size_tuple = (window_size - 1, 0)
 
         self.rope: Optional[Union[RotaryEmbedding, ComplexRotaryEmbedding]] = None
         if rope is not None:
@@ -382,17 +715,28 @@ class Attention(AttentionBase):
             assert isinstance(rope_class, (RotaryEmbedding, ComplexRotaryEmbedding))
             self.rope = rope_class
 
-        self.use_flash = use_flash
+        if backend is None:
+            backend = AttentionBackendName.torch
 
-        self._cp_pg: Optional[dist.ProcessGroup] = None
-        self._cp_enabled = False
-        self._cp_load_balancer: Optional[RingAttentionLoadBalancerType] = None
-
+        if not backend.is_supported():
+            raise OLMoConfigurationError(
+                f"Attention backend '{backend}' is not supported on this system."
+            )
+        else:
+            log.info(f"Using attention backend '{backend}'")
+        self.backend = backend.build(
+            head_dim=self.head_dim,
+            n_heads=n_heads,
+            n_kv_heads=self.n_kv_heads,
+            scale=softmax_scale,
+            dropout_p=dropout,
+            window_size=window_size_tuple,
+        )
         self.kv_cache_manager: Optional[KVCacheManager] = None
 
     @property
     def cp_enabled(self) -> bool:
-        return self._cp_enabled
+        return self.backend.cp_enabled
 
     def sdpa(
         self,
@@ -406,115 +750,24 @@ class Attention(AttentionBase):
         max_doc_len_q: Optional[int] = None,
         max_doc_len_k: Optional[int] = None,
         local_k_slice: Optional[slice] = None,
-        scale: Optional[float] = None,
         cache_leftpad: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        att: torch.Tensor
-
-        if self.kv_cache_manager:
-            if self.cp_enabled:
-                raise RuntimeError(
-                    f"'{self.__class__.__name__}' does not support KV caching with context parallelism"
-                )
-            if not self.use_flash:
-                raise RuntimeError(
-                    f"'{self.__class__.__name__}' requires flash (use_flash=True) for KV caching"
-                )
-
+        if self.kv_cache_manager is not None:
             self.kv_cache_manager.record_leftpad(cache_leftpad)
-            att = dispatch_flash_attn_with_kvcache(
-                q,
-                k=k,
-                v=v,
-                softmax_scale=scale,
-                causal=True,
-                window_size=self.window_size,
-                k_cache=self.kv_cache_manager.k_cache,  # updated in-place
-                v_cache=self.kv_cache_manager.v_cache,  # updated in-place
-                cache_leftpad=self.kv_cache_manager.cache_leftpad,
-                cache_seqlens=self.kv_cache_manager.cache_seqlens.expand(
-                    self.kv_cache_manager.cache_leftpad.shape[0]
-                ).contiguous(),
-            )
+        # shape: (batch_size, seq_len, n_heads, head_dim)
+        att = self.backend(
+            (q, k, v),
+            cu_doc_lens=cu_doc_lens,
+            cu_doc_lens_q=cu_doc_lens_q,
+            cu_doc_lens_k=cu_doc_lens_k,
+            max_doc_len=max_doc_len,
+            max_doc_len_q=max_doc_len_q,
+            max_doc_len_k=max_doc_len_k,
+            local_k_slice=local_k_slice,
+            kv_cache_manager=self.kv_cache_manager,
+        )
+        if self.kv_cache_manager is not None:
             self.kv_cache_manager.update_seqlen(q.shape[1])
-
-        elif self.cp_enabled:
-            assert self._cp_pg is not None and self._cp_load_balancer is not None
-            if not self.use_flash:
-                raise RuntimeError(
-                    f"'{self.__class__.__name__}' requires flash (use_flash=True) for context parallelism"
-                )
-            att = dispatch_ring_flash_attn(
-                q,
-                k,
-                v,
-                group=self._cp_pg,
-                strategy=self._cp_load_balancer,
-                cu_seqlens=cu_doc_lens,
-                cu_seqlens_q=cu_doc_lens_q,
-                cu_seqlens_k=cu_doc_lens_k,
-                max_seqlen=max_doc_len,
-                max_seqlen_q=max_doc_len_q,
-                max_seqlen_k=max_doc_len_k,
-                heads_k_stride=self._cp_head_stride,
-                local_k_slice=local_k_slice,
-                dropout_p=self.dropout_p,
-                causal=True,
-                softmax_scale=scale,
-                window_size=self.window_size,
-            )
-        elif self.use_flash:
-            att = dispatch_flash_attn(
-                q,
-                k,
-                v,
-                cu_seqlens=cu_doc_lens,
-                cu_seqlens_q=cu_doc_lens_q,
-                cu_seqlens_k=cu_doc_lens_k,
-                max_seqlen=max_doc_len,
-                max_seqlen_q=max_doc_len_q,
-                max_seqlen_k=max_doc_len_k,
-                dropout_p=self.dropout_p,
-                softmax_scale=scale,
-                causal=True,
-                window_size=self.window_size,
-            )
-        else:
-            # Fall back to PyTorch's SDPA...
-            if any(
-                opt is not None
-                for opt in (
-                    cu_doc_lens,
-                    cu_doc_lens_q,
-                    cu_doc_lens_k,
-                    max_doc_len,
-                    max_doc_len_q,
-                    max_doc_len_k,
-                )
-            ):
-                raise RuntimeError(
-                    f"{self.__class__.__name__} requires flash-attn (use_flash=True) for intra-document masking"
-                )
-
-            # NOTE: PyTorch's SDPA doesn't support GQA, so we have to do this.
-            # shape: (batch_size, n_heads, seq_len, head_dim)
-            k = repeat_kv(k, self.n_rep)
-            v = repeat_kv(v, self.n_rep)
-
-            # PyTorch's SDPA expects the head dimension to come before the sequence dimension.
-            # shape: (batch_size, n_heads, seq_len, head_dim),
-            #        (batch_size, n_kv_heads, seq_len, head_dim),
-            #        (batch_size, n_kv_heads, seq_len, head_dim)
-            q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
-
-            # shape: (batch_size, n_heads, seq_len, head_dim)
-            att = F.scaled_dot_product_attention(
-                q, k, v, dropout_p=self.dropout_p, is_causal=True, scale=scale
-            )
-
-            # shape: (batch_size, seq_len, n_heads, head_dim)
-            att = att.transpose(1, 2).contiguous()
-
         return att
 
     def forward(
@@ -677,15 +930,12 @@ class Attention(AttentionBase):
         Prepare the module for context-parallelism (ring attention).
 
         .. important::
-            This requires flash-attn and ring-flash-attn (``use_flash=True``).
+            This requires a backend that supports CP, such as "flash".
 
         :param cp_mesh: The context parallel device sub-mesh.
         :param load_balancer: The load balancer type.
         """
-        self._cp_pg = cp_mesh.get_group()
-        self._cp_load_balancer = load_balancer
-        self._cp_enabled = True
-        self._cp_head_stride = head_stride
+        self.backend.apply_cp(cp_mesh, load_balancer, head_stride=head_stride)
 
     def init_kv_cache_manager(self, batch_size: int, max_seq_len: int):
         """
@@ -718,7 +968,8 @@ class NormalizedAttention(Attention):
         n_kv_heads: Optional[int] = None,
         rope: Optional[RoPEConfig] = None,
         qk_norm: Optional[LayerNormConfig] = None,
-        use_flash: bool = False,
+        use_flash: Optional[bool] = None,
+        backend: Optional[AttentionBackendName] = None,
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
@@ -730,6 +981,8 @@ class NormalizedAttention(Attention):
             rope=rope,
             qk_norm=qk_norm,
             use_flash=use_flash,
+            backend=backend,
+            softmax_scale=math.sqrt(d_model // n_heads),
             bias=False,
             dtype=dtype,
             init_device=init_device,
@@ -748,7 +1001,6 @@ class NormalizedAttention(Attention):
             torch.empty(self.head_dim * self.n_kv_heads, dtype=dtype, device=init_device)
         )
 
-        self.sqrt_head_dim = math.sqrt(self.head_dim)
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -832,7 +1084,6 @@ class NormalizedAttention(Attention):
             max_doc_len_q=max_doc_len_q,
             max_doc_len_k=max_doc_len_k,
             local_k_slice=local_k_slice,
-            scale=self.sqrt_head_dim,
             cache_leftpad=cache_leftpad,
         )
 
@@ -877,7 +1128,7 @@ class FusedAttention(AttentionBase):
     parameters to :meth:`forward()`.
 
     .. warning::
-        This requires `flash-attn <https://github.com/Dao-AILab/flash-attention>`_ to be installed.
+        Currently this is only supported with the "flash" backend.
 
     .. warning::
         If using RoPE, this requires that you use the "fused" RoPE implementation
@@ -903,17 +1154,24 @@ class FusedAttention(AttentionBase):
         clip_qkv: Optional[float] = None,
         dropout: float = 0.0,
         dtype: torch.dtype = torch.float32,
+        backend: Optional[AttentionBackendName] = None,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
     ):
         super().__init__()
+
+        if backend is not None and backend != AttentionBackendName.flash:
+            raise OLMoConfigurationError(
+                f"{self.__class__.__name__} only supports the 'flash' backend (got '{backend}')"
+            )
+        elif backend is None:
+            backend = AttentionBackendName.flash
 
         self.n_heads = n_heads
         self.head_dim = d_model // n_heads
         self.w_qkv = nn.Linear(d_model, 3 * d_model, bias=bias, dtype=dtype, device=init_device)
         self.w_out = nn.Linear(d_model, d_model, bias=bias, dtype=dtype, device=init_device)
         self.clip_qkv = clip_qkv
-        self.dropout_p = dropout
         self.rope: Optional[FusedRotaryEmbedding] = None
         if rope is not None:
             if rope.name != "fused":
@@ -922,13 +1180,13 @@ class FusedAttention(AttentionBase):
             assert isinstance(rope_class, FusedRotaryEmbedding)
             self.rope = rope_class
 
-        self._cp_pg: Optional[dist.ProcessGroup] = None
-        self._cp_enabled = False
-        self._cp_load_balancer: Optional[RingAttentionLoadBalancerType] = None
+        self.backend = backend.build(
+            head_dim=self.head_dim, n_heads=self.n_heads, dropout_p=dropout
+        )
 
     @property
     def cp_enabled(self) -> bool:
-        return self._cp_enabled
+        return self.backend.cp_enabled
 
     def forward(
         self,
@@ -974,25 +1232,11 @@ class FusedAttention(AttentionBase):
                 )
             qkv = self.rope(qkv, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis)
 
-        if self.cp_enabled:
-            assert self._cp_pg is not None and self._cp_load_balancer is not None
-            att = dispatch_ring_flash_attn_qkvpacked(
-                qkv,
-                group=self._cp_pg,
-                strategy=self._cp_load_balancer,
-                cu_seqlens=cu_doc_lens,
-                max_seqlen=max_doc_len,
-                dropout_p=self.dropout_p,
-                causal=True,
-            )
-        else:
-            att = dispatch_flash_attn_qkvpacked(
-                qkv,
-                cu_seqlens=cu_doc_lens,
-                max_seqlen=max_doc_len,
-                dropout_p=self.dropout_p,
-                causal=True,
-            )
+        att = self.backend(
+            qkv,
+            cu_doc_lens=cu_doc_lens,
+            max_doc_len=max_doc_len,
+        )
 
         # shape: (batch_size, seq_len, d_model)
         att = att.view(B, T, -1)  # type: ignore
@@ -1018,10 +1262,7 @@ class FusedAttention(AttentionBase):
         load_balancer: RingAttentionLoadBalancerType,
         head_stride: int = 1,
     ):
-        self._cp_pg = cp_mesh.get_group()
-        self._cp_load_balancer = load_balancer
-        self._cp_enabled = True
-        self._cp_head_stride = head_stride
+        self.backend.apply_cp(cp_mesh, load_balancer, head_stride=head_stride)
 
 
 def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
