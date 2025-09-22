@@ -2290,12 +2290,17 @@ class VSLCurriculumConfig(Config):
         raise NotImplementedError(self.name)
 
 
-NumpyDatasetConfigT = TypeVar("NumpyDatasetConfigT", bound="NumpyDatasetConfigBase")
+NumpyDatasetConfigT = TypeVar("NumpyDatasetConfigT", bound="NumpyDatasetConfig")
 
 
 @dataclass(kw_only=True)
-class NumpyDatasetConfigBase(Config, ABC):
-    """Shared helpers for configuring :class:`NumpyDatasetBase` datasets."""
+class NumpyDatasetConfig(Config, ABC):
+    """
+    Base configuration class for numpy-based datasets.
+
+    This abstract base class provides common configuration options and utilities
+    for creating :class:`NumpyDatasetBase` datasets.
+    """
 
     tokenizer: TokenizerConfig
     """
@@ -2331,6 +2336,10 @@ class NumpyDatasetConfigBase(Config, ABC):
     :meth:`NumpyDatasetBase.__getitem__()`.
     """
     instance_filter_config: Optional[InstanceFilterConfig] = None
+    """
+    The instance filter config (aka the "ngram filter") that will be applied to the dataset. This
+    can be used to filter out instances with too many repeated token ngrams.
+    """
     source_permutation_seed: Optional[int] = None
     """
     Used to shuffle the source files before handing off to the dataset class.
