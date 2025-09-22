@@ -4,7 +4,7 @@ ARG CUDA_VERSION=12.8.1
 ARG CUDA_VERSION_PATH=cu128
 ARG PYTHON_VERSION=3.11
 ARG BASE_IMAGE=ubuntu:${UBUNTU_VERSION}
-ARG DEVEL_BASE_IMAGE=nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION}
+ARG DEVEL_BASE_IMAGE=nvidia/cuda:${CUDA_VERSION}-cudnn-devel-ubuntu${UBUNTU_VERSION}
 
 #########################################################################
 # Build image
@@ -60,6 +60,9 @@ RUN pip install --no-build-isolation --no-cache-dir "${GROUPED_GEMM_VERSION}"
 # Install flash-attn.
 ARG FLASH_ATTN_VERSION=2.8.2
 RUN pip install --no-build-isolation --no-cache-dir flash-attn==${FLASH_ATTN_VERSION}
+
+# Install transformer-engine.
+RUN pip install --no-build-isolation --no-cache-dir transformer_engine[pytorch]
 
 # Install ring-flash-attn.
 ARG RING_FLASH_ATTN_VERSION=0.1.8
