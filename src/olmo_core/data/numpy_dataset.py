@@ -2296,7 +2296,7 @@ NumpyDatasetConfigT = TypeVar("NumpyDatasetConfigT", bound="NumpyDatasetConfig")
 @dataclass(kw_only=True)
 class NumpyDatasetConfig(Config, ABC):
     """
-    Base configuration class for numpy-based datasets.
+    Abstract base configuration class for numpy-based datasets.
 
     This abstract base class provides common configuration options and utilities
     for creating :class:`NumpyDatasetBase` datasets.
