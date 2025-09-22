@@ -22,6 +22,7 @@ from olmo_core.data import (
     NumpyPaddedFSLDatasetConfig,
     TokenizerConfig,
 )
+from olmo_core.data.numpy_dataset import NumpyDatasetConfigBase
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_rank
 from olmo_core.nn.transformer import TransformerConfig
@@ -84,7 +85,7 @@ EVAL_DATA_PATHS = [f"{DATA_ROOT}/c4-validation.00000-00008.npy"]
 class ExperimentConfig(Config):
     model: TransformerConfig
     """Model config."""
-    dataset: NumpyFSLDatasetConfig
+    dataset: NumpyDatasetConfigBase
     """Dataset config."""
     data_loader: NumpyDataLoaderConfig
     """Data loader config."""

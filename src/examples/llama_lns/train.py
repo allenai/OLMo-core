@@ -23,6 +23,7 @@ from olmo_core.data import (
     NumpyPaddedFSLDatasetConfig,
     TokenizerConfig,
 )
+from olmo_core.data.numpy_dataset import NumpyDatasetConfigBase
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.nn.transformer import TransformerBlockType, TransformerConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
@@ -73,7 +74,7 @@ DATA_WORK_DIR = "/tmp/dataset-cache"
 @dataclass
 class ExperimentConfig(Config):
     model: TransformerConfig
-    dataset: NumpyFSLDatasetConfig
+    dataset: NumpyDatasetConfigBase
     data_loader: NumpyDataLoaderConfig
     train_module: TransformerTrainModuleConfig
     trainer: TrainerConfig

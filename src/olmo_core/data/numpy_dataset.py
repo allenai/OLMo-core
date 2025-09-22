@@ -2290,7 +2290,7 @@ class VSLCurriculumConfig(Config):
         raise NotImplementedError(self.name)
 
 
-ConfigT = TypeVar("ConfigT", bound="NumpyDatasetConfigBase")
+NumpyDatasetConfigT = TypeVar("NumpyDatasetConfigT", bound="NumpyDatasetConfigBase")
 
 
 @dataclass(kw_only=True)
@@ -2348,10 +2348,21 @@ class NumpyDatasetConfigBase(Config, ABC):
     @property
     @abstractmethod
     def effective_sequence_length(self) -> int:
+        """
+        Get the effective sequence length for this dataset configuration. This is the
+        maximum sequence length that this dataset will produce.
+
+        :returns: The effective sequence length.
+        """
         raise NotImplementedError
 
     @abstractmethod
     def build(self) -> NumpyDatasetBase:
+        """
+        Build and return a NumpyDatasetBase instance from this configuration.
+
+        :returns: The constructed dataset instance.
+        """
         raise NotImplementedError
 
     def get_dtype(self) -> NumpyUIntTypes:
@@ -2447,7 +2458,9 @@ class NumpyDatasetConfigBase(Config, ABC):
         return dataset
 
     @classmethod
-    def glob(cls: Type[ConfigT], *glob_paths: str, **kwargs: Any) -> ConfigT:
+    def glob(
+        cls: Type[NumpyDatasetConfigT], *glob_paths: str, **kwargs: Any
+    ) -> NumpyDatasetConfigT:
         """
         Initialize a dataset config with glob paths.
 
@@ -2462,12 +2475,12 @@ class NumpyDatasetConfigBase(Config, ABC):
 
     @classmethod
     def from_data_mix(
-        cls: Type[ConfigT],
+        cls: Type[NumpyDatasetConfigT],
         mix: Union[str, DataMixBase],
         *,
         tokenizer: TokenizerConfig,
         **kwargs: Any,
-    ) -> ConfigT:
+    ) -> NumpyDatasetConfigT:
         """
         Initialize a dataset config from an official data mix.
 

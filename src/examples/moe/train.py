@@ -13,6 +13,7 @@ from typing import List, cast
 
 from olmo_core.config import Config, DType
 from olmo_core.data import NumpyDataLoaderConfig, NumpyFSLDatasetConfig, TokenizerConfig
+from olmo_core.data.numpy_dataset import NumpyDatasetConfigBase
 from olmo_core.distributed.parallel import DataParallelType, PipelineScheduleType
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import (
@@ -64,7 +65,7 @@ DATA_PATHS = [
 @dataclass
 class ExperimentConfig(Config):
     model: TransformerConfig
-    dataset: NumpyFSLDatasetConfig
+    dataset: NumpyDatasetConfigBase
     data_loader: NumpyDataLoaderConfig
     train_module: TransformerTrainModuleConfig
     trainer: TrainerConfig

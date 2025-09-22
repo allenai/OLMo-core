@@ -10,6 +10,7 @@ from typing import List, Optional, cast
 
 from olmo_core.config import Config, DType
 from olmo_core.data import NumpyDataLoaderConfig, NumpyFSLDatasetConfig, TokenizerConfig
+from olmo_core.data.numpy_dataset import NumpyDatasetConfigBase
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.internal.common import (
     build_launch_config,
@@ -86,7 +87,7 @@ WANDB_PROJECT: Optional[str] = None  # set this to enable W&B logging
 class ExperimentConfig(Config):
     launch: BeakerLaunchConfig
     model: TransformerConfig
-    dataset: NumpyFSLDatasetConfig
+    dataset: NumpyDatasetConfigBase
     data_loader: NumpyDataLoaderConfig
     train_module: TransformerTrainModuleConfig
     trainer: TrainerConfig
