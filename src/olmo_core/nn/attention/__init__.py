@@ -43,6 +43,7 @@ from .ring import (
     RingAttentionLoadBalancerType,
     RingAttentionZigZagLoadBalancer,
 )
+from .te_attn_api import TEDotProductAttention, has_te_attn
 
 __all__ = [
     "AttentionType",
@@ -50,6 +51,7 @@ __all__ = [
     "AttentionBackend",
     "TorchAttentionBackend",
     "FlashAttentionBackend",
+    "TEAttentionBackend",
     "AttentionConfig",
     "AttentionBase",
     "Attention",
@@ -156,6 +158,10 @@ class AttentionBackendName(StrEnum):
     To use this with context-parallelism, `ring-flash-attn <https://github.com/zhuzilin/ring-flash-attention>`_
     is also required. ➡️ :class:`FlashAttentionBackend`
     """
+    te = "te"
+    """
+    Transformer Engine attention ➡️ :class:`TEAttentionBackend`.
+    """
 
     def build(
         self,
@@ -168,25 +174,22 @@ class AttentionBackendName(StrEnum):
         window_size: Tuple[int, int] = (-1, -1),
     ) -> "AttentionBackend":
         if self == self.torch:
-            return TorchAttentionBackend(
-                head_dim=head_dim,
-                n_heads=n_heads,
-                n_kv_heads=n_kv_heads,
-                scale=scale,
-                dropout_p=dropout_p,
-                window_size=window_size,
-            )
+            backend_cls = TorchAttentionBackend
         elif self == self.flash:
-            return FlashAttentionBackend(
-                head_dim=head_dim,
-                n_heads=n_heads,
-                n_kv_heads=n_kv_heads,
-                scale=scale,
-                dropout_p=dropout_p,
-                window_size=window_size,
-            )
+            backend_cls = FlashAttentionBackend
+        elif self == self.te:
+            backend_cls = TEAttentionBackend
         else:
             raise NotImplementedError(self)
+
+        return backend_cls(
+            head_dim=head_dim,
+            n_heads=n_heads,
+            n_kv_heads=n_kv_heads,
+            scale=scale,
+            dropout_p=dropout_p,
+            window_size=window_size,
+        )
 
     def is_supported(self) -> bool:
         if self == AttentionBackendName.flash:
@@ -572,6 +575,88 @@ class FlashAttentionBackend(AttentionBackend):
             softmax_scale=self.scale,
             causal=True,
             window_size=self.window_size,
+        )
+
+
+class TEAttentionBackend(AttentionBackend):
+    def __init__(
+        self,
+        *,
+        head_dim: int,
+        n_heads: int,
+        n_kv_heads: Optional[int] = None,
+        scale: Optional[float] = None,
+        dropout_p: float = 0.0,
+        window_size: Tuple[int, int] = (-1, -1),
+    ):
+        super().__init__(
+            head_dim=head_dim,
+            n_heads=n_heads,
+            n_kv_heads=n_kv_heads,
+            scale=scale,
+            dropout_p=dropout_p,
+            window_size=window_size,
+        )
+        if not has_te_attn():
+            raise RuntimeError("Transformer Engine attention is not available")
+        assert TEDotProductAttention is not None
+        self.te_attn = TEDotProductAttention(
+            self.n_heads,
+            self.head_dim,
+            num_gqa_groups=self.n_kv_heads,
+            attention_dropout=self.dropout_p,
+            attn_mask_type="causal",
+            window_size=(self.window_size[0], 0),  # be explicit about causal mask
+            qkv_format="bshd",
+            softmax_scale=self.scale,
+        )
+
+    def forward(
+        self,
+        qkv: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
+        cu_doc_lens: Optional[torch.Tensor] = None,
+        cu_doc_lens_q: Optional[torch.Tensor] = None,
+        cu_doc_lens_k: Optional[torch.Tensor] = None,
+        max_doc_len: Optional[int] = None,
+        max_doc_len_q: Optional[int] = None,
+        max_doc_len_k: Optional[int] = None,
+        local_k_slice: Optional[slice] = None,
+        kv_cache_manager: Optional[KVCacheManager] = None,
+    ) -> torch.Tensor:
+        del local_k_slice
+
+        if kv_cache_manager is not None:
+            raise RuntimeError(f"'{self.__class__.__name__}' doesn't support KV caching")
+
+        if isinstance(qkv, torch.Tensor):
+            raise RuntimeError(f"'{self.__class__.__name__}' doesn't support packed QKV")
+
+        q, k, v = qkv
+        return self.te_attn(
+            q,
+            k,
+            v,
+            cu_seqlens_q=cu_doc_lens if cu_doc_lens is not None else cu_doc_lens_q,
+            cu_seqlens_kv=cu_doc_lens if cu_doc_lens is not None else cu_doc_lens_k,
+            max_seqlen_q=max_doc_len if max_doc_len is not None else max_doc_len_q,
+            max_seqlen_kv=max_doc_len if max_doc_len is not None else max_doc_len_k,
+        )
+
+    def apply_cp(
+        self,
+        cp_mesh: DeviceMesh,
+        load_balancer: RingAttentionLoadBalancerType,
+        head_stride: int = 1,
+    ):
+        if load_balancer != RingAttentionLoadBalancerType.zig_zag:
+            raise RuntimeError(f"'{self.__class__.__name__}' only supports zig-zag load balancing")
+        super().apply_cp(cp_mesh, load_balancer, head_stride=head_stride)
+        self.te_attn.set_context_parallel_group(
+            cp_group=cp_mesh.get_group(),
+            cp_global_ranks=dist.get_process_group_ranks(cp_mesh.get_group()),
+            cp_stream=torch.cuda.default_stream(),
+            #  cp_stream=get_or_init_stream("cp"),  # this doesn't seem to help
+            cp_comm_type="p2p",
         )
 
 

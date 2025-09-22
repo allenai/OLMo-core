@@ -28,6 +28,7 @@ from olmo_core.testing import (
     DEVICES,
     FLASH_MARKS,
     GPU_MARKS,
+    TE_MARKS,
     requires_flash_attn,
     requires_gpu,
     requires_multi_gpu,
@@ -54,8 +55,12 @@ BF16_ATOL = 5e-3
     [pytest.param(None, id="MHA"), pytest.param(1, id="MQA"), pytest.param(2, id="GQA")],
 )
 @pytest.mark.parametrize(
-    "use_flash",
-    [pytest.param(True, id="flash", marks=FLASH_MARKS), pytest.param(False, id="torch-SDPA")],
+    "backend",
+    [
+        pytest.param("flash", id="flash-attn", marks=FLASH_MARKS),
+        pytest.param("torch", id="torch-SDPA"),
+        pytest.param("te", id="te-attn", marks=TE_MARKS),
+    ],
 )
 @pytest.mark.parametrize(
     "kwargs",
@@ -72,11 +77,13 @@ def test_attention(
     dtype: torch.dtype,
     device: torch.device,
     n_kv_heads: Optional[int],
-    use_flash: bool,
+    backend: str,
     kwargs: Dict[str, Any],
 ):
-    if use_flash and dtype == torch.float32:
-        pytest.skip("flash requires a low precision dtype")
+    if backend == "flash" and dtype == torch.float32:
+        pytest.skip("flash-attn requires a low precision dtype")
+    if backend in ("flash", "te") and device.type == "cpu":
+        pytest.skip(f"'{backend}' backend requires GPU")
     if dtype == torch.bfloat16 and device.type == "cpu":
         pytest.skip("bf16 requires GPU")
     if attention_cls is NormalizedAttention:
@@ -84,9 +91,9 @@ def test_attention(
             pytest.skip("clip_qkv is not supported for NormalizedAttention")
         if "use_head_qk_norm" in kwargs:
             pytest.skip("use_head_qk_norm is not supported for NormalizedAttention")
-        if use_flash:
+        if backend in ("flash", "te"):
             pytest.xfail(
-                "NormalizedAttention is broken with flash because it creates activation tensors in fp32"
+                f"NormalizedAttention is broken with '{backend}' backend because it creates activation tensors in fp32"
             )
 
     seed_all(0)
@@ -98,7 +105,7 @@ def test_attention(
         d_model=d_model,
         n_heads=4,
         n_kv_heads=n_kv_heads,
-        use_flash=use_flash,
+        backend=backend,
         init_device=device.type,
         **kwargs,
     )
