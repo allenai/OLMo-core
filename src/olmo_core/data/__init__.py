@@ -26,7 +26,7 @@ from .mixes import DataMix, DataMixBase
 from .numpy_dataset import (
     InstanceFilterConfig,
     NumpyDatasetBase,
-    NumpyDatasetConfigBase,
+    NumpyDatasetConfig,
     NumpyFSLDataset,
     NumpyFSLDatasetBase,
     NumpyFSLDatasetConfig,
@@ -60,7 +60,7 @@ __all__ = [
     "VSLGrowthCurriculum",
     "VSLGrowP2Curriculum",
     "VSLGrowLinearCurriculum",
-    "NumpyDatasetConfigBase",
+    "NumpyDatasetConfig",
     "NumpyFSLDatasetConfig",
     "NumpyPaddedFSLDatasetConfig",
     "NumpyPackedFSLDatasetConfig",

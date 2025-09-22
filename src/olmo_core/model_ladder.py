@@ -12,7 +12,7 @@ from .config import Config, StrEnum
 from .data import (
     DataMix,
     NumpyDataLoaderConfig,
-    NumpyDatasetConfigBase,
+    NumpyDatasetConfig,
     NumpyFSLDatasetConfig,
     NumpyPaddedFSLDatasetConfig,
     TokenizerConfig,
@@ -232,7 +232,7 @@ class ModelLadder(Config, metaclass=ABCMeta):
         """
         raise NotImplementedError
 
-    def get_dataset_config(self) -> NumpyDatasetConfigBase:
+    def get_dataset_config(self) -> NumpyDatasetConfig:
         """
         Get the train dataset config.
 

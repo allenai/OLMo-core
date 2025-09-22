@@ -72,7 +72,7 @@ __all__ = [
     "VSLGrowP2Curriculum",
     "VSLGrowLinearCurriculum",
     "NumpyVSLDataset",
-    "NumpyDatasetConfigBase",
+    "NumpyDatasetConfig",
     "NumpyFSLDatasetConfig",
     "NumpyPaddedFSLDatasetConfig",
     "NumpyPackedFSLDatasetConfig",
@@ -2506,7 +2506,7 @@ class NumpyDatasetConfig(Config, ABC):
 
 
 @dataclass
-class NumpyFSLDatasetConfig(NumpyDatasetConfigBase):
+class NumpyFSLDatasetConfig(NumpyDatasetConfig):
     sequence_length: int
     """
     The length of a single instance. Generally this should correspond to your model's maximum input length.
@@ -2598,7 +2598,7 @@ class NumpyFSLDatasetConfig(NumpyDatasetConfigBase):
 
 
 @dataclass(kw_only=True)
-class NumpyPaddedFSLDatasetConfig(NumpyDatasetConfigBase):
+class NumpyPaddedFSLDatasetConfig(NumpyDatasetConfig):
     sequence_length: int
     """
     The length of a single instance. Generally this should correspond to your model's maximum input length.
@@ -2638,7 +2638,7 @@ class NumpyPaddedFSLDatasetConfig(NumpyDatasetConfigBase):
 
 
 @dataclass(kw_only=True)
-class NumpyPackedFSLDatasetConfig(NumpyDatasetConfigBase):
+class NumpyPackedFSLDatasetConfig(NumpyDatasetConfig):
     sequence_length: int
     """
     The length of a single instance. Generally this should correspond to your model's maximum input length.
@@ -2698,7 +2698,7 @@ class NumpyPackedFSLDatasetConfig(NumpyDatasetConfigBase):
 
 
 @dataclass(kw_only=True)
-class NumpyInterleavedFSLDatasetConfig(NumpyDatasetConfigBase):
+class NumpyInterleavedFSLDatasetConfig(NumpyDatasetConfig):
     sequence_length: int
     """
     The length of a single instance. Generally this should correspond to your model's maximum input length.
@@ -2766,7 +2766,7 @@ class NumpyInterleavedFSLDatasetConfig(NumpyDatasetConfigBase):
 
 
 @dataclass(kw_only=True)
-class NumpyVSLDatasetConfig(NumpyDatasetConfigBase):
+class NumpyVSLDatasetConfig(NumpyDatasetConfig):
     max_sequence_length: int
     """
     The maximum sequence length. Generally this should correspond to your model's maximum input length.

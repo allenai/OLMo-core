@@ -6,7 +6,7 @@ from typing import Callable, List, cast
 from rich import print
 
 from olmo_core.config import Config, StrEnum
-from olmo_core.data import NumpyDataLoaderConfig, NumpyDatasetConfigBase
+from olmo_core.data import NumpyDataLoaderConfig, NumpyDatasetConfig
 from olmo_core.distributed.utils import get_local_rank
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.model_ladder import ModelLadder, ModelSize, RunDuration
@@ -30,7 +30,7 @@ class LadderRunConfig(Config):
     launch: BeakerLaunchConfig
     ladder: ModelLadder
     model: TransformerConfig
-    dataset: NumpyDatasetConfigBase
+    dataset: NumpyDatasetConfig
     data_loader: NumpyDataLoaderConfig
     train_module: TransformerTrainModuleConfig
     trainer: TrainerConfig
@@ -145,7 +145,7 @@ def build_config(
 
 def main(ladder_builder: Callable[[str], ModelLadder]):
     usage = f"""
-[yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]{'|'.join(SubCmd)}[/] [i b]SIZE RUN_DURATION CLUSTER[/] [i][OVERRIDES...][/]
+[yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]{"|".join(SubCmd)}[/] [i b]SIZE RUN_DURATION CLUSTER[/] [i][OVERRIDES...][/]
 
 [b]Subcommands[/]
 [b magenta]launch:[/]       Launch the script on Beaker with the [b magenta]train[/] subcommand.

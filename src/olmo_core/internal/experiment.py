@@ -11,7 +11,7 @@ from olmo_core.data import (
     DataMix,
     InstanceFilterConfig,
     NumpyDataLoaderConfig,
-    NumpyDatasetConfigBase,
+    NumpyDatasetConfig,
     NumpyPaddedFSLDatasetConfig,
     TokenizerConfig,
 )
@@ -49,7 +49,7 @@ class CommonComponents(Config):
     save_folder: str
     launch: Optional[BeakerLaunchConfig]
     tokenizer: TokenizerConfig
-    dataset: NumpyDatasetConfigBase
+    dataset: NumpyDatasetConfig
     data_loader: NumpyDataLoaderConfig
     callbacks: Dict[str, Callback]
 
@@ -59,7 +59,7 @@ class ExperimentConfig(Config):
     run_name: str
     launch: Optional[BeakerLaunchConfig]
     model: TransformerConfig
-    dataset: NumpyDatasetConfigBase
+    dataset: NumpyDatasetConfig
     data_loader: NumpyDataLoaderConfig
     train_module: TransformerTrainModuleConfig
     trainer: TrainerConfig
