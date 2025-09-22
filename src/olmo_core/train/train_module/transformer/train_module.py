@@ -352,14 +352,21 @@ class TransformerTrainModule(TrainModule):
 
         # Calculate and record how many tokens are going to be used in the loss.
         batch_num_tokens = batch["labels"].numel()
-        batch_num_tokens_for_loss = move_to_device(
-            (batch["labels"] != self.label_ignore_index).sum(), self.device
-        )
+        batch_num_tokens_for_loss = (batch["labels"] != self.label_ignore_index).sum()
         self.record_metric(
             "train/masked labels (%)",
             (batch_num_tokens - batch_num_tokens_for_loss) / batch_num_tokens,
             ReduceType.mean,
         )
+
+        # Check for edge case where there are no labels to predict.
+        # 'batch_num_tokens_for_loss' should still be on CPU here so this is okay.
+        if batch_num_tokens_for_loss.item() == 0:
+            log.warning("Batch has no labels to predict after masking!")
+            # Add some value to avoid division by zero later.
+            batch_num_tokens_for_loss = batch_num_tokens_for_loss + 1e-7
+
+        batch_num_tokens_for_loss = move_to_device(batch_num_tokens_for_loss, self.device)
 
         # Batch losses to record.
         ce_batch_loss = move_to_device(torch.tensor(0.0), self.device)
