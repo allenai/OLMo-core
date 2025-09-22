@@ -31,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Refactored eval task groups into `task_groups.py`
 - The `use_flash` argument to the `Attention` classes is deprecated. Use `backend="flash"` instead.
 - Refactored `NumpyDatasetConfig` by splitting it into a separate config per underlying dataset class.
+- The `model_id` argument to `convert_state_from_hf` is deprecated. Conversion information is deduced from the model type.
+- Refactored the example conversion scripts to/from HF, including decreasing false failures in validation.
 
 ### Added
 
@@ -41,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added [Beaker images with torch 2.8](https://beaker.allen.ai/orgs/ai2/workspaces/OLMo-core/images?searchQuery=tch280). There is `olmo-core-tch280cu128-2025-09-18` and `olmo-core-tch280cu129-2025-09-18` for CUDA 12.8 and 12.9, respectively.
 - Added TransformerEngine to Docker images and a TransformerEngine attention backend.
 - Added support for sliding window attention to the Torch attention backend. Performance is not optimized, so other backends should be preferred.
+- Added support for converting FlexOlmo models from OLMo Core to HF format.
 
 ## [v2.2.0](https://github.com/allenai/OLMo-core/releases/tag/v2.2.0) - 2025-08-26
 
