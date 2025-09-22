@@ -364,6 +364,7 @@ class TransformerTrainModule(TrainModule):
         if batch_num_tokens_for_loss.item() == 0:
             log.warning("Batch has no labels to predict after masking!")
             # Add some value to avoid division by zero later.
+            # It really doesn't matter what we add since the loss will be 0 either way.
             batch_num_tokens_for_loss = batch_num_tokens_for_loss + 1e-7
 
         batch_num_tokens_for_loss = move_to_device(batch_num_tokens_for_loss, self.device)
