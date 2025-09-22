@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `BeakerLaunchConfig.launch()` will now send Slack notifications by default when `follow=True` if the env var `SLACK_WEBHOOK_URL` is set.
 - `src/examples/llama/` has been renamed to `src/examples/llm/`.
 - Refactored eval task groups into `task_groups.py`
+- The `use_flash` argument to the `Attention` classes is deprecated. Use `backend="flash"` instead.
 
 ### Added
 
@@ -36,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `CONTRIBUTING.md` guidelines.
 - Added a lightweight, gantry-like Beaker launch CLI: `python -m olmo_core.launch.beaker`.
 - Added [Beaker images with torch 2.8](https://beaker.allen.ai/orgs/ai2/workspaces/OLMo-core/images?searchQuery=tch280). There is `olmo-core-tch280cu128-2025-09-18` and `olmo-core-tch280cu129-2025-09-18` for CUDA 12.8 and 12.9, respectively.
+- Added TransformerEngine to Docker images and a TransformerEngine attention backend.
 
 ## [v2.2.0](https://github.com/allenai/OLMo-core/releases/tag/v2.2.0) - 2025-08-26
 
