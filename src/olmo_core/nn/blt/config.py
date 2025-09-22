@@ -39,6 +39,7 @@ class BLTConfig(Config):
     boundary_predictor_backprop_through_encoder: bool = True
     teacher_force_boundaries: bool = True
     boundary_threshold: str = "sample:0" # sample:<temperature> or topk:<value>
+    inference_sampling_strategies: str | None = None
     xlstm_igate_bias_init: float = -10.0
 
 
