@@ -65,6 +65,7 @@ class TransformerGenerationModule(GenerationModule):
         state_dict_load_opts: Optional[dist_cp_sd.StateDictOptions] = None,
         state_dict_save_opts: Optional[dist_cp_sd.StateDictOptions] = None,
         load_key_mapping: Optional[Dict[str, str]] = None,
+        **kwargs,
     ):
         super().__init__()
 
@@ -591,6 +592,7 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         state_dict_load_opts: Optional[dist_cp_sd.StateDictOptions] = None,
         state_dict_save_opts: Optional[dist_cp_sd.StateDictOptions] = None,
         load_key_mapping: Optional[Dict[str, str]] = None,
+        **kwargs,
     ):
         super().__init__(
             model=model,
@@ -604,7 +606,8 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
             load_key_mapping=load_key_mapping,
         )
         self.tokenizer = tokenizer
-        self.blt_config = blt_config
+        filtered_kwargs = {k: v for k, v in kwargs.items() if hasattr(blt_config, k)}
+        self.blt_config = blt_config.replace(**filtered_kwargs)
 
     def prepare_inference_cache(self, batch_size: int, max_seq_len: int):
         blocks = [
@@ -1255,7 +1258,6 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
 
         log_or_print(log, f"{transformer_config}")
         log_or_print(log, f"{generation_config}")
-        log_or_print(log, f"{blt_config}")
         model = transformer_config.build()
 
         # DEBUG flash attention needs bf16
@@ -1269,6 +1271,9 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
             generation_config,
             **kwargs
         )
+
+        # log later since **kwargs might overwrite
+        log_or_print(log, f"{generation_module.blt_config}")
 
         # Load checkpoint
         generation_module.load_checkpoint(
