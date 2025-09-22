@@ -42,13 +42,9 @@ HF_TO_OLMO_CORE_WEIGHT_MAPPINGS: Dict[str, str] = {
     f"model.layers.{LAYER}.self_attn.q_norm.weight": f"blocks.{LAYER}.attention.q_norm.weight",
     f"model.layers.{LAYER}.self_attn.k_norm.weight": f"blocks.{LAYER}.attention.k_norm.weight",
     # MoEMLP.
-    f"model.layers.{LAYER}.mlp.gate.weight": f"blocks.{LAYER}.feed_forward_moe.router.weight",
-    f"model.layers.{LAYER}.mlp.experts.{EXPERT}.gate_proj.weight": f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w1",
-    f"model.layers.{LAYER}.mlp.experts.{EXPERT}.down_proj.weight": f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w2",
-    f"model.layers.{LAYER}.mlp.experts.{EXPERT}.up_proj.weight": f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w3",
-    f"model.layers.{LAYER}.mlp.shared_mlp.gate_proj.weight": f"blocks.{LAYER}.feed_forward_moe.shared_mlp.w1.weight",
-    f"model.layers.{LAYER}.mlp.shared_mlp.down_proj.weight": f"blocks.{LAYER}.feed_forward_moe.shared_mlp.w2.weight",
-    f"model.layers.{LAYER}.mlp.shared_mlp.up_proj.weight": f"blocks.{LAYER}.feed_forward_moe.shared_mlp.w3.weight",
+    f"model.layers.{LAYER}.block_sparse_moe.shared_mlp.gate_proj.weight": f"blocks.{LAYER}.feed_forward_moe.shared_mlp.w1.weight",
+    f"model.layers.{LAYER}.block_sparse_moe.shared_mlp.down_proj.weight": f"blocks.{LAYER}.feed_forward_moe.shared_mlp.w2.weight",
+    f"model.layers.{LAYER}.block_sparse_moe.shared_mlp.up_proj.weight": f"blocks.{LAYER}.feed_forward_moe.shared_mlp.w3.weight",
 }
 
 
@@ -126,32 +122,61 @@ MODEL_SPECIFIC_HF_TO_OLMO_CORE_MODULE_MAPPINGS: Dict[str, Dict[str, str]] = {
 #: For simple one-to-one mappings from HF to OLMo Core, see
 #: :data:`HF_TO_OLMO_CORE_MAPPINGS`.
 HF_TO_OLMO_CORE_TEMPLATE_MAPPINGS: Dict[str, StateMappingTemplate] = {
-    f"model.layers.{LAYER}.mlp.block_sparse_moe.experts.{EXPERT}.gate_proj.weight": StateMappingTemplate(
-        f"model.layers.{LAYER}.mlp.block_sparse_moe.experts.{EXPERT}.gate_proj.weight",
+    f"model.layers.{LAYER}.block_sparse_moe.experts.{EXPERT}.gate_proj.weight": StateMappingTemplate(
+        f"model.layers.{LAYER}.block_sparse_moe.experts.{EXPERT}.gate_proj.weight",
         f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w1",
         source_key_per_placeholder=TemplatePlaceholder.EXPERT,
         source_concat_dim=1,
         dims_permutation=(1, 0),
         dest_chunk_dim=0,
     ),
-    f"model.layers.{LAYER}.mlp.block_sparse_moe.experts.{EXPERT}.down_proj.weight": StateMappingTemplate(
-        f"model.layers.{LAYER}.mlp.block_sparse_moe.experts.{EXPERT}.down_proj.weight",
+    f"model.layers.{LAYER}.block_sparse_moe.experts.{EXPERT}.down_proj.weight": StateMappingTemplate(
+        f"model.layers.{LAYER}.block_sparse_moe.experts.{EXPERT}.down_proj.weight",
         f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w2",
         source_key_per_placeholder=TemplatePlaceholder.EXPERT,
         source_concat_dim=1,
         dims_permutation=(1, 0),
         dest_chunk_dim=0,
     ),
-    f"model.layers.{LAYER}.mlp.block_sparse_moe.experts.{EXPERT}.up_proj.weight": StateMappingTemplate(
-        f"model.layers.{LAYER}.mlp.block_sparse_moe.experts.{EXPERT}.up_proj.weight",
+    f"model.layers.{LAYER}.block_sparse_moe.experts.{EXPERT}.up_proj.weight": StateMappingTemplate(
+        f"model.layers.{LAYER}.block_sparse_moe.experts.{EXPERT}.up_proj.weight",
         f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w3",
         source_key_per_placeholder=TemplatePlaceholder.EXPERT,
         source_concat_dim=1,
         dims_permutation=(1, 0),
         dest_chunk_dim=0,
     ),
-    f"model.layers.{LAYER}.mlp.block_sparse_moe.gate.weight": StateMappingTemplate(
-        f"model.layers.{LAYER}.mlp.block_sparse_moe.gate.weight",
+    f"model.layers.{LAYER}.block_sparse_moe.gate.weight": StateMappingTemplate(
+        f"model.layers.{LAYER}.block_sparse_moe.gate.weight",
+        f"blocks.{LAYER}.feed_forward_moe.router.weight",
+        flatten_dims=(0, 1),
+    ),
+    f"model.layers.{LAYER}.mlp.experts.{EXPERT}.gate_proj.weight": StateMappingTemplate(
+        f"model.layers.{LAYER}.mlp.experts.{EXPERT}.gate_proj.weight",
+        f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w1",
+        source_key_per_placeholder=TemplatePlaceholder.EXPERT,
+        source_concat_dim=1,
+        dims_permutation=(1, 0),
+        dest_chunk_dim=0,
+    ),
+    f"model.layers.{LAYER}.mlp.experts.{EXPERT}.down_proj.weight": StateMappingTemplate(
+        f"model.layers.{LAYER}.mlp.experts.{EXPERT}.down_proj.weight",
+        f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w2",
+        source_key_per_placeholder=TemplatePlaceholder.EXPERT,
+        source_concat_dim=1,
+        dims_permutation=(1, 0),
+        dest_chunk_dim=0,
+    ),
+    f"model.layers.{LAYER}.mlp.experts.{EXPERT}.up_proj.weight": StateMappingTemplate(
+        f"model.layers.{LAYER}.mlp.experts.{EXPERT}.up_proj.weight",
+        f"blocks.{LAYER}.feed_forward_moe.experts.mlp.w3",
+        source_key_per_placeholder=TemplatePlaceholder.EXPERT,
+        source_concat_dim=1,
+        dims_permutation=(1, 0),
+        dest_chunk_dim=0,
+    ),
+    f"model.layers.{LAYER}.mlp.gate.weight": StateMappingTemplate(
+        f"model.layers.{LAYER}.mlp.gate.weight",
         f"blocks.{LAYER}.feed_forward_moe.router.weight",
         flatten_dims=(0, 1),
     ),
