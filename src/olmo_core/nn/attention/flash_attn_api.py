@@ -74,6 +74,8 @@ def dispatch_flash_attn(
             max_seqlen_k = max_seqlen
 
     varlen = all(x is not None for x in (cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k))
+    if dropout_p > 0:
+        raise RuntimeError("dropout_p is not supported for flash-attn 3")
 
     if varlen:
         return flash_attn.flash_attn_varlen_func(
@@ -84,7 +86,6 @@ def dispatch_flash_attn(
             cu_seqlens_k,
             max_seqlen_q,
             max_seqlen_k,
-            dropout_p=dropout_p,
             softmax_scale=softmax_scale,
             causal=causal,
             window_size=window_size,
@@ -94,7 +95,6 @@ def dispatch_flash_attn(
             q,
             k,
             v,
-            dropout_p=dropout_p,
             softmax_scale=softmax_scale,
             causal=causal,
             window_size=window_size,
