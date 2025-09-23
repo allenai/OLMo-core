@@ -42,11 +42,17 @@ BF16_RTOL = 1e-5
 BF16_ATOL = 5e-3
 
 
-@pytest.mark.parametrize("backend_name", [AttentionBackendName.flash, AttentionBackendName.te])
-@pytest.mark.parametrize("head_dim", [128])
-@pytest.mark.parametrize("n_heads", [8])
+@pytest.mark.parametrize(
+    "window_size",
+    [
+        pytest.param((-1, -1), id="full"),
+        pytest.param((8, 8), id="SWA"),
+    ],
+)
 @pytest.mark.parametrize("n_kv_heads", [None])
-@pytest.mark.parametrize("window_size", [(-1, -1)])
+@pytest.mark.parametrize("n_heads", [8])
+@pytest.mark.parametrize("head_dim", [128])
+@pytest.mark.parametrize("backend_name", [AttentionBackendName.flash, AttentionBackendName.te])
 @requires_gpu
 def test_attention_backend(
     backend_name: AttentionBackendName,
