@@ -55,10 +55,16 @@ class CliContext(Config):
 @dataclass
 class CommonComponents(Config):
     run_name: str
+
     root_dir: str
     work_dir: str
     save_folder: str
+
     launch: Optional[BeakerLaunchConfig]
+
+    tokenizer: TokenizerConfig
+    max_sequence_length: int
+    global_batch_size: int
 
 
 @dataclass
@@ -147,6 +153,9 @@ Type alias for a function that builds an ExperimentConfig based on a CliContext.
 def build_common_components(
     cli_context: CliContext,
     *,
+    tokenizer: TokenizerConfig,
+    global_batch_size: int,
+    max_sequence_length: int,
     beaker_image: str = OLMoCoreBeakerImage.stable,
     num_nodes: int = 1,
     beaker_workspace: str = "ai2/OLMo-core",
@@ -193,13 +202,14 @@ def build_common_components(
         work_dir=get_work_dir(root_dir),
         save_folder=save_folder,
         launch=launch_config,
+        tokenizer=tokenizer,
+        max_sequence_length=max_sequence_length,
+        global_batch_size=global_batch_size,
     )
 
 
 def build_default_data_components(
     common: CommonComponents,
-    global_batch_size: int,
-    max_sequence_length: int = 8192,
     intra_document_masking: bool = False,
     include_instance_filter: bool = False,
 ) -> DataComponents:
@@ -209,8 +219,8 @@ def build_default_data_components(
         DataMix.OLMoE_mix_0824,
         tokenizer=tokenizer_config,
         mix_base_dir=common.root_dir,
-        sequence_length=max_sequence_length,
-        max_target_sequence_length=max_sequence_length,
+        sequence_length=common.max_sequence_length,
+        max_target_sequence_length=max(common.max_sequence_length, 8192),
         work_dir=common.work_dir,
         generate_doc_lengths=intra_document_masking,
         instance_filter_config=None
@@ -221,7 +231,7 @@ def build_default_data_components(
     )
 
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=global_batch_size, seed=34521, num_workers=4
+        global_batch_size=common.global_batch_size, seed=34521, num_workers=4
     )
 
     return DataComponents(
@@ -243,23 +253,21 @@ def build_required_callbacks(common: CommonComponents) -> Dict[str, Callback]:
     return callbacks
 
 
-def build_default_eval_callbacks(
-    common: CommonComponents, data: DataComponents
-) -> Dict[str, Callback]:
+def build_default_eval_callbacks(common: CommonComponents) -> Dict[str, Callback]:
     return {
         "lm_evaluator": LMEvaluatorCallbackConfig(
             eval_dataset=NumpyPaddedFSLDatasetConfig.from_data_mix(
                 DataMix.v3_small_ppl_validation,
                 mix_base_dir=common.root_dir,
-                sequence_length=data.dataset.effective_sequence_length,
-                tokenizer=data.tokenizer,
+                sequence_length=common.max_sequence_length,
+                tokenizer=common.tokenizer,
                 work_dir=common.work_dir,
             ),
             eval_interval=1000,
         ),
         "downstream_evaluator": DownstreamEvaluatorCallbackConfig(
             tasks=["hellaswag"],
-            tokenizer=data.tokenizer,
+            tokenizer=common.tokenizer,
             eval_interval=1000,
         ),
     }
@@ -309,6 +317,7 @@ def build_config(
     beaker_workspace: str = "ai2/OLMo-core",
     use_hostname_constraints: bool = False,
     num_execution_units: Optional[int] = None,
+    tokenizer: TokenizerConfig = TokenizerConfig.dolma2(),
     global_batch_size: int,
     max_sequence_length: int = 4096,
     include_default_evals: bool = False,
@@ -316,29 +325,30 @@ def build_config(
 ) -> ExperimentConfig:
     common = common_config_builder(
         cli_context,
-        beaker_image,
-        num_nodes,
-        beaker_workspace,
-        use_hostname_constraints,
-        num_execution_units,
+        tokenizer=tokenizer,
+        global_batch_size=global_batch_size,
+        max_sequence_length=max_sequence_length,
+        beaker_image=beaker_image,
+        num_nodes=num_nodes,
+        beaker_workspace=beaker_workspace,
+        use_hostname_constraints=use_hostname_constraints,
+        num_execution_units=num_execution_units,
     )
 
-    data = data_config_builder(common, global_batch_size, max_sequence_length, **kwargs)
+    data = data_config_builder(common, **kwargs)
 
-    model = model_config_builder(data.tokenizer)
+    model = model_config_builder(common)
 
     trainer = trainer_config_builder(common)
     callbacks_to_add = build_required_callbacks(common)
     if include_default_evals:
-        default_evals = build_default_eval_callbacks(common, data)
+        default_evals = build_default_eval_callbacks(common)
         callbacks_to_add.update(default_evals)
     for name, cb in callbacks_to_add.items():
         if name not in trainer.callbacks:
             trainer.add_callback(name, cb)
 
-    train_module = train_module_config_builder(
-        common
-    )  # requires data knowledge -> effective_sequence_length
+    train_module = train_module_config_builder(common)
 
     config = ExperimentConfig(
         run_name=cli_context.run_name,

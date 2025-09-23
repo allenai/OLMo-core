@@ -2354,17 +2354,6 @@ class NumpyDatasetConfig(Config, ABC):
         all of you runs.
     """
 
-    @property
-    @abstractmethod
-    def effective_sequence_length(self) -> int:
-        """
-        Get the effective sequence length for this dataset configuration. This is the
-        maximum sequence length that this dataset will produce.
-
-        :returns: The effective sequence length.
-        """
-        raise NotImplementedError
-
     @abstractmethod
     def build(self) -> NumpyDatasetBase:
         """
@@ -2548,10 +2537,6 @@ class NumpyFSLDatasetConfig(NumpyDatasetConfig):
                     "'label_mask_paths' is not supported alongside 'source_mixture_config'"
                 )
 
-    @property
-    def effective_sequence_length(self) -> int:
-        return self.sequence_length
-
     def build(self) -> NumpyDatasetBase:
         self.validate()
 
@@ -2608,10 +2593,6 @@ class NumpyPaddedFSLDatasetConfig(NumpyDatasetConfig):
     The paths/URLs to numpy bool files indicating which tokens should be masked.
     """
 
-    @property
-    def effective_sequence_length(self) -> int:
-        return self.sequence_length
-
     def validate(self):
         if self.sequence_length <= 0:
             raise OLMoConfigurationError("'sequence_length' must be positive")
@@ -2660,10 +2641,6 @@ class NumpyPackedFSLDatasetConfig(NumpyDatasetConfig):
     """
     The number of source npy files to process together when packing.
     """
-
-    @property
-    def effective_sequence_length(self) -> int:
-        return self.sequence_length
 
     def validate(self):
         if self.sequence_length <= 0:
@@ -2724,10 +2701,6 @@ class NumpyInterleavedFSLDatasetConfig(NumpyDatasetConfig):
     The paths/URLs to numpy bool files indicating which tokens should be exempt from interleaving.
     """
 
-    @property
-    def effective_sequence_length(self) -> int:
-        return self.sequence_length
-
     def validate(self):
         if self.sequence_length <= 0:
             raise OLMoConfigurationError("'sequence_length' must be positive")
@@ -2779,10 +2752,6 @@ class NumpyVSLDatasetConfig(NumpyDatasetConfig):
     """
     The VSL curriculum config.
     """
-
-    @property
-    def effective_sequence_length(self) -> int:
-        return self.max_sequence_length
 
     def validate(self):
         if self.max_sequence_length <= 0:
