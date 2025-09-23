@@ -48,6 +48,7 @@ TORCH_VERSION_SHORT = $(shell echo $(TORCH_VERSION) | tr -d .)
 INSTALL_CHANNEL = whl
 GROUPED_GEMM_VERSION = "grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@main"
 FLASH_ATTN_VERSION = 2.8.2
+TE_VERSION = 2.6.0.post1
 RING_FLASH_ATTN_VERSION = 0.1.8
 LIGER_KERNEL_VERSION = 0.6.2
 
@@ -71,6 +72,7 @@ docker-image :
 		--build-arg INSTALL_CHANNEL=$(INSTALL_CHANNEL) \
 		--build-arg GROUPED_GEMM_VERSION=$(GROUPED_GEMM_VERSION) \
 		--build-arg FLASH_ATTN_VERSION=$(FLASH_ATTN_VERSION) \
+		--build-arg TE_VERSION=$(TE_VERSION) \
 		--build-arg RING_FLASH_ATTN_VERSION=$(RING_FLASH_ATTN_VERSION) \
 		--build-arg LIGER_KERNEL_VERSION=$(LIGER_KERNEL_VERSION) \
 		--target release \

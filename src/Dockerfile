@@ -62,7 +62,8 @@ ARG FLASH_ATTN_VERSION=2.8.2
 RUN pip install --no-build-isolation --no-cache-dir flash-attn==${FLASH_ATTN_VERSION}
 
 # Install transformer-engine.
-RUN pip install --no-build-isolation --no-cache-dir transformer_engine[pytorch]
+ARG TE_VERSION=2.6.0.post1
+RUN pip install --no-build-isolation --no-cache-dir transformer-engine[pytorch]==${TE_VERSION}
 
 # Install ring-flash-attn.
 ARG RING_FLASH_ATTN_VERSION=0.1.8
