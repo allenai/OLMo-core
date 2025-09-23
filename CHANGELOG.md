@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Previously the URL would just get mangled into a local path, leading to unexpected behavior.
 - Fixed an issue where the `ConsoleLoggerCallback` would attempt to log before the first step.
 - Only call `teardown_distributed_environment()` when training ends cleanly to avoid a hang for the duration of the distributed backend's timeout when there's an error from one rank.
+- Fixed invalid usage of `PathOrString` in dataset configuration.
 
 ### Changed
 
