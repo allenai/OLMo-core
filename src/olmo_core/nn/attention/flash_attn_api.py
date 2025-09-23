@@ -9,7 +9,18 @@ from .ring import RingAttentionLoadBalancerType
 try:
     import flash_attn  # type: ignore
 except ImportError:
-    flash_attn = None
+    try:
+        # flash-attn 3 is in beta, this is the recommended interface for now
+        import flash_attn_interface as flash_attn  # type: ignore
+
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        major, minor = torch.cuda.get_device_capability(device)
+        # H100/H800 are compute capability 9.0
+        assert major == 9, (
+            f"flash-attn 3 requires H100/H800 (compute capability 9.x), but got {major}.{minor}"
+        )
+    except ImportError:
+        flash_attn = None
 
 try:
     import ring_flash_attn  # type: ignore
