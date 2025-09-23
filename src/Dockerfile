@@ -115,11 +115,11 @@ RUN wget --quiet https://content.mellanox.com/ofed/MLNX_OFED-${MOFED_VER}/MLNX_O
 # Copy conda environment.
 COPY --from=build /opt/conda /opt/conda
 
-ENV PATH /opt/conda/bin:$PATH
-ENV NVIDIA_VISIBLE_DEVICES all
-ENV NVIDIA_DRIVER_CAPABILITIES compute,utility
-ENV LD_LIBRARY_PATH /usr/local/nvidia/lib:/usr/local/nvidia/lib64
-ENV PATH /usr/local/nvidia/bin:/usr/local/cuda/bin:$PATH
+ENV PATH=/opt/conda/bin:$PATH
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
+ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
+ENV PATH=/usr/local/nvidia/bin:/usr/local/cuda/bin:$PATH
 
 LABEL org.opencontainers.image.source https://github.com/allenai/OLMo-core
 WORKDIR /app/olmo-core
