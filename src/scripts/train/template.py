@@ -9,12 +9,8 @@ from dataclasses import dataclass
 from typing import List, Optional, cast
 
 from olmo_core.config import Config, DType
-from olmo_core.data import (
-    NumpyDataLoaderConfig,
-    NumpyDatasetConfig,
-    NumpyDatasetType,
-    TokenizerConfig,
-)
+from olmo_core.data import NumpyDataLoaderConfig, NumpyFSLDatasetConfig, TokenizerConfig
+from olmo_core.data.numpy_dataset import NumpyDatasetConfig
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.internal.common import (
     build_launch_config,
@@ -104,9 +100,8 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
     beaker_user = get_beaker_username()
     assert beaker_user is not None
 
-    dataset_config = NumpyDatasetConfig(
+    dataset_config = NumpyFSLDatasetConfig(
         paths=DATA_PATHS,
-        name=NumpyDatasetType.fsl,
         sequence_length=SEQUENCE_LENGTH,
         tokenizer=TOKENIZER_CONFIG,
         work_dir=work_dir,

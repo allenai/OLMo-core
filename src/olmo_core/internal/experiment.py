@@ -12,11 +12,10 @@ from olmo_core.data import (
     InstanceFilterConfig,
     NumpyDataLoaderConfig,
     NumpyDatasetConfig,
-    NumpyDatasetType,
+    NumpyPaddedFSLDatasetConfig,
     TokenizerConfig,
-    VSLCurriculumConfig,
-    VSLCurriculumType,
 )
+from olmo_core.data.numpy_dataset import NumpyFSLDatasetConfig
 from olmo_core.distributed.utils import get_local_rank
 from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
 from olmo_core.nn.transformer import TransformerConfig
@@ -167,19 +166,14 @@ def build_common_components(
 
     tokenizer_config = TokenizerConfig.dolma2()
 
-    dataset_config = NumpyDatasetConfig.from_data_mix(
+    dataset_config = NumpyFSLDatasetConfig.from_data_mix(
         DataMix.OLMoE_mix_0824,
         tokenizer=tokenizer_config,
         mix_base_dir=root_dir,
         sequence_length=sequence_length,
         max_target_sequence_length=max(8192, sequence_length),
-        min_sequence_length=min(256, sequence_length),
-        max_sequence_length=max(8192, sequence_length),
-        vsl_curriculum=VSLCurriculumConfig(
-            name=VSLCurriculumType.grow_p2, num_cycles=8, balanced=False
-        ),
-        work_dir=get_work_dir(root_dir),
         generate_doc_lengths=intra_document_masking,
+        work_dir=get_work_dir(root_dir),
         instance_filter_config=None
         if not include_instance_filter
         else InstanceFilterConfig(
@@ -207,9 +201,8 @@ def build_common_components(
 
     if include_default_evals:
         callbacks["lm_evaluator"] = LMEvaluatorCallbackConfig(
-            eval_dataset=NumpyDatasetConfig.from_data_mix(
+            eval_dataset=NumpyPaddedFSLDatasetConfig.from_data_mix(
                 DataMix.v3_small_ppl_validation,
-                name=NumpyDatasetType.padded_fsl,
                 mix_base_dir=root_dir,
                 sequence_length=dataset_config.effective_sequence_length,
                 tokenizer=tokenizer_config,
@@ -371,7 +364,7 @@ def main(
     num_execution_units: Optional[int] = None,
 ):
     usage = f"""
-[yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]{'|'.join(SubCmd)}[/] [i b]RUN_NAME CLUSTER[/] [i][OVERRIDES...][/]
+[yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]{"|".join(SubCmd)}[/] [i b]RUN_NAME CLUSTER[/] [i][OVERRIDES...][/]
 
 [b]Subcommands[/]
 [b magenta]launch:[/]      Launch the script on Beaker with the [b magenta]train[/] subcommand.
