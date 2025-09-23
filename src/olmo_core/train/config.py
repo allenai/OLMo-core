@@ -80,7 +80,7 @@ class TrainerConfig(Config):
         """
         Return a new trainer config with added callbacks for downstream evaluation and validation sets.
         """
-        from olmo_core.data import DataMix, NumpyDatasetConfig, NumpyDatasetType
+        from olmo_core.data import DataMix, NumpyPaddedFSLDatasetConfig
         from olmo_core.internal.common import get_root_dir, get_work_dir
         from olmo_core.train.callbacks import (
             DownstreamEvaluatorCallbackConfig,
@@ -102,9 +102,8 @@ class TrainerConfig(Config):
         ).with_callback(
             "lm_evaluator",
             LMEvaluatorCallbackConfig(
-                eval_dataset=NumpyDatasetConfig.from_data_mix(
+                eval_dataset=NumpyPaddedFSLDatasetConfig.from_data_mix(
                     DataMix.v3_small_ppl_validation,
-                    name=NumpyDatasetType.padded_fsl,
                     mix_base_dir=get_root_dir(cluster),
                     sequence_length=sequence_length,
                     tokenizer=tokenizer,

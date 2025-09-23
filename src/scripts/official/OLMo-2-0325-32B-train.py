@@ -9,8 +9,8 @@ from olmo_core.config import DType
 from olmo_core.data import (
     DataMix,
     NumpyDataLoaderConfig,
-    NumpyDatasetConfig,
-    NumpyDatasetType,
+    NumpyFSLDatasetConfig,
+    NumpyPaddedFSLDatasetConfig,
     TokenizerConfig,
 )
 from olmo_core.distributed.parallel import DataParallelType
@@ -45,7 +45,7 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         vocab_size=tokenizer_config.padded_vocab_size(),  # a little bigger than actual vocab size to make it a multiple of 128
     )
 
-    dataset_config = NumpyDatasetConfig.from_data_mix(
+    dataset_config = NumpyFSLDatasetConfig.from_data_mix(
         DataMix.OLMoE_mix_0824,
         tokenizer=tokenizer_config,
         mix_base_dir=opts.data_root,
@@ -132,9 +132,8 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         .with_callback(
             "lm_evaluator",
             LMEvaluatorCallbackConfig(
-                eval_dataset=NumpyDatasetConfig.from_data_mix(
+                eval_dataset=NumpyPaddedFSLDatasetConfig.from_data_mix(
                     DataMix.v3_small_ppl_validation,
-                    name=NumpyDatasetType.padded_fsl,
                     mix_base_dir=opts.data_root,
                     sequence_length=dataset_config.effective_sequence_length,
                     tokenizer=tokenizer_config,

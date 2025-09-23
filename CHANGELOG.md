@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `src/examples/llama/` has been renamed to `src/examples/llm/`.
 - Refactored eval task groups into `task_groups.py`
 - The `use_flash` argument to the `Attention` classes is deprecated. Use `backend="flash"` instead.
+- Refactored `NumpyDatasetConfig` by splitting it into a separate config per underlying dataset class.
 
 ### Added
 

@@ -3,7 +3,7 @@ from typing import Type, Union
 
 import numpy as np
 
-from olmo_core.data import NumpyDatasetBase, NumpyDatasetConfig, TokenizerConfig
+from olmo_core.data import NumpyDatasetBase, NumpyFSLDatasetConfig, TokenizerConfig
 from olmo_core.data.source_mixture import (
     SourceMixtureConfig,
     SourceMixtureDatasetConfig,
@@ -56,7 +56,7 @@ def get_fsl_mixture(
         global_batch_size=sequence_length * 32,
     )
 
-    ds = NumpyDatasetConfig(
+    ds = NumpyFSLDatasetConfig(
         source_mixture_config=mixture_config,
         sequence_length=sequence_length,
         tokenizer=tokenizer,
