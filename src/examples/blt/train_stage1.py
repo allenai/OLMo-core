@@ -125,7 +125,7 @@ class ExperimentConfig(Config):
 
 
 def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
-    global NUM_WORKERS, GLOBAL_BATCH_SIZE, LOCAL_BATCH_SIZE
+    global NUM_WORKERS, GLOBAL_BATCH_SIZE, LOCAL_BATCH_SIZE, EVAL_BATCH_SIZE
 
     BYTE_EXPANSION_FACTOR = int(os.environ.get("BYTE_EXPANSION_FACTOR", "6"))  # default (max) expansion factor
     SAVE_FOLDER = os.environ.get("SAVE_FOLDER", f"/tmp/{run_name}")
