@@ -72,8 +72,14 @@ class AttentionBackendName(StrEnum):
             window_size=window_size,
         )
 
-    def is_supported(self) -> bool:
-        return self.get_class().is_supported()
+    def assert_supported(self):
+        self.get_class().assert_supported()
+
+    def assert_supports_cp(self):
+        self.get_class().assert_supports_cp()
+
+    def assert_supports_packed_qkv(self):
+        self.get_class().assert_supports_packed_qkv()
 
 
 class AttentionBackend(nn.Module):
@@ -91,8 +97,7 @@ class AttentionBackend(nn.Module):
         dropout_p: float = 0.0,
         window_size: Tuple[int, int] = (-1, -1),
     ):
-        if not self.is_supported():
-            raise RuntimeError(f"'{self.__class__.__name__}' is not supported on this system.")
+        self.assert_supported()
         super().__init__()
         self.head_dim = head_dim
         self.n_heads = n_heads
@@ -106,8 +111,29 @@ class AttentionBackend(nn.Module):
         self.head_stride: int = 1
 
     @classmethod
-    def is_supported(cls) -> bool:
-        return True
+    @abstractmethod
+    def assert_supported(cls):
+        """
+        Validates that this backend is supported on the current system.
+        Raises an error if not supported.
+        """
+        pass
+
+    @classmethod
+    @abstractmethod
+    def assert_supports_cp(cls):
+        """
+        Whether this backend supports context parallelism.
+        """
+        pass
+
+    @classmethod
+    @abstractmethod
+    def assert_supports_packed_qkv(cls):
+        """
+        Whether this backend supports taking QKV as a single packed tensor.
+        """
+        pass
 
     @abstractmethod
     def forward(
@@ -127,17 +153,6 @@ class AttentionBackend(nn.Module):
         """
         raise NotImplementedError
 
-    def _setup_cp(
-        self,
-        cp_mesh: DeviceMesh,
-        load_balancer: RingAttentionLoadBalancerType,
-        head_stride: int = 1,
-    ):
-        self.cp_pg = cp_mesh.get_group()
-        self.cp_load_balancer = load_balancer
-        self.cp_enabled = True
-        self.cp_head_stride = head_stride
-
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
@@ -147,16 +162,29 @@ class AttentionBackend(nn.Module):
         """
         Apply context parallelism if supported by the backend.
         """
-        del cp_mesh, load_balancer, head_stride
-        raise NotImplementedError(
-            f"'{self.__class__.__name__}' doesn't support context parallelism"
-        )
+        self.assert_supports_cp()
+        self.cp_pg = cp_mesh.get_group()
+        self.cp_load_balancer = load_balancer
+        self.cp_enabled = True
+        self.cp_head_stride = head_stride
 
 
 class TorchAttentionBackend(AttentionBackend):
     """
     PyTorch's built-in scaled dot-product attention (SDPA) backend.
     """
+
+    @classmethod
+    def assert_supported(cls):
+        pass
+
+    @classmethod
+    def assert_supports_cp(cls):
+        raise RuntimeError(f"'{cls.__name__}' doesn't support context parallelism")
+
+    @classmethod
+    def assert_supports_packed_qkv(cls):
+        raise RuntimeError(f"'{cls.__name__}' doesn't support packed QKV")
 
     def forward(
         self,
@@ -223,24 +251,24 @@ class TorchAttentionBackend(AttentionBackend):
 
 class FlashAttentionBackend(AttentionBackend):
     """
-    SDPA from the flash-attn package.
+    SDPA from the flash-attn package. Additionally, ring-flash-attn is required for context parallelism.
     """
 
     @classmethod
-    def is_supported(cls) -> bool:
-        return has_flash_attn()
+    def assert_supported(cls):
+        if not has_flash_attn():
+            raise RuntimeError(f"'{cls.__name__}' requires the flash-attn package.")
 
-    def apply_cp(
-        self,
-        cp_mesh: DeviceMesh,
-        load_balancer: RingAttentionLoadBalancerType,
-        head_stride: int = 1,
-    ):
+    @classmethod
+    def assert_supports_cp(cls):
         if not has_ring_flash_attn():
             raise RuntimeError(
-                f"ring-flash-attn is required for context parallelism with '{self.__class__.__name__}'"
+                f"'{cls.__name__}' requires the ring-flash-attn package for context parallelism."
             )
-        self._setup_cp(cp_mesh, load_balancer, head_stride=head_stride)
+
+    @classmethod
+    def assert_supports_packed_qkv(cls):
+        pass
 
     def forward(
         self,
@@ -369,7 +397,7 @@ class TEAttentionBackend(AttentionBackend):
             window_size=window_size,
         )
         if not has_te_attn():
-            raise RuntimeError("Transformer Engine attention is not available")
+            raise RuntimeError("TransformerEngine attention is not available")
         assert TEDotProductAttention is not None
         self.te_attn = TEDotProductAttention(
             self.n_heads,
@@ -383,8 +411,17 @@ class TEAttentionBackend(AttentionBackend):
         )
 
     @classmethod
-    def is_supported(cls) -> bool:
-        return has_te_attn()
+    def assert_supported(cls):
+        if not has_te_attn():
+            raise RuntimeError(f"'{cls.__name__}' requires NVIDIA's TransformerEngine package.")
+
+    @classmethod
+    def assert_supports_cp(cls):
+        pass
+
+    @classmethod
+    def assert_supports_packed_qkv(cls):
+        raise RuntimeError(f"'{cls.__name__}' doesn't support packed QKV")
 
     def apply_cp(
         self,
@@ -394,7 +431,7 @@ class TEAttentionBackend(AttentionBackend):
     ):
         if load_balancer != RingAttentionLoadBalancerType.zig_zag:
             raise RuntimeError(f"'{self.__class__.__name__}' only supports zig-zag load balancing")
-        self._setup_cp(cp_mesh, load_balancer, head_stride=head_stride)
+        super().apply_cp(cp_mesh, load_balancer, head_stride=head_stride)
         self.te_attn.set_context_parallel_group(
             cp_group=cp_mesh.get_group(),
             cp_global_ranks=dist.get_process_group_ranks(cp_mesh.get_group()),

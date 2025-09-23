@@ -403,13 +403,8 @@ class Attention(AttentionBase):
         if backend is None:
             backend = AttentionBackendName.torch
 
-        if not backend.is_supported():
-            raise OLMoConfigurationError(
-                f"Attention backend '{backend}' is not supported on this system. "
-                "Please switch to a different backend or install the missing dependencies."
-            )
-        else:
-            log.info(f"Using attention backend '{backend}'")
+        backend.assert_supported()
+        log.info(f"Using attention backend '{backend}'")
         self.backend = backend.build(
             head_dim=self.head_dim,
             n_heads=n_heads,
@@ -846,13 +841,6 @@ class FusedAttention(AttentionBase):
     ):
         super().__init__()
 
-        if backend is not None and backend != AttentionBackendName.flash:
-            raise OLMoConfigurationError(
-                f"{self.__class__.__name__} only supports the 'flash' backend (got '{backend}')"
-            )
-        elif backend is None:
-            backend = AttentionBackendName.flash
-
         self.n_heads = n_heads
         self.head_dim = d_model // n_heads
         self.w_qkv = nn.Linear(d_model, 3 * d_model, bias=bias, dtype=dtype, device=init_device)
@@ -866,6 +854,14 @@ class FusedAttention(AttentionBase):
             assert isinstance(rope_class, FusedRotaryEmbedding)
             self.rope = rope_class
 
+        if backend is not None:
+            backend = AttentionBackendName(backend)
+        elif backend is None:
+            backend = AttentionBackendName.flash
+
+        backend.assert_supported()
+        backend.assert_supports_packed_qkv()
+        log.info(f"Using attention backend '{backend}'")
         self.backend = backend.build(
             head_dim=self.head_dim, n_heads=self.n_heads, dropout_p=dropout
         )
