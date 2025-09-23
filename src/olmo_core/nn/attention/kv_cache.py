@@ -23,21 +23,25 @@ class KVCacheManager(nn.Module):
         self.head_dim = head_dim
         self.kv_cache_shape = (batch_size, max_seq_len, self.num_kv_heads, self.head_dim)
 
+        self.k_cache: torch.Tensor
         self.register_buffer(
             "k_cache",
             torch.zeros(self.kv_cache_shape, device=device, dtype=dtype),
             persistent=False,
         )
+        self.v_cache: torch.Tensor
         self.register_buffer(
             "v_cache",
             torch.zeros(self.kv_cache_shape, device=device, dtype=dtype),
             persistent=False,
         )
+        self.cache_leftpad: torch.Tensor
         self.register_buffer(
             "cache_leftpad",
             torch.zeros(batch_size, dtype=torch.int32, device=device),
             persistent=False,
         )
+        self.cache_seqlens: torch.Tensor
         self.register_buffer(
             "cache_seqlens", torch.zeros((), dtype=torch.int32, device=device), persistent=False
         )

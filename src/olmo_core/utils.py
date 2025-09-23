@@ -719,10 +719,10 @@ def min_value_of_dtype(dtype: torch.dtype):
     return info_value_of_dtype(dtype).min
 
 
-_CUDA_STREAMS: Dict[int, torch.cuda.Stream] = {}
+_CUDA_STREAMS: Dict[str, torch.cuda.Stream] = {}
 
 
-def get_or_init_stream(id: int = 0, priority: int = 0) -> torch.cuda.Stream:
+def get_or_init_stream(id: str, priority: int = 0) -> torch.cuda.Stream:
     global _CUDA_STREAMS
     if id in _CUDA_STREAMS:
         return _CUDA_STREAMS[id]

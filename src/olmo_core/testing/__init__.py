@@ -8,6 +8,7 @@ from .utils import (
     INIT_DEVICES,
     LOW_PRECISION_DTYPES,
     MULTI_GPU_MARKS,
+    TE_MARKS,
     get_default_device,
     has_cuda,
     has_flash_attn,
@@ -18,12 +19,14 @@ from .utils import (
     requires_gpu,
     requires_grouped_gemm,
     requires_multi_gpu,
+    requires_te,
 )
 
 __all__ = [
     "BACKENDS",
     "DEVICES",
     "FLASH_MARKS",
+    "TE_MARKS",
     "GPU_MARKS",
     "GROUPED_GEMM_MARKS",
     "INIT_DEVICES",
@@ -36,6 +39,7 @@ __all__ = [
     "has_multiple_gpus",
     "has_torchao",
     "requires_flash_attn",
+    "requires_te",
     "requires_gpu",
     "requires_grouped_gemm",
     "requires_multi_gpu",

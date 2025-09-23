@@ -40,11 +40,14 @@ jobs:
             run: |
               pytest -v --color=yes --durations=3 \
                 --ignore-glob='src/test/distributed/checkpoint*' \
+                --ignore-glob='src/test/train/checkpoint*' \
                 src/test/
 
           - name: Test checkpoint
             run: |
-              pytest -v --color=yes --durations=3 src/test/distributed/checkpoint*
+              pytest -v --color=yes --durations=3 \
+                src/test/distributed/checkpoint* \
+                src/test/train/checkpoint*
 
           - name: Type check
             run: make type-check
@@ -119,7 +122,7 @@ jobs:
       matrix:
         task:
           - name: Test (GPU)
-            image: petew/olmo-core-tch271cu128-2025-09-15
+            image: petew/olmo-core-tch280cu128-2025-09-19
             gpus: 2
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
@@ -129,21 +132,21 @@ jobs:
                 src/test/
 
           - name: Test checkpoint (GPU)
-            image: petew/olmo-core-tch271cu128-2025-09-15
+            image: petew/olmo-core-tch280cu128-2025-09-19
             gpus: 2
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
                 src/test/distributed/checkpoint*
 
           - name: Test transformer (GPU)
-            image: petew/olmo-core-tch271cu128-2025-09-15
+            image: petew/olmo-core-tch280cu128-2025-09-19
             gpus: 2
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
                 src/test/nn/transformer*
 
           - name: Test MoE (GPU)
-            image: petew/olmo-core-tch271cu128-2025-09-15
+            image: petew/olmo-core-tch280cu128-2025-09-19
             gpus: 2
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
