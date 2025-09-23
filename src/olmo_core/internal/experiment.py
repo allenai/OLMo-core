@@ -69,7 +69,6 @@ class CommonComponents(Config):
 
 @dataclass
 class DataComponents(Config):
-    tokenizer: TokenizerConfig
     dataset: NumpyDatasetConfig
     data_loader: NumpyDataLoaderConfig
 
@@ -94,6 +93,12 @@ class SubCmd(StrEnum):
     prep = "prep"
     launch_prep = "launch_prep"
     dry_run = "dry_run"
+
+    def post_launch_subcmd(self) -> "SubCmd":
+        if self in (SubCmd.launch_prep, SubCmd.prep):
+            return SubCmd.prep
+        else:
+            return SubCmd.train
 
     def prepare_environment(self, config: ExperimentConfig):
         if self in (SubCmd.launch, SubCmd.dry_run, SubCmd.prep, SubCmd.launch_prep):
@@ -163,14 +168,10 @@ def build_common_components(
     num_execution_units: Optional[int] = None,
 ) -> CommonComponents:
     root_dir = get_root_dir(cli_context.cluster)
-
-    # TODO: can this be factored better? Why are launch commands relevant here?
-    cmd_to_launch = SubCmd.train
-    if cli_context.cmd == SubCmd.launch_prep:
-        cmd_to_launch = SubCmd.prep
-
     beaker_user = get_beaker_username()
+
     launch_config: Optional[BeakerLaunchConfig] = None
+    cmd_to_launch = cli_context.cmd.post_launch_subcmd()
     if beaker_user is not None:
         launch_config = build_launch_config(
             name=f"{cli_context.run_name}-{cmd_to_launch}",
@@ -213,15 +214,18 @@ def build_default_data_components(
     intra_document_masking: bool = False,
     include_instance_filter: bool = False,
 ) -> DataComponents:
-    tokenizer_config = TokenizerConfig.dolma2()
-
+    """
+    Default dataset and data loader configurations. Constructs a simple FSL dataset and data loader
+    configuration with default settings.
+    """
     dataset_config = NumpyFSLDatasetConfig.from_data_mix(
         DataMix.OLMoE_mix_0824,
-        tokenizer=tokenizer_config,
+        tokenizer=common.tokenizer,
         mix_base_dir=common.root_dir,
-        sequence_length=common.max_sequence_length,
-        max_target_sequence_length=max(common.max_sequence_length, 8192),
         work_dir=common.work_dir,
+        sequence_length=common.max_sequence_length,
+        # max target sequence length doesn't affect how the data is loaded, just how it's cached behind the scenes
+        max_target_sequence_length=max(common.max_sequence_length, 8192),
         generate_doc_lengths=intra_document_masking,
         instance_filter_config=None
         if not include_instance_filter
@@ -234,12 +238,10 @@ def build_default_data_components(
         global_batch_size=common.global_batch_size, seed=34521, num_workers=4
     )
 
-    return DataComponents(
-        tokenizer=tokenizer_config, dataset=dataset_config, data_loader=data_loader_config
-    )
+    return DataComponents(dataset=dataset_config, data_loader=data_loader_config)
 
 
-def build_required_callbacks(common: CommonComponents) -> Dict[str, Callback]:
+def _build_required_callbacks(common: CommonComponents) -> Dict[str, Callback]:
     callbacks = {
         "config_saver": ConfigSaverCallback(),
         "profiler": ProfilerCallback(enabled=False),
@@ -253,7 +255,7 @@ def build_required_callbacks(common: CommonComponents) -> Dict[str, Callback]:
     return callbacks
 
 
-def build_default_eval_callbacks(common: CommonComponents) -> Dict[str, Callback]:
+def _build_default_eval_callbacks(common: CommonComponents) -> Dict[str, Callback]:
     return {
         "lm_evaluator": LMEvaluatorCallbackConfig(
             eval_dataset=NumpyPaddedFSLDatasetConfig.from_data_mix(
@@ -312,17 +314,49 @@ def build_config(
     train_module_config_builder: Callable[[CommonComponents], TransformerTrainModuleConfig],
     trainer_config_builder: Callable[[CommonComponents], TrainerConfig],
     finalize_config: Optional[Callable[[ExperimentConfig], None]] = None,
+    tokenizer: TokenizerConfig = TokenizerConfig.dolma2(),
+    global_batch_size: int,
+    max_sequence_length: int = 4096,
     beaker_image: str = OLMoCoreBeakerImage.stable,
     num_nodes: int = 1,
     beaker_workspace: str = "ai2/OLMo-core",
     use_hostname_constraints: bool = False,
     num_execution_units: Optional[int] = None,
-    tokenizer: TokenizerConfig = TokenizerConfig.dolma2(),
-    global_batch_size: int,
-    max_sequence_length: int = 4096,
     include_default_evals: bool = False,
-    **kwargs,
+    **data_kwargs,
 ) -> ExperimentConfig:
+    """
+    Build an ``ExperimentConfig`` from a CLI context with good defaults. Allows for easy
+    customization of individual components of the configuration.
+
+    :param cli_context: The CLI context containing run name and overrides.
+    :param common_config_builder: Function to build common components. This should accept a
+        ``CliContext`` instance and return a ``CommonComponents`` instance.
+    :param data_config_builder: Function to build data components. This should accept a
+        ``CommonComponents`` instance and return a ``DataComponents`` instance.
+    :param model_config_builder: Function to build the transformer model configuration. This should accept a
+        ``CommonComponents`` instance and return a ``TransformerConfig`` instance.
+    :param train_module_config_builder: Function to build the training module configuration. This should accept a
+        ``CommonComponents`` instance and return a ``TransformerTrainModuleConfig`` instance.
+    :param trainer_config_builder: Function to build the trainer configuration. This should accept a
+        ``CommonComponents`` instance and return a ``TrainerConfig`` instance.
+    :param finalize_config: Optional function to finalize the configuration. This should accept an
+        ``ExperimentConfig`` instance and modify it in place.
+    :param tokenizer: The tokenizer configuration to use.
+    :param global_batch_size: The global batch size for training.
+    :param max_sequence_length: Maximum sequence length for the model. This is typically used to set
+        the sequence length for the dataset and data loader, as well as the maximum sequence length
+        for the model.
+    :param beaker_image: The Beaker image to use for the experiment.
+    :param num_nodes: Number of nodes to use for training.
+    :param beaker_workspace: The Beaker workspace to use.
+    :param use_hostname_constraints: Whether to use hostname constraints in Beaker.
+    :param num_execution_units: Number of execution units for Beaker.
+    :param include_default_evals: Whether to include default evaluation callbacks.
+    :param data_kwargs: Additional keyword arguments to pass to the data config builder.
+    :returns: The complete ``ExperimentConfig``.
+    """
+
     common = common_config_builder(
         cli_context,
         tokenizer=tokenizer,
@@ -335,14 +369,14 @@ def build_config(
         num_execution_units=num_execution_units,
     )
 
-    data = data_config_builder(common, **kwargs)
+    data = data_config_builder(common, **data_kwargs)
 
     model = model_config_builder(common)
 
     trainer = trainer_config_builder(common)
-    callbacks_to_add = build_required_callbacks(common)
+    callbacks_to_add = _build_required_callbacks(common)
     if include_default_evals:
-        default_evals = build_default_eval_callbacks(common)
+        default_evals = _build_default_eval_callbacks(common)
         callbacks_to_add.update(default_evals)
     for name, cb in callbacks_to_add.items():
         if name not in trainer.callbacks:
@@ -409,7 +443,7 @@ def train(config: ExperimentConfig):
     trainer.fit()
 
 
-def main(*, config_builder: ConfigBuilder):
+def main(*, config_builder: ConfigBuilder) -> None:
     """
     Main entry point for running Ai2-internal experiments.
 
@@ -419,6 +453,23 @@ def main(*, config_builder: ConfigBuilder):
     :param config_builder: A function that builds an ExperimentConfig from command-line
         arguments. It should accept (script, cmd, run_name, cluster, overrides)
         and return an ExperimentConfig instance.
+
+    .. tip::
+        Use ``functools.partial`` + ``build_config()`` to assemble a function that can be used as
+        a config builder without needing to construct an entire ``ExperimentConfig``. For example::
+
+            from functools import partial
+            from olmo_core.internal.experiment import build_config, ConfigBuilder
+
+            config_builder: ConfigBuilder = partial(
+                build_config,
+                data_config_builder=my_data_config_builder(),
+                model_config_builder=my_model_config_builder(),
+                train_module_config_builder=my_train_module_config_builder(),
+                trainer_config_builder=my_trainer_config_builder(),
+            )
+            main(config_builder=config_builder)
+
     """
 
     usage = f"""
