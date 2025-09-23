@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 import logging
-import fla.layers
 import torch
 from torch import nn
 from dataclasses import field
@@ -10,7 +9,7 @@ log = logging.getLogger(__name__)
 
 
 class FLA(nn.Module):
-    def __init__(self, inner: fla.layers.ABCAttention):
+    def __init__(self, inner):
         super().__init__()
         self.inner = inner
 
@@ -35,6 +34,7 @@ class FLAConfig(Config):
     dtype: DType = DType.float32
 
     def build(self, d_model: int, init_device) -> FLA:
+        import fla.layers
         layer = getattr(fla.layers, self.name)(
             hidden_size=d_model,
             **self.fla_layer_kwargs,
