@@ -62,6 +62,7 @@ def test_attention_backend(
         pytest.skip(f"'{backend_name}' attention backend is not supported on this system")
 
     seed_all(0)
+    B, T = 2, 16
 
     backend = backend_name.build(
         head_dim=head_dim, n_heads=n_heads, n_kv_heads=n_kv_heads, window_size=window_size
@@ -70,12 +71,12 @@ def test_attention_backend(
         head_dim=head_dim, n_heads=n_heads, n_kv_heads=n_kv_heads, window_size=window_size
     )
 
-    q = torch.randn(2, 16, n_heads, head_dim, device="cuda", dtype=dtype)
-    k = torch.randn(2, 16, n_kv_heads or n_heads, head_dim, device="cuda", dtype=dtype)
-    v = torch.randn(2, 16, n_kv_heads or n_heads, head_dim, device="cuda", dtype=dtype)
+    q = torch.randn(B, T, n_heads, head_dim, device="cuda", dtype=dtype)
+    k = torch.randn(B, T, n_kv_heads or n_heads, head_dim, device="cuda", dtype=dtype)
+    v = torch.randn(B, T, n_kv_heads or n_heads, head_dim, device="cuda", dtype=dtype)
 
-    att = backend((q, k, v))
-    att_reference = default((q, k, v))
+    att = backend((q, k, v)).view(B, T, -1)
+    att_reference = default((q, k, v)).view(B, T, -1)
     torch.testing.assert_close(att, att_reference)
 
 
