@@ -49,8 +49,8 @@ BF16_ATOL = 5e-3
         pytest.param((8, 8), id="SWA"),
     ],
 )
-@pytest.mark.parametrize("n_kv_heads", [None])
-@pytest.mark.parametrize("n_heads", [8, 4])
+@pytest.mark.parametrize("n_kv_heads", [None, 4])
+@pytest.mark.parametrize("n_heads", [8])
 @pytest.mark.parametrize("head_dim", [128])
 @pytest.mark.parametrize("backend_name", [AttentionBackendName.flash, AttentionBackendName.te])
 @requires_gpu
