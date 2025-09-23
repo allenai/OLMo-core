@@ -200,14 +200,12 @@ def test_sdpa(
     window_size: Optional[int],
     intra_doc_masking: bool,
 ):
-    if backend_name == AttentionBackendName.torch and dtype == torch.float32:
-        pytest.skip("low precision dtype is required unless flex attention is used")
-
-    if backend_name == AttentionBackendName.flash and device.type == "cpu":
-        pytest.skip("flash requires gpu")
-
+    if backend_name == AttentionBackendName.flash and dtype == torch.float32:
+        pytest.skip("flash-attn requires a low precision dtype")
+    if backend_name in (AttentionBackendName.flash, AttentionBackendName.te) and device.type == "cpu":
+        pytest.skip(f"{backend_name} backend requires GPU")
     if backend_name == AttentionBackendName.torch and intra_doc_masking:
-        pytest.skip("intra-document masking is not supported by torch SDPA")
+        pytest.skip("intra-document masking is not supported by torch backend")
 
     torch.random.manual_seed(0)
 
