@@ -81,6 +81,9 @@ class AttentionBackendName(StrEnum):
     def assert_supports_packed_qkv(self):
         self.get_class().assert_supports_packed_qkv()
 
+    def assert_supports_kv_cache(self):
+        self.get_class().assert_supports_kv_cache()
+
 
 class AttentionBackend(nn.Module):
     """
@@ -123,7 +126,7 @@ class AttentionBackend(nn.Module):
     @abstractmethod
     def assert_supports_cp(cls):
         """
-        Whether this backend supports context parallelism.
+        Validates that this backend supports context parallelism.
         """
         pass
 
@@ -131,7 +134,15 @@ class AttentionBackend(nn.Module):
     @abstractmethod
     def assert_supports_packed_qkv(cls):
         """
-        Whether this backend supports taking QKV as a single packed tensor.
+        Validates that this backend supports taking QKV as a single packed tensor.
+        """
+        pass
+
+    @classmethod
+    @abstractmethod
+    def assert_supports_kv_cache(cls):
+        """
+        Validates that this backend supports KV caching.
         """
         pass
 
@@ -185,6 +196,10 @@ class TorchAttentionBackend(AttentionBackend):
     @classmethod
     def assert_supports_packed_qkv(cls):
         raise RuntimeError(f"'{cls.__name__}' doesn't support packed QKV")
+
+    @classmethod
+    def assert_supports_kv_cache(cls):
+        raise RuntimeError(f"'{cls.__name__}' doesn't support KV caching")
 
     def forward(
         self,
@@ -268,6 +283,10 @@ class FlashAttentionBackend(AttentionBackend):
 
     @classmethod
     def assert_supports_packed_qkv(cls):
+        pass
+
+    @classmethod
+    def assert_supports_kv_cache(cls):
         pass
 
     def forward(
@@ -422,6 +441,10 @@ class TEAttentionBackend(AttentionBackend):
     @classmethod
     def assert_supports_packed_qkv(cls):
         raise RuntimeError(f"'{cls.__name__}' doesn't support packed QKV")
+
+    @classmethod
+    def assert_supports_kv_cache(cls):
+        raise RuntimeError(f"'{cls.__name__}' doesn't support KV caching")
 
     def apply_cp(
         self,

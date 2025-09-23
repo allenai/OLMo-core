@@ -626,6 +626,7 @@ class Attention(AttentionBase):
         :param batch_size: The batch size for the cache.
         :param max_seq_len: The maximum sequence length for the cache.
         """
+        self.backend.assert_supports_kv_cache()
         self.kv_cache_manager = KVCacheManager(
             batch_size=batch_size,
             max_seq_len=max_seq_len,
