@@ -36,6 +36,8 @@ class BLTConfig(Config):
     compute_teacher_ce: bool = False
     use_student_patch_reps_for_teacher: bool = False
     use_oracle_patch_reps: bool = False
+    teacher_blocks_no_grad: bool = True
+    student_blocks_no_grad: bool = False
     decoder_backprop_through_encoder: bool = True
     decoder_backprop_through_boundary_predictor: bool = True
     boundary_predictor_backprop_through_encoder: bool = True

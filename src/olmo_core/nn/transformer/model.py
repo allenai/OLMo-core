@@ -14,6 +14,7 @@ from typing import (
     cast,
 )
 import math
+from contextlib import nullcontext
 
 import torch
 import torch.nn as nn
@@ -1963,7 +1964,7 @@ class BLTDistillTransformer(BLTTransformer):
 
         # First, run the teacher.
         if not skip_teacher:
-            with torch.no_grad():
+            with (torch.no_grad() if blt_config.teacher_blocks_no_grad else nullcontext()):
                 assert not isinstance(self.teacher, BLTTransformer)
                 input_ids_for_teacher = torch.concatenate(
                     [
@@ -2035,21 +2036,23 @@ class BLTDistillTransformer(BLTTransformer):
                 assert blt_config.teacher_force_boundaries
 
                 h_patch_after_global = teacher_last_hidden_state
-                _, student_hidden_states = self._block_forward(
-                    h_patch,
-                    hidden_states_to_return=list(range(blt_config.encoder_loss_lookahead)),
-                    limit=blt_config.encoder_loss_lookahead,
-                    **block_kwargs,
-                )
+                with (torch.no_grad() if blt_config.student_blocks_no_grad else nullcontext()):
+                    _, student_hidden_states = self._block_forward(
+                        h_patch,
+                        hidden_states_to_return=list(range(blt_config.encoder_loss_lookahead)),
+                        limit=blt_config.encoder_loss_lookahead,
+                        **block_kwargs,
+                    )
             else:
                 dtype = h_patch.dtype
                 global_dtype = torch.bfloat16 if self.blocks["0"].attention.use_flash else dtype  # type: ignore
 
-                h_patch_after_global, student_hidden_states = self._block_forward(
-                    h_patch.to(global_dtype),
-                    hidden_states_to_return=list(range(blt_config.encoder_loss_lookahead)),
-                    **block_kwargs,
-                )
+                with (torch.no_grad() if blt_config.student_blocks_no_grad else nullcontext()):
+                    h_patch_after_global, student_hidden_states = self._block_forward(
+                        h_patch.to(global_dtype),
+                        hidden_states_to_return=list(range(blt_config.encoder_loss_lookahead)),
+                        **block_kwargs,
+                    )
                 h_patch_after_global = h_patch_after_global.to(dtype)
                 student_hidden_states = [x.to(dtype) for x in student_hidden_states]
 
