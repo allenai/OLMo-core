@@ -75,6 +75,9 @@ class AttentionBackendName(StrEnum):
     def assert_supported(self):
         self.get_class().assert_supported()
 
+    def assert_supports_swa(self):
+        self.get_class().assert_supports_swa()
+
     def assert_supports_cp(self):
         self.get_class().assert_supports_cp()
 
@@ -101,6 +104,8 @@ class AttentionBackend(nn.Module):
         window_size: Tuple[int, int] = (-1, -1),
     ):
         self.assert_supported()
+        if window_size != (-1, -1):
+            self.assert_supports_swa()
         super().__init__()
         self.head_dim = head_dim
         self.n_heads = n_heads
@@ -124,9 +129,19 @@ class AttentionBackend(nn.Module):
 
     @classmethod
     @abstractmethod
+    def assert_supports_swa(cls):
+        """
+        Validates that this backend supports sliding window attention (SWA).
+        Raises an error if not supported.
+        """
+        pass
+
+    @classmethod
+    @abstractmethod
     def assert_supports_cp(cls):
         """
         Validates that this backend supports context parallelism.
+        Raises an error if not supported.
         """
         pass
 
@@ -135,6 +150,7 @@ class AttentionBackend(nn.Module):
     def assert_supports_packed_qkv(cls):
         """
         Validates that this backend supports taking QKV as a single packed tensor.
+        Raises an error if not supported.
         """
         pass
 
@@ -143,6 +159,7 @@ class AttentionBackend(nn.Module):
     def assert_supports_kv_cache(cls):
         """
         Validates that this backend supports KV caching.
+        Raises an error if not supported.
         """
         pass
 
@@ -188,6 +205,10 @@ class TorchAttentionBackend(AttentionBackend):
     @classmethod
     def assert_supported(cls):
         pass
+
+    @classmethod
+    def assert_supports_swa(cls):
+        raise RuntimeError(f"'{cls.__name__}' doesn't support sliding window attention")
 
     @classmethod
     def assert_supports_cp(cls):
@@ -273,6 +294,10 @@ class FlashAttentionBackend(AttentionBackend):
     def assert_supported(cls):
         if not has_flash_attn():
             raise RuntimeError(f"'{cls.__name__}' requires the flash-attn package.")
+
+    @classmethod
+    def assert_supports_swa(cls):
+        pass
 
     @classmethod
     def assert_supports_cp(cls):
@@ -433,6 +458,10 @@ class TEAttentionBackend(AttentionBackend):
     def assert_supported(cls):
         if not has_te_attn():
             raise RuntimeError(f"'{cls.__name__}' requires NVIDIA's TransformerEngine package.")
+
+    @classmethod
+    def assert_supports_swa(cls):
+        pass
 
     @classmethod
     def assert_supports_cp(cls):
