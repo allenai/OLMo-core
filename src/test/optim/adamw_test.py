@@ -13,7 +13,7 @@ from olmo_core.distributed.checkpoint import (
 )
 from olmo_core.optim import AdamWConfig, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.testing import DEVICES
-from olmo_core.utils import cuda_sync_debug_mode
+from olmo_core.utils import cuda_sync_debug_mode, seed_all
 
 
 class MyModel(nn.Module):
@@ -122,22 +122,22 @@ def test_skip_step_adamw_foreach(device: torch.device, dtype: Optional[DType]):
     optim.step()
 
 
-_LRS = [1e-3, 5e-4]
-_WDS = [0.0, 1e-2]
-_BETAS = [(0.9, 0.999), (0.7, 0.95)]
-
-
 @pytest.mark.parametrize("device", DEVICES)
-@pytest.mark.parametrize("lr, wd, betas", list(product(_LRS, _WDS, _BETAS)))
+@pytest.mark.parametrize("bnb_style", [False, True], ids=["standard", "bnb_style"])
+@pytest.mark.parametrize(
+    "betas", [(0.9, 0.999), (0.9, 0.95)], ids=["beta_0.9_0.999", "beta_0.9_0.95"]
+)
+@pytest.mark.parametrize("wd", [0.0, 1e-2], ids=["no_wd", "wd"])
+@pytest.mark.parametrize("lr", [1e-3, 5e-4], ids=["lr_1e-3", "lr_5e-4"])
 def test_adamw_equivalence(
     device: torch.device,
     lr: float,
     wd: float,
     betas: tuple[float, float],
+    bnb_style: bool,
 ):
-    """Ensure standard SkipStepAdamW matches torch's AdamW."""
-
-    torch.manual_seed(123)
+    """Ensure SkipStepAdamW matches torch's AdamW."""
+    seed_all(0)
 
     model1 = MyModel().to(device)
     model2 = copy.deepcopy(model1).to(device)
@@ -153,11 +153,12 @@ def test_adamw_equivalence(
     )
 
     optim1 = AdamWConfig(foreach=False, **cfg_common).build(model1)  # type: ignore[arg-type]
-    optim2 = SkipStepAdamWConfig(foreach=True, **cfg_common).build(model2)  # type: ignore[arg-type]
-    optim3 = SkipStepAdamWConfig(foreach=False, **cfg_common).build(model3)  # type: ignore[arg-type]
+    optim2 = SkipStepAdamWConfig(foreach=True, bnb_style=bnb_style, **cfg_common).build(model2)  # type: ignore[arg-type]
+    optim3 = SkipStepAdamWConfig(foreach=False, bnb_style=bnb_style, **cfg_common).build(model3)  # type: ignore[arg-type]
+    num_steps = 5
 
     # Training loop
-    for step_idx in range(5):
+    for step_idx in range(num_steps):
         inp = torch.randint(0, 128, (4, 8), device=device)
 
         with cuda_sync_debug_mode(debug_mode="error"):
@@ -174,6 +175,7 @@ def test_adamw_equivalence(
             assert torch.allclose(p1, p2, atol=atol, rtol=rtol)
         for p1, p3 in zip(model1.parameters(), model3.parameters()):
             assert torch.allclose(p1, p3, atol=atol, rtol=rtol)
+
         # Compare optimizer state
         for t1, t2 in zip(model1.parameters(), model2.parameters()):
             st1, st2 = optim1.state[t1], optim2.state[t2]
