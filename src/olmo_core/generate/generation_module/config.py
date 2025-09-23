@@ -41,6 +41,9 @@ class GenerationConfig(Config):
     stop_token_ids: Optional[List[int]] = None
     """Tokens to stop generation at. If provided, the generation will stop when any of these tokens are generated."""
 
+    until: Optional[List[str]] = None
+    """Strings to stop generation at. If provided, the generation will stop when any of these strings are generated."""
+
     def __post_init__(self):
         self.validate()
 
