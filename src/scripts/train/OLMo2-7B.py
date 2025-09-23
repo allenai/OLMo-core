@@ -1,6 +1,7 @@
 """
 Train a 7B OLMo model. Run this script without any arguments to see usage info.
 """
+
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
