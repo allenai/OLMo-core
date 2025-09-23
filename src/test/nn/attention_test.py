@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import pytest
 import torch
@@ -13,6 +13,7 @@ from olmo_core.distributed.utils import get_rank, get_world_size
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention import (
     Attention,
+    AttentionBackendName,
     AttentionConfig,
     AttentionType,
     FusedAttention,
@@ -39,6 +40,43 @@ from olmo_core.utils import get_default_device, seed_all
 
 BF16_RTOL = 1e-5
 BF16_ATOL = 5e-3
+
+
+@pytest.mark.parametrize("backend_name", [AttentionBackendName.flash, AttentionBackendName.te])
+@pytest.mark.parametrize("head_dim", [128])
+@pytest.mark.parametrize("n_heads", [8])
+@pytest.mark.parametrize("n_kv_heads", [None])
+@pytest.mark.parametrize("window_size", [(-1, -1)])
+@requires_gpu
+def test_attention_backend(
+    backend_name: AttentionBackendName,
+    head_dim: int,
+    n_heads: int,
+    n_kv_heads: Optional[int],
+    window_size: Tuple[int, int],
+    dtype: torch.dtype = torch.bfloat16,
+):
+    try:
+        backend_name.assert_supported()
+    except RuntimeError:
+        pytest.skip(f"'{backend_name}' attention backend is not supported on this system")
+
+    seed_all(0)
+
+    backend = backend_name.build(
+        head_dim=head_dim, n_heads=n_heads, n_kv_heads=n_kv_heads, window_size=window_size
+    )
+    default = AttentionBackendName.torch.build(
+        head_dim=head_dim, n_heads=n_heads, n_kv_heads=n_kv_heads, window_size=window_size
+    )
+
+    q = torch.randn(2, 16, n_heads, head_dim, device="cuda", dtype=dtype)
+    k = torch.randn(2, 16, n_kv_heads or n_heads, head_dim, device="cuda", dtype=dtype)
+    v = torch.randn(2, 16, n_kv_heads or n_heads, head_dim, device="cuda", dtype=dtype)
+
+    att = backend((q, k, v))
+    att_reference = default((q, k, v))
+    torch.testing.assert_close(att, att_reference)
 
 
 @pytest.mark.parametrize("attention_cls", [Attention, NormalizedAttention])
