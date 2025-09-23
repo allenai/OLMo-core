@@ -33,6 +33,8 @@ class BLTConfig(Config):
     skip_blocks: bool = False
     skip_teacher_blocks: bool = False
     skip_teacher: bool = False
+    compute_teacher_ce: bool = False
+    use_student_patch_reps_for_teacher: bool = False
     use_oracle_patch_reps: bool = False
     decoder_backprop_through_encoder: bool = True
     decoder_backprop_through_boundary_predictor: bool = True

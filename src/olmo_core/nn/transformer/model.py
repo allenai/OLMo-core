@@ -1477,7 +1477,7 @@ class BLTDistillTransformer(BLTTransformer):
         super().apply_fsdp(*args, **kwargs)
 
     # teacher forward patched to (1) use the student blocks if blocks are shared, (2) return the required extra hidden state information
-    def _teacher_forward(
+    def teacher_forward(
         self,
         input_ids: torch.Tensor,
         inputs_embeds: Optional[torch.Tensor] = None,
@@ -1492,7 +1492,7 @@ class BLTDistillTransformer(BLTTransformer):
         zero_bos: bool = True,
         hidden_states_to_return: Optional[list[int]] = None,
         **kwargs,
-    ) -> Tuple[Union[torch.Tensor, LMOutputWithLoss, None], Tuple[list[torch.Tensor], Optional[torch.Tensor], Optional[torch.Tensor]]]:
+    ) -> Tuple[Union[LMOutputWithLoss, None], Tuple[list[torch.Tensor], Optional[torch.Tensor], Optional[torch.Tensor]]]:
         """
         Run the transformer on the token input IDs.
 
@@ -1516,11 +1516,10 @@ class BLTDistillTransformer(BLTTransformer):
                 **kwargs,
             )
 
-            h_emb = self.teacher.embeddings(input_ids)
-
             if inputs_embeds is not None:
-                # not ideal, to support <bos> difference
-                h_emb[:, :inputs_embeds.shape[1]] = inputs_embeds
+                h_emb = inputs_embeds
+            else:
+                h_emb = self.teacher.embeddings(input_ids)
 
             if skip_blocks:
                 return None, ([], None, h_emb)
@@ -1557,7 +1556,15 @@ class BLTDistillTransformer(BLTTransformer):
                 # will throw an exception.
                 if labels is not None:
                     lm_head_kwargs["labels"] = labels
-                return self.teacher.lm_head(h, **lm_head_kwargs), (out_hidden_states, h, h_emb)
+
+                out = LMOutputWithLoss(
+                    logits=self.teacher.lm_head(h, **lm_head_kwargs),
+                    loss=torch.tensor(torch.nan),
+                    ce_loss=torch.tensor(torch.nan),
+                    z_loss=None,
+                )
+
+                return out, (out_hidden_states, h, h_emb)
             else:
                 return None, (out_hidden_states, h, h_emb)
         else:
@@ -1682,6 +1689,23 @@ class BLTDistillTransformer(BLTTransformer):
                 return (e - ce)
 
             div_fn = kl_div_fn
+        elif blt_config.div_fn == "reverse_kl":
+            def reverse_kl_div_fn(log_y_true, log_y_pred):
+                log_y_true = (log_y_true.float() / blt_config.binarization_temp) - blt_config.epsilon
+                log_y_pred = (log_y_pred.float() / blt_config.binarization_temp) - blt_config.epsilon
+
+                e = (
+                    torch.exp(log_y_pred) * log_y_pred
+                    + (-torch.expm1(log_y_pred) * log1mexp(log_y_pred))
+                )
+                ce = (
+                    torch.exp(log_y_pred) * log_y_true
+                    + (-torch.expm1(log_y_pred) * log1mexp(log_y_true))
+                )
+
+                return (e - ce)
+
+            div_fn = reverse_kl_div_fn
         elif blt_config.div_fn == "tvd":
             def tvd_div_fn(log_y_true, log_y_pred):
                 log_y_true = (log_y_true.float() / blt_config.binarization_temp) - blt_config.epsilon
@@ -1955,8 +1979,14 @@ class BLTDistillTransformer(BLTTransformer):
                 )
                 teacher_loss_mask = shifted_patch_lens != 0
 
-                teacher_logits, (teacher_hidden_states, teacher_last_hidden_state, teacher_embeds) = self._teacher_forward(
+                if blt_config.use_student_patch_reps_for_teacher:
+                    inputs_embeds_for_teacher = h_patch
+                else:
+                    inputs_embeds_for_teacher = None
+
+                teacher_out, (teacher_hidden_states, teacher_last_hidden_state, teacher_embeds) = self.teacher_forward(
                     input_ids_for_teacher,
+                    inputs_embeds=inputs_embeds_for_teacher,
                     labels=None, # we will compute loss ourselves
                     return_logits=True,
                     skip_blocks=skip_blocks or skip_teacher_blocks,
@@ -1964,12 +1994,31 @@ class BLTDistillTransformer(BLTTransformer):
                     hidden_states_to_return=list(range(blt_config.encoder_loss_lookahead)),
                     **kwargs,
                 )
+                teacher_logits = teacher_out.logits if teacher_out is not None else None
                 if teacher_logits is not None:
                     teacher_logprobs = F.log_softmax(teacher_logits.float() / blt_config.temperature, dim=-1) # type: ignore
                     teacher_main_path_logprobs = torch.gather(teacher_logprobs[:, :-1], -1, input_ids_for_teacher[:, 1:].unsqueeze(-1)).squeeze(-1)
+
+                    # behind flag since it's compute intensive
+                    if blt_config.compute_teacher_ce:
+                        teacher_labels = F.pad(
+                            input_ids_for_teacher[:, 1:],
+                            (0, 1),
+                            value=ignore_index,
+                        )
+
+                        teacher_ce_loss, _ = cross_entropy_loss(
+                            teacher_logits.view(-1, teacher_logits.shape[-1]),  # type: ignore
+                            teacher_labels.view(-1),
+                            ignore_index=ignore_index,
+                        )
+                        metrics["blt/teacher_ce_loss"] = teacher_ce_loss
+                    else:
+                        teacher_ce_loss = torch.nan
                 else:
                     teacher_logprobs = None
                     teacher_main_path_logprobs = None
+                    teacher_ce_loss = torch.nan
         else:
             teacher_embeds = None
             teacher_last_hidden_state = None
@@ -1977,6 +2026,7 @@ class BLTDistillTransformer(BLTTransformer):
             teacher_main_path_logprobs = None
             teacher_hidden_states = None
             teacher_loss_mask = None
+            teacher_ce_loss = torch.nan
 
         # Run each block.
         if not skip_blocks:
@@ -2198,6 +2248,7 @@ class BLTDistillTransformer(BLTTransformer):
         local_encoder_loss = self._finalize_loss(local_encoder_loss, loss_div_factor=patch_loss_div_factor)
         local_decoder_loss = self._finalize_loss(local_decoder_loss, loss_div_factor=loss_div_factor)
         hnet_embed_loss = self._finalize_loss(hnet_embed_loss, loss_div_factor=loss_div_factor)
+        teacher_ce_loss = self._finalize_loss(teacher_ce_loss, loss_div_factor=patch_loss_div_factor)
 
         loss = 0.0
         for loss_idx, (loss_name, loss_weight) in enumerate(zip(blt_config.losses, blt_config.loss_weights)):
@@ -2233,6 +2284,8 @@ class BLTDistillTransformer(BLTTransformer):
                 loss = loss + hnet_embed_loss * loss_weight * schedule_multiplier
             elif loss_name == "ratio":
                 loss = loss + ratio_loss * loss_weight * schedule_multiplier
+            elif loss_name == "teacher_ce":
+                loss = loss + teacher_ce_loss * loss_weight * schedule_multiplier
             else:
                 raise ValueError(f"Unknown distillation loss '{loss_name}'")
 

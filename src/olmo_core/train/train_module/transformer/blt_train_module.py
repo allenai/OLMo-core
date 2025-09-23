@@ -377,6 +377,19 @@ class TransformerBLTTrainModule(TransformerTrainModule):
                 batch["continuation"] = orig_cont
                 batch["ctx_len"] = orig_ctx_len
                 batch["cont_len"] = orig_cont_len
+            elif eval_mode == "teacher":
+                with self._model_forward_context():
+                    out, _ = self.model.teacher_forward(  # type: ignore
+                        batch["original_input_ids"],
+                    )
+
+                # teacher_forward gives us logits over the original (Dolma2) tokens.
+                # so we need to change the batch tokens / token info back to subword token space from byte space.
+                batch["input_ids"] = batch["original_input_ids"]
+                batch["ctx"] = orig_ctx
+                batch["continuation"] = orig_cont
+                batch["ctx_len"] = orig_ctx_len
+                batch["cont_len"] = orig_cont_len
             elif eval_mode is not None:
                 raise ValueError(f"Unknown eval_mode: {eval_mode}")
             else:

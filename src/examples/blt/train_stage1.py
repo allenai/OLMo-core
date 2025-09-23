@@ -71,18 +71,18 @@ from olmo_core.train.train_module import (
 from olmo_core.utils import seed_all
 
 NUM_WORKERS = 32
-SEQUENCE_LENGTH = int(os.environ.get("SEQUENCE_LENGTH", 1024))
+SEQUENCE_LENGTH = int(os.environ.get("SEQUENCE_LENGTH", 4096))
 QUICK_DEBUG = False
 GLOBAL_BATCH_SIZE = 64
 LOCAL_BATCH_SIZE = 64
 EVAL_BATCH_SIZE = 16
-LOCAL_MODEL_STYLE = os.environ.get("LOCAL_MODEL_STYLE", "hnet")
-TRAIN_MODE = os.environ.get("TRAIN_MODE", "full_stage_1")
+LOCAL_MODEL_STYLE = os.environ.get("LOCAL_MODEL_STYLE", "hnet:xlstm")
+TRAIN_MODE = os.environ.get("TRAIN_MODE", "stage_1")
 DATA_SOURCE = os.environ.get("DATA_SOURCE", "dclm")
 DTYPE = os.environ.get("DTYPE", "float32")
 LR_SCHEDULE = os.environ.get("LR_SCHEDULE", "linear_with_warmup")
-ADD_HASH_EMBEDDINGS = os.environ.get("ADD_HASH_EMBEDDINGS", "true").lower() in {"1", "true", "yes"}
-ADD_EXPANDED_EMBEDDINGS = os.environ.get("ADD_EXPANDED_EMBEDDINGS", "false").lower() in {"1", "true", "yes"}
+ADD_HASH_EMBEDDINGS = os.environ.get("ADD_HASH_EMBEDDINGS", "false").lower() in {"1", "true", "yes"}
+ADD_EXPANDED_EMBEDDINGS = os.environ.get("ADD_EXPANDED_EMBEDDINGS", "true").lower() in {"1", "true", "yes"}
 OLMO_ARCH = os.environ.get("OLMO_ARCH", "olmo2_1B_v2")
 
 if DATA_SOURCE == "dclm":
@@ -138,8 +138,9 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
 
     if QUICK_DEBUG:
         NUM_WORKERS = 0
-        GLOBAL_BATCH_SIZE = 4
-        LOCAL_BATCH_SIZE = 4
+        GLOBAL_BATCH_SIZE = 2
+        LOCAL_BATCH_SIZE = 2
+        EVAL_BATCH_SIZE = 4
 
     model_style_tags = LOCAL_MODEL_STYLE.split(":")[1:]
     teacher_model_config = getattr(TransformerConfig, OLMO_ARCH)(
@@ -323,17 +324,14 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         num_threads=None if not QUICK_DEBUG else 0,
     )
 
-    if TRAIN_MODE == "local_encoder_only":
-        losses = ["local_encoder"]
-        loss_weights = [1.0]
-    elif TRAIN_MODE == "local_decoder_only":
-        losses = ["local_decoder","boundary"]
-        loss_weights = [1.0]
-    elif TRAIN_MODE == "full_stage_1":
+    if TRAIN_MODE == "stage_1":
         losses = ["local_encoder", "local_decoder", "boundary"]
         loss_weights = [1.0, 1.0, 1.0]
+    elif TRAIN_MODE == "reverse_stage_1":
+        losses = ["local_decoder", "local_encoder", "teacher_ce"]
+        loss_weights = [1.0, 1.0, 1.0]
     else:
-        raise ValueError(f"Unknown TRAIN_MODE: {TRAIN_MODE}. Must be one of 'local_encoder_only', 'local_decoder_only', 'full_stage_1'.")
+        raise ValueError(f"Unknown TRAIN_MODE: {TRAIN_MODE}. Must be one of 'stage_1', 'reverse_stage_1'.")
 
     if LR_SCHEDULE == "linear_with_warmup":
         scheduler = LinearWithWarmup(warmup_fraction=0.1, alpha_f=0.0)
@@ -360,9 +358,10 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             tokenizer=byte_tokenizer_config,
             losses=losses,
             loss_weights=loss_weights,
-            skip_blocks=TRAIN_MODE == "local_encoder_only",
+            skip_blocks=False,
             skip_teacher=False,
-            use_oracle_patch_reps=TRAIN_MODE in {"local_decoder_only", "full_stage_1"},
+            use_student_patch_reps_for_teacher=False,
+            use_oracle_patch_reps=True,
         ),
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
@@ -395,15 +394,14 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             "basic_skills_arithmetic_rc_5shot",
         ]
 
-    all_eval_tasks = []
-    all_eval_names = []
-    all_eval_batch_kwargs = []
+    all_eval_tasks = eval_tasks
+    all_eval_names = [f"downstream" for _ in eval_tasks]
 
-    if TRAIN_MODE == "full_stage_1":
-        all_eval_tasks += eval_tasks
-        all_eval_names += [f"downstream" for _ in eval_tasks]
-        all_eval_batch_kwargs += [{} for _ in eval_tasks]
-        # all_eval_batch_kwargs += [{"eval_mode": "subword"} for _ in eval_tasks]
+    if TRAIN_MODE == "reverse_stage_1":
+        all_eval_batch_kwargs = [{"eval_mode": "teacher"} for _ in eval_tasks]
+    else:
+        all_eval_batch_kwargs = [{} for _ in eval_tasks]
+    # all_eval_batch_kwargs = [{"eval_mode": "subword"} for _ in eval_tasks]
 
     trainer_config = (
         TrainerConfig(
@@ -487,9 +485,7 @@ def main(run_name: str, overrides: List[str]):
     config_dict = config.as_config_dict()
     cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
 
-    if OLMO_CKPT_PATH:
-        if STAGE1_CKPT_PATH:
-            raise ValueError("Cannot use both OLMO_CKPT_PATH and STAGE1_CKPT_PATH. Please set only one of them.")
+    if OLMO_CKPT_PATH and not STAGE1_CKPT_PATH:
         # Load OLMo 1B checkpoint.
         random_init_keys = {"local_encoder", "boundary_predictor", "local_decoder"}
 
@@ -515,16 +511,23 @@ def main(run_name: str, overrides: List[str]):
         # init embeddings + scale appropriately
         model.fix_init(trainer.train_module.blt_config, EMBEDDING_INIT_PATH)  # type: ignore
     else:
-        if OLMO_CKPT_PATH:
-            raise ValueError("Cannot use both OLMO_CKPT_PATH and STAGE1_CKPT_PATH. Please set only one of them.")
+        if not OLMO_CKPT_PATH:
+            # Load BOLMo checkpoint. all keys must match.
+            incompatible_keys = load_model_and_optim_state(STAGE1_CKPT_PATH, model)
+        else:
+            key_mapping = {
+                f"teacher.{key}": None for key in model.teacher.state_dict().keys()  # type: ignore
+            } # will be loaded in second call
+            # Load BOLMo checkpoint into student and OLMO checkpoint into teacher.
+            incompatible_keys = load_model_and_optim_state(STAGE1_CKPT_PATH, model, key_mapping=key_mapping, strict=False)  # type: ignore
+            incompatible_keys = load_model_and_optim_state(OLMO_CKPT_PATH, model.teacher, strict=False)  # type: ignore
 
-        # Load BOLMo checkpoint. all keys must match.
-        incompatible_keys = load_model_and_optim_state(STAGE1_CKPT_PATH, model)
         log.info(f"{incompatible_keys}")
 
     # TODO(benjaminm): this is not a nice place?
     register_fsdp_forward_method(model, "student_forward")
     register_fsdp_forward_method(model, "subword_forward")
+    register_fsdp_forward_method(model, "teacher_forward")
     register_fsdp_forward_method(model.local_encoder, "pool")  # type: ignore
 
     # Train.
