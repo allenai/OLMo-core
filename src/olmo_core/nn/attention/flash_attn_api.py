@@ -23,6 +23,10 @@ def has_flash_attn() -> bool:
     return flash_attn is not None
 
 
+def has_ring_flash_attn() -> bool:
+    return ring_flash_attn is not None
+
+
 def _flatten_batch_dim(x: torch.Tensor) -> torch.Tensor:
     B, T, *other = x.shape
     return x.view(B * T, *other)

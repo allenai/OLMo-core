@@ -386,12 +386,8 @@ class Attention(AttentionBase):
 
             if backend is None:
                 backend = AttentionBackendName.flash
-            elif not backend.supports_swa():
-                raise OLMoConfigurationError(
-                    f"'window_size' is not supported by the '{backend}' backend"
-                )
 
-            # Flash attn window is [i - window_size[0], i + window_size[1]] inclusive
+            # Window size is [i - window_size[0], i + window_size[1]] inclusive
             window_size_tuple = (window_size - 1, 0)
 
         self.rope: Optional[Union[RotaryEmbedding, ComplexRotaryEmbedding]] = None
@@ -409,7 +405,8 @@ class Attention(AttentionBase):
 
         if not backend.is_supported():
             raise OLMoConfigurationError(
-                f"Attention backend '{backend}' is not supported on this system."
+                f"Attention backend '{backend}' is not supported on this system. "
+                "Please switch to a different backend or install the missing dependencies."
             )
         else:
             log.info(f"Using attention backend '{backend}'")

@@ -1,5 +1,5 @@
 from abc import abstractmethod
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple, Type, Union
 
 import torch
 import torch.distributed as dist
@@ -17,6 +17,7 @@ from .flash_attn_api import (
     dispatch_ring_flash_attn,
     dispatch_ring_flash_attn_qkvpacked,
     has_flash_attn,
+    has_ring_flash_attn,
 )
 from .ring import RingAttentionLoadBalancerType
 from .te_attn_api import TEDotProductAttention, has_te_attn
@@ -42,6 +43,16 @@ class AttentionBackendName(StrEnum):
     Transformer Engine attention ➡️ :class:`TEAttentionBackend`.
     """
 
+    def get_class(self) -> Type["AttentionBackend"]:
+        if self == self.torch:
+            return TorchAttentionBackend
+        elif self == self.flash:
+            return FlashAttentionBackend
+        elif self == self.te:
+            return TEAttentionBackend
+        else:
+            raise NotImplementedError(self)
+
     def build(
         self,
         *,
@@ -52,16 +63,7 @@ class AttentionBackendName(StrEnum):
         dropout_p: float = 0.0,
         window_size: Tuple[int, int] = (-1, -1),
     ) -> "AttentionBackend":
-        if self == self.torch:
-            backend_cls = TorchAttentionBackend
-        elif self == self.flash:
-            backend_cls = FlashAttentionBackend
-        elif self == self.te:
-            backend_cls = TEAttentionBackend
-        else:
-            raise NotImplementedError(self)
-
-        return backend_cls(
+        return self.get_class()(
             head_dim=head_dim,
             n_heads=n_heads,
             n_kv_heads=n_kv_heads,
@@ -71,16 +73,7 @@ class AttentionBackendName(StrEnum):
         )
 
     def is_supported(self) -> bool:
-        if self == AttentionBackendName.flash:
-            return has_flash_attn()
-        else:
-            return True
-
-    def supports_swa(self) -> bool:
-        if self in (AttentionBackendName.flash,):
-            return True
-        else:
-            return False
+        return self.get_class().is_supported()
 
 
 class AttentionBackend(nn.Module):
@@ -98,6 +91,8 @@ class AttentionBackend(nn.Module):
         dropout_p: float = 0.0,
         window_size: Tuple[int, int] = (-1, -1),
     ):
+        if not self.is_supported():
+            raise RuntimeError(f"'{self.__class__.__name__}' is not supported on this system.")
         super().__init__()
         self.head_dim = head_dim
         self.n_heads = n_heads
@@ -109,6 +104,10 @@ class AttentionBackend(nn.Module):
         self.cp_enabled = False
         self.cp_load_balancer: Optional[RingAttentionLoadBalancerType] = None
         self.head_stride: int = 1
+
+    @classmethod
+    def is_supported(cls) -> bool:
+        return True
 
     @abstractmethod
     def forward(
@@ -128,6 +127,17 @@ class AttentionBackend(nn.Module):
         """
         raise NotImplementedError
 
+    def _setup_cp(
+        self,
+        cp_mesh: DeviceMesh,
+        load_balancer: RingAttentionLoadBalancerType,
+        head_stride: int = 1,
+    ):
+        self.cp_pg = cp_mesh.get_group()
+        self.cp_load_balancer = load_balancer
+        self.cp_enabled = True
+        self.cp_head_stride = head_stride
+
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
@@ -135,27 +145,18 @@ class AttentionBackend(nn.Module):
         head_stride: int = 1,
     ):
         """
-        Apply context parallelism, if supported by the backend.
+        Apply context parallelism if supported by the backend.
         """
-        self.cp_pg = cp_mesh.get_group()
-        self.cp_load_balancer = load_balancer
-        self.cp_enabled = True
-        self.cp_head_stride = head_stride
+        del cp_mesh, load_balancer, head_stride
+        raise NotImplementedError(
+            f"'{self.__class__.__name__}' doesn't support context parallelism"
+        )
 
 
 class TorchAttentionBackend(AttentionBackend):
     """
     PyTorch's built-in scaled dot-product attention (SDPA) backend.
     """
-
-    def apply_cp(
-        self,
-        cp_mesh: DeviceMesh,
-        load_balancer: RingAttentionLoadBalancerType,
-        head_stride: int = 1,
-    ):
-        del cp_mesh, load_balancer, head_stride
-        raise RuntimeError(f"'{self.__class__.__name__}' doesn't support context parallelism")
 
     def forward(
         self,
@@ -224,6 +225,22 @@ class FlashAttentionBackend(AttentionBackend):
     """
     SDPA from the flash-attn package.
     """
+
+    @classmethod
+    def is_supported(cls) -> bool:
+        return has_flash_attn()
+
+    def apply_cp(
+        self,
+        cp_mesh: DeviceMesh,
+        load_balancer: RingAttentionLoadBalancerType,
+        head_stride: int = 1,
+    ):
+        if not has_ring_flash_attn():
+            raise RuntimeError(
+                f"ring-flash-attn is required for context parallelism with '{self.__class__.__name__}'"
+            )
+        self._setup_cp(cp_mesh, load_balancer, head_stride=head_stride)
 
     def forward(
         self,
@@ -365,6 +382,27 @@ class TEAttentionBackend(AttentionBackend):
             softmax_scale=self.scale,
         )
 
+    @classmethod
+    def is_supported(cls) -> bool:
+        return has_te_attn()
+
+    def apply_cp(
+        self,
+        cp_mesh: DeviceMesh,
+        load_balancer: RingAttentionLoadBalancerType,
+        head_stride: int = 1,
+    ):
+        if load_balancer != RingAttentionLoadBalancerType.zig_zag:
+            raise RuntimeError(f"'{self.__class__.__name__}' only supports zig-zag load balancing")
+        self._setup_cp(cp_mesh, load_balancer, head_stride=head_stride)
+        self.te_attn.set_context_parallel_group(
+            cp_group=cp_mesh.get_group(),
+            cp_global_ranks=dist.get_process_group_ranks(cp_mesh.get_group()),
+            cp_stream=torch.cuda.default_stream(),
+            #  cp_stream=get_or_init_stream("cp"),  # this doesn't seem to help
+            cp_comm_type="p2p",
+        )
+
     def forward(
         self,
         qkv: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
@@ -394,23 +432,6 @@ class TEAttentionBackend(AttentionBackend):
             cu_seqlens_kv=cu_doc_lens if cu_doc_lens is not None else cu_doc_lens_k,
             max_seqlen_q=max_doc_len if max_doc_len is not None else max_doc_len_q,
             max_seqlen_kv=max_doc_len if max_doc_len is not None else max_doc_len_k,
-        )
-
-    def apply_cp(
-        self,
-        cp_mesh: DeviceMesh,
-        load_balancer: RingAttentionLoadBalancerType,
-        head_stride: int = 1,
-    ):
-        if load_balancer != RingAttentionLoadBalancerType.zig_zag:
-            raise RuntimeError(f"'{self.__class__.__name__}' only supports zig-zag load balancing")
-        super().apply_cp(cp_mesh, load_balancer, head_stride=head_stride)
-        self.te_attn.set_context_parallel_group(
-            cp_group=cp_mesh.get_group(),
-            cp_global_ranks=dist.get_process_group_ranks(cp_mesh.get_group()),
-            cp_stream=torch.cuda.default_stream(),
-            #  cp_stream=get_or_init_stream("cp"),  # this doesn't seem to help
-            cp_comm_type="p2p",
         )
 
 
