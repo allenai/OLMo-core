@@ -308,7 +308,7 @@ def build_config(
     *,
     common_config_builder: Callable[..., CommonComponents] = build_common_components,
     data_config_builder: Callable[..., DataComponents] = build_default_data_components,
-    model_config_builder: Callable[[TokenizerConfig], TransformerConfig],
+    model_config_builder: Callable[[CommonComponents], TransformerConfig],
     train_module_config_builder: Callable[[CommonComponents], TransformerTrainModuleConfig],
     trainer_config_builder: Callable[[CommonComponents], TrainerConfig],
     finalize_config: Optional[Callable[[ExperimentConfig], None]] = None,

@@ -28,7 +28,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
-    rank_microbatch_size = 8 * SEQUENCE_LENGTH
+    rank_microbatch_size = 8 * common.max_sequence_length
     if common.launch is not None:
         gpus = {CLUSTER_TO_GPU_TYPE.get(c, "unknown") for c in common.launch.clusters}
         if all("B200" in g for g in gpus):
@@ -36,7 +36,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
 
     return TransformerTrainModuleConfig(
         rank_microbatch_size=rank_microbatch_size,
-        max_sequence_length=common.dataset.effective_sequence_length,
+        max_sequence_length=common.max_sequence_length,
         optim=SkipStepAdamWConfig(
             lr=4e-4,
             weight_decay=0.033,
@@ -101,7 +101,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 cancel_check_interval=cancel_check_interval,
             ),
         )
-        .with_recommended_evals(common.tokenizer, SEQUENCE_LENGTH, cluster)
+        .with_recommended_evals(common.tokenizer, common.max_sequence_length, cluster)
     )
 
 
@@ -109,11 +109,11 @@ if __name__ == "__main__":
     config_builder = partial(
         build_config,
         global_batch_size=GLOBAL_BATCH_SIZE,
-        sequence_length=SEQUENCE_LENGTH,
+        max_sequence_length=SEQUENCE_LENGTH,
         model_config_builder=build_model_config,
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
-        include_instance_filter=False,  # We use SkipStepOptimizer for this problem.
         include_default_evals=False,
+        include_instance_filter=False,  # We use SkipStepOptimizer for this problem.
     )
     main(config_builder=config_builder)
