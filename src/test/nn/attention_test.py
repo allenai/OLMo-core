@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import pytest
 import torch
@@ -13,6 +13,7 @@ from olmo_core.distributed.utils import get_rank, get_world_size
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention import (
     Attention,
+    AttentionBackendName,
     AttentionConfig,
     AttentionType,
     FusedAttention,
@@ -28,6 +29,7 @@ from olmo_core.testing import (
     DEVICES,
     FLASH_MARKS,
     GPU_MARKS,
+    TE_MARKS,
     requires_flash_attn,
     requires_gpu,
     requires_multi_gpu,
@@ -38,6 +40,49 @@ from olmo_core.utils import get_default_device, seed_all
 
 BF16_RTOL = 1e-5
 BF16_ATOL = 5e-3
+
+
+@pytest.mark.parametrize(
+    "window_size",
+    [
+        pytest.param((-1, -1), id="full"),
+        pytest.param((8, 8), id="SWA"),
+    ],
+)
+@pytest.mark.parametrize("n_kv_heads", [None, 4])
+@pytest.mark.parametrize("n_heads", [8])
+@pytest.mark.parametrize("head_dim", [128])
+@pytest.mark.parametrize("backend_name", [AttentionBackendName.flash, AttentionBackendName.te])
+@requires_gpu
+def test_attention_backend(
+    backend_name: AttentionBackendName,
+    head_dim: int,
+    n_heads: int,
+    n_kv_heads: Optional[int],
+    window_size: Tuple[int, int],
+    dtype: torch.dtype = torch.bfloat16,
+):
+    try:
+        backend_name.assert_supported()
+        backend = backend_name.build(
+            head_dim=head_dim, n_heads=n_heads, n_kv_heads=n_kv_heads, window_size=window_size
+        )
+        default = AttentionBackendName.torch.build(
+            head_dim=head_dim, n_heads=n_heads, n_kv_heads=n_kv_heads, window_size=window_size
+        )
+    except RuntimeError as e:
+        pytest.skip(str(e))
+
+    seed_all(0)
+    B, T = 2, 16
+
+    q = torch.randn(B, T, n_heads, head_dim, device="cuda", dtype=dtype)
+    k = torch.randn(B, T, n_kv_heads or n_heads, head_dim, device="cuda", dtype=dtype)
+    v = torch.randn(B, T, n_kv_heads or n_heads, head_dim, device="cuda", dtype=dtype)
+
+    att = backend((q, k, v)).view(B, T, -1)
+    att_reference = default((q, k, v)).view(B, T, -1)
+    torch.testing.assert_close(att, att_reference)
 
 
 @pytest.mark.parametrize("attention_cls", [Attention, NormalizedAttention])
@@ -54,8 +99,12 @@ BF16_ATOL = 5e-3
     [pytest.param(None, id="MHA"), pytest.param(1, id="MQA"), pytest.param(2, id="GQA")],
 )
 @pytest.mark.parametrize(
-    "use_flash",
-    [pytest.param(True, id="flash", marks=FLASH_MARKS), pytest.param(False, id="torch-SDPA")],
+    "backend",
+    [
+        pytest.param("flash", id="flash-attn", marks=FLASH_MARKS),
+        pytest.param("torch", id="torch-SDPA"),
+        pytest.param("te", id="te-attn", marks=TE_MARKS),
+    ],
 )
 @pytest.mark.parametrize(
     "kwargs",
@@ -72,11 +121,13 @@ def test_attention(
     dtype: torch.dtype,
     device: torch.device,
     n_kv_heads: Optional[int],
-    use_flash: bool,
+    backend: str,
     kwargs: Dict[str, Any],
 ):
-    if use_flash and dtype == torch.float32:
-        pytest.skip("flash requires a low precision dtype")
+    if backend == "flash" and dtype == torch.float32:
+        pytest.skip("flash-attn requires a low precision dtype")
+    if backend in ("flash", "te") and device.type == "cpu":
+        pytest.skip(f"'{backend}' backend requires GPU")
     if dtype == torch.bfloat16 and device.type == "cpu":
         pytest.skip("bf16 requires GPU")
     if attention_cls is NormalizedAttention:
@@ -84,9 +135,9 @@ def test_attention(
             pytest.skip("clip_qkv is not supported for NormalizedAttention")
         if "use_head_qk_norm" in kwargs:
             pytest.skip("use_head_qk_norm is not supported for NormalizedAttention")
-        if use_flash:
+        if backend in ("flash", "te"):
             pytest.xfail(
-                "NormalizedAttention is broken with flash because it creates activation tensors in fp32"
+                f"NormalizedAttention is broken with '{backend}' backend because it creates activation tensors in fp32"
             )
 
     seed_all(0)
@@ -98,7 +149,7 @@ def test_attention(
         d_model=d_model,
         n_heads=4,
         n_kv_heads=n_kv_heads,
-        use_flash=use_flash,
+        backend=backend,
         init_device=device.type,
         **kwargs,
     )

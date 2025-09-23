@@ -14,6 +14,7 @@ compute_capability = torch.cuda.get_device_capability()[0] if has_cuda else None
 has_flash_attn = False
 has_torchao = False
 has_grouped_gemm = False
+has_te = False
 
 try:
     import flash_attn  # type: ignore
@@ -37,6 +38,14 @@ try:
     has_grouped_gemm = True
     del grouped_gemm
 except ModuleNotFoundError:
+    pass
+
+try:
+    import transformer_engine.pytorch  # type: ignore
+
+    has_te = True
+    del transformer_engine
+except ImportError:
     pass
 
 
@@ -91,6 +100,18 @@ GROUPED_GEMM_MARKS = (
 
 def requires_grouped_gemm(func):
     for mark in GROUPED_GEMM_MARKS:
+        func = mark(func)
+    return func
+
+
+TE_MARKS = (
+    pytest.mark.gpu,
+    pytest.mark.skipif(not has_te, reason="Requires Transformer Engine"),
+)
+
+
+def requires_te(func):
+    for mark in TE_MARKS:
         func = mark(func)
     return func
 
