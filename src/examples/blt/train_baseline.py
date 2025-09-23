@@ -148,7 +148,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
         ),
         max_grad_norm=1.0,
-        scheduler=LinearWithWarmup(warmup=10000, alpha_f=0.0),
+        scheduler=LinearWithWarmup(warmup_fraction=0.1, alpha_f=0.0),
     )
 
     if QUICK_DEBUG:
