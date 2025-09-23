@@ -412,6 +412,7 @@ class Attention(AttentionBase):
             scale=softmax_scale,
             dropout_p=dropout,
             window_size=window_size_tuple,
+            cache=cache,
         )
         self.kv_cache_manager: Optional[KVCacheManager] = None
 
