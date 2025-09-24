@@ -209,8 +209,6 @@ def test_sdpa(
         pytest.skip(f"{backend_name} backend requires GPU")
     if backend_name == AttentionBackendName.torch and intra_doc_masking:
         pytest.skip("intra-document masking is not supported by torch backend")
-    if backend_name == AttentionBackendName.te and intra_doc_masking:
-        pytest.xfail("intra-document masking is currently broken in te backend")
 
     torch.random.manual_seed(0)
 
@@ -289,7 +287,12 @@ def test_sdpa(
             cu_doc_lens=cu_doc_lens,
         ).view_as(y1)
 
-    torch.testing.assert_close(y1, y2)
+    try:
+        torch.testing.assert_close(y1, y2)
+    except AssertionError:
+        if backend_name == AttentionBackendName.te and intra_doc_masking:
+            pytest.xfail("intra-document masking is currently broken in te backend")
+        raise
 
 
 @requires_gpu
