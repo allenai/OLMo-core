@@ -27,7 +27,7 @@ log = logging.getLogger(__name__)
 if __name__ == "__main__":
     usage = f"""
 Performs anneals on original data. Resumes data loader state and optimizer state.
-    
+
 [yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]{'|'.join(SubCmd)}[/] [i b]ORIGINAL_CHECKPOINT LENGTH CLUSTER[/] [i][OVERRIDES...][/]
 
 [b]Subcommands[/]
@@ -38,7 +38,7 @@ Performs anneals on original data. Resumes data loader state and optimizer state
 [b magenta]dry_run:[/]     Pretty print the config and exit.
 
 [b]Examples[/]
-$ [i]python {sys.argv[0]} {SubCmd.launch} gs://ai2-llm/checkpoints/OLMo25/step238000/ 100e9 ai2/augusta-google-1 --launch.num_nodes=2[/]
+$ [i]python {sys.argv[0]} {SubCmd.launch} gs://ai2-llm/checkpoints/OLMo25/step238000/ 100e9 ai2/augusta --launch.num_nodes=2[/]
     """.strip()
 
     if len(sys.argv) < 5 or sys.argv[1] not in set(SubCmd):
