@@ -128,7 +128,7 @@ def build_launch_config(
             required=False,
             workspace=workspace,
         )
-        if "google" not in cluster
+        if "augusta" not in cluster
         else None
     )
     env_secrets = [
