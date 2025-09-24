@@ -320,7 +320,7 @@ class TorchAttentionBackend(AttentionBackend):
         device: torch.device,
         window_size: Tuple[int, int],
     ) -> torch.Tensor:
-        key = f"seq_len_q={seq_len_q},seq_len_kv={seq_len_kv}"
+        key = f"seq_len_q={seq_len_q},seq_len_kv={seq_len_kv},window_size={window_size}"
         if self.cache is not None:
             if (mask := self.cache.get_for_device(key, device)) is not None:
                 return mask
