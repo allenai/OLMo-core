@@ -72,7 +72,7 @@ class CustomCheckpointerCallback(Callback):
     checkpoint_steps: List[int]
     """List of specific steps at which to save checkpoints."""
     
-    save_async: bool = True
+    save_async: bool = False
     """Whether to save checkpoints asynchronously."""
     
     def __post_init__(self):
@@ -517,7 +517,7 @@ def train(checkpoint: str, config: SFTConfig, save_tokenizer: bool, keep_trainab
     # Replace the regular checkpointer with our custom one
     custom_checkpointer = CustomCheckpointerCallback(
         checkpoint_steps=checkpoint_steps,
-        save_async=True
+        save_async=False
     )
     # Properly attach the callback to the trainer
     custom_checkpointer.trainer = trainer
