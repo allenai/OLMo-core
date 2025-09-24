@@ -168,6 +168,12 @@ class AttentionBackend(nn.Module):
         """
         pass
 
+    def warmup_cache(self, max_seq_len: int, device: torch.device):
+        """
+        Warmup the buffer cache.
+        """
+        del max_seq_len, device
+
     @abstractmethod
     def forward(
         self,
@@ -226,6 +232,14 @@ class TorchAttentionBackend(AttentionBackend):
     @classmethod
     def assert_supports_kv_cache(cls):
         raise RuntimeError(f"'{cls.__name__}' doesn't support KV caching")
+
+    def warmup_cache(self, max_seq_len: int, device: torch.device):
+        self._get_sliding_window_mask(
+            seq_len_q=max_seq_len,
+            seq_len_kv=max_seq_len,
+            device=device,
+            window_size=self.window_size,
+        )
 
     def forward(
         self,
