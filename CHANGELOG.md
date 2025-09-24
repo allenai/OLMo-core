@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed an issue where the `ConsoleLoggerCallback` would attempt to log before the first step.
 - Only call `teardown_distributed_environment()` when training ends cleanly to avoid a hang for the duration of the distributed backend's timeout when there's an error from one rank.
 - Fixed tensor parallelism issue with torch 2.8.
+- More fixes for Beaker cluster names.
 - `Callback.post_train()` will still be called even if the run is canceled before the dry-run batch.
 - `GarbageCollectorCallback` will restore `gc` settings even when `Trainer.fit()` exits on an error.
 
