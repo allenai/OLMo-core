@@ -57,10 +57,18 @@ ENV GROUPED_GEMM_CUTLASS="1"
 ARG GROUPED_GEMM_VERSION="grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@main"
 RUN pip install --no-build-isolation --no-cache-dir "${GROUPED_GEMM_VERSION}"
 
-# Install flash-attn.
-# ARG FLASH_ATTN_VERSION=2.8.2
-# RUN pip install --no-build-isolation --no-cache-dir flash-attn==${FLASH_ATTN_VERSION}
+# Install flash-attn 2
+ARG FLASH_ATTN_VERSION=2.8.2
+RUN pip install --no-build-isolation --no-cache-dir flash-attn==${FLASH_ATTN_VERSION}
 RUN pip install --no-cache-dir https://github.com/tyler-romero/flash-attention/releases/download/v3.0.0b0/flash_attn_3-3.0.0b1-cp39-abi3-linux_x86_64.whl
+
+# Install flash-attn 3
+ARG FLASH_ATTN_3_SHA="1ceaa984b2f348caea18b39a98458d33b4ea7a09"
+RUN git clone --depth 1 --branch ${FLASH_ATTN_3_SHA} https://github.com/Dao-AILab/flash-attention.git && \
+    cd flash-attention && \
+    git submodule update --init --depth 1 && \
+    cd hopper && \
+    MAX_JOBS=24 FLASH_ATTENTION_FORCE_BUILD=TRUE FLASH_ATTENTION_DISABLE_FP16=TRUE python setup.py bdist_wheel
 
 # Install transformer-engine.
 ARG TE_VERSION=2.6.0.post1
