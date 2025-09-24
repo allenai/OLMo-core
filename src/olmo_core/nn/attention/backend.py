@@ -37,10 +37,16 @@ class AttentionBackendName(StrEnum):
     PyTorch's built-in SDPA ➡️ :class:`TorchAttentionBackend`
     """
     flash = "flash"
+    flash_2 = "flash"
     """
-    Flash attention from the `flash-attn <https://github.com/Dao-AILab/flash-attention>`_ library.
+    Flash attention 2 from the `flash-attn <https://github.com/Dao-AILab/flash-attention>`_ library.
     To use this with context-parallelism, `ring-flash-attn <https://github.com/zhuzilin/ring-flash-attention>`_
     is also required. ➡️ :class:`FlashAttentionBackend`
+    """
+    flash_3 = "flash_3"
+    """
+    Flash attention 3 (beta) from the `flash-attn <https://github.com/Dao-AILab/flash-attention>`_
+    library `hopper/` subdirectory. Only supports H100/H800 GPUs. ➡️ :class:`FlashAttention3Backend`
     """
     te = "te"
     """
@@ -50,8 +56,10 @@ class AttentionBackendName(StrEnum):
     def get_class(self) -> Type["AttentionBackend"]:
         if self == self.torch:
             return TorchAttentionBackend
-        elif self == self.flash:
+        elif self in (self.flash, self.flash_2):
             return FlashAttentionBackend
+        elif self == self.flash_3:
+            return FlashAttention3Backend
         elif self == self.te:
             return TEAttentionBackend
         else:
@@ -427,7 +435,7 @@ class FlashAttentionBackend(AttentionBackend):
 
 class FlashAttention3Backend(AttentionBackend):
     """
-    SDPA from the flash-attn 3 package. Additionally, ring-flash-attn is required for context parallelism.
+    SDPA from the flash-attn 3 package. Does not currently support context parallelism.
     """
 
     def __init__(
@@ -440,8 +448,8 @@ class FlashAttention3Backend(AttentionBackend):
         dropout_p: float = 0.0,
         window_size: Tuple[int, int] = (-1, -1),
     ):
-        if dropout_p > 0:
-            raise RuntimeError("dropout_p > 0 is not supported for flash-attn 3")
+        if dropout_p > 0.0:
+            raise RuntimeError("dropout_p > 0.0 is not supported for flash-attn 3")
         super().__init__(
             head_dim=head_dim,
             n_heads=n_heads,
