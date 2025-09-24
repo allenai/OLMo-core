@@ -670,6 +670,8 @@ class Trainer:
 
             # Quick check if the run has already been canceled.
             if self.is_canceled:
+                for callback in self._iter_callbacks():
+                    callback.post_train()
                 self._shutdown()
                 return
 
@@ -684,6 +686,8 @@ class Trainer:
             log.error(f"Training failed due to:\n{type(exc).__name__}: {exc}")
             for callback in self._iter_callbacks():
                 callback.on_error(exc)
+            for callback in self._iter_callbacks():
+                callback.close()
             raise
         finally:
             # Restore original signal handlers.
@@ -699,6 +703,8 @@ class Trainer:
 
     def _shutdown(self):
         self._log_metrics()
+        for callback in self._iter_callbacks():
+            callback.close()
         if self._multi_thread_pool is not None:
             self._multi_thread_pool.shutdown(wait=True, cancel_futures=False)
             self._multi_thread_pool = None
