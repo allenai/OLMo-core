@@ -29,10 +29,10 @@ from olmo_core.testing import (
     BACKENDS,
     DEVICES,
     FLASH_3_MARKS,
-    FLASH_MARKS,
+    FLASH_2_MARKS,
     GPU_MARKS,
     TE_MARKS,
-    requires_flash_attn,
+    requires_flash_attn_2,
     requires_gpu,
     requires_multi_gpu,
     run_distributed_test,
@@ -106,7 +106,7 @@ def test_attention_backend(
 @pytest.mark.parametrize(
     "backend",
     [
-        pytest.param("flash_2", id="flash-attn-2", marks=FLASH_MARKS),
+        pytest.param("flash_2", id="flash-attn-2", marks=FLASH_2_MARKS),
         pytest.param("flash_3", id="flash-attn-3", marks=FLASH_3_MARKS),
         pytest.param("torch", id="torch-SDPA"),
         pytest.param("te", id="te-attn", marks=TE_MARKS),
@@ -185,7 +185,7 @@ def test_attention(
 @pytest.mark.parametrize(
     "backend_name",
     [
-        pytest.param(AttentionBackendName.flash_2, id="flash-attn-2", marks=FLASH_MARKS),
+        pytest.param(AttentionBackendName.flash_2, id="flash-attn-2", marks=FLASH_2_MARKS),
         pytest.param(AttentionBackendName.flash_3, id="flash-attn-2", marks=FLASH_3_MARKS),
         pytest.param(AttentionBackendName.torch, id="torch-SDPA"),
         pytest.param(AttentionBackendName.te, id="te-attn", marks=TE_MARKS),
@@ -306,7 +306,7 @@ def test_sdpa(
 
 
 @requires_gpu
-@requires_flash_attn
+@requires_flash_attn_2
 @pytest.mark.parametrize("dtype", [pytest.param(torch.bfloat16, id="bf16")])
 @pytest.mark.parametrize(
     "use_flash", [pytest.param(True, id="flash_2"), pytest.param(False, id="torch-SDPA")]
@@ -347,7 +347,7 @@ def test_fused_attention_against_non_fused(dtype: torch.dtype, use_flash: bool):
 
 
 @requires_gpu
-@requires_flash_attn
+@requires_flash_attn_2
 def test_fused_attention_with_rope():
     seed_all(0)
 
@@ -373,7 +373,7 @@ def test_fused_attention_with_rope():
 
 
 @requires_gpu
-@requires_flash_attn
+@requires_flash_attn_2
 def test_attention_with_intra_document_masking():
     seed_all(0)
 
@@ -417,7 +417,7 @@ def test_attention_with_intra_document_masking():
 
 
 @requires_gpu
-@requires_flash_attn
+@requires_flash_attn_2
 @requires_compute_capability(min_cc=9)  # flash-attn bf16 precision is worse on A100s (cc=8)
 @pytest.mark.parametrize("batch_size", [1, 2])
 @pytest.mark.parametrize(
@@ -497,7 +497,7 @@ def test_attention_kv_caching(batch_size: int, n_kv_heads: Optional[int], use_ro
 
 
 @requires_gpu
-@requires_flash_attn
+@requires_flash_attn_2
 def test_attention_kv_cache_update():
     seed_all(0)
 
@@ -600,7 +600,7 @@ def test_attention_kv_cache_update():
 
 
 @requires_gpu
-@requires_flash_attn
+@requires_flash_attn_2
 @pytest.mark.parametrize("batch_size", [1, 8])
 def test_attention_prefill_forward_pass(batch_size: int):
     seed_all(0)
@@ -629,7 +629,7 @@ def test_attention_prefill_forward_pass(batch_size: int):
 
 
 @requires_gpu
-@requires_flash_attn
+@requires_flash_attn_2
 def test_attention_kv_cache_write_position():
     """Test KV caching with left-padded attention masks."""
     seed_all(0)
@@ -724,7 +724,7 @@ def test_attention_kv_cache_write_position():
 
 
 @requires_gpu
-@requires_flash_attn
+@requires_flash_attn_2
 @pytest.mark.parametrize("use_rope", [True, False], ids=["rope", "no-rope"])
 def test_attention_leftpad_shift_equivalence(use_rope):
     """The same content, presented with different left-padding, should produce identical outputs on the valid region."""
@@ -1079,7 +1079,7 @@ def _run_context_parallel_attention(
 
 
 @requires_multi_gpu
-@requires_flash_attn
+@requires_flash_attn_2
 @pytest.mark.parametrize(
     "load_balancer_type",
     [pytest.param(RingAttentionLoadBalancerType.zig_zag, id="zig_zag")],

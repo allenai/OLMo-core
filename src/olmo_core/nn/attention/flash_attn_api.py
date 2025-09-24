@@ -70,7 +70,6 @@ def dispatch_flash_attn(
     if flash_attn_2 is None:
         raise RuntimeError("flash-attn 2 is required!")
 
-    # Handle defaulting of seqlens
     if cu_seqlens is not None:
         cu_seqlens_q = cu_seqlens if cu_seqlens_q is None else cu_seqlens_q
         cu_seqlens_k = cu_seqlens if cu_seqlens_k is None else cu_seqlens_k
@@ -124,7 +123,6 @@ def dispatch_flash_attn_3(
     if flash_attn_3 is None:
         raise RuntimeError("flash-attn 3 is required!")
 
-    # Handle defaulting of seqlens
     if cu_seqlens is not None:
         cu_seqlens_q = cu_seqlens if cu_seqlens_q is None else cu_seqlens_q
         cu_seqlens_k = cu_seqlens if cu_seqlens_k is None else cu_seqlens_k

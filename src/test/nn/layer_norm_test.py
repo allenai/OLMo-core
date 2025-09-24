@@ -9,11 +9,11 @@ from olmo_core.nn.layer_norm import (
     LayerNormType,
     RMSNorm,
 )
-from olmo_core.testing import requires_flash_attn, requires_gpu
+from olmo_core.testing import requires_flash_attn_2, requires_gpu
 
 
 @requires_gpu
-@requires_flash_attn
+@requires_flash_attn_2
 @pytest.mark.parametrize("bias", [pytest.param(True, id="bias"), pytest.param(False, id="no-bias")])
 @pytest.mark.parametrize(
     "dtype", [pytest.param(torch.float32, id="fp32"), pytest.param(torch.bfloat16, id="bf16")]

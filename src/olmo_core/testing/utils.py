@@ -91,14 +91,14 @@ def requires_compute_capability(min_cc: int):
     return decorator
 
 
-FLASH_MARKS = (
+FLASH_2_MARKS = (
     pytest.mark.gpu,
     pytest.mark.skipif(not has_flash_attn_2, reason="Requires flash-attn 2"),
 )
 
 
-def requires_flash_attn(func):
-    for mark in FLASH_MARKS:
+def requires_flash_attn_2(func):
+    for mark in FLASH_2_MARKS:
         func = mark(func)
     return func
 
@@ -107,6 +107,12 @@ FLASH_3_MARKS = (
     pytest.mark.gpu,
     pytest.mark.skipif(not has_flash_attn_3, reason="Requires flash-attn 3"),
 )
+
+
+def requires_flash_attn_3(func):
+    for mark in FLASH_3_MARKS:
+        func = mark(func)
+    return func
 
 
 GROUPED_GEMM_MARKS = (

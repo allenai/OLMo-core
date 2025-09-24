@@ -16,7 +16,7 @@ from olmo_core.generate.generation_module.transformer.config import (
 )
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.testing import requires_multi_gpu, run_distributed_test
-from olmo_core.testing.utils import has_flash_attn_2, requires_flash_attn, requires_gpu
+from olmo_core.testing.utils import has_flash_attn_2, requires_flash_attn_2, requires_gpu
 from olmo_core.train.train_module.transformer.config import (
     TransformerDataParallelConfig,
 )
@@ -261,7 +261,7 @@ def test_generation_module_stop_sequences():
 
 
 @requires_gpu
-@requires_flash_attn
+@requires_flash_attn_2
 def test_generation_with_attention_mask():
     device = torch.device("cuda")
     pad_token_id = 0
@@ -294,7 +294,7 @@ def test_generation_with_attention_mask():
 
 
 @requires_gpu
-@requires_flash_attn
+@requires_flash_attn_2
 @pytest.mark.parametrize("use_rope", [True, False], ids=["rope", "no-rope"])
 def test_left_padded_attention_mask_equivalence(use_rope):
     device = torch.device("cuda")
@@ -337,7 +337,7 @@ def test_left_padded_attention_mask_equivalence(use_rope):
 
 
 @requires_gpu
-@requires_flash_attn
+@requires_flash_attn_2
 @pytest.mark.parametrize("batch_size", [1, 8])
 def test_generation_cache_consistency(batch_size: int):
     if not has_flash_attn_2:
