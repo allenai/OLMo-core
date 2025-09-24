@@ -134,6 +134,10 @@ exclude = [
 [tool.pyright]
 reportPrivateImportUsage = false
 
+[tool.ty.rules]
+possibly-unbound-attribute = "ignore"
+possibly-unbound-import = "ignore"
+
 [tool.mypy]
 ignore_missing_imports = true
 no_site_packages = true
