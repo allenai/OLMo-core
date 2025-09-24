@@ -199,7 +199,7 @@ def get_beaker_hostname_constraints(
     beaker_priority: Priority,
     gcp_credentials_path: Optional[Path] = None,
 ) -> list[list[str]]:
-    if beaker_cluster != "ai2/augusta-google-1":
+    if beaker_cluster != "ai2/augusta":
         raise ValueError(
             "Only Augusta is supported. Making this work for other clusters probably would be a bad idea..."
         )
@@ -254,7 +254,7 @@ def main():
     parser.add_argument(
         "--cluster",
         type=str,
-        default="ai2/augusta-google-1",
+        default="ai2/augusta",
         help="The beaker cluster. This defaults to and is assumed to be Augusta for now.",
     )
 

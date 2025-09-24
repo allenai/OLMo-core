@@ -220,7 +220,7 @@ class BeakerLaunchConfig(Config):
     The amount of shared memory to use.
     """
 
-    clusters: List[str] = field(default_factory=lambda: ["ai2/jupiter-cirrascale-2"])
+    clusters: List[str] = field(default_factory=lambda: ["ai2/jupiter"])
     """
     The allowed clusters to run on.
     """
