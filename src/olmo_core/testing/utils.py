@@ -29,7 +29,7 @@ try:
     import flash_attn_interface  # type: ignore
 
     if compute_capability is not None:
-        is_supported = 9 <= compute_capability < 10
+        is_supported = 9 <= compute_capability < 10  # H100 / H800
         has_flash_attn_3 = is_supported
     del flash_attn_interface
 except ModuleNotFoundError:

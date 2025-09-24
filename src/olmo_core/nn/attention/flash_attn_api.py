@@ -35,8 +35,7 @@ def has_flash_attn_3() -> bool:
     if flash_attn_3 is not None:
         if torch.cuda.is_available():
             compute_capability = torch.cuda.get_device_capability()
-            # Flash Attention 3 requires compute capability 9.0 (H100/H800)
-            is_supported = (10, 0) > compute_capability >= (9, 0)
+            is_supported = (9, 0) <= compute_capability < (10, 0)  # H100 / H800
             return is_supported
         return True
     return False
