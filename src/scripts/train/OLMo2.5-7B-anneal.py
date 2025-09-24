@@ -27,7 +27,7 @@ log = logging.getLogger(__name__)
 if __name__ == "__main__":
     usage = f"""
 Performs anneals on original data. Resumes data loader state and optimizer state.
-    
+
 [yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]{'|'.join(SubCmd)}[/] [i b]ORIGINAL_CHECKPOINT LENGTH CLUSTER[/] [i][OVERRIDES...][/]
 
 [b]Subcommands[/]

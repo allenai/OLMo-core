@@ -19,6 +19,10 @@ from olmo_core.utils import generate_uuid
 
 log = logging.getLogger(__name__)
 
+GOOGLE_CLUSTERS = [
+    "ai2/augusta",
+]
+
 
 @lru_cache()
 def get_beaker_client() -> Optional[Beaker]:
@@ -79,7 +83,7 @@ def get_root_dir(cluster: str) -> str:
         "ai2/phobos",
     ]:
         return "/weka/oe-training-default/ai2-llm"
-    elif cluster == "ai2/augusta":
+    elif cluster in GOOGLE_CLUSTERS:
         return "gs://ai2-llm"
     elif "local" in cluster:
         return "gs://ai2-llm"
@@ -127,7 +131,7 @@ def build_launch_config(
             required=False,
             workspace=workspace,
         )
-        if cluster != "ai2/augusta"
+        if cluster not in GOOGLE_CLUSTERS
         else None
     )
     env_secrets = [
@@ -219,9 +223,8 @@ def build_launch_config(
 
 CLUSTER_TO_GPU_TYPE = {
     "ai2/jupiter": "NVIDIA H100 80GB HBM3",
-    "ai2/test-h100": "NVIDIA H100 80GB HBM3",
-    "ai2/pluto": "NVIDIA H100",
-    "ai2/augusta": "NVIDIA H100",
+    "ai2/augusta": "NVIDIA H100 80GB HBM3",
+    "ai2/ceres": "NVIDIA H100 80GB HBM3",
     "ai2/titan": "NVIDIA B200",
 }
 
