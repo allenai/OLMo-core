@@ -2,8 +2,8 @@ from .distributed import run_distributed_test
 from .utils import (
     BACKENDS,
     DEVICES,
-    FLASH_MARKS,
     FLASH_3_MARKS,
+    FLASH_MARKS,
     GPU_MARKS,
     GROUPED_GEMM_MARKS,
     INIT_DEVICES,

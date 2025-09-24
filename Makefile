@@ -18,6 +18,17 @@ type-check :
 	@echo "======== running mypy... ========="
 	@mypy src/
 
+.PHONY : style
+style:
+	@echo "======== formatting with isort... ========"
+	@isort .
+	@echo "======== formatting with black... ========"
+	@black .
+
+.PHONY : test
+test :
+	pytest
+
 .PHONY : docs
 docs :
 	rm -rf docs/build/

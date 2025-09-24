@@ -102,6 +102,7 @@ def requires_flash_attn(func):
         func = mark(func)
     return func
 
+
 FLASH_3_MARKS = (
     pytest.mark.gpu,
     pytest.mark.skipif(not has_flash_attn_3, reason="Requires flash-attn 3"),
