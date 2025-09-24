@@ -132,7 +132,11 @@ exclude = [
 "**/__init__.py" = ["F401"]
 
 [tool.pyright]
+pythonVersion = "3.9"
+reportImplicitStringConcatenation = false
 reportPrivateImportUsage = false
+reportUnknownMemberType = false
+reportUnusedCallResult = false
 
 [tool.mypy]
 ignore_missing_imports = true
