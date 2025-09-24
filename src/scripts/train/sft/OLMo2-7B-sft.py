@@ -436,28 +436,6 @@ class SFTConfig(Config):
         ).merge(overrides)
 
         config.dataset = dataset_config
-        
-        # Calculate checkpoint steps after dataset is created
-        # We need to build the dataset first to get steps_per_epoch
-        temp_dataset = dataset_config.build()
-        temp_data_loader = config.data_loader.build(temp_dataset, dp_process_group=None)
-        steps_per_epoch = temp_data_loader.total_batches
-        if steps_per_epoch is None:
-            raise RuntimeError("Cannot determine steps per epoch for checkpoint calculation")
-        
-        # Calculate checkpoint steps for 2 epochs (as specified in your command)
-        checkpoint_steps = calculate_checkpoint_steps(total_epochs=2, steps_per_epoch=steps_per_epoch)
-        
-        # Replace the regular checkpointer with our custom one
-        config.trainer.callbacks["checkpointer"] = CustomCheckpointerCallback(
-            checkpoint_steps=checkpoint_steps,
-            save_async=True
-        )
-        
-        if get_local_rank() == 0:
-            print(f"Checkpoint steps: {checkpoint_steps}")
-            print(f"Steps per epoch: {steps_per_epoch}")
-            print(f"Total training steps: {2 * steps_per_epoch}")
 
         print(config)
 
@@ -517,7 +495,27 @@ def train(checkpoint: str, config: SFTConfig, save_tokenizer: bool, keep_trainab
     
     dataset = config.dataset.build()
     data_loader = config.data_loader.build(dataset, dp_process_group=train_module.dp_process_group)
+    
+    # Calculate checkpoint steps now that we have the dataset
+    steps_per_epoch = data_loader.total_batches
+    if steps_per_epoch is None:
+        raise RuntimeError("Cannot determine steps per epoch for checkpoint calculation")
+    
+    # Calculate checkpoint steps for 2 epochs (as specified in your command)
+    checkpoint_steps = calculate_checkpoint_steps(total_epochs=2, steps_per_epoch=steps_per_epoch)
+    
+    if get_local_rank() == 0:
+        print(f"Checkpoint steps: {checkpoint_steps}")
+        print(f"Steps per epoch: {steps_per_epoch}")
+        print(f"Total training steps: {2 * steps_per_epoch}")
+    
     trainer = config.trainer.build(train_module, data_loader)
+    
+    # Replace the regular checkpointer with our custom one
+    trainer.callbacks["checkpointer"] = CustomCheckpointerCallback(
+        checkpoint_steps=checkpoint_steps,
+        save_async=True
+    )
 
     if save_tokenizer and get_local_rank() == 0:
         tokenizer_path = Path(dataset.paths[0]).parent / "tokenizer"
