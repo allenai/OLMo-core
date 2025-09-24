@@ -28,12 +28,12 @@ from olmo_core.config import DType
 from olmo_core.data.tokenizer import TokenizerConfig
 from olmo_core.distributed.checkpoint import load_model_and_optim_state
 from olmo_core.io import file_exists, join_path
+from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.conversion.state_mapping import TemplatePlaceholder
 from olmo_core.nn.hf.checkpoint import save_hf_model
 from olmo_core.nn.hf.convert import get_converter_to_hf
 from olmo_core.nn.transformer.config import TransformerConfig
 from olmo_core.nn.transformer.model import Transformer
-from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.utils import get_default_device, prepare_cli_environment
 
 log = logging.getLogger(__name__)
@@ -249,9 +249,9 @@ def validate_conversion(
         assert state_mapping is not None
 
         simple_key_mapping = {
-            mapping.source_keys[0].replace(".weight", ""): mapping.dest_keys[0].replace(
-                ".weight", ""
-            )
+            mapping.source_keys[0]
+            .replace(".weight", ""): mapping.dest_keys[0]
+            .replace(".weight", "")
             for mapping in state_mapping
             if len(mapping.source_keys) == 1 and len(mapping.dest_keys) == 1
         }
