@@ -23,6 +23,7 @@ GOOGLE_CLUSTERS = [
     "ai2/augusta",
 ]
 
+
 @lru_cache()
 def get_beaker_client() -> Optional[Beaker]:
     try:
