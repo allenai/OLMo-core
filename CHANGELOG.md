@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Only call `teardown_distributed_environment()` when training ends cleanly to avoid a hang for the duration of the distributed backend's timeout when there's an error from one rank.
 - Fixed tensor parallelism issue with torch 2.8.
 - More fixes for Beaker cluster names.
+- `Callback.post_train()` will still be called even if the run is canceled before the dry-run batch.
+- `GarbageCollectorCallback` will restore `gc` settings even when `Trainer.fit()` exits on an error.
 
 ### Changed
 
@@ -41,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a lightweight, gantry-like Beaker launch CLI: `python -m olmo_core.launch.beaker`.
 - Added [Beaker images with torch 2.8](https://beaker.allen.ai/orgs/ai2/workspaces/OLMo-core/images?searchQuery=tch280). There is `olmo-core-tch280cu128-2025-09-18` and `olmo-core-tch280cu129-2025-09-18` for CUDA 12.8 and 12.9, respectively.
 - Added TransformerEngine to Docker images and a TransformerEngine attention backend.
+- Added `Callback.close()` method, which is always called when exiting `Trainer.fit()`.
 
 ## [v2.2.0](https://github.com/allenai/OLMo-core/releases/tag/v2.2.0) - 2025-08-26
 
