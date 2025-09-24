@@ -512,10 +512,13 @@ def train(checkpoint: str, config: SFTConfig, save_tokenizer: bool, keep_trainab
     trainer = config.trainer.build(train_module, data_loader)
     
     # Replace the regular checkpointer with our custom one
-    trainer.callbacks["checkpointer"] = CustomCheckpointerCallback(
+    custom_checkpointer = CustomCheckpointerCallback(
         checkpoint_steps=checkpoint_steps,
         save_async=True
     )
+    # Properly attach the callback to the trainer
+    custom_checkpointer.trainer = trainer
+    trainer.callbacks["checkpointer"] = custom_checkpointer
 
     if save_tokenizer and get_local_rank() == 0:
         tokenizer_path = Path(dataset.paths[0]).parent / "tokenizer"
