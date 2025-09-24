@@ -506,6 +506,7 @@ class TEAttentionBackend(AttentionBackend):
         scale: Optional[float] = None,
         dropout_p: float = 0.0,
         window_size: Tuple[int, int] = (-1, -1),
+        cache: Optional[BufferCache] = None,
     ):
         super().__init__(
             head_dim=head_dim,
@@ -514,6 +515,7 @@ class TEAttentionBackend(AttentionBackend):
             scale=scale,
             dropout_p=dropout_p,
             window_size=window_size,
+            cache=cache,
         )
         if not has_te_attn():
             raise RuntimeError("TransformerEngine attention is not available")
