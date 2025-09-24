@@ -824,6 +824,8 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
 
         # Output containers
         generated = byte_input_ids
+        all_logits: Optional[List[torch.Tensor]] = [] if return_logits else None
+        all_logprobs: Optional[List[torch.Tensor]] = [] if return_logprobs else None
 
         # Timing stats
         time_to_first_token = None
@@ -932,12 +934,19 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                 inference_sampling_strategies = []
 
             for strategy in inference_sampling_strategies:
-                if strategy == "greedy_boundary":
+                if strategy.startswith("gen_eos_bias"):
+                    eos_bias = float(strategy.split(":")[-1])
+                    next_token_logits[..., eos] += eos_bias
+                elif strategy.startswith("gen_boundary_bias"):
+                    boundary_bias = float(strategy.split(":")[-1])
+                    next_token_logits[..., self.model.end_of_subword_token_blt] += boundary_bias
+                elif strategy == "greedy_boundary":
                     # force boundary if argmax
+                    # otherwise force no boundary
                     next_token_logits[..., self.model.end_of_subword_token_blt] = torch.where(
                         next_token_logits.argmax(-1) == self.model.end_of_subword_token_blt,  # type: ignore
                         torch.tensor(100_000, device=next_token_logits.device, dtype=next_token_logits.dtype),
-                        next_token_logits[..., self.model.end_of_subword_token_blt],
+                        torch.tensor(-100_000, device=next_token_logits.device, dtype=next_token_logits.dtype),
                     )
                 elif strategy.startswith("temperature_patch_decay"):
                     decay_alpha = float(strategy.split(":")[-1])
@@ -947,6 +956,9 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                     else:
                         decay_factor = decay_alpha ** bytes_since_boundary[boundary_state.inv_mask].float()
                     temperature = (temperature * decay_factor).unsqueeze(-1)
+
+            if all_logits is not None:
+                all_logits.append(next_token_logits)
 
             new_next_tokens = select_next_token(
                 next_token_logits.squeeze(1),
@@ -1051,6 +1063,10 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         pbar.close()
         if prof is not None:
             prof.__exit__(None, None, None)
+
+        logits = logprobs = None
+        if return_logits and all_logits:
+            logits = torch.cat(all_logits, dim=1)
 
         if stream:
             RED = "\033[0;31m"
