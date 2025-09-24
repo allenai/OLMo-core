@@ -279,20 +279,20 @@ def test_sdpa(
             .transpose(1, 2)
             .contiguous()
         )
-        y2 = attention.sdpa(
-            q,
-            k,
-            v,
-            max_doc_len=max_doc_len,
-            cu_doc_lens=cu_doc_lens,
-        ).view_as(y1)
+        try:
+            y2 = attention.sdpa(
+                q,
+                k,
+                v,
+                max_doc_len=max_doc_len,
+                cu_doc_lens=cu_doc_lens,
+            ).view_as(y1)
+        except RuntimeError:
+            if backend_name == AttentionBackendName.te and intra_doc_masking:
+                pytest.xfail("intra-document masking is currently broken in te backend")
+            raise
 
-    try:
-        torch.testing.assert_close(y1, y2)
-    except AssertionError:
-        if backend_name == AttentionBackendName.te and intra_doc_masking:
-            pytest.xfail("intra-document masking is currently broken in te backend")
-        raise
+    torch.testing.assert_close(y1, y2)
 
 
 @requires_gpu
