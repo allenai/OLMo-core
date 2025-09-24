@@ -42,6 +42,7 @@ from olmo_core.train.callbacks import (
     GarbageCollectorCallback,
     GPUMemoryMonitorCallback,
 )
+from olmo_core.train.callbacks.callback import Callback
 from olmo_core.train.callbacks.wandb import WandBCallback
 from olmo_core.train.checkpoint import CheckpointerConfig
 from olmo_core.train.train_module import (
@@ -60,6 +61,44 @@ import shutil
 log = logging.getLogger(__name__)
 
 DEFAULT_SEQUENCE_LENGTH = 16_384
+
+
+@dataclass
+class CustomCheckpointerCallback(Callback):
+    """
+    Custom checkpointing callback that saves checkpoints at specific steps.
+    """
+    
+    checkpoint_steps: List[int]
+    """List of specific steps at which to save checkpoints."""
+    
+    save_async: bool = True
+    """Whether to save checkpoints asynchronously."""
+    
+    def __post_init__(self):
+        self.checkpoint_steps = sorted(set(self.checkpoint_steps))  # Remove duplicates and sort
+        self._latest_checkpoint_step: int = -1
+        self._checkpoints: List[str] = []
+    
+    def post_train(self):
+        """Save final checkpoint if not already saved."""
+        if self.step > self._latest_checkpoint_step:
+            self._save_checkpoint(save_async=False)
+    
+    def post_train_batch(self):
+        """Check if we should save a checkpoint at the current step."""
+        if self.step in self.checkpoint_steps and self.step > self._latest_checkpoint_step:
+            self._checkpoints.append(self._save_checkpoint())
+            self._latest_checkpoint_step = self.step
+            log.info(f"Saved checkpoint at step {self.step}")
+    
+    def _save_checkpoint(self, save_async: bool = None) -> str:
+        """Save a checkpoint and return the path."""
+        if save_async is None:
+            save_async = self.save_async
+        
+        checkpoint_path = self.trainer.save_checkpoint(save_async=save_async)
+        return checkpoint_path
 DEFAULT_NUM_NODES = 1
 GPUS_PER_NODE = 8
 MAX_RANK_MICROBATCH_SIZE_TOKENS = 16_384  # max tokens this config can handle on an H100
@@ -143,6 +182,31 @@ class BatchSizeConfig:
             "(rank_microbatch_size_tokens * dp_world_size * grad_accum_steps) (got "
             f"{self.global_batch_size_tokens} and {total_tokens})"
         )
+
+
+def calculate_checkpoint_steps(total_epochs: int, steps_per_epoch: int) -> List[int]:
+    """
+    Calculate specific steps for 5 checkpoints:
+    1. Start (step 0)
+    2. 1/4 through first epoch
+    3. End of first epoch
+    4. 1/2 through second epoch
+    5. End of training
+    """
+    total_steps = total_epochs * steps_per_epoch
+    
+    checkpoint_steps = [
+        0,  # Start
+        steps_per_epoch // 4,  # 1/4 through first epoch
+        steps_per_epoch,  # End of first epoch
+        steps_per_epoch + (steps_per_epoch // 2),  # 1/2 through second epoch
+        total_steps - 1,  # End of training (step before final)
+    ]
+    
+    # Remove duplicates and ensure we don't exceed total steps
+    checkpoint_steps = sorted(set([max(0, min(step, total_steps - 1)) for step in checkpoint_steps]))
+    
+    return checkpoint_steps
 
 
 def build_sft_dataset(
@@ -348,7 +412,7 @@ class SFTConfig(Config):
                 save_overwrite=True,
                 metrics_collect_interval=10,
                 cancel_check_interval=10,
-                max_duration=Duration.epochs(3),
+                max_duration=Duration.epochs(2),
             )
             .with_callback("gpu_monitor", GPUMemoryMonitorCallback())
             .with_callback("config_saver", ConfigSaverCallback())
@@ -372,6 +436,28 @@ class SFTConfig(Config):
         ).merge(overrides)
 
         config.dataset = dataset_config
+        
+        # Calculate checkpoint steps after dataset is created
+        # We need to build the dataset first to get steps_per_epoch
+        temp_dataset = dataset_config.build()
+        temp_data_loader = config.data_loader.build(temp_dataset, dp_process_group=None)
+        steps_per_epoch = temp_data_loader.total_batches
+        if steps_per_epoch is None:
+            raise RuntimeError("Cannot determine steps per epoch for checkpoint calculation")
+        
+        # Calculate checkpoint steps for 2 epochs (as specified in your command)
+        checkpoint_steps = calculate_checkpoint_steps(total_epochs=2, steps_per_epoch=steps_per_epoch)
+        
+        # Replace the regular checkpointer with our custom one
+        config.trainer.callbacks["checkpointer"] = CustomCheckpointerCallback(
+            checkpoint_steps=checkpoint_steps,
+            save_async=True
+        )
+        
+        if get_local_rank() == 0:
+            print(f"Checkpoint steps: {checkpoint_steps}")
+            print(f"Steps per epoch: {steps_per_epoch}")
+            print(f"Total training steps: {2 * steps_per_epoch}")
 
         print(config)
 
