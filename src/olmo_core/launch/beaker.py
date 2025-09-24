@@ -106,7 +106,7 @@ class OLMoCoreBeakerImage(StrEnum):
     Built with torch 2.8.0 and CUDA 12.9.
     """
 
-    flash_attn_3 = "tylerr/olmo-core-tch280cu129-2025-09-23"
+    flash_attn_3 = "tylerr/olmo-core-tch270cu128-2025-09-24"
     """
     Built flash-attn 3 (beta release) with torch 2.7.0 and CUDA 12.8.
     """
