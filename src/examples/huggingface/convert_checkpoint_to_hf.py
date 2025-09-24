@@ -13,11 +13,6 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Dict, Optional, Tuple
 
-try:
-    import flash_attn as flash_attn_2  # type: ignore
-except ImportError:
-    flash_attn_2 = None
-
 import torch
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 from cached_path import cached_path
