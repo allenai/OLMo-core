@@ -366,6 +366,16 @@ class Attention(AttentionBase):
                     size=self.n_kv_heads * self.head_dim, init_device=init_device
                 )
 
+        self.rope: Optional[Union[RotaryEmbedding, ComplexRotaryEmbedding]] = None
+        if rope is not None:
+            if rope.name == "fused":
+                raise OLMoConfigurationError(
+                    f"fused RoPE is not compatible with {self.__class__.__name__}"
+                )
+            rope_class = rope.build(self.head_dim, cache=cache)
+            assert isinstance(rope_class, (RotaryEmbedding, ComplexRotaryEmbedding))
+            self.rope = rope_class
+
         if backend is not None:
             backend = AttentionBackendName(backend)
 
@@ -387,20 +397,11 @@ class Attention(AttentionBase):
                 raise OLMoConfigurationError(f"'window_size' must be positive (got {window_size})")
 
             if backend is None:
+                # note: flash_3 and te backends are faster than flash_2 and also support SWA
                 backend = AttentionBackendName.flash_2
 
             # Window size is [i - window_size[0], i + window_size[1]] inclusive
             window_size_tuple = (window_size - 1, 0)
-
-        self.rope: Optional[Union[RotaryEmbedding, ComplexRotaryEmbedding]] = None
-        if rope is not None:
-            if rope.name == "fused":
-                raise OLMoConfigurationError(
-                    f"fused RoPE is not compatible with {self.__class__.__name__}"
-                )
-            rope_class = rope.build(self.head_dim, cache=cache)
-            assert isinstance(rope_class, (RotaryEmbedding, ComplexRotaryEmbedding))
-            self.rope = rope_class
 
         if backend is None:
             backend = AttentionBackendName.torch
