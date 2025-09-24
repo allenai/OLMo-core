@@ -412,6 +412,7 @@ class Attention(AttentionBase):
             scale=softmax_scale,
             dropout_p=dropout,
             window_size=window_size_tuple,
+            cache=cache,
         )
         self.kv_cache_manager: Optional[KVCacheManager] = None
 
@@ -864,7 +865,7 @@ class FusedAttention(AttentionBase):
         backend.assert_supports_packed_qkv()
         log.info(f"Using attention backend '{backend}'")
         self.backend = backend.build(
-            head_dim=self.head_dim, n_heads=self.n_heads, dropout_p=dropout
+            head_dim=self.head_dim, n_heads=self.n_heads, dropout_p=dropout, cache=cache
         )
 
     @property
