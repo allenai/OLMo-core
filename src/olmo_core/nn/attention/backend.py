@@ -589,6 +589,21 @@ class TEAttentionBackend(AttentionBackend):
         if isinstance(qkv, torch.Tensor):
             raise RuntimeError(f"'{self.__class__.__name__}' doesn't support packed QKV")
 
+        if any(
+            opt is not None
+            for opt in (
+                cu_doc_lens,
+                cu_doc_lens_q,
+                cu_doc_lens_k,
+                max_doc_len,
+                max_doc_len_q,
+                max_doc_len_k,
+            )
+        ):
+            raise RuntimeError(
+                f"'{self.__class__.__name__}' doesn't currently support intra-document masking"
+            )
+
         q, k, v = qkv
         return self.te_attn(
             q,
