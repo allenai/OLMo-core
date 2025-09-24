@@ -72,8 +72,7 @@ def convert_checkpoint_to_hf(
     # Check if validation is being performed and flash attn / TE attn is requested but cannot run.
     device = device or get_default_device()
     if validate:
-        attention = transformer_config_dict.get("block", {}).get("attention")
-        if attention:
+        if attention := transformer_config_dict.get("block", {}).get("attention"):
             backend = attention.get("backend")
             use_flash = bool(attention.get("use_flash"))
 
