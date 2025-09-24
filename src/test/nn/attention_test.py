@@ -28,8 +28,8 @@ from olmo_core.nn.rope import RoPEConfig, RoPEType
 from olmo_core.testing import (
     BACKENDS,
     DEVICES,
-    FLASH_3_MARKS,
     FLASH_2_MARKS,
+    FLASH_3_MARKS,
     GPU_MARKS,
     TE_MARKS,
     requires_flash_attn_2,

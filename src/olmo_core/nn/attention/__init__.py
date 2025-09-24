@@ -30,8 +30,8 @@ from ..utils import get_tp_wrappers
 from .backend import (
     AttentionBackend,
     AttentionBackendName,
-    FlashAttentionBackend,
     FlashAttention3Backend,
+    FlashAttentionBackend,
     TEAttentionBackend,
     TorchAttentionBackend,
 )

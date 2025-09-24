@@ -16,7 +16,11 @@ from olmo_core.generate.generation_module.transformer.config import (
 )
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.testing import requires_multi_gpu, run_distributed_test
-from olmo_core.testing.utils import has_flash_attn_2, requires_flash_attn_2, requires_gpu
+from olmo_core.testing.utils import (
+    has_flash_attn_2,
+    requires_flash_attn_2,
+    requires_gpu,
+)
 from olmo_core.train.train_module.transformer.config import (
     TransformerDataParallelConfig,
 )
