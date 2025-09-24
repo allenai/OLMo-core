@@ -4,12 +4,13 @@ Train a 7B OLMo model. Run this script without any arguments to see usage info.
 
 import math
 from datetime import datetime
+from functools import partial
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
 from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
-from olmo_core.internal.experiment import CommonComponents, main
+from olmo_core.internal.experiment import CommonComponents, build_config, main
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig
@@ -39,8 +40,8 @@ MAX_DURATION = int(
     10e12
 )  # Setting this higher than 6T (expected run time), in case we get to run longer since 1) we're using WSD and 2) our anneal will use different data
 ANNEAL_TOKENS = int(100e9)
-LR = 4.4e-5 * math.sqrt(
-    4
+LR = (
+    4.4e-5 * math.sqrt(4)
 )  # Based on 6T tokens with 100B anneal, don't forget to adjust when max duration or anneal length changes.
 EVAL_INTERVAL = 1000
 
@@ -75,7 +76,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
 
     return TransformerTrainModuleConfig(
         rank_microbatch_size=rank_microbatch_size,
-        max_sequence_length=common.dataset.effective_sequence_length,
+        max_sequence_length=common.max_sequence_length,
         optim=SkipStepAdamWConfig(
             lr=LR,
             weight_decay=0.1,
@@ -179,8 +180,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         batch_sizes=[
             # GLOBAL_BATCH_SIZE,
             # GLOBAL_BATCH_SIZE * 2,
-            GLOBAL_BATCH_SIZE
-            * 4,
+            GLOBAL_BATCH_SIZE * 4,
         ],
         schedule=[
             Duration.tokens(0),
@@ -194,13 +194,15 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
 
 if __name__ == "__main__":
-    main(
+    config_builder = partial(
+        build_config,
         global_batch_size=GLOBAL_BATCH_SIZE,
-        sequence_length=SEQUENCE_LENGTH,
+        max_sequence_length=SEQUENCE_LENGTH,
         model_config_builder=build_model_config,
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
-        include_instance_filter=False,  # We use SkipStepOptimizer for this problem.
         include_default_evals=False,
+        include_instance_filter=False,  # We use SkipStepOptimizer for this problem.
         intra_document_masking=True,
     )
+    main(config_builder=config_builder)

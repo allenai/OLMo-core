@@ -3,9 +3,11 @@ Train a small MoE model (mixture of experts).
 Run this script without any arguments to see usage info.
 """
 
+from functools import partial
+
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
-from olmo_core.internal.experiment import CommonComponents, main
+from olmo_core.internal.experiment import CommonComponents, build_config, main
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
 from olmo_core.train import TrainerConfig
@@ -17,14 +19,18 @@ from olmo_core.train.train_module import (
 )
 
 
+SEQUENCE_LENGTH = 4096
+GLOBAL_BATCH_SIZE = 512 * SEQUENCE_LENGTH
+
+
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     return TransformerConfig.small_hybrid_moe(vocab_size=common.tokenizer.padded_vocab_size())
 
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
     return TransformerTrainModuleConfig(
-        rank_microbatch_size=8 * 4096,
-        max_sequence_length=common.dataset.effective_sequence_length,
+        rank_microbatch_size=8 * common.max_sequence_length,
+        max_sequence_length=common.max_sequence_length,
         optim=AdamWConfig(
             lr=4e-4,
             weight_decay=0.1,
@@ -87,10 +93,13 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
 
 if __name__ == "__main__":
-    main(
-        global_batch_size=512 * 4096,
+    config_builder = partial(
+        build_config,
+        global_batch_size=GLOBAL_BATCH_SIZE,
+        max_sequence_length=SEQUENCE_LENGTH,
         model_config_builder=build_model_config,
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
         include_default_evals=False,
     )
+    main(config_builder=config_builder)
