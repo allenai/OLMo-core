@@ -22,6 +22,7 @@ def adamw_step(
     step: torch.Tensor,
     step_factor: torch.Tensor,
     step_increment_bugfix: bool = True,
+    bnb_style: bool = False,
 ):
     beta1, beta2 = betas
 
@@ -36,9 +37,17 @@ def adamw_step(
     bias_correction1 = 1 - beta1 ** (step + 1)
     bias_correction2 = 1 - beta2 ** (step + 1)
 
-    step_size = lr / bias_correction1
-
-    denom = (exp_avg_sq.sqrt() / bias_correction2.sqrt()).add_(eps)
+    if bnb_style:
+        # https://github.com/bitsandbytes-foundation/bitsandbytes/blob/e8170363e0c94db8e5ef6a150fc7e1f9fc858602/bitsandbytes/backends/default/ops.py#L428
+        # https://x.com/Tim_Dettmers/status/1969133748382765407
+        # mathematically identical, but numerically more stable.
+        # avoids eps having an outsized effect when bc2_sqrt is tiny (early in training).
+        bc2_sqrt = bias_correction2.sqrt()
+        step_size = lr * bc2_sqrt / bias_correction1
+        denom = exp_avg_sq.sqrt() + (bc2_sqrt * eps)
+    else:
+        step_size = lr / bias_correction1
+        denom = (exp_avg_sq.sqrt() / bias_correction2.sqrt()).add_(eps)
 
     update = -step_size * torch.div(exp_avg, denom)
     update.mul_(step_factor)
@@ -59,6 +68,7 @@ def foreach_adamw_step(
     eps: float,
     weight_decay: float,
     step_factor: torch.Tensor,
+    bnb_style: bool = False,
     step_increment_bugfix: bool = True,
 ):
     """Perform a single AdamW update with multi-tensor (*foreach*) kernels."""
@@ -76,6 +86,7 @@ def foreach_adamw_step(
     # foreach_lerp_ has issues when DTensor is enabled (see https://github.com/pytorch/pytorch/issues/132017).
     # Implement the lerp(a, b, w) = a + w * (b - a) with basic _foreach_mul_/add_ ops instead:
     w1 = step_factor * (1 - beta1)
+
     torch._foreach_mul_(exp_avgs, 1.0 - w1)
     torch._foreach_add_(exp_avgs, torch._foreach_mul(grads, w1))
 
@@ -89,11 +100,19 @@ def foreach_adamw_step(
     bias_corrections1 = 1 - torch.pow(beta1, steps_t + 1)
     bias_corrections2 = 1 - torch.pow(beta2, steps_t + 1)
 
-    step_sizes = lr / bias_corrections1
-
-    denoms = torch._foreach_sqrt(exp_avg_sqs)
-    torch._foreach_div_(denoms, bias_corrections2.sqrt().unbind())
-    torch._foreach_add_(denoms, eps)
+    if bnb_style:
+        # https://x.com/Tim_Dettmers/status/1969133748382765407
+        # mathematically identical, but numerically more stable.
+        # avoids eps having an outsized effect when bc2_sqrt is tiny (early in training).
+        bc2_sqrt = bias_corrections2.sqrt()
+        step_sizes = lr * bc2_sqrt / bias_corrections1
+        denoms = torch._foreach_sqrt(exp_avg_sqs)
+        torch._foreach_add_(denoms, (bc2_sqrt * eps).unbind())
+    else:
+        step_sizes = lr / bias_corrections1
+        denoms = torch._foreach_sqrt(exp_avg_sqs)
+        torch._foreach_div_(denoms, bias_corrections2.sqrt().unbind())
+        torch._foreach_add_(denoms, eps)
 
     updates = torch._foreach_div(exp_avgs, denoms)
     torch._foreach_mul_(updates, (-step_factor * step_sizes).unbind())
@@ -119,6 +138,7 @@ class SkipStepAdamW(SkipStepOptimizer):
         dtype: Optional[Union[torch.dtype, DType]] = None,
         foreach: bool = False,
         step_increment_bugfix: bool = True,
+        bnb_style: bool = False,
     ) -> None:
         assert lr > 0.0
         assert all([0.0 <= beta <= 1.0 for beta in betas])
@@ -133,6 +153,7 @@ class SkipStepAdamW(SkipStepOptimizer):
             dtype = dtype.as_pt()
         self.dtype = dtype
         self.foreach = foreach
+        self.bnb_style = bnb_style
         self.stepfix = step_increment_bugfix
         self._step_skipped: Optional[torch.Tensor] = None
 
@@ -180,6 +201,7 @@ class SkipStepAdamW(SkipStepOptimizer):
                     step=state["step"],
                     step_factor=step_factor,
                     step_increment_bugfix=self.stepfix,
+                    bnb_style=self.bnb_style,
                 )
 
     def _step_foreach(self, closure=None) -> None:
@@ -227,6 +249,7 @@ class SkipStepAdamW(SkipStepOptimizer):
                 weight_decay=group["weight_decay"],
                 step_factor=step_factor,
                 step_increment_bugfix=self.stepfix,
+                bnb_style=self.bnb_style,
             )
 
 
@@ -263,6 +286,13 @@ class SkipStepAdamWConfig(OptimConfig):
     """
     Whether to use multi-tensor (*foreach*) kernels for the AdamW update.
     Faster than the non-foreach version.
+    """
+
+    bnb_style: bool = False
+    """
+    Whether to use the BitsandBytes-style implementation of AdamW that is
+    mathematically identical, but numerically more stable.
+    https://x.com/Tim_Dettmers/status/1969133748382765407
     """
 
     step_increment_bugfix: bool = True
