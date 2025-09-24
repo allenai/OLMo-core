@@ -45,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added TransformerEngine to Docker images and a TransformerEngine attention backend.
 - Added `Callback.close()` method, which is always called when exiting `Trainer.fit()`.
 - Added flash-attention 3 to Docker images.
+- Added support for sliding window attention to the Torch attention backend. Performance is not optimized, so other backends should be preferred.
+
 
 ## [v2.2.0](https://github.com/allenai/OLMo-core/releases/tag/v2.2.0) - 2025-08-26
 
