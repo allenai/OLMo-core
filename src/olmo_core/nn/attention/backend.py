@@ -37,8 +37,7 @@ class AttentionBackendName(StrEnum):
     """
     PyTorch's built-in SDPA ➡️ :class:`TorchAttentionBackend`
     """
-    flash = "flash"
-    flash_2 = "flash"
+    flash_2 = "flash_2"
     """
     Flash attention 2 from the `flash-attn <https://github.com/Dao-AILab/flash-attention>`_ library.
     To use this with context-parallelism, `ring-flash-attn <https://github.com/zhuzilin/ring-flash-attention>`_
@@ -47,7 +46,7 @@ class AttentionBackendName(StrEnum):
     flash_3 = "flash_3"
     """
     Flash attention 3 (beta) from the `flash-attn <https://github.com/Dao-AILab/flash-attention>`_
-    library `hopper/` subdirectory. Only supports H100/H800 GPUs. ➡️ :class:`FlashAttention3Backend`
+    library ``hopper/`` subdirectory. Only supports H100/H800 GPUs. ➡️ :class:`FlashAttention3Backend`
     """
     te = "te"
     """
@@ -57,7 +56,7 @@ class AttentionBackendName(StrEnum):
     def get_class(self) -> Type["AttentionBackend"]:
         if self == self.torch:
             return TorchAttentionBackend
-        elif self in (self.flash, self.flash_2):
+        elif self in self.flash_2:
             return FlashAttentionBackend
         elif self == self.flash_3:
             return FlashAttention3Backend

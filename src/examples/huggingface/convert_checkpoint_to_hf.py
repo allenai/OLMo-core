@@ -85,12 +85,13 @@ def convert_checkpoint_to_hf(
                 "Running conversion without cuda or flash attention on a model requiring flash attention, validation would fail so we are disabling it."
             )
             validate = False
-        elif attention.get("use_flash") or attention.get("backend") == "flash":
+        elif attention.get("use_flash") or attention.get("backend") == "flash_2":
             log.info(
-                "Flash attention or cuda is unavailable, turning off flash attention to stop validation from failing."
+                "Flash attention 2 or cuda is unavailable, turning off flash attention to stop validation from failing."
             )
             attention["use_flash"] = False
             attention["backend"] = None
+        # TODO: support fe3 and te backends
 
     model = TransformerConfig.from_dict(transformer_config_dict).build()
     model.to_empty(device=device)
@@ -229,9 +230,9 @@ def validate_conversion(
         assert state_mapping is not None
 
         simple_key_mapping = {
-            mapping.source_keys[0]
-            .replace(".weight", ""): mapping.dest_keys[0]
-            .replace(".weight", "")
+            mapping.source_keys[0].replace(".weight", ""): mapping.dest_keys[0].replace(
+                ".weight", ""
+            )
             for mapping in state_mapping
             if len(mapping.source_keys) == 1 and len(mapping.dest_keys) == 1
         }

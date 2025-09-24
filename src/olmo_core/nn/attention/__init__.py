@@ -31,6 +31,7 @@ from .backend import (
     AttentionBackend,
     AttentionBackendName,
     FlashAttentionBackend,
+    FlashAttention3Backend,
     TEAttentionBackend,
     TorchAttentionBackend,
 )
@@ -47,6 +48,7 @@ __all__ = [
     "AttentionBackend",
     "TorchAttentionBackend",
     "FlashAttentionBackend",
+    "FlashAttention3Backend",
     "TEAttentionBackend",
     "AttentionConfig",
     "AttentionBase",
@@ -310,7 +312,7 @@ class Attention(AttentionBase):
     :param clip_qkv: Clip QKV to this value, if set.
     :param qk_norm: Configuration a layer norm for queries and keys.
     :param dropout: Dropout probability.
-    :param use_flash: Deprecated, use ``backend="flash"`` instead.
+    :param use_flash: Deprecated, use ``backend="flash_2"`` instead.
     :param backend: The attention backend to use. If not set, it will be chosen automatically.
     :param dtype: The default data type to use for parameters.
     :param init_device: The device to initialize weights on.
@@ -368,15 +370,15 @@ class Attention(AttentionBase):
             backend = AttentionBackendName(backend)
 
         if use_flash:
-            if backend is not None and backend != AttentionBackendName.flash:
+            if backend is not None and backend != AttentionBackendName.flash_2:
                 raise OLMoConfigurationError(
-                    f"'use_flash' is only compatible with 'flash' backend (got '{backend}')"
+                    f"'use_flash' is only compatible with 'flash_2' backend (got '{backend}')"
                 )
             elif backend is None:
                 warnings.warn(
-                    "'use_flash' is deprecated, use 'backend=flash' instead", DeprecationWarning
+                    "'use_flash' is deprecated, use 'backend=flash_2' instead", DeprecationWarning
                 )
-                backend = AttentionBackendName.flash
+                backend = AttentionBackendName.flash_2
 
         # Translate window size so that we only look left, not right.
         window_size_tuple: Tuple[int, int] = (-1, -1)
@@ -385,7 +387,7 @@ class Attention(AttentionBase):
                 raise OLMoConfigurationError(f"'window_size' must be positive (got {window_size})")
 
             if backend is None:
-                backend = AttentionBackendName.flash
+                backend = AttentionBackendName.flash_2
 
             # Window size is [i - window_size[0], i + window_size[1]] inclusive
             window_size_tuple = (window_size - 1, 0)
@@ -612,7 +614,7 @@ class Attention(AttentionBase):
         Prepare the module for context-parallelism (ring attention).
 
         .. important::
-            This requires a backend that supports CP, such as "flash".
+            This requires a backend that supports CP, such as "flash_2" or "te".
 
         :param cp_mesh: The context parallel device sub-mesh.
         :param load_balancer: The load balancer type.
@@ -811,7 +813,7 @@ class FusedAttention(AttentionBase):
     parameters to :meth:`forward()`.
 
     .. warning::
-        Currently this is only supported with the "flash" backend.
+        Currently this is only supported with the "flash_2" backend.
 
     .. warning::
         If using RoPE, this requires that you use the "fused" RoPE implementation
@@ -859,7 +861,7 @@ class FusedAttention(AttentionBase):
         if backend is not None:
             backend = AttentionBackendName(backend)
         elif backend is None:
-            backend = AttentionBackendName.flash
+            backend = AttentionBackendName.flash_2
 
         backend.assert_supported()
         backend.assert_supports_packed_qkv()

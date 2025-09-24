@@ -56,7 +56,7 @@ BF16_ATOL = 5e-3
 @pytest.mark.parametrize("head_dim", [128])
 @pytest.mark.parametrize(
     "backend_name",
-    [AttentionBackendName.flash, AttentionBackendName.flash_3, AttentionBackendName.te],
+    [AttentionBackendName.flash_2, AttentionBackendName.flash_3, AttentionBackendName.te],
 )
 @requires_gpu
 def test_attention_backend(
@@ -106,7 +106,7 @@ def test_attention_backend(
 @pytest.mark.parametrize(
     "backend",
     [
-        pytest.param("flash", id="flash-attn-2", marks=FLASH_MARKS),
+        pytest.param("flash_2", id="flash-attn-2", marks=FLASH_MARKS),
         pytest.param("flash_3", id="flash-attn-3", marks=FLASH_3_MARKS),
         pytest.param("torch", id="torch-SDPA"),
         pytest.param("te", id="te-attn", marks=TE_MARKS),
@@ -130,9 +130,9 @@ def test_attention(
     backend: str,
     kwargs: Dict[str, Any],
 ):
-    if backend == "flash" and dtype == torch.float32:
+    if backend == "flash_2" and dtype == torch.float32:
         pytest.skip("flash-attn requires a low precision dtype")
-    if backend in ("flash", "te") and device.type == "cpu":
+    if backend in ("flash_2", "flash_3", "te") and device.type == "cpu":
         pytest.skip(f"'{backend}' backend requires GPU")
     if dtype == torch.bfloat16 and device.type == "cpu":
         pytest.skip("bf16 requires GPU")
@@ -141,7 +141,7 @@ def test_attention(
             pytest.skip("clip_qkv is not supported for NormalizedAttention")
         if "use_head_qk_norm" in kwargs:
             pytest.skip("use_head_qk_norm is not supported for NormalizedAttention")
-        if backend in ("flash", "te"):
+        if backend in ("flash_2", "te"):
             pytest.xfail(
                 f"NormalizedAttention is broken with '{backend}' backend because it creates activation tensors in fp32"
             )
@@ -185,7 +185,8 @@ def test_attention(
 @pytest.mark.parametrize(
     "backend_name",
     [
-        pytest.param(AttentionBackendName.flash, id="flash-attn", marks=FLASH_MARKS),
+        pytest.param(AttentionBackendName.flash_2, id="flash-attn-2", marks=FLASH_MARKS),
+        pytest.param(AttentionBackendName.flash_3, id="flash-attn-2", marks=FLASH_3_MARKS),
         pytest.param(AttentionBackendName.torch, id="torch-SDPA"),
         pytest.param(AttentionBackendName.te, id="te-attn", marks=TE_MARKS),
     ],
@@ -205,10 +206,14 @@ def test_sdpa(
     window_size: Optional[int],
     intra_doc_masking: bool,
 ):
-    if backend_name == AttentionBackendName.flash and dtype == torch.float32:
+    if (
+        backend_name in (AttentionBackendName.flash_2, AttentionBackendName.flash_3)
+        and dtype == torch.float32
+    ):
         pytest.skip("flash-attn requires a low precision dtype")
     if (
-        backend_name in (AttentionBackendName.flash, AttentionBackendName.te)
+        backend_name
+        in (AttentionBackendName.flash_2, AttentionBackendName.flash_3, AttentionBackendName.te)
         and device.type == "cpu"
     ):
         pytest.skip(f"{backend_name} backend requires GPU")
@@ -304,7 +309,7 @@ def test_sdpa(
 @requires_flash_attn
 @pytest.mark.parametrize("dtype", [pytest.param(torch.bfloat16, id="bf16")])
 @pytest.mark.parametrize(
-    "use_flash", [pytest.param(True, id="flash"), pytest.param(False, id="torch-SDPA")]
+    "use_flash", [pytest.param(True, id="flash_2"), pytest.param(False, id="torch-SDPA")]
 )
 def test_fused_attention_against_non_fused(dtype: torch.dtype, use_flash: bool):
     seed_all(0)
