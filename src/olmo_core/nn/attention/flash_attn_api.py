@@ -7,17 +7,9 @@ import torch.distributed as dist
 from .ring import RingAttentionLoadBalancerType
 
 try:
-    import flash_attn as flash_attn_2  # type: ignore
+    import flash_attn  # type: ignore
 except ImportError:
-    flash_attn_2 = None
-
-try:
-    # Due to how flash-attn 3 is installed, we just import the interface module.
-    # This is a bit of a hack that conveniently avoids the namespace conflict.
-    # When flash-attn 3 is officially released we may need to figure out a better solution.
-    import flash_attn_interface as flash_attn_3  # type: ignore
-except ImportError:
-    flash_attn_3 = None
+    flash_attn = None
 
 try:
     import ring_flash_attn  # type: ignore
@@ -27,19 +19,8 @@ except ImportError:
 log = logging.getLogger(__name__)
 
 
-def has_flash_attn_2() -> bool:
-    return flash_attn_2 is not None
-
-
-def has_flash_attn_3() -> bool:
-    if flash_attn_3 is not None:
-        if torch.cuda.is_available():
-            compute_capability = torch.cuda.get_device_capability()
-            # Flash Attention 3 requires compute capability 9.0 (H100/H800)
-            is_supported = (10, 0) > compute_capability >= (9, 0)
-            return is_supported
-        return True
-    return False
+def has_flash_attn() -> bool:
+    return flash_attn is not None
 
 
 def has_ring_flash_attn() -> bool:
@@ -67,21 +48,24 @@ def dispatch_flash_attn(
     causal: bool = False,
     window_size: Tuple[int, int] = (-1, -1),
 ) -> torch.Tensor:
-    if flash_attn_2 is None:
-        raise RuntimeError("flash-attn 2 is required!")
+    if flash_attn is None:
+        raise RuntimeError("flash-attn is required!")
 
-    # Handle defaulting of seqlens
     if cu_seqlens is not None:
-        cu_seqlens_q = cu_seqlens if cu_seqlens_q is None else cu_seqlens_q
-        cu_seqlens_k = cu_seqlens if cu_seqlens_k is None else cu_seqlens_k
+        if cu_seqlens_q is None:
+            cu_seqlens_q = cu_seqlens
+        if cu_seqlens_k is None:
+            cu_seqlens_k = cu_seqlens
     if max_seqlen is not None:
-        max_seqlen_q = max_seqlen if max_seqlen_q is None else max_seqlen_q
-        max_seqlen_k = max_seqlen if max_seqlen_k is None else max_seqlen_k
+        if max_seqlen_q is None:
+            max_seqlen_q = max_seqlen
+        if max_seqlen_k is None:
+            max_seqlen_k = max_seqlen
 
     varlen = all(x is not None for x in (cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k))
 
     if varlen:
-        return flash_attn_2.flash_attn_varlen_func(
+        return flash_attn.flash_attn_varlen_func(
             _flatten_batch_dim(q),
             _flatten_batch_dim(k),
             _flatten_batch_dim(v),
@@ -95,63 +79,11 @@ def dispatch_flash_attn(
             window_size=window_size,
         )
     else:
-        return flash_attn_2.flash_attn_func(
+        return flash_attn.flash_attn_func(
             q,
             k,
             v,
             dropout_p=dropout_p,
-            softmax_scale=softmax_scale,
-            causal=causal,
-            window_size=window_size,
-        )
-
-
-def dispatch_flash_attn_3(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    v: torch.Tensor,
-    *,
-    cu_seqlens: Optional[torch.Tensor] = None,
-    cu_seqlens_q: Optional[torch.Tensor] = None,
-    cu_seqlens_k: Optional[torch.Tensor] = None,
-    max_seqlen: Optional[int] = None,
-    max_seqlen_q: Optional[int] = None,
-    max_seqlen_k: Optional[int] = None,
-    softmax_scale: Optional[float] = None,
-    causal: bool = False,
-    window_size: Tuple[int, int] = (-1, -1),
-) -> torch.Tensor:
-    if flash_attn_3 is None:
-        raise RuntimeError("flash-attn 3 is required!")
-
-    # Handle defaulting of seqlens
-    if cu_seqlens is not None:
-        cu_seqlens_q = cu_seqlens if cu_seqlens_q is None else cu_seqlens_q
-        cu_seqlens_k = cu_seqlens if cu_seqlens_k is None else cu_seqlens_k
-    if max_seqlen is not None:
-        max_seqlen_q = max_seqlen if max_seqlen_q is None else max_seqlen_q
-        max_seqlen_k = max_seqlen if max_seqlen_k is None else max_seqlen_k
-
-    varlen = all(x is not None for x in (cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k))
-
-    if varlen:
-        return flash_attn_3.flash_attn_varlen_func(
-            _flatten_batch_dim(q),
-            _flatten_batch_dim(k),
-            _flatten_batch_dim(v),
-            cu_seqlens_q,
-            cu_seqlens_k,
-            max_seqlen_q,
-            max_seqlen_k,
-            softmax_scale=softmax_scale,
-            causal=causal,
-            window_size=window_size,
-        )
-    else:
-        return flash_attn_3.flash_attn_func(
-            q,
-            k,
-            v,
             softmax_scale=softmax_scale,
             causal=causal,
             window_size=window_size,
@@ -162,17 +94,17 @@ def dispatch_flash_attn_qkvpacked(
     qkv: torch.Tensor,
     *,
     cu_seqlens: Optional[torch.Tensor] = None,
-    max_seqlen: Optional[int] = None,
+    max_seqlen: Optional[int],
     dropout_p: float = 0.0,
     softmax_scale: Optional[float] = None,
     causal: bool = False,
     window_size: Tuple[int, int] = (-1, -1),
 ) -> torch.Tensor:
-    if flash_attn_2 is None:
-        raise RuntimeError("flash-attn 2 is required!")
+    if flash_attn is None:
+        raise RuntimeError("flash-attn is required!")
 
     if cu_seqlens is not None and max_seqlen is not None:
-        return flash_attn_2.flash_attn_varlen_qkvpacked_func(
+        return flash_attn.flash_attn_varlen_qkvpacked_func(
             _flatten_batch_dim(qkv),
             cu_seqlens,
             max_seqlen,
@@ -182,39 +114,9 @@ def dispatch_flash_attn_qkvpacked(
             window_size=window_size,
         )
     else:
-        return flash_attn_2.flash_attn_qkvpacked_func(
+        return flash_attn.flash_attn_qkvpacked_func(
             qkv,
             dropout_p=dropout_p,
-            softmax_scale=softmax_scale,
-            causal=causal,
-            window_size=window_size,
-        )
-
-
-def dispatch_flash_attn_3_qkvpacked(
-    qkv: torch.Tensor,
-    *,
-    cu_seqlens: Optional[torch.Tensor] = None,
-    max_seqlen: Optional[int] = None,
-    softmax_scale: Optional[float] = None,
-    causal: bool = False,
-    window_size: Tuple[int, int] = (-1, -1),
-) -> torch.Tensor:
-    if flash_attn_3 is None:
-        raise RuntimeError("flash-attn 3 is required!")
-
-    if cu_seqlens is not None and max_seqlen is not None:
-        return flash_attn_3.flash_attn_varlen_qkvpacked_func(
-            _flatten_batch_dim(qkv),
-            cu_seqlens,
-            max_seqlen,
-            softmax_scale=softmax_scale,
-            causal=causal,
-            window_size=window_size,
-        )
-    else:
-        return flash_attn_3.flash_attn_qkvpacked_func(
-            qkv,
             softmax_scale=softmax_scale,
             causal=causal,
             window_size=window_size,
@@ -234,40 +136,10 @@ def dispatch_flash_attn_with_kvcache(
     causal: bool = False,
     window_size: Tuple[int, int] = (-1, -1),
 ) -> torch.Tensor:
-    if flash_attn_2 is None:
-        raise RuntimeError("flash-attn 2 is required!")
+    if flash_attn is None:
+        raise RuntimeError("flash-attn is required!")
 
-    return flash_attn_2.flash_attn_with_kvcache(
-        q,
-        k_cache,  # updated in-place if k/v are provided
-        v_cache,  # updated in-place if k/v are provided
-        k=k,
-        v=v,
-        cache_seqlens=cache_seqlens,
-        cache_leftpad=cache_leftpad,
-        softmax_scale=softmax_scale,
-        causal=causal,
-        window_size=window_size,
-    )
-
-
-@torch._dynamo.disable()
-def dispatch_flash_attn_3_with_kvcache(
-    q: torch.Tensor,
-    k_cache: torch.Tensor,
-    v_cache: torch.Tensor,
-    k: Optional[torch.Tensor] = None,
-    v: Optional[torch.Tensor] = None,
-    cache_seqlens: Optional[torch.Tensor] = None,
-    cache_leftpad: Optional[torch.Tensor] = None,
-    softmax_scale: Optional[float] = None,
-    causal: bool = False,
-    window_size: Tuple[int, int] = (-1, -1),
-) -> torch.Tensor:
-    if flash_attn_3 is None:
-        raise RuntimeError("flash-attn 3 is required!")
-
-    return flash_attn_3.flash_attn_with_kvcache(
+    return flash_attn.flash_attn_with_kvcache(
         q,
         k_cache,  # updated in-place if k/v are provided
         v_cache,  # updated in-place if k/v are provided

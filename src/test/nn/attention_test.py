@@ -27,7 +27,6 @@ from olmo_core.nn.rope import RoPEConfig, RoPEType
 from olmo_core.testing import (
     BACKENDS,
     DEVICES,
-    FLASH_3_MARKS,
     FLASH_MARKS,
     GPU_MARKS,
     TE_MARKS,
@@ -53,10 +52,7 @@ BF16_ATOL = 5e-3
 @pytest.mark.parametrize("n_kv_heads", [None, 4])
 @pytest.mark.parametrize("n_heads", [8])
 @pytest.mark.parametrize("head_dim", [128])
-@pytest.mark.parametrize(
-    "backend_name",
-    [AttentionBackendName.flash, AttentionBackendName.flash_3, AttentionBackendName.te],
-)
+@pytest.mark.parametrize("backend_name", [AttentionBackendName.flash, AttentionBackendName.te])
 @requires_gpu
 def test_attention_backend(
     backend_name: AttentionBackendName,
@@ -105,8 +101,7 @@ def test_attention_backend(
 @pytest.mark.parametrize(
     "backend",
     [
-        pytest.param("flash", id="flash-attn-2", marks=FLASH_MARKS),
-        pytest.param("flash_3", id="flash-attn-3", marks=FLASH_3_MARKS),
+        pytest.param("flash", id="flash-attn", marks=FLASH_MARKS),
         pytest.param("torch", id="torch-SDPA"),
         pytest.param("te", id="te-attn", marks=TE_MARKS),
     ],

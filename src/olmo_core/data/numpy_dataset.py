@@ -2530,7 +2530,7 @@ class NumpyFSLDatasetConfig(NumpyDatasetConfig):
     Include individual document lengths in the instances returned from
     :meth:`NumpyDatasetBase.__getitem__()`.
     """
-    label_mask_paths: Optional[List[str]] = None
+    label_mask_paths: Optional[List[PathOrStr]] = None
     """
     The paths/URLs to numpy bool files indicating which tokens should be masked.
     """
@@ -2603,7 +2603,7 @@ class NumpyPaddedFSLDatasetConfig(NumpyDatasetConfig):
     """
     The length of a single instance. Generally this should correspond to your model's maximum input length.
     """
-    label_mask_paths: Optional[List[str]] = None
+    label_mask_paths: Optional[List[PathOrStr]] = None
     """
     The paths/URLs to numpy bool files indicating which tokens should be masked.
     """
@@ -2648,7 +2648,7 @@ class NumpyPackedFSLDatasetConfig(NumpyDatasetConfig):
     Include individual document lengths in the instances returned from
     :meth:`NumpyDatasetBase.__getitem__()`.
     """
-    label_mask_paths: Optional[List[str]] = None
+    label_mask_paths: Optional[List[PathOrStr]] = None
     """
     The paths/URLs to numpy bool files indicating which tokens should be masked.
     """
@@ -2715,7 +2715,7 @@ class NumpyInterleavedFSLDatasetConfig(NumpyDatasetConfig):
     """
     The seed to use for the random number generator.
     """
-    label_mask_paths: Optional[List[str]] = None
+    label_mask_paths: Optional[List[PathOrStr]] = None
     """
     The paths/URLs to numpy bool files indicating which tokens should be masked.
     """

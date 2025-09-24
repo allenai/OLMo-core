@@ -16,7 +16,7 @@ from olmo_core.generate.generation_module.transformer.config import (
 )
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.testing import requires_multi_gpu, run_distributed_test
-from olmo_core.testing.utils import has_flash_attn_2, requires_flash_attn, requires_gpu
+from olmo_core.testing.utils import has_flash_attn, requires_flash_attn, requires_gpu
 from olmo_core.train.train_module.transformer.config import (
     TransformerDataParallelConfig,
 )
@@ -49,7 +49,7 @@ def test_generation_module_basic(compile_model: bool, use_cache: bool):
     dtype = DType.bfloat16
     seed_all(0)
 
-    flash_attn_available = dtype == DType.bfloat16 and has_flash_attn_2
+    flash_attn_available = dtype == DType.bfloat16 and has_flash_attn
     if not flash_attn_available and use_cache:
         pytest.skip("flash-attn is required for use_cache")
 
@@ -340,7 +340,7 @@ def test_left_padded_attention_mask_equivalence(use_rope):
 @requires_flash_attn
 @pytest.mark.parametrize("batch_size", [1, 8])
 def test_generation_cache_consistency(batch_size: int):
-    if not has_flash_attn_2:
+    if not has_flash_attn:
         pytest.skip("flash-attn is required for KV cache usage")
 
     device = torch.device("cuda")
@@ -414,7 +414,7 @@ def test_generation_module_distributed_fsdp(
 ):
     seed_all(0)
 
-    if not has_flash_attn_2 and use_cache:
+    if not has_flash_attn and use_cache:
         pytest.skip("flash-attn is required for use_cache")
     if use_attention_mask and not use_cache:
         pytest.skip("attention mask test is only valid with use_cache=True")
@@ -423,7 +423,7 @@ def test_generation_module_distributed_fsdp(
     generation_config = GenerationConfig(
         max_length=16, do_sample=False, pad_token_id=0, eos_token_id=1, use_cache=use_cache
     )
-    transformer_config = small_transformer_config(dtype=DType.bfloat16, use_flash=has_flash_attn_2)
+    transformer_config = small_transformer_config(dtype=DType.bfloat16, use_flash=has_flash_attn)
     model = transformer_config.build()
     generation_module = TransformerGenerationModule(
         model=model, generation_config=generation_config, device=torch.device("cuda")

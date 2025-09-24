@@ -20,9 +20,9 @@ def build_config(command: List[str], overrides: List[str]) -> BeakerLaunchConfig
         workspace="ai2/OLMo-core",
         beaker_image=OLMoCoreBeakerImage.stable,
         clusters=[
-            "ai2/jupiter",
-            "ai2/augusta",
-            "ai2/ceres",
+            "ai2/jupiter-cirrascale-2",
+            "ai2/augusta-google-1",
+            "ai2/ceres-cirrascale",
         ],
         num_nodes=1,
         num_gpus=2,
