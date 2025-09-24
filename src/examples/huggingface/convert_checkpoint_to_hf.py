@@ -72,7 +72,7 @@ def convert_checkpoint_to_hf(
     # Check if validation is being performed and flash attn / TE attn is requested but cannot run.
     device = device or get_default_device()
     if validate:
-        if attention := transformer_config_dict.get("block", {}).get("attention"):
+        if (attention := transformer_config_dict.get("block", {}).get("attention")) is not None:
             backend = attention.get("backend")
             use_flash = bool(attention.get("use_flash"))
 
@@ -243,9 +243,9 @@ def validate_conversion(
         assert state_mapping is not None
 
         simple_key_mapping = {
-            mapping.source_keys[0]
-            .replace(".weight", ""): mapping.dest_keys[0]
-            .replace(".weight", "")
+            mapping.source_keys[0].replace(".weight", ""): mapping.dest_keys[0].replace(
+                ".weight", ""
+            )
             for mapping in state_mapping
             if len(mapping.source_keys) == 1 and len(mapping.dest_keys) == 1
         }
