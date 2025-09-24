@@ -97,8 +97,11 @@ class CustomCheckpointerCallback(Callback):
         if save_async is None:
             save_async = self.save_async
         
-        checkpoint_path = self.trainer.save_checkpoint(save_async=save_async)
-        return checkpoint_path
+        if save_async:
+            path, _ = self.trainer.save_checkpoint_async()
+        else:
+            path = self.trainer.save_checkpoint()
+        return path
 DEFAULT_NUM_NODES = 1
 GPUS_PER_NODE = 8
 MAX_RANK_MICROBATCH_SIZE_TOKENS = 16_384  # max tokens this config can handle on an H100
