@@ -6,6 +6,7 @@ from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
 from olmo_core.internal.experiment import CommonComponents, main
+from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import Duration, TrainerConfig
@@ -21,7 +22,13 @@ MAX_DURATION = int(4e12)
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
-    return TransformerConfig.olmo2_1B_v2(vocab_size=common.tokenizer.padded_vocab_size())
+    model = TransformerConfig.olmo2_1B_v2(vocab_size=common.tokenizer.padded_vocab_size())
+    model.block.attention.sliding_window = SlidingWindowAttentionConfig(
+        force_full_attention_on_first_layer=False,
+        force_full_attention_on_last_layer=True,
+        pattern=[1024, 1024, 1024, -1],
+    )
+    return model
 
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
