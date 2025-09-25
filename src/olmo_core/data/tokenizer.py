@@ -199,9 +199,9 @@ class ByteTokenizerConfig(TokenizerConfig):
             "<eos>",
             "<bpe_token_end>", # reserved in BLT tokenizer, but unused in released checkpoints
         ]
-
+    
         return cls(
-            vocab_size=len(special_tokens) + 256 * 2, # *2 to accomodate fused boundary token
+            vocab_size=(len(special_tokens) + 256) * 2, # *2 to accomodate fused boundary token
             special_tokens=special_tokens,
             bos_token_id=special_tokens.index("<bos>"),
             pad_token_id=special_tokens.index("<pad>"),
