@@ -1773,6 +1773,7 @@ class BLTDistillTransformer(BLTTransformer):
 
     def _compute_local_encoder_loss(
         self,
+        input_ids,
         h_patch,
         teacher_embeds,
         patch_mask,
@@ -1789,6 +1790,13 @@ class BLTDistillTransformer(BLTTransformer):
             index=seq_sorted_indices,
         )
         mask = patch_mask & (teacher_indices_to_select < teacher_embeds.shape[1])
+        eos_mask = torch.gather(
+            input_ids,
+            dim=1,
+            index=seq_sorted_indices,
+        ) == self.eos_token_blt
+        eos_mask[:, 0] = False # bos is ok to align
+        mask = mask & (~eos_mask) # otherwise, skip eos, since we would align the entire patch (more than eos) to only eos embedding
         teacher_indices_to_select = torch.where(
             mask,
             teacher_indices_to_select,
@@ -2113,6 +2121,7 @@ class BLTDistillTransformer(BLTTransformer):
         # could also have some version of the encoder loss for BLT teacher but not implemented for now
         if not skip_teacher and not isinstance(self.teacher, BLTTransformer) and teacher_embeds is not None:
             local_encoder_loss = self._compute_local_encoder_loss(
+                input_ids=input_ids,
                 h_patch=h_patch,
                 teacher_embeds=teacher_embeds,
                 patch_mask=patch_mask,
