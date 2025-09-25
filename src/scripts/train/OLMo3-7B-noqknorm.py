@@ -53,7 +53,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
-    rank_microbatch_size = 2 * SEQUENCE_LENGTH
+    rank_microbatch_size = 2 * common.max_sequence_length
     if common.launch is not None:
         gpus = {CLUSTER_TO_GPU_TYPE.get(c, "unknown") for c in common.launch.clusters}
         if all("B200" in g for g in gpus):
@@ -148,7 +148,11 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             ),
         )
         .with_recommended_evals(
-            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
+            common.tokenizer,
+            common.max_sequence_length,
+            cluster,
+            task_set="fast",
+            eval_interval=EVAL_INTERVAL,
         )
     )
 

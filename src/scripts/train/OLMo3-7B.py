@@ -68,7 +68,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
-    rank_microbatch_size = 2 * SEQUENCE_LENGTH
+    rank_microbatch_size = 2 * common.max_sequence_length
     if common.launch is not None:
         gpus = {CLUSTER_TO_GPU_TYPE.get(c, "unknown") for c in common.launch.clusters}
         if all("B200" in g for g in gpus):
@@ -114,7 +114,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             units=SchedulerUnits.steps,
             warmup=2000,
             decay=(
-                int(ANNEAL_TOKENS / (4 * GLOBAL_BATCH_SIZE))
+                int(ANNEAL_TOKENS / (4 * common.global_batch_size))
             ),  # * 4 because we're doubling the batch size twice with batch size warmup
             decay_fraction=None,
         ),
@@ -171,16 +171,20 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         )
         .with_callback("monkey_patcher", MonkeyPatcherCallback())
         .with_recommended_evals(
-            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
+            common.tokenizer,
+            common.max_sequence_length,
+            cluster,
+            task_set="fast",
+            eval_interval=EVAL_INTERVAL,
         )
     )
 
     # batch size warmup
     config.callbacks["batchwup"] = BatchSizeSchedulerCallback(
         batch_sizes=[
-            # GLOBAL_BATCH_SIZE,
-            # GLOBAL_BATCH_SIZE * 2,
-            GLOBAL_BATCH_SIZE * 4,
+            # common.global_batch_size,
+            # common.global_batch_size * 2,
+            common.global_batch_size * 4,
         ],
         schedule=[
             Duration.tokens(0),
