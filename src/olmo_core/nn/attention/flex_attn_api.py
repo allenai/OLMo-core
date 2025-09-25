@@ -95,7 +95,12 @@ class FlexAttention(torch.nn.Module):
                         q.shape[2], q.device,
                         window_size=(sliding_window, 0) if sliding_window else None
                     )
-            return FlexAttention.flex_attn(q, k, v, block_mask=block_mask, scale=scale, enable_gqa=enable_gqa)
+            # SDPA uses full precision. We match it for flex attention.
+            og_dtype = q.dtype
+            q_fp32, k_fp32, v_fp32 = q.float(), k.float(), v.float()
+            with torch.autocast(enabled=False, device_type=q.device.type):
+                att = FlexAttention.flex_attn(q_fp32, k_fp32, v_fp32, block_mask=block_mask, scale=scale, enable_gqa=enable_gqa)
+            return att.to(dtype=og_dtype)
 
         B, H_q, S_q, D = q.shape
         _, H_kv, S_kv, _ = k.shape
@@ -130,9 +135,14 @@ class FlexAttention(torch.nn.Module):
                 score,
             )
 
-        return FlexAttention.flex_attn(
-            q, k_ext, v_ext, block_mask=block_mask, score_mod=score_mod, scale=scale, enable_gqa=enable_gqa
-        )
+        # SDPA uses full precision. We match it for flex attention.
+        og_dtype = q.dtype
+        q_fp32, k_ext_fp32, v_ext_fp32 = q.float(), k_ext.float(), v_ext.float()
+        with torch.autocast(enabled=False, device_type=q.device.type):
+            att = FlexAttention.flex_attn(
+                q_fp32, k_ext_fp32, v_ext_fp32, block_mask=block_mask, score_mod=score_mod, scale=scale, enable_gqa=enable_gqa
+            )
+        return att.to(dtype=og_dtype)
 
     @classmethod
     def clear_sink_mask_cache(cls):
