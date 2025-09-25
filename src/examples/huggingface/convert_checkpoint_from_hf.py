@@ -119,10 +119,15 @@ def convert_checkpoint_from_hf(
         # GPU for conversion and validation
         backend = model_config.block.attention.backend
         if backend is None:
-            assert model_config.block.attention.use_flash, "use_flash or flash backend is expected for fused attention"
+            assert (
+                model_config.block.attention.use_flash
+            ), "use_flash or flash backend is expected for fused attention"
             backend = AttentionBackendName.flash_2
 
-        assert backend in (AttentionBackendName.flash_2, AttentionBackendName.flash_3), "flash_2 or flash_3 backend is expected for fused attention"
+        assert backend in (
+            AttentionBackendName.flash_2,
+            AttentionBackendName.flash_3,
+        ), "flash_2 or flash_3 backend is expected for fused attention"
 
         try:
             backend.assert_supported()
@@ -133,7 +138,9 @@ def convert_checkpoint_from_hf(
             validation_device = torch.device("cuda")
             model_config.block.attention.backend = backend
         except RuntimeError as e:
-            raise RuntimeError(f"Fused attention requires a flash attention backend, but {backend} is not supported") from e
+            raise RuntimeError(
+                f"Fused attention requires a flash attention backend, but {backend} is not supported"
+            ) from e
     elif validate and model_config.block.attention.backend != AttentionBackendName.torch:
         log.info(
             "Using torch backend for conversion and validation to make validation less likely to fail."
