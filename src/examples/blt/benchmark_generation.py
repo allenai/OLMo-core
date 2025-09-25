@@ -47,7 +47,7 @@ PREFILL_LENGTH = int(os.environ.get("PREFILL_LENGTH", 1024))
 PROFILE = os.environ.get("PROFILE", "0") == "1"
 BATCH_SIZE = int(os.environ.get("BATCH_SIZE", 1))
 N_BATCHES = int(os.environ.get("N_BATCHES", 1))
-FORCE_BOUNDARY_EVERY_K = int(os.environ.get("FORCE_BOUNDARY_EVERY_K", 8))
+AVG_BYTES_PER_TOKEN = int(os.environ.get("AVG_BYTES_PER_TOKEN", 4.3))
 
 def main(run_name: str, overrides: list[str]):
     if MODEL_STYLE == "hnet":
@@ -181,29 +181,32 @@ def main(run_name: str, overrides: list[str]):
             BLTConfig(teacher_force_boundaries=True),
             generation_config,
             compile_model=True,
+            device=torch.device("cuda"),
         )
         generate_kwargs = {
-            "force_boundary_every": FORCE_BOUNDARY_EVERY_K,
-            "max_patch_length_decode": None,
+            "avg_bytes_per_token": AVG_BYTES_PER_TOKEN,
         }
     else:
         generation_module = TransformerGenerationModule(
             model,
             generation_config,
             compile_model=True,
+            device=torch.device("cuda"),
         )
         generate_kwargs = {}
 
     all_timings = []
 
-    for _ in range(N_BATCHES):
-        _, _, _, timings = generation_module.generate_batch(  # type: ignore
-            input_ids=torch.randint(0, 100_000, (BATCH_SIZE, PREFILL_LENGTH), device=get_default_device()),
-            return_logits=False,
-            return_logprobs=False,
-            return_timing=True,
+    log.info(f"Benchmarking {N_BATCHES} batches of size {BATCH_SIZE} with prefill length {PREFILL_LENGTH} and generate length {GENERATE_LENGTH}")
+
+    for batch_idx in range(N_BATCHES):
+        log.info(f"Running batch {batch_idx+1}/{N_BATCHES}")
+        timings = generation_module.benchmark(  # type: ignore
+            batch_size=BATCH_SIZE,
+            n_prefill=PREFILL_LENGTH,
+            n_generate=GENERATE_LENGTH,
             profile=PROFILE,
-            **generate_kwargs,  # type: ignore
+            **generate_kwargs,
         )
         all_timings.append(timings)
 
