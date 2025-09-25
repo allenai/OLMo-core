@@ -407,7 +407,11 @@ class LMHead(nn.Module):
             parallelize_module(
                 module=self.w_out,
                 device_mesh=tp_mesh,
-                parallelize_plan=ColwiseParallel(output_layouts=Shard(1), use_local_output=False),
+                parallelize_plan=ColwiseParallel(
+                    input_layouts=Shard(1) if self.norm is not None else Replicate(),
+                    output_layouts=Shard(1),
+                    use_local_output=False,
+                ),
             )
 
         self._tp_mesh = tp_mesh

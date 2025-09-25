@@ -187,9 +187,16 @@ def has_flash_attn() -> bool:
 def set_env_var(name: str, value: str, override: bool = False, secret: bool = False):
     value_str = "****" if secret else value
     if name in os.environ:
-        if override and os.environ[name] != value:
-            log_or_print(log, f"Overriding env var '{name}' to '{value_str}'", logging.WARNING)
-            os.environ[name] = value
+        if os.environ[name] != value:
+            if override:
+                log_or_print(log, f"Overriding env var '{name}' to '{value_str}'", logging.WARNING)
+                os.environ[name] = value
+            else:
+                log_or_print(
+                    log,
+                    f"Will skip setting env var '{name}' since it's already set to '{value_str}'",
+                    logging.WARNING,
+                )
         else:
             log_or_print(log, f"Env var '{name}' already set to '{value_str}'")
     else:
@@ -719,10 +726,10 @@ def min_value_of_dtype(dtype: torch.dtype):
     return info_value_of_dtype(dtype).min
 
 
-_CUDA_STREAMS: Dict[int, torch.cuda.Stream] = {}
+_CUDA_STREAMS: Dict[str, torch.cuda.Stream] = {}
 
 
-def get_or_init_stream(id: int = 0, priority: int = 0) -> torch.cuda.Stream:
+def get_or_init_stream(id: str, priority: int = 0) -> torch.cuda.Stream:
     global _CUDA_STREAMS
     if id in _CUDA_STREAMS:
         return _CUDA_STREAMS[id]

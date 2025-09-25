@@ -290,6 +290,10 @@ class Transformer(nn.Module):
                     generator=generator,
                 )
 
+            # Warm up attention backend cache.
+            if max_seq_len is not None and att.backend is not None:
+                att.backend.warmup_cache(max_seq_len, device)
+
             # Warm up RoPE cache.
             if max_seq_len is not None and att.rope is not None:
                 att.rope.warmup_cache(max_seq_len, device)
