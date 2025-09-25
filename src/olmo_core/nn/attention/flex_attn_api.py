@@ -86,11 +86,13 @@ class FlexAttention(torch.nn.Module):
         scale : Optional scale factor for attention scores
         """
         if sink_weights is None:
-            # Use provided block_mask or fall back to class's default mask
+            # Use provided block_mask if given
             if block_mask is None:
+                # Try to get from cache first
                 block_mask = FlexAttention.block_masks.get(self.mask_key)
                 if block_mask is None:
                     # Create a simple causal mask if no block mask exists
+                    # Note: sliding_window is only used if block_mask is not provided
                     block_mask = self.get_causal_block_mask(
                         q.shape[2], q.device,
                         window_size=(sliding_window, 0) if sliding_window else None
