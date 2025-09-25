@@ -115,20 +115,28 @@ def convert_checkpoint_from_hf(
     validation_device = validation_device or torch.device("cpu")
 
     if model_config.block.attention.name == AttentionType.fused:
-        if has_flash_attn():
+        # FusedAttention requires flash attention to even load the model, so we need to use the
+        # GPU for conversion and validation
+        backend = model_config.block.attention.backend
+        if backend is None:
+            assert model_config.block.attention.use_flash, "use_flash or flash backend is expected for fused attention"
+            backend = AttentionBackendName.flash_2
+
+        assert backend in (AttentionBackendName.flash_2, AttentionBackendName.flash_3), "flash_2 or flash_3 backend is expected for fused attention"
+
+        try:
+            backend.assert_supported()
             log.info(
-                "Fused attention requires flash attention, using GPU and flash backend for conversion and validation"
+                f"Fused attention requires flash attention, using GPU and {backend} backend for conversion and validation"
             )
             device = torch.device("cuda")
             validation_device = torch.device("cuda")
-            model_config.block.attention.backend = AttentionBackendName.flash
-        else:
-            raise RuntimeError(
-                "Fused attention requires flash attention, but flash attention is not available"
-            )
+            model_config.block.attention.backend = backend
+        except RuntimeError as e:
+            raise RuntimeError(f"Fused attention requires a flash attention backend, but {backend} is not supported") from e
     elif validate and model_config.block.attention.backend != AttentionBackendName.torch:
         log.info(
-            "Using torch backend for conversion and validation to stop validation from failing."
+            "Using torch backend for conversion and validation to make validation less likely to fail."
         )
         model_config.block.attention.backend = AttentionBackendName.torch
         model_config.block.attention.use_flash = False
