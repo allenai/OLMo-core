@@ -535,6 +535,7 @@ class FlashAttention3Backend(AttentionBackend):
         scale: Optional[float] = None,
         dropout_p: float = 0.0,
         window_size: Tuple[int, int] = (-1, -1),
+        cache: Optional[BufferCache] = None,
     ):
         if dropout_p > 0.0:
             raise RuntimeError("dropout_p > 0.0 is not supported for flash-attn 3")
@@ -545,6 +546,7 @@ class FlashAttention3Backend(AttentionBackend):
             scale=scale,
             dropout_p=dropout_p,
             window_size=window_size,
+            cache=cache,
         )
 
     @classmethod
