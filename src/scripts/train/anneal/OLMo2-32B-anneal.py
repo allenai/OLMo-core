@@ -165,13 +165,12 @@ class AnnealingConfig(Config):
                 work_dir=get_work_dir(root_dir),
             ),
             data_loader=NumpyDataLoaderConfig(
-                global_batch_size=2048
-                * SEQUENCE_LENGTH,  # NOTE: this is specified in TOKENS, not instances.
+                global_batch_size=2048 * 4096,  # NOTE: this is specified in TOKENS, not instances.
                 seed=34521,  # NOTE: can update this to change data order.
                 num_workers=4,
             ),
             train_module=TransformerTrainModuleConfig(
-                rank_microbatch_size=2 * SEQUENCE_LENGTH,  # NOTE: specified in tokens.
+                rank_microbatch_size=2 * 4096,  # NOTE: this is specified in TOKENS, not instances.
                 max_sequence_length=SEQUENCE_LENGTH,
                 z_loss_multiplier=1e-5,
                 compile_model=True,

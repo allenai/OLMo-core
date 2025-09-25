@@ -53,6 +53,25 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     )
 
 
+def finalize_config(config: ExperimentConfig):
+    if config.model.block.name in (
+        TransformerBlockType.moe_hybrid,
+        TransformerBlockType.moe_hybrid_reordered_norm,
+    ):
+        assert config.model.block.feed_forward_moe is not None
+        moe_config = replace(
+            config.model.block.feed_forward_moe, shared_mlp=config.model.block.feed_forward
+        )
+        config.model.block_overrides = {
+            0: replace(
+                config.model.block,
+                name=TransformerBlockType(str(config.model.block.name).replace("_hybrid_", "_")),
+                feed_forward=None,
+                feed_forward_moe=moe_config,
+            )
+        }
+
+
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
     return TransformerTrainModuleConfig(
         rank_microbatch_size=2 * common.max_sequence_length,
@@ -127,25 +146,6 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             ),
         )
     )
-
-
-def finalize_config(config: ExperimentConfig):
-    if config.model.block.name in (
-        TransformerBlockType.moe_hybrid,
-        TransformerBlockType.moe_hybrid_reordered_norm,
-    ):
-        assert config.model.block.feed_forward_moe is not None
-        moe_config = replace(
-            config.model.block.feed_forward_moe, shared_mlp=config.model.block.feed_forward
-        )
-        config.model.block_overrides = {
-            0: replace(
-                config.model.block,
-                name=TransformerBlockType(str(config.model.block.name).replace("_hybrid_", "_")),
-                feed_forward=None,
-                feed_forward_moe=moe_config,
-            )
-        }
 
 
 if __name__ == "__main__":

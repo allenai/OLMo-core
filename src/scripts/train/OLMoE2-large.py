@@ -22,7 +22,7 @@ from olmo_core.train.train_module import (
 )
 
 SEQUENCE_LENGTH = 4096
-GLOBAL_BATCH_SIZE = 2048 * SEQUENCE_LENGTH
+GLOBAL_BATCH_SIZE = 2048 * 4096
 
 log = logging.getLogger(__name__)
 
@@ -50,7 +50,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
     return TransformerTrainModuleConfig(
-        rank_microbatch_size=2 * common.max_sequence_length,
+        rank_microbatch_size=2 * 4096,
         max_sequence_length=common.max_sequence_length,
         optim=AdamWConfig(
             lr=3e-4,
