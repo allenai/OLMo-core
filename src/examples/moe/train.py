@@ -42,8 +42,6 @@ from olmo_core.train.train_module import (
 )
 from olmo_core.utils import seed_all
 
-SEQUENCE_LENGTH = 1024
-
 # This will read stream data from the public endpoints by default, but that might be a lot slower
 # than reading data locally.
 DATA_ROOT = os.environ.get("OLMO_DATA_ROOT", "http://olmo-data.org/examples/c4-en/gpt2").rstrip("/")
@@ -60,6 +58,8 @@ DATA_PATHS = [
     f"{DATA_ROOT}/c4-train.00900-00999.npy",
     f"{DATA_ROOT}/c4-train.01000-01023.npy",
 ]
+
+SEQUENCE_LENGTH = 1024
 
 
 @dataclass
@@ -102,7 +102,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
 
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=16 * SEQUENCE_LENGTH,
-        max_sequence_length=dataset_config.effective_sequence_length,
+        max_sequence_length=SEQUENCE_LENGTH,
         optim=AdamWConfig(
             lr=1e-3,
             group_overrides=[

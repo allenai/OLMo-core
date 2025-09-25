@@ -9,7 +9,12 @@ from typing import Dict, Optional
 import torch
 
 from olmo_core.distributed.checkpoint import load_state_dict
-from olmo_core.internal.experiment import CommonComponents, SubCmd, build_config
+from olmo_core.internal.experiment import (
+    CliContext,
+    CommonComponents,
+    SubCmd,
+    build_config,
+)
 from olmo_core.io import join_path, resource_path
 from olmo_core.launch.beaker import OLMoCoreBeakerImage
 from olmo_core.nn.transformer import TransformerActivationCheckpointingMode
@@ -28,7 +33,7 @@ if __name__ == "__main__":
     usage = f"""
 Performs anneals on original data. Resumes data loader state and optimizer state.
 
-[yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]{'|'.join(SubCmd)}[/] [i b]ORIGINAL_CHECKPOINT LENGTH CLUSTER[/] [i][OVERRIDES...][/]
+[yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]{"|".join(SubCmd)}[/] [i b]ORIGINAL_CHECKPOINT LENGTH CLUSTER[/] [i][OVERRIDES...][/]
 
 [b]Subcommands[/]
 [b magenta]launch:[/]      Launch the script on Beaker with the [b magenta]train[/] subcommand.
@@ -48,6 +53,7 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} gs://ai2-llm/checkpoints/OLMo25/step23
         sys.exit(1)
 
     script, cmd, original_checkpoint, length, cluster, *overrides = sys.argv
+
     length_in_tokens = int(float(length))
     log.info(f"Training for {length_in_tokens} tokens ({length_in_tokens / 1_000_000_000}B)")
 
@@ -84,6 +90,7 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} gs://ai2-llm/checkpoints/OLMo25/step23
     log.info(f"Starting learning rate is {lr}")
 
     cmd = SubCmd(cmd)
+    cli_context = CliContext(script, cmd, run_name, cluster, overrides)
 
     def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
         config = o25_module.build_train_module_config(common)
@@ -124,17 +131,13 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} gs://ai2-llm/checkpoints/OLMo25/step23
         return config
 
     config = build_config(
-        script,
-        cmd,
-        run_name,
-        cluster,
-        overrides,
+        cli_context,
         global_batch_size=batch_size,
+        max_sequence_length=sequence_length,
         model_config_builder=o25_module.build_model_config,
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
         finalize_config=None,
-        sequence_length=sequence_length,
         include_default_evals=False,
         intra_document_masking=False,
         include_instance_filter=False,
