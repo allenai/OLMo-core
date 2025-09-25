@@ -130,7 +130,7 @@ def test_attention(
     backend: str,
     kwargs: Dict[str, Any],
 ):
-    if backend == "flash_2" and dtype == torch.float32:
+    if backend in ("flash_2", "flash_3") and dtype == torch.float32:
         pytest.skip("flash-attn requires a low precision dtype")
     if backend in ("flash_2", "flash_3", "te") and device.type == "cpu":
         pytest.skip(f"'{backend}' backend requires GPU")
