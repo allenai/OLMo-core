@@ -41,7 +41,7 @@ class AttentionBackendName(StrEnum):
     """
     Flash attention 2 from the `flash-attn <https://github.com/Dao-AILab/flash-attention>`_ library.
     To use this with context-parallelism, `ring-flash-attn <https://github.com/zhuzilin/ring-flash-attention>`_
-    is also required. ➡️ :class:`FlashAttentionBackend`
+    is also required. ➡️ :class:`FlashAttention2Backend`
     """
     flash_3 = "flash_3"
     """
@@ -57,7 +57,7 @@ class AttentionBackendName(StrEnum):
         if self == self.torch:
             return TorchAttentionBackend
         elif self in self.flash_2:
-            return FlashAttentionBackend
+            return FlashAttention2Backend
         elif self == self.flash_3:
             return FlashAttention3Backend
         elif self == self.te:
@@ -385,7 +385,7 @@ class TorchAttentionBackend(AttentionBackend):
         return attn_mask
 
 
-class FlashAttentionBackend(AttentionBackend):
+class FlashAttention2Backend(AttentionBackend):
     """
     SDPA from the flash-attn package. Additionally, ring-flash-attn is required for context parallelism.
     """

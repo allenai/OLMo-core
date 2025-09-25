@@ -30,8 +30,8 @@ from ..utils import get_tp_wrappers
 from .backend import (
     AttentionBackend,
     AttentionBackendName,
+    FlashAttention2Backend,
     FlashAttention3Backend,
-    FlashAttentionBackend,
     TEAttentionBackend,
     TorchAttentionBackend,
 )
@@ -47,7 +47,7 @@ __all__ = [
     "AttentionBackendName",
     "AttentionBackend",
     "TorchAttentionBackend",
-    "FlashAttentionBackend",
+    "FlashAttention2Backend",
     "FlashAttention3Backend",
     "TEAttentionBackend",
     "AttentionConfig",

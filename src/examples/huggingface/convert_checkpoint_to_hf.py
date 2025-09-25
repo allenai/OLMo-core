@@ -86,17 +86,18 @@ def convert_checkpoint_to_hf(
                 try:
                     AttentionBackendName.flash_2.assert_supported()
                     if device.type != "cuda":
-                        raise RuntimeError("CUDA device required for flash attention")
+                        raise RuntimeError(f"CUDA device required for {backend=}")
                 except Exception:
                     log.warning(
-                        "Flash attention required for validation but not available; disabling validation."
+                        "Flash attention required for validation but not available; disabling validation.",
+                        exc_info=True,
                     )
                     validate = False
             elif backend is not None:
                 try:
                     AttentionBackendName[backend].assert_supported()
                     if backend in ("flash_2", "flash_3", "te") and device.type != "cuda":
-                        raise RuntimeError("CUDA device required for flash attention")
+                        raise RuntimeError(f"CUDA device required for {backend=}")
                 except Exception:
                     log.warning(
                         f"{backend=} unavailable/unsupported; disabling to avoid validation failures.",
