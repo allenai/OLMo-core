@@ -485,7 +485,7 @@ def main(*, config_builder: ConfigBuilder) -> None:
 [b magenta]dry_run:[/]     Pretty print the config and exit.
 
 [b]Examples[/]
-$ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/pluto-cirrascale --launch.num_nodes=2[/]
+$ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/neptune --launch.num_nodes=2[/]
     """.strip()
 
     if len(sys.argv) < 4 or sys.argv[1] not in set(SubCmd):

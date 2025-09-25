@@ -368,7 +368,7 @@ Anneal the 32B model.
 [b magenta]dry_run:[/]     Print the config for debugging.
 
 [b]Examples[/]
-$ [i]python {sys.argv[0]} launch run01 gs://ai2-llm/checkpoints/peteish32/step419000 ai2/jupiter-cirrascale-2 --launch.num_nodes=2[/]
+$ [i]python {sys.argv[0]} launch run01 gs://ai2-llm/checkpoints/peteish32/step419000 ai2/jupiter --launch.num_nodes=2[/]
 """.strip()
 
     # Parse command line arguments.

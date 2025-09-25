@@ -72,7 +72,6 @@ def _to_beaker_env_secret(
 
 
 def get_root_dir(cluster: str) -> str:
-    root_dir: str = "weka://oe-training-default/ai2-llm"
     if cluster in [
         "ai2/test-h100",
         "ai2/jupiter",
@@ -83,12 +82,12 @@ def get_root_dir(cluster: str) -> str:
         "ai2/rhea",
         "ai2/phobos",
     ]:
-        root_dir = "/weka/oe-training-default/ai2-llm"
+        return "/weka/oe-training-default/ai2-llm"
     elif cluster in GOOGLE_CLUSTERS:
-        root_dir = "gs://ai2-llm"
+        return "gs://ai2-llm"
     elif "local" in cluster:
-        root_dir = "gs://ai2-llm"
-    return root_dir
+        return "gs://ai2-llm"
+    raise OLMoConfigurationError(f"Unknown cluster: {cluster}")
 
 
 def get_work_dir(root_dir: str) -> str:
