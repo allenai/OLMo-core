@@ -11,7 +11,8 @@ log = logging.getLogger(__name__)
 has_cuda = torch.cuda.is_available()
 has_multiple_gpus = has_cuda and torch.cuda.device_count() > 1
 compute_capability = torch.cuda.get_device_capability()[0] if has_cuda else None
-has_flash_attn = False
+has_flash_attn_2 = False
+has_flash_attn_3 = False
 has_torchao = False
 has_grouped_gemm = False
 has_te = False
@@ -19,8 +20,18 @@ has_te = False
 try:
     import flash_attn  # type: ignore
 
-    has_flash_attn = True
+    has_flash_attn_2 = True
     del flash_attn
+except ModuleNotFoundError:
+    pass
+
+try:
+    import flash_attn_interface  # type: ignore
+
+    if compute_capability is not None:
+        is_supported = 9 <= compute_capability < 10  # H100 / H800
+        has_flash_attn_3 = is_supported
+    del flash_attn_interface
 except ModuleNotFoundError:
     pass
 
@@ -80,14 +91,26 @@ def requires_compute_capability(min_cc: int):
     return decorator
 
 
-FLASH_MARKS = (
+FLASH_2_MARKS = (
     pytest.mark.gpu,
-    pytest.mark.skipif(not has_flash_attn, reason="Requires flash-attn"),
+    pytest.mark.skipif(not has_flash_attn_2, reason="Requires flash-attn 2"),
 )
 
 
-def requires_flash_attn(func):
-    for mark in FLASH_MARKS:
+def requires_flash_attn_2(func):
+    for mark in FLASH_2_MARKS:
+        func = mark(func)
+    return func
+
+
+FLASH_3_MARKS = (
+    pytest.mark.gpu,
+    pytest.mark.skipif(not has_flash_attn_3, reason="Requires flash-attn 3"),
+)
+
+
+def requires_flash_attn_3(func):
+    for mark in FLASH_3_MARKS:
         func = mark(func)
     return func
 

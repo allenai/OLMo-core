@@ -31,7 +31,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 # Install miniconda, Python, and Python build dependencies.
 ARG TARGET_PLATFORM
 ARG PYTHON_VERSION
-ENV PATH /opt/conda/bin:$PATH
+ENV PATH=/opt/conda/bin:$PATH
 RUN curl -fsSL -v -o ~/miniconda.sh -O  "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-${TARGET_PLATFORM}.sh"
 # NOTE: Manually invoke bash on miniconda script per https://github.com/conda/conda/issues/10431
 RUN chmod +x ~/miniconda.sh && \
@@ -57,9 +57,21 @@ ENV GROUPED_GEMM_CUTLASS="1"
 ARG GROUPED_GEMM_VERSION="grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@main"
 RUN pip install --no-build-isolation --no-cache-dir "${GROUPED_GEMM_VERSION}"
 
-# Install flash-attn.
+# Install flash-attn 2
 ARG FLASH_ATTN_VERSION=2.8.2
 RUN pip install --no-build-isolation --no-cache-dir flash-attn==${FLASH_ATTN_VERSION}
+
+# Install flash-attn 3
+ARG FLASH_ATTN_3_SHA="1ceaa984b2f348caea18b39a98458d33b4ea7a09"
+RUN git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com/Dao-AILab/flash-attention.git && \
+    cd flash-attention && \
+    git fetch --depth 1 origin ${FLASH_ATTN_3_SHA} && \
+    git checkout ${FLASH_ATTN_3_SHA} && \
+    git submodule update --init --depth 1 && \
+    cd hopper && \
+    FLASH_ATTENTION_DISABLE_FP16=TRUE python setup.py install && \
+    cd /app/build && \
+    rm -rf flash-attention
 
 # Install transformer-engine.
 ARG TE_VERSION=2.6.0.post1
@@ -121,5 +133,5 @@ ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
 ENV PATH=/usr/local/nvidia/bin:/usr/local/cuda/bin:$PATH
 
-LABEL org.opencontainers.image.source https://github.com/allenai/OLMo-core
+LABEL org.opencontainers.image.source=https://github.com/allenai/OLMo-core
 WORKDIR /app/olmo-core

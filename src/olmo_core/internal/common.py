@@ -19,6 +19,10 @@ from olmo_core.utils import generate_uuid
 
 log = logging.getLogger(__name__)
 
+GOOGLE_CLUSTERS = [
+    "ai2/augusta",
+]
+
 
 @lru_cache()
 def get_beaker_client() -> Optional[Beaker]:
@@ -68,7 +72,6 @@ def _to_beaker_env_secret(
 
 
 def get_root_dir(cluster: str) -> str:
-    root_dir: str = "weka://oe-training-default/ai2-llm"
     if cluster in [
         "ai2/test-h100",
         "ai2/jupiter",
@@ -79,12 +82,12 @@ def get_root_dir(cluster: str) -> str:
         "ai2/rhea",
         "ai2/phobos",
     ]:
-        root_dir = "/weka/oe-training-default/ai2-llm"
-    elif cluster == "ai2/augusta":
-        root_dir = "gs://ai2-llm"
+        return "/weka/oe-training-default/ai2-llm"
+    elif cluster in GOOGLE_CLUSTERS:
+        return "gs://ai2-llm"
     elif "local" in cluster:
-        root_dir = "gs://ai2-llm"
-    return root_dir
+        return "gs://ai2-llm"
+    raise OLMoConfigurationError(f"Unknown cluster: {cluster}")
 
 
 def get_work_dir(root_dir: str) -> str:
@@ -128,7 +131,7 @@ def build_launch_config(
             required=False,
             workspace=workspace,
         )
-        if "google" not in cluster
+        if cluster not in GOOGLE_CLUSTERS
         else None
     )
     env_secrets = [
@@ -219,11 +222,10 @@ def build_launch_config(
 
 
 CLUSTER_TO_GPU_TYPE = {
-    "ai2/jupiter-cirrascale-2": "NVIDIA H100 80GB HBM3",
-    "ai2/test-h100": "NVIDIA H100 80GB HBM3",
-    "ai2/pluto-cirrascale": "NVIDIA H100",
-    "ai2/augusta-google-1": "NVIDIA H100",
-    "ai2/titan-cirrascale": "NVIDIA B200",
+    "ai2/jupiter": "NVIDIA H100 80GB HBM3",
+    "ai2/augusta": "NVIDIA H100 80GB HBM3",
+    "ai2/ceres": "NVIDIA H100 80GB HBM3",
+    "ai2/titan": "NVIDIA B200",
 }
 
 

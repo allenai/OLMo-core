@@ -67,7 +67,7 @@ MODEL_CONFIG = TransformerConfig.olmo2_1B(vocab_size=TOKENIZER_CONFIG.padded_voc
 LEARNING_RATE = 4e-4
 
 # Beaker.
-BEAKER_CLUSTER = "ai2/jupiter-cirrascale-2"
+BEAKER_CLUSTER = "ai2/jupiter"
 NUM_NODES = 1
 BEAKER_WORKSPACE = "ai2/OLMo-core"
 BEAKER_BUDGET = "ai2/oe-base"
@@ -116,7 +116,7 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
 
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=16 * SEQUENCE_LENGTH,
-        max_sequence_length=dataset_config.effective_sequence_length,
+        max_sequence_length=SEQUENCE_LENGTH,
         optim=AdamWConfig(
             lr=LEARNING_RATE,
             weight_decay=0.1,

@@ -84,7 +84,7 @@ def convert_checkpoint_to_hf(
             )
             device = torch.device("cuda")
             validation_device = torch.device("cuda")
-            model_config.block.attention.backend = AttentionBackendName.flash
+            model_config.block.attention.backend = AttentionBackendName.flash_2
         else:
             raise RuntimeError(
                 "Fused attention requires flash attention, but flash attention is not available"
