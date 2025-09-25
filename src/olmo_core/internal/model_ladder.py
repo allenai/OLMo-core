@@ -155,7 +155,7 @@ def main(ladder_builder: Callable[[str], ModelLadder]):
 [b magenta]dry_run:[/]      Pretty print the config to run and exit.
 
 [b]Examples[/]
-$ [i]python {sys.argv[0]} {SubCmd.launch} 1B 1xC ai2/pluto-cirrascale --launch.num_nodes=2[/]
+$ [i]python {sys.argv[0]} {SubCmd.launch} 1B 1xC ai2/neptune --launch.num_nodes=2[/]
     """.strip()
 
     try:
