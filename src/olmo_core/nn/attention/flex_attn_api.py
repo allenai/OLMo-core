@@ -134,10 +134,9 @@ class FlexAttention(torch.nn.Module):
 
         # SDPA uses full precision. We match it for flex attention.
         og_dtype = q.dtype
-        q_fp32, k_ext_fp32, v_ext_fp32 = q.float(), k_ext.float(), v_ext.float()
         with torch.autocast(enabled=False, device_type=q.device.type):
             att = FlexAttention.flex_attn(
-                q_fp32, k_ext_fp32, v_ext_fp32, block_mask=block_mask, score_mod=score_mod, scale=scale, enable_gqa=enable_gqa
+                q, k_ext, v_ext, block_mask=block_mask, score_mod=score_mod, scale=scale, enable_gqa=enable_gqa
             )
         return att.to(dtype=og_dtype)
 
