@@ -1157,6 +1157,7 @@ class BLTTransformer(Transformer):
         self.space_mask_blt = blt_utils.get_blt_space_mask()
         self.end_of_subword_token_blt = 3
         self.eos_token_blt = 1
+        self.vocab_size_blt = (4 + 256) * 2
 
     def apply_fsdp(
         self,
@@ -1956,7 +1957,7 @@ class BLTDistillTransformer(BLTTransformer):
             torch.ones_like(seq_sorted_indices),
         )
         shift_boundary_mask = boundary_mask[:, 1:]
-        label_offsets = shift_boundary_mask * 256
+        label_offsets = shift_boundary_mask * (self.vocab_size_blt // 2)
         labels[:, :-1] += label_offsets
 
         # compute the boundary loss
@@ -2271,6 +2272,12 @@ class BLTDistillTransformer(BLTTransformer):
             return_logits=True,  # needed for distillation
             **kwargs,
         )
+        if labels is None:
+            labels = F.pad(
+                input_ids[:, 1:],
+                (0, 1),
+                value=ignore_index,
+            )
 
         byte_mask = labels != ignore_index
         shifted_patch_lens = F.pad(
@@ -2306,6 +2313,9 @@ class BLTDistillTransformer(BLTTransformer):
             (torch.arange(patch_mask.shape[1], device=patch_mask.device)[None, :] <= last_increasing_index.indices[:, None]) |
             (torch.zeros_like(patch_mask) == last_increasing_index.values[:, None]) # case where never not increasing (no padding)
         )
+        shift_boundary_mask = boundary_mask[:, 1:]
+        label_offsets = shift_boundary_mask * (self.vocab_size_blt // 2)
+        labels[:, :-1] += label_offsets
 
         dtype = h_patch.dtype
         global_dtype = torch.bfloat16 if self.blocks["0"].attention.use_flash else dtype  # type: ignore
@@ -2313,7 +2323,7 @@ class BLTDistillTransformer(BLTTransformer):
         h_patch_after_global, _ = self._block_forward(h_patch.to(global_dtype), **block_kwargs)
         h_patch_after_global = h_patch_after_global.to(dtype)
 
-        (h_out_for_boundaries, _), h_out_for_logits, _ = self.local_decoder(
+        h_out = self.local_decoder(
             embeds=h_byte,
             patch_embeds=h_patch_after_global,
             patch_residuals=h_patch,
@@ -2321,41 +2331,20 @@ class BLTDistillTransformer(BLTTransformer):
             boundary_mask=boundary_mask,
             **local_decoder_kwargs,
         )
-        logits = self.lm_head(h_out_for_logits, **lm_head_kwargs)
-        boundary_logits = self.lm_head(h_out_for_boundaries, **lm_head_kwargs)
-
-        logits = torch.concatenate([
-            logits,
-            torch.zeros((logits.shape[0], 1, logits.shape[2]), device=logits.device, dtype=logits.dtype)
-        ], dim=1)
-
+        logits = self.lm_head(h_out, **lm_head_kwargs)
         ce_loss, _ = cross_entropy_loss(logits.view(-1, logits.shape[-1]), labels.view(-1))  # type: ignore
 
+        # replace plain (single byte) logits with byte + boundary logits where boundaries occur
         if blt_config.eval_add_boundary_logp:
-            main_path_logprobs = torch.gather(F.log_softmax(logits[:, :-1].float(), dim=-1), -1, input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
-            main_path_boundary_logprobs = F.log_softmax(boundary_logits.float(), dim=-1)[..., self.end_of_subword_token_blt]  # type: ignore
-
-            y_hat = main_path_logprobs.scatter_add(
-                src=torch.where(
-                    patch_mask[:, 1:],
-                    main_path_boundary_logprobs,
-                    torch.zeros_like(main_path_boundary_logprobs),
-                ),
-                dim=-1,
-                index=torch.where(
-                    patch_mask[:, 1:],
-                    seq_sorted_indices[:, 1:] - 1,
-                    torch.zeros_like(seq_sorted_indices[:, 1:])
-                ),
-            )
-            remaining_logpmass = log1mexp(y_hat)
+            main_path_logprobs = torch.gather(F.log_softmax(logits[:, :-1].float(), dim=-1), -1, labels[:, :-1].clip(0).unsqueeze(-1)).squeeze(-1)
+            remaining_logpmass = log1mexp(main_path_logprobs)
             remaining_logp_uniform = remaining_logpmass - math.log(logits.shape[2] - 1)  # -1 to skip the main path token
             logits.zero_()
             logits[:, :-1, :] = remaining_logp_uniform.unsqueeze(-1)
             logits.scatter_(
                 -1,
                 input_ids[:, 1:].unsqueeze(-1),
-                y_hat.to(logits.dtype).unsqueeze(-1),
+                main_path_logprobs.to(logits.dtype).unsqueeze(-1),
             )
 
         return LMOutputWithLoss(
