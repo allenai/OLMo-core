@@ -129,7 +129,11 @@ def get_default_device() -> torch.device:
     Get the default device.
     """
 
-    from .distributed.utils import is_distributed, backend_supports_cpu, backend_supports_cuda
+    from .distributed.utils import (
+        backend_supports_cpu,
+        backend_supports_cuda,
+        is_distributed,
+    )
 
     if is_distributed():
         backend = dist.get_backend()
