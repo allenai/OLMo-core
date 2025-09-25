@@ -101,7 +101,7 @@ def move_to_device(o: T, device: torch.device, non_blocking: Optional[bool] = No
     :param device: The device to move to.
     """
     if non_blocking is None:
-        non_blocking = device.type != "cpu"
+        non_blocking = device.type not in ("cpu", "mps")
     if isinstance(o, torch.Tensor):
         return o.to(device, non_blocking=non_blocking)  # type: ignore[return-value]
     elif isinstance(o, dict):
