@@ -201,7 +201,7 @@ class ByteTokenizerConfig(TokenizerConfig):
         ]
 
         return cls(
-            vocab_size=len(special_tokens) + 256,
+            vocab_size=len(special_tokens) + 256 * 2, # *2 to accomodate fused boundary token
             special_tokens=special_tokens,
             bos_token_id=special_tokens.index("<bos>"),
             pad_token_id=special_tokens.index("<pad>"),
@@ -210,7 +210,7 @@ class ByteTokenizerConfig(TokenizerConfig):
             # slightly hacky, but this must match the dataset tokenizer, so dolma2
             original_identifier=TokenizerConfig.dolma2().identifier,
         )
-    
+
     @classmethod
     def hnet(cls) -> "ByteTokenizerConfig":
         special_tokens = [
