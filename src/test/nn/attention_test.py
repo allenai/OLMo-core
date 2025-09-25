@@ -132,8 +132,6 @@ def test_attention(
 ):
     if backend in ("flash_2", "flash_3") and dtype == torch.float32:
         pytest.skip("flash-attn requires a low precision dtype")
-    if backend in ("flash_2", "flash_3", "te") and device.type == "cpu":
-        pytest.skip(f"'{backend}' backend requires GPU")
     if dtype == torch.bfloat16 and device.type == "cpu":
         pytest.skip("bf16 requires GPU")
     if attention_cls is NormalizedAttention:
@@ -141,7 +139,7 @@ def test_attention(
             pytest.skip("clip_qkv is not supported for NormalizedAttention")
         if "use_head_qk_norm" in kwargs:
             pytest.skip("use_head_qk_norm is not supported for NormalizedAttention")
-        if backend in ("flash_2", "te"):
+        if backend in ("flash_2", "flash_3", "te"):
             pytest.xfail(
                 f"NormalizedAttention is broken with '{backend}' backend because it creates activation tensors in fp32"
             )
