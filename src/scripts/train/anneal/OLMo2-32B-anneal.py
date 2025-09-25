@@ -17,6 +17,7 @@ from olmo_core.config import Config, DType
 from olmo_core.data import (
     DataMixBase,
     NumpyDataLoaderConfig,
+    NumpyDatasetConfig,
     NumpyFSLDatasetConfig,
     TokenizerConfig,
     TokenizerName,
@@ -58,6 +59,8 @@ from olmo_core.train.train_module import (
 from olmo_core.utils import prepare_cli_environment, seed_all
 
 log = logging.getLogger(__name__)
+
+SEQUENCE_LENGTH = 4096
 
 
 class AnnealingDataMix(DataMixBase):
@@ -102,7 +105,7 @@ class AnnealingConfig(Config):
     run_name: str
     launch: BeakerLaunchConfig
     model: TransformerConfig
-    dataset: NumpyFSLDatasetConfig
+    dataset: NumpyDatasetConfig
     data_loader: NumpyDataLoaderConfig
     train_module: TransformerTrainModuleConfig
     trainer: TrainerConfig
@@ -158,7 +161,7 @@ class AnnealingConfig(Config):
                 AnnealingDataMix.dolmino100,
                 tokenizer=tokenizer_config,
                 mix_base_dir=root_dir,
-                sequence_length=4096,
+                sequence_length=SEQUENCE_LENGTH,
                 work_dir=get_work_dir(root_dir),
             ),
             data_loader=NumpyDataLoaderConfig(
@@ -167,8 +170,8 @@ class AnnealingConfig(Config):
                 num_workers=4,
             ),
             train_module=TransformerTrainModuleConfig(
-                rank_microbatch_size=2 * 4096,  # NOTE: again this is specified in tokens.
-                max_sequence_length=4096,
+                rank_microbatch_size=2 * 4096,  # NOTE: this is specified in TOKENS, not instances.
+                max_sequence_length=SEQUENCE_LENGTH,
                 z_loss_multiplier=1e-5,
                 compile_model=True,
                 optim=SkipStepAdamWConfig(

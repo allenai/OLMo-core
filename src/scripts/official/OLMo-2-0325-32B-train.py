@@ -62,7 +62,7 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
 
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=4 * 4096,
-        max_sequence_length=dataset_config.effective_sequence_length,
+        max_sequence_length=opts.sequence_length,
         optim=SkipStepAdamWConfig(
             lr=6e-4,
             weight_decay=0.1,
@@ -135,7 +135,7 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
                 eval_dataset=NumpyPaddedFSLDatasetConfig.from_data_mix(
                     DataMix.v3_small_ppl_validation,
                     mix_base_dir=opts.data_root,
-                    sequence_length=dataset_config.effective_sequence_length,
+                    sequence_length=opts.sequence_length,
                     tokenizer=tokenizer_config,
                     work_dir=opts.work_dir,
                 ),

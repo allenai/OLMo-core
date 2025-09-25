@@ -116,7 +116,7 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
 
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=16 * SEQUENCE_LENGTH,
-        max_sequence_length=dataset_config.effective_sequence_length,
+        max_sequence_length=SEQUENCE_LENGTH,
         optim=AdamWConfig(
             lr=LEARNING_RATE,
             weight_decay=0.1,
