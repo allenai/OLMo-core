@@ -86,17 +86,12 @@ class FlexAttention(torch.nn.Module):
         scale : Optional scale factor for attention scores
         """
         if sink_weights is None:
-            # Use provided block_mask if given
+            # For non-sink flex attention, block_mask is required
             if block_mask is None:
-                # Try to get from cache first
+                # Try to get from cache if available
                 block_mask = FlexAttention.block_masks.get(self.mask_key)
                 if block_mask is None:
-                    # Create a simple causal mask if no block mask exists
-                    # Note: sliding_window is only used if block_mask is not provided
-                    block_mask = self.get_causal_block_mask(
-                        q.shape[2], q.device,
-                        window_size=(sliding_window, 0) if sliding_window else None
-                    )
+                    raise ValueError("Block mask missing during flex attention.")
             # SDPA uses full precision. We match it for flex attention.
             og_dtype = q.dtype
             q_fp32, k_fp32, v_fp32 = q.float(), k.float(), v.float()
