@@ -537,6 +537,7 @@ class Attention(AttentionBase):
                     sliding_window=sliding_window,
                     enable_gqa=(n_kv_heads != n_heads_q),
                     block_mask=block_mask,  # Pass block_mask if available
+                    scale=scale,
                 )
 
                 att = att.transpose(1, 2).contiguous()

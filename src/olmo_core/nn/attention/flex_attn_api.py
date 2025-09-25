@@ -74,7 +74,7 @@ class FlexAttention(torch.nn.Module):
     def mask_key(self) -> FLEX_ATTN_MASK_T:
         return (self.attn_mask_type, self.fixed_block_size)
 
-    def forward(self, q, k, v, sink_weights=None, sliding_window=0, enable_gqa=False, block_mask=None):
+    def forward(self, q, k, v, sink_weights=None, sliding_window=0, enable_gqa=False, block_mask=None, scale=None):
         """
         q : (B, H_q, S_q, D)
         k : (B, H_kv, S_kv, D)   -- without sink
@@ -83,6 +83,7 @@ class FlexAttention(torch.nn.Module):
         sliding_window : int
         enable_gqa : bool
         block_mask : Optional BlockMask for custom masking (used when sink_weights is None)
+        scale : Optional scale factor for attention scores
         """
         if sink_weights is None:
             # Use provided block_mask or fall back to class's default mask
@@ -94,7 +95,7 @@ class FlexAttention(torch.nn.Module):
                         q.shape[2], q.device,
                         window_size=(sliding_window, 0) if sliding_window else None
                     )
-            return FlexAttention.flex_attn(q, k, v, block_mask=block_mask, enable_gqa=enable_gqa)
+            return FlexAttention.flex_attn(q, k, v, block_mask=block_mask, scale=scale, enable_gqa=enable_gqa)
 
         B, H_q, S_q, D = q.shape
         _, H_kv, S_kv, _ = k.shape
@@ -130,7 +131,7 @@ class FlexAttention(torch.nn.Module):
             )
 
         return FlexAttention.flex_attn(
-            q, k_ext, v_ext, block_mask=block_mask, score_mod=score_mod, enable_gqa=enable_gqa
+            q, k_ext, v_ext, block_mask=block_mask, score_mod=score_mod, scale=scale, enable_gqa=enable_gqa
         )
 
     @classmethod
