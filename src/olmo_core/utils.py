@@ -18,6 +18,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, TypeVar, Union
 
 import rich
 import torch
+import torch.distributed as dist
 from rich.console import Console, ConsoleRenderable
 from rich.highlighter import NullHighlighter
 from rich.text import Text
@@ -127,7 +128,18 @@ def get_default_device() -> torch.device:
     """
     Get the default device.
     """
-    if torch.cuda.is_available() and torch.cuda.is_initialized():
+
+    from .distributed.utils import is_distributed, backend_supports_cpu, backend_supports_cuda
+
+    if is_distributed():
+        backend = dist.get_backend()
+        if backend_supports_cuda(backend):
+            return torch.device("cuda")
+        elif backend_supports_cpu(backend):
+            return torch.device("cpu")
+        else:
+            raise NotImplementedError(backend)
+    elif torch.cuda.is_available() and torch.cuda.is_initialized():
         return torch.device("cuda")
     elif torch.mps.is_available():
         return torch.device("mps")

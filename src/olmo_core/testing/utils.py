@@ -2,14 +2,12 @@ import logging
 
 import pytest
 import torch
-import torch.distributed as dist
-
-from olmo_core.distributed.utils import is_distributed
 
 log = logging.getLogger(__name__)
 
 has_cuda = torch.cuda.is_available()
 has_multiple_gpus = has_cuda and torch.cuda.device_count() > 1
+has_mps = torch.mps.is_available()
 compute_capability = torch.cuda.get_device_capability()[0] if has_cuda else None
 has_flash_attn = False
 has_torchao = False
@@ -116,9 +114,19 @@ def requires_te(func):
     return func
 
 
+MPS_MARKS = (pytest.mark.skipif(not has_mps, reason="Requires MPS"),)
+
+
+def requires_mps(func):
+    for mark in MPS_MARKS:
+        func = mark(func)
+    return func
+
+
 INIT_DEVICES = [
     pytest.param(torch.device("meta"), id="device=meta"),
     pytest.param(torch.device("cpu"), id="device=CPU"),
+    pytest.param(torch.device("mps"), id="device=MPS", marks=MPS_MARKS),
     pytest.param(
         torch.device("cuda"),
         id="device=CUDA",
@@ -128,6 +136,7 @@ INIT_DEVICES = [
 
 DEVICES = [
     pytest.param(torch.device("cpu"), id="device=CPU"),
+    pytest.param(torch.device("mps"), id="device=MPS", marks=MPS_MARKS),
     pytest.param(
         torch.device("cuda"),
         id="device=CUDA",
@@ -153,18 +162,3 @@ LOW_PRECISION_DTYPES = [
         marks=GPU_MARKS,
     ),
 ]
-
-
-def get_default_device():
-    if is_distributed():
-        backend = dist.get_backend()
-        if dist.Backend.NCCL in backend:
-            return torch.device("cuda")
-        elif backend == dist.Backend.GLOO:
-            return torch.device("cpu")
-        else:
-            raise NotImplementedError(backend)
-    elif torch.cuda.is_available():
-        return torch.device("cuda")
-    else:
-        return torch.device("cpu")
