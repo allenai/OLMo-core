@@ -2,6 +2,7 @@ from typing import Any, Dict, Optional, Tuple
 
 import pytest
 import torch
+import torch.nn.functional as F
 from torch.distributed.tensor import Shard, init_device_mesh
 
 from olmo_core.data.utils import attention_mask_to_cache_leftpad
@@ -166,6 +167,132 @@ def test_attention(
 
     torch.testing.assert_close(y[0:1, :, :], y1)
     torch.testing.assert_close(y[1:, :, :], y2)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        pytest.param(torch.bfloat16, id="bf16"),
+        pytest.param(torch.float32, id="fp32"),
+    ],
+)
+@pytest.mark.parametrize(
+    "backend_name",
+    [
+        pytest.param(AttentionBackendName.flash, id="flash-attn", marks=FLASH_MARKS),
+        pytest.param(AttentionBackendName.torch, id="torch-SDPA"),
+        pytest.param(AttentionBackendName.te, id="te-attn", marks=TE_MARKS),
+    ],
+)
+@pytest.mark.parametrize(
+    "window_size",
+    [pytest.param(None, id="full"), pytest.param(16, id="sliding")],
+)
+@pytest.mark.parametrize(
+    "intra_doc_masking",
+    [pytest.param(False, id="no-doc-masking"), pytest.param(True, id="doc-masking")],
+)
+def test_sdpa(
+    device: torch.device,
+    dtype: torch.dtype,
+    backend_name: AttentionBackendName,
+    window_size: Optional[int],
+    intra_doc_masking: bool,
+):
+    if backend_name == AttentionBackendName.flash and dtype == torch.float32:
+        pytest.skip("flash-attn requires a low precision dtype")
+    if (
+        backend_name in (AttentionBackendName.flash, AttentionBackendName.te)
+        and device.type == "cpu"
+    ):
+        pytest.skip(f"{backend_name} backend requires GPU")
+    if backend_name == AttentionBackendName.torch and intra_doc_masking:
+        pytest.skip("intra-document masking is not supported by torch backend")
+
+    torch.random.manual_seed(0)
+
+    d_model = 128
+    seq_len = 32
+    batch_size = 2
+    n_heads = 8
+    if intra_doc_masking:
+        doc_lens = torch.tensor([[0, 4, 16, 12], [8, 8, 8, 8]], dtype=torch.int32, device=device)
+        max_doc_len = int(torch.max(doc_lens))
+        cu_doc_lens = torch.cumsum(doc_lens.flatten(), dim=0, dtype=torch.int32)
+        assert int(cu_doc_lens[-1]) == batch_size * seq_len
+    else:
+        doc_lens = None
+        max_doc_len = None
+        cu_doc_lens = None
+
+    kwargs: Dict[str, Any] = dict(
+        d_model=d_model,
+        n_heads=8,
+        init_device=device.type,
+        window_size=window_size,
+    )
+
+    attention = Attention(backend=backend_name, **kwargs)
+
+    q = torch.randn(batch_size, seq_len, n_heads, d_model // n_heads, dtype=dtype, device=device)
+    k = torch.randn(batch_size, seq_len, n_heads, d_model // n_heads, dtype=dtype, device=device)
+    v = torch.randn(batch_size, seq_len, n_heads, d_model // n_heads, dtype=dtype, device=device)
+
+    with torch.no_grad():
+        mask_len = batch_size * seq_len if intra_doc_masking else seq_len
+        attn_mask = torch.ones(mask_len, mask_len, dtype=torch.bool, device=device).tril(diagonal=0)
+        is_causal = False
+
+        if window_size is not None:
+            attn_mask = torch.logical_and(
+                attn_mask,
+                torch.ones(mask_len, mask_len, dtype=torch.bool, device=device).triu(
+                    diagonal=1 - window_size
+                ),
+            )
+        if intra_doc_masking:
+            assert doc_lens is not None
+            attn_mask = torch.logical_and(
+                attn_mask,
+                torch.block_diag(
+                    *[
+                        torch.ones(int(doc_len), int(doc_len), dtype=torch.bool, device=device)
+                        for doc_len in doc_lens.flatten()
+                    ]
+                ),
+            )
+
+        if window_size is None and not intra_doc_masking:
+            attn_mask = None
+            is_causal = True
+
+        # PyTorch's SDPA expects the head dimension to come before the sequence dimension.
+        y1 = (
+            F.scaled_dot_product_attention(
+                q.view(q.shape[0] * q.shape[1] // mask_len, mask_len, *q.shape[2:]).transpose(1, 2),
+                k.view(k.shape[0] * k.shape[1] // mask_len, mask_len, *k.shape[2:]).transpose(1, 2),
+                v.view(v.shape[0] * v.shape[1] // mask_len, mask_len, *v.shape[2:]).transpose(1, 2),
+                attn_mask=attn_mask,
+                is_causal=is_causal,
+            )
+            .transpose(1, 2)
+            .contiguous()
+        )
+        try:
+            y2 = attention.sdpa(
+                q,
+                k,
+                v,
+                max_doc_len=max_doc_len,
+                cu_doc_lens=cu_doc_lens,
+            ).view_as(y1)
+        except RuntimeError:
+            if backend_name == AttentionBackendName.te and intra_doc_masking:
+                pytest.xfail("intra-document masking is currently broken in te backend")
+            raise
+
+    torch.testing.assert_close(y1, y2)
 
 
 @requires_gpu
