@@ -6,15 +6,13 @@
 #
 # Copyright (c) Meta Platforms, Inc. All Rights Reserved.
 
-from typing import Callable, ClassVar
+from typing import Callable, ClassVar, Optional, Tuple
 
 import torch
-import torch.nn.functional as F
-from torch._utils import _get_available_device_type, _get_device_module
-from torch.nn.attention import SDPBackend, sdpa_kernel
 from torch.nn.attention.flex_attention import (
     BlockMask,
     _mask_mod_signature,
+    and_masks,
     create_block_mask,
     flex_attention,
 )
@@ -23,22 +21,6 @@ from torch.nn.attention.flex_attention import (
 # batch. To record what it is initialized, FLEX_ATTN_MASK_T is used as the key to
 # track the initialized mask.
 FLEX_ATTN_MASK_T = tuple[str, int | None]
-
-
-def has_cuda_capability(major: int, minor: int) -> bool:
-    return torch.cuda.is_available() and torch.cuda.get_device_capability() >= (
-        major,
-        minor,
-    )
-
-
-def get_device_info() -> tuple[str, torch.device]:
-    device_type = _get_available_device_type() or "cuda"
-    device_module = _get_device_module(device_type)  # default device_module:torch.cuda
-    return device_type, device_module
-
-
-device_type, device_module = get_device_info()
 
 
 class FlexAttention(torch.nn.Module):
@@ -92,7 +74,7 @@ class FlexAttention(torch.nn.Module):
     def mask_key(self) -> FLEX_ATTN_MASK_T:
         return (self.attn_mask_type, self.fixed_block_size)
 
-    def forward(self, q, k, v, sink_weights=None, sliding_window=0, enable_gqa=False):
+    def forward(self, q, k, v, sink_weights=None, sliding_window=0, enable_gqa=False, block_mask=None):
         """
         q : (B, H_q, S_q, D)
         k : (B, H_kv, S_kv, D)   -- without sink
@@ -100,10 +82,19 @@ class FlexAttention(torch.nn.Module):
         sink_weights : (H_q,) or (H, M)   -- broadcast to all queries
         sliding_window : int
         enable_gqa : bool
+        block_mask : Optional BlockMask for custom masking (used when sink_weights is None)
         """
         if sink_weights is None:
-            block_mask = FlexAttention.block_masks[self.mask_key]
-            return FlexAttention.flex_attn(q, k, v, block_mask=block_mask)
+            # Use provided block_mask or fall back to class's default mask
+            if block_mask is None:
+                block_mask = FlexAttention.block_masks.get(self.mask_key)
+                if block_mask is None:
+                    # Create a simple causal mask if no block mask exists
+                    block_mask = self.get_causal_block_mask(
+                        q.shape[2], q.device,
+                        window_size=(sliding_window, 0) if sliding_window else None
+                    )
+            return FlexAttention.flex_attn(q, k, v, block_mask=block_mask, enable_gqa=enable_gqa)
 
         B, H_q, S_q, D = q.shape
         _, H_kv, S_kv, _ = k.shape
@@ -237,6 +228,140 @@ class FlexAttention(torch.nn.Module):
         return blocked_mask_mod
 
     @staticmethod
+    def get_mask_mod(
+        window_size: Optional[Tuple[int, int]] = None,
+        doc_lens: Optional[Tuple[int, ...]] = None,
+        device: Optional[torch.device] = None,
+    ) -> Callable[[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor], torch.Tensor]:
+        """Create a mask modification function combining causal, sliding window, and document masks.
+
+        Args:
+            window_size: Optional tuple (left_window, right_window) for sliding window attention.
+                        (-1, -1) means no window restriction.
+            doc_lens: Optional tuple of document lengths for intra-document masking.
+            device: Required device when using document masking.
+
+        Returns:
+            A mask modification function for flex attention.
+        """
+        mask_mods = []
+
+        def _causal_mask_mod(
+            B: torch.Tensor, H: torch.Tensor, q_idx: torch.Tensor, kv_idx: torch.Tensor
+        ) -> torch.Tensor:
+            return q_idx >= kv_idx
+
+        mask_mods.append(_causal_mask_mod)
+
+        if window_size is not None and window_size != (-1, -1):
+
+            def _sliding_window_mask_mod(
+                B: torch.Tensor, H: torch.Tensor, q_idx: torch.Tensor, kv_idx: torch.Tensor
+            ) -> torch.Tensor:
+                assert window_size is not None
+                return torch.logical_and(
+                    q_idx - kv_idx <= window_size[0], kv_idx - q_idx <= window_size[1]
+                )
+
+            mask_mods.append(_sliding_window_mask_mod)
+
+        if doc_lens is not None:
+            if device is None:
+                raise ValueError("Device is required for intra-document masking mod")
+
+            document_ids = torch.cat(
+                [torch.full((int(doc_len),), i, device=device) for i, doc_len in enumerate(doc_lens)]
+            )
+
+            def _document_masking_mask_mod(
+                B: torch.Tensor, H: torch.Tensor, q_idx: torch.Tensor, kv_idx: torch.Tensor
+            ) -> torch.Tensor:
+                return document_ids[q_idx] == document_ids[kv_idx]
+
+            mask_mods.append(_document_masking_mask_mod)
+
+        return and_masks(*mask_mods)
+
+    @staticmethod
+    def create_causal_block_mask(
+        seq_len: int,
+        device: torch.device,
+        window_size: Optional[Tuple[int, int]] = None,
+        doc_lens: Optional[Tuple[int, ...]] = None,
+        block_size: int = 128,
+    ) -> BlockMask:
+        """Create a causal block mask with optional sliding window and document boundaries.
+
+        Args:
+            seq_len: Sequence length
+            device: Device to create the mask on
+            window_size: Optional sliding window size (left, right)
+            doc_lens: Optional document lengths as a tuple
+            block_size: Block size for block mask creation
+
+        Returns:
+            BlockMask for flex attention
+        """
+        if doc_lens is not None:
+            token_count = int(sum(doc_lens))
+            if token_count % seq_len != 0:
+                raise ValueError("Sum of document lengths is not a multiple of sequence length")
+
+            # For intra-document masking, we merge the batch size dimension into the sequence dimension.
+            return create_block_mask(
+                FlexAttention.get_mask_mod(window_size, doc_lens=doc_lens, device=device),
+                B=1,
+                H=None,
+                Q_LEN=token_count,
+                KV_LEN=token_count,
+                device=device.type,
+                BLOCK_SIZE=block_size,
+            )
+
+        else:
+            return create_block_mask(
+                FlexAttention.get_mask_mod(window_size, device=device),
+                B=None,
+                H=None,
+                Q_LEN=seq_len,
+                KV_LEN=seq_len,
+                device=device.type,
+                BLOCK_SIZE=block_size,
+            )
+
+    @staticmethod
+    def get_causal_block_mask(
+        seq_len: int,
+        device: torch.device,
+        window_size: Optional[Tuple[int, int]] = None,
+        doc_lens: Optional[torch.Tensor] = None,
+        block_size: int = 128,
+    ) -> BlockMask:
+        """Create a causal block mask with optional sliding window and document boundaries.
+
+        This is the main public API for creating causal block masks without sinks.
+
+        Args:
+            seq_len: Sequence length
+            device: Device to create the mask on
+            window_size: Optional sliding window size (left, right)
+            doc_lens: Optional document lengths as a tensor
+            block_size: Block size for block mask creation
+
+        Returns:
+            BlockMask for flex attention
+        """
+        if doc_lens is not None:
+            doc_lens_list = tuple(doc_lens.flatten().tolist())
+            return FlexAttention.create_causal_block_mask(
+                seq_len, device, window_size, doc_lens_list, block_size
+            )
+
+        return FlexAttention.create_causal_block_mask(
+            seq_len, device, window_size, doc_lens=None, block_size=block_size
+        )
+
+    @staticmethod
     @torch.no_grad()
     def init_attention_mask(batch: torch.Tensor, eos_id: int | None) -> None:
         # batch is [b, s, h, d] shape
@@ -266,53 +391,6 @@ class FlexAttention(torch.nn.Module):
                 mask_mod, batch_dimension, None, seq_len, seq_len
             )
             FlexAttention.block_masks[mask_key] = block_mask
-
-
-class ScaledDotProductAttention(torch.nn.Module):
-    backends: ClassVar[list[SDPBackend]] = []
-
-    def __init__(self, attn_mask_type: str) -> None:
-        super().__init__()
-        if attn_mask_type != "causal":
-            raise ValueError("TorchTitan with SDPA currently only supports causal mask.")
-
-        ScaledDotProductAttention._init_backend()
-
-    @classmethod
-    def _init_backend(cls) -> None:
-        if cls.backends:
-            return
-
-        # Add CuDNN on B200 w/ highest priority
-        cls.backends = [
-            SDPBackend.FLASH_ATTENTION,
-            SDPBackend.EFFICIENT_ATTENTION,
-            SDPBackend.MATH,
-        ]
-        if has_cuda_capability(10, 0):
-            cls.backends.insert(0, SDPBackend.CUDNN_ATTENTION)
-
-    def forward(
-        self,
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
-        scale: float | None = None,
-    ) -> torch.Tensor:
-        assert self.backends, "SDPA Backends should not be empty."
-        with sdpa_kernel(self.backends, set_priority=True):
-            return F.scaled_dot_product_attention(q, k, v, is_causal=True, scale=scale)
-
-
-def build_attention(use_flex_attn: bool, attn_mask_type: str, fixed_block_size: int | None = None):
-    if use_flex_attn:
-        return FlexAttention(attn_mask_type, fixed_block_size)
-    else:
-        if fixed_block_size is not None:
-            raise ValueError("TorchTitan with SDPA currently does not support fixed_block_size.")
-        if attn_mask_type != "causal":
-            raise ValueError("TorchTitan with SDPA currently only supports causal mask.")
-        return ScaledDotProductAttention(attn_mask_type)
 
 
 def init_attention_mask(batch: torch.Tensor, eos_id: int | None) -> None:
