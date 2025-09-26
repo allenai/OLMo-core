@@ -539,6 +539,9 @@ class TransformerGenerationModule(GenerationModule):
             # Average the weights
             for key in merged_state_dict["model"].keys():
                 if torch.is_tensor(merged_state_dict["model"][key]):
+                    assert (
+                        merged_state_dict["model"][key].shape == next_state_dict["model"][key].shape
+                    )
                     merged_state_dict["model"][key] = merged_state_dict["model"][key] * (
                         (i - 1) / i
                     ) + next_state_dict["model"][key] * (1 / i)
