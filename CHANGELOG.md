@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - More fixes for Beaker cluster names.
 - `Callback.post_train()` will still be called even if the run is canceled before the dry-run batch.
 - `GarbageCollectorCallback` will restore `gc` settings even when `Trainer.fit()` exits on an error.
+- Make `move_to_device` blocking for MPS device to fix possible incorrect transfer of data from CPU to MPS.
 
 ### Changed
 
