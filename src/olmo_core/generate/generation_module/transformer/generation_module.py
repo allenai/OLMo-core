@@ -847,11 +847,11 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         self.prepare_inference_cache(batch_size, n_prefill + n_generate)
         prefill_cache_leftpad = attention_mask_to_cache_leftpad(token_attention_mask).to(self.device)
 
-        torch.cuda.synchronize()
-        cache_prepare_time = time.perf_counter() - start_time
-
         zero_boundary_state = blt_utils.MaskState(torch.zeros(batch_size, dtype=torch.bool, device=self.device))
         one_boundary_state = blt_utils.MaskState(torch.ones(batch_size, dtype=torch.bool, device=self.device))
+
+        torch.cuda.synchronize()
+        cache_prepare_time = time.perf_counter() - start_time
 
         # prefill
         boundary_mask, cached_encoder_outputs = self.model.prefill_boundary_prediction_forward(  # type: ignore
