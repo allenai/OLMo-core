@@ -4,11 +4,17 @@ Train a medium OLMoE model. Run this script without any arguments to see usage i
 
 import logging
 from dataclasses import replace
+from functools import partial
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
-from olmo_core.internal.experiment import CommonComponents, ExperimentConfig, main
+from olmo_core.internal.experiment import (
+    CommonComponents,
+    ExperimentConfig,
+    build_config,
+    main,
+)
 from olmo_core.launch.beaker import OLMoCoreBeakerImage
 from olmo_core.nn.transformer import TransformerBlockType, TransformerConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
@@ -19,6 +25,9 @@ from olmo_core.train.train_module import (
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
+
+SEQUENCE_LENGTH = 4096
+GLOBAL_BATCH_SIZE = 1024 * SEQUENCE_LENGTH
 
 log = logging.getLogger(__name__)
 
@@ -65,8 +74,8 @@ def finalize_config(config: ExperimentConfig):
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
     return TransformerTrainModuleConfig(
-        rank_microbatch_size=2 * 4096,
-        max_sequence_length=common.dataset.effective_sequence_length,
+        rank_microbatch_size=2 * common.max_sequence_length,
+        max_sequence_length=common.max_sequence_length,
         optim=AdamWConfig(
             lr=3e-4,
             weight_decay=0.1,
@@ -140,8 +149,10 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
 
 if __name__ == "__main__":
-    main(
-        global_batch_size=1024 * 4096,
+    config_builder = partial(
+        build_config,
+        global_batch_size=GLOBAL_BATCH_SIZE,
+        max_sequence_length=SEQUENCE_LENGTH,
         model_config_builder=build_model_config,
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
@@ -150,3 +161,4 @@ if __name__ == "__main__":
         num_nodes=4,
         finalize_config=finalize_config,
     )
+    main(config_builder=config_builder)

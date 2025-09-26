@@ -9,8 +9,6 @@ Launch this with torchrun:
     torchrun --nproc-per-node=4 src/examples/llama_lns/train.py run_name [OVERRIDES...]
 """
 
-# ... existing code ...
-
 import os
 import sys
 from dataclasses import dataclass
@@ -107,7 +105,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
 
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=16 * SEQUENCE_LENGTH,
-        max_sequence_length=dataset_config.effective_sequence_length,
+        max_sequence_length=SEQUENCE_LENGTH,
         optim=AdamWConfig(
             lr=1e-3,
             group_overrides=[

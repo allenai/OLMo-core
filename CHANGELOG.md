@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Refactored eval task groups into `task_groups.py`
 - The `use_flash` argument to the `Attention` classes is deprecated. Use `backend="flash_2"` instead.
 - Refactored `NumpyDatasetConfig` by splitting it into a separate config per underlying dataset class.
+- Refactored `internal/experiment` module to facilitate modifying datasets or supplying a fully custom `ExperimentConfig`.
 
 ### Added
 
