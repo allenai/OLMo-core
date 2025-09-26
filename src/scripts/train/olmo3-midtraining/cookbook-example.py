@@ -28,7 +28,7 @@ from olmo_core.data import (
 )
 
 SEQ_LENGTH = 8192
-GLOBAL_BATCH_SIZE = 4096
+GLOBAL_BATCH_SIZE = 4096 * 8192
 
 
 def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
@@ -115,4 +115,17 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
 
 
 if __name__ == "__main__":
+    """
+    Invoke this script directly to access the internal experiment CLI, which
+    supports launch, train, dry_run, and other subcommands.
+
+    Examples:
+        To render the config and exit:
+            python src/scripts/train/olmo3-midtraining/cookbook-example.py dry_run debug_run ai2/augusta
+
+        To launch a training run on Augusta w/ 8 nodes:
+        python src/scripts/train/olmo3-midtraining/cookbook-example.py launch my_run ai2/augusta \
+            --launch.num_nodes=8 \
+            --launch.priority=high
+    """
     main(config_builder=build_experiment_config)
