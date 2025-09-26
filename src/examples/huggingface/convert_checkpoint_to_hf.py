@@ -47,6 +47,7 @@ def convert_checkpoint_to_hf(
     validate: bool = True,
     debug: bool = False,
     device: torch.device | None = None,
+    moe_capacity_factor: float | None = None,
     validation_device: torch.device | None = None,
     validation_sliding_window: int | None = None,
 ) -> None:
@@ -110,6 +111,9 @@ def convert_checkpoint_to_hf(
         )
         model_config.block.attention.backend = AttentionBackendName.torch
         model_config.block.attention.use_flash = False
+
+    if moe_capacity_factor is not None and model_config.block.feed_forward_moe is not None:
+        model_config.block.feed_forward_moe.capacity_factor = moe_capacity_factor
 
     model = model_config.build(init_device="meta")
     model.to_empty(device=device or torch.device("cpu"))
@@ -180,6 +184,14 @@ def _register_debug_hooks(hf_model: torch.nn.Module, model: Transformer):
         args,
         output,
     ):
+        if (
+            model_type == "hf"
+            and re.match(r"model.layers.\d+.mlp$", name)
+            and isinstance(output, tuple)
+        ):
+            # Special casing for FlexOlmo moe
+            assert isinstance(output[0], torch.Tensor), (name, output)
+            output = output[0]
         if (
             model_type == "hf"
             and re.match(r"model.layers.\d+.block_sparse_moe$", name)
@@ -448,6 +460,11 @@ def parse_args():
         help="If set, overrides the model's sliding window size during validation. Useful for checking that sliding window is correctly implemented.",
         type=int,
     )
+    parser.add_argument(
+        "--moe-capacity-factor",
+        type=float,
+        help="The MoE capacity factor. Higher capacity factor can decrease validation false negatives but may cause out of memory errors.",
+    )
     return parser.parse_args()
 
 
@@ -474,6 +491,7 @@ def main():
         validate=args.validate,
         debug=args.debug,
         device=args.device,
+        moe_capacity_factor=args.moe_capacity_factor,
         validation_device=args.validation_device or args.device,
         validation_sliding_window=args.validation_sliding_window,
     )

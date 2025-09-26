@@ -293,12 +293,6 @@ MODEL_TYPE_SPECIFIC_OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS: Dict[
             f"model.layers.{LAYER}.mlp.gate.weight",
             unflatten_dim=(0, (TemplatePlaceholder.EXPERT, -1)),
         ),
-        f"blocks.{LAYER}.feed_forward_moe.router": StateMappingTemplate(
-            f"blocks.{LAYER}.feed_forward_moe.router",
-            f"model.layers.{LAYER}.mlp.gate",
-            state_type=StateType.module,
-            unflatten_dim=(0, (TemplatePlaceholder.EXPERT, -1)),
-        ),
     }
 }
 

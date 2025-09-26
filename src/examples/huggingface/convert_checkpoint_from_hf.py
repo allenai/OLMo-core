@@ -219,6 +219,14 @@ def _register_debug_hooks(hf_model: torch.nn.Module, model: Transformer):
     ):
         if (
             model_type == "hf"
+            and re.match(r"model.layers.\d+.mlp$", name)
+            and isinstance(output, tuple)
+        ):
+            # Special casing for FlexOlmo moe
+            assert isinstance(output[0], torch.Tensor), (name, output)
+            output = output[0]
+        if (
+            model_type == "hf"
             and re.match(r"model.layers.\d+.block_sparse_moe$", name)
             and isinstance(output, tuple)
         ):
