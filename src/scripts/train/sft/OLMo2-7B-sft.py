@@ -245,7 +245,7 @@ class SFTConfig(Config):
     data_loader: NumpyDataLoaderConfig
     train_module: TransformerTrainModuleConfig
     trainer: TrainerConfig
-    init_seed: int = 33333
+    init_seed: int = 78899
 
     @classmethod
     def build(
