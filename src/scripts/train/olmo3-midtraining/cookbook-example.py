@@ -1,34 +1,21 @@
 from datetime import datetime
 from typing import Optional
 
-from olmo_core.internal.common import (
-    get_root_dir,
-    get_work_dir,
-    build_launch_config,
-)
+from olmo_core.internal.common import get_root_dir, get_work_dir, build_launch_config
 from olmo_core.launch.beaker import BeakerLaunchConfig
-from olmo_core.internal.experiment import (
-    main,
-    CliContext,
-    ExperimentConfig,
-)
+from olmo_core.internal.experiment import main, CliContext, ExperimentConfig
 from olmo_core.internal import cookbook
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import Duration, TrainerConfig, LoadStrategy
-from olmo_core.train.train_module import (
-    TransformerTrainModuleConfig,
-)
+from olmo_core.train.train_module import TransformerTrainModuleConfig
 from olmo_core.optim.scheduler import WSD, SchedulerUnits
-from olmo_core.data import (
-    DataMix,
-    NumpyDataLoaderConfig,
-    NumpyFSLDatasetConfig,
-    TokenizerConfig,
-)
+from olmo_core.data import DataMix, NumpyDataLoaderConfig, NumpyFSLDatasetConfig, TokenizerConfig
+
 
 SEQ_LENGTH = 8192
 GLOBAL_BATCH_SIZE = 4096 * 8192
+SEED = 12536
 
 
 def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
@@ -99,7 +86,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=GLOBAL_BATCH_SIZE, seed=34521, num_workers=4
+        global_batch_size=GLOBAL_BATCH_SIZE, seed=SEED, num_workers=4
     )
 
     return ExperimentConfig(
@@ -110,7 +97,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         trainer=trainer_config,
         dataset=dataset_config,
         data_loader=data_loader_config,
-        init_seed=12536,
+        init_seed=SEED,
     )
 
 
