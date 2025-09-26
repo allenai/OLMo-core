@@ -105,7 +105,7 @@ def test_convert_state_from_hf_and_flatten():
     for i in range(hf_config.num_hidden_layers):
         hf_state.update(
             {
-                f"model.layers.{i}.block_sparse_moe.gate.weight": torch.randn(5, 6),
+                f"model.layers.{i}.mlp.gate.weight": torch.randn(5, 6),
             }
         )
 
@@ -114,7 +114,7 @@ def test_convert_state_from_hf_and_flatten():
     for i in range(hf_config.num_hidden_layers):
         torch.testing.assert_close(
             converted_state[f"blocks.{i}.feed_forward_moe.router.weight"],
-            hf_state[f"model.layers.{i}.block_sparse_moe.gate.weight"].flatten(),
+            hf_state[f"model.layers.{i}.mlp.gate.weight"].flatten(),
         )
 
 
@@ -189,7 +189,7 @@ def test_convert_state_to_hf_and_unflatten():
 
     for i in range(hf_config.num_hidden_layers):
         torch.testing.assert_close(
-            converted_state[f"model.layers.{i}.block_sparse_moe.gate.weight"].flatten(),
+            converted_state[f"model.layers.{i}.mlp.gate.weight"].flatten(),
             olmo_core_state[f"blocks.{i}.feed_forward_moe.router.weight"],
         )
 
