@@ -84,7 +84,7 @@ class TransformerGenerationModuleConfig(Config):
         log_or_print(log, f"TransformerGenerationModuleConfig: {config_dict}")
 
         return TransformerGenerationModule.from_checkpoints(
-            checkpoint_dir=checkpoint_dir if isinstance(checkpoint_dir, PathOrStr) else [checkpoint_dir],  # type: ignore  # mypy bug with Union isinstance
+            checkpoint_dirs=[checkpoint_dir] if isinstance(checkpoint_dir, PathOrStr) else checkpoint_dir,  # type: ignore  # mypy bug with Union isinstance
             transformer_config=transformer_config,
             device=device,
             process_group=process_group,
