@@ -90,7 +90,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         trainer_config.add_callback(name, callback)
 
     dataset_config = NumpyFSLDatasetConfig.from_data_mix(
-        DataMix.OLMoE_mix_0824,
+        DataMix.OLMoE_mix_0824,  # TODO: cookbook sources
         tokenizer=tokenizer_config,
         mix_base_dir=root_dir,
         work_dir=work_dir,
