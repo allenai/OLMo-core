@@ -507,3 +507,67 @@ class TransformerGenerationModule(GenerationModule):
         )
 
         return generation_module
+
+    @classmethod
+    def from_checkpoints(
+        cls,
+        checkpoint_dirs: List[PathOrStr],
+        dtype: Optional[DType] = None,
+        **kwargs,
+    ) -> "TransformerGenerationModule":
+        if len(checkpoint_dirs) == 1:
+            return cls.from_checkpoint(checkpoint_dirs[0], dtype=dtype, **kwargs)
+
+        log.info(f"Merging {len(checkpoint_dirs)} checkpoints")
+
+        log.info(f"Merging {checkpoint_dirs[0]}")
+        first_generation_module = cls.from_checkpoint(
+            checkpoint_dirs[0], dtype=DType.float32, **kwargs
+        )
+
+        # Get the state dict from the first module to use as accumulator
+        merged_state_dict = first_generation_module.state_dict()
+
+        # Average weights from all checkpoints
+        for i, checkpoint_dir in enumerate(checkpoint_dirs[1:], start=2):
+            log.info(f"Merging {checkpoint_dir}")
+            next_generation_module = cls.from_checkpoint(
+                checkpoint_dir, dtype=DType.float32, **kwargs
+            )
+            next_state_dict = next_generation_module.state_dict()
+
+            # Average the weights
+            for key in merged_state_dict["model"].keys():
+                if torch.is_tensor(merged_state_dict["model"][key]):
+                    merged_state_dict["model"][key] = merged_state_dict["model"][key] * (
+                        (i - 1) / i
+                    ) + next_state_dict["model"][key] * (1 / i)
+
+            # Free memory from the temporary module
+            del next_generation_module
+            del next_state_dict
+
+        # If we need to load the model with float32, we're done
+        if dtype == DType.float32:
+            first_generation_module.load_state_dict(merged_state_dict)
+            return first_generation_module
+
+        # Otherwise, let's re-do this with the right dtype
+        log.info(f"Loading {checkpoint_dirs[0]} again with the right dtype ({dtype}).")
+        final_generation_module = cls.from_checkpoint(checkpoint_dirs[0], dtype=dtype, **kwargs)
+        final_state_dict = final_generation_module.state_dict()
+        assert merged_state_dict["model"].keys() == final_state_dict["model"].keys()
+        for key in merged_state_dict["model"].keys():
+            merged_state_dict_tensor = merged_state_dict["model"][key]
+            if not torch.is_tensor(merged_state_dict_tensor):
+                continue
+            final_state_dict_tensor = final_state_dict["model"][key]
+            if not torch.is_tensor(final_state_dict_tensor):
+                continue
+            if merged_state_dict_tensor.dtype != final_state_dict_tensor.dtype:
+                merged_state_dict["model"][key] = merged_state_dict_tensor.to(
+                    final_state_dict_tensor.dtype
+                )
+
+        final_generation_module.load_state_dict(merged_state_dict)
+        return final_generation_module
