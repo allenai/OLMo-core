@@ -1790,13 +1790,6 @@ class BLTDistillTransformer(BLTTransformer):
             index=seq_sorted_indices,
         )
         mask = patch_mask & (teacher_indices_to_select < teacher_embeds.shape[1])
-        eos_mask = torch.gather(
-            input_ids,
-            dim=1,
-            index=seq_sorted_indices,
-        ) == self.eos_token_blt
-        eos_mask[:, 0] = False # bos is ok to align
-        mask = mask & (~eos_mask) # otherwise, skip eos, since we would align the entire patch (more than eos) to only eos embedding
         teacher_indices_to_select = torch.where(
             mask,
             teacher_indices_to_select,
@@ -1930,12 +1923,13 @@ class BLTDistillTransformer(BLTTransformer):
 
         boundary_labels = torch.zeros_like(byte_mask, dtype=torch.float32)
         boundary_labels.scatter_(1, patch_end_indices, 1.0)
-        boundary_labels[:, :-1] = torch.where( # no boundary before eos
-            input_ids[:, 1:] == self.eos_token_blt,
-            0.0,
-            boundary_labels[:, :-1]
-        )
-        boundary_labels[:, 0] = 1 # bos must be boundary
+        if blt_config.skip_boundary_before_eos:
+            boundary_labels[:, :-1] = torch.where( # no boundary before eos
+                input_ids[:, 1:] == self.eos_token_blt,
+                0.0,
+                boundary_labels[:, :-1]
+            )
+            boundary_labels[:, 0] = 1 # bos must still be boundary
 
         h_byte, h_patch, boundary_logprobs, boundary_mask = self.local_encoder(
             input_ids,
@@ -2055,7 +2049,27 @@ class BLTDistillTransformer(BLTTransformer):
                 assert teacher_last_hidden_state is not None
                 assert blt_config.teacher_force_boundaries
 
-                h_patch_after_global = teacher_last_hidden_state
+                if blt_config.skip_boundary_before_eos:
+                    # need to align
+                    teacher_indices_to_select = torch.gather(
+                        local_encoder_kwargs["patch_ids"],
+                        dim=1,
+                        index=seq_sorted_indices,
+                    )
+                    mask = patch_mask & (teacher_indices_to_select < teacher_last_hidden_state.shape[1])
+                    teacher_indices_to_select = torch.where(
+                        mask,
+                        teacher_indices_to_select,
+                        torch.zeros_like(teacher_indices_to_select),
+                    ).unsqueeze(-1).expand(-1, -1, teacher_last_hidden_state.shape[-1])
+                    h_patch_after_global = torch.gather(
+                        teacher_last_hidden_state,
+                        dim=1,
+                        index=teacher_indices_to_select,
+                    )
+                else:
+                    h_patch_after_global = teacher_last_hidden_state
+
                 with (torch.no_grad() if blt_config.student_blocks_no_grad else nullcontext()):
                     _, student_hidden_states = self._block_forward(
                         h_patch,

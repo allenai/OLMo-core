@@ -15,6 +15,7 @@ class BLTConfig(Config):
     loss_schedules: Optional[list[str]] = None
     binarization_temp: float = 1.0
     temperature: float = 1.0
+    skip_boundary_before_eos: bool = False
     div_fn: str = "tvd_temp_limit"
     merge_boundary_loss: bool = False
     use_output_boundary_jsd: bool = False
