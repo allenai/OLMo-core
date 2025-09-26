@@ -26,7 +26,6 @@ from olmo_core.data.tokenizer import TokenizerConfig
 from olmo_core.distributed.checkpoint import load_model_and_optim_state
 from olmo_core.io import file_exists, join_path
 from olmo_core.nn.attention import AttentionBackendName, AttentionType
-from olmo_core.nn.attention.flash_attn_api import has_flash_attn_2
 from olmo_core.nn.conversion.state_mapping import StateType, TemplatePlaceholder
 from olmo_core.nn.hf.checkpoint import save_hf_model
 from olmo_core.nn.hf.convert import get_converter_to_hf

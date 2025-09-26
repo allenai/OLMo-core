@@ -32,7 +32,7 @@ from olmo_core.nn.hf.checkpoint import load_hf_model
 from olmo_core.nn.hf.convert import get_converter_from_hf
 from olmo_core.nn.transformer.config import TransformerConfig
 from olmo_core.nn.transformer.model import Transformer
-from olmo_core.utils import has_flash_attn, prepare_cli_environment
+from olmo_core.utils import prepare_cli_environment
 
 log = logging.getLogger(__name__)
 
