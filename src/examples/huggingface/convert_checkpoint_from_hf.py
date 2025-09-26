@@ -507,7 +507,7 @@ def parse_args():
     parser.add_argument(
         "--validation-device",
         type=torch.device,
-        help="The device on which validation occurs. Defaults to CPU.",
+        help="The device on which validation occurs. Defaults to `device`.",
     )
     parser.add_argument(
         "--validation-sliding-window",
@@ -546,7 +546,7 @@ def main():
         validate=args.validate,
         debug=args.debug,
         device=args.device,
-        validation_device=args.validation_device,
+        validation_device=args.validation_device or args.device,
         validation_sliding_window=args.validation_sliding_window,
     )
 
