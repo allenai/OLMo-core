@@ -102,7 +102,7 @@ def get_work_dir(root_dir: str) -> str:
 def build_launch_config(
     *,
     name: str,
-    root_dir: str,
+    root_dir: str,  # TODO: make this optional and infer from cluster
     cmd: List[str],
     cluster: str,
     task_name: str = "train",
