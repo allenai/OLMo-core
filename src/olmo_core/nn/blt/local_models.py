@@ -1050,7 +1050,6 @@ class LocalDecoder(nn.Module):
         else:
             self.patch_residuals_projection = None
 
-        self.boundary_embedding = nn.Embedding(1, d_model, dtype=dtype, device=init_device)
         self.has_cache = False
 
     def apply_fsdp(
@@ -1121,10 +1120,7 @@ class LocalDecoder(nn.Module):
             assert not self.hnet_smooth # not implemented for now
 
             if patch_embeds.numel() > 0:
-                # we got a new value from the global model, so must be at boundary position
-                h_patch = patch_embeds[:, -1:, :self.d_model]
-                h = self.boundary_embedding.weight.unsqueeze(0) + h_patch
-                self.last_value.copy_(h_patch[:, -1])
+                raise NotImplementedError()
             else:
                 h = embeds + self.last_value.unsqueeze(1)
 
