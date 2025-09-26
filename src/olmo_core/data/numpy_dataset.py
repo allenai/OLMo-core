@@ -374,7 +374,7 @@ class NumpyFSLDatasetBase(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         generate_doc_lengths: bool = False,
         bos_token_id: Optional[int] = None,
         instance_filter_config: Optional[InstanceFilterConfig] = None,
-        label_mask_paths: Optional[List[PathOrStr]] = None,
+        label_mask_paths: Optional[List[str]] = None,
     ):
         if include_instance_metadata is None and metadata:
             include_instance_metadata = True
@@ -492,7 +492,7 @@ class NumpyFSLDataset(NumpyFSLDatasetBase):
         bos_token_id: Optional[int] = None,
         max_target_sequence_length: Optional[int] = None,
         instance_filter_config: Optional[InstanceFilterConfig] = None,
-        label_mask_paths: Optional[List[PathOrStr]] = None,
+        label_mask_paths: Optional[List[str]] = None,
     ):
         super().__init__(
             *paths,
@@ -851,7 +851,7 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
         metadata: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None,
         include_instance_metadata: Optional[bool] = None,
         instance_filter_config: Optional[InstanceFilterConfig] = None,
-        label_mask_paths: Optional[List[PathOrStr]] = None,
+        label_mask_paths: Optional[List[str]] = None,
     ):
         super().__init__(
             *paths,
@@ -1003,7 +1003,7 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
         generate_doc_lengths: bool = False,
         bos_token_id: Optional[int] = None,
         instance_filter_config: Optional[InstanceFilterConfig] = None,
-        label_mask_paths: Optional[List[PathOrStr]] = None,
+        label_mask_paths: Optional[List[str]] = None,
         long_doc_strategy: LongDocStrategy = LongDocStrategy.truncate,
         source_group_size: int = 1,
     ):
@@ -1351,7 +1351,7 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
         metadata: Optional[Union[List[Dict[str, Any]], Dict[str, Any]]] = None,
         include_instance_metadata: Optional[bool] = None,
         instance_filter_config: Optional[InstanceFilterConfig] = None,
-        label_mask_paths: Optional[List[PathOrStr]] = None,
+        label_mask_paths: Optional[List[str]] = None,
         bos_token_id: Optional[int] = None,
         interleaving_exempt_paths: Optional[List[PathOrStr]] = None,
     ):
@@ -2530,7 +2530,7 @@ class NumpyFSLDatasetConfig(NumpyDatasetConfig):
     Include individual document lengths in the instances returned from
     :meth:`NumpyDatasetBase.__getitem__()`.
     """
-    label_mask_paths: Optional[List[PathOrStr]] = None
+    label_mask_paths: Optional[List[str]] = None
     """
     The paths/URLs to numpy bool files indicating which tokens should be masked.
     """
@@ -2603,7 +2603,7 @@ class NumpyPaddedFSLDatasetConfig(NumpyDatasetConfig):
     """
     The length of a single instance. Generally this should correspond to your model's maximum input length.
     """
-    label_mask_paths: Optional[List[PathOrStr]] = None
+    label_mask_paths: Optional[List[str]] = None
     """
     The paths/URLs to numpy bool files indicating which tokens should be masked.
     """
@@ -2648,7 +2648,7 @@ class NumpyPackedFSLDatasetConfig(NumpyDatasetConfig):
     Include individual document lengths in the instances returned from
     :meth:`NumpyDatasetBase.__getitem__()`.
     """
-    label_mask_paths: Optional[List[PathOrStr]] = None
+    label_mask_paths: Optional[List[str]] = None
     """
     The paths/URLs to numpy bool files indicating which tokens should be masked.
     """
@@ -2715,7 +2715,7 @@ class NumpyInterleavedFSLDatasetConfig(NumpyDatasetConfig):
     """
     The seed to use for the random number generator.
     """
-    label_mask_paths: Optional[List[PathOrStr]] = None
+    label_mask_paths: Optional[List[str]] = None
     """
     The paths/URLs to numpy bool files indicating which tokens should be masked.
     """
