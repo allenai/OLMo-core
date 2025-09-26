@@ -1254,9 +1254,9 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         if prof is not None:
             prof.__exit__(None, None, None)
 
-        logits = logprobs = None
-        if return_logits and all_logits:
-            logits = torch.cat(all_logits, dim=1)
+        # logits = logprobs = None
+        # if return_logits and all_logits:
+        #     logits = torch.cat(all_logits, dim=1)
 
         if stream:
             RED = "\033[0;31m"
