@@ -444,6 +444,20 @@ class TransformerConfig(Config):
         return flop_per_token
 
     @classmethod
+    def olmo2_30M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        return cls.llama_like(
+            d_model=256,
+            n_layers=kwargs.pop("n_layers", 4),
+            n_heads=kwargs.pop("n_heads", 8),
+            vocab_size=vocab_size,
+            block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
+            qk_norm=kwargs.pop("qk_norm", True),
+            rope_theta=kwargs.pop("rope_theta", 500_000),
+            layer_norm_eps=1e-6,
+            **kwargs,
+        )
+
+    @classmethod
     def olmo2_190M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         return cls.llama_like(
             d_model=768,
