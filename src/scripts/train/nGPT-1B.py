@@ -2,10 +2,12 @@
 Train a 1B nGPT model. Run this script without any arguments to see usage info.
 """
 
+from functools import partial
+
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
-from olmo_core.internal.experiment import CommonComponents, main
+from olmo_core.internal.experiment import CommonComponents, build_config, main
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamConfig, CosWithWarmup
 from olmo_core.train import TrainerConfig
@@ -14,6 +16,9 @@ from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerTrainModuleConfig,
 )
+
+SEQUENCE_LENGTH = 4096
+GLOBAL_BATCH_SIZE = 1024 * 4096
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
@@ -25,7 +30,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
     return TransformerTrainModuleConfig(
         rank_microbatch_size=4 * 4096,  # TODO: can we increase this?
-        max_sequence_length=common.dataset.effective_sequence_length,
+        max_sequence_length=common.max_sequence_length,
         optim=AdamConfig(
             lr=4e-4,
             betas=(0.9, 0.95),
@@ -82,9 +87,12 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
 
 if __name__ == "__main__":
-    main(
-        global_batch_size=1024 * 4096,
+    config_builder = partial(
+        build_config,
+        global_batch_size=GLOBAL_BATCH_SIZE,
+        max_sequence_length=SEQUENCE_LENGTH,
         model_config_builder=build_model_config,
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
     )
+    main(config_builder=config_builder)

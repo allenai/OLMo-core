@@ -9,14 +9,19 @@ from torch.distributed import DeviceMesh
 
 from olmo_core.config import StrEnum
 from olmo_core.nn.attention.kv_cache import KVCacheManager
+from olmo_core.nn.buffer_cache import BufferCache
 
 from .flash_attn_api import (
     dispatch_flash_attn,
+    dispatch_flash_attn_3,
+    dispatch_flash_attn_3_qkvpacked,
+    dispatch_flash_attn_3_with_kvcache,
     dispatch_flash_attn_qkvpacked,
     dispatch_flash_attn_with_kvcache,
     dispatch_ring_flash_attn,
     dispatch_ring_flash_attn_qkvpacked,
-    has_flash_attn,
+    has_flash_attn_2,
+    has_flash_attn_3,
     has_ring_flash_attn,
 )
 from .ring import RingAttentionLoadBalancerType
@@ -32,11 +37,16 @@ class AttentionBackendName(StrEnum):
     """
     PyTorch's built-in SDPA ➡️ :class:`TorchAttentionBackend`
     """
-    flash = "flash"
+    flash_2 = "flash_2"
     """
-    Flash attention from the `flash-attn <https://github.com/Dao-AILab/flash-attention>`_ library.
+    Flash attention 2 from the `flash-attn <https://github.com/Dao-AILab/flash-attention>`_ library.
     To use this with context-parallelism, `ring-flash-attn <https://github.com/zhuzilin/ring-flash-attention>`_
-    is also required. ➡️ :class:`FlashAttentionBackend`
+    is also required. ➡️ :class:`FlashAttention2Backend`
+    """
+    flash_3 = "flash_3"
+    """
+    Flash attention 3 (beta) from the `flash-attn <https://github.com/Dao-AILab/flash-attention>`_
+    library ``hopper/`` subdirectory. Only supports H100/H800 GPUs. ➡️ :class:`FlashAttention3Backend`
     """
     te = "te"
     """
@@ -46,8 +56,10 @@ class AttentionBackendName(StrEnum):
     def get_class(self) -> Type["AttentionBackend"]:
         if self == self.torch:
             return TorchAttentionBackend
-        elif self == self.flash:
-            return FlashAttentionBackend
+        elif self in self.flash_2:
+            return FlashAttention2Backend
+        elif self == self.flash_3:
+            return FlashAttention3Backend
         elif self == self.te:
             return TEAttentionBackend
         else:
@@ -62,6 +74,7 @@ class AttentionBackendName(StrEnum):
         scale: Optional[float] = None,
         dropout_p: float = 0.0,
         window_size: Tuple[int, int] = (-1, -1),
+        cache: Optional[BufferCache] = None,
     ) -> "AttentionBackend":
         return self.get_class()(
             head_dim=head_dim,
@@ -70,6 +83,7 @@ class AttentionBackendName(StrEnum):
             scale=scale,
             dropout_p=dropout_p,
             window_size=window_size,
+            cache=(cache.with_namespace(f"attn_backend={self}") if cache else None),
         )
 
     def assert_supported(self):
@@ -102,6 +116,7 @@ class AttentionBackend(nn.Module):
         scale: Optional[float] = None,
         dropout_p: float = 0.0,
         window_size: Tuple[int, int] = (-1, -1),
+        cache: Optional[BufferCache] = None,
     ):
         self.assert_supported()
         if window_size != (-1, -1):
@@ -113,6 +128,7 @@ class AttentionBackend(nn.Module):
         self.scale = scale
         self.dropout_p = dropout_p
         self.window_size = window_size
+        self.cache = cache
         self.cp_pg: Optional[dist.ProcessGroup] = None
         self.cp_enabled = False
         self.cp_load_balancer: Optional[RingAttentionLoadBalancerType] = None
@@ -163,6 +179,12 @@ class AttentionBackend(nn.Module):
         """
         pass
 
+    def warmup_cache(self, max_seq_len: int, device: torch.device):
+        """
+        Warmup the buffer cache.
+        """
+        del max_seq_len, device
+
     @abstractmethod
     def forward(
         self,
@@ -208,7 +230,7 @@ class TorchAttentionBackend(AttentionBackend):
 
     @classmethod
     def assert_supports_swa(cls):
-        raise RuntimeError(f"'{cls.__name__}' doesn't support sliding window attention")
+        pass
 
     @classmethod
     def assert_supports_cp(cls):
@@ -221,6 +243,14 @@ class TorchAttentionBackend(AttentionBackend):
     @classmethod
     def assert_supports_kv_cache(cls):
         raise RuntimeError(f"'{cls.__name__}' doesn't support KV caching")
+
+    def warmup_cache(self, max_seq_len: int, device: torch.device):
+        self._get_sliding_window_mask(
+            seq_len_q=max_seq_len,
+            seq_len_kv=max_seq_len,
+            device=device,
+            window_size=self.window_size,
+        )
 
     def forward(
         self,
@@ -244,9 +274,13 @@ class TorchAttentionBackend(AttentionBackend):
         if kv_cache_manager is not None:
             raise RuntimeError(f"'{self.__class__.__name__}' doesn't support KV caching")
 
+        attn_mask: Optional[torch.Tensor] = None
         if self.window_size != (-1, -1):
-            raise RuntimeError(
-                f"'{self.__class__.__name__}' doesn't support sliding window attention"
+            attn_mask = self._get_sliding_window_mask(
+                seq_len_q=q.shape[1],
+                seq_len_kv=k.shape[1],
+                device=q.device,
+                window_size=self.window_size,
             )
 
         if any(
@@ -278,21 +312,87 @@ class TorchAttentionBackend(AttentionBackend):
 
         # shape: (batch_size, n_heads, seq_len, head_dim)
         att = F.scaled_dot_product_attention(
-            q, k, v, dropout_p=self.dropout_p, is_causal=True, scale=self.scale
+            q,
+            k,
+            v,
+            attn_mask=attn_mask,
+            dropout_p=self.dropout_p,
+            is_causal=attn_mask is None,
+            scale=self.scale,
         )
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
         return att.transpose(1, 2).contiguous()
 
+    def _get_sliding_window_mask(
+        self,
+        seq_len_q: int,
+        seq_len_kv: int,
+        device: torch.device,
+        window_size: Tuple[int, int],
+    ) -> torch.Tensor:
+        key = f"seq_len_q={seq_len_q},seq_len_kv={seq_len_kv},window_size={window_size}"
+        if self.cache is not None:
+            if (mask := self.cache.get_for_device(key, device)) is not None:
+                return mask
 
-class FlashAttentionBackend(AttentionBackend):
+            attn_mask = self._build_sliding_window_mask(
+                seq_len_q=seq_len_q,
+                seq_len_kv=seq_len_kv,
+                device=device,
+                window_size=window_size,
+            )
+            self.cache[key] = attn_mask
+
+            return attn_mask
+
+        return self._build_sliding_window_mask(
+            seq_len_q=seq_len_q,
+            seq_len_kv=seq_len_kv,
+            device=device,
+            window_size=window_size,
+        )
+
+    @classmethod
+    def _build_sliding_window_mask(
+        cls,
+        seq_len_q: int,
+        seq_len_kv: int,
+        device: torch.device,
+        window_size: Tuple[int, int],
+    ) -> torch.Tensor:
+        causal_mask = torch.tril(torch.ones(seq_len_q, seq_len_kv, device=device, dtype=torch.bool))
+
+        if window_size != (-1, -1):
+            sliding_window_left_mask = torch.ones_like(
+                causal_mask, dtype=torch.bool, device=device
+            ).triu(diagonal=-window_size[0])
+            sliding_window_right_mask = torch.ones_like(
+                causal_mask, dtype=torch.bool, device=device
+            ).tril(diagonal=window_size[1])
+            sliding_window_mask = torch.logical_and(
+                sliding_window_left_mask,
+                sliding_window_right_mask,
+            )
+
+            attn_mask = torch.logical_and(
+                causal_mask,
+                sliding_window_mask,
+            )
+        else:
+            attn_mask = causal_mask
+
+        return attn_mask
+
+
+class FlashAttention2Backend(AttentionBackend):
     """
     SDPA from the flash-attn package. Additionally, ring-flash-attn is required for context parallelism.
     """
 
     @classmethod
     def assert_supported(cls):
-        if not has_flash_attn():
+        if not has_flash_attn_2():
             raise RuntimeError(f"'{cls.__name__}' requires the flash-attn package.")
 
     @classmethod
@@ -421,6 +521,120 @@ class FlashAttentionBackend(AttentionBackend):
         )
 
 
+class FlashAttention3Backend(AttentionBackend):
+    """
+    SDPA from the flash-attn 3 package. Does not currently support context parallelism.
+    """
+
+    def __init__(
+        self,
+        *,
+        head_dim: int,
+        n_heads: int,
+        n_kv_heads: Optional[int] = None,
+        scale: Optional[float] = None,
+        dropout_p: float = 0.0,
+        window_size: Tuple[int, int] = (-1, -1),
+        cache: Optional[BufferCache] = None,
+    ):
+        if dropout_p > 0.0:
+            raise RuntimeError("dropout_p > 0.0 is not supported for flash-attn 3")
+        super().__init__(
+            head_dim=head_dim,
+            n_heads=n_heads,
+            n_kv_heads=n_kv_heads,
+            scale=scale,
+            dropout_p=dropout_p,
+            window_size=window_size,
+            cache=cache,
+        )
+
+    @classmethod
+    def assert_supported(cls):
+        if not has_flash_attn_3():
+            raise RuntimeError(f"'{cls.__name__}' requires the flash-attn 3 package.")
+
+    @classmethod
+    def assert_supports_swa(cls):
+        pass
+
+    @classmethod
+    def assert_supports_cp(cls):
+        raise RuntimeError(f"'{cls.__name__}' doesn't support context parallelism")
+
+    @classmethod
+    def assert_supports_packed_qkv(cls):
+        pass
+
+    @classmethod
+    def assert_supports_kv_cache(cls):
+        pass
+
+    def forward(
+        self,
+        qkv: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
+        cu_doc_lens: Optional[torch.Tensor] = None,
+        cu_doc_lens_q: Optional[torch.Tensor] = None,
+        cu_doc_lens_k: Optional[torch.Tensor] = None,
+        max_doc_len: Optional[int] = None,
+        max_doc_len_q: Optional[int] = None,
+        max_doc_len_k: Optional[int] = None,
+        local_k_slice: Optional[slice] = None,
+        kv_cache_manager: Optional[KVCacheManager] = None,
+    ) -> torch.Tensor:
+        if isinstance(qkv, torch.Tensor):
+            if kv_cache_manager is not None:
+                raise RuntimeError(
+                    f"'{self.__class__.__name__}' doesn't support packed QKV with KV caching"
+                )
+
+            if self.window_size != (-1, -1):
+                raise RuntimeError(
+                    f"'{self.__class__.__name__}' doesn't support packed QKV with sliding window attention"
+                )
+
+            return dispatch_flash_attn_3_qkvpacked(
+                qkv,
+                cu_seqlens=cu_doc_lens,
+                max_seqlen=max_doc_len,
+                softmax_scale=self.scale,
+                causal=True,
+            )
+
+        q, k, v = qkv
+
+        if kv_cache_manager:
+            return dispatch_flash_attn_3_with_kvcache(
+                q,
+                k=k,
+                v=v,
+                softmax_scale=self.scale,
+                causal=True,
+                window_size=self.window_size,
+                k_cache=kv_cache_manager.k_cache,  # updated in-place
+                v_cache=kv_cache_manager.v_cache,  # updated in-place
+                cache_leftpad=kv_cache_manager.cache_leftpad,
+                cache_seqlens=kv_cache_manager.cache_seqlens.expand(
+                    kv_cache_manager.cache_leftpad.shape[0]
+                ).contiguous(),
+            )
+
+        return dispatch_flash_attn_3(
+            q,
+            k,
+            v,
+            cu_seqlens=cu_doc_lens,
+            cu_seqlens_q=cu_doc_lens_q,
+            cu_seqlens_k=cu_doc_lens_k,
+            max_seqlen=max_doc_len,
+            max_seqlen_q=max_doc_len_q,
+            max_seqlen_k=max_doc_len_k,
+            softmax_scale=self.scale,
+            causal=True,
+            window_size=self.window_size,
+        )
+
+
 class TEAttentionBackend(AttentionBackend):
     def __init__(
         self,
@@ -431,6 +645,7 @@ class TEAttentionBackend(AttentionBackend):
         scale: Optional[float] = None,
         dropout_p: float = 0.0,
         window_size: Tuple[int, int] = (-1, -1),
+        cache: Optional[BufferCache] = None,
     ):
         super().__init__(
             head_dim=head_dim,
@@ -439,6 +654,7 @@ class TEAttentionBackend(AttentionBackend):
             scale=scale,
             dropout_p=dropout_p,
             window_size=window_size,
+            cache=cache,
         )
         if not has_te_attn():
             raise RuntimeError("TransformerEngine attention is not available")
@@ -511,6 +727,21 @@ class TEAttentionBackend(AttentionBackend):
 
         if isinstance(qkv, torch.Tensor):
             raise RuntimeError(f"'{self.__class__.__name__}' doesn't support packed QKV")
+
+        if any(
+            opt is not None
+            for opt in (
+                cu_doc_lens,
+                cu_doc_lens_q,
+                cu_doc_lens_k,
+                max_doc_len,
+                max_doc_len_q,
+                max_doc_len_k,
+            )
+        ):
+            raise RuntimeError(
+                f"'{self.__class__.__name__}' doesn't currently support intra-document masking"
+            )
 
         q, k, v = qkv
         return self.te_attn(

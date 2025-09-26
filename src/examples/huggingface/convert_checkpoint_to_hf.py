@@ -13,11 +13,6 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Dict, Optional, Tuple
 
-try:
-    import flash_attn  # type: ignore
-except ImportError:
-    flash_attn = None
-
 import torch
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 from cached_path import cached_path
@@ -28,6 +23,7 @@ from olmo_core.config import DType
 from olmo_core.data.tokenizer import TokenizerConfig
 from olmo_core.distributed.checkpoint import load_model_and_optim_state
 from olmo_core.io import file_exists, join_path
+from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.conversion.state_mapping import TemplatePlaceholder
 from olmo_core.nn.hf.checkpoint import save_hf_model
 from olmo_core.nn.hf.convert import get_converter_to_hf
@@ -73,24 +69,43 @@ def convert_checkpoint_to_hf(
     if "float8_config" in transformer_config_dict:
         del transformer_config_dict["float8_config"]
 
-    # Check if validation is being performed and flash attn is requested but cannot run.
+    # Check if validation is being performed and flash attn / TE attn is requested but cannot run.
     device = device or get_default_device()
-    if (
-        validate
-        and (flash_attn is None or device != torch.device("cuda"))
-        and (attention := transformer_config_dict.get("block", {}).get("attention")) is not None
-    ):
-        if attention["name"] == "fused":
-            log.warning(
-                "Running conversion without cuda or flash attention on a model requiring flash attention, validation would fail so we are disabling it."
-            )
-            validate = False
-        elif attention.get("use_flash") or attention.get("backend") == "flash":
-            log.info(
-                "Flash attention or cuda is unavailable, turning off flash attention to stop validation from failing."
-            )
-            attention["use_flash"] = False
-            attention["backend"] = None
+    if validate:
+        if (attention := transformer_config_dict.get("block", {}).get("attention")) is not None:
+            backend = attention.get("backend")
+            use_flash = bool(attention.get("use_flash"))
+
+            # If use_flash is requested but no backend set, assume flash_2.
+            if use_flash and not backend:
+                backend = "flash_2"
+
+            # 'fused' requires flash attention 2; if unavailable, disable validation to avoid failures.
+            if attention.get("name") == "fused":
+                assert backend == "flash_2", "Fused attention requires flash_2 backend"
+                try:
+                    AttentionBackendName.flash_2.assert_supported()
+                    if device.type != "cuda":
+                        raise RuntimeError(f"CUDA device required for {backend=}")
+                except Exception:
+                    log.warning(
+                        "Flash attention required for validation but not available; disabling validation.",
+                        exc_info=True,
+                    )
+                    validate = False
+            elif backend is not None:
+                try:
+                    AttentionBackendName[backend].assert_supported()
+                    if backend in ("flash_2", "flash_3", "te") and device.type != "cuda":
+                        raise RuntimeError(f"CUDA device required for {backend=}")
+                except Exception:
+                    log.warning(
+                        f"{backend=} unavailable/unsupported; disabling to avoid validation failures.",
+                        exc_info=True,
+                    )
+                    if "use_flash" in attention:
+                        attention["use_flash"] = False
+                    attention["backend"] = None
 
     model = TransformerConfig.from_dict(transformer_config_dict).build()
     model.to_empty(device=device)
