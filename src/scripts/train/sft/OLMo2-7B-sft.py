@@ -80,6 +80,13 @@ class CustomCheckpointerCallback(Callback):
         self._latest_checkpoint_step: int = -1
         self._checkpoints: List[str] = []
     
+    def pre_train(self):
+        """Optionally save a checkpoint at the very start (step 0)."""
+        if 0 in self.checkpoint_steps and self.step == 0 and self._latest_checkpoint_step < 0:
+            self._checkpoints.append(self._save_checkpoint(save_async=False))
+            self._latest_checkpoint_step = 0
+            log.info("Saved start-of-run checkpoint at step 0")
+    
     def post_train(self):
         """Save final checkpoint if not already saved."""
         if self.step > self._latest_checkpoint_step:
