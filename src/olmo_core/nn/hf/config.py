@@ -2,7 +2,7 @@ from transformers import Olmo2Config, PretrainedConfig
 
 from olmo_core.doc_utils import beta_feature
 from olmo_core.nn.attention import Attention
-from olmo_core.nn.moe.mlp import DroplessMoEMLP, MoEMLP
+from olmo_core.nn.moe.mlp import MoEMLP
 from olmo_core.nn.transformer.block import (
     MoEReorderedNormTransformerBlock,
     ReorderedNormTransformerBlock,
@@ -27,9 +27,9 @@ def _get_flex_olmo_config(model: MoETransformer) -> PretrainedConfig:
                 f"Block is not a {MoEReorderedNormTransformerBlock.__name__}, unable to build HF config for {model.__class__.__name__}"
             )
 
-        if not isinstance(block.experts.mlp, (DroplessMoEMLP, MoEMLP)):
+        if not isinstance(block.experts.mlp, MoEMLP):
             raise NotImplementedError(
-                f"MoE mlp is not a {DroplessMoEMLP.__name__} or {MoEMLP.__name__}, unable to build HF config for {model.__class__.__name__}"
+                f"MoE mlp is not a {MoEMLP.__name__}, unable to build HF config for {model.__class__.__name__}"
             )
 
         if not isinstance(block.attention, Attention):
