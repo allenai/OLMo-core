@@ -61,16 +61,15 @@ class TransformerGenerationModule(GenerationModule):
         super().__init__()
 
         self.device = device or get_default_device()
-        if self.device.type != "cuda":
-            raise AssertionError(f"Expected CUDA device, got {self.device.type}")
 
-        device_name = torch.cuda.get_device_name(self.device)
-        if "H100" not in device_name:
-            log_or_print(
-                log,
-                "Flash attention w/ kv caching is not verified to work on non-Hopper GPUs.",
-                level=logging.WARNING,
-            )
+        if torch.cuda.is_available():
+            device_name = torch.cuda.get_device_name(self.device)
+            if "H100" not in device_name:
+                log_or_print(
+                    log,
+                    "Flash attention w/ kv caching is not verified to work on non-Hopper GPUs.",
+                    level=logging.WARNING,
+                )
 
         self.world_mesh: Optional[DeviceMesh] = None
         if is_distributed():
