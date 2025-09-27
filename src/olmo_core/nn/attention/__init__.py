@@ -406,6 +406,10 @@ class Attention(AttentionBase):
         if backend is None:
             backend = AttentionBackendName.torch
 
+        if not torch.cuda.is_available() and backend != AttentionBackendName.torch:
+            warnings.warn(f"Backend is set to {backend}, but GPUs are not available. Defaulting to torch.")
+            backend = AttentionBackendName.torch
+
         backend.assert_supported()
         log.info(f"Using attention backend '{backend}'")
         self.backend = backend.build(
