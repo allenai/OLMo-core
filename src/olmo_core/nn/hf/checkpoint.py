@@ -50,14 +50,15 @@ def load_hf_model(
     :param model_state_dict: The OLMo Core model state dict in which to load HF state.
     :param revision: If ``model_name_or_path`` is the id of a model in HF Hub, then this is the revision
         (branch) of that model. Defaults to "main".
-    :param model_id: If ``model_name_or_path`` is a local or remote path, this is the id of the model
-        in HF Hub that the model corresponds to.
+    :param model_id: Deprecated, model-specific mappings are now determined by the model architecture,
+        in :mod:`olmo_core.nn.hf.convert`
     :param num_embeddings: The number of embeddings in the OLMo Core model being loaded into,
         defaults to the number of embeddings in the HF model.
     :param process_group: The process group to use for distributed communication.
     :param work_dir: A local directory that can be used for holding temporary state. Required when
         downloading a model from a cloud directory.
     """
+    del model_id
 
     work_dir = f"{work_dir}/hf-tmp" if work_dir is not None else None
 
@@ -86,7 +87,6 @@ def load_hf_model(
         log.warning(
             "Model id or path provided is a Hugging Face model id. This may not be suitable for unshared file systems."
         )
-        model_id = str(model_name_or_path)
     else:
         raise NotImplementedError
 
@@ -101,7 +101,9 @@ def load_hf_model(
     hf_model.resize_token_embeddings(num_embeddings)
 
     converted_state_dict: Dict[str, torch.Tensor] = convert_state_from_hf(
-        hf_model.config, hf_model.state_dict(), model_id=model_id
+        hf_model.config,
+        hf_model.state_dict(),
+        model_type=getattr(hf_model.config, "model_type", None),
     )
 
     for key in sorted(converted_state_dict.keys()):

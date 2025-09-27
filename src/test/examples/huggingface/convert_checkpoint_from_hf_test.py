@@ -85,7 +85,6 @@ def test_convert_checkpoint_from_hf_correct_config(
         output_path=output_dir,
         transformer_config_dict=transformer_config.as_config_dict(),
         tokenizer_config_dict=tokenizer_config.as_config_dict(),
-        max_sequence_length=256,
         validate=False,
     )
 
@@ -112,7 +111,6 @@ def test_convert_checkpoint_from_hf_correct_model(
         output_path=output_dir,
         transformer_config_dict=transformer_config.as_config_dict(),
         tokenizer_config_dict=tokenizer_config.as_config_dict(),
-        max_sequence_length=256,
         validate=False,
     )
 
