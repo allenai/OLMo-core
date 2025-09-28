@@ -111,15 +111,35 @@ def convert_checkpoint_to_hf(
         )
         model_state_dict = dist_cp_sd.get_model_state_dict(model, options=state_dict_options)
 
-        save_hf_model(
-            output_path,
-            model_state_dict,
-            model,
-            dtype=dtype,
-            vocab_size=vocab_size,
-            work_dir=work_dir,
-            save_overwrite=True,
-        )
+        # Check if save_hf_model supports dtype parameter
+        import inspect
+        save_hf_model_sig = inspect.signature(save_hf_model)
+        if 'dtype' in save_hf_model_sig.parameters:
+            save_hf_model(
+                output_path,
+                model_state_dict,
+                model,
+                dtype=dtype,
+                vocab_size=vocab_size,
+                work_dir=work_dir,
+                save_overwrite=True,
+            )
+        else:
+            # Fallback for older versions that don't support dtype
+            log.warning("save_hf_model doesn't support dtype parameter, converting tensors manually")
+            if dtype is not None:
+                model_state_dict = {
+                    key: state.to(dtype=dtype.as_pt()) if isinstance(state, torch.Tensor) else state
+                    for key, state in model_state_dict.items()
+                }
+            save_hf_model(
+                output_path,
+                model_state_dict,
+                model,
+                vocab_size=vocab_size,
+                work_dir=work_dir,
+                save_overwrite=True,
+            )
         # checkpointer.save(output_path, train_module, train_state={}, format=output_format)
         log.info(f"Successfully saved converted model to '{output_path}'")
 
