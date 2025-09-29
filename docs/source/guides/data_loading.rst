@@ -90,7 +90,7 @@ large enough (>1 Gb), and also allows for parallelization of the packing process
 You can optionally pack instances from multiple consecutive source files together by setting the ``source_group_size`` parameter to a value greater than 1.
 
 Document padding (:class:`~olmo_core.data.numpy_dataset.NumpyPaddedFSLDataset`):
-"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 This strategy creates fixed-length training instances by padding each document to the target sequence length.
 Documents shorter than ``sequence_length`` are padded with padding tokens, while documents longer than
 ``sequence_length`` are fragmented into multiple instances.
@@ -113,7 +113,7 @@ Variable sequence length (VSL) training
 The natural alternative to FSL is variable sequence length (VSL) training. You can use this approach by setting
 a :class:`~olmo_core.data.data_loader.NumpyVSLDataLoader` as your trainer's :data:`~olmo_core.train.Trainer.data_loader`.
 
-There is only one built-in dataset for VSL training:c:class:`~olmo_core.data.numpy_dataset.NumpyVSLDataset`.
+There is only one built-in dataset for VSL training: :class:`~olmo_core.data.numpy_dataset.NumpyVSLDataset`.
 This dataset is used to inject a sequence length-based curriculum during training as introduced in
 `Dataset Decomposition: Faster LLM Training with Variable Sequence Length Curriculum
 <https://arxiv.org/pdf/2405.13226>`_.
