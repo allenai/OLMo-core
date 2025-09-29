@@ -76,17 +76,6 @@ that if ``doc_lens`` and ``max_doc_lens`` are provided, the model will apply int
 
 See the :class:`~olmo_core.nn.transformer.Transformer` model implementation for an example.
 
-Document padding (:class:`~olmo_core.data.numpy_dataset.NumpyPaddedFSLDataset`):
-"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-
-This strategy creates fixed-length training instances by padding each document to the target sequence length.
-Documents shorter than ``sequence_length`` are padded with padding tokens, while documents longer than
-``sequence_length`` are split into multiple instances.
-
-This approach ensures that tokens from different documents never appear in the same training instance,
-avoiding cross-document attention without requiring intra-document masking. However, it can be inefficient
-if your documents vary widely from ``sequence_length``, as many padding tokens may be needed.
-
 Document packing (:class:`~olmo_core.data.numpy_dataset.NumpyPackedFSLDataset`):
 """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 
@@ -100,6 +89,17 @@ By default, OBFD is applied to each source file separately, which typically achi
 large enough (>1 Gb), and also allows for parallelization of the packing process, which can be somewhat time consuming at the start of training.
 You can optionally pack instances from multiple consecutive source files together by setting the ``source_group_size`` parameter to a value greater than 1.
 
+Document padding (:class:`~olmo_core.data.numpy_dataset.NumpyPaddedFSLDataset`):
+"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+This strategy creates fixed-length training instances by padding each document to the target sequence length.
+Documents shorter than ``sequence_length`` are padded with padding tokens, while documents longer than
+``sequence_length`` are fragmented into multiple instances.
+
+This approach ensures that tokens from different documents never appear in the same training instance,
+avoiding cross-document attention without requiring intra-document masking. However, it can be inefficient
+if your documents vary widely from ``sequence_length``, as many padding tokens may be needed. In general,
+using :class:`~olmo_core.data.numpy_dataset.NumpyPackedFSLDataset` is preferred over this approach.
+
 Interleaved documents (:class:`~olmo_core.data.numpy_dataset.NumpyInterleavedFSLDataset`):
 """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 
@@ -110,18 +110,23 @@ Does not support intra-document masking as that would largely defeat the purpose
 Variable sequence length (VSL) training
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Another alternative is variable sequence length (VSL) training through "dataset decomposition" (`Pouransari et al. (2024) <Pouransari et al 2024_>`_).
-With dataset decomposition, every training instance is a unique subset of tokens from a single document. Therefore there's no need for intra-document masking.
-You can use this approach by setting a :class:`~olmo_core.data.data_loader.NumpyVSLDataLoader` as your trainer's :data:`~olmo_core.train.Trainer.data_loader`.
+The natural alternative to FSL is variable sequence length (VSL) training. You can use this approach by setting
+a :class:`~olmo_core.data.data_loader.NumpyVSLDataLoader` as your trainer's :data:`~olmo_core.train.Trainer.data_loader`.
 
-This requires you set a ``min_sequence_length`` and ``max_sequence_length`` which must both be powers of 2 (e.g. 256 and 4096).
-Each training batch will be composed of instances of the same sequence length such that the total number of tokens in the batch
-is equal to your :data:`~olmo_core.train.Trainer.global_batch_size`.
+There is only one built-in dataset for VSL training:c:class:`~olmo_core.data.numpy_dataset.NumpyVSLDataset`.
+This dataset is used to inject a sequence length-based curriculum during training as introduced in
+`Dataset Decomposition: Faster LLM Training with Variable Sequence Length Curriculum
+<https://arxiv.org/pdf/2405.13226>`_.
 
-You can also configure a :class:`~olmo_core.data.numpy_dataset.VSLCurriculum` to control the sampling probability of different sequence lengths over the course of an epoch.
+When using dataset decomposition, every training instance is a unique subset of tokens from a single document. Therefore there's no need for intra-document masking.
 
-Configuration
-~~~~~~~~~~~~~
+Using :class:`~olmo_core.data.numpy_dataset.NumpyVSLDataset` requires you set a ``min_sequence_length`` and ``max_sequence_length``
+which must both be powers of 2 (e.g. 256 and 4096). Each training batch will be composed of instances of the same sequence length
+such that the total number of tokens in the batch is equal to your :data:`~olmo_core.train.Trainer.global_batch_size`. Your model
+must be able to handle sequences of up to ``max_sequence_length``.
+
+You can configure a :class:`~olmo_core.data.numpy_dataset.VSLCurriculum` to control the sampling probability of different sequence lengths over the course of an epoch.
+
 
 Using a custom data loader
 --------------------------
