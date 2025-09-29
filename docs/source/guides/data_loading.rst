@@ -37,7 +37,7 @@ For example::
 Train data loading
 ~~~~~~~~~~~~~~~~~~
 
-Once you're data is pre-processed as above there are several different strategies available for loading that data for training.
+Once your data is pre-processed as above there are several different strategies available for loading that data for training.
 The built-in data loading strategies can be broadly categorized into two types: fixed sequence length (FSL) training and variable sequence length (VSL) training.
 
 FSL and VSL each have their own data loader classes (:class:`~olmo_core.data.data_loader.NumpyFSLDataLoader` and :class:`~olmo_core.data.data_loader.NumpyVSLDataLoader`),
