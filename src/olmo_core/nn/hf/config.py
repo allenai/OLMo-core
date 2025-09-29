@@ -27,10 +27,10 @@ def _get_flex_olmo_config(model: MoETransformer) -> PretrainedConfig:
                 f"Block is not a {MoEReorderedNormTransformerBlock.__name__}, unable to build HF config for {model.__class__.__name__}"
             )
 
-        if not isinstance(block.experts.mlp, MoEMLP):
-            raise NotImplementedError(
-                f"MoE mlp is not a {MoEMLP.__name__}, unable to build HF config for {model.__class__.__name__}"
-            )
+        # if not isinstance(block.experts.mlp, MoEMLP):
+        #     raise NotImplementedError(
+        #         f"MoE mlp is not a {MoEMLP.__name__}, unable to build HF config for {model.__class__.__name__}"
+        #     )
 
         if not isinstance(block.attention, Attention):
             raise NotImplementedError(
