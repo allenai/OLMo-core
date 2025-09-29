@@ -13,15 +13,15 @@ set -euo pipefail
 INPUT=""
 OUTPUT=""
 SEQ_LEN=4096
-DEVICE="cpu"
+DEVICE="cuda"
 SKIP_VALIDATION=1
 
 # Gantry / Beaker defaults (can be overridden by flags or env vars)
 BUDGET=${BUDGET:-"ai2/oe-base"}
 WORKSPACE=${WORKSPACE:-"ai2/flex2"}
 CLUSTER=${CLUSTER:-"ai2/jupiter-cirrascale-2"}
-PRIORITY=${PRIORITY:-"normal"}
-GPUS=${GPUS:-0}
+PRIORITY=${PRIORITY:-"urgent"}
+GPUS=${GPUS:-1}
 
 # Optional env secrets (set to secret names when needed, leave empty to skip)
 ENV_SECRET_HF_TOKEN=${ENV_SECRET_HF_TOKEN:-""}
