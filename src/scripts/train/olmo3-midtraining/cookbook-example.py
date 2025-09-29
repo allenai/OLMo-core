@@ -1,28 +1,27 @@
 from datetime import datetime
 from typing import Optional
 
-from olmo_core.internal.common import get_root_dir, get_work_dir, build_launch_config
-from olmo_core.launch.beaker import BeakerLaunchConfig
-from olmo_core.internal.experiment import main, CliContext, ExperimentConfig
-from olmo_core.internal import cookbook
-from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.optim import OptimGroupOverride, SkipStepAdamWConfig
-from olmo_core.train import Duration, TrainerConfig, LoadStrategy
-from olmo_core.train.train_module import TransformerTrainModuleConfig
-from olmo_core.optim.scheduler import WSD, SchedulerUnits
 from olmo_core.data import (
     NumpyDataLoaderConfig,
     NumpyFSLDatasetConfig,
     TokenizerConfig,
-    NumpyDatasetDType,
 )
-from olmo_core.data.utils import infer_token_dtype
-from olmo_core.data.source_mixture import SourceMixtureDatasetConfig, SourceMixtureConfig
-
+from olmo_core.data.source_mixture import (
+    SourceMixtureConfig,
+    SourceMixtureDatasetConfig,
+)
+from olmo_core.internal import cookbook
+from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
+from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
+from olmo_core.launch.beaker import BeakerLaunchConfig
+from olmo_core.nn.transformer import TransformerConfig
+from olmo_core.optim import OptimGroupOverride, SkipStepAdamWConfig
+from olmo_core.optim.scheduler import WSD, SchedulerUnits
+from olmo_core.train import Duration, LoadStrategy, TrainerConfig
+from olmo_core.train.train_module import TransformerTrainModuleConfig
 
 SEQ_LENGTH = 8192
 GLOBAL_BATCH_SIZE = 4096 * 8192
-MAX_TOKENS = 100_000_000_000
 SEED = 12536
 
 
@@ -92,7 +91,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     ]
     source_mix = SourceMixtureDatasetConfig(
         source_configs=config,
-        max_tokens=MAX_TOKENS,
+        requested_tokens=100_000_000_000,  # 1B
         global_batch_size=GLOBAL_BATCH_SIZE,
         seed=SEED,
     )
