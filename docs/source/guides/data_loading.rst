@@ -35,7 +35,7 @@ For example::
 
 
 Train data loading
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~
 
 Once you're data is pre-processed as above there are several different strategies available for loading that data for training.
 The built-in data loading strategies can be broadly categorized into two types: fixed sequence length (FSL) training and variable sequence length (VSL) training.
@@ -64,7 +64,7 @@ While this strategy is simple and efficient, it does have a couple downsides:
 2. Since each training instance may be composed of multiple documents, the model will be attending to tokens across more than one document simultaneously, which could potentially have adverse affects on the model (see `Zhao et al. (2024) <Zhao et al 2024_>`_ for example).
 
 Alternatively, you can use :class:`~olmo_core.data.numpy_dataset.NumpyFSLDatasetMixture` to create a dataset that is a fine-grained mixture
-of dataset sources. See :ref:`the dataset mixture guide <data_mixing>` for more details.
+of dataset sources. See :ref:`the dataset mixing guide <data_mixing>` for more details.
 
 Concatenate and chunk + intra-document masking (:class:`~olmo_core.data.numpy_dataset.NumpyFSLDataset` w/ ``generate_doc_lengths=True``):
 """""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
