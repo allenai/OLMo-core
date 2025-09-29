@@ -2555,7 +2555,7 @@ class NumpyFSLDatasetConfig(NumpyDatasetConfig):
 
         if self.source_mixture_config is not None:
             mixture = self.source_mixture_config.build(
-                dtype=self.get_dtype(), sequence_length=self.sequence_length
+                npdtype=self.get_dtype(), sequence_length=self.sequence_length
             )
             dataset = NumpyFSLDatasetMixture(
                 *mixture.to_paths(),

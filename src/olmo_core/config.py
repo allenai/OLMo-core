@@ -16,7 +16,6 @@ from typing import (
 )
 
 import torch
-import yaml
 from cached_path import cached_path
 from omegaconf import OmegaConf as om
 from omegaconf.errors import OmegaConfBaseException
