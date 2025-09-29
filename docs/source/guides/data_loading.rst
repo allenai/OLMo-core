@@ -49,7 +49,7 @@ handle the details of loading and sampling from your pre-tokenized numpy data fi
 Fixed sequence length (FSL) datasets
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 The following datasets are for fixed sequence length (FSL) training with :class:`~olmo_core.data.data_loader.NumpyFSLDataLoader`, where every training instance is exactly the same length (``sequence_length``), possibly
-with documnent fragmentation across instances or padding within instances. They implement different strategies for how to create those training instances from your pre-tokenized numpy data files
+with document fragmentation across instances or padding within instances. They implement different strategies for how to create those training instances from your pre-tokenized numpy data files
 where the sequence lengths of individual documents may vary widely.
 
 Concatenate and chunk (:class:`~olmo_core.data.numpy_dataset.NumpyFSLDataset` or :class:`~olmo_core.data.numpy_dataset.NumpyFSLDatasetMixture`):
