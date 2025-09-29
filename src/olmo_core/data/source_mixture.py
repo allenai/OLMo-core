@@ -277,9 +277,9 @@ class SourceMixtureDatasetConfig(Config):
         ]
 
         training_steps = math.ceil(self.requested_tokens / self.global_batch_size)
-        assert self.global_batch_size % sequence_length == 0, (
-            "global_batch_size must be multiple of sequence_length"
-        )
+        assert (
+            self.global_batch_size % sequence_length == 0
+        ), "global_batch_size must be multiple of sequence_length"
         num_instances_per_batch = self.global_batch_size // sequence_length
         requested_instances = training_steps * num_instances_per_batch
 
@@ -287,8 +287,8 @@ class SourceMixtureDatasetConfig(Config):
         int_instances = []
         remainders = []
         for tokens_per_path in all_tokens_per_path:
-            int_part = tokens_per_path // self.sequence_length
-            remainder = (tokens_per_path % self.sequence_length) / self.sequence_length
+            int_part = tokens_per_path // sequence_length
+            remainder = (tokens_per_path % sequence_length) / sequence_length
             int_instances.append(int_part)
             remainders.append(remainder)
 
@@ -307,7 +307,7 @@ class SourceMixtureDatasetConfig(Config):
                 ]:
                     int_instances[idx] += 1
 
-        final_tokens_per_path = [inst * self.sequence_length for inst in int_instances]
+        final_tokens_per_path = [inst * sequence_length for inst in int_instances]
 
         i = 0
         final_token_distribution: Dict[str, float] = {}
@@ -356,7 +356,7 @@ class SourceMixtureDatasetConfig(Config):
             diff = np.abs(final_token_distribution.get(source_name, 0) - ratio)
             log.info(f"{source_name}: {diff:.4f} difference from target ratio {ratio:.4f}")
 
-        return SourceMixtureDataset(seed=self.seed, sources=completed)
+        return SourceMixtureDataset(sources=completed)
 
     def get_paths_and_tokens_for_source(
         self,
