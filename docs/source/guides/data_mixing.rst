@@ -72,20 +72,20 @@ Typical usage together with the fixed-sequence dataset config::
     mix_config = SourceMixtureDatasetConfig(
         source_configs=[
             SourceMixtureConfig(
-                source_name="dolma",
+                source_name="trex-facts",
                 target_ratio=0.6,
-                paths=["/corpus/dolma/part-*.npy"],
+                paths=["/corpus/trex-facts/part-*.npy"],
             ),
             SourceMixtureConfig(
-                source_name="refinedweb",
+                source_name="triceratops-knowledge",
                 target_ratio=0.3,
-                paths=["/corpus/refinedweb/shard-*.npy"],
+                paths=["/corpus/triceratops-facts/shard-*.npy"],
                 max_repetition_ratio=1.5,
             ),
             SourceMixtureConfig(
-                source_name="high_quality",
+                source_name="stegosaurus-high-quality",
                 target_ratio=0.1,
-                paths=["/corpus/high_quality/*.npy"],
+                paths=["/corpus/stegosaurus-high-quality/*.npy"],
                 max_source_fraction=0.25,
             ),
         ],
