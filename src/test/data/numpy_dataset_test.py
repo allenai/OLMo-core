@@ -433,8 +433,7 @@ def test_numpy_fsl_mixture_dataset(tmp_path: Path):
 
     mixture_config = SourceMixtureDatasetConfig(
         render_tables=False,
-        max_tokens=max_tokens,
-        sequence_length=sequence_length,
+        requested_tokens=max_tokens,
         source_configs=[
             SourceMixtureConfig(
                 source_name="mmap1",
@@ -447,8 +446,6 @@ def test_numpy_fsl_mixture_dataset(tmp_path: Path):
                 target_ratio=0.2,
             ),
         ],
-        dtype=NumpyDatasetDType.uint16,
-        processes=1,
         seed=seed,
         global_batch_size=sequence_length * bsz,
     )
@@ -457,6 +454,7 @@ def test_numpy_fsl_mixture_dataset(tmp_path: Path):
         source_mixture_config=mixture_config,
         sequence_length=sequence_length,
         tokenizer=tokenizer,
+        dtype=NumpyDatasetDType.uint16,
         include_instance_metadata=False,
     ).build()
     ds.prepare()
@@ -515,8 +513,7 @@ def test_numpy_fsl_mixture_dataset_with_repetition(tmp_path: Path):
 
     mixture_config = SourceMixtureDatasetConfig(
         render_tables=False,
-        max_tokens=max_tokens,
-        sequence_length=sequence_length,
+        requested_tokens=max_tokens,
         source_configs=[
             SourceMixtureConfig(
                 source_name="mmap1", paths=source1_paths, target_ratio=0.8, max_repetition_ratio=2.0
@@ -527,8 +524,6 @@ def test_numpy_fsl_mixture_dataset_with_repetition(tmp_path: Path):
                 target_ratio=0.2,
             ),
         ],
-        dtype=NumpyDatasetDType.uint16,
-        processes=1,
         seed=seed,
         global_batch_size=sequence_length * bsz,  # 10k sequences of length 4
     )
@@ -537,6 +532,7 @@ def test_numpy_fsl_mixture_dataset_with_repetition(tmp_path: Path):
         source_mixture_config=mixture_config,
         sequence_length=sequence_length,
         tokenizer=tokenizer,
+        dtype=NumpyDatasetDType.uint16,
         include_instance_metadata=False,
     ).build()
     ds.prepare()
