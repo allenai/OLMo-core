@@ -10,11 +10,19 @@ from olmo_core.optim import OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import Duration, TrainerConfig, LoadStrategy
 from olmo_core.train.train_module import TransformerTrainModuleConfig
 from olmo_core.optim.scheduler import WSD, SchedulerUnits
-from olmo_core.data import DataMix, NumpyDataLoaderConfig, NumpyFSLDatasetConfig, TokenizerConfig
+from olmo_core.data import (
+    NumpyDataLoaderConfig,
+    NumpyFSLDatasetConfig,
+    TokenizerConfig,
+    NumpyDatasetDType,
+)
+from olmo_core.data.utils import infer_token_dtype
+from olmo_core.data.source_mixture import SourceMixtureDatasetConfig, SourceMixtureConfig
 
 
 SEQ_LENGTH = 8192
 GLOBAL_BATCH_SIZE = 4096 * 8192
+MAX_TOKENS = 100_000_000_000
 SEED = 12536
 
 
@@ -36,7 +44,6 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     tokenizer_config = TokenizerConfig.dolma2()
-
     model_config = TransformerConfig.olmo2_1B(
         vocab_size=tokenizer_config.padded_vocab_size(),
     )
@@ -53,12 +60,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
             ],
         ),
-        scheduler=WSD(
-            units=SchedulerUnits.steps,
-            warmup=2000,
-            decay=2000,
-            decay_fraction=None,
-        ),
+        scheduler=WSD(units=SchedulerUnits.steps, warmup=2000, decay=2000, decay_fraction=None),
     )
 
     trainer_config = TrainerConfig(
@@ -71,13 +73,33 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         load_strategy=LoadStrategy.always,
     )
     callbacks = cookbook.configure_default_callbacks(
-        run_name=cli_context.run_name, launch_config=beaker_launch_config
+        run_name=cli_context.run_name,
+        launch_config=beaker_launch_config,
     )
     for name, callback in callbacks.items():
         trainer_config.add_callback(name, callback)
 
-    dataset_config = NumpyFSLDatasetConfig.from_data_mix(
-        DataMix.OLMoE_mix_0824,  # TODO: cookbook sources
+    config = [
+        SourceMixtureConfig(
+            source_name="code_fim",
+            target_ratio=0.12352010809861039,
+            max_repetition_ratio=1.0,
+            paths=[
+                "gs://ai2-llm/preprocessed/stack-edu/sample-fim-weighted-pl-edu-score-decon/**/**/*.npy"
+            ],
+        ),
+        # ...
+    ]
+    source_mix = SourceMixtureDatasetConfig(
+        source_configs=config,
+        max_tokens=MAX_TOKENS,
+        global_batch_size=GLOBAL_BATCH_SIZE,
+        seed=SEED,
+    )
+    # source_mix = SourceMixtureDatasetConfig.from_yaml("./my-mix.yaml")
+
+    dataset_config = NumpyFSLDatasetConfig.from_src_mix(
+        src_mix=source_mix,
         tokenizer=tokenizer_config,
         mix_base_dir=root_dir,
         work_dir=work_dir,
