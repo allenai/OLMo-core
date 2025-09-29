@@ -208,6 +208,8 @@ OLMO_CORE_TO_HF_MODULE_MAPPINGS: Dict[str, str] = {
     f"blocks.{LAYER}.feed_forward_moe": f"model.layers.{LAYER}.mlp",
     f"blocks.{LAYER}.feed_forward_moe_norm": f"model.layers.{LAYER}.post_moe_norm",
     f"blocks.{LAYER}.feed_forward_moe.router": f"model.layers.{LAYER}.mlp.gate",
+    # Indices are not part of the original OLMo Core state but can be introduced during conversion for aide debugging.
+    f"blocks.{LAYER}.feed_forward_moe.router.indices": f"model.layers.{LAYER}.mlp.gate.indices",
     f"blocks.{LAYER}.feed_forward_moe.shared_mlp": f"model.layers.{LAYER}.mlp.shared_mlp",
     f"blocks.{LAYER}.feed_forward_moe.shared_mlp.w1": f"model.layers.{LAYER}.mlp.shared_mlp.gate_proj",
     f"blocks.{LAYER}.feed_forward_moe.shared_mlp.w2": f"model.layers.{LAYER}.mlp.shared_mlp.down_proj",

@@ -233,7 +233,7 @@ def _register_debug_hooks(hf_model: torch.nn.Module, model: Transformer):
             # Special casing for HF moe
             assert isinstance(output[0], torch.Tensor), (name, output)
             output = output[0]
-        if model_type == "hf" and re.match(r"model.layers.\d+.mlp.gate", name):
+        if model_type == "hf" and re.match(r"model.layers.\d+.mlp.gate$", name):
             # Special casing for FlexOlmo router
             assert isinstance(output, torch.Tensor), (name, output)
             router_logits = output.detach().clone()
@@ -241,7 +241,8 @@ def _register_debug_hooks(hf_model: torch.nn.Module, model: Transformer):
             # Like topk, but we keep all the data. This will hopefully go ok.
             routing_weights, routing_indices = torch.sort(routing_weights, descending=True, dim=-1)
             output = routing_weights
-        if model_type == "hf" and re.match(r"model.layers.\d+.block_sparse_moe.gate", name):
+            module_hook(debug_state, model_type, f"{name}.indices", _, args, routing_indices)
+        if model_type == "hf" and re.match(r"model.layers.\d+.block_sparse_moe.gate$", name):
             # Special casing for HF moe router
             assert isinstance(output, torch.Tensor), (name, output)
             router_logits = output.detach().clone()
@@ -249,9 +250,14 @@ def _register_debug_hooks(hf_model: torch.nn.Module, model: Transformer):
             # Like topk, but we keep all the data. This will hopefully go ok.
             routing_weights, routing_indices = torch.sort(routing_weights, descending=True, dim=-1)
             output = routing_weights
-        if model_type == "olmo_core" and re.match(r"blocks.\d+.feed_forward_moe.router", name):
+            module_hook(debug_state, model_type, f"{name}.indices", _, args, routing_indices)
+        if model_type == "olmo_core" and re.match(r"blocks.\d+.feed_forward_moe.router$", name):
             # Special casing for OLMo Core moe router
             assert isinstance(output, tuple), (name, output)
+            assert len(output) >= 2, (name, output)
+            assert isinstance(output[1], torch.Tensor), (name, output[1])
+            module_hook(debug_state, model_type, f"{name}.indices", _, args, output[1])
+
             assert isinstance(output[0], torch.Tensor), (name, output[0])
             output = output[0]
 
@@ -417,6 +423,13 @@ def validate_conversion(
                     for i, dim in enumerate(common_shape):
                         hf_tensor = hf_tensor.narrow(i, 0, dim)
                         olmo_core_tensor = olmo_core_tensor.narrow(i, 0, dim)
+                    if not torch.is_floating_point(hf_tensor) or not torch.is_floating_point(
+                        olmo_core_tensor
+                    ):
+                        diff_elements = hf_tensor != olmo_core_tensor
+                        log.info(
+                            f"{hf_state_name}, {olmo_core_state_name} different elements: {diff_elements.sum()} / {diff_elements.numel()}"
+                        )
                     log.info(
                         f"{hf_state_name}, {olmo_core_state_name} element diff abs mean: {(hf_tensor - olmo_core_tensor).float().abs().mean()}"
                     )
