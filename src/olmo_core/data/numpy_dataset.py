@@ -63,6 +63,7 @@ __all__ = [
     "NumpyDatasetBase",
     "NumpyFSLDatasetBase",
     "NumpyFSLDataset",
+    "NumpyFSLDatasetMixture",
     "NumpyPaddedFSLDataset",
     "NumpyPackedFSLDataset",
     "NumpyInterleavedFSLDataset",
@@ -2558,7 +2559,7 @@ class NumpyFSLDatasetConfig(NumpyDatasetConfig):
             )
             dataset = NumpyFSLDatasetMixture(
                 *mixture.to_paths(),
-                seed=mixture.seed,
+                seed=self.source_mixture_config.seed,
                 path_offset_index=mixture.to_index(),
                 sequence_length=self.sequence_length,
                 max_target_sequence_length=self.max_target_sequence_length,

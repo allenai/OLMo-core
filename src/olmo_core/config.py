@@ -1,5 +1,4 @@
 import copy
-import yaml
 import json
 from dataclasses import dataclass, fields, is_dataclass, replace
 from enum import Enum
@@ -17,6 +16,7 @@ from typing import (
 )
 
 import torch
+import yaml
 from cached_path import cached_path
 from omegaconf import OmegaConf as om
 from omegaconf.errors import OmegaConfBaseException

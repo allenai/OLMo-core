@@ -25,10 +25,20 @@ class LongDocStrategy(StrEnum):
 
 
 class NumpyDatasetDType(StrEnum):
+    """
+    Supported numpy unsigned integer data types for datasets.
+    """
+
     uint8 = "uint8"
     uint16 = "uint16"
     uint32 = "uint32"
     uint64 = "uint64"
 
     def as_np_dtype(self) -> NumpyUIntTypes:
+        """
+        Convert the enum value to its corresponding numpy dtype.
+
+        Returns:
+            The numpy unsigned integer dtype corresponding to this enum value.
+        """
         return getattr(np, str(self))
