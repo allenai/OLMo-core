@@ -36,8 +36,7 @@ def get_fsl_mixture(
     )
 
     mixture_config = SourceMixtureDatasetConfig(
-        max_tokens=num_tokens,
-        sequence_length=sequence_length,
+        requested_tokens=num_tokens,
         source_configs=[
             SourceMixtureConfig(
                 source_name="mmap1",
@@ -50,18 +49,16 @@ def get_fsl_mixture(
                 target_ratio=0.2,
             ),
         ],
-        dtype=NumpyDatasetDType.uint16,
-        processes=1,
         seed=seed,
         global_batch_size=sequence_length * 32,
     )
 
-    ds = NumpyFSLDatasetConfig(
-        source_mixture_config=mixture_config,
+    ds = NumpyFSLDatasetConfig.from_src_mix(
+        src_mix=mixture_config,
         sequence_length=sequence_length,
         tokenizer=tokenizer,
+        dtype=NumpyDatasetDType.uint16,
         include_instance_metadata=False,
     ).build()
     ds.prepare()
-
     return ds

@@ -20,7 +20,6 @@ from olmo_core.io import get_file_size
 
 __all__ = [
     "SourceMixtureConfig",
-    "SourceMixtureDataset",
     "SourceMixtureDatasetConfig",
 ]
 
@@ -30,7 +29,12 @@ log = logging.getLogger(__name__)
 @dataclass
 class SourceMixtureConfig(Config):
     """
-    A configuration class for building a source mixture.
+    Configuration for a single data source within a mixture.
+
+    This class defines how a data source should be sampled and weighted when
+    creating a training dataset from multiple sources. It allows control over
+    the target proportion, repetition limits, and maximum usage fraction of
+    the source data.
     """
 
     source_name: str
@@ -123,18 +127,18 @@ class SourceMixtureOutcome:
 
 
 @dataclass
-class SourceMixtureDataset:
+class SourceMixtureDataset:  # Note: "dataset" naming is a bit inconsistent with the rest of the codebase
     """
-    A dataset consisting of a fractionalized mixture of data sources.
+    A container for a fractionalized mixture of data sources. Do not construct directly,
+    use :class:`SourceMixtureDatasetConfig` instead.
+
+    See also :class:`~olmo_core.data.numpy_dataset.NumpyFSLDatasetMixture`, the downstream
+    consumer of this dataset.
     """
 
-    seed: int
-    """
-    The seed used to generate the dataset.
-    """
     sources: List[SourceMixtureOutcome]
     """
-    A list of sources and the associated paths and token counts.
+    A list of sources and their associated paths and token counts.
     """
 
     def to_index(self) -> Dict[Tuple[str, int], int]:
@@ -161,7 +165,18 @@ class SourceMixtureDataset:
 @dataclass
 class SourceMixtureDatasetConfig(Config):
     """
-    A configuration class for building a dataset from a fractionalized mixture of sources.
+    Configuration for building a dataset from a fractionalized mixture of sources.
+
+    This class manages the creation of training datasets by combining multiple data sources
+    according to specified target ratios. It handles token counting, source selection,
+    and ensures the final mixture meets the requested dataset size while maintaining
+    the desired proportions across sources.
+
+    The build process will:
+    1. Count available tokens in each source
+    2. Calculate token allocations based on target ratios
+    3. Validate that sources have sufficient data
+    4. Generate a mixture that respects repetition and fraction limits
     """
 
     source_configs: List[SourceMixtureConfig]
