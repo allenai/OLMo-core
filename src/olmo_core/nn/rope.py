@@ -588,8 +588,9 @@ class FusedRotaryEmbedding(RotaryEmbeddingBase):
                     theta=self.theta, dim=self.dim, device=device
                 )
             seq = torch.arange(seq_len, device=device, dtype=torch.float)
-            freqs = torch.einsum("i , j -> i j", seq, inv_freq)
-            pos_sin, pos_cos = freqs.sin(), freqs.cos()
+            freqs = torch.einsum("i , j -> i j", seq, inv_freq)  # (seq_len, head_size // 2)
+            # Note: no concat here, unlike the non-fused implementation
+            pos_sin, pos_cos = freqs.sin(), freqs.cos()  # 2x (seq_len, head_size // 2)
 
         pos_sin = pos_sin * attention_rescale_factor
         pos_cos = pos_cos * attention_rescale_factor
@@ -703,6 +704,7 @@ class ComplexRotaryEmbedding(RotaryEmbeddingBase):
         q: torch.Tensor,
         k: torch.Tensor,
         head_first: bool = True,
+        start_pos: Optional[int] = None,
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
