@@ -90,7 +90,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
 
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=16 * SEQUENCE_LENGTH,
-        max_sequence_length=dataset_config.effective_sequence_length,
+        max_sequence_length=SEQUENCE_LENGTH,
         optim=AdamConfig(lr=1e-3),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(

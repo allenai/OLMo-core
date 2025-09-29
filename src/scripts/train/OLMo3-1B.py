@@ -1,12 +1,14 @@
 """
 Train a 1B OLMo model. Run this script without any arguments to see usage info.
 """
+
 from datetime import datetime
+from functools import partial
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
-from olmo_core.internal.experiment import CommonComponents, main
+from olmo_core.internal.experiment import CommonComponents, build_config, main
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig
@@ -60,7 +62,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
-    rank_microbatch_size = 4 * SEQUENCE_LENGTH
+    rank_microbatch_size = 4 * common.max_sequence_length
     if common.launch is not None:
         gpus = {CLUSTER_TO_GPU_TYPE.get(c, "unknown") for c in common.launch.clusters}
         if all("B200" in g for g in gpus):
@@ -68,7 +70,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
 
     return TransformerTrainModuleConfig(
         rank_microbatch_size=rank_microbatch_size,
-        max_sequence_length=common.dataset.effective_sequence_length,
+        max_sequence_length=common.max_sequence_length,
         optim=SkipStepAdamWConfig(
             lr=LR,
             weight_decay=0.033,
@@ -146,7 +148,11 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             ),
         )
         .with_recommended_evals(
-            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
+            common.tokenizer,
+            common.max_sequence_length,
+            cluster,
+            task_set="fast",
+            eval_interval=EVAL_INTERVAL,
         )
     )
 
@@ -164,13 +170,15 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
 
 if __name__ == "__main__":
-    main(
+    config_builder = partial(
+        build_config,
         global_batch_size=GLOBAL_BATCH_SIZE,
-        sequence_length=SEQUENCE_LENGTH,
+        max_sequence_length=SEQUENCE_LENGTH,
         model_config_builder=build_model_config,
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
-        include_instance_filter=False,  # We use SkipStepOptimizer for this problem.
         include_default_evals=False,
+        include_instance_filter=False,  # We use SkipStepOptimizer for this problem.
         intra_document_masking=True,
     )
+    main(config_builder=config_builder)

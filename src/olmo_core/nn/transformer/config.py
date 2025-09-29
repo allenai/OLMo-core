@@ -506,7 +506,7 @@ class TransformerConfig(Config):
     @classmethod
     def olmo2_1B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
-        A 1B OLMo model config.
+        A 1B OLMo2 model config.
 
         This is different from the OLMo 1B from the old OLMo trainer.
         """
@@ -523,7 +523,7 @@ class TransformerConfig(Config):
     @classmethod
     def olmo2_1B_v2(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
-        A 1B OLMo model config.
+        A 1B OLMo2 model config.
 
         This matches the OLMo 1B from the old OLMo trainer.
         """
@@ -540,6 +540,9 @@ class TransformerConfig(Config):
 
     @classmethod
     def olmo2_3B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 3B OLMo2 model config.
+        """
         return cls.llama_like(
             d_model=3328,
             hidden_size_multiplier=1.5,
@@ -556,7 +559,7 @@ class TransformerConfig(Config):
     @classmethod
     def olmo2_7B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
-        A 7B OLMo model config.
+        A 7B OLMo2 model config.
         """
         return cls.llama2_7B(
             vocab_size,
@@ -570,7 +573,7 @@ class TransformerConfig(Config):
     @classmethod
     def olmo2_13B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
-        A 13B OLMo model config.
+        A 13B OLMo2 model config.
         """
         return cls.llama2_13B(
             vocab_size,
@@ -584,7 +587,7 @@ class TransformerConfig(Config):
     @classmethod
     def olmo2_32B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
-        A 32B OLMo model config.
+        A 32B OLMo2 model config.
         """
         d_model = 5120
         return cls.llama_like(
