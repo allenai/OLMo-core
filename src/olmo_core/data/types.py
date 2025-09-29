@@ -30,7 +30,5 @@ class NumpyDatasetDType(StrEnum):
     uint32 = "uint32"
     uint64 = "uint64"
 
-    def as_np_dtype(
-        self,
-    ) -> Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]]:
+    def as_np_dtype(self) -> NumpyUIntTypes:
         return getattr(np, str(self))
