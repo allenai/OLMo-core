@@ -30,6 +30,7 @@ specific to your environment. Then you can install OLMo-core from PyPI with:
 
    guides/all_in_one_for_researchers.md
    guides/data_loading.rst
+   guides/data_mixing.rst
 
 .. toctree::
    :hidden:
