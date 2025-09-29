@@ -1958,7 +1958,7 @@ class BLTDistillTransformer(BLTTransformer):
             seq_sorted_indices,
             torch.ones_like(seq_sorted_indices),
         )
-        shift_boundary_mask = boundary_mask[:, 1:]
+        shift_boundary_mask = (boundary_mask[:, 1:] & byte_mask[:, 1:])
         label_offsets = shift_boundary_mask * (self.vocab_size_blt // 2)
         labels[:, :-1] += label_offsets
 
