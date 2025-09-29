@@ -95,6 +95,12 @@ def _compute_boundary_mask(boundary_logprobs: torch.Tensor, boundary_threshold: 
         topk = int(topk)
         thresholds = torch.quantile(boundary_logprobs, dim=1, q=1 - (topk / boundary_logprobs.shape[1]))
         return (boundary_logprobs >= thresholds.unsqueeze(-1))
+    elif boundary_threshold.startswith("topk_percent:"):
+        _, topk_percent = boundary_threshold.split(":")
+        topk_percent = float(topk_percent)
+        assert 0 <= topk_percent <= 1
+        thresholds = torch.quantile(boundary_logprobs, dim=1, q=1 - topk_percent)
+        return (boundary_logprobs >= thresholds.unsqueeze(-1))
     else:
         raise ValueError(f"Unknown boundary threshold: {boundary_threshold}")
 

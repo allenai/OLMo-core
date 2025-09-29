@@ -158,6 +158,85 @@ class TransformerGenerationModule(GenerationModule):
         return self.model(input_ids, **kwargs)
 
     @torch.inference_mode()
+    def benchmark(
+        self,
+        batch_size: int,
+        n_prefill: int,
+        n_generate: int,
+        profile: bool = False,
+        vocab_size: int = 10_000,
+    ):
+        input_ids = torch.randint(
+            low=0,
+            high=vocab_size,
+            size=(batch_size, n_prefill),
+        )
+        attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
+
+        if profile:
+            prof = torch.profiler.profile(
+                activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
+                record_shapes=True,
+                with_stack=True,
+                profile_memory=True,
+                with_flops=True,
+                schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=2),
+                on_trace_ready=torch.profiler.tensorboard_trace_handler('/tmp/profiles/transformer_generation_module'),
+            )
+            prof.__enter__()
+        else:
+            prof = None
+
+        start_time = time.perf_counter()
+
+        self.prepare_inference_cache(batch_size, n_prefill + n_generate)
+        prefill_cache_leftpad = attention_mask_to_cache_leftpad(attention_mask).to(self.device)
+
+        torch.cuda.synchronize()
+        cache_prepare_time = time.perf_counter() - start_time
+
+        # prefill
+        next_token_logits = self.model(
+            input_ids,
+            logits_to_keep=1,
+            cache_leftpad=prefill_cache_leftpad,
+        )
+        next_token_probs = F.softmax(next_token_logits, dim=-1)
+        next_token = next_token_logits.argmax(-1)
+
+        torch.cuda.synchronize()
+        prefill_time = time.perf_counter() - start_time - cache_prepare_time
+
+        if prof is not None:
+            prof.step()
+
+        # generate
+        for step in range(n_generate):
+            next_token_logits = self.model(
+                next_token.to(self.device),
+                logits_to_keep=1,
+            )
+            next_token_probs = F.softmax(next_token_logits, dim=-1)
+            next_token = next_token_probs.argmax(-1)
+
+            if prof is not None:
+                prof.step()
+
+        torch.cuda.synchronize()
+        generate_time = time.perf_counter() - start_time - cache_prepare_time - prefill_time
+
+        if prof is not None:
+            prof.__exit__(None, None, None)
+
+        self.free_inference_cache()
+
+        return {
+            "cache_prepare_time": cache_prepare_time,
+            "prefill_time": prefill_time,
+            "generate_time": generate_time,
+        }
+
+    @torch.inference_mode()
     def generate_batch(
         self,
         input_ids: torch.Tensor,
@@ -717,6 +796,117 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         return torch.take_along_dim(input_ids, first_non_boundary_idx.unsqueeze(1), 1)
 
     @torch.inference_mode()
+    def benchmark(
+        self,
+        batch_size: int,
+        n_prefill: int,
+        n_generate: int,
+        avg_bytes_per_token: float = 4.3,
+        profile: bool = False,
+        vocab_size: int = 256,
+    ):
+        self._set_model_mode("eval")
+
+        n_prefill_bytes = int(n_prefill * avg_bytes_per_token)
+        n_generate_bytes = int(n_generate * avg_bytes_per_token)
+
+        input_ids = torch.randint(
+            low=0,
+            high=vocab_size,
+            size=(batch_size, n_prefill_bytes),
+        )
+        token_attention_mask = torch.ones((batch_size, n_prefill), dtype=torch.bool)
+        patch_end_indices = 1 + torch.randperm(n_prefill_bytes - 1)[:n_prefill]
+        patch_end_indices = F.pad(
+            torch.sort(patch_end_indices).values,
+            (1, 0),
+            value=0,
+        )
+        patch_lens = (patch_end_indices[1:] - patch_end_indices[:-1]).unsqueeze(0).expand(batch_size, -1)
+
+        generate_boundary_mask = torch.zeros(n_generate_bytes, dtype=torch.bool)
+        generate_boundary_mask[torch.randperm(n_generate_bytes)[:n_generate]] = True
+        generate_boundary_mask = generate_boundary_mask.tolist()
+
+        if profile:
+            prof = torch.profiler.profile(
+                activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
+                record_shapes=True,
+                with_stack=True,
+                profile_memory=True,
+                with_flops=True,
+                schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=2),
+                on_trace_ready=torch.profiler.tensorboard_trace_handler('/tmp/profiles/transformer_generation_module'),
+            )
+            prof.__enter__()
+        else:
+            prof = None
+
+        start_time = time.perf_counter()
+
+        self.prepare_inference_cache(batch_size, n_prefill + n_generate)
+        prefill_cache_leftpad = attention_mask_to_cache_leftpad(token_attention_mask).to(self.device)
+
+        zero_boundary_state = blt_utils.MaskState(torch.zeros(batch_size, dtype=torch.bool, device=self.device))
+        one_boundary_state = blt_utils.MaskState(torch.ones(batch_size, dtype=torch.bool, device=self.device))
+
+        torch.cuda.synchronize()
+        cache_prepare_time = time.perf_counter() - start_time
+
+        # prefill
+        boundary_mask, cached_encoder_outputs = self.model.prefill_boundary_prediction_forward(  # type: ignore
+            input_ids,
+            patch_lens=patch_lens,
+            blt_config=self.blt_config,
+        )
+        next_token_logits = self.model.inference_forward(  # type: ignore
+            input_ids,
+            logits_to_keep=1,
+            cached_encoder_outputs=cached_encoder_outputs,
+            cache_leftpad=prefill_cache_leftpad,
+            boundary_state=zero_boundary_state,
+            blt_config=self.blt_config,
+        )
+        next_token_probs = F.softmax(next_token_logits, dim=-1)
+        next_token = next_token_logits.argmax(-1)
+
+        torch.cuda.synchronize()
+        prefill_time = time.perf_counter() - start_time - cache_prepare_time
+
+        if prof is not None:
+            prof.step()
+
+        # generate
+        for step in range(n_generate_bytes):
+            boundary_state = one_boundary_state if generate_boundary_mask[step] else zero_boundary_state
+
+            next_token_logits = self.model.inference_forward(  # type: ignore
+                next_token.to(self.device),
+                logits_to_keep=1,
+                boundary_state=boundary_state,
+                blt_config=self.blt_config,
+            )
+            next_token_probs = F.softmax(next_token_logits, dim=-1)
+            next_token = next_token_probs.argmax(-1)
+
+            if prof is not None:
+                prof.step()
+
+        torch.cuda.synchronize()
+        generate_time = time.perf_counter() - start_time - cache_prepare_time - prefill_time
+
+        if prof is not None:
+            prof.__exit__(None, None, None)
+
+        self.free_inference_cache()
+
+        return {
+            "cache_prepare_time": cache_prepare_time,
+            "prefill_time": prefill_time,
+            "generate_time": generate_time,
+        }
+
+    @torch.inference_mode()
     def generate_batch(
         self,
         input_ids: torch.Tensor,
@@ -1064,9 +1254,9 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         if prof is not None:
             prof.__exit__(None, None, None)
 
-        logits = logprobs = None
-        if return_logits and all_logits:
-            logits = torch.cat(all_logits, dim=1)
+        # logits = logprobs = None
+        # if return_logits and all_logits:
+        #     logits = torch.cat(all_logits, dim=1)
 
         if stream:
             RED = "\033[0;31m"

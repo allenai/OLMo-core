@@ -77,11 +77,11 @@ LOCAL_BATCH_SIZE = 64
 EVAL_BATCH_SIZE = 16
 TEACHER_MODE = os.environ.get("TEACHER_MODE", None)
 GLOBAL_MODEL_LEARNING_RATE = os.environ.get("GLOBAL_MODEL_LEARNING_RATE", "")
-LOCAL_MODEL_STYLE = os.environ.get("LOCAL_MODEL_STYLE", "hnet")
+LOCAL_MODEL_STYLE = os.environ.get("LOCAL_MODEL_STYLE", "hnet:xlstm")
 DATA_SOURCE = os.environ.get("DATA_SOURCE", "dclm")
 LR_SCHEDULE = os.environ.get("LR_SCHEDULE", "linear_with_warmup")
-ADD_HASH_EMBEDDINGS = os.environ.get("ADD_HASH_EMBEDDINGS", "true").lower() in {"1", "true", "yes"}
-ADD_EXPANDED_EMBEDDINGS = os.environ.get("ADD_EXPANDED_EMBEDDINGS", "false").lower() in {"1", "true", "yes"}
+ADD_HASH_EMBEDDINGS = os.environ.get("ADD_HASH_EMBEDDINGS", "false").lower() in {"1", "true", "yes"}
+ADD_EXPANDED_EMBEDDINGS = os.environ.get("ADD_EXPANDED_EMBEDDINGS", "true").lower() in {"1", "true", "yes"}
 OLMO_ARCH = os.environ.get("OLMO_ARCH", "olmo2_1B_v2")
 
 if DATA_SOURCE == "dclm":
@@ -92,6 +92,8 @@ elif DATA_SOURCE == "dolma2_code_string":
     _DATA_SOURCES = open(Path(__file__).parent / "data_sources_dolma2_code_string.txt").read().strip().splitlines()
 elif DATA_SOURCE == "dolmino_code_string":
     _DATA_SOURCES = open(Path(__file__).parent / "data_sources_dolmino_code_string.txt").read().strip().splitlines()
+elif DATA_SOURCE == "tulu3":
+    _DATA_SOURCES = open(Path(__file__).parent / "data_sources_tulu3.txt").read().strip().splitlines()
 else:
     raise ValueError(f"Unknown DATA_SOURCE: {DATA_SOURCE}. Must be one of 'dclm', 'dolmino', 'dolma2_code_string', 'dolmino_code_string'.")
 
