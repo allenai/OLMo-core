@@ -1,3 +1,7 @@
+.. _data_mixing:
+
+Data Mixing
+===========
 
 .. note::
    This guide discussions functionality that is specific to text-based data.
