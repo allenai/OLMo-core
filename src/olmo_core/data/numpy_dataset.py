@@ -2419,15 +2419,15 @@ class NumpyDatasetConfig(Config, ABC):
         resolved_label_masks: Optional[List[PathOrStr]] = None
 
         if self.paths is not None:
-            raw_paths = [str(path) for path in self.paths]
+            # raw_paths = [str(path) for path in self.paths]
             if self.expand_glob:
-                paths = self._expand_globs(raw_paths)
+                paths = self._expand_globs(self.paths)
                 if label_mask_paths is not None:
                     mask_patterns = [str(path) for path in label_mask_paths]
                     expanded_masks = self._expand_globs(mask_patterns)
                     resolved_label_masks = [cast(PathOrStr, mask) for mask in expanded_masks]
             else:
-                paths = raw_paths
+                paths = self.paths
                 if label_mask_paths is not None:
                     resolved_label_masks = [cast(PathOrStr, path) for path in label_mask_paths]
         else:
