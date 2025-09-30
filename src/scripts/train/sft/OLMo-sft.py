@@ -259,7 +259,7 @@ class SFTConfig(Config):
         workspace: str,
         budget: str,
         model_name: str,
-        seed: int = 33333,
+        init_seed: int = 33333,
         dataset_path: Optional[str],
     ) -> "SFTConfig":
         root_dir = get_root_dir(cluster)
@@ -420,7 +420,7 @@ class SFTConfig(Config):
                     cancel_check_interval=10,
                 ),
             ),
-            init_seed=seed,
+            init_seed=init_seed,
         ).merge(overrides)
 
         config.dataset = dataset_config
