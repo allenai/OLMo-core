@@ -293,27 +293,7 @@ class SFTConfig(Config):
                 use_flash=True,
                 rope_theta=8 * 10**6,
             )
-        elif model_name == "olmo2.5-7b":
-            model = TransformerConfig.olmo2_7B(vocab_size=tokenizer_config.padded_vocab_size())
-            model.block.attention.sliding_window = SlidingWindowAttentionConfig(
-                force_full_attention_on_first_layer=False,
-                force_full_attention_on_last_layer=True,
-                pattern=[4096, 4096, 4096, -1],
-            )
-            model.block.attention.use_flash = True
-        elif model_name == "olmo2.5-7b-yarn":
-            # @soldni: copied from https://github.com/allenai/olmo-cookbook/blob/fe0d0ef5bbef7ad2caa2c91047d88062cf565df9/src/cookbook/model/config.py#L200-L206
-            model = TransformerConfig.olmo2_7B(vocab_size=tokenizer_config.padded_vocab_size())
-            model.block.attention.sliding_window = SlidingWindowAttentionConfig(
-                force_full_attention_on_first_layer=False,
-                force_full_attention_on_last_layer=True,
-                pattern=[4096, 4096, 4096, -1],
-            )
-            model.block.attention.use_flash = True
-            model.block.attention.rope.scaling = YaRNRoPEScalingConfig(
-                factor=8, beta_fast=32, beta_slow=1, old_context_len=8192
-            )
-        elif model_name == "olmo2.5-7b-yarn-fullonly":
+        elif model_name == "olmo3-7b":
             # @soldni: copied from https://github.com/allenai/olmo-cookbook/blob/fe0d0ef5bbef7ad2caa2c91047d88062cf565df9/src/cookbook/model/config.py#L209-L224
             model = TransformerConfig.olmo2_7B(vocab_size=tokenizer_config.padded_vocab_size())
             model.block.attention.sliding_window = SlidingWindowAttentionConfig(
@@ -336,34 +316,6 @@ class SFTConfig(Config):
                 for i in range(model.n_layers)
                 if model.block.attention.sliding_window.should_use_swa(i, model.n_layers)
             }
-        elif model_name == "olmo2.9-7b":
-            model = TransformerConfig.olmo2_7B(
-                    vocab_size=tokenizer_config.padded_vocab_size(),
-                    n_kv_heads=8,
-                    hidden_size_multiplier=1.2,
-                    hidden_size_multiple_of=1024,
-            )
-            model.block.attention.sliding_window = SlidingWindowAttentionConfig(
-                force_full_attention_on_first_layer=False,
-                force_full_attention_on_last_layer=True,
-                pattern=[4096, 4096, 4096, -1],
-            )
-            model.block.attention.use_flash = True
-            model.block.attention.use_head_qk_norm = True
-        elif model_name == "olmo3-7b":
-            model = TransformerConfig.olmo2_7B(  # Based on https://github.com/allenai/OLMo-core/pull/310/files#diff-03f6a1f5db18fc4be7a243d8168698ae674cd50b2866253bcdadba5d48590b3dR48
-                vocab_size=tokenizer_config.padded_vocab_size(),
-                n_kv_heads=8,
-                hidden_size_multiplier=1.2,
-                hidden_size_multiple_of=1024,
-            )
-            model.block.attention.sliding_window = SlidingWindowAttentionConfig(
-                force_full_attention_on_first_layer=False,
-                force_full_attention_on_last_layer=True,
-                pattern=[4096, 4096, 4096, -1],
-            )
-            model.block.attention.use_flash = True
-            model.block.attention.use_head_qk_norm = True
         else:
             raise OLMoConfigurationError(f"Must set a valid model_name: {model_name}")
 
