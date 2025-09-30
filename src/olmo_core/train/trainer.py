@@ -286,8 +286,12 @@ class Trainer:
                 "or set 'FS_LOCAL_RANK' to the global rank for each process."
             )
 
-        # Configure working directory.
-        self.work_dir = Path(self.work_dir)
+        # Validate working directory.
+        if is_url(self.work_dir):
+            raise OLMoConfigurationError(
+                f"Trainer working directory must be a local path, got a URL instead ('{self.work_dir}')."
+            )
+        self.work_dir = Path(normalize_path(self.work_dir))
 
         # Ensure save folder and working directory exist.
         if get_fs_local_rank() == 0:
@@ -655,31 +659,35 @@ class Trainer:
 
         log.info(f"Training for {self.max_steps:,d} steps")
 
-        for callback in self._iter_callbacks():
-            callback.pre_train()
-        self.train_module.pre_train()
-
-        barrier()
-
-        # Quick check if the run has already been canceled.
-        if self.is_canceled:
-            self._shutdown()
-            return
-
         # Install SIGTERM + SIGINT handlers.
         og_sigterm_handler = signal.signal(signal.SIGTERM, self._handle_os_signal)
         og_sigint_handler = signal.signal(signal.SIGINT, self._handle_os_signal)
 
-        # Do a dry-run for compiling and catch OOMs.
-        self._dry_run_batch()
-
         try:
+            for callback in self._iter_callbacks():
+                callback.pre_train()
+            self.train_module.pre_train()
+
+            # Quick check if the run has already been canceled.
+            if self.is_canceled:
+                for callback in self._iter_callbacks():
+                    callback.post_train()
+                self._shutdown()
+                return
+
+            # Do a dry-run for compiling and catch OOMs.
+            self._dry_run_batch()
+
+            # Iterate over epochs until done.
             while not self.training_complete:
                 self._fit_epoch()
         except BaseException as exc:
-            log.error(f"Training failed due to:\n{exc}")
+            self._error = exc
+            log.error(f"Training failed due to:\n{type(exc).__name__}: {exc}")
             for callback in self._iter_callbacks():
                 callback.on_error(exc)
+            for callback in self._iter_callbacks():
+                callback.close()
             raise
         finally:
             # Restore original signal handlers.
@@ -695,6 +703,8 @@ class Trainer:
 
     def _shutdown(self):
         self._log_metrics()
+        for callback in self._iter_callbacks():
+            callback.close()
         if self._multi_thread_pool is not None:
             self._multi_thread_pool.shutdown(wait=True, cancel_futures=False)
             self._multi_thread_pool = None
@@ -765,7 +775,13 @@ class Trainer:
                 "were saved with a different world size."
             )
 
-    def load_checkpoint(self, dir: PathOrStr, *, load_trainer_state: Optional[bool] = None):
+    def load_checkpoint(
+        self,
+        dir: PathOrStr,
+        *,
+        load_trainer_state: Optional[bool] = None,
+        load_optim_state: Optional[bool] = None,
+    ):
         """
         Load a checkpoint.
 
@@ -773,7 +789,8 @@ class Trainer:
             :meth:`fit()` may call this method automatically depending on the :data:`load_strategy`.
 
         :param dir: The path/URL to a checkpoint or a folder of checkpoints.
-        :param load_trainer_state: Load trainer state.
+        :param load_trainer_state: Load trainer state (data loader state, RNG states, and other bookkeeping).
+        :param load_optim_state: Load optimizer state in the train module.
         """
         dir = normalize_path(dir)
 
@@ -798,6 +815,7 @@ class Trainer:
             dir,
             self.train_module,
             load_trainer_state=load_trainer_state,
+            load_optim_state=load_optim_state,
         )
         if trainer_state is not None:
             self.load_state_dict(cast(TrainerStateDict, trainer_state))
@@ -809,7 +827,11 @@ class Trainer:
         log.info("Checkpoint successfully loaded")
 
     def maybe_load_checkpoint(
-        self, dir: PathOrStr, *, load_trainer_state: Optional[bool] = None
+        self,
+        dir: Optional[PathOrStr] = None,
+        *,
+        load_trainer_state: Optional[bool] = None,
+        load_optim_state: Optional[bool] = None,
     ) -> bool:
         """
         Like :meth:`load_checkpoint()` but is a no-op if there is no checkpoint in the ``dir`` provided.
@@ -819,12 +841,18 @@ class Trainer:
 
         :returns: If a checkpoint was loaded.
         """
+        if dir is None:
+            dir = self.save_folder
         should_load: bool = True
         if get_rank() == 0:
             should_load = self.checkpointer.contains_checkpoint(dir)
         should_load = scatter_object(should_load)
         if should_load:
-            self.load_checkpoint(dir, load_trainer_state=load_trainer_state)
+            self.load_checkpoint(
+                dir,
+                load_trainer_state=load_trainer_state,
+                load_optim_state=load_optim_state,
+            )
             assert self.checkpoint_loaded
             return True
         else:
@@ -998,6 +1026,9 @@ class Trainer:
         return target
 
     def add_callback(self, name: str, callback: Callback):
+        """
+        Add a callback to the trainer.
+        """
         if name in self.callbacks:
             raise OLMoConfigurationError(f"A callback with name '{name}' already exists!")
         callback.trainer = self

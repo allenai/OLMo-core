@@ -18,6 +18,7 @@ from olmo_core.data import (
     DataMixBase,
     NumpyDataLoaderConfig,
     NumpyDatasetConfig,
+    NumpyFSLDatasetConfig,
     TokenizerConfig,
     TokenizerName,
 )
@@ -58,6 +59,8 @@ from olmo_core.train.train_module import (
 from olmo_core.utils import prepare_cli_environment, seed_all
 
 log = logging.getLogger(__name__)
+
+SEQUENCE_LENGTH = 4096
 
 
 class AnnealingDataMix(DataMixBase):
@@ -154,11 +157,11 @@ class AnnealingConfig(Config):
                 nccl_debug=False,
             ),
             model=TransformerConfig.olmo2_32B(vocab_size=tokenizer_config.padded_vocab_size()),
-            dataset=NumpyDatasetConfig.from_data_mix(
+            dataset=NumpyFSLDatasetConfig.from_data_mix(
                 AnnealingDataMix.dolmino100,
                 tokenizer=tokenizer_config,
                 mix_base_dir=root_dir,
-                sequence_length=4096,
+                sequence_length=SEQUENCE_LENGTH,
                 work_dir=get_work_dir(root_dir),
             ),
             data_loader=NumpyDataLoaderConfig(
@@ -167,8 +170,8 @@ class AnnealingConfig(Config):
                 num_workers=4,
             ),
             train_module=TransformerTrainModuleConfig(
-                rank_microbatch_size=2 * 4096,  # NOTE: again this is specified in tokens.
-                max_sequence_length=4096,
+                rank_microbatch_size=2 * 4096,  # NOTE: this is specified in TOKENS, not instances.
+                max_sequence_length=SEQUENCE_LENGTH,
                 z_loss_multiplier=1e-5,
                 compile_model=True,
                 optim=SkipStepAdamWConfig(
@@ -364,7 +367,7 @@ Anneal the 32B model.
 [b magenta]dry_run:[/]     Print the config for debugging.
 
 [b]Examples[/]
-$ [i]python {sys.argv[0]} launch run01 gs://ai2-llm/checkpoints/peteish32/step419000 ai2/jupiter-cirrascale-2 --launch.num_nodes=2[/]
+$ [i]python {sys.argv[0]} launch run01 gs://ai2-llm/checkpoints/peteish32/step419000 ai2/jupiter --launch.num_nodes=2[/]
 """.strip()
 
     # Parse command line arguments.
@@ -401,9 +404,7 @@ $ [i]python {sys.argv[0]} launch run01 gs://ai2-llm/checkpoints/peteish32/step41
     elif cmd == "launch":
         config.launch.launch(follow=True)
     elif cmd == "train":
-        try:
-            train(checkpoint, config)
-        finally:
-            teardown_training_environment()
+        train(checkpoint, config)
+        teardown_training_environment()
     else:
         raise NotImplementedError(cmd)

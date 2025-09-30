@@ -1,10 +1,11 @@
 import logging
+import math
 from itertools import chain
 from pathlib import Path
 
+import numpy as np
 import pytest
 
-from olmo_core.data import NumpyDatasetDType
 from olmo_core.data.source_mixture import (
     SourceMixtureConfig,
     SourceMixtureDataset,
@@ -39,22 +40,31 @@ def test_source_mixture_config(tmp_path: Path, caplog, capsys):
     ]
 
     max_tokens = 5_000_000
+    sequence_length = 1024
+    global_batch_size = 1024 * 32
 
     config = SourceMixtureDatasetConfig(
-        max_tokens=max_tokens,
+        requested_tokens=max_tokens,
         source_configs=source_configs,
-        dtype=NumpyDatasetDType.uint32,
-        sequence_length=1024,
         quiet=True,
         render_tables=True,
+        global_batch_size=global_batch_size,
     )
 
     # NOTE: We need to disable capsys so we can override log capture as
     # we want to see the rendered tables in the case
     with capsys.disabled(), caplog.at_level(logging.DEBUG):
         config.validate()
-        mixture = config.build()
+        mixture = config.build(npdtype=np.uint32, sequence_length=sequence_length)
         assert isinstance(mixture, SourceMixtureDataset)
+
+        requested_instances = math.ceil(max_tokens / global_batch_size) * int(
+            global_batch_size / sequence_length
+        )
+        assert (
+            sum([tokens // sequence_length for _, tokens in mixture.to_index().items()])
+            == requested_instances
+        ), f"Expected {requested_instances} instances, but got {sum([tokens // sequence_length for _, tokens in mixture.to_index().items()])}"
         #  print(caplog.text)  # uncomment if you want to see the table
 
 
@@ -80,12 +90,11 @@ def test_dataset_mixture_config_validation():
     ]
 
     config = SourceMixtureDatasetConfig(
-        max_tokens=1000,
+        requested_tokens=1000,
         source_configs=source_configs,
-        dtype=NumpyDatasetDType.uint32,
-        sequence_length=1024,
         quiet=True,
         render_tables=False,
+        global_batch_size=1024 * 32,
     )
     config.validate()
 
@@ -95,12 +104,11 @@ def test_dataset_mixture_config_validation():
     ]
 
     config_invalid = SourceMixtureDatasetConfig(
-        max_tokens=1000,
+        requested_tokens=1000,
         source_configs=source_configs_invalid,
-        dtype=NumpyDatasetDType.uint32,
-        sequence_length=1024,
         quiet=True,
         render_tables=False,
+        global_batch_size=1024 * 32,
     )
 
     with pytest.raises(OLMoConfigurationError):
@@ -131,18 +139,27 @@ def test_dataset_mixture_build(tmp_path: Path):
     ]
 
     max_tokens = 5_000_000
+    sequence_length = 1024
+    global_batch_size = sequence_length * 32
 
     config = SourceMixtureDatasetConfig(
-        max_tokens=max_tokens,
+        requested_tokens=max_tokens,
         source_configs=source_configs,
-        dtype=NumpyDatasetDType.uint32,
-        sequence_length=1024,
         quiet=True,
         render_tables=False,
+        global_batch_size=global_batch_size,
     )
 
-    mixture = config.build()
+    mixture = config.build(npdtype=np.uint32, sequence_length=sequence_length)
     assert isinstance(mixture, SourceMixtureDataset)
+
+    requested_instances = math.ceil(max_tokens / global_batch_size) * int(
+        global_batch_size / sequence_length
+    )
+    assert (
+        sum([tokens // sequence_length for _, tokens in mixture.to_index().items()])
+        == requested_instances
+    ), f"Expected {requested_instances} instances, but got {sum([tokens // sequence_length for _, tokens in mixture.to_index().items()])}"
 
 
 def test_dataset_mixture_build_insufficient_source_data(tmp_path: Path):
@@ -170,17 +187,16 @@ def test_dataset_mixture_build_insufficient_source_data(tmp_path: Path):
     max_tokens = 5_000_000
 
     config = SourceMixtureDatasetConfig(
-        max_tokens=max_tokens,
+        requested_tokens=max_tokens,
         source_configs=source_configs,
-        dtype=NumpyDatasetDType.uint32,
-        sequence_length=1024,
         quiet=True,
         render_tables=False,
+        global_batch_size=1024 * 32,
     )
 
     # Should raise exception because the target ratio for source 1 @50% (2.5M) is infeasible without repetition (default max_repetition_ratio=1)
     with pytest.raises(OLMoConfigurationError):
-        config.build()
+        config.build(npdtype=np.uint32, sequence_length=1024)
 
 
 def test_dataset_mixture_build_with_repetition(tmp_path: Path):
@@ -213,17 +229,19 @@ def test_dataset_mixture_build_with_repetition(tmp_path: Path):
     ]
 
     max_tokens = 5_000_000
+    sequence_length = 1024
+    global_batch_size = sequence_length * 32
 
     config = SourceMixtureDatasetConfig(
-        max_tokens=max_tokens,
+        requested_tokens=max_tokens,
         source_configs=source_configs,
-        dtype=NumpyDatasetDType.uint32,
-        sequence_length=1024,
         quiet=True,
         render_tables=False,
+        global_batch_size=global_batch_size,
     )
 
-    mixture = config.build()
+    mixture = config.build(npdtype=np.uint32, sequence_length=sequence_length)
+
     sources = [source for source in mixture.sources]
     all_paths = []
     for source in sources:
@@ -231,7 +249,16 @@ def test_dataset_mixture_build_with_repetition(tmp_path: Path):
 
     total_tokens = sum([item.tokens for item in all_paths])
     assert isinstance(mixture, SourceMixtureDataset)
-    assert total_tokens == 5_000_000
+
+    requested_instances = math.ceil(max_tokens / global_batch_size) * int(
+        global_batch_size / sequence_length
+    )
+    assert (
+        sum([tokens // sequence_length for _, tokens in mixture.to_index().items()])
+        == requested_instances
+    ), f"Expected {requested_instances} instances, but got {sum([tokens // sequence_length for _, tokens in mixture.to_index().items()])}"
+
+    assert total_tokens == 5013504
 
 
 def test_dataset_mixture_build_insufficient_source_max_fraction(tmp_path: Path):
@@ -263,18 +290,17 @@ def test_dataset_mixture_build_insufficient_source_max_fraction(tmp_path: Path):
     max_tokens = len(list(chain(*source_paths.values()))) * 1_000_000
 
     config = SourceMixtureDatasetConfig(
-        max_tokens=max_tokens,
+        requested_tokens=max_tokens,
         source_configs=source_configs,
-        dtype=NumpyDatasetDType.uint32,
-        sequence_length=1024,
         quiet=True,
         render_tables=False,
+        global_batch_size=1024 * 32,
     )
 
     # Should raise exception because the target ratio for source 1 is infeasible because
     # we limit usage to 10% of the source
     with pytest.raises(OLMoConfigurationError):
-        config.build()
+        config.build(npdtype=np.uint32, sequence_length=1024)
 
 
 def test_dataset_mixture_build_duplicate_paths(tmp_path: Path):
@@ -305,21 +331,29 @@ def test_dataset_mixture_build_duplicate_paths(tmp_path: Path):
     ]
 
     max_tokens = 3_000_000
+    sequence_length = 1024
+    global_batch_size = sequence_length * 32
 
     config = SourceMixtureDatasetConfig(
-        max_tokens=max_tokens,
+        requested_tokens=max_tokens,
         source_configs=source_configs,
-        dtype=NumpyDatasetDType.uint32,
-        sequence_length=1024,
         quiet=True,
         render_tables=False,
+        global_batch_size=global_batch_size,
     )
 
     expected = [str(sources["1"][0][0])] + [str(item[0]) for item in list(chain(*sources.values()))]
-    mixture = config.build()
+    mixture = config.build(npdtype=np.uint32, sequence_length=sequence_length)
     index = mixture.to_index()
     paths = mixture.to_paths()
     assert paths == expected
-    assert len(index) == 6
+    assert len(index) == 6, "Expected 6 unique paths in the index, but got {}".format(len(index))
     assert isinstance(mixture, SourceMixtureDataset)
-    assert len(mixture.sources) == 3
+    assert len(mixture.sources) == 3, "Expected 3 sources, but got {}".format(len(mixture.sources))
+    requested_instances = math.ceil(max_tokens / global_batch_size) * int(
+        global_batch_size / sequence_length
+    )
+    assert (
+        sum([tokens // sequence_length for _, tokens in mixture.to_index().items()])
+        == requested_instances
+    ), f"Expected {requested_instances} instances, but got {sum([tokens // sequence_length for _, tokens in mixture.to_index().items()])}"
