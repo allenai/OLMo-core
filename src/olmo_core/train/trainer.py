@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
 from typing import (
+    TYPE_CHECKING,
     Any,
     Callable,
     Dict,
@@ -66,8 +67,10 @@ from .common import (
 from .train_module import TrainModule
 from .utils import EnvRngStates, check_metrics_consistent, move_metrics, reduce_metrics
 
-log = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    from .config import CkptLoadConfig
 
+log = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
@@ -159,17 +162,12 @@ class Trainer:
     Whether to overwrite existing files/checkpoints in the :data:`save_folder`.
     """
 
-    load_path: Optional[PathOrStr] = None
+    load_config: Optional[CkptLoadConfig] = None
     """
-    An alternative location to load a checkpoint from if no checkpoint is found in the current :data:`save_folder`.
+    Configuration options for loading a checkpoint prior to training. Once training has started,
+    checkpoints are always saved and loaded from the :data:`save_folder` if available.
 
-    This can be set to a checkpoint path or the path to a folder of checkpoints such as the :data:`save_folder`
-    from a different run.
-    """
-
-    load_strategy: LoadStrategy = LoadStrategy.if_available
-    """
-    The strategy for loading a checkpoint prior to training.
+    A :data:`load_config` of :data:`None` means no checkpoint loading will be attempted.
     """
 
     metrics_collect_interval: int = 5
@@ -275,8 +273,8 @@ class Trainer:
 
     def __post_init__(self):
         self.save_folder = normalize_path(self.save_folder)
-        if self.load_path is not None:
-            self.load_path = normalize_path(self.load_path)
+        if self.load_config is not None:
+            self.load_config.load_path = normalize_path(self.load_config.load_path)
 
         # If save folder is a local directory, make sure we're using a shared filesystem.
         if not is_url(self.save_folder) and get_fs_local_rank() != get_rank():
@@ -608,8 +606,7 @@ class Trainer:
 
     def fit(self):
         """
-        Fit the model, potentially loading a checkpoint first depending on the
-        :data:`load_strategy`.
+        Fit the model, potentially loading a checkpoint first.
         """
         self._canceled = False
         self._cancel_reason = None
@@ -619,30 +616,35 @@ class Trainer:
         if (
             not self.no_checkpoints
             and not self.checkpoint_loaded
-            and self.load_strategy != LoadStrategy.never
+            and self.load_config is not None
+            and self.load_config.load_strategy != LoadStrategy.never
         ):
             # Try loading from the save folder first.
             self.maybe_load_checkpoint(self.save_folder)
 
             # Then fallback to the load path, if provided.
-            if self.load_path is not None:
+            if self.load_config.load_path is not None:
                 if not self.checkpoint_loaded:
-                    self.maybe_load_checkpoint(self.load_path)
+                    self.maybe_load_checkpoint(
+                        dir=self.load_config.load_path,
+                        load_trainer_state=self.load_config.load_trainer_state,
+                        load_optim_state=self.load_config.load_optim_state,
+                    )
                 else:
                     log.warning(
-                        f"Ignoring load path ('{self.load_path}') since checkpoint was found in save folder"
+                        f"Ignoring load path ('{self.load_config.load_path}') since checkpoint was found in save folder"
                     )
 
             if not self.checkpoint_loaded:
-                if self.load_strategy == LoadStrategy.always:
+                if self.load_config.load_strategy == LoadStrategy.always:
                     raise FileNotFoundError(
                         f"No checkpoint found in save folder ('{self.save_folder}') or "
-                        f"load path ('{self.load_path}')"
+                        f"load path ('{self.load_config.load_path}')"
                     )
                 else:
                     log.warning(
                         f"No checkpoint found in save folder ('{self.save_folder}') or "
-                        f"load path ('{self.load_path}'), will train from scratch..."
+                        f"load path ('{self.load_config.load_path}'), will train from scratch..."
                     )
 
         barrier()
@@ -655,7 +657,7 @@ class Trainer:
 
         log.info("Callback order:")
         for i, callback_name in enumerate(self.callbacks.keys()):
-            log.info(f"  - Callback {i+1}: {callback_name}")
+            log.info(f"  - Callback {i + 1}: {callback_name}")
 
         log.info(f"Training for {self.max_steps:,d} steps")
 

@@ -23,6 +23,40 @@ from .trainer import Trainer
 
 
 @dataclass
+class CkptLoadConfig(Config):
+    """
+    Configuration for loading a checkpoint into a model prior to commencing training.
+    """
+
+    load_path: str
+    """
+    An alternative location to load a checkpoint from if no checkpoint is found in the Trainer's :data:`save_folder`.
+
+    This can be set to a checkpoint path or the path to a folder of checkpoints such as the :data:`save_folder`
+    from a different run.
+    """
+
+    load_strategy: LoadStrategy = LoadStrategy.if_available
+    """
+    The strategy for loading a checkpoint prior to training.
+    """
+
+    load_trainer_state: Optional[bool] = None
+    """
+    Whether to load the trainer state ((including data loader state) ) from the checkpoint specified
+    by :data:`load_path`. If :data:`load_trainer_state` is :data:`None`, it will attempt to load the
+    trainer state, but will not fail if no trainer state is found.
+    """
+
+    load_optim_state: Optional[bool] = None
+    """
+    Whether to load the optimizer state from the checkpoint specified by :data:`load_path`. If
+    :data:`load_optim_state` is :data:`None`, it will attempt to load the optimizer state, but will
+    not fail if no optimizer state is found.
+    """
+
+
+@dataclass
 class TrainerConfig(Config):
     """
     A configuration class for easily building :class:`Trainer` instances.
@@ -34,8 +68,7 @@ class TrainerConfig(Config):
     save_folder: str
 
     work_dir: Optional[str] = None
-    load_path: Optional[str] = None
-    load_strategy: LoadStrategy = LoadStrategy.if_available
+    load_config: Optional[CkptLoadConfig] = None
     checkpointer: CheckpointerConfig = field(default_factory=CheckpointerConfig)
 
     device: Optional[str] = None
