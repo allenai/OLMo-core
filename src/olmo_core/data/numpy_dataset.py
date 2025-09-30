@@ -63,6 +63,7 @@ __all__ = [
     "NumpyDatasetBase",
     "NumpyFSLDatasetBase",
     "NumpyFSLDataset",
+    "NumpyFSLDatasetMixture",
     "NumpyPaddedFSLDataset",
     "NumpyPackedFSLDataset",
     "NumpyInterleavedFSLDataset",
@@ -2467,9 +2468,10 @@ class NumpyDatasetConfig(Config, ABC):
             If any of the globs don't expand to any matches a :class:`FileNotFoundError`
             error is raised
 
+        :param glob_paths: The glob patterns.
         :returns: A new dataset config.
         """
-        return cls(paths=list(glob_paths), expand_glob=True, **kwargs)
+        return cls(paths=list(glob_paths), mix=None, expand_glob=True, **kwargs)
 
     @classmethod
     def from_data_mix(
@@ -2484,14 +2486,13 @@ class NumpyDatasetConfig(Config, ABC):
 
         :param mix: The data mix.
         :param tokenizer: The tokenizer config.
-
         :returns: A new dataset config.
         """
         if tokenizer.identifier is None:
             raise OLMoConfigurationError(
                 "Missing tokenizer identifier required to construct data mix"
             )
-        return cls(mix=mix, tokenizer=tokenizer, **kwargs)
+        return cls(mix=mix, paths=None, tokenizer=tokenizer, **kwargs)
 
 
 @dataclass
@@ -2510,10 +2511,6 @@ class NumpyFSLDatasetConfig(NumpyDatasetConfig):
     token boundaries and cache files deterministic across warm-up stages. Leave ``None`` if you
     won't rebuild at a larger length.
     """
-    source_mixture_config: Optional[SourceMixtureDatasetConfig] = None
-    """
-    A source mixture dataset config. If set, the dataset will be built from a mixture of sources.
-    """
     generate_doc_lengths: bool = False
     """
     Include individual document lengths in the instances returned from
@@ -2523,6 +2520,22 @@ class NumpyFSLDatasetConfig(NumpyDatasetConfig):
     """
     The paths/URLs to numpy bool files indicating which tokens should be masked.
     """
+    source_mixture_config: Optional[SourceMixtureDatasetConfig] = None
+    """
+    A source mixture dataset config. If set, the dataset will be built from a mixture of sources.
+    """
+
+    @classmethod
+    def from_src_mix(
+        cls, src_mix: SourceMixtureDatasetConfig, *, tokenizer: TokenizerConfig, **kwargs: Any
+    ) -> NumpyFSLDatasetConfig:
+        """
+        Initialize a dataset config from a custom fine-grained data mix.
+
+        :param src_mix: The fine-grained SourceMixtureDatasetConfig.
+        :returns: A new dataset config.
+        """
+        return cls(source_mixture_config=src_mix, paths=None, mix=None, **kwargs)
 
     def validate(self):
         if self.sequence_length <= 0:
@@ -2541,10 +2554,13 @@ class NumpyFSLDatasetConfig(NumpyDatasetConfig):
         self.validate()
 
         if self.source_mixture_config is not None:
-            mixture = self.source_mixture_config.build()
+            mixture = self.source_mixture_config.build(
+                npdtype=self.get_dtype(), sequence_length=self.sequence_length
+            )
             dataset = NumpyFSLDatasetMixture(
                 *mixture.to_paths(),
-                seed=mixture.seed,
+                seed=self.source_mixture_config.seed,
+                path_offset_index=mixture.to_index(),
                 sequence_length=self.sequence_length,
                 max_target_sequence_length=self.max_target_sequence_length,
                 pad_token_id=self.tokenizer.pad_token_id,
@@ -2555,7 +2571,6 @@ class NumpyFSLDatasetConfig(NumpyDatasetConfig):
                 include_instance_metadata=self.include_instance_metadata,
                 generate_doc_lengths=self.generate_doc_lengths,
                 bos_token_id=self.tokenizer.bos_token_id,
-                path_offset_index=mixture.to_index(),
                 instance_filter_config=self.instance_filter_config,
             )
             return self._finalize(dataset)
