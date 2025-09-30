@@ -18,6 +18,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, TypeVar, Union
 
 import rich
 import torch
+import torch.distributed as dist
 from rich.console import Console, ConsoleRenderable
 from rich.highlighter import NullHighlighter
 from rich.text import Text
@@ -100,7 +101,7 @@ def move_to_device(o: T, device: torch.device, non_blocking: Optional[bool] = No
     :param device: The device to move to.
     """
     if non_blocking is None:
-        non_blocking = device.type != "cpu"
+        non_blocking = device.type not in ("cpu", "mps")
     if isinstance(o, torch.Tensor):
         return o.to(device, non_blocking=non_blocking)  # type: ignore[return-value]
     elif isinstance(o, dict):
@@ -127,7 +128,22 @@ def get_default_device() -> torch.device:
     """
     Get the default device.
     """
-    if torch.cuda.is_available() and torch.cuda.is_initialized():
+
+    from .distributed.utils import (
+        backend_supports_cpu,
+        backend_supports_cuda,
+        is_distributed,
+    )
+
+    if is_distributed():
+        backend = dist.get_backend()
+        if backend_supports_cuda(backend):
+            return torch.device("cuda")
+        elif backend_supports_cpu(backend):
+            return torch.device("cpu")
+        else:
+            raise NotImplementedError(backend)
+    elif torch.cuda.is_available() and torch.cuda.is_initialized():
         return torch.device("cuda")
     elif torch.mps.is_available():
         return torch.device("mps")

@@ -22,12 +22,8 @@ from olmo_core.distributed.checkpoint import (
     save_state_dict,
     unshard_checkpoint,
 )
-from olmo_core.testing import (
-    BACKENDS,
-    get_default_device,
-    requires_multi_gpu,
-    run_distributed_test,
-)
+from olmo_core.testing import BACKENDS, requires_multi_gpu, run_distributed_test
+from olmo_core.utils import get_default_device
 
 
 def run_save_and_load_torch_fsdp_model(dir, model_factory, model_data_factory, use_orig_params):

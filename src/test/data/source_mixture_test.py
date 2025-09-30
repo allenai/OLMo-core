@@ -3,9 +3,9 @@ import math
 from itertools import chain
 from pathlib import Path
 
+import numpy as np
 import pytest
 
-from olmo_core.data import NumpyDatasetDType
 from olmo_core.data.source_mixture import (
     SourceMixtureConfig,
     SourceMixtureDataset,
@@ -44,10 +44,8 @@ def test_source_mixture_config(tmp_path: Path, caplog, capsys):
     global_batch_size = 1024 * 32
 
     config = SourceMixtureDatasetConfig(
-        max_tokens=max_tokens,
+        requested_tokens=max_tokens,
         source_configs=source_configs,
-        dtype=NumpyDatasetDType.uint32,
-        sequence_length=sequence_length,
         quiet=True,
         render_tables=True,
         global_batch_size=global_batch_size,
@@ -57,7 +55,7 @@ def test_source_mixture_config(tmp_path: Path, caplog, capsys):
     # we want to see the rendered tables in the case
     with capsys.disabled(), caplog.at_level(logging.DEBUG):
         config.validate()
-        mixture = config.build()
+        mixture = config.build(npdtype=np.uint32, sequence_length=sequence_length)
         assert isinstance(mixture, SourceMixtureDataset)
 
         requested_instances = math.ceil(max_tokens / global_batch_size) * int(
@@ -92,10 +90,8 @@ def test_dataset_mixture_config_validation():
     ]
 
     config = SourceMixtureDatasetConfig(
-        max_tokens=1000,
+        requested_tokens=1000,
         source_configs=source_configs,
-        dtype=NumpyDatasetDType.uint32,
-        sequence_length=1024,
         quiet=True,
         render_tables=False,
         global_batch_size=1024 * 32,
@@ -108,10 +104,8 @@ def test_dataset_mixture_config_validation():
     ]
 
     config_invalid = SourceMixtureDatasetConfig(
-        max_tokens=1000,
+        requested_tokens=1000,
         source_configs=source_configs_invalid,
-        dtype=NumpyDatasetDType.uint32,
-        sequence_length=1024,
         quiet=True,
         render_tables=False,
         global_batch_size=1024 * 32,
@@ -149,16 +143,14 @@ def test_dataset_mixture_build(tmp_path: Path):
     global_batch_size = sequence_length * 32
 
     config = SourceMixtureDatasetConfig(
-        max_tokens=max_tokens,
+        requested_tokens=max_tokens,
         source_configs=source_configs,
-        dtype=NumpyDatasetDType.uint32,
-        sequence_length=sequence_length,
         quiet=True,
         render_tables=False,
         global_batch_size=global_batch_size,
     )
 
-    mixture = config.build()
+    mixture = config.build(npdtype=np.uint32, sequence_length=sequence_length)
     assert isinstance(mixture, SourceMixtureDataset)
 
     requested_instances = math.ceil(max_tokens / global_batch_size) * int(
@@ -195,10 +187,8 @@ def test_dataset_mixture_build_insufficient_source_data(tmp_path: Path):
     max_tokens = 5_000_000
 
     config = SourceMixtureDatasetConfig(
-        max_tokens=max_tokens,
+        requested_tokens=max_tokens,
         source_configs=source_configs,
-        dtype=NumpyDatasetDType.uint32,
-        sequence_length=1024,
         quiet=True,
         render_tables=False,
         global_batch_size=1024 * 32,
@@ -206,7 +196,7 @@ def test_dataset_mixture_build_insufficient_source_data(tmp_path: Path):
 
     # Should raise exception because the target ratio for source 1 @50% (2.5M) is infeasible without repetition (default max_repetition_ratio=1)
     with pytest.raises(OLMoConfigurationError):
-        config.build()
+        config.build(npdtype=np.uint32, sequence_length=1024)
 
 
 def test_dataset_mixture_build_with_repetition(tmp_path: Path):
@@ -243,16 +233,15 @@ def test_dataset_mixture_build_with_repetition(tmp_path: Path):
     global_batch_size = sequence_length * 32
 
     config = SourceMixtureDatasetConfig(
-        max_tokens=max_tokens,
+        requested_tokens=max_tokens,
         source_configs=source_configs,
-        dtype=NumpyDatasetDType.uint32,
-        sequence_length=sequence_length,
         quiet=True,
         render_tables=False,
         global_batch_size=global_batch_size,
     )
 
-    mixture = config.build()
+    mixture = config.build(npdtype=np.uint32, sequence_length=sequence_length)
+
     sources = [source for source in mixture.sources]
     all_paths = []
     for source in sources:
@@ -301,10 +290,8 @@ def test_dataset_mixture_build_insufficient_source_max_fraction(tmp_path: Path):
     max_tokens = len(list(chain(*source_paths.values()))) * 1_000_000
 
     config = SourceMixtureDatasetConfig(
-        max_tokens=max_tokens,
+        requested_tokens=max_tokens,
         source_configs=source_configs,
-        dtype=NumpyDatasetDType.uint32,
-        sequence_length=1024,
         quiet=True,
         render_tables=False,
         global_batch_size=1024 * 32,
@@ -313,7 +300,7 @@ def test_dataset_mixture_build_insufficient_source_max_fraction(tmp_path: Path):
     # Should raise exception because the target ratio for source 1 is infeasible because
     # we limit usage to 10% of the source
     with pytest.raises(OLMoConfigurationError):
-        config.build()
+        config.build(npdtype=np.uint32, sequence_length=1024)
 
 
 def test_dataset_mixture_build_duplicate_paths(tmp_path: Path):
@@ -348,17 +335,15 @@ def test_dataset_mixture_build_duplicate_paths(tmp_path: Path):
     global_batch_size = sequence_length * 32
 
     config = SourceMixtureDatasetConfig(
-        max_tokens=max_tokens,
+        requested_tokens=max_tokens,
         source_configs=source_configs,
-        dtype=NumpyDatasetDType.uint32,
-        sequence_length=sequence_length,
         quiet=True,
         render_tables=False,
         global_batch_size=global_batch_size,
     )
 
     expected = [str(sources["1"][0][0])] + [str(item[0]) for item in list(chain(*sources.values()))]
-    mixture = config.build()
+    mixture = config.build(npdtype=np.uint32, sequence_length=sequence_length)
     index = mixture.to_index()
     paths = mixture.to_paths()
     assert paths == expected
