@@ -37,7 +37,7 @@ class TransformerBLTTrainModule(TransformerTrainModule):
         # this has had the byte collator + ByteFSLDataset applied, no need to patch
         if "patch_lens" in batch:
             # apply gradual boundary compression - only during training
-            if self.blt_config.gradual_boundary_compression_kind == "bpe":
+            if self.blt_config.gradual_boundary_compression_kind in {"bpe", "entropy", "cross_entropy"}:
                 if "bpe_merges" not in batch:
                     raise ValueError("To use bpe gradual boundary compression, bpe_merges must be computed and included in the batch.")
 

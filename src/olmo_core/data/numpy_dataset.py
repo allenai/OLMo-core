@@ -678,8 +678,9 @@ def prepare_byte_example(
     tokenizer: ByteTokenizer,
     byte_sequence_length,
     pad_token_id,
-    compute_bpe_merges=False,
+    compute_merge_kind=None,
     fim_middle_id=None,
+    **kwargs,
 ):
     if fim_middle_id is not None and fim_middle_id in item["input_ids"]:
         # remove FIM middle and retokenize
@@ -765,9 +766,27 @@ def prepare_byte_example(
     item["patch_lens"] = patch_lengths
     item["space_patch_lens"] = space_patch_lengths
 
-    if compute_bpe_merges:
+    if compute_merge_kind == "bpe":
         # hardcode max compression to 0.5 for now
         item["bpe_merges"] = blt_utils.compute_bpe_merges(original_input_ids.tolist(), max_compression_ratio=0.5)
+    elif compute_merge_kind in {"entropy", "cross_entropy"}:
+        with torch.inference_mode():
+            logits = kwargs["entropy_model"](original_input_ids.unsqueeze(0)).squeeze(0)
+            logprobs = F.log_softmax(logits.float(), dim=-1)
+            
+            if compute_merge_kind == "entropy":
+                # neg entropy
+                scores = torch.sum(torch.exp(logprobs) * logprobs, -1)[:-1]
+            else:
+                # main path logprobs / cross entropy
+                scores = torch.gather(logprobs[:-1], -1, original_input_ids[1:].unsqueeze(-1)).squeeze(-1)
+
+            indices = torch.argsort(scores, descending=True)
+            offsets = (
+                (indices[:, None] > indices[None, :]) 
+                & (np.arange(len(indices))[:, None] > np.arange(len(indices))[None, :])
+            ).sum(axis=1)
+            item["bpe_merges"] = indices - offsets
 
     return item
 
@@ -793,13 +812,16 @@ class NumpyByteFSLDataset(NumpyFSLDataset):
         # manually remove fim middle ID and retokenize - not needed for byte level models since
         # no tokenization bias.
         self.fim_middle_id = self.tokenizer.hf_tokenizer.get_vocab()["<|fim_middle|>"]
-        self.compute_bpe_merges = False
+        self.compute_merge_kind = None
 
-    def enable_compute_bpe_merges(self):
-        self.compute_bpe_merges = True
-    
-    def disable_compute_bpe_merges(self):
-        self.compute_bpe_merges = False
+    def enable_compute_merges(self, kind, **kwargs):
+        self.compute_merge_kind = kind
+
+        if kind in {"entropy", "cross_entropy"}:
+            self._entropy_model = kwargs["entropy_model"]
+
+    def disable_compute_merges(self):
+        self.compute_merge_kind = None
 
     def _read_chunk_from_array(self, path: PathOrStr, index: int, dtype=None) -> torch.Tensor:
         start_idx = index * self.patch_sequence_length # patch <-> sub/superword sequence length
@@ -830,8 +852,9 @@ class NumpyByteFSLDataset(NumpyFSLDataset):
             self.tokenizer,
             byte_sequence_length=self.byte_sequence_length,
             pad_token_id=self.tokenizer.pad_token_id,
-            compute_bpe_merges=self.compute_bpe_merges,
+            compute_merge_kind=self.compute_merge_kind,
             fim_middle_id=self.fim_middle_id,
+            entropy_model=getattr(self, "_entropy_model", None),
         )
 
     @property

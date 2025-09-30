@@ -71,7 +71,7 @@ from olmo_core.utils import seed_all
 
 NUM_WORKERS = 16
 SEQUENCE_LENGTH = int(os.environ.get("SEQUENCE_LENGTH", 1024))
-QUICK_DEBUG = False
+QUICK_DEBUG = os.environ.get("QUICK_DEBUG", "false").lower() in {"1", "true", "yes"}
 GLOBAL_BATCH_SIZE = 64
 LOCAL_BATCH_SIZE = 64
 EVAL_BATCH_SIZE = 16
@@ -99,6 +99,7 @@ else:
 
 OLMO_CKPT_PATH = os.environ.get("OLMO_CKPT_PATH", "") # for baseline
 STAGE1_CKPT_PATH = os.environ.get("STAGE1_CKPT_PATH", "")
+ENTROPY_CKPT_PATH = os.environ.get("ENTROPY_CKPT_PATH", "/weka/oe-training-default/ai2-llm/checkpoints/dirkg/ladder/checkpoints/baseline-titan-190M-5xC/step36308/model_and_optim")
 DATA_PATHS = ["/weka/oe-training-default/" + x for x in _DATA_SOURCES]
 
 if not os.environ.get("HAS_WEKA"):
@@ -464,8 +465,19 @@ def main(run_name: str, overrides: List[str]):
     dataset = config.dataset.build()
 
     if train_module.blt_config.gradual_boundary_compression_kind == "bpe":  # type: ignore
-        dataset.enable_compute_bpe_merges()  # type: ignore
-    
+        dataset.enable_compute_merges("bpe")  # type: ignore
+    elif train_module.blt_config.gradual_boundary_compression_kind in {"entropy", "cross_entropy"}:  # type: ignore
+        entropy_model_config = TransformerConfig.olmo2_190M(vocab_size=TokenizerConfig.dolma2().padded_vocab_size(), dtype=DType.bfloat16)
+        entropy_model = entropy_model_config.build(init_device="cpu")
+        load_model_and_optim_state(
+            ENTROPY_CKPT_PATH,
+            entropy_model,
+        )
+        dataset.enable_compute_merges(  # type: ignore
+            train_module.blt_config.gradual_boundary_compression_kind, # type: ignore
+            entropy_model=entropy_model
+        )
+
     data_loader = config.data_loader.build(
         dataset,
         collator=ByteDataCollator(pad_token_id=dataset.pad_token_id) if isinstance(dataset, NumpyByteFSLDataset) else None,
