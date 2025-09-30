@@ -1,3 +1,10 @@
+"""
+Configuration helpers for LLM cooking.
+
+Indended to aid those migrating from olmo-cookbook to OLMo-core. Implements the same
+defaults as olmo-cookbook where possible, and even includes some QOL improvements.
+"""
+
 import logging
 import math
 from datetime import datetime
@@ -183,10 +190,3 @@ def estimate_critical_batch_size(
         log.warning(f"Critical batch size {safe_batch_size} capped to {result}")
 
     return result
-
-
-def extract_hparams_from_checkpoint(checkpoint_path: str) -> Dict[str, str]:
-    """
-    Extract hyperparameters from a checkpoint path.
-    """
-    raise NotImplementedError("TODO")

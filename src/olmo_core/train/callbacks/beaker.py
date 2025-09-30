@@ -58,9 +58,6 @@ class BeakerCallback(Callback):
     def client(self, client: "Beaker"):
         self._client = client
 
-    def is_on_beaker(self) -> bool:
-        return BEAKER_EXPERIMENT_ID_ENV_VAR in os.environ
-
     def post_attach(self):
         if self.enabled is None and BEAKER_EXPERIMENT_ID_ENV_VAR in os.environ:
             self.enabled = True

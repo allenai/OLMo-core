@@ -2471,7 +2471,7 @@ class NumpyDatasetConfig(Config, ABC):
         :param glob_paths: The glob patterns.
         :returns: A new dataset config.
         """
-        return cls(paths=list(glob_paths), mix=None, expand_glob=True, **kwargs)
+        return cls(paths=list(glob_paths), mix=None, mix_base_dir=None, expand_glob=True, **kwargs)
 
     @classmethod
     def from_data_mix(
