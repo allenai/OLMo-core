@@ -51,7 +51,6 @@ from .utils import (
     get_doc_lengths_from_indices,
     get_document_lengths,
     get_rng,
-    load_array_slice,
     load_array_slice_into_tensor,
     memmap_to_write,
     pack_documents_into_instances,

@@ -4,10 +4,14 @@ Run the script without any arguments to see usage info. See the README for more 
 """
 
 import argparse
+import fnmatch
 import logging
+import shutil
 import sys
 from dataclasses import dataclass, field
-from typing import List, Optional, cast, Tuple
+from pathlib import Path
+from typing import List, Optional, Tuple, cast
+from urllib.parse import urlparse
 
 from rich import print
 
@@ -28,7 +32,7 @@ from olmo_core.io import list_directory
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.rope import YaRNRoPEScalingConfig
-from olmo_core.nn.transformer import TransformerConfig, TransformerBlockConfig
+from olmo_core.nn.transformer import TransformerBlockConfig, TransformerConfig
 from olmo_core.optim import LinearWithWarmup, SkipStepAdamWConfig
 from olmo_core.train import (
     Duration,
@@ -55,11 +59,6 @@ from olmo_core.train.train_module.transformer.config import (
     TransformerContextParallelConfig,
 )
 from olmo_core.utils import prepare_cli_environment, seed_all
-from pathlib import Path
-import shutil
-from urllib.parse import urlparse
-import fnmatch
-
 
 log = logging.getLogger(__name__)
 
