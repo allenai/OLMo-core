@@ -36,6 +36,8 @@ class TrainerConfig(Config):
     work_dir: Optional[str] = None
     load_path: Optional[str] = None
     load_strategy: LoadStrategy = LoadStrategy.if_available
+    load_optim_state: Optional[bool] = None
+    load_trainer_state: Optional[bool] = None
     checkpointer: CheckpointerConfig = field(default_factory=CheckpointerConfig)
 
     device: Optional[str] = None

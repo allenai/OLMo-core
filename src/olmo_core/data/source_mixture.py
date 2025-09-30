@@ -20,6 +20,7 @@ from olmo_core.io import file_exists, get_file_size, glob_directory
 
 __all__ = [
     "SourceMixtureConfig",
+    "SourceMixtureList",
     "SourceMixtureDatasetConfig",
 ]
 
@@ -102,6 +103,28 @@ class SourceMixtureConfig(Config):
         self._resolved_paths = resolved
         return resolved
 
+@dataclass
+class SourceMixtureList(Config)
+    """
+    A list of source configurations for building a mixture dataset.
+    This class ensures that the target ratios of the sources sum to 1.0.
+
+    The purpose of this class is to make managing sources independent from the details of
+    materializing those sources with SourceMixtureDatasetConfig.build().
+
+    With this separation, we can define a list of sources in a YAML file without also needing to
+    specify parameters like requested_tokens, global_batch_size, or processes.
+    """
+    sources: List[SourceMixtureConfig]
+
+    def validate(self):
+        if not self.sources:
+            raise OLMoConfigurationError("sources must not be empty")
+
+        summed_weights = np.sum([source.target_ratio for source in self.sources])
+
+        if not np.allclose(summed_weights, 1.0):
+            raise OLMoConfigurationError(f"target_ratios must sum to 1.0, got {summed_weights}")
 
 @dataclass
 class SourceTokenDetails:
@@ -206,9 +229,9 @@ class SourceMixtureDatasetConfig(Config):
     4. Generate a mixture that respects repetition and fraction limits
     """
 
-    source_configs: List[SourceMixtureConfig]
+    source_list: SourceMixtureList
     """
-    A list of source configurations.
+    A list of source configurations contained in a SourceMixtureList.
     """
     requested_tokens: int
     """
@@ -236,14 +259,7 @@ class SourceMixtureDatasetConfig(Config):
     def validate(self):
         if self.requested_tokens <= 0:
             raise OLMoConfigurationError("requested_tokens must be > 0")
-
-        if not self.source_configs:
-            raise OLMoConfigurationError("source_configs must not be empty")
-
-        summed_weights = np.sum([source.target_ratio for source in self.source_configs])
-
-        if not np.allclose(summed_weights, 1.0):
-            raise OLMoConfigurationError(f"target_ratios must sum to 1.0, got {summed_weights}")
+        self.source_list.validate()
 
     def build(self, *, npdtype: NumpyUIntTypes, sequence_length: int) -> SourceMixtureDataset:
         self.validate()
@@ -252,10 +268,10 @@ class SourceMixtureDatasetConfig(Config):
 
         log.info("---------------------------------------------------------")
         log.info("Generating a source mixture from configurations:")
-        log.info(self.source_configs)
+        log.info(self.source_list.sources)
 
         # Count the number of tokens available for each source
-        for source_config in self.source_configs:
+        for source_config in self.source_list.sources:
             log.info(f"Counting tokens for source: {source_config.source_name}")
             available_tokens_by_source[source_config.source_name] = self._count_tokens_for_paths(
                 paths=cast(List[PathOrStr], source_config.resolved_paths),
@@ -266,7 +282,7 @@ class SourceMixtureDatasetConfig(Config):
         tokens_details_by_source: List[SourceTokenDetails] = []
 
         # Calculate the number of tokens available and to include for each source
-        for source_config in self.source_configs:
+        for source_config in self.source_list.sources:
             num_for_source = available_tokens_by_source[source_config.source_name]
             needed_for_source = int(self.requested_tokens * source_config.target_ratio)
             max_for_source = int(
@@ -377,7 +393,7 @@ class SourceMixtureDatasetConfig(Config):
 
         original_token_distribution = {
             source_config.source_name: source_config.target_ratio
-            for source_config in self.source_configs
+            for source_config in self.source_list.sources
         }
         for source_name, ratio in original_token_distribution.items():
             diff = np.abs(final_token_distribution.get(source_name, 0) - ratio)

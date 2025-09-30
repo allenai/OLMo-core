@@ -15,6 +15,7 @@ from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
 from olmo_core.internal.common import get_beaker_username
+from olmo_core.io import dir_is_empty
 from olmo_core.optim import OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.optim.scheduler import Scheduler
 from olmo_core.train import Duration, DurationUnit, LoadStrategy, TrainerConfig
@@ -100,10 +101,13 @@ def configure_trainer(
     checkpoint_dir: str,
     work_dir: str,
     load_path: Optional[str] = None,
+    load_trainer_state: Optional[bool] = None,
+    load_optim_state: Optional[bool] = None,
     hard_stop: Optional[Duration] = None,
 ) -> TrainerConfig:
-    # TODO: ensure load_path exists (even on remote) before proceeding
     load_strategy = LoadStrategy.always if load_path else LoadStrategy.if_available
+    if load_path and dir_is_empty(load_path):
+        raise FileNotFoundError(f"{load_path=} was provided, but the directory is empty.")
     trainer_config = TrainerConfig(
         max_duration=max_duration,
         load_path=load_path,
@@ -111,6 +115,8 @@ def configure_trainer(
         work_dir=work_dir,
         hard_stop=hard_stop,
         load_strategy=load_strategy,
+        load_trainer_state=load_trainer_state,
+        load_optim_state=load_optim_state,
         save_overwrite=True,
     )
     return trainer_config

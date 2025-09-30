@@ -1,6 +1,4 @@
-requested_tokens: 100000000000
-global_batch_size: 512 # placeholder
-source_configs:
+sources:
   - source_name: sponge
     target_ratio: 0.05
     paths:

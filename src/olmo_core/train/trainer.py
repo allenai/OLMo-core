@@ -172,6 +172,20 @@ class Trainer:
     The strategy for loading a checkpoint prior to training.
     """
 
+    load_trainer_state: Optional[bool] = None
+    """
+    When loading from :data:`load_path`, whether to load the trainer state (including dataloader state).
+    If ``None``, this will attempt to load the trainer state if it exists in the checkpoint, but will
+    will not error if it doesn't.
+    """
+
+    load_optim_state: Optional[bool] = None
+    """
+    When loading from :data:`load_path`, whether to load the optimizer state. If ``None``, this
+    will attempt to load the optimizer state if it exists in the checkpoint, but will not error if
+    it doesn't.
+    """
+
     metrics_collect_interval: int = 5
     """
     How often (in steps) to collect, reduce, and pass on metrics to the
@@ -627,7 +641,11 @@ class Trainer:
             # Then fallback to the load path, if provided.
             if self.load_path is not None:
                 if not self.checkpoint_loaded:
-                    self.maybe_load_checkpoint(self.load_path)
+                    self.maybe_load_checkpoint(
+                        self.load_path,
+                        load_trainer_state=self.load_trainer_state,
+                        load_optim_state=self.load_optim_state,
+                    )
                 else:
                     log.warning(
                         f"Ignoring load path ('{self.load_path}') since checkpoint was found in save folder"

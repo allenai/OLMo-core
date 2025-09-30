@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Optional
 
 from olmo_core.data import NumpyDataLoaderConfig, NumpyFSLDatasetConfig, TokenizerConfig
-from olmo_core.data.source_mixture import SourceMixtureConfig, SourceMixtureDatasetConfig
+from olmo_core.data.source_mixture import SourceMixtureDatasetConfig, SourceMixtureList
 from olmo_core.internal import cookbook
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
@@ -15,17 +15,6 @@ from olmo_core.train.train_module import TransformerTrainModuleConfig
 SEQ_LENGTH = 8192
 GLOBAL_BATCH_SIZE = 2097152
 SEED = 1337
-
-
-def build_olmo25_7B(vocab_size: int) -> TransformerConfig:
-    config = TransformerConfig.olmo2_7B(vocab_size=vocab_size)
-    config.block.attention.sliding_window = SlidingWindowAttentionConfig(
-        force_full_attention_on_first_layer=False,
-        force_full_attention_on_last_layer=True,
-        pattern=[4096, 4096, 4096, -1],
-    )
-    config.block.attention.use_flash = True
-    return config
 
 
 def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
@@ -49,13 +38,10 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     tokenizer_config = TokenizerConfig.dolma2()
-    model_config = build_olmo25_7B(vocab_size=tokenizer_config.padded_vocab_size())
+    model_config = TransformerConfig.olmo3_7B(vocab_size=tokenizer_config.padded_vocab_size())
 
-    max_duration = Duration.tokens(100_000_000_000)
-    global_batch_size = (
-        cookbook.estimate_critical_batch_size(duration=max_duration, sequence_length=SEQ_LENGTH)
-        * SEQ_LENGTH
-    )
+    max_tokens = 100_000_000_000  # 100B
+    max_duration = Duration.tokens(max_tokens)
 
     train_module_config: TransformerTrainModuleConfig = cookbook.configure_train_module(
         max_sequence_length=SEQ_LENGTH,
@@ -69,38 +55,28 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         activation_checkpointing_enabled=True,
     )
 
-    source_mix_config = SourceMixtureDatasetConfig(
-        requested_tokens=100_000_000_000,  # 1B
-        global_batch_size=global_batch_size,
-        source_configs=[
-            SourceMixtureConfig(
-                source_name="code_fim",
-                target_ratio=0.12352010809861039,
-                max_repetition_ratio=1.0,
-                paths=[
-                    "gs://ai2-llm/preprocessed/stack-edu/sample-fim-weighted-pl-edu-score-decon/**/**/*.npy"
-                ],
-            ),
-            # ...
-        ],
-        seed=SEED,
-    )
-    # source_mix = SourceMixtureDatasetConfig.from_yaml("./my-mix.yaml")
-
+    source_list = SourceMixtureList.from_yaml("./midtraining-mixture.yaml")
+    source_list.validate()
     dataset_config = NumpyFSLDatasetConfig.from_src_mix(
-        src_mix=source_mix_config,
+        src_mix=SourceMixtureDatasetConfig(
+            source_list=source_list,
+            requested_tokens=max_tokens,
+            global_batch_size=GLOBAL_BATCH_SIZE,
+            processes=16,
+            seed=SEED,
+        ),
         tokenizer=tokenizer_config,
         work_dir=work_dir,
         sequence_length=SEQ_LENGTH,
-        generate_doc_lengths=True,  # providing doc lengths enables intra-document masking
     )
 
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=global_batch_size, seed=SEED, num_workers=4
+        global_batch_size=GLOBAL_BATCH_SIZE, seed=SEED, num_workers=4
     )
 
     trainer_config = cookbook.configure_trainer(
-        load_path="gs://ai2-llm/checkpoints/OLMo25/step1413814",  # load_state = False
+        load_path="gs://ai2-llm/checkpoints/OLMo25/step1413814",
+        load_trainer_state=False,
         max_duration=max_duration,
         checkpoint_dir=save_dir,
         work_dir=work_dir,

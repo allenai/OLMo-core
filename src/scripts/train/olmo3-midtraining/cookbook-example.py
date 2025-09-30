@@ -2,7 +2,11 @@ from datetime import datetime
 from typing import Optional
 
 from olmo_core.data import NumpyDataLoaderConfig, NumpyFSLDatasetConfig, TokenizerConfig
-from olmo_core.data.source_mixture import SourceMixtureConfig, SourceMixtureDatasetConfig
+from olmo_core.data.source_mixture import (
+    SourceMixtureConfig,
+    SourceMixtureDatasetConfig,
+    SourceMixtureList,
+)
 from olmo_core.internal import cookbook
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
@@ -60,20 +64,21 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     source_mix_config = SourceMixtureDatasetConfig(
         requested_tokens=100_000_000_000,  # 1B
         global_batch_size=global_batch_size,
-        source_configs=[
-            SourceMixtureConfig(
-                source_name="code_fim",
-                target_ratio=0.12352010809861039,
-                max_repetition_ratio=1.0,
-                paths=[
-                    "gs://ai2-llm/preprocessed/stack-edu/sample-fim-weighted-pl-edu-score-decon/**/**/*.npy"
-                ],
-            ),
-            # ...
-        ],
+        source_list=SourceMixtureList(
+            sources=[
+                SourceMixtureConfig(
+                    source_name="code_fim",
+                    target_ratio=0.12352010809861039,
+                    max_repetition_ratio=1.0,
+                    paths=[
+                        "gs://ai2-llm/preprocessed/stack-edu/sample-fim-weighted-pl-edu-score-decon/**/**/*.npy"
+                    ],
+                ),
+                # ...
+            ]
+        ),
         seed=SEED,
     )
-    source_mix = SourceMixtureDatasetConfig.from_yaml("./my-mix.yaml")
 
     dataset_config = NumpyFSLDatasetConfig.from_src_mix(
         src_mix=source_mix_config,

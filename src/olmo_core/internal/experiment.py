@@ -443,7 +443,7 @@ def train(config: ExperimentConfig):
     config_dict = config.as_config_dict()
     cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
 
-    # Train.
+    # Train (also handles checkpoint loading)
     trainer.fit()
 
 
