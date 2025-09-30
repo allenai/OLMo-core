@@ -34,11 +34,6 @@ class TokenizerName(StrEnum):
     The base GPT2 tokenizer.
     """
 
-    superbpe_experimental_v0_1_0 = "allenai/superbpe-experimental_v0.1.0"
-    """
-    An experimental tokenizer with a very large vocabulary.
-    """
-
 
 @dataclass
 class TokenizerConfig(Config):
@@ -126,15 +121,6 @@ class TokenizerConfig(Config):
             bos_token_id=50256,
             pad_token_id=50256,
             identifier=TokenizerName.gpt2,
-        )
-
-    @classmethod
-    def superbpe_experimental_v0_1_0(cls) -> "TokenizerConfig":
-        return cls(
-            vocab_size=180021,
-            eos_token_id=180000,
-            pad_token_id=180001,
-            identifier=TokenizerName.superbpe_experimental_v0_1_0,
         )
 
     @classmethod

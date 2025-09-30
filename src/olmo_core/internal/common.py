@@ -116,8 +116,14 @@ def build_launch_config(
 ) -> BeakerLaunchConfig:
     weka_buckets: List[BeakerWekaBucket] = []
 
+    default_root_dir = get_root_dir(cluster)
     if root_dir is None:
-        root_dir = get_root_dir(cluster)
+        root_dir = default_root_dir
+    elif root_dir != default_root_dir:
+        log.warning(
+            f"Overriding default root_dir for {cluster=} to {root_dir} ({default_root_dir=})."
+        )
+
     if root_dir.startswith("/weka/"):
         weka_buckets.append(BeakerWekaBucket("oe-training-default", "/weka/oe-training-default"))
 

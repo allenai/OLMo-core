@@ -8,13 +8,24 @@ from olmo_core.internal.common import build_launch_config, get_root_dir, get_wor
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.optim.scheduler import WSD, SchedulerUnits
+from olmo_core.optim.scheduler import LinearWithWarmup, SchedulerUnits
 from olmo_core.train import Duration
 from olmo_core.train.train_module import TransformerTrainModuleConfig
 
 SEQ_LENGTH = 8192
-GLOBAL_BATCH_SIZE = 4096 * 8192
-SEED = 12536
+GLOBAL_BATCH_SIZE = 2097152
+SEED = 1337
+
+
+def build_olmo25_7B(vocab_size: int) -> TransformerConfig:
+    config = TransformerConfig.olmo2_7B(vocab_size=vocab_size)
+    config.block.attention.sliding_window = SlidingWindowAttentionConfig(
+        force_full_attention_on_first_layer=False,
+        force_full_attention_on_last_layer=True,
+        pattern=[4096, 4096, 4096, -1],
+    )
+    config.block.attention.use_flash = True
+    return config
 
 
 def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
@@ -27,24 +38,20 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
 
     beaker_launch_config: Optional[BeakerLaunchConfig] = build_launch_config(
         name=cli_context.run_name,
-        root_dir=root_dir,
         cmd=cli_context.remote_cmd,
         cluster=cli_context.cluster,
+        root_dir=root_dir,
         beaker_image="petew/olmo-core-tch270cu128",
-        workspace="ai2/oe-data",
-        num_nodes=1,
+        workspace="ai2/olmo-3-microanneals",
+        num_nodes=16,
+        nccl_debug=True,
         # override priority from the CLI eg `--launch.priority=high`
     )
 
     tokenizer_config = TokenizerConfig.dolma2()
-    model_config = TransformerConfig.olmo2_30M(
-        vocab_size=tokenizer_config.padded_vocab_size(),
-    )
+    model_config = build_olmo25_7B(vocab_size=tokenizer_config.padded_vocab_size())
 
-    max_duration = Duration.chinchilla_tokens(
-        2.0, model_params=model_config.num_active_non_embedding_params
-    )
-    # max_duration=Duration.tokens(500000)
+    max_duration = Duration.tokens(100_000_000_000)
     global_batch_size = (
         cookbook.estimate_critical_batch_size(duration=max_duration, sequence_length=SEQ_LENGTH)
         * SEQ_LENGTH
@@ -52,9 +59,14 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
 
     train_module_config: TransformerTrainModuleConfig = cookbook.configure_train_module(
         max_sequence_length=SEQ_LENGTH,
-        rank_microbatch_size=SEQ_LENGTH * 4,
-        learning_rate=4.4e-5 * (4**0.5),
-        scheduler=WSD(units=SchedulerUnits.steps, warmup=2000),
+        rank_microbatch_size=SEQ_LENGTH * 2,
+        learning_rate=0.00020712352850360292,
+        scheduler=LinearWithWarmup(
+            units=SchedulerUnits.steps,
+            warmup=0,
+            alpha_f=0.1,  # annealing.enabled=True from cookbook
+        ),
+        activation_checkpointing_enabled=True,
     )
 
     source_mix_config = SourceMixtureDatasetConfig(
@@ -73,7 +85,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         ],
         seed=SEED,
     )
-    source_mix = SourceMixtureDatasetConfig.from_yaml("./my-mix.yaml")
+    # source_mix = SourceMixtureDatasetConfig.from_yaml("./my-mix.yaml")
 
     dataset_config = NumpyFSLDatasetConfig.from_src_mix(
         src_mix=source_mix_config,
@@ -88,7 +100,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     trainer_config = cookbook.configure_trainer(
-        load_path="gs://...",  # optional
+        load_path="gs://ai2-llm/checkpoints/OLMo25/step1413814",  # load_state = False
         max_duration=max_duration,
         checkpoint_dir=save_dir,
         work_dir=work_dir,

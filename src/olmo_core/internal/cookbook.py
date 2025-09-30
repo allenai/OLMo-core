@@ -7,7 +7,6 @@ defaults as olmo-cookbook where possible, and even includes some QOL improvement
 
 import logging
 import math
-from datetime import datetime
 from typing import Dict, Optional
 
 import torch
@@ -15,8 +14,7 @@ import torch
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
-from olmo_core.internal.common import get_beaker_username, get_root_dir, get_work_dir
-from olmo_core.internal.experiment import CliContext
+from olmo_core.internal.common import get_beaker_username
 from olmo_core.optim import OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.optim.scheduler import Scheduler
 from olmo_core.train import Duration, DurationUnit, LoadStrategy, TrainerConfig
@@ -42,16 +40,6 @@ from olmo_core.train.train_module import (
 )
 
 log = logging.getLogger(__name__)
-
-
-def setup_basics(cli_context: CliContext):
-    run_name_with_ts = (
-        f"{cli_context.run_name}-{datetime.now().astimezone().strftime('%Y%m%dT%H%M%S%z')}"
-    )
-    root_dir = get_root_dir(cli_context.cluster)
-    work_dir = get_work_dir(root_dir)
-    save_dir = f"{root_dir}/checkpoints/{run_name_with_ts}"
-    return run_name_with_ts, root_dir, work_dir, save_dir
 
 
 def configure_train_module(
@@ -165,22 +153,51 @@ def configure_default_callbacks(
 
 
 def estimate_critical_batch_size(
-    sequence_length: int, duration: Duration, _factor: float = 8
+    sequence_length: int,
+    duration: Duration,
+    _factor: float = 8,
+    *,
+    scaling: str = "power",
+    growth_exponent: float = 0.5,
 ) -> int:
     """
-    Estimate the instant critical batch size as `bs = factor * sqrt(total_steps)`.
+    Estimate the fixed critical batch size by averaging the local CBS over training.
 
-    Ported from https://github.com/allenai/olmo-cookbook/blob/ac657a8cc905b5363f3f97c21393ee82f1df5bc8/src/cookbook/cli/core.py#L46
+    Parameters
+    ----------
+    scaling:
+        "power" applies the Proposition 2 result for a power-law local CBS profile.
+        "log" applies the Proposition 3 result for a logarithmic local CBS profile.
+    growth_exponent:
+        Exponent c for the power-law case (f(t) ∝ t**c). Ignored when scaling="log".
     """
+    if sequence_length <= 0:
+        raise ValueError("Sequence length must be positive for critical batch size estimation.")
+
     if duration.unit == DurationUnit.steps:
-        critical_batch_size = _factor * (duration.value ** (1 / 2))
+        total_steps = float(duration.value)
     elif duration.unit == DurationUnit.tokens:
-        # why is this different from the previous formula and the docstring??
-        critical_batch_size = ((_factor**2) * (duration.value / sequence_length)) ** (1 / 3)
+        total_steps = duration.value / sequence_length
     else:
         raise ValueError(
             f"Duration unit {duration.unit} not supported for critical batch size estimation."
         )
+    if total_steps <= 0:
+        raise ValueError("Training duration must be positive to estimate the critical batch size.")
+
+    if scaling == "power":
+        if growth_exponent <= 0:
+            raise ValueError("growth_exponent must be positive for power-law scaling.")
+        critical_batch_size = (_factor / (1.0 + growth_exponent)) * (total_steps**growth_exponent)
+    elif scaling == "log":
+        log_term = math.log(total_steps + 1.0)
+        critical_batch_size = _factor * ((total_steps / (total_steps + 1.0)) * log_term - 1.0)
+    else:
+        raise ValueError(
+            f"Scaling mode {scaling!r} not supported for critical batch size estimation."
+        )
+
+    critical_batch_size = max(critical_batch_size, 1.0)
 
     safe_batch_size = int(2 ** math.floor(math.log2(critical_batch_size)))
     max_batch_size = 2**24 // sequence_length  # 16M tokens from llama 3 405B

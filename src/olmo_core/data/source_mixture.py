@@ -16,7 +16,7 @@ from olmo_core.aliases import PathOrStr
 from olmo_core.config import Config
 from olmo_core.data.types import NumpyUIntTypes
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.io import get_file_size
+from olmo_core.io import file_exists, get_file_size, glob_directory
 
 __all__ = [
     "SourceMixtureConfig",
@@ -59,6 +59,8 @@ class SourceMixtureConfig(Config):
     The maximum ratio of the source data to include in the mixture.
     """
 
+    _resolved_paths: Optional[List[str]] = None
+
     def validate(self):
         if self.target_ratio:
             if not 0 < self.target_ratio <= 1:
@@ -74,6 +76,31 @@ class SourceMixtureConfig(Config):
 
         if not 0 <= self.max_source_fraction <= 1:
             raise OLMoConfigurationError("max_source_fraction must be in the range [0, 1]")
+
+    @property
+    def resolved_paths(self) -> List[str]:
+        """
+        Resolve the paths, expanding any globs and validating existence.
+        Caches the result after the first access.
+        """
+        if self._resolved_paths is not None:
+            return self._resolved_paths
+
+        resolved: List[str] = []
+        for path in self.paths:
+            path_str = str(path)
+            if "*" in path_str:
+                matches = sorted(glob_directory(path_str))
+                if not matches:
+                    raise FileNotFoundError(f"Glob pattern '{path_str}' did not match any files")
+                resolved.extend(matches)
+            else:
+                if not file_exists(path_str):
+                    raise FileNotFoundError(f"Path '{path_str}' does not exist")
+                resolved.append(path_str)
+
+        self._resolved_paths = resolved
+        return resolved
 
 
 @dataclass
@@ -231,7 +258,7 @@ class SourceMixtureDatasetConfig(Config):
         for source_config in self.source_configs:
             log.info(f"Counting tokens for source: {source_config.source_name}")
             available_tokens_by_source[source_config.source_name] = self._count_tokens_for_paths(
-                paths=cast(List[PathOrStr], source_config.paths),
+                paths=cast(List[PathOrStr], source_config.resolved_paths),
                 source=source_config.source_name,
                 npdtype=npdtype,
             )
@@ -277,9 +304,9 @@ class SourceMixtureDatasetConfig(Config):
         ]
 
         training_steps = math.ceil(self.requested_tokens / self.global_batch_size)
-        assert (
-            self.global_batch_size % sequence_length == 0
-        ), "global_batch_size must be multiple of sequence_length"
+        assert self.global_batch_size % sequence_length == 0, (
+            "global_batch_size must be multiple of sequence_length"
+        )
         num_instances_per_batch = self.global_batch_size // sequence_length
         requested_instances = training_steps * num_instances_per_batch
 
@@ -381,7 +408,7 @@ class SourceMixtureDatasetConfig(Config):
                 remaining -= chunk
 
             for ratio in take_ratios:
-                for path in source_config.paths:
+                for path in source_config.resolved_paths:
                     tokens_to_keep = int(
                         math.ceil(self._count_tokens_for_file(path, npdtype) * ratio)
                     )
@@ -389,7 +416,7 @@ class SourceMixtureDatasetConfig(Config):
 
             return path_tokens
 
-        for path in source_config.paths:
+        for path in source_config.resolved_paths:
             tokens_to_keep = int(math.ceil(self._count_tokens_for_file(path, npdtype) * take_ratio))
             path_tokens.append(SourcePathTokens(path=path, tokens=tokens_to_keep))
 
