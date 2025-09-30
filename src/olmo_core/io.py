@@ -446,7 +446,9 @@ def glob_directory(pattern: str) -> Generator[str, None, None]:
         which the follow the semantics defined here https://docs.python.org/3/library/pathlib.html#pattern-language.
     """
     # Pull out base directory from pattern.
-    dir = pattern.split("*", 1)[0]
+    first_star = pattern.find("*")
+    prefix = pattern if first_star == -1 else pattern[:first_star]
+    dir = prefix.rsplit("/", 1)[0] + "/"  # ensure it's a directory
 
     # Translate the glob pattern into a regex.
     # For example, "src/examples/**/*.py" --> "^src/examples/.*[^/]*\\.py$".
