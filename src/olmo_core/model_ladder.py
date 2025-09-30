@@ -443,7 +443,7 @@ class ModelLadder(Config, metaclass=ABCMeta):
             "wandb",
             WandBCallback(
                 name=f"{self.name}-{size}-{run_duration}",
-                entity="ai2",
+                entity="ai2-llm",
                 project=self.project,
                 enabled=False,
                 cancel_check_interval=5,

@@ -216,6 +216,12 @@ def convert_checkpoint_to_hf(
         )
         log.info("Validation completed successful")
 
+    tokenizer_path = Path(original_checkpoint_path).parent / "tokenizer"
+    if tokenizer_path.exists():
+        tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
+        tokenizer.save_pretrained(output_path)
+        print(f"Successfully saved model tokenizer to '{output_path}'")
+
 
 def _register_debug_hooks(hf_model: torch.nn.Module, model: Transformer):
     MAX_DIM_SIZE = 1_000_000

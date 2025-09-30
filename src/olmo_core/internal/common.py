@@ -109,7 +109,8 @@ def build_launch_config(
     workspace: str = "ai2/OLMo-core",
     budget: str = "ai2/oe-base",
     nccl_debug: bool = False,
-    beaker_image: str = OLMoCoreBeakerImage.stable,
+    cuda_launch_blocking: bool = False,
+    beaker_image: str = "olmo-core-tch280cu128-2025-09-24",
     num_nodes: int = 1,
     use_hostname_constraints: bool = False,
     num_execution_units: Optional[int] = None,
@@ -189,7 +190,10 @@ def build_launch_config(
         num_execution_units=num_execution_units,
         shared_filesystem=not is_url(root_dir),
         allow_dirty=False,
-        env_vars=[BeakerEnvVar(name="NCCL_DEBUG", value="INFO" if nccl_debug else "WARN")],
+        env_vars=[
+            BeakerEnvVar(name="NCCL_DEBUG", value="INFO" if nccl_debug else "WARN"),
+            BeakerEnvVar(name="CUDA_LAUNCH_BLOCKING", value="1" if cuda_launch_blocking else "0"),
+        ],
         env_secrets=[env_secret for env_secret in env_secrets if env_secret is not None],
         setup_steps=[
             # Clone repo.
