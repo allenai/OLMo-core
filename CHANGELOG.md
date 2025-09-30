@@ -37,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Refactored `NumpyDatasetConfig` by splitting it into a separate config per underlying dataset class.
 - Refactored `internal/experiment` module to facilitate modifying datasets or supplying a fully custom `ExperimentConfig`.
 - Simplified `SourceMixtureDatasetConfig` by removing redundant `sequence_length` and `dtype` fields.
+- The `model_id` argument to `convert_state_from_hf` is deprecated. Conversion information is deduced from the model type.
+- Refactored the example conversion scripts to/from HF, including decreasing false failures in validation.
 
 ### Added
 
@@ -50,6 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added flash-attention 3 to Docker images, added `flash_3` attention backend.
 - Added support for sliding window attention to the Torch attention backend. Performance is not optimized, so other backends should be preferred.
 - Guide to dataset mixing in `docs/source/guides/data_mixing.rst`.
+- Added support for converting FlexOlmo models from OLMo Core to HF format.
 
 
 ## [v2.2.0](https://github.com/allenai/OLMo-core/releases/tag/v2.2.0) - 2025-08-26
