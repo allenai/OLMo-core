@@ -53,7 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added support for sliding window attention to the Torch attention backend. Performance is not optimized, so other backends should be preferred.
 - Added `RoPEScalingConfig.to_hf_config()` for each RoPE scaling method to support automatic conversion to HuggingFace format.
 - Guide to dataset mixing in `docs/source/guides/data_mixing.rst`.
-- Added support for converting FlexOlmo models from OLMo Core to HF format.
+- Added support for converting FlexOlmo models (with both dropless and default MoEs) between OLMo Core and HF formats.
 
 
 ## [v2.2.0](https://github.com/allenai/OLMo-core/releases/tag/v2.2.0) - 2025-08-26
