@@ -204,8 +204,8 @@ def build_sft_dataset(
         label_mask_paths = glob_remote_dataset(f"{clean_path}/token_ids_part_*.npy")
         expand_glob = False
     else:
-        token_id_paths = [f"{clean_path}/token_ids_part_*.npy"]
-        label_mask_paths = [f"{clean_path}/labels_mask_*.npy"]
+        token_id_paths = [f"{clean_path}/"]
+        label_mask_paths = [f"{clean_path}/"]
         expand_glob = True
 
     dataset = NumpyPackedFSLDatasetConfig(
