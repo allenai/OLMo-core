@@ -2308,6 +2308,10 @@ class NumpyDatasetConfig(Config, ABC):
     """
     The tokenizer config.
     """
+    sequence_length: Optional[int] = None
+    """
+    The sequence length for a :class:`NumpyFSLDataset`.
+    """
     paths: Optional[List[str]] = None
     """
     The paths/URLs to the numpy token ID arrays.
