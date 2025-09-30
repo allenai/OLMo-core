@@ -17,7 +17,7 @@ from rich import print
 
 from olmo_core.config import Config, DType
 from olmo_core.data import NumpyDataLoaderConfig, NumpyPackedFSLDatasetConfig, TokenizerConfig
-from olmo_core.data.types import LongDocStrategy, NumpyDatasetType
+from olmo_core.data.types import LongDocStrategy
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_local_rank
 from olmo_core.exceptions import OLMoConfigurationError
