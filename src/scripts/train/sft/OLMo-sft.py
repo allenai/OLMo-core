@@ -241,7 +241,7 @@ class SFTConfig(Config):
     data_loader: NumpyDataLoaderConfig
     train_module: TransformerTrainModuleConfig
     trainer: TrainerConfig
-    init_seed: int = 33333
+    init_seed: int
 
     @classmethod
     def build(
@@ -259,6 +259,7 @@ class SFTConfig(Config):
         workspace: str,
         budget: str,
         model_name: str,
+        seed: int = 33333,
         dataset_path: Optional[str],
     ) -> "SFTConfig":
         root_dir = get_root_dir(cluster)
@@ -346,6 +347,7 @@ class SFTConfig(Config):
                 num_nodes=num_nodes,
                 budget=budget,
                 workspace=workspace,
+                init_seed=seed,
             ),
             model=model,
             dataset=None,
