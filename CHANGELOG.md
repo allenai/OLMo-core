@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Callback.post_train()` will still be called even if the run is canceled before the dry-run batch.
 - `GarbageCollectorCallback` will restore `gc` settings even when `Trainer.fit()` exits on an error.
 - Make `move_to_device` blocking for MPS device to fix possible incorrect transfer of data from CPU to MPS.
+- Fixed bug where `glob_directory()` would fail to match certain glob patterns.
 
 ### Changed
 
@@ -51,8 +52,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `Callback.close()` method, which is always called when exiting `Trainer.fit()`.
 - Added flash-attention 3 to Docker images, added `flash_3` attention backend.
 - Added support for sliding window attention to the Torch attention backend. Performance is not optimized, so other backends should be preferred.
+- Added `RoPEScalingConfig.to_hf_config()` for each RoPE scaling method to support automatic conversion to HuggingFace format.
 - Guide to dataset mixing in `docs/source/guides/data_mixing.rst`.
-- Added support for converting FlexOlmo models from OLMo Core to HF format.
+- Added support for converting FlexOlmo models (with both dropless and default MoEs) between OLMo Core and HF formats.
 
 
 ## [v2.2.0](https://github.com/allenai/OLMo-core/releases/tag/v2.2.0) - 2025-08-26

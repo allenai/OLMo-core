@@ -29,6 +29,7 @@ from olmo_core.nn.attention import AttentionBackendName, AttentionType
 from olmo_core.nn.conversion.state_mapping import StateType, TemplatePlaceholder
 from olmo_core.nn.hf.checkpoint import save_hf_model
 from olmo_core.nn.hf.convert import get_converter_to_hf
+from olmo_core.nn.moe.moe import MoEType
 from olmo_core.nn.transformer.config import TransformerConfig
 from olmo_core.nn.transformer.model import Transformer
 from olmo_core.utils import prepare_cli_environment
@@ -135,6 +136,27 @@ def convert_checkpoint_to_hf(
             flatten_optimizer_state_dict=True, cpu_offload=True
         )
         model_state_dict = dist_cp_sd.get_model_state_dict(model, options=state_dict_options)
+
+        if (moe_config := model_config.block.feed_forward_moe) is not None:
+            if moe_config.name == MoEType.dropless:
+                for k, v in model_state_dict.items():
+                    # We need to reshape the w1 and w3 weights for the dropless MoE because conversion
+                    # can't distinguish between dropless and regular MoE, and dropless MoE
+                    # weights are shaped differently to regular MoE.
+                    if k.endswith(".feed_forward_moe.experts.mlp.w1") or k.endswith(
+                        ".feed_forward_moe.experts.mlp.w3"
+                    ):
+                        assert isinstance(v, torch.Tensor), (k, v)
+                        model_state_dict[k] = (
+                            v.reshape(moe_config.num_experts, moe_config.hidden_size, -1)
+                            .permute(0, 2, 1)
+                            .reshape(-1, moe_config.hidden_size)
+                        )
+                        log.info(f"Reshaped {k} because MoE is dropless")
+            elif moe_config.name == MoEType.default:
+                log.warning(
+                    f"MoE is {moe_config.name}, which may drop activations and cause validation to fail. You can try mitigating this by setting '--moe-capacity-factor' to a higher value."
+                )
 
         save_hf_model(
             output_path,
@@ -330,6 +352,10 @@ def validate_conversion(
 
     del hf_model
 
+    if is_sliding and sliding_window is not None:
+        for block in model.blocks.values():
+            if block.attention.window_size != (-1, -1):
+                block.attention.window_size = (sliding_window - 1, 0)
     if dtype:
         model = model.to(dtype.as_pt())
     model = model.to(device=device)
