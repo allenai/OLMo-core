@@ -655,7 +655,7 @@ class Trainer:
 
         log.info("Callback order:")
         for i, callback_name in enumerate(self.callbacks.keys()):
-            log.info(f"  - Callback {i+1}: {callback_name}")
+            log.info(f"  - Callback {i + 1}: {callback_name}")
 
         log.info(f"Training for {self.max_steps:,d} steps")
 

@@ -58,6 +58,13 @@ class TrainerConfig(Config):
             raise OLMoConfigurationError(f"A callback with name '{name}' already exists")
         self.callbacks[name] = callback
 
+    def add_callbacks(self, callbacks: Dict[str, Callback]):
+        """
+        Add a set of callbacks.
+        """
+        for name, callback in callbacks.items():
+            self.add_callback(name, callback)
+
     def with_callback(self, name: str, callback: Callback) -> "TrainerConfig":
         """
         Return a new trainer config with an additional callback.

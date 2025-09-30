@@ -65,12 +65,19 @@ class Duration:
         return cls(value=tokens, unit=DurationUnit.tokens)
 
     @classmethod
-    def chinchilla_tokens(cls, multiple: float, *, model_params: int) -> "Duration":
+    def chinchilla_tokens(
+        cls, multiple: float, *, model_params: int, _tok_per_param: int = 20
+    ) -> "Duration":
         """
-        Define a duration from a Chinchilla multiplier.
+        Define a duration based on a multiple of the Chinchilla-optimal number of tokens.
 
-        The rule of thumb for Chinchilla compute optimality is 20 tokens per parameter
-        for decoder-only natural language models on dataset mixtures similar to the Pile.
+        The rule of thumb for Chinchilla compute optimality is 20 tokens-per-parameter
+        for decoder-only natural language models trained with AdamW on dataset mixtures
+        similar to the Pile.
+
+        Chinchilla optimality refers to training-time compute only, and does not account for
+        inference-time compute. In practice, models are often trained with more tokens than
+        the Chinchilla optimal value ("overtrained") to improve inference-time performance.
 
         Chinchilla: https://arxiv.org/abs/2203.15556
         Chinchilla replication: https://arxiv.org/abs/2404.10102
@@ -80,7 +87,7 @@ class Duration:
             than 1.0 will overtrain relative to Chinchilla.
         :param model_params: The number of *active, non-embedding* parameters in the target model.
         """
-        tokens = int(20 * model_params * multiple)
+        tokens = int(_tok_per_param * model_params * multiple)
         return Duration.tokens(tokens)
 
     def due(self, *, step: int, tokens: int, epoch: int) -> bool:

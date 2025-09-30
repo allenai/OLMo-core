@@ -2527,7 +2527,7 @@ class NumpyFSLDatasetConfig(NumpyDatasetConfig):
 
     @classmethod
     def from_src_mix(
-        cls, src_mix: SourceMixtureDatasetConfig, *, tokenizer: TokenizerConfig, **kwargs: Any
+        cls, src_mix: SourceMixtureDatasetConfig, **kwargs: Any
     ) -> NumpyFSLDatasetConfig:
         """
         Initialize a dataset config from a custom fine-grained data mix.
@@ -2535,7 +2535,7 @@ class NumpyFSLDatasetConfig(NumpyDatasetConfig):
         :param src_mix: The fine-grained SourceMixtureDatasetConfig.
         :returns: A new dataset config.
         """
-        return cls(source_mixture_config=src_mix, paths=None, mix=None, **kwargs)
+        return cls(source_mixture_config=src_mix, paths=None, mix=None, mix_base_dir=None, **kwargs)
 
     def validate(self):
         if self.sequence_length <= 0:
