@@ -93,7 +93,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             save_overwrite=True,
             metrics_collect_interval=50,
             cancel_check_interval=cancel_check_interval,
-            max_duration=Duration.tokens(int(7e12)),
+            max_duration=Duration.tokens(int(5e12)),
             hard_stop=Duration.tokens(int(145e9)) # stop at 145B tokens for this run 
         )
         .with_callback(
