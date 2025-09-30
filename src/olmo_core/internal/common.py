@@ -110,7 +110,7 @@ def build_launch_config(
     budget: str = "ai2/oe-base",
     nccl_debug: bool = False,
     cuda_launch_blocking: bool = False,
-    beaker_image: str = OLMoCoreBeakerImage.stable,
+    beaker_image: str = "olmo-core-tch280cu128-2025-09-24",
     num_nodes: int = 1,
     use_hostname_constraints: bool = False,
     num_execution_units: Optional[int] = None,
