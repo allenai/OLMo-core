@@ -347,7 +347,6 @@ class SFTConfig(Config):
                 num_nodes=num_nodes,
                 budget=budget,
                 workspace=workspace,
-                init_seed=seed,
             ),
             model=model,
             dataset=None,
@@ -421,6 +420,7 @@ class SFTConfig(Config):
                     cancel_check_interval=10,
                 ),
             ),
+            init_seed=seed,
         ).merge(overrides)
 
         config.dataset = dataset_config
