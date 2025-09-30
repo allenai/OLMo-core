@@ -16,12 +16,12 @@ from .evaluator_callback import (
 )
 from .garbage_collector import GarbageCollectorCallback
 from .gpu_memory_monitor import GPUMemoryMonitorCallback
+from .monkey_patcher import MonkeyPatcherCallback
 from .profiler import ProfilerCallback
 from .sequence_length_scheduler import SequenceLengthSchedulerCallback
 from .slack_notifier import SlackNotificationSetting, SlackNotifierCallback
 from .speed_monitor import SpeedMonitorCallback
 from .wandb import WandBCallback
-from .monkey_patcher import MonkeyPatcherCallback
 
 __all__ = [
     "Callback",

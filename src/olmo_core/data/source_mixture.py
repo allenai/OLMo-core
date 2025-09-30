@@ -323,9 +323,9 @@ class SourceMixtureDatasetConfig(Config):
         ]
 
         training_steps = math.ceil(self.requested_tokens / self.global_batch_size)
-        assert self.global_batch_size % sequence_length == 0, (
-            "global_batch_size must be multiple of sequence_length"
-        )
+        assert (
+            self.global_batch_size % sequence_length == 0
+        ), "global_batch_size must be multiple of sequence_length"
         num_instances_per_batch = self.global_batch_size // sequence_length
         requested_instances = training_steps * num_instances_per_batch
 
