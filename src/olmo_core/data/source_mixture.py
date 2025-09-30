@@ -103,8 +103,9 @@ class SourceMixtureConfig(Config):
         self._resolved_paths = resolved
         return resolved
 
+
 @dataclass
-class SourceMixtureList(Config)
+class SourceMixtureList(Config):
     """
     A list of source configurations for building a mixture dataset.
     This class ensures that the target ratios of the sources sum to 1.0.
@@ -115,6 +116,7 @@ class SourceMixtureList(Config)
     With this separation, we can define a list of sources in a YAML file without also needing to
     specify parameters like requested_tokens, global_batch_size, or processes.
     """
+
     sources: List[SourceMixtureConfig]
 
     def validate(self):
@@ -125,6 +127,7 @@ class SourceMixtureList(Config)
 
         if not np.allclose(summed_weights, 1.0):
             raise OLMoConfigurationError(f"target_ratios must sum to 1.0, got {summed_weights}")
+
 
 @dataclass
 class SourceTokenDetails:

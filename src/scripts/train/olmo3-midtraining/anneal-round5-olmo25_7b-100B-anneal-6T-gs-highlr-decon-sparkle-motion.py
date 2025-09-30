@@ -31,7 +31,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         cluster=cli_context.cluster,
         root_dir=root_dir,
         beaker_image="petew/olmo-core-tch270cu128",
-        workspace="ai2/olmo-3-microanneals",
+        # workspace="ai2/olmo-3-microanneals",
         num_nodes=16,
         nccl_debug=True,
         # override priority from the CLI eg `--launch.priority=high`
@@ -55,7 +55,9 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         activation_checkpointing_enabled=True,
     )
 
-    source_list = SourceMixtureList.from_yaml("./midtraining-mixture.yaml")
+    source_list = SourceMixtureList.from_yaml(
+        "./src/scripts/train/olmo3-midtraining/midtraining-mixture.yaml"
+    )
     source_list.validate()
     dataset_config = NumpyFSLDatasetConfig.from_src_mix(
         src_mix=SourceMixtureDatasetConfig(

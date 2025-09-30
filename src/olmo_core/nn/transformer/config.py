@@ -636,7 +636,7 @@ class TransformerConfig(Config):
                 force_full_attention_on_last_layer=True,
                 pattern=[4096, 4096, 4096, -1],
             ),
-            attention_backend=kwargs.pop("attention_backend", AttentionBackendName.flash_2),
+            attn_backend=kwargs.pop("attn_backend", AttentionBackendName.flash_2),
             **kwargs,
         )
         return config
