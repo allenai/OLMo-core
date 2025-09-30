@@ -23,7 +23,7 @@ import torch
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 import torch.nn.functional as F
 from cached_path import cached_path
-from transformers import AutoConfig, AutoModelForCausalLM
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import DType
@@ -157,6 +157,12 @@ def convert_checkpoint_to_hf(
             sliding_window=validation_sliding_window,
         )
         log.info("Validation completed successful")
+
+    tokenizer_path = Path(original_checkpoint_path).parent / "tokenizer"
+    if tokenizer_path.exists():
+        tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
+        tokenizer.save_pretrained(output_path)
+        print(f"Successfully saved model tokenizer to '{output_path}'")
 
 
 def _register_debug_hooks(hf_model: torch.nn.Module, model: Transformer):
