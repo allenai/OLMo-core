@@ -16,8 +16,8 @@ from urllib.parse import urlparse
 from rich import print
 
 from olmo_core.config import Config, DType
-from olmo_core.data import NumpyDataLoaderConfig, NumpyDatasetConfig, TokenizerConfig
-from olmo_core.data import LongDocStrategy, NumpyDatasetType
+from olmo_core.data import NumpyDataLoaderConfig, NumpyPackedFSLDatasetConfig, TokenizerConfig
+from olmo_core.data.types import LongDocStrategy, NumpyDatasetType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_local_rank
 from olmo_core.exceptions import OLMoConfigurationError
@@ -197,7 +197,7 @@ def build_sft_dataset(
     tokenizer_config: TokenizerConfig,
     sequence_length: int,
     dataset_path: Optional[str],
-) -> NumpyDatasetConfig:
+) -> NumpyPackedFSLDatasetConfig:
     clean_path = dataset_path.rstrip("/")
     if dataset_path.startswith("gs://") or dataset_path.startswith("s3://"):
         token_id_paths = glob_remote_dataset(f"{clean_path}/token_ids_part_*.npy")
@@ -208,19 +208,18 @@ def build_sft_dataset(
         label_mask_paths = [f"{clean_path}/labels_mask_*.npy"]
         expand_glob = True
 
-    dataset = NumpyDatasetConfig(
+    dataset = NumpyPackedFSLDatasetConfig(
         # general config
         tokenizer=tokenizer_config,
-        mix_base_dir=root_dir,
         work_dir=get_work_dir(root_dir),
         paths=token_id_paths,
         expand_glob=expand_glob,
         label_mask_paths=label_mask_paths,
-        name=NumpyDatasetType.packed_fsl,  # concatenated short docs into a single sequence... (see also "padded_fsl")
         generate_doc_lengths=True,  # ...and mask attention so that they don't attend to each other
         long_doc_strategy=LongDocStrategy.truncate,  # truncate docs...
         sequence_length=sequence_length,  # ...that are over this length
     )
+
     return dataset
 
 
