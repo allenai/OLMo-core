@@ -172,6 +172,9 @@ class ByteDataCollator(DataCollator):
     entropy_model_path: Optional[str] = None
 
     def __post_init__(self):
+        self._initialize_entropy_model()
+
+    def _initialize_entropy_model(self):
         sess_options = ort.SessionOptions()
         sess_options.intra_op_num_threads = 4
         sess_options.inter_op_num_threads = 4
@@ -181,6 +184,17 @@ class ByteDataCollator(DataCollator):
             self._entropy_model = ort.InferenceSession(self.entropy_model_path, sess_options, providers=["CPUExecutionProvider"])
         else:
             self._entropy_model = None
+
+    def __getstate__(self):
+        # Remove non-picklable InferenceSession from state
+        state = self.__dict__.copy()
+        state['_entropy_model'] = None
+        return state
+
+    def __setstate__(self, state):
+        # Restore state and reinitialize InferenceSession
+        self.__dict__.update(state)
+        self._initialize_entropy_model()
 
 
     def __call__(
