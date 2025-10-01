@@ -241,7 +241,7 @@ class ByteDataCollator(DataCollator):
                 scores = torch.sum(torch.exp(logprobs) * logprobs, -1)[:, :-1]
             else:
                 # main path logprobs / cross entropy
-                scores = torch.gather(logprobs[:, :-1], -1, entropy_input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
+                scores = torch.gather(logprobs[:, :-1], -1, torch.from_numpy(entropy_input_ids)[:, 1:].unsqueeze(-1)).squeeze(-1)
 
             scores = torch.where(
                 entropy_mask[:, 1:],
