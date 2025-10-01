@@ -46,7 +46,7 @@ __all__ = [
 log = logging.getLogger(__name__)
 
 def _worker_init_fn(worker_id):
-    torch.set_num_threads(1)
+    torch.set_num_threads(4)
 
 class DataLoaderBase(ABC):
     """
