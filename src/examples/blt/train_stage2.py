@@ -69,7 +69,7 @@ from olmo_core.train.train_module import (
 )
 from olmo_core.utils import seed_all
 
-NUM_WORKERS = int(os.environ.get("NUM_WORKERS", 32))
+NUM_WORKERS = int(os.environ.get("NUM_WORKERS", 16))
 SEQUENCE_LENGTH = int(os.environ.get("SEQUENCE_LENGTH", 1024))
 QUICK_DEBUG = os.environ.get("QUICK_DEBUG", "false").lower() in {"1", "true", "yes"}
 GLOBAL_BATCH_SIZE = 64
