@@ -680,6 +680,7 @@ def prepare_byte_example(
     pad_token_id,
     compute_merge_kind=None,
     fim_middle_id=None,
+    max_compression_ratio=0.5,
     **kwargs,
 ):
     if fim_middle_id is not None and fim_middle_id in item["input_ids"]:
@@ -768,7 +769,10 @@ def prepare_byte_example(
 
     if compute_merge_kind == "bpe":
         # hardcode max compression to 0.5 for now
-        item["bpe_merges"] = blt_utils.compute_bpe_merges(original_input_ids.tolist(), max_compression_ratio=0.5)
+        item["bpe_merges"] = blt_utils.compute_bpe_merges(
+            original_input_ids.tolist(),
+            max_compression_ratio=max_compression_ratio,
+        )
     elif compute_merge_kind in {"entropy", "cross_entropy"}:
         with torch.inference_mode():
             logits = kwargs["entropy_model"](original_input_ids.unsqueeze(0)).squeeze(0)
@@ -781,12 +785,35 @@ def prepare_byte_example(
                 # main path logprobs / cross entropy
                 scores = torch.gather(logprobs[:-1], -1, original_input_ids[1:].unsqueeze(-1)).squeeze(-1)
 
-            indices = torch.argsort(scores, descending=True)
-            offsets = (
-                (indices[:, None] > indices[None, :]) 
-                & (np.arange(len(indices))[:, None] > np.arange(len(indices))[None, :])
-            ).sum(axis=1)
-            item["bpe_merges"] = indices - offsets
+            merge_indices = []
+
+            compressed_scores = scores.tolist()
+            original_length = len(scores)
+
+            while len(compressed_scores) > 1:
+                # Check compression ratio
+                current_ratio = len(compressed_scores) / original_length
+                if current_ratio <= max_compression_ratio:
+                    break
+
+                max_score = -math.inf
+                max_indices = []
+                for i in range(len(compressed_scores) - 1):
+                    pair_score = compressed_scores[i] + compressed_scores[i + 1]
+                    if pair_score == max_score:
+                        max_indices.append(i)
+                    elif pair_score > max_score:
+                        max_indices = [i]
+                        max_score = pair_score
+
+                next_merge = random.choice(max_indices)
+
+                compressed_scores[next_merge] = compressed_scores[next_merge] + compressed_scores[next_merge + 1]
+                del compressed_scores[next_merge + 1]
+
+                merge_indices.append(next_merge)
+
+            item["bpe_merges"] = merge_indices
 
     return item
 
