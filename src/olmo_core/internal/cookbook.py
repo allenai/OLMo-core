@@ -48,10 +48,12 @@ def configure_train_module(
     learning_rate: float,
     scheduler: Scheduler,
     float8_enabled: bool = False,
-    activation_checkpointing_enabled: bool = True,
+    activation_memory_budget: float = 1.0,  # smaller memory budget means more checkpointing
     dp_shard_degree: Optional[int] = None,
     cp_degree: Optional[int] = None,
 ) -> TransformerTrainModuleConfig:
+    if not (0.0 < activation_memory_budget <= 1.0):
+        raise ValueError("activation_memory_budget must be in the range [0.0, 1.0].")
     return TransformerTrainModuleConfig(
         rank_microbatch_size=rank_microbatch_size,
         max_sequence_length=max_sequence_length,
@@ -84,9 +86,9 @@ def configure_train_module(
         # )
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.budget,
-            activation_memory_budget=0.25,
+            activation_memory_budget=activation_memory_budget,
         )
-        if activation_checkpointing_enabled
+        if activation_memory_budget < 1.0
         else None,
         float8_config=Float8Config(
             enabled=float8_enabled,
