@@ -678,7 +678,6 @@ def prepare_byte_example(
     tokenizer: ByteTokenizer,
     byte_sequence_length,
     pad_token_id,
-    compute_merge_kind=None,
     fim_middle_id=None,
     max_compression_ratio=0.5,
     **kwargs,
@@ -767,54 +766,6 @@ def prepare_byte_example(
     item["patch_lens"] = patch_lengths
     item["space_patch_lens"] = space_patch_lengths
 
-    if compute_merge_kind == "bpe":
-        # hardcode max compression to 0.5 for now
-        item["bpe_merges"] = blt_utils.compute_bpe_merges(
-            original_input_ids.tolist(),
-            max_compression_ratio=max_compression_ratio,
-        )
-    elif compute_merge_kind in {"entropy", "cross_entropy"}:
-        with torch.inference_mode():
-            logits = kwargs["entropy_model"](original_input_ids.unsqueeze(0)).squeeze(0)
-            logprobs = F.log_softmax(logits.float(), dim=-1)
-            
-            if compute_merge_kind == "entropy":
-                # neg entropy
-                scores = torch.sum(torch.exp(logprobs) * logprobs, -1)[:-1]
-            else:
-                # main path logprobs / cross entropy
-                scores = torch.gather(logprobs[:-1], -1, original_input_ids[1:].unsqueeze(-1)).squeeze(-1)
-
-            merge_indices = []
-
-            compressed_scores = scores.tolist()
-            original_length = len(scores)
-
-            while len(compressed_scores) > 1:
-                # Check compression ratio
-                current_ratio = len(compressed_scores) / original_length
-                if current_ratio <= max_compression_ratio:
-                    break
-
-                max_score = -math.inf
-                max_indices = []
-                for i in range(len(compressed_scores) - 1):
-                    pair_score = compressed_scores[i] + compressed_scores[i + 1]
-                    if pair_score == max_score:
-                        max_indices.append(i)
-                    elif pair_score > max_score:
-                        max_indices = [i]
-                        max_score = pair_score
-
-                next_merge = random.choice(max_indices)
-
-                compressed_scores[next_merge] = compressed_scores[next_merge] + compressed_scores[next_merge + 1]
-                del compressed_scores[next_merge + 1]
-
-                merge_indices.append(next_merge)
-
-            item["bpe_merges"] = merge_indices
-
     return item
 
 class NumpyByteFSLDataset(NumpyFSLDataset):
@@ -839,15 +790,6 @@ class NumpyByteFSLDataset(NumpyFSLDataset):
         # manually remove fim middle ID and retokenize - not needed for byte level models since
         # no tokenization bias.
         self.fim_middle_id = self.tokenizer.hf_tokenizer.get_vocab()["<|fim_middle|>"]
-        self.compute_merge_kind = None
-
-    def enable_compute_merges(self, kind, **kwargs):
-        self.compute_merge_kind = kind
-
-        if kind in {"entropy", "cross_entropy"}:
-            self._entropy_model = kwargs["entropy_model"]
-
-    def disable_compute_merges(self):
         self.compute_merge_kind = None
 
     def _read_chunk_from_array(self, path: PathOrStr, index: int, dtype=None) -> torch.Tensor:
@@ -879,9 +821,7 @@ class NumpyByteFSLDataset(NumpyFSLDataset):
             self.tokenizer,
             byte_sequence_length=self.byte_sequence_length,
             pad_token_id=self.tokenizer.pad_token_id,
-            compute_merge_kind=self.compute_merge_kind,
             fim_middle_id=self.fim_middle_id,
-            entropy_model=getattr(self, "_entropy_model", None),
         )
 
     @property
@@ -1223,19 +1163,12 @@ class NumpyBytePaddedFSLDataset(NumpyPaddedFSLDataset):
         # manually remove fim middle ID and retokenize - not needed for byte level models since
         # no tokenization bias.
         self.fim_middle_id = self.tokenizer.hf_tokenizer.get_vocab()["<|fim_middle|>"]
-        self.compute_bpe_merges = False
 
         # make sure we pad the subword sequence with the correct (subword) pad ID
         self._pad_token_id = self.tokenizer.hf_tokenizer.pad_token_id
         # make sure None is passed as eos_token_id to segment_documents_into_instances
         # since instruct doc contains extra eos tokens so we need to use metadata to compute doc boundaries
         self._eos_token_id = None 
-
-    def enable_compute_bpe_merges(self):
-        self.compute_bpe_merges = True
-
-    def disable_compute_bpe_merges(self):
-        self.compute_bpe_merges = False
 
     def _read_chunk_from_array(self, path: PathOrStr, index: int, dtype=None) -> torch.Tensor:
         indices_path = self._get_instance_indices_path(path)
