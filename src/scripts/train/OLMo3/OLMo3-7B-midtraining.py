@@ -48,11 +48,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         max_sequence_length=SEQ_LENGTH,
         rank_microbatch_size=SEQ_LENGTH * 2,
         learning_rate=0.00020712352850360292,
-        scheduler=LinearWithWarmup(
-            units=SchedulerUnits.steps,
-            warmup=0,
-            alpha_f=0.1,  # annealing.enabled=True from cookbook
-        ),
+        scheduler=LinearWithWarmup(units=SchedulerUnits.steps, warmup=0, alpha_f=0.0),
         activation_checkpointing_enabled=True,
     )
 
@@ -87,8 +83,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
     trainer_config.add_callbacks(
         cookbook.configure_default_callbacks(
-            run_name=run_name_with_ts,
-            wandb_group_name=cli_context.run_name,
+            run_name=run_name_with_ts, wandb_group_name=cli_context.run_name
         )
     )
 
