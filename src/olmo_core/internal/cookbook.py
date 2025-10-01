@@ -36,7 +36,6 @@ from olmo_core.train.train_module import (
     TransformerActivationCheckpointingMode,
     TransformerContextParallelConfig,
     TransformerDataParallelConfig,
-    TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
 
@@ -50,7 +49,7 @@ def configure_train_module(
     scheduler: Scheduler,
     float8_enabled: bool = False,
     activation_checkpointing_enabled: bool = True,
-    dp_shard_degree: int = 8,
+    dp_shard_degree: Optional[int] = None,
     cp_degree: Optional[int] = None,
 ) -> TransformerTrainModuleConfig:
     return TransformerTrainModuleConfig(
@@ -72,7 +71,6 @@ def configure_train_module(
             name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
-            wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
             shard_degree=dp_shard_degree,
         ),
         cp_config=(

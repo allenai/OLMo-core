@@ -13,7 +13,7 @@ from olmo_core.train import Duration
 from olmo_core.train.train_module import TransformerTrainModuleConfig
 
 SEQ_LENGTH = 8192
-GLOBAL_BATCH_SIZE = 2097152
+GLOBAL_BATCH_SIZE = 2**21  # ~2M tokens
 SEED = 1337
 
 
@@ -54,11 +54,10 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             alpha_f=0.1,  # annealing.enabled=True from cookbook
         ),
         activation_checkpointing_enabled=True,
-        dp_shard_degree=32,
     )
 
     source_list = SourceMixtureList.from_yaml(
-        "./src/scripts/train/olmo3-midtraining/midtraining-mixture.yaml"
+        "src/olmo_core/data/source_mixtures/OLMo3-7B-midtraining.yaml"
     )
     source_list.validate()
     dataset_config = NumpyFSLDatasetConfig.from_src_mix(
@@ -81,6 +80,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     trainer_config = cookbook.configure_trainer(
         load_path="gs://ai2-llm/checkpoints/OLMo25/step1413814",
         load_trainer_state=False,
+        load_optim_state=True,
         max_duration=max_duration,
         checkpoint_dir=save_dir,
         work_dir=work_dir,

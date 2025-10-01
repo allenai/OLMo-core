@@ -631,10 +631,13 @@ class TransformerConfig(Config):
         """
         config = cls.olmo2_7B(
             vocab_size=vocab_size,
-            sliding_window=SlidingWindowAttentionConfig(
-                force_full_attention_on_first_layer=False,
-                force_full_attention_on_last_layer=True,
-                pattern=[4096, 4096, 4096, -1],
+            sliding_window=kwargs.pop(
+                "sliding_window",
+                SlidingWindowAttentionConfig(
+                    force_full_attention_on_first_layer=False,
+                    force_full_attention_on_last_layer=True,
+                    pattern=[4096, 4096, 4096, -1],
+                ),
             ),
             attn_backend=kwargs.pop("attn_backend", AttentionBackendName.flash_2),
             **kwargs,
