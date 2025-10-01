@@ -467,6 +467,7 @@ def main(run_name: str, overrides: List[str]):
     if train_module.blt_config.gradual_boundary_compression_kind in {"entropy", "cross_entropy"}:  # type: ignore
         entropy_model_config = TransformerConfig.olmo2_190M(vocab_size=TokenizerConfig.dolma2().padded_vocab_size(), dtype=DType.bfloat16)
         entropy_model = entropy_model_config.build(init_device="cpu")
+        entropy_model.apply_compile()
         load_model_and_optim_state(
             ENTROPY_CKPT_PATH,
             entropy_model,
