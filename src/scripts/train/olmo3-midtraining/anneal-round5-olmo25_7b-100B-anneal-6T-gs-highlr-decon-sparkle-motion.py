@@ -54,6 +54,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             alpha_f=0.1,  # annealing.enabled=True from cookbook
         ),
         activation_checkpointing_enabled=True,
+        dp_shard_degree=32,
     )
 
     source_list = SourceMixtureList.from_yaml(

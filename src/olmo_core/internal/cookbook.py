@@ -50,6 +50,7 @@ def configure_train_module(
     scheduler: Scheduler,
     float8_enabled: bool = False,
     activation_checkpointing_enabled: bool = True,
+    dp_shard_degree: int = 8,
     cp_degree: Optional[int] = None,
 ) -> TransformerTrainModuleConfig:
     return TransformerTrainModuleConfig(
@@ -71,8 +72,8 @@ def configure_train_module(
             name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
-            wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
-            shard_degree=32,
+            wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
+            shard_degree=dp_shard_degree,
         ),
         cp_config=(
             TransformerContextParallelConfig.llama3(degree=cp_degree, head_stride=4)
