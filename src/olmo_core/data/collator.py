@@ -231,9 +231,9 @@ class ByteDataCollator(DataCollator):
             entropy_input_ids = blt_utils.pad_right(
                 [item["original_input_ids"] for item in items],
                 value=subword_pad_token_id    
-            )
+            ).numpy()
             entropy_mask = entropy_input_ids != subword_pad_token_id
-            logits = torch.from_numpy(self._entropy_model.run(None, {"input_ids": entropy_input_ids.numpy()})[0])
+            logits = torch.from_numpy(self._entropy_model.run(None, {"input_ids": entropy_input_ids})[0])
             logprobs = F.log_softmax(logits, dim=-1)
 
             if self.blt_config.gradual_boundary_compression_kind == "entropy":
