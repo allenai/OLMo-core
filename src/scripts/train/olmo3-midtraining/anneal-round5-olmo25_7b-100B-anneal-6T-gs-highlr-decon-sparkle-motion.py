@@ -100,6 +100,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         data_loader=data_loader_config,
         init_seed=SEED,
     )
+    experiment_config = experiment_config.merge(cli_context.overrides)
     return experiment_config
 
 
