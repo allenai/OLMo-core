@@ -43,6 +43,7 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
         "ADD_EXPANDED_EMBEDDINGS",
         "TEACHER_MODE",
         "GLOBAL_MODEL_LEARNING_RATE",
+        "NUM_WORKERS",
     ]:
         if transparent_env_var in os.environ:
             env_vars.append(BeakerEnvVar(name=transparent_env_var, value=os.environ[transparent_env_var]))
