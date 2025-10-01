@@ -63,7 +63,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         tokenizer=tokenizer_config,
         work_dir=work_dir,
         sequence_length=SEQ_LENGTH,
-        generate_doc_lengths=True,
+        generate_doc_lengths=True,  # enables intra-document masking
     )
 
     data_loader_config = NumpyDataLoaderConfig(
