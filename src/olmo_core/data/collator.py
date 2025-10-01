@@ -177,7 +177,7 @@ class ByteDataCollator(DataCollator):
     def _initialize_entropy_model(self):
         sess_options = ort.SessionOptions()
         sess_options.intra_op_num_threads = 4
-        sess_options.enable_cpu_mem_arena = False
+        sess_options.inter_op_num_threads = 4
         sess_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
 
         if self.entropy_model_path is not None:
