@@ -17,6 +17,20 @@ GLOBAL_BATCH_SIZE = 2**21  # ~2M tokens
 SEED = 1337
 
 
+# TODO: address midtraining dtata issue where items in batch dont have same shape
+# 1Z Original Traceback (most recent call last):
+# 2025-10-01T21:40:47.121Z   File "/opt/conda/lib/python3.11/site-packages/torch/utils/data/_utils/worker.py", line 349, in _worker_loop
+# 2025-10-01T21:40:47.121Z     data = fetcher.fetch(index)  # type: ignore[possibly-undefined]
+# 2025-10-01T21:40:47.121Z            ^^^^^^^^^^^^^^^^^^^^
+# 2025-10-01T21:40:47.121Z   File "/opt/conda/lib/python3.11/site-packages/torch/utils/data/_utils/fetch.py", line 42, in fetch
+# 2025-10-01T21:40:47.121Z     data = next(self.dataset_iter)
+# 2025-10-01T21:40:47.121Z            ^^^^^^^^^^^^^^^^^^^^^^^
+# 2025-10-01T21:40:47.121Z   File "/olmo-core-runtime/src/olmo_core/data/data_loader.py", line 1045, in <genexpr>
+# 2025-10-01T21:40:47.121Z     return (
+# 2025-10-01T21:40:47.121Z            ^
+# 2025-10-01T21:40:47.121Z   File "/olmo-core-runtime/src/olmo_core/data/utils.py", line 401, in iter_batched
+# 2025-10-01T21:40:47.121Z     raise RuntimeError(
+# 2025-10-01T21:40:47.121Z RuntimeError: Items in batch don't have the same shape! Expected (8192,), got (5081,)
 def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     run_name_with_ts = (
         f"{cli_context.run_name}-{datetime.now().astimezone().strftime('%Y%m%dT%H%M%S%z')}"
@@ -80,8 +94,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         max_duration=max_duration,
         checkpoint_dir=save_dir,
         work_dir=work_dir,
-    )
-    trainer_config.add_callbacks(
+    ).with_callbacks(
         cookbook.configure_default_callbacks(
             run_name=run_name_with_ts, wandb_group_name=cli_context.run_name
         )
