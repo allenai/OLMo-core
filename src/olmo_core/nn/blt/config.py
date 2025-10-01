@@ -1,15 +1,14 @@
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Any
 
 from torch import nn
 
 from olmo_core.config import Config, DType
-from olmo_core.data.tokenizer import ByteTokenizerConfig
 
 @dataclass
 class BLTConfig(Config):
     """Config for distillation into BLT."""
-    tokenizer: Optional[ByteTokenizerConfig] = None
+    tokenizer: Optional[Any] = None
     losses: list[str] = field(default_factory=lambda: ["ce"])
     loss_weights: list[float] = field(default_factory=lambda: [1.0])
     loss_schedules: Optional[list[str]] = None

@@ -7,11 +7,12 @@ from typing import Any, Dict, Optional, Sequence, Union
 
 import torch
 import torch.nn.functional as F
+from torch import nn
+import onnxruntime as ort
 
 from olmo_core.data.tokenizer import ByteTokenizer
 from olmo_core.nn.blt.config import BLTConfig
 from olmo_core.nn.blt import utils as blt_utils
-from olmo_core.nn.transformer.model import Transformer
 
 from ..config import StrEnum
 
@@ -168,7 +169,19 @@ class DataCollator:
 class ByteDataCollator(DataCollator):
     tokenizer: Optional[ByteTokenizer] = None
     blt_config: Optional[BLTConfig] = None
-    entropy_model: Optional[Transformer] = None
+    entropy_model_path: Optional[str] = None
+
+    def __post_init__(self):
+        sess_options = ort.SessionOptions()
+        sess_options.intra_op_num_threads = 4
+        sess_options.inter_op_num_threads = 4
+        sess_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+
+        if self.entropy_model_path is not None:
+            self._entropy_model = ort.InferenceSession(self.entropy_model_path, sess_options, providers=["CPUExecutionProvider"])
+        else:
+            self._entropy_model = None
+
 
     def __call__(
         self, items: Union[Sequence[Dict[str, Any]], Sequence[torch.Tensor]]
@@ -199,61 +212,60 @@ class ByteDataCollator(DataCollator):
                     max_compression_ratio=max_compression_ratio,
                 )
         elif self.blt_config.gradual_boundary_compression_kind in {"entropy", "cross_entropy"}:
-            assert self.entropy_model is not None, "Entropy model must be provided for entropy-based merge computation."
+            assert self._entropy_model is not None, "Entropy model must be provided for entropy-based merge computation."
 
-            with torch.inference_mode():
-                entropy_input_ids = blt_utils.pad_right(
-                    [item["original_input_ids"] for item in items],
-                    value=subword_pad_token_id    
-                )
-                entropy_mask = entropy_input_ids != subword_pad_token_id
-                logits = self.entropy_model(entropy_input_ids)
-                logprobs = F.log_softmax(logits.float(), dim=-1)
+            entropy_input_ids = blt_utils.pad_right(
+                [item["original_input_ids"] for item in items],
+                value=subword_pad_token_id    
+            ).numpy()
+            entropy_mask = entropy_input_ids != subword_pad_token_id
+            logits = torch.from_numpy(self._entropy_model.run(None, {"input_ids": entropy_input_ids})[0])
+            logprobs = F.log_softmax(logits, dim=-1)
 
-                if self.blt_config.gradual_boundary_compression_kind == "entropy":
-                    # neg entropy
-                    scores = torch.sum(torch.exp(logprobs) * logprobs, -1)[:, :-1]
-                else:
-                    # main path logprobs / cross entropy
-                    scores = torch.gather(logprobs[:, :-1], -1, entropy_input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
+            if self.blt_config.gradual_boundary_compression_kind == "entropy":
+                # neg entropy
+                scores = torch.sum(torch.exp(logprobs) * logprobs, -1)[:, :-1]
+            else:
+                # main path logprobs / cross entropy
+                scores = torch.gather(logprobs[:, :-1], -1, torch.from_numpy(entropy_input_ids)[:, 1:].unsqueeze(-1)).squeeze(-1)
 
-                scores = torch.where(
-                    entropy_mask[:, 1:],
-                    scores,
-                    torch.tensor(-100_000, device=scores.device, dtype=scores.dtype)
-                )
+            scores = torch.where(
+                entropy_mask[:, 1:],
+                scores,
+                torch.tensor(-100_000, device=scores.device, dtype=scores.dtype)
+            )
 
-                for item_idx, item in enumerate(items):
-                    assert isinstance(item, dict)
-                    merge_indices = []
+            for item_idx, item in enumerate(items):
+                assert isinstance(item, dict)
+                merge_indices = []
 
-                    compressed_scores = scores[item_idx].tolist()
-                    original_length = len(scores[item_idx])
+                compressed_scores = scores[item_idx].tolist()
+                original_length = len(scores[item_idx])
 
-                    while len(compressed_scores) > 1:
-                        # Check compression ratio
-                        current_ratio = len(compressed_scores) / original_length
-                        if current_ratio <= max_compression_ratio:
-                            break
+                while len(compressed_scores) > 1:
+                    # Check compression ratio
+                    current_ratio = len(compressed_scores) / original_length
+                    if current_ratio <= max_compression_ratio:
+                        break
 
-                        max_score = -math.inf
-                        max_indices = []
-                        for i in range(len(compressed_scores) - 1):
-                            pair_score = compressed_scores[i] + compressed_scores[i + 1]
-                            if pair_score == max_score:
-                                max_indices.append(i)
-                            elif pair_score > max_score:
-                                max_indices = [i]
-                                max_score = pair_score
+                    max_score = -math.inf
+                    max_indices = []
+                    for i in range(len(compressed_scores) - 1):
+                        pair_score = compressed_scores[i] + compressed_scores[i + 1]
+                        if pair_score == max_score:
+                            max_indices.append(i)
+                        elif pair_score > max_score:
+                            max_indices = [i]
+                            max_score = pair_score
 
-                        next_merge = random.choice(max_indices)
+                    next_merge = random.choice(max_indices)
 
-                        compressed_scores[next_merge] = compressed_scores[next_merge] + compressed_scores[next_merge + 1]
-                        del compressed_scores[next_merge + 1]
+                    compressed_scores[next_merge] = compressed_scores[next_merge] + compressed_scores[next_merge + 1]
+                    del compressed_scores[next_merge + 1]
 
-                        merge_indices.append(next_merge)
+                    merge_indices.append(next_merge)
 
-                    item["bpe_merges"] = merge_indices
+                item["bpe_merges"] = merge_indices
 
         max_original_len = max(
             len(x["original_input_ids"]) if isinstance(x, dict) and "original_input_ids" in x else math.nan for x in items
