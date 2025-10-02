@@ -475,6 +475,54 @@ def test_numpy_fsl_mixture_dataset(tmp_path: Path):
     assert len(ds) / bsz >= math.ceil(max_tokens / (sequence_length * bsz))
 
 
+def test_numpy_fsl_mixture_dataset_truncated_instance(tmp_path: Path):
+    """Hamilton rounding can make the dataset think a full window exists when it doesn't."""
+
+    sequence_length = 4
+
+    data = np.arange(4, dtype=np.uint16)
+    mmap_path = tmp_path / "short.npy"
+    mmap = np.memmap(mmap_path, mode="w+", dtype=np.uint16, shape=data.shape)
+    mmap[:] = data
+    mmap.flush()
+
+    tokenizer = TokenizerConfig(vocab_size=32_000, eos_token_id=0, pad_token_id=-1)
+
+    mixture_config = SourceMixtureDatasetConfig(
+        render_tables=False,
+        requested_tokens=8,
+        source_list=SourceMixtureList(
+            [
+                SourceMixtureConfig(
+                    source_name="short",
+                    paths=[str(mmap_path)],
+                    target_ratio=1.0,
+                    max_repetition_ratio=2.0,
+                )
+            ]
+        ),
+        seed=0,
+        global_batch_size=sequence_length * 2,
+    )
+
+    ds = NumpyFSLDatasetConfig(
+        source_mixture_config=mixture_config,
+        sequence_length=sequence_length,
+        tokenizer=tokenizer,
+        dtype=NumpyDatasetDType.uint16,
+        include_instance_metadata=False,
+        work_dir=str(tmp_path),
+    ).build()
+    ds.prepare()
+
+    assert len(ds) == 2
+    first = ds[0]["input_ids"].tolist()
+    second = ds[1]["input_ids"].tolist()
+    assert len(first) == sequence_length
+    assert len(second) == sequence_length
+    assert second == first
+
+
 def test_numpy_fsl_mixture_dataset_with_repetition(tmp_path: Path):
     # NOTE: At small token counts the take_ratio can be finicky so we test at small but real world-ish scale
     npdtype = np.uint16

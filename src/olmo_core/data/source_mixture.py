@@ -269,12 +269,13 @@ class SourceMixtureDatasetConfig(Config):
             )
             tokens_per_path_per_source[source.config.source_name] = source_path_tokens
 
-        # We adjust the number of tokens per path so that we can complete the desired number of training steps while still retaining the target ratios.
-        all_tokens_per_path = [
-            path.tokens
-            for source_path_tokens in tokens_per_path_per_source.values()
-            for path in source_path_tokens
-        ]
+        # Determine how many full sequence-length instances each path can contribute.
+        flat_entries: List[Tuple[str, "SourcePathTokens", int, float]] = []
+        for source_name, source_path_tokens in tokens_per_path_per_source.items():
+            for path_tokens in source_path_tokens:
+                instances = path_tokens.tokens // sequence_length
+                remainder = (path_tokens.tokens % sequence_length) / sequence_length
+                flat_entries.append((source_name, path_tokens, instances, remainder))
 
         training_steps = math.ceil(self.requested_tokens / self.global_batch_size)
         assert (
@@ -283,50 +284,44 @@ class SourceMixtureDatasetConfig(Config):
         num_instances_per_batch = self.global_batch_size // sequence_length
         requested_instances = training_steps * num_instances_per_batch
 
-        # determine how many instances we still need to allocate
-        int_instances = []
-        remainders = []
-        for tokens_per_path in all_tokens_per_path:
-            int_part = tokens_per_path // sequence_length
-            remainder = (tokens_per_path % sequence_length) / sequence_length
-            int_instances.append(int_part)
-            remainders.append(remainder)
+        available_instances = sum(entry[2] for entry in flat_entries)
+        additional_instances_needed = requested_instances - available_instances
 
-        # we apply Hamilton's method for rounding (see https://mathematics-democracy-institute.org/apportionment/)
-        # that is, we only round up the requested instances for the paths that have the largest remainders
-        # there is a lot of literature on how any other allocation of increments is suboptimal
-        # basically, the requested tokens that are closest to a full instance are rounded up first
-        additional_instances_needed = requested_instances - sum(int_instances)
         if additional_instances_needed > 0:
-            base, leftover = divmod(additional_instances_needed, len(remainders))
-            if base:
-                int_instances = [n + base for n in int_instances]
-            if leftover:
-                for idx in sorted(range(len(remainders)), key=remainders.__getitem__, reverse=True)[
-                    :leftover
-                ]:
-                    int_instances[idx] += 1
+            # Prefer to duplicate paths whose fractional remainder indicates they were closest to
+            # producing another full instance.
+            candidates = [entry for entry in flat_entries if entry[2] > 0]
+            if not candidates:
+                raise OLMoConfigurationError(
+                    "Insufficient sequence-length tokens available to satisfy requested instances"
+                )
+            candidates.sort(key=lambda entry: entry[3], reverse=True)
+            if not candidates:
+                candidates = flat_entries
 
-        final_tokens_per_path = [inst * sequence_length for inst in int_instances]
+            idx = 0
+            while additional_instances_needed > 0:
+                source_name, path_tokens, _, _ = candidates[idx % len(candidates)]
+                duplicate = SourcePathTokens(path=path_tokens.path, tokens=sequence_length)
+                tokens_per_path_per_source[source_name].append(duplicate)
+                flat_entries.append((source_name, duplicate, 1, 0.0))
+                additional_instances_needed -= 1
+                idx += 1
 
-        i = 0
+        # Ensure each entry only claims whole instances; duplicates handle rounding.
+        for idx, (source_name, path_tokens, instances, _) in enumerate(flat_entries):
+            flat_entries[idx] = (source_name, path_tokens, instances, 0.0)
+            path_tokens.tokens = instances * sequence_length
+
         final_token_distribution: Dict[str, float] = {}
         for source_name, source_path_tokens in tokens_per_path_per_source.items():
-            for j in range(len(source_path_tokens)):
-                source_path_tokens[j] = SourcePathTokens(
-                    path=source_path_tokens[j].path, tokens=final_tokens_per_path[i]
-                )
-                i += 1
-
             completed.append(
                 SourceMixtureOutcome(
                     name=source_name,
                     path_tokens=source_path_tokens,
                 )
             )
-            final_token_distribution[source_name] = sum(
-                [path.tokens for path in source_path_tokens]
-            )
+            final_token_distribution[source_name] = sum(path.tokens for path in source_path_tokens)
 
         total_tokens = sum(final_token_distribution.values())
         final_token_distribution = {
