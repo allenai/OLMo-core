@@ -41,7 +41,7 @@ class SlackNotificationSetting(StrEnum):
 
     none = "none"
     """
-    Don't send any notifcations.
+    Don't send any notifications.
     """
 
 
