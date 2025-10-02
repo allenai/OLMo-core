@@ -1961,6 +1961,7 @@ class BLTDistillTransformer(BLTTransformer):
         metrics["blt/boundary_loss"] = boundary_loss / boundary_byte_mask.float().mean()
         metrics["blt/boundary_acc"] = boundary_acc / boundary_byte_mask.float().mean()
         metrics["blt/boundary_mean"] = (boundary_mask * boundary_byte_mask).float().mean() / boundary_byte_mask.float().mean()
+        metrics["blt/boundary_label_mean"] = (boundary_labels * boundary_byte_mask).float().mean() / boundary_byte_mask.float().mean()
 
         # First, run the teacher.
         if not skip_teacher:
