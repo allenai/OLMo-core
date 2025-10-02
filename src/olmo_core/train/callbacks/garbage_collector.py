@@ -3,6 +3,7 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
+from ...aliases import PathOrStr
 from .callback import Callback
 
 log = logging.getLogger(__name__)
@@ -44,3 +45,9 @@ class GarbageCollectorCallback(Callback):
             return
         if self._start_state:
             gc.enable()
+
+    def post_checkpoint_saved(self, path: PathOrStr):
+        del path
+        if not self.enabled:
+            return
+        gc.collect(1)

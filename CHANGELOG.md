@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Make `move_to_device` blocking for MPS device to fix possible incorrect transfer of data from CPU to MPS.
 - Fixed bug where `glob_directory()` would fail to match certain glob patterns.
 - Added one more type of error to retry on when the Google Storage API throws it.
+- Perform a garbage collection after checkpointing to avoid running out of CPU memory.
 
 ### Changed
 
