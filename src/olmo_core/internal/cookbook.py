@@ -63,6 +63,7 @@ def configure_train_module(
             group_overrides=[
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
             ],
+            foreach=True,
         ),
         scheduler=scheduler,
         z_loss_multiplier=1e-5,

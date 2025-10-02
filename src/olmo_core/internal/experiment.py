@@ -398,7 +398,7 @@ def build_config(
         trainer=trainer,
     )
 
-    config = config.merge(cli_context.overrides)  # should this be agnostic to the config builder?
+    config = config.merge(cli_context.overrides)
 
     _set_beaker_execution_units(config)
 
