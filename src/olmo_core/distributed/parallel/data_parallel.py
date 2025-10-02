@@ -39,6 +39,12 @@ class DataParallelConfig(Config):
     shard_degree: Optional[int] = None
 
     def get_replicate_and_shard_degree(self, dp_world_size: int) -> Tuple[int, int]:
+        """
+        Defaults to one replica per node, with the shard degree set to the number of gpus per node.
+
+        :param dp_world_size: The data parallel world size.
+        :return: A tuple of (num_replicas, shard_degree)
+        """
         if self.num_replicas is None and self.shard_degree is None:
             return get_num_nodes(), dp_world_size // get_num_nodes()
         elif self.num_replicas is not None and self.shard_degree is not None:

@@ -59,10 +59,11 @@ Key parameters:
 
 Typical usage together with the fixed-sequence dataset config::
 
-    from olmo_core.data import (
-        NumpyFSLDatasetConfig,
+    from olmo_core.data import NumpyFSLDatasetConfig
+    from olmo_core.data.source_mixture import (
         SourceMixtureConfig,
         SourceMixtureDatasetConfig,
+        SourceMixtureList,
     )
     from olmo_core.train import TokenizerConfig
 
@@ -70,7 +71,7 @@ Typical usage together with the fixed-sequence dataset config::
     global_batch_size = sequence_length * 512  # tokens per optimizer step
 
     mix_config = SourceMixtureDatasetConfig(
-        source_configs=[
+        source_list=SourceMixtureList([
             SourceMixtureConfig(
                 source_name="trex-facts",
                 target_ratio=0.6,
@@ -88,7 +89,7 @@ Typical usage together with the fixed-sequence dataset config::
                 paths=["/corpus/stegosaurus-high-quality/*.npy"],
                 max_source_fraction=0.25,
             ),
-        ],
+        ]),
         requested_tokens=1_000_000_000,
         global_batch_size=global_batch_size,
         processes=16,

@@ -7,6 +7,7 @@ from olmo_core.data import NumpyDatasetBase, NumpyFSLDatasetConfig, TokenizerCon
 from olmo_core.data.source_mixture import (
     SourceMixtureConfig,
     SourceMixtureDatasetConfig,
+    SourceMixtureList,
 )
 from olmo_core.data.types import NumpyDatasetDType
 
@@ -37,18 +38,20 @@ def get_fsl_mixture(
 
     mixture_config = SourceMixtureDatasetConfig(
         requested_tokens=num_tokens,
-        source_configs=[
-            SourceMixtureConfig(
-                source_name="mmap1",
-                paths=[str(i[0]) for i in mmap1],
-                target_ratio=0.8,
-            ),
-            SourceMixtureConfig(
-                source_name="mmap2",
-                paths=[str(i[0]) for i in mmap2],
-                target_ratio=0.2,
-            ),
-        ],
+        source_list=SourceMixtureList(
+            [
+                SourceMixtureConfig(
+                    source_name="mmap1",
+                    paths=[str(i[0]) for i in mmap1],
+                    target_ratio=0.8,
+                ),
+                SourceMixtureConfig(
+                    source_name="mmap2",
+                    paths=[str(i[0]) for i in mmap2],
+                    target_ratio=0.2,
+                ),
+            ]
+        ),
         seed=seed,
         global_batch_size=sequence_length * 32,
     )

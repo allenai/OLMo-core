@@ -9,7 +9,12 @@ from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import ensure_multiple_of
 
-from ..attention import AttentionBackendName, AttentionConfig, AttentionType
+from ..attention import (
+    AttentionBackendName,
+    AttentionConfig,
+    AttentionType,
+    SlidingWindowAttentionConfig,
+)
 from ..buffer_cache import BufferCache
 from ..feed_forward import FeedForwardConfig, FeedForwardType
 from ..layer_norm import LayerNormConfig, LayerNormType
@@ -444,6 +449,20 @@ class TransformerConfig(Config):
         return flop_per_token
 
     @classmethod
+    def olmo2_30M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        return cls.llama_like(
+            d_model=256,
+            n_layers=kwargs.pop("n_layers", 4),
+            n_heads=kwargs.pop("n_heads", 8),
+            vocab_size=vocab_size,
+            block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
+            qk_norm=kwargs.pop("qk_norm", True),
+            rope_theta=kwargs.pop("rope_theta", 500_000),
+            layer_norm_eps=1e-6,
+            **kwargs,
+        )
+
+    @classmethod
     def olmo2_190M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         return cls.llama_like(
             d_model=768,
@@ -604,6 +623,26 @@ class TransformerConfig(Config):
             layer_norm_eps=1e-6,
             **kwargs,
         )
+
+    @classmethod
+    def olmo3_7B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 7B OLMo3 model config.
+        """
+        config = cls.olmo2_7B(
+            vocab_size=vocab_size,
+            sliding_window=kwargs.pop(
+                "sliding_window",
+                SlidingWindowAttentionConfig(
+                    force_full_attention_on_first_layer=False,
+                    force_full_attention_on_last_layer=True,
+                    pattern=[4096, 4096, 4096, -1],
+                ),
+            ),
+            attn_backend=kwargs.pop("attn_backend", AttentionBackendName.flash_2),
+            **kwargs,
+        )
+        return config
 
     @classmethod
     def smallmoe(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
@@ -880,6 +919,7 @@ class TransformerConfig(Config):
         fused_ops: bool = False,
         use_flash: Optional[bool] = None,
         attn_backend: Optional[AttentionBackendName] = None,
+        sliding_window: Optional[SlidingWindowAttentionConfig] = None,
         block_name: TransformerBlockType = TransformerBlockType.default,
         block_mods: Optional[
             Dict[int, Callable[[TransformerBlockConfig], TransformerBlockConfig]]
@@ -937,6 +977,7 @@ class TransformerConfig(Config):
                 qk_norm=layer_norm if qk_norm else None,
                 use_flash=use_flash,
                 backend=attn_backend,
+                sliding_window=sliding_window,
                 dtype=dtype,
             ),
             feed_forward=feed_forward,
@@ -1071,3 +1112,36 @@ class TransformerConfig(Config):
             init_method=InitMethod.normalized,
             **kwargs,
         )
+
+    def with_rope_scaling(
+        self, rope_scaling: RoPEScalingConfig, full_attn_layers_only: bool = True
+    ) -> "TransformerConfig":
+        """
+        Return a copy of this config with the given RoPE scaling scheme applied.
+        """
+        new_config = self.copy()
+        if new_config.block.attention.rope is None:
+            raise ValueError("Cannot apply RoPE scaling to a model without RoPE.")
+
+        if not full_attn_layers_only:
+            new_config.block.attention.rope.scaling = rope_scaling
+            return new_config
+        else:
+
+            def add_rope_scaling(block: TransformerBlockConfig) -> TransformerBlockConfig:
+                rope_config = block.attention.rope
+                if rope_config is None:
+                    raise ValueError("Cannot apply RoPE scaling to a layer without RoPE.")
+                rope_config.scaling = rope_scaling
+                block.attention.rope = rope_config
+                return block
+
+            # Add rope scaling only to layers that do not use sliding window attention.
+            new_config.block_overrides = {
+                i: add_rope_scaling(new_config.block.copy())
+                for i in range(new_config.n_layers)
+                if not new_config.block.attention.sliding_window.should_use_swa(
+                    i, new_config.n_layers
+                )
+            }
+        return new_config
