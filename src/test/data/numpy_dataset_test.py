@@ -466,9 +466,9 @@ def test_numpy_fsl_mixture_dataset(tmp_path: Path):
     # Note that changing the seed here could result in the inclusion of the first sequence from the mock data.
     # assert not np.array_equal(first_src_sequence, first_ds_item)
     expected = "aff421"
-    assert ds.fingerprint.endswith(
-        expected
-    ), f"Fingerprint mismatch, expected {expected}, got {ds.fingerprint[-6:]}...Do you need to update expected fingerprint?"
+    assert ds.fingerprint.endswith(expected), (
+        f"Fingerprint mismatch, expected {expected}, got {ds.fingerprint[-6:]}...Do you need to update expected fingerprint?"
+    )
     assert first_ds_item == [56423, 24546, 15796, 52203]  # stable because we pass a seed
     assert ds.num_tokens == 10_112  # oversamples to handle rounding error
     assert len(ds) == 2528
@@ -491,16 +491,14 @@ def test_numpy_fsl_mixture_dataset_truncated_instance(tmp_path: Path):
     mixture_config = SourceMixtureDatasetConfig(
         render_tables=False,
         requested_tokens=8,
-        source_list=SourceMixtureList(
-            [
-                SourceMixtureConfig(
-                    source_name="short",
-                    paths=[str(mmap_path)],
-                    target_ratio=1.0,
-                    max_repetition_ratio=2.0,
-                )
-            ]
-        ),
+        source_configs=[
+            SourceMixtureConfig(
+                source_name="short",
+                paths=[str(mmap_path)],
+                target_ratio=1.0,
+                max_repetition_ratio=2.0,
+            )
+        ],
         seed=0,
         global_batch_size=sequence_length * 2,
     )
@@ -593,9 +591,9 @@ def test_numpy_fsl_mixture_dataset_with_repetition(tmp_path: Path):
     # Note that changing the seed here could result in the inclusion of the first sequence from the mock data.
     # assert not np.array_equal(first_src_sequence, first_ds_item)
 
-    assert ds.fingerprint.endswith(
-        expected_fingerprint
-    ), f"Fingerprint mismatch, expected {expected_fingerprint}, got {ds.fingerprint[-6:]}...Do you need to update expected fingerprint?"
+    assert ds.fingerprint.endswith(expected_fingerprint), (
+        f"Fingerprint mismatch, expected {expected_fingerprint}, got {ds.fingerprint[-6:]}...Do you need to update expected fingerprint?"
+    )
     assert first_ds_item == [
         12761,
         6996,
