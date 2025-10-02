@@ -40,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Simplified `SourceMixtureDatasetConfig` by removing redundant `sequence_length` and `dtype` fields.
 - The `model_id` argument to `convert_state_from_hf` is deprecated. Conversion information is deduced from the model type.
 - Refactored the example conversion scripts to/from HF, including decreasing false failures in validation.
+- Small refactor to `source_mixture.py` to make it easier to define data mixes in yaml.
 
 ### Added
 
@@ -55,6 +56,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `RoPEScalingConfig.to_hf_config()` for each RoPE scaling method to support automatic conversion to HuggingFace format.
 - Guide to dataset mixing in `docs/source/guides/data_mixing.rst`.
 - Added support for converting FlexOlmo models (with both dropless and default MoEs) between OLMo Core and HF formats.
+- Added `olmo3_7B` model config.
+- Added additional internal configuration tools.
 
 
 ## [v2.2.0](https://github.com/allenai/OLMo-core/releases/tag/v2.2.0) - 2025-08-26
