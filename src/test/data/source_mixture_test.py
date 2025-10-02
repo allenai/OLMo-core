@@ -64,7 +64,9 @@ def test_source_mixture_config(tmp_path: Path, caplog, capsys):
         assert (
             sum([tokens // sequence_length for _, tokens in mixture.to_index().items()])
             == requested_instances
-        ), f"Expected {requested_instances} instances, but got {sum([tokens // sequence_length for _, tokens in mixture.to_index().items()])}"
+        ), (
+            f"Expected {requested_instances} instances, but got {sum([tokens // sequence_length for _, tokens in mixture.to_index().items()])}"
+        )
         #  print(caplog.text)  # uncomment if you want to see the table
 
 
@@ -159,7 +161,9 @@ def test_dataset_mixture_build(tmp_path: Path):
     assert (
         sum([tokens // sequence_length for _, tokens in mixture.to_index().items()])
         == requested_instances
-    ), f"Expected {requested_instances} instances, but got {sum([tokens // sequence_length for _, tokens in mixture.to_index().items()])}"
+    ), (
+        f"Expected {requested_instances} instances, but got {sum([tokens // sequence_length for _, tokens in mixture.to_index().items()])}"
+    )
 
 
 def test_dataset_mixture_build_insufficient_source_data(tmp_path: Path):
@@ -194,7 +198,7 @@ def test_dataset_mixture_build_insufficient_source_data(tmp_path: Path):
         global_batch_size=1024 * 32,
     )
 
-    # Should raise exception because the target ratio for source 1 @50% (2.5M) is infeasible without repetition (default max_repetition_ratio=1)
+    # Should raise exception because the target ratio for source 1 @50% (2.5M) is infeasible without repetition (default max_repetitions=1)
     with pytest.raises(OLMoConfigurationError):
         config.build(npdtype=np.uint32, sequence_length=1024)
 
@@ -215,7 +219,7 @@ def test_dataset_mixture_build_with_repetition(tmp_path: Path):
         SourceMixtureConfig(
             source_name="1",
             target_ratio=0.5,
-            max_repetition_ratio=3.0,  # Allow 3x repetition of source1 so that we can meet the target of 2.5M
+            max_repetitions=3.0,  # Allow 3x repetition of source1 so that we can meet the target of 2.5M
             paths=[str(i[0]) for i in source_paths["1"]],
         ),
         SourceMixtureConfig(
@@ -256,7 +260,9 @@ def test_dataset_mixture_build_with_repetition(tmp_path: Path):
     assert (
         sum([tokens // sequence_length for _, tokens in mixture.to_index().items()])
         == requested_instances
-    ), f"Expected {requested_instances} instances, but got {sum([tokens // sequence_length for _, tokens in mixture.to_index().items()])}"
+    ), (
+        f"Expected {requested_instances} instances, but got {sum([tokens // sequence_length for _, tokens in mixture.to_index().items()])}"
+    )
 
     assert total_tokens == 5013504
 
@@ -314,7 +320,7 @@ def test_dataset_mixture_build_duplicate_paths(tmp_path: Path):
         SourceMixtureConfig(
             source_name="1",
             target_ratio=0.33,  # 990k tokens
-            max_repetition_ratio=2.0,
+            max_repetitions=2.0,
             paths=[
                 str(sources["1"][0][0]),
                 str(sources["1"][0][0]),
@@ -356,4 +362,6 @@ def test_dataset_mixture_build_duplicate_paths(tmp_path: Path):
     assert (
         sum([tokens // sequence_length for _, tokens in mixture.to_index().items()])
         == requested_instances
-    ), f"Expected {requested_instances} instances, but got {sum([tokens // sequence_length for _, tokens in mixture.to_index().items()])}"
+    ), (
+        f"Expected {requested_instances} instances, but got {sum([tokens // sequence_length for _, tokens in mixture.to_index().items()])}"
+    )

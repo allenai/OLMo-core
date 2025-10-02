@@ -32,7 +32,7 @@ source should be sampled:
 - ``target_ratio`` – Global proportion of tokens that should come from this source.
   All ratios across sources must sum to ``1.0``.
 - ``paths`` – List of numpy ``.npy`` files that contain pre-tokenized data.
-- ``max_repetition_ratio`` – Optional upsampling factor. Values above ``1.0`` allow
+- ``max_repetitions`` – Optional upsampling factor. Values above ``1.0`` allow
   the same file set to be repeated to hit the requested ratio when there are not enough
   unique tokens available.
 - ``max_source_fraction`` – Caps how much of the underlying source population can be
@@ -80,7 +80,7 @@ Typical usage together with the fixed-sequence dataset config::
                 source_name="triceratops-knowledge",
                 target_ratio=0.3,
                 paths=["/corpus/triceratops-facts/shard-*.npy"],
-                max_repetition_ratio=1.5,
+                max_repetitions=1.5,
             ),
             SourceMixtureConfig(
                 source_name="stegosaurus-high-quality",
@@ -108,7 +108,7 @@ logs summary tables (unless ``quiet=True``), and supplies file weights to
 
 If the requested ratios cannot be met because a source is too small and repetition
 is disabled, ``build()`` raises :class:`~olmo_core.exceptions.OLMoConfigurationError`
-so you can adjust either the ratios or ``max_repetition_ratio``.
+so you can adjust either the ratios or ``max_repetitions``.
 
 Source mixture datasets are currently ony compatible with :class:`~olmo_core.data.numpy_dataset.NumpyFSLDatasetMixture`
 (no padding, packing, or VSL support).

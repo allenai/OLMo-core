@@ -21,6 +21,7 @@ from olmo_core.data.source_mixture import (
 )
 from olmo_core.data.types import NumpyDatasetDType
 from olmo_core.data.utils import get_document_indices, write_document_indices
+from olmo_core.exceptions import OLMoConfigurationError
 
 from .utils import mk_mmaps
 
@@ -475,9 +476,7 @@ def test_numpy_fsl_mixture_dataset(tmp_path: Path):
     assert len(ds) / bsz >= math.ceil(max_tokens / (sequence_length * bsz))
 
 
-def test_numpy_fsl_mixture_dataset_truncated_instance(tmp_path: Path):
-    """Hamilton rounding can make the dataset think a full window exists when it doesn't."""
-
+def test_numpy_fsl_mixture_dataset_insufficient_instances(tmp_path: Path):
     sequence_length = 4
 
     data = np.arange(4, dtype=np.uint16)
@@ -496,29 +495,22 @@ def test_numpy_fsl_mixture_dataset_truncated_instance(tmp_path: Path):
                 source_name="short",
                 paths=[str(mmap_path)],
                 target_ratio=1.0,
-                max_repetition_ratio=2.0,
+                max_repetitions=1.0,
             )
         ],
         seed=0,
         global_batch_size=sequence_length * 2,
     )
 
-    ds = NumpyFSLDatasetConfig(
-        source_mixture_config=mixture_config,
-        sequence_length=sequence_length,
-        tokenizer=tokenizer,
-        dtype=NumpyDatasetDType.uint16,
-        include_instance_metadata=False,
-        work_dir=str(tmp_path),
-    ).build()
-    ds.prepare()
-
-    assert len(ds) == 2
-    first = ds[0]["input_ids"].tolist()
-    second = ds[1]["input_ids"].tolist()
-    assert len(first) == sequence_length
-    assert len(second) == sequence_length
-    assert second == first
+    with pytest.raises(OLMoConfigurationError, match="Mixture provides only"):
+        NumpyFSLDatasetConfig(
+            source_mixture_config=mixture_config,
+            sequence_length=sequence_length,
+            tokenizer=tokenizer,
+            dtype=NumpyDatasetDType.uint16,
+            include_instance_metadata=False,
+            work_dir=str(tmp_path),
+        ).build()
 
 
 def test_numpy_fsl_mixture_dataset_with_repetition(tmp_path: Path):
@@ -562,7 +554,7 @@ def test_numpy_fsl_mixture_dataset_with_repetition(tmp_path: Path):
         requested_tokens=max_tokens,
         source_configs=[
             SourceMixtureConfig(
-                source_name="mmap1", paths=source1_paths, target_ratio=0.8, max_repetition_ratio=2.0
+                source_name="mmap1", paths=source1_paths, target_ratio=0.8, max_repetitions=2.0
             ),
             SourceMixtureConfig(
                 source_name="mmap2",

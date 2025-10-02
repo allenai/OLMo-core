@@ -37,7 +37,7 @@ from olmo_core.io import (
 )
 from olmo_core.utils import capped_powers_of_2
 
-from .types import LongDocStrategy
+from .types import LongDocStrategy, NumpyUIntTypes
 
 
 def split_batch(batch: Dict[str, Any], num_microbatch_instances: int) -> List[Dict[str, Any]]:
@@ -442,6 +442,10 @@ def write_array_to_disk(arr: np.ndarray, path: Path):
         shape=arr.shape,
     ) as mmap:
         mmap[:] = arr
+
+
+def bytes_to_tokens(num_bytes: int, dtype: NumpyUIntTypes) -> int:
+    return num_bytes // dtype(int(0)).itemsize
 
 
 def divide_into_buckets(n: int, b: int) -> List[int]:
