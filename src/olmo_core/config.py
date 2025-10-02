@@ -272,6 +272,16 @@ class Config:
             raise OLMoConfigurationError(str(e))
 
     @classmethod
+    def from_file(cls: Type[C], path: PathOrStr, overrides: Optional[List[str]] = None) -> C:
+        path = cached_path(path)
+        if path.suffix in {".yml", ".yaml"}:
+            return cls.from_yaml(path, overrides=overrides)
+        elif path.suffix == ".json":
+            return cls.from_json(path, overrides=overrides)
+        else:
+            raise OLMoConfigurationError(f"Unsupported config file type: {path}")
+
+    @classmethod
     def from_json(cls: Type[C], path: PathOrStr, overrides: Optional[List[str]] = None) -> C:
         with cached_path(path).open() as f:
             config_dict = json.load(f)

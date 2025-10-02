@@ -635,17 +635,17 @@ class Trainer:
             and not self.checkpoint_loaded
             and self.load_strategy != LoadStrategy.never
         ):
-            # Try loading from the save folder first.
-            self.maybe_load_checkpoint(self.save_folder)
+            # Try loading from the save folder first. The save folder is used for continuing
+            # existing runs that failed or were preempted, so we always load trainer state and
+            # optimizer state.
+            self.maybe_load_checkpoint(
+                self.save_folder, load_trainer_state=True, load_optim_state=True
+            )
 
             # Then fallback to the load path, if provided.
             if self.load_path is not None:
                 if not self.checkpoint_loaded:
-                    self.maybe_load_checkpoint(
-                        self.load_path,
-                        load_trainer_state=self.load_trainer_state,
-                        load_optim_state=self.load_optim_state,
-                    )
+                    self.maybe_load_checkpoint(self.load_path)
                 else:
                     log.warning(
                         f"Ignoring load path ('{self.load_path}') since checkpoint was found in save folder"
@@ -811,6 +811,10 @@ class Trainer:
         :param load_optim_state: Load optimizer state in the train module.
         """
         dir = normalize_path(dir)
+        load_trainer_state = (
+            self.load_trainer_state if load_trainer_state is None else load_trainer_state
+        )
+        load_optim_state = self.load_optim_state if load_optim_state is None else load_optim_state
 
         # NOTE: to avoid making a ton of client requests (S3 or otherwise) we only make those
         # requests from rank 0 then scatter the result to the other ranks.
