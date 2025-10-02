@@ -67,7 +67,7 @@ class DataLoaderBase(ABC):
         implementation.
     :param dp_world_size: The data parallel world size.
     :param dp_rank: The local data parallel rank.
-    :param fs_local_rank: The filesystem-local rank.
+    :param fs_local_rank: The filesystem-local rank relative to the working directory.
     """
 
     def __init__(
@@ -77,7 +77,7 @@ class DataLoaderBase(ABC):
         global_batch_size: int,
         dp_world_size: int = 1,
         dp_rank: int = 0,
-        fs_local_rank: int = 0,
+        fs_local_rank: Optional[int] = None,
     ):
         if is_url(work_dir):
             raise OLMoConfigurationError(
@@ -88,8 +88,7 @@ class DataLoaderBase(ABC):
         assert dp_rank < dp_world_size
         self.dp_world_size = dp_world_size
         self.dp_rank = dp_rank
-
-        self.fs_local_rank = fs_local_rank
+        self.fs_local_rank = fs_local_rank if fs_local_rank is not None else get_fs_local_rank()
 
         self.batches_processed = 0
         """
@@ -267,7 +266,7 @@ class TextDataLoaderBase(DataLoaderBase):
         global_batch_size: int,
         dp_world_size: int = 1,
         dp_rank: int = 0,
-        fs_local_rank: int = 0,
+        fs_local_rank: Optional[int] = None,
     ):
         super().__init__(
             work_dir=work_dir,
@@ -346,7 +345,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
         target_device_type: str = "cpu",
         dp_world_size: int = 1,
         dp_rank: int = 0,
-        fs_local_rank: int = 0,
+        fs_local_rank: Optional[int] = None,
     ):
         super().__init__(
             collator=collator,
@@ -376,7 +375,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
         seed: int = 0,
         dp_world_size: int = 1,
         dp_rank: int = 0,
-        fs_local_rank: int = 0,
+        fs_local_rank: Optional[int] = None,
         num_threads: Optional[int] = None,
         num_workers: int = 0,
         prefetch_factor: Optional[int] = None,
