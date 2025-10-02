@@ -273,10 +273,10 @@ class Config:
 
     @classmethod
     def from_file(cls: Type[C], path: PathOrStr, overrides: Optional[List[str]] = None) -> C:
-        path = cached_path(path)
-        if path.suffix in {".yml", ".yaml"}:
+        path_str = str(path)
+        if path_str.endswith((".yml", ".yaml")):
             return cls.from_yaml(path, overrides=overrides)
-        elif path.suffix == ".json":
+        elif path_str.endswith(".json"):
             return cls.from_json(path, overrides=overrides)
         else:
             raise OLMoConfigurationError(f"Unsupported config file type: {path}")
