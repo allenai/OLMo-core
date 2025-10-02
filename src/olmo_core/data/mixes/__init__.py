@@ -39,6 +39,7 @@ class DataMix(DataMixBase):
     dolma17 = "dolma17"
     v3_small_ppl_validation = "v3-small-ppl-validation"
     OLMo_mix_0625 = "OLMo-mix-0625"
+    OLMo_mix_0925 = "OLMo-mix-0925"
 
     def build(self, base_dir: str, tokenizer: str) -> Tuple[List[str], List[str]]:
         if not base_dir.endswith("/"):
