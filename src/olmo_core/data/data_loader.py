@@ -45,8 +45,6 @@ __all__ = [
 
 log = logging.getLogger(__name__)
 
-def _worker_init_fn(worker_id):
-    torch.set_num_threads(4)
 
 class DataLoaderBase(ABC):
     """
@@ -600,7 +598,6 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
                     prefetch_factor=self.prefetch_factor,
                     persistent_workers=False,
                     timeout=0,
-                    worker_init_fn=_worker_init_fn,
                 ),
             )
 
