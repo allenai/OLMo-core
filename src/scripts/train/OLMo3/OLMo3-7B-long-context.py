@@ -71,7 +71,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     trainer_config = cookbook.configure_trainer(
-        load_path="gs://ai2-llm/checkpoints/OLMo25/step1413814",
+        load_path="gs://ai2-llm/checkpoints/allysone/anneal-round5-100B-olmo25_7b-anneal-6T-decon-sparkle-motion-8730626c/step47684",
         load_trainer_state=False,
         load_optim_state=True,
         max_duration=max_duration,
@@ -83,8 +83,6 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             run_name=run_name_with_ts, wandb_group_name=cli_context.run_name
         )
     )
-
-    # TODO: evals
 
     experiment_config = ExperimentConfig(
         run_name=cli_context.run_name,
@@ -107,10 +105,10 @@ if __name__ == "__main__":
 
     Examples:
         To render the config and exit:
-            python src/scripts/train/olmo3-midtraining/cookbook-example.py dry_run debug_run ai2/augusta
+            python src/scripts/train/OLMo3/OLMo3-7B-long-context.py dry_run debug_run ai2/augusta
 
         To launch a training run on Augusta w/ 8 nodes:
-        python src/scripts/train/olmo3-midtraining/cookbook-example.py launch my_run ai2/augusta \
+        python src/scripts/train/OLMo3/OLMo3-7B-long-context.py launch my_run ai2/augusta \
             --launch.num_nodes=8 \
             --launch.priority=high
     """
