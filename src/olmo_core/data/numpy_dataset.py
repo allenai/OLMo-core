@@ -774,46 +774,36 @@ def prepare_byte_example(
             max_compression_ratio=max_compression_ratio,
         )
     elif compute_merge_kind in {"entropy", "cross_entropy"}:
-        with torch.inference_mode():
-            logits = kwargs["entropy_model"](original_input_ids.unsqueeze(0)).squeeze(0)
-            logprobs = F.log_softmax(logits.float(), dim=-1)
-            
-            if compute_merge_kind == "entropy":
-                # neg entropy
-                scores = torch.sum(torch.exp(logprobs) * logprobs, -1)[:-1]
-            else:
-                # main path logprobs / cross entropy
-                scores = torch.gather(logprobs[:-1], -1, original_input_ids[1:].unsqueeze(-1)).squeeze(-1)
+        scores = item["entropies"][:-1] # cant merge last token with anything
+        merge_indices = []
 
-            merge_indices = []
+        compressed_scores = scores.tolist()
+        original_length = len(scores)
 
-            compressed_scores = scores.tolist()
-            original_length = len(scores)
+        while len(compressed_scores) > 1:
+            # Check compression ratio
+            current_ratio = len(compressed_scores) / original_length
+            if current_ratio <= max_compression_ratio:
+                break
 
-            while len(compressed_scores) > 1:
-                # Check compression ratio
-                current_ratio = len(compressed_scores) / original_length
-                if current_ratio <= max_compression_ratio:
-                    break
+            max_score = -math.inf
+            max_indices = []
+            for i in range(len(compressed_scores) - 1):
+                pair_score = compressed_scores[i] + compressed_scores[i + 1]
+                if pair_score == max_score:
+                    max_indices.append(i)
+                elif pair_score > max_score:
+                    max_indices = [i]
+                    max_score = pair_score
 
-                max_score = -math.inf
-                max_indices = []
-                for i in range(len(compressed_scores) - 1):
-                    pair_score = compressed_scores[i] + compressed_scores[i + 1]
-                    if pair_score == max_score:
-                        max_indices.append(i)
-                    elif pair_score > max_score:
-                        max_indices = [i]
-                        max_score = pair_score
+            next_merge = random.choice(max_indices)
 
-                next_merge = random.choice(max_indices)
+            compressed_scores[next_merge] = compressed_scores[next_merge] + compressed_scores[next_merge + 1]
+            del compressed_scores[next_merge + 1]
 
-                compressed_scores[next_merge] = compressed_scores[next_merge] + compressed_scores[next_merge + 1]
-                del compressed_scores[next_merge + 1]
+            merge_indices.append(next_merge)
 
-                merge_indices.append(next_merge)
-
-            item["bpe_merges"] = merge_indices
+        item["bpe_merges"] = merge_indices
 
     return item
 
@@ -840,12 +830,13 @@ class NumpyByteFSLDataset(NumpyFSLDataset):
         # no tokenization bias.
         self.fim_middle_id = self.tokenizer.hf_tokenizer.get_vocab()["<|fim_middle|>"]
         self.compute_merge_kind = None
+        self._entropy_path_replace = None
 
     def enable_compute_merges(self, kind, **kwargs):
         self.compute_merge_kind = kind
 
         if kind in {"entropy", "cross_entropy"}:
-            self._entropy_model = kwargs["entropy_model"]
+            self._entropy_path_replace = kwargs["entropy_path_replace"]
 
     def disable_compute_merges(self):
         self.compute_merge_kind = None
@@ -871,8 +862,57 @@ class NumpyByteFSLDataset(NumpyFSLDataset):
 
         return file_size, file_size // (item_size * self.patch_sequence_length)
 
+    # NumpyFSLDataset.__getitem__ + obtain cross-entropies and entropies
+    def _get_subword_item(self, index: int) -> Dict[str, Any]:
+        index = int(index)  # in case this is a numpy int type.
+        pos_index = index if index >= 0 else len(self) + index
+
+        # The index of the array within 'self.paths'.
+        array_index: Optional[int] = None
+        # The index within the corresponding array.
+        array_local_index: Optional[int] = None
+        for i, (offset_start, offset_end) in enumerate(self.offsets):
+            if offset_start <= pos_index < offset_end:
+                array_index = i
+                array_local_index = pos_index - offset_start
+                break
+
+        if array_index is None or array_local_index is None:
+            raise IndexError(f"{index} is out of bounds for dataset of size {len(self)}")
+
+        # Read the data from file.
+        input_ids = self._read_chunk_from_array(self.paths[array_index], array_local_index)
+        out: Dict[str, Any] = {"input_ids": input_ids}
+
+        if self._label_mask_paths is not None:
+            label_mask = self._read_chunk_from_array(
+                self._label_mask_paths[array_index], array_local_index, dtype=np.bool_
+            )
+            out["label_mask"] = label_mask
+
+        if self.instance_filter_config is not None:
+            out["instance_mask"] = self._validate_instance(input_ids, self.instance_filter_config)
+
+        if self._include_instance_metadata:
+            metadata = self._metadata[array_index]
+            out["metadata"] = deepcopy(metadata)
+
+        if self._generate_doc_lengths:
+            out["doc_lens"] = get_document_lengths(
+                input_ids, self.eos_token_id, bos_token_id=self.bos_token_id
+            )
+
+        if self._entropy_path_replace is not None:
+            out["entropies"] = self._read_chunk_from_array(
+                str(self.paths[array_index]).replace(
+                    self._entropy_path_replace[0], self._entropy_path_replace[1]
+                ), array_local_index, dtype=np.float16
+            )
+
+        return out
+
     def __getitem__(self, index: int) -> Dict[str, Any]:
-        item = super().__getitem__(index)
+        item = self._get_subword_item(index)
 
         return prepare_byte_example(
             item,
@@ -881,7 +921,7 @@ class NumpyByteFSLDataset(NumpyFSLDataset):
             pad_token_id=self.tokenizer.pad_token_id,
             compute_merge_kind=self.compute_merge_kind,
             fim_middle_id=self.fim_middle_id,
-            entropy_model=getattr(self, "_entropy_model", None),
+            entropies=item["entropies"] if "entropies" in item else None,
         )
 
     @property

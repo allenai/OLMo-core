@@ -307,6 +307,8 @@ def load_array_slice_into_tensor(
     array = load_array_slice(path, start_idx, end_idx, dtype)
     if dtype == np.bool_:
         return torch.tensor(array)
+    elif dtype == np.float16:
+        return torch.tensor(array, dtype=torch.float16)
     else:
         return torch.tensor(array.astype(np.int_), dtype=torch.long)
 

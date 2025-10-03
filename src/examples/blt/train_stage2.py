@@ -83,6 +83,9 @@ LR_SCHEDULE = os.environ.get("LR_SCHEDULE", "linear_with_warmup")
 ADD_HASH_EMBEDDINGS = os.environ.get("ADD_HASH_EMBEDDINGS", "false").lower() in {"1", "true", "yes"}
 ADD_EXPANDED_EMBEDDINGS = os.environ.get("ADD_EXPANDED_EMBEDDINGS", "true").lower() in {"1", "true", "yes"}
 OLMO_ARCH = os.environ.get("OLMO_ARCH", "olmo2_1B_v2")
+ENTROPY_PATH_ROOT = "/weka/oe-training-default/benjaminm/entropies/entropy/"
+CROSS_ENTROPY_PATH_ROOT = "/weka/oe-training-default/benjaminm/entropies/cross_entropy/"
+ENTROPY_PATH_SUB = "/weka/oe-training-default/"
 
 if DATA_SOURCE == "dclm":
     _DATA_SOURCES = open(Path(__file__).parent / "data_sources.txt").read().strip().splitlines()
@@ -103,6 +106,9 @@ ENTROPY_CKPT_PATH = os.environ.get("ENTROPY_CKPT_PATH", "/weka/oe-training-defau
 DATA_PATHS = ["/weka/oe-training-default/" + x for x in _DATA_SOURCES]
 
 if not os.environ.get("HAS_WEKA"):
+    ENTROPY_PATH_ROOT = ENTROPY_PATH_ROOT.replace("/weka/oe-training-default/", "gs://ai2-llm/")
+    CROSS_ENTROPY_PATH_ROOT = CROSS_ENTROPY_PATH_ROOT.replace("/weka/oe-training-default/", "gs://ai2-llm/")
+    ENTROPY_PATH_SUB = ENTROPY_PATH_SUB.replace("/weka/oe-training-default/", "gs://ai2-llm/")
     STAGE1_CKPT_PATH = STAGE1_CKPT_PATH.replace("/weka/oe-training-default/", "gs://ai2-llm/")
     OLMO_CKPT_PATH = OLMO_CKPT_PATH.replace("/weka/oe-training-default/", "gs://ai2-llm/")
     DATA_PATHS = [x.replace("/weka/oe-training-default/", "gs://") for x in DATA_PATHS] # slight inconsistency
@@ -330,6 +336,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         global_batch_size=GLOBAL_BATCH_SIZE * SEQUENCE_LENGTH * BYTE_EXPANSION_FACTOR,
         seed=0,
         num_workers=NUM_WORKERS if not QUICK_DEBUG else 0,
+        num_threads=None if not QUICK_DEBUG else 0,
     )
 
     if LR_SCHEDULE == "linear_with_warmup":
@@ -467,16 +474,14 @@ def main(run_name: str, overrides: List[str]):
     if train_module.blt_config.gradual_boundary_compression_kind == "bpe":  # type: ignore
         dataset.enable_compute_merges("bpe")  # type: ignore
     elif train_module.blt_config.gradual_boundary_compression_kind in {"entropy", "cross_entropy"}:  # type: ignore
-        entropy_model_config = TransformerConfig.olmo2_190M(vocab_size=TokenizerConfig.dolma2().padded_vocab_size(), dtype=DType.bfloat16)
-        entropy_model = entropy_model_config.build(init_device="cpu")
-        entropy_model.apply_compile()
-        load_model_and_optim_state(
-            ENTROPY_CKPT_PATH,
-            entropy_model,
+        entropy_path_replace = (
+            ENTROPY_PATH_SUB,
+            CROSS_ENTROPY_PATH_ROOT if train_module.blt_config.gradual_boundary_compression_kind == "cross_entropy" else ENTROPY_PATH_ROOT  # type: ignore
         )
+
         dataset.enable_compute_merges(  # type: ignore
             train_module.blt_config.gradual_boundary_compression_kind, # type: ignore
-            entropy_model=entropy_model
+            entropy_path_replace=entropy_path_replace,
         )
 
     data_loader = config.data_loader.build(
