@@ -99,7 +99,7 @@ else:
 
 OLMO_CKPT_PATH = os.environ.get("OLMO_CKPT_PATH", "") # for baseline
 STAGE1_CKPT_PATH = os.environ.get("STAGE1_CKPT_PATH", "")
-ENTROPY_CKPT_PATH = os.environ.get("ENTROPY_CKPT_PATH", "/weka/oe-training-default/benjaminm/checkpoints/olmo2_190M.onnx")
+ENTROPY_CKPT_PATH = os.environ.get("ENTROPY_CKPT_PATH", "/weka/oe-training-default/ai2-llm/checkpoints/dirkg/ladder/checkpoints/baseline-titan-190M-5xC/step36308/model_and_optim")
 DATA_PATHS = ["/weka/oe-training-default/" + x for x in _DATA_SOURCES]
 
 if not os.environ.get("HAS_WEKA"):
@@ -465,9 +465,15 @@ def main(run_name: str, overrides: List[str]):
     dataset = config.dataset.build()
 
     if train_module.blt_config.gradual_boundary_compression_kind in {"entropy", "cross_entropy"}:  # type: ignore
-        entropy_model_path = ENTROPY_CKPT_PATH
+        entropy_model_config = TransformerConfig.olmo2_190M(vocab_size=TokenizerConfig.dolma2().padded_vocab_size(), dtype=DType.bfloat16)
+        entropy_model = entropy_model_config.build(init_device="cpu")
+        entropy_model.apply_compile()
+        load_model_and_optim_state(
+            ENTROPY_CKPT_PATH,
+            entropy_model,
+        )
     else:
-        entropy_model_path = None
+        entropy_model = None
 
     data_loader = config.data_loader.build(
         dataset,
@@ -475,7 +481,7 @@ def main(run_name: str, overrides: List[str]):
             pad_token_id=dataset.pad_token_id,
             tokenizer=dataset.tokenizer,  # type: ignore
             blt_config=train_module.blt_config,   # type: ignore
-            entropy_model_path=entropy_model_path,
+            entropy_model=entropy_model,
         ),
         dp_process_group=train_module.dp_process_group
     )
