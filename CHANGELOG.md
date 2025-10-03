@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed bug where `glob_directory()` would fail to match certain glob patterns.
 - Added one more type of error to retry on when the Google Storage API throws it.
 - Perform a garbage collection after checkpointing to avoid running out of CPU memory.
+- Avoidable overflow error when using NumpyPackedFSLDataset.
 
 ### Changed
 
