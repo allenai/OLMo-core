@@ -841,7 +841,7 @@ class InstancePacker:
 
         # Sort document indices by document length, decreasing.
         document_lengths = document_indices[:, 1] - document_indices[:, 0]
-        sorted_index = np.argsort(document_lengths)[::-1]
+        sorted_index = np.argsort(-1 * document_lengths.astype(np.int64))
         document_indices = np.take(document_indices, sorted_index, axis=0)
 
         # Pack documents into instances.
