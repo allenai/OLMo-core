@@ -18,6 +18,7 @@ from olmo_core.data.numpy_dataset import NumpyInterleavedFSLDataset
 from olmo_core.data.source_mixture import (
     SourceMixtureConfig,
     SourceMixtureDatasetConfig,
+    SourceMixtureList,
 )
 from olmo_core.data.types import NumpyDatasetDType
 from olmo_core.data.utils import get_document_indices, write_document_indices
@@ -434,18 +435,20 @@ def test_numpy_fsl_mixture_dataset(tmp_path: Path):
     mixture_config = SourceMixtureDatasetConfig(
         render_tables=False,
         requested_tokens=max_tokens,
-        source_configs=[
-            SourceMixtureConfig(
-                source_name="mmap1",
-                paths=[str(i[0]) for i in mmap1],
-                target_ratio=0.8,
-            ),
-            SourceMixtureConfig(
-                source_name="mmap2",
-                paths=[str(i[0]) for i in mmap2],
-                target_ratio=0.2,
-            ),
-        ],
+        source_list=SourceMixtureList(
+            [
+                SourceMixtureConfig(
+                    source_name="mmap1",
+                    paths=[str(i[0]) for i in mmap1],
+                    target_ratio=0.8,
+                ),
+                SourceMixtureConfig(
+                    source_name="mmap2",
+                    paths=[str(i[0]) for i in mmap2],
+                    target_ratio=0.2,
+                ),
+            ]
+        ),
         seed=seed,
         global_batch_size=sequence_length * bsz,
     )
@@ -514,16 +517,21 @@ def test_numpy_fsl_mixture_dataset_with_repetition(tmp_path: Path):
     mixture_config = SourceMixtureDatasetConfig(
         render_tables=False,
         requested_tokens=max_tokens,
-        source_configs=[
-            SourceMixtureConfig(
-                source_name="mmap1", paths=source1_paths, target_ratio=0.8, max_repetition_ratio=2.0
-            ),
-            SourceMixtureConfig(
-                source_name="mmap2",
-                paths=[str(i[0]) for i in mmap2],
-                target_ratio=0.2,
-            ),
-        ],
+        source_list=SourceMixtureList(
+            [
+                SourceMixtureConfig(
+                    source_name="mmap1",
+                    paths=source1_paths,
+                    target_ratio=0.8,
+                    max_repetition_ratio=2.0,
+                ),
+                SourceMixtureConfig(
+                    source_name="mmap2",
+                    paths=[str(i[0]) for i in mmap2],
+                    target_ratio=0.2,
+                ),
+            ]
+        ),
         seed=seed,
         global_batch_size=sequence_length * bsz,  # 10k sequences of length 4
     )

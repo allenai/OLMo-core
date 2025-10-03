@@ -39,6 +39,7 @@ class DataMix(DataMixBase):
     dolma17 = "dolma17"
     v3_small_ppl_validation = "v3-small-ppl-validation"
     OLMo_mix_0625 = "OLMo-mix-0625"
+    OLMo_mix_0925 = "OLMo-mix-0925"
     OLMo_mix_0625_150Bsample = "OLMo-mix-0625-150Bsample"
 
     @classmethod
