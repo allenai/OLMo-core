@@ -273,6 +273,11 @@ def main():
         description="Precompute entropy and cross-entropy for dataset shards"
     )
     parser.add_argument(
+        "run_name",
+        type=str,
+        help="Name of the run",
+    )
+    parser.add_argument(
         "--model-checkpoint",
         type=str,
         required=True,
