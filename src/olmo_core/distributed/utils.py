@@ -40,6 +40,12 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
     # Force processes to synchronize at init process group.
     set_env_var("TORCH_DIST_INIT_BARRIER", "1")
 
+    # Make sure we get debug info when we have collective timeouts.
+    set_env_var("TORCH_NCCL_TRACE_BUFFER_SIZE", "2000")
+    set_env_var("TORCH_NCCL_DUMP_ON_TIMEOUT", "1")
+    set_env_var("TORCH_FR_DUMP_TEMP_FILE", "/data/nccl_trace_rank_")
+    set_env_var("TORCH_NCCL_ENABLE_MONITORING", "1")
+
     # Set host-specific env var defaults.
     if _running_in_beaker():
         node_name = get_node_hostname()
