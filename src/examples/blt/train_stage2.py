@@ -464,7 +464,9 @@ def main(run_name: str, overrides: List[str]):
 
     dataset = config.dataset.build()
 
-    if train_module.blt_config.gradual_boundary_compression_kind in {"entropy", "cross_entropy"}:  # type: ignore
+    if train_module.blt_config.gradual_boundary_compression_kind == "bpe":  # type: ignore
+        dataset.enable_compute_merges("bpe")  # type: ignore
+    elif train_module.blt_config.gradual_boundary_compression_kind in {"entropy", "cross_entropy"}:  # type: ignore
         entropy_model_config = TransformerConfig.olmo2_190M(vocab_size=TokenizerConfig.dolma2().padded_vocab_size(), dtype=DType.bfloat16)
         entropy_model = entropy_model_config.build(init_device="cpu")
         entropy_model.apply_compile()
@@ -472,17 +474,14 @@ def main(run_name: str, overrides: List[str]):
             ENTROPY_CKPT_PATH,
             entropy_model,
         )
-    else:
-        entropy_model = None
+        dataset.enable_compute_merges(  # type: ignore
+            train_module.blt_config.gradual_boundary_compression_kind, # type: ignore
+            entropy_model=entropy_model
+        )
 
     data_loader = config.data_loader.build(
         dataset,
-        collator=ByteDataCollator(
-            pad_token_id=dataset.pad_token_id,
-            tokenizer=dataset.tokenizer,  # type: ignore
-            blt_config=train_module.blt_config,   # type: ignore
-            entropy_model=entropy_model,
-        ),
+        collator=ByteDataCollator(pad_token_id=dataset.pad_token_id) if isinstance(dataset, NumpyByteFSLDataset) else None,
         dp_process_group=train_module.dp_process_group
     )
     trainer = config.trainer.build(train_module, data_loader)
