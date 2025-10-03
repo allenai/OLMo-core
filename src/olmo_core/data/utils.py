@@ -276,6 +276,36 @@ def iter_document_indices_with_max_sequence_length(
             yield start_idx, end_idx
 
 
+def iter_document_indices_with_min_max_sequence_length(
+    data_path: PathOrStr,
+    min_sequence_length: int,
+    max_sequence_length: int,
+    *,
+    local_cache: Optional[PathOrStr] = None,
+    use_array_if_local: Optional[bool] = None,
+    eos_token_id: Optional[int] = None,
+    dtype=None,
+) -> Generator[Tuple[int, int], None, None]:
+    """
+    Like :func:`iter_document_indices` but filters out documents shorter than ``min_sequence_length``
+    and truncates documents longer than ``max_sequence_length``.
+
+    This is used for FSL (Fixed Sequence Length) datasets where all instances must be exactly
+    the same length.
+    """
+    for start_idx, end_idx in iter_document_indices(
+        data_path,
+        local_cache=local_cache,
+        use_array_if_local=use_array_if_local,
+        eos_token_id=eos_token_id,
+        dtype=dtype,
+    ):
+        doc_length = end_idx - start_idx
+        if doc_length >= min_sequence_length:
+            # Truncate to max_sequence_length
+            yield start_idx, start_idx + min(doc_length, max_sequence_length)
+
+
 def get_document_indices(
     data_path: PathOrStr, local_cache: Optional[PathOrStr] = None
 ) -> List[Tuple[int, int]]:
@@ -527,37 +557,34 @@ def segment_documents_into_instances(
     min_sequence_length: Optional[int] = None,
 ) -> Tuple[int, int]:
     """
-    Segment documents into instances of at most ``sequence_length`` tokens.
+    Segment documents into instances of at most ``max_sequence_length`` tokens.
     Saving the indices of the instances to ``target``.
 
     Sample a subset of the instances if ``sample`` is provided as a tuple of ``(max_instances, seed)``.
 
-    If min_sequence_length is provided, documents shorter than this will be filtered out and
-    all instances will be exactly max_sequence_length tokens (for FSL datasets).
+    If min_sequence_length is provided, documents shorter than this will be filtered out.
 
     Returns the number of original documents and the number of resulting instances documents.
     """
-    total_og_docs = 0
-
-    if min_sequence_length is not None and min_sequence_length == max_sequence_length:
-        # FSL mode: filter short docs and create fixed-length instances
-        idx_gen = (
-            idx
-            for start_idx, end_idx in iter_document_indices(
-                path, eos_token_id=eos_token_id, dtype=dtype
-            )
-            if end_idx - start_idx >= max_sequence_length
-            for idx in (start_idx, start_idx + max_sequence_length)
+    # Choose the appropriate document iterator based on whether we need filtering
+    if min_sequence_length is not None:
+        doc_iter = iter_document_indices_with_min_max_sequence_length(
+            path,
+            min_sequence_length=min_sequence_length,
+            max_sequence_length=max_sequence_length,
+            eos_token_id=eos_token_id,
+            dtype=dtype,
         )
     else:
-        # Variable length mode: keep all docs, truncate to max_sequence_length
-        idx_gen = (
-            idx
-            for start_idx, end_idx in iter_document_indices(
-                path, eos_token_id=eos_token_id, dtype=dtype
-            )
-            for idx in (start_idx, start_idx + min(end_idx - start_idx, max_sequence_length))
+        doc_iter = iter_document_indices_with_max_sequence_length(
+            path,
+            max_sequence_length=max_sequence_length,
+            eos_token_id=eos_token_id,
+            dtype=dtype,
         )
+
+    # Generate start/end index pairs for each instance
+    idx_gen = (idx for start_idx, end_idx in doc_iter for idx in (start_idx, end_idx))
 
     indices = np.fromiter(idx_gen, dtype=indices_dtype)
     total_og_docs = len(indices) // 2
