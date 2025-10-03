@@ -48,6 +48,8 @@ class DataMix(DataMixBase):
         # Aliases mapping
         aliases = {
             "dolma3-0625-6T-mix": "OLMo-mix-0625",
+            "dolma3-0925-6T-mix": "OLMo-mix-0925",
+            "dolma3-0925-150B-mix": "OLMo-mix-0925-150Bsample",
         }
 
         # Check if the value is an alias
