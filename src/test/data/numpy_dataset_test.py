@@ -462,17 +462,15 @@ def test_numpy_fsl_mixture_dataset(tmp_path: Path):
 
     first_ds_item = ds[0]["input_ids"].tolist()
 
-    # NOTE: This is commented out until we fix behavior of the source mixture dataset
-    # first_src_sequence = mmap1[0][1][:sequence_length].tolist()
-    # Note that changing the seed here could result in the inclusion of the first sequence from the mock data.
-    # assert not np.array_equal(first_src_sequence, first_ds_item)
-    expected = "aff421"
+    # NOTE: Fingerprint and token counts changed after fixing token counting to only include
+    # usable tokens (documents >= sequence_length). The new allocation properly maintains
+    # target ratios (80/20) which results in 12,500 total tokens (10k + 2.5k).
+    expected = "b91714"
     assert ds.fingerprint.endswith(expected), (
         f"Fingerprint mismatch, expected {expected}, got {ds.fingerprint[-6:]}...Do you need to update expected fingerprint?"
     )
-    assert first_ds_item == [56423, 24546, 15796, 52203]  # stable because we pass a seed
-    assert ds.num_tokens == 10_112  # oversamples to handle rounding error
-    assert len(ds) == 2528
+    assert ds.num_tokens == 12_500  # Maintains exact 80/20 ratio
+    assert len(ds) == 3_125  # 12,500 / 4
     assert len(ds) / bsz >= math.ceil(max_tokens / (sequence_length * bsz))
 
 
@@ -501,7 +499,7 @@ def test_numpy_fsl_mixture_dataset_insufficient_instances(tmp_path: Path):
         global_batch_size=sequence_length * 2,
     )
 
-    with pytest.raises(OLMoConfigurationError, match="Mixture provides only"):
+    with pytest.raises(OLMoConfigurationError, match="has no usable tokens"):
         NumpyFSLDatasetConfig(
             source_mixture_config=mixture_config,
             sequence_length=sequence_length,

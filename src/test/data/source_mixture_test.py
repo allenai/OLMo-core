@@ -55,6 +55,7 @@ def test_source_mixture_config(tmp_path: Path, caplog, capsys):
     # we want to see the rendered tables in the case
     with capsys.disabled(), caplog.at_level(logging.DEBUG):
         config.validate()
+        # Don't pass eos_token_id to use total token counting (backward compatible mode)
         mixture = config.build(npdtype=np.uint32, sequence_length=sequence_length)
         assert isinstance(mixture, SourceMixtureDataset)
 
@@ -200,7 +201,7 @@ def test_dataset_mixture_build_insufficient_source_data(tmp_path: Path):
 
     # Should raise exception because the target ratio for source 1 @50% (2.5M) is infeasible without repetition (default max_repetitions=1)
     with pytest.raises(OLMoConfigurationError):
-        config.build(npdtype=np.uint32, sequence_length=1024)
+        config.build(npdtype=np.uint32, sequence_length=1024, eos_token_id=0)
 
 
 def test_dataset_mixture_build_with_repetition(tmp_path: Path):
@@ -305,7 +306,7 @@ def test_dataset_mixture_build_insufficient_source_max_fraction(tmp_path: Path):
     # Should raise exception because the target ratio for source 1 is infeasible because
     # we limit usage to 10% of the source
     with pytest.raises(OLMoConfigurationError):
-        config.build(npdtype=np.uint32, sequence_length=1024)
+        config.build(npdtype=np.uint32, sequence_length=1024, eos_token_id=0)
 
 
 def test_dataset_mixture_build_duplicate_paths(tmp_path: Path):

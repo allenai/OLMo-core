@@ -4,7 +4,7 @@ import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from itertools import chain
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 from rich.console import Console
@@ -227,7 +227,9 @@ class SourceMixtureDatasetConfig(Config):
         if not np.allclose(summed_weights, 1.0):
             raise OLMoConfigurationError(f"target_ratios must sum to 1.0, got {summed_weights}")
 
-    def build(self, *, npdtype: NumpyUIntTypes, sequence_length: int) -> SourceMixtureDataset:
+    def build(
+        self, *, npdtype: NumpyUIntTypes, sequence_length: int, eos_token_id: Optional[int] = None
+    ) -> SourceMixtureDataset:
         self.validate()
         random.seed(self.seed)  # but we've already run seed_all()...
 
@@ -236,15 +238,36 @@ class SourceMixtureDatasetConfig(Config):
         # Calculate the number of tokens available and to include for each source
         tokens_details_by_source: List[SourceTokenDetails] = []
         for source_config in self.source_configs:
-            tokens_in_source = (
-                self._count_tokens_for_source(source_config=source_config, npdtype=npdtype)
-                * source_config.max_source_fraction  # pretend we have less data than we do
-            )
+            # Count only usable tokens (from documents >= sequence_length) when eos_token_id is provided
+            # Otherwise fall back to counting all tokens for backward compatibility
+            if eos_token_id is not None:
+                tokens_in_source = (
+                    self._count_usable_tokens_for_source(
+                        source_config=source_config,
+                        npdtype=npdtype,
+                        sequence_length=sequence_length,
+                        eos_token_id=eos_token_id,
+                    )
+                    * source_config.max_source_fraction
+                )
+            else:
+                tokens_in_source = (
+                    self._count_tokens_for_source(
+                        source_config=source_config,
+                        npdtype=npdtype,
+                    )
+                    * source_config.max_source_fraction
+                )
             needed_tokens = self.requested_tokens * source_config.target_ratio
             needed_for_source = round_down_to_multiple(needed_tokens, n=sequence_length)
 
             # Ensure that we have enough tokens in the source to meet the target ratio
-            if tokens_in_source < needed_for_source:
+            if tokens_in_source == 0:
+                raise OLMoConfigurationError(
+                    f"Source {source_config.source_name} has no usable tokens. "
+                    f"All documents are shorter than sequence_length={sequence_length}."
+                )
+            elif tokens_in_source < needed_for_source:
                 upsample_ratio = needed_for_source / tokens_in_source
                 if upsample_ratio > source_config.max_repetitions:
                     raise OLMoConfigurationError(
@@ -438,8 +461,89 @@ class SourceMixtureDatasetConfig(Config):
 
             return sum(results)
 
+    def _count_usable_tokens_for_source(
+        self,
+        source_config: SourceMixtureConfig,
+        npdtype: NumpyUIntTypes,
+        sequence_length: int,
+        eos_token_id: int,
+    ) -> int:
+        """
+        Count the total number of USABLE tokens for FSL datasets from a source, across all files.
+
+        Only counts tokens from documents that are >= sequence_length, since shorter documents
+        will be filtered out during instance creation.
+
+        Args:
+            source_config: The source configuration.
+            npdtype: The data type of the source tokens.
+            sequence_length: The target sequence length for FSL datasets.
+            eos_token_id: The EOS token ID used to identify document boundaries.
+        """
+        log.info(
+            f"Counting usable tokens (>= {sequence_length}) for source: {source_config.source_name}"
+        )
+        with ThreadPoolExecutor(max_workers=self.num_worker_threads) as executor:
+            futures = []
+            for path in source_config.paths:
+                futures.append(
+                    executor.submit(
+                        self._count_usable_tokens_for_file,
+                        path=path,
+                        npdtype=npdtype,
+                        sequence_length=sequence_length,
+                        eos_token_id=eos_token_id,
+                    )
+                )
+
+            with Progress(disable=self.quiet) as progress:
+                results = []
+                task = progress.add_task(
+                    f"Counting usable tokens for source: {source_config.source_name}",
+                    total=len(futures),
+                )
+                for future in as_completed(futures):
+                    progress.update(task, advance=1)
+                    results.append(future.result())
+
+            return sum(results)
+
     def _count_tokens_for_file(self, path: PathOrStr, npdtype: NumpyUIntTypes) -> int:
         return bytes_to_tokens(get_file_size(path), dtype=npdtype)
+
+    def _count_usable_tokens_for_file(
+        self, path: PathOrStr, npdtype: NumpyUIntTypes, sequence_length: int, eos_token_id: int
+    ) -> int:
+        """
+        Count usable tokens in a file (only from documents >= sequence_length).
+
+        This ensures the token count matches what will actually be available after
+        filtering in segment_documents_into_instances.
+
+        Args:
+            path: Path to the numpy file.
+            npdtype: The data type of the source tokens.
+            sequence_length: The target sequence length for FSL datasets.
+            eos_token_id: The EOS token ID used to identify document boundaries.
+        """
+        from olmo_core.data.utils import iter_document_indices
+
+        usable_tokens = 0
+
+        try:
+            for start_idx, end_idx in iter_document_indices(
+                path, eos_token_id=eos_token_id, dtype=npdtype
+            ):
+                doc_length = end_idx - start_idx
+                if doc_length >= sequence_length:
+                    # Count tokens in multiples of sequence_length from this document
+                    usable_tokens += (doc_length // sequence_length) * sequence_length
+        except Exception:
+            # If we can't iterate documents (no metadata), fall back to total count
+            # This happens for files without document structure
+            return self._count_tokens_for_file(path, npdtype)
+
+        return usable_tokens
 
     def render_mixture_outcome_tables(self, results: List[SourceTokenDetails]) -> None:
         """
