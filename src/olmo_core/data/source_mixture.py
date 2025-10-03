@@ -165,6 +165,7 @@ class SourceTokenDetails:
 class SourcePathTokens:
     path: str
     tokens: int
+    max_tokens: int
 
 
 @dataclass
@@ -283,6 +284,7 @@ class SourceMixtureDatasetConfig(Config):
             )
 
         tokens_details_by_source: List[SourceTokenDetails] = []
+        max_tokens_cap_by_source: Dict[str, int] = {}
 
         # Calculate the number of tokens available and to include for each source
         for source_config in self.source_list.sources:
@@ -298,6 +300,8 @@ class SourceMixtureDatasetConfig(Config):
                 raise OLMoConfigurationError(
                     f"Insufficient tokens for source: {source_config.source_name} @ target global ratio: {source_config.target_ratio} :: {max_for_source} < {needed_for_source}"
                 )
+
+            max_tokens_cap_by_source[source_config.source_name] = max_for_source
 
             tokens_details_by_source.append(
                 SourceTokenDetails(
@@ -316,63 +320,132 @@ class SourceMixtureDatasetConfig(Config):
             tokens_per_path_per_source[source.config.source_name] = source_path_tokens
 
         # We adjust the number of tokens per path so that we can complete the desired number of training steps while still retaining the target ratios.
-        all_tokens_per_path = [
-            path.tokens
-            for source_path_tokens in tokens_per_path_per_source.values()
-            for path in source_path_tokens
-        ]
-
         training_steps = math.ceil(self.requested_tokens / self.global_batch_size)
-        assert (
-            self.global_batch_size % sequence_length == 0
-        ), "global_batch_size must be multiple of sequence_length"
+        assert self.global_batch_size % sequence_length == 0, (
+            "global_batch_size must be multiple of sequence_length"
+        )
         num_instances_per_batch = self.global_batch_size // sequence_length
         requested_instances = training_steps * num_instances_per_batch
 
-        # determine how many instances we still need to allocate
-        int_instances = []
-        remainders = []
-        for tokens_per_path in all_tokens_per_path:
-            int_part = tokens_per_path // sequence_length
-            remainder = (tokens_per_path % sequence_length) / sequence_length
-            int_instances.append(int_part)
+        all_entries: List[Tuple[str, SourcePathTokens]] = []
+        for source_name, source_path_tokens in tokens_per_path_per_source.items():
+            for path_token in source_path_tokens:
+                all_entries.append((source_name, path_token))
+
+        base_instances: List[int] = []
+        remainders: List[float] = []
+        max_instances_available: List[int] = []
+        for source_name, path_token in all_entries:
+            max_instances = path_token.max_tokens // sequence_length
+            max_instances_available.append(max_instances)
+            desired_instances = path_token.tokens // sequence_length
+            assigned_instances = min(desired_instances, max_instances)
+            base_instances.append(assigned_instances)
+            remainder = 0.0
+            if max_instances > 0 and assigned_instances < max_instances:
+                remainder = (path_token.tokens % sequence_length) / sequence_length
             remainders.append(remainder)
 
-        # we apply Hamilton's method for rounding (see https://mathematics-democracy-institute.org/apportionment/)
-        # that is, we only round up the requested instances for the paths that have the largest remainders
-        # there is a lot of literature on how any other allocation of increments is suboptimal
-        # basically, the requested tokens that are closest to a full instance are rounded up first
-        additional_instances_needed = requested_instances - sum(int_instances)
+        source_tokens_assigned: Dict[str, int] = {name: 0 for name in tokens_per_path_per_source}
+        for (source_name, _), instances in zip(all_entries, base_instances):
+            source_tokens_assigned[source_name] += instances * sequence_length
+
+        source_remaining_tokens: Dict[str, int] = {
+            name: max(0, max_tokens_cap_by_source[name] - source_tokens_assigned[name])
+            for name in source_tokens_assigned
+        }
+
+        additional_instances_needed = requested_instances - sum(base_instances)
+
         if additional_instances_needed > 0:
-            base, leftover = divmod(additional_instances_needed, len(remainders))
-            if base:
-                int_instances = [n + base for n in int_instances]
-            if leftover:
-                for idx in sorted(range(len(remainders)), key=remainders.__getitem__, reverse=True)[
-                    :leftover
-                ]:
-                    int_instances[idx] += 1
+            fractional_candidates = [
+                (remainders[idx], idx)
+                for idx in range(len(base_instances))
+                if remainders[idx] > 0
+                and base_instances[idx] < max_instances_available[idx]
+                and source_remaining_tokens[all_entries[idx][0]] >= sequence_length
+            ]
+            fractional_candidates.sort(key=lambda item: (item[0], -item[1]), reverse=True)
+            for _, idx in fractional_candidates:
+                if additional_instances_needed == 0:
+                    break
+                source_name, _ = all_entries[idx]
+                if source_remaining_tokens[source_name] < sequence_length:
+                    continue
+                base_instances[idx] += 1
+                source_remaining_tokens[source_name] -= sequence_length
+                additional_instances_needed -= 1
 
-        final_tokens_per_path = [inst * sequence_length for inst in int_instances]
+            while additional_instances_needed > 0:
+                capacity_indices = [
+                    idx
+                    for idx in range(len(base_instances))
+                    if base_instances[idx] < max_instances_available[idx]
+                    and source_remaining_tokens[all_entries[idx][0]] >= sequence_length
+                ]
+                if not capacity_indices:
+                    break
+                for idx in capacity_indices:
+                    if additional_instances_needed == 0:
+                        break
+                    source_name, _ = all_entries[idx]
+                    if base_instances[idx] >= max_instances_available[idx]:
+                        continue
+                    if source_remaining_tokens[source_name] < sequence_length:
+                        continue
+                    base_instances[idx] += 1
+                    source_remaining_tokens[source_name] -= sequence_length
+                    additional_instances_needed -= 1
 
-        i = 0
+            if additional_instances_needed > 0:
+                log.warning(
+                    "Unable to allocate %d additional instances due to capacity constraints.",
+                    additional_instances_needed,
+                )
+        elif additional_instances_needed < 0:
+            reduction_needed = -additional_instances_needed
+            removal_candidates = [
+                (remainders[idx], idx)
+                for idx in range(len(base_instances))
+                if base_instances[idx] > 0
+            ]
+            removal_candidates.sort(key=lambda item: (item[0], -item[1]))
+            while reduction_needed > 0 and removal_candidates:
+                for _, idx in removal_candidates:
+                    if reduction_needed == 0:
+                        break
+                    if base_instances[idx] == 0:
+                        continue
+                    source_name, _ = all_entries[idx]
+                    base_instances[idx] -= 1
+                    source_remaining_tokens[source_name] += sequence_length
+                    reduction_needed -= 1
+                removal_candidates = [
+                    (remainders[idx], idx)
+                    for idx in range(len(base_instances))
+                    if base_instances[idx] > 0
+                ]
+                removal_candidates.sort(key=lambda item: (item[0], -item[1]))
+            if reduction_needed > 0:
+                log.warning(
+                    "Unable to remove %d excess instances due to minimum capacity constraints.",
+                    reduction_needed,
+                )
+
+        final_tokens_per_path = [instances * sequence_length for instances in base_instances]
+
+        for (source_name, path_token), tokens in zip(all_entries, final_tokens_per_path):
+            path_token.tokens = tokens
+
         final_token_distribution: Dict[str, float] = {}
         for source_name, source_path_tokens in tokens_per_path_per_source.items():
-            for j in range(len(source_path_tokens)):
-                source_path_tokens[j] = SourcePathTokens(
-                    path=source_path_tokens[j].path, tokens=final_tokens_per_path[i]
-                )
-                i += 1
-
             completed.append(
                 SourceMixtureOutcome(
                     name=source_name,
                     path_tokens=source_path_tokens,
                 )
             )
-            final_token_distribution[source_name] = sum(
-                [path.tokens for path in source_path_tokens]
-            )
+            final_token_distribution[source_name] = sum(path.tokens for path in source_path_tokens)
 
         total_tokens = sum(final_token_distribution.values())
         final_token_distribution = {
@@ -414,7 +487,12 @@ class SourceMixtureDatasetConfig(Config):
         Get the paths and resulting token count for a source.
         """
         take_ratio = token_details.num_selected / token_details.population
-        path_tokens = []
+        path_tokens: List[SourcePathTokens] = []
+
+        resolved_paths = source_config.resolved_paths
+        token_counts_by_path = {
+            path: self._count_tokens_for_file(path, npdtype) for path in resolved_paths
+        }
 
         # When we need more than 1 repetition of the source data we have a take ration > 1
         if take_ratio > 1:
@@ -427,17 +505,29 @@ class SourceMixtureDatasetConfig(Config):
                 remaining -= chunk
 
             for ratio in take_ratios:
-                for path in source_config.resolved_paths:
-                    tokens_to_keep = int(
-                        math.ceil(self._count_tokens_for_file(path, npdtype) * ratio)
+                for path in resolved_paths:
+                    available_tokens = token_counts_by_path[path]
+                    tokens_to_keep = int(math.ceil(available_tokens * ratio))
+                    path_tokens.append(
+                        SourcePathTokens(
+                            path=path,
+                            tokens=tokens_to_keep,
+                            max_tokens=available_tokens,
+                        )
                     )
-                    path_tokens.append(SourcePathTokens(path=path, tokens=tokens_to_keep))
 
             return path_tokens
 
-        for path in source_config.resolved_paths:
-            tokens_to_keep = int(math.ceil(self._count_tokens_for_file(path, npdtype) * take_ratio))
-            path_tokens.append(SourcePathTokens(path=path, tokens=tokens_to_keep))
+        for path in resolved_paths:
+            available_tokens = token_counts_by_path[path]
+            tokens_to_keep = int(math.ceil(available_tokens * take_ratio))
+            path_tokens.append(
+                SourcePathTokens(
+                    path=path,
+                    tokens=tokens_to_keep,
+                    max_tokens=available_tokens,
+                )
+            )
 
         return path_tokens
 
