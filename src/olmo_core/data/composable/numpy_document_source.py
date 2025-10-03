@@ -1,6 +1,8 @@
 import functools as ft
 import hashlib
+import logging
 import typing
+from dataclasses import dataclass
 from typing import Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -9,18 +11,58 @@ import olmo_core.distributed.utils as dist_utils
 import olmo_core.io as io
 from olmo_core.aliases import PathOrStr
 from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.utils import log_once
 
 from ..tokenizer import TokenizerConfig
-from ..types import NumpyUIntTypes
+from ..types import NumpyDatasetDType, NumpyUIntTypes
 from ..utils import iter_document_indices, load_array_slice
-from .token_source import DocumentSource, TokenRange
+from .token_source import DocumentSource, DocumentSourceConfig, TokenRange
 from .utils import path_map
+
+log = logging.getLogger(__name__)
+
+
+@dataclass
+class NumpyDocumentSourceConfig(DocumentSourceConfig):
+    """Config class for a :class:`NumpyDocumentSource`."""
+
+    source_paths: List[str]
+    tokenizer: TokenizerConfig
+    dtype: NumpyDatasetDType
+    label_mask_paths: Optional[List[str]] = None
+
+    def get_dtype(self) -> NumpyUIntTypes:
+        if self.dtype is not None:
+            return NumpyDatasetDType(self.dtype).as_np_dtype()
+
+        for dtype in (
+            NumpyDatasetDType.uint8,
+            NumpyDatasetDType.uint16,
+            NumpyDatasetDType.uint32,
+            NumpyDatasetDType.uint64,
+        ):
+            if (self.tokenizer.vocab_size - 1) <= np.iinfo(dtype.as_np_dtype()).max:
+                log_once(log, f"Assuming dtype '{dtype}' based on vocab size")
+                return dtype.as_np_dtype()
+
+        raise ValueError("vocab size too big!")
+
+    def build(self, work_dir: PathOrStr) -> "NumpyDocumentSource":
+        return NumpyDocumentSource(
+            source_paths=self.source_paths,
+            label_mask_paths=self.label_mask_paths,
+            tokenizer=self.tokenizer,
+            dtype=self.get_dtype(),
+            work_dir=work_dir,
+        )
 
 
 class NumpyDocumentSource(DocumentSource):
     """
     A :class:`DocumentSource` that reads tokens from one or more tokenized numpy source files.
     """
+
+    Config = NumpyDocumentSourceConfig
 
     def __init__(
         self,
@@ -121,7 +163,7 @@ class NumpyDocumentSource(DocumentSource):
     def num_tokens(self) -> int:
         return sum(self.source_sizes)
 
-    def __str__(self) -> str:
+    def __repr__(self) -> str:
         return f"{self.__class__.__name__}{self.source_paths}"
 
     def get_token_range(self, start_idx: int, count: int) -> TokenRange:
@@ -130,7 +172,7 @@ class NumpyDocumentSource(DocumentSource):
             start_idx = self.num_tokens + start_idx
         end_idx = start_idx + count
         if start_idx >= self.num_tokens or end_idx > self.num_tokens:
-            raise IndexError(f"Token range [{start_idx}, {end_idx}) is out of bounds.")
+            raise IndexError(f"Token range {start_idx}->{end_idx} is out of bounds.")
 
         token_chunks: List[np.ndarray] = []
         mask_chunks: List[np.ndarray] = []
@@ -164,7 +206,7 @@ class NumpyDocumentSource(DocumentSource):
 
             source_start_offset = source_end_offset
         else:
-            raise IndexError(f"Failed to find tokens in range [{start_idx}, {end_idx}).")
+            raise IndexError(f"Failed to find tokens in range {start_idx}->{end_idx}.")
 
         input_ids = np.concatenate(token_chunks)
         out: TokenRange = {"input_ids": typing.cast(Sequence[int], input_ids)}

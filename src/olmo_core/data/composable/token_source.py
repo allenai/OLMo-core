@@ -1,6 +1,7 @@
 import functools as ft
 import hashlib
 from abc import ABCMeta, abstractmethod
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Optional, Sequence, TypedDict
 
@@ -9,6 +10,7 @@ from typing_extensions import NotRequired
 import olmo_core.distributed.utils as dist_utils
 import olmo_core.io as io
 from olmo_core.aliases import PathOrStr
+from olmo_core.config import Config
 from olmo_core.exceptions import OLMoConfigurationError
 
 
@@ -144,3 +146,23 @@ class InMemoryTokenSource(TokenSource):
         if self.label_mask is not None:
             out["label_mask"] = self.label_mask[start_idx:end_idx]
         return out
+
+
+@dataclass
+class TokenSourceConfig(Config):
+    """A base config class for configuring and building a :class:`TokenSource`."""
+
+    @abstractmethod
+    def build(self, work_dir: PathOrStr) -> TokenSource:
+        """Build the token source."""
+        raise NotImplementedError
+
+
+@dataclass
+class DocumentSourceConfig(TokenSourceConfig):
+    """A base config class for configuring and building a :class:`DocumentSource`."""
+
+    @abstractmethod
+    def build(self, work_dir: PathOrStr) -> DocumentSource:
+        """Build the document source."""
+        raise NotImplementedError

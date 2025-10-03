@@ -1,4 +1,5 @@
 from abc import ABCMeta, abstractmethod
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Generator, Optional, Sequence, TypedDict
 
@@ -7,6 +8,7 @@ from typing_extensions import NotRequired
 import olmo_core.distributed.utils as dist_utils
 import olmo_core.io as io
 from olmo_core.aliases import PathOrStr
+from olmo_core.config import Config
 from olmo_core.exceptions import OLMoConfigurationError
 
 
@@ -134,3 +136,13 @@ class InstanceSource(metaclass=ABCMeta):
         """Iterate over all instances in the source."""
         for i in range(len(self)):
             yield self[i]
+
+
+@dataclass
+class InstanceSourceConfig(Config):
+    """A base config class for configuring and building an :class:`InstanceSource`."""
+
+    @abstractmethod
+    def build(self, work_dir: PathOrStr) -> InstanceSource:
+        """Build the :class:`InstanceSource`."""
+        raise NotImplementedError

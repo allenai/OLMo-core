@@ -1,11 +1,31 @@
 import functools as ft
 import hashlib
-from typing import Optional, Sequence
+from dataclasses import dataclass
+from typing import List, Optional, Sequence
 
 from olmo_core.aliases import PathOrStr
 
-from .instance_source import Instance, InstanceSource
-from .token_source import TokenSource
+from .instance_source import Instance, InstanceSource, InstanceSourceConfig
+from .token_source import TokenSource, TokenSourceConfig
+
+
+@dataclass
+class ConcatAndChunkInstanceSourceConfig(InstanceSourceConfig):
+    """
+    Config for :class:`ConcatAndChunkInstanceSource`.
+    """
+
+    sources: List[TokenSourceConfig]
+    sequence_length: int
+    max_sequence_length: Optional[int] = None
+
+    def build(self, work_dir: PathOrStr) -> "ConcatAndChunkInstanceSource":
+        return ConcatAndChunkInstanceSource(
+            sources=[source_config.build(work_dir) for source_config in self.sources],
+            sequence_length=self.sequence_length,
+            max_sequence_length=self.max_sequence_length,
+            work_dir=work_dir,
+        )
 
 
 class ConcatAndChunkInstanceSource(InstanceSource):
@@ -13,6 +33,8 @@ class ConcatAndChunkInstanceSource(InstanceSource):
     The basic instance source that simply chunks up token sources without regard for
     document boundaries, just like the :class:`~olmo_core.data.numpy_dataset.NumpyFSLDataset`.
     """
+
+    Config = ConcatAndChunkInstanceSourceConfig
 
     def __init__(
         self,

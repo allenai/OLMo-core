@@ -12,7 +12,7 @@ import torch
 
 import olmo_core.distributed.utils as dist_utils
 from olmo_core.aliases import PathOrStr
-from olmo_core.config import Config
+from olmo_core.config import Config, StrEnum
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import roundrobin, threaded_generator
 
@@ -41,6 +41,15 @@ class InstanceFilterConfig(Config):
     repetition_max_count: int = 32
 
 
+class ShuffleStrategy(StrEnum):
+    """Defines how the data is shuffled."""
+
+    inter_source = "inter_source"
+    """Shuffle across all sources as if they were one big source."""
+    intra_source = "intra_source"
+    """Shuffle within each source, then concatenate the sources in order."""
+
+
 class ComposableDataLoader(TextDataLoaderBase):
     """
     A data loader for composable instance sources.
@@ -57,6 +66,7 @@ class ComposableDataLoader(TextDataLoaderBase):
       of the working directory.
     :param seed: The random seed to use when shuffling data.
     :param shuffle: Whether to shuffle data at the start of each epoch.
+    :param shuffle_strategy: How to shuffle the data.
     :param num_threads: The number of threads to use for loading data within each worker process.
     :param num_workers: The number of worker processes to use for loading data.
     :param prefetch_factor: The number of batches to prefetch from each worker process.
@@ -79,6 +89,7 @@ class ComposableDataLoader(TextDataLoaderBase):
         fs_local_rank: Optional[int] = None,
         seed: int = 0,
         shuffle: bool = True,
+        shuffle_strategy: ShuffleStrategy = ShuffleStrategy.inter_source,
         num_threads: Optional[int] = None,
         num_workers: int = 0,
         prefetch_factor: Optional[int] = None,
@@ -104,6 +115,7 @@ class ComposableDataLoader(TextDataLoaderBase):
             )
         self.seed = seed
         self.shuffle = shuffle
+        self.shuffle_strategy = shuffle_strategy
         self.sources = tuple(sources)
         if not self.sources:
             raise OLMoConfigurationError("'sources' must contain at least one InstanceSource.")
@@ -153,7 +165,13 @@ class ComposableDataLoader(TextDataLoaderBase):
 
     @property
     def total_instances(self) -> int:
-        return sum(len(source) for source in self.sources)
+        chunk_size = self.max_sequence_length // self.sequence_length
+        if self.shuffle_strategy == ShuffleStrategy.intra_source:
+            return sum(chunk_size * (len(source) // chunk_size) for source in self.sources)
+        elif self.shuffle_strategy == ShuffleStrategy.inter_source:
+            return chunk_size * (sum(len(source) for source in self.sources) // chunk_size)
+        else:
+            raise NotImplementedError(f"Unknown shuffle strategy: {self.shuffle_strategy}")
 
     @property
     def total_tokens(self) -> int:
@@ -176,6 +194,7 @@ class ComposableDataLoader(TextDataLoaderBase):
             sequence_length=self.sequence_length,
             max_sequence_length=self.max_sequence_length,
             shuffle=self.shuffle,
+            shuffle_strategy=self.shuffle_strategy,
             seed=self.seed,
             epoch=self._epoch,
         )
@@ -198,6 +217,12 @@ class ComposableDataLoader(TextDataLoaderBase):
                 "will use setting from state dict for data order consistency."
             )
             self.shuffle = state_dict["shuffle"]
+        if state_dict["shuffle_strategy"] != self.shuffle_strategy:
+            log.warning(
+                "Restoring data loading state with a different shuffle strategy, "
+                "will use setting from state dict for data order consistency."
+            )
+            self.shuffle_strategy = state_dict["shuffle_strategy"]
         if state_dict["seed"] != self.seed and self.shuffle:
             log.warning(
                 "Restoring data loading state with a different data seed, "
@@ -301,6 +326,7 @@ class ComposableDataLoader(TextDataLoaderBase):
             "global_indices",
             seed=self.seed if self.shuffle else None,
             epoch=self.epoch if self.shuffle else None,
+            shuffle=self.shuffle_strategy if self.shuffle else None,
             size=self.total_instances,
             seq_len=self.sequence_length,
             max_seq_len=self.max_sequence_length,
@@ -366,32 +392,62 @@ class ComposableDataLoader(TextDataLoaderBase):
         dist_utils.barrier()
 
     def _build_global_indices(self) -> np.ndarray:
-        assert self.total_instances < np.iinfo(np.uint32).max
+        if self.shuffle_strategy == ShuffleStrategy.inter_source:
+            return _build_global_indices(
+                self.total_instances,
+                sequence_length=self.sequence_length,
+                max_sequence_length=self.max_sequence_length,
+                seed=self.seed + self.epoch if self.shuffle else None,
+            )
+        elif self.shuffle_strategy == ShuffleStrategy.intra_source:
+            indices_per_source = []
+            chunk_size = self.max_sequence_length // self.sequence_length
+            offset = 0
+            for source in self.sources:
+                source_size = chunk_size * (len(source) // chunk_size)
+                indices = _build_global_indices(
+                    source_size,
+                    sequence_length=self.sequence_length,
+                    max_sequence_length=self.max_sequence_length,
+                    seed=self.seed + self.epoch if self.shuffle else None,
+                )
+                indices_per_source.append(indices + offset)
+                offset += source_size
+            return np.concatenate(indices_per_source)
+        else:
+            raise NotImplementedError(f"Unknown shuffle strategy: {self.shuffle_strategy}")
 
-        rng: Optional[np.random.Generator] = None
-        if self.shuffle:
-            # Deterministically shuffle based on epoch and seed
-            rng = get_rng(self.seed + self.epoch)
 
-        chunk_size = self.max_sequence_length // self.sequence_length
-        # NOTE: To guarantee the same data order with `self.max_sequence_length` fixed but `self.sequence_length`
-        # changing, we need `self.total_instances // chunk_size` to remain constant.
-        # This is ensured by requiring `self.max_sequence_length` is a multiple of `self.sequence_length`
-        # and assuming that `self.total_instances` is proportional to `chunk_size`, i.e.
-        # if `self.sequence_length` is half of `self.max_sequence_length`, then `self.total_instances`
-        # should double. This takes some care when implementing an `InstanceSource` to ensure that
-        # excess tokens are dropped in a way that respects `self.max_sequence_length`, not `self.sequence_length`.
-        chunk_indices = np.arange(self.total_instances // chunk_size, dtype=np.uint32)
-        if rng is not None:
-            rng.shuffle(chunk_indices)
+def _build_global_indices(
+    total_instances: int, *, sequence_length: int, max_sequence_length: int, seed: Optional[int]
+) -> np.ndarray:
+    assert total_instances < np.iinfo(np.uint32).max
+    assert max_sequence_length % sequence_length == 0
+    chunk_size = max_sequence_length // sequence_length
+    # Length of dataset would be calculated incorrectly if this didn't hold.
+    assert total_instances % chunk_size == 0
 
-        if chunk_size == 1:
-            return chunk_indices
+    # NOTE: To guarantee the same data order with `self.max_sequence_length` fixed but `self.sequence_length`
+    # changing, we need `self.total_instances // chunk_size` to remain constant.
+    # This is ensured by requiring `self.max_sequence_length` is a multiple of `self.sequence_length`
+    # and assuming that `self.total_instances` is proportional to `chunk_size`, i.e.
+    # if `self.sequence_length` is half of `self.max_sequence_length`, then `self.total_instances`
+    # should double. This takes some care when implementing an `InstanceSource` to ensure that
+    # excess tokens are dropped in a way that respects `self.max_sequence_length`, not `self.sequence_length`.
+    chunk_indices = np.arange(total_instances // chunk_size, dtype=np.uint32)
 
-        indices = np.repeat(chunk_indices * chunk_size, chunk_size)
-        indices = indices.reshape((-1, chunk_size)) + np.arange(0, chunk_size).reshape((1, -1))
-        indices = indices.reshape(-1)
-        return indices
+    # Deterministically shuffle based on epoch and seed
+    if seed is not None:
+        rng = get_rng(seed)
+        rng.shuffle(chunk_indices)
+
+    if chunk_size == 1:
+        return chunk_indices
+
+    indices = np.repeat(chunk_indices * chunk_size, chunk_size)
+    indices = indices.reshape((-1, chunk_size)) + np.arange(0, chunk_size).reshape((1, -1))
+    indices = indices.reshape(-1)
+    return indices
 
 
 class _IterableDataLoaderWrapper(torch.utils.data.IterableDataset[Dict[str, Any]]):

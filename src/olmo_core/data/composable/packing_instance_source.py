@@ -3,6 +3,7 @@ import functools as ft
 import hashlib
 import logging
 import typing
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Generator, List, Optional, Sequence, Tuple
 
@@ -24,11 +25,34 @@ from ..utils import (
     run_worker_func,
     write_array_to_disk,
 )
-from .instance_source import Instance, InstanceSource
-from .token_source import DocumentSource
+from .instance_source import Instance, InstanceSource, InstanceSourceConfig
+from .token_source import DocumentSource, DocumentSourceConfig
 from .utils import as_tensor, path_map
 
 log = logging.getLogger(__name__)
+
+
+@dataclass
+class PackingInstanceSourceConfig(InstanceSourceConfig):
+    """Config for :class:`PackingInstanceSource`."""
+
+    sources: List[DocumentSourceConfig]
+    sequence_length: int
+    tokenizer: TokenizerConfig
+    max_sequence_length: Optional[int] = None
+    long_doc_strategy: LongDocStrategy = LongDocStrategy.truncate
+    source_group_size: int = 1
+
+    def build(self, work_dir: PathOrStr) -> "PackingInstanceSource":
+        return PackingInstanceSource(
+            sources=[source_config.build(work_dir) for source_config in self.sources],
+            sequence_length=self.sequence_length,
+            max_sequence_length=self.max_sequence_length,
+            work_dir=work_dir,
+            tokenizer=self.tokenizer,
+            long_doc_strategy=self.long_doc_strategy,
+            source_group_size=self.source_group_size,
+        )
 
 
 class PackingInstanceSource(InstanceSource):
@@ -43,7 +67,18 @@ class PackingInstanceSource(InstanceSource):
         are usually large enough for OBFD to achieve very good compactness (minimal padding tokens)
         and so that we can parallelize the packing. However, you can pack instances from multiple
         consecutive sources together by setting ``source_group_size`` to a value greater than 1.
+
+    :param sources: Sources of documents to pack.
+    :param sequence_length: The sequence length of each instance, i.e. the maximum number of tokens
+        that can be packed into each instance.
+    :param work_dir: A local directory where intermediate files can be stored.
+    :param tokenizer: The tokenizer configuration.
+    :param max_sequence_length: This must be equal to ``sequence_length`` if given.
+    :param long_doc_strategy: The strategy to use for documents longer than ``sequence_length``.
+    :param source_group_size: The number of consecutive sources to pack together.
     """
+
+    Config = PackingInstanceSourceConfig
 
     def __init__(
         self,
@@ -200,7 +235,7 @@ class PackingInstanceSource(InstanceSource):
                 raise RuntimeError("we shouldn't be here!")
 
             assert source is not None
-            token_range = source.get_token_range(document_start, document_end)
+            token_range = source.get_token_range(document_start, document_end - document_start)
             document_token_ids.append(as_tensor(token_range["input_ids"]))
             if "label_mask" in token_range:
                 document_label_masks.append(as_tensor(token_range["label_mask"]))
