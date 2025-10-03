@@ -469,13 +469,59 @@ def test_numpy_fsl_mixture_dataset(tmp_path: Path):
     # Note that changing the seed here could result in the inclusion of the first sequence from the mock data.
     # assert not np.array_equal(first_src_sequence, first_ds_item)
     expected = "aff421"
-    assert ds.fingerprint.endswith(
-        expected
-    ), f"Fingerprint mismatch, expected {expected}, got {ds.fingerprint[-6:]}...Do you need to update expected fingerprint?"
+    assert ds.fingerprint.endswith(expected), (
+        f"Fingerprint mismatch, expected {expected}, got {ds.fingerprint[-6:]}...Do you need to update expected fingerprint?"
+    )
     assert first_ds_item == [56423, 24546, 15796, 52203]  # stable because we pass a seed
     assert ds.num_tokens == 10_112  # oversamples to handle rounding error
     assert len(ds) == 2528
     assert len(ds) / bsz >= math.ceil(max_tokens / (sequence_length * bsz))
+
+
+def test_numpy_fsl_mixture_dataset_truncated_instance(tmp_path: Path):
+    """Hamilton rounding can make the dataset think a full window exists when it doesn't."""
+
+    sequence_length = 4
+
+    data = np.arange(4, dtype=np.uint16)
+    mmap_path = tmp_path / "short.npy"
+    mmap = np.memmap(mmap_path, mode="w+", dtype=np.uint16, shape=data.shape)
+    mmap[:] = data
+    mmap.flush()
+
+    tokenizer = TokenizerConfig(vocab_size=32_000, eos_token_id=0, pad_token_id=-1)
+
+    mixture_config = SourceMixtureDatasetConfig(
+        render_tables=False,
+        requested_tokens=8,
+        source_configs=[
+            SourceMixtureConfig(
+                source_name="short",
+                paths=[str(mmap_path)],
+                target_ratio=1.0,
+                max_repetition_ratio=2.0,
+            )
+        ],
+        seed=0,
+        global_batch_size=sequence_length * 2,
+    )
+
+    ds = NumpyFSLDatasetConfig(
+        source_mixture_config=mixture_config,
+        sequence_length=sequence_length,
+        tokenizer=tokenizer,
+        dtype=NumpyDatasetDType.uint16,
+        include_instance_metadata=False,
+        work_dir=str(tmp_path),
+    ).build()
+    ds.prepare()
+
+    assert len(ds) == 2
+    first = ds[0]["input_ids"].tolist()
+    second = ds[1]["input_ids"].tolist()
+    assert len(first) == sequence_length
+    assert len(second) == sequence_length
+    assert second == first
 
 
 def test_numpy_fsl_mixture_dataset_with_repetition(tmp_path: Path):
@@ -553,9 +599,9 @@ def test_numpy_fsl_mixture_dataset_with_repetition(tmp_path: Path):
     # Note that changing the seed here could result in the inclusion of the first sequence from the mock data.
     # assert not np.array_equal(first_src_sequence, first_ds_item)
 
-    assert ds.fingerprint.endswith(
-        expected_fingerprint
-    ), f"Fingerprint mismatch, expected {expected_fingerprint}, got {ds.fingerprint[-6:]}...Do you need to update expected fingerprint?"
+    assert ds.fingerprint.endswith(expected_fingerprint), (
+        f"Fingerprint mismatch, expected {expected_fingerprint}, got {ds.fingerprint[-6:]}...Do you need to update expected fingerprint?"
+    )
     assert first_ds_item == [
         12761,
         6996,
