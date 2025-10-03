@@ -1,5 +1,6 @@
 import logging
 from functools import lru_cache
+from pathlib import Path
 from typing import List, Optional
 
 import torch
@@ -15,6 +16,7 @@ from olmo_core.launch.beaker import (
     OLMoCoreBeakerImage,
     is_running_in_beaker_batch_job,
 )
+from olmo_core.train.callbacks.beaker import BEAKER_RESULT_DIR
 from olmo_core.utils import generate_uuid
 
 log = logging.getLogger(__name__)
@@ -109,6 +111,7 @@ def build_launch_config(
     workspace: str = "ai2/OLMo-core",
     budget: str = "ai2/oe-base",
     nccl_debug: bool = False,
+    flight_recorder: bool = False,
     beaker_image: str = OLMoCoreBeakerImage.stable,
     num_nodes: int = 1,
     use_hostname_constraints: bool = False,
@@ -183,6 +186,16 @@ def build_launch_config(
         google_creds,
     ]
 
+    env_vars = [BeakerEnvVar(name="NCCL_DEBUG", value="INFO" if nccl_debug else "WARN")]
+    if flight_recorder:
+        # https://github.com/pytorch/tutorials/blob/main/unstable_source/flight_recorder_tutorial.rst
+        fr_dump_location = Path(BEAKER_RESULT_DIR) / "flightrecorder" / "nccl_trace_rank_"
+        env_vars += [
+            BeakerEnvVar(name="TORCH_NCCL_TRACE_BUFFER_SIZE", value="2000"),
+            BeakerEnvVar(name="TORCH_NCCL_DUMP_ON_TIMEOUT", value="1"),
+            BeakerEnvVar(name="TORCH_FR_DUMP_TEMP_FILE", value=str(fr_dump_location)),
+        ]
+
     launch_config = BeakerLaunchConfig(
         name=f"{name}-{generate_uuid()[:8]}",
         budget=budget,
@@ -198,7 +211,7 @@ def build_launch_config(
         num_execution_units=num_execution_units,
         shared_filesystem=not is_url(root_dir),
         allow_dirty=False,
-        env_vars=[BeakerEnvVar(name="NCCL_DEBUG", value="INFO" if nccl_debug else "WARN")],
+        env_vars=env_vars,
         env_secrets=[env_secret for env_secret in env_secrets if env_secret is not None],
         setup_steps=[
             # Clone repo.

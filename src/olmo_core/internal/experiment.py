@@ -176,6 +176,7 @@ def build_common_components(
     beaker_workspace: str = "ai2/OLMo-core",
     use_hostname_constraints: bool = False,
     num_execution_units: Optional[int] = None,
+    flight_recorder: bool = False,
 ) -> CommonComponents:
     root_dir = get_root_dir(cli_context.cluster)
     beaker_user = get_beaker_username()
@@ -189,6 +190,7 @@ def build_common_components(
             cmd=cli_context.remote_cmd,
             cluster=cli_context.cluster,
             nccl_debug=True,
+            flight_recorder=flight_recorder,
             beaker_image=beaker_image,
             num_nodes=num_nodes,
             workspace=beaker_workspace,
