@@ -41,6 +41,23 @@ class DataMix(DataMixBase):
     OLMo_mix_0625 = "OLMo-mix-0625"
     OLMo_mix_0625_150Bsample = "OLMo-mix-0625-150Bsample"
 
+    @classmethod
+    def _missing_(cls, value: str):
+        """Handle alias lookups."""
+        # Aliases mapping
+        aliases = {
+            "dolma3-0625-6T-mix": "OLMo-mix-0625",
+        }
+
+        # Check if the value is an alias
+        if isinstance(value, str) and value in aliases:
+            # Look up the real value and return the corresponding enum member
+            real_value = aliases[value]
+            for member in cls:
+                if member.value == real_value:
+                    return member
+        return None
+
     def build(self, base_dir: str, tokenizer: str) -> Tuple[List[str], List[str]]:
         if not base_dir.endswith("/"):
             base_dir = base_dir + "/"
