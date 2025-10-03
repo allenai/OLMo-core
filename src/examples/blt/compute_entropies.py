@@ -28,6 +28,7 @@ import glob
 import logging
 import os
 from pathlib import Path
+import time
 
 import numpy as np
 import torch
@@ -83,11 +84,35 @@ def get_array_length(path: str, dtype=np.uint16) -> int:
     return file_size // item_size
 
 
+@torch.compile
+def _postprocess_logits(logits: torch.Tensor, input_ids: torch.Tensor, pad_token_id: int) -> tuple[torch.Tensor, torch.Tensor]:
+    logprobs = F.log_softmax(logits, dim=-1)[:, :-1]  # (batch, seq_len-1, vocab_size)
+
+    # Compute entropy (negative entropy, so higher = more certain)
+    # H = -sum(p * log(p))
+    # We return -H so that lower values = more uncertain
+    entropy = torch.sum(torch.exp(logprobs) * logprobs, dim=-1)  # (batch, seq_len-1)
+
+    # Compute cross-entropy (negative log probability of next token)
+    # This is the main path logprobs
+    cross_entropy = torch.gather(
+        logprobs,
+        dim=-1,
+        index=input_ids[:, 1:].unsqueeze(-1)
+    ).squeeze(-1)  # (batch, seq_len-1)
+
+    # Mask out padding positions
+    mask = input_ids[:, 1:] != pad_token_id
+    entropy = torch.where(mask, entropy, torch.tensor(0.0, dtype=entropy.dtype))
+    cross_entropy = torch.where(mask, cross_entropy, torch.tensor(0.0, dtype=cross_entropy.dtype))
+
+    return entropy, cross_entropy  # (batch, seq_len-1), (batch, seq_len-1)
+
+
 def compute_entropies_for_batch(
     input_ids: torch.Tensor,
     model: torch.nn.Module,
     pad_token_id: int = 0,
-    device: str = "cuda",
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Compute entropy and cross-entropy for a batch of sequences.
@@ -103,37 +128,13 @@ def compute_entropies_for_batch(
         cross_entropy: Negative log probability values of shape (batch_size, seq_len-1)
     """
     # Move input to device
-    input_ids = input_ids.to(device)
+    input_ids = input_ids
 
     # Get logits from model
     with torch.no_grad():
         logits = model(input_ids)  # (batch_size, seq_len, vocab_size)
 
-    # Move back to CPU for processing
-    logits = logits.cpu()
-    input_ids = input_ids.cpu()
-
-    logprobs = F.log_softmax(logits, dim=-1)
-
-    # Compute entropy (negative entropy, so higher = more certain)
-    # H = -sum(p * log(p))
-    # We return -H so that lower values = more uncertain
-    entropy = torch.sum(torch.exp(logprobs) * logprobs, dim=-1)[:, :-1]  # (batch, seq_len-1)
-
-    # Compute cross-entropy (negative log probability of next token)
-    # This is the main path logprobs
-    cross_entropy = torch.gather(
-        logprobs[:, :-1],
-        dim=-1,
-        index=input_ids[:, 1:].unsqueeze(-1)
-    ).squeeze(-1)  # (batch, seq_len-1)
-
-    # Mask out padding positions
-    mask = input_ids[:, 1:] != pad_token_id
-    entropy = torch.where(mask, entropy, torch.tensor(0.0, dtype=entropy.dtype))
-    cross_entropy = torch.where(mask, cross_entropy, torch.tensor(0.0, dtype=cross_entropy.dtype))
-
-    return entropy, cross_entropy
+    return _postprocess_logits(logits, input_ids, pad_token_id)
 
 
 def process_shard(
@@ -225,12 +226,12 @@ def process_shard(
 
         # Compute entropies
         entropy, cross_entropy = compute_entropies_for_batch(
-            input_ids, model, pad_token_id=pad_token_id, device=device
+            input_ids.to(device), model, pad_token_id=pad_token_id
         )
 
         # Accumulate results in overlapping positions
-        entropy_np = entropy.to(torch.float32).numpy()
-        cross_entropy_np = cross_entropy.to(torch.float32).numpy()
+        entropy_np = entropy.cpu().to(torch.float32).numpy()
+        cross_entropy_np = cross_entropy.cpu().to(torch.float32).numpy()
 
         for i, (window_start, window_end) in enumerate(zip(window_starts, window_ends)):
             # Only accumulate values for the actual (non-padded) part of the window
@@ -326,6 +327,12 @@ def main():
         default="olmo2_190M",
         help="Model architecture name (default: olmo2_190M)",
     )
+    parser.add_argument(
+        "--process_every",
+        type=str,
+        default="1/1",
+        help="Process only a fraction of shards, in the form 'i/n' to process the i-th out of n equal parts (default: 1/1 = all shards)",
+    )
 
     args = parser.parse_args()
 
@@ -368,6 +375,8 @@ def main():
         log.error("No input files found!")
         return
 
+    input_files = sorted(input_files)
+
     log.info(f"Found {len(input_files)} input files to process")
 
     # Initialize model
@@ -376,7 +385,7 @@ def main():
 
     # Build tokenizer config
     tokenizer_config = TokenizerConfig.dolma2()
-    pad_token_id = tokenizer_config.eos_token_id  # Use EOS as padding
+    pad_token_id = tokenizer_config.pad_token_id
 
     # Build model config
     model_config = getattr(TransformerConfig, args.model_arch)(
@@ -402,8 +411,15 @@ def main():
 
     log.info(f"Model loaded successfully on {args.device}")
 
+    process_every_nom, process_every_denom = map(int, args.process_every.split("/"))
+    input_files_to_process = []
+
+    for idx, input_file in enumerate(input_files):
+        if (idx % process_every_denom) == (process_every_nom - 1):
+            input_files_to_process.append(input_file)
+
     # Process each shard
-    for input_path in tqdm(input_files, desc="Processing shards"):
+    for input_path in tqdm(input_files_to_process, desc="Processing shards"):
         # Determine output paths
         # Preserve directory structure relative to data root
         if "/weka/oe-training-default/" in input_path:
