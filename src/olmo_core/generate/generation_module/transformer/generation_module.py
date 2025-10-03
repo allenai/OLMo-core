@@ -11,6 +11,7 @@ import torch.distributed.checkpoint.state_dict as dist_cp_sd
 from cached_path import cached_path
 from torch.distributed import DeviceMesh, ProcessGroup
 from torch.distributed.checkpoint.metadata import Metadata
+from torch.nn import functional as F
 from tqdm import tqdm
 
 from olmo_core.aliases import PathOrStr
@@ -33,6 +34,7 @@ from olmo_core.generate.sampling import select_next_token
 from olmo_core.generate.utils import selective_log_softmax
 from olmo_core.io import is_url, join_path, normalize_path
 from olmo_core.nn.attention import Attention
+from olmo_core.nn.fla import FLA
 from olmo_core.nn.transformer import Transformer, TransformerConfig
 from olmo_core.train.train_module.transformer.common import parallelize_model
 from olmo_core.train.train_module.transformer.config import (
@@ -120,17 +122,25 @@ class TransformerGenerationModule(GenerationModule):
         # is called "prepare_inference_cache" rather than "prepare_kv_cache".
         # For example, Mamba requires cache state but doesn't use a kv-cache.
         for block in self.model.blocks.values():
-            assert isinstance(block.attention, Attention)
-            attn = cast(Attention, block.attention)
-            if attn.kv_cache_manager is None:
-                attn.init_kv_cache_manager(batch_size, max_seq_len)
-            else:
-                attn.kv_cache_manager.reset(batch_size, max_seq_len)
+            if hasattr(block, "attention"):
+                assert isinstance(block.attention, Attention)
+                attn = cast(Attention, block.attention)
+                if attn.kv_cache_manager is None:
+                    attn.init_kv_cache_manager(batch_size, max_seq_len)
+            elif hasattr(block, "fla"):
+                assert isinstance(block.fla, FLA)
+                fla = cast(FLA, block.fla)
+                if fla.kv_cache_manager is None:
+                    fla.init_kv_cache_manager(batch_size)
 
     def free_inference_cache(self):
         for block in self.model.blocks.values():
-            assert isinstance(block.attention, Attention)
-            cast(Attention, block.attention).kv_cache_manager = None
+            if hasattr(block, "attention"):
+                assert isinstance(block.attention, Attention)
+                cast(Attention, block.attention).kv_cache_manager = None
+            elif hasattr(block, "fla"):
+                assert isinstance(block.fla, FLA)
+                cast(FLA, block.fla).kv_cache_manager = None
 
     def _set_model_mode(self, mode: Literal["train", "eval"]):
         if self._model_mode != mode:
@@ -337,6 +347,87 @@ class TransformerGenerationModule(GenerationModule):
             # NOTE: completions_only does not apply to logits/logprobs. They are already computed only for completions.
         return generated, logits, logprobs
 
+    @torch.inference_mode()
+    def benchmark(
+        self,
+        batch_size: int,
+        n_prefill: int,
+        n_generate: int,
+        profile: bool = False,
+        vocab_size: int = 10_000,
+    ):
+        self._set_model_mode("eval")
+
+        input_ids = torch.randint(
+            low=0,
+            high=vocab_size,
+            size=(batch_size, n_prefill),
+        )
+        attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
+
+        if profile:
+            prof = torch.profiler.profile(
+                activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
+                record_shapes=True,
+                with_stack=True,
+                profile_memory=True,
+                with_flops=True,
+                schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=2),
+                on_trace_ready=torch.profiler.tensorboard_trace_handler('/tmp/profiles/transformer_generation_module'),
+            )
+            prof.__enter__()
+        else:
+            prof = None
+
+        start_time = time.perf_counter()
+
+        self.prepare_inference_cache(batch_size, n_prefill + n_generate)
+        prefill_cache_leftpad = attention_mask_to_cache_leftpad(attention_mask).to(self.device)
+
+        torch.cuda.synchronize()
+        cache_prepare_time = time.perf_counter() - start_time
+
+        # prefill
+        next_token_logits = self.model(
+            input_ids,
+            logits_to_keep=1,
+            cache_leftpad=prefill_cache_leftpad,
+        )
+        next_token_probs = F.softmax(next_token_logits, dim=-1)
+        next_token = next_token_logits.argmax(-1)
+
+        torch.cuda.synchronize()
+        prefill_time = time.perf_counter() - start_time - cache_prepare_time
+
+        if prof is not None:
+            prof.step()
+
+        # generate
+        for step in range(n_generate):
+            next_token_logits = self.model(
+                next_token.to(self.device),
+                logits_to_keep=1,
+            )
+            next_token_probs = F.softmax(next_token_logits, dim=-1)
+            next_token = next_token_probs.argmax(-1)
+
+            if prof is not None:
+                prof.step()
+
+        torch.cuda.synchronize()
+        generate_time = time.perf_counter() - start_time - cache_prepare_time - prefill_time
+
+        if prof is not None:
+            prof.__exit__(None, None, None)
+
+        self.free_inference_cache()
+
+        return {
+            "cache_prepare_time": cache_prepare_time,
+            "prefill_time": prefill_time,
+            "generate_time": generate_time,
+        }
+
     def load_checkpoint(
         self,
         checkpoint_dir: PathOrStr,
@@ -402,6 +493,7 @@ class TransformerGenerationModule(GenerationModule):
         checkpoint_dir: PathOrStr,
         *,
         transformer_config: Optional[TransformerConfig] = None,
+        tokenizer_config: Optional[TokenizerConfig] = None,
         generation_config: Optional[GenerationConfig] = None,
         process_group: Optional[ProcessGroup] = None,
         work_dir: Optional[PathOrStr] = None,
@@ -439,8 +531,7 @@ class TransformerGenerationModule(GenerationModule):
         checkpoint_dir = normalize_path(checkpoint_dir)
 
         # Load transformer config from checkpoint if not provided
-        tokenizer_config = None
-        if transformer_config is None and get_rank(process_group) == 0:
+        if transformer_config is None and tokenizer_config is None and get_rank(process_group) == 0:
             config_path = join_path(checkpoint_dir, "config.json")
             with cached_path(config_path).open() as f:
                 config_dict = json.load(f)
