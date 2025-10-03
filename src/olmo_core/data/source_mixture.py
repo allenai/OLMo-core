@@ -27,6 +27,10 @@ __all__ = [
 log = logging.getLogger(__name__)
 
 
+def round_down_to_multiple(x, *, n):
+    return (x // n) * n
+
+
 @dataclass
 class SourceMixtureConfig(Config):
     """
@@ -56,6 +60,11 @@ class SourceMixtureConfig(Config):
     This can be used to upsample the source data by setting the number of repetitions > 1
     and allocating a target_ratio that requires >1 repetitions.
     """
+    max_source_fraction: float = 1.0
+    """
+    The maximum fraction of the source data to use. This can be used to pretend that a source
+    has less data than it actually does, which can be useful for testing / experimentation.
+    """
 
     def validate(self):
         if not self.paths:
@@ -64,6 +73,12 @@ class SourceMixtureConfig(Config):
             raise OLMoConfigurationError("target_ratio must be > 0 and <= 1")
         if self.max_repetitions < 1:
             raise OLMoConfigurationError("max_repetitions must be >= 1")
+        if not 0 < self.max_source_fraction <= 1:
+            raise OLMoConfigurationError("max_source_fraction must be > 0 and <= 1")
+        if self.max_source_fraction < 1 and self.max_repetitions > 1:
+            raise NotImplementedError(
+                "max_source_fraction < 1 with max_repetitions > 1 is not supported"
+            )
 
 
 @dataclass
@@ -133,7 +148,11 @@ class SourceMixtureDataset:  # Note: "dataset" naming is a bit inconsistent with
 
     def to_index(self) -> Dict[Tuple[str, int], int]:
         """
-        Convert the dataset to an indexed array of dict((int, path), int).
+        Convert the dataset to an indexed dictionary mapping (path, index) tuples to token counts.
+
+        This method flattens all sources and their paths into a single dictionary where each
+        key is a tuple of (path_string, enumeration_index) and the value is the number of
+        tokens for that path.
         """
         return {
             (str(outcome.path), idx): outcome.tokens
@@ -217,28 +236,33 @@ class SourceMixtureDatasetConfig(Config):
         # Calculate the number of tokens available and to include for each source
         tokens_details_by_source: List[SourceTokenDetails] = []
         for source_config in self.source_configs:
-            tokens_in_source = self._count_tokens_for_source(
-                source_config=source_config, npdtype=npdtype
+            tokens_in_source = (
+                self._count_tokens_for_source(source_config=source_config, npdtype=npdtype)
+                * source_config.max_source_fraction  # pretend we have less data than we do
             )
-            needed_for_source = int(self.requested_tokens * source_config.target_ratio)
-            max_for_source = int(
-                tokens_in_source
-                * source_config.max_source_fraction
-                # why does max_repetitions affect the max number of tokens to take?
-                # it should affect the max available to take!
-                * source_config.max_repetitions
-            )
+            needed_tokens = self.requested_tokens * source_config.target_ratio
+            needed_for_source = round_down_to_multiple(needed_tokens, n=sequence_length)
 
-            # Ensure that the max tokens for a source meet the target ratio requirement
-            if max_for_source < needed_for_source:
-                raise OLMoConfigurationError(
-                    f"Insufficient tokens for source: {source_config.source_name} @ target global ratio: {source_config.target_ratio} :: {max_for_source} < {needed_for_source}"
-                )
+            # Ensure that we have enough tokens in the source to meet the target ratio
+            if tokens_in_source < needed_for_source:
+                upsample_ratio = needed_for_source / tokens_in_source
+                if upsample_ratio > source_config.max_repetitions:
+                    raise OLMoConfigurationError(
+                        f"Source {source_config.source_name} does not have enough tokens to meet the "
+                        f"target ratio. Needs {needed_for_source}, has {tokens_in_source}, which "
+                        f"requires an upsample ratio of {upsample_ratio:.4f} "
+                        f"but max_repetitions is {source_config.max_repetitions}"
+                    )
+                else:
+                    log.info(
+                        f"Source {source_config.source_name} does not have enough tokens to meet the "
+                        f"target ratio, upsampling by roughly {upsample_ratio:.4f}"
+                    )
 
             tokens_details_by_source.append(
                 SourceTokenDetails(
                     config=source_config,
-                    population=tokens_in_source,
+                    population=int(tokens_in_source * source_config.max_repetitions),
                     num_selected=needed_for_source,
                 )
             )
@@ -246,7 +270,10 @@ class SourceMixtureDatasetConfig(Config):
         tokens_per_path_per_source: Dict[str, List[SourcePathTokens]] = {}
         for source in tokens_details_by_source:
             tokens_per_path = self.get_tokens_per_path(
-                source_config=source.config, token_details=source, npdtype=npdtype
+                source_config=source.config,
+                token_details=source,
+                npdtype=npdtype,
+                sequence_length=sequence_length,
             )
             tokens_per_path_per_source[source.config.source_name] = tokens_per_path
         all_tokens_per_path = [
@@ -263,51 +290,50 @@ class SourceMixtureDatasetConfig(Config):
         requested_instances = total_batches * num_instances_per_batch
 
         # determine how many instances we still need to allocate
-        int_instances = []
-        remainders = []
+        full_instances_per_path = []
+        remainders_per_path = []
         for tokens_per_path in all_tokens_per_path:
-            int_part = tokens_per_path // sequence_length
-            remainder = (tokens_per_path % sequence_length) / sequence_length
-            int_instances.append(int_part)
-            remainders.append(remainder)
+            full_instances, remainder = divmod(tokens_per_path, sequence_length)
+            full_instances_per_path.append(full_instances)
+            remainders_per_path.append(remainder)
 
         # we apply Hamilton's method for rounding (see https://mathematics-democracy-institute.org/apportionment/)
         # that is, we only round up the requested instances for the paths that have the largest remainders
         # there is a lot of literature on how any other allocation of increments is suboptimal
         # basically, the requested tokens that are closest to a full instance are rounded up first
-        additional_instances_needed = requested_instances - sum(int_instances)
+        additional_instances_needed = requested_instances - sum(full_instances_per_path)
         if additional_instances_needed > 0:
             # Distribute additional instances evenly across all paths first (base),
             # then allocate any remaining instances (leftover) to paths with largest remainders
             #
             # TODO: does this actually work? Can the dataset simply read the remainders like this?
             # Seems we're pretending these full instances actually exist?
-            base, leftover = divmod(additional_instances_needed, len(remainders))
+            num_paths = len(remainders_per_path)
+            base, leftover = divmod(additional_instances_needed, num_paths)
             if base:
-                int_instances = [n + base for n in int_instances]
+                full_instances_per_path = [n + base for n in full_instances_per_path]
             if leftover:
                 largest_remainder_indicies = sorted(
-                    range(len(remainders)), key=remainders.__getitem__, reverse=True
+                    range(num_paths), key=remainders_per_path.__getitem__, reverse=True
                 )
                 for idx in largest_remainder_indicies[:leftover]:
-                    int_instances[idx] += 1
+                    full_instances_per_path[idx] += 1
 
-        final_tokens_per_path = [inst * sequence_length for inst in int_instances]
+        final_tokens_per_path = [inst * sequence_length for inst in full_instances_per_path]
 
         i = 0
-        final_token_distribution: Dict[str, float] = {}
         completed: List[SourceMixtureOutcome] = []
+        final_token_distribution: Dict[str, float] = {}
         for source_name, source_path_tokens in tokens_per_path_per_source.items():
-            for j in range(len(source_path_tokens)):
-                source_path_tokens[j] = SourcePathTokens(
-                    path=source_path_tokens[j].path, tokens=final_tokens_per_path[i]
+            path_tokens = []
+            for path_token in source_path_tokens:
+                path_tokens.append(
+                    SourcePathTokens(path=path_token.path, tokens=final_tokens_per_path[i])
                 )
                 i += 1
 
-            completed.append(SourceMixtureOutcome(name=source_name, path_tokens=source_path_tokens))
-            final_token_distribution[source_name] = sum(
-                [path.tokens for path in source_path_tokens]
-            )
+            completed.append(SourceMixtureOutcome(name=source_name, path_tokens=path_tokens))
+            final_token_distribution[source_name] = sum(path.tokens for path in path_tokens)
 
         total_tokens = sum(final_token_distribution.values())
         final_token_distribution = {
@@ -344,9 +370,13 @@ class SourceMixtureDatasetConfig(Config):
         source_config: SourceMixtureConfig,
         token_details: SourceTokenDetails,
         npdtype: NumpyUIntTypes,
+        sequence_length: int,
     ) -> List[SourcePathTokens]:
         """
         Get the paths and resulting token count for a source.
+
+        All token counts are rounded down to multiples of sequence_length to ensure
+        that downstream NumpyFSLDataset can create fixed-length sequences.
         """
         take_ratio = token_details.num_selected / token_details.population
         path_tokens = []
@@ -363,16 +393,17 @@ class SourceMixtureDatasetConfig(Config):
 
             for ratio in take_ratios:
                 for path in source_config.paths:
-                    tokens_to_keep = int(
-                        math.ceil(self._count_tokens_for_file(path, npdtype) * ratio)
-                    )
+                    raw_tokens = int(math.ceil(self._count_tokens_for_file(path, npdtype) * ratio))
+                    # Round down to sequence_length multiple
+                    tokens_to_keep = round_down_to_multiple(raw_tokens, n=sequence_length)
                     path_tokens.append(SourcePathTokens(path=path, tokens=tokens_to_keep))
 
             return path_tokens
 
         for path in source_config.paths:
-            # TODO: should this round to the nearest sequence length?
-            tokens_to_keep = int(math.ceil(self._count_tokens_for_file(path, npdtype) * take_ratio))
+            raw_tokens = int(math.ceil(self._count_tokens_for_file(path, npdtype) * take_ratio))
+            # Round down to sequence_length multiple
+            tokens_to_keep = round_down_to_multiple(raw_tokens, n=sequence_length)
             path_tokens.append(SourcePathTokens(path=path, tokens=tokens_to_keep))
 
         return path_tokens

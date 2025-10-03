@@ -524,6 +524,7 @@ def segment_documents_into_instances(
         Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]
     ] = np.uint32,
     sample: Optional[Tuple[int, int]] = None,
+    min_sequence_length: Optional[int] = None,
 ) -> Tuple[int, int]:
     """
     Segment documents into instances of at most ``sequence_length`` tokens.
@@ -531,16 +532,33 @@ def segment_documents_into_instances(
 
     Sample a subset of the instances if ``sample`` is provided as a tuple of ``(max_instances, seed)``.
 
+    If min_sequence_length is provided, documents shorter than this will be filtered out and
+    all instances will be exactly max_sequence_length tokens (for FSL datasets).
+
     Returns the number of original documents and the number of resulting instances documents.
     """
     total_og_docs = 0
-    idx_gen = (
-        idx
-        for start_idx, end_idx in iter_document_indices(
-            path, eos_token_id=eos_token_id, dtype=dtype
+
+    if min_sequence_length is not None and min_sequence_length == max_sequence_length:
+        # FSL mode: filter short docs and create fixed-length instances
+        idx_gen = (
+            idx
+            for start_idx, end_idx in iter_document_indices(
+                path, eos_token_id=eos_token_id, dtype=dtype
+            )
+            if end_idx - start_idx >= max_sequence_length
+            for idx in (start_idx, start_idx + max_sequence_length)
         )
-        for idx in (start_idx, start_idx + min(end_idx - start_idx, max_sequence_length))
-    )
+    else:
+        # Variable length mode: keep all docs, truncate to max_sequence_length
+        idx_gen = (
+            idx
+            for start_idx, end_idx in iter_document_indices(
+                path, eos_token_id=eos_token_id, dtype=dtype
+            )
+            for idx in (start_idx, start_idx + min(end_idx - start_idx, max_sequence_length))
+        )
+
     indices = np.fromiter(idx_gen, dtype=indices_dtype)
     total_og_docs = len(indices) // 2
 

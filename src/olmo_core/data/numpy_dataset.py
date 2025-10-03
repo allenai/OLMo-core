@@ -428,6 +428,8 @@ class NumpyFSLDatasetBase(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         self, name: str, *source_paths: PathOrStr, extra_ids: Optional[Sequence[str]] = None
     ) -> Path:
         sha256_hash = hashlib.sha256()
+        # Version string to force cache invalidation when segmentation logic changes
+        sha256_hash.update(b"v2_fsl_filter_short_docs")
         for source_path in source_paths:
             # NOTE: the pre-processed data file names are based on the corresponding source (token IDs) file name,
             # so to get the right instance indices file name for a label mask file, we need to map
@@ -784,6 +786,7 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
                             dtype=self.dtype,
                             indices_dtype=self.indices_dtype,
                             sample=(max_instances, self._seed),
+                            min_sequence_length=self.sequence_length,
                         )
                         futures.append(future)
 
@@ -797,14 +800,14 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
                         f"{self.sequence_length} from '{path}'"
                     )
 
-    # def _read_chunk_from_array(self, path: PathOrStr, index: int) -> torch.Tensor:
-    #     indices_path = self._get_instance_indices_path(path)
-    #     indices = load_array_slice_into_tensor(
-    #         indices_path, index * 2, index * 2 + 2, self.indices_dtype
-    #     )
-    #     start_idx, end_idx = indices
-    #     data = load_array_slice_into_tensor(path, int(start_idx), int(end_idx), self.dtype)
-    #     return data
+    def _read_chunk_from_array(self, path: PathOrStr, index: int) -> torch.Tensor:
+        indices_path = self._get_instance_indices_path(path)
+        indices = load_array_slice_into_tensor(
+            indices_path, index * 2, index * 2 + 2, self.indices_dtype
+        )
+        start_idx, end_idx = indices
+        data = load_array_slice_into_tensor(path, int(start_idx), int(end_idx), self.dtype)
+        return data
 
     def _get_file_size_and_length(self, path: PathOrStr, idx: int, dtype=None) -> Tuple[int, int]:
         dtype = dtype or self.dtype

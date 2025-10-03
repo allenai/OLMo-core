@@ -278,7 +278,6 @@ def test_dataset_mixture_build_insufficient_source_max_fraction(tmp_path: Path):
             source_name="1",
             target_ratio=0.25,
             paths=[str(i[0]) for i in source_paths["1"]],
-            max_source_fraction=0.10,  # Allow only 10% of source1 to be used (population is 1M tokens)
         ),
         SourceMixtureConfig(
             source_name="2",
