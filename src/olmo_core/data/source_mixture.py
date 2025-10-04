@@ -322,13 +322,12 @@ class SourceMixtureDatasetConfig(Config):
         # We adjust the number of tokens per path so that we can complete the desired number
         # of training steps while still retaining the target ratios.
         training_steps = math.ceil(self.requested_tokens / self.global_batch_size)
-        assert self.global_batch_size % sequence_length == 0, (
-            "global_batch_size must be multiple of sequence_length"
-        )
+        assert (
+            self.global_batch_size % sequence_length == 0
+        ), "global_batch_size must be multiple of sequence_length"
         num_instances_per_batch = self.global_batch_size // sequence_length
         requested_instances = training_steps * num_instances_per_batch
 
-        # Flatten all path tokens with their source names for easier processing
         all_path_tokens: List[SourcePathTokens] = []
         for source_path_tokens in tokens_per_path_per_source.values():
             all_path_tokens.extend(source_path_tokens)
