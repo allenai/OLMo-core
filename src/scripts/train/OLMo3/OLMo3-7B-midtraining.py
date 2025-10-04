@@ -17,20 +17,6 @@ GLOBAL_BATCH_SIZE = 2**21  # ~2M tokens
 SEED = 1337
 
 
-# TODO: address midtraining dtata issue where items in batch dont have same shape
-# 1Z Original Traceback (most recent call last):
-# 2025-10-01T21:40:47.121Z   File "/opt/conda/lib/python3.11/site-packages/torch/utils/data/_utils/worker.py", line 349, in _worker_loop
-# 2025-10-01T21:40:47.121Z     data = fetcher.fetch(index)  # type: ignore[possibly-undefined]
-# 2025-10-01T21:40:47.121Z            ^^^^^^^^^^^^^^^^^^^^
-# 2025-10-01T21:40:47.121Z   File "/opt/conda/lib/python3.11/site-packages/torch/utils/data/_utils/fetch.py", line 42, in fetch
-# 2025-10-01T21:40:47.121Z     data = next(self.dataset_iter)
-# 2025-10-01T21:40:47.121Z            ^^^^^^^^^^^^^^^^^^^^^^^
-# 2025-10-01T21:40:47.121Z   File "/olmo-core-runtime/src/olmo_core/data/data_loader.py", line 1045, in <genexpr>
-# 2025-10-01T21:40:47.121Z     return (
-# 2025-10-01T21:40:47.121Z            ^
-# 2025-10-01T21:40:47.121Z   File "/olmo-core-runtime/src/olmo_core/data/utils.py", line 401, in iter_batched
-# 2025-10-01T21:40:47.121Z     raise RuntimeError(
-# 2025-10-01T21:40:47.121Z RuntimeError: Items in batch don't have the same shape! Expected (8192,), got (5081,)
 def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     run_name_with_ts = (
         f"{cli_context.run_name}-{datetime.now().astimezone().strftime('%Y%m%dT%H%M%S%z')}"
@@ -121,10 +107,10 @@ if __name__ == "__main__":
 
     Examples:
         To render the config and exit:
-            python src/scripts/train/olmo3-midtraining/cookbook-example.py dry_run debug_run ai2/augusta
+            python src/scripts/train/OLMo3/OLMo3-7B-midtraining.py dry_run debug_run ai2/augusta
 
         To launch a training run on Augusta w/ 8 nodes:
-        python src/scripts/train/olmo3-midtraining/cookbook-example.py launch my_run ai2/augusta \
+        python src/scripts/train/OLMo3/OLMo3-7B-midtraining.py launch my_run ai2/augusta \
             --launch.num_nodes=8 \
             --launch.priority=high
     """
