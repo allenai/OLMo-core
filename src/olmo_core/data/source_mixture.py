@@ -351,6 +351,7 @@ class SourceMixtureDatasetConfig(Config):
             remainders.append(remainder)
 
         # Apply Hamilton's method for rounding, but respect capacity constraints
+        # https://mathematics-democracy-institute.org/apportionment/
         additional_instances_needed = requested_instances - sum(int_instances)
         if additional_instances_needed > 0:
             # Find indices that have capacity for more instances
