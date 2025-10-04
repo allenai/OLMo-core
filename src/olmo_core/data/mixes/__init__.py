@@ -43,7 +43,7 @@ class DataMix(DataMixBase):
     OLMo_mix_0625_150Bsample = "OLMo-mix-0625-150Bsample"
 
     @classmethod
-    def _missing_(cls, value: object) -> 'DataMix | None':
+    def _missing_(cls, value: object) -> "DataMix | None":
         """Handle alias lookups."""
         # Aliases mapping
         aliases = {
