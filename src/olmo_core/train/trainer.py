@@ -174,16 +174,14 @@ class Trainer:
 
     load_trainer_state: Optional[bool] = None
     """
-    When loading from :data:`load_path`, whether to load the trainer state (including dataloader state).
-    If ``None``, this will attempt to load the trainer state if it exists in the checkpoint, but will
-    will not error if it doesn't.
+    Whether to load the trainer state (including dataloader state). If ``None``, this will attempt
+    to load the trainer state if it exists in the checkpoint, but will will not error if it doesn't.
     """
 
     load_optim_state: Optional[bool] = None
     """
-    When loading from :data:`load_path`, whether to load the optimizer state. If ``None``, this
-    will attempt to load the optimizer state if it exists in the checkpoint, but will not error if
-    it doesn't.
+    Whether to load the optimizer state. If ``None``, this will attempt to load the optimizer state
+    if it exists in the checkpoint, but will not error if it doesn't.
     """
 
     metrics_collect_interval: int = 5
@@ -635,17 +633,17 @@ class Trainer:
             and not self.checkpoint_loaded
             and self.load_strategy != LoadStrategy.never
         ):
-            # Try loading from the save folder first.
-            self.maybe_load_checkpoint(self.save_folder)
+            # Try loading from the save folder first. The save folder is used for continuing
+            # existing runs that failed or were preempted, so we always load trainer state and
+            # optimizer state.
+            self.maybe_load_checkpoint(
+                self.save_folder, load_trainer_state=True, load_optim_state=True
+            )
 
             # Then fallback to the load path, if provided.
             if self.load_path is not None:
                 if not self.checkpoint_loaded:
-                    self.maybe_load_checkpoint(
-                        self.load_path,
-                        load_trainer_state=self.load_trainer_state,
-                        load_optim_state=self.load_optim_state,
-                    )
+                    self.maybe_load_checkpoint(self.load_path)
                 else:
                     log.warning(
                         f"Ignoring load path ('{self.load_path}') since checkpoint was found in save folder"
@@ -810,6 +808,22 @@ class Trainer:
         :param load_trainer_state: Load trainer state (data loader state, RNG states, and other bookkeeping).
         :param load_optim_state: Load optimizer state in the train module.
         """
+        load_trainer_state = (
+            self.load_trainer_state if load_trainer_state is None else load_trainer_state
+        )
+        load_optim_state = self.load_optim_state if load_optim_state is None else load_optim_state
+        if dir == self.save_folder:
+            if load_trainer_state is False:
+                log.warning(
+                    "Loading from save_folder with 'load_trainer_state=False' is not recommended, "
+                    "since the save_folder is meant for continuing existing runs."
+                )
+            if load_optim_state is False:
+                log.warning(
+                    "Loading from save_folder with 'load_optim_state=False' is not recommended, "
+                    "since the save_folder is meant for continuing existing runs."
+                )
+
         dir = normalize_path(dir)
 
         # NOTE: to avoid making a ton of client requests (S3 or otherwise) we only make those
@@ -870,6 +884,7 @@ class Trainer:
     def save_checkpoint(self) -> PathOrStr:
         """
         Save a checkpoint for the current step to the :data:`save_folder`.
+
 
         :returns: The path/URL to the checkpoint.
         """
