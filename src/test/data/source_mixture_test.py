@@ -10,6 +10,7 @@ from olmo_core.data.source_mixture import (
     SourceMixtureConfig,
     SourceMixtureDataset,
     SourceMixtureDatasetConfig,
+    SourceMixtureList,
 )
 from olmo_core.exceptions import OLMoConfigurationError
 
@@ -23,29 +24,31 @@ def test_source_mixture_config(tmp_path: Path, caplog, capsys):
         "3": mk_mmaps(tmp_path=tmp_path, prefix="source3", num_files=2, size=1_000_000),
     }
 
-    source_configs = [
-        SourceMixtureConfig(
-            source_name="1",
-            target_ratio=0.33333,
-            paths=[str(i[0]) for i in source_paths["1"]],
-        ),
-        SourceMixtureConfig(
-            source_name="2", target_ratio=0.33333, paths=[str(i[0]) for i in source_paths["2"]]
-        ),
-        SourceMixtureConfig(
-            source_name="3",
-            target_ratio=0.33333,
-            paths=[str(i[0]) for i in source_paths["3"]],
-        ),
-    ]
+    source_configs = SourceMixtureList(
+        [
+            SourceMixtureConfig(
+                source_name="1",
+                target_ratio=0.33333,
+                paths=[str(i[0]) for i in source_paths["1"]],
+            ),
+            SourceMixtureConfig(
+                source_name="2", target_ratio=0.33333, paths=[str(i[0]) for i in source_paths["2"]]
+            ),
+            SourceMixtureConfig(
+                source_name="3",
+                target_ratio=0.33333,
+                paths=[str(i[0]) for i in source_paths["3"]],
+            ),
+        ]
+    )
 
     max_tokens = 5_000_000
     sequence_length = 1024
     global_batch_size = 1024 * 32
 
     config = SourceMixtureDatasetConfig(
+        source_list=source_configs,
         requested_tokens=max_tokens,
-        source_configs=source_configs,
         quiet=True,
         render_tables=True,
         global_batch_size=global_batch_size,
@@ -84,28 +87,40 @@ def test_source_mixture_config_validation():
 
 
 def test_dataset_mixture_config_validation():
-    source_configs = [
-        SourceMixtureConfig(source_name="source1", target_ratio=0.5, paths=["/path/to/source1"]),
-        SourceMixtureConfig(source_name="source2", target_ratio=0.5, paths=["/path/to/source2"]),
-    ]
+    source_configs = SourceMixtureList(
+        [
+            SourceMixtureConfig(
+                source_name="source1", target_ratio=0.5, paths=["/path/to/source1"]
+            ),
+            SourceMixtureConfig(
+                source_name="source2", target_ratio=0.5, paths=["/path/to/source2"]
+            ),
+        ]
+    )
 
     config = SourceMixtureDatasetConfig(
         requested_tokens=1000,
-        source_configs=source_configs,
+        source_list=source_configs,
         quiet=True,
         render_tables=False,
         global_batch_size=1024 * 32,
     )
     config.validate()
 
-    source_configs_invalid = [
-        SourceMixtureConfig(source_name="source1", target_ratio=0.7, paths=["/path/to/source1"]),
-        SourceMixtureConfig(source_name="source2", target_ratio=0.5, paths=["/path/to/source2"]),
-    ]
+    source_configs_invalid = SourceMixtureList(
+        [
+            SourceMixtureConfig(
+                source_name="source1", target_ratio=0.7, paths=["/path/to/source1"]
+            ),
+            SourceMixtureConfig(
+                source_name="source2", target_ratio=0.5, paths=["/path/to/source2"]
+            ),
+        ]
+    )
 
     config_invalid = SourceMixtureDatasetConfig(
         requested_tokens=1000,
-        source_configs=source_configs_invalid,
+        source_list=source_configs_invalid,
         quiet=True,
         render_tables=False,
         global_batch_size=1024 * 32,
@@ -122,21 +137,23 @@ def test_dataset_mixture_build(tmp_path: Path):
         "3": mk_mmaps(tmp_path=tmp_path, prefix="source3", num_files=2, size=1_000_000),
     }
 
-    source_configs = [
-        SourceMixtureConfig(
-            source_name="1",
-            target_ratio=0.33,
-            paths=[str(i[0]) for i in source_paths["1"]],
-        ),
-        SourceMixtureConfig(
-            source_name="2", target_ratio=0.33, paths=[str(i[0]) for i in source_paths["2"]]
-        ),
-        SourceMixtureConfig(
-            source_name="3",
-            target_ratio=0.34,
-            paths=[str(i[0]) for i in source_paths["3"]],
-        ),
-    ]
+    source_configs = SourceMixtureList(
+        [
+            SourceMixtureConfig(
+                source_name="1",
+                target_ratio=0.33,
+                paths=[str(i[0]) for i in source_paths["1"]],
+            ),
+            SourceMixtureConfig(
+                source_name="2", target_ratio=0.33, paths=[str(i[0]) for i in source_paths["2"]]
+            ),
+            SourceMixtureConfig(
+                source_name="3",
+                target_ratio=0.34,
+                paths=[str(i[0]) for i in source_paths["3"]],
+            ),
+        ]
+    )
 
     max_tokens = 5_000_000
     sequence_length = 1024
@@ -144,7 +161,7 @@ def test_dataset_mixture_build(tmp_path: Path):
 
     config = SourceMixtureDatasetConfig(
         requested_tokens=max_tokens,
-        source_configs=source_configs,
+        source_list=source_configs,
         quiet=True,
         render_tables=False,
         global_batch_size=global_batch_size,
@@ -168,27 +185,29 @@ def test_dataset_mixture_build_insufficient_source_data(tmp_path: Path):
         "2": mk_mmaps(tmp_path=tmp_path, prefix="source2", num_files=2, size=1_000_000),
         "3": mk_mmaps(tmp_path=tmp_path, prefix="source3", num_files=2, size=1_000_000),
     }
-    source_configs = [
-        SourceMixtureConfig(
-            source_name="1",
-            target_ratio=0.5,
-            paths=[str(i[0]) for i in source_paths["1"]],
-        ),
-        SourceMixtureConfig(
-            source_name="2", target_ratio=0.25, paths=[str(i[0]) for i in source_paths["2"]]
-        ),
-        SourceMixtureConfig(
-            source_name="3",
-            target_ratio=0.25,
-            paths=[str(i[0]) for i in source_paths["3"]],
-        ),
-    ]
+    source_configs = SourceMixtureList(
+        [
+            SourceMixtureConfig(
+                source_name="1",
+                target_ratio=0.5,
+                paths=[str(i[0]) for i in source_paths["1"]],
+            ),
+            SourceMixtureConfig(
+                source_name="2", target_ratio=0.25, paths=[str(i[0]) for i in source_paths["2"]]
+            ),
+            SourceMixtureConfig(
+                source_name="3",
+                target_ratio=0.25,
+                paths=[str(i[0]) for i in source_paths["3"]],
+            ),
+        ]
+    )
 
     max_tokens = 5_000_000
 
     config = SourceMixtureDatasetConfig(
         requested_tokens=max_tokens,
-        source_configs=source_configs,
+        source_list=source_configs,
         quiet=True,
         render_tables=False,
         global_batch_size=1024 * 32,
@@ -211,22 +230,24 @@ def test_dataset_mixture_build_with_repetition(tmp_path: Path):
         "3": mk_mmaps(tmp_path=tmp_path, prefix="source3", num_files=2, size=1_000_000),
     }
 
-    source_configs = [
-        SourceMixtureConfig(
-            source_name="1",
-            target_ratio=0.5,
-            max_repetition_ratio=3.0,  # Allow 3x repetition of source1 so that we can meet the target of 2.5M
-            paths=[str(i[0]) for i in source_paths["1"]],
-        ),
-        SourceMixtureConfig(
-            source_name="2", target_ratio=0.25, paths=[str(i[0]) for i in source_paths["2"]]
-        ),
-        SourceMixtureConfig(
-            source_name="3",
-            target_ratio=0.25,
-            paths=[str(i[0]) for i in source_paths["3"]],
-        ),
-    ]
+    source_configs = SourceMixtureList(
+        [
+            SourceMixtureConfig(
+                source_name="1",
+                target_ratio=0.5,
+                max_repetition_ratio=3.0,  # Allow 3x repetition of source1 so that we can meet the target of 2.5M
+                paths=[str(i[0]) for i in source_paths["1"]],
+            ),
+            SourceMixtureConfig(
+                source_name="2", target_ratio=0.25, paths=[str(i[0]) for i in source_paths["2"]]
+            ),
+            SourceMixtureConfig(
+                source_name="3",
+                target_ratio=0.25,
+                paths=[str(i[0]) for i in source_paths["3"]],
+            ),
+        ]
+    )
 
     max_tokens = 5_000_000
     sequence_length = 1024
@@ -234,7 +255,7 @@ def test_dataset_mixture_build_with_repetition(tmp_path: Path):
 
     config = SourceMixtureDatasetConfig(
         requested_tokens=max_tokens,
-        source_configs=source_configs,
+        source_list=source_configs,
         quiet=True,
         render_tables=False,
         global_batch_size=global_batch_size,
@@ -267,31 +288,33 @@ def test_dataset_mixture_build_insufficient_source_max_fraction(tmp_path: Path):
         "2": mk_mmaps(tmp_path=tmp_path, prefix="source2", num_files=2, size=1_000_000),
         "3": mk_mmaps(tmp_path=tmp_path, prefix="source3", num_files=2, size=1_000_000),
     }
-    source_configs = [
-        SourceMixtureConfig(
-            source_name="1",
-            target_ratio=0.25,
-            paths=[str(i[0]) for i in source_paths["1"]],
-            max_source_fraction=0.10,  # Allow only 10% of source1 to be used (population is 1M tokens)
-        ),
-        SourceMixtureConfig(
-            source_name="2",
-            target_ratio=0.25,
-            paths=[str(i[0]) for i in source_paths["2"]],
-        ),
-        SourceMixtureConfig(
-            source_name="3",
-            target_ratio=0.5,
-            paths=[str(i[0]) for i in source_paths["3"]],
-        ),
-    ]
+    source_configs = SourceMixtureList(
+        [
+            SourceMixtureConfig(
+                source_name="1",
+                target_ratio=0.25,
+                paths=[str(i[0]) for i in source_paths["1"]],
+                max_source_fraction=0.10,  # Allow only 10% of source1 to be used (population is 1M tokens)
+            ),
+            SourceMixtureConfig(
+                source_name="2",
+                target_ratio=0.25,
+                paths=[str(i[0]) for i in source_paths["2"]],
+            ),
+            SourceMixtureConfig(
+                source_name="3",
+                target_ratio=0.5,
+                paths=[str(i[0]) for i in source_paths["3"]],
+            ),
+        ]
+    )
 
     # 5 source files * 1_000_000 tokens per file
     max_tokens = len(list(chain(*source_paths.values()))) * 1_000_000
 
     config = SourceMixtureDatasetConfig(
         requested_tokens=max_tokens,
-        source_configs=source_configs,
+        source_list=source_configs,
         quiet=True,
         render_tables=False,
         global_batch_size=1024 * 32,
@@ -310,25 +333,27 @@ def test_dataset_mixture_build_duplicate_paths(tmp_path: Path):
         "3": mk_mmaps(tmp_path=tmp_path, prefix="source3", num_files=2, size=1_000_000),
     }
 
-    source_configs = [
-        SourceMixtureConfig(
-            source_name="1",
-            target_ratio=0.33,  # 990k tokens
-            max_repetition_ratio=2.0,
-            paths=[
-                str(sources["1"][0][0]),
-                str(sources["1"][0][0]),
-            ],  # Duplicate the 1 path for source 1
-        ),
-        SourceMixtureConfig(
-            source_name="2", target_ratio=0.33, paths=[str(i[0]) for i in sources["2"]]
-        ),
-        SourceMixtureConfig(
-            source_name="3",
-            target_ratio=0.34,
-            paths=[str(i[0]) for i in sources["3"]],
-        ),
-    ]
+    source_configs = SourceMixtureList(
+        [
+            SourceMixtureConfig(
+                source_name="1",
+                target_ratio=0.33,  # 990k tokens
+                max_repetition_ratio=2.0,
+                paths=[
+                    str(sources["1"][0][0]),
+                    str(sources["1"][0][0]),
+                ],  # Duplicate the 1 path for source 1
+            ),
+            SourceMixtureConfig(
+                source_name="2", target_ratio=0.33, paths=[str(i[0]) for i in sources["2"]]
+            ),
+            SourceMixtureConfig(
+                source_name="3",
+                target_ratio=0.34,
+                paths=[str(i[0]) for i in sources["3"]],
+            ),
+        ]
+    )
 
     max_tokens = 3_000_000
     sequence_length = 1024
@@ -336,7 +361,7 @@ def test_dataset_mixture_build_duplicate_paths(tmp_path: Path):
 
     config = SourceMixtureDatasetConfig(
         requested_tokens=max_tokens,
-        source_configs=source_configs,
+        source_list=source_configs,
         quiet=True,
         render_tables=False,
         global_batch_size=global_batch_size,

@@ -445,19 +445,26 @@ def glob_directory(pattern: str) -> Generator[str, None, None]:
         Only a subset of glob patterns are supported. Specifically, ``*`` and ``**`` wildcards,
         which the follow the semantics defined here https://docs.python.org/3/library/pathlib.html#pattern-language.
     """
-    # Pull out base directory from pattern.
-    dir = pattern.split("*", 1)[0]
+    # Pull out base directory from pattern by finding the first part before any wildcard.
+    # Split by '/' and take path components until we hit one with a wildcard.
+    parts = pattern.split("/")
+    base_parts = []
+    for part in parts:
+        if "*" in part:
+            break
+        base_parts.append(part)
+    dir = "/".join(base_parts) if base_parts else "."
 
     # Translate the glob pattern into a regex.
     # For example, "src/examples/**/*.py" --> "^src/examples/.*[^/]*\\.py$".
-    regex = re.compile(
+    pattern_regex = re.compile(
         "^"
         + re.escape(pattern).replace(r"\*\*/", ".*").replace(r"\*\*", ".*").replace(r"\*", "[^/]*")
         + "$"
     )
 
     for path in list_directory(dir, recurse="**" in pattern):
-        if regex.match(path):
+        if pattern_regex.match(path):
             yield path
 
 
@@ -574,7 +581,7 @@ def _http_file_size(url: str) -> int:
 @retriable()
 def _http_get_bytes_range(url: str, bytes_start: int, num_bytes: int) -> bytes:
     response = requests.get(
-        url, headers={"Range": f"bytes={bytes_start}-{bytes_start+num_bytes-1}"}
+        url, headers={"Range": f"bytes={bytes_start}-{bytes_start + num_bytes - 1}"}
     )
     if response.status_code == 404:
         raise FileNotFoundError(url)
@@ -613,6 +620,7 @@ def _get_gcs_client():
 def _gcs_is_retriable(exc: Exception) -> bool:
     from google.api_core.exceptions import BadRequest, GatewayTimeout
     from google.api_core.retry import if_transient_error
+    from google.auth.exceptions import RefreshError
 
     return if_transient_error(exc) or isinstance(
         exc,
@@ -620,6 +628,7 @@ def _gcs_is_retriable(exc: Exception) -> bool:
             requests.exceptions.Timeout,
             BadRequest,  # Weird choice, but Google throws this transiently
             GatewayTimeout,
+            RefreshError,
         ),
     )
 
@@ -1047,6 +1056,6 @@ class _WekaClient(SchemeClient):
 
     def get_bytes_range(self, index: int, length: int) -> bytes:
         response = self.s3.get_object(
-            Bucket=self.bucket_name, Key=self.path, Range=f"bytes={index}-{index+length-1}"
+            Bucket=self.bucket_name, Key=self.path, Range=f"bytes={index}-{index + length - 1}"
         )
         return response["Body"].read()

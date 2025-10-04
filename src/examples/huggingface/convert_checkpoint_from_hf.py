@@ -30,6 +30,7 @@ from olmo_core.nn.attention import AttentionBackendName, AttentionType
 from olmo_core.nn.conversion.state_mapping import StateType, TemplatePlaceholder
 from olmo_core.nn.hf.checkpoint import load_hf_model
 from olmo_core.nn.hf.convert import get_converter_from_hf
+from olmo_core.nn.moe.moe import MoEType
 from olmo_core.nn.transformer.config import TransformerConfig
 from olmo_core.nn.transformer.model import Transformer
 from olmo_core.utils import prepare_cli_environment
@@ -167,6 +168,28 @@ def convert_checkpoint_from_hf(
             work_dir=work_dir,
             num_embeddings=model.vocab_size,
         )
+
+        if (moe_config := model_config.block.feed_forward_moe) is not None:
+            if moe_config.name == MoEType.dropless:
+                for k, v in model_state_dict.items():
+                    # We need to reshape the w1 and w3 weights for the dropless MoE because conversion
+                    # can't distinguish between dropless and regular MoE, and dropless MoE
+                    # weights are shaped differently to regular MoE.
+                    if k.endswith(".feed_forward_moe.experts.mlp.w1") or k.endswith(
+                        ".feed_forward_moe.experts.mlp.w3"
+                    ):
+                        assert isinstance(v, torch.Tensor), (k, v)
+                        model_state_dict[k] = (
+                            v.reshape(moe_config.num_experts, -1, moe_config.hidden_size)
+                            .permute(0, 2, 1)
+                            .reshape(moe_config.num_experts * moe_config.hidden_size, -1)
+                        )
+                        log.info(f"Reshaped {k} because MoE is dropless")
+            elif moe_config.name == MoEType.default:
+                log.warning(
+                    f"MoE is {moe_config.name}, which may drop activations and cause validation to fail. If this is not desired, please change the MoE type to 'dropless'."
+                )
+
         model.load_state_dict(model_state_dict)
 
     model_and_optim_dir = join_path(output_path, "model_and_optim")
@@ -339,7 +362,7 @@ def validate_conversion(
             if block.attention.window_size != (-1, -1):
                 block.attention.window_size = (sliding_window - 1, 0)
     dtype = getattr(hf_config, "torch_dtype", torch.float32)
-    model = model.to(dtype=dtype)
+    model = model.to(device=device, dtype=dtype)
     model.eval()
     with torch.no_grad():
         logits = model(input_ids=input_ids)
