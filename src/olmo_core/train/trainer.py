@@ -623,7 +623,8 @@ class Trainer:
             # Then fallback to the load path, if provided.
             if self.load_path is not None:
                 if not self.checkpoint_loaded:
-                    self.maybe_load_checkpoint(self.load_path)
+                    # DEBUG: Hacked to skip optimizer state loading. Don't merge.
+                    self.maybe_load_checkpoint(self.load_path, load_optim_state=False)
                 else:
                     log.warning(
                         f"Ignoring load path ('{self.load_path}') since checkpoint was found in save folder"
