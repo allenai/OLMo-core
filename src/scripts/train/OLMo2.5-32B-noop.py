@@ -47,10 +47,6 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
     rank_microbatch_size = SEQUENCE_LENGTH
-    if common.launch is not None:
-        gpus = {CLUSTER_TO_GPU_TYPE.get(c, "unknown") for c in common.launch.clusters}
-        if all("B200" in g for g in gpus):
-            rank_microbatch_size *= 2
 
     return TransformerTrainModuleConfig(
         rank_microbatch_size=rank_microbatch_size,
