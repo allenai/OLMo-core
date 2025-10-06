@@ -49,7 +49,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         rank_microbatch_size=SEQ_LENGTH * 2,
         learning_rate=0.00020712352850360292,
         scheduler=LinearWithWarmup(units=SchedulerUnits.steps, warmup=0, alpha_f=0.0),
-        activation_memory_budget=0.7,
+        activation_memory_budget=0.5,
     )
 
     source_list = SourceMixtureList.from_yaml(
