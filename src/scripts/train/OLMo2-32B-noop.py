@@ -132,7 +132,7 @@ if __name__ == "__main__":
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
         beaker_image="petew/olmo-core-tch270cu128-2025-05-16",
-        include_instance_filter=True,
+        include_instance_filter=False,
         include_default_evals=False,
         flight_recorder=True,
     )
