@@ -54,6 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `RoPEScalingConfig.to_hf_config()` for each RoPE scaling method to support automatic conversion to HuggingFace format.
 - Guide to dataset mixing in `docs/source/guides/data_mixing.rst`.
 - Added support for converting FlexOlmo models (with both dropless and default MoEs) between OLMo Core and HF formats.
+- Added the ability for `GenerationModule` to load multiple checkpoints at once and average them.
 
 
 ## [v2.2.0](https://github.com/allenai/OLMo-core/releases/tag/v2.2.0) - 2025-08-26
