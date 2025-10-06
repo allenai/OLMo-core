@@ -78,6 +78,16 @@ class TrainerConfig(Config):
         out.add_callback(name, callback)
         return out
 
+    def with_callbacks(self, callbacks: Dict[str, Callback]) -> "TrainerConfig":
+        """
+        Return a new trainer config with additional callbacks.
+
+        :param callbacks: A dictionary of callbacks to add. Keys must be unique.
+        """
+        out = replace(self, callbacks=deepcopy(self.callbacks))
+        out.add_callbacks(callbacks)
+        return out
+
     def with_recommended_evals(
         self,
         tokenizer: TokenizerConfig,
