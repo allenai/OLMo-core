@@ -14,12 +14,15 @@ from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
+    TransformerActivationCheckpointingConfig,
+    TransformerActivationCheckpointingMode
 )
 
 from beaker import Priority
 
 SEQUENCE_LENGTH = 8 * 1024
 GLOBAL_BATCH_SIZE = 4 * 1024 * 1024
+ACTIVATION_MEM_BUDGET = 0.8
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
@@ -43,7 +46,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
     if common.launch is not None:
         gpus = {CLUSTER_TO_GPU_TYPE.get(c, "unknown") for c in common.launch.clusters}
         if all("B200" in g for g in gpus):
-            rank_microbatch_size *= 2
+            rank_microbatch_size *= 4
 
     return TransformerTrainModuleConfig(
         rank_microbatch_size=rank_microbatch_size,
@@ -55,6 +58,10 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             group_overrides=[
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
             ],
+        ),
+        ac_config=TransformerActivationCheckpointingConfig(
+            mode=TransformerActivationCheckpointingMode.budget,
+            activation_memory_budget=ACTIVATION_MEM_BUDGET
         ),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
