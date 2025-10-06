@@ -24,6 +24,7 @@ def test_local_functionality(tmp_path):
     (tmp_path / "file1.json").touch()
     (tmp_path / "dir1").mkdir()
     (tmp_path / "dir1" / "file2").touch()
+    (tmp_path / "dir1" / "file3.json").touch()
 
     # Should only list immediate children (files and dirs), but not files in subdirs.
     # The paths returned should be full paths.
@@ -32,16 +33,41 @@ def test_local_functionality(tmp_path):
         f"{tmp_path}/file1.json",
         f"{tmp_path}/dir1",
         f"{tmp_path}/dir1/file2",
+        f"{tmp_path}/dir1/file3.json",
     }
 
     (tmp_path / "dir1" / "subdir1").mkdir()
     (tmp_path / "dir1" / "subdir1" / "file1").touch()
+    (tmp_path / "dir1" / "subdir1" / "file4.json").touch()
 
     copy_dir(tmp_path / "dir1", tmp_path / "dir2")
     assert set(list_directory(tmp_path / "dir2", recurse=True)) == {
         f"{tmp_path}/dir2/file2",
+        f"{tmp_path}/dir2/file3.json",
         f"{tmp_path}/dir2/subdir1",
         f"{tmp_path}/dir2/subdir1/file1",
+        f"{tmp_path}/dir2/subdir1/file4.json",
+    }
+
+    # Test glob_directory with local files
+    # Should list top-level json files
+    assert set(glob_directory(f"{tmp_path}/*.json")) == {
+        f"{tmp_path}/file1.json",
+    }
+
+    # Should list all json files
+    assert set(glob_directory(f"{tmp_path}/**/*.json")) == {
+        f"{tmp_path}/file1.json",
+        f"{tmp_path}/dir1/file3.json",
+        f"{tmp_path}/dir1/subdir1/file4.json",
+        f"{tmp_path}/dir2/file3.json",
+        f"{tmp_path}/dir2/subdir1/file4.json",
+    }
+
+    # Should list nested json files in dir1
+    assert set(glob_directory(f"{tmp_path}/dir1/**/file*.json")) == {
+        f"{tmp_path}/dir1/file3.json",
+        f"{tmp_path}/dir1/subdir1/file4.json",
     }
 
 
@@ -81,6 +107,11 @@ def _run_remote_functionality(tmp_path, remote_dir):
     # Should list all json files.
     assert set(glob_directory(f"{remote_dir}/**/*.json")) == {
         f"{remote_dir}/file1.json",
+        f"{remote_dir}/dir1/file2.json",
+    }
+
+    # Should list nested json file
+    assert set(glob_directory(f"{remote_dir}/dir1/file*.json")) == {
         f"{remote_dir}/dir1/file2.json",
     }
 

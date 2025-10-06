@@ -16,10 +16,11 @@ from olmo_core.aliases import PathOrStr
 from olmo_core.config import Config
 from olmo_core.data.types import NumpyUIntTypes
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.io import get_file_size
+from olmo_core.io import file_exists, get_file_size, glob_directory
 
 __all__ = [
     "SourceMixtureConfig",
+    "SourceMixtureList",
     "SourceMixtureDatasetConfig",
 ]
 
@@ -59,6 +60,8 @@ class SourceMixtureConfig(Config):
     The maximum ratio of the source data to include in the mixture.
     """
 
+    _resolved_paths: Optional[List[str]] = None
+
     def validate(self):
         if self.target_ratio:
             if not 0 < self.target_ratio <= 1:
@@ -74,6 +77,56 @@ class SourceMixtureConfig(Config):
 
         if not 0 <= self.max_source_fraction <= 1:
             raise OLMoConfigurationError("max_source_fraction must be in the range [0, 1]")
+
+    @property
+    def resolved_paths(self) -> List[str]:
+        """
+        Resolve the paths, expanding any globs and validating existence.
+        Caches the result after the first access.
+        """
+        if self._resolved_paths is not None:
+            return self._resolved_paths
+
+        resolved: List[str] = []
+        for path in self.paths:
+            path_str = str(path)
+            if "*" in path_str:
+                matches = sorted(glob_directory(path_str))
+                if not matches:
+                    raise FileNotFoundError(f"Glob pattern '{path_str}' did not match any files")
+                resolved.extend(matches)
+            else:
+                if not file_exists(path_str):
+                    raise FileNotFoundError(f"Path '{path_str}' does not exist")
+                resolved.append(path_str)
+
+        self._resolved_paths = resolved
+        return resolved
+
+
+@dataclass
+class SourceMixtureList(Config):
+    """
+    A list of source configurations for building a mixture dataset.
+    This class ensures that the target ratios of the sources sum to 1.0.
+
+    The purpose of this class is to make managing sources independent from the details of
+    materializing those sources with SourceMixtureDatasetConfig.build().
+
+    With this separation, we can define a list of sources in a YAML file without also needing to
+    specify parameters like requested_tokens, global_batch_size, or processes.
+    """
+
+    sources: List[SourceMixtureConfig]
+
+    def validate(self):
+        if not self.sources:
+            raise OLMoConfigurationError("sources must not be empty")
+
+        summed_weights = np.sum([source.target_ratio for source in self.sources])
+
+        if not np.allclose(summed_weights, 1.0):
+            raise OLMoConfigurationError(f"target_ratios must sum to 1.0, got {summed_weights}")
 
 
 @dataclass
@@ -112,6 +165,7 @@ class SourceTokenDetails:
 class SourcePathTokens:
     path: str
     tokens: int
+    max_tokens: int
 
 
 @dataclass
@@ -179,9 +233,9 @@ class SourceMixtureDatasetConfig(Config):
     4. Generate a mixture that respects repetition and fraction limits
     """
 
-    source_configs: List[SourceMixtureConfig]
+    source_list: SourceMixtureList
     """
-    A list of source configurations.
+    A list of source configurations contained in a SourceMixtureList.
     """
     requested_tokens: int
     """
@@ -209,14 +263,7 @@ class SourceMixtureDatasetConfig(Config):
     def validate(self):
         if self.requested_tokens <= 0:
             raise OLMoConfigurationError("requested_tokens must be > 0")
-
-        if not self.source_configs:
-            raise OLMoConfigurationError("source_configs must not be empty")
-
-        summed_weights = np.sum([source.target_ratio for source in self.source_configs])
-
-        if not np.allclose(summed_weights, 1.0):
-            raise OLMoConfigurationError(f"target_ratios must sum to 1.0, got {summed_weights}")
+        self.source_list.validate()
 
     def build(self, *, npdtype: NumpyUIntTypes, sequence_length: int) -> SourceMixtureDataset:
         self.validate()
@@ -225,21 +272,22 @@ class SourceMixtureDatasetConfig(Config):
 
         log.info("---------------------------------------------------------")
         log.info("Generating a source mixture from configurations:")
-        log.info(self.source_configs)
+        log.info(self.source_list.sources)
 
         # Count the number of tokens available for each source
-        for source_config in self.source_configs:
+        for source_config in self.source_list.sources:
             log.info(f"Counting tokens for source: {source_config.source_name}")
             available_tokens_by_source[source_config.source_name] = self._count_tokens_for_paths(
-                paths=cast(List[PathOrStr], source_config.paths),
+                paths=cast(List[PathOrStr], source_config.resolved_paths),
                 source=source_config.source_name,
                 npdtype=npdtype,
             )
 
         tokens_details_by_source: List[SourceTokenDetails] = []
+        max_tokens_cap_by_source: Dict[str, int] = {}
 
         # Calculate the number of tokens available and to include for each source
-        for source_config in self.source_configs:
+        for source_config in self.source_list.sources:
             num_for_source = available_tokens_by_source[source_config.source_name]
             needed_for_source = int(self.requested_tokens * source_config.target_ratio)
             max_for_source = int(
@@ -252,6 +300,8 @@ class SourceMixtureDatasetConfig(Config):
                 raise OLMoConfigurationError(
                     f"Insufficient tokens for source: {source_config.source_name} @ target global ratio: {source_config.target_ratio} :: {max_for_source} < {needed_for_source}"
                 )
+
+            max_tokens_cap_by_source[source_config.source_name] = max_for_source
 
             tokens_details_by_source.append(
                 SourceTokenDetails(
@@ -269,13 +319,8 @@ class SourceMixtureDatasetConfig(Config):
             )
             tokens_per_path_per_source[source.config.source_name] = source_path_tokens
 
-        # We adjust the number of tokens per path so that we can complete the desired number of training steps while still retaining the target ratios.
-        all_tokens_per_path = [
-            path.tokens
-            for source_path_tokens in tokens_per_path_per_source.values()
-            for path in source_path_tokens
-        ]
-
+        # We adjust the number of tokens per path so that we can complete the desired number
+        # of training steps while still retaining the target ratios.
         training_steps = math.ceil(self.requested_tokens / self.global_batch_size)
         assert (
             self.global_batch_size % sequence_length == 0
@@ -283,50 +328,82 @@ class SourceMixtureDatasetConfig(Config):
         num_instances_per_batch = self.global_batch_size // sequence_length
         requested_instances = training_steps * num_instances_per_batch
 
-        # determine how many instances we still need to allocate
+        all_path_tokens: List[SourcePathTokens] = []
+        for source_path_tokens in tokens_per_path_per_source.values():
+            all_path_tokens.extend(source_path_tokens)
+
+        # Calculate base instances and remainders, respecting max_tokens constraint
         int_instances = []
         remainders = []
-        for tokens_per_path in all_tokens_per_path:
-            int_part = tokens_per_path // sequence_length
-            remainder = (tokens_per_path % sequence_length) / sequence_length
-            int_instances.append(int_part)
+        for path_token in all_path_tokens:
+            max_instances = path_token.max_tokens // sequence_length
+            desired_instances = path_token.tokens // sequence_length
+            # Don't allocate more than max_instances
+            base_instances = min(desired_instances, max_instances)
+            int_instances.append(base_instances)
+
+            # Only include remainder if we have capacity to add more
+            if base_instances < max_instances:
+                remainder = (path_token.tokens % sequence_length) / sequence_length
+            else:
+                remainder = 0.0
             remainders.append(remainder)
 
-        # we apply Hamilton's method for rounding (see https://mathematics-democracy-institute.org/apportionment/)
-        # that is, we only round up the requested instances for the paths that have the largest remainders
-        # there is a lot of literature on how any other allocation of increments is suboptimal
-        # basically, the requested tokens that are closest to a full instance are rounded up first
+        # Apply Hamilton's method for rounding, but respect capacity constraints
+        # https://mathematics-democracy-institute.org/apportionment/
         additional_instances_needed = requested_instances - sum(int_instances)
         if additional_instances_needed > 0:
-            base, leftover = divmod(additional_instances_needed, len(remainders))
-            if base:
-                int_instances = [n + base for n in int_instances]
-            if leftover:
-                for idx in sorted(range(len(remainders)), key=remainders.__getitem__, reverse=True)[
-                    :leftover
-                ]:
-                    int_instances[idx] += 1
+            # Find indices that have capacity for more instances
+            eligible_indices = [
+                idx
+                for idx in range(len(int_instances))
+                if int_instances[idx] < all_path_tokens[idx].max_tokens // sequence_length
+            ]
+
+            if eligible_indices:
+                # Distribute base amount evenly among eligible paths
+                base, leftover = divmod(additional_instances_needed, len(eligible_indices))
+                if base:
+                    for idx in eligible_indices:
+                        max_instances = all_path_tokens[idx].max_tokens // sequence_length
+                        # Add base amount but don't exceed max capacity
+                        can_add = min(base, max_instances - int_instances[idx])
+                        int_instances[idx] += can_add
+
+                # Recalculate how many we still need after base distribution
+                additional_instances_needed = requested_instances - sum(int_instances)
+
+                # Distribute remaining by largest remainders (Hamilton's method)
+                if additional_instances_needed > 0:
+                    # Only consider paths that still have capacity
+                    candidates_with_remainders = [
+                        (remainders[idx], idx)
+                        for idx in eligible_indices
+                        if int_instances[idx] < all_path_tokens[idx].max_tokens // sequence_length
+                    ]
+                    candidates_with_remainders.sort(reverse=True)
+
+                    for _, idx in candidates_with_remainders[:additional_instances_needed]:
+                        int_instances[idx] += 1
 
         final_tokens_per_path = [inst * sequence_length for inst in int_instances]
 
-        i = 0
+        # Update the path_token objects with final token counts
+        idx = 0
+        for source_path_tokens in tokens_per_path_per_source.values():
+            for path_token in source_path_tokens:
+                path_token.tokens = final_tokens_per_path[idx]
+                idx += 1
+
         final_token_distribution: Dict[str, float] = {}
         for source_name, source_path_tokens in tokens_per_path_per_source.items():
-            for j in range(len(source_path_tokens)):
-                source_path_tokens[j] = SourcePathTokens(
-                    path=source_path_tokens[j].path, tokens=final_tokens_per_path[i]
-                )
-                i += 1
-
             completed.append(
                 SourceMixtureOutcome(
                     name=source_name,
                     path_tokens=source_path_tokens,
                 )
             )
-            final_token_distribution[source_name] = sum(
-                [path.tokens for path in source_path_tokens]
-            )
+            final_token_distribution[source_name] = sum(path.tokens for path in source_path_tokens)
 
         total_tokens = sum(final_token_distribution.values())
         final_token_distribution = {
@@ -350,7 +427,7 @@ class SourceMixtureDatasetConfig(Config):
 
         original_token_distribution = {
             source_config.source_name: source_config.target_ratio
-            for source_config in self.source_configs
+            for source_config in self.source_list.sources
         }
         for source_name, ratio in original_token_distribution.items():
             diff = np.abs(final_token_distribution.get(source_name, 0) - ratio)
@@ -368,7 +445,12 @@ class SourceMixtureDatasetConfig(Config):
         Get the paths and resulting token count for a source.
         """
         take_ratio = token_details.num_selected / token_details.population
-        path_tokens = []
+        path_tokens: List[SourcePathTokens] = []
+
+        resolved_paths = source_config.resolved_paths
+        token_counts_by_path = {
+            path: self._count_tokens_for_file(path, npdtype) for path in resolved_paths
+        }
 
         # When we need more than 1 repetition of the source data we have a take ration > 1
         if take_ratio > 1:
@@ -381,17 +463,29 @@ class SourceMixtureDatasetConfig(Config):
                 remaining -= chunk
 
             for ratio in take_ratios:
-                for path in source_config.paths:
-                    tokens_to_keep = int(
-                        math.ceil(self._count_tokens_for_file(path, npdtype) * ratio)
+                for path in resolved_paths:
+                    available_tokens = token_counts_by_path[path]
+                    tokens_to_keep = int(math.ceil(available_tokens * ratio))
+                    path_tokens.append(
+                        SourcePathTokens(
+                            path=path,
+                            tokens=tokens_to_keep,
+                            max_tokens=available_tokens,
+                        )
                     )
-                    path_tokens.append(SourcePathTokens(path=path, tokens=tokens_to_keep))
 
             return path_tokens
 
-        for path in source_config.paths:
-            tokens_to_keep = int(math.ceil(self._count_tokens_for_file(path, npdtype) * take_ratio))
-            path_tokens.append(SourcePathTokens(path=path, tokens=tokens_to_keep))
+        for path in resolved_paths:
+            available_tokens = token_counts_by_path[path]
+            tokens_to_keep = int(math.ceil(available_tokens * take_ratio))
+            path_tokens.append(
+                SourcePathTokens(
+                    path=path,
+                    tokens=tokens_to_keep,
+                    max_tokens=available_tokens,
+                )
+            )
 
         return path_tokens
 
