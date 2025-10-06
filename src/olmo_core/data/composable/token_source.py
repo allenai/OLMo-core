@@ -3,7 +3,7 @@ import hashlib
 from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Optional, Sequence, TypedDict
+from typing import Iterable, List, Optional, Sequence, TypedDict
 
 from typing_extensions import NotRequired
 
@@ -40,7 +40,9 @@ class TokenSource(metaclass=ABCMeta):
             raise OLMoConfigurationError(
                 f"'work_dir' should be a local path, not a URL ('{work_dir}')."
             )
-        self._work_dir = Path(io.normalize_path(work_dir)) / self.__class__.__name__
+        self._work_dir = Path(io.normalize_path(work_dir))
+        if self._work_dir.name != self.__class__.__name__:
+            self._work_dir = self._work_dir / self.__class__.__name__
         self._fs_local_rank = dist_utils.get_fs_local_rank()
         self._rank = dist_utils.get_rank()
 
@@ -153,7 +155,7 @@ class TokenSourceConfig(Config):
     """A base config class for configuring and building a :class:`TokenSource`."""
 
     @abstractmethod
-    def build(self, work_dir: PathOrStr) -> TokenSource:
+    def build(self, work_dir: PathOrStr) -> List[TokenSource]:
         """Build the token source."""
         raise NotImplementedError
 
@@ -163,6 +165,6 @@ class DocumentSourceConfig(TokenSourceConfig):
     """A base config class for configuring and building a :class:`DocumentSource`."""
 
     @abstractmethod
-    def build(self, work_dir: PathOrStr) -> DocumentSource:
+    def build(self, work_dir: PathOrStr) -> List[DocumentSource]:
         """Build the document source."""
         raise NotImplementedError

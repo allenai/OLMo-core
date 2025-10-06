@@ -45,7 +45,9 @@ class PackingInstanceSourceConfig(InstanceSourceConfig):
 
     def build(self, work_dir: PathOrStr) -> "PackingInstanceSource":
         return PackingInstanceSource(
-            sources=[source_config.build(work_dir) for source_config in self.sources],
+            sources=[
+                source for source_config in self.sources for source in source_config.build(work_dir)
+            ],
             sequence_length=self.sequence_length,
             max_sequence_length=self.max_sequence_length,
             work_dir=work_dir,

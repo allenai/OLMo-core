@@ -1,9 +1,10 @@
 import functools as ft
 import hashlib
 import logging
+import random
 import typing
 from dataclasses import dataclass
-from typing import Iterable, List, Optional, Sequence, Tuple
+from typing import Iterable, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
@@ -13,23 +14,30 @@ from olmo_core.aliases import PathOrStr
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import log_once
 
+from ..mixes import DataMix, DataMixBase
 from ..tokenizer import TokenizerConfig
 from ..types import NumpyDatasetDType, NumpyUIntTypes
-from ..utils import iter_document_indices, load_array_slice
+from ..utils import chunked, iter_document_indices, load_array_slice
 from .token_source import DocumentSource, DocumentSourceConfig, TokenRange
 from .utils import path_map
 
 log = logging.getLogger(__name__)
 
 
-@dataclass
-class NumpyDocumentSourceConfig(DocumentSourceConfig):
-    """Config class for a :class:`NumpyDocumentSource`."""
-
-    source_paths: List[str]
+@dataclass(kw_only=True)
+class _NumpyDocumentSourceConfigBase(DocumentSourceConfig):
     tokenizer: TokenizerConfig
-    dtype: NumpyDatasetDType
-    label_mask_paths: Optional[List[str]] = None
+    """The config of the tokenizer that was used to tokenize the source files."""
+    dtype: Optional[NumpyDatasetDType] = None
+    """The numpy datatype of the token ID arrays in the source paths."""
+    source_permutation_seed: Optional[int] = None
+    """Used to shuffle the source files before grouping/building the document sources."""
+    source_group_size: int = 1
+    """The number of npy source files to group together into a single source."""
+
+    def __post_init__(self):
+        if self.source_group_size < -1 or self.source_group_size == 0:
+            raise OLMoConfigurationError("'source_group_size' must be -1 or a positive integer.")
 
     def get_dtype(self) -> NumpyUIntTypes:
         if self.dtype is not None:
@@ -47,13 +55,67 @@ class NumpyDocumentSourceConfig(DocumentSourceConfig):
 
         raise ValueError("vocab size too big!")
 
-    def build(self, work_dir: PathOrStr) -> "NumpyDocumentSource":
-        return NumpyDocumentSource(
-            source_paths=self.source_paths,
+
+@dataclass
+class NumpyDocumentSourceConfig(_NumpyDocumentSourceConfigBase):
+    """Config class for building one or more :class:`NumpyDocumentSource` directly from source paths."""
+
+    source_paths: List[str]
+    """The paths/URLs to the numpy token ID arrays."""
+    label_mask_paths: Optional[List[str]] = None
+    """The paths/URLs to numpy bool files indicating which tokens should be masked."""
+
+    def build(self, work_dir: PathOrStr) -> List["NumpyDocumentSource"]:
+        """
+        Build the sources.
+        """
+        source_paths = self.source_paths
+        if self.source_permutation_seed is not None:
+            source_order = list(range(len(self.source_paths)))
+            rng = random.Random(self.source_permutation_seed)
+            rng.shuffle(source_order)
+            source_paths = [source_paths[i] for i in source_order]
+
+        # NOTE: we always create a single main source first, then split it up if needed.
+        # This way is more efficient because we can query for the size of all source files concurrently.
+        main_source = NumpyDocumentSource(
+            source_paths=source_paths,
             label_mask_paths=self.label_mask_paths,
             tokenizer=self.tokenizer,
             dtype=self.get_dtype(),
             work_dir=work_dir,
+        )
+
+        if self.source_group_size > 0:
+            return main_source.split(self.source_group_size)
+        else:
+            return [main_source]
+
+
+@dataclass
+class NumpyDocumentSourceMixConfig(_NumpyDocumentSourceConfigBase):
+    """Config class for building one or more :class:`NumpyDocumentSource` from a predefined source mix."""
+
+    mix: Union[str, DataMixBase]
+    """The name of a data mix (e.g. ``"dolma17"``)."""
+    mix_base_dir: str
+    """The base directory of the data mix."""
+
+    def build(self, work_dir: PathOrStr) -> List["NumpyDocumentSource"]:
+        """
+        Build the sources.
+        """
+        if self.tokenizer.identifier is None:
+            raise OLMoConfigurationError(
+                "Missing tokenizer identifier required to construct data mix"
+            )
+        mix = self.mix
+        if not isinstance(mix, DataMixBase):
+            mix = DataMix(mix)
+        source_paths, _ = mix.build(self.mix_base_dir, self.tokenizer.identifier)
+        kwargs = self.as_dict(recurse=False, exclude={"mix", "mix_base_dir"})
+        return NumpyDocumentSourceConfig(source_paths=source_paths, **kwargs).build(
+            work_dir=work_dir
         )
 
 
@@ -122,6 +184,28 @@ class NumpyDocumentSource(DocumentSource):
                         "Each file in 'label_mask_paths' should have the same number of items as the corresponding file in 'source_paths', "
                         f"but found {label_mask_size:,d} in '{label_path}' vs {source_size:,d} in '{source_path}'.",
                     )
+
+    def split(self, group_size: int = 1) -> List["NumpyDocumentSource"]:
+        """
+        Split the source up into multiple smaller sources from groups of source files.
+        """
+        assert group_size >= 1
+        source_paths_groups = chunked(self.source_paths, group_size)
+        label_mask_paths_groups = (
+            chunked(self.label_mask_paths, group_size)
+            if self.label_mask_paths is not None
+            else [None for _ in chunked(self.source_paths, group_size)]
+        )
+        return [
+            self.__class__(
+                source_paths=source_paths,
+                dtype=self.dtype,
+                work_dir=self.work_dir,
+                tokenizer=self.tokenizer,
+                label_mask_paths=label_mask_paths,
+            )
+            for source_paths, label_mask_paths in zip(source_paths_groups, label_mask_paths_groups)
+        ]
 
     @property
     def dtype(self) -> NumpyUIntTypes:

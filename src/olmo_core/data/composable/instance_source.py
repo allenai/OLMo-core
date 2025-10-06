@@ -63,7 +63,9 @@ class InstanceSource(metaclass=ABCMeta):
                 )
         self._sequence_length = sequence_length
         self._max_sequence_length = max_sequence_length or sequence_length
-        self._work_dir = Path(io.normalize_path(work_dir)) / self.__class__.__name__
+        self._work_dir = Path(io.normalize_path(work_dir))
+        if self._work_dir.name != self.__class__.__name__:
+            self._work_dir = self._work_dir / self.__class__.__name__
         self._fs_local_rank = dist_utils.get_fs_local_rank()
         self._rank = dist_utils.get_rank()
 

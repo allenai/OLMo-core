@@ -4,7 +4,11 @@ from .concat_and_chunk_instance_source import (
 )
 from .data_loader import ComposableDataLoader, InstanceFilterConfig, ShuffleStrategy
 from .instance_source import Instance, InstanceSource, InstanceSourceConfig
-from .numpy_document_source import NumpyDocumentSource, NumpyDocumentSourceConfig
+from .numpy_document_source import (
+    NumpyDocumentSource,
+    NumpyDocumentSourceConfig,
+    NumpyDocumentSourceMixConfig,
+)
 from .packing_instance_source import (
     LongDocStrategy,
     PackingInstanceSource,
@@ -34,6 +38,7 @@ __all__ = [
     "InMemoryTokenSource",
     "NumpyDocumentSource",
     "NumpyDocumentSourceConfig",
+    "NumpyDocumentSourceMixConfig",
     # Instance source implementations.
     "ConcatAndChunkInstanceSource",
     "ConcatAndChunkInstanceSourceConfig",
