@@ -593,14 +593,21 @@ class BeakerLaunchConfig(Config):
                 SLACK_WEBHOOK_URL_ENV_VAR,
             )
 
-            if slack_notifications is None:
-                slack_notifications = SLACK_WEBHOOK_URL_ENV_VAR in os.environ
-            elif slack_notifications and SLACK_WEBHOOK_URL_ENV_VAR not in os.environ:
-                raise OLMoEnvironmentError(
-                    f"Missing env var '{SLACK_WEBHOOK_URL_ENV_VAR}' for Slack notifications"
-                )
+            if SLACK_WEBHOOK_URL_ENV_VAR in os.environ:
+                slack_webhook_url = os.environ[SLACK_WEBHOOK_URL_ENV_VAR]
+            else:
+                # Pull from secret if available.
+                for env_secret in self.env_secrets:
+                    if env_secret.name == SLACK_WEBHOOK_URL_ENV_VAR:
+                        slack_webhook_url = self.beaker.secret.read(env_secret.secret)
+                        break
 
-            slack_webhook_url = os.environ.get(SLACK_WEBHOOK_URL_ENV_VAR)
+            if slack_notifications is None:
+                slack_notifications = slack_webhook_url is not None
+            elif slack_notifications and slack_webhook_url is None:
+                raise OLMoEnvironmentError(
+                    f"Missing env var / secret '{SLACK_WEBHOOK_URL_ENV_VAR}' for Slack notifications"
+                )
 
         spec = self.build_experiment_spec(torchrun=torchrun, entrypoint=entrypoint)
         experiment = self.beaker.experiment.create(self.name, spec)
