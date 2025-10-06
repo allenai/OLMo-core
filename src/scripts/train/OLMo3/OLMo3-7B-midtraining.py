@@ -30,9 +30,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         cmd=cli_context.remote_cmd,
         cluster=cli_context.cluster,
         root_dir=root_dir,
-        beaker_image="petew/olmo-core-tch270cu128",
-        # workspace="ai2/olmo-3-microanneals",
-        workspace="ai2/OLMo_3",
+        workspace="ai2/olmo-3-microanneals",
         num_nodes=16,
         nccl_debug=True,
         # override priority from the CLI eg `--launch.priority=high`
@@ -49,7 +47,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         rank_microbatch_size=SEQ_LENGTH * 2,
         learning_rate=0.00020712352850360292,
         scheduler=LinearWithWarmup(units=SchedulerUnits.steps, warmup=0, alpha_f=0.0),
-        activation_memory_budget=0.7,
+        activation_memory_budget=0.5,
     )
 
     source_list = SourceMixtureList.from_yaml(
