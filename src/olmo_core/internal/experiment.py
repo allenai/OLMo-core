@@ -169,7 +169,7 @@ def build_common_components(
     dataset_config = NumpyDatasetConfig.from_data_mix(
         DataMix.OLMoE_mix_0824,
         tokenizer=tokenizer_config,
-        mix_base_dir=root_dir,
+        mix_base_dir="s3:///oe-training-default/ai2-llm", #root_dir,
         sequence_length=sequence_length,
         max_target_sequence_length=max(8192, sequence_length),
         min_sequence_length=min(256, sequence_length),
