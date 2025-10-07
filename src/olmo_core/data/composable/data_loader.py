@@ -9,12 +9,14 @@ from typing import Any, Dict, Iterable, Iterator, Optional
 
 import numpy as np
 import torch
+import torch.distributed as dist
 
 import olmo_core.distributed.utils as dist_utils
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import Config, StrEnum
+from olmo_core.distributed.parallel import get_dp_process_group
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.utils import roundrobin, threaded_generator
+from olmo_core.utils import get_default_device, roundrobin, threaded_generator
 
 from ..collator import DataCollator
 from ..data_loader import TextDataLoaderBase
@@ -47,7 +49,10 @@ class ShuffleStrategy(StrEnum):
     inter_source = "inter_source"
     """Shuffle across all sources as if they were one big source."""
     intra_source = "intra_source"
-    """Shuffle within each source, then concatenate the sources in order."""
+    """
+    Shuffle within each source, then concatenate the sources in order. This can be used to create
+    a data curriculum.
+    """
 
 
 class ComposableDataLoader(TextDataLoaderBase):
@@ -500,4 +505,73 @@ class _IterableDataLoaderWrapper(torch.utils.data.IterableDataset[Dict[str, Any]
         return (
             self.data_loader.collator(batch)
             for batch in iter_batched(instance_iterator, self.data_loader.rank_batch_size)
+        )
+
+
+@dataclass
+class ComposableDataLoaderConfig(Config):
+    """
+    A configuration class for building :class:`ComposableDataLoader` data loaders.
+    """
+
+    tokenizer: TokenizerConfig
+    global_batch_size: int
+    seed: int
+    work_dir: Optional[str] = None
+    shuffle: bool = True
+    shuffle_strategy: ShuffleStrategy = ShuffleStrategy.inter_source
+    num_threads: Optional[int] = None
+    num_workers: int = 0
+    prefetch_factor: Optional[int] = None
+    target_device_type: Optional[str] = None
+    generate_doc_lengths: bool = False
+    instance_filter_config: Optional[InstanceFilterConfig] = None
+
+    def build(
+        self,
+        *sources: InstanceSource,
+        collator: Optional[DataCollator] = None,
+        work_dir: Optional[PathOrStr] = None,
+        mesh: Optional[dist.DeviceMesh] = None,
+        dp_process_group: Optional[dist.ProcessGroup] = None,
+    ) -> ComposableDataLoader:
+        """
+        Construct the :class:`ComposableDataLoader`.
+
+        :param sources: The instance sources.
+        :param collator: An optional data collator. If not provided, a default will be created.
+        :param work_dir: A working directory for caching.
+        :param mesh: An optional ``DeviceMesh`` that defines the data parallel dimensions. Ideally
+            you should create this mesh using :func:`~olmo_core.distributed.parallel.build_world_mesh()`.
+            Alternatively you can pass the ``dp_process_group`` instead.
+        :param dp_process_group: The data parallel process group.
+        """
+        if not sources:
+            raise OLMoConfigurationError("At least one 'source' must be provided.")
+
+        if dp_process_group is None and mesh is not None:
+            dp_process_group = get_dp_process_group(mesh)
+
+        work_dir = work_dir or self.work_dir
+        if work_dir is None:
+            raise OLMoConfigurationError("'work_dir' must be specified.")
+
+        return ComposableDataLoader(
+            *sources,
+            collator=collator or DataCollator(pad_token_id=self.tokenizer.pad_token_id),
+            tokenizer=self.tokenizer,
+            work_dir=work_dir,
+            global_batch_size=self.global_batch_size,
+            dp_world_size=dist_utils.get_world_size(dp_process_group),
+            dp_rank=dist_utils.get_rank(dp_process_group),
+            fs_local_rank=dist_utils.get_fs_local_rank(),
+            seed=self.seed,
+            shuffle=self.shuffle,
+            shuffle_strategy=self.shuffle_strategy,
+            num_threads=self.num_threads,
+            num_workers=self.num_workers,
+            prefetch_factor=self.prefetch_factor,
+            target_device_type=self.target_device_type or get_default_device().type,
+            generate_doc_lengths=self.generate_doc_lengths,
+            instance_filter_config=self.instance_filter_config,
         )

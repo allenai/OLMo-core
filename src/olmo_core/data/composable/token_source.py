@@ -1,10 +1,12 @@
 import functools as ft
 import hashlib
+import typing
 from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional, Sequence, TypedDict
+from typing import Iterable, List, Optional, Sequence, Tuple, TypedDict
 
+import torch
 from typing_extensions import NotRequired
 
 import olmo_core.distributed.utils as dist_utils
@@ -12,6 +14,8 @@ import olmo_core.io as io
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import Config
 from olmo_core.exceptions import OLMoConfigurationError
+
+from .utils import as_tensor
 
 
 class TokenRange(TypedDict):
@@ -101,8 +105,93 @@ class DocumentSource(TokenSource):
 
     @abstractmethod
     def get_document_offsets(self) -> Iterable[tuple[int, int]]:
-        """Get the start (inclusive) and end (exclusive) token indices of each document."""
+        """Get the start (inclusive) and end (exclusive) token indices of each document, in order."""
         raise NotImplementedError
+
+
+class ConcatenatedDocumentSource(DocumentSource):
+    """
+    A document source that can be created from concatenating multiple other document sources.
+    """
+
+    def __init__(self, *sources: DocumentSource, work_dir: PathOrStr):
+        super().__init__(work_dir=work_dir)
+        self._sources = sources
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}{self.sources}"
+
+    @property
+    def sources(self) -> Tuple[DocumentSource, ...]:
+        return self._sources
+
+    @ft.cached_property
+    def fingerprint(self) -> str:
+        sha256_hash = hashlib.sha256()
+        sha256_hash.update((f"class={self.__class__.__name__},").encode())
+        for source in self.sources:
+            sha256_hash.update(f"{source=},".encode())
+        return sha256_hash.hexdigest()
+
+    @property
+    def num_tokens(self) -> int:
+        return sum(source.num_tokens for source in self.sources)
+
+    def get_token_range(self, start_idx: int, count: int) -> TokenRange:
+        assert count >= 0
+        if start_idx < 0:
+            start_idx = self.num_tokens + start_idx
+        end_idx = start_idx + count
+        if start_idx >= self.num_tokens or end_idx > self.num_tokens:
+            raise IndexError(f"Token range {start_idx}->{end_idx} is out of bounds.")
+
+        token_chunks: List[torch.Tensor] = []
+        mask_chunks: List[torch.Tensor] = []
+        source_start_offset = 0
+        for source in self.sources:
+            source_size = source.num_tokens
+            source_end_offset = source_start_offset + source_size
+
+            if source_start_offset <= start_idx < source_end_offset:
+                token_rng = source.get_token_range(
+                    start_idx - source_start_offset, min(end_idx - source_start_offset, source_size)
+                )
+                token_chunks.append(as_tensor(token_rng["input_ids"]))
+                if "label_mask" in token_rng:
+                    mask_chunks.append(as_tensor(token_rng["label_mask"]))
+
+                if end_idx - source_start_offset <= source_size:
+                    break
+                else:
+                    start_idx = source_end_offset
+
+            source_start_offset = source_end_offset
+        else:
+            raise IndexError(f"Failed to find tokens in range {start_idx}->{end_idx}.")
+
+        input_ids = torch.cat(token_chunks)
+        out: TokenRange = {"input_ids": typing.cast(Sequence[int], input_ids)}
+        if mask_chunks:
+            out["label_mask"] = typing.cast(Sequence[bool], torch.cat(mask_chunks))
+        return out
+
+    def get_document_offsets(self) -> Iterable[tuple[int, int]]:
+        start_offset = 0
+        for source in self.sources:
+            source_size = source.num_tokens
+            last_doc_end = 0
+            for doc_start, doc_end in source.get_document_offsets():
+                assert doc_start == last_doc_end  # API assumes consecutive documents
+                yield doc_start + start_offset, doc_end + start_offset
+                last_doc_end = doc_end
+
+            # To avoid unexpected results, we ALWAYS treat the end of a source file as the end of
+            # a document, even if it doesn't end with an EOS token ID. This *should* always be the case
+            # anyway, but just to be careful.
+            if last_doc_end != source_size:
+                yield last_doc_end + start_offset, source_size + start_offset
+
+            start_offset += source_size
 
 
 class InMemoryTokenSource(TokenSource):

@@ -302,11 +302,21 @@ class NumpyDocumentSource(DocumentSource):
     def get_document_offsets(self) -> Iterable[tuple[int, int]]:
         start_offset = 0
         for source_path, source_size in zip(self.source_paths, self.source_sizes):
+            last_doc_end = 0
             for doc_start, doc_end in iter_document_indices(
                 source_path,
                 eos_token_id=self.eos_token_id,
                 bos_token_id=self.bos_token_id,
                 dtype=self.dtype,
             ):
+                assert doc_start == last_doc_end  # API assumes consecutive documents
                 yield doc_start + start_offset, doc_end + start_offset
+                last_doc_end = doc_end
+
+            # To avoid unexpected results, we ALWAYS treat the end of a source file as the end of
+            # a document, even if it doesn't end with an EOS token ID. This *should* always be the case
+            # anyway, but just to be careful.
+            if last_doc_end != source_size:
+                yield last_doc_end + start_offset, source_size + start_offset
+
             start_offset += source_size

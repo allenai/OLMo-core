@@ -2,7 +2,12 @@ from .concat_and_chunk_instance_source import (
     ConcatAndChunkInstanceSource,
     ConcatAndChunkInstanceSourceConfig,
 )
-from .data_loader import ComposableDataLoader, InstanceFilterConfig, ShuffleStrategy
+from .data_loader import (
+    ComposableDataLoader,
+    ComposableDataLoaderConfig,
+    InstanceFilterConfig,
+    ShuffleStrategy,
+)
 from .instance_source import Instance, InstanceSource, InstanceSourceConfig
 from .numpy_document_source import (
     NumpyDocumentSource,
@@ -14,7 +19,9 @@ from .packing_instance_source import (
     PackingInstanceSource,
     PackingInstanceSourceConfig,
 )
+from .sampling_document_source import SamplingDocumentSource
 from .token_source import (
+    ConcatenatedDocumentSource,
     DocumentSource,
     DocumentSourceConfig,
     InMemoryTokenSource,
@@ -34,11 +41,14 @@ __all__ = [
     "InstanceSourceConfig",
     "Instance",
     "ComposableDataLoader",
+    "ComposableDataLoaderConfig",
     # Token/document source implementations.
     "InMemoryTokenSource",
+    "ConcatenatedDocumentSource",
     "NumpyDocumentSource",
     "NumpyDocumentSourceConfig",
     "NumpyDocumentSourceMixConfig",
+    "SamplingDocumentSource",
     # Instance source implementations.
     "ConcatAndChunkInstanceSource",
     "ConcatAndChunkInstanceSourceConfig",
