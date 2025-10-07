@@ -48,7 +48,7 @@ class SamplingTokenSource(TokenSource):
 
     :param sources: The sources to sample tokens from.
     :param max_tokens: The maximum number of tokens to sample.
-    :param seed: A optional seed for sampling documents. If ``None``, the first ``N_s`` tokens are taken
+    :param seed: A optional seed for sampling. If ``None``, the first ``N_s`` tokens are taken
       from each source where ``N_s`` is proportional to the size of the source.
     :param work_dir: A local working directory for caching preprocessing results.
     """

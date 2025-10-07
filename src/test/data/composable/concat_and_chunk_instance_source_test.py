@@ -11,9 +11,7 @@ def test_concat_and_chunk_instance_source(tmp_path: Path):
     assert tokens1.num_tokens == 17
     tokens2 = InMemoryTokenSource(tokens=list(range(17, 32)), work_dir=tmp_path)
     assert tokens2.num_tokens == 15
-    instances = ConcatAndChunkInstanceSource(
-        sources=[tokens1, tokens2], sequence_length=4, work_dir=tmp_path
-    )
+    instances = ConcatAndChunkInstanceSource(tokens1, tokens2, sequence_length=4, work_dir=tmp_path)
     assert isinstance(instances.fingerprint, str)
     assert len(instances) == 7
     assert list(instances[0]["input_ids"]) == [0, 1, 2, 3]
@@ -27,10 +25,10 @@ def test_concat_and_chunk_instance_source_varying_seq_len(tmp_path: Path):
     assert tokens2.num_tokens == 15
 
     instances1 = ConcatAndChunkInstanceSource(
-        sources=[tokens1, tokens2], sequence_length=8, max_sequence_length=8, work_dir=tmp_path
+        tokens1, tokens2, sequence_length=8, max_sequence_length=8, work_dir=tmp_path
     )
     instances2 = ConcatAndChunkInstanceSource(
-        sources=[tokens1, tokens2], sequence_length=4, max_sequence_length=8, work_dir=tmp_path
+        tokens1, tokens2, sequence_length=4, max_sequence_length=8, work_dir=tmp_path
     )
     assert instances1.fingerprint == instances2.fingerprint
     assert len(instances1) == 3

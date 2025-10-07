@@ -31,20 +31,18 @@ def test_packing_intance_source(tmp_path: Path, long_doc_strategy: LongDocStrate
     _write_mmap(path2, data2, dtype)
 
     instances = PackingInstanceSource(
-        sources=[
-            NumpyDocumentSource(
-                source_paths=[path1],
-                dtype=dtype,
-                tokenizer=tokenizer,
-                work_dir=tmp_path,
-            ),
-            NumpyDocumentSource(
-                source_paths=[path2],
-                dtype=dtype,
-                tokenizer=tokenizer,
-                work_dir=tmp_path,
-            ),
-        ],
+        NumpyDocumentSource(
+            source_paths=[path1],
+            dtype=dtype,
+            tokenizer=tokenizer,
+            work_dir=tmp_path,
+        ),
+        NumpyDocumentSource(
+            source_paths=[path2],
+            dtype=dtype,
+            tokenizer=tokenizer,
+            work_dir=tmp_path,
+        ),
         sequence_length=8,
         work_dir=tmp_path,
         tokenizer=tokenizer,
@@ -96,22 +94,20 @@ def test_packing_instance_source_with_label_mask(
     _write_mmap(mask_path2, mask2, np.bool_)
 
     instances = PackingInstanceSource(
-        sources=[
-            NumpyDocumentSource(
-                source_paths=[path1],
-                dtype=dtype,
-                tokenizer=tokenizer,
-                work_dir=tmp_path,
-                label_mask_paths=[mask_path1],
-            ),
-            NumpyDocumentSource(
-                source_paths=[path2],
-                dtype=dtype,
-                tokenizer=tokenizer,
-                work_dir=tmp_path,
-                label_mask_paths=[mask_path2],
-            ),
-        ],
+        NumpyDocumentSource(
+            source_paths=[path1],
+            dtype=dtype,
+            tokenizer=tokenizer,
+            work_dir=tmp_path,
+            label_mask_paths=[mask_path1],
+        ),
+        NumpyDocumentSource(
+            source_paths=[path2],
+            dtype=dtype,
+            tokenizer=tokenizer,
+            work_dir=tmp_path,
+            label_mask_paths=[mask_path2],
+        ),
         sequence_length=8,
         work_dir=tmp_path,
         tokenizer=tokenizer,
@@ -160,32 +156,30 @@ def test_packing_intance_source_with_grouping(tmp_path: Path):
     _write_mmap(path4, data4, dtype)
 
     instances = PackingInstanceSource(
-        sources=[
-            NumpyDocumentSource(
-                source_paths=[path1],
-                dtype=dtype,
-                tokenizer=tokenizer,
-                work_dir=tmp_path,
-            ),
-            NumpyDocumentSource(
-                source_paths=[path2],
-                dtype=dtype,
-                tokenizer=tokenizer,
-                work_dir=tmp_path,
-            ),
-            NumpyDocumentSource(
-                source_paths=[path3],
-                dtype=dtype,
-                tokenizer=tokenizer,
-                work_dir=tmp_path,
-            ),
-            NumpyDocumentSource(
-                source_paths=[path4],
-                dtype=dtype,
-                tokenizer=tokenizer,
-                work_dir=tmp_path,
-            ),
-        ],
+        NumpyDocumentSource(
+            source_paths=[path1],
+            dtype=dtype,
+            tokenizer=tokenizer,
+            work_dir=tmp_path,
+        ),
+        NumpyDocumentSource(
+            source_paths=[path2],
+            dtype=dtype,
+            tokenizer=tokenizer,
+            work_dir=tmp_path,
+        ),
+        NumpyDocumentSource(
+            source_paths=[path3],
+            dtype=dtype,
+            tokenizer=tokenizer,
+            work_dir=tmp_path,
+        ),
+        NumpyDocumentSource(
+            source_paths=[path4],
+            dtype=dtype,
+            tokenizer=tokenizer,
+            work_dir=tmp_path,
+        ),
         sequence_length=8,
         work_dir=tmp_path,
         tokenizer=tokenizer,

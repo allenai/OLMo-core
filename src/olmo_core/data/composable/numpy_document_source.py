@@ -64,23 +64,34 @@ class NumpyDocumentSourceConfig(_NumpyDocumentSourceConfigBase):
     """The paths/URLs to the numpy token ID arrays."""
     label_mask_paths: Optional[List[str]] = None
     """The paths/URLs to numpy bool files indicating which tokens should be masked."""
+    expand_glob: bool = False
+    """If true, treat source/label paths as glob patterns and expand them when building the sources."""
 
     def build(self, work_dir: PathOrStr) -> List["NumpyDocumentSource"]:
         """
         Build the sources.
         """
-        source_paths = self.source_paths
+        if self.expand_glob:
+            source_paths = self._expand_globs(self.source_paths)
+            mask_paths = (
+                None if self.label_mask_paths is None else self._expand_globs(self.label_mask_paths)
+            )
+        else:
+            source_paths = self.source_paths
+            mask_paths = self.label_mask_paths
+
         if self.source_permutation_seed is not None:
             source_order = list(range(len(self.source_paths)))
             rng = random.Random(self.source_permutation_seed)
             rng.shuffle(source_order)
             source_paths = [source_paths[i] for i in source_order]
+            mask_paths = None if mask_paths is None else [mask_paths[i] for i in source_order]
 
         # NOTE: we always create a single main source first, then split it up if needed.
         # This way is more efficient because we can query for the size of all source files concurrently.
         main_source = NumpyDocumentSource(
             source_paths=source_paths,
-            label_mask_paths=self.label_mask_paths,
+            label_mask_paths=mask_paths,
             tokenizer=self.tokenizer,
             dtype=self.get_dtype(),
             work_dir=work_dir,
@@ -90,6 +101,18 @@ class NumpyDocumentSourceConfig(_NumpyDocumentSourceConfigBase):
             return main_source.split(self.source_group_size)
         else:
             return [main_source]
+
+    def _expand_globs(self, patterns: Sequence[str]) -> List[str]:
+        expanded: List[str] = []
+        for pattern in patterns:
+            log.info(f"Expanding '{pattern}'...")
+            matches = sorted(io.glob_directory(pattern))
+            if not matches:
+                raise FileNotFoundError(pattern)
+            for match in matches:
+                log.info(f" - '{match}'")
+            expanded.extend(matches)
+        return expanded
 
 
 @dataclass

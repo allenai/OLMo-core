@@ -43,9 +43,7 @@ class PackingInstanceSourceConfig(InstanceSourceConfig):
 
     def build(self, work_dir: PathOrStr) -> "PackingInstanceSource":
         return PackingInstanceSource(
-            sources=[
-                source for source_config in self.sources for source in source_config.build(work_dir)
-            ],
+            *[source for source_config in self.sources for source in source_config.build(work_dir)],
             sequence_length=self.sequence_length,
             max_sequence_length=self.max_sequence_length,
             work_dir=work_dir,
@@ -82,8 +80,7 @@ class PackingInstanceSource(InstanceSource):
 
     def __init__(
         self,
-        *,
-        sources: Sequence[DocumentSource],
+        *sources: DocumentSource,
         sequence_length: int,
         work_dir: PathOrStr,
         tokenizer: TokenizerConfig,
@@ -100,7 +97,7 @@ class PackingInstanceSource(InstanceSource):
             raise OLMoConfigurationError(
                 f"'{self.__class__.__name__}' requires 'sequence_length' to be equal to 'max_sequence_length'."
             )
-        self._sources = tuple(sources)
+        self._sources = sources
         self._tokenizer = tokenizer
         self._long_doc_strategy = long_doc_strategy
         self._source_group_size = source_group_size

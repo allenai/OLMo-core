@@ -1,7 +1,7 @@
 import functools as ft
 import hashlib
 from dataclasses import dataclass
-from typing import List, Optional, Sequence
+from typing import List, Optional
 
 from olmo_core.aliases import PathOrStr
 
@@ -21,9 +21,7 @@ class ConcatAndChunkInstanceSourceConfig(InstanceSourceConfig):
 
     def build(self, work_dir: PathOrStr) -> "ConcatAndChunkInstanceSource":
         return ConcatAndChunkInstanceSource(
-            sources=[
-                source for source_config in self.sources for source in source_config.build(work_dir)
-            ],
+            *[source for source_config in self.sources for source in source_config.build(work_dir)],
             sequence_length=self.sequence_length,
             max_sequence_length=self.max_sequence_length,
             work_dir=work_dir,
@@ -40,8 +38,7 @@ class ConcatAndChunkInstanceSource(InstanceSource):
 
     def __init__(
         self,
-        *,
-        sources: Sequence[TokenSource],
+        *sources: TokenSource,
         sequence_length: int,
         work_dir: PathOrStr,
         max_sequence_length: Optional[int] = None,
@@ -51,7 +48,7 @@ class ConcatAndChunkInstanceSource(InstanceSource):
             max_sequence_length=max_sequence_length,
             work_dir=work_dir,
         )
-        self._sources = tuple(sources)
+        self._sources = sources
 
     @property
     def sources(self) -> tuple[TokenSource]:
