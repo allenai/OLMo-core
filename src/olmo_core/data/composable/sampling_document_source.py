@@ -29,12 +29,12 @@ class SamplingDocumentSourceConfig(DocumentSourceConfig):
     A config for building a :class:`SamplingDocumentSource`.
     """
 
-    source: DocumentSourceConfig
+    sources: List[DocumentSourceConfig]
     max_tokens: int
     seed: Optional[int] = None
 
     def build(self, work_dir: PathOrStr) -> "SamplingDocumentSource":
-        sources = self.source.build(work_dir=work_dir)
+        sources = [s for source in self.sources for s in source.build(work_dir=work_dir)]
         return SamplingDocumentSource(
             *sources,
             max_tokens=self.max_tokens,
@@ -48,6 +48,9 @@ class SamplingDocumentSource(DocumentSource):
     A document source that samples documents from other document sources.
     This is useful for creating a smaller document source for testing or for building up
     mixes of sources.
+
+    .. seealso::
+        :class:`SamplingTokenSource`.
 
     :param sources: The sources to sample documents from.
     :param max_tokens: The maximum number of tokens to sample. The resulting source will have
