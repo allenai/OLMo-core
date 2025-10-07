@@ -46,8 +46,8 @@ class TokenSource(metaclass=ABCMeta):
                 f"'work_dir' should be a local path, not a URL ('{work_dir}')."
             )
         self._work_dir = Path(io.normalize_path(work_dir))
-        if self._work_dir.name != self.__class__.__name__:
-            self._work_dir = self._work_dir / self.__class__.__name__
+        if self._work_dir.name == self.__class__.__name__:
+            self._work_dir = self._work_dir.parent
         self._fs_local_rank = dist_utils.get_fs_local_rank()
         self._rank = dist_utils.get_rank()
 
@@ -57,7 +57,7 @@ class TokenSource(metaclass=ABCMeta):
         A local working directly that can be used by the token source for caching files during
         preprocessing.
         """
-        return self._work_dir
+        return self._work_dir / self.__class__.__name__
 
     @property
     def fs_local_rank(self) -> int:
@@ -133,6 +133,18 @@ class TokenSource(metaclass=ABCMeta):
             )
         return start_idx, end_idx
 
+    def __add__(self, other: "TokenSource"):
+        """
+        Add two token sources together into a :class:`ConcatenatedTokenSource` or :class:`ConcatenatedDocumentSource`
+        depending on the type of ``self`` and ``other``.
+        """
+        if isinstance(self, DocumentSource) and isinstance(other, DocumentSource):
+            return ConcatenatedDocumentSource(self, other, work_dir=self._work_dir)
+        elif isinstance(other, TokenSource):
+            return ConcatenatedTokenSource(self, other, work_dir=self._work_dir)
+        else:
+            raise NotImplementedError(f"Cannot concatenate {self} and {other}.")
+
 
 class InMemoryTokenSource(TokenSource):
     """
@@ -181,7 +193,13 @@ class ConcatenatedTokenSource(TokenSource):
 
     def __init__(self, *sources: TokenSource, work_dir: PathOrStr):
         super().__init__(work_dir=work_dir)
-        self._sources = sources
+        unraveled_sources: List[TokenSource] = []
+        for source in sources:
+            if isinstance(source, ConcatenatedTokenSource):
+                unraveled_sources.extend(source.sources)
+            else:
+                unraveled_sources.append(source)
+        self._sources = tuple(unraveled_sources)
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}{self.sources}"
