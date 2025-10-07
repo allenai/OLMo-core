@@ -47,6 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added `olmo_core.data.composable` module.
 - Added a custom block that does LayerNorm scaling.
 - Added the `HalfCos` learning rate scheduler.
 - Added `CONTRIBUTING.md` guidelines.
