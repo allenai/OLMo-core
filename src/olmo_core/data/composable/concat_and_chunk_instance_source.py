@@ -84,9 +84,7 @@ class ConcatAndChunkInstanceSource(InstanceSource):
         return self.num_instances
 
     def __getitem__(self, idx: int) -> Instance:
-        if idx < 0:
-            idx = self.num_instances + idx
-        assert 0 <= idx < self.num_instances
+        idx = self.validate_index(idx)
         source_start_offset = 0
         for source in self.sources:
             source_end_offset = source_start_offset + (
@@ -94,9 +92,8 @@ class ConcatAndChunkInstanceSource(InstanceSource):
             ) * (self.max_sequence_length // self.sequence_length)
 
             if source_start_offset <= idx < source_end_offset:
-                return source.get_token_range(
-                    (idx - source_start_offset) * self.sequence_length, self.sequence_length
-                )
+                start_idx = (idx - source_start_offset) * self.sequence_length
+                return source.get_token_range(start_idx, start_idx + self.sequence_length)
 
             source_start_offset = source_end_offset
         raise IndexError(f"Index {idx} out of range for {self.num_instances} instances.")

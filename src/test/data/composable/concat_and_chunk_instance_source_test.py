@@ -16,8 +16,8 @@ def test_concat_and_chunk_instance_source(tmp_path: Path):
     )
     assert isinstance(instances.fingerprint, str)
     assert len(instances) == 7
-    assert instances[0] == {"input_ids": [0, 1, 2, 3]}
-    assert instances[4] == {"input_ids": [17, 18, 19, 20]}
+    assert list(instances[0]["input_ids"]) == [0, 1, 2, 3]
+    assert list(instances[4]["input_ids"]) == [17, 18, 19, 20]
 
 
 def test_concat_and_chunk_instance_source_varying_seq_len(tmp_path: Path):

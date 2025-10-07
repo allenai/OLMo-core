@@ -81,13 +81,22 @@ def format_fname_from_fields(prefix: str, **fields) -> str:
     return "_".join(parts)
 
 
+def as_ndarray(array: Union[Sequence[int], Sequence[bool]]) -> np.ndarray:
+    if isinstance(array, np.ndarray):
+        return array
+    elif isinstance(array, torch.Tensor):
+        return array.cpu().numpy()
+    else:
+        return np.array(array)
+
+
 def as_tensor(array: Union[Sequence[int], Sequence[bool]]) -> torch.Tensor:
     if isinstance(array, torch.Tensor):
         return array
     elif isinstance(array, np.ndarray):
         if array.dtype == np.bool_:
-            return torch.tensor(array)
+            return torch.tensor(array, device="cpu")
         else:
-            return torch.tensor(array.astype(np.int_), dtype=torch.long)
+            return torch.tensor(array.astype(np.int_), dtype=torch.long, device="cpu")
     else:
-        return torch.tensor(array)
+        return torch.tensor(array, device="cpu")

@@ -42,12 +42,19 @@ def test_numpy_document_source(tmp_path: Path):
 
     assert list(source.get_token_range(0, 4)["input_ids"]) == [1, 0, 2, 3]
     assert list(source.get_token_range(0, 4)["label_mask"]) == [True, False, True, True]  # type: ignore
+    # Same thing but with slicing.
+    assert list(source[0:4]["input_ids"]) == [1, 0, 2, 3]
+    assert list(source[0:4]["label_mask"]) == [True, False, True, True]  # type: ignore
+    assert list(source[0:4:2]["input_ids"]) == [1, 2]
+    assert list(source[0]["input_ids"]) == [1]
 
-    assert list(source.get_token_range(10, 4)["input_ids"]) == [10, 0, 11, 12]
-    assert list(source.get_token_range(10, 4)["label_mask"]) == [True, False, True, True]  # type: ignore
+    assert list(source.get_token_range(10, 14)["input_ids"]) == [10, 0, 11, 12]
+    assert list(source.get_token_range(10, 14)["label_mask"]) == [True, False, True, True]  # type: ignore
 
-    assert list(source.get_token_range(12, 4)["input_ids"]) == [11, 12, 13, 14]
-    assert list(source.get_token_range(12, 4)["label_mask"]) == [True, True, True, True]  # type: ignore
+    assert list(source.get_token_range(12, 16)["input_ids"]) == [11, 12, 13, 14]
+    assert list(source.get_token_range(12, 16)["label_mask"]) == [True, True, True, True]  # type: ignore
+
+    assert list(source[-3:]["input_ids"]) == [21, 22, 0]
 
     assert list(source.get_document_offsets()) == [(0, 2), (2, 12), (12, 23), (23, 26)]
 

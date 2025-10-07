@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from typing import Iterable, List, Optional, Sequence
 
 import numpy as np
-import torch
 
 import olmo_core.distributed.utils as dist_utils
 import olmo_core.io as io
@@ -19,7 +18,7 @@ from .token_source import (
     DocumentSourceConfig,
     TokenRange,
 )
-from .utils import as_tensor
+from .utils import as_ndarray
 
 log = logging.getLogger(__name__)
 
@@ -161,13 +160,8 @@ class SamplingDocumentSource(DocumentSource):
         )
         return sha256_hash.hexdigest()
 
-    def get_token_range(self, start_idx: int, count: int) -> TokenRange:
-        assert count >= 0
-        if start_idx < 0:
-            start_idx = self.num_tokens + start_idx
-        end_idx = start_idx + count
-        if start_idx >= self.num_tokens or end_idx > self.num_tokens:
-            raise IndexError(f"Token range {start_idx}->{end_idx} is out of bounds.")
+    def get_token_range(self, start_idx: int, end_idx: int) -> TokenRange:
+        start_idx, end_idx = self.validate_indices(start_idx, end_idx)
 
         # NOTE: we need to map this range to ranges of tokens in the original source.
         # We do that by mapping this range to a range of documents, then getting the right range
@@ -188,27 +182,27 @@ class SamplingDocumentSource(DocumentSource):
         ).reshape(-1, 2)
 
         # Finally, we iterate over the OG document offsets and load the corresponding ranges.
-        document_input_ids: List[torch.Tensor] = []
-        document_label_masks: List[torch.Tensor] = []
-        tokens_remaining = count
+        document_input_ids: List[np.ndarray] = []
+        document_label_masks: List[np.ndarray] = []
+        tokens_remaining = end_idx - start_idx
         for doc_idx, (doc_start, doc_end) in enumerate(og_doc_offsets):
             if doc_idx == 0:
                 doc_start += start_idx - int(cu_doc_lens[starting_doc])
 
             token_rng = self.source.get_token_range(
-                int(doc_start), min(int(doc_end - doc_start), tokens_remaining)
+                int(doc_start), min(int(doc_end), doc_start + tokens_remaining)
             )
-            document_input_ids.append(as_tensor(token_rng["input_ids"]))
+            document_input_ids.append(as_ndarray(token_rng["input_ids"]))
             if "label_mask" in token_rng:
-                document_label_masks.append(as_tensor(token_rng["label_mask"]))
+                document_label_masks.append(as_ndarray(token_rng["label_mask"]))
 
-            tokens_remaining -= document_input_ids[-1].numel()
+            tokens_remaining -= document_input_ids[-1].size
 
         # Combine token IDs and maybe label masks for each document.
-        input_ids = torch.cat(document_input_ids)
+        input_ids = np.concatenate(document_input_ids)
         out: TokenRange = {"input_ids": typing.cast(Sequence[int], input_ids)}
         if document_label_masks:
-            out["label_mask"] = typing.cast(Sequence[bool], torch.cat(document_label_masks))
+            out["label_mask"] = typing.cast(Sequence[bool], np.concatenate(document_label_masks))
         return out
 
     def get_document_offsets(self) -> Iterable[tuple[int, int]]:

@@ -4,9 +4,9 @@ import typing
 from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional, Sequence, Tuple, TypedDict
+from typing import Iterable, List, Optional, Sequence, Tuple, TypedDict, Union
 
-import torch
+import numpy as np
 from typing_extensions import NotRequired
 
 import olmo_core.distributed.utils as dist_utils
@@ -15,7 +15,8 @@ from olmo_core.aliases import PathOrStr
 from olmo_core.config import Config
 from olmo_core.exceptions import OLMoConfigurationError
 
-from .utils import as_tensor
+from ..tokenizer import TokenizerConfig
+from .utils import as_ndarray
 
 
 class TokenRange(TypedDict):
@@ -80,14 +81,17 @@ class TokenSource(metaclass=ABCMeta):
     @property
     @abstractmethod
     def num_tokens(self) -> int:
-        """The number of tokens available from this source."""
+        """The number of tokens available from this source, same as ``len(self)``."""
         raise NotImplementedError
 
+    def __len__(self) -> int:
+        """The number of tokens available from this source, same as ``self.num_tokens``."""
+        return self.num_tokens
+
     @abstractmethod
-    def get_token_range(self, start_idx: int, count: int) -> TokenRange:
+    def get_token_range(self, start_idx: int, end_idx: int) -> TokenRange:
         """
-        Get a range of ``count`` contiguous tokens starting from ``start_idx``, which
-        can vary from ``0`` to ``num_tokens - 1``.
+        Get a range of contiguous tokens starting from ``start_idx`` (0-based, inclusive) to ``end_idx`` (exclusive).
 
         Since a :class:`TokenSource` isn't necessarily aware of document boundaries (see :class:`DocumentSource`),
         the token range could start in the middle of a document and span multiple documents.
@@ -96,25 +100,86 @@ class TokenSource(metaclass=ABCMeta):
         """
         raise NotImplementedError
 
+    def __getitem__(self, key: Union[int, slice]) -> TokenRange:
+        """
+        Get a range of tokens using either an integer index (for a singular token range) or a slice.
+        """
+        if isinstance(key, slice):
+            start_idx = key.start if key.start is not None else 0
+            end_idx = key.stop if key.stop is not None else self.num_tokens
+            step = key.step if key.step is not None else 1
+            token_rng = self.get_token_range(start_idx, end_idx)
+            out: TokenRange = {"input_ids": token_rng["input_ids"][::step]}
+            if "label_mask" in token_rng:
+                out["label_mask"] = token_rng["label_mask"][::step]
+            return out
+        else:
+            if key < 0:
+                key = self.num_tokens + key
+            return self.get_token_range(key, key + 1)
 
-class DocumentSource(TokenSource):
+    def validate_indices(self, start_idx: int, end_idx: int) -> Tuple[int, int]:
+        start_idx, end_idx = int(start_idx), int(end_idx)
+        if start_idx < 0:
+            start_idx = self.num_tokens + start_idx
+        if end_idx < 0:
+            end_idx = self.num_tokens + end_idx
+        if end_idx <= start_idx:
+            raise ValueError(f"Invalid token range {start_idx=} → {end_idx=}.")
+        if start_idx >= self.num_tokens or end_idx > self.num_tokens:
+            raise IndexError(
+                f"Token range {start_idx=} → {end_idx=} is out of bounds "
+                f"for source {self} with {self.num_tokens:,d} tokens."
+            )
+        return start_idx, end_idx
+
+
+class InMemoryTokenSource(TokenSource):
     """
-    An abstract base class for a particular type of :class:`TokenSource` that's aware of document
-    boundaries. This class provides one additional method: :meth:`get_document_offsets()`.
+    An in-memory implementation of a :class:`TokenSource`. Primarily meant for testing.
     """
 
-    @abstractmethod
-    def get_document_offsets(self) -> Iterable[tuple[int, int]]:
-        """Get the start (inclusive) and end (exclusive) token indices of each document, in order."""
-        raise NotImplementedError
+    def __init__(
+        self,
+        tokens: Sequence[int],
+        *,
+        work_dir: PathOrStr,
+        label_mask: Optional[Sequence[bool]] = None,
+    ):
+        super().__init__(work_dir=work_dir)
+        self._tokens = as_ndarray(tokens)
+        self._label_mask = None if label_mask is None else as_ndarray(label_mask)
+        if self._label_mask is not None:
+            assert len(self._tokens) == len(self._label_mask)
+
+    @ft.cached_property
+    def fingerprint(self) -> str:
+        sha256_hash = hashlib.sha256()
+        sha256_hash.update((f"class={self.__class__.__name__},tokens=").encode())
+        sha256_hash.update(self._tokens.tobytes())
+        if self._label_mask is not None:
+            sha256_hash.update(b"mask=")
+            sha256_hash.update(self._label_mask.tobytes())
+        return sha256_hash.hexdigest()
+
+    @property
+    def num_tokens(self) -> int:
+        return len(self._tokens)
+
+    def get_token_range(self, start_idx: int, end_idx: int) -> TokenRange:
+        start_idx, end_idx = self.validate_indices(start_idx, end_idx)
+        out: TokenRange = {"input_ids": typing.cast(Sequence[int], self._tokens[start_idx:end_idx])}
+        if self._label_mask is not None:
+            out["label_mask"] = typing.cast(Sequence[bool], self._label_mask[start_idx:end_idx])
+        return out
 
 
-class ConcatenatedDocumentSource(DocumentSource):
+class ConcatenatedTokenSource(TokenSource):
     """
-    A document source that can be created from concatenating multiple other document sources.
+    A token source that can be created from concatenating multiple other token sources.
     """
 
-    def __init__(self, *sources: DocumentSource, work_dir: PathOrStr):
+    def __init__(self, *sources: TokenSource, work_dir: PathOrStr):
         super().__init__(work_dir=work_dir)
         self._sources = sources
 
@@ -122,7 +187,7 @@ class ConcatenatedDocumentSource(DocumentSource):
         return f"{self.__class__.__name__}{self.sources}"
 
     @property
-    def sources(self) -> Tuple[DocumentSource, ...]:
+    def sources(self) -> Tuple[TokenSource, ...]:
         return self._sources
 
     @ft.cached_property
@@ -137,16 +202,11 @@ class ConcatenatedDocumentSource(DocumentSource):
     def num_tokens(self) -> int:
         return sum(source.num_tokens for source in self.sources)
 
-    def get_token_range(self, start_idx: int, count: int) -> TokenRange:
-        assert count >= 0
-        if start_idx < 0:
-            start_idx = self.num_tokens + start_idx
-        end_idx = start_idx + count
-        if start_idx >= self.num_tokens or end_idx > self.num_tokens:
-            raise IndexError(f"Token range {start_idx}->{end_idx} is out of bounds.")
+    def get_token_range(self, start_idx: int, end_idx: int) -> TokenRange:
+        start_idx, end_idx = self.validate_indices(start_idx, end_idx)
 
-        token_chunks: List[torch.Tensor] = []
-        mask_chunks: List[torch.Tensor] = []
+        token_chunks: List[np.ndarray] = []
+        mask_chunks: List[np.ndarray] = []
         source_start_offset = 0
         for source in self.sources:
             source_size = source.num_tokens
@@ -156,9 +216,9 @@ class ConcatenatedDocumentSource(DocumentSource):
                 token_rng = source.get_token_range(
                     start_idx - source_start_offset, min(end_idx - source_start_offset, source_size)
                 )
-                token_chunks.append(as_tensor(token_rng["input_ids"]))
+                token_chunks.append(as_ndarray(token_rng["input_ids"]))
                 if "label_mask" in token_rng:
-                    mask_chunks.append(as_tensor(token_rng["label_mask"]))
+                    mask_chunks.append(as_ndarray(token_rng["label_mask"]))
 
                 if end_idx - source_start_offset <= source_size:
                     break
@@ -167,13 +227,102 @@ class ConcatenatedDocumentSource(DocumentSource):
 
             source_start_offset = source_end_offset
         else:
-            raise IndexError(f"Failed to find tokens in range {start_idx}->{end_idx}.")
+            raise IndexError(f"Failed to find tokens in range {start_idx=} → {end_idx=}.")
 
-        input_ids = torch.cat(token_chunks)
+        input_ids = np.concatenate(token_chunks)
         out: TokenRange = {"input_ids": typing.cast(Sequence[int], input_ids)}
         if mask_chunks:
-            out["label_mask"] = typing.cast(Sequence[bool], torch.cat(mask_chunks))
+            out["label_mask"] = typing.cast(Sequence[bool], np.concatenate(mask_chunks))
         return out
+
+
+class DocumentSource(TokenSource):
+    """
+    An abstract base class for a particular type of :class:`TokenSource` that's aware of document
+    boundaries. This class provides one additional method: :meth:`get_document_offsets()`.
+    """
+
+    @abstractmethod
+    def get_document_offsets(self) -> Iterable[tuple[int, int]]:
+        """Get the start (inclusive) and end (exclusive) token indices of each document, in order."""
+        raise NotImplementedError
+
+
+class InMemoryDocumentSource(InMemoryTokenSource, DocumentSource):
+    """
+    An in-memory implementation of a :class:`DocumentSource`. Primarily meant for testing.
+    """
+
+    def __init__(
+        self,
+        tokens: Sequence[int],
+        *,
+        tokenizer: TokenizerConfig,
+        work_dir: PathOrStr,
+        label_mask: Optional[Sequence[bool]] = None,
+    ):
+        super().__init__(tokens=tokens, work_dir=work_dir, label_mask=label_mask)
+        self._tokenizer = tokenizer
+
+    @property
+    def eos_token_id(self) -> int:
+        return self._tokenizer.eos_token_id
+
+    @property
+    def bos_token_id(self) -> Optional[int]:
+        return self._tokenizer.bos_token_id
+
+    @ft.cached_property
+    def fingerprint(self) -> str:
+        sha256_hash = hashlib.sha256()
+        sha256_hash.update(
+            (
+                f"class={self.__class__.__name__},"
+                f"eos_token_id={self.eos_token_id},"
+                f"bos_token_id={self.bos_token_id},"
+                f"tokens="
+            ).encode()
+        )
+        sha256_hash.update(self._tokens.tobytes())
+        if self._label_mask is not None:
+            sha256_hash.update(b"mask=")
+            sha256_hash.update(self._label_mask.tobytes())
+        return sha256_hash.hexdigest()
+
+    def get_document_offsets(self) -> Iterable[tuple[int, int]]:
+        if self.bos_token_id is None:
+            doc_boundaries = (self._tokens == self.eos_token_id).nonzero()[0]
+        else:
+            doc_boundaries = np.logical_and(
+                self._tokens[:-1] == self.eos_token_id, self._tokens[1:] == self.bos_token_id
+            ).nonzero()[0]
+
+        start_idx = 0
+        for idx in doc_boundaries:
+            end_idx = idx + 1
+            yield start_idx, end_idx
+            start_idx = end_idx
+
+        # To avoid unexpected results, we ALWAYS treat the end of the source as the end of
+        # a document, even if it doesn't end with an EOS token ID.
+        if start_idx != self.num_tokens:
+            yield start_idx, self.num_tokens
+
+
+class ConcatenatedDocumentSource(ConcatenatedTokenSource, DocumentSource):
+    """
+    A document source that can be created from concatenating multiple other document sources.
+    """
+
+    def __init__(self, *sources: DocumentSource, work_dir: PathOrStr):
+        super().__init__(*sources, work_dir=work_dir)
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}{self.sources}"
+
+    @property
+    def sources(self) -> Tuple[DocumentSource, ...]:
+        return typing.cast(Tuple[DocumentSource, ...], self._sources)
 
     def get_document_offsets(self) -> Iterable[tuple[int, int]]:
         start_offset = 0
@@ -192,51 +341,6 @@ class ConcatenatedDocumentSource(DocumentSource):
                 yield last_doc_end + start_offset, source_size + start_offset
 
             start_offset += source_size
-
-
-class InMemoryTokenSource(TokenSource):
-    """
-    An in-memory implementation of a :class:`TokenSource`. Primarily meant for testing.
-    """
-
-    def __init__(
-        self,
-        *,
-        tokens: Sequence[int],
-        work_dir: PathOrStr,
-        label_mask: Optional[Sequence[bool]] = None,
-    ):
-        super().__init__(work_dir=work_dir)
-        self.tokens = tokens
-        self.label_mask = label_mask
-        if self.label_mask is not None:
-            assert len(self.tokens) == len(self.label_mask)
-
-    @ft.cached_property
-    def fingerprint(self) -> str:
-        sha256_hash = hashlib.sha256()
-        sha256_hash.update((f"class={self.__class__.__name__},").encode())
-        for idx in range(self.num_tokens):
-            sha256_hash.update(f"token={self.tokens[idx]},".encode())
-            if self.label_mask is not None:
-                sha256_hash.update(f"mask={self.label_mask[idx]},".encode())
-        return sha256_hash.hexdigest()
-
-    @property
-    def num_tokens(self) -> int:
-        return len(self.tokens)
-
-    def get_token_range(self, start_idx: int, count: int) -> TokenRange:
-        assert count >= 0
-        if start_idx < 0:
-            start_idx = self.num_tokens + start_idx
-        end_idx = start_idx + count
-        assert 0 <= start_idx < self.num_tokens
-        assert 0 < end_idx <= self.num_tokens
-        out: TokenRange = {"input_ids": self.tokens[start_idx:end_idx]}
-        if self.label_mask is not None:
-            out["label_mask"] = self.label_mask[start_idx:end_idx]
-        return out
 
 
 @dataclass

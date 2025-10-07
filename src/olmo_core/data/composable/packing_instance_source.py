@@ -8,8 +8,6 @@ from pathlib import Path
 from typing import Generator, List, Optional, Sequence, Tuple
 
 import numpy as np
-import torch
-import torch.nn.functional as F
 
 import olmo_core.distributed.utils as dist_utils
 import olmo_core.io as io
@@ -27,7 +25,7 @@ from ..utils import (
 )
 from .instance_source import Instance, InstanceSource, InstanceSourceConfig
 from .token_source import DocumentSource, DocumentSourceConfig
-from .utils import as_tensor, path_map
+from .utils import as_ndarray, path_map
 
 log = logging.getLogger(__name__)
 
@@ -213,8 +211,8 @@ class PackingInstanceSource(InstanceSource):
         ).tolist()
 
         # Load token IDs and label masks for each document.
-        document_token_ids: List[torch.Tensor] = []
-        document_label_masks: List[torch.Tensor] = []
+        document_token_ids: List[np.ndarray] = []
+        document_label_masks: List[np.ndarray] = []
         for document_id in document_ids:
             document_indices = load_array_slice_into_tensor(
                 document_indices_path, document_id * 2, document_id * 2 + 2, np.uint64
@@ -237,22 +235,24 @@ class PackingInstanceSource(InstanceSource):
                 raise RuntimeError("we shouldn't be here!")
 
             assert source is not None
-            token_range = source.get_token_range(document_start, document_end - document_start)
-            document_token_ids.append(as_tensor(token_range["input_ids"]))
+            token_range = source.get_token_range(document_start, document_end)
+            document_token_ids.append(as_ndarray(token_range["input_ids"]))
             if "label_mask" in token_range:
-                document_label_masks.append(as_tensor(token_range["label_mask"]))
+                document_label_masks.append(as_ndarray(token_range["label_mask"]))
 
         # Combine token IDs and maybe label masks for each document.
-        input_ids = torch.cat(document_token_ids)
-        label_mask = None if not document_label_masks else torch.cat(document_label_masks)
+        input_ids = np.concatenate(document_token_ids, dtype=np.int_)
+        label_mask = None if not document_label_masks else np.concatenate(document_label_masks)
 
         # Pad to target sequence length.
-        pad_shape = (0, self.sequence_length - input_ids.numel())
+        pad_shape = (0, self.sequence_length - input_ids.size)
         if label_mask is not None:
-            label_mask = F.pad(label_mask, pad_shape, value=False)
+            label_mask = np.pad(label_mask, pad_shape, constant_values=False)
         else:
-            label_mask = F.pad(torch.ones_like(input_ids, dtype=torch.bool), pad_shape, value=False)
-        input_ids = F.pad(input_ids, pad_shape, value=self.pad_token_id)
+            label_mask = np.pad(
+                np.ones_like(input_ids, dtype=np.bool_), pad_shape, constant_values=False
+            )
+        input_ids = np.pad(input_ids, pad_shape, constant_values=self.pad_token_id)
 
         return {
             "input_ids": typing.cast(Sequence[int], input_ids),

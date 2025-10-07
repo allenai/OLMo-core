@@ -209,7 +209,6 @@ def iter_document_indices(
             if mmap[-1] == eos_token_id:
                 doc_boundaries = np.append(doc_boundaries, mmap.shape[0] - 1)
         start_idx = 0
-        end_idx = 0
         for idx in doc_boundaries:
             end_idx = idx + 1
             yield start_idx, end_idx

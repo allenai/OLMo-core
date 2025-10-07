@@ -139,6 +139,16 @@ class InstanceSource(metaclass=ABCMeta):
         for i in range(len(self)):
             yield self[i]
 
+    def validate_index(self, idx: int) -> int:
+        idx = int(idx)
+        if idx < 0:
+            idx = len(self) + idx
+        if not (0 <= idx < len(self)):
+            raise IndexError(
+                f"Index {idx} is out of bounds for source {self} with {len(self):,d} instances."
+            )
+        return idx
+
 
 @dataclass
 class InstanceSourceConfig(Config):

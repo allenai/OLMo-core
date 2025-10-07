@@ -250,13 +250,8 @@ class NumpyDocumentSource(DocumentSource):
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}{self.source_paths}"
 
-    def get_token_range(self, start_idx: int, count: int) -> TokenRange:
-        assert count >= 0
-        if start_idx < 0:
-            start_idx = self.num_tokens + start_idx
-        end_idx = start_idx + count
-        if start_idx >= self.num_tokens or end_idx > self.num_tokens:
-            raise IndexError(f"Token range {start_idx}->{end_idx} is out of bounds.")
+    def get_token_range(self, start_idx: int, end_idx: int) -> TokenRange:
+        start_idx, end_idx = self.validate_indices(start_idx, end_idx)
 
         token_chunks: List[np.ndarray] = []
         mask_chunks: List[np.ndarray] = []

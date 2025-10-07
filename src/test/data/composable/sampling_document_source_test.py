@@ -34,8 +34,8 @@ def test_sampling_document_source(tmp_path: Path):
 
     assert list(sampled_source.get_document_offsets()) == [(0, 5), (5, 9), (9, 12)]
     assert sampled_source.get_token_range(0, 5)["input_ids"].tolist() == [1, 1, 1, 1, 0]  # type: ignore
-    assert sampled_source.get_token_range(5, 7)["input_ids"].tolist() == [2, 2, 2, 0, 3, 3, 0]  # type: ignore
-    assert sampled_source.get_token_range(2, 5)["input_ids"].tolist() == [1, 1, 0, 2, 2]  # type: ignore
+    assert sampled_source.get_token_range(5, 12)["input_ids"].tolist() == [2, 2, 2, 0, 3, 3, 0]  # type: ignore
+    assert sampled_source.get_token_range(2, 7)["input_ids"].tolist() == [1, 1, 0, 2, 2]  # type: ignore
     assert sampled_source.get_token_range(0, 12)["input_ids"].tolist() == [1, 1, 1, 1, 0, 2, 2, 2, 0, 3, 3, 0]  # type: ignore
 
 
@@ -60,4 +60,4 @@ def test_sampling_document_source_random_sample(tmp_path: Path):
 
     assert list(sampled_source.get_document_offsets()) == [(0, 4), (4, 8)]
     assert sampled_source.get_token_range(0, 4)["input_ids"].tolist() in [[1, 1, 1, 0], [2, 2, 2, 0], [3, 3, 3, 0]]  # type: ignore
-    assert sampled_source.get_token_range(4, 4)["input_ids"].tolist() in [[1, 1, 1, 0], [2, 2, 2, 0], [3, 3, 3, 0]]  # type: ignore
+    assert sampled_source.get_token_range(4, 8)["input_ids"].tolist() in [[1, 1, 1, 0], [2, 2, 2, 0], [3, 3, 3, 0]]  # type: ignore

@@ -25,8 +25,10 @@ from .sampling_document_source import (
 )
 from .token_source import (
     ConcatenatedDocumentSource,
+    ConcatenatedTokenSource,
     DocumentSource,
     DocumentSourceConfig,
+    InMemoryDocumentSource,
     InMemoryTokenSource,
     TokenRange,
     TokenSource,
@@ -47,6 +49,8 @@ __all__ = [
     "ComposableDataLoaderConfig",
     # Token/document source implementations.
     "InMemoryTokenSource",
+    "ConcatenatedTokenSource",
+    "InMemoryDocumentSource",
     "ConcatenatedDocumentSource",
     "SamplingDocumentSource",
     "SamplingDocumentSourceConfig",
