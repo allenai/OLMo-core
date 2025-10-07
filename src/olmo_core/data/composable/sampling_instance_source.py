@@ -5,6 +5,7 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 
+import olmo_core.distributed.utils as dist_utils
 from olmo_core.aliases import PathOrStr
 from olmo_core.exceptions import OLMoConfigurationError
 
@@ -85,18 +86,20 @@ class SamplingInstanceSource(InstanceSource):
         rng = None if seed is None else get_rng(seed)
         source_sample_paths: List[PathOrStr] = []
         for source, sample_size in zip(sources, source_sample_sizes):
-            if rng is None:
-                source_sample_indices = np.arange(sample_size, dtype=np.uint64)
-            else:
-                source_sample_indices = np.arange(len(source), dtype=np.uint64)
-                rng.shuffle(source_sample_indices)
-                source_sample_indices = source_sample_indices[:sample_size]
             source_sample_path = (
                 self.work_dir / f"{self.fingerprint}-{source.fingerprint}-indices.npy"
             )
-            write_array_to_disk(source_sample_indices, source_sample_path)
             source_sample_paths.append(source_sample_path)
+            if self.fs_local_rank == 0:
+                if rng is None:
+                    source_sample_indices = np.arange(sample_size, dtype=np.uint64)
+                else:
+                    source_sample_indices = np.arange(len(source), dtype=np.uint64)
+                    rng.shuffle(source_sample_indices)
+                    source_sample_indices = source_sample_indices[:sample_size]
+                write_array_to_disk(source_sample_indices, source_sample_path)
         self._source_sample_paths = tuple(source_sample_paths)
+        dist_utils.barrier()
 
     @property
     def sources(self) -> Tuple[InstanceSource]:
