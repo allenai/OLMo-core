@@ -98,23 +98,24 @@ def get_hf_config(model: Transformer) -> PretrainedConfig:
 
     rope_scaling = _get_and_validate_rope_scaling_config(blocks)
 
-    # Common arguments for both Olmo2Config and Olmo3Config
+    # Extract common configuration parameters
+    first_block = blocks[0]
     common_config_args = {
         "vocab_size": model.vocab_size,
         "hidden_size": model.d_model,
-        "intermediate_size": blocks[0].feed_forward.hidden_size,
+        "intermediate_size": first_block.feed_forward.hidden_size,
         "num_hidden_layers": model.n_layers,
-        "num_attention_heads": blocks[0].attention.n_heads,
-        "num_key_value_heads": blocks[0].attention.n_kv_heads,
+        "num_attention_heads": first_block.attention.n_heads,
+        "num_key_value_heads": first_block.attention.n_kv_heads,
         "hidden_act": "silu",
         "max_position_embeddings": -1,
-        "attention_bias": blocks[0].attention.w_out.bias is not None,
-        "rope_theta": blocks[0].attention.rope.theta,
+        "attention_bias": first_block.attention.w_out.bias is not None,
+        "rope_theta": first_block.attention.rope.theta,
         "rope_scaling": rope_scaling,
         "pad_token_id": None,
         "bos_token_id": None,
         "eos_token_id": None,
-        "rms_norm_eps": blocks[0].feed_forward_norm.eps,
+        "rms_norm_eps": first_block.feed_forward_norm.eps,
         "tie_word_embeddings": False,
     }
 
@@ -122,11 +123,32 @@ def get_hf_config(model: Transformer) -> PretrainedConfig:
     # - Sliding window attention is used for 3 out of 4 layers.
     # - RoPE scaling is not applied to sliding window attention layers.
     # Therefore, if any layer uses sliding window attention, we assume the model is OLMo 3.
-    if any(block.attention.window_size != (-1, -1) for block in blocks):
+    # Identify layers that use sliding window attention.
+    sliding_window_blocks = [
+        block for block in blocks if block.attention.backend.window_size != (-1, -1)
+    ]
+
+    if sliding_window_blocks:
+        # Collect the window sizes for validation. The 'sliding_window' config parameter
+        # is derived from window_size[0] + 1, so we'll check consistency of window_size[0].
+        found_window_sizes = {
+            block.attention.backend.window_size[0] for block in sliding_window_blocks
+        }
+
+        if len(found_window_sizes) > 1:
+            raise ValueError(
+                "All sliding window attention layers must have the same window size for "
+                f"OLMo3Config. Found different window sizes: {found_window_sizes}."
+            )
+        # If we reach here, all sliding window layers have the same window_size[0]
+        common_window_size_value = found_window_sizes.pop()
+
         olmo3_specific_args = {
-            "sliding_window": max(block.attention.window_size[0] + 1 for block in blocks),
+            "sliding_window": common_window_size_value,
             "layer_types": [
-                "sliding_attention" if block.attention.window_size != (-1, -1) else "full_attention"
+                "sliding_attention"
+                if block.attention.backend.window_size != (-1, -1)
+                else "full_attention"
                 for block in blocks
             ],
         }
@@ -146,10 +168,14 @@ def _get_and_validate_rope_scaling_config(blocks) -> dict | None:
     """
     # Separate full attention layers from sliding window layers
     full_attention_layers = [
-        (idx, block) for idx, block in enumerate(blocks) if block.attention.window_size == (-1, -1)
+        (idx, block)
+        for idx, block in enumerate(blocks)
+        if block.attention.backend.window_size == (-1, -1)
     ]
     sliding_window_layers = [
-        (idx, block) for idx, block in enumerate(blocks) if block.attention.window_size != (-1, -1)
+        (idx, block)
+        for idx, block in enumerate(blocks)
+        if block.attention.backend.window_size != (-1, -1)
     ]
 
     # Check for RoPE scaling on sliding window layers (not allowed)
