@@ -1112,3 +1112,36 @@ class TransformerConfig(Config):
             init_method=InitMethod.normalized,
             **kwargs,
         )
+
+    def with_rope_scaling(
+        self, rope_scaling: RoPEScalingConfig, full_attn_layers_only: bool = True
+    ) -> "TransformerConfig":
+        """
+        Return a copy of this config with the given RoPE scaling scheme applied.
+        """
+        new_config = self.copy()
+        if new_config.block.attention.rope is None:
+            raise ValueError("Cannot apply RoPE scaling to a model without RoPE.")
+
+        if not full_attn_layers_only:
+            new_config.block.attention.rope.scaling = rope_scaling
+            return new_config
+        else:
+
+            def add_rope_scaling(block: TransformerBlockConfig) -> TransformerBlockConfig:
+                rope_config = block.attention.rope
+                if rope_config is None:
+                    raise ValueError("Cannot apply RoPE scaling to a layer without RoPE.")
+                rope_config.scaling = rope_scaling
+                block.attention.rope = rope_config
+                return block
+
+            # Add rope scaling only to layers that do not use sliding window attention.
+            new_config.block_overrides = {
+                i: add_rope_scaling(new_config.block.copy())
+                for i in range(new_config.n_layers)
+                if not new_config.block.attention.sliding_window.should_use_swa(
+                    i, new_config.n_layers
+                )
+            }
+        return new_config
