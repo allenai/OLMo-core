@@ -12,7 +12,7 @@ def test_in_memory_token_source(tmp_path: Path):
     source = InMemoryTokenSource(list(range(10)), work_dir=tmp_path)
     assert len(source) == 10
     assert isinstance(source.fingerprint, str)
-    assert source[:]["input_ids"].tolist() == list(range(10))  # type: ignore
+    assert list(source[:]["input_ids"]) == list(range(10))
 
 
 def test_in_memory_document_source(tmp_path: Path):
@@ -48,4 +48,6 @@ def test_concatenated_document_source(tmp_path: Path):
         (11, 15),
         (15, 18),
     ]
-    assert source[15:18]["input_ids"].tolist() == [6, 6, 0]  # type: ignore
+    assert list(source[15:18]["input_ids"]) == [6, 6, 0]
+    assert list(source[13:18]["input_ids"]) == [5, 0, 6, 6, 0]
+    assert list(source[13:17]["input_ids"]) == [5, 0, 6, 6]

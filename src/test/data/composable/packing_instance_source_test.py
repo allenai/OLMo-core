@@ -53,21 +53,21 @@ def test_packing_intance_source(tmp_path: Path, long_doc_strategy: LongDocStrate
 
     assert len(instances) == 6
 
-    assert instances[0]["input_ids"].tolist() == [1, 2, 3, 4, 5, 6, 7, 0]  # type: ignore
-    assert instances[0]["label_mask"].tolist() == [True] * 8  # type: ignore
+    assert list(instances[0]["input_ids"]) == [1, 2, 3, 4, 5, 6, 7, 0]
+    assert list(instances[0].get("label_mask", [])) == [True] * 8
 
-    assert instances[1]["input_ids"].tolist() == [1, 2, 3, 4, 5, 0, -1, -1]  # type: ignore
-    assert instances[1]["label_mask"].tolist() == [True] * 6 + [False] * 2  # type: ignore
+    assert list(instances[1]["input_ids"]) == [1, 2, 3, 4, 5, 0, -1, -1]
+    assert list(instances[1].get("label_mask", [])) == [True] * 6 + [False] * 2
 
-    assert instances[3]["input_ids"].tolist() == [1, 2, 3, 0, 1, 2, 0, -1]  # type: ignore
-    assert instances[3]["label_mask"].tolist() == [True] * 7 + [False]  # type: ignore
+    assert list(instances[3]["input_ids"]) == [1, 2, 3, 0, 1, 2, 0, -1]
+    assert list(instances[3].get("label_mask", [])) == [True] * 7 + [False]
 
     if long_doc_strategy == LongDocStrategy.truncate:
-        assert instances[5]["input_ids"].tolist() == [1, 2, 0, -1, -1, -1, -1, -1]  # type: ignore
-        assert instances[5]["label_mask"].tolist() == [True] * 3 + [False] * 5  # type: ignore
+        assert list(instances[5]["input_ids"]) == [1, 2, 0, -1, -1, -1, -1, -1]
+        assert list(instances[5].get("label_mask", [])) == [True] * 3 + [False] * 5
     elif long_doc_strategy == LongDocStrategy.fragment:
-        assert instances[5]["input_ids"].tolist() == [9, 10, 0, 1, 2, 0, -1, -1]  # type: ignore
-        assert instances[5]["label_mask"].tolist() == [True] * 6 + [False] * 2  # type: ignore
+        assert list(instances[5]["input_ids"]) == [9, 10, 0, 1, 2, 0, -1, -1]
+        assert list(instances[5].get("label_mask", [])) == [True] * 6 + [False] * 2
     else:
         raise ValueError(long_doc_strategy)
 
@@ -120,21 +120,21 @@ def test_packing_instance_source_with_label_mask(
 
     assert len(instances) == 6
 
-    assert instances[0]["input_ids"].tolist() == [1, 2, 3, 4, 5, 6, 7, 0]  # type: ignore
-    assert instances[0]["label_mask"].tolist() == [True, False] + [True] * 6  # type: ignore
+    assert list(instances[0]["input_ids"]) == [1, 2, 3, 4, 5, 6, 7, 0]
+    assert list(instances[0].get("label_mask", [])) == [True, False] + [True] * 6
 
-    assert instances[1]["input_ids"].tolist() == [1, 2, 3, 4, 5, 0, -1, -1]  # type: ignore
-    assert instances[1]["label_mask"].tolist() == [True] * 6 + [False] * 2  # type: ignore
+    assert list(instances[1]["input_ids"]) == [1, 2, 3, 4, 5, 0, -1, -1]
+    assert list(instances[1].get("label_mask", [])) == [True] * 6 + [False] * 2
 
-    assert instances[3]["input_ids"].tolist() == [1, 2, 3, 0, 1, 2, 0, -1]  # type: ignore
-    assert instances[3]["label_mask"].tolist() == [True] * 7 + [False]  # type: ignore
+    assert list(instances[3]["input_ids"]) == [1, 2, 3, 0, 1, 2, 0, -1]
+    assert list(instances[3].get("label_mask", [])) == [True] * 7 + [False]
 
     if long_doc_strategy == LongDocStrategy.truncate:
-        assert instances[5]["input_ids"].tolist() == [1, 2, 0, -1, -1, -1, -1, -1]  # type: ignore
-        assert instances[5]["label_mask"].tolist() == [True] * 3 + [False] * 5  # type: ignore
+        assert list(instances[5]["input_ids"]) == [1, 2, 0, -1, -1, -1, -1, -1]
+        assert list(instances[5].get("label_mask", [])) == [True] * 3 + [False] * 5
     elif long_doc_strategy == LongDocStrategy.fragment:
-        assert instances[5]["input_ids"].tolist() == [9, 10, 0, 1, 2, 0, -1, -1]  # type: ignore
-        assert instances[5]["label_mask"].tolist() == [False, True] + [True] * 4 + [False] * 2  # type: ignore
+        assert list(instances[5]["input_ids"]) == [9, 10, 0, 1, 2, 0, -1, -1]
+        assert list(instances[5].get("label_mask", [])) == [False, True] + [True] * 4 + [False] * 2
     else:
         raise ValueError(long_doc_strategy)
 
@@ -195,10 +195,10 @@ def test_packing_intance_source_with_grouping(tmp_path: Path):
     # NOTE: potentially brittle test here!
     # Hard-coding exactly what the instances should be to ensure it's deterministic.
     assert len(instances) == 7
-    assert instances[0]["input_ids"].tolist() == [61, 62, 63, 64, 65, 66, 67, 0]  # type: ignore
-    assert instances[1]["input_ids"].tolist() == [11, 12, 13, 14, 15, 0, -1, -1]  # type: ignore
-    assert instances[2]["input_ids"].tolist() == [21, 22, 23, 24, 25, 0, -1, -1]  # type: ignore
-    assert instances[3]["input_ids"].tolist() == [1, 2, 3, 0, 31, 32, 33, 0]  # type: ignore
-    assert instances[4]["input_ids"].tolist() == [41, 42, 0, 51, 52, 0, -1, -1]  # type: ignore
-    assert instances[5]["input_ids"].tolist() == [71, 72, 73, 74, 75, 76, 77, 78]  # type: ignore
-    assert instances[6]["input_ids"].tolist() == [91, 92, 93, 94, 0, 81, 82, 0]  # type: ignore
+    assert list(instances[0]["input_ids"]) == [61, 62, 63, 64, 65, 66, 67, 0]
+    assert list(instances[1]["input_ids"]) == [11, 12, 13, 14, 15, 0, -1, -1]
+    assert list(instances[2]["input_ids"]) == [21, 22, 23, 24, 25, 0, -1, -1]
+    assert list(instances[3]["input_ids"]) == [1, 2, 3, 0, 31, 32, 33, 0]
+    assert list(instances[4]["input_ids"]) == [41, 42, 0, 51, 52, 0, -1, -1]
+    assert list(instances[5]["input_ids"]) == [71, 72, 73, 74, 75, 76, 77, 78]
+    assert list(instances[6]["input_ids"]) == [91, 92, 93, 94, 0, 81, 82, 0]
