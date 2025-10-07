@@ -19,7 +19,10 @@ from .packing_instance_source import (
     PackingInstanceSource,
     PackingInstanceSourceConfig,
 )
-from .sampling_document_source import SamplingDocumentSource
+from .sampling_document_source import (
+    SamplingDocumentSource,
+    SamplingDocumentSourceConfig,
+)
 from .token_source import (
     ConcatenatedDocumentSource,
     DocumentSource,
@@ -45,10 +48,11 @@ __all__ = [
     # Token/document source implementations.
     "InMemoryTokenSource",
     "ConcatenatedDocumentSource",
+    "SamplingDocumentSource",
+    "SamplingDocumentSourceConfig",
     "NumpyDocumentSource",
     "NumpyDocumentSourceConfig",
     "NumpyDocumentSourceMixConfig",
-    "SamplingDocumentSource",
     # Instance source implementations.
     "ConcatAndChunkInstanceSource",
     "ConcatAndChunkInstanceSourceConfig",

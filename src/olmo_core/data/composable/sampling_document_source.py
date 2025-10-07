@@ -8,6 +8,7 @@ from typing import Iterable, List, Optional, Sequence
 import numpy as np
 import torch
 
+import olmo_core.distributed.utils as dist_utils
 import olmo_core.io as io
 from olmo_core.aliases import PathOrStr
 
@@ -25,6 +26,10 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class SamplingDocumentSourceConfig(DocumentSourceConfig):
+    """
+    A config for building a :class:`SamplingDocumentSource`.
+    """
+
     source: DocumentSourceConfig
     max_tokens: int
     seed: Optional[int] = None
@@ -41,9 +46,16 @@ class SamplingDocumentSourceConfig(DocumentSourceConfig):
 
 class SamplingDocumentSource(DocumentSource):
     """
-    A document source that samples from other document sources.
+    A document source that samples documents from other document sources.
     This is useful for creating a smaller document source for testing or for building up
     mixes of sources.
+
+    :param sources: The sources to sample documents from.
+    :param max_tokens: The maximum number of tokens to sample. The resulting source will have
+        at most this many tokens, but potentially less because only whole documents are sampled.
+    :param seed: A optional seed for sampling documents. If ``None``, no shuffling is done and
+        the first documents are taken up to ``max_tokens``.
+    :param work_dir: A local working directory for caching preprocessing results.
     """
 
     Config = SamplingDocumentSourceConfig
@@ -110,6 +122,7 @@ class SamplingDocumentSource(DocumentSource):
                 sampled_document_offsets.reshape(-1), self._sampled_document_offsets_path
             )
             write_array_to_disk(sampled_cu_document_lengths, self._sampled_cu_document_lens_path)
+        dist_utils.barrier()
 
     @property
     def source(self) -> DocumentSource:
