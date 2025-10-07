@@ -127,13 +127,15 @@ class StepwiseRoPEScalingConfig(RoPEScalingConfig):
 
     Scales RoPE to longer sequence lengths by interpolating between high- and low-frequency components.
     1. **High-frequency band** (short wavelengths) – keeps the original frequencies unchanged.
-        These correspond to the very first dimensions of the rotary embedding and already encode
-        short-range ordering well.
+       These correspond to the very first dimensions of the rotary embedding and already encode
+       short-range ordering well.
+
     2. **Low-frequency band** (long wavelengths) – divides the original inverse frequency by
-        ``factor`` (equivalently, multiplies the wavelength by ``factor``).  This has the effect of
-        spreading the very low frequencies across a longer context window (similar to PI scaling).
+       ``factor`` (equivalently, multiplies the wavelength by ``factor``).  This has the effect of
+       spreading the very low frequencies across a longer context window (similar to PI scaling).
+
     3. **Medium-frequency band** – linearly interpolates (in inverse-frequency space) between the
-        unscaled and the fully-scaled value so that the full spectrum changes smoothly.
+       unscaled and the fully-scaled value so that the full spectrum changes smoothly.
     """
 
     factor: float = 32.0
