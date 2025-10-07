@@ -5,6 +5,7 @@ from olmo_core.data import NumpyDataLoaderConfig, NumpyPackedFSLDatasetConfig, T
 from olmo_core.internal import cookbook
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
+from olmo_core.io import join_path
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.rope import YaRNRoPEScalingConfig
 from olmo_core.nn.transformer import TransformerConfig
@@ -59,7 +60,9 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     dataset_config = NumpyPackedFSLDatasetConfig.glob(
-        "gs://ai2-llm/preprocessed/tylerr/lc-reshard-final/v0.6/allenai/dolma2-tokenizer/*.npy",
+        join_path(
+            root_dir, "preprocessed/tylerr/lc-reshard-final/v0.6/allenai/dolma2-tokenizer/*.npy"
+        ),
         tokenizer=tokenizer_config,
         work_dir=work_dir,
         sequence_length=SEQ_LENGTH,
@@ -73,7 +76,10 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     trainer_config = cookbook.configure_trainer(
-        load_path="gs://ai2-llm/checkpoints/allysone/anneal-round5-100B-olmo25_7b-anneal-6T-decon-sparkle-motion-8730626c/step47684",
+        load_path=join_path(
+            root_dir,
+            "checkpoints/allysone/anneal-round5-100B-olmo25_7b-anneal-6T-decon-sparkle-motion-8730626c/step47684",
+        ),
         load_trainer_state=False,
         load_optim_state=True,
         max_duration=max_duration,
