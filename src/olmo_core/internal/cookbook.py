@@ -80,10 +80,6 @@ def configure_train_module(
             if cp_degree
             else None
         ),
-        # ac_config=TransformerActivationCheckpointingConfig(
-        #     mode=TransformerActivationCheckpointingMode.selected_modules,
-        #     modules=["blocks.*.feed_forward"],
-        # )
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.budget,
             activation_memory_budget=activation_memory_budget,
