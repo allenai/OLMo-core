@@ -143,7 +143,7 @@ class TokenSource(metaclass=ABCMeta):
         elif isinstance(other, TokenSource):
             return ConcatenatedTokenSource(self, other, work_dir=self._work_dir)
         else:
-            raise NotImplementedError(f"Cannot concatenate {self} and {other}.")
+            raise TypeError(f"Cannot add {type(self)} with {type(other)}.")
 
 
 class InMemoryTokenSource(TokenSource):

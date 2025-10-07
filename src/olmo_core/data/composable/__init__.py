@@ -31,6 +31,7 @@ This API consists of a series of simple, composable, elements, including:
      without regard for document boundaries, just like the :class:`~olmo_core.data.numpy_dataset.NumpyFSLDataset`.
    * :class:`PackingInstanceSource`: An instance source that packs documents from one or more document
      sources into instances using an optimized packing algorithm.
+   * :class:`ConcatenatedInstanceSource`: An instance source combines instances from other instances sources.
    * :class:`SamplingInstanceSource`: An instance source that samples instances from other instances sources.
 
 3. :class:`ComposableDataLoader`: A data loader for OLMo-core's :class:`~olmo_core.train.Trainer` that takes
@@ -50,7 +51,12 @@ from .data_loader import (
     InstanceFilterConfig,
     ShuffleStrategy,
 )
-from .instance_source import Instance, InstanceSource, InstanceSourceConfig
+from .instance_source import (
+    ConcatenatedInstanceSource,
+    Instance,
+    InstanceSource,
+    InstanceSourceConfig,
+)
 from .numpy_document_source import (
     NumpyDocumentSource,
     NumpyDocumentSourceConfig,
@@ -111,6 +117,7 @@ __all__ = [
     "ConcatAndChunkInstanceSourceConfig",
     "PackingInstanceSource",
     "PackingInstanceSourceConfig",
+    "ConcatenatedInstanceSource",
     "SamplingInstanceSource",
     "SamplingInstanceSourceConfig",
     # Other types.

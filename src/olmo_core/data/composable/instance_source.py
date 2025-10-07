@@ -1,7 +1,9 @@
+import functools as ft
+import hashlib
 from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Generator, Optional, Sequence, TypedDict
+from typing import Generator, List, Optional, Sequence, Tuple, TypedDict
 
 from typing_extensions import NotRequired
 
@@ -68,6 +70,9 @@ class InstanceSource(metaclass=ABCMeta):
             self._work_dir = self._work_dir.parent
         self._fs_local_rank = dist_utils.get_fs_local_rank()
         self._rank = dist_utils.get_rank()
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}({self.fingerprint})"
 
     @property
     def sequence_length(self) -> int:
@@ -148,6 +153,74 @@ class InstanceSource(metaclass=ABCMeta):
                 f"Index {idx} is out of bounds for source {self} with {len(self):,d} instances."
             )
         return idx
+
+    def __add__(self, other: "InstanceSource"):
+        """Add two instance sources together into a :class:`ConcatenatedInstanceSource`."""
+        if isinstance(other, InstanceSource):
+            return ConcatenatedInstanceSource(self, other, work_dir=self._work_dir)
+        else:
+            raise TypeError(f"Cannot add {type(self)} with {type(other)}.")
+
+
+class ConcatenatedInstanceSource(InstanceSource):
+    """
+    An instance source that concatenates multiple instance sources together end-to-end.
+    """
+
+    def __init__(
+        self,
+        *sources: InstanceSource,
+        work_dir: PathOrStr,
+    ):
+        if len(sources) == 0:
+            raise OLMoConfigurationError("At least one source must be provided.")
+
+        sequence_length = sources[0].sequence_length
+        max_sequence_length = sources[0].max_sequence_length
+        for source in sources:
+            if source.sequence_length != sequence_length:
+                raise OLMoConfigurationError("All sources must have the same sequence length.")
+            if source.max_sequence_length != max_sequence_length:
+                raise OLMoConfigurationError("All sources must have the same max sequence length.")
+
+        super().__init__(
+            work_dir=work_dir,
+            sequence_length=sequence_length,
+            max_sequence_length=max_sequence_length,
+        )
+
+        unraveled_sources: List[InstanceSource] = []
+        for source in sources:
+            if isinstance(source, ConcatenatedInstanceSource):
+                unraveled_sources.extend(source.sources)
+            else:
+                unraveled_sources.append(source)
+        self._sources = tuple(unraveled_sources)
+
+    @property
+    def sources(self) -> Tuple[InstanceSource, ...]:
+        return self._sources
+
+    @ft.cached_property
+    def fingerprint(self) -> str:
+        sha256_hash = hashlib.sha256()
+        sha256_hash.update((f"class={self.__class__.__name__},").encode())
+        for source in self.sources:
+            sha256_hash.update(f"source={source.fingerprint},".encode())
+        return sha256_hash.hexdigest()
+
+    def __len__(self) -> int:
+        return sum(len(source) for source in self.sources)
+
+    def __getitem__(self, idx: int) -> Instance:
+        idx = self.validate_index(idx)
+        source_start_offset = 0
+        for source in self.sources:
+            source_end_offset = source_start_offset + len(source)
+            if source_start_offset <= idx < source_end_offset:
+                return source[idx - source_start_offset]
+            source_start_offset = source_end_offset
+        raise IndexError(f"{idx} is out of bounds for source of size {len(self)}")
 
 
 @dataclass
