@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from olmo_core.data import NumpyDataLoaderConfig, NumpyFSLDatasetConfig, TokenizerConfig
+from olmo_core.data import NumpyDataLoaderConfig, NumpyPackedFSLDatasetConfig, TokenizerConfig
 from olmo_core.internal import cookbook
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
@@ -58,12 +58,14 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         dp_shard_degree=1,
     )
 
-    dataset_config = NumpyFSLDatasetConfig.glob(
+    dataset_config = NumpyPackedFSLDatasetConfig.glob(
         "gs://ai2-llm/preprocessed/tylerr/lc-reshard-final/v0.6/allenai/dolma2-tokenizer/*.npy",
         tokenizer=tokenizer_config,
         work_dir=work_dir,
         sequence_length=SEQ_LENGTH,
         generate_doc_lengths=True,  # enables intra-document masking
+        source_group_size=8,
+        source_permutation_seed=123,
     )
 
     data_loader_config = NumpyDataLoaderConfig(
