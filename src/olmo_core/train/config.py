@@ -36,6 +36,8 @@ class TrainerConfig(Config):
     work_dir: Optional[str] = None
     load_path: Optional[str] = None
     load_strategy: LoadStrategy = LoadStrategy.if_available
+    load_optim_state: Optional[bool] = None
+    load_trainer_state: Optional[bool] = None
     checkpointer: CheckpointerConfig = field(default_factory=CheckpointerConfig)
 
     device: Optional[str] = None
@@ -58,6 +60,13 @@ class TrainerConfig(Config):
             raise OLMoConfigurationError(f"A callback with name '{name}' already exists")
         self.callbacks[name] = callback
 
+    def add_callbacks(self, callbacks: Dict[str, Callback]):
+        """
+        Add a set of callbacks.
+        """
+        for name, callback in callbacks.items():
+            self.add_callback(name, callback)
+
     def with_callback(self, name: str, callback: Callback) -> "TrainerConfig":
         """
         Return a new trainer config with an additional callback.
@@ -67,6 +76,16 @@ class TrainerConfig(Config):
         """
         out = replace(self, callbacks=deepcopy(self.callbacks))
         out.add_callback(name, callback)
+        return out
+
+    def with_callbacks(self, callbacks: Dict[str, Callback]) -> "TrainerConfig":
+        """
+        Return a new trainer config with additional callbacks.
+
+        :param callbacks: A dictionary of callbacks to add. Keys must be unique.
+        """
+        out = replace(self, callbacks=deepcopy(self.callbacks))
+        out.add_callbacks(callbacks)
         return out
 
     def with_recommended_evals(

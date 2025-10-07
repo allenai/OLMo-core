@@ -620,6 +620,7 @@ def _get_gcs_client():
 def _gcs_is_retriable(exc: Exception) -> bool:
     from google.api_core.exceptions import BadRequest, GatewayTimeout
     from google.api_core.retry import if_transient_error
+    from google.auth.exceptions import RefreshError
 
     return if_transient_error(exc) or isinstance(
         exc,
@@ -627,6 +628,7 @@ def _gcs_is_retriable(exc: Exception) -> bool:
             requests.exceptions.Timeout,
             BadRequest,  # Weird choice, but Google throws this transiently
             GatewayTimeout,
+            RefreshError,
         ),
     )
 

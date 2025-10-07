@@ -102,9 +102,9 @@ def get_work_dir(root_dir: str) -> str:
 def build_launch_config(
     *,
     name: str,
-    root_dir: str,
     cmd: List[str],
     cluster: str,
+    root_dir: Optional[str] = None,
     task_name: str = "train",
     workspace: str = "ai2/OLMo-core",
     budget: str = "ai2/oe-base",
@@ -116,6 +116,15 @@ def build_launch_config(
     num_execution_units: Optional[int] = None,
 ) -> BeakerLaunchConfig:
     weka_buckets: List[BeakerWekaBucket] = []
+
+    default_root_dir = get_root_dir(cluster)
+    if root_dir is None:
+        root_dir = default_root_dir
+    elif root_dir != default_root_dir:
+        log.warning(
+            f"Overriding default root_dir for {cluster=} to {root_dir} ({default_root_dir=})."
+        )
+
     if root_dir.startswith("/weka/"):
         weka_buckets.append(BeakerWekaBucket("oe-training-default", "/weka/oe-training-default"))
 

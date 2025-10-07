@@ -51,6 +51,16 @@ class CliContext(Config):
     cluster: str
     overrides: List[str]
 
+    @property
+    def remote_cmd(self) -> List[str]:
+        return [
+            self.script,
+            self.cmd.post_launch_subcmd(),
+            self.run_name,
+            self.cluster,
+            *self.overrides,
+        ]
+
 
 @dataclass
 class CommonComponents(Config):
@@ -171,18 +181,12 @@ def build_common_components(
     beaker_user = get_beaker_username()
 
     launch_config: Optional[BeakerLaunchConfig] = None
-    cmd_to_launch = cli_context.cmd.post_launch_subcmd()
     if beaker_user is not None:
+        cmd_to_launch = cli_context.cmd.post_launch_subcmd()
         launch_config = build_launch_config(
             name=f"{cli_context.run_name}-{cmd_to_launch}",
             root_dir=root_dir,
-            cmd=[
-                cli_context.script,
-                cmd_to_launch,
-                cli_context.run_name,
-                cli_context.cluster,
-                *cli_context.overrides,
-            ],
+            cmd=cli_context.remote_cmd,
             cluster=cli_context.cluster,
             nccl_debug=True,
             beaker_image=beaker_image,
@@ -471,7 +475,7 @@ def train(config: ExperimentConfig):
     config_dict = config.as_config_dict()
     cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
 
-    # Train.
+    # Train (also handles checkpoint loading)
     trainer.fit()
 
 
