@@ -67,7 +67,7 @@ class NumpyDocumentSourceConfig(_NumpyDocumentSourceConfigBase):
     expand_glob: bool = False
     """If true, treat source/label paths as glob patterns and expand them when building the sources."""
 
-    def build(self, work_dir: PathOrStr) -> List["NumpyDocumentSource"]:
+    def build(self, work_dir: PathOrStr) -> List["NumpyDocumentSource"]:  # type: ignore[override]
         """
         Build the sources.
         """
@@ -124,7 +124,7 @@ class NumpyDocumentSourceMixConfig(_NumpyDocumentSourceConfigBase):
     mix_base_dir: str
     """The base directory of the data mix."""
 
-    def build(self, work_dir: PathOrStr) -> List["NumpyDocumentSource"]:
+    def build(self, work_dir: PathOrStr) -> List["NumpyDocumentSource"]:  # type: ignore[override]
         """
         Build the sources.
         """
@@ -186,7 +186,7 @@ class NumpyDocumentSource(DocumentSource):
         assert len(source_sizes) == len(self.source_paths)
         self.source_sizes = source_sizes
 
-        self.label_mask_sizes: Optional[Tuple[int]] = None
+        self.label_mask_sizes: Optional[Tuple[int, ...]] = None
         if self.label_mask_paths is not None:
             label_mask_sizes: List[int]
             if self.rank == 0:
@@ -200,7 +200,7 @@ class NumpyDocumentSource(DocumentSource):
             assert len(label_mask_sizes) == len(self.label_mask_paths)
             self.label_mask_sizes = tuple(label_mask_sizes)
             for label_path, label_mask_size, source_path, source_size in zip(
-                self.label_mask_paths, self.label_mask_sizes, self.source_paths, self.source_sizes
+                self.label_mask_paths, label_mask_sizes, self.source_paths, self.source_sizes
             ):
                 if label_mask_size != source_size:
                     raise OLMoConfigurationError(
@@ -217,7 +217,7 @@ class NumpyDocumentSource(DocumentSource):
         label_mask_paths_groups = (
             chunked(self.label_mask_paths, group_size)
             if self.label_mask_paths is not None
-            else [None for _ in chunked(self.source_paths, group_size)]
+            else [None for _ in chunked(self.source_paths, group_size)]  # type: ignore[misc]
         )
         return [
             self.__class__(

@@ -376,6 +376,6 @@ class DocumentSourceConfig(TokenSourceConfig):
     """A base config class for configuring and building a :class:`DocumentSource`."""
 
     @abstractmethod
-    def build(self, work_dir: PathOrStr) -> List[DocumentSource]:
+    def build(self, work_dir: PathOrStr) -> List[DocumentSource]:  # type: ignore[override]
         """Build the document source."""
         raise NotImplementedError

@@ -102,7 +102,7 @@ class SamplingInstanceSource(InstanceSource):
         dist_utils.barrier()
 
     @property
-    def sources(self) -> Tuple[InstanceSource]:
+    def sources(self) -> Tuple[InstanceSource, ...]:
         return self._sources
 
     @property

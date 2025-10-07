@@ -15,9 +15,7 @@ from olmo_core.data.tokenizer import TokenizerConfig
 def test_data_loader(tmp_path: Path, num_workers: int):
     tokens1 = InMemoryTokenSource(tokens=list(range(64)), work_dir=tmp_path)
     tokens2 = InMemoryTokenSource(tokens=list(range(64, 128)), work_dir=tmp_path)
-    instances = ConcatAndChunkInstanceSource(
-        sources=[tokens1, tokens2], sequence_length=8, work_dir=tmp_path
-    )
+    instances = ConcatAndChunkInstanceSource(tokens1, tokens2, sequence_length=8, work_dir=tmp_path)
     tokenizer = TokenizerConfig(vocab_size=32000, eos_token_id=0, pad_token_id=-1)
     data_loader = ComposableDataLoader(
         instances,

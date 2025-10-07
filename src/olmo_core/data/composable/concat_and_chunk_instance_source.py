@@ -1,7 +1,7 @@
 import functools as ft
 import hashlib
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from olmo_core.aliases import PathOrStr
 
@@ -51,7 +51,7 @@ class ConcatAndChunkInstanceSource(InstanceSource):
         self._sources = sources
 
     @property
-    def sources(self) -> tuple[TokenSource]:
+    def sources(self) -> Tuple[TokenSource, ...]:
         return self._sources
 
     @ft.cached_property

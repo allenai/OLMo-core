@@ -26,14 +26,16 @@ class SamplingTokenSourceConfig(TokenSourceConfig):
     max_tokens: int
     seed: Optional[int] = None
 
-    def build(self, work_dir: PathOrStr) -> "SamplingTokenSource":
+    def build(self, work_dir: PathOrStr) -> List["SamplingTokenSource"]:  # type: ignore[override]
         sources = [s for source in self.sources for s in source.build(work_dir=work_dir)]
-        return SamplingTokenSource(
-            *sources,
-            max_tokens=self.max_tokens,
-            seed=self.seed,
-            work_dir=work_dir,
-        )
+        return [
+            SamplingTokenSource(
+                *sources,
+                max_tokens=self.max_tokens,
+                seed=self.seed,
+                work_dir=work_dir,
+            )
+        ]
 
 
 class SamplingTokenSource(TokenSource):

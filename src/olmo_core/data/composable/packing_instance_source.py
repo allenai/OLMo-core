@@ -126,7 +126,7 @@ class PackingInstanceSource(InstanceSource):
         return self._source_group_size
 
     @property
-    def source_groups(self) -> Tuple[Tuple[DocumentSource, ...]]:
+    def source_groups(self) -> Tuple[Tuple[DocumentSource, ...], ...]:
         return self._source_groups
 
     @ft.cached_property
@@ -166,9 +166,7 @@ class PackingInstanceSource(InstanceSource):
         return self.source_group_instance_offsets[-1][1]
 
     def __getitem__(self, idx: int) -> Instance:
-        if idx < 0:
-            idx = len(self) + idx
-        assert 0 <= idx < len(self)
+        idx = self.validate_index(idx)
 
         # The index of the source group.
         source_group_index: Optional[int] = None

@@ -33,14 +33,16 @@ class SamplingDocumentSourceConfig(DocumentSourceConfig):
     max_tokens: int
     seed: Optional[int] = None
 
-    def build(self, work_dir: PathOrStr) -> "SamplingDocumentSource":
+    def build(self, work_dir: PathOrStr) -> List["SamplingDocumentSource"]:  # type: ignore[override]
         sources = [s for source in self.sources for s in source.build(work_dir=work_dir)]
-        return SamplingDocumentSource(
-            *sources,
-            max_tokens=self.max_tokens,
-            seed=self.seed,
-            work_dir=work_dir,
-        )
+        return [
+            SamplingDocumentSource(
+                *sources,
+                max_tokens=self.max_tokens,
+                seed=self.seed,
+                work_dir=work_dir,
+            )
+        ]
 
 
 class SamplingDocumentSource(DocumentSource):
@@ -70,12 +72,15 @@ class SamplingDocumentSource(DocumentSource):
         work_dir: PathOrStr,
     ):
         super().__init__(work_dir=work_dir)
+
+        source: DocumentSource
         if not sources:
             raise ValueError("At least one source must be provided.")
         elif len(sources) > 1:
-            self._source = ConcatenatedDocumentSource(*sources, work_dir=work_dir)
+            source = ConcatenatedDocumentSource(*sources, work_dir=work_dir)
         else:
-            self._source = sources[0]
+            source = sources[0]
+        self._source = source
         assert max_tokens > 0
         self._max_tokens = max_tokens
         self._seed = seed
