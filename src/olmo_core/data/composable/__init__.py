@@ -22,6 +22,7 @@ This API consists of a series of simple, composable, elements, including:
      from the dolma toolkit.
    * :class:`SamplingTokenSource` and :class:`SamplingDocumentSource`: A token/document source that samples tokens/documents
      from one or more other token/document sources.
+   * :class:`MixingTokenSource` and :class:`MixingDocumentSource`: A token/document source that mixes other token/document sources together.
 
 2. :class:`InstanceSource`: Instance sources convert token sources (or in some case other instance sources)
    into fixed-length instances.
@@ -58,11 +59,23 @@ from .instance_source import (
     InstanceSource,
     InstanceSourceConfig,
 )
+from .mixing_document_source import (
+    MixingDocumentSource,
+    MixingDocumentSourceConfig,
+    MixingDocumentSourceSpec,
+    MixingDocumentSourceSpecConfig,
+)
 from .mixing_instance_source import (
     MixingInstanceSource,
     MixingInstanceSourceConfig,
     MixingInstanceSourceSpec,
     MixingInstanceSourceSpecConfig,
+)
+from .mixing_token_source import (
+    MixingTokenSource,
+    MixingTokenSourceConfig,
+    MixingTokenSourceSpec,
+    MixingTokenSourceSpecConfig,
 )
 from .numpy_document_source import (
     NumpyDocumentSource,
@@ -112,10 +125,14 @@ __all__ = [
     "ConcatenatedTokenSource",
     "SamplingTokenSource",
     "SamplingTokenSourceConfig",
+    "MixingTokenSource",
+    "MixingTokenSourceConfig",
     "InMemoryDocumentSource",
     "ConcatenatedDocumentSource",
     "SamplingDocumentSource",
     "SamplingDocumentSourceConfig",
+    "MixingDocumentSource",
+    "MixingDocumentSourceConfig",
     "NumpyDocumentSource",
     "NumpyDocumentSourceConfig",
     "NumpyDocumentSourceMixConfig",
@@ -135,4 +152,8 @@ __all__ = [
     "ShuffleStrategy",
     "MixingInstanceSourceSpec",
     "MixingInstanceSourceSpecConfig",
+    "MixingTokenSourceSpec",
+    "MixingTokenSourceSpecConfig",
+    "MixingDocumentSourceSpec",
+    "MixingDocumentSourceSpecConfig",
 ]

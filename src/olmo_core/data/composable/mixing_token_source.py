@@ -8,21 +8,21 @@ from olmo_core.aliases import PathOrStr
 from olmo_core.config import Config
 from olmo_core.exceptions import OLMoConfigurationError
 
-from .instance_source import (
-    ConcatenatedInstanceSource,
-    Instance,
-    InstanceSource,
-    InstanceSourceConfig,
+from .sampling_token_source import SamplingTokenSource
+from .token_source import (
+    ConcatenatedTokenSource,
+    TokenRange,
+    TokenSource,
+    TokenSourceConfig,
 )
-from .sampling_instance_source import SamplingInstanceSource
 from .utils import calculate_sample_sizes
 
 
 @dataclass
-class MixingInstanceSourceSpecConfig(Config):
-    """Config for :class:`MixingInstanceSourceSpec`."""
+class MixingTokenSourceSpecConfig(Config):
+    """Config for :class:`MixingTokenSourceSpec`."""
 
-    source: InstanceSourceConfig
+    source: TokenSourceConfig
     ratio: float
     max_repetition: float = 1.0
 
@@ -32,47 +32,55 @@ class MixingInstanceSourceSpecConfig(Config):
         if self.max_repetition < 1.0:
             raise OLMoConfigurationError("Max repetition must be at least 1.0.")
 
-    def build(self, work_dir: PathOrStr) -> "MixingInstanceSourceSpec":
-        return MixingInstanceSourceSpec(
-            source=self.source.build(work_dir),
+    def build(self, work_dir: PathOrStr) -> "MixingTokenSourceSpec":
+        sources = self.source.build(work_dir)
+        source = (
+            sources[0]
+            if len(sources) == 1
+            else ConcatenatedTokenSource(*sources, work_dir=work_dir)
+        )
+        return MixingTokenSourceSpec(
+            source=source,
             ratio=self.ratio,
             max_repetition=self.max_repetition,
         )
 
 
 @dataclass
-class MixingInstanceSourceConfig(InstanceSourceConfig):
-    """A config for :class:`MixingInstanceSource`."""
+class MixingTokenSourceConfig(TokenSourceConfig):
+    """A config for :class:`MixingTokenSource`."""
 
-    source_specs: List[MixingInstanceSourceSpecConfig]
+    source_specs: List[MixingTokenSourceSpecConfig]
     """Mixing source specs."""
     seed: Optional[int] = None
     """A random seed for sampling."""
 
-    def build(self, work_dir: PathOrStr) -> "MixingInstanceSource":  # type: ignore[override]
+    def build(self, work_dir: PathOrStr) -> List["MixingTokenSource"]:  # type: ignore[override]
         source_specs = [spec.build(work_dir) for spec in self.source_specs]
-        return MixingInstanceSource(
-            *source_specs,
-            work_dir=work_dir,
-            seed=self.seed,
-        )
+        return [
+            MixingTokenSource(
+                *source_specs,
+                work_dir=work_dir,
+                seed=self.seed,
+            )
+        ]
 
 
 @dataclass
-class MixingInstanceSourceSpec:
-    """Defines a source and its associated mixing ratio for :class:`MixingInstanceSource`."""
+class MixingTokenSourceSpec:
+    """Defines a source and its associated mixing ratio for :class:`MixingTokenSource`."""
 
-    Config: ClassVar[Type["MixingInstanceSourceSpecConfig"]] = MixingInstanceSourceSpecConfig
+    Config: ClassVar[Type["MixingTokenSourceSpecConfig"]] = MixingTokenSourceSpecConfig
     """The config class for this spec."""
 
-    source: InstanceSource
+    source: TokenSource
     """The source."""
     ratio: float
     """The relative ratio for this source."""
     max_repetition: float = 1.0
     """
     The maximum amount of repetition allowed, expressed as a factor greater than or equal to 1.0.
-    A factor of 1.0 means no repetition is allowed. A factor of 2.0 means each instance could be
+    A factor of 1.0 means no repetition is allowed. A factor of 2.0 means each token could be
     repeated at most once (i.e., seen twice).
     """
 
@@ -83,67 +91,56 @@ class MixingInstanceSourceSpec:
             raise OLMoConfigurationError("Max repetition must be at least 1.0.")
 
 
-class MixingInstanceSource(InstanceSource):
+class MixingTokenSource(TokenSource):
     """
-    An instance source for mixing other instance sources together with arbitrary ratios.
+    A token source for mixing other token sources together with arbitrary ratios.
 
     :param source_specs: The sources and how to sample from them.
     """
 
-    Config = MixingInstanceSourceConfig
+    Config = MixingTokenSourceConfig
     """The config class for this source."""
 
-    Spec = MixingInstanceSourceSpec
+    Spec = MixingTokenSourceSpec
     """The mixing spec class for this source."""
 
     def __init__(
         self,
-        *source_specs: MixingInstanceSourceSpec,
+        *source_specs: MixingTokenSourceSpec,
         work_dir: PathOrStr,
         seed: Optional[int] = None,
     ):
         if not source_specs:
             raise OLMoConfigurationError("At least one source spec must be provided.")
 
+        super().__init__(work_dir=work_dir)
+
         sources = [spec.source for spec in source_specs]
-        sequence_length = sources[0].sequence_length
-        max_sequence_length = sources[0].max_sequence_length
-        for source in sources:
-            if source.sequence_length != sequence_length:
-                raise OLMoConfigurationError("All sources must have the same sequence length.")
-            if source.max_sequence_length != max_sequence_length:
-                raise OLMoConfigurationError("All sources must have the same max sequence length.")
 
-        super().__init__(
-            work_dir=work_dir,
-            sequence_length=sequence_length,
-            max_sequence_length=max_sequence_length,
-        )
-
-        # Determine the number of instances to sample from each source.
+        # Determine the number of tokens to sample from each source.
         sample_sizes = calculate_sample_sizes(
             [len(source) for source in sources],
             [spec.ratio for spec in source_specs],
             [spec.max_repetition for spec in source_specs],
         )
 
-        # Sample instances from each source.
-        sampled_sources: List[SamplingInstanceSource] = []
+        # Sample tokens from each source.
+        sampled_sources: List[SamplingTokenSource] = []
         for i, (source, sample_size) in enumerate(zip(sources, sample_sizes)):
             sampled_sources.append(
-                SamplingInstanceSource(
+                SamplingTokenSource(
                     source,
-                    max_instances=int(sample_size),
+                    max_tokens=int(sample_size),
                     work_dir=work_dir,
                     seed=None if seed is None else seed + i,
                     allow_repetition=sample_size > len(source),
                 )
             )
-        self._source = ConcatenatedInstanceSource(*sampled_sources, work_dir=work_dir)
+        self._source = ConcatenatedTokenSource(*sampled_sources, work_dir=work_dir)
 
     @property
-    def sampled_sources(self) -> Tuple[SamplingInstanceSource, ...]:
-        return typing.cast(Tuple[SamplingInstanceSource, ...], self._source.sources)
+    def sampled_sources(self) -> Tuple[SamplingTokenSource, ...]:
+        return typing.cast(Tuple[SamplingTokenSource, ...], self._source.sources)
 
     @ft.cached_property
     def fingerprint(self) -> str:
@@ -151,8 +148,9 @@ class MixingInstanceSource(InstanceSource):
         sha256_hash.update((f"class={self.__class__.__name__},source={self._source}").encode())
         return sha256_hash.hexdigest()
 
-    def __len__(self) -> int:
-        return len(self._source)
+    @property
+    def num_tokens(self) -> int:
+        return self._source.num_tokens
 
-    def __getitem__(self, idx: int) -> Instance:
-        return self._source[idx]
+    def get_token_range(self, start_idx: int, end_idx: int) -> TokenRange:
+        return self._source.get_token_range(start_idx, end_idx)
