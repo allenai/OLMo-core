@@ -564,7 +564,7 @@ class RepeatedWSD(Scheduler):
     The cycle ends exactly when LR reaches decay_min_lr, making it ideal for checkpointing.
     """
     
-    cycle_length: int
+    cycle_length: Optional[int] = None
     """Number of steps/tokens for each WSD cycle. Checkpoint is saved at the end of each cycle."""
     
     warmup: Optional[int] = None
@@ -587,6 +587,10 @@ class RepeatedWSD(Scheduler):
     """If True, each cycle starts warmup from warmup_min_lr. If False, starts from decay_min_lr of previous cycle."""
 
     def __post_init__(self):
+        # Check that cycle_length was provided
+        if self.cycle_length is None:
+            raise OLMoConfigurationError("'cycle_length' must be specified.")
+
         if self.cycle_length <= 0:
             raise OLMoConfigurationError("'cycle_length' must be positive.")
             
