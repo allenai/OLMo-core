@@ -33,6 +33,7 @@ This API consists of a series of simple, composable, elements, including:
      sources into instances using an optimized packing algorithm.
    * :class:`ConcatenatedInstanceSource`: An instance source combines instances from other instances sources.
    * :class:`SamplingInstanceSource`: An instance source that samples instances from other instances sources.
+   * :class:`MixingInstanceSource`: An instance source that mixes other instances sources together.
 
 3. :class:`ComposableDataLoader`: A data loader for OLMo-core's :class:`~olmo_core.train.Trainer` that takes
    one or more instance sources.
@@ -56,6 +57,11 @@ from .instance_source import (
     Instance,
     InstanceSource,
     InstanceSourceConfig,
+)
+from .mixing_instance_source import (
+    MixingInstanceSource,
+    MixingInstanceSourceConfig,
+    MixingInstanceSourceSpec,
 )
 from .numpy_document_source import (
     NumpyDocumentSource,
@@ -120,8 +126,11 @@ __all__ = [
     "ConcatenatedInstanceSource",
     "SamplingInstanceSource",
     "SamplingInstanceSourceConfig",
+    "MixingInstanceSource",
+    "MixingInstanceSourceConfig",
     # Other types.
     "InstanceFilterConfig",
     "LongDocStrategy",
     "ShuffleStrategy",
+    "MixingInstanceSourceSpec",
 ]
