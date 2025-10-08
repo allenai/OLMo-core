@@ -3,14 +3,14 @@ from pathlib import Path
 
 import pytest
 import torch
-from transformers import AutoModelForCausalLM, Olmo2Config, PreTrainedModel
+from transformers import AutoModelForCausalLM, Olmo2Config, Olmo3Config, PreTrainedModel
 
 from examples.huggingface.convert_checkpoint_from_hf import convert_checkpoint_from_hf
 from olmo_core.data.tokenizer import TokenizerConfig
 from olmo_core.distributed.checkpoint import (
     load_model_and_optim_state,
-    save_model_and_optim_state,
 )
+from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.transformer.config import TransformerConfig
 from olmo_core.nn.transformer.model import Transformer
 
@@ -20,39 +20,54 @@ def tokenizer_config() -> TokenizerConfig:
     return TokenizerConfig.dolma2()
 
 
-@pytest.fixture
-def transformer_config(tokenizer_config: TokenizerConfig) -> TransformerConfig:
-    return TransformerConfig.olmo2_190M(tokenizer_config.padded_vocab_size())
+@pytest.fixture(
+    params=["olmo2", "olmo3"],
+    ids=["OLMo2-190M", "OLMo3-190M"],
+)
+def model_config(request, tokenizer_config: TokenizerConfig) -> tuple[str, TransformerConfig]:
+    """Returns (model_family, transformer_config) tuple."""
+    model_family = request.param
+
+    if model_family == "olmo2":
+        config = TransformerConfig.olmo2_190M(tokenizer_config.padded_vocab_size())
+    elif model_family == "olmo3":
+        config = TransformerConfig.olmo3_190M(
+            tokenizer_config.padded_vocab_size(),
+            attn_backend=AttentionBackendName.torch,  # Use torch backend for testing
+        )
+    else:
+        raise ValueError(f"Unknown model family: {model_family}")
+
+    return model_family, config
 
 
 @pytest.fixture
 def hf_model_path(
-    tmp_path: Path, tokenizer_config: TokenizerConfig, transformer_config: TransformerConfig
+    tmp_path: Path, tokenizer_config: TokenizerConfig, model_config: tuple[str, TransformerConfig]
 ) -> Path:
-    hf_config = Olmo2Config(
-        vocab_size=tokenizer_config.vocab_size,
-        hidden_size=transformer_config.d_model,
-        intermediate_size=3072,
-        num_hidden_layers=transformer_config.n_layers,
-        num_attention_heads=12,
-        rope_theta=500_000,
-        rms_norm_eps=1e-6,
-    )
+    model_family, transformer_config = model_config
+    common_config = {
+        "vocab_size": tokenizer_config.vocab_size,
+        "hidden_size": transformer_config.d_model,
+        "intermediate_size": 3072,
+        "num_hidden_layers": transformer_config.n_layers,
+        "num_attention_heads": 12,
+        "rope_theta": 500_000,
+        "rms_norm_eps": 1e-6,
+    }
+
+    if model_family == "olmo2":
+        hf_config = Olmo2Config(**common_config)
+    elif model_family == "olmo3":
+        hf_config = Olmo3Config(**common_config)
+    else:
+        raise ValueError(f"Unknown model family: {model_family}")
+
     hf_model = AutoModelForCausalLM.from_config(hf_config)
 
-    model_path = tmp_path / "hf"
-    hf_model.save_pretrained(tmp_path / "hf")
+    model_path = tmp_path / f"hf-{model_family}"
+    hf_model.save_pretrained(model_path)
     del hf_model
-    return model_path
-
-
-@pytest.fixture
-def olmo_core_model_path(tmp_path: Path, transformer_config: TransformerConfig) -> Path:
-    model = transformer_config.build()
-
-    model_path = tmp_path / "olmo_core"
-    save_model_and_optim_state(model_path, model)
-    del model
     return model_path
 
 
@@ -70,16 +85,20 @@ def _validate_models_match(hf_model: PreTrainedModel, olmo_core_model: Transform
 
     assert hf_logits.shape[-1] == hf_model.vocab_size
     assert logits.shape[-1] == olmo_core_model.vocab_size
-    torch.testing.assert_close(hf_logits[..., :min_vocab_size], logits[..., :min_vocab_size])
+
+    # Using torch backend w/ validation on cpu we get bitwise identical results when comparing
+    # logit outputs from an OlmoCore model and its HF-converted counterpart
+    assert torch.equal(hf_logits[..., :min_vocab_size], logits[..., :min_vocab_size])
 
 
 def test_convert_checkpoint_from_hf_correct_config(
     tmp_path: Path,
     hf_model_path: Path,
     tokenizer_config: TokenizerConfig,
-    transformer_config: TransformerConfig,
+    model_config: tuple[str, TransformerConfig],
 ):
-    output_dir = tmp_path / "olmo_core"
+    model_family, transformer_config = model_config
+    output_dir = tmp_path / f"olmo_core-{model_family}"
     convert_checkpoint_from_hf(
         hf_checkpoint_path=hf_model_path,
         output_path=output_dir,
@@ -103,9 +122,10 @@ def test_convert_checkpoint_from_hf_correct_model(
     tmp_path: Path,
     hf_model_path: Path,
     tokenizer_config: TokenizerConfig,
-    transformer_config: TransformerConfig,
+    model_config: tuple[str, TransformerConfig],
 ):
-    output_dir = tmp_path / "olmo_core-output"
+    model_family, transformer_config = model_config
+    output_dir = tmp_path / f"olmo_core-output-{model_family}"
     convert_checkpoint_from_hf(
         hf_checkpoint_path=hf_model_path,
         output_path=output_dir,
