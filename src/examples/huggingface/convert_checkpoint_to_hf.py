@@ -363,6 +363,7 @@ def validate_conversion(
 
     del hf_model
 
+    # apply sliding_window size override if provided
     if is_sliding and sliding_window is not None:
         for block in model.blocks.values():
             if block.attention.window_size != (-1, -1):

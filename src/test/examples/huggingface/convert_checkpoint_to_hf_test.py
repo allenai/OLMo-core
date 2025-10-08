@@ -97,7 +97,7 @@ def _get_expected_hf_config(
         force_first = sliding_window_config.force_full_attention_on_first_layer
         force_last = sliding_window_config.force_full_attention_on_last_layer
 
-        # Generate layer types based on pattern
+        # Generate layer types based on swa pattern
         layer_types = []
         for i in range(n_layers):
             if i == 0 and force_first:
@@ -114,7 +114,7 @@ def _get_expected_hf_config(
 
         return Olmo3Config(
             architectures=["Olmo3ForCausalLM"],
-            sliding_window=window_size - 1,  # HF expects window_size - 1
+            sliding_window=window_size,
             layer_types=layer_types,
             **common_config,
         )

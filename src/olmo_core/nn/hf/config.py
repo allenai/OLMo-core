@@ -141,12 +141,16 @@ def get_hf_config(model: Transformer) -> PretrainedConfig:
                 "All sliding window attention layers must have the same window size for "
                 f"OLMo3Config. Found different window sizes: {found_window_sizes}."
             )
-        # If we reach here, all sliding window layers have the same window_size[0]
+
+        # This sliding window sizes value is configured to be fed to flash_attention -
+        # it is one smaller than the actual window size because FA implicitly includes the
+        # current position in the window. HF expects a value one larger than this and will
+        # manually adjust the window size down by 1 for FA.
+        # See https://github.com/huggingface/transformers/pull/40163
         common_window_size_value = found_window_sizes.pop()
 
         olmo3_specific_args = {
-            # NOTE: the flash-attn OBO error in HF transformers has been patched as of v4.56.2: https://github.com/huggingface/transformers/pull/40163
-            "sliding_window": common_window_size_value,
+            "sliding_window": common_window_size_value + 1,
             "layer_types": [
                 "sliding_attention"
                 if block.attention.backend.window_size != (-1, -1)
