@@ -1,4 +1,4 @@
-from transformers import Olmo2Config, Olmo3Config, PretrainedConfig
+from transformers import Olmo2Config, PretrainedConfig
 
 from olmo_core.doc_utils import beta_feature
 from olmo_core.nn.attention import Attention

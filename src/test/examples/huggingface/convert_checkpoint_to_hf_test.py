@@ -6,7 +6,6 @@ from transformers import (
     AutoConfig,
     AutoModelForCausalLM,
     Olmo2Config,
-    Olmo3Config,
     PreTrainedModel,
 )
 
@@ -19,6 +18,11 @@ from olmo_core.distributed.checkpoint import (
 from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.transformer.config import TransformerConfig
 from olmo_core.nn.transformer.model import Transformer
+
+try:
+    from transformers import Olmo3Config
+except ImportError:
+    Olmo3Config = None  # type: ignore
 
 
 @pytest.fixture
@@ -88,6 +92,9 @@ def _get_expected_hf_config(
             **common_config,
         )
     elif model_family == "olmo3":
+        if Olmo3Config is None:
+            pytest.skip("The installed transformers version does not support Olmo3")
+
         # Compute expected layer_types and sliding_window from the transformer config
         sliding_window_config = transformer_config.block.attention.sliding_window
         assert sliding_window_config is not None
