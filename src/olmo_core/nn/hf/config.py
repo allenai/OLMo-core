@@ -19,6 +19,11 @@ try:
 except ImportError:
     FlexOlmoConfig = None
 
+try:
+    from transformers import Olmo3Config  # type: ignore
+except ImportError:
+    Olmo3Config = None
+
 
 def _get_flex_olmo_config(model: MoETransformer) -> PretrainedConfig:
     blocks = list(model.blocks.values())
@@ -132,6 +137,9 @@ def get_hf_config(model: Transformer) -> PretrainedConfig:
     ]
 
     if sliding_window_blocks:
+        if Olmo3Config is None:
+            raise RuntimeError("The installed transformers version does not support Olmo3")
+
         found_window_sizes = {
             block.attention.backend.window_size[0] for block in sliding_window_blocks
         }
