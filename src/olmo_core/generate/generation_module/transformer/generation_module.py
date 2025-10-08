@@ -596,4 +596,9 @@ class TransformerGenerationModule(GenerationModule):
                 )
 
         final_generation_module.load_state_dict(merged_state_dict)
+
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
         return final_generation_module
