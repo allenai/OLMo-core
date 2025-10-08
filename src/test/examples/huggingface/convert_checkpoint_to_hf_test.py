@@ -2,12 +2,7 @@ from pathlib import Path
 
 import pytest
 import torch
-from transformers import (
-    AutoConfig,
-    AutoModelForCausalLM,
-    Olmo2Config,
-    PreTrainedModel,
-)
+from transformers import AutoConfig, AutoModelForCausalLM, Olmo2Config, PreTrainedModel
 
 from examples.huggingface.convert_checkpoint_to_hf import convert_checkpoint_to_hf
 from olmo_core.data.tokenizer import TokenizerConfig
