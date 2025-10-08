@@ -1,3 +1,4 @@
+import gc
 import json
 import logging
 import tempfile
@@ -519,19 +520,30 @@ class TransformerGenerationModule(GenerationModule):
 
         log.info(f"Merging {len(checkpoint_dirs)} checkpoints")
 
+        # Override device to CPU for intermediate checkpoint loading to save GPU memory
+        cpu_kwargs = kwargs.copy()
+        cpu_kwargs["device"] = torch.device("cpu")
+
+        log.info(f"Loading checkpoints on CPU for merging, will transfer to target device at the end")
         log.info(f"Merging {checkpoint_dirs[0]}")
         first_generation_module = cls.from_checkpoint(
-            checkpoint_dirs[0], dtype=DType.float32, **kwargs
+            checkpoint_dirs[0], dtype=DType.float32, **cpu_kwargs
         )
 
         # Get the state dict from the first module to use as accumulator
         merged_state_dict = first_generation_module.state_dict()
 
+        # Free the first module since we have its state dict
+        del first_generation_module
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
         # Average weights from all checkpoints
         for i, checkpoint_dir in enumerate(checkpoint_dirs[1:], start=2):
             log.info(f"Merging {checkpoint_dir}")
             next_generation_module = cls.from_checkpoint(
-                checkpoint_dir, dtype=DType.float32, **kwargs
+                checkpoint_dir, dtype=DType.float32, **cpu_kwargs
             )
             next_state_dict = next_generation_module.state_dict()
 
@@ -545,20 +557,32 @@ class TransformerGenerationModule(GenerationModule):
                         (i - 1) / i
                     ) + next_state_dict["model"][key] * (1 / i)
 
-            # Free memory from the temporary module
+            # Free memory from the temporary module and run garbage collection
             del next_generation_module
             del next_state_dict
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
-        # If we need to load the model with float32, we're done
+        # Now load the final model on the target device with the correct dtype
         if dtype == DType.float32:
-            first_generation_module.load_state_dict(merged_state_dict)
-            return first_generation_module
+            # If target dtype is float32, we can reuse the merged state dict
+            log.info(f"Loading merged checkpoint with dtype float32")
+            final_generation_module = cls.from_checkpoint(
+                checkpoint_dirs[0], dtype=DType.float32, **kwargs
+            )
+            final_generation_module.load_state_dict(merged_state_dict)
+            return final_generation_module
 
-        # Otherwise, let's re-do this with the right dtype
-        log.info(f"Loading {checkpoint_dirs[0]} again with the right dtype ({dtype}).")
-        final_generation_module = cls.from_checkpoint(checkpoint_dirs[0], dtype=dtype, **kwargs)
+        # Otherwise, load with the target dtype and convert the merged weights
+        log.info(f"Loading merged checkpoint with dtype {dtype}")
+        final_generation_module = cls.from_checkpoint(
+            checkpoint_dirs[0], dtype=dtype, **kwargs
+        )
         final_state_dict = final_generation_module.state_dict()
         assert merged_state_dict["model"].keys() == final_state_dict["model"].keys()
+
+        # Convert merged state dict to the target dtype
         for key in merged_state_dict["model"].keys():
             merged_state_dict_tensor = merged_state_dict["model"][key]
             if not torch.is_tensor(merged_state_dict_tensor):
