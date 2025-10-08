@@ -228,7 +228,7 @@ class Checkpointer:
             thread_count=self.load_thread_count,
             allow_partial_load=(keys_to_ignore is not None), # only if we're ignoring things on purpose!
         )
-        train_module.load_state_dict(state_dict, strict=(keys_to_ignore is None))
+        train_module.load_state_dict(state_dict)
 
         return trainer_state
 
