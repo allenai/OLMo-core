@@ -204,6 +204,7 @@ class Checkpointer:
         state_dict = train_module.state_dict_to_load(metadata)
         # if we have keys to ignore, remove them
         if keys_to_ignore:
+            keys_to_ignore = [re.compile(key) for key in keys_to_ignore]
             state_dict = {
                 key: value for key, value in state_dict.items() if any([re.search(pattern, key) is not None for pattern in keys_to_ignore])
             }
