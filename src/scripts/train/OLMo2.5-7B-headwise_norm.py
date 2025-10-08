@@ -66,6 +66,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         ),        z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
         scheduler=CosWithWarmup(warmup_steps=2000),
+        state_dict_load_opts={'strict': False},
     )
 
 
