@@ -52,6 +52,39 @@ def test_sampling_document_source(tmp_path: Path):
     ]
 
 
+def test_sampling_document_source_with_repetition(tmp_path: Path):
+    dtype = np.uint16
+
+    path, data = tmp_path / "mmap1.npy", [1, 1, 1, 1, 0, 2, 2, 2, 0, 3, 3, 0, 4, 0]
+    _write_mmap(path, data, dtype)
+
+    og_source = NumpyDocumentSource(
+        source_paths=[path],
+        dtype=dtype,
+        work_dir=tmp_path / "work_dir",
+        tokenizer=TokenizerConfig(vocab_size=32_000, eos_token_id=0, pad_token_id=-1),
+    )
+    assert og_source.num_tokens == len(data) == 14
+
+    sampled_source = SamplingDocumentSource(
+        og_source,
+        max_tokens=20,
+        work_dir=tmp_path,
+        allow_repetition=True,
+    )
+    assert sampled_source.num_docs == 5  # first doc will be repeated
+    assert sampled_source.num_tokens == 19
+
+    assert list(sampled_source.get_document_offsets()) == [
+        (0, 5),
+        (5, 9),
+        (9, 12),
+        (12, 14),
+        (14, 19),
+    ]
+    assert list(sampled_source[:]["input_ids"]) == data + [1, 1, 1, 1, 0]
+
+
 def test_sampling_document_source_random_sample(tmp_path: Path):
     dtype = np.uint16
 

@@ -32,6 +32,7 @@ class SamplingDocumentSourceConfig(DocumentSourceConfig):
     sources: List[DocumentSourceConfig]
     max_tokens: int
     seed: Optional[int] = None
+    allow_repetition: bool = False
 
     def build(self, work_dir: PathOrStr) -> List["SamplingDocumentSource"]:  # type: ignore[override]
         sources = [s for source in self.sources for s in source.build(work_dir=work_dir)]
@@ -41,6 +42,7 @@ class SamplingDocumentSourceConfig(DocumentSourceConfig):
                 max_tokens=self.max_tokens,
                 seed=self.seed,
                 work_dir=work_dir,
+                allow_repetition=self.allow_repetition,
             )
         ]
 
@@ -59,6 +61,8 @@ class SamplingDocumentSource(DocumentSource):
         at most this many tokens, but potentially less because only whole documents are sampled.
     :param seed: A optional seed for sampling documents. If ``None``, no shuffling is done and
         the first documents are taken up to ``max_tokens``.
+    :param allow_repetition: Allow repeated documents (oversampling) to meet the target ``max_tokens``
+      if needed.
     :param work_dir: A local working directory for caching preprocessing results.
     """
 
@@ -70,6 +74,7 @@ class SamplingDocumentSource(DocumentSource):
         max_tokens: int,
         seed: Optional[int] = None,
         work_dir: PathOrStr,
+        allow_repetition: bool = False,
     ):
         super().__init__(work_dir=work_dir)
 
@@ -84,6 +89,7 @@ class SamplingDocumentSource(DocumentSource):
         assert max_tokens > 0
         self._max_tokens = max_tokens
         self._seed = seed
+        self._allow_repetition = allow_repetition
 
         # Sample tokens from the source.
         log.info(f"Sampling documents from {self.source}...")
@@ -104,14 +110,28 @@ class SamplingDocumentSource(DocumentSource):
                 rng = get_rng(self.seed)
                 rng.shuffle(document_offsets, axis=0)
 
-            # Find cumulative token counts, then truncate OG docs to get the target max number of tokens.
+            # Find cumulative token counts, then repeat/truncate OG docs to get the target max number of tokens.
             document_lengths = document_offsets[:, 1] - document_offsets[:, 0]
             cu_document_lengths = np.cumsum(document_lengths, dtype=np.uint64)
+            total_tokens = int(cu_document_lengths[-1])
+
+            n_repetitions = max_tokens // total_tokens if allow_repetition else 0
+            remaining_sample_size = max_tokens % total_tokens
             sampled_document_offsets = np.take(
-                document_offsets, (cu_document_lengths <= self.max_tokens).nonzero()[0], axis=0
+                document_offsets,
+                (cu_document_lengths <= remaining_sample_size).nonzero()[0],
+                axis=0,
             )
+            if n_repetitions > 0:
+                sampled_document_offsets = np.concatenate(
+                    [
+                        np.tile(document_offsets, (n_repetitions, 1)),
+                        sampled_document_offsets,
+                    ]
+                )
+
             if sampled_document_offsets.shape[0] == 0:
-                raise RuntimeError(f"Unable to sample {self.max_tokens} from {self.source}")
+                raise RuntimeError(f"Unable to sample {self.max_tokens} tokens from {self.source}")
 
             # Now get the cumulative lengths of the sampled documents.
             sampled_document_lengths = (
@@ -164,6 +184,7 @@ class SamplingDocumentSource(DocumentSource):
                 f"source={self.source.fingerprint},"
                 f"max_tokens={self.max_tokens},"
                 f"seed={self.seed},"
+                f"repetition={self._allow_repetition},"
             ).encode()
         )
         return sha256_hash.hexdigest()
