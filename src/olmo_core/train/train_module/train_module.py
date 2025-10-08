@@ -281,7 +281,8 @@ class BasicTrainModule(TrainModule):
             )
         return state_dict
 
-    def load_state_dict(self, state_dict: Dict[str, Any], strict: bool =True) -> None:
+    def load_state_dict(self, state_dict: Dict[str, Any], **kwargs) -> None:
+        strict = kwargs['strict'] if 'strict' in kwargs else True
         dist_cp_sd.set_model_state_dict(
             self.model, state_dict["model"], options=dist_cp_sd.StateDictOptions(strict=strict)
         )
