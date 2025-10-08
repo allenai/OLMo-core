@@ -2,7 +2,13 @@ from pathlib import Path
 
 import pytest
 import torch
-from transformers import AutoConfig, AutoModelForCausalLM, Olmo2Config, Olmo3Config, PreTrainedModel
+from transformers import (
+    AutoConfig,
+    AutoModelForCausalLM,
+    Olmo2Config,
+    Olmo3Config,
+    PreTrainedModel,
+)
 
 from examples.huggingface.convert_checkpoint_to_hf import convert_checkpoint_to_hf
 from olmo_core.data.tokenizer import TokenizerConfig
@@ -131,7 +137,7 @@ def _validate_models_match(hf_model: PreTrainedModel, olmo_core_model: Transform
     assert hf_logits.shape[-1] == hf_model.vocab_size
     assert logits.shape[-1] == olmo_core_model.vocab_size
 
-    # Using torch backend w/ validation on cpu we get bitwise identicle results when comparing
+    # Using torch backend w/ validation on cpu we get bitwise identical results when comparing
     # logit outputs from an OlmoCore model and its HF-converted counterpart
     assert torch.equal(hf_logits[..., :min_vocab_size], logits[..., :min_vocab_size])
 
