@@ -96,6 +96,9 @@ def get_hf_config(model: Transformer) -> PretrainedConfig:
             f"Attention does not use rope, unable to build HF config for {model.__class__.__name__}"
         )
 
+    if blocks[0].attention.backend is None:
+        raise ValueError("Attention backend is not set.")
+
     rope_scaling = _get_and_validate_rope_scaling_config(blocks)
 
     # Extract common configuration parameters
@@ -129,8 +132,6 @@ def get_hf_config(model: Transformer) -> PretrainedConfig:
     ]
 
     if sliding_window_blocks:
-        # Collect the window sizes for validation. The 'sliding_window' config parameter
-        # is derived from window_size[0] + 1, so we'll check consistency of window_size[0].
         found_window_sizes = {
             block.attention.backend.window_size[0] for block in sliding_window_blocks
         }
@@ -144,6 +145,7 @@ def get_hf_config(model: Transformer) -> PretrainedConfig:
         common_window_size_value = found_window_sizes.pop()
 
         olmo3_specific_args = {
+            # NOTE: the flash-attn OBO error in HF transformers has been patched as of v4.56.2: https://github.com/huggingface/transformers/pull/40163
             "sliding_window": common_window_size_value,
             "layer_types": [
                 "sliding_attention"
