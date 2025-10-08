@@ -153,6 +153,8 @@ def test_convert_checkpoint_to_hf_correct_config(
     model_family, model_path = olmo_core_model_path
     _, transformer_config = model_config
 
+    expected_hf_config = _get_expected_hf_config(model_family, transformer_config, tokenizer_config)
+
     output_dir = tmp_path / f"hf-output-{model_family}"
     convert_checkpoint_to_hf(
         original_checkpoint_path=model_path,
@@ -162,8 +164,6 @@ def test_convert_checkpoint_to_hf_correct_config(
         max_sequence_length=256,
         validate=False,
     )
-
-    expected_hf_config = _get_expected_hf_config(model_family, transformer_config, tokenizer_config)
     hf_config = AutoConfig.from_pretrained(output_dir)
 
     assert hf_config.to_diff_dict() == expected_hf_config.to_diff_dict()
