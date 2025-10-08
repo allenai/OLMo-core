@@ -29,7 +29,7 @@ from ..utils import (
     memmap_to_write,
 )
 from .instance_source import InstanceSource
-from .utils import as_tensor, format_fname_from_fields
+from .utils import as_tensor, build_global_indices, format_fname_from_fields
 
 log = logging.getLogger(__name__)
 
@@ -398,7 +398,7 @@ class ComposableDataLoader(TextDataLoaderBase):
 
     def _build_global_indices(self) -> np.ndarray:
         if self.shuffle_strategy == ShuffleStrategy.inter_source:
-            return _build_global_indices(
+            return build_global_indices(
                 self.total_instances,
                 sequence_length=self.sequence_length,
                 max_sequence_length=self.max_sequence_length,
@@ -410,7 +410,7 @@ class ComposableDataLoader(TextDataLoaderBase):
             offset = 0
             for source in self.sources:
                 source_size = chunk_size * (len(source) // chunk_size)
-                indices = _build_global_indices(
+                indices = build_global_indices(
                     source_size,
                     sequence_length=self.sequence_length,
                     max_sequence_length=self.max_sequence_length,
@@ -421,38 +421,6 @@ class ComposableDataLoader(TextDataLoaderBase):
             return np.concatenate(indices_per_source)
         else:
             raise NotImplementedError(f"Unknown shuffle strategy: {self.shuffle_strategy}")
-
-
-def _build_global_indices(
-    total_instances: int, *, sequence_length: int, max_sequence_length: int, seed: Optional[int]
-) -> np.ndarray:
-    assert total_instances < np.iinfo(np.uint32).max
-    assert max_sequence_length % sequence_length == 0
-    chunk_size = max_sequence_length // sequence_length
-    # Length of dataset would be calculated incorrectly if this didn't hold.
-    assert total_instances % chunk_size == 0
-
-    # NOTE: To guarantee the same data order with `self.max_sequence_length` fixed but `self.sequence_length`
-    # changing, we need `self.total_instances // chunk_size` to remain constant.
-    # This is ensured by requiring `self.max_sequence_length` is a multiple of `self.sequence_length`
-    # and assuming that `self.total_instances` is proportional to `chunk_size`, i.e.
-    # if `self.sequence_length` is half of `self.max_sequence_length`, then `self.total_instances`
-    # should double. This takes some care when implementing an `InstanceSource` to ensure that
-    # excess tokens are dropped in a way that respects `self.max_sequence_length`, not `self.sequence_length`.
-    chunk_indices = np.arange(total_instances // chunk_size, dtype=np.uint32)
-
-    # Deterministically shuffle based on epoch and seed
-    if seed is not None:
-        rng = get_rng(seed)
-        rng.shuffle(chunk_indices)
-
-    if chunk_size == 1:
-        return chunk_indices
-
-    indices = np.repeat(chunk_indices * chunk_size, chunk_size)
-    indices = indices.reshape((-1, chunk_size)) + np.arange(0, chunk_size).reshape((1, -1))
-    indices = indices.reshape(-1)
-    return indices
 
 
 class _IterableDataLoaderWrapper(torch.utils.data.IterableDataset[Dict[str, Any]]):

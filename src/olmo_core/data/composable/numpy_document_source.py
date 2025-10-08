@@ -64,14 +64,18 @@ class NumpyDocumentSourceConfig(_NumpyDocumentSourceConfigBase):
     """The paths/URLs to the numpy token ID arrays."""
     label_mask_paths: Optional[List[str]] = None
     """The paths/URLs to numpy bool files indicating which tokens should be masked."""
-    expand_glob: bool = False
+    expand_glob: Optional[bool] = None
     """If true, treat source/label paths as glob patterns and expand them when building the sources."""
 
     def build(self, work_dir: PathOrStr) -> List["NumpyDocumentSource"]:  # type: ignore[override]
         """
         Build the sources.
         """
-        if self.expand_glob:
+        expand_glob = self.expand_glob
+        if self.expand_glob is None:
+            expand_glob = any(["*" in p for p in self.source_paths])
+
+        if expand_glob:
             source_paths = self._expand_globs(self.source_paths)
             mask_paths = (
                 None if self.label_mask_paths is None else self._expand_globs(self.label_mask_paths)
@@ -109,8 +113,8 @@ class NumpyDocumentSourceConfig(_NumpyDocumentSourceConfigBase):
             matches = sorted(io.glob_directory(pattern))
             if not matches:
                 raise FileNotFoundError(pattern)
-            for match in matches:
-                log.info(f" - '{match}'")
+            summary = "\n".join([f" - '{match}'" for match in matches])
+            log.info(f"Expanded '{pattern}' into {len(matches):,d} paths:\n{summary}")
             expanded.extend(matches)
         return expanded
 

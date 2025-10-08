@@ -1,5 +1,6 @@
 import functools as ft
 import hashlib
+import logging
 import typing
 from dataclasses import dataclass
 from typing import ClassVar, List, Optional, Tuple, Type
@@ -17,6 +18,8 @@ from .instance_source import (
 from .sampling_instance_source import SamplingInstanceSource
 from .utils import calculate_sample_sizes
 
+log = logging.getLogger(__name__)
+
 
 @dataclass
 class MixingInstanceSourceSpecConfig(Config):
@@ -25,6 +28,7 @@ class MixingInstanceSourceSpecConfig(Config):
     source: InstanceSourceConfig
     ratio: float
     max_repetition: float = 1.0
+    label: Optional[str] = None
 
     def __post_init__(self):
         if self.ratio <= 0:
@@ -37,6 +41,7 @@ class MixingInstanceSourceSpecConfig(Config):
             source=self.source.build(work_dir),
             ratio=self.ratio,
             max_repetition=self.max_repetition,
+            label=self.label,
         )
 
 
@@ -75,6 +80,8 @@ class MixingInstanceSourceSpec:
     A factor of 1.0 means no repetition is allowed. A factor of 2.0 means each instance could be
     repeated at most once (i.e., seen twice).
     """
+    label: Optional[str] = None
+    """An optional label for this source."""
 
     def __post_init__(self):
         if self.ratio <= 0:
@@ -90,7 +97,7 @@ class MixingInstanceSource(InstanceSource):
     :param source_specs: The sources and how to sample from them.
     """
 
-    Config = MixingInstanceSourceConfig
+    Config: ClassVar[Type[MixingInstanceSourceConfig]] = MixingInstanceSourceConfig
     """The config class for this source."""
 
     Spec = MixingInstanceSourceSpec
@@ -140,6 +147,17 @@ class MixingInstanceSource(InstanceSource):
                 )
             )
         self._source = ConcatenatedInstanceSource(*sampled_sources, work_dir=work_dir)
+
+        summary_lines = []
+        for i, (source, sampled_source, spec) in enumerate(
+            zip(sources, self.sampled_sources, source_specs)
+        ):
+            summary_lines.append(
+                f" ❯ {100 * len(sampled_source) / len(self):0.3f}% {spec.label or ('source ' + str(i))}, "
+                f"{len(sampled_source):,d} sampled instances from {len(source):,d} source instances"
+            )
+        summary = "\n".join(summary_lines)
+        log.info(f"Created instance mixture consisting of:\n{summary}")
 
     @property
     def sampled_sources(self) -> Tuple[SamplingInstanceSource, ...]:

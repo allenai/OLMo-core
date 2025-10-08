@@ -8,6 +8,9 @@ import olmo_core.io as io
 from olmo_core.aliases import PathOrStr
 from olmo_core.exceptions import OLMoEnvironmentError
 
+from ..types import NumpyUIntTypes
+from ..utils import get_rng
+
 
 def _warmup_clients(paths: Sequence[PathOrStr]):
     # Maybe create client up front to work around a threading issue in boto.
@@ -153,3 +156,40 @@ def calculate_sample_sizes(
     assert (actual_sample_sizes <= sizes_to_use).all()
 
     return actual_sample_sizes
+
+
+def build_global_indices(
+    total_instances: int,
+    *,
+    sequence_length: int,
+    max_sequence_length: int,
+    seed: Optional[int],
+    dtype: NumpyUIntTypes = np.uint32,
+) -> np.ndarray:
+    assert total_instances < np.iinfo(dtype).max
+    assert max_sequence_length % sequence_length == 0
+    chunk_size = max_sequence_length // sequence_length
+    # Length of dataset would be calculated incorrectly if this didn't hold.
+    assert total_instances % chunk_size == 0
+
+    # NOTE: To guarantee the same data order with `self.max_sequence_length` fixed but `self.sequence_length`
+    # changing, we need `self.total_instances // chunk_size` to remain constant.
+    # This is ensured by requiring `self.max_sequence_length` is a multiple of `self.sequence_length`
+    # and assuming that `self.total_instances` is proportional to `chunk_size`, i.e.
+    # if `self.sequence_length` is half of `self.max_sequence_length`, then `self.total_instances`
+    # should double. This takes some care when implementing an `InstanceSource` to ensure that
+    # excess tokens are dropped in a way that respects `self.max_sequence_length`, not `self.sequence_length`.
+    chunk_indices = np.arange(total_instances // chunk_size, dtype=dtype)
+
+    # Deterministically shuffle based on epoch and seed
+    if seed is not None:
+        rng = get_rng(seed)
+        rng.shuffle(chunk_indices)
+
+    if chunk_size == 1:
+        return chunk_indices
+
+    indices = np.repeat(chunk_indices * chunk_size, chunk_size)
+    indices = indices.reshape((-1, chunk_size)) + np.arange(0, chunk_size).reshape((1, -1))
+    indices = indices.reshape(-1)
+    return indices

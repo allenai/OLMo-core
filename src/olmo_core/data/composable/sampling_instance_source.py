@@ -9,8 +9,9 @@ import olmo_core.distributed.utils as dist_utils
 from olmo_core.aliases import PathOrStr
 from olmo_core.exceptions import OLMoConfigurationError
 
-from ..utils import get_rng, load_array_slice, write_array_to_disk
+from ..utils import load_array_slice, write_array_to_disk
 from .instance_source import Instance, InstanceSource, InstanceSourceConfig
+from .utils import build_global_indices
 
 
 @dataclass
@@ -75,6 +76,7 @@ class SamplingInstanceSource(InstanceSource):
         self._max_instances = max_instances
         self._seed = seed
         self._allow_repetition = allow_repetition
+        self._dtype = np.uint32
 
         # Determine how many instances to sample from each source.
         total_instances = sum(len(source) for source in self.sources)
@@ -87,28 +89,26 @@ class SamplingInstanceSource(InstanceSource):
         self._source_sample_sizes = tuple(source_sample_sizes)
 
         # Sample indices from each source.
-        rng = None if seed is None else get_rng(seed)
         source_sample_paths: List[PathOrStr] = []
-        for source, sample_size in zip(sources, source_sample_sizes):
+        for i, (source, sample_size) in enumerate(zip(sources, source_sample_sizes)):
             source_sample_path = (
                 self.work_dir / f"{self.fingerprint}-{source.fingerprint}-indices.npy"
             )
             source_sample_paths.append(source_sample_path)
             if self.fs_local_rank == 0:
-                if rng is None:
-                    source_sample_indices = np.arange(sample_size, dtype=np.uint64)
-                    source_sample_indices = np.mod(source_sample_indices, len(source))
-                else:
-                    source_sample_indices = np.array([], dtype=np.uint64)
-                    while source_sample_indices.size < sample_size:
-                        sample_indices = np.arange(len(source), dtype=np.uint64)
-                        rng.shuffle(sample_indices)
-                        sample_indices = sample_indices[
-                            : (sample_size - source_sample_indices.size)
-                        ]
-                        source_sample_indices = np.concatenate(
-                            [source_sample_indices, sample_indices]
-                        )
+                n_repetitions = sample_size // len(source)
+                remaining_sample_size = sample_size % len(source)
+                source_indices = build_global_indices(
+                    len(source),
+                    sequence_length=self.sequence_length,
+                    max_sequence_length=self.max_sequence_length,
+                    seed=None if seed is None else seed + i,
+                    dtype=self._dtype,
+                )
+                sample_indices = source_indices[:remaining_sample_size]
+                source_sample_indices = np.concatenate(
+                    [np.tile(source_indices, n_repetitions), sample_indices]
+                )
                 write_array_to_disk(source_sample_indices, source_sample_path)
         self._source_sample_paths = tuple(source_sample_paths)
         dist_utils.barrier()
@@ -164,7 +164,7 @@ class SamplingInstanceSource(InstanceSource):
                     source_sample_indices_path,
                     idx - source_start_offset,
                     idx - source_start_offset + 1,
-                    np.uint64,
+                    self._dtype,
                 )[0]
                 return source[int(idx_in_source)]
             source_start_offset = source_end_offset
