@@ -82,27 +82,27 @@ def get_hf_config(model: Transformer) -> PretrainedConfig:
         return _get_flex_olmo_config(model)
 
     blocks = list(model.blocks.values())
-    if not isinstance(blocks[0], ReorderedNormTransformerBlock):
+    first_block = blocks[0]
+    if not isinstance(first_block, ReorderedNormTransformerBlock):
         raise NotImplementedError(
             f"Block is not a {ReorderedNormTransformerBlock.__name__}, unable to build HF config for {model.__class__.__name__}"
         )
 
-    if not isinstance(blocks[0].attention, Attention):
+    if not isinstance(first_block.attention, Attention):
         raise NotImplementedError(
             f"Attention is not a {Attention.__name__}, unable to build HF config for {model.__class__.__name__}"
         )
-    if blocks[0].attention.rope is None:
+    if first_block.attention.rope is None:
         raise NotImplementedError(
             f"Attention does not use rope, unable to build HF config for {model.__class__.__name__}"
         )
 
-    if blocks[0].attention.backend is None:
+    if first_block.attention.backend is None:
         raise ValueError("Attention backend is not set.")
 
     rope_scaling = _get_and_validate_rope_scaling_config(blocks)
 
     # Extract common configuration parameters
-    first_block = blocks[0]
     common_config_args = {
         "vocab_size": model.vocab_size,
         "hidden_size": model.d_model,
