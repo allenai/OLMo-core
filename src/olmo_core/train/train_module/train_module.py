@@ -156,7 +156,7 @@ class TrainModule(Stateful, metaclass=ABCMeta):
         return self.state_dict(optim=optim)
 
     @abstractmethod
-    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
+    def load_state_dict(self, state_dict: Dict[str, Any], **kwargs) -> None:
         """
         Load a state dict.
         """
@@ -281,15 +281,15 @@ class BasicTrainModule(TrainModule):
             )
         return state_dict
 
-    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
+    def load_state_dict(self, state_dict: Dict[str, Any], strict: bool =True) -> None:
         dist_cp_sd.set_model_state_dict(
-            self.model, state_dict["model"], options=dist_cp_sd.StateDictOptions(strict=True)
+            self.model, state_dict["model"], options=dist_cp_sd.StateDictOptions(strict=strict)
         )
         dist_cp_sd.set_optimizer_state_dict(
             self.model,
             self.optim,
             state_dict["optim"],
-            options=dist_cp_sd.StateDictOptions(strict=True),
+            options=dist_cp_sd.StateDictOptions(strict=strict),
         )
 
     def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):

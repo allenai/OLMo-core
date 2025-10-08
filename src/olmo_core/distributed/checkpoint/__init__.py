@@ -162,6 +162,8 @@ def load_state_dict(
     reader = RemoteFileSystemReader(
         dir, thread_count=thread_count, pre_download=pre_download, work_dir=work_dir
     )
+    if allow_partial_load:
+        log.info("Allowing partial load")
     dist_cp.load(
         state_dict,
         checkpoint_id=dir,
