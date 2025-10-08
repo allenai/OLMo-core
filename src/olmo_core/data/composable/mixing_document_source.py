@@ -101,6 +101,9 @@ class MixingDocumentSource(DocumentSource):
     Config = MixingDocumentSourceConfig
     """The config class for this source."""
 
+    Spec = MixingDocumentSourceSpec
+    """The mixing spec class for this source."""
+
     def __init__(
         self,
         *source_specs: MixingDocumentSourceSpec,
@@ -145,6 +148,7 @@ class MixingDocumentSource(DocumentSource):
         sha256_hash.update((f"class={self.__class__.__name__},source={self._source}").encode())
         return sha256_hash.hexdigest()
 
+    @property
     def num_tokens(self) -> int:
         return self._source.num_tokens
 
