@@ -204,12 +204,20 @@ class Checkpointer:
         state_dict = train_module.state_dict_to_load(metadata)
         # if we have keys to ignore, remove them
         if keys_to_ignore:
-            log.info(f"Filtering {len(state_dict['model'])} keys down to ignore these keys: {keys_to_ignore}")
+            log.info(f"Filtering {len(state_dict['model'])} model keys down to ignore these keys: {keys_to_ignore}")
             keys_to_ignore = [re.compile(key) for key in keys_to_ignore]
             state_dict['model'] = {
                 key: value for key, value in state_dict['model'].items() if all([re.search(pattern, key) is None for pattern in keys_to_ignore])
             }
-            log.info(f"After key filtering, there are {len(state_dict['model'])} keys")
+            log.info(f"After key filtering, there are {len(state_dict['model'])} model keys")
+
+
+            log.info(f"Filtering {len(state_dict['optim'])} optim keys down to ignore these keys: {keys_to_ignore}")
+            keys_to_ignore = [re.compile(key) for key in keys_to_ignore]
+            state_dict['optim'] = {
+                key: value for key, value in state_dict['optim'].items() if all([re.search(pattern, key) is None for pattern in keys_to_ignore])
+            }
+            log.info(f"After key filtering, there are {len(state_dict['optim'])} keys")
 
         load_state_dict(
             train_module_dir,
