@@ -124,12 +124,12 @@ class PIRoPEScalingConfig(RoPEScalingConfig):
 
 @dataclass
 class StepwiseRoPEScalingConfig(RoPEScalingConfig):
-    """
-    Step-wise RoPE scaling (aka "Per-frequency" scaling or Llama-3.1 scaling).
+    """Step-wise RoPE scaling (aka "Per-frequency" scaling or Llama-3.1 scaling).
 
-    Reference: https://huggingface.co/meta-llama/Llama-3.1-8B/blob/refs%2Fpr%2F3/README.md
+    Reference: `Llama-3.1-8B README <https://huggingface.co/meta-llama/Llama-3.1-8B/blob/refs%2Fpr%2F3/README.md>`_
 
     Scales RoPE to longer sequence lengths by interpolating between high- and low-frequency components.
+
     1. **High-frequency band** (short wavelengths) – keeps the original frequencies unchanged.
         These correspond to the very first dimensions of the rotary embedding and already encode
         short-range ordering well.
