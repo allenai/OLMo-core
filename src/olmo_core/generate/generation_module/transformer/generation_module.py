@@ -63,7 +63,7 @@ class TransformerGenerationModule(GenerationModule):
 
         self.device = device or get_default_device()
 
-        if torch.cuda.is_available():
+        if torch.cuda.is_available() and self.device.type == "cuda":
             device_name = torch.cuda.get_device_name(self.device)
             if "H100" not in device_name:
                 log_or_print(
