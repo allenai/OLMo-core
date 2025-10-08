@@ -544,3 +544,202 @@ class SequentialScheduler(Scheduler):
 
         assert t_max > 0
         return self.schedulers[-1].get_lr(initial_lr, current, t_max)
+
+
+@dataclass
+class RepeatedWSD(Scheduler):
+    """
+    Repeated Warmup-Stable-Decay (WSD) scheduler for scaling law experiments.
+    
+    This scheduler repeats a WSD pattern every `cycle_length` steps/tokens, ensuring that
+    each cycle ends with the learning rate decayed to its minimum value. This is designed
+    for ladder/scaling law runs where checkpoints are saved at the end of each cycle
+    when LR is at its minimum.
+    
+    Each cycle consists of:
+    1. Warmup phase: LR increases from warmup_min_lr to initial_lr
+    2. Stable phase: LR remains at initial_lr
+    3. Decay phase: LR decreases from initial_lr to decay_min_lr
+    
+    The cycle ends exactly when LR reaches decay_min_lr, making it ideal for checkpointing.
+    """
+    
+    cycle_length: int
+    """Number of steps/tokens for each WSD cycle. Checkpoint is saved at the end of each cycle."""
+    
+    warmup: Optional[int] = None
+    warmup_steps: Optional[int] = None  # deprecated, use 'warmup' instead.
+    warmup_fraction: Optional[float] = None
+    """Fraction of each cycle used for warmup, or absolute number of steps/tokens."""
+    
+    decay: Optional[int] = None
+    decay_steps: Optional[int] = None  # deprecated, use 'decay' instead.
+    decay_fraction: Optional[float] = 0.1
+    """Fraction of each cycle used for decay, or absolute number of steps/tokens."""
+    
+    warmup_min_lr: float = 0.0
+    """Minimum LR at the start of each warmup phase."""
+    
+    decay_min_lr: float = 0.0
+    """Minimum LR at the end of each decay phase (checkpoint point)."""
+    
+    restart_warmup_from_min: bool = True
+    """If True, each cycle starts warmup from warmup_min_lr. If False, starts from decay_min_lr of previous cycle."""
+
+    def __post_init__(self):
+        if self.cycle_length <= 0:
+            raise OLMoConfigurationError("'cycle_length' must be positive.")
+            
+        if self.warmup is None and self.warmup_steps is not None:
+            self.warmup = self.warmup_steps
+            self.warmup_steps = None
+            warnings.warn(
+                f"'{self.__class__.__name__}.warmup_steps' is deprecated, please use '.warmup' instead.",
+                DeprecationWarning,
+            )
+
+        if (self.warmup_fraction is None) == (self.warmup is None):
+            raise OLMoConfigurationError("Either 'warmup_fraction' or 'warmup' must be specified.")
+
+        if self.warmup_fraction is not None and (
+            self.warmup_fraction < 0 or self.warmup_fraction > 1
+        ):
+            raise OLMoConfigurationError("'warmup_fraction' must be between 0 and 1.")
+
+        if self.decay is None and self.decay_steps is not None:
+            self.decay = self.decay_steps
+            self.decay_steps = None
+            warnings.warn(
+                f"'{self.__class__.__name__}.decay_steps' is deprecated, please use '.decay' instead.",
+                DeprecationWarning,
+            )
+
+        if (self.decay_fraction is None) == (self.decay is None):
+            raise OLMoConfigurationError(
+                "Either 'decay_fraction' or 'decay' must be specified. Never both."
+            )
+
+        if self.decay_fraction is not None and (self.decay_fraction < 0 or self.decay_fraction > 1):
+            raise OLMoConfigurationError("'decay_fraction' must be between 0 and 1.")
+            
+        # Validate that warmup + decay don't exceed cycle length
+        if self.warmup is not None and self.decay is not None:
+            if self.warmup + self.decay > self.cycle_length:
+                raise OLMoConfigurationError(
+                    f"warmup ({self.warmup}) + decay ({self.decay}) exceeds cycle_length ({self.cycle_length})"
+                )
+        elif self.warmup_fraction is not None and self.decay_fraction is not None:
+            if self.warmup_fraction + self.decay_fraction > 1.0:
+                raise OLMoConfigurationError(
+                    f"warmup_fraction ({self.warmup_fraction}) + decay_fraction ({self.decay_fraction}) exceeds 1.0"
+                )
+
+    def get_lr(
+        self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
+    ) -> Union[float, torch.Tensor]:
+        """
+        Get learning rate for the current step within repeated WSD cycles.
+        
+        Each cycle of length `cycle_length` follows a WSD pattern, with the cycle
+        ending exactly when LR reaches decay_min_lr (ideal for checkpointing).
+        """
+        # Determine which cycle we're in and position within that cycle
+        cycle_idx = current // self.cycle_length
+        position_in_cycle = current % self.cycle_length
+        
+        # Calculate warmup and decay lengths for this cycle
+        if self.warmup is None:
+            assert self.warmup_fraction is not None
+            warmup = round(self.cycle_length * self.warmup_fraction)
+        else:
+            warmup = min(self.warmup, self.cycle_length)
+            
+        if self.decay is None:
+            assert self.decay_fraction is not None
+            decay = round(self.cycle_length * self.decay_fraction)
+        else:
+            decay = min(self.decay, self.cycle_length)
+            
+        # Ensure warmup + decay don't exceed cycle length
+        if warmup + decay > self.cycle_length:
+            # Proportionally reduce both to fit
+            total = warmup + decay
+            warmup = round(warmup * self.cycle_length / total)
+            decay = self.cycle_length - warmup
+            
+        # Calculate stable phase length
+        stable = self.cycle_length - warmup - decay
+        
+        # Determine which phase we're in within the current cycle
+        if position_in_cycle < warmup:
+            # Warmup phase
+            if self.restart_warmup_from_min or cycle_idx == 0:
+                start_lr = self.warmup_min_lr
+            else:
+                start_lr = self.decay_min_lr
+            return _linear_warmup(initial_lr, position_in_cycle, warmup, start_lr)
+            
+        elif position_in_cycle < warmup + stable:
+            # Stable phase
+            return initial_lr
+            
+        else:
+            # Decay phase
+            decay_position = position_in_cycle - warmup - stable
+            # Linear decay from initial_lr to decay_min_lr
+            # Note: _linear_decay expects "steps from end", so we need to reverse!!
+            steps_from_end = decay - decay_position - 1
+            return _linear_decay(initial_lr, steps_from_end, decay, self.decay_min_lr)
+            
+    def get_cycle_info(self, current: int) -> Dict[str, Any]:
+        """
+        Get information about the current position within the cycle.
+        Useful for logging and debugging.
+        
+        Returns:
+            Dictionary containing:
+            - cycle_idx: Current cycle number (0-indexed)
+            - position_in_cycle: Position within current cycle
+            - phase: Current phase ('warmup', 'stable', or 'decay')
+            - is_checkpoint_step: Whether this is a checkpoint step (end of cycle)
+        """
+        cycle_idx = current // self.cycle_length
+        position_in_cycle = current % self.cycle_length
+        
+        # Calculate phase boundaries
+        if self.warmup is None:
+            assert self.warmup_fraction is not None
+            warmup = round(self.cycle_length * self.warmup_fraction)
+        else:
+            warmup = min(self.warmup, self.cycle_length)
+            
+        if self.decay is None:
+            assert self.decay_fraction is not None
+            decay = round(self.cycle_length * self.decay_fraction)
+        else:
+            decay = min(self.decay, self.cycle_length)
+            
+        if warmup + decay > self.cycle_length:
+            total = warmup + decay
+            warmup = round(warmup * self.cycle_length / total)
+            decay = self.cycle_length - warmup
+            
+        stable = self.cycle_length - warmup - decay
+        
+        # Determine phase
+        if position_in_cycle < warmup:
+            phase = "warmup"
+        elif position_in_cycle < warmup + stable:
+            phase = "stable"
+        else:
+            phase = "decay"
+            
+        # Check if this is a checkpoint step (last step of cycle)
+        is_checkpoint_step = (position_in_cycle == self.cycle_length - 1)
+        
+        return {
+            "cycle_idx": cycle_idx,
+            "position_in_cycle": position_in_cycle,
+            "phase": phase,
+            "is_checkpoint_step": is_checkpoint_step,
+        }
