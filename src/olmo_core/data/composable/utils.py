@@ -100,3 +100,56 @@ def as_tensor(array: Union[Sequence[int], Sequence[bool]]) -> torch.Tensor:
             return torch.tensor(array.astype(np.int_), dtype=torch.long, device="cpu")
     else:
         return torch.tensor(array, device="cpu")
+
+
+def calculate_sample_sizes(
+    source_sizes: Sequence[int],
+    target_ratios: Sequence[float],
+    max_repetitions_per_source: Sequence[float],
+) -> np.ndarray:
+    """
+    Calculate the number of items needed to sample from each source in order to match the target ratios.
+    """
+    assert len(source_sizes) == len(target_ratios) == len(max_repetitions_per_source)
+
+    ratios = np.array(target_ratios)
+    sizes = np.array(source_sizes)
+    max_repetitions = np.array(max_repetitions_per_source)
+
+    assert (ratios > 0.0).all()
+    assert (max_repetitions >= 1.0).all()
+
+    # Normalize ratios.
+    ratios = ratios / ratios.sum()
+
+    # Determine the number of instances to sample from each source.
+    # This is tricky because the sources may have different sizes, yet we want to stay
+    # true to the sampling ratios while minimizing the number of dropped or over-sampled items.
+    # To that end, the optimal natural distribution of items over sources is the one that
+    # matches the target sampling ratios. We'll call that the 'ideal_sample_sizes'.
+    total_size = sizes.sum()
+    ideal_sample_sizes = total_size * ratios
+    # But since the actual (natural) distribution probably differs from the ideal one, it's
+    # not possible to match the target ratios without some dropping or oversampling.
+    # So we first calculate how much oversampling/repetition is needed per source, and then cap that
+    # according to the given `max_repetitions_per_source`.
+    max_repetitions_needed = np.maximum(ideal_sample_sizes / sizes, 1.0)
+    repetitions_to_use = np.minimum(max_repetitions, max_repetitions_needed)
+    # Now we can adjust sizes based on the repetitions needed.
+    sizes_to_use = sizes * repetitions_to_use
+    # Lastly, we need to adjust the ideal sample sizes down until by the smallest common factor
+    # that would result in all sample sizes being less than or equal to the number of items available
+    # from the corresponding source. We can calculate that factor by finding the source with the
+    # largest relative difference between its available size (number of items after oversampling) and
+    # its ideal sample size, and taking that ratio.
+    adjustment_factor = min(1.0, (sizes_to_use / ideal_sample_sizes).min())
+    actual_sample_sizes = ideal_sample_sizes * adjustment_factor
+
+    # Sanity check.
+    # Sample sizes should stay true to target ratios.
+    assert np.allclose(ratios, actual_sample_sizes / actual_sample_sizes.sum())
+    # And sample sizes shouldn't be larger than the number of instances available.
+    actual_sample_sizes = actual_sample_sizes.astype(np.uint64)
+    assert (actual_sample_sizes <= sizes_to_use).all()
+
+    return actual_sample_sizes

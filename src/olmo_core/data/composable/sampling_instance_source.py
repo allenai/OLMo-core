@@ -20,6 +20,7 @@ class SamplingInstanceSourceConfig(InstanceSourceConfig):
     sources: List[InstanceSourceConfig]
     max_instances: int
     seed: Optional[int] = None
+    allow_repetition: bool = False
 
     def build(self, work_dir: PathOrStr) -> "SamplingInstanceSource":
         return SamplingInstanceSource(
@@ -27,6 +28,7 @@ class SamplingInstanceSourceConfig(InstanceSourceConfig):
             max_instances=self.max_instances,
             work_dir=work_dir,
             seed=self.seed,
+            allow_repetition=self.allow_repetition,
         )
 
 
@@ -38,6 +40,8 @@ class SamplingInstanceSource(InstanceSource):
     :param max_instances: The maximum number of instances to sample.
     :param seed: A optional seed for sampling. If ``None``, the first ``N_s`` instances are taken
       from each source where ``N_s`` is proportional to the size of the source.
+    :param allow_repetition: Allow repeated instances (oversampling) to meet the target ``max_instances``
+      if needed.
     """
 
     Config = SamplingInstanceSourceConfig
@@ -48,6 +52,7 @@ class SamplingInstanceSource(InstanceSource):
         max_instances: int,
         work_dir: PathOrStr,
         seed: Optional[int] = None,
+        allow_repetition: bool = False,
     ):
         if not sources:
             raise OLMoConfigurationError("At least one source must be provided.")
@@ -69,17 +74,16 @@ class SamplingInstanceSource(InstanceSource):
         self._sources = sources
         self._max_instances = max_instances
         self._seed = seed
+        self._allow_repetition = allow_repetition
 
         # Determine how many instances to sample from each source.
         total_instances = sum(len(source) for source in self.sources)
-        max_instances = min(max_instances, total_instances)
+        max_instances = max_instances if allow_repetition else min(max_instances, total_instances)
         source_sample_sizes: List[int] = []
         for source in sources:
-            if max_instances == total_instances:
-                source_sample_sizes.append(len(source))
-            else:
-                # We want `len(source) / total_instances ~= source_sample_size / max_instances`.
-                source_sample_sizes.append(int(max_instances * (len(source) / total_instances)))
+            # We want `len(source) / total_instances ~= source_sample_size / max_instances`,
+            # so `source_sample_size = max_instances * (len(source) / total_instances)`.
+            source_sample_sizes.append(int(max_instances * (len(source) / total_instances)))
         self._source_sample_sizes = tuple(source_sample_sizes)
 
         # Sample indices from each source.
@@ -93,10 +97,18 @@ class SamplingInstanceSource(InstanceSource):
             if self.fs_local_rank == 0:
                 if rng is None:
                     source_sample_indices = np.arange(sample_size, dtype=np.uint64)
+                    source_sample_indices = np.mod(source_sample_indices, len(source))
                 else:
-                    source_sample_indices = np.arange(len(source), dtype=np.uint64)
-                    rng.shuffle(source_sample_indices)
-                    source_sample_indices = source_sample_indices[:sample_size]
+                    source_sample_indices = np.array([], dtype=np.uint64)
+                    while source_sample_indices.size < sample_size:
+                        sample_indices = np.arange(len(source), dtype=np.uint64)
+                        rng.shuffle(sample_indices)
+                        sample_indices = sample_indices[
+                            : (sample_size - source_sample_indices.size)
+                        ]
+                        source_sample_indices = np.concatenate(
+                            [source_sample_indices, sample_indices]
+                        )
                 write_array_to_disk(source_sample_indices, source_sample_path)
         self._source_sample_paths = tuple(source_sample_paths)
         dist_utils.barrier()
@@ -125,7 +137,12 @@ class SamplingInstanceSource(InstanceSource):
     def fingerprint(self) -> str:
         sha256_hash = hashlib.sha256()
         sha256_hash.update(
-            (f"class={self.__class__.__name__},{self.max_instances=},{self.seed=},").encode()
+            (
+                f"class={self.__class__.__name__},"
+                f"{self.max_instances=},"
+                f"{self.seed=},"
+                f"repetition={self._allow_repetition}"
+            ).encode()
         )
         for source in self.sources:
             sha256_hash.update(f"source={source.fingerprint},".encode())

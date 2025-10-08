@@ -25,6 +25,7 @@ class SamplingTokenSourceConfig(TokenSourceConfig):
     sources: List[TokenSourceConfig]
     max_tokens: int
     seed: Optional[int] = None
+    allow_repetition: bool = False
 
     def build(self, work_dir: PathOrStr) -> List["SamplingTokenSource"]:  # type: ignore[override]
         sources = [s for source in self.sources for s in source.build(work_dir=work_dir)]
@@ -34,6 +35,7 @@ class SamplingTokenSourceConfig(TokenSourceConfig):
                 max_tokens=self.max_tokens,
                 seed=self.seed,
                 work_dir=work_dir,
+                allow_repetition=self.allow_repetition,
             )
         ]
 
@@ -52,6 +54,8 @@ class SamplingTokenSource(TokenSource):
     :param max_tokens: The maximum number of tokens to sample.
     :param seed: A optional seed for sampling. If ``None``, the first ``N_s`` tokens are taken
       from each source where ``N_s`` is proportional to the size of the source.
+    :param allow_repetition: Allow repeated tokens (oversampling) to meet the target ``max_tokens``
+      if needed.
     :param work_dir: A local working directory for caching preprocessing results.
     """
 
@@ -63,36 +67,45 @@ class SamplingTokenSource(TokenSource):
         max_tokens: int,
         seed: Optional[int] = None,
         work_dir: PathOrStr,
+        allow_repetition: bool = False,
     ):
         super().__init__(work_dir=work_dir)
         if not sources:
             raise ValueError("At least one source must be provided.")
-        self._sources = sources
         assert max_tokens > 0
         self._max_tokens = max_tokens
         self._seed = seed
+        self._allow_repetition = allow_repetition
 
         # Determine how many tokens to sample from each source.
-        total_tokens = sum(source.num_tokens for source in self.sources)
-        max_tokens = min(max_tokens, total_tokens)
+        total_tokens = sum(source.num_tokens for source in sources)
+        max_tokens = max_tokens if allow_repetition else min(max_tokens, total_tokens)
         source_sample_sizes: List[int] = []
         for source in sources:
-            if max_tokens == total_tokens:
-                source_sample_sizes.append(source.num_tokens)
-            else:
-                # We want `source.num_tokens / total_tokens ~= source_sample_size / max_tokens`.
-                source_sample_sizes.append(int(max_tokens * (source.num_tokens / total_tokens)))
+            # We want `source.num_tokens / total_tokens ~= source_sample_size / max_tokens`,
+            # so `source_sample_size = max_tokens * (source.num_tokens / total_tokens)`.
+            source_sample_sizes.append(int(max_tokens * (source.num_tokens / total_tokens)))
 
-        # Determine sampling start/end offsets for each source.
+        # Determine number of repetitions and sampling start/end offsets for each source.
         rng = None if seed is None else get_rng(seed)
-        source_sampling_offsets: List[Tuple[int, int]] = []
+        final_sources: List[TokenSource] = []
+        source_sampling_specs: List[Tuple[int, int]] = []
         for source, source_sample_size in zip(sources, source_sample_sizes):
-            if rng is None:
-                source_sampling_offsets.append((0, source_sample_size))
-            else:
-                start_idx = rng.integers(0, source.num_tokens - source_sample_size)
-                source_sampling_offsets.append((start_idx, start_idx + source_sample_size))
-        self._source_sampling_offsets = tuple(source_sampling_offsets)
+            n_repetitions = source_sample_size // source.num_tokens
+            final_sources.extend([source] * n_repetitions)
+            source_sampling_specs.extend([(0, source.num_tokens)] * n_repetitions)
+
+            remaining_sample_size = source_sample_size % source.num_tokens
+            if remaining_sample_size > 0:
+                if rng is None:
+                    source_sampling_specs.append((0, remaining_sample_size))
+                else:
+                    start_idx = rng.integers(0, source.num_tokens - remaining_sample_size)
+                    source_sampling_specs.append((start_idx, start_idx + remaining_sample_size))
+                final_sources.append(source)
+
+        self._sources = tuple(final_sources)
+        self._source_sampling_specs = tuple(source_sampling_specs)
 
     @property
     def sources(self) -> Tuple[TokenSource, ...]:
@@ -104,7 +117,7 @@ class SamplingTokenSource(TokenSource):
 
     @ft.cached_property
     def num_tokens(self) -> int:
-        return sum((end_idx - start_idx) for (start_idx, end_idx) in self._source_sampling_offsets)
+        return sum((end_idx - start_idx) for (start_idx, end_idx) in self._source_sampling_specs)
 
     @property
     def seed(self) -> Optional[int]:
@@ -118,6 +131,7 @@ class SamplingTokenSource(TokenSource):
                 f"class={self.__class__.__name__},"
                 f"max_tokens={self.max_tokens},"
                 f"seed={self.seed},"
+                f"repetition={self._allow_repetition},"
             ).encode()
         )
         for source in self.sources:
@@ -131,7 +145,7 @@ class SamplingTokenSource(TokenSource):
         mask_chunks: List[np.ndarray] = []
         source_start_offset = 0
         for source, (source_sample_start, source_sample_end) in zip(
-            self.sources, self._source_sampling_offsets
+            self.sources, self._source_sampling_specs
         ):
             source_sample_size = source_sample_end - source_sample_start
             source_end_offset = source_start_offset + source_sample_size

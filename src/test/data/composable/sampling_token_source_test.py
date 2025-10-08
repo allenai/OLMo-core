@@ -18,6 +18,20 @@ def test_sampling_token_source(tmp_path: Path):
     assert list(source[6:10]["input_ids"]) == [6, 7, 10, 11]
 
 
+def test_sampling_token_source_with_repetition(tmp_path: Path):
+    source = SamplingTokenSource(
+        InMemoryTokenSource(list(range(10)), work_dir=tmp_path),
+        InMemoryTokenSource(list(range(10, 20)), work_dir=tmp_path),
+        max_tokens=24,
+        work_dir=tmp_path,
+        allow_repetition=True,
+    )
+    assert source.num_tokens == 24
+    assert list(source[:]["input_ids"]) == list(range(10)) + list(range(0, 2)) + list(
+        range(10, 20)
+    ) + list(range(10, 12))
+
+
 @pytest.mark.parametrize("seed", [0, 542, 1234])
 def test_sampling_token_source_with_random_sampling(tmp_path: Path, seed: int):
     source = SamplingTokenSource(

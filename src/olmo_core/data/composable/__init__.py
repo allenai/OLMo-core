@@ -62,6 +62,7 @@ from .mixing_instance_source import (
     MixingInstanceSource,
     MixingInstanceSourceConfig,
     MixingInstanceSourceSpec,
+    MixingInstanceSourceSpecConfig,
 )
 from .numpy_document_source import (
     NumpyDocumentSource,
@@ -133,4 +134,5 @@ __all__ = [
     "LongDocStrategy",
     "ShuffleStrategy",
     "MixingInstanceSourceSpec",
+    "MixingInstanceSourceSpecConfig",
 ]

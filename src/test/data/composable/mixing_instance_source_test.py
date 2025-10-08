@@ -1,27 +1,30 @@
 from pathlib import Path
 
 from olmo_core.data.composable import ConcatAndChunkInstanceSource, InMemoryTokenSource
-from olmo_core.data.composable.mixing_instance_source import MixingInstanceSource
+from olmo_core.data.composable.mixing_instance_source import (
+    MixingInstanceSource,
+    MixingInstanceSourceSpec,
+)
 
 
 def test_mixing_instance_source(tmp_path: Path):
     sequence_length = 8
     source = MixingInstanceSource(
-        (
-            0.50,
-            ConcatAndChunkInstanceSource(
+        MixingInstanceSourceSpec(
+            source=ConcatAndChunkInstanceSource(
                 InMemoryTokenSource(list(range(64)), work_dir=tmp_path),
                 sequence_length=sequence_length,
                 work_dir=tmp_path,
             ),
+            ratio=0.50,
         ),
-        (
-            0.50,
-            ConcatAndChunkInstanceSource(
+        MixingInstanceSourceSpec(
+            source=ConcatAndChunkInstanceSource(
                 InMemoryTokenSource(list(range(64, 256)), work_dir=tmp_path),
                 sequence_length=sequence_length,
                 work_dir=tmp_path,
             ),
+            ratio=0.50,
         ),
         work_dir=tmp_path,
     )
