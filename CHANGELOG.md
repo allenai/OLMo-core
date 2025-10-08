@@ -66,7 +66,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added additional internal configuration tools.
 - Added a new named data mix that we used for the 32B run
 - Added internal OLMo3 7B midtraining config.
-- Added ability to convert OLMo3 models to HF format with support for rope scaling configs.
+- Added ability to convert OLMo3 models to/from HF format with support for rope scaling configs.
 
 
 ## [v2.2.0](https://github.com/allenai/OLMo-core/releases/tag/v2.2.0) - 2025-08-26
