@@ -171,6 +171,11 @@ class Trainer:
     The strategy for loading a checkpoint prior to training.
     """
 
+    keys_to_ignore: Optional[list] = None
+    """
+    keys to NOT initialize from a loaded checkpoint
+    """
+
     load_trainer_state: Optional[bool] = None
     """
     Whether to load trainer and optimizer state from the checkpoint.
@@ -776,6 +781,7 @@ class Trainer:
             dir,
             self.train_module,
             load_trainer_state=load_trainer_state,
+            keys_to_ignore=self.keys_to_ignore,
         )
         if trainer_state is not None:
             self.load_state_dict(cast(TrainerStateDict, trainer_state))

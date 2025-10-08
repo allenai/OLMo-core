@@ -148,6 +148,7 @@ def load_state_dict(
     pre_download: bool = False,
     work_dir: Optional[PathOrStr] = None,
     thread_count: Optional[int] = None,
+    allow_partial_load=False
 ):
     """
     Load an arbitrary state dict in-place from a checkpoint saved with :func:`save_state_dict()`.
@@ -166,6 +167,7 @@ def load_state_dict(
         checkpoint_id=dir,
         storage_reader=reader,
         process_group=process_group,
+        planner=dist_cp.default_planner.DefaultLoadPlanner(allow_partial_load=allow_partial_load) # potentially allow loading with keys missing
     )
 
 

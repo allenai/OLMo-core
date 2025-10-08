@@ -101,6 +101,7 @@ class LoadStrategy(StrEnum):
     """
 
 
+
 class ReduceType(StrEnum):
     """
     An enumeration of the allowed ways to reduce a metric across ranks.

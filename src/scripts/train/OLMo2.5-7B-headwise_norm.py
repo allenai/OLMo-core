@@ -1,4 +1,5 @@
 from datetime import datetime
+import re
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
@@ -90,7 +91,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             metrics_collect_interval=10,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(int(5e12)),
-            hard_stop=Duration.tokens(int(145e9)) # stop at 145B tokens for this run 
+            hard_stop=Duration.tokens(int(145e9)), # stop at 145B tokens for this run 
+            keys_to_ignore=[re.compile(r'q_norm'), re.compile(r'k_norm')],
         )
         .with_callback(
             "checkpointer",

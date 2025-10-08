@@ -159,6 +159,7 @@ class Checkpointer:
         train_module: TrainModule,
         *,
         load_trainer_state: Optional[bool] = None,
+        keys_to_ignore=None,
     ) -> Optional[Dict[str, Any]]:
         """
         Load model, optim, and other training state from a local or remote checkpoint directory
@@ -201,6 +202,12 @@ class Checkpointer:
             metadata = get_checkpoint_metadata(train_module_dir)
 
         state_dict = train_module.state_dict_to_load(metadata)
+        # if we have keys to ignore, remove them
+        if keys_to_ignore:
+            state_dict = {
+                key: value for key, value in state_dict.items() if any([re.search(pattern, key) is not None for pattern in keys_to_ignore])
+            }
+
         load_state_dict(
             train_module_dir,
             state_dict,
@@ -208,6 +215,7 @@ class Checkpointer:
             pre_download=is_url(dir) and self.pre_download,
             work_dir=self.work_dir,
             thread_count=self.load_thread_count,
+            allow_partial_load=(keys_to_ignore is not None), # only if we're ignoring things on purpose!
         )
         train_module.load_state_dict(state_dict)
 
