@@ -97,14 +97,15 @@ def convert_checkpoint_to_hf(
         if attention_config.name == AttentionType.fused:
             backend = attention_config.backend
             if backend is None:
-                assert attention_config.use_flash, (
-                    "use_flash or flash_2 backend is expected for fused attention"
-                )
+                assert (
+                    attention_config.use_flash
+                ), "use_flash or flash_2 backend is expected for fused attention"
                 backend = AttentionBackendName.flash_2
 
-            assert backend in (AttentionBackendName.flash_2, AttentionBackendName.flash_3), (
-                "flash_2 or flash_3 backend is expected for fused attention"
-            )
+            assert backend in (
+                AttentionBackendName.flash_2,
+                AttentionBackendName.flash_3,
+            ), "flash_2 or flash_3 backend is expected for fused attention"
 
             try:
                 backend.assert_supported()
