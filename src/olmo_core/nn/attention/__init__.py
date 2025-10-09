@@ -43,6 +43,7 @@ from .ring import (
 )
 
 __all__ = [
+    "SlidingWindowAttentionConfig",
     "AttentionType",
     "AttentionBackendName",
     "AttentionBackend",
