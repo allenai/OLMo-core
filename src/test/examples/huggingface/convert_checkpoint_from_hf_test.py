@@ -62,7 +62,8 @@ def hf_model_path(
     if model_family == "olmo2":
         hf_config = Olmo2Config(**common_config)
     elif model_family == "olmo3":
-        pytest.skip("The installed transformers version does not support Olmo3")
+        if Olmo3Config is None:
+            pytest.skip("The installed transformers version does not support Olmo3")
         hf_config = Olmo3Config(**common_config)
     else:
         raise ValueError(f"Unknown model family: {model_family}")

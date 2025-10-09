@@ -51,6 +51,7 @@ def _get_transformer_config(model_arch: str, vocab_size: int) -> TransformerConf
         "olmo2_7b": TransformerConfig.olmo2_7B,
         "olmo2_13b": TransformerConfig.olmo2_13B,
         "olmo2_32b": TransformerConfig.olmo2_32B,
+        "olmo3_190m": TransformerConfig.olmo3_190M,
         "olmo3_7b": TransformerConfig.olmo3_7B,
         "smallmoe": TransformerConfig.smallmoe,
         "olmoe_1b_7b": TransformerConfig.olmoe_1B_7B,
@@ -133,9 +134,9 @@ def convert_checkpoint_from_hf(
         if attention_config.name == AttentionType.fused:
             backend = attention_config.backend
             if backend is None:
-                assert (
-                    attention_config.use_flash
-                ), "use_flash or flash_2 backend is expected for fused attention"
+                assert attention_config.use_flash, (
+                    "use_flash or flash_2 backend is expected for fused attention"
+                )
                 backend = AttentionBackendName.flash_2
 
             assert backend in (
