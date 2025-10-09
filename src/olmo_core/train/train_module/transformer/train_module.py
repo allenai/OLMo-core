@@ -327,6 +327,7 @@ class TransformerTrainModule(TrainModule):
             options=self.state_dict_load_opts,
         )
         gc_cuda()
+
         if load_optim:
             dist_cp_sd.set_optimizer_state_dict(
                 self.model,
