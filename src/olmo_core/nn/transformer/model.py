@@ -2853,7 +2853,7 @@ class DistillTransformer(Transformer):
         ce_loss = student_out.ce_loss if hasattr(student_out, 'ce_loss') and student_out.ce_loss is not None else student_out.loss
 
         # Store CE loss metric
-        if ce_loss is not None and not torch.isnan(ce_loss):
+        if ce_loss is not None:
             metrics["distill/ce_loss"] = ce_loss
 
         # Run teacher forward pass (no grad)
