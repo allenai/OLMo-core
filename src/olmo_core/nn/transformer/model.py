@@ -70,6 +70,7 @@ __all__ = [
     "Transformer",
     "NormalizedTransformer",
     "MoETransformer",
+    "DistillTransformer",
     "TransformerDataParallelWrappingStrategy",
     "TransformerActivationCheckpointingMode",
 ]
@@ -2651,3 +2652,268 @@ class BLTDistillTransformer(BLTTransformer):
         logits = self.lm_head(h_out, **lm_head_kwargs)
 
         return logits
+
+
+class DistillTransformer(Transformer):
+    """
+    A transformer that enables KL distillation from a teacher model with the same tokenizer.
+    Much simpler than BLTDistillTransformer as it only handles subword-to-subword distillation.
+    """
+
+    def __init__(
+        self,
+        *args,
+        teacher: Optional[Transformer],
+        share_blocks: bool = False,
+        dtype=None,
+        init_device=None,
+        **kwargs
+    ):
+        super().__init__(*args, dtype=dtype, init_device=init_device, **kwargs)
+
+        self.teacher = teacher
+        self.share_blocks = share_blocks
+
+        if self.teacher is not None and self.share_blocks:
+            self.teacher.blocks.clear()
+
+    def _finalize_loss(
+        self,
+        loss: torch.Tensor | float,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None
+    ):
+        """Helper to finalize loss with optional division factor."""
+        if self.lm_head.tp_enabled or self.lm_head.cp_enabled:
+            raise NotImplementedError("Loss division is not implemented for TP or CP.")
+
+        if loss_div_factor is not None:
+            if isinstance(loss_div_factor, torch.Tensor):
+                loss = loss / loss_div_factor
+            else:
+                loss = loss / float(loss_div_factor)
+
+        return loss
+
+    def apply_fp8(self, float8_config: Float8Config):
+        """Apply FP8 recipe to both student and teacher."""
+        if not float8_config.enabled:
+            return
+
+        float8_config.apply_float8_linear(self.blocks)
+        if self.teacher is not None:
+            float8_config.apply_float8_linear(self.teacher.blocks)
+
+        self._fp8_enabled = True
+        self._precompute_float8_dynamic_scale_for_fsdp = (
+            float8_config.should_precompute_float8_dynamic_scale_for_fsdp
+        )
+
+    def apply_compile(self):
+        """Apply torch.compile to both student and teacher blocks."""
+        super().apply_compile()
+
+        if self.teacher is not None:
+            self.teacher.apply_compile()
+
+    def apply_fsdp(self, *args, **kwargs):
+        """Apply FSDP to both teacher and student."""
+        if self.teacher is not None:
+            self.teacher.apply_fsdp(*args, **kwargs)
+
+        super().apply_fsdp(*args, **kwargs)
+
+    def teacher_forward(
+        self,
+        input_ids: torch.Tensor,
+        *,
+        labels: Optional[torch.Tensor] = None,
+        ignore_index: int = -100,
+        loss_reduction: Literal["mean", "sum", "none"] = "mean",
+        z_loss_multiplier: Optional[float] = None,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        return_logits: Optional[bool] = None,
+        **kwargs,
+    ) -> LMOutputWithLoss:
+        """
+        Run the teacher transformer on the token input IDs.
+
+        :param input_ids: The token input IDs, shape ``(batch_size, seq_len)``.
+        :returns: The LM output with logits.
+        """
+        input_ids, labels, block_kwargs, per_block_kwargs, lm_head_kwargs = self.teacher._prepare_inputs(
+            input_ids,
+            labels,
+            ignore_index=ignore_index,
+            loss_reduction=loss_reduction,
+            z_loss_multiplier=z_loss_multiplier,
+            loss_div_factor=loss_div_factor,
+            return_logits=return_logits,
+            **kwargs,
+        )
+
+        # Get embeddings
+        h = self.teacher.embeddings(input_ids)
+
+        # Use student blocks if blocks are shared
+        if self.share_blocks:
+            blocks = self.blocks
+        else:
+            blocks = self.teacher.blocks
+
+        # Run each block
+        dtype = h.dtype
+        global_dtype = torch.bfloat16 if self.blocks["0"].attention.use_flash else dtype  # type: ignore
+
+        h = h.to(global_dtype)
+
+        for block_key, block in blocks.items():
+            block_idx = int(block_key)
+            block_kwargs_for_block = per_block_kwargs.get(block_idx, {})
+            if self.teacher.compile_enabled:
+                mark_dynamic(h, (0, 1), strict=False)
+            h = block(h, **block_kwargs, **block_kwargs_for_block)
+
+        h = h.to(dtype)
+
+        # Get final logits
+        if self.teacher.lm_head is not None:
+            if self.teacher.compile_enabled:
+                mark_dynamic(h, (0, 1), strict=False)
+                if labels is not None:
+                    mark_dynamic(labels, (0, 1), strict=False)
+
+            if labels is not None:
+                lm_head_kwargs["labels"] = labels
+
+            out = self.teacher.lm_head(h, **lm_head_kwargs)
+
+            # Replace loss with NaN since we compute it separately
+            if isinstance(out, LMOutputWithLoss):
+                out = LMOutputWithLoss(
+                    logits=out.logits,
+                    loss=torch.tensor(torch.nan),
+                    ce_loss=torch.tensor(torch.nan),
+                    z_loss=None,
+                )
+
+            return out
+        else:
+            return LMOutputWithLoss(
+                logits=h,
+                loss=torch.tensor(torch.nan),
+                ce_loss=torch.tensor(torch.nan),
+                z_loss=None,
+            )
+
+    def forward(  # type: ignore[override]
+        self,
+        input_ids: torch.Tensor,
+        *,
+        labels: Optional[torch.Tensor] = None,
+        ignore_index: int = -100,
+        loss_reduction: Literal["mean", "sum", "none"] = "mean",
+        z_loss_multiplier: Optional[float] = None,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        return_logits: Optional[bool] = None,
+        temperature: float = 1.0,
+        kl_weight: float = 1.0,
+        ce_weight: float = 0.0,
+        **kwargs,
+    ):
+        """
+        Forward pass with KL distillation.
+
+        :param input_ids: The token input IDs, shape ``(batch_size, seq_len)``.
+        :param labels: The token labels, shape ``(batch_size, seq_len)``.
+        :param ignore_index: The index to ignore in the loss computation.
+        :param loss_reduction: The reduction method for the loss.
+        :param z_loss_multiplier: Optional multiplier for the z-loss regularization term.
+        :param loss_div_factor: Optional divisor for the loss.
+        :param return_logits: Whether to return logits along with the loss.
+        :param temperature: Temperature for KL distillation.
+        :param kl_weight: Weight for the KL divergence loss.
+        :param ce_weight: Weight for the cross-entropy loss.
+        :returns: LMOutputWithLoss and metrics dict.
+        """
+        metrics = {}
+
+        # Run student forward pass (standard transformer forward)
+        student_out = super().forward(
+            input_ids,
+            labels=labels,
+            ignore_index=ignore_index,
+            loss_reduction=loss_reduction,
+            z_loss_multiplier=z_loss_multiplier,
+            loss_div_factor=loss_div_factor,
+            return_logits=True,
+            **kwargs,
+        )
+
+        student_logits = student_out.logits
+        ce_loss = student_out.ce_loss if hasattr(student_out, 'ce_loss') and student_out.ce_loss is not None else student_out.loss
+
+        # Store CE loss metric
+        if ce_loss is not None and not torch.isnan(ce_loss):
+            metrics["distill/ce_loss"] = ce_loss
+
+        # Run teacher forward pass (no grad)
+        if self.teacher is not None:
+            with torch.no_grad():
+                teacher_out = self.teacher_forward(
+                    input_ids,
+                    labels=labels,
+                    return_logits=True,
+                    **kwargs,
+                )
+                teacher_logits = teacher_out.logits
+
+            # Compute KL divergence loss
+            # KL(teacher || student) where we treat teacher as the "true" distribution
+            if labels is not None:
+                # Create mask for valid positions (not ignore_index)
+                mask = labels != ignore_index
+
+                # Compute log probabilities
+                student_log_probs = F.log_softmax(student_logits.float() / temperature, dim=-1)
+                teacher_log_probs = F.log_softmax(teacher_logits.float() / temperature, dim=-1)
+
+                # Compute KL divergence: KL(P||Q) = sum(P * (log(P) - log(Q)))
+                # We want KL(teacher || student)
+                kl_div = torch.exp(teacher_log_probs) * (teacher_log_probs - student_log_probs)
+                kl_div = kl_div.sum(dim=-1)  # Sum over vocabulary dimension
+
+                # Apply mask and reduce
+                kl_loss = (kl_div * mask.float()).sum() / mask.float().sum()
+
+                # Scale by temperature squared (standard for distillation)
+                kl_loss = kl_loss * (temperature ** 2)
+
+                metrics["distill/kl_loss"] = kl_loss
+                metrics["distill/teacher_entropy"] = -(torch.exp(teacher_log_probs) * teacher_log_probs).sum(dim=-1).mean()
+                metrics["distill/student_entropy"] = -(torch.exp(student_log_probs) * student_log_probs).sum(dim=-1).mean()
+
+                # Finalize losses
+                if loss_div_factor is not None:
+                    kl_loss = self._finalize_loss(kl_loss, loss_div_factor)
+                    ce_loss = self._finalize_loss(ce_loss, loss_div_factor)
+
+                # Combine losses
+                total_loss = ce_weight * ce_loss + kl_weight * kl_loss
+                metrics["distill/total_loss"] = total_loss
+                metrics["distill/kl_weight"] = kl_weight
+                metrics["distill/ce_weight"] = ce_weight
+            else:
+                # No labels, no loss
+                total_loss = torch.tensor(0.0, device=student_logits.device)
+        else:
+            # No teacher, just use CE loss
+            total_loss = ce_loss if ce_loss is not None else torch.tensor(0.0, device=student_logits.device)
+
+        output = LMOutputWithLoss(
+            logits=student_logits,
+            loss=total_loss,
+            ce_loss=ce_loss,
+            z_loss=None,
+        )
+
+        return output, metrics

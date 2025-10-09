@@ -375,13 +375,15 @@ class TransformerTrainModule(TrainModule):
         micro_batches = split_batch(batch, self.rank_microbatch_size // seq_len)
         num_micro_batches = len(micro_batches)
 
+        batch_metrics = {}
+
         # Train one micro-batch at a time.
         for micro_batch_idx, micro_batch in enumerate(micro_batches):
             with self._train_microbatch_context(micro_batch_idx, num_micro_batches):
                 input_ids, labels, model_kwargs = self._prepare_batch(micro_batch)
 
                 # Run forward pass, get losses.
-                _, loss, ce_loss, z_loss = self.model_forward(
+                out = self.model_forward(
                     input_ids,
                     labels=labels,
                     ignore_index=self.label_ignore_index,
@@ -391,6 +393,13 @@ class TransformerTrainModule(TrainModule):
                     return_logits=False,
                     **model_kwargs,
                 )
+                if isinstance(out, tuple):
+                    # metrics + out
+                    (_, loss, ce_loss, z_loss), metrics = out
+                else:
+                    # out only
+                    (_, loss, ce_loss, z_loss) = out
+                    metrics = {}
 
                 # Update total batch CE and Z loss.
                 ce_batch_loss += get_local_tensor(ce_loss.detach())
@@ -399,6 +408,12 @@ class TransformerTrainModule(TrainModule):
                     assert z_loss is not None
                     z_batch_loss += get_local_tensor(z_loss.detach())
                     del z_loss
+
+                for key, value in metrics.items():  # type: ignore
+                    if isinstance(value, torch.Tensor):
+                        batch_metrics[key] = batch_metrics.get(key, 0.0) + get_local_tensor(value.detach()) / num_micro_batches
+                    else:
+                        batch_metrics[key] = batch_metrics.get(key, 0.0) + value / num_micro_batches
 
                 # Run backward pass.
                 loss.backward()
@@ -434,6 +449,14 @@ class TransformerTrainModule(TrainModule):
             self.record_metric(
                 "Z loss unscaled",
                 z_batch_loss / self.z_loss_multiplier,
+                ReduceType.mean,
+                namespace="train",
+            )
+
+        for key, value in batch_metrics.items():
+            self.record_metric(
+                key,
+                value,
                 ReduceType.mean,
                 namespace="train",
             )

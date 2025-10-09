@@ -98,6 +98,11 @@ class TransformerType(StrEnum):
     ➡️ :class:`BLTDistillTransformer`
     """
 
+    distill = "distill"
+    """
+    ➡️ :class:`DistillTransformer`
+    """
+
 
 class TransformerBlockType(StrEnum):
     """
@@ -325,7 +330,7 @@ class TransformerConfig(Config):
         :param init_device: The device to put the parameters on during initialization. In a
             distributed setting it usually makes sense to set this to "meta".
         """
-        from .model import MoETransformer, NormalizedTransformer, Transformer, BLTTransformer, BLTDistillTransformer
+        from .model import MoETransformer, NormalizedTransformer, Transformer, BLTTransformer, BLTDistillTransformer, DistillTransformer
 
         if self.name not in {TransformerType.blt, TransformerType.blt_distill}:
             # not implemented for BLTTransformer
@@ -426,6 +431,27 @@ class TransformerConfig(Config):
                 teacher=self.teacher_config.build(init_device=init_device) if self.teacher_config is not None else None,
                 share_blocks=self.share_blocks_between_teacher_and_student,
                 use_teacher_embs_with_vocab_size=self.use_teacher_embs_with_vocab_size,
+            )
+        elif self.name == TransformerType.distill:
+            if self.teacher_config is None:
+                raise OLMoConfigurationError(
+                    f"teacher_config must be specified for DistillTransformer"
+                )
+
+            model = DistillTransformer(
+                d_model=self.d_model,
+                vocab_size=self.vocab_size,
+                n_layers=self.n_layers,
+                block=self.block,
+                lm_head=self.lm_head,
+                dtype=self.dtype.as_pt(),
+                init_method=self.init_method,
+                init_device=init_device,
+                init_seed=self.init_seed,
+                init_std=self.init_std,
+                block_overrides=self.block_overrides,
+                teacher=self.teacher_config.build(init_device=init_device),
+                share_blocks=self.share_blocks_between_teacher_and_student,
             )
         else:
             raise NotImplementedError(self.name)
