@@ -25,9 +25,6 @@ from olmo_core.train.train_module import (
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
-from olmo_core.train.train_module.transformer.config import (
-    TransformerTensorParallelConfig,
-)
 
 SEQUENCE_LENGTH = 4096
 GLOBAL_BATCH_SIZE = (

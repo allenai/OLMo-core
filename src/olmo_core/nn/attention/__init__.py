@@ -36,7 +36,8 @@ from .backend import (
     TEAttentionBackend,
     TorchAttentionBackend,
 )
-from .flex_attn_api import FlexAttention as FlexAttentionAPI, get_flex_attn_causal_block_mask
+from .flex_attn_api import FlexAttention as FlexAttentionAPI
+from .flex_attn_api import get_flex_attn_causal_block_mask
 from .ring import (
     RingAttentionLlama3LoadBalancer,
     RingAttentionLoadBalancer,
@@ -475,12 +476,14 @@ class Attention(AttentionBase):
 
             # Call FlexAttentionAPI with sinks
             att = self._flex_attn_api.forward(
-                q_flex, k_flex, v_flex,
+                q_flex,
+                k_flex,
+                v_flex,
                 sink_weights=sinks,
                 sliding_window=self.window_size[0] if self.window_size != (-1, -1) else 0,
                 enable_gqa=self.n_kv_heads != self.n_heads,
                 block_mask=block_mask,
-                scale=scale
+                scale=scale,
             )
 
             # Transpose back to expected output shape

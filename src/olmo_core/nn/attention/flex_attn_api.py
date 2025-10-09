@@ -74,7 +74,17 @@ class FlexAttention(torch.nn.Module):
     def mask_key(self) -> FLEX_ATTN_MASK_T:
         return (self.attn_mask_type, self.fixed_block_size)
 
-    def forward(self, q, k, v, sink_weights=None, sliding_window=0, enable_gqa=False, block_mask=None, scale=None):
+    def forward(
+        self,
+        q,
+        k,
+        v,
+        sink_weights=None,
+        sliding_window=0,
+        enable_gqa=False,
+        block_mask=None,
+        scale=None,
+    ):
         """
         q : (B, H_q, S_q, D)
         k : (B, H_kv, S_kv, D)   -- without sink
@@ -96,7 +106,14 @@ class FlexAttention(torch.nn.Module):
             og_dtype = q.dtype
             q_fp32, k_fp32, v_fp32 = q.float(), k.float(), v.float()
             with torch.autocast(enabled=False, device_type=q.device.type):
-                att = FlexAttention.flex_attn(q_fp32, k_fp32, v_fp32, block_mask=block_mask, scale=scale, enable_gqa=enable_gqa)
+                att = FlexAttention.flex_attn(
+                    q_fp32,
+                    k_fp32,
+                    v_fp32,
+                    block_mask=block_mask,
+                    scale=scale,
+                    enable_gqa=enable_gqa,
+                )
             return att.to(dtype=og_dtype)
 
         B, H_q, S_q, D = q.shape
@@ -110,7 +127,7 @@ class FlexAttention(torch.nn.Module):
         v_ext = torch.cat([v, sink_v], dim=2)
 
         cache_key = (B, H_q, S_q, S_kv + 1, sliding_window if sliding_window else -1)
-        
+
         if cache_key not in FlexAttention.sink_block_masks:
             if sliding_window is not None and sliding_window > 0:
                 mask_mod = FlexAttention._get_sliding_window_with_sink_mask_mod(
@@ -140,7 +157,13 @@ class FlexAttention(torch.nn.Module):
         og_dtype = q.dtype
         with torch.autocast(enabled=False, device_type=q.device.type):
             att = FlexAttention.flex_attn(
-                q, k_ext, v_ext, block_mask=block_mask, score_mod=score_mod, scale=scale, enable_gqa=enable_gqa
+                q,
+                k_ext,
+                v_ext,
+                block_mask=block_mask,
+                score_mod=score_mod,
+                scale=scale,
+                enable_gqa=enable_gqa,
             )
         return att.to(dtype=og_dtype)
 
@@ -148,7 +171,7 @@ class FlexAttention(torch.nn.Module):
     def clear_sink_mask_cache(cls):
         """Clear the cached sink block masks to free memory."""
         cls.sink_block_masks.clear()
-    
+
     @staticmethod
     def _get_causal_with_sink_mask_mod(sink_idx):
         """
@@ -281,7 +304,10 @@ class FlexAttention(torch.nn.Module):
                 raise ValueError("Device is required for intra-document masking mod")
 
             document_ids = torch.cat(
-                [torch.full((int(doc_len),), i, device=device) for i, doc_len in enumerate(doc_lens)]
+                [
+                    torch.full((int(doc_len),), i, device=device)
+                    for i, doc_len in enumerate(doc_lens)
+                ]
             )
 
             def _document_masking_mask_mod(
@@ -407,6 +433,7 @@ class FlexAttention(torch.nn.Module):
 def init_attention_mask(batch: torch.Tensor, eos_id: int | None) -> None:
     FlexAttention.init_attention_mask(batch, eos_id)
 
+
 def get_flex_attn_causal_block_mask(
     seq_len: int,
     device: torch.device,
@@ -415,6 +442,4 @@ def get_flex_attn_causal_block_mask(
     block_size: int = 128,
 ) -> BlockMask:
     """Convenience wrapper for FlexAttention.get_causal_block_mask."""
-    return FlexAttention.get_causal_block_mask(
-        seq_len, device, window_size, doc_lens, block_size
-    )
+    return FlexAttention.get_causal_block_mask(seq_len, device, window_size, doc_lens, block_size)
