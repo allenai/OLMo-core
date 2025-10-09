@@ -119,7 +119,11 @@ class FlexAttention(torch.nn.Module):
             else:
                 mask_mod = FlexAttention._get_causal_with_sink_mask_mod(sink_idx)
 
-            block_mask = FlexAttention.compiled_create_block_mask(mask_mod, B, H_q, S_q, S_kv + 1)
+            # Get device from input tensors
+            device = q.device.type
+            block_mask = FlexAttention.compiled_create_block_mask(
+                mask_mod, B, H_q, S_q, S_kv + 1, device=device
+            )
             FlexAttention.sink_block_masks[cache_key] = block_mask
         else:
             block_mask = FlexAttention.sink_block_masks[cache_key]
@@ -402,3 +406,15 @@ class FlexAttention(torch.nn.Module):
 
 def init_attention_mask(batch: torch.Tensor, eos_id: int | None) -> None:
     FlexAttention.init_attention_mask(batch, eos_id)
+
+def get_flex_attn_causal_block_mask(
+    seq_len: int,
+    device: torch.device,
+    window_size: Optional[Tuple[int, int]] = None,
+    doc_lens: Optional[torch.Tensor] = None,
+    block_size: int = 128,
+) -> BlockMask:
+    """Convenience wrapper for FlexAttention.get_causal_block_mask."""
+    return FlexAttention.get_causal_block_mask(
+        seq_len, device, window_size, doc_lens, block_size
+    )

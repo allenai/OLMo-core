@@ -33,12 +33,16 @@ from .flash_attn_api import (
     dispatch_ring_flash_attn,
     dispatch_ring_flash_attn_qkvpacked,
 )
-from .flex_attn_api import FlexAttention as FlexAttentionAPI
+from .flex_attn_api import FlexAttention
 from .ring import (
     RingAttentionLlama3LoadBalancer,
     RingAttentionLoadBalancer,
     RingAttentionLoadBalancerType,
     RingAttentionZigZagLoadBalancer,
+)
+from torch.nn.attention.flex_attention import (
+    BlockMask,
+    flex_attention,
 )
 
 __all__ = [
@@ -376,7 +380,7 @@ class Attention(AttentionBase):
                 )
             if window_size <= 0:
                 raise OLMoConfigurationError(f"'window_size' must be positive (got {window_size})")
-            self.window_size = (window_size - 1, 0)
+            self.window_size = (window_size, 0)
         else:
             self.window_size = (-1, -1)
 
@@ -400,9 +404,9 @@ class Attention(AttentionBase):
         self.use_flash = use_flash
         self.use_flex = use_flex
 
-        self._flex_attn_api: Optional[FlexAttentionAPI] = None
+        self._flex_attn_api: Optional[FlexAttention] = None
         if use_flex:
-            self._flex_attn_api = FlexAttentionAPI(attn_mask_type="causal")
+            self._flex_attn_api = FlexAttention(attn_mask_type="causal")
 
         self._cp_pg: Optional[dist.ProcessGroup] = None
         self._cp_enabled = False
@@ -479,67 +483,70 @@ class Attention(AttentionBase):
                     window_size=self.window_size,
                 )
         elif self.use_flex:
-            if self._flex_attn_api:
-                n_heads_q = q.shape[2]
-                n_kv_heads = k.shape[2]
+            if self._flex_attn_api and sinks is not None:
+                # Transpose to match FlexAttention's expected input shape
+                # FlexAttention expects: (B, H, S, D)
+                q_flex = q.transpose(1, 2)  # (B, S, H, D) -> (B, H, S, D)
+                k_flex = k.transpose(1, 2)
+                v_flex = v.transpose(1, 2)
 
-                # Handle block_mask reshaping for document masking
-                if block_mask is not None and hasattr(block_mask, 'seq_lengths'):
-                    batch_size = q.shape[0]
-                    seq_len_q = q.shape[1]
-                    head_dim = q.shape[3]
-
-                    original_total_tokens_q = batch_size * seq_len_q
-                    original_total_tokens_kv = k.shape[0] * k.shape[1]
-
-                    q = q.view(
-                        original_total_tokens_q // block_mask.seq_lengths[0],
-                        block_mask.seq_lengths[0],
-                        n_heads_q,
-                        head_dim,
-                    )
-                    k = k.view(
-                        original_total_tokens_kv // block_mask.seq_lengths[1],
-                        block_mask.seq_lengths[1],
-                        n_kv_heads,
-                        head_dim,
-                    )
-                    v = v.view(
-                        original_total_tokens_kv // block_mask.seq_lengths[1],
-                        block_mask.seq_lengths[1],
-                        n_kv_heads,
-                        head_dim,
-                    )
-
-                q = q.transpose(1, 2)
-                k = k.transpose(1, 2)
-                v = v.transpose(1, 2)
-
-                # Prepare sink weights
-                sink_weights = None
-                if sinks is not None:
-                    if hasattr(sinks, "to_local"):
-                        sink_weights = sinks.to_local()
-                    elif hasattr(sinks, "_local_tensor"):
-                        sink_weights = sinks._local_tensor
-                    else:
-                        sink_weights = sinks
-
-                sliding_window = None
-                if self.window_size != (-1, -1):
-                    sliding_window = self.window_size[0]
-
-                att = self._flex_attn_api(
-                    q,
-                    k,
-                    v,
-                    sink_weights=sink_weights,
-                    sliding_window=sliding_window,
-                    enable_gqa=(n_kv_heads != n_heads_q),
-                    block_mask=block_mask,  # Pass block_mask if available
-                    scale=scale,
+                # Call FlexAttention with sinks
+                att = self._flex_attn_api.forward(
+                    q_flex, k_flex, v_flex,
+                    sink_weights=sinks,
+                    sliding_window=self.window_size[0] if self.window_size != (-1, -1) else 0,
+                    enable_gqa=self.n_kv_heads != self.n_heads,
+                    block_mask=block_mask,
+                    scale=scale
                 )
 
+                # Transpose back to expected output shape
+                att = att.transpose(1, 2)  # (B, H, S, D) -> (B, S, H, D)
+
+            else:
+                if self.dropout_p != 0:
+                    raise NotImplementedError("Our flex attention does not yet support dropout.")
+                if block_mask is None:
+                    raise ValueError("Block mask missing during flex attention.")
+
+                # Reshape (batch_size, seq_len) so that the seq_len matches that of the block mask.
+                # This is needed for intra-document masking, in which case the block mask sequence
+                # length is batch_size * seq_len.
+                # shape: (batch_size, seq_len, n_heads, head_dim)
+                #        (batch_size, seq_len, n_kv_heads, head_dim),
+                #        (batch_size, seq_len, n_kv_heads, head_dim)
+                q = q.view(
+                    q.shape[0] * q.shape[1] // block_mask.seq_lengths[0],
+                    block_mask.seq_lengths[0],
+                    *q.shape[2:],
+                )
+                k = k.view(
+                    k.shape[0] * k.shape[1] // block_mask.seq_lengths[1],
+                    block_mask.seq_lengths[1],
+                    *k.shape[2:],
+                )
+                v = v.view(
+                    v.shape[0] * v.shape[1] // block_mask.seq_lengths[1],
+                    block_mask.seq_lengths[1],
+                    *v.shape[2:],
+                )
+
+                # PyTorch's flex attn expects the number of heads to come before the sequence dimension.
+                # shape: (batch_size, n_heads, seq_len, head_dim),
+                #        (batch_size, n_kv_heads, seq_len, head_dim),
+                #        (batch_size, n_kv_heads, seq_len, head_dim)
+                q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
+
+                # SDPA uses full precision. We match it for flex attention.
+                og_dtype = q.dtype
+                q, k, v = q.float(), k.float(), v.float()
+                with torch.autocast(enabled=False, device_type=q.device.type):
+                    # shape: (batch_size, n_heads, seq_len, head_dim)
+                    flex_att = flex_attention(
+                        q, k, v, block_mask=block_mask, scale=scale, enable_gqa=True
+                    )
+                assert isinstance(flex_att, torch.Tensor)
+                att = flex_att.to(dtype=og_dtype)
                 att = att.transpose(1, 2).contiguous()
 
         else:
@@ -1063,19 +1070,3 @@ def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
         .reshape(bs, slen, n_kv_heads * n_rep, head_dim)
     )
 
-
-
-
-
-
-def get_flex_attn_causal_block_mask(
-    seq_len: int,
-    device: torch.device,
-    window_size: Optional[Tuple[int, int]] = None,
-    doc_lens: Optional[torch.Tensor] = None,
-    block_size: int = 128,
-) -> BlockMask:
-    """Convenience wrapper for FlexAttentionAPI.get_causal_block_mask."""
-    return FlexAttentionAPI.get_causal_block_mask(
-        seq_len, device, window_size, doc_lens, block_size
-    )

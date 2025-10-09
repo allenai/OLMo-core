@@ -12,9 +12,9 @@ from olmo_core.nn.attention import (
     AttentionType,
     FusedAttention,
     RingAttentionZigZagLoadBalancer,
-    SlidingWindowAttentionConfig,
-    get_flex_attn_causal_block_mask
+    SlidingWindowAttentionConfig
 )
+from olmo_core.nn.attention.flex_attn_api import get_flex_attn_causal_block_mask
 from olmo_core.nn.layer_norm import LayerNormConfig
 from olmo_core.nn.rope import RoPEConfig, RoPEType
 from olmo_core.testing import (

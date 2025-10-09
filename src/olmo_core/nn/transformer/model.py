@@ -35,8 +35,8 @@ from ..attention import (
     FusedAttention,
     RingAttentionLoadBalancer,
     RingAttentionLoadBalancerType,
-    get_flex_attn_causal_block_mask,
 )
+from ..attention.flex_attn_api import get_flex_attn_causal_block_mask
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
 from ..lm_head import LMHeadConfig, LMOutputWithLoss
