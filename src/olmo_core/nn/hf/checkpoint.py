@@ -166,7 +166,7 @@ def save_hf_model(
         hf_model = AutoModelForCausalLM.from_config(hf_config)
         del hf_config
 
-    hf_model.load_state_dict(hf_state_dict, assign=True, strict=False)
+    hf_model.load_state_dict(hf_state_dict, assign=True)
 
     hf_model.config.vocab_size = vocab_size or model.vocab_size
     hf_model.resize_token_embeddings(hf_model.config.vocab_size)
