@@ -81,11 +81,15 @@ class SamplingInstanceSource(InstanceSource):
         # Determine how many instances to sample from each source.
         total_instances = sum(len(source) for source in self.sources)
         max_instances = max_instances if allow_repetition else min(max_instances, total_instances)
+        chunk_size = self.max_sequence_length // self.sequence_length
         source_sample_sizes: List[int] = []
         for source in sources:
             # We want `len(source) / total_instances ~= source_sample_size / max_instances`,
             # so `source_sample_size = max_instances * (len(source) / total_instances)`.
-            source_sample_sizes.append(int(max_instances * (len(source) / total_instances)))
+            source_sample_size = int(max_instances * (len(source) / total_instances))
+            # Adjust to be a multiple of chunk_size.
+            source_sample_size = chunk_size * (source_sample_size // chunk_size)
+            source_sample_sizes.append(source_sample_size)
         self._source_sample_sizes = tuple(source_sample_sizes)
 
         # Sample indices from each source.

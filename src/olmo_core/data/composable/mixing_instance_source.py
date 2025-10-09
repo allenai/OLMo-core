@@ -27,20 +27,24 @@ class MixingInstanceSourceSpecConfig(Config):
 
     source: InstanceSourceConfig
     ratio: float
-    max_repetition: float = 1.0
+    size_adjustment_factor: float = 1.0
+    max_repetition_factor: float = 1.0
     label: Optional[str] = None
 
     def __post_init__(self):
         if self.ratio <= 0:
             raise OLMoConfigurationError("Ratio must be greater than 0.")
-        if self.max_repetition < 1.0:
+        if self.size_adjustment_factor <= 0:
+            raise OLMoConfigurationError("Size adjustment factor must be greater than 0.")
+        if self.max_repetition_factor < 1.0:
             raise OLMoConfigurationError("Max repetition must be at least 1.0.")
 
     def build(self, work_dir: PathOrStr) -> "MixingInstanceSourceSpec":
         return MixingInstanceSourceSpec(
             source=self.source.build(work_dir),
             ratio=self.ratio,
-            max_repetition=self.max_repetition,
+            size_adjustment_factor=self.size_adjustment_factor,
+            max_repetition_factor=self.max_repetition_factor,
             label=self.label,
         )
 
@@ -73,10 +77,17 @@ class MixingInstanceSourceSpec:
     source: InstanceSource
     """The source."""
     ratio: float
-    """The relative ratio for this source."""
-    max_repetition: float = 1.0
+    """The relative target ratio for this source."""
+    size_adjustment_factor: float = 1.0
     """
-    The maximum amount of repetition allowed, expressed as a factor greater than or equal to 1.0.
+    An optional factor to adjust the effective size of this source prior to determining how many
+    instances to sample. A factor less than 1.0 makes the source smaller, while a factor greater
+    than 1.0 makes it larger by oversampling.
+    """
+    max_repetition_factor: float = 1.0
+    """
+    The maximum amount of repetition allowed after applying the ``size_adjustment_factor``,
+    expressed as a factor greater than or equal to 1.0.
     A factor of 1.0 means no repetition is allowed. A factor of 2.0 means each instance could be
     repeated at most once (i.e., seen twice).
     """
@@ -86,7 +97,9 @@ class MixingInstanceSourceSpec:
     def __post_init__(self):
         if self.ratio <= 0:
             raise OLMoConfigurationError("Ratio must be greater than 0.")
-        if self.max_repetition < 1.0:
+        if self.size_adjustment_factor <= 0:
+            raise OLMoConfigurationError("Size adjustment factor must be greater than 0.")
+        if self.max_repetition_factor < 1.0:
             raise OLMoConfigurationError("Max repetition must be at least 1.0.")
 
 
@@ -129,9 +142,9 @@ class MixingInstanceSource(InstanceSource):
 
         # Determine the number of instances to sample from each source.
         sample_sizes = calculate_sample_sizes(
-            [len(source) for source in sources],
+            [int(len(spec.source) * spec.size_adjustment_factor) for spec in source_specs],
             [spec.ratio for spec in source_specs],
-            [spec.max_repetition for spec in source_specs],
+            [spec.max_repetition_factor for spec in source_specs],
         )
 
         # Sample instances from each source.

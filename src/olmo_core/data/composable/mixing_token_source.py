@@ -1,5 +1,6 @@
 import functools as ft
 import hashlib
+import logging
 import typing
 from dataclasses import dataclass
 from typing import ClassVar, List, Optional, Tuple, Type
@@ -17,6 +18,8 @@ from .token_source import (
 )
 from .utils import calculate_sample_sizes
 
+log = logging.getLogger(__name__)
+
 
 @dataclass
 class MixingTokenSourceSpecConfig(Config):
@@ -24,12 +27,16 @@ class MixingTokenSourceSpecConfig(Config):
 
     source: TokenSourceConfig
     ratio: float
-    max_repetition: float = 1.0
+    size_adjustment_factor: float = 1.0
+    max_repetition_factor: float = 1.0
+    label: Optional[str] = None
 
     def __post_init__(self):
         if self.ratio <= 0:
             raise OLMoConfigurationError("Ratio must be greater than 0.")
-        if self.max_repetition < 1.0:
+        if self.size_adjustment_factor <= 0:
+            raise OLMoConfigurationError("Size adjustment factor must be greater than 0.")
+        if self.max_repetition_factor < 1.0:
             raise OLMoConfigurationError("Max repetition must be at least 1.0.")
 
     def build(self, work_dir: PathOrStr) -> "MixingTokenSourceSpec":
@@ -42,7 +49,9 @@ class MixingTokenSourceSpecConfig(Config):
         return MixingTokenSourceSpec(
             source=source,
             ratio=self.ratio,
-            max_repetition=self.max_repetition,
+            size_adjustment_factor=self.size_adjustment_factor,
+            max_repetition_factor=self.max_repetition_factor,
+            label=self.label,
         )
 
 
@@ -76,18 +85,29 @@ class MixingTokenSourceSpec:
     source: TokenSource
     """The source."""
     ratio: float
-    """The relative ratio for this source."""
-    max_repetition: float = 1.0
+    """The relative target ratio for this source."""
+    size_adjustment_factor: float = 1.0
     """
-    The maximum amount of repetition allowed, expressed as a factor greater than or equal to 1.0.
+    An optional factor to adjust the effective size of this source prior to determining how many
+    tokens to sample. A factor less than 1.0 makes the source smaller, while a factor greater
+    than 1.0 makes it larger by oversampling.
+    """
+    max_repetition_factor: float = 1.0
+    """
+    The maximum amount of repetition allowed after applying the ``size_adjustment_factor``,
+    expressed as a factor greater than or equal to 1.0.
     A factor of 1.0 means no repetition is allowed. A factor of 2.0 means each token could be
     repeated at most once (i.e., seen twice).
     """
+    label: Optional[str] = None
+    """An optional label for this source."""
 
     def __post_init__(self):
         if self.ratio <= 0:
             raise OLMoConfigurationError("Ratio must be greater than 0.")
-        if self.max_repetition < 1.0:
+        if self.size_adjustment_factor <= 0:
+            raise OLMoConfigurationError("Size adjustment factor must be greater than 0.")
+        if self.max_repetition_factor < 1.0:
             raise OLMoConfigurationError("Max repetition must be at least 1.0.")
 
 
@@ -119,9 +139,9 @@ class MixingTokenSource(TokenSource):
 
         # Determine the number of tokens to sample from each source.
         sample_sizes = calculate_sample_sizes(
-            [len(source) for source in sources],
+            [int(len(spec.source) * spec.size_adjustment_factor) for spec in source_specs],
             [spec.ratio for spec in source_specs],
-            [spec.max_repetition for spec in source_specs],
+            [spec.max_repetition_factor for spec in source_specs],
         )
 
         # Sample tokens from each source.
@@ -137,6 +157,17 @@ class MixingTokenSource(TokenSource):
                 )
             )
         self._source = ConcatenatedTokenSource(*sampled_sources, work_dir=work_dir)
+
+        summary_lines = []
+        for i, (source, sampled_source, spec) in enumerate(
+            zip(sources, self.sampled_sources, source_specs)
+        ):
+            summary_lines.append(
+                f" ❯ {100 * len(sampled_source) / len(self):0.3f}% {spec.label or ('source ' + str(i))}, "
+                f"{len(sampled_source):,d} sampled tokens from {len(source):,d} source tokens"
+            )
+        summary = "\n".join(summary_lines)
+        log.info(f"Created token mixture consisting of:\n{summary}")
 
     @property
     def sampled_sources(self) -> Tuple[SamplingTokenSource, ...]:

@@ -115,7 +115,8 @@ class SamplingDocumentSource(DocumentSource):
             cu_document_lengths = np.cumsum(document_lengths, dtype=np.uint64)
             total_tokens = int(cu_document_lengths[-1])
 
-            n_repetitions = max_tokens // total_tokens if allow_repetition else 0
+            max_tokens = max_tokens if allow_repetition else min(max_tokens, total_tokens)
+            n_repetitions = max_tokens // total_tokens
             remaining_sample_size = max_tokens % total_tokens
             sampled_document_offsets = np.take(
                 document_offsets,

@@ -51,6 +51,9 @@ class TokenSource(metaclass=ABCMeta):
         self._fs_local_rank = dist_utils.get_fs_local_rank()
         self._rank = dist_utils.get_rank()
 
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}({self.fingerprint})"
+
     @property
     def work_dir(self) -> Path:
         """
@@ -163,6 +166,9 @@ class InMemoryTokenSource(TokenSource):
         self._label_mask = None if label_mask is None else as_ndarray(label_mask)
         if self._label_mask is not None:
             assert len(self._tokens) == len(self._label_mask)
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}({self._tokens})"
 
     @ft.cached_property
     def fingerprint(self) -> str:

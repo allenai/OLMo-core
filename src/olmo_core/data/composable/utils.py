@@ -108,16 +108,16 @@ def as_tensor(array: Union[Sequence[int], Sequence[bool]]) -> torch.Tensor:
 def calculate_sample_sizes(
     source_sizes: Sequence[int],
     target_ratios: Sequence[float],
-    max_repetitions_per_source: Sequence[float],
+    max_repetition_factors: Sequence[float],
 ) -> np.ndarray:
     """
     Calculate the number of items needed to sample from each source in order to match the target ratios.
     """
-    assert len(source_sizes) == len(target_ratios) == len(max_repetitions_per_source)
+    assert len(source_sizes) == len(target_ratios) == len(max_repetition_factors)
 
     ratios = np.array(target_ratios)
     sizes = np.array(source_sizes)
-    max_repetitions = np.array(max_repetitions_per_source)
+    max_repetitions = np.array(max_repetition_factors)
 
     assert (ratios > 0.0).all()
     assert (max_repetitions >= 1.0).all()
@@ -166,6 +166,10 @@ def build_global_indices(
     seed: Optional[int],
     dtype: NumpyUIntTypes = np.uint32,
 ) -> np.ndarray:
+    """
+    Build global (as opposed to rank-local) instance indices as a numpy array, in a way that
+    preserves the order of data when ``max_sequence_length`` is fixed but ``sequence_length`` changes.
+    """
     assert total_instances < np.iinfo(dtype).max
     assert max_sequence_length % sequence_length == 0
     chunk_size = max_sequence_length // sequence_length

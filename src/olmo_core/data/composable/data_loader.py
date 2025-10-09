@@ -143,7 +143,7 @@ class ComposableDataLoader(TextDataLoaderBase):
                         "Each source must have a number of instances that is a multiple of "
                         "'max_sequence_length // sequence_length' when 'sequence_length' != "
                         "'max_sequence_length'. "
-                        f"Source {i} does not meet this condition."
+                        f"Source {i} does not meet this condition: {source}"
                     )
         if self.max_sequence_length % self.sequence_length != 0:
             raise OLMoConfigurationError(

@@ -25,7 +25,7 @@ def test_mixing_token_source_with_repetition(tmp_path: Path):
         MixingTokenSource.Spec(
             source=InMemoryTokenSource(list(range(8)), work_dir=tmp_path),
             ratio=0.50,
-            max_repetition=2.0,
+            max_repetition_factor=2.0,
         ),
         MixingTokenSource.Spec(
             source=InMemoryTokenSource(list(range(8, 24)), work_dir=tmp_path),
