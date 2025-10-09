@@ -47,7 +47,7 @@ pip install ai2-olmo-core
 ```
 
 There are a number of optional dependencies that must be installed to use certain functionality as well, including:
-- [flash-attn](https://github.com/Dao-AILab/flash-attention) and [ring-flash-attn](https://github.com/zhuzilin/ring-flash-attention) for intra-document masking and context parallelism.
+- [flash-attn](https://github.com/Dao-AILab/flash-attention), [ring-flash-attn](https://github.com/zhuzilin/ring-flash-attention), and [TransformerEngine](https://github.com/NVIDIA/TransformerEngine) for the corresponding attention backends.
 - [Liger-Kernel](https://github.com/linkedin/Liger-Kernel) for a low-memory "fused-linear" loss implementation.
 - [torchao](https://github.com/pytorch/ao) for float8 training.
 - [grouped_gemm](https://github.com/tgale96/grouped_gemm) for dropless mixture-of-experts (MoE) models. You may need to compile from source until [PR #21](https://github.com/tgale96/grouped_gemm/pull/21) is released (post v0.1.6).
@@ -62,21 +62,29 @@ If the published images do not work for your use-case for any of the above reaso
 ## Official training scripts
 
 Official training scripts for released models can be found in [`src/scripts/official/`](https://github.com/allenai/OLMo-core/tree/main/src/scripts/official).
-These scripts are meant to be launched with ``torchrun``. For example:
+These scripts are meant to be launched with ``torchrun``, or with OLMo-core's Beaker launch CLI if you have access to Beaker.
+
+For example:
 
 ```bash
-torchrun --nproc-per-node=8 ./src/scripts/official/OLMo-2-0325-32B-train.py run01
+torchrun --nproc-per-node=8 src/scripts/official/OLMo-2-0325-32B-train.py \
+  --save-folder=/path/to/save/checkpoints
 ```
 
 You can override most configuration options from the command-line. For example, to override the learning rate you could launch the script like this:
 
 ```bash
-torchrun --nproc-per-node=8 ./src/scripts/train/OLMo-2-0325-32B-train.py run01 --train_module.optim.lr=6e-3
+torchrun --nproc-per-node=8 src/scripts/train/OLMo-2-0325-32B-train.py \
+  --save-folder=/path/to/save/checkpoints \
+  --train_module.optim.lr=6e-3
 ```
+
 To continue annealing from a checkpoint, we use a separate script which can be launched like this:
 
 ```bash
-torchrun --nproc-per-node=8 ./src/scripts/train/OLMo-2-0325-32B-anneal.py anneal_run01 https://olmo-checkpoints.org/ai2-llm/peteish32/step721901/
+torchrun --nproc-per-node=8 src/scripts/train/OLMo-2-0325-32B-anneal.py \
+  --save-folder=/path/to/save/checkpoints \
+  --checkpoint=https://olmo-checkpoints.org/ai2-llm/peteish32/step721901
 ```
 
 ## OLMo-2 Model Training
@@ -86,7 +94,7 @@ In the first stage, we train on large amounts of mostly web-based data: [OLMo-mi
 In the second stage, we train on a smaller amount of high-quality, targeted data: Dolmino-mix-0324 (releasing soon).
 
 | Stage | Model Size | Training | Checkpoint | Monitoring |
-|------------|----------|------------|------------|------------|
+|-------|------------|----------|------------|------------|
 | stage 1 | **32B** | 6T tokens | [stage1-step721901-tokens6056B](https://huggingface.co/allenai/OLMo-2-0325-32B/tree/stage1-step721901-tokens6056B) | [comet.ml/OLMo2-32B](https://www.comet.com/ai2/olmo-2-0325-32b/reports/olmo-2-0325-32b?shareable=WhT37Wy7jqttDoy6ysDBumQzf) |
 | stage 2 | **32B** | random seed 1110, 100B tokens | [stage2-ingredient1-step11921-tokens101B](https://huggingface.co/allenai/OLMo-2-0325-32B/tree/stage2-ingredient1-step11921-tokens101B) | [comet.ml/OLMo2-32B](https://www.comet.com/ai2/olmo-2-0325-32b/reports/olmo-2-0325-32b-anneal?shareable=WhT37Wy7jqttDoy6ysDBumQzf) |
 | |  | random seed 2662, 100B tokens | [stage2-ingredient2-step11921-tokens101B](https://huggingface.co/allenai/OLMo-2-0325-32B/tree/stage2-ingredient2-step11921-tokens101B) | [comet.ml/OLMo2-32B](https://www.comet.com/ai2/olmo-2-0325-32b/reports/olmo-2-0325-32b-anneal?shareable=WhT37Wy7jqttDoy6ysDBumQzf) |
@@ -95,8 +103,8 @@ In the second stage, we train on a smaller amount of high-quality, targeted data
 
 The table below lists the checkpoints for Stage 1 and Stage 2 of OLMo-2, along with their corresponding Hugging Face format.
 
-| Variant         | OLMo Format (Stage 1)                                                                                         | OLMo Format (Stage 2) | Hugging Face Format                                                               |
-|----------------|-----------------------------------------------------------------------------------------------------|--------|----------------------------------------------------------------------------------|
+| Variant | OLMo Format (Stage 1) | OLMo Format (Stage 2) | Hugging Face Format |
+|---------|-----------------------|-----------------------|---------------------|
 | **OLMo-2 32B**  | [OLMo-2 32B](https://github.com/allenai/OLMo-core/blob/main/src/scripts/official/OLMo-2-0325-32B.csv)     | [OLMo-2 32B](https://github.com/allenai/OLMo-core/blob/main/src/scripts/official/OLMo-2-0325-32B-stage2.csv)      | [Hugging Face for the 32B variant](https://huggingface.co/allenai/OLMo-2-0325-32B)  |
 
 

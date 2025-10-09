@@ -27,7 +27,12 @@ BEAKER_HOSTNAME_ENV_VAR = "BEAKER_NODE_HOSTNAME"
 log = logging.getLogger(__name__)
 
 
-def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minutes=90), **kwargs):
+def init_distributed(
+    backend: str = "nccl",
+    timeout: timedelta = timedelta(minutes=30),
+    shared_filesytem: Optional[bool] = True,
+    **kwargs,
+):
     """
     Initialize the distributed process group with the given backend(s) and check/set the
     relevant environment variables.
@@ -39,6 +44,9 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
 
     # Force processes to synchronize at init process group.
     set_env_var("TORCH_DIST_INIT_BARRIER", "1")
+
+    if shared_filesytem:
+        set_env_var(OLMO_SHARED_FS_ENV_VAR, "1")
 
     # Set host-specific env var defaults.
     if _running_in_beaker():
@@ -71,7 +79,9 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
             set_env_var("CUDA_VISIBLE_DEVICES", "0,1,2,3,4,5,6,7")
             set_env_var("NCCL_NET_GDR_LEVEL", "PIX")
             set_env_var("NCCL_FASTRAK_ENABLE_HOTPATH_LOGGING", "0")
-            set_env_var("NCCL_FASTRAK_PLUGIN_ACCEPT_TIMEOUT_MS", "600000")
+            set_env_var(
+                "NCCL_FASTRAK_PLUGIN_ACCEPT_TIMEOUT_MS", str(int(timeout.total_seconds() * 1000))
+            )
             set_env_var("NCCL_NVLS_ENABLE", "0")
             set_env_var("NCCL_USE_SNAP", "1")
             set_env_var("NCCL_FASTRAK_USE_LLCM", "1")
@@ -291,7 +301,11 @@ def synchronize_value(
     """
     if dist.is_available() and dist.is_initialized():
         is_tensor = isinstance(value, torch.Tensor)
-        value_tensor = move_to_device(value, device) if is_tensor else move_to_device(torch.tensor(value), device)  # type: ignore
+        value_tensor = (
+            move_to_device(value, device)
+            if is_tensor
+            else move_to_device(torch.tensor(value), device)
+        )  # type: ignore
         dist.broadcast(value_tensor, src, group=group)
         return value_tensor if is_tensor else value_tensor.item()  # type: ignore
     else:
@@ -315,7 +329,11 @@ def all_reduce_value(
     """
     if dist.is_available() and dist.is_initialized():
         is_tensor = isinstance(value, torch.Tensor)
-        value_tensor = move_to_device(value, device) if is_tensor else move_to_device(torch.tensor(value), device)  # type: ignore
+        value_tensor = (
+            move_to_device(value, device)
+            if is_tensor
+            else move_to_device(torch.tensor(value), device)
+        )  # type: ignore
         dist.all_reduce(value_tensor, op=op, group=group)
         return value_tensor if is_tensor else value_tensor.item()  # type: ignore
     else:

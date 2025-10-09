@@ -41,7 +41,7 @@ from olmo_core.nn.transformer import (
 from olmo_core.testing import (
     BACKENDS,
     GPU_MARKS,
-    requires_flash_attn,
+    requires_flash_attn_2,
     requires_multi_gpu,
     run_distributed_test,
 )
@@ -281,7 +281,7 @@ def run_context_parallel_transformer(checkpoint_dir, outputs_path, architecture:
 
 
 @requires_multi_gpu
-@requires_flash_attn
+@requires_flash_attn_2
 @pytest.mark.parametrize("architecture", ["olmo2"])
 @pytest.mark.skip("known precision issues with ring-flash-attn")
 def test_context_parallel_transformer(architecture: str, tmp_path):
