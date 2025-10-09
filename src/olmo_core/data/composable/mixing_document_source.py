@@ -16,7 +16,7 @@ from .token_source import (
     DocumentSourceConfig,
     TokenRange,
 )
-from .utils import calculate_sample_sizes
+from .utils import calculate_sample_sizes, format_token_count
 
 log = logging.getLogger(__name__)
 
@@ -164,8 +164,9 @@ class MixingDocumentSource(DocumentSource):
         ):
             summary_lines.append(
                 f" ❯ {100 * len(sampled_source) / len(self):0.3f}% {spec.label or ('source ' + str(i))}, "
-                f"{len(sampled_source):,d} sampled tokens from {len(source):,d} source tokens"
+                f"{format_token_count(len(sampled_source))} sampled tokens from {format_token_count(len(source))} source tokens"
             )
+        summary_lines.append(f"Total: {format_token_count(self.num_tokens)} tokens")
         summary = "\n".join(summary_lines)
         log.info(f"Created document mixture consisting of:\n{summary}")
 

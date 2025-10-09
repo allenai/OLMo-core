@@ -16,7 +16,7 @@ from .instance_source import (
     InstanceSourceConfig,
 )
 from .sampling_instance_source import SamplingInstanceSource
-from .utils import calculate_sample_sizes
+from .utils import calculate_sample_sizes, format_token_count
 
 log = logging.getLogger(__name__)
 
@@ -140,9 +140,9 @@ class MixingInstanceSource(InstanceSource):
             max_sequence_length=max_sequence_length,
         )
 
-        # Determine the number of instances to sample from each source.
+        # Determine the number of tokens to sample from each source.
         sample_sizes = calculate_sample_sizes(
-            [int(len(spec.source) * spec.size_adjustment_factor) for spec in source_specs],
+            [int(spec.source.num_tokens * spec.size_adjustment_factor) for spec in source_specs],
             [spec.ratio for spec in source_specs],
             [spec.max_repetition_factor for spec in source_specs],
         )
@@ -153,10 +153,10 @@ class MixingInstanceSource(InstanceSource):
             sampled_sources.append(
                 SamplingInstanceSource(
                     source,
-                    max_instances=int(sample_size),
+                    max_tokens=int(sample_size),
                     work_dir=work_dir,
                     seed=None if seed is None else seed + i,
-                    allow_repetition=sample_size > len(source),
+                    allow_repetition=True,
                 )
             )
         self._source = ConcatenatedInstanceSource(*sampled_sources, work_dir=work_dir)
@@ -167,8 +167,12 @@ class MixingInstanceSource(InstanceSource):
         ):
             summary_lines.append(
                 f" ❯ {100 * len(sampled_source) / len(self):0.3f}% {spec.label or ('source ' + str(i))}, "
-                f"{len(sampled_source):,d} sampled instances from {len(source):,d} source instances"
+                f"{len(sampled_source):,d} sampled instances ({format_token_count(sampled_source.num_tokens)} tokens) from "
+                f"{len(source):,d} source instances ({format_token_count(source.num_tokens)} tokens)"
             )
+        summary_lines.append(
+            f"Total: {len(self):,d} instances ({format_token_count(self.num_tokens)} tokens)"
+        )
         summary = "\n".join(summary_lines)
         log.info(f"Created instance mixture consisting of:\n{summary}")
 

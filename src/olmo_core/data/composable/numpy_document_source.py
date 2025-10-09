@@ -71,6 +71,8 @@ class NumpyDocumentSourceConfig(_NumpyDocumentSourceConfigBase):
         """
         Build the sources.
         """
+        dtype = self.get_dtype()
+
         expand_glob = self.expand_glob
         if self.expand_glob is None:
             expand_glob = any(["*" in p for p in self.source_paths])
@@ -97,7 +99,7 @@ class NumpyDocumentSourceConfig(_NumpyDocumentSourceConfigBase):
             source_paths=source_paths,
             label_mask_paths=mask_paths,
             tokenizer=self.tokenizer,
-            dtype=self.get_dtype(),
+            dtype=dtype,
             work_dir=work_dir,
         )
 
@@ -109,13 +111,27 @@ class NumpyDocumentSourceConfig(_NumpyDocumentSourceConfigBase):
     def _expand_globs(self, patterns: Sequence[str]) -> List[str]:
         expanded: List[str] = []
         for pattern in patterns:
-            log.info(f"Expanding '{pattern}'...")
-            matches = sorted(io.glob_directory(pattern))
-            if not matches:
-                raise FileNotFoundError(pattern)
-            summary = "\n".join([f" - '{match}'" for match in matches])
-            log.info(f"Expanded '{pattern}' into {len(matches):,d} paths:\n{summary}")
-            expanded.extend(matches)
+            if "*" in pattern:
+                log.info(f"Expanding '{pattern}'...")
+                matches = sorted(io.glob_directory(pattern))
+                if not matches:
+                    raise FileNotFoundError(pattern)
+                if len(matches) <= 5:
+                    summary = "\n".join([f"- '{match}'" for match in matches])
+                else:
+                    summary = "\n".join(
+                        [
+                            f"- '{matches[0]}'",
+                            f"- '{matches[1]}'",
+                            "⋮",
+                            f"- '{matches[-2]}'",
+                            f"- '{matches[-1]}'",
+                        ]
+                    )
+                log.info(f"Expanded '{pattern}' into {len(matches):,d} paths:\n{summary}")
+                expanded.extend(matches)
+            else:
+                expanded.append(pattern)
         return expanded
 
 

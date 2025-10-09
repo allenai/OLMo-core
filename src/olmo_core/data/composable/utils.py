@@ -84,6 +84,19 @@ def format_fname_from_fields(prefix: str, **fields) -> str:
     return "_".join(parts)
 
 
+def format_token_count(n: int) -> str:
+    if n >= 1_000_000_000_000:
+        return f"{n / 1_000_000_000_000:.1f}T"
+    elif n >= 1_000_000_000:
+        return f"{n / 1_000_000_000:.1f}B"
+    elif n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    elif n >= 1_000:
+        return f"{n / 1_000:.1f}K"
+    else:
+        return str(n)
+
+
 def as_ndarray(array: Union[Sequence[int], Sequence[bool]]) -> np.ndarray:
     if isinstance(array, np.ndarray):
         return array

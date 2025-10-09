@@ -19,13 +19,21 @@ class SamplingInstanceSourceConfig(InstanceSourceConfig):
     """Config for :class:`SamplingInstanceSource`."""
 
     sources: List[InstanceSourceConfig]
-    max_instances: int
+    max_tokens: Optional[int] = None
+    max_instances: Optional[int] = None
     seed: Optional[int] = None
     allow_repetition: bool = False
+
+    def __post_init__(self):
+        if (self.max_tokens is None) == (self.max_instances is None):
+            raise OLMoConfigurationError(
+                "Either max_tokens or max_instances must be set, but not both."
+            )
 
     def build(self, work_dir: PathOrStr) -> "SamplingInstanceSource":
         return SamplingInstanceSource(
             *[source.build(work_dir) for source in self.sources],
+            max_tokens=self.max_tokens,
             max_instances=self.max_instances,
             work_dir=work_dir,
             seed=self.seed,
@@ -50,14 +58,14 @@ class SamplingInstanceSource(InstanceSource):
     def __init__(
         self,
         *sources: InstanceSource,
-        max_instances: int,
+        max_tokens: Optional[int] = None,
+        max_instances: Optional[int] = None,
         work_dir: PathOrStr,
         seed: Optional[int] = None,
         allow_repetition: bool = False,
     ):
         if not sources:
             raise OLMoConfigurationError("At least one source must be provided.")
-        assert max_instances > 0
 
         sequence_length = sources[0].sequence_length
         max_sequence_length = sources[0].max_sequence_length
@@ -66,6 +74,18 @@ class SamplingInstanceSource(InstanceSource):
                 raise OLMoConfigurationError("All sources must have the same sequence length.")
             if source.max_sequence_length != max_sequence_length:
                 raise OLMoConfigurationError("All sources must have the same max sequence length.")
+
+        if (max_tokens is None) == (max_instances is None):
+            raise OLMoConfigurationError(
+                "Either max_tokens or max_instances must be set, but not both."
+            )
+        elif max_tokens is not None:
+            assert max_tokens > 0
+            max_instances = max_tokens // sequence_length
+        elif max_instances is not None:
+            assert max_instances > 0
+
+        assert max_instances is not None
 
         super().__init__(
             work_dir=work_dir,

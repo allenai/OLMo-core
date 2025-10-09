@@ -88,6 +88,10 @@ class InstanceSource(metaclass=ABCMeta):
         return self._max_sequence_length
 
     @property
+    def num_tokens(self) -> int:
+        return len(self) * self.sequence_length
+
+    @property
     def work_dir(self) -> Path:
         """
         A local working directly that can be used by the token source for caching files during
