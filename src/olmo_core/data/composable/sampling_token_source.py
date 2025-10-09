@@ -73,9 +73,6 @@ class SamplingTokenSource(TokenSource):
         if not sources:
             raise ValueError("At least one source must be provided.")
         assert max_tokens > 0
-        self._max_tokens = max_tokens
-        self._seed = seed
-        self._allow_repetition = allow_repetition
 
         # Determine how many tokens to sample from each source.
         total_tokens = sum(source.num_tokens for source in sources)
@@ -89,53 +86,42 @@ class SamplingTokenSource(TokenSource):
         # Determine number of repetitions and sampling start/end offsets for each source.
         rng = None if seed is None else get_rng(seed)
         final_sources: List[TokenSource] = []
-        source_sampling_specs: List[Tuple[int, int]] = []
+        source_sampling_offsets: List[Tuple[int, int]] = []
         for source, source_sample_size in zip(sources, source_sample_sizes):
             n_repetitions = source_sample_size // source.num_tokens
             final_sources.extend([source] * n_repetitions)
-            source_sampling_specs.extend([(0, source.num_tokens)] * n_repetitions)
+            source_sampling_offsets.extend([(0, source.num_tokens)] * n_repetitions)
 
             remaining_sample_size = source_sample_size % source.num_tokens
             if remaining_sample_size > 0:
                 if rng is None:
-                    source_sampling_specs.append((0, remaining_sample_size))
+                    source_sampling_offsets.append((0, remaining_sample_size))
                 else:
                     start_idx = rng.integers(0, source.num_tokens - remaining_sample_size)
-                    source_sampling_specs.append((start_idx, start_idx + remaining_sample_size))
+                    source_sampling_offsets.append((start_idx, start_idx + remaining_sample_size))
                 final_sources.append(source)
 
         self._sources = tuple(final_sources)
-        self._source_sampling_specs = tuple(source_sampling_specs)
+        self._source_sampling_offsets = tuple(source_sampling_offsets)
 
     @property
     def sources(self) -> Tuple[TokenSource, ...]:
         return self._sources
 
     @property
-    def max_tokens(self) -> int:
-        return self._max_tokens
+    def source_sampling_offsets(self) -> Tuple[Tuple[int, int], ...]:
+        return self._source_sampling_offsets
 
     @ft.cached_property
     def num_tokens(self) -> int:
-        return sum((end_idx - start_idx) for (start_idx, end_idx) in self._source_sampling_specs)
-
-    @property
-    def seed(self) -> Optional[int]:
-        return self._seed
+        return sum((end_idx - start_idx) for (start_idx, end_idx) in self._source_sampling_offsets)
 
     @ft.cached_property
     def fingerprint(self) -> str:
         sha256_hash = hashlib.sha256()
-        sha256_hash.update(
-            (
-                f"class={self.__class__.__name__},"
-                f"max_tokens={self.max_tokens},"
-                f"seed={self.seed},"
-                f"repetition={self._allow_repetition},"
-            ).encode()
-        )
-        for source in self.sources:
-            sha256_hash.update(f"source={source.fingerprint},".encode())
+        sha256_hash.update((f"class={self.__class__.__name__},").encode())
+        for source, sampling_offsets in zip(self.sources, self.source_sampling_offsets):
+            sha256_hash.update(f"source={source.fingerprint}{sampling_offsets},".encode())
         return sha256_hash.hexdigest()
 
     def get_token_range(self, start_idx: int, end_idx: int) -> TokenRange:
@@ -145,7 +131,7 @@ class SamplingTokenSource(TokenSource):
         mask_chunks: List[np.ndarray] = []
         source_start_offset = 0
         for source, (source_sample_start, source_sample_end) in zip(
-            self.sources, self._source_sampling_specs
+            self.sources, self._source_sampling_offsets
         ):
             source_sample_size = source_sample_end - source_sample_start
             source_end_offset = source_start_offset + source_sample_size

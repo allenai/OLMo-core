@@ -75,7 +75,6 @@ class SamplingInstanceSource(InstanceSource):
         self._sources = sources
         self._max_instances = max_instances
         self._seed = seed
-        self._allow_repetition = allow_repetition
         self._dtype = np.uint32
 
         # Determine how many instances to sample from each source.
@@ -140,16 +139,13 @@ class SamplingInstanceSource(InstanceSource):
     @ft.cached_property
     def fingerprint(self) -> str:
         sha256_hash = hashlib.sha256()
-        sha256_hash.update(
-            (
-                f"class={self.__class__.__name__},"
-                f"{self.max_instances=},"
-                f"{self.seed=},"
-                f"repetition={self._allow_repetition}"
-            ).encode()
-        )
-        for source in self.sources:
-            sha256_hash.update(f"source={source.fingerprint},".encode())
+        sha256_hash.update((f"class={self.__class__.__name__},{self.seed=},").encode())
+        for source, sample_size in zip(self.sources, self.source_sample_sizes):
+            chunk_size = self.max_sequence_length // self.sequence_length
+            sample_size_chunk_size_ratio = sample_size // chunk_size
+            sha256_hash.update(
+                f"source={source.fingerprint},{sample_size_chunk_size_ratio=}".encode()
+            )
         return sha256_hash.hexdigest()
 
     def __len__(self) -> int:
