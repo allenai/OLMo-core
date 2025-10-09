@@ -178,6 +178,9 @@ def test_convert_checkpoint_to_hf_correct_model(
     model_family, model_path = olmo_core_model_path
     _, transformer_config = model_config
 
+    if model_family == "olmo3" and Olmo3Config is None:
+        pytest.skip("The installed transformers version does not support Olmo3")
+
     output_dir = tmp_path / f"hf-output-{model_family}"
     convert_checkpoint_to_hf(
         original_checkpoint_path=model_path,
