@@ -167,7 +167,7 @@ def main():
 
     checkpoint_dir = normalize_path(args.checkpoint)
 
-    # Step 1: Load checkpoint files
+    # Load checkpoint files
     log.info(f"Loading checkpoint from {checkpoint_dir}")
     config = load_checkpoint_config(checkpoint_dir)
     data_paths = load_data_paths(checkpoint_dir)
@@ -182,7 +182,7 @@ def main():
             f"Make sure this checkpoint has the correct dataset configuration for that earlier step."
         )
 
-    # Step 2: Extract configuration
+    # Extract configuration
     dataset_config_dict = config["dataset"]
     data_loader_config_dict = config["data_loader"]
 
@@ -206,12 +206,8 @@ def main():
         log.error("Mix verification failed! data_paths.txt does not match the mix from config.json")
         sys.exit(1)
 
-    # Step 4: Reconstruct dataset
-    log.info("Reconstructing dataset...")
-
-    # Determine dataset config class from _CLASS_ field
+    # Reconstruct dataset
     dataset_class_name = dataset_config_dict["_CLASS_"]
-
     if dataset_class_name == "olmo_core.data.numpy_dataset.NumpyDatasetConfig":
         log.warning(
             "Dataset config class is 'NumpyDatasetConfig' (base class). Assuming 'NumpyFSLDatasetConfig'."
@@ -222,8 +218,6 @@ def main():
     else:
         log.error(f"Unsupported dataset config class: {dataset_class_name}")
         sys.exit(1)
-
-    log.info(f"Using dataset config class: {config_class.__name__}")
 
     # Start with the full dataset config and only modify what we need
     config_fields = dict(dataset_config_dict)
@@ -257,11 +251,7 @@ def main():
             f"  Computed:   {dataset.fingerprint}"
         )
         log.warning("This may indicate the dataset has changed since the checkpoint was created.")
-    else:
-        log.info("✓ Dataset fingerprint matches checkpoint")
 
-    # Step 5: Reconstruct data loader
-    log.info("Reconstructing data loader...")
     collator = DataCollator(pad_token_id=dataset.pad_token_id)
 
     data_loader = NumpyFSLDataLoader(
@@ -285,11 +275,8 @@ def main():
     # Reshuffle to regenerate the same global indices as during training
     data_loader.reshuffle(epoch=data_loader_state["epoch"], in_memory=True)
 
-    # Step 7: Extract tokens
-    log.info("Extracting tokens...")
     batch = data_loader[args.step]
 
-    # Step 8: Save output
     if args.output is not None:
         with open(args.output, "wb") as f:
             pickle.dump(batch, f)
