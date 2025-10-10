@@ -76,9 +76,10 @@ class NumpyDocumentSourceConfig(_NumpyDocumentSourceConfigBase):
         label = self.label
 
         if label is None:
-            # Assign the common path component, if there is one, as the label.
             if len(self.source_paths) == 1:
                 label = self.source_paths[0]
+            else:
+                label = "various paths"
 
         expand_glob = self.expand_glob
         if self.expand_glob is None:

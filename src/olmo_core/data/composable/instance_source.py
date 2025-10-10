@@ -28,6 +28,7 @@ from .token_source import TokenSource
 
 if TYPE_CHECKING:
     from .sampling_instance_source import SamplingInstanceSource
+    from .sliced_instance_source import SlicedInstanceSource
 
 
 class Instance(TypedDict):
@@ -222,7 +223,8 @@ class InstanceSource(metaclass=ABCMeta):
         Create a :class:`SamplingInstanceSource` by sampling instances from this source.
 
         .. seealso::
-            :meth:`resize()`
+            - :meth:`resize()`
+            - :meth:`split()`
 
         :param max_tokens: The maximum number of tokens to sample from this source.
           Mutually exclusive with ``max_instances``.
@@ -250,7 +252,8 @@ class InstanceSource(metaclass=ABCMeta):
         Re-size this source by a given factor by sampling instances from it.
 
         .. seealso::
-            :meth:`sample()`
+            - :meth:`sample()`
+            - :meth:`split()`
 
         :param factor: The factor by which to resize this source.
         :param seed: A random seed for sampling.
@@ -260,9 +263,35 @@ class InstanceSource(metaclass=ABCMeta):
             max_tokens=int(self.num_tokens * factor), seed=seed, allow_repetition=True
         )
 
+    def split(
+        self, ratio: float, seed: Optional[int] = None
+    ) -> Tuple["SlicedInstanceSource", "SlicedInstanceSource"]:
+        """
+        Split this source into two disjoint sources according to the given ratio.
+
+        :param ratio: The ratio of the first split to original source. E.g., ``0.8`` means
+          the first split will have 80% of the instances and the second split will have 20%.
+        :param seed: A seed to use to randomize the split.
+        """
+        from .sliced_instance_source import SlicedInstanceSource
+
+        assert 0 < ratio < 1
+        split_idx = int(
+            ((ratio * self.num_tokens) // self.max_sequence_length)
+            * (self.max_sequence_length // self.sequence_length)
+        )
+
+        return (
+            SlicedInstanceSource(self, slice(0, split_idx), seed=seed, work_dir=self._work_dir),
+            SlicedInstanceSource(self, slice(split_idx, -1), seed=seed, work_dir=self._work_dir),
+        )
+
     def visualize(self):
         """
         Print a visualization of this source and its children, recursively.
+
+        .. important::
+            Some icons used in the visualization require a Nerd Font to render properly.
         """
         from .visualize import visualize_source
 

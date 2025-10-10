@@ -33,6 +33,7 @@ This API consists of a series of simple, composable, elements, including:
    * :class:`PackingInstanceSource`: An instance source that packs documents from one or more document
      sources into instances using an optimized packing algorithm.
    * :class:`ConcatenatedInstanceSource`: An instance source combines instances from other instance sources.
+   * :class:`SlicedInstanceSource`: An instance source that provides a slice into another instance source.
    * :class:`SamplingInstanceSource`: An instance source that samples instances from other instance sources.
    * :class:`MixingInstanceSource`: An instance source that mixes other instance sources together.
    * :class:`RandomInstanceSource`: An instance source for generating random instances.
@@ -102,6 +103,7 @@ from .sampling_instance_source import (
     SamplingInstanceSourceConfig,
 )
 from .sampling_token_source import SamplingTokenSource, SamplingTokenSourceConfig
+from .sliced_instance_source import SlicedInstanceSource
 from .token_source import (
     ConcatenatedDocumentSource,
     ConcatenatedTokenSource,
@@ -148,6 +150,7 @@ __all__ = [
     "PackingInstanceSource",
     "PackingInstanceSourceConfig",
     "ConcatenatedInstanceSource",
+    "SlicedInstanceSource",
     "SamplingInstanceSource",
     "SamplingInstanceSourceConfig",
     "MixingInstanceSource",

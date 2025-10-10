@@ -15,7 +15,7 @@ from olmo_core.aliases import PathOrStr
 from olmo_core.exceptions import OLMoConfigurationError
 
 from ..tokenizer import TokenizerConfig
-from ..types import LongDocStrategy
+from ..types import LongDocStrategy, NumpyDatasetDType
 from ..utils import (
     InstancePacker,
     chunked,
@@ -24,6 +24,7 @@ from ..utils import (
     write_array_to_disk,
 )
 from .instance_source import Instance, InstanceSource, InstanceSourceConfig
+from .numpy_document_source import NumpyDocumentSource
 from .token_source import DocumentSource, DocumentSourceConfig
 from .utils import as_ndarray, path_map
 
@@ -41,6 +42,44 @@ class PackingInstanceSourceConfig(InstanceSourceConfig):
     long_doc_strategy: LongDocStrategy = LongDocStrategy.truncate
     source_group_size: int = 1
     label: Optional[str] = None
+
+    @classmethod
+    def from_npy(
+        cls,
+        *npy_paths: str,
+        tokenizer: TokenizerConfig,
+        sequence_length: int,
+        max_sequence_length: Optional[int] = None,
+        dtype: Optional[NumpyDatasetDType] = None,
+        source_permutation_seed: Optional[int] = None,
+        source_group_size: int = 1,
+        label_mask_paths: Optional[List[str]] = None,
+        expand_glob: Optional[bool] = None,
+        label: Optional[str] = None,
+        long_doc_strategy: LongDocStrategy = LongDocStrategy.truncate,
+    ) -> "PackingInstanceSourceConfig":
+        """
+        Create a :class:`PackingInstanceSourceConfig` from one or more tokenized ``.npy`` source files.
+        """
+        return cls(
+            sources=[
+                NumpyDocumentSource.Config(
+                    source_paths=list(npy_paths),
+                    tokenizer=tokenizer,
+                    dtype=dtype,
+                    source_permutation_seed=source_permutation_seed,
+                    source_group_size=source_group_size,
+                    label_mask_paths=label_mask_paths,
+                    expand_glob=expand_glob,
+                )
+            ],
+            tokenizer=tokenizer,
+            sequence_length=sequence_length,
+            max_sequence_length=max_sequence_length,
+            source_group_size=1,
+            label=label,
+            long_doc_strategy=long_doc_strategy,
+        )
 
     def build(self, work_dir: PathOrStr) -> "PackingInstanceSource":
         return PackingInstanceSource(
