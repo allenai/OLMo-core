@@ -65,6 +65,24 @@ def test_iter_document_indices(tmp_path):
     ) == [(0, 9), (9, len(data))]
 
 
+@pytest.mark.parametrize("bos_token_id, eos_token_id", [(98, 99), (99, 99)])
+def test_iter_document_indices_with_bos_token_id(tmp_path, bos_token_id: int, eos_token_id: int):
+    data = [bos_token_id, 2, 3, 4, 5, 6, 7, 8, eos_token_id, bos_token_id, 2, 3, 4, 5, eos_token_id]
+    data_path = tmp_path / "data.npy"
+    mmap = np.memmap(data_path, mode="w+", dtype=np.uint16, shape=(len(data),))
+    mmap[:] = data
+    mmap.flush()
+    assert list(
+        iter_document_indices(
+            data_path,
+            bos_token_id=bos_token_id,
+            eos_token_id=eos_token_id,
+            dtype=np.uint16,
+            use_array_if_local=True,
+        )
+    ) == [(0, 9), (9, len(data))]
+
+
 def test_melt_batch():
     batch = {
         "input_ids": torch.randint(0, 32, (2, 12)),

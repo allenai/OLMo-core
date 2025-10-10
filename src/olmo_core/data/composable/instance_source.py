@@ -1,0 +1,376 @@
+import functools as ft
+import hashlib
+from abc import ABCMeta, abstractmethod
+from dataclasses import dataclass
+from pathlib import Path
+from typing import (
+    TYPE_CHECKING,
+    ClassVar,
+    Generator,
+    Iterable,
+    List,
+    Optional,
+    Sequence,
+    Tuple,
+    TypedDict,
+    Union,
+)
+
+from typing_extensions import NotRequired
+
+import olmo_core.distributed.utils as dist_utils
+import olmo_core.io as io
+from olmo_core.aliases import PathOrStr
+from olmo_core.config import Config
+from olmo_core.exceptions import OLMoConfigurationError
+
+from .token_source import TokenSource
+
+if TYPE_CHECKING:
+    from .sampling_instance_source import SamplingInstanceSource
+    from .sliced_instance_source import SlicedInstanceSource
+
+
+class Instance(TypedDict):
+    """
+    An instance is just a dictionary that should include ``input_ids`` and optionally a
+    corresponding ``label_mask``.
+    """
+
+    input_ids: Sequence[int]
+    """The token IDs for this instance."""
+    label_mask: NotRequired[Sequence[bool]]
+    """An optional mask indicating which tokens should contribute to the loss."""
+
+
+class InstanceSource(metaclass=ABCMeta):
+    """
+    An abstract base class for a source of instances, usually consumed by a :class:`ComposableDataLoader`.
+    It essentially represents an array of instances, where each instance is a sequence of
+    ``sequence_length`` tokens.
+
+    :param work_dir: A local working directory that can be used for caching files during preprocessing.
+    :param sequence_length: The length of each sequence (instance) to produce.
+    :param max_sequence_length: For sources that support this. If you intend to increase the sequence
+      length in the middle of an epoch, you should set this to the maximum sequence length that you'll
+      train on to guarantee that you can restart the run with the same data order after changing sequence length.
+      Care needs to be taken when implementing this in a subclass to ensure that the exact same tokens
+      will be produced when `sequence_length` is changed but `max_sequence_length` is fixed.
+    :param label: An optional label for this source, useful for debugging and visualizing.
+    """
+
+    DISPLAY_ICON: ClassVar[str] = ""  # Nerd Font icon for visualizations
+
+    def __init__(
+        self,
+        *,
+        work_dir: PathOrStr,
+        sequence_length: int,
+        max_sequence_length: Optional[int] = None,
+        label: Optional[str] = None,
+    ):
+        if io.is_url(work_dir):
+            raise OLMoConfigurationError(
+                f"'work_dir' should be a local path, not a URL ('{work_dir}')."
+            )
+        assert sequence_length > 0
+        if max_sequence_length is not None:
+            assert max_sequence_length > 0
+            if sequence_length > max_sequence_length:
+                raise OLMoConfigurationError(
+                    "'sequence_length' cannot be greater than 'max_sequence_length'."
+                )
+            if max_sequence_length % sequence_length != 0:
+                raise OLMoConfigurationError(
+                    "'max_sequence_length' must be a multiple of 'sequence_length'."
+                )
+        self._sequence_length = sequence_length
+        self._max_sequence_length = max_sequence_length or sequence_length
+        self._work_dir = Path(io.normalize_path(work_dir))
+        if self._work_dir.name == self.__class__.__name__:
+            self._work_dir = self._work_dir.parent
+        self._fs_local_rank = dist_utils.get_fs_local_rank()
+        self._rank = dist_utils.get_rank()
+        self._label = label
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}({self.fingerprint})"
+
+    @property
+    def sequence_length(self) -> int:
+        """The sequence length of each instance that this source will produce."""
+        return self._sequence_length
+
+    @property
+    def max_sequence_length(self) -> int:
+        """
+        Typically the same as ``sequence_length`` though in some cases it can be greater, such
+        as when the sequence length will be increased in the middle of an epoch.
+        """
+        return self._max_sequence_length
+
+    @property
+    def num_tokens(self) -> int:
+        return len(self) * self.sequence_length
+
+    @property
+    def work_dir(self) -> Path:
+        """
+        A local working directly that can be used by the token source for caching files during
+        preprocessing.
+        """
+        return self._work_dir / self.__class__.__name__
+
+    @property
+    def fs_local_rank(self) -> int:
+        """
+        The local rank of the current process with respect to filesystem access of the working
+        directory.
+        """
+        return self._fs_local_rank
+
+    @property
+    def rank(self) -> int:
+        """The global rank of the current process across the entire distributed job."""
+        return self._rank
+
+    @property
+    def label(self) -> Optional[str]:
+        """The label assigned to this source."""
+        return self._label
+
+    @property
+    @abstractmethod
+    def fingerprint(self) -> str:
+        """
+        A unique, deterministic string representing the contents of the source.
+        This is used by the data loader during restarts to validate that it can resume in the middle of an epoch
+        by comparing the current fingerprint to the fingerprint stored in the checkpoint.
+
+        So the fingerprint should take into account everything that impacts the complete sequence of tokens
+        (i.e., what you'd get if you concatenated all instances) that the source produces,
+        including the contents of the underlying data and any relevant parameters to this class,
+        such as ``max_sequence_length``.
+        However, it should not take into account parameters that are allowed to change on a restart.
+
+        For example, the :class:`ConcatAndChunkInstanceSource` doesn't include ``sequence_length`` in its fingerprint
+        because as long as ``sequence_length`` divides evenly into ``max_sequence_length`` it
+        can vary while still producing the same complete sequence of tokens even though individual
+        instances will change.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def __len__(self) -> int:
+        """The number of instances available from this source."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def __getitem__(self, idx: int) -> Instance:
+        """Get an instance by index."""
+        raise NotImplementedError
+
+    def __iter__(self) -> Generator[Instance, None, None]:
+        """Iterate over all instances in the source."""
+        for i in range(len(self)):
+            yield self[i]
+
+    def validate_index(self, idx: int) -> int:
+        idx = int(idx)
+        if idx < 0:
+            idx = len(self) + idx
+        if not (0 <= idx < len(self)):
+            raise IndexError(
+                f"Index {idx} is out of bounds for source {self} with {len(self):,d} instances."
+            )
+        return idx
+
+    @abstractmethod
+    def children(self) -> Iterable[Union["InstanceSource", TokenSource]]:
+        """Get the child sources that make up this source, if any."""
+        raise NotImplementedError
+
+    @property
+    def is_leaf(self) -> bool:
+        """Check if this instance source is a leaf node (i.e. has no children)."""
+        for _ in self.children():
+            return False
+        return True
+
+    def __add__(self, other: "InstanceSource") -> "ConcatenatedInstanceSource":
+        """Add two instance sources together into a :class:`ConcatenatedInstanceSource`."""
+        if isinstance(other, InstanceSource):
+            return ConcatenatedInstanceSource(self, other, work_dir=self._work_dir)
+        else:
+            raise TypeError(f"Cannot add {type(self)} with {type(other)}.")
+
+    def __mul__(self, factor: float) -> "SamplingInstanceSource":
+        """Re-size this source by a given factor by sampling instances from it."""
+        if isinstance(factor, (float, int)):
+            return self.resize(factor)
+        else:
+            raise TypeError(f"Cannot multiply {type(self)} with {type(factor)}.")
+
+    def sample(
+        self,
+        *,
+        max_tokens: Optional[int] = None,
+        max_instances: Optional[int] = None,
+        seed: Optional[int] = None,
+        allow_repetition: bool = False,
+    ) -> "SamplingInstanceSource":
+        """
+        Create a :class:`SamplingInstanceSource` by sampling instances from this source.
+
+        .. seealso::
+            - :meth:`resize()`
+            - :meth:`split()`
+
+        :param max_tokens: The maximum number of tokens to sample from this source.
+          Mutually exclusive with ``max_instances``.
+        :param max_instances: The maximum number of instances to sample from this source.
+          Mutually exclusive with ``max_tokens``.
+        :param seed: A random seed for sampling. If ``None``, no shuffling is done and instances
+          are taken in order.
+        :param allow_repetition: Allow repeated instances (oversampling) to meet the target
+          ``max_instances`` if needed. If ``False``, ``max_tokens`` or ``max_instances`` must
+          be less than the size of the source.
+        """
+        from .sampling_instance_source import SamplingInstanceSource
+
+        return SamplingInstanceSource(
+            self,
+            max_tokens=max_tokens,
+            max_instances=max_instances,
+            seed=seed,
+            allow_repetition=allow_repetition,
+            work_dir=self._work_dir,
+        )
+
+    def resize(self, factor: float, seed: Optional[int] = None) -> "SamplingInstanceSource":
+        """
+        Re-size this source by a given factor by sampling instances from it.
+
+        .. seealso::
+            - :meth:`sample()`
+            - :meth:`split()`
+
+        :param factor: The factor by which to resize this source.
+        :param seed: A random seed for sampling.
+        """
+        assert factor > 0
+        return self.sample(
+            max_tokens=int(self.num_tokens * factor), seed=seed, allow_repetition=True
+        )
+
+    def split(
+        self, ratio: float, seed: Optional[int] = None
+    ) -> Tuple["SlicedInstanceSource", "SlicedInstanceSource"]:
+        """
+        Split this source into two disjoint sources according to the given ratio.
+
+        :param ratio: The ratio of the first split to original source. E.g., ``0.8`` means
+          the first split will have 80% of the instances and the second split will have 20%.
+        :param seed: A seed to use to randomize the split.
+        """
+        from .sliced_instance_source import SlicedInstanceSource
+
+        assert 0 < ratio < 1
+        split_idx = int(
+            ((ratio * self.num_tokens) // self.max_sequence_length)
+            * (self.max_sequence_length // self.sequence_length)
+        )
+
+        return (
+            SlicedInstanceSource(self, slice(0, split_idx), seed=seed, work_dir=self._work_dir),
+            SlicedInstanceSource(self, slice(split_idx, -1), seed=seed, work_dir=self._work_dir),
+        )
+
+    def visualize(self):
+        """
+        Print a visualization of this source and its children, recursively.
+
+        .. important::
+            Some icons used in the visualization require a Nerd Font to render properly.
+        """
+        from .visualize import visualize_source
+
+        visualize_source(self)
+
+
+class ConcatenatedInstanceSource(InstanceSource):
+    """
+    An instance source that concatenates multiple instance sources together end-to-end.
+    """
+
+    DISPLAY_ICON = "\uf51e"
+
+    def __init__(
+        self,
+        *sources: InstanceSource,
+        work_dir: PathOrStr,
+        label: Optional[str] = None,
+    ):
+        if len(sources) == 0:
+            raise OLMoConfigurationError("At least one source must be provided.")
+
+        sequence_length = sources[0].sequence_length
+        max_sequence_length = sources[0].max_sequence_length
+        for source in sources:
+            if source.sequence_length != sequence_length:
+                raise OLMoConfigurationError("All sources must have the same sequence length.")
+            if source.max_sequence_length != max_sequence_length:
+                raise OLMoConfigurationError("All sources must have the same max sequence length.")
+
+        super().__init__(
+            work_dir=work_dir,
+            sequence_length=sequence_length,
+            max_sequence_length=max_sequence_length,
+            label=label,
+        )
+
+        unraveled_sources: List[InstanceSource] = []
+        for source in sources:
+            if isinstance(source, ConcatenatedInstanceSource):
+                unraveled_sources.extend(source.sources)
+            else:
+                unraveled_sources.append(source)
+        self._sources = tuple(unraveled_sources)
+
+    @property
+    def sources(self) -> Tuple[InstanceSource, ...]:
+        return self._sources
+
+    @ft.cached_property
+    def fingerprint(self) -> str:
+        sha256_hash = hashlib.sha256()
+        sha256_hash.update((f"class={self.__class__.__name__},").encode())
+        for source in self.sources:
+            sha256_hash.update(f"source={source.fingerprint},".encode())
+        return sha256_hash.hexdigest()
+
+    def __len__(self) -> int:
+        return sum(len(source) for source in self.sources)
+
+    def __getitem__(self, idx: int) -> Instance:
+        idx = self.validate_index(idx)
+        source_start_offset = 0
+        for source in self.sources:
+            source_end_offset = source_start_offset + len(source)
+            if source_start_offset <= idx < source_end_offset:
+                return source[idx - source_start_offset]
+            source_start_offset = source_end_offset
+        raise IndexError(f"{idx} is out of bounds for source of size {len(self)}")
+
+    def children(self):
+        return self.sources
+
+
+@dataclass
+class InstanceSourceConfig(Config):
+    """A base config class for configuring and building an :class:`InstanceSource`."""
+
+    @abstractmethod
+    def build(self, work_dir: PathOrStr) -> InstanceSource:
+        """Build the :class:`InstanceSource`."""
+        raise NotImplementedError
