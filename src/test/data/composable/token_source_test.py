@@ -14,6 +14,12 @@ def test_in_memory_token_source(tmp_path: Path):
     assert isinstance(source.fingerprint, str)
     assert list(source[:]["input_ids"]) == list(range(10))
 
+    source2 = source * 2
+    assert len(source2) == 20
+
+    source2 = source * 1.5
+    assert len(source2) == 15
+
 
 def test_in_memory_document_source(tmp_path: Path):
     source = InMemoryDocumentSource(
@@ -24,6 +30,9 @@ def test_in_memory_document_source(tmp_path: Path):
     assert len(source) == 11
     assert isinstance(source.fingerprint, str)
     assert list(source.get_document_offsets()) == [(0, 3), (3, 6), (6, 9), (9, 11)]
+
+    source2 = source * 2
+    assert len(source2) == 22
 
 
 def test_concatenated_document_source(tmp_path: Path):
@@ -59,6 +68,6 @@ def test_concatenated_document_source(tmp_path: Path):
         assert list(source[13:18]["input_ids"]) == [5, 0, 6, 6, 0]
         assert list(source[13:17]["input_ids"]) == [5, 0, 6, 6]
 
-    source = source1 + source2
-    assert isinstance(source, ConcatenatedDocumentSource)
-    assert len(source.sources) == 4
+    source3 = source1 + source2
+    assert isinstance(source3, ConcatenatedDocumentSource)
+    assert len(source3.sources) == 4

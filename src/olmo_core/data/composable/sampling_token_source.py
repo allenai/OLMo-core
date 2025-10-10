@@ -26,6 +26,7 @@ class SamplingTokenSourceConfig(TokenSourceConfig):
     max_tokens: int
     seed: Optional[int] = None
     allow_repetition: bool = False
+    label: Optional[str] = None
 
     def build(self, work_dir: PathOrStr) -> List["SamplingTokenSource"]:  # type: ignore[override]
         sources = [s for source in self.sources for s in source.build(work_dir=work_dir)]
@@ -36,6 +37,7 @@ class SamplingTokenSourceConfig(TokenSourceConfig):
                 seed=self.seed,
                 work_dir=work_dir,
                 allow_repetition=self.allow_repetition,
+                label=self.label,
             )
         ]
 
@@ -68,8 +70,9 @@ class SamplingTokenSource(TokenSource):
         seed: Optional[int] = None,
         work_dir: PathOrStr,
         allow_repetition: bool = False,
+        label: Optional[str] = None,
     ):
-        super().__init__(work_dir=work_dir)
+        super().__init__(work_dir=work_dir, label=label)
         if not sources:
             raise ValueError("At least one source must be provided.")
         assert max_tokens > 0
@@ -157,3 +160,6 @@ class SamplingTokenSource(TokenSource):
         if mask_chunks:
             out["label_mask"] = typing.cast(Sequence[bool], np.concatenate(mask_chunks))
         return out
+
+    def children(self):
+        return self.sources

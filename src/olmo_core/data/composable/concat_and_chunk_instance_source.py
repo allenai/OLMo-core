@@ -21,6 +21,7 @@ class ConcatAndChunkInstanceSourceConfig(InstanceSourceConfig):
     sources: List[TokenSourceConfig]
     sequence_length: int
     max_sequence_length: Optional[int] = None
+    label: Optional[str] = None
 
     @classmethod
     def from_npy(
@@ -34,6 +35,7 @@ class ConcatAndChunkInstanceSourceConfig(InstanceSourceConfig):
         source_group_size: int = 1,
         label_mask_paths: Optional[List[str]] = None,
         expand_glob: Optional[bool] = None,
+        label: Optional[str] = None,
     ) -> "ConcatAndChunkInstanceSourceConfig":
         """
         Create a :class:`ConcatAndChunkInstanceSourceConfig` from one or more tokenized ``.npy`` source files.
@@ -52,6 +54,7 @@ class ConcatAndChunkInstanceSourceConfig(InstanceSourceConfig):
             ],
             sequence_length=sequence_length,
             max_sequence_length=max_sequence_length,
+            label=label,
         )
 
     def build(self, work_dir: PathOrStr) -> "ConcatAndChunkInstanceSource":
@@ -60,6 +63,7 @@ class ConcatAndChunkInstanceSourceConfig(InstanceSourceConfig):
             sequence_length=self.sequence_length,
             max_sequence_length=self.max_sequence_length,
             work_dir=work_dir,
+            label=self.label,
         )
 
 
@@ -77,11 +81,13 @@ class ConcatAndChunkInstanceSource(InstanceSource):
         sequence_length: int,
         work_dir: PathOrStr,
         max_sequence_length: Optional[int] = None,
+        label: Optional[str] = None,
     ):
         super().__init__(
             sequence_length=sequence_length,
             max_sequence_length=max_sequence_length,
             work_dir=work_dir,
+            label=label,
         )
         self._sources = sources
 
@@ -129,3 +135,6 @@ class ConcatAndChunkInstanceSource(InstanceSource):
 
             source_start_offset = source_end_offset
         raise IndexError(f"Index {idx} out of range for {self.num_instances} instances.")
+
+    def children(self):
+        return self.sources

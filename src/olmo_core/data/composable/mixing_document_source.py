@@ -63,6 +63,7 @@ class MixingDocumentSourceConfig(DocumentSourceConfig):
     """Mixing source specs."""
     seed: Optional[int] = None
     """A random seed for sampling."""
+    label: Optional[str] = None
 
     def build(self, work_dir: PathOrStr) -> List["MixingDocumentSource"]:  # type: ignore[override]
         source_specs = [spec.build(work_dir) for spec in self.source_specs]
@@ -71,6 +72,7 @@ class MixingDocumentSourceConfig(DocumentSourceConfig):
                 *source_specs,
                 work_dir=work_dir,
                 seed=self.seed,
+                label=self.label,
             )
         ]
 
@@ -129,11 +131,12 @@ class MixingDocumentSource(DocumentSource):
         *source_specs: MixingDocumentSourceSpec,
         work_dir: PathOrStr,
         seed: Optional[int] = None,
+        label: Optional[str] = None,
     ):
         if not source_specs:
             raise OLMoConfigurationError("At least one source spec must be provided.")
 
-        super().__init__(work_dir=work_dir)
+        super().__init__(work_dir=work_dir, label=label)
 
         sources = [spec.source for spec in source_specs]
 
@@ -146,14 +149,15 @@ class MixingDocumentSource(DocumentSource):
 
         # Sample documents from each source.
         sampled_sources: List[SamplingDocumentSource] = []
-        for i, (source, sample_size) in enumerate(zip(sources, sample_sizes)):
+        for i, (spec, sample_size) in enumerate(zip(source_specs, sample_sizes)):
             sampled_sources.append(
                 SamplingDocumentSource(
-                    source,
+                    spec.source,
                     max_tokens=int(sample_size),
                     work_dir=work_dir,
                     seed=None if seed is None else seed + i,
-                    allow_repetition=sample_size > len(source),
+                    allow_repetition=sample_size > len(spec.source),
+                    label=spec.label or spec.source.label,
                 )
             )
         self._source = ConcatenatedDocumentSource(*sampled_sources, work_dir=work_dir)
@@ -189,3 +193,6 @@ class MixingDocumentSource(DocumentSource):
 
     def get_document_offsets(self) -> Iterable[tuple[int, int]]:
         return self._source.get_document_offsets()
+
+    def children(self):
+        return self.sampled_sources

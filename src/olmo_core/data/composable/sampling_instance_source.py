@@ -23,6 +23,7 @@ class SamplingInstanceSourceConfig(InstanceSourceConfig):
     max_instances: Optional[int] = None
     seed: Optional[int] = None
     allow_repetition: bool = False
+    label: Optional[str] = None
 
     def __post_init__(self):
         if (self.max_tokens is None) == (self.max_instances is None):
@@ -38,6 +39,7 @@ class SamplingInstanceSourceConfig(InstanceSourceConfig):
             work_dir=work_dir,
             seed=self.seed,
             allow_repetition=self.allow_repetition,
+            label=self.label,
         )
 
 
@@ -46,7 +48,10 @@ class SamplingInstanceSource(InstanceSource):
     An instance source that samples instances from other instance sources.
 
     :param sources: The sources to sample instances from.
-    :param max_instances: The maximum number of instances to sample.
+    :param max_tokens: The maximum number of tokens to sample. Alternatively you can specify
+      ``max_instances``.
+    :param max_instances: The maximum number of instances to sample. Mutually exclusive with
+      ``max_tokens``.
     :param seed: A optional seed for sampling. If ``None``, the first ``N_s`` instances are taken
       from each source where ``N_s`` is proportional to the size of the source.
     :param allow_repetition: Allow repeated instances (oversampling) to meet the target ``max_instances``
@@ -63,6 +68,7 @@ class SamplingInstanceSource(InstanceSource):
         work_dir: PathOrStr,
         seed: Optional[int] = None,
         allow_repetition: bool = False,
+        label: Optional[str] = None,
     ):
         if not sources:
             raise OLMoConfigurationError("At least one source must be provided.")
@@ -91,6 +97,7 @@ class SamplingInstanceSource(InstanceSource):
             work_dir=work_dir,
             sequence_length=sequence_length,
             max_sequence_length=max_sequence_length,
+            label=label,
         )
         self._sources = sources
         self._max_instances = max_instances
@@ -167,6 +174,9 @@ class SamplingInstanceSource(InstanceSource):
                 f"source={source.fingerprint},{sample_size_chunk_size_ratio=}".encode()
             )
         return sha256_hash.hexdigest()
+
+    def children(self):
+        return self.sources
 
     def __len__(self) -> int:
         return self.num_instances

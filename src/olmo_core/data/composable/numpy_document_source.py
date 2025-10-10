@@ -34,6 +34,7 @@ class _NumpyDocumentSourceConfigBase(DocumentSourceConfig):
     """Used to shuffle the source files before grouping/building the document sources."""
     source_group_size: int = 1
     """The number of npy source files to group together into a single source."""
+    label: Optional[str] = None
 
     def __post_init__(self):
         if self.source_group_size < -1 or self.source_group_size == 0:
@@ -72,6 +73,12 @@ class NumpyDocumentSourceConfig(_NumpyDocumentSourceConfigBase):
         Build the sources.
         """
         dtype = self.get_dtype()
+        label = self.label
+
+        if label is None:
+            # Assign the common path component, if there is one, as the label.
+            if len(self.source_paths) == 1:
+                label = self.source_paths[0]
 
         expand_glob = self.expand_glob
         if self.expand_glob is None:
@@ -101,6 +108,7 @@ class NumpyDocumentSourceConfig(_NumpyDocumentSourceConfigBase):
             tokenizer=self.tokenizer,
             dtype=dtype,
             work_dir=work_dir,
+            label=label,
         )
 
         if self.source_group_size > 0:
@@ -156,10 +164,10 @@ class NumpyDocumentSourceMixConfig(_NumpyDocumentSourceConfigBase):
         if not isinstance(mix, DataMixBase):
             mix = DataMix(mix)
         source_paths, _ = mix.build(self.mix_base_dir, self.tokenizer.identifier)
-        kwargs = self.as_dict(recurse=False, exclude={"mix", "mix_base_dir"})
-        return NumpyDocumentSourceConfig(source_paths=source_paths, **kwargs).build(
-            work_dir=work_dir
-        )
+        kwargs = self.as_dict(recurse=False, exclude={"mix", "mix_base_dir", "label"})
+        return NumpyDocumentSourceConfig(
+            source_paths=source_paths, label=self.label or self.mix, **kwargs
+        ).build(work_dir=work_dir)
 
 
 class NumpyDocumentSource(DocumentSource):
@@ -177,8 +185,9 @@ class NumpyDocumentSource(DocumentSource):
         work_dir: PathOrStr,
         tokenizer: TokenizerConfig,
         label_mask_paths: Optional[Sequence[PathOrStr]] = None,
+        label: Optional[str] = None,
     ):
-        super().__init__(work_dir=work_dir)
+        super().__init__(work_dir=work_dir, label=label)
         self.source_paths = tuple((io.normalize_path(p) for p in source_paths))
         if not self.source_paths:
             raise OLMoConfigurationError("'source_paths' must contain at least one path.")
@@ -246,6 +255,7 @@ class NumpyDocumentSource(DocumentSource):
                 work_dir=self.work_dir,
                 tokenizer=self.tokenizer,
                 label_mask_paths=label_mask_paths,
+                label=self.label,
             )
             for source_paths, label_mask_paths in zip(source_paths_groups, label_mask_paths_groups)
         ]
@@ -358,3 +368,6 @@ class NumpyDocumentSource(DocumentSource):
                 yield last_doc_end + start_offset, source_size + start_offset
 
             start_offset += source_size
+
+    def children(self):
+        return []

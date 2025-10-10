@@ -33,6 +33,7 @@ class SamplingDocumentSourceConfig(DocumentSourceConfig):
     max_tokens: int
     seed: Optional[int] = None
     allow_repetition: bool = False
+    label: Optional[str] = None
 
     def build(self, work_dir: PathOrStr) -> List["SamplingDocumentSource"]:  # type: ignore[override]
         sources = [s for source in self.sources for s in source.build(work_dir=work_dir)]
@@ -43,6 +44,7 @@ class SamplingDocumentSourceConfig(DocumentSourceConfig):
                 seed=self.seed,
                 work_dir=work_dir,
                 allow_repetition=self.allow_repetition,
+                label=self.label,
             )
         ]
 
@@ -75,8 +77,9 @@ class SamplingDocumentSource(DocumentSource):
         seed: Optional[int] = None,
         work_dir: PathOrStr,
         allow_repetition: bool = False,
+        label: Optional[str] = None,
     ):
-        super().__init__(work_dir=work_dir)
+        super().__init__(work_dir=work_dir, label=label)
 
         source: DocumentSource
         if not sources:
@@ -241,3 +244,6 @@ class SamplingDocumentSource(DocumentSource):
         for cu_doc_len in cu_doc_lens[1:]:
             yield (start_offset, int(cu_doc_len))
             start_offset = int(cu_doc_len)
+
+    def children(self):
+        return self.source.children

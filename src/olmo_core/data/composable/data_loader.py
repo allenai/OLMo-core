@@ -161,6 +161,12 @@ class ComposableDataLoader(TextDataLoaderBase):
         self.instance_filter_config = instance_filter_config
         self._global_indices: Optional[np.ndarray] = None
 
+        if dist_utils.get_rank() == 0:
+            print()
+            for source in sources:
+                source.visualize()
+                print()
+
     @ft.cached_property
     def source_fingerprint(self) -> str:
         sha256_hash = hashlib.sha256()

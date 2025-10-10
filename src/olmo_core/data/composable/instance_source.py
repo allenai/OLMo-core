@@ -3,7 +3,17 @@ import hashlib
 from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Generator, List, Optional, Sequence, Tuple, TypedDict
+from typing import (
+    TYPE_CHECKING,
+    Generator,
+    Iterable,
+    List,
+    Optional,
+    Sequence,
+    Tuple,
+    TypedDict,
+    Union,
+)
 
 from typing_extensions import NotRequired
 
@@ -12,6 +22,11 @@ import olmo_core.io as io
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import Config
 from olmo_core.exceptions import OLMoConfigurationError
+
+from .token_source import TokenSource
+
+if TYPE_CHECKING:
+    from .sampling_instance_source import SamplingInstanceSource
 
 
 class Instance(TypedDict):
@@ -39,6 +54,7 @@ class InstanceSource(metaclass=ABCMeta):
       train on to guarantee that you can restart the run with the same data order after changing sequence length.
       Care needs to be taken when implementing this in a subclass to ensure that the exact same tokens
       will be produced when `sequence_length` is changed but `max_sequence_length` is fixed.
+    :param label: An optional label for this source, useful for debugging and visualizing.
     """
 
     def __init__(
@@ -47,6 +63,7 @@ class InstanceSource(metaclass=ABCMeta):
         work_dir: PathOrStr,
         sequence_length: int,
         max_sequence_length: Optional[int] = None,
+        label: Optional[str] = None,
     ):
         if io.is_url(work_dir):
             raise OLMoConfigurationError(
@@ -70,6 +87,7 @@ class InstanceSource(metaclass=ABCMeta):
             self._work_dir = self._work_dir.parent
         self._fs_local_rank = dist_utils.get_fs_local_rank()
         self._rank = dist_utils.get_rank()
+        self._label = label
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}({self.fingerprint})"
@@ -111,6 +129,11 @@ class InstanceSource(metaclass=ABCMeta):
     def rank(self) -> int:
         """The global rank of the current process across the entire distributed job."""
         return self._rank
+
+    @property
+    def label(self) -> Optional[str]:
+        """The label assigned to this source."""
+        return self._label
 
     @property
     @abstractmethod
@@ -158,12 +181,69 @@ class InstanceSource(metaclass=ABCMeta):
             )
         return idx
 
-    def __add__(self, other: "InstanceSource"):
+    @abstractmethod
+    def children(self) -> Iterable[Union["InstanceSource", TokenSource]]:
+        """Get the child sources that make up this source, if any."""
+        raise NotImplementedError
+
+    def __add__(self, other: "InstanceSource") -> "ConcatenatedInstanceSource":
         """Add two instance sources together into a :class:`ConcatenatedInstanceSource`."""
         if isinstance(other, InstanceSource):
             return ConcatenatedInstanceSource(self, other, work_dir=self._work_dir)
         else:
             raise TypeError(f"Cannot add {type(self)} with {type(other)}.")
+
+    def __mul__(self, factor: float) -> "SamplingInstanceSource":
+        """Re-size this source by a given factor by sampling instances from it."""
+        if isinstance(factor, (float, int)):
+            return self.resize(factor)
+        else:
+            raise TypeError(f"Cannot multiply {type(self)} with {type(factor)}.")
+
+    def sample(
+        self,
+        *,
+        max_tokens: Optional[int] = None,
+        max_instances: Optional[int] = None,
+        seed: Optional[int] = None,
+        allow_repetition: bool = False,
+    ) -> "SamplingInstanceSource":
+        """
+        Create a :class:`SamplingInstanceSource` by sampling instances from this source.
+
+        .. seealso::
+            :meth:`resize()`
+        """
+        from .sampling_instance_source import SamplingInstanceSource
+
+        return SamplingInstanceSource(
+            self,
+            max_tokens=max_tokens,
+            max_instances=max_instances,
+            seed=seed,
+            allow_repetition=allow_repetition,
+            work_dir=self._work_dir,
+        )
+
+    def resize(self, factor: float, seed: Optional[int] = None) -> "SamplingInstanceSource":
+        """
+        Re-size this source by a given factor by sampling instances from it.
+
+        .. seealso::
+            :meth:`sample()`
+        """
+        assert factor > 0
+        return self.sample(
+            max_tokens=int(self.num_tokens * factor), seed=seed, allow_repetition=True
+        )
+
+    def visualize(self):
+        """
+        Print a visualization of this source and its children, recursively.
+        """
+        from .visualize import visualize_source
+
+        visualize_source(self)
 
 
 class ConcatenatedInstanceSource(InstanceSource):
@@ -175,6 +255,7 @@ class ConcatenatedInstanceSource(InstanceSource):
         self,
         *sources: InstanceSource,
         work_dir: PathOrStr,
+        label: Optional[str] = None,
     ):
         if len(sources) == 0:
             raise OLMoConfigurationError("At least one source must be provided.")
@@ -191,6 +272,7 @@ class ConcatenatedInstanceSource(InstanceSource):
             work_dir=work_dir,
             sequence_length=sequence_length,
             max_sequence_length=max_sequence_length,
+            label=label,
         )
 
         unraveled_sources: List[InstanceSource] = []
@@ -225,6 +307,9 @@ class ConcatenatedInstanceSource(InstanceSource):
                 return source[idx - source_start_offset]
             source_start_offset = source_end_offset
         raise IndexError(f"{idx} is out of bounds for source of size {len(self)}")
+
+    def children(self):
+        return self.sources
 
 
 @dataclass

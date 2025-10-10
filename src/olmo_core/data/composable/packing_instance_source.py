@@ -40,6 +40,7 @@ class PackingInstanceSourceConfig(InstanceSourceConfig):
     max_sequence_length: Optional[int] = None
     long_doc_strategy: LongDocStrategy = LongDocStrategy.truncate
     source_group_size: int = 1
+    label: Optional[str] = None
 
     def build(self, work_dir: PathOrStr) -> "PackingInstanceSource":
         return PackingInstanceSource(
@@ -50,6 +51,7 @@ class PackingInstanceSourceConfig(InstanceSourceConfig):
             tokenizer=self.tokenizer,
             long_doc_strategy=self.long_doc_strategy,
             source_group_size=self.source_group_size,
+            label=self.label,
         )
 
 
@@ -87,11 +89,13 @@ class PackingInstanceSource(InstanceSource):
         max_sequence_length: Optional[int] = None,
         long_doc_strategy: LongDocStrategy = LongDocStrategy.truncate,
         source_group_size: int = 1,
+        label: Optional[str] = None,
     ):
         super().__init__(
             sequence_length=sequence_length,
             max_sequence_length=max_sequence_length,
             work_dir=work_dir,
+            label=label,
         )
         if self.sequence_length != self.max_sequence_length:
             raise OLMoConfigurationError(
@@ -161,6 +165,9 @@ class PackingInstanceSource(InstanceSource):
         for source in self.sources:
             sha256_hash.update(f"source={source.fingerprint},".encode())
         return sha256_hash.hexdigest()
+
+    def children(self):
+        return self.sources
 
     def __len__(self) -> int:
         return self.source_group_instance_offsets[-1][1]

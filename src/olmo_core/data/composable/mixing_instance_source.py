@@ -57,6 +57,7 @@ class MixingInstanceSourceConfig(InstanceSourceConfig):
     """Mixing source specs."""
     seed: Optional[int] = None
     """A random seed for sampling."""
+    label: Optional[str] = None
 
     def build(self, work_dir: PathOrStr) -> "MixingInstanceSource":  # type: ignore[override]
         source_specs = [spec.build(work_dir) for spec in self.source_specs]
@@ -64,6 +65,7 @@ class MixingInstanceSourceConfig(InstanceSourceConfig):
             *source_specs,
             work_dir=work_dir,
             seed=self.seed,
+            label=self.label,
         )
 
 
@@ -121,6 +123,7 @@ class MixingInstanceSource(InstanceSource):
         *source_specs: MixingInstanceSourceSpec,
         work_dir: PathOrStr,
         seed: Optional[int] = None,
+        label: Optional[str] = None,
     ):
         if not source_specs:
             raise OLMoConfigurationError("At least one source spec must be provided.")
@@ -138,6 +141,7 @@ class MixingInstanceSource(InstanceSource):
             work_dir=work_dir,
             sequence_length=sequence_length,
             max_sequence_length=max_sequence_length,
+            label=label,
         )
 
         # Determine the number of tokens to sample from each source.
@@ -149,14 +153,15 @@ class MixingInstanceSource(InstanceSource):
 
         # Sample instances from each source.
         sampled_sources: List[SamplingInstanceSource] = []
-        for i, (source, sample_size) in enumerate(zip(sources, sample_sizes)):
+        for i, (spec, sample_size) in enumerate(zip(source_specs, sample_sizes)):
             sampled_sources.append(
                 SamplingInstanceSource(
-                    source,
+                    spec.source,
                     max_tokens=int(sample_size),
                     work_dir=work_dir,
                     seed=None if seed is None else seed + i,
                     allow_repetition=True,
+                    label=spec.label or spec.source.label,
                 )
             )
         self._source = ConcatenatedInstanceSource(*sampled_sources, work_dir=work_dir)
@@ -179,6 +184,9 @@ class MixingInstanceSource(InstanceSource):
     @property
     def sampled_sources(self) -> Tuple[SamplingInstanceSource, ...]:
         return typing.cast(Tuple[SamplingInstanceSource, ...], self._source.sources)
+
+    def children(self):
+        return self.sampled_sources
 
     @ft.cached_property
     def fingerprint(self) -> str:

@@ -4,7 +4,16 @@ import typing
 from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional, Sequence, Tuple, TypedDict, Union
+from typing import (
+    TYPE_CHECKING,
+    Iterable,
+    List,
+    Optional,
+    Sequence,
+    Tuple,
+    TypedDict,
+    Union,
+)
 
 import numpy as np
 from typing_extensions import NotRequired
@@ -17,6 +26,10 @@ from olmo_core.exceptions import OLMoConfigurationError
 
 from ..tokenizer import TokenizerConfig
 from .utils import as_ndarray
+
+if TYPE_CHECKING:
+    from .sampling_document_source import SamplingDocumentSource
+    from .sampling_token_source import SamplingTokenSource
 
 
 class TokenRange(TypedDict):
@@ -37,10 +50,10 @@ class TokenSource(metaclass=ABCMeta):
     It essentially represents an array of tokens.
 
     At a minimum, a :class:`TokenSource` must implement the methods/properties (1) :meth:`num_tokens`,
-    (2) :meth:`get_token_range`, and (3) :meth:`fingerprint`.
+    (2) :meth:`get_token_range`, (3) :meth:`fingerprint`, and (4) :meth:`children`.
     """
 
-    def __init__(self, *, work_dir: PathOrStr):
+    def __init__(self, *, work_dir: PathOrStr, label: Optional[str] = None):
         if io.is_url(work_dir):
             raise OLMoConfigurationError(
                 f"'work_dir' should be a local path, not a URL ('{work_dir}')."
@@ -50,6 +63,7 @@ class TokenSource(metaclass=ABCMeta):
             self._work_dir = self._work_dir.parent
         self._fs_local_rank = dist_utils.get_fs_local_rank()
         self._rank = dist_utils.get_rank()
+        self._label = label
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}({self.fingerprint})"
@@ -74,6 +88,11 @@ class TokenSource(metaclass=ABCMeta):
     def rank(self) -> int:
         """The global rank of the current process across the entire distributed job."""
         return self._rank
+
+    @property
+    def label(self) -> Optional[str]:
+        """The label assigned to this source."""
+        return self._label
 
     @property
     @abstractmethod
@@ -136,7 +155,12 @@ class TokenSource(metaclass=ABCMeta):
             )
         return start_idx, end_idx
 
-    def __add__(self, other: "TokenSource"):
+    @abstractmethod
+    def children(self) -> Iterable["TokenSource"]:
+        """Get the child token sources that make up this source, if any."""
+        raise NotImplementedError
+
+    def __add__(self, other: "TokenSource") -> "ConcatenatedTokenSource":
         """
         Add two token sources together into a :class:`ConcatenatedTokenSource` or :class:`ConcatenatedDocumentSource`
         depending on the type of ``self`` and ``other``.
@@ -147,6 +171,48 @@ class TokenSource(metaclass=ABCMeta):
             return ConcatenatedTokenSource(self, other, work_dir=self._work_dir)
         else:
             raise TypeError(f"Cannot add {type(self)} with {type(other)}.")
+
+    def __mul__(self, factor: float) -> "SamplingTokenSource":
+        """Re-size this source by a given factor by sampling tokens from it."""
+        if isinstance(factor, (float, int)):
+            return self.resize(factor)
+        else:
+            raise TypeError(f"Cannot multiply {type(self)} with {type(factor)}.")
+
+    def sample(
+        self,
+        *,
+        max_tokens: int,
+        seed: Optional[int] = None,
+        allow_repetition: bool = False,
+    ) -> "SamplingTokenSource":
+        """
+        Create a :class:`SamplingTokenSource` by sampling tokens from this source.
+
+        .. seealso::
+            :meth:`resize()`
+        """
+        from .sampling_token_source import SamplingTokenSource
+
+        return SamplingTokenSource(
+            self,
+            max_tokens=max_tokens,
+            seed=seed,
+            allow_repetition=allow_repetition,
+            work_dir=self._work_dir,
+        )
+
+    def resize(self, factor: float, seed: Optional[int] = None) -> "SamplingTokenSource":
+        """
+        Re-size this source by a given factor by sampling tokens from it.
+
+        .. seealso::
+            :meth:`sample()`
+        """
+        assert factor > 0
+        return self.sample(
+            max_tokens=int(self.num_tokens * factor), seed=seed, allow_repetition=True
+        )
 
 
 class InMemoryTokenSource(TokenSource):
@@ -160,8 +226,9 @@ class InMemoryTokenSource(TokenSource):
         *,
         work_dir: PathOrStr,
         label_mask: Optional[Sequence[bool]] = None,
+        label: Optional[str] = None,
     ):
-        super().__init__(work_dir=work_dir)
+        super().__init__(work_dir=work_dir, label=label)
         self._tokens = as_ndarray(tokens)
         self._label_mask = None if label_mask is None else as_ndarray(label_mask)
         if self._label_mask is not None:
@@ -191,14 +258,17 @@ class InMemoryTokenSource(TokenSource):
             out["label_mask"] = typing.cast(Sequence[bool], self._label_mask[start_idx:end_idx])
         return out
 
+    def children(self):
+        return []
+
 
 class ConcatenatedTokenSource(TokenSource):
     """
     A token source that can be created from concatenating multiple other token sources.
     """
 
-    def __init__(self, *sources: TokenSource, work_dir: PathOrStr):
-        super().__init__(work_dir=work_dir)
+    def __init__(self, *sources: TokenSource, work_dir: PathOrStr, label: Optional[str] = None):
+        super().__init__(work_dir=work_dir, label=label)
         unraveled_sources: List[TokenSource] = []
         for source in sources:
             if isinstance(source, ConcatenatedTokenSource):
@@ -213,6 +283,9 @@ class ConcatenatedTokenSource(TokenSource):
     @property
     def sources(self) -> Tuple[TokenSource, ...]:
         return self._sources
+
+    def children(self):
+        return self.sources
 
     @ft.cached_property
     def fingerprint(self) -> str:
@@ -266,6 +339,23 @@ class DocumentSource(TokenSource):
     boundaries. This class provides one additional method: :meth:`get_document_offsets()`.
     """
 
+    def sample(  # type: ignore[override]
+        self,
+        *,
+        max_tokens: int,
+        seed: Optional[int] = None,
+        allow_repetition: bool = False,
+    ) -> "SamplingDocumentSource":
+        from .sampling_document_source import SamplingDocumentSource
+
+        return SamplingDocumentSource(
+            self,
+            max_tokens=max_tokens,
+            seed=seed,
+            allow_repetition=allow_repetition,
+            work_dir=self._work_dir,
+        )
+
     @abstractmethod
     def get_document_offsets(self) -> Iterable[tuple[int, int]]:
         """Get the start (inclusive) and end (exclusive) token indices of each document, in order."""
@@ -284,8 +374,9 @@ class InMemoryDocumentSource(InMemoryTokenSource, DocumentSource):
         tokenizer: TokenizerConfig,
         work_dir: PathOrStr,
         label_mask: Optional[Sequence[bool]] = None,
+        label: Optional[str] = None,
     ):
-        super().__init__(tokens=tokens, work_dir=work_dir, label_mask=label_mask)
+        super().__init__(tokens=tokens, work_dir=work_dir, label_mask=label_mask, label=label)
         self._tokenizer = tokenizer
 
     @property
@@ -313,6 +404,9 @@ class InMemoryDocumentSource(InMemoryTokenSource, DocumentSource):
             sha256_hash.update(self._label_mask.tobytes())
         return sha256_hash.hexdigest()
 
+    def children(self):
+        return []
+
     def get_document_offsets(self) -> Iterable[tuple[int, int]]:
         if self.bos_token_id is None:
             doc_boundaries = (self._tokens == self.eos_token_id).nonzero()[0]
@@ -338,8 +432,8 @@ class ConcatenatedDocumentSource(ConcatenatedTokenSource, DocumentSource):
     A document source that can be created from concatenating multiple other document sources.
     """
 
-    def __init__(self, *sources: DocumentSource, work_dir: PathOrStr):
-        super().__init__(*sources, work_dir=work_dir)
+    def __init__(self, *sources: DocumentSource, work_dir: PathOrStr, label: Optional[str] = None):
+        super().__init__(*sources, work_dir=work_dir, label=label)
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}{self.sources}"
@@ -365,6 +459,9 @@ class ConcatenatedDocumentSource(ConcatenatedTokenSource, DocumentSource):
                 yield last_doc_end + start_offset, source_size + start_offset
 
             start_offset += source_size
+
+    def children(self):
+        return self.sources
 
 
 @dataclass

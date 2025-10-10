@@ -63,6 +63,7 @@ class MixingTokenSourceConfig(TokenSourceConfig):
     """Mixing source specs."""
     seed: Optional[int] = None
     """A random seed for sampling."""
+    label: Optional[str] = None
 
     def build(self, work_dir: PathOrStr) -> List["MixingTokenSource"]:  # type: ignore[override]
         source_specs = [spec.build(work_dir) for spec in self.source_specs]
@@ -71,6 +72,7 @@ class MixingTokenSourceConfig(TokenSourceConfig):
                 *source_specs,
                 work_dir=work_dir,
                 seed=self.seed,
+                label=self.label,
             )
         ]
 
@@ -129,11 +131,12 @@ class MixingTokenSource(TokenSource):
         *source_specs: MixingTokenSourceSpec,
         work_dir: PathOrStr,
         seed: Optional[int] = None,
+        label: Optional[str] = None,
     ):
         if not source_specs:
             raise OLMoConfigurationError("At least one source spec must be provided.")
 
-        super().__init__(work_dir=work_dir)
+        super().__init__(work_dir=work_dir, label=label)
 
         sources = [spec.source for spec in source_specs]
 
@@ -146,14 +149,15 @@ class MixingTokenSource(TokenSource):
 
         # Sample tokens from each source.
         sampled_sources: List[SamplingTokenSource] = []
-        for i, (source, sample_size) in enumerate(zip(sources, sample_sizes)):
+        for i, (spec, sample_size) in enumerate(zip(source_specs, sample_sizes)):
             sampled_sources.append(
                 SamplingTokenSource(
-                    source,
+                    spec.source,
                     max_tokens=int(sample_size),
                     work_dir=work_dir,
                     seed=None if seed is None else seed + i,
-                    allow_repetition=sample_size > len(source),
+                    allow_repetition=sample_size > len(spec.source),
+                    label=spec.label or spec.source.label,
                 )
             )
         self._source = ConcatenatedTokenSource(*sampled_sources, work_dir=work_dir)
@@ -186,3 +190,6 @@ class MixingTokenSource(TokenSource):
 
     def get_token_range(self, start_idx: int, end_idx: int) -> TokenRange:
         return self._source.get_token_range(start_idx, end_idx)
+
+    def children(self):
+        return self.sampled_sources
