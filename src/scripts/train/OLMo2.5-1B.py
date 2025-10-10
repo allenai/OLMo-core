@@ -9,7 +9,7 @@ from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
-from olmo_core.internal.experiment import CommonComponents, main, build_config
+from olmo_core.internal.experiment import CommonComponents, build_config, main
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
@@ -24,6 +24,7 @@ from olmo_core.train.train_module import (
 SEQUENCE_LENGTH = 8 * 1024
 GLOBAL_BATCH_SIZE = 4 * 1024 * 1024
 WARMUP_STEPS = 2000
+
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     config = TransformerConfig.olmo2_1B_v2(vocab_size=common.tokenizer.padded_vocab_size())
@@ -86,7 +87,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             metrics_collect_interval=10,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(int(5e12)),
-            hard_stop=Duration.tokens(int(2.5e12 + GLOBAL_BATCH_SIZE * (WARMUP_STEPS / 2))), # After this, we switch to a longer cosine to reach 6T.
+            hard_stop=Duration.tokens(
+                int(2.5e12 + GLOBAL_BATCH_SIZE * (WARMUP_STEPS / 2))
+            ),  # After this, we switch to a longer cosine to reach 6T.
         )
         .with_callback(
             "checkpointer",
@@ -118,11 +121,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             ),
         )
         .with_recommended_evals(
-            common.tokenizer,
-            SEQUENCE_LENGTH,
-            cluster,
-            task_set="fast",
-            eval_interval=1000
+            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=1000
         )
     )
 
