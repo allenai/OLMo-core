@@ -101,6 +101,7 @@ class ComposableDataLoader(TextDataLoaderBase):
         target_device_type: str = "cpu",
         generate_doc_lengths: bool = False,
         instance_filter_config: Optional[InstanceFilterConfig] = None,
+        display_source_visualization: bool = True,
     ):
         super().__init__(
             collator=collator,
@@ -161,7 +162,7 @@ class ComposableDataLoader(TextDataLoaderBase):
         self.instance_filter_config = instance_filter_config
         self._global_indices: Optional[np.ndarray] = None
 
-        if dist_utils.get_rank() == 0:
+        if display_source_visualization and dist_utils.get_rank() == 0:
             print()
             for source in sources:
                 source.visualize()
@@ -500,6 +501,7 @@ class ComposableDataLoaderConfig(Config):
     target_device_type: Optional[str] = None
     generate_doc_lengths: bool = False
     instance_filter_config: Optional[InstanceFilterConfig] = None
+    display_source_visualization: bool = True
 
     def build(
         self,
@@ -548,4 +550,5 @@ class ComposableDataLoaderConfig(Config):
             target_device_type=self.target_device_type or get_default_device().type,
             generate_doc_lengths=self.generate_doc_lengths,
             instance_filter_config=self.instance_filter_config,
+            display_source_visualization=self.display_source_visualization,
         )

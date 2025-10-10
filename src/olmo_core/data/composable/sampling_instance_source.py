@@ -60,6 +60,8 @@ class SamplingInstanceSource(InstanceSource):
 
     Config = SamplingInstanceSourceConfig
 
+    DISPLAY_ICON = "\uedec"
+
     def __init__(
         self,
         *sources: InstanceSource,

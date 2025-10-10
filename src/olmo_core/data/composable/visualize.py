@@ -8,32 +8,46 @@ from .utils import format_token_count
 
 
 def visualize_source(self):
-    skip_connector, child_connector, leaf_child_connector = "│  ", "├─ ", "└─ "
+    skip_connector, child_connector, last_child_connector = "│  ", "├─ ", "└─ "
 
     def _format_label(label: str) -> str:
         if len(label) > 53:
-            return label[:13] + "…" + label[-40:]
+            return label[:13] + "..." + label[-40:]
         else:
             return label
 
     def _format_source(
-        source_cls, tokens: int, label: Optional[str], indent_spec: List[bool], count: int = 1
+        source_cls,
+        tokens: int,
+        label: Optional[str],
+        indent_spec: List[bool],
+        is_leaf: bool,
+        count: int = 1,
     ) -> str:
+        del is_leaf
         indents = []
-        for is_leaf in indent_spec[:-1]:
-            indents.append("   " if is_leaf else skip_connector)
+        for is_last_child in indent_spec[:-1]:
+            indents.append("   " if is_last_child else skip_connector)
         if indent_spec:
-            indents.append(leaf_child_connector if indent_spec[-1] else child_connector)
+            indents.append(last_child_connector if indent_spec[-1] else child_connector)
         indent = "".join(indents)
+        icon_str = f"{source_cls.DISPLAY_ICON} " if source_cls.DISPLAY_ICON else ""
         count_str = f" x {count}" if count > 1 else ""
         label_str = rf" \[{_format_label(label)}]" if label else ""
         token_str = format_token_count(tokens)
-        return f"{indent}[b cyan]{source_cls.__name__}[/]{count_str}: [green]{token_str}[/] tokens[magenta]{label_str}[/]"
+        return (
+            f"{indent}[b cyan]{icon_str}{source_cls.__name__}[/]{count_str}: "
+            f"[green]{token_str}[/] tokens[magenta]{label_str}[/]"
+        )
 
     def _visualize_source(
         source: Union[InstanceSource, TokenSource], indent_spec: List[bool]
     ) -> str:
-        lines = [_format_source(type(source), source.num_tokens, source.label, indent_spec)]
+        lines = [
+            _format_source(
+                type(source), source.num_tokens, source.label, indent_spec, source.is_leaf
+            )
+        ]
         children = list(source.children())
 
         children_types = set()
@@ -42,7 +56,7 @@ def visualize_source(self):
         for child in children:
             children_types.add(type(child))
             children_labels.add(child.label)
-            if list(child.children()):
+            if not child.is_leaf:
                 children_are_leafs = False
                 break
 
@@ -60,6 +74,7 @@ def visualize_source(self):
                     total_child_tokens,
                     label,
                     indent_spec + [True],
+                    True,
                     count=len(children),
                 )
             )

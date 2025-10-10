@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
+    ClassVar,
     Generator,
     Iterable,
     List,
@@ -56,6 +57,8 @@ class InstanceSource(metaclass=ABCMeta):
       will be produced when `sequence_length` is changed but `max_sequence_length` is fixed.
     :param label: An optional label for this source, useful for debugging and visualizing.
     """
+
+    DISPLAY_ICON: ClassVar[str] = ""  # Nerd Font icon for visualizations
 
     def __init__(
         self,
@@ -186,6 +189,13 @@ class InstanceSource(metaclass=ABCMeta):
         """Get the child sources that make up this source, if any."""
         raise NotImplementedError
 
+    @property
+    def is_leaf(self) -> bool:
+        """Check if this instance source is a leaf node (i.e. has no children)."""
+        for _ in self.children():
+            return False
+        return True
+
     def __add__(self, other: "InstanceSource") -> "ConcatenatedInstanceSource":
         """Add two instance sources together into a :class:`ConcatenatedInstanceSource`."""
         if isinstance(other, InstanceSource):
@@ -250,6 +260,8 @@ class ConcatenatedInstanceSource(InstanceSource):
     """
     An instance source that concatenates multiple instance sources together end-to-end.
     """
+
+    DISPLAY_ICON = "\uf51e"
 
     def __init__(
         self,

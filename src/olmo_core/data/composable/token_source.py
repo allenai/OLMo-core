@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
+    ClassVar,
     Iterable,
     List,
     Optional,
@@ -52,6 +53,8 @@ class TokenSource(metaclass=ABCMeta):
     At a minimum, a :class:`TokenSource` must implement the methods/properties (1) :meth:`num_tokens`,
     (2) :meth:`get_token_range`, (3) :meth:`fingerprint`, and (4) :meth:`children`.
     """
+
+    DISPLAY_ICON: ClassVar[str] = "\ueb7e"  # Nerd Font icon for visualizations
 
     def __init__(self, *, work_dir: PathOrStr, label: Optional[str] = None):
         if io.is_url(work_dir):
@@ -160,6 +163,13 @@ class TokenSource(metaclass=ABCMeta):
         """Get the child token sources that make up this source, if any."""
         raise NotImplementedError
 
+    @property
+    def is_leaf(self) -> bool:
+        """Check if this token source is a leaf node (i.e. has no children)."""
+        for _ in self.children():
+            return False
+        return True
+
     def __add__(self, other: "TokenSource") -> "ConcatenatedTokenSource":
         """
         Add two token sources together into a :class:`ConcatenatedTokenSource` or :class:`ConcatenatedDocumentSource`
@@ -220,6 +230,8 @@ class InMemoryTokenSource(TokenSource):
     An in-memory implementation of a :class:`TokenSource`. Primarily meant for testing.
     """
 
+    DISPLAY_ICON = "\U000f035b"
+
     def __init__(
         self,
         tokens: Sequence[int],
@@ -266,6 +278,8 @@ class ConcatenatedTokenSource(TokenSource):
     """
     A token source that can be created from concatenating multiple other token sources.
     """
+
+    DISPLAY_ICON = "\uf51e"
 
     def __init__(self, *sources: TokenSource, work_dir: PathOrStr, label: Optional[str] = None):
         super().__init__(work_dir=work_dir, label=label)
@@ -338,6 +352,8 @@ class DocumentSource(TokenSource):
     An abstract base class for a particular type of :class:`TokenSource` that's aware of document
     boundaries. This class provides one additional method: :meth:`get_document_offsets()`.
     """
+
+    DISPLAY_ICON = "\uf15c"
 
     def sample(  # type: ignore[override]
         self,

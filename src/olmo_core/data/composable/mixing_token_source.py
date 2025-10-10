@@ -126,6 +126,8 @@ class MixingTokenSource(TokenSource):
     Spec = MixingTokenSourceSpec
     """The mixing spec class for this source."""
 
+    DISPLAY_ICON = "\uf074"
+
     def __init__(
         self,
         *source_specs: MixingTokenSourceSpec,

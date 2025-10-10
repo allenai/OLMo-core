@@ -74,6 +74,7 @@ class ConcatAndChunkInstanceSource(InstanceSource):
     """
 
     Config = ConcatAndChunkInstanceSourceConfig
+    DISPLAY_ICON = "\uf51e"
 
     def __init__(
         self,

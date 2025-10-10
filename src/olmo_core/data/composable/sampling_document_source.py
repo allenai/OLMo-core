@@ -70,6 +70,8 @@ class SamplingDocumentSource(DocumentSource):
 
     Config = SamplingDocumentSourceConfig
 
+    DISPLAY_ICON = "\uedec"
+
     def __init__(
         self,
         *sources: DocumentSource,

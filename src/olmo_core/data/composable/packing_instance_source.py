@@ -80,6 +80,8 @@ class PackingInstanceSource(InstanceSource):
 
     Config = PackingInstanceSourceConfig
 
+    DISPLAY_ICON = "\ueb29"
+
     def __init__(
         self,
         *sources: DocumentSource,

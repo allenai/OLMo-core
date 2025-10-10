@@ -63,6 +63,8 @@ class SamplingTokenSource(TokenSource):
 
     Config = SamplingTokenSourceConfig
 
+    DISPLAY_ICON = "\uedec"
+
     def __init__(
         self,
         *sources: TokenSource,
