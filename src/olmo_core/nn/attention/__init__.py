@@ -397,7 +397,7 @@ class Attention(AttentionBase):
             if window_size <= 0:
                 raise OLMoConfigurationError(f"'window_size' must be positive (got {window_size})")
 
-            if backend is None:
+            if backend is None and torch.cuda.is_available():
                 # note: flash_3 and te backends are faster than flash_2 and also support SWA
                 backend = AttentionBackendName.flash_2
 
