@@ -43,7 +43,7 @@ MAX_DURATION_STEPS = 10000  # Adjust as needed for your experiment
 LR = 1e-4
 
 # Scheduler configuration in STEPS
-CYCLE_STEPS = 20  # Each cycle is 20 steps (based on your graph)
+CYCLE_STEPS = 200  # Each cycle is 20 steps (based on your graph)
 WARMUP_STEPS = 2  # 10% of cycle for warmup
 DECAY_STEPS = 4   # 20% of cycle for decay
 # This leaves 14 steps (70%) for stable phase
@@ -128,7 +128,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         .with_callback(
             "checkpointer",
             CheckpointerCallback(
-                save_interval=Duration.steps(SAVE_INTERVAL_STEPS),  # Save every cycle (20 steps)
+                save_interval=SAVE_INTERVAL_STEPS,  # Save every cycle (20 steps)
                 ephemeral_save_interval=100,  # This is already in steps
                 save_async=True,
             ),
