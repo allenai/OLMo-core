@@ -35,6 +35,7 @@ This API consists of a series of simple, composable, elements, including:
    * :class:`ConcatenatedInstanceSource`: An instance source combines instances from other instance sources.
    * :class:`SamplingInstanceSource`: An instance source that samples instances from other instance sources.
    * :class:`MixingInstanceSource`: An instance source that mixes other instance sources together.
+   * :class:`RandomInstanceSource`: An instance source for generating random instances.
 
 3. :class:`ComposableDataLoader`: A data loader for OLMo-core's :class:`~olmo_core.train.Trainer` that takes
    one or more instance sources.
@@ -87,6 +88,7 @@ from .packing_instance_source import (
     PackingInstanceSource,
     PackingInstanceSourceConfig,
 )
+from .random_instance_source import RandomInstanceSource, RandomInstanceSourceConfig
 from .sampling_document_source import (
     SamplingDocumentSource,
     SamplingDocumentSourceConfig,
@@ -146,6 +148,8 @@ __all__ = [
     "SamplingInstanceSourceConfig",
     "MixingInstanceSource",
     "MixingInstanceSourceConfig",
+    "RandomInstanceSource",
+    "RandomInstanceSourceConfig",
     # Other types.
     "InstanceFilterConfig",
     "LongDocStrategy",
