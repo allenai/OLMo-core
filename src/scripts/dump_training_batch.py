@@ -243,12 +243,13 @@ def main():
 
     # Verify fingerprint
     if dataset.fingerprint != data_loader_state["dataset_fingerprint"]:
-        log.warning(
+        log.error(
             f"Dataset fingerprint mismatch!\n"
             f"  Checkpoint: {data_loader_state['dataset_fingerprint']}\n"
             f"  Computed:   {dataset.fingerprint}"
         )
-        log.warning("This may indicate the dataset has changed since the checkpoint was created.")
+        log.error("This may indicate the dataset has changed in the code since the checkpoint was created.")
+        sys.exit(1)
 
     collator = DataCollator(pad_token_id=dataset.pad_token_id)
 
