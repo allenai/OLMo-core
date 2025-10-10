@@ -55,6 +55,7 @@ def verify_paths_match_mix(
 ) -> bool:
     """Verify that data_paths.txt matches the paths from the mix in config.json."""
     mix = DataMix(mix_name)
+    assert tokenizer.identifier is not None
     mix_paths, _ = mix.build(mix_base_dir, tokenizer.identifier)
 
     if len(data_paths) != len(mix_paths):
@@ -264,7 +265,7 @@ def main():
 
     if args.monkeypatch:
         if isinstance(data_loader, NumpyFSLDataLoader):
-            NumpyFSLDataLoader.__getitem__ = NumpyFSLDataLoader_getitem_monkeypatch
+            NumpyFSLDataLoader.__getitem__ = NumpyFSLDataLoader_getitem_monkeypatch  # type: ignore
             log.info("Monkeypatch is active.")
         else:
             raise ValueError("Monkey patch is only supported for NumpyFSLDataLoader.")
