@@ -692,7 +692,7 @@ class RepeatedWSD(Scheduler):
             decay_position = position_in_cycle - warmup - stable
             # Linear decay from initial_lr to decay_min_lr
             # Note: _linear_decay expects "steps from end", so we need to reverse!!
-            steps_from_end = decay - decay_position - 1
+            steps_from_end = decay - decay_position
             return _linear_decay(initial_lr, steps_from_end, decay, self.decay_min_lr)
             
     def get_cycle_info(self, current: int) -> Dict[str, Any]:
