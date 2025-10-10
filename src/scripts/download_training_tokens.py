@@ -11,12 +11,11 @@ import json
 import logging
 import pickle
 import sys
-from pathlib import Path
 from typing import Any, Dict, List
 
-import numpy as np
 import torch
 from cached_path import cached_path
+import bettermap
 
 from olmo_core.data import (
     DataCollator,
@@ -70,6 +69,44 @@ def verify_paths_match_mix(data_paths: List[str], mix_name: str, tokenizer: Toke
     return True
 
 
+def NumpyFSLDataLoader_getitem_monkeypatch(self: NumpyFSLDataLoader, index: int) -> Dict[str, Any]:
+    """
+    This is a monkey patch for the data loader that loads all instances in parallel, much faster
+    than doing it sequentially would be.
+
+    During training, we don't need this, because we have many workers. But we don't have workers
+    here.
+    """
+
+    # NOTE: Make sure the logic here matches that in '_get_local_instance_indices()'
+
+    # NOTE: 'indices' are global instance indices.
+    indices = self.get_global_indices()[: self.total_size]
+
+    # Slice up by batch.
+    assert isinstance(self.dataset, NumpyFSLDatasetBase)
+    instances_per_batch = self.global_batch_size // self.dataset.sequence_length
+    # shape: (global num batches, global num instances per batch)
+    indices = indices.reshape(-1, instances_per_batch)
+
+    # Slice batches into micro batches for the local DP rank.
+    if self.dp_world_size > 1:
+        indices = indices[:, self.dp_rank :: self.dp_world_size]
+
+    # Get instances for the batch.
+    # This is the change from the original implementation.
+    instances = list(
+        bettermap.ordered_map_per_thread(
+            lambda idx: self._get_dataset_item(int(idx)),
+            indices[index],
+            parallelism=10      # default connection pool size
+        )
+    )
+
+    return self.collator(instances)
+
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=(
@@ -103,6 +140,12 @@ def main():
         type=str,
         default="/tmp/download_training_tokens",
         help="Working directory for dataset cache",
+    )
+    parser.add_argument(
+        "--monkeypatch",
+        default=False,
+        action="store_true",
+        help="Use the monkeypatch to make loading faster. Use at your own risk. Verify at least once or twice that it produces the same output before relying on it!"
     )
     parser.add_argument(
         "--verbose",
@@ -222,6 +265,13 @@ def main():
         dp_world_size=1,  # We're extracting for a single "rank"
         dp_rank=0,
     )
+
+    if args.monkeypatch:
+        if isinstance(data_loader, NumpyFSLDataLoader):
+            NumpyFSLDataLoader.__getitem__ = NumpyFSLDataLoader_getitem_monkeypatch
+            log.info("Monkeypatch is active.")
+        else:
+            raise ValueError("Monkey patch is only supported for NumpyFSLDataLoader.")
 
     # Reshuffle to regenerate the same global indices as during training
     data_loader.reshuffle(epoch=data_loader_state["epoch"], in_memory=True)
