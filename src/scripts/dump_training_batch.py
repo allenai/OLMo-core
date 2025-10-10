@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Download the exact training tokens for a given checkpoint and step number.
+Download the exact training batch for a given checkpoint and step number.
 
 This script reconstructs the dataset and data loader state from a training checkpoint,
-then extracts the exact batch of tokens that were being trained on at the specified step.
+then extracts the exact batch that we trained on at the specified step.
 """
 
 import argparse
@@ -33,7 +33,6 @@ log = logging.getLogger(__name__)
 def load_checkpoint_config(checkpoint_dir: str) -> Dict[str, Any]:
     """Load config.json from checkpoint directory."""
     config_path = f"{checkpoint_dir}/config.json"
-    log.info(f"Loading config from {config_path}")
     with open(cached_path(config_path)) as f:
         return json.load(f)
 
@@ -41,7 +40,6 @@ def load_checkpoint_config(checkpoint_dir: str) -> Dict[str, Any]:
 def load_data_paths(checkpoint_dir: str) -> List[str]:
     """Load data_paths.txt from checkpoint directory."""
     data_paths_file = f"{checkpoint_dir}/data_paths.txt"
-    log.info(f"Loading data paths from {data_paths_file}")
     with open(cached_path(data_paths_file)) as f:
         return [line.strip() for line in f if line.strip()]
 
@@ -49,7 +47,6 @@ def load_data_paths(checkpoint_dir: str) -> List[str]:
 def load_trainer_state(checkpoint_dir: str) -> Dict[str, Any]:
     """Load train/rank0.pt from checkpoint directory."""
     trainer_state_path = f"{checkpoint_dir}/train/rank0.pt"
-    log.info(f"Loading trainer state from {trainer_state_path}")
     return torch.load(cached_path(trainer_state_path), weights_only=False)
 
 
@@ -113,7 +110,7 @@ def NumpyFSLDataLoader_getitem_monkeypatch(self: NumpyFSLDataLoader, index: int)
 def main():
     parser = argparse.ArgumentParser(
         description=(
-            "Download exact training tokens for a specific training step. "
+            "Download exact training batch for a specific training step. "
             "The checkpoint is only used to get the dataset configuration (paths, tokenizer, seed, etc.)."
         )
     )
@@ -129,13 +126,13 @@ def main():
         "--step",
         type=int,
         required=True,
-        help="Training step number to extract tokens for",
+        help="Step number to extract tokens for",
     )
     parser.add_argument(
         "--output",
         type=str,
         required=False,
-        help="Output path for tokens (will create .npy and .json files)",
+        help="Output path. Will write a pickle file. If not given, it writes the token ids to stdout.",
         default=None,
     )
     parser.add_argument(
