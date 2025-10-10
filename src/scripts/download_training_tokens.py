@@ -67,8 +67,6 @@ def verify_paths_match_mix(data_paths: List[str], mix_name: str, tokenizer: Toke
         if normalize_path(actual) != normalize_path(expected):
             log.error(f"Path mismatch at index {i}:\n  Actual:   {actual}\n  Expected: {expected}")
             return False
-
-    log.info("✓ Data paths match mix configuration")
     return True
 
 
@@ -129,9 +127,6 @@ def main():
     data_paths = load_data_paths(checkpoint_dir)
     trainer_state = load_trainer_state(checkpoint_dir)
 
-    log.info(f"Checkpoint step: {trainer_state['global_step']}")
-    log.info(f"Requested step: {args.step}")
-
     # Get data loader state
     data_loader_state = trainer_state["data_loader"]
 
@@ -150,15 +145,7 @@ def main():
         log.error(f"Only FSL datasets are supported, got: {data_loader_state['dataset_type']}")
         sys.exit(1)
 
-    log.info(f"Dataset type: FSL")
-    log.info(f"Sequence length: {data_loader_state['sequence_length']}")
-    log.info(f"Global batch size: {data_loader_config_dict['global_batch_size']}")
-    log.info(f"Seed: {data_loader_state['seed']}")
-    log.info(f"Epoch: {data_loader_state['epoch']}")
-
     # Verify that data_paths.txt matches the mix
-    log.info(f"Number of data paths in data_paths.txt: {len(data_paths)}")
-
     tokenizer_config_dict = {k: v for k, v in dataset_config_dict["tokenizer"].items() if k != "_CLASS_"}
     tokenizer_config = TokenizerConfig(**tokenizer_config_dict)
 
@@ -207,8 +194,7 @@ def main():
     dataset = dataset_config.build()
     assert isinstance(dataset, NumpyFSLDatasetBase), f"Expected FSL dataset, got {type(dataset)}"
 
-    # Prepare the dataset (builds necessary index files)
-    log.info("Preparing dataset (building index files)...")
+    # Prepare the dataset
     dataset.prepare()
 
     # Verify fingerprint
@@ -218,7 +204,7 @@ def main():
             f"  Checkpoint: {data_loader_state['dataset_fingerprint']}\n"
             f"  Computed:   {dataset.fingerprint}"
         )
-        log.warning("This may indicate the dataset has changed since the checkpoint was created")
+        log.warning("This may indicate the dataset has changed since the checkpoint was created.")
     else:
         log.info("✓ Dataset fingerprint matches checkpoint")
 
@@ -238,7 +224,6 @@ def main():
     )
 
     # Reshuffle to regenerate the same global indices as during training
-    log.info(f"Reshuffling data loader for epoch {data_loader_state['epoch']}...")
     data_loader.reshuffle(epoch=data_loader_state["epoch"], in_memory=True)
 
     # Step 7: Extract tokens
