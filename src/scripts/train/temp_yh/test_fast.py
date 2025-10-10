@@ -27,32 +27,26 @@ from olmo_core.train.train_module import (
     TransformerTrainModuleConfig,
 )
 
-NUM_GPUS = 4  # Set your desired number of GPUs here
-NUM_NODES = 1  # Number of nodes
+NUM_GPUS = 4
+NUM_NODES = 1
 
-# Model size - reduce layers dramatically
-SEQUENCE_LENGTH = 2048  # Reduce from 8192
-N_LAYERS = 2  # Reduce from 16 in build_model_config
+SEQUENCE_LENGTH = 2048
+N_LAYERS = 2
 
-# Batch and token settings for fast cycles
-GLOBAL_BATCH_SIZE = 32 * 2048  # ~65K tokens per step (much smaller)
+GLOBAL_BATCH_SIZE = 32 * 2048
 
-# Total duration - keep it short for testing
-MAX_DURATION = int(10e6)  # 10M tokens total = ~10 cycles
+MAX_DURATION = int(10e6)
 
 ANNEAL_TOKENS = int(1e9)
-# Learning rate - can keep the same or increase for visibility
 LR = 1e-4
 
-# Make cycles SHORT so you can see them quickly
-CYCLE_TOKENS = int(1e6)  # 1M tokens per cycle (down from 10B!)
-WARMUP_TOKENS = int(50e3)  # 50K tokens warmup
-DECAY_TOKENS = int(100e3)  # 100K tokens decay
-# Save and eval - align with cycles
-SAVE_INTERVAL_TOKENS = CYCLE_TOKENS  # Save every cycle
-EVAL_INTERVAL_TOKENS = CYCLE_TOKENS // 2  # Eval twice per cycle
+CYCLE_TOKENS = int(1e6)
+WARMUP_TOKENS = int(50e3)
+DECAY_TOKENS = int(100e3)
 
-# Use this to change whether the job is preemptible or not.
+SAVE_INTERVAL_TOKENS = CYCLE_TOKENS
+EVAL_INTERVAL_TOKENS = CYCLE_TOKENS // 2
+
 PREEMPTIBLE = True
 
 
