@@ -13,9 +13,9 @@ import pickle
 import sys
 from typing import Any, Dict, List
 
+import bettermap
 import torch
 from cached_path import cached_path
-import bettermap
 
 from olmo_core.data import (
     DataCollator,
@@ -53,13 +53,17 @@ def load_trainer_state(checkpoint_dir: str) -> Dict[str, Any]:
     return torch.load(cached_path(trainer_state_path), weights_only=False)
 
 
-def verify_paths_match_mix(data_paths: List[str], mix_name: str, tokenizer: TokenizerConfig, mix_base_dir: str) -> bool:
+def verify_paths_match_mix(
+    data_paths: List[str], mix_name: str, tokenizer: TokenizerConfig, mix_base_dir: str
+) -> bool:
     """Verify that data_paths.txt matches the paths from the mix in config.json."""
     mix = DataMix(mix_name)
     mix_paths, _ = mix.build(mix_base_dir, tokenizer.identifier)
 
     if len(data_paths) != len(mix_paths):
-        log.error(f"Path count mismatch: data_paths.txt has {len(data_paths)} paths, mix has {len(mix_paths)}")
+        log.error(
+            f"Path count mismatch: data_paths.txt has {len(data_paths)} paths, mix has {len(mix_paths)}"
+        )
         return False
 
     for i, (actual, expected) in enumerate(zip(data_paths, mix_paths)):
@@ -99,12 +103,11 @@ def NumpyFSLDataLoader_getitem_monkeypatch(self: NumpyFSLDataLoader, index: int)
         bettermap.ordered_map_per_thread(
             lambda idx: self._get_dataset_item(int(idx)),
             indices[index],
-            parallelism=10      # default connection pool size
+            parallelism=10,  # default connection pool size
         )
     )
 
     return self.collator(instances)
-
 
 
 def main():
@@ -133,7 +136,7 @@ def main():
         type=str,
         required=False,
         help="Output path for tokens (will create .npy and .json files)",
-        default=None
+        default=None,
     )
     parser.add_argument(
         "--work-dir",
@@ -145,7 +148,7 @@ def main():
         "--monkeypatch",
         default=False,
         action="store_true",
-        help="Use the monkeypatch to make loading faster. Use at your own risk. Verify at least once or twice that it produces the same output before relying on it!"
+        help="Use the monkeypatch to make loading faster. Use at your own risk. Verify at least once or twice that it produces the same output before relying on it!",
     )
     parser.add_argument(
         "--verbose",
@@ -189,7 +192,9 @@ def main():
         sys.exit(1)
 
     # Verify that data_paths.txt matches the mix
-    tokenizer_config_dict = {k: v for k, v in dataset_config_dict["tokenizer"].items() if k != "_CLASS_"}
+    tokenizer_config_dict = {
+        k: v for k, v in dataset_config_dict["tokenizer"].items() if k != "_CLASS_"
+    }
     tokenizer_config = TokenizerConfig(**tokenizer_config_dict)
 
     if not verify_paths_match_mix(
@@ -207,10 +212,12 @@ def main():
     # Determine dataset config class from _CLASS_ field
     dataset_class_name = dataset_config_dict["_CLASS_"]
 
-    if dataset_class_name == 'olmo_core.data.numpy_dataset.NumpyDatasetConfig':
-        log.warning("Dataset config class is 'NumpyDatasetConfig' (base class). Assuming 'NumpyFSLDatasetConfig'.")
+    if dataset_class_name == "olmo_core.data.numpy_dataset.NumpyDatasetConfig":
+        log.warning(
+            "Dataset config class is 'NumpyDatasetConfig' (base class). Assuming 'NumpyFSLDatasetConfig'."
+        )
         config_class = NumpyFSLDatasetConfig
-    elif dataset_class_name == 'olmo_core.data.numpy_dataset.NumpyFSLDatasetConfig':
+    elif dataset_class_name == "olmo_core.data.numpy_dataset.NumpyFSLDatasetConfig":
         config_class = NumpyFSLDatasetConfig
     else:
         log.error(f"Unsupported dataset config class: {dataset_class_name}")
@@ -226,7 +233,9 @@ def main():
 
     # Clean up tokenizer dict (remove _CLASS_ field)
     if "tokenizer" in config_fields and isinstance(config_fields["tokenizer"], dict):
-        config_fields["tokenizer"] = {k: v for k, v in config_fields["tokenizer"].items() if k != "_CLASS_"}
+        config_fields["tokenizer"] = {
+            k: v for k, v in config_fields["tokenizer"].items() if k != "_CLASS_"
+        }
 
     # Remove fields that shouldn't be passed to from_dict
     config_fields.pop("name", None)
@@ -285,7 +294,7 @@ def main():
         with open(args.output, "wb") as f:
             pickle.dump(batch, f)
     else:
-        for instance in batch['input_ids']:
+        for instance in batch["input_ids"]:
             print(", ".join(str(token_id.item()) for token_id in instance))
 
 
