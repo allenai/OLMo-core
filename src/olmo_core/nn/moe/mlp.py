@@ -167,19 +167,19 @@ class MoEMLP(MoEMLPBase):
 
         if mup:
             self.mups["w1"] = mup.build(
-                {MuPHyperParam.d_model: 1},
-                {MuPHyperParam.hidden_size: 1},
-                # {MuPHyperParam.hidden_size: 1, MuPHyperParam.num_experts: 1},
+                {MuPHyperParam.d_model},
+                {MuPHyperParam.hidden_size},
+                # {MuPHyperParam.hidden_size, MuPHyperParam.num_experts},
             )
             self.mups["w2"] = mup.build(
-                {MuPHyperParam.hidden_size: 1},
-                {MuPHyperParam.d_model: 1},
-                # {MuPHyperParam.d_model: 1, MuPHyperParam.num_experts: 1},
+                {MuPHyperParam.hidden_size},
+                {MuPHyperParam.d_model},
+                # {MuPHyperParam.d_model, MuPHyperParam.num_experts},
             )
             self.mups["w3"] = mup.build(
-                {MuPHyperParam.d_model: 1},
-                {MuPHyperParam.hidden_size: 1},
-                # {MuPHyperParam.hidden_size: 1, MuPHyperParam.num_experts: 1},
+                {MuPHyperParam.d_model},
+                {MuPHyperParam.hidden_size},
+                # {MuPHyperParam.hidden_size, MuPHyperParam.num_experts},
             )
 
         self.reset_parameters()
@@ -266,19 +266,19 @@ class DroplessMoEMLP(MoEMLPBase):
 
         if mup:
             self.mups["w1"] = mup.build(
-                {MuPHyperParam.d_model: 1},
-                {MuPHyperParam.hidden_size: 1},
-                # {MuPHyperParam.hidden_size: 1, MuPHyperParam.num_experts: 1},
+                {MuPHyperParam.d_model},
+                {MuPHyperParam.hidden_size},
+                # {MuPHyperParam.hidden_size, MuPHyperParam.num_experts},
             )
             self.mups["w2"] = mup.build(
-                {MuPHyperParam.hidden_size: 1},
-                {MuPHyperParam.d_model: 1},
-                # {MuPHyperParam.d_model: 1, MuPHyperParam.num_experts: 1},
+                {MuPHyperParam.hidden_size},
+                {MuPHyperParam.d_model},
+                # {MuPHyperParam.d_model, MuPHyperParam.num_experts},
             )
             self.mups["w3"] = mup.build(
-                {MuPHyperParam.d_model: 1},
-                {MuPHyperParam.hidden_size: 1},
-                # {MuPHyperParam.hidden_size: 1, MuPHyperParam.num_experts: 1},
+                {MuPHyperParam.d_model},
+                {MuPHyperParam.hidden_size},
+                # {MuPHyperParam.hidden_size, MuPHyperParam.num_experts},
             )
 
         self._gmm = gmm

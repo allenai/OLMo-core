@@ -134,13 +134,13 @@ class FeedForward(nn.Module):
         if mup:
             hidden_size_mup_hyper_param = hidden_size_mup_hyper_param or MuPHyperParam.hidden_size
             self.mups["w1.weight"] = mup.build(
-                {MuPHyperParam.d_model: 1}, {hidden_size_mup_hyper_param: 1}
+                {MuPHyperParam.d_model}, {hidden_size_mup_hyper_param}
             )
             self.mups["w2.weight"] = mup.build(
-                {hidden_size_mup_hyper_param: 1}, {MuPHyperParam.d_model: 1}
+                {hidden_size_mup_hyper_param}, {MuPHyperParam.d_model}
             )
             self.mups["w3.weight"] = mup.build(
-                {MuPHyperParam.d_model: 1}, {hidden_size_mup_hyper_param: 1}
+                {MuPHyperParam.d_model}, {hidden_size_mup_hyper_param}
             )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

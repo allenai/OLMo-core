@@ -75,7 +75,9 @@ def assert_distributions_close(
 def test_mup_no_width_scaling_same_init(mup_scaling_strategy):
     model_config = get_transformer_config()
 
-    mup_config = MuPConfig(optimizer=MuPOptimizerType.adam, scaling_strategy=mup_scaling_strategy)
+    mup_config = MuPConfig(
+        optimizer=MuPOptimizerType.adam, width_scalings={}, scaling_strategy=mup_scaling_strategy
+    )
     mup_model_config = get_transformer_config(mup_config)
 
     model = model_config.build()

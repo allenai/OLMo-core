@@ -1,7 +1,7 @@
 import logging
 import math
-from dataclasses import dataclass, field
-from typing import Dict, Optional, Tuple
+from dataclasses import dataclass
+from typing import Dict, Optional, Set, Tuple
 
 import torch
 import torch.nn as nn
@@ -123,16 +123,17 @@ class MuPConfig(Config):
     The type of optimizer being used for training.
     """
 
-    scaling_strategy: MuPScalingStrategy = MuPScalingStrategy.constant_inputs
-    """
-    The strategy for how muP should scale the initialization, outputs and LR of bigger/smaller models.
-    """
-
-    width_scalings: Dict[MuPHyperParam, float] = field(default_factory=dict)
+    width_scalings: Dict[MuPHyperParam, float]
     """
     A map that contains for each width-related hyperparameters the factor by which it has been increased/decreased
     in this model relative to in the base model. For example, a mapping of ``MuPHyperParam.d_model`` to ``0.5``
-    means that the ``d_model`` of this model is half of the base model.
+    means that the ``d_model`` of this model is half of the base model. A base model is not needed to use muP,
+    in which case you can set all scalings to, say, the hyperparameter's value.
+    """
+
+    scaling_strategy: MuPScalingStrategy = MuPScalingStrategy.constant_inputs
+    """
+    The strategy for how muP should scale the initialization, outputs and LR of bigger/smaller models.
     """
 
     def __post_init__(self):
@@ -166,25 +167,37 @@ class MuPConfig(Config):
                 f"{computed_head_dim_scaling} computed from {MuPHyperParam.d_model} and {MuPHyperParam.n_heads}."
             )
 
-    def _get_scaling(self, hyper_param_exponents: Dict[MuPHyperParam, float]) -> float:
-        scalings = [
-            math.pow(self.width_scalings.get(param, 1.0), exponent)
-            for param, exponent in hyper_param_exponents.items()
-        ]
+    def _get_scaling(self, hyper_param_exponents: Set[MuPHyperParam]) -> float:
+        scalings = [self.width_scalings.get(param, 1.0) for param in hyper_param_exponents]
         return math.prod(scalings)
 
     def build(
         self,
-        input_hyper_param_exponents: Dict[MuPHyperParam, float],
-        output_hyper_param_exponents: Dict[MuPHyperParam, float],
+        input_dim_hyperparams: Optional[Set[MuPHyperParam]],
+        output_dim_hyperparams: Optional[Set[MuPHyperParam]],
     ) -> "MuP":
+        """
+        Build the MuP object for applying muP scaling to parameters with the given input and output
+        dimension hyperparameters.
+
+        Note: Each hyperparameter is assumed to affect dimension linearly. For example, if
+        ``d_model`` is doubled, the input (resp. output) dimensions of the parameter are assumed to be
+        doubled if ``d_model`` is in ``input_dim_hyperparams`` (resp. ``output_dim_hyperparams``).
+
+        :param input_dim_hyperparams: A set of hyperparameters that affect the input dimension of
+            the parameter.
+        :param output_dim_hyperparams: A set of hyperparameters that affect the output dimension of
+            the parameter.
+        """
         kwargs = self.as_dict(exclude_none=True, recurse=False)
 
         kwargs.pop("width_scalings")
         optimizer = kwargs.pop("optimizer")
 
-        input_scaling = self._get_scaling(input_hyper_param_exponents)
-        output_scaling = self._get_scaling(output_hyper_param_exponents)
+        input_scaling = self._get_scaling(input_dim_hyperparams) if input_dim_hyperparams else 1.0
+        output_scaling = (
+            self._get_scaling(output_dim_hyperparams) if output_dim_hyperparams else 1.0
+        )
 
         try:
             return MuP(input_scaling, output_scaling, optimizer, **kwargs)

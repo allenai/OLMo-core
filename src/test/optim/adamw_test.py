@@ -11,17 +11,18 @@ from olmo_core.distributed.checkpoint import (
     load_model_and_optim_state,
     save_model_and_optim_state,
 )
+from olmo_core.nn.mup import MuPHyperParam, MuPScalingStrategy
 from olmo_core.optim import AdamWConfig, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.testing import DEVICES
 from olmo_core.utils import cuda_sync_debug_mode
 
 
 class MyModel(nn.Module):
-    def __init__(self):
+    def __init__(self, bias: bool = True):
         super().__init__()
         self.wte = nn.Embedding(1024, 16)
-        self.fc1 = nn.Linear(16, 32)
-        self.fc2 = nn.Linear(32, 16)
+        self.fc1 = nn.Linear(16, 32, bias=bias)
+        self.fc2 = nn.Linear(32, 16, bias=bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.wte(x)
@@ -189,3 +190,58 @@ def test_adamw_equivalence(
                 assert torch.allclose(v1, v3, atol=atol, rtol=rtol)
                 if key == "step":
                     assert v1 == step_idx + 1  # step should equal current iteration + 1
+
+
+@pytest.mark.parametrize("optim_config_cls", [AdamWConfig, SkipStepAdamWConfig])
+def test_adamw_mup_unchanged_weight_decay(optim_config_cls):
+    from olmo_core.nn.mup import MuPConfig, MuPOptimizerType
+
+    lr = 1e-3
+
+    optim_config = optim_config_cls(
+        group_overrides=[
+            OptimGroupOverride(params=["wte.*"], opts=dict(weight_decay=0.2)),
+            OptimGroupOverride(params=["fc1.*"], opts=dict(weight_decay=0.5)),
+        ],
+        weight_decay=0.1,
+        lr=lr,
+    )
+    mup_optimizer_type = optim_config.mup_optimizer_type()
+    assert mup_optimizer_type == MuPOptimizerType.adam_coupled_wd
+
+    mup_config = MuPConfig(
+        optimizer=mup_optimizer_type,
+        width_scalings={
+            MuPHyperParam.d_model: 2,
+            MuPHyperParam.hidden_size: 3,
+            MuPHyperParam.head_dim: 2,
+        },
+        scaling_strategy=MuPScalingStrategy.constant_inputs,
+    )
+    assert mup_config.optimizer.coupled_weight_decay
+
+    model = MyModel(bias=False)
+    model.mups = {
+        "wte.weight": mup_config.build(None, None),
+        "fc1.weight": mup_config.build({MuPHyperParam.d_model}, {MuPHyperParam.hidden_size}),
+        "fc2.weight": mup_config.build({MuPHyperParam.hidden_size}, None),
+    }
+    optim = optim_config.build(model)
+
+    expected_weight_decays = {
+        "wte.weight": 0.2 * lr,
+        "fc1.weight": 0.5 * lr,
+        "fc2.weight": 0.1 * lr,
+    }
+
+    param_to_name = {param: name for name, param in model.named_parameters()}
+
+    for group in optim.param_groups:
+        for p in group["params"]:
+            param_name = param_to_name[p]
+            assert param_name in expected_weight_decays, param_name
+            expected_weight_decay = expected_weight_decays[param_name]
+            # lr should be scaled by MuP except for wte.weight.
+            assert group["lr"] != lr or param_name == "wte.weight", param_name
+            # Overall weight decay should be unaffected by MuP scaling.
+            assert group["weight_decay"] * group["lr"] == expected_weight_decay, param_name

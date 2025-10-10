@@ -357,18 +357,14 @@ class Attention(AttentionBase):
         self.w_out = nn.Linear(d_model, d_model, bias=bias, dtype=dtype, device=init_device)
         self.mups: Dict[str, MuP] = {}
         if mup:
-            self.mups["w_q.weight"] = mup.build(
-                {MuPHyperParam.d_model: 1}, {MuPHyperParam.d_model: 1}
-            )
+            self.mups["w_q.weight"] = mup.build({MuPHyperParam.d_model}, {MuPHyperParam.d_model})
             self.mups["w_k.weight"] = mup.build(
-                {MuPHyperParam.d_model: 1}, {MuPHyperParam.n_kv_heads: 1, MuPHyperParam.head_dim: 1}
+                {MuPHyperParam.d_model}, {MuPHyperParam.n_kv_heads, MuPHyperParam.head_dim}
             )
             self.mups["w_v.weight"] = mup.build(
-                {MuPHyperParam.d_model: 1}, {MuPHyperParam.n_kv_heads: 1, MuPHyperParam.head_dim: 1}
+                {MuPHyperParam.d_model}, {MuPHyperParam.n_kv_heads, MuPHyperParam.head_dim}
             )
-            self.mups["w_out.weight"] = mup.build(
-                {MuPHyperParam.d_model: 1}, {MuPHyperParam.d_model: 1}
-            )
+            self.mups["w_out.weight"] = mup.build({MuPHyperParam.d_model}, {MuPHyperParam.d_model})
         self.clip_qkv = clip_qkv
         self.use_head_qk_norm = use_head_qk_norm
 
@@ -384,11 +380,11 @@ class Attention(AttentionBase):
                     size=self.n_kv_heads * self.head_dim, init_device=init_device
                 )
             if mup:
-                self.mups["q_norm.weight"] = mup.build({}, {})
-                self.mups["k_norm.weight"] = mup.build({}, {})
+                self.mups["q_norm.weight"] = mup.build(None, None)
+                self.mups["k_norm.weight"] = mup.build(None, None)
 
         if mup:
-            self.mups["sdpa"] = mup.build({MuPHyperParam.head_dim: 1}, {})
+            self.mups["sdpa"] = mup.build({MuPHyperParam.head_dim}, None)
 
             if (att_multiplier := self.mups["sdpa"].attention_multiplier) is not None:
                 softmax_scale = (

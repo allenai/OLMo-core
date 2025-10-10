@@ -1132,7 +1132,9 @@ def test_attention_mup_no_width_scaling_same_output(mup_scaling_strategy):
 
     attn_config = AttentionConfig(name=AttentionType.default, n_heads=8, n_kv_heads=2)
 
-    mup_config = MuPConfig(optimizer=MuPOptimizerType.adam, scaling_strategy=mup_scaling_strategy)
+    mup_config = MuPConfig(
+        optimizer=MuPOptimizerType.adam, width_scalings={}, scaling_strategy=mup_scaling_strategy
+    )
     mup_attn_config = AttentionConfig(
         name=AttentionType.default, n_heads=8, n_kv_heads=2, mup=mup_config
     )

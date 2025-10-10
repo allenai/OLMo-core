@@ -62,10 +62,8 @@ def get_transformer_inputs(vocab_size: int = 100) -> torch.Tensor:
     "mup_optimizer_type, mup_scaling_strategy, expected_multiplier",
     [
         pytest.param(MuPOptimizerType.adam, MuPScalingStrategy.constant_inputs, None),
-        pytest.param(MuPOptimizerType.adam, MuPScalingStrategy.constant_lr, 1 / (2**3 * 0.7)),
-        pytest.param(
-            MuPOptimizerType.adam, MuPScalingStrategy.constant_init_std, 1 / (2**3 * 0.7)
-        ),
+        pytest.param(MuPOptimizerType.adam, MuPScalingStrategy.constant_lr, 1 / (2 * 0.7)),
+        pytest.param(MuPOptimizerType.adam, MuPScalingStrategy.constant_init_std, 1 / (2 * 0.7)),
     ],
 )
 def test_mup_input_multiplier_scaling_input(
@@ -80,7 +78,7 @@ def test_mup_input_multiplier_scaling_input(
             MuPHyperParam.head_dim: 2,
         },
     )
-    mup = mup_config.build({MuPHyperParam.d_model: 3, MuPHyperParam.hidden_size: 1}, {})
+    mup = mup_config.build({MuPHyperParam.d_model, MuPHyperParam.hidden_size}, None)
 
     torch.testing.assert_close(mup.input_multiplier, expected_multiplier)
 
@@ -89,9 +87,9 @@ def test_mup_input_multiplier_scaling_input(
     "mup_optimizer_type, mup_scaling_strategy, expected_multiplier",
     [
         pytest.param(MuPOptimizerType.adam, MuPScalingStrategy.constant_inputs, None),
-        pytest.param(MuPOptimizerType.adam, MuPScalingStrategy.constant_lr, 1 / (2**3)),
+        pytest.param(MuPOptimizerType.adam, MuPScalingStrategy.constant_lr, 1 / 2),
         pytest.param(
-            MuPOptimizerType.adam, MuPScalingStrategy.constant_init_std, 1 / (2 ** (3 / 2))
+            MuPOptimizerType.adam, MuPScalingStrategy.constant_init_std, 1 / (2 ** (1 / 2))
         ),
     ],
 )
@@ -107,7 +105,7 @@ def test_mup_input_multiplier_scaling_input_and_output(
             MuPHyperParam.head_dim: 2,
         },
     )
-    mup = mup_config.build({MuPHyperParam.d_model: 3}, {MuPHyperParam.hidden_size: 1})
+    mup = mup_config.build({MuPHyperParam.d_model}, {MuPHyperParam.hidden_size})
 
     torch.testing.assert_close(mup.input_multiplier, expected_multiplier)
 
@@ -115,7 +113,7 @@ def test_mup_input_multiplier_scaling_input_and_output(
 @pytest.mark.parametrize(
     "mup_optimizer_type, mup_scaling_strategy, expected_multiplier",
     [
-        pytest.param(MuPOptimizerType.adam, MuPScalingStrategy.constant_inputs, 1 / (2**3 * 0.7)),
+        pytest.param(MuPOptimizerType.adam, MuPScalingStrategy.constant_inputs, 1 / (2 * 0.7)),
         pytest.param(MuPOptimizerType.adam, MuPScalingStrategy.constant_lr, None),
         pytest.param(MuPOptimizerType.adam, MuPScalingStrategy.constant_init_std, None),
     ],
@@ -132,7 +130,7 @@ def test_mup_init_std_multiplier_scaling_input(
             MuPHyperParam.head_dim: 2,
         },
     )
-    mup = mup_config.build({MuPHyperParam.d_model: 3, MuPHyperParam.hidden_size: 1}, {})
+    mup = mup_config.build({MuPHyperParam.d_model, MuPHyperParam.hidden_size}, None)
 
     torch.testing.assert_close(mup.init_std_multiplier, expected_multiplier)
 
@@ -140,8 +138,8 @@ def test_mup_init_std_multiplier_scaling_input(
 @pytest.mark.parametrize(
     "mup_optimizer_type, mup_scaling_strategy, expected_multiplier",
     [
-        pytest.param(MuPOptimizerType.adam, MuPScalingStrategy.constant_inputs, 1 / (2 ** (3 / 2))),
-        pytest.param(MuPOptimizerType.adam, MuPScalingStrategy.constant_lr, 2 ** (3 / 2)),
+        pytest.param(MuPOptimizerType.adam, MuPScalingStrategy.constant_inputs, 1 / (2 ** (1 / 2))),
+        pytest.param(MuPOptimizerType.adam, MuPScalingStrategy.constant_lr, 2 ** (1 / 2)),
         pytest.param(MuPOptimizerType.adam, MuPScalingStrategy.constant_init_std, None),
     ],
 )
@@ -157,7 +155,7 @@ def test_mup_init_std_multiplier_scaling_input_and_output(
             MuPHyperParam.head_dim: 2,
         },
     )
-    mup = mup_config.build({MuPHyperParam.d_model: 3}, {MuPHyperParam.hidden_size: 1})
+    mup = mup_config.build({MuPHyperParam.d_model}, {MuPHyperParam.hidden_size})
 
     torch.testing.assert_close(mup.init_std_multiplier, expected_multiplier)
 
@@ -173,7 +171,9 @@ def test_mup_init_std_multiplier_scaling_input_and_output(
 def test_mup_no_width_scaling_same_output(mup_optimizer_type, mup_scaling_strategy):
     model_config = get_transformer_config()
 
-    mup_config = MuPConfig(mup_optimizer_type, scaling_strategy=mup_scaling_strategy)
+    mup_config = MuPConfig(
+        mup_optimizer_type, width_scalings={}, scaling_strategy=mup_scaling_strategy
+    )
     mup_model_config = get_transformer_config(mup_config)
 
     model = model_config.build()
@@ -206,7 +206,9 @@ def test_mup_no_width_scaling_same_optim_groups(
     mup_optimizer_type = optim_config_cls.mup_optimizer_type()
     assert mup_optimizer_type is not None, "Optimizer does not support muP"
 
-    mup_config = MuPConfig(mup_optimizer_type, scaling_strategy=mup_scaling_strategy)
+    mup_config = MuPConfig(
+        mup_optimizer_type, width_scalings={}, scaling_strategy=mup_scaling_strategy
+    )
     mup_model_config = get_transformer_config(mup_config)
 
     model = model_config.build()

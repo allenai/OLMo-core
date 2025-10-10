@@ -551,9 +551,7 @@ class MoELinearRouter(MoERouter):
 
         self.mups: Dict[str, MuP] = {}
         if mup:
-            self.mups["weight"] = mup.build(
-                {MuPHyperParam.d_model: 1}, {MuPHyperParam.num_experts: 1}
-            )
+            self.mups["weight"] = mup.build({MuPHyperParam.d_model}, {MuPHyperParam.num_experts})
 
         self.reset_parameters()
 

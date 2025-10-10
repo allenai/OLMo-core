@@ -177,7 +177,7 @@ class LMHead(nn.Module):
         self.w_out = nn.Linear(d_model, vocab_size, bias=bias, dtype=dtype, device=init_device)
         self.mups: Dict[str, MuP] = {}
         if mup:
-            self.mups["w_out.weight"] = mup.build({MuPHyperParam.d_model: 1}, {})
+            self.mups["w_out.weight"] = mup.build({MuPHyperParam.d_model}, None)
         self._d_model = d_model
         self._vocab_size = vocab_size
         self._loss_implementation = loss_implementation
