@@ -209,6 +209,11 @@ OLMO_CORE_TO_HF_MODULE_MAPPINGS: Dict[str, str] = {
     f"blocks.{LAYER}.feed_forward_moe.router": f"model.layers.{LAYER}.mlp.gate",
     # Indices are not part of the original OLMo Core state but can be introduced during conversion for aide debugging.
     f"blocks.{LAYER}.feed_forward_moe.router.indices": f"model.layers.{LAYER}.mlp.gate.indices",
+    f"blocks.{LAYER}.feed_forward_moe.experts": f"model.layers.{LAYER}.mlp.experts",
+    f"blocks.{LAYER}.feed_forward_moe.experts.expert_indices": f"model.layers.{LAYER}.mlp.experts.expert_indices",
+    f"blocks.{LAYER}.feed_forward_moe.experts.expert_weights": f"model.layers.{LAYER}.mlp.experts.expert_weights",
+    f"blocks.{LAYER}.feed_forward_moe.experts.mlp.{EXPERT}": f"model.layers.{LAYER}.mlp.experts.{EXPERT}",
+    # f"blocks.{LAYER}.feed_forward_moe.experts.mlp.{EXPERT}.sort_indices": f"model.layers.{LAYER}.mlp.experts.{EXPERT}.sort_indices",
     f"blocks.{LAYER}.feed_forward_moe.shared_mlp": f"model.layers.{LAYER}.mlp.shared_mlp",
     f"blocks.{LAYER}.feed_forward_moe.shared_mlp.w1": f"model.layers.{LAYER}.mlp.shared_mlp.gate_proj",
     f"blocks.{LAYER}.feed_forward_moe.shared_mlp.w2": f"model.layers.{LAYER}.mlp.shared_mlp.down_proj",

@@ -251,7 +251,7 @@ def _register_debug_hooks(hf_model: torch.nn.Module, model: Transformer):
             # Special casing for FlexOlmo router
             assert isinstance(output, torch.Tensor), (name, output)
             router_logits = output.detach().clone()
-            routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float)
+            routing_weights = F.softmax(router_logits.float(), dim=-1)
             # Like topk, but we keep all the data. This will hopefully go ok.
             routing_weights, routing_indices = torch.sort(routing_weights, descending=True, dim=-1)
             output = routing_weights
@@ -274,6 +274,48 @@ def _register_debug_hooks(hf_model: torch.nn.Module, model: Transformer):
 
             assert isinstance(output[0], torch.Tensor), (name, output[0])
             output = output[0]
+        if model_type == "olmo_core" and re.match(r"blocks.\d+.feed_forward_moe.experts$", name):
+            # Special casing for OLMo Core moe experts
+            assert len(args) >= 4, (name, args)
+            assert isinstance(args[1], torch.Tensor), (name, args[1])
+            module_hook(debug_state, model_type, f"{name}.expert_weights", _, [args[1]], None)
+            assert isinstance(args[2], torch.Tensor), (name, args[2])
+            module_hook(debug_state, model_type, f"{name}.expert_indices", _, [args[2]], None)
+        if model_type == "olmo_core" and re.match(r"blocks.\d+.feed_forward_moe.experts.mlp$", name) and len(args) >= 2:
+            # Special casing for OLMo Core moe expert dropless mlp
+            assert isinstance(args[0], torch.Tensor), (name, args[0])
+            assert isinstance(args[1], torch.Tensor), (name, args[1])
+            assert isinstance(output, torch.Tensor), (name, output)
+            batch_sizes = args[1]
+            for i, batch_size in enumerate(batch_sizes):
+                # Sort the input and output batches because they could be in the wrong order
+                input_tensor = args[0].narrow(0, sum(batch_sizes[:i]), batch_size).detach().clone()
+                sort_indices = torch.argsort(input_tensor[:, 0])
+                module_hook(
+                    debug_state,
+                    model_type,
+                    f"{name}.{i}",
+                    _,
+                    [input_tensor[sort_indices]],
+                    output.narrow(0, sum(batch_sizes[:i]), batch_size).detach().clone()[sort_indices],
+                )
+        if model_type == "hf" and re.match(r"model.layers.\d+.mlp.experts.\d+$", name):
+            # Special casing for HF moe individual experts
+            assert len(args) >= 1, (name, args)
+            assert isinstance(args[0], torch.Tensor), (name, args[0])
+            input_tensor = args[0].detach().clone()
+            sort_indices = torch.argsort(input_tensor[:, 0])
+            args = [input_tensor[sort_indices]]
+            assert isinstance(output, torch.Tensor), (name, output)
+            output = output.detach().clone()[sort_indices]
+
+        if model_type == "hf" and re.match(r"model.layers.\d+.mlp.experts$", name):
+            # Special casing for HF moe experts
+            assert len(args) >= 3, (name, args)
+            assert isinstance(args[1], torch.Tensor), (name, args[1])
+            module_hook(debug_state, model_type, f"{name}.expert_indices", _, [args[1]], None)
+            assert isinstance(args[2], torch.Tensor), (name, args[2])
+            module_hook(debug_state, model_type, f"{name}.expert_weights", _, [args[2]], None)
 
         if len(args) >= 1 and isinstance(args[0], torch.Tensor):
             state_name = f"{name}|input"
