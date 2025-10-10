@@ -129,7 +129,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "checkpointer",
             CheckpointerCallback(
                 save_interval=SAVE_INTERVAL_STEPS,  # Save every cycle (20 steps)
-                ephemeral_save_interval=100,  # This is already in steps
+                # ephemeral_save_interval=100,
                 save_async=True,
             ),
         )
