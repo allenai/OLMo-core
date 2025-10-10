@@ -37,13 +37,13 @@ N_LAYERS = 2
 GLOBAL_BATCH_SIZE = 32 * 2048  # 65,536 tokens per step
 
 # Duration configuration in STEPS
-MAX_DURATION_STEPS = 10000  # Adjust as needed for your experiment
+MAX_DURATION_STEPS = 200  # Adjust as needed for your experiment
 
 # Learning rate configuration
 LR = 1e-4
 
 # Scheduler configuration in STEPS
-CYCLE_STEPS = 200  # Each cycle is 20 steps (based on your graph)
+CYCLE_STEPS = 20  # Each cycle is 20 steps (based on your graph)
 WARMUP_STEPS = 2  # 10% of cycle for warmup
 DECAY_STEPS = 4   # 20% of cycle for decay
 # This leaves 14 steps (70%) for stable phase
