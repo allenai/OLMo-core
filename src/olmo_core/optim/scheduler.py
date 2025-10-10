@@ -688,12 +688,9 @@ class RepeatedWSD(Scheduler):
             return initial_lr
             
         else:
-            # Decay phase
             decay_position = position_in_cycle - warmup - stable
-            # Linear decay from initial_lr to decay_min_lr
-            # Note: _linear_decay expects "steps from end", so we need to reverse!!
-            steps_from_end = decay - decay_position - 1
-            return _linear_decay(initial_lr, steps_from_end, decay, self.decay_min_lr)
+            lr_fraction = 1.0 - (decay_position / decay)
+            return self.decay_min_lr + (initial_lr - self.decay_min_lr) * lr_fraction
             
     def get_cycle_info(self, current: int) -> Dict[str, Any]:
         """
