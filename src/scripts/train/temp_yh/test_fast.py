@@ -33,19 +33,24 @@ NUM_NODES = 1
 SEQUENCE_LENGTH = 2048
 N_LAYERS = 2
 
-GLOBAL_BATCH_SIZE = 32 * 2048
+# Batch size configuration
+GLOBAL_BATCH_SIZE = 32 * 2048  # 65,536 tokens per step
 
-MAX_DURATION = int(10e6)
+# Duration configuration in STEPS
+MAX_DURATION_STEPS = 10000  # Adjust as needed for your experiment
 
-ANNEAL_TOKENS = int(1e9)
+# Learning rate configuration
 LR = 1e-4
 
-CYCLE_TOKENS = int(1e6)
-WARMUP_TOKENS = int(50e3)
-DECAY_TOKENS = int(100e3)
+# Scheduler configuration in STEPS
+CYCLE_STEPS = 20  # Each cycle is 20 steps (based on your graph)
+WARMUP_STEPS = 2  # 10% of cycle for warmup
+DECAY_STEPS = 4   # 20% of cycle for decay
+# This leaves 14 steps (70%) for stable phase
 
-SAVE_INTERVAL_TOKENS = CYCLE_TOKENS
-EVAL_INTERVAL_TOKENS = CYCLE_TOKENS // 2
+# Save and eval intervals in STEPS
+SAVE_INTERVAL_STEPS = CYCLE_STEPS  # Save at the end of each cycle
+EVAL_INTERVAL_STEPS = CYCLE_STEPS // 2  # Eval twice per cycle
 
 PREEMPTIBLE = True
 
@@ -91,11 +96,11 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
         scheduler=RepeatedWSD(
-            units=SchedulerUnits.tokens,
-            cycle_length=CYCLE_TOKENS,  # 1M tokens
-            warmup=WARMUP_TOKENS,  # 50K tokens
-            decay=DECAY_TOKENS,  # 100K 
-            decay_fraction=None,
+            units=SchedulerUnits.steps,  # Changed to steps!
+            cycle_length=CYCLE_STEPS,     # 20 steps per cycle
+            warmup=WARMUP_STEPS,          # 2 steps warmup
+            decay=DECAY_STEPS,            # 4 steps decay
+            decay_fraction=None,          # Using absolute steps, not fractions
             warmup_min_lr=0.0,
             decay_min_lr=0.0,
             restart_warmup_from_min=True,
@@ -118,13 +123,13 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             save_overwrite=True,
             metrics_collect_interval=1,
             cancel_check_interval=cancel_check_interval,
-            max_duration=Duration.tokens(MAX_DURATION),
+            max_duration=Duration.steps(MAX_DURATION_STEPS),  # Changed to steps
         )
         .with_callback(
             "checkpointer",
             CheckpointerCallback(
-                save_interval=SAVE_INTERVAL_TOKENS,  # Changed from SAVE_INTERVAL
-                ephemeral_save_interval=100,
+                save_interval=Duration.steps(SAVE_INTERVAL_STEPS),  # Save every cycle (20 steps)
+                ephemeral_save_interval=100,  # This is already in steps
                 save_async=True,
             ),
         )
@@ -140,18 +145,18 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             ),
         )
         .with_recommended_evals(
-            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL_TOKENS  # Changed
+            common.tokenizer, 
+            SEQUENCE_LENGTH, 
+            cluster, 
+            task_set="fast", 
+            eval_interval=Duration.steps(EVAL_INTERVAL_STEPS)  # Changed to steps
         )
     )
 
-    # # batch size warmup
-    # config.callbacks["batchwup"] = BatchSizeSchedulerCallback(
-    #     batch_sizes=[GLOBAL_BATCH_SIZE, GLOBAL_BATCH_SIZE * 2, GLOBAL_BATCH_SIZE * 4],
-    #     schedule=[
-    #         Duration.tokens(0),
-    #         Duration.tokens(167_772_160_000),
-    #         Duration.tokens(503_316_480_000),
-    #     ],
+    # Optional: Add logging callback to monitor cycle info
+    # You might need to implement this callback based on your framework
+    # config.callbacks["cycle_logger"] = CycleLoggingCallback(
+    #     log_interval=1,  # Log every step to see cycle phases
     # )
 
     return config
@@ -180,9 +185,11 @@ if __name__ == "__main__":
     from functools import partial
     from olmo_core.internal.experiment import build_config
     
+    # Note: You might want to adjust these based on your actual needs
+    # Since we're using steps, the global_batch_size still defines tokens per step
     config_builder = partial(
         build_config,
-        global_batch_size=GLOBAL_BATCH_SIZE,
+        global_batch_size=GLOBAL_BATCH_SIZE,  # Still in tokens (65,536 tokens per step)
         max_sequence_length=SEQUENCE_LENGTH,
         model_config_builder=build_model_config,
         train_module_config_builder=build_train_module_config,
