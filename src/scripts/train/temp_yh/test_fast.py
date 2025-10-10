@@ -122,7 +122,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         TrainerConfig(
             save_folder=f"{root_dir}/checkpoints/yanhongl/linear-rnns/{common.run_name}/",
             save_overwrite=True,
-            metrics_collect_interval=10,
+            metrics_collect_interval=1,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(MAX_DURATION),
         )
