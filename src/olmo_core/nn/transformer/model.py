@@ -304,6 +304,7 @@ class Transformer(nn.Module):
                 d_model=self.d_model,
                 std=self.init_std,
                 generator=generator,
+                mup=self.lm_head.mups.get("w_out.weight"),
             )
 
         return generator

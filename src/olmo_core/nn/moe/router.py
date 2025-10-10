@@ -22,6 +22,7 @@ from olmo_core.distributed.utils import (
     unhide_from_torch,
 )
 from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.nn.mup import MuP, MuPConfig, MuPHyperParam
 from olmo_core.utils import get_default_device
 
 from .loss import MoELoadBalancingLossGranularity, load_balancing_loss, router_z_loss
@@ -537,6 +538,7 @@ class MoELinearRouter(MoERouter):
         *,
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
+        mup: Optional[MuPConfig] = None,
         **kwargs,
     ):
         super().__init__(init_device=init_device, **kwargs)
@@ -546,6 +548,11 @@ class MoELinearRouter(MoERouter):
         self.weight = nn.Parameter(
             torch.empty(self.num_experts * self.d_model, device=init_device, dtype=dtype)
         )
+
+        self.mups: Dict[str, MuP] = {}
+        if mup:
+            self.mups["weight"] = mup.build({MuPHyperParam.d_model}, {MuPHyperParam.num_experts})
+
         self.reset_parameters()
 
     @property
@@ -560,6 +567,7 @@ class MoELinearRouter(MoERouter):
         return f"in_features={self.d_model}, num_experts={self.num_experts}"
 
     def get_expert_logits(self, x: torch.Tensor) -> torch.Tensor:
+        x = MuP.scale_input(self.mups.get("weight"), x)
         return F.linear(
             x.float(), get_local_tensor(self.weight).view(self.num_experts, self.d_model).float()
         )
