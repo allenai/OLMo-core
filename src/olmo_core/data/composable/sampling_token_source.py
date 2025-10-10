@@ -8,6 +8,7 @@ from typing import List, Optional, Sequence, Tuple
 import numpy as np
 
 from olmo_core.aliases import PathOrStr
+from olmo_core.exceptions import OLMoConfigurationError
 
 from ..utils import get_rng
 from .token_source import TokenRange, TokenSource, TokenSourceConfig
@@ -81,7 +82,10 @@ class SamplingTokenSource(TokenSource):
 
         # Determine how many tokens to sample from each source.
         total_tokens = sum(source.num_tokens for source in sources)
-        max_tokens = max_tokens if allow_repetition else min(max_tokens, total_tokens)
+        if max_tokens > total_tokens and not allow_repetition:
+            raise OLMoConfigurationError(
+                "'max_tokens' cannot exceed the total number of tokens unless 'allow_repetition=True'"
+            )
         source_sample_sizes: List[int] = []
         for source in sources:
             # We want `source.num_tokens / total_tokens ~= source_sample_size / max_tokens`,

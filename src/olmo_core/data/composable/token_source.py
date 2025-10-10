@@ -201,6 +201,12 @@ class TokenSource(metaclass=ABCMeta):
 
         .. seealso::
             :meth:`resize()`
+
+        :param max_tokens: The maximum number of tokens to sample.
+        :param seed: A seed to use to randomize the sampling.
+        :param allow_repetition: Whether to allow the same token to be sampled multiple times.
+            If ``False``, then ``max_tokens`` must be less than or equal to the number of tokens
+            in this source.
         """
         from .sampling_token_source import SamplingTokenSource
 
@@ -218,6 +224,10 @@ class TokenSource(metaclass=ABCMeta):
 
         .. seealso::
             :meth:`sample()`
+
+        :param factor: The factor to resize the source by. For example, ``0.5`` will create a source
+          with half the number of tokens, and ``2.0`` will create a source with twice the number of tokens.
+        :param seed: A seed to use to randomize the sampling.
         """
         assert factor > 0
         return self.sample(

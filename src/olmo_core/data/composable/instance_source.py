@@ -223,6 +223,16 @@ class InstanceSource(metaclass=ABCMeta):
 
         .. seealso::
             :meth:`resize()`
+
+        :param max_tokens: The maximum number of tokens to sample from this source.
+          Mutually exclusive with ``max_instances``.
+        :param max_instances: The maximum number of instances to sample from this source.
+          Mutually exclusive with ``max_tokens``.
+        :param seed: A random seed for sampling. If ``None``, no shuffling is done and instances
+          are taken in order.
+        :param allow_repetition: Allow repeated instances (oversampling) to meet the target
+          ``max_instances`` if needed. If ``False``, ``max_tokens`` or ``max_instances`` must
+          be less than the size of the source.
         """
         from .sampling_instance_source import SamplingInstanceSource
 
@@ -241,6 +251,9 @@ class InstanceSource(metaclass=ABCMeta):
 
         .. seealso::
             :meth:`sample()`
+
+        :param factor: The factor by which to resize this source.
+        :param seed: A random seed for sampling.
         """
         assert factor > 0
         return self.sample(

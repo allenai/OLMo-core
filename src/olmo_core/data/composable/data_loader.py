@@ -80,6 +80,8 @@ class ComposableDataLoader(TextDataLoaderBase):
       intra-document masking.
     :param instance_filter_config: Optional configuration for filtering instances based on
       long sequences of repeated ngrams.
+    :param display_source_visualization: Whether to display a visualization of each source
+      to stdout from rank 0.
     """
 
     def __init__(

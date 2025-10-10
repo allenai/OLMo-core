@@ -10,6 +10,7 @@ import numpy as np
 import olmo_core.distributed.utils as dist_utils
 import olmo_core.io as io
 from olmo_core.aliases import PathOrStr
+from olmo_core.exceptions import OLMoConfigurationError
 
 from ..utils import get_rng, load_array_slice, write_array_to_disk
 from .token_source import (
@@ -119,8 +120,11 @@ class SamplingDocumentSource(DocumentSource):
             document_lengths = document_offsets[:, 1] - document_offsets[:, 0]
             cu_document_lengths = np.cumsum(document_lengths, dtype=np.uint64)
             total_tokens = int(cu_document_lengths[-1])
+            if max_tokens > total_tokens and not allow_repetition:
+                raise OLMoConfigurationError(
+                    "'max_tokens' cannot exceed the total number of tokens unless 'allow_repetition=True'"
+                )
 
-            max_tokens = max_tokens if allow_repetition else min(max_tokens, total_tokens)
             n_repetitions = max_tokens // total_tokens
             remaining_sample_size = max_tokens % total_tokens
             sampled_document_offsets = np.take(

@@ -55,7 +55,8 @@ class SamplingInstanceSource(InstanceSource):
     :param seed: A optional seed for sampling. If ``None``, the first ``N_s`` instances are taken
       from each source where ``N_s`` is proportional to the size of the source.
     :param allow_repetition: Allow repeated instances (oversampling) to meet the target ``max_instances``
-      if needed.
+      or ``max_tokens`` if needed. If ``False`` then ``max_instances`` or ``max_tokens`` can't
+      exceed the total size of all sources.
     """
 
     Config = SamplingInstanceSourceConfig
@@ -108,7 +109,10 @@ class SamplingInstanceSource(InstanceSource):
 
         # Determine how many instances to sample from each source.
         total_instances = sum(len(source) for source in self.sources)
-        max_instances = max_instances if allow_repetition else min(max_instances, total_instances)
+        if max_instances > total_instances and not allow_repetition:
+            raise OLMoConfigurationError(
+                "'max_instances' cannot exceed the total number of instances unless 'allow_repetition=True'"
+            )
         chunk_size = self.max_sequence_length // self.sequence_length
         source_sample_sizes: List[int] = []
         for source in sources:

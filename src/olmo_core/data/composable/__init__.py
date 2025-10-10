@@ -40,6 +40,10 @@ This API consists of a series of simple, composable, elements, including:
 3. :class:`ComposableDataLoader`: A data loader for OLMo-core's :class:`~olmo_core.train.Trainer` that takes
    one or more instance sources.
 
+.. tip::
+    Use :meth:`InstanceSource.visualize()` to print out a recursive visualization of an instance
+    source and all its sub-sources.
+
 Reference
 ---------
 """
