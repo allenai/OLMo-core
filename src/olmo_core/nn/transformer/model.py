@@ -2883,12 +2883,12 @@ class DistillTransformer(Transformer):
                 kl_div = kl_div.sum(dim=-1)  # Sum over vocabulary dimension
 
                 # Apply mask and reduce
-                kl_loss = (kl_div * mask.float()).sum() / mask.float().sum()
+                kl_loss = (kl_div * mask.float()).sum()
 
                 # Scale by temperature squared (standard for distillation)
                 kl_loss = kl_loss * (temperature ** 2)
 
-                metrics["distill/kl_loss"] = kl_loss
+                metrics["distill/kl_loss"] = kl_loss / mask.float().sum()
                 metrics["distill/teacher_entropy"] = -(torch.exp(teacher_log_probs) * teacher_log_probs).sum(dim=-1).mean()
                 metrics["distill/student_entropy"] = -(torch.exp(student_log_probs) * student_log_probs).sum(dim=-1).mean()
 
