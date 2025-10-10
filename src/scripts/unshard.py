@@ -127,7 +127,7 @@ def main(
     )
 
     if not quiet:
-        log.info(f"\nUnsharding complete!")
+        log.info("\nUnsharding complete!")
         log.info(f"Model checkpoint: {model_path}")
         if optim_path is not None:
             log.info(f"Optimizer checkpoint: {optim_path}")
@@ -139,7 +139,9 @@ def main(
         elif isinstance(model_path, Path) and model_path.is_dir():
             total_size = sum(f.stat().st_size for f in model_path.rglob("*") if f.is_file())
             size_mb = total_size / (1024 * 1024)
-            log.info(f"Total model size: {size_mb:.2f} MB across {len(list(model_path.rglob('*')))} files")
+            log.info(
+                f"Total model size: {size_mb:.2f} MB across {len(list(model_path.rglob('*')))} files"
+            )
 
         if optim_path is not None and isinstance(optim_path, Path) and optim_path.is_file():
             size_mb = optim_path.stat().st_size / (1024 * 1024)
