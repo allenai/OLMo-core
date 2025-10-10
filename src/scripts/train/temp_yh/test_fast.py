@@ -123,7 +123,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             save_overwrite=True,
             metrics_collect_interval=1,
             cancel_check_interval=cancel_check_interval,
-            max_duration=Duration.steps(MAX_DURATION_STEPS),  # Changed to steps
+            max_duration=MAX_DURATION_STEPS,  # Changed to steps
         )
         .with_callback(
             "checkpointer",
