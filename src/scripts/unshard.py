@@ -12,9 +12,38 @@ from pathlib import Path
 import click
 
 from olmo_core.distributed.checkpoint import UnshardStrategy, unshard_checkpoint
+from olmo_core.io import file_exists, normalize_path
 from olmo_core.utils import prepare_cli_environment
 
 log = logging.getLogger(__name__)
+
+
+def _resolve_checkpoint_dir(checkpoint_dir: str) -> str:
+    """
+    Resolve the checkpoint directory, automatically appending '/model_and_optim' if needed.
+
+    This handles the common case where users provide the step directory instead of the
+    model_and_optim subdirectory.
+    """
+    checkpoint_dir = normalize_path(checkpoint_dir)
+
+    # Check if .metadata exists in the provided directory
+    metadata_path = checkpoint_dir.rstrip("/") + "/.metadata"
+
+    if file_exists(metadata_path):
+        # Directory already contains checkpoint files
+        return checkpoint_dir
+
+    # Try appending /model_and_optim
+    model_and_optim_dir = checkpoint_dir.rstrip("/") + "/model_and_optim"
+    model_and_optim_metadata = model_and_optim_dir + "/.metadata"
+
+    if file_exists(model_and_optim_metadata):
+        log.info(f"Detected checkpoint in subdirectory, using: {model_and_optim_dir}")
+        return model_and_optim_dir
+
+    # Return original path (will fail later with appropriate error)
+    return checkpoint_dir
 
 
 @click.command()
@@ -92,6 +121,9 @@ def main(
 
     OUTPUT_DIR: Local directory where unsharded checkpoint will be saved
     """
+    # Resolve checkpoint directory (automatically append /model_and_optim if needed)
+    checkpoint_dir = _resolve_checkpoint_dir(checkpoint_dir)
+
     # Build unshard strategy
     unshard_strategy: UnshardStrategy
     if strategy == "one_file":
