@@ -546,201 +546,240 @@ class SequentialScheduler(Scheduler):
         return self.schedulers[-1].get_lr(initial_lr, current, t_max)
 
 
+# src/olmo_core/optim/scheduler.py
+# --- keep the existing imports and helpers at the top of the file ---
+
+def _invprop_decay(
+    eta_max: Union[float, torch.Tensor],
+    eta_min: Union[float, torch.Tensor],
+    t: int,
+    T: int,
+    eps: float = 1e-12,
+) -> Union[float, torch.Tensor]:
+    """
+    Inverse-proportional decay, defined by 1/lr linear interpolation between 1/eta_max and 1/eta_min.
+
+    For eta_min <= 0, we return the limit value:
+      - for t < T, use a tiny positive epsilon in place of eta_min to avoid division-by-zero;
+      - for t >= T, return exactly 0.0.
+
+    Args:
+        eta_max: peak LR (constant during stable phase).
+        eta_min: final LR at end of decay (may be 0; see note above).
+        t:      current step within the decay (0..T).
+        T:      total number of decay steps (>= 0).
+        eps:    small value used if eta_min <= 0 and t < T.
+    """
+    if T <= 0:
+        return eta_max
+    if t >= T:
+        # End of decay: return exact endpoint.
+        return 0.0 if (isinstance(eta_min, float) and eta_min <= 0.0) or (
+            isinstance(eta_min, torch.Tensor) and float(eta_min) <= 0.0
+        ) else eta_min
+
+    # Use epsilon if eta_min <= 0 to keep finite values inside the decay.
+    if (isinstance(eta_min, float) and eta_min <= 0.0) or (
+        isinstance(eta_min, torch.Tensor) and float(eta_min) <= 0.0
+    ):
+        eta_min_eff: Union[float, torch.Tensor] = eps
+    else:
+        eta_min_eff = eta_min
+
+    alpha = t / T
+    denom = alpha / eta_min_eff + (1.0 - alpha) / eta_max
+    return 1.0 / denom
+
+
 @dataclass
-class RepeatedWSD(Scheduler):
+class WSDS(Scheduler):
     """
-    Repeated Warmup-Stable-Decay (WSD) scheduler for scaling law experiments.
-    
-    This scheduler repeats a WSD pattern every `cycle_length` steps/tokens, ensuring that
-    each cycle ends with the learning rate decayed to its minimum value. This is designed
-    for ladder/scaling law runs where checkpoints are saved at the end of each cycle
-    when LR is at its minimum.
-    
-    Each cycle consists of:
-    1. Warmup phase: LR increases from warmup_min_lr to initial_lr
-    2. Stable phase: LR remains at initial_lr
-    3. Decay phase: LR decreases from initial_lr to decay_min_lr
-    
-    The cycle ends exactly when LR reaches decay_min_lr, making it ideal for checkpointing.
+    Warmup–Stable–Decay—Simplified (WSD‑S) scheduler for continual pretraining.
+
+    Design:
+      • A single warmup at the very beginning (period 0).
+      • Multiple periods, each with a long STABLE phase followed by a short DECAY phase.
+      • Period 0 = warmup + stable + decay. Periods 1..N = stable + decay.
+      • At the boundary between periods, LR is *reset* to eta_max (the 'initial_lr' for the group).
+      • End of each period: LR is set to EXACTLY 0.0 (for eta_min <= 0), which is ideal for checkpointing.
+      • 'period_lengths' defines each period's total length in chosen 'units' (steps or tokens).
+
+    Phases per period i (length L_i):
+      - if i == 0:
+          warmup length W = self.warmup or round(self.warmup_fraction * L_0)
+          decay  length D = self.decay  or round(self.decay_fraction  * L_i)
+          stable length   = L_0 - W - D
+        else:
+          warmup length W = 0
+          decay  length D = self.decay or round(self.decay_fraction * L_i)
+          stable length   = L_i - D
+
+    Notes:
+      - If warmup + decay > L_0, they are proportionally shrunk to fit.
+      - If decay > L_i for any period, it's clamped to L_i.
+      - For eta_min <= 0, the inverse-proportional decay returns 0 at t = T and
+        stays finite (using epsilon) for t < T.
+
+    Attributes
+    ----------
+    period_lengths : List[int]
+        Length of EACH period in chosen 'units' (steps or tokens). Must be >0.
+    warmup : Optional[int]
+        Warmup length for period 0 in absolute 'units'. Exactly one of (warmup, warmup_fraction) must be set.
+    warmup_fraction : Optional[float]
+        Warmup fraction of period 0 (0..1). Mutually exclusive with 'warmup'.
+    decay : Optional[int]
+        Decay length per period (absolute). Exactly one of (decay, decay_fraction) must be set.
+    decay_fraction : Optional[float]
+        Decay fraction per period (0..1). Mutually exclusive with 'decay'.
+    warmup_min_lr : float
+        LR at start of warmup.
+    decay_min_lr : float
+        LR at end of decay. Can be 0.0 (recommended for "checkpoint when LR=0").
     """
-    
-    cycle_length: Optional[int] = None
-    """Number of steps/tokens for each WSD cycle. Checkpoint is saved at the end of each cycle."""
-    
+
+    # --- configuration ---
+    period_lengths: List[int] = field(default_factory=list)
+
     warmup: Optional[int] = None
-    warmup_steps: Optional[int] = None  # deprecated, use 'warmup' instead.
     warmup_fraction: Optional[float] = None
-    """Fraction of each cycle used for warmup, or absolute number of steps/tokens."""
-    
+
     decay: Optional[int] = None
-    decay_steps: Optional[int] = None  # deprecated, use 'decay' instead.
-    decay_fraction: Optional[float] = 0.1
-    """Fraction of each cycle used for decay, or absolute number of steps/tokens."""
-    
+    decay_fraction: Optional[float] = None
+
     warmup_min_lr: float = 0.0
-    """Minimum LR at the start of each warmup phase."""
-    
     decay_min_lr: float = 0.0
-    """Minimum LR at the end of each decay phase (checkpoint point)."""
-    
-    restart_warmup_from_min: bool = True
-    """If True, each cycle starts warmup from warmup_min_lr. If False, starts from decay_min_lr of previous cycle."""
+
+    # --- cached derived state ---
+    _cum_period_end: List[int] = field(default_factory=list, init=False, repr=False)
 
     def __post_init__(self):
-        # Check that cycle_length was provided
-        if self.cycle_length is None:
-            raise OLMoConfigurationError("'cycle_length' must be specified.")
+        # Units validated by base class.
+        if not self.period_lengths:
+            raise OLMoConfigurationError("'period_lengths' must be provided and non-empty.")
+        if any(p <= 0 for p in self.period_lengths):
+            raise OLMoConfigurationError("All entries in 'period_lengths' must be > 0.")
 
-        if self.cycle_length <= 0:
-            raise OLMoConfigurationError("'cycle_length' must be positive.")
-            
-        if self.warmup is None and self.warmup_steps is not None:
-            self.warmup = self.warmup_steps
-            self.warmup_steps = None
-            warnings.warn(
-                f"'{self.__class__.__name__}.warmup_steps' is deprecated, please use '.warmup' instead.",
-                DeprecationWarning,
-            )
+        # warmup validation (applies ONLY to the first period)
+        if (self.warmup is None) == (self.warmup_fraction is None):
+            raise OLMoConfigurationError("Exactly one of 'warmup' or 'warmup_fraction' must be specified.")
+        if self.warmup_fraction is not None and not (0.0 <= self.warmup_fraction <= 1.0):
+            raise OLMoConfigurationError("'warmup_fraction' must be in [0, 1].")
 
-        if (self.warmup_fraction is None) == (self.warmup is None):
-            raise OLMoConfigurationError("Either 'warmup_fraction' or 'warmup' must be specified.")
+        # decay validation (applies to ALL periods)
+        if (self.decay is None) == (self.decay_fraction is None):
+            raise OLMoConfigurationError("Exactly one of 'decay' or 'decay_fraction' must be specified.")
+        if self.decay_fraction is not None and not (0.0 <= self.decay_fraction <= 1.0):
+            raise OLMoConfigurationError("'decay_fraction' must be in [0, 1].")
 
-        if self.warmup_fraction is not None and (
-            self.warmup_fraction < 0 or self.warmup_fraction > 1
-        ):
-            raise OLMoConfigurationError("'warmup_fraction' must be between 0 and 1.")
+        # Precompute cumulative ends so we can detect period boundaries quickly.
+        self._cum_period_end = []
+        s = 0
+        for L in self.period_lengths:
+            s += int(L)
+            self._cum_period_end.append(s)
 
-        if self.decay is None and self.decay_steps is not None:
-            self.decay = self.decay_steps
-            self.decay_steps = None
-            warnings.warn(
-                f"'{self.__class__.__name__}.decay_steps' is deprecated, please use '.decay' instead.",
-                DeprecationWarning,
-            )
+        # Validate warmup+decay for the first period.
+        L0 = self.period_lengths[0]
+        W = self._resolve_warmup(L0)
+        D0 = self._resolve_decay(L0)
+        if W + D0 > L0:
+            # Proportionally shrink (keep ratio W:D0) to fit in L0.
+            total = W + D0
+            if total == 0:
+                # degenerate; make everything stable
+                pass
+            else:
+                W = round(W * L0 / total)
+                D0 = L0 - W
+            # Store the adjusted warmup/decay values into fractions so that we recompute consistently later
+            if self.warmup is not None:
+                self.warmup = W
+            else:
+                self.warmup_fraction = W / L0
+            if self.decay is not None:
+                self.decay = D0
+            else:
+                self.decay_fraction = D0 / L0
 
-        if (self.decay_fraction is None) == (self.decay is None):
-            raise OLMoConfigurationError(
-                "Either 'decay_fraction' or 'decay' must be specified. Never both."
-            )
+    def _resolve_warmup(self, L0: int) -> int:
+        if self.warmup is not None:
+            return min(max(int(self.warmup), 0), int(L0))
+        else:
+            return min(max(int(round(self.warmup_fraction * L0)), 0), int(L0))
 
-        if self.decay_fraction is not None and (self.decay_fraction < 0 or self.decay_fraction > 1):
-            raise OLMoConfigurationError("'decay_fraction' must be between 0 and 1.")
-            
-        # Validate that warmup + decay don't exceed cycle length
-        if self.warmup is not None and self.decay is not None:
-            if self.warmup + self.decay > self.cycle_length:
-                raise OLMoConfigurationError(
-                    f"warmup ({self.warmup}) + decay ({self.decay}) exceeds cycle_length ({self.cycle_length})"
-                )
-        elif self.warmup_fraction is not None and self.decay_fraction is not None:
-            if self.warmup_fraction + self.decay_fraction > 1.0:
-                raise OLMoConfigurationError(
-                    f"warmup_fraction ({self.warmup_fraction}) + decay_fraction ({self.decay_fraction}) exceeds 1.0"
-                )
+    def _resolve_decay(self, Li: int) -> int:
+        if self.decay is not None:
+            return min(max(int(self.decay), 0), int(Li))
+        else:
+            return min(max(int(round(self.decay_fraction * Li)), 0), int(Li))
+
+    def _find_period(self, x: int) -> int:
+        """
+        Return the 0-based period index such that:
+            cumulative_end[period-1] < x <= cumulative_end[period]
+        If x <= period_lengths[0], this returns 0.
+        If x > sum(period_lengths), returns len(period_lengths)-1, and we will clamp positions.
+        """
+        for idx, end in enumerate(self._cum_period_end):
+            if x <= end:
+                return idx
+        return len(self._cum_period_end) - 1
+
+    def period_boundaries(self) -> List[int]:
+        """
+        Inclusive boundaries in the same units as 'period_lengths', i.e., the set of x
+        where LR is exactly 0.0 (end of period).
+            boundary_k = sum_{i=0..k} period_lengths[i]
+        """
+        return list(self._cum_period_end)
 
     def get_lr(
         self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
     ) -> Union[float, torch.Tensor]:
         """
-        Get learning rate for the current step within repeated WSD cycles.
-        
-        Each cycle of length `cycle_length` follows a WSD pattern, with the cycle
-        ending exactly when LR reaches decay_min_lr (ideal for checkpointing).
+        Return the LR at 'current' (in 'units').
+        Contract:
+          • At *end of each period* (current == boundary), LR == 0 if decay_min_lr <= 0 (exact).
+          • Right after a boundary (start of next period), LR resets to initial_lr (stable phase).
         """
-        # Determine which cycle we're in and position within that cycle
-        cycle_idx = current // self.cycle_length
-        position_in_cycle = current % self.cycle_length
-        
-        # Calculate warmup and decay lengths for this cycle
-        if self.warmup is None:
-            assert self.warmup_fraction is not None
-            warmup = round(self.cycle_length * self.warmup_fraction)
-        else:
-            warmup = min(self.warmup, self.cycle_length)
-            
-        if self.decay is None:
-            assert self.decay_fraction is not None
-            decay = round(self.cycle_length * self.decay_fraction)
-        else:
-            decay = min(self.decay, self.cycle_length)
-            
-        # Ensure warmup + decay don't exceed cycle length
-        if warmup + decay > self.cycle_length:
-            # Proportionally reduce both to fit
-            total = warmup + decay
-            warmup = round(warmup * self.cycle_length / total)
-            decay = self.cycle_length - warmup
-            
-        # Calculate stable phase length
-        stable = self.cycle_length - warmup - decay
-        
-        # Determine which phase we're in within the current cycle
-        if position_in_cycle < warmup:
-            # Warmup phase
-            if self.restart_warmup_from_min or cycle_idx == 0:
-                start_lr = self.warmup_min_lr
+        # If we've exceeded all periods, stay at 0 (if eta_min <= 0) or at eta_min otherwise.
+        total = self._cum_period_end[-1]
+        if current >= total:
+            return 0.0 if self.decay_min_lr <= 0.0 else self.decay_min_lr
+
+        # Determine period and position; clamp 'pos_in_period' into [0, L_i] (inclusive)
+        pidx = self._find_period(current)
+        start = 0 if pidx == 0 else self._cum_period_end[pidx - 1]
+        Li = self.period_lengths[pidx]
+        # inclusive position; allow pos = Li to evaluate exact endpoint/lr=0
+        pos = min(max(current - start, 0), Li)
+
+        # Determine W (warmup only for p==0) and D (decay for all)
+        if pidx == 0:
+            W = self._resolve_warmup(Li)
+            D = self._resolve_decay(Li)
+            S = max(Li - W - D, 0)
+            # Phases: [0, W) warmup, [W, W+S) stable, [W+S, W+S+D] decay (inclusive end)
+            if pos < W:
+                # warmup from warmup_min_lr -> initial_lr
+                return _linear_warmup(initial_lr, pos, W, self.warmup_min_lr)
+            elif pos < W + S:
+                return initial_lr
             else:
-                start_lr = self.decay_min_lr
-            return _linear_warmup(initial_lr, position_in_cycle, warmup, start_lr)
-            
-        elif position_in_cycle < warmup + stable:
-            # Stable phase
-            return initial_lr
-            
+                t = pos - (W + S)
+                T = max(D, 0)
+                return _invprop_decay(initial_lr, self.decay_min_lr, t, T)
         else:
-            decay_position = position_in_cycle - warmup - stable
-            lr_fraction = 1.0 - (decay_position / decay)
-            return self.decay_min_lr + (initial_lr - self.decay_min_lr) * lr_fraction
-            
-    def get_cycle_info(self, current: int) -> Dict[str, Any]:
-        """
-        Get information about the current position within the cycle.
-        Useful for logging and debugging.
-        
-        Returns:
-            Dictionary containing:
-            - cycle_idx: Current cycle number (0-indexed)
-            - position_in_cycle: Position within current cycle
-            - phase: Current phase ('warmup', 'stable', or 'decay')
-            - is_checkpoint_step: Whether this is a checkpoint step (end of cycle)
-        """
-        cycle_idx = current // self.cycle_length
-        position_in_cycle = current % self.cycle_length
-        
-        # Calculate phase boundaries
-        if self.warmup is None:
-            assert self.warmup_fraction is not None
-            warmup = round(self.cycle_length * self.warmup_fraction)
-        else:
-            warmup = min(self.warmup, self.cycle_length)
-            
-        if self.decay is None:
-            assert self.decay_fraction is not None
-            decay = round(self.cycle_length * self.decay_fraction)
-        else:
-            decay = min(self.decay, self.cycle_length)
-            
-        if warmup + decay > self.cycle_length:
-            total = warmup + decay
-            warmup = round(warmup * self.cycle_length / total)
-            decay = self.cycle_length - warmup
-            
-        stable = self.cycle_length - warmup - decay
-        
-        # Determine phase
-        if position_in_cycle < warmup:
-            phase = "warmup"
-        elif position_in_cycle < warmup + stable:
-            phase = "stable"
-        else:
-            phase = "decay"
-            
-        # Check if this is a checkpoint step (last step of cycle)
-        is_checkpoint_step = (position_in_cycle == self.cycle_length - 1)
-        
-        return {
-            "cycle_idx": cycle_idx,
-            "position_in_cycle": position_in_cycle,
-            "phase": phase,
-            "is_checkpoint_step": is_checkpoint_step,
-        }
+            W = 0
+            D = self._resolve_decay(Li)
+            S = max(Li - D, 0)
+            # Phases: [0, S) stable, [S, S+D] decay (inclusive end)
+            if pos < S:
+                # reset to peak LR at start of each period
+                return initial_lr
+            else:
+                t = pos - S
+                T = max(D, 0)
+                return _invprop_decay(initial_lr, self.decay_min_lr, t, T)
+

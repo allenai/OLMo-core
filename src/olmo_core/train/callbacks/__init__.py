@@ -22,6 +22,8 @@ from .sequence_length_scheduler import SequenceLengthSchedulerCallback
 from .slack_notifier import SlackNotificationSetting, SlackNotifierCallback
 from .speed_monitor import SpeedMonitorCallback
 from .wandb import WandBCallback
+from .zero_lr_checkpointer import ZeroLRCheckpointerCallback
+from .wandb_tokens import WandBTokensCallback
 
 __all__ = [
     "Callback",
@@ -46,6 +48,8 @@ __all__ = [
     "BeakerCallback",
     "BatchSizeSchedulerCallback",
     "MonkeyPatcherCallback",
+    "ZeroLRCheckpointerCallback",
+    "WandBTokensCallback",
 ]
 
 __doc__ += "\n"
