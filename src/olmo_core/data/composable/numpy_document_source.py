@@ -4,7 +4,7 @@ import logging
 import random
 import typing
 from dataclasses import dataclass
-from typing import Iterable, List, Optional, Sequence, Tuple, Union
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
@@ -71,6 +71,79 @@ class NumpyDocumentSourceConfig(NumpyDocumentSourceConfigBase):
     expand_glob: Optional[bool] = None
     """If true, treat source/label paths as glob patterns and expand them when building the sources."""
 
+    @classmethod
+    def from_source_groups(
+        cls,
+        source_path_groups: Dict[str, List[PathOrStr]],
+        *,
+        tokenizer: TokenizerConfig,
+        label_mask_path_groups: Optional[Dict[str, List[PathOrStr]]] = None,
+        expand_glob: Optional[bool] = None,
+        **kwargs,
+    ) -> Dict[str, "NumpyDocumentSourceConfig"]:
+        """
+        A more efficient way to create multiple configs from groups of source paths.
+
+        :param source_path_groups: Groups of source paths to use. Each group will be put into its own config
+            with the corresponding label.
+        :param tokenizer: The tokenizer config to use.
+        :param label_mask_path_groups: Optional groups of label mask paths to use. Each group should
+            correspond to the group in ``source_paths`` at the same key.
+        """
+        if label_mask_path_groups is not None:
+            assert len(source_path_groups) == len(label_mask_path_groups)
+            assert set(source_path_groups.keys()) == set(label_mask_path_groups.keys())
+            for k in source_path_groups.keys():
+                assert len(source_path_groups[k]) == len(label_mask_path_groups[k])
+
+        if expand_glob is None:
+            expand_glob = any(
+                ["*" in str(p) for group in source_path_groups.values() for p in group]
+            )
+
+        source_paths_to_use: Dict[str, List[str]] = {}
+        mask_paths_to_use: Optional[Dict[str, List[str]]] = None
+        if expand_glob:
+            _, src_pattern_to_expanded = cls._expand_globs(
+                [p for group in source_path_groups.values() for p in group]
+            )
+            for k, group in source_path_groups.items():
+                expanded_group = []
+                for p in group:
+                    expanded_group.extend(src_pattern_to_expanded[p])
+                source_paths_to_use[k] = expanded_group
+
+            if label_mask_path_groups is not None:
+                mask_paths_to_use = {}
+                _, mask_pattern_to_expanded = cls._expand_globs(
+                    [p for group in label_mask_path_groups.values() for p in group]
+                )
+                for k, group in label_mask_path_groups.items():
+                    expanded_group = []
+                    for p in group:
+                        expanded_group.extend(mask_pattern_to_expanded[p])
+                    mask_paths_to_use[k] = expanded_group
+        else:
+            source_paths_to_use = {
+                k: [str(p) for p in group] for k, group in source_path_groups.items()
+            }
+            if label_mask_path_groups is not None:
+                mask_paths_to_use = {
+                    k: [str(p) for p in group] for k, group in label_mask_path_groups.items()
+                }
+
+        configs: Dict[str, NumpyDocumentSourceConfig] = {}
+        for k, src_group in source_paths_to_use.items():
+            configs[k] = cls(
+                source_paths=src_group,
+                label_mask_paths=mask_paths_to_use[k] if mask_paths_to_use is not None else None,
+                tokenizer=tokenizer,
+                expand_glob=False,
+                label=k,
+                **kwargs,
+            )
+        return configs
+
     def build(self, work_dir: PathOrStr) -> List["NumpyDocumentSource"]:  # type: ignore[override]
         """
         Build the sources.
@@ -93,9 +166,11 @@ class NumpyDocumentSourceConfig(NumpyDocumentSourceConfigBase):
             expand_glob = any(["*" in p for p in self.source_paths])
 
         if expand_glob:
-            source_paths = self._expand_globs(self.source_paths)
+            source_paths, _ = self._expand_globs(self.source_paths)
             mask_paths = (
-                None if self.label_mask_paths is None else self._expand_globs(self.label_mask_paths)
+                None
+                if self.label_mask_paths is None
+                else self._expand_globs(self.label_mask_paths)[0]
             )
         else:
             source_paths = self.source_paths
@@ -120,20 +195,24 @@ class NumpyDocumentSourceConfig(NumpyDocumentSourceConfigBase):
         )
 
         if self.source_group_size > 0:
-            return main_source.split(self.source_group_size)
+            return main_source.split_by_source(self.source_group_size)
         else:
             return [main_source]
 
-    def _expand_globs(self, patterns: Sequence[PathOrStr]) -> List[str]:
+    @classmethod
+    def _expand_globs(
+        cls, patterns: Sequence[PathOrStr]
+    ) -> Tuple[List[str], Dict[PathOrStr, List[str]]]:
         log.info("Expanding globs...")
         results: List[List[str]] = []
         if dist_utils.get_rank() == 0:
-            results = path_map(self._expand_glob, patterns)
+            results = path_map(cls._expand_glob, patterns)
         else:
             results = []
         results = dist_utils.scatter_object(results)
 
         expanded: List[str] = []
+        pattern_to_expanded: Dict[PathOrStr, List[str]] = {}
         for pattern, matches in zip(patterns, results):
             if not matches:
                 raise FileNotFoundError(pattern)
@@ -151,10 +230,12 @@ class NumpyDocumentSourceConfig(NumpyDocumentSourceConfigBase):
                 )
             log.info(f"Expanded '{pattern}' into {len(matches):,d} paths:\n{summary}")
             expanded.extend(matches)
+            pattern_to_expanded[pattern] = matches
 
-        return expanded
+        return expanded, pattern_to_expanded
 
-    def _expand_glob(self, pattern: PathOrStr) -> List[str]:
+    @classmethod
+    def _expand_glob(cls, pattern: PathOrStr) -> List[str]:
         pattern = str(pattern)
         if "*" in pattern:
             return sorted(io.glob_directory(pattern))
@@ -200,10 +281,17 @@ class NumpyDocumentSource(DocumentSource):
     .. important::
         There's some overhead when instantiating this class because it needs to query the sizes of
         all the source files. If you want to create multiple sources from the same set of files,
-        consider first creating a single source and then splitting it up using :meth:`split()`,
+        consider first creating a single source and then splitting it up using :meth:`split_by_source()`,
         which will be much more efficient than creating multiple sources directly since the sizes
         of the source files will only need to be queried once and will be done so concurrently with a
         thread pool.
+
+    :param source_paths: The paths/URLs to the numpy token ID arrays.
+    :param dtype: The numpy datatype of the token ID arrays in the source paths.
+    :param work_dir: A local working directory to use for temporary files.
+    :param tokenizer: The config of the tokenizer that was used to tokenize the source files.
+    :param label_mask_paths: The paths/URLs to numpy bool files indicating which tokens should be masked.
+    :param label: An optional label to assign to the source for logging and debugging.
     """
 
     Config = NumpyDocumentSourceConfig
@@ -342,7 +430,7 @@ class NumpyDocumentSource(DocumentSource):
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}{self.source_paths}"
 
-    def split(self, group_size: int = 1) -> List["NumpyDocumentSource"]:
+    def split_by_source(self, group_size: int = 1) -> List["NumpyDocumentSource"]:
         """
         Split the source up into multiple smaller sources from groups of source files.
         """

@@ -20,11 +20,11 @@ def test_in_memory_token_source(tmp_path: Path):
     source2 = source * 1.5
     assert len(source2) == 15
 
-    source2, source3 = source.split(0.6)
-    assert len(source2) == 6
-    assert len(source3) == 4
-    assert list(source2[:]["input_ids"]) == list(range(0, 6))
-    assert list(source3[:]["input_ids"]) == list(range(6, 10))
+    source3, source4 = source.split(0.6)
+    assert len(source3) == 6
+    assert len(source4) == 4
+    assert list(source3[:]["input_ids"]) == list(range(0, 6))
+    assert list(source4[:]["input_ids"]) == list(range(6, 10))
 
 
 def test_in_memory_document_source(tmp_path: Path):

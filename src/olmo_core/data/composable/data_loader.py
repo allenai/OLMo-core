@@ -302,6 +302,9 @@ class ComposableDataLoader(TextDataLoaderBase):
 
             if source_start_offset <= idx < source_end_offset:
                 out: Dict[str, Any] = {"index": idx}
+                if source.label is not None:
+                    out["metadata"] = {"source": source.label}
+
                 instance = source[idx - source_start_offset]
 
                 input_ids = as_tensor(instance["input_ids"])
