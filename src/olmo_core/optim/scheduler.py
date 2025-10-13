@@ -546,49 +546,40 @@ class SequentialScheduler(Scheduler):
         return self.schedulers[-1].get_lr(initial_lr, current, t_max)
 
 
-# src/olmo_core/optim/scheduler.py
-# --- keep the existing imports and helpers at the top of the file ---
-
 def _invprop_decay(
     eta_max: Union[float, torch.Tensor],
-    eta_min: Union[float, torch.Tensor],
+    eta_min: float,
     t: int,
     T: int,
-    eps: float = 1e-12,
+    epsilon: float = 1e-8
 ) -> Union[float, torch.Tensor]:
     """
-    Inverse-proportional decay, defined by 1/lr linear interpolation between 1/eta_max and 1/eta_min.
-
-    For eta_min <= 0, we return the limit value:
-      - for t < T, use a tiny positive epsilon in place of eta_min to avoid division-by-zero;
-      - for t >= T, return exactly 0.0.
-
-    Args:
-        eta_max: peak LR (constant during stable phase).
-        eta_min: final LR at end of decay (may be 0; see note above).
-        t:      current step within the decay (0..T).
-        T:      total number of decay steps (>= 0).
-        eps:    small value used if eta_min <= 0 and t < T.
+    Inverse-proportional decay where 1/lr interpolates linearly.
+    
+    Formula: 1/lr(t) = (t/T) * (1/eta_min) + (1 - t/T) * (1/eta_max)
+    
+    At t=0: lr = eta_max
+    At t=T: lr = eta_min
     """
-    if T <= 0:
-        return eta_max
+    if T == 0:
+        return eta_min if eta_min > 0 else 0.0
+    
+    # Handle the endpoint exactly
     if t >= T:
-        # End of decay: return exact endpoint.
-        return 0.0 if (isinstance(eta_min, float) and eta_min <= 0.0) or (
-            isinstance(eta_min, torch.Tensor) and float(eta_min) <= 0.0
-        ) else eta_min
-
-    # Use epsilon if eta_min <= 0 to keep finite values inside the decay.
-    if (isinstance(eta_min, float) and eta_min <= 0.0) or (
-        isinstance(eta_min, torch.Tensor) and float(eta_min) <= 0.0
-    ):
-        eta_min_eff: Union[float, torch.Tensor] = eps
-    else:
-        eta_min_eff = eta_min
-
-    alpha = t / T
-    denom = alpha / eta_min_eff + (1.0 - alpha) / eta_max
-    return 1.0 / denom
+        return eta_min if eta_min > 0 else 0.0
+    
+    # Handle eta_min <= 0 case (decay to zero)
+    if eta_min <= 0:
+        # 1/lr(t) = (t/T) * (1/epsilon) + (1 - t/T) * (1/eta_max)
+        # As eta_min -> 0, 1/eta_min -> infinity, so we use large value
+        inv_lr = (t / T) * (1 / epsilon) + (1 - t / T) * (1 / eta_max)
+        return 1 / inv_lr
+    
+    # Standard case: both eta_max and eta_min are positive
+    progress = t / T
+    inv_lr = progress * (1 / eta_min) + (1 - progress) * (1 / eta_max)
+    
+    return 1 / inv_lr
 
 
 @dataclass
