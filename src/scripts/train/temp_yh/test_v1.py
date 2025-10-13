@@ -44,9 +44,9 @@ GLOBAL_BATCH_SIZE_TOKENS = 32 * 2048  # 65,536 tokens/step
 # ]
 
 PERIOD_TOKEN_BUDGETS: List[int] = [
-    50_000_000,
-    100_000_000,
-    200_000_000,
+    50_000_00,
+    100_000_00,
+    200_000_00,
 ]
 
 # Convert token budgets to *period lengths in steps*.
