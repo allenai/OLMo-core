@@ -86,6 +86,7 @@ from .mixing_token_source import (
 from .numpy_document_source import (
     NumpyDocumentSource,
     NumpyDocumentSourceConfig,
+    NumpyDocumentSourceConfigBase,
     NumpyDocumentSourceMixConfig,
 )
 from .packing_instance_source import (
@@ -142,6 +143,7 @@ __all__ = [
     "MixingDocumentSource",
     "MixingDocumentSourceConfig",
     "NumpyDocumentSource",
+    "NumpyDocumentSourceConfigBase",
     "NumpyDocumentSourceConfig",
     "NumpyDocumentSourceMixConfig",
     # Instance source implementations.

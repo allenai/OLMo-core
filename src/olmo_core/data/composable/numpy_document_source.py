@@ -25,7 +25,9 @@ log = logging.getLogger(__name__)
 
 
 @dataclass(kw_only=True)
-class _NumpyDocumentSourceConfigBase(DocumentSourceConfig):
+class NumpyDocumentSourceConfigBase(DocumentSourceConfig):
+    """Base config class for :class:`NumpyDocumentSourceConfig` and :class:`NumpyDocumentSourceMixConfig`."""
+
     tokenizer: TokenizerConfig
     """The config of the tokenizer that was used to tokenize the source files."""
     dtype: Optional[NumpyDatasetDType] = None
@@ -35,6 +37,7 @@ class _NumpyDocumentSourceConfigBase(DocumentSourceConfig):
     source_group_size: int = 1
     """The number of npy source files to group together into a single source."""
     label: Optional[str] = None
+    """An optional to assign for logging and debugging."""
 
     def __post_init__(self):
         if self.source_group_size < -1 or self.source_group_size == 0:
@@ -57,8 +60,8 @@ class _NumpyDocumentSourceConfigBase(DocumentSourceConfig):
         raise ValueError("vocab size too big!")
 
 
-@dataclass
-class NumpyDocumentSourceConfig(_NumpyDocumentSourceConfigBase):
+@dataclass(kw_only=True)
+class NumpyDocumentSourceConfig(NumpyDocumentSourceConfigBase):
     """Config class for building one or more :class:`NumpyDocumentSource` directly from source paths."""
 
     source_paths: List[str]
@@ -71,6 +74,10 @@ class NumpyDocumentSourceConfig(_NumpyDocumentSourceConfigBase):
     def build(self, work_dir: PathOrStr) -> List["NumpyDocumentSource"]:  # type: ignore[override]
         """
         Build the sources.
+
+        .. note::
+            The number of sources returned depends on the length of :data:`source_paths` and the
+            value of :data:`~NumpyDocumentSourceConfigBase.source_group_size`.
         """
         dtype = self.get_dtype()
         label = self.label
@@ -117,35 +124,46 @@ class NumpyDocumentSourceConfig(_NumpyDocumentSourceConfigBase):
         else:
             return [main_source]
 
-    def _expand_globs(self, patterns: Sequence[str]) -> List[str]:
+    def _expand_globs(self, patterns: Sequence[PathOrStr]) -> List[str]:
+        log.info("Expanding globs...")
+        results: List[List[str]] = []
+        if dist_utils.get_rank() == 0:
+            results = path_map(self._expand_glob, patterns)
+        else:
+            results = []
+        results = dist_utils.scatter_object(results)
+
         expanded: List[str] = []
-        for pattern in patterns:
-            if "*" in pattern:
-                log.info(f"Expanding '{pattern}'...")
-                matches = sorted(io.glob_directory(pattern))
-                if not matches:
-                    raise FileNotFoundError(pattern)
-                if len(matches) <= 5:
-                    summary = "\n".join([f"- '{match}'" for match in matches])
-                else:
-                    summary = "\n".join(
-                        [
-                            f"- '{matches[0]}'",
-                            f"- '{matches[1]}'",
-                            "⋮",
-                            f"- '{matches[-2]}'",
-                            f"- '{matches[-1]}'",
-                        ]
-                    )
-                log.info(f"Expanded '{pattern}' into {len(matches):,d} paths:\n{summary}")
-                expanded.extend(matches)
+        for pattern, matches in zip(patterns, results):
+            if not matches:
+                raise FileNotFoundError(pattern)
+            if len(matches) <= 5:
+                summary = "\n".join([f"- '{match}'" for match in matches])
             else:
-                expanded.append(pattern)
+                summary = "\n".join(
+                    [
+                        f"- '{matches[0]}'",
+                        f"- '{matches[1]}'",
+                        "⋮",
+                        f"- '{matches[-2]}'",
+                        f"- '{matches[-1]}'",
+                    ]
+                )
+            log.info(f"Expanded '{pattern}' into {len(matches):,d} paths:\n{summary}")
+            expanded.extend(matches)
+
         return expanded
 
+    def _expand_glob(self, pattern: PathOrStr) -> List[str]:
+        pattern = str(pattern)
+        if "*" in pattern:
+            return sorted(io.glob_directory(pattern))
+        else:
+            return [pattern]
 
-@dataclass
-class NumpyDocumentSourceMixConfig(_NumpyDocumentSourceConfigBase):
+
+@dataclass(kw_only=True)
+class NumpyDocumentSourceMixConfig(NumpyDocumentSourceConfigBase):
     """Config class for building one or more :class:`NumpyDocumentSource` from a predefined source mix."""
 
     mix: Union[str, DataMixBase]
@@ -156,6 +174,10 @@ class NumpyDocumentSourceMixConfig(_NumpyDocumentSourceConfigBase):
     def build(self, work_dir: PathOrStr) -> List["NumpyDocumentSource"]:  # type: ignore[override]
         """
         Build the sources.
+
+        .. note::
+            The number of sources returned depends on the number of paths in the mix and the
+            value of :data:`~NumpyDocumentSourceConfigBase.source_group_size`.
         """
         if self.tokenizer.identifier is None:
             raise OLMoConfigurationError(
@@ -174,9 +196,19 @@ class NumpyDocumentSourceMixConfig(_NumpyDocumentSourceConfigBase):
 class NumpyDocumentSource(DocumentSource):
     """
     A :class:`DocumentSource` that reads tokens from one or more tokenized numpy source files.
+
+    .. important::
+        There's some overhead when instantiating this class because it needs to query the sizes of
+        all the source files. If you want to create multiple sources from the same set of files,
+        consider first creating a single source and then splitting it up using :meth:`split()`,
+        which will be much more efficient than creating multiple sources directly since the sizes
+        of the source files will only need to be queried once and will be done so concurrently with a
+        thread pool.
     """
 
     Config = NumpyDocumentSourceConfig
+
+    MixConfig = NumpyDocumentSourceMixConfig
 
     def __init__(
         self,
@@ -187,48 +219,61 @@ class NumpyDocumentSource(DocumentSource):
         tokenizer: TokenizerConfig,
         label_mask_paths: Optional[Sequence[PathOrStr]] = None,
         label: Optional[str] = None,
+        _source_sizes: Optional[Sequence[int]] = None,
+        _label_mask_sizes: Optional[Sequence[int]] = None,
     ):
         super().__init__(work_dir=work_dir, label=label)
-        self.source_paths = tuple((io.normalize_path(p) for p in source_paths))
-        if not self.source_paths:
+
+        if not source_paths:
             raise OLMoConfigurationError("'source_paths' must contain at least one path.")
-        self.label_mask_paths = (
+
+        if label_mask_paths is not None and len(label_mask_paths) != len(source_paths):
+            raise OLMoConfigurationError(
+                "'label_mask_paths' should have the same length as 'source_paths'."
+            )
+
+        self._source_paths = tuple((io.normalize_path(p) for p in source_paths))
+        self._label_mask_paths = (
             None
             if label_mask_paths is None
             else tuple((io.normalize_path(p) for p in label_mask_paths))
         )
-        if self.label_mask_paths is not None and len(self.label_mask_paths) != len(
-            self.source_paths
-        ):
-            raise OLMoConfigurationError(
-                "'label_mask_paths' should have the same length as 'source_paths'."
-            )
         self._dtype = dtype
         self._tokenizer = tokenizer
 
-        source_sizes: List[int]
-        if self.rank == 0:
-            item_size = self.dtype(0).itemsize
-            source_sizes = path_map(lambda p: io.get_file_size(p) // item_size, self.source_paths)
+        source_sizes: Sequence[int]
+        if _source_sizes is not None:
+            source_sizes = tuple(_source_sizes)
         else:
-            source_sizes = []
-        source_sizes = dist_utils.scatter_object(source_sizes)
-        assert len(source_sizes) == len(self.source_paths)
-        self.source_sizes = source_sizes
-
-        self.label_mask_sizes: Optional[Tuple[int, ...]] = None
-        if self.label_mask_paths is not None:
-            label_mask_sizes: List[int]
             if self.rank == 0:
-                item_size = np.bool_(0).itemsize
-                label_mask_sizes = path_map(
-                    lambda p: io.get_file_size(p) // item_size, self.label_mask_paths
+                item_size = self.dtype(0).itemsize
+                source_sizes = path_map(
+                    lambda p: io.get_file_size(p) // item_size, self.source_paths
                 )
             else:
-                label_mask_sizes = []
-            label_mask_sizes = dist_utils.scatter_object(label_mask_sizes)
+                source_sizes = []
+            source_sizes = dist_utils.scatter_object(source_sizes)
+        assert len(source_sizes) == len(self.source_paths)
+        self._source_sizes = tuple(source_sizes)
+
+        self._label_mask_sizes: Optional[Tuple[int, ...]] = None
+        if self.label_mask_paths is not None:
+            label_mask_sizes: Sequence[int]
+            if _label_mask_sizes is not None:
+                label_mask_sizes = tuple(_label_mask_sizes)
+            else:
+                if self.rank == 0:
+                    item_size = np.bool_(0).itemsize
+                    label_mask_sizes = path_map(
+                        lambda p: io.get_file_size(p) // item_size, self.label_mask_paths
+                    )
+                else:
+                    label_mask_sizes = []
+                label_mask_sizes = dist_utils.scatter_object(label_mask_sizes)
+
             assert len(label_mask_sizes) == len(self.label_mask_paths)
-            self.label_mask_sizes = tuple(label_mask_sizes)
+            self._label_mask_sizes = tuple(label_mask_sizes)
+
             for label_path, label_mask_size, source_path, source_size in zip(
                 self.label_mask_paths, label_mask_sizes, self.source_paths, self.source_sizes
             ):
@@ -238,28 +283,21 @@ class NumpyDocumentSource(DocumentSource):
                         f"but found {label_mask_size:,d} in '{label_path}' vs {source_size:,d} in '{source_path}'.",
                     )
 
-    def split(self, group_size: int = 1) -> List["NumpyDocumentSource"]:
-        """
-        Split the source up into multiple smaller sources from groups of source files.
-        """
-        assert group_size >= 1
-        source_paths_groups = chunked(self.source_paths, group_size)
-        label_mask_paths_groups = (
-            chunked(self.label_mask_paths, group_size)
-            if self.label_mask_paths is not None
-            else [None for _ in chunked(self.source_paths, group_size)]  # type: ignore[misc]
-        )
-        return [
-            self.__class__(
-                source_paths=source_paths,
-                dtype=self.dtype,
-                work_dir=self.work_dir,
-                tokenizer=self.tokenizer,
-                label_mask_paths=label_mask_paths,
-                label=self.label,
-            )
-            for source_paths, label_mask_paths in zip(source_paths_groups, label_mask_paths_groups)
-        ]
+    @property
+    def source_paths(self) -> Tuple[str, ...]:
+        return self._source_paths
+
+    @property
+    def source_sizes(self) -> Tuple[int, ...]:
+        return self._source_sizes
+
+    @property
+    def label_mask_paths(self) -> Optional[Tuple[str, ...]]:
+        return self._label_mask_paths
+
+    @property
+    def label_mask_sizes(self) -> Optional[Tuple[int, ...]]:
+        return self._label_mask_sizes
 
     @property
     def dtype(self) -> NumpyUIntTypes:
@@ -303,6 +341,42 @@ class NumpyDocumentSource(DocumentSource):
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}{self.source_paths}"
+
+    def split(self, group_size: int = 1) -> List["NumpyDocumentSource"]:
+        """
+        Split the source up into multiple smaller sources from groups of source files.
+        """
+        assert group_size >= 1
+        source_paths_groups = chunked(self.source_paths, group_size)
+        source_size_groups = chunked(self.source_sizes, group_size)
+        label_mask_paths_groups = (
+            chunked(self.label_mask_paths, group_size)
+            if self.label_mask_paths is not None
+            else [None for _ in chunked(self.source_paths, group_size)]  # type: ignore[misc]
+        )
+        label_mask_size_groups = (
+            chunked(self.label_mask_sizes, group_size)
+            if self.label_mask_sizes is not None
+            else [None for _ in chunked(self.source_sizes, group_size)]  # type: ignore[misc]
+        )
+        return [
+            self.__class__(
+                source_paths=source_paths,
+                dtype=self.dtype,
+                work_dir=self.work_dir,
+                tokenizer=self.tokenizer,
+                label_mask_paths=label_mask_paths,
+                label=self.label,
+                _source_sizes=source_sizes,
+                _label_mask_sizes=label_mask_sizes,
+            )
+            for source_paths, label_mask_paths, source_sizes, label_mask_sizes in zip(
+                source_paths_groups,
+                label_mask_paths_groups,
+                source_size_groups,
+                label_mask_size_groups,
+            )
+        ]
 
     def get_token_range(self, start_idx: int, end_idx: int) -> TokenRange:
         start_idx, end_idx = self.validate_indices(start_idx, end_idx)

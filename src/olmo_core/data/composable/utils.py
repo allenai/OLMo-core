@@ -45,7 +45,7 @@ def path_map(
     method: Literal["threads", "processes"] = "threads",
 ) -> List[T]:
     """
-    Call a function on each path in the dataset, returning a list of the results, in order.
+    Call a function on each path, returning a list of the results, in order.
 
     :param func: The function to map to the paths and their indices.
     :param max_workers: The number of workers threads/processes. Set to 0 to execute synchronously
@@ -54,7 +54,7 @@ def path_map(
 
     :returns: The results, in the same order as :data:`paths`.
     """
-    if max_workers == 0:
+    if max_workers == 0 or len(paths) <= 1:
         return [func(path) for path in paths]
 
     executor_class: Union[
