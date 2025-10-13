@@ -17,7 +17,8 @@ This API consists of a series of simple, composable, elements, including:
    Examples include:
 
    * :class:`InMemoryTokenSource` and :class:`InMemoryDocumentSource`: A simple token/document source that holds all tokens in memory.
-   * :class:`ConcatenatedTokenSource` and :class:`ConcatenatedDocumentSource`: A token/document that combines multiple sources into one.
+   * :class:`ConcatenatedTokenSource` and :class:`ConcatenatedDocumentSource`: A token/document source that combines multiple sources into one.
+   * :class:`SlicedTokenSource`: A token source that provides a slice into another token source.
    * :class:`NumpyDocumentSource`: A document that reads tokens from one or more numpy source files, like those created
      from the dolma toolkit.
    * :class:`SamplingTokenSource` and :class:`SamplingDocumentSource`: A token/document source that samples tokens/documents
@@ -105,6 +106,7 @@ from .sampling_instance_source import (
 )
 from .sampling_token_source import SamplingTokenSource, SamplingTokenSourceConfig
 from .sliced_instance_source import SlicedInstanceSource
+from .sliced_token_source import SlicedTokenSource
 from .token_source import (
     ConcatenatedDocumentSource,
     ConcatenatedTokenSource,
@@ -132,6 +134,7 @@ __all__ = [
     # Token/document source implementations.
     "InMemoryTokenSource",
     "ConcatenatedTokenSource",
+    "SlicedTokenSource",
     "SamplingTokenSource",
     "SamplingTokenSourceConfig",
     "MixingTokenSource",

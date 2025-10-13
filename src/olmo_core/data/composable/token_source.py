@@ -31,6 +31,7 @@ from .utils import as_ndarray
 if TYPE_CHECKING:
     from .sampling_document_source import SamplingDocumentSource
     from .sampling_token_source import SamplingTokenSource
+    from .sliced_token_source import SlicedTokenSource
 
 
 class TokenRange(TypedDict):
@@ -232,6 +233,22 @@ class TokenSource(metaclass=ABCMeta):
         assert factor > 0
         return self.sample(
             max_tokens=int(self.num_tokens * factor), seed=seed, allow_repetition=True
+        )
+
+    def split(self, ratio: float) -> Tuple["SlicedTokenSource", "SlicedTokenSource"]:
+        """
+        Split this source into two disjoint sources according to the given ratio.
+
+        :param ratio: The ratio of the first split to original source. E.g., ``0.8`` means
+          the first split will have 80% of the tokens and the second split will have 20%.
+        """
+        from .sliced_token_source import SlicedTokenSource
+
+        assert 0 < ratio < 1
+        split_idx = int(ratio * self.num_tokens)
+        return (
+            SlicedTokenSource(self, slice(0, split_idx), work_dir=self._work_dir),
+            SlicedTokenSource(self, slice(split_idx, -1), work_dir=self._work_dir),
         )
 
 
