@@ -150,11 +150,10 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             ZeroLRCheckpointerCallback(
                 save_interval=1_000_000_000,    # effectively disabled; we override save logic
                 save_async=True,
-                save_steps=CUM_PERIOD_STEPS,    # <-- save exactly at these steps
-                # optional: you can still set removal=... if you want cleanups
+                save_steps=CUM_PERIOD_STEPS,
             ),
         )
-        # NEW: W&B with tokens axis, in addition to default step-based logging
+        # W&B with tokens axis, in addition to default step-based logging
         .with_callback(
             "wandb",
             WandBTokensCallback(
@@ -167,7 +166,6 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 enable_token_axis=True,
             ),
         )
-        # Evaluations (unchanged apart from steps-based interval)
         .with_recommended_evals(
             common.tokenizer,
             SEQUENCE_LENGTH,

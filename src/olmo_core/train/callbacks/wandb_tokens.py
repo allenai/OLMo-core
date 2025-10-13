@@ -2,6 +2,8 @@ import logging
 from dataclasses import dataclass
 from typing import Dict
 
+from olmo_core.distributed.utils import get_rank 
+
 from .wandb import WandBCallback
 
 log = logging.getLogger(__name__)
@@ -24,7 +26,7 @@ class WandBTokensCallback(WandBCallback):
 
     def pre_train(self):
         super().pre_train()
-        if self.enabled and self.enable_token_axis:
+        if self.enabled and self.enable_token_axis and get_rank() == 0:
             try:
                 self.wandb.define_metric("global_tokens", summary="max")
                 self.wandb.define_metric("loss_by_tokens", step_metric="global_tokens")
@@ -65,7 +67,7 @@ class WandBTokensCallback(WandBCallback):
             return float("nan")
 
     def log_metrics(self, step: int, metrics: Dict[str, float]):
-        if not (self.enabled):
+        if not (self.enabled and get_rank() == 0):
             return
 
         # tokens from trainer (already used by the stock scheduler)
