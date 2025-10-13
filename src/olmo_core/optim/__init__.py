@@ -2,6 +2,7 @@ from .adam import AdamConfig
 from .adamw import AdamWConfig, SkipStepAdamW, SkipStepAdamWConfig
 from .config import INITIAL_LR_FIELD, LR_FIELD, OptimConfig, OptimGroupOverride
 from .lion import Lion, LionConfig, SkipStepLion, SkipStepLionConfig
+from .moe_optimizer import MoEFusedV2OptimizerConfig, MoEFusedV2Optimizer
 from .scheduler import (
     WSD,
     PowerLR,
@@ -43,4 +44,6 @@ __all__ = [
     "PowerLR"
     "LR_FIELD",
     "INITIAL_LR_FIELD",
+    "MoEFusedV2Optimizer",
+    "MoEFusedV2OptimizerConfig",
 ]

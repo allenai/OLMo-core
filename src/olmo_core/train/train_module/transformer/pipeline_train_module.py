@@ -403,6 +403,7 @@ class TransformerPipelineTrainModule(TrainModule):
             self.record_ce_loss(ce_batch_loss)
         elif ce_batch_loss is not None:
             self.record_ce_loss(ce_batch_loss, ReduceType.mean)
+            
         if z_batch_loss is not None:
             assert self.z_loss_multiplier
             self.record_metric(

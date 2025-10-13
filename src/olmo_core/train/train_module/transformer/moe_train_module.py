@@ -2,8 +2,9 @@ import contextlib
 import logging
 from dataclasses import replace
 from functools import cached_property
-from typing import Any, Dict, Generator, Optional, Tuple, Union
+from typing import Any, Dict, Generator, Optional, Tuple, Union, Iterable, Sequence
 
+from olmo_core.nn.moe.v2.model import MoEFusedV2Transformer
 import torch
 import torch.distributed as dist
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
@@ -18,6 +19,8 @@ from torch.optim import Optimizer
 from typing import List, Optional, Tuple
 from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
 from torch.distributed.tensor import Placement, Replicate, Shard
+from torch.distributed.pipelining import PipelineStage
+from ...common import MetricMergeStrategy, ReduceType
 
 from torch.distributed import ProcessGroup
 from olmo_core.data.utils import get_labels, split_batch
@@ -34,13 +37,15 @@ from olmo_core.distributed.utils import (
     get_reduce_divide_factor,
     get_world_size,
     is_distributed,
+    get_global_rank,
+    get_rank,
 )
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
 from olmo_core.nn.lm_head import LMOutputWithLoss
 from olmo_core.nn.transformer import Transformer
 from olmo_core.nn.transformer.config import TransformerActivationCheckpointingMode
-from olmo_core.optim import OptimConfig, SkipStepOptimizer
+from olmo_core.optim import OptimConfig, SkipStepOptimizer, MoEFusedV2OptimizerConfig
 from olmo_core.optim.scheduler import Scheduler
 from olmo_core.utils import gc_cuda, get_default_device, log_once, move_to_device
 from typing import List, Optional, TypeVar, cast
@@ -72,13 +77,13 @@ import nvtx
 
 log = logging.getLogger(__name__)
 
-M = TypeVar("M", Transformer, List[Transformer])
+M = TypeVar("M", bound=List[MoEFusedV2Transformer])
 
 class MoEV2TransformerTrainModule(TrainModule):
     def __init__(
         self,
         model: Transformer,
-        optim: OptimConfig,
+        optim: MoEFusedV2OptimizerConfig,
         rank_microbatch_size: int,
         max_sequence_length: int,
         compile_model: bool = False,
@@ -120,6 +125,15 @@ class MoEV2TransformerTrainModule(TrainModule):
         self.ep_dp_group = None
         self.ep_mp_group = None
 
+        # PP related state.
+        self._train_pp_schedule: Optional[PipelineSchedule] = None
+        self._pp_stages: Optional[List[PipelineStage]] = None
+        self.pp_group_rank = 0 # default 0
+        self.pp_group_size = 1 # default 1
+        self.pp_prev_rank = -1 # no previous stage
+        self.pp_next_rank = -1 # no next stage
+        self.pp_final_stage_rank = 0 # default 0
+
         # If True, the DDP will not all-reduce grad for the last microbatch
         # instead it will call optim.step() which will reduce_scatter 
         # directly into the owner main grad 
@@ -148,16 +162,17 @@ class MoEV2TransformerTrainModule(TrainModule):
             self._build_world_mesh(
                 dp=dp_config, tp=tp_config, cp=cp_config, ep=ep_config, pp=pp_config, device_type=self.device.type
             )
-            log.info(f"Data parallel world size = {get_world_size(self.dp_process_group):,d}")
+            self.dp_world_size = get_world_size(self.dp_process_group)
+            log.info(f"Data parallel world size = {self.dp_world_size:,d}")
+            assert self.world_mesh['dense'] is not None
         else:
             raise OLMoConfigurationError(
                 "Training parallelism is required for MoEV2TransformerTrainModule"
             )
 
+
         # Parallelize model.
-        self.model: MoEFusedV2Transformer = cast(
-            MoEFusedV2Transformer, 
-                self.parallelize_model(
+        self.model_parts = self.parallelize_model(
                     model,
                     compile_model=compile_model,
                     float8_config=float8_config,
@@ -168,14 +183,18 @@ class MoEV2TransformerTrainModule(TrainModule):
                     ac_config=ac_config,
                     pp_config=pp_config
                 )
-            )
+            
 
         self.init_model_weights(
             max_sequence_length=max_sequence_length,
             rank_microbatch_size=rank_microbatch_size,
         )
 
-        self._cast_to_fwd_bwd_precision(self.model)
+        self._cast_to_fwd_bwd_precision(self.model_parts)
+
+        import torch._dynamo.config as dynamo_cfg
+        dynamo_cfg.recompile_limit = 64  # or any higher number you want
+
 
         if compile_model:
             self.compile_model()
@@ -184,6 +203,7 @@ class MoEV2TransformerTrainModule(TrainModule):
         self._cp_config = cp_config
         self._tp_config = tp_config
         self._ep_config = ep_config
+        self._pp_config = pp_config
 
         self.label_ignore_index = label_ignore_index
         self.z_loss_multiplier = z_loss_multiplier
@@ -205,15 +225,16 @@ class MoEV2TransformerTrainModule(TrainModule):
 
         from olmo_core.optim.moe_optimizer import MoEFusedV2Optimizer, MoEFusedV2OptimizerConfig
         assert isinstance(optim, MoEFusedV2OptimizerConfig)
+        optim = cast(MoEFusedV2OptimizerConfig, optim)
         self.optim: MoEFusedV2Optimizer = optim.build(
-            self.model, 
+            self.model_parts, 
             self, 
             strict=False # group_overrides might only be matched in one group, strict=False allows it to not match in one group (could match in some other group),
         )
 
         self.optim.set_reduce_scatter_grads(self.reduce_scatter_grads)
 
-    def _cast_to_fwd_bwd_precision(self, model: M) -> None:
+    def _cast_to_fwd_bwd_precision(self, model: Union[MoEFusedV2Transformer, List[MoEFusedV2Transformer]]) -> None:
         """
         Cast the model to the forward and backward precision.
         """
@@ -405,6 +426,16 @@ class MoEV2TransformerTrainModule(TrainModule):
     def ep_enabled(self) -> bool:
         return self._ep_config is not None
 
+    @property
+    def pp_enabled(self) -> bool:
+        return self._pp_config is not None
+
+    @property
+    def train_pp_schedule(self) -> PipelineSchedule:
+        self.trainer  # make sure trainer has been attached before trying to access this
+        assert self._train_pp_schedule is not None
+        return self._train_pp_schedule
+
     @cached_property
     def world_size(self) -> int:
         return get_world_size()
@@ -423,6 +454,33 @@ class MoEV2TransformerTrainModule(TrainModule):
             # )
             pass # BUG: when batch size warmup + load checkpoint
 
+        if self.pp_enabled:
+            # Initialize pipeline schedule.
+            assert self._train_pp_schedule is None  # make sure we don't initialize this twice
+            assert self._pp_stages is not None
+            assert self._pp_config is not None
+            assert self.world_mesh['dense'] is not None
+            pp_mesh = self.world_mesh['dense']['pp']
+            assert pp_mesh is not None
+
+            # Determine the number of micro-batches.
+            rank_batch_size = self.trainer.global_batch_size // dp_ws
+            num_microbatches = rank_batch_size // self.rank_microbatch_size
+
+            self._train_pp_schedule = PipelineSchedule(
+                model_parts=self.model_parts,  # type: ignore[arg-type]
+                stages=self._pp_stages,
+                pp_mesh=pp_mesh,
+                schedule_name=self._pp_config.schedule,
+                loss_fn=self.loss_fn,
+                num_microbatches=num_microbatches,
+            )
+
+    def loss_fn(self, output: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        # NOTE: the output is the loss.
+        del labels
+        return output
+    
     def state_dict(self, *, optim: bool = True) -> Dict[str, Any]:
         return self._get_state_dict(self.state_dict_save_opts, optim=optim)
 
@@ -533,7 +591,9 @@ class MoEV2TransformerTrainModule(TrainModule):
 
     def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
         # Set model to train mode if it isn't already.
-        self.model.train()
+        for m in self.model_parts:
+            m.train()
+
 
         # Generate labels.
         if "labels" not in batch:
@@ -545,98 +605,131 @@ class MoEV2TransformerTrainModule(TrainModule):
                 "train/masked instances (%)", (~instance_mask).float().mean(), ReduceType.mean
             )
 
-        # Calculate how many tokens are going to be used in the loss.
-        batch_num_tokens_for_loss = move_to_device(
-            (batch["labels"] != self.label_ignore_index).sum(), self.device
-        )
-
-        # Batch losses to record.
-        ce_batch_loss = move_to_device(torch.tensor(0.0), self.device)
-        z_batch_loss: Optional[torch.Tensor] = None
-        if self.z_loss_multiplier is not None:
-            z_batch_loss = move_to_device(torch.tensor(0.0), self.device)
-
-        # Split into micro-batches.
-        if self.rank_microbatch_size < (seq_len := batch["input_ids"].shape[1]):
-            raise RuntimeError(
-                f"Microbatch size ({self.rank_microbatch_size}) is too small relative to sequence length ({seq_len})"
+        #############################
+        if not self.pp_enabled:
+            # Calculate how many tokens are going to be used in the loss.
+            batch_num_tokens_for_loss = move_to_device(
+                (batch["labels"] != self.label_ignore_index).sum(), self.device
             )
-        micro_batches = split_batch(batch, self.rank_microbatch_size // seq_len)
-        num_micro_batches = len(micro_batches)
 
-        dbg_mem_before_fwd0 = torch.cuda.memory_allocated()/1024**3
+            # Batch losses to record.
+            ce_batch_loss = move_to_device(torch.tensor(0.0), self.device)
+            z_batch_loss: Optional[torch.Tensor] = None
+            if self.z_loss_multiplier is not None:
+                z_batch_loss = move_to_device(torch.tensor(0.0), self.device)
 
-        dbg_mem_activation_usage_all = []
-        dbg_mem_activation_freed_all = []
-        # Train one micro-batch at a time.
-        for micro_batch_idx, micro_batch in enumerate(micro_batches):
-            with self._train_microbatch_context(micro_batch_idx, num_micro_batches):
-                with nvtx.annotate(f"fwd_mb{micro_batch_idx}", color='blue'):
-                    
-                    input_ids, labels, model_kwargs = self._prepare_batch(micro_batch)
-                    dbg_mem_before_fwd = torch.cuda.memory_allocated()/1024**3
-                    # Run forward pass, get losses.
-                    _, loss, ce_loss, z_loss = self.model_forward(
-                        input_ids,
-                        labels=labels,
-                        ignore_index=self.label_ignore_index,
-                        loss_reduction="sum",
-                        z_loss_multiplier=self.z_loss_multiplier,
-                        loss_div_factor=batch_num_tokens_for_loss,
-                        return_logits=False,
-                        **model_kwargs,
-                    )
-                    dbg_mem_after_fwd = torch.cuda.memory_allocated()/1024**3
-                    dbg_mem_activation_usage = dbg_mem_after_fwd - dbg_mem_before_fwd
-                    dbg_mem_activation_usage_all.append(dbg_mem_activation_usage)
-                    # Update total batch CE and Z loss.
-                    ce_batch_loss += get_local_tensor(ce_loss.detach())
-                    del ce_loss
-                    if z_batch_loss is not None:
-                        assert z_loss is not None
-                        z_batch_loss += get_local_tensor(z_loss.detach())
-                        del z_loss
+            # Split into micro-batches.
+            if self.rank_microbatch_size < (seq_len := batch["input_ids"].shape[1]):
+                raise RuntimeError(
+                    f"Microbatch size ({self.rank_microbatch_size}) is too small relative to sequence length ({seq_len})"
+                )
+            micro_batches = split_batch(batch, self.rank_microbatch_size // seq_len)
+            num_micro_batches = len(micro_batches)
 
-                with nvtx.annotate(f"bwd_mb{micro_batch_idx}", color='red'):
-                    # Run backward pass.
-                    dbg_mem_before_bwd = torch.cuda.memory_allocated()/1024**3
-                    loss.backward()
-                    # self.model.reset_offload_handler()
+            dbg_mem_before_fwd0 = torch.cuda.memory_allocated()/1024**3
 
-                    dbg_mem_after_bwd = torch.cuda.memory_allocated()/1024**3
-                    dbg_mem_activation_freed = dbg_mem_before_bwd - dbg_mem_after_bwd
-                    dbg_mem_activation_freed_all.append(dbg_mem_activation_freed)
-                    pass
+            dbg_mem_activation_usage_all = []
+            dbg_mem_activation_freed_all = []
+            # Train one micro-batch at a time.
+            for micro_batch_idx, micro_batch in enumerate(micro_batches):
+                with self._train_microbatch_context(micro_batch_idx, num_micro_batches):
+                    with nvtx.annotate(f"fwd_mb{micro_batch_idx}", color='blue'):
+                        
+                        input_ids, labels, model_kwargs = self._prepare_batch(micro_batch)
+                        dbg_mem_before_fwd = torch.cuda.memory_allocated()/1024**3
+                        # Run forward pass, get losses.
+                        _, loss, ce_loss, z_loss = self.model_forward_no_pipeline(
+                            input_ids,
+                            labels=labels,
+                            ignore_index=self.label_ignore_index,
+                            loss_reduction="sum",
+                            z_loss_multiplier=self.z_loss_multiplier,
+                            loss_div_factor=batch_num_tokens_for_loss,
+                            return_logits=False,
+                            **model_kwargs,
+                        )
+                        dbg_mem_after_fwd = torch.cuda.memory_allocated()/1024**3
+                        dbg_mem_activation_usage = dbg_mem_after_fwd - dbg_mem_before_fwd
+                        dbg_mem_activation_usage_all.append(dbg_mem_activation_usage)
+                        # Update total batch CE and Z loss.
+                        ce_batch_loss += get_local_tensor(ce_loss.detach())
+                        del ce_loss
+                        if z_batch_loss is not None:
+                            assert z_loss is not None
+                            z_batch_loss += get_local_tensor(z_loss.detach())
+                            del z_loss
+
+                    with nvtx.annotate(f"bwd_mb{micro_batch_idx}", color='red'):
+                        # Run backward pass.
+                        dbg_mem_before_bwd = torch.cuda.memory_allocated()/1024**3
+                        loss.backward()
+                        # self.model.reset_offload_handler()
+
+                        dbg_mem_after_bwd = torch.cuda.memory_allocated()/1024**3
+                        dbg_mem_activation_freed = dbg_mem_before_bwd - dbg_mem_after_bwd
+                        dbg_mem_activation_freed_all.append(dbg_mem_activation_freed)
+                        pass
 
 
-        del batch  # In case this helps with memory utilization.
+            del batch  # In case this helps with memory utilization.
+            if dry_run:
+                print("activation: ", dbg_mem_activation_usage_all)
+                print("freed:      ", dbg_mem_activation_freed_all)
+                for (tag, mem) in self.model_parts[0]._debug_alloc_mem_layer_logs:
+                    print(f"Alloc - {tag}: {mem:.2f} GB")
+                for (tag, mem) in self.model_parts[0]._debug_max_alloc_mem_layer_logs:
+                    print(f"Max - {tag}: {mem:.2f} GB")
+        else:
+            # pipeline parallel forward / backward
+            # Calculate how many tokens are going to be used in the loss.
+            batch_num_tokens_for_loss = (batch['labels'] != self.label_ignore_index).sum().item()
+
+            # Run pipeline schedule.
+            input_ids, labels, model_kwargs = self._prepare_batch(batch, batch['labels'])
+            assert labels is not None
+            ce_batch_loss, z_batch_loss = self.run_pipeline(
+                input_ids,
+                labels,
+                batch_num_tokens_for_loss,
+                ignore_index=self.label_ignore_index,
+                loss_reduction="sum",
+                z_loss_multiplier=self.z_loss_multiplier,
+                return_logits=False,
+                **model_kwargs,
+            )   
+        #############################
+        debug_norm = [torch.nn.utils.get_total_norm([p.grad for p in model_part.parameters()]) for model_part in self.model_parts]
+
+        for model in self.model_parts:
+            model.post_batch(dry_run=dry_run)
+
         if dry_run:
-            print("activation: ", dbg_mem_activation_usage_all)
-            print("freed:      ", dbg_mem_activation_freed_all)
-            for (tag, mem) in self.model._debug_alloc_mem_layer_logs:
-                print(f"Alloc - {tag}: {mem:.2f} GB")
-            for (tag, mem) in self.model._debug_max_alloc_mem_layer_logs:
-                print(f"Max - {tag}: {mem:.2f} GB")
-
-        self.model.post_batch(dry_run=dry_run)
-
-        if dry_run:
-            self.model.reset_auxiliary_metrics()
+            for model in self.model_parts:
+                model.reset_auxiliary_metrics()
             return
 
         # Record loss metrics.
         from olmo_core.optim.moe_optimizer import MoEFusedV2Optimizer
-        if isinstance(self.optim, MoEFusedV2Optimizer):
-            # Need to reduce the loss right away for the SkipStepOptimizer.
-            if is_distributed():
-                ce_batch_loss.div_(self._reduce_divide_factor)
-                dist.all_reduce(ce_batch_loss)
-                ce_batch_loss.div_(self.world_size)
-                ce_batch_loss.mul_(self._reduce_divide_factor)
-            self.record_ce_loss(ce_batch_loss)
-            self.optim.latest_loss = ce_batch_loss
+        if self.pp_enabled:
+            if isinstance(self.optim, MoEFusedV2Optimizer):
+                ce_batch_loss = self.reduce_send_recv(ce_batch_loss)
+                self.record_ce_loss(ce_batch_loss)
+                self.optim.latest_loss = ce_batch_loss
+            elif ce_batch_loss is not None:
+                self.record_ce_loss(ce_batch_loss, ReduceType.mean)
         else:
-            self.record_ce_loss(ce_batch_loss, ReduceType.mean)
+            assert ce_batch_loss is not None, "CE loss should not be None"
+            if isinstance(self.optim, MoEFusedV2Optimizer):
+                # Need to reduce the loss right away for the SkipStepOptimizer.
+                if is_distributed():
+                    ce_batch_loss.div_(self._reduce_divide_factor)
+                    dist.all_reduce(ce_batch_loss)
+                    ce_batch_loss.div_(self.world_size)
+                    ce_batch_loss.mul_(self._reduce_divide_factor)
+                self.record_ce_loss(ce_batch_loss)
+                self.optim.latest_loss = ce_batch_loss
+            else:
+                self.record_ce_loss(ce_batch_loss, ReduceType.mean)
   
         if z_batch_loss is not None:
             assert self.z_loss_multiplier is not None
@@ -654,19 +747,29 @@ class MoEV2TransformerTrainModule(TrainModule):
             )
 
         # And additional metrics.
-        for metric_name, (metric_val, reduction) in self.model.compute_auxiliary_metrics(
-            reset=True
-        ).items():
-            self.record_metric(
-                metric_name,
-                metric_val,
-                reduction,
-                namespace="train",
-            )
+        for m in self.model_parts:
+            for metric_name, (metric_val, reduction) in m.compute_auxiliary_metrics(
+                reset=True
+            ).items():
+                merge_strategy = MetricMergeStrategy.warn
+                if reduction in (ReduceType.sum, ReduceType.mean):
+                    merge_strategy = MetricMergeStrategy.sum
+                elif reduction == ReduceType.max:
+                    merge_strategy = MetricMergeStrategy.max
+                self.record_metric(
+                    metric_name,
+                    metric_val,
+                    reduction,
+                    namespace="train",
+                    merge_strategy=merge_strategy,
+                )
 
     def eval_batch(
         self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
     ) -> Union[torch.Tensor, LMOutputWithLoss]:
+        if self.pp_enabled:
+            raise NotImplementedError("Pipeline parallelism is not implemented")
+
         # TODO: (epwalsh) Currently all of our evaluators require the full logits locally,
         # but when we're using CP/TP we usually can't materialize the full logits locally (due to OOMs).
         # However we could at least support in-loop PPL evals with a little work in the evaluator
@@ -684,10 +787,11 @@ class MoEV2TransformerTrainModule(TrainModule):
 
         input_ids, labels, model_kwargs = self._prepare_batch(batch, labels)
 
-        self.model.eval()
+        for m in self.model_parts:
+            m.eval()
 
         with self._eval_batch_context():
-            return self.model_forward(
+            return self.model_forward_no_pipeline(
                 input_ids,
                 labels=labels,
                 ignore_index=self.label_ignore_index,
@@ -695,12 +799,75 @@ class MoEV2TransformerTrainModule(TrainModule):
                 **model_kwargs,
             )
 
+    
+    def run_pipeline(
+        self,
+        input_ids: torch.Tensor,
+        labels: torch.Tensor,
+        batch_num_tokens_for_loss: Union[int, float],
+        **kwargs,
+    ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
+        """
+        Run the pipeline, returning the losses captured.
+        """
+
+        ce_batch_loss: Optional[torch.Tensor] = None
+        z_batch_loss: Optional[torch.Tensor] = None
+
+        def capture_losses(
+            model: Transformer, args: Tuple[torch.Tensor, ...], output: Any
+        ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+            del args
+            nonlocal ce_batch_loss
+            nonlocal z_batch_loss
+
+            if model.lm_head is not None:
+                assert isinstance(output, LMOutputWithLoss)
+                _, loss, ce_loss, z_loss = output
+                if ce_batch_loss is None:
+                    ce_batch_loss = get_local_tensor(ce_loss.detach())
+                else:
+                    ce_batch_loss += get_local_tensor(ce_loss.detach())
+
+                if self.z_loss_multiplier is not None:
+                    assert z_loss is not None
+                    if z_batch_loss is None:
+                        z_batch_loss = get_local_tensor(z_loss.detach())
+                    else:
+                        z_batch_loss += get_local_tensor(z_loss.detach())
+
+                return loss.unsqueeze(0)
+            else:
+                assert isinstance(output, torch.Tensor)
+                return output
+
+        handles = []
+        for model in self.model_parts:
+            handles.append(model.register_forward_hook(capture_losses))
+
+        with self._model_forward_context():
+            self.train_pp_schedule.step(
+                input_ids,
+                target=labels,
+                loss_div_factor=batch_num_tokens_for_loss,
+                labels=labels,
+                **kwargs,
+            )
+
+        for handle in handles:
+            handle.remove()
+
+        return ce_batch_loss, z_batch_loss
+
+
     def optim_step(self):
         from olmo_core.optim.moe_optimizer import MoEFusedV2Optimizer
         
         if self.reduce_scatter_grads:
             pass
         else:
+            assert self.pp_enabled == False, "Pipeline parallelism with all-reduce grad is not supported"
+            model = self.model_parts[0]
             # Maybe clip gradients.
             if self.max_grad_norm is not None:
                 grad_norm = self._clip_grad_norm(self.max_grad_norm)
@@ -713,7 +880,7 @@ class MoEV2TransformerTrainModule(TrainModule):
 
             # calculate per layer grad norm
             per_layer_norms = []
-            for layer_idx, layer in enumerate(self.model.blocks.values()):
+            for layer_idx, layer in enumerate(model.blocks.values()):
                 layer_grads = [p.grad for p in layer.parameters() if p.grad is not None]
                 if layer_grads:
                     per_layer_norm = nn.utils.get_total_norm(
@@ -735,7 +902,7 @@ class MoEV2TransformerTrainModule(TrainModule):
             del per_layer_norms
 
             # embedding layer grad norm
-            embedding_grads = [p.grad for p in self.model.embeddings.parameters() if p.grad is not None]
+            embedding_grads = [p.grad for p in model.embeddings.parameters() if p.grad is not None]
             if embedding_grads:
                 embedding_grad_norm = nn.utils.get_total_norm(
                     embedding_grads, norm_type=2.0, error_if_nonfinite=False, foreach=None
@@ -755,7 +922,7 @@ class MoEV2TransformerTrainModule(TrainModule):
             del embedding_grads
             
             # lm head grad norm
-            lm_head_grads = [p.grad for p in self.model.lm_head.parameters() if p.grad is not None]
+            lm_head_grads = [p.grad for p in model.lm_head.parameters() if p.grad is not None]
             if lm_head_grads:
                 lm_head_grad_norm = nn.utils.get_total_norm(
                     lm_head_grads, norm_type=2.0, error_if_nonfinite=False, foreach=None
@@ -791,23 +958,26 @@ class MoEV2TransformerTrainModule(TrainModule):
         if isinstance(self.optim, MoEFusedV2Optimizer):
             self.record_metric("step skipped", self.optim.step_skipped, namespace="optim")
 
-        self.model.post_optim_step()
+        for model in self.model_parts:
+            model.post_optim_step()
 
     def zero_grads(self):
         self.optim.zero_grad(set_to_none=True) # clear main grad
-        self.model.zero_grad(set_to_none=True) # clear model grad
+        for m in self.model_parts:
+            m.zero_grad(set_to_none=True) # clear model grad
 
-    def model_forward(
+    def model_forward_no_pipeline(
         self, input_ids: torch.Tensor, labels: Optional[torch.Tensor] = None, **kwargs
     ) -> Union[torch.Tensor, LMOutputWithLoss]:
         """
         Run a forward pass on a micro-batch, returning the logits.
         """
         with self._model_forward_context():
-            return self.model(input_ids, labels=labels, **kwargs)
+            return self.model_parts[0](input_ids, labels=labels, **kwargs)
 
     def num_flops_per_token(self, seq_len: int) -> int:
-        return self.model.num_flops_per_token(seq_len)
+        # NOTE: it uses the config to calculate the FLOPs for the whole model, so it should be fine to just use the first model part.
+        return self.model_parts[0].num_flops_per_token(seq_len)
 
     @contextlib.contextmanager
     def _train_microbatch_context(
@@ -815,9 +985,9 @@ class MoEV2TransformerTrainModule(TrainModule):
     ) -> Generator[None, None, None]:
         is_last_mb = micro_batch_idx == num_micro_batches - 1
         with contextlib.ExitStack() as stack:
-            if isinstance(self.model, FSDPModule):
+            if isinstance(self.model_parts[0], FSDPModule):
                 raise OLMoConfigurationError("FSDP not supported. Use replicate()")
-            elif isinstance(self.model, DDP): 
+            elif isinstance(self.model_parts[0], DDP): 
                 raise OLMoConfigurationError("torch DDP not supported. Use replicate()")
             elif self.dp_config.name == DataParallelType.ddp: # temp fix
                 if (
@@ -828,29 +998,32 @@ class MoEV2TransformerTrainModule(TrainModule):
                         not is_last_mb and self.dp_config.only_allreduce_last_microbatch
                     )
                 ):
-                    stack.enter_context(self.ddp_no_sync(self.model)) # only DDP has no_sync(), can only call set_requires_gradient_sync()
+                    stack.enter_context(self.ddp_no_sync(self.model_parts)) # only DDP has no_sync(), can only call set_requires_gradient_sync()
             yield
 
 
     @contextlib.contextmanager
-    def ddp_no_sync(self, module: torch.nn.Module):
-        assert callable(getattr(module, "set_requires_gradient_sync", None)), \
-       f"{type(module).__name__} must implement set_requires_gradient_sync(flag: bool). " \
-       "This is automatically managed if the model is returned by torch.distributed._composable.replicate"
-        # non-EP modules
-        module.set_requires_gradient_sync(False) # type: ignore
+    def ddp_no_sync(self, model_parts: List[MoEFusedV2Transformer]):
+        for module in model_parts:
+            assert callable(getattr(module, "set_requires_gradient_sync", None)), \
+        f"{type(module).__name__} must implement set_requires_gradient_sync(flag: bool). " \
+        "This is automatically managed if the model is returned by torch.distributed._composable.replicate"
+            # non-EP modules
+            module.set_requires_gradient_sync(False) # type: ignore
 
-        # EP managed modules
-        ep_modules = [m for m in module.modules() if getattr(m, '_ep_sharded', False) ]
-        for m in ep_modules:
-            m.set_requires_gradient_sync(False) # type: ignore
+            # EP managed modules
+            ep_modules = [m for m in module.modules() if getattr(m, '_ep_sharded', False) ]
+            for m in ep_modules:
+                m.set_requires_gradient_sync(False) # type: ignore
 
         try:
             yield
         finally:
-            module.set_requires_gradient_sync(True) # type: ignore
-            for m in ep_modules:
-                m.set_requires_gradient_sync(True) # type: ignore
+            for module in model_parts:
+                module.set_requires_gradient_sync(True) # type: ignore
+                ep_modules = [m for m in module.modules() if getattr(m, '_ep_sharded', False) ]
+                for m in ep_modules:
+                    m.set_requires_gradient_sync(True) # type: ignore
 
     @contextlib.contextmanager
     def _eval_batch_context(self) -> Generator[None, None, None]:
@@ -911,8 +1084,8 @@ class MoEV2TransformerTrainModule(TrainModule):
     def _clip_grad_norm(
         self, max_grad_norm: float, norm_type: float = 2.0, foreach: Optional[bool] = None
     ) -> torch.Tensor:
-
-        parameters = [p for p in self.model.parameters()]
+        assert self.pp_enabled == False, "Pipeline parallelism with grad clipping inside train module is not supported yet. Use optimizer's grad clipping instead."
+        parameters = [p for p in self.model_parts[0].parameters()]
         grads = [p.grad for p in parameters if p.grad is not None]
 
         total_norm = nn.utils.get_total_norm(
@@ -937,16 +1110,26 @@ class MoEV2TransformerTrainModule(TrainModule):
     def _prepare_batch(
         self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any]]:
-        input_ids = batch.pop("input_ids")
-        labels = labels if labels is not None else batch.pop("labels", None)
-        if "doc_lens" in batch and "max_doc_lens" in batch:
-            log_once(log, "intra-document masking enabled")
-        return input_ids, labels, batch
+        if self.pp_enabled:
+            input_ids = batch.pop("input_ids")
+            labels = labels if labels is not None else batch.pop("labels", None)
+            kwargs: Dict[str, Any] = {}
+            if "doc_lens" in batch and "max_doc_lens" in batch:
+                log_once(log, "intra-document masking enabled")
+                kwargs["doc_lens"] = batch["doc_lens"]
+                kwargs["max_doc_lens"] = batch["max_doc_lens"]
+            return input_ids, labels, kwargs
+        else:
+            input_ids = batch.pop("input_ids")
+            labels = labels if labels is not None else batch.pop("labels", None)
+            if "doc_lens" in batch and "max_doc_lens" in batch:
+                log_once(log, "intra-document masking enabled")
+            return input_ids, labels, batch
 
 
     def parallelize_model(
         self,
-        model: M, # the full model before sharding, the same on all models
+        model: MoEFusedV2Transformer, # the full model before sharding, the same on all models
         *,
         compile_model: bool = False,
         float8_config: Optional[Float8Config] = None,
@@ -956,18 +1139,56 @@ class MoEV2TransformerTrainModule(TrainModule):
         ep_config: Optional[TransformerExpertParallelConfig] = None,
         ac_config: Optional[TransformerActivationCheckpointingConfig] = None,
         pp_config: Optional[TransformerPipelineParallelConfig] = None,
-    ) -> M:
+    ) -> List["MoEFusedV2Transformer"]:
         from olmo_core.nn.moe.v2.model import MoEFusedV2Transformer
-        model_parts: List[Transformer] = [model] if isinstance(model, Transformer) else model
+        assert isinstance(model, MoEFusedV2Transformer), "model must be an instance of Transformer"
 
-        pp_mesh: Optional[DeviceMesh] = None
+        if tp_config is not None:
+            raise NotImplementedError("TP not supported yet")
+        if cp_config is not None:
+            raise NotImplementedError("CP not supported yet")
+
+
         if pp_config is not None:
+
+            assert self.world_mesh['dense'] is not None, "Dense mesh must be built before applying pipeline parallelism"
+            self.pp_mesh = self.world_mesh['dense']['pp']
+            self.pp_group = self.pp_mesh.get_group()
+            self.pp_group_rank = get_rank(self.pp_group)
+            self.pp_group_size = get_world_size(self.pp_group)
+            self.pp_prev_rank = (self.pp_group_rank - 1) % self.pp_group_size
+            self.pp_next_rank = (self.pp_group_rank + 1) % self.pp_group_size
+            self.pp_final_stage_rank = pp_config.final_stage_rank()
+
+            # Split model into pipeline stages.
+            model.purge_cuda_events() # set event to None so that can be deepcopied
+            
+            stages_and_model_parts = pp_config.split_model(
+                model, pp_mesh=self.pp_mesh, device=self.device, 
+                use_ddp=self.world_mesh['dense']['dp'].size() > 1
+            )
+            stages = stages_and_model_parts[0]
+
+            model_parts: List[MoEFusedV2Transformer] = cast(List[MoEFusedV2Transformer], stages_and_model_parts[1])
+
+            for model_part in model_parts:
+                assert isinstance(model_part, MoEFusedV2Transformer)
+                model_part.install_cuda_events()
+
+            self._pp_stages = stages
+            log.info(
+                f"Applied pipeline parallelism to the model with {get_device_mesh_info(self.pp_mesh)}"
+            )
+            
             # TODO: chunk layers into stages
             assert self.world_mesh is not None, "World mesh must be built before applying expert parallelism"
             assert self.world_mesh['dense'] is not None, "Dense mesh must be built before applying expert parallelism"
-            pp_mesh = self.world_mesh['dense']['pp']
+
             for m in model_parts:
-                m.apply_pp(pp_mesh)
+                m.apply_pp(self.pp_mesh)
+
+        else:
+            model_parts: List[MoEFusedV2Transformer] = [model] # no PP, single part
 
         # Maybe apply FP8 training.
         if float8_config is not None and float8_config.enabled:
@@ -1018,7 +1239,7 @@ class MoEV2TransformerTrainModule(TrainModule):
                 )
             log.info(f"Applied '{ac_config.mode}' activation checkpointing to the model")
 
-        return model
+        return model_parts
 
 
     def memory_usage_estimation(self):
@@ -1032,24 +1253,65 @@ class MoEV2TransformerTrainModule(TrainModule):
         from olmo_core.nn.moe.v2.model import MoEFusedV2Transformer
         
         # Materialize and init parameters.
-        model_parts: List[Transformer] = [self.model] if isinstance(self.model, Transformer) else self.model
         log.info("Initializing model weights...")
-        for model_part_idx, m in enumerate(model_parts):
+        for model_part_idx, m in enumerate(self.model_parts):
             m = cast(MoEFusedV2Transformer, m)
             m.init_weights(
                 max_seq_len=max_sequence_length,
                 max_local_microbatch_size=rank_microbatch_size,
                 device=self.device,
-                world_mesh=self.world_mesh['moe'], # only PP mesh is used, should be fine
+                world_mesh=self.world_mesh, # only PP mesh is used, should be fine
                 model_part_idx=model_part_idx
             )
 
     def compile_model(self):
-        model_parts: List[Transformer] = [self.model] if isinstance(self.model, Transformer) else self.model
         if torch.cuda.is_available():
-            for m in model_parts:
+            for m in self.model_parts:
                 m.apply_compile()
             log.info("Applied torch.compile() to the model")
         else:
             log.warning("Skipping model compilation since CUDA is not available")
 
+
+    def reduce_send_recv(self, x: Optional[torch.Tensor] = None) -> torch.Tensor:
+        # TODO: review
+        assert self.pp_enabled and self._pp_config is not None, "reduce_send_recv is only valid when PP is enabled"
+        if self.pp_group_rank == self.pp_final_stage_rank:
+            assert x is not None
+            # Reduce across DP process group.
+            x.div_(self._reduce_divide_factor)
+            dist.all_reduce(x, group=self.dp_process_group)
+            x.div_(self.dp_world_size)
+            x.mul_(self._reduce_divide_factor)
+        else:
+            assert x is None
+            x = move_to_device(torch.empty([]), self.device)
+
+        # Asynchronously send to previous stage rank in the PP group.
+        ordered_ranks = list(self._pp_config.rank_completion_order())
+        local_index = ordered_ranks.index(self.pp_group_rank)
+        src_rank = None if local_index == 0 else ordered_ranks[local_index - 1]
+        dst_rank = (
+            None if local_index == (len(ordered_ranks) - 1) else ordered_ranks[local_index + 1]
+        )
+
+        ops: List[dist.P2POp] = []
+        if src_rank is not None:
+            log.debug(
+                f"Rank {get_rank()} (pp group rank {self.pp_group_rank}) receiving from rank "
+                f"{get_global_rank(src_rank, group=self.pp_group)} (pp group rank {src_rank})"
+            )
+            ops.append(dist.P2POp(dist.irecv, x, group=self.pp_group, group_peer=src_rank))
+        if dst_rank is not None:
+            log.debug(
+                f"Rank {get_rank()} (pp group rank {self.pp_group_rank}) sending to rank "
+                f"{get_global_rank(dst_rank, group=self.pp_group)} (pp group rank {dst_rank})"
+            )
+            ops.append(dist.P2POp(dist.isend, x, group=self.pp_group, group_peer=dst_rank))
+
+        reqs = dist.batch_isend_irecv(ops)
+        if self.pp_group_rank != self.pp_final_stage_rank:
+            for req in reqs:
+                req.wait()
+
+        return x

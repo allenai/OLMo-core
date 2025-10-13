@@ -410,20 +410,7 @@ class TransformerConfig(Config):
                 block_overrides=self.block_overrides,
             )
         elif self.name == TransformerType.moe_fused_v2:
-            from ..moe.v2.model import MoEFusedV2Transformer
-            model = MoEFusedV2Transformer(
-                d_model=self.d_model,
-                vocab_size=self.vocab_size,
-                n_layers=self.n_layers,
-                block=self.block,
-                lm_head=self.lm_head,
-                dtype=self.dtype.as_pt(),
-                init_method=self.init_method,
-                init_device=init_device,
-                init_seed=self.init_seed,
-                init_std=self.init_std,
-                block_overrides=self.block_overrides,
-            )
+            raise RuntimeError("Use MoEFusedV2TransformerConfig")
         else:
             raise NotImplementedError(self.name)
 
@@ -1143,3 +1130,66 @@ class TransformerConfig(Config):
             init_method=InitMethod.normalized,
             **kwargs,
         )
+
+
+@dataclass
+class MoEFusedV2TransformerConfig(TransformerConfig):
+
+    two_batch_overlap: bool = False
+
+    def build(
+        self,
+        *,
+        init_device: str = "cpu",
+    ) -> "Transformer":
+        """
+        Build the model corresponding to this config.
+
+        :param init_device: The device to put the parameters on during initialization. In a
+            distributed setting it usually makes sense to set this to "meta".
+        """
+        from .model import MoETransformer, NormalizedTransformer, Transformer
+
+        log.info(
+            f"Building transformer with {self.num_params:,d} total params, "
+            f"{self.num_non_embedding_params:,d} non-embedding params"
+        )
+        model: Transformer
+        if self.name == TransformerType.moe_fused_v2:
+            from ..moe.v2.model import MoEFusedV2Transformer
+            model = MoEFusedV2Transformer(
+                d_model=self.d_model,
+                vocab_size=self.vocab_size,
+                n_layers=self.n_layers,
+                block=self.block,
+                lm_head=self.lm_head,
+                dtype=self.dtype.as_pt(),
+                init_method=self.init_method,
+                init_device=init_device,
+                init_seed=self.init_seed,
+                init_std=self.init_std,
+                block_overrides=self.block_overrides,
+                two_batch_overlap=self.two_batch_overlap,
+            )
+        else:
+            raise NotImplementedError(self.name)
+
+        if self.freeze_params:
+            for name, param in model.named_parameters():
+                for pattern in self.freeze_params:
+                    if fnmatch(name, pattern):
+                        param.requires_grad = False
+                        log.info(f"Param '{name}' will be frozen")
+                        break
+                else:
+                    log.info(f"Param '{name}' will be trainable")
+
+        log.info("%s", model)
+        log.info(
+            f"Built model with:\n"
+            f"- {model.num_params:,d} total params\n"
+            f"- {model.num_non_embedding_params:,d} non-embedding params\n"
+            f"- {model.num_trainable_params:,d} trainable params"
+        )
+        model.config = self
+        return model

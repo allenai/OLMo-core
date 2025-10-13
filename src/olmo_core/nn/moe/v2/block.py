@@ -214,6 +214,7 @@ class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
 
 if TYPE_CHECKING:
     from olmo_core.train.common import ReduceType
+
 class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBase):
     
     def __init__(
@@ -320,7 +321,33 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
 
         self.checkpoint_attn = False
         self.checkpoint_permute_moe_unpermute = False
-        self.checkpoint_combined_ep_tbo = True
+        self.checkpoint_combined_ep_tbo = False
+
+        # self.type_id = None
+
+
+    def purge_cuda_events(self):
+        # set all events to None (so that the model can be deepcopied)
+        self._dtoh_event = None # type: ignore[assignment]
+        self._dtoh_event_send = None # type: ignore[assignment]
+        self._dtoh_event_recv = None # type: ignore[assignment]
+        self._before_rev_all2all_event = None # type: ignore[assignment]
+
+        self._dtoh_event1 = None # type: ignore[assignment]
+        self._dtoh_event_send1 = None # type: ignore[assignment]
+        self._dtoh_event_recv1 = None # type: ignore[assignment]
+        self._before_rev_all2all_event1 = None # type: ignore[assignment]
+
+    def install_cuda_events(self):
+        self._dtoh_event = cast(torch.cuda.Event, torch.cuda.Event()) 
+        self._dtoh_event_send = cast(torch.cuda.Event, torch.cuda.Event()) 
+        self._dtoh_event_recv = cast(torch.cuda.Event, torch.cuda.Event())
+        self._before_rev_all2all_event = cast(torch.cuda.Event, torch.cuda.Event())
+
+        self._dtoh_event1 = cast(torch.cuda.Event, torch.cuda.Event()) 
+        self._dtoh_event_send1 = cast(torch.cuda.Event, torch.cuda.Event()) 
+        self._dtoh_event_recv1 = cast(torch.cuda.Event, torch.cuda.Event())
+        self._before_rev_all2all_event1 = cast(torch.cuda.Event, torch.cuda.Event())
 
     def compute_metrics(
         self, reset: bool = True
@@ -414,6 +441,10 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
     def apply_compile(self):
         self.compile(fullgraph=False)
 
+        # self.combined_forward_ep = torch.compile(self.combined_forward_ep)
+        # self.combined_forward_no_ep = torch.compile(self.combined_forward_no_ep)
+    
+
         # NOTE: the tbo might be called by the outer model directly (by block.combined_forward_ep_tbo(x, ...) instead of block(x, ...)), so need to compile it here as well
         self.combined_forward_ep_tbo = torch.compile(self.combined_forward_ep_tbo) 
         self._res_norm_attn = torch.compile(self._res_norm_attn)
@@ -452,6 +483,18 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         assert self.shared_experts is not None
         raise NotImplementedError
 
+    @torch.compiler.disable
+    def async_copy_to_cpu(
+            self, gpu_buf
+    ):
+        cpu_buf, copy_stream, dtoh_event = async_copy_to_cpu(gpu_buf, event=self._dtoh_event)
+        return cpu_buf
+    
+    @torch.compiler.disable
+    def sync_dtoh_event(self):
+        assert self._dtoh_event is not None
+        dtoh_event = cast(torch.cuda.Event, self._dtoh_event)
+        dtoh_event.synchronize()
 
     def combined_forward_no_ep(
         self,
@@ -495,6 +538,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         # step 1A: DtoH token count communication
         # should start DtoH as immediately after the results are available on GPU
         local_batch_size_per_global_routed_expert_cpu, copy_stream, dtoh_event = async_copy_to_cpu(local_batch_size_per_global_routed_expert, event=self._dtoh_event)  
+        # local_batch_size_per_global_routed_expert_cpu = self.async_copy_to_cpu(local_batch_size_per_global_routed_expert)
 
         # copy_stream.synchronize() # wait for the copy to CPU to finish
         
@@ -519,6 +563,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         if torch.is_grad_enabled():
             with nvtx.annotate("attach_auxiliary_loss", color="blue"):
                 if routed_expert_router_aux_loss is not None:
+                    # TODO: should attach to router input or output?
                     attn_res_out = attach_auxiliary_loss(attn_res_out, routed_expert_router_aux_loss)
         
         moe_inp = attn_res_out
@@ -575,6 +620,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         assert dtoh_event is not None 
         dtoh_event = cast(torch.cuda.Event, dtoh_event)
         dtoh_event.synchronize()
+        # self.sync_dtoh_event()
         ####################################
 
         # step 3: MLP
@@ -628,6 +674,15 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         # Combine shared and routed outputs
         return shared_out * shared_factor + routed_out * routed_factor
 
+    @torch.compiler.disable(recursive=False) # NOTE: 
+    def fwd_routed_experts(
+            self,
+            global_x: torch.Tensor,
+            parallel_batch_size_per_local_expert_cpu: torch.Tensor,
+    ):
+        assert self.routed_experts is not None
+        global_x = self.routed_experts(global_x, parallel_batch_size_per_local_expert_cpu)
+        return global_x
 
     def combined_forward_ep(
         self,
@@ -636,10 +691,19 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         **kwargs,
     ) -> torch.Tensor:
-        assert self.routed_experts is not None
+        # assert self.routed_experts is not None
         assert self.routed_experts_router is not None
         assert self.ep_enabled == True
         assert self.num_local_routed_experts is not None
+
+        # if torch.distributed.get_rank() == 0:
+        #     type_id = id(type(self.routed_experts))
+        #     type_id_attn = id(type(self.attention))
+        #     print(f'rank={torch.distributed.get_rank()}', type_id, type_id_attn)
+        # if self.type_id is None:
+        #     self.type_id = type_id
+        # else:
+        #     assert self.type_id == type_id, "RoutedExperts instance cannot be reused after torch.compile"
 
         B, S, D = x.shape
 
@@ -768,7 +832,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             # Construct the expert indices for the permuted tokens.
             global_x_local_expert_indices = torch.remainder(
                 torch.arange(
-                    self.routed_experts.num_experts,
+                    self.routed_experts_router.num_experts,
                     dtype=torch.int32,
                     device=moe_inp.device,
                 ),
@@ -907,7 +971,9 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         
         ########## 6. MLP forwrad ###########
 
-        global_x = self.routed_experts(global_x, parallel_batch_size_per_local_expert_cpu.tolist())
+        # global_x = self.routed_experts(global_x, parallel_batch_size_per_local_expert_cpu.tolist())
+        # global_x = self.routed_experts(global_x, parallel_batch_size_per_local_expert_cpu)
+        global_x = self.fwd_routed_experts(global_x, parallel_batch_size_per_local_expert_cpu)
 
         ############################################ end
         
@@ -1141,6 +1207,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 loss_div_factor=loss_div_factor,
                 **kwargs,
             )
+        
     def combined_forward_ep_tbo(
         self,
         x0: torch.Tensor,

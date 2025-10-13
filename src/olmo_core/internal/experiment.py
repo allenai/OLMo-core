@@ -101,13 +101,15 @@ class SubCmd(StrEnum):
         elif self == SubCmd.dry_run:
             pass
         elif self == SubCmd.train:
-            try:
-                train(config)
-            except Exception as e:
-                log.error(f"Training failed with error: {e}")
-                raise
-            finally:
-                teardown_training_environment()
+            train(config)
+
+            # try:
+            #     train(config)
+            # except Exception as e:
+            #     log.error(f"Training failed with error: {e}")
+            #     raise
+            # finally:
+            #     teardown_training_environment()
         elif self == SubCmd.train_single:
             if config.train_module.dp_config is not None:
                 log.warning(

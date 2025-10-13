@@ -113,39 +113,52 @@ class RoutedExperts(nn.Module):
                 device=init_device
             ),
         )
-        self.gmm_ops = gmm_no_compile
+        # self.gmm_ops = gmm_no_compile
 
         # assume no ep in init
         self.num_local_experts: int = num_experts
         self.ep_dim: int = 1
         self.ep_rank: int = 0
 
+        # self.type_id = None
+
     @nvtx.annotate("RoutedExperts.forward", color="blue")
-    def forward(self, x: torch.Tensor, batch_size_per_expert: List) -> torch.Tensor:
+    @torch.compiler.disable(recursive=False) 
+    def forward(self, x: torch.Tensor, batch_size_per_expert: torch.Tensor) -> torch.Tensor:
         """
         `batch_size_per_expert` specifies the number of tokens in x for each expert.
         """
-        assert isinstance(batch_size_per_expert, List), "only accept List for batch_size_per_expert"
-        batch_size_per_expert_tensor = torch.tensor(
-            batch_size_per_expert, 
-            device='cpu', 
-            dtype=torch.int64,  # NOTE: int64 required for grouped_gemm
-        )
+
+        # assert isinstance(batch_size_per_expert, List), "only accept List for batch_size_per_expert"
+        assert isinstance(batch_size_per_expert, torch.Tensor), "only accept Tensor for batch_size_per_expert"
+        # batch_size_per_expert_tensor = torch.tensor(
+        #     batch_size_per_expert, 
+        #     device='cpu', 
+        #     dtype=torch.int64,  # NOTE: int64 required for grouped_gemm
+        # )
+        assert batch_size_per_expert.device.type == 'cpu', "batch_size_per_expert must be on cpu"
+        batch_size_per_expert_tensor = batch_size_per_expert.to(dtype=torch.int64)  # NOTE: int64 required for grouped_gemm
 
         if x.numel() == 0:
             return x
         
         w_up_gate = self.w_up_gate # (E, H, 2D)
         w_down = self.w_down # (E, H, D)
-        up_gate = self.gmm_ops(x, w_up_gate, batch_size_per_expert_tensor, trans_b=True) # -> (BS, 2H)
+        up_gate = gmm_no_compile(x, w_up_gate, batch_size_per_expert_tensor, trans_b=True) # -> (BS, 2H)
         up_gate = cast(torch.Tensor, up_gate)  # ensure type is Tensor
-        up, gate = up_gate.chunk(2, dim=-1)  
-        h = up * F.silu(gate) # -> (BS, H)
+
+        h = self.chunk_and_activate(up_gate) # -> (BS, H)
         
-        down = self.gmm_ops(h, w_down, batch_size_per_expert_tensor, trans_b=False) # -> (BS, H)
+        down = gmm_no_compile(h, w_down, batch_size_per_expert_tensor, trans_b=False) # -> (BS, H)
             
         return cast(torch.Tensor, down)  # ensure type is Tensor
-    
+
+    @torch.compile
+    def chunk_and_activate(self, up_gate: torch.Tensor) -> torch.Tensor:
+        up, gate = up_gate.chunk(2, dim=-1)  
+        h = up * F.silu(gate) # -> (BS, H)
+        return h
+
     def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
         # ep_dp_mesh = ep_mesh['ep_dp']
         # ep_mp_mesh = ep_mesh['ep_mp']

@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union, cast
 
 import torch
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
-from torch.distributed import DeviceMesh
+from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.pipelining import PipelineStage
 from abc import ABCMeta, abstractmethod
 
@@ -28,7 +28,7 @@ from olmo_core.nn.transformer import (
 )
 from olmo_core.optim import OptimConfig
 from olmo_core.optim.scheduler import Scheduler
-from .pipeline_schedule import CustomPipelineStage
+from .pipeline.pipeline_schedule import CustomPipelineStage
 
 if TYPE_CHECKING:
     from .pipeline_train_module import TransformerPipelineTrainModule
@@ -132,7 +132,6 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
                     num_stages,
                     device,
                     is_rddp=use_ddp,
-                    buffer_pool_size=1, # 2 for interleaved?, 1 for 1f1b?
                     group=pp_mesh.get_group("pp"),
                 )
             else:

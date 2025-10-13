@@ -55,14 +55,20 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
     """
 
     def __init__(self, *args, **kwargs):
+        self.tbo = kwargs.pop('two_batch_overlap')
         super().__init__(*args, **kwargs)
         self.ep_enabled = False # default
-        self.tbo = True
+        self.recompute_all_blocks = False
+        self.recompute_each_block = True
 
         if self.tbo:
             self.first_moe_idx = self._check_tbo_requirements()
         else:
             self.first_moe_idx = None
+
+        assert not (self.recompute_all_blocks and self.recompute_each_block), "Only one of recompute_all_blocks and recompute_each_block can be True."
+        assert not (self.tbo and self.recompute_each_block), "Cannot use TBO when recompute_each_block is True."
+
 
         self._debug_alloc_mem_layer_logs = []
         self._debug_max_alloc_mem_layer_logs = []
@@ -102,9 +108,26 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         
         return first_moe_idx
 
+    def purge_cuda_events(self):
+        # set all events to None (so that the model can be deepcopied)
+        for layer in self.blocks.values():
+            if layer.is_moe:
+                layer = cast(MoEFusedV2TransformerBlock, layer)
+                layer.purge_cuda_events()
+
+    def install_cuda_events(self):
+        for layer in self.blocks.values():
+            if layer.is_moe:
+                layer = cast(MoEFusedV2TransformerBlock, layer)
+                layer.install_cuda_events()
+
     @property
     def is_moe(self) -> bool:
         return True
+
+    def num_flops_per_token(self, seq_len: int) -> int:
+        # TODO: check if it works with PP, does it compute one model part only? or the full model?
+        return super().num_flops_per_token(seq_len)
 
     def compute_auxiliary_metrics(
         self, reset: bool = True
@@ -153,6 +176,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
     def apply_compile(self):
         super().apply_compile()
         self._tbo_last_step = torch.compile(self._tbo_last_step)
+        # self._forward_blocks = torch.compile(self._forward_blocks)
 
     def apply_ddp(
         self,
@@ -171,13 +195,14 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         if target_dtype != self.dtype:
             self.to(dtype=target_dtype)
 
+        # TODO: check if this is needed
         # Adapted from
         # https://github.com/pytorch/torchtitan/blob/90c889e972b56b9faadebbb78fc985dedc537ed9/torchtitan/parallelisms/parallelize_llama.py#L328
-        if compile_enabled:
-            if autograd_compile_enabled:
-                torch._dynamo.config.optimize_ddp = "python_reducer_without_compiled_forward"  # type: ignore
-            else:
-                torch._dynamo.config.optimize_ddp = "ddp_optimizer"  # type: ignore
+        # if compile_enabled:
+        #     if autograd_compile_enabled:
+        #         torch._dynamo.config.optimize_ddp = "python_reducer_without_compiled_forward"  # type: ignore
+        #     else:
+        #         torch._dynamo.config.optimize_ddp = "ddp_optimizer"  # type: ignore
                 
         self.to(torch.bfloat16) # HACK, need fix
         
@@ -217,13 +242,14 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         # if target_dtype != self.dtype:
         #     self.to(dtype=target_dtype)
 
+        # TODO: check if this is needed
         # Adapted from
         # https://github.com/pytorch/torchtitan/blob/90c889e972b56b9faadebbb78fc985dedc537ed9/torchtitan/parallelisms/parallelize_llama.py#L328
-        if compile_enabled:
-            if autograd_compile_enabled:
-                torch._dynamo.config.optimize_ddp = "python_reducer_without_compiled_forward"  # type: ignore
-            else:
-                torch._dynamo.config.optimize_ddp = "ddp_optimizer"  # type: ignore
+        # if compile_enabled:
+        #     if autograd_compile_enabled:
+        #         torch._dynamo.config.optimize_ddp = "python_reducer_without_compiled_forward"  # type: ignore
+        #     else:
+        #         torch._dynamo.config.optimize_ddp = "ddp_optimizer"  # type: ignore
                 
         # TODO: here the replicate/DDP wrapper takes the model in original precision (mostly fp32)
         # but later the wrapper model converts to bf16, will there be a problem?
@@ -274,7 +300,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         max_seq_len: Optional[int] = None,
         max_local_microbatch_size: Optional[int] = None,
         device: Optional[torch.device] = None,
-        world_mesh: Optional[DeviceMesh] = None,
+        world_mesh: Dict[str, Optional[DeviceMesh]],
         model_part_idx: int = 0,
     ) -> torch.Generator:
         from .block import MoEFusedV2TransformerBlock
@@ -308,16 +334,16 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         # 1. PP stage
         # 2. model part within the PP stage (eg, interleaved 1F1B)
         if self.pp_enabled:
-            assert world_mesh
-            seed += get_pp_mesh(world_mesh).get_local_rank() 
+            assert world_mesh['dense'] is not None
+            seed += get_pp_mesh(world_mesh['dense']).get_local_rank() 
             seed += model_part_idx * 997 # random prime
 
         # adjust seed for EP_MP, different EP shards should have different init values
         # but within the same EP_DP group, they should share the same init value
         ep_generator = None
         if self.ep_enabled:
-            assert world_mesh
-            ep_mp_rank = world_mesh['ep_mp'].get_local_rank()
+            assert world_mesh['moe']
+            ep_mp_rank = world_mesh['moe']['ep_mp'].get_local_rank()
             ep_seed = seed + (1 + ep_mp_rank) * 653 # random prime; +1 so that it will never be the same as the base seed
             ep_generator = torch.Generator(device).manual_seed(ep_seed)
 
@@ -440,13 +466,13 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
                 mark_dynamic(h, (0, 1), strict=False)
             with nvtx.annotate(f"fwd_block_{block_idx}", color="blue"):
                 # with self.offload_context:
-                # h = block(h, **block_kwargs)
-                h = checkpoint(
-                    block,
-                    h,
-                    use_reentrant=False,
-                    **block_kwargs,
-                )
+                h = block(h, **block_kwargs)
+                # h = checkpoint(
+                #     block,
+                #     h,
+                #     use_reentrant=False,
+                #     **block_kwargs,
+                # )
                 h = cast(torch.Tensor, h)
                 self._log_debug_mem(f'{block_idx}')
 
@@ -480,7 +506,8 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             with nvtx.annotate(f"fwd_block_{block_idx}", color="blue"):
                 block = cast(MoEFusedV2TransformerBlock, block)
                 # with self.offload_context:
-                x0, x1_ctx = block.checkpointed_combined_forward_ep_tbo(x0, x1_ctx, x1_is_fresh, **block_kwargs)
+                # x0, x1_ctx = block.checkpointed_combined_forward_ep_tbo(x0, x1_ctx, x1_is_fresh, **block_kwargs)
+                x0, x1_ctx = block.combined_forward_ep_tbo(x0, x1_ctx, x1_is_fresh, **block_kwargs)
                 x1_is_fresh = False # after the first TBO block, x1 is no longer fresh
                 self._log_debug_mem(f'{block_idx}')
 
@@ -607,6 +634,30 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             h0 = x
         return h0
 
+    def _forward_blocks(self, h, block_kwargs: Dict[str, Any]) -> torch.Tensor:
+        # Run each block.
+        for block_idx, block in enumerate(self.blocks.values()):
+            # Mark sizes as dynamic for torch.compile().
+            if self.compile_enabled:
+                mark_dynamic(h, (0, 1), strict=False)
+            with nvtx.annotate(f"fwd_block_{block_idx}", color="blue"):
+                if self.recompute_each_block:
+                    h = checkpoint(self._forwrad_one_block, h, block, block_kwargs, use_reentrant=False)
+                    h = cast(torch.Tensor, h)
+                else:
+                    h = self._forwrad_one_block(h, block, block_kwargs)
+                
+        return h
+
+    def _forwrad_one_block(self, h, block: nn.Module, block_kwargs: Dict[str, Any]) -> torch.Tensor:
+        # debug_mem_block_start = torch.cuda.memory_allocated()/1024**3
+        h = block(h, **block_kwargs)
+        # debug_mem_block_end = torch.cuda.memory_allocated()/1024**3
+        # mem_diff = debug_mem_block_end - debug_mem_block_start
+        # if torch.is_grad_enabled():
+        #     print(f'block mem: {mem_diff:.3f} GB')
+        return h
+
     def forward(
         self,
         input_ids: torch.Tensor,
@@ -665,13 +716,19 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         # pipeline parallel configuration.
         h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
 
-        # Run each block.
-        for block_idx, block in enumerate(self.blocks.values()):
-            # Mark sizes as dynamic for torch.compile().
-            if self.compile_enabled:
-                mark_dynamic(h, (0, 1), strict=False)
-            with nvtx.annotate(f"fwd_block_{block_idx}", color="blue"):
-                h = block(h, **block_kwargs)
+        # # Run each block.
+        # for block_idx, block in enumerate(self.blocks.values()):
+        #     # Mark sizes as dynamic for torch.compile().
+        #     if self.compile_enabled:
+        #         mark_dynamic(h, (0, 1), strict=False)
+        #     with nvtx.annotate(f"fwd_block_{block_idx}", color="blue"):
+        #         h = block(h, **block_kwargs)
+
+        if self.recompute_all_blocks:
+            h = checkpoint(self._forward_blocks, h, block_kwargs, use_reentrant=False)
+            h = cast(torch.Tensor, h)
+        else:
+            h = self._forward_blocks(h, block_kwargs)
 
         # Get final logits but again pass-through in case of pipeline parallelism.
         if self.lm_head is not None:
@@ -683,7 +740,14 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             # will throw an exception.
             if labels is not None:
                 lm_head_kwargs["labels"] = labels
-            out = self.lm_head(h, **lm_head_kwargs)
+
+            with nvtx.annotate("lm_head", color="purple"):
+                out = self.lm_head(h, **lm_head_kwargs)
+
+            # check for nan
+            if torch.isnan(out.loss).any():
+                print('nan')
+
         else:
             out = h
         return out

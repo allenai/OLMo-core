@@ -56,15 +56,15 @@ MAX_DURATION = int(1000e9)  # int(6e12), don't forget to adjust the LR when you 
 EVAL_INTERVAL = 1000
 LR= 1e-4
 
-NUM_EXPERTS = 32
+NUM_EXPERTS = 16
 TOP_K = 4
 D_MODEL=2048
 MOE_HIDDEN_SIZE = 2048
 SHARED_MLP_HIDDEN_SIZE = 2048  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
-MICRO_BSZ = 4
-NUM_LAYERS=8
-DP_DIM=8
+MICRO_BSZ = 1
+NUM_LAYERS=4
+DP_DIM=4
 EP_DIM=1
 PP_DIM=1
 SPLIT_POINTS = None
@@ -205,7 +205,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 save_interval=1000,
                 ephemeral_save_interval=200,
                 save_async=True,
-                pre_train_checkpoint=True,
+                pre_train_checkpoint=False,
             ),
         )
         .with_callback(
@@ -215,7 +215,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 entity="ai2-llm",
                 project="tianhua-moe",
                 # project="olmo3",
-                enabled=True,
+                enabled=False,
                 cancel_check_interval=cancel_check_interval,
             ),
         )
@@ -233,7 +233,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         )
         .with_callback(
             "profiler", 
-            NvidiaProfilerCallback(enabled=True, # NOTE: change this
+            NvidiaProfilerCallback(enabled=False, # NOTE: change this
                                    profile_ranks=[0, 8, 16, 24],
                                    start=30,
                                    end=33
@@ -245,6 +245,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         # )
     )
 
+WORK_DIR = "/jfs/tianhua-tao/ws-olmoe"
 
 def finalize_config(config: ExperimentConfig):
     # config.dataset.mix = 'OLMo-mix-0625' # new dataset mix
@@ -252,6 +253,33 @@ def finalize_config(config: ExperimentConfig):
     # config.dataset.mix = "OLMoE-mix-0824-dev"
     # config.data_loader.num_workers = 1
     
+    DATA_ROOT = "/jfs/tianhua-tao/ws-olmoe/data"
+    
+    DATA_WORK_DIR = "/tmp/dataset-cache"
+    # SAVE_ROOT = "/tmp/olmo-core/runs"  # NOTE: change this to what you want
+
+    from olmo_core.data import (
+        DataMix,
+        NumpyDataLoaderConfig,
+        NumpyDatasetConfig,
+        NumpyDatasetType,
+        TokenizerConfig,
+    )
+        
+    dataset_config = NumpyDatasetConfig.from_data_mix(
+        DataMix.OLMoE_mix_0824,
+        tokenizer=TokenizerConfig.dolma2(),
+        mix_base_dir=DATA_ROOT,
+        sequence_length=SEQUENCE_LENGTH,
+        max_target_sequence_length=max(8192, SEQUENCE_LENGTH),
+        work_dir=f"{WORK_DIR}/{DATA_WORK_DIR}",
+    )
+
+    config.dataset = dataset_config
+    config.dataset.mix = "OLMoE-mix-0824-dev"
+
+    config.data_loader.num_workers = 1
+
     # add active & total params to the wandb name
     total_params_in_B = config.model.num_params/1000/1000/1000
     active_params_in_B = config.model.num_active_params/1000/1000/1000

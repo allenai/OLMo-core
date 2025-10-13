@@ -66,39 +66,29 @@ MAX_DURATION = int(1000e9)  # int(6e12), don't forget to adjust the LR when you 
 EVAL_INTERVAL = 1000
 LR= 1e-4
 
-NUM_EXPERTS = 32
+NUM_EXPERTS = 8
 TOP_K = 4
-D_MODEL=2560
+D_MODEL=2048
 HEAD_DIM=128
 NUM_HEAD = D_MODEL // HEAD_DIM
 NUM_KV_HEAD=4
-MOE_HIDDEN_SIZE = 2560
+MOE_HIDDEN_SIZE = 2048
 NUM_SHARED_EXPERTS = 1  # Number of shared experts in the shared MLP
-SHARED_MLP_HIDDEN_SIZE = 2560  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
+SHARED_MLP_HIDDEN_SIZE = 2048  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
-MICRO_BSZ = 1
+MICRO_BSZ = 2
+NUM_LAYERS= 44
 # DP_DIM=2
-EP_DIM=2
-PP_DIM=2
-# NUM_LAYERS= 30
-# SPLIT_POINTS = [
-#     4, 8 ,
-#     12,16, 
-#     20,24 , 
-#     28, 
-#     ]
-
-NUM_LAYERS= 14
-SPLIT_POINTS =[8,]
-# SPLIT_POINTS = [
-#     6, 12 ,
-#     18,24, 
-#     30,36 , 
-#     42, 
-# ]
-
-SPLIT_POINTS = None
-USE_COMPILE=False
+EP_DIM=1
+PP_DIM=4
+SPLIT_POINTS = [
+    6, 12 ,
+    18,24, 
+    30,36 , 
+    42, 
+    ]
+# SPLIT_POINTS = None
+USE_COMPILE=True
 USE_AC=False
 USE_TBO=False
 
@@ -284,9 +274,7 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
         ),
     )
 
-# WORK_DIR = "/jfs/tianhua-tao/ws-olmoe"
-WORK_DIR = "/weka/oe-training-default/tianhua/ws-megatron"
-
+WORK_DIR = "/jfs/tianhua-tao/ws-olmoe"
 def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     cancel_check_interval = 10
     
@@ -356,9 +344,7 @@ def finalize_config(config: ExperimentConfig):
     # This will read stream data from the public endpoints by default, but that might be a lot slower
     # than reading data locally.
     # DATA_ROOT = "http://olmo-data.org"
-    # DATA_ROOT = "/jfs/tianhua-tao/ws-olmoe/data"
-    # DATA_ROOT = "/jfs/tianhua-tao/ws-olmoe/data"
-    DATA_ROOT = "/weka/oe-training-default/ai2-llm"
+    DATA_ROOT = "/jfs/tianhua-tao/ws-olmoe/data"
     
     DATA_WORK_DIR = "/tmp/dataset-cache"
     # SAVE_ROOT = "/tmp/olmo-core/runs"  # NOTE: change this to what you want

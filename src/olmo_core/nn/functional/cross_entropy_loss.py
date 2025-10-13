@@ -52,16 +52,19 @@ def cross_entropy_loss(
 
 _fused_linear_cross_entropy_loss: Optional[Callable] = None
 
-try:
-    from liger_kernel.ops.fused_linear_cross_entropy import (  # type: ignore
-        LigerFusedLinearCrossEntropyFunction,
-    )
+# try:
+#     from liger_kernel.ops.fused_linear_cross_entropy import (  # type: ignore
+#         LigerFusedLinearCrossEntropyFunction,
+#     )
 
-    _fused_linear_cross_entropy_loss = LigerFusedLinearCrossEntropyFunction.apply
-except ImportError:
-    pass
-except Exception:
-    log.exception("Error importing liger-kernel")
+#     _fused_linear_cross_entropy_loss = LigerFusedLinearCrossEntropyFunction.apply
+# except ImportError:
+#     pass
+# except Exception:
+#     log.exception("Error importing liger-kernel")
+
+from .custom_fused_linear_cross_entropy import LigerFusedLinearCrossEntropyFunction
+_fused_linear_cross_entropy_loss = LigerFusedLinearCrossEntropyFunction.apply
 
 
 @torch._dynamo.disable()
