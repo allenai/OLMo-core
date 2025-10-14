@@ -2,7 +2,7 @@
 Distributed, deterministic, stateful data loaders used by the :class:`~olmo_core.train.Trainer`.
 
 """
-
+import functools
 import logging
 import math
 from abc import ABC, abstractmethod
@@ -11,6 +11,7 @@ from itertools import islice
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, Optional, Tuple
 
+import bettermap
 import numpy as np
 import torch
 import torch.distributed as dist
@@ -673,7 +674,16 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
             indices = indices[:, self.dp_rank :: self.dp_world_size]
 
         # Get instances for the batch.
-        instances = [self._get_dataset_item(int(idx)) for idx in indices[index]]
+        if self.num_threads > 1:
+            map_fn = functools.partial(bettermap.ordered_map_per_thread, parallelism=self.num_threads)
+        else:
+            map_fn = map
+        instances = list(
+            map_fn(
+                lambda idx: self._get_dataset_item(int(idx)),
+                indices[index]
+            )
+        )
 
         return self.collator(instances)
 
