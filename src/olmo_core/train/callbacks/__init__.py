@@ -48,7 +48,6 @@ __all__ = [
     "BatchSizeSchedulerCallback",
     "MonkeyPatcherCallback",
     "ZeroLRCheckpointerCallback",
-    "WandBTokensCallback",
 ]
 
 __doc__ += "\n"
