@@ -675,15 +675,12 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
 
         # Get instances for the batch.
         if self.num_threads > 1:
-            map_fn = functools.partial(bettermap.ordered_map_per_thread, parallelism=self.num_threads)
+            map_fn = functools.partial(
+                bettermap.ordered_map_per_thread, parallelism=self.num_threads
+            )
         else:
             map_fn = map
-        instances = list(
-            map_fn(
-                lambda idx: self._get_dataset_item(int(idx)),
-                indices[index]
-            )
-        )
+        instances = list(map_fn(lambda idx: self._get_dataset_item(int(idx)), indices[index]))
 
         return self.collator(instances)
 

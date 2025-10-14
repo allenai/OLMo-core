@@ -205,7 +205,9 @@ def main():
             f"  Checkpoint: {data_loader_state['dataset_fingerprint']}\n"
             f"  Computed:   {dataset.fingerprint}"
         )
-        log.error("This may indicate the dataset has changed in the code since the checkpoint was created.")
+        log.error(
+            "This may indicate the dataset has changed in the code since the checkpoint was created."
+        )
         sys.exit(1)
 
     collator = DataCollator(pad_token_id=dataset.pad_token_id)
@@ -219,7 +221,7 @@ def main():
         shuffle=True,
         dp_world_size=1,  # We're extracting for a single "rank"
         dp_rank=0,
-        num_threads=10  # 10 is the default connection pool size
+        num_threads=10,  # 10 is the default connection pool size
     )
 
     # Reshuffle to regenerate the same global indices as during training
