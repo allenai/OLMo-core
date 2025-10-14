@@ -27,7 +27,7 @@ when you need precise control over per-source proportions, repetition limits, or
 Via the composable API
 ^^^^^^^^^^^^^^^^^^^^^^
 
-The composable data loading API allows to build fine-grained mixtures by mixing/sampling at various
+The composable data loading API allows you to build fine-grained mixtures by mixing/sampling at various
 levels: either the token-level (:class:`~olmo_core.data.composable.MixingTokenSource`),
 document-level (:class:`~olmo_core.data.composable.MixingDocumentSource`),
 or instance-level (:class:`~olmo_core.data.composable.MixingInstanceSource`).

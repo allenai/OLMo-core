@@ -46,6 +46,210 @@ This API consists of a series of simple, composable, elements, including:
     Use :meth:`InstanceSource.visualize()` to print out a recursive visualization of an instance
     source and all its sub-sources.
 
+Basic Examples
+--------------
+
+Create a simple instance source that chunks up in-memory token sources::
+
+   from olmo_core.data.composable import *
+   
+   work_dir = "/tmp/dataset-common"
+   source = ConcatAndChunkInstanceSource(
+       InMemoryTokenSource(list(range(100)), work_dir=work_dir),
+       sequence_length=10,
+       work_dir=work_dir,
+   )
+   source.visualize()
+
+::
+
+   ConcatAndChunkInstanceSource: 100 tokens
+   └─ InMemoryTokenSource: 100 tokens
+
+Split the source into train and test sets::
+
+   train_source, test_source = source.split(0.8)
+   train_source.visualize()
+   test_source.visualize()
+
+::
+
+   SlicedInstanceSource: 80 tokens
+   └─ ConcatAndChunkInstanceSource: 100 tokens
+      └─ InMemoryTokenSource: 100 tokens
+
+   SlicedInstanceSource: 10 tokens
+   └─ ConcatAndChunkInstanceSource: 100 tokens
+      └─ InMemoryTokenSource: 100 tokens
+
+Sample a subset of a source::
+
+   train_source = train_source.sample(max_tokens=50)
+   train_source.visualize()
+
+::
+
+   SamplingInstanceSource: 50 tokens
+   └─ SlicedInstanceSource: 80 tokens
+      └─ ConcatAndChunkInstanceSource: 100 tokens
+         └─ InMemoryTokenSource: 100 tokens
+
+Create a mix of token sources::
+
+   tokens1 = InMemoryTokenSource(list(range(100)), work_dir=work_dir, label="source1")
+   tokens2 = InMemoryTokenSource(list(range(100, 200)), work_dir=work_dir, label="source2")
+   tokens_mix = MixingTokenSource(
+       MixingTokenSource.Spec(source=tokens1, ratio=0.5),
+       MixingTokenSource.Spec(source=tokens2, ratio=0.5),
+       work_dir=work_dir,
+   )
+   source = ConcatAndChunkInstanceSource(tokens_mix, sequence_length=10, work_dir=work_dir)
+   source.visualize()
+
+::
+
+   ConcatAndChunkInstanceSource: 200 tokens
+   └─ MixingTokenSource: 200 tokens
+      ├─ SamplingTokenSource: 100 tokens [source1]
+      │  └─ InMemoryTokenSource: 100 tokens [source1]
+      └─ SamplingTokenSource: 100 tokens [source2]
+         └─ InMemoryTokenSource: 100 tokens [source2]
+
+Working with numpy source files
+-------------------------------
+
+You can use the same numpy tokenized source files that the dataset classes in :mod:`olmo_core.data.numpy_dataset`
+consume by starting with the :class:`NumpyDocumentSource` (or its corresponding config class :class:`NumpyDocumentSourceConfig`).
+
+For example::
+
+   source_config = NumpyDocumentSource.Config(
+       source_paths=[
+           "gs://ai2-llm/preprocessed/midtraining-reasoning/tinyMATH/PoT/processed_data/processed-decon-sparkle-motion/allenai/dolma2-tokenizer/*.npy"
+       ],
+       tokenizer=tokenizer,
+   )
+   sources = source_config.build(work_dir)
+
+::
+
+   [
+       NumpyDocumentSource('gs://ai2-llm/preprocessed/midtraining-reasoning/tinyMATH/PoT/processed_data/processed-decon-sparkle-motion/allenai/dolma2-tokenizer/part-00-00000.npy',),
+       NumpyDocumentSource('gs://ai2-llm/preprocessed/midtraining-reasoning/tinyMATH/PoT/processed_data/processed-decon-sparkle-motion/allenai/dolma2-tokenizer/part-01-00000.npy',),
+       NumpyDocumentSource('gs://ai2-llm/preprocessed/midtraining-reasoning/tinyMATH/PoT/processed_data/processed-decon-sparkle-motion/allenai/dolma2-tokenizer/part-02-00000.npy',),
+       NumpyDocumentSource('gs://ai2-llm/preprocessed/midtraining-reasoning/tinyMATH/PoT/processed_data/processed-decon-sparkle-motion/allenai/dolma2-tokenizer/part-03-00000.npy',),
+       NumpyDocumentSource('gs://ai2-llm/preprocessed/midtraining-reasoning/tinyMATH/PoT/processed_data/processed-decon-sparkle-motion/allenai/dolma2-tokenizer/part-04-00000.npy',),
+       NumpyDocumentSource('gs://ai2-llm/preprocessed/midtraining-reasoning/tinyMATH/PoT/processed_data/processed-decon-sparkle-motion/allenai/dolma2-tokenizer/part-05-00000.npy',),
+       NumpyDocumentSource('gs://ai2-llm/preprocessed/midtraining-reasoning/tinyMATH/PoT/processed_data/processed-decon-sparkle-motion/allenai/dolma2-tokenizer/part-06-00000.npy',),
+       NumpyDocumentSource('gs://ai2-llm/preprocessed/midtraining-reasoning/tinyMATH/PoT/processed_data/processed-decon-sparkle-motion/allenai/dolma2-tokenizer/part-07-00000.npy',),
+       NumpyDocumentSource('gs://ai2-llm/preprocessed/midtraining-reasoning/tinyMATH/PoT/processed_data/processed-decon-sparkle-motion/allenai/dolma2-tokenizer/part-08-00000.npy',),
+       NumpyDocumentSource('gs://ai2-llm/preprocessed/midtraining-reasoning/tinyMATH/PoT/processed_data/processed-decon-sparkle-motion/allenai/dolma2-tokenizer/part-09-00000.npy',)
+   ]
+
+Here's a more useful example where we create several groups of numpy sources, two code and two math,
+using :meth:`NumpyDocumentSourceConfig.from_source_groups`::
+
+   sequence_length = 8192
+   token_sources = NumpyDocumentSource.Config.from_source_groups(
+       {
+           "code_fim": [
+               "gs://ai2-llm/preprocessed/stack-edu/sample-fim-weighted-pl-edu-score-decon/**/**/*.npy",
+           ],
+           "swallowcode": [
+               "gs://ai2-llm/preprocessed/tokyotech-llm/swallowcode/scor_final_data-decon-sparkle-motion/allenai/dolma2-tokenizer/*.npy"
+           ],
+           "megamath": [
+               "gs://ai2-llm/preprocessed/megamath_web_pro_max/beaker_rewrites-decon-sparkle-motion/**/allenai/dolma2-tokenizer/*.npy"
+           ],
+           "dolminos2math": [
+               "gs://ai2-llm/preprocessed/tokyotech-llm/swallowmath/beaker_outputs-decon-sparkle-motion-withids/allenai/dolma2-tokenizer/*.npy",
+               "gs://ai2-llm/preprocessed/midtraining-reasoning/flat_dolmino_math-decon-sparkle-motion/allenai/dolma2-tokenizer/*.npy",
+               "gs://ai2-llm/preprocessed/midtraining-reasoning/OpenMathReasoning/OpenMathReasoning-rewrite-full-thoughts/jsonls-decon-sparkle-motion/allenai/dolma2-tokenizer/*.npy",
+               "gs://ai2-llm/preprocessed/midtraining-reasoning/tinyMATH/MIND/data/processed-decon-sparkle-motion/allenai/dolma2-tokenizer/*.npy",
+               "gs://ai2-llm/preprocessed/midtraining-reasoning/tinyMATH/PoT/processed_data/processed-decon-sparkle-motion/allenai/dolma2-tokenizer/*.npy",
+           ],
+       },
+       tokenizer=tokenizer,
+   )
+
+And then mix them together in a hierarchical fashion::
+
+   def make_instance_source(label: str) -> InstanceSourceConfig:
+       return ConcatAndChunkInstanceSource.Config(
+           sources=[token_sources[label]], label=label, sequence_length=sequence_length
+       )
+   
+   
+   mix_config = MixingInstanceSource.Config(
+       source_specs=[
+           ################
+           # code sources #
+           ################
+           MixingInstanceSource.Spec.Config(
+               source=MixingInstanceSource.Config(
+                   source_specs=[
+                       MixingInstanceSource.Spec.Config(
+                           source=make_instance_source("code_fim"),
+                           ratio=0.5,
+                           label="code_fim",
+                       ),
+                       MixingInstanceSource.Spec.Config(
+                           source=make_instance_source("swallowcode"),
+                           ratio=0.5,
+                           label="swallowcode",
+                       ),
+                   ]
+               ),
+               ratio=0.5,
+               label="code",
+           ),
+           ################
+           # math sources #
+           ################
+           MixingInstanceSource.Spec.Config(
+               source=MixingInstanceSource.Config(
+                   source_specs=[
+                       MixingInstanceSource.Spec.Config(
+                           source=make_instance_source("megamath"),
+                           ratio=0.1,
+                           label="megamath",
+                       ),
+                       MixingInstanceSource.Spec.Config(
+                           source=make_instance_source("dolminos2math"),
+                           ratio=0.9,
+                           label="dolminos2math",
+                       ),
+                   ]
+               ),
+               ratio=0.5,
+               label="math",
+           ),
+       ]
+   )
+
+   mix = mix_config.build("/tmp/dataset-common")
+   mix.visualize()
+
+::
+
+   MixingInstanceSource: 40.6B tokens
+   ├─ SamplingInstanceSource: 20.3B tokens [code]
+   │  └─ MixingInstanceSource: 37.7B tokens
+   │     ├─ SamplingInstanceSource: 18.8B tokens [code_fim]
+   │     │  └─ ConcatAndChunkInstanceSource: 21.4B tokens [code_fim]
+   │     │     └─ NumpyDocumentSource x 474: 21.4B tokens [code_fim]
+   │     └─ SamplingInstanceSource: 18.8B tokens [swallowcode]
+   │        └─ ConcatAndChunkInstanceSource: 18.8B tokens [swallowcode]
+   │           └─ NumpyDocumentSource x 128: 18.8B tokens [swallowcode]
+   └─ SamplingInstanceSource: 20.3B tokens [math]
+      └─ MixingInstanceSource: 20.3B tokens
+         ├─ SamplingInstanceSource: 2.0B tokens [megamath]
+         │  └─ ConcatAndChunkInstanceSource: 3.9B tokens [megamath]
+         │     └─ NumpyDocumentSource x 264: 3.9B tokens [megamath]
+         └─ SamplingInstanceSource: 18.3B tokens [dolminos2math]
+            └─ ConcatAndChunkInstanceSource: 18.3B tokens [dolminos2math]
+               └─ NumpyDocumentSource x 415: 18.3B tokens [dolminos2math]
+
 Reference
 ---------
 """

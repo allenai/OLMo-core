@@ -7,7 +7,7 @@ from .token_source import TokenSource
 from .utils import format_token_count
 
 
-def visualize_source(self):
+def visualize_source(source, icons: bool = True):
     skip_connector, child_connector, last_child_connector = "│  ", "├─ ", "└─ "
 
     def _format_label(label: str) -> str:
@@ -31,7 +31,7 @@ def visualize_source(self):
         if indent_spec:
             indents.append(last_child_connector if indent_spec[-1] else child_connector)
         indent = "".join(indents)
-        icon_str = f"{source_cls.DISPLAY_ICON} " if source_cls.DISPLAY_ICON else ""
+        icon_str = f"{source_cls.DISPLAY_ICON} " if icons and source_cls.DISPLAY_ICON else ""
         count_str = f" x {count}" if count > 1 else ""
         label_str = rf" \[{_format_label(label)}]" if label else ""
         token_str = format_token_count(tokens)
@@ -84,4 +84,4 @@ def visualize_source(self):
 
         return "\n".join(lines)
 
-    rich.get_console().print(_visualize_source(self, []), highlight=False)
+    rich.get_console().print(_visualize_source(source, []), highlight=False)

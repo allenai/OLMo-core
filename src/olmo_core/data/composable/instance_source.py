@@ -286,16 +286,18 @@ class InstanceSource(metaclass=ABCMeta):
             SlicedInstanceSource(self, slice(split_idx, -1), seed=seed, work_dir=self._work_dir),
         )
 
-    def visualize(self):
+    def visualize(self, icons: bool = True):
         """
         Print a visualization of this source and its children, recursively.
 
-        .. important::
-            Some icons used in the visualization require a Nerd Font to render properly.
+        :param icons: Whether to use icons in the visualization.
+
+           .. important::
+               Some icons used in the visualization require a Nerd Font to render properly.
         """
         from .visualize import visualize_source
 
-        visualize_source(self)
+        visualize_source(self, icons=icons)
 
 
 class ConcatenatedInstanceSource(InstanceSource):
