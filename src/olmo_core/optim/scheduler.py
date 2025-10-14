@@ -661,12 +661,14 @@ class WSDS(Scheduler):
         if self.warmup is not None:
             return int(self.warmup)
         else:
+            assert self.warmup_fraction is not None, "Either warmup or warmup_fraction must be set"
             return int(round(self.warmup_fraction * L0))
 
     def _resolve_decay(self, Li: int) -> int:
         if self.decay is not None:
             return int(self.decay)
         else:
+            assert self.decay_fraction is not None, "Either decay or decay_fraction must be set"
             return int(round(self.decay_fraction * Li))
 
     def _find_period(self, x: int) -> int:
