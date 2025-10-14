@@ -570,10 +570,9 @@ class WSDS(Scheduler):
           stable length   = L_i - D
 
     Notes:
-      - If warmup + decay > L_0, they are proportionally shrunk to fit.
-      - If decay > L_i for any period, it's clamped to L_i.
-      - For eta_min <= 0, the inverse-proportional decay returns 0 at t = T and
-        stays finite (using epsilon) for t < T.
+      - warmup + decay must not exceed the first period length L_0.
+      - decay must not exceed any period length L_i.
+      - Configuration errors will be raised if these constraints are violated.
 
     Attributes
     ----------
@@ -624,24 +623,25 @@ class WSDS(Scheduler):
         if self.decay_fraction is not None and not (0.0 <= self.decay_fraction <= 1.0):
             raise OLMoConfigurationError("'decay_fraction' must be in [0, 1].")
 
-        # Precompute cumulative ends so we can detect period boundaries quickly.
+        # Precompute cumulative ends
         self._cum_period_end = []
         s = 0
         for L in self.period_lengths:
             s += int(L)
             self._cum_period_end.append(s)
 
-        # Validate warmup+decay for the first period - ERROR instead of adjust
+        # Validate warmup + decay for first period, and decay for all periods
         L0 = self.period_lengths[0]
         W = self._resolve_warmup(L0)
         D0 = self._resolve_decay(L0)
+        
         if W + D0 > L0:
             raise OLMoConfigurationError(
                 f"First period: warmup ({W}) + decay ({D0}) = {W + D0} exceeds period length ({L0}). "
                 f"Please reduce warmup and/or decay values."
             )
         
-        # Validate decay for all subsequent periods
+        # Validate decay for remaining periods
         for i, Li in enumerate(self.period_lengths[1:], start=1):
             Di = self._resolve_decay(Li)
             if Di > Li:
@@ -652,15 +652,15 @@ class WSDS(Scheduler):
 
     def _resolve_warmup(self, L0: int) -> int:
         if self.warmup is not None:
-            return min(max(int(self.warmup), 0), int(L0))
+            return int(self.warmup)
         else:
-            return min(max(int(round(self.warmup_fraction * L0)), 0), int(L0))
+            return int(round(self.warmup_fraction * L0))
 
     def _resolve_decay(self, Li: int) -> int:
         if self.decay is not None:
-            return min(max(int(self.decay), 0), int(Li))
+            return int(self.decay)
         else:
-            return min(max(int(round(self.decay_fraction * Li)), 0), int(Li))
+            return int(round(self.decay_fraction * Li))
 
     def _find_period(self, x: int) -> int:
         """
@@ -674,60 +674,42 @@ class WSDS(Scheduler):
                 return idx
         return len(self._cum_period_end) - 1
 
-    def period_boundaries(self) -> List[int]:
-        """
-        Inclusive boundaries in the same units as 'period_lengths', i.e., the set of x
-        where LR is exactly 0.0 (end of period).
-            boundary_k = sum_{i=0..k} period_lengths[i]
-        """
-        return list(self._cum_period_end)
-
     def get_lr(
         self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
     ) -> Union[float, torch.Tensor]:
         """
         Return the LR at 'current' (in 'units').
         Contract:
-          • At *end of each period* (current == boundary), LR == 0 if decay_min_lr <= 0 (exact).
-          • Right after a boundary (start of next period), LR resets to initial_lr (stable phase).
+        • At *end of each period* (current == boundary), LR == 0 if decay_min_lr <= 0 (exact).
+        • Right after a boundary (start of next period), LR resets to initial_lr (stable phase).
         """
-        # If we've exceeded all periods, stay at 0 (if eta_min <= 0) or at eta_min otherwise.
         total = self._cum_period_end[-1]
         if current >= total:
             return 0.0 if self.decay_min_lr <= 0.0 else self.decay_min_lr
 
-        # Determine period and position; clamp 'pos_in_period' into [0, L_i] (inclusive)
         pidx = self._find_period(current)
         start = 0 if pidx == 0 else self._cum_period_end[pidx - 1]
         Li = self.period_lengths[pidx]
-        # inclusive position; allow pos = Li to evaluate exact endpoint/lr=0
         pos = min(max(current - start, 0), Li)
 
-        # Determine W (warmup only for p==0) and D (decay for all)
         if pidx == 0:
             W = self._resolve_warmup(Li)
             D = self._resolve_decay(Li)
-            S = max(Li - W - D, 0)
-            # Phases: [0, W) warmup, [W, W+S) stable, [W+S, W+S+D] decay (inclusive end)
+            S = Li - W - D  # Removed max(., 0)
+            
             if pos < W:
-                # warmup from warmup_min_lr -> initial_lr
                 return _linear_warmup(initial_lr, pos, W, self.warmup_min_lr)
             elif pos < W + S:
                 return initial_lr
             else:
                 t = pos - (W + S)
-                T = max(D, 0)
-                return _linear_decay(initial_lr, T - t, T, self.decay_min_lr)
+                return _linear_decay(initial_lr, D - t, D, self.decay_min_lr)
         else:
-            W = 0
             D = self._resolve_decay(Li)
-            S = max(Li - D, 0)
-            # Phases: [0, S) stable, [S, S+D] decay (inclusive end)
+            S = Li - D  # Removed max(., 0)
+            
             if pos < S:
-                # reset to peak LR at start of each period
                 return initial_lr
             else:
                 t = pos - S
-                T = max(D, 0)
-                return _linear_decay(initial_lr, T - t, T, self.decay_min_lr)
-
+                return _linear_decay(initial_lr, D - t, D, self.decay_min_lr)
