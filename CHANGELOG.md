@@ -49,6 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added CLI script `src/scripts/unshard.py` for converting distributed checkpoints to regular PyTorch or safetensors format.
 - Added a custom block that does LayerNorm scaling.
 - Added `OLMo-mix-0625-150Bsample` data mix.
 - Added alias support to `DataMix` enum.
