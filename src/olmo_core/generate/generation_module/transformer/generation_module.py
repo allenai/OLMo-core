@@ -569,7 +569,7 @@ class TransformerGenerationModule(GenerationModule):
         # Now load the final model on the target device with the correct dtype
         if dtype == DType.float32:
             # If target dtype is float32, we can reuse the merged state dict
-            log.info(f"Loading merged checkpoint with dtype float32")
+            log.info("Loading merged checkpoint with dtype float32")
             final_generation_module = cls.from_checkpoint(
                 checkpoint_dirs[0], dtype=DType.float32, **kwargs
             )
