@@ -53,11 +53,11 @@ class SamplingDocumentSourceConfig(DocumentSourceConfig):
 class SamplingDocumentSource(DocumentSource):
     """
     A document source that samples documents from other document sources.
-    This is useful for creating a smaller document source for testing or for building up
-    mixes of sources.
+    This can be used to adjust the effective size of a source.
 
     .. seealso::
-        :class:`SamplingTokenSource`.
+        - :class:`SamplingTokenSource`
+        - :class:`SamplingInstanceSource`
 
     :param sources: The sources to sample documents from.
     :param max_tokens: The maximum number of tokens to sample. The resulting source will have
@@ -65,8 +65,7 @@ class SamplingDocumentSource(DocumentSource):
     :param seed: A optional seed for sampling documents. If ``None``, no shuffling is done and
         the first documents are taken up to ``max_tokens``.
     :param allow_repetition: Allow repeated documents (oversampling) to meet the target ``max_tokens``
-      if needed.
-    :param work_dir: A local working directory for caching preprocessing results.
+        if needed. If ``False`` then ``max_tokens`` can't exceed the total size of all sources.
     """
 
     Config = SamplingDocumentSourceConfig

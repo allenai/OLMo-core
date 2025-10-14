@@ -110,7 +110,6 @@ class PackingInstanceSource(InstanceSource):
     :param sources: Sources of documents to pack.
     :param sequence_length: The sequence length of each instance, i.e. the maximum number of tokens
         that can be packed into each instance.
-    :param work_dir: A local directory where intermediate files can be stored.
     :param tokenizer: The tokenizer configuration.
     :param max_sequence_length: This must be equal to ``sequence_length`` if given.
     :param long_doc_strategy: The strategy to use for documents longer than ``sequence_length``.

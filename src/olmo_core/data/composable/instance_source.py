@@ -36,14 +36,12 @@ class InstanceSource(SourceABC):
     It essentially represents an array of instances, where each instance is a sequence of
     ``sequence_length`` tokens.
 
-    :param work_dir: A local working directory that can be used for caching files during preprocessing.
     :param sequence_length: The length of each sequence (instance) to produce.
     :param max_sequence_length: For sources that support this. If you intend to increase the sequence
       length in the middle of an epoch, you should set this to the maximum sequence length that you'll
       train on to guarantee that you can restart the run with the same data order after changing sequence length.
       Care needs to be taken when implementing this in a subclass to ensure that the exact same tokens
       will be produced when `sequence_length` is changed but `max_sequence_length` is fixed.
-    :param label: An optional label for this source, useful for debugging and visualizing.
     """
 
     def __init__(
@@ -118,7 +116,7 @@ class InstanceSource(SourceABC):
     def __add__(self, other: "InstanceSource") -> "ConcatenatedInstanceSource":
         """Add two instance sources together into a :class:`ConcatenatedInstanceSource`."""
         if isinstance(other, InstanceSource):
-            return ConcatenatedInstanceSource(self, other, work_dir=self._work_dir)
+            return ConcatenatedInstanceSource(self, other, work_dir=self.common_work_dir)
         else:
             raise TypeError(f"Cannot add {type(self)} with {type(other)}.")
 
@@ -162,7 +160,7 @@ class InstanceSource(SourceABC):
             max_instances=max_instances,
             seed=seed,
             allow_repetition=allow_repetition,
-            work_dir=self._work_dir,
+            work_dir=self.common_work_dir,
         )
 
     def resize(self, factor: float, seed: Optional[int] = None) -> "SamplingInstanceSource":
@@ -200,8 +198,12 @@ class InstanceSource(SourceABC):
         )
 
         return (
-            SlicedInstanceSource(self, slice(0, split_idx), seed=seed, work_dir=self._work_dir),
-            SlicedInstanceSource(self, slice(split_idx, -1), seed=seed, work_dir=self._work_dir),
+            SlicedInstanceSource(
+                self, slice(0, split_idx), seed=seed, work_dir=self.common_work_dir
+            ),
+            SlicedInstanceSource(
+                self, slice(split_idx, -1), seed=seed, work_dir=self.common_work_dir
+            ),
         )
 
     def visualize(self, icons: bool = True):

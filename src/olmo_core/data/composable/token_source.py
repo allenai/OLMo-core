@@ -109,9 +109,9 @@ class TokenSource(SourceABC):
         depending on the type of ``self`` and ``other``.
         """
         if isinstance(self, DocumentSource) and isinstance(other, DocumentSource):
-            return ConcatenatedDocumentSource(self, other, work_dir=self._work_dir)
+            return ConcatenatedDocumentSource(self, other, work_dir=self.common_work_dir)
         elif isinstance(other, TokenSource):
-            return ConcatenatedTokenSource(self, other, work_dir=self._work_dir)
+            return ConcatenatedTokenSource(self, other, work_dir=self.common_work_dir)
         else:
             raise TypeError(f"Cannot add {type(self)} with {type(other)}.")
 
@@ -148,7 +148,7 @@ class TokenSource(SourceABC):
             max_tokens=max_tokens,
             seed=seed,
             allow_repetition=allow_repetition,
-            work_dir=self._work_dir,
+            work_dir=self.common_work_dir,
         )
 
     def resize(self, factor: float, seed: Optional[int] = None) -> "SamplingTokenSource":
@@ -179,8 +179,8 @@ class TokenSource(SourceABC):
         assert 0 < ratio < 1
         split_idx = int(ratio * self.num_tokens)
         return (
-            SlicedTokenSource(self, slice(0, split_idx), work_dir=self._work_dir),
-            SlicedTokenSource(self, slice(split_idx, -1), work_dir=self._work_dir),
+            SlicedTokenSource(self, slice(0, split_idx), work_dir=self.common_work_dir),
+            SlicedTokenSource(self, slice(split_idx, -1), work_dir=self.common_work_dir),
         )
 
 
@@ -328,7 +328,7 @@ class DocumentSource(TokenSource):
             max_tokens=max_tokens,
             seed=seed,
             allow_repetition=allow_repetition,
-            work_dir=self._work_dir,
+            work_dir=self.common_work_dir,
         )
 
     @abstractmethod

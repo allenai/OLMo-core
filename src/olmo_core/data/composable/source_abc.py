@@ -11,6 +11,10 @@ from olmo_core.exceptions import OLMoConfigurationError
 class SourceABC(metaclass=ABCMeta):
     """
     Abstract base class for source types.
+
+    :param work_dir: A common local working directory that can be used for caching files during
+        preprocessing.
+    :param label: An optional label for this source, useful for debugging and visualizing.
     """
 
     DISPLAY_ICON: ClassVar[str] = ""  # Nerd Font icon for visualizations
@@ -20,9 +24,10 @@ class SourceABC(metaclass=ABCMeta):
             raise OLMoConfigurationError(
                 f"'work_dir' should be a local path, not a URL ('{work_dir}')."
             )
-        self._work_dir = Path(io.normalize_path(work_dir))
-        if self._work_dir.name == self.__class__.__name__:
-            self._work_dir = self._work_dir.parent
+        work_dir = Path(io.normalize_path(work_dir))
+        if work_dir.name == self.__class__.__name__:
+            work_dir = work_dir.parent
+        self._common_work_dir = work_dir
         self._fs_local_rank = dist_utils.get_fs_local_rank()
         self._rank = dist_utils.get_rank()
         self._label = label
@@ -31,12 +36,19 @@ class SourceABC(metaclass=ABCMeta):
         return f"{self.__class__.__name__}({self.fingerprint[:7]})"
 
     @property
+    def common_work_dir(self) -> Path:
+        """
+        The common working directory, usually the parent of :data:`work_dir`.
+        """
+        return self._common_work_dir
+
+    @property
     def work_dir(self) -> Path:
         """
-        A local working directly that can be used by the source for caching files during
+        The class-specific local working directory that can be used by the source for caching files during
         preprocessing.
         """
-        return self._work_dir / self.__class__.__name__
+        return self.common_work_dir / self.__class__.__name__
 
     @property
     def fs_local_rank(self) -> int:

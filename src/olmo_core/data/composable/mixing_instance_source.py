@@ -85,6 +85,8 @@ class MixingInstanceSourceSpec:
     An optional factor to adjust the effective size of this source prior to determining how many
     instances to sample. A factor less than 1.0 makes the source smaller, while a factor greater
     than 1.0 makes it larger by oversampling.
+
+    Equivalently you could wrap the source in a :class:`SamplingInstanceSource` to adjust its size.
     """
     max_repetition_factor: float = 1.0
     """
@@ -108,6 +110,17 @@ class MixingInstanceSourceSpec:
 class MixingInstanceSource(InstanceSource):
     """
     An instance source for mixing other instance sources together with arbitrary ratios.
+
+    .. important::
+        Sampling is done in a way that minimizes the number of dropped and repeated instances while
+        matching the target ratios and respecting the :data:`MixingInstanceSourceSpec.max_repetition_factor`
+        values.
+
+        The number of instances this source produces will always be less than or equal to the
+        sum of instances across all of its immediate children defined in the ``source_specs``,
+        after applying their respective :data:`MixingInstanceSourceSpec.size_adjustment_factor` values.
+
+        You can always adjust the final size of a source by wrapping it in a :class:`SamplingInstanceSource`.
 
     :param source_specs: The sources and how to sample from them.
     """

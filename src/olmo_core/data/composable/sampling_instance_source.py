@@ -46,6 +46,11 @@ class SamplingInstanceSourceConfig(InstanceSourceConfig):
 class SamplingInstanceSource(InstanceSource):
     """
     An instance source that samples instances from other instance sources.
+    This can be used to adjust the effective size of a source.
+
+    .. seealso::
+        - :class:`SamplingTokenSource`
+        - :class:`SamplingDocumentSource`
 
     :param sources: The sources to sample instances from.
     :param max_tokens: The maximum number of tokens to sample. Alternatively you can specify
@@ -55,8 +60,8 @@ class SamplingInstanceSource(InstanceSource):
     :param seed: A optional seed for sampling. If ``None``, the first ``N_s`` instances are taken
       from each source where ``N_s`` is proportional to the size of the source.
     :param allow_repetition: Allow repeated instances (oversampling) to meet the target ``max_instances``
-      or ``max_tokens`` if needed. If ``False`` then ``max_instances`` or ``max_tokens`` can't
-      exceed the total size of all sources.
+      or ``max_tokens`` if needed.
+      If ``False`` then ``max_instances`` or ``max_tokens`` can't exceed the total size of all sources.
     """
 
     Config = SamplingInstanceSourceConfig

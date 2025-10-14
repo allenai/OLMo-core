@@ -32,7 +32,8 @@ This API consists of a series of simple, composable, elements, including:
    * :class:`ConcatAndChunkInstanceSource`: The simplest instance source that chunks up token sources
      without regard for document boundaries, just like the :class:`~olmo_core.data.numpy_dataset.NumpyFSLDataset`.
    * :class:`PackingInstanceSource`: An instance source that packs documents from one or more document
-     sources into instances using an optimized packing algorithm.
+     sources into instances using an optimized packing algorithm, just like the
+     :class:`~olmo_core.data.numpy_dataset.NumpyPackedFSLDataset`.
    * :class:`ConcatenatedInstanceSource`: An instance source combines instances from other instance sources.
    * :class:`SlicedInstanceSource`: An instance source that provides a slice into another instance source.
    * :class:`SamplingInstanceSource`: An instance source that samples instances from other instance sources.
@@ -172,7 +173,7 @@ using :meth:`NumpyDocumentSourceConfig.from_source_groups`::
        tokenizer=tokenizer,
    )
 
-And then mix them together in a hierarchical fashion::
+And then mix them together at the instance level in a hierarchical fashion with :class:`MixingInstanceSource`::
 
    def make_instance_source(label: str) -> InstanceSourceConfig:
        return ConcatAndChunkInstanceSource.Config(
@@ -249,6 +250,15 @@ And then mix them together in a hierarchical fashion::
          └─ SamplingInstanceSource(0cf6aa7): 18.3B tokens [dolminos2math]
             └─ ConcatAndChunkInstanceSource(b768b9a): 18.3B tokens [dolminos2math]
                └─ NumpyDocumentSource x 415: 18.3B tokens [dolminos2math]
+
+.. tip::
+    **Up-sampling:** In general general you can accomplish exact up-sampling by wrapping a source in
+    a :class:`SamplingInstanceSource` (or :class:`SamplingTokenSource`, :class:`SamplingDocumentSource`)
+    with ``allow_repetition=True``, but the :class:`MixingInstanceSourceSpec`
+    (or :class:`MixingTokenSourceSpec`, :class:`MixingDocumentSourceSpec`) also has a shortcut
+    for this via the ``size_adjustment_factor`` option.
+
+    For example, if you want to up-sample a source by 3x, you can set ``size_adjustment_factor=3.0``.
 
 Reference
 ---------

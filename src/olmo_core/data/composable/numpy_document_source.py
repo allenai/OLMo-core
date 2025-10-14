@@ -288,10 +288,8 @@ class NumpyDocumentSource(DocumentSource):
 
     :param source_paths: The paths/URLs to the numpy token ID arrays.
     :param dtype: The numpy datatype of the token ID arrays in the source paths.
-    :param work_dir: A local working directory to use for temporary files.
     :param tokenizer: The config of the tokenizer that was used to tokenize the source files.
     :param label_mask_paths: The paths/URLs to numpy bool files indicating which tokens should be masked.
-    :param label: An optional label to assign to the source for logging and debugging.
     """
 
     Config = NumpyDocumentSourceConfig

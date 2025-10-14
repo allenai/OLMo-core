@@ -46,8 +46,7 @@ class SamplingTokenSourceConfig(TokenSourceConfig):
 class SamplingTokenSource(TokenSource):
     """
     A token source that samples contiguous chunks of tokens from other token sources.
-    This is useful for creating a smaller token source for testing or for building up
-    mixes of sources.
+    This can be used to adjust the effective size of a source.
 
     .. tip::
         Unlike :class:`SamplingDocumentSource`, this class doesn't take document boundaries
@@ -56,10 +55,9 @@ class SamplingTokenSource(TokenSource):
     :param sources: The sources to sample tokens from.
     :param max_tokens: The maximum number of tokens to sample.
     :param seed: A optional seed for sampling. If ``None``, the first ``N_s`` tokens are taken
-      from each source where ``N_s`` is proportional to the size of the source.
+        from each source where ``N_s`` is proportional to the size of the source.
     :param allow_repetition: Allow repeated tokens (oversampling) to meet the target ``max_tokens``
-      if needed.
-    :param work_dir: A local working directory for caching preprocessing results.
+        if needed. If ``False`` then ``max_tokens`` can't exceed the total size of all sources.
     """
 
     Config = SamplingTokenSourceConfig

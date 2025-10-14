@@ -63,7 +63,7 @@ class ComposableDataLoader(TextDataLoaderBase):
       ``sequence_length`` and ``max_sequence_length``.
     :param collator: The data collator to use to form batches.
     :param tokenizer: The config of the tokenizer used to create the underlying data.
-    :param work_dir: A local working directory that can be used for caching.
+    :param work_dir: A common local working directory that can be used for caching.
     :param global_batch_size: The total batch size (in tokens) across all data parallel ranks.
     :param dp_world_size: The number of data parallel ranks.
     :param dp_rank: The data parallel rank of the current process.

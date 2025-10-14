@@ -93,6 +93,8 @@ class MixingDocumentSourceSpec:
     An optional factor to adjust the effective size of this source prior to determining how many
     tokens to sample. A factor less than 1.0 makes the source smaller, while a factor greater
     than 1.0 makes it larger by oversampling.
+
+    Equivalently you could wrap the source in a :class:`SamplingDocumentSource` to adjust its size.
     """
     max_repetition_factor: float = 1.0
     """
@@ -116,6 +118,17 @@ class MixingDocumentSourceSpec:
 class MixingDocumentSource(DocumentSource):
     """
     A document source for mixing other document sources together with arbitrary ratios.
+
+    .. important::
+        Sampling is done in a way that minimizes the number of dropped and repeated tokens while
+        matching the target ratios and respecting the :data:`MixingDocumentSourceSpec.max_repetition_factor`
+        values.
+
+        The number of tokens this source produces will always be less than or equal to the
+        sum of tokens across all of its immediate children defined in the ``source_specs``,
+        after applying their respective :data:`MixingDocumentSourceSpec.size_adjustment_factor` values.
+
+        You can always adjust the final size of a source by wrapping it in a :class:`SamplingDocumentSource`.
 
     :param source_specs: The sources and how to sample from them.
     """
