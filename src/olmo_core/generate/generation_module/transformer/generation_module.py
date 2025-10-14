@@ -524,7 +524,9 @@ class TransformerGenerationModule(GenerationModule):
         cpu_kwargs = kwargs.copy()
         cpu_kwargs["device"] = torch.device("cpu")
 
-        log.info(f"Loading checkpoints on CPU for merging, will transfer to target device at the end")
+        log.info(
+            f"Loading checkpoints on CPU for merging, will transfer to target device at the end"
+        )
         log.info(f"Merging {checkpoint_dirs[0]}")
         first_generation_module = cls.from_checkpoint(
             checkpoint_dirs[0], dtype=DType.float32, **cpu_kwargs
@@ -576,9 +578,7 @@ class TransformerGenerationModule(GenerationModule):
 
         # Otherwise, load with the target dtype and convert the merged weights
         log.info(f"Loading merged checkpoint with dtype {dtype}")
-        final_generation_module = cls.from_checkpoint(
-            checkpoint_dirs[0], dtype=dtype, **kwargs
-        )
+        final_generation_module = cls.from_checkpoint(checkpoint_dirs[0], dtype=dtype, **kwargs)
         final_state_dict = final_generation_module.state_dict()
         assert merged_state_dict["model"].keys() == final_state_dict["model"].keys()
 
