@@ -153,17 +153,15 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 save_steps=CUM_PERIOD_STEPS,
             ),
         )
-        # W&B with tokens axis, in addition to default step-based logging
         .with_callback(
             "wandb",
-            WandBTokensCallback(
+            WandBCallback(
                 name=run_name,
                 group=common.run_name,
                 entity="yanhong-lbh",
                 project="linear-rnns",
                 enabled=True,
                 cancel_check_interval=cancel_check_interval,
-                enable_token_axis=True,
             ),
         )
         .with_recommended_evals(
