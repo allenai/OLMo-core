@@ -43,19 +43,28 @@ GLOBAL_BATCH_SIZE_TOKENS = 32 * 2048  # 65,536 tokens/step
 #     200_000_000_000,
 # ]
 
-PERIOD_TOKEN_BUDGETS: List[int] = [
-    50_000_00,
-    100_000_00,
-    200_000_00,
+
+CUMULATIVE_TOKEN_BUDGETS: List[int] = [
+    5_000_000,
+    10_000_000,
+    20_000_000,
 ]
+
+# Convert cumulative budgets to period durations (tokens to add each period)
+PERIOD_TOKEN_BUDGETS: List[int] = []
+prev_budget = 0
+for cum_budget in CUMULATIVE_TOKEN_BUDGETS:
+    period_duration = cum_budget - prev_budget
+    PERIOD_TOKEN_BUDGETS.append(period_duration)
+    prev_budget = cum_budget
 
 # Convert token budgets to *period lengths in steps*.
 def tokens_to_steps(tok: int) -> int:
-    # Use integer division; for exact alignment prefer budgets multiple of GLOBAL_BATCH_SIZE_TOKENS.
-    # If you want a stricter "do not exceed token budget", use floor; if you want to meet/exceed, use round/ceil.
     return int(round(tok / GLOBAL_BATCH_SIZE_TOKENS))
 
 PERIOD_STEPS: List[int] = [tokens_to_steps(t) for t in PERIOD_TOKEN_BUDGETS]
+
+# Calculate cumulative steps for checkpointing
 CUM_PERIOD_STEPS: List[int] = []
 _s = 0
 for L in PERIOD_STEPS:

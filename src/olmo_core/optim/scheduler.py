@@ -568,13 +568,13 @@ def _invprop_decay(
     
     # For eta_min <= 0, use a very small positive value to approximate zero
     # This prevents the formula from collapsing to zero immediately
-    effective_eta_min = max(eta_min, eta_max * 1e-6)
+    effective_eta_min = max(eta_min, eta_max * 0.1)
     
     progress = t / T
     inv_lr = progress / effective_eta_min + (1 - progress) / eta_max
     
     return 1 / inv_lr
-    
+
 
 @dataclass
 class WSDS(Scheduler):
