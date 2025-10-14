@@ -138,7 +138,7 @@ def calculate_sample_sizes(
     # Normalize ratios.
     ratios = ratios / ratios.sum()
 
-    # Determine the number of instances to sample from each source.
+    # Determine the number of items to sample from each source.
     # This is tricky because the sources may have different sizes, yet we want to stay
     # true to the sampling ratios while minimizing the number of dropped or over-sampled items.
     # To that end, the optimal natural distribution of items over sources is the one that
@@ -164,7 +164,7 @@ def calculate_sample_sizes(
     # Sanity check.
     # Sample sizes should stay true to target ratios.
     assert np.allclose(ratios, actual_sample_sizes / actual_sample_sizes.sum())
-    # And sample sizes shouldn't be larger than the number of instances available.
+    # And sample sizes shouldn't be larger than the number of items available.
     actual_sample_sizes = actual_sample_sizes.astype(np.uint64)
     assert (actual_sample_sizes <= sizes_to_use).all()
 

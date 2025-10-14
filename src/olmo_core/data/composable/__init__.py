@@ -253,8 +253,8 @@ And then mix them together at the instance level in a hierarchical fashion with 
 
 .. tip::
     **Up-sampling:** In general general you can accomplish exact up-sampling by wrapping a source in
-    a :class:`SamplingInstanceSource` (or :class:`SamplingTokenSource`, :class:`SamplingDocumentSource`)
-    with ``allow_repetition=True``, but the :class:`MixingInstanceSourceSpec`
+    a :class:`SamplingInstanceSource` (or :class:`SamplingTokenSource`, :class:`SamplingDocumentSource`),
+    but the :class:`MixingInstanceSourceSpec`
     (or :class:`MixingTokenSourceSpec`, :class:`MixingDocumentSourceSpec`) also has a shortcut
     for this via the ``size_adjustment_factor`` option.
 
