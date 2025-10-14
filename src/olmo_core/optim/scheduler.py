@@ -754,7 +754,7 @@ class WSDS(Scheduler):
             else:
                 t = pos - (W + S)
                 T = max(D, 0)
-                return _invprop_decay(initial_lr, self.decay_min_lr, t, T)
+                return _linear_decay(initial_lr, T - t, T, self.decay_min_lr)
         else:
             W = 0
             D = self._resolve_decay(Li)
@@ -766,5 +766,5 @@ class WSDS(Scheduler):
             else:
                 t = pos - S
                 T = max(D, 0)
-                return _invprop_decay(initial_lr, self.decay_min_lr, t, T)
+                return _linear_decay(initial_lr, T - t, T, self.decay_min_lr)
 
