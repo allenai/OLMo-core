@@ -675,7 +675,7 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
 
         # Get instances for the batch.
         map_fn: Callable
-        if self.num_threads is not None and self.num_threads > 1:
+        if self.worker_info is None and self.num_threads is not None and self.num_threads > 1:
             map_fn = functools.partial(
                 bettermap.ordered_map_per_thread, parallelism=self.num_threads
             )
