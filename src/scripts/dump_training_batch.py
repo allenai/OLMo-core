@@ -13,7 +13,6 @@ import pickle
 import sys
 from typing import Any, Dict, List
 
-import bettermap
 import torch
 from cached_path import cached_path
 
