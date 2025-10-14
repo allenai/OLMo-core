@@ -550,49 +550,6 @@ class SequentialScheduler(Scheduler):
 class WSDS(Scheduler):
     """
     Warmup–Stable–Decay—Simplified (WSD‑S) scheduler for continual pretraining.
-
-    Design:
-      • A single warmup at the very beginning (period 0).
-      • Multiple periods, each with a long STABLE phase followed by a short DECAY phase.
-      • Period 0 = warmup + stable + decay. Periods 1..N = stable + decay.
-      • At the start of each new period, LR resets to the peak learning rate.
-      • End of each period: LR is set to EXACTLY 0.0, which is ideal for checkpointing.
-      • 'period_lengths' defines each period's total length in chosen 'units' (steps or tokens).
-
-    Phases per period i (length L_i):
-      - if i == 0:
-          warmup length W = self.warmup or round(self.warmup_fraction * L_0)
-          decay  length D = self.decay  or round(self.decay_fraction  * L_i)
-          stable length   = L_0 - W - D
-        else:
-          warmup length W = 0
-          decay  length D = self.decay or round(self.decay_fraction * L_i)
-          stable length   = L_i - D
-
-    Notes:
-      - warmup + decay must not exceed the first period length L_0.
-      - decay must not exceed any period length L_i.
-      - Configuration errors will be raised if these constraints are violated.
-
-    Attributes
-    ----------
-    period_lengths : List[int]
-        Length of EACH period in chosen 'units' (steps or tokens). Must be >0.
-    warmup : Optional[int]
-        Warmup length for period 0 in absolute 'units'. Exactly one of (warmup, warmup_fraction) must be set.
-    warmup_fraction : Optional[float]
-        Warmup fraction of period 0 (0..1). Mutually exclusive with 'warmup'.
-    decay : Optional[int]
-        Decay length per period (absolute). Exactly one of (decay, decay_fraction) must be set.
-    decay_fraction : Optional[float]
-        Decay fraction per period (0..1). Mutually exclusive with 'decay'.
-    warmup_min_lr : float
-        LR at start of warmup.
-    decay_min_lr : float
-        LR at end of decay. Can be 0.0 (recommended for "checkpoint when LR=0").
-
-    Note: The peak learning rate is provided via the 'initial_lr' parameter in get_lr().
-      This value remains constant and is reset at the start of each period.
     """
 
     period_lengths: List[int] = field(default_factory=list)
@@ -672,12 +629,6 @@ class WSDS(Scheduler):
             return int(round(self.decay_fraction * Li))
 
     def _find_period(self, x: int) -> int:
-        """
-        Return the 0-based period index such that:
-            cumulative_end[period-1] < x <= cumulative_end[period]
-        If x <= period_lengths[0], this returns 0.
-        If x > sum(period_lengths), returns len(period_lengths)-1, and we will clamp positions.
-        """
         for idx, end in enumerate(self._cum_period_end):
             if x <= end:
                 return idx
@@ -686,12 +637,6 @@ class WSDS(Scheduler):
     def get_lr(
         self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
     ) -> Union[float, torch.Tensor]:
-        """
-        Return the LR at 'current' (in 'units').
-        Contract:
-        • At end of each period (current == boundary), LR == 0 if decay_min_lr <= 0 (exact).
-        • At start of each period, LR resets to the peak learning rate (stable phase).
-        """
         total = self._cum_period_end[-1]
         if current >= total:
             return 0.0 if self.decay_min_lr <= 0.0 else self.decay_min_lr
