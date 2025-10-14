@@ -11,15 +11,15 @@ log = logging.getLogger(__name__)
 class ListCheckpointerCallback(CheckpointerCallback):
     """
     Save checkpoints only at specific steps provided in a list.
-    
+
     Pass 'save_steps' as a sorted list of step numbers (integers) at which to save.
     All other base behavior (async save, removal) is preserved.
-    
+
     This is useful for saving at predetermined milestones, such as:
     - Period boundaries in WSD-S schedules (when LR = 0)
     - Specific token budgets
     - Other training milestones
-    
+
     Example:
         save_steps = [100, 500, 1000, 2000]  # save at these exact steps
     """
