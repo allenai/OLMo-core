@@ -21,7 +21,7 @@ from olmo_core.train.train_module import (
 )
 # NEW callbacks
 from olmo_core.train.callbacks.zero_lr_checkpointer import ZeroLRCheckpointerCallback
-from olmo_core.train.callbacks.wandb_tokens import WandBTokensCallback
+from olmo_core.train.callbacks.wandb import WandBCallback
 
 
 NUM_GPUS = 4
