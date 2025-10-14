@@ -9,14 +9,13 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from itertools import islice
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Tuple
 
 import bettermap
 import numpy as np
 import torch
 import torch.distributed as dist
 import torch.utils.data
-from jedi.inference.gradual.typing import Callable
 from torch.distributed import DeviceMesh
 
 from ..aliases import PathOrStr
