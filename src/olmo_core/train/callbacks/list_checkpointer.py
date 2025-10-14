@@ -8,16 +8,20 @@ log = logging.getLogger(__name__)
 
 
 @dataclass
-class ZeroLRCheckpointerCallback(CheckpointerCallback):
+class ListCheckpointerCallback(CheckpointerCallback):
     """
-    Save checkpoints only at specific steps -- typically the period boundaries of WSD‑S.
-    Intended for "checkpoint only when LR = 0".
-
-    Pass 'save_steps' as a sorted list of *steps* (integers) at which to save.
+    Save checkpoints only at specific steps provided in a list.
+    
+    Pass 'save_steps' as a sorted list of step numbers (integers) at which to save.
     All other base behavior (async save, removal) is preserved.
-
+    
+    This is useful for saving at predetermined milestones, such as:
+    - Period boundaries in WSD-S schedules (when LR = 0)
+    - Specific token budgets
+    - Other training milestones
+    
     Example:
-        save_steps = [S1, S2, S3, ...]  # cumulative period lengths in steps
+        save_steps = [100, 500, 1000, 2000]  # save at these exact steps
     """
 
     # Disable the interval behavior in the base class by setting a huge interval
