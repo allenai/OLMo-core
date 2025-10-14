@@ -1140,8 +1140,11 @@ class TransformerConfig(Config):
             new_config.block_overrides = {
                 i: add_rope_scaling(new_config.block.copy())
                 for i in range(new_config.n_layers)
-                if not new_config.block.attention.sliding_window.should_use_swa(
-                    i, new_config.n_layers
+                if not (
+                    new_config.block.attention.sliding_window
+                    and new_config.block.attention.sliding_window.should_use_swa(
+                        i, new_config.n_layers
+                    )
                 )
             }
         return new_config
