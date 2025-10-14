@@ -70,7 +70,6 @@ def test_sampling_document_source_with_repetition(tmp_path: Path):
         og_source,
         max_tokens=20,
         work_dir=tmp_path,
-        allow_repetition=True,
     )
     assert sampled_source.num_docs == 5  # first doc will be repeated
     assert sampled_source.num_tokens == 19

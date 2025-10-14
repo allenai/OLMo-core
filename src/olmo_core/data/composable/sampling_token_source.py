@@ -26,7 +26,7 @@ class SamplingTokenSourceConfig(TokenSourceConfig):
     sources: List[TokenSourceConfig]
     max_tokens: int
     seed: Optional[int] = None
-    allow_repetition: bool = False
+    allow_repetition: Optional[bool] = None
     label: Optional[str] = None
 
     def build(self, work_dir: PathOrStr) -> List["SamplingTokenSource"]:  # type: ignore[override]
@@ -70,7 +70,7 @@ class SamplingTokenSource(TokenSource):
         max_tokens: int,
         seed: Optional[int] = None,
         work_dir: PathOrStr,
-        allow_repetition: bool = False,
+        allow_repetition: Optional[bool] = None,
         label: Optional[str] = None,
     ):
         super().__init__(work_dir=work_dir, label=label)
@@ -80,6 +80,8 @@ class SamplingTokenSource(TokenSource):
 
         # Determine how many tokens to sample from each source.
         total_tokens = sum(source.num_tokens for source in sources)
+        if allow_repetition is None:
+            allow_repetition = max_tokens > total_tokens
         if max_tokens > total_tokens and not allow_repetition:
             raise OLMoConfigurationError(
                 "'max_tokens' cannot exceed the total number of tokens unless 'allow_repetition=True'"

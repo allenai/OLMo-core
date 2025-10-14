@@ -33,7 +33,7 @@ class SamplingDocumentSourceConfig(DocumentSourceConfig):
     sources: List[DocumentSourceConfig]
     max_tokens: int
     seed: Optional[int] = None
-    allow_repetition: bool = False
+    allow_repetition: Optional[bool] = None
     label: Optional[str] = None
 
     def build(self, work_dir: PathOrStr) -> List["SamplingDocumentSource"]:  # type: ignore[override]
@@ -78,9 +78,11 @@ class SamplingDocumentSource(DocumentSource):
         max_tokens: int,
         seed: Optional[int] = None,
         work_dir: PathOrStr,
-        allow_repetition: bool = False,
+        allow_repetition: Optional[bool] = None,
         label: Optional[str] = None,
     ):
+        assert max_tokens > 0
+
         super().__init__(work_dir=work_dir, label=label)
 
         source: DocumentSource
@@ -90,8 +92,8 @@ class SamplingDocumentSource(DocumentSource):
             source = ConcatenatedDocumentSource(*sources, work_dir=work_dir)
         else:
             source = sources[0]
+
         self._source = source
-        assert max_tokens > 0
         self._max_tokens = max_tokens
         self._seed = seed
         self._allow_repetition = allow_repetition
@@ -119,6 +121,8 @@ class SamplingDocumentSource(DocumentSource):
             document_lengths = document_offsets[:, 1] - document_offsets[:, 0]
             cu_document_lengths = np.cumsum(document_lengths, dtype=np.uint64)
             total_tokens = int(cu_document_lengths[-1])
+            if allow_repetition is None:
+                allow_repetition = max_tokens > total_tokens
             if max_tokens > total_tokens and not allow_repetition:
                 raise OLMoConfigurationError(
                     "'max_tokens' cannot exceed the total number of tokens unless 'allow_repetition=True'"

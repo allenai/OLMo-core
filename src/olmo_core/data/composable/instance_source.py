@@ -133,7 +133,7 @@ class InstanceSource(SourceABC):
         max_tokens: Optional[int] = None,
         max_instances: Optional[int] = None,
         seed: Optional[int] = None,
-        allow_repetition: bool = False,
+        allow_repetition: Optional[bool] = None,
     ) -> "SamplingInstanceSource":
         """
         Create a :class:`SamplingInstanceSource` by sampling instances from this source.
@@ -175,9 +175,7 @@ class InstanceSource(SourceABC):
         :param seed: A random seed for sampling.
         """
         assert factor > 0
-        return self.sample(
-            max_tokens=int(self.num_tokens * factor), seed=seed, allow_repetition=True
-        )
+        return self.sample(max_tokens=int(self.num_tokens * factor), seed=seed)
 
     def split(
         self, ratio: float, seed: Optional[int] = None

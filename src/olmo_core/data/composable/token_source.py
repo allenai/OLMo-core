@@ -127,7 +127,7 @@ class TokenSource(SourceABC):
         *,
         max_tokens: int,
         seed: Optional[int] = None,
-        allow_repetition: bool = False,
+        allow_repetition: Optional[bool] = None,
     ) -> "SamplingTokenSource":
         """
         Create a :class:`SamplingTokenSource` by sampling tokens from this source.
@@ -163,9 +163,7 @@ class TokenSource(SourceABC):
         :param seed: A seed to use to randomize the sampling.
         """
         assert factor > 0
-        return self.sample(
-            max_tokens=int(self.num_tokens * factor), seed=seed, allow_repetition=True
-        )
+        return self.sample(max_tokens=int(self.num_tokens * factor), seed=seed)
 
     def split(self, ratio: float) -> Tuple["SlicedTokenSource", "SlicedTokenSource"]:
         """
@@ -319,7 +317,7 @@ class DocumentSource(TokenSource):
         *,
         max_tokens: int,
         seed: Optional[int] = None,
-        allow_repetition: bool = False,
+        allow_repetition: Optional[bool] = None,
     ) -> "SamplingDocumentSource":
         from .sampling_document_source import SamplingDocumentSource
 

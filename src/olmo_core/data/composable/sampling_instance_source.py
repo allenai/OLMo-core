@@ -22,7 +22,7 @@ class SamplingInstanceSourceConfig(InstanceSourceConfig):
     max_tokens: Optional[int] = None
     max_instances: Optional[int] = None
     seed: Optional[int] = None
-    allow_repetition: bool = False
+    allow_repetition: Optional[bool] = None
     label: Optional[str] = None
 
     def __post_init__(self):
@@ -75,7 +75,7 @@ class SamplingInstanceSource(InstanceSource):
         max_instances: Optional[int] = None,
         work_dir: PathOrStr,
         seed: Optional[int] = None,
-        allow_repetition: bool = False,
+        allow_repetition: Optional[bool] = None,
         label: Optional[str] = None,
     ):
         if not sources:
@@ -114,6 +114,8 @@ class SamplingInstanceSource(InstanceSource):
 
         # Determine how many instances to sample from each source.
         total_instances = sum(len(source) for source in self.sources)
+        if allow_repetition is None:
+            allow_repetition = max_instances > total_instances
         if max_instances > total_instances and not allow_repetition:
             raise OLMoConfigurationError(
                 "'max_instances' cannot exceed the total number of instances unless 'allow_repetition=True'"

@@ -171,7 +171,6 @@ class MixingDocumentSource(DocumentSource):
                     max_tokens=int(sample_size),
                     work_dir=work_dir,
                     seed=None if seed is None else seed + i,
-                    allow_repetition=sample_size > len(spec.source),
                     label=spec.label or spec.source.label,
                 )
             )
