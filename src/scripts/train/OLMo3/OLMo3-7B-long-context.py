@@ -1,7 +1,11 @@
 from datetime import datetime
 from typing import Optional
 
-from olmo_core.data import NumpyDataLoaderConfig, NumpyPackedFSLDatasetConfig, TokenizerConfig
+from olmo_core.data import (
+    NumpyDataLoaderConfig,
+    NumpyPackedFSLDatasetConfig,
+    TokenizerConfig,
+)
 from olmo_core.internal import cookbook
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
@@ -60,8 +64,10 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     dataset_config = NumpyPackedFSLDatasetConfig.glob(
-        join_path(
-            root_dir, "preprocessed/tylerr/lc-reshard-final/v0.6/allenai/dolma2-tokenizer/*.npy"
+        str(
+            join_path(
+                root_dir, "preprocessed/tylerr/lc-reshard-final/v0.6/allenai/dolma2-tokenizer/*.npy"
+            )
         ),
         tokenizer=tokenizer_config,
         work_dir=work_dir,
@@ -76,9 +82,11 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     trainer_config = cookbook.configure_trainer(
-        load_path=join_path(
-            root_dir,
-            "checkpoints/allysone/anneal-round5-100B-olmo25_7b-anneal-6T-decon-sparkle-motion-8730626c/step47684",
+        load_path=str(
+            join_path(
+                root_dir,
+                "checkpoints/allysone/anneal-round5-100B-olmo25_7b-anneal-6T-decon-sparkle-motion-8730626c/step47684",
+            )
         ),
         load_trainer_state=False,
         load_optim_state=True,
