@@ -546,36 +546,6 @@ class SequentialScheduler(Scheduler):
         return self.schedulers[-1].get_lr(initial_lr, current, t_max)
 
 
-def _invprop_decay(
-    eta_max: Union[float, torch.Tensor],
-    eta_min: float,
-    t: int,
-    T: int,
-) -> Union[float, torch.Tensor]:
-    """
-    Inverse-proportional decay where 1/lr interpolates linearly.
-    
-    Formula: 1/lr(t) = (t/T) * (1/eta_min) + (1 - t/T) * (1/eta_max)
-    """
-    if T == 0:
-        return eta_min if eta_min > 0 else 0.0
-    
-    if t >= T:
-        return eta_min if eta_min > 0 else 0.0
-    
-    if t == 0:
-        return eta_max
-    
-    # For eta_min <= 0, use a very small positive value to approximate zero
-    # This prevents the formula from collapsing to zero immediately
-    effective_eta_min = max(eta_min, eta_max * 0.1)
-    
-    progress = t / T
-    inv_lr = progress / effective_eta_min + (1 - progress) / eta_max
-    
-    return 1 / inv_lr
-
-
 @dataclass
 class WSDS(Scheduler):
     """
@@ -623,7 +593,6 @@ class WSDS(Scheduler):
         LR at end of decay. Can be 0.0 (recommended for "checkpoint when LR=0").
     """
 
-    # --- configuration ---
     period_lengths: List[int] = field(default_factory=list)
 
     warmup: Optional[int] = None
@@ -635,11 +604,9 @@ class WSDS(Scheduler):
     warmup_min_lr: float = 0.0
     decay_min_lr: float = 0.0
 
-    # --- cached derived state ---
     _cum_period_end: List[int] = field(default_factory=list, init=False, repr=False)
 
     def __post_init__(self):
-        # Units validated by base class.
         if not self.period_lengths:
             raise OLMoConfigurationError("'period_lengths' must be provided and non-empty.")
         if any(p <= 0 for p in self.period_lengths):
@@ -664,28 +631,24 @@ class WSDS(Scheduler):
             s += int(L)
             self._cum_period_end.append(s)
 
-        # Validate warmup+decay for the first period.
+        # Validate warmup+decay for the first period - ERROR instead of adjust
         L0 = self.period_lengths[0]
         W = self._resolve_warmup(L0)
         D0 = self._resolve_decay(L0)
         if W + D0 > L0:
-            # Proportionally shrink (keep ratio W:D0) to fit in L0.
-            total = W + D0
-            if total == 0:
-                # degenerate; make everything stable
-                pass
-            else:
-                W = round(W * L0 / total)
-                D0 = L0 - W
-            # Store the adjusted warmup/decay values into fractions so that we recompute consistently later
-            if self.warmup is not None:
-                self.warmup = W
-            else:
-                self.warmup_fraction = W / L0
-            if self.decay is not None:
-                self.decay = D0
-            else:
-                self.decay_fraction = D0 / L0
+            raise OLMoConfigurationError(
+                f"First period: warmup ({W}) + decay ({D0}) = {W + D0} exceeds period length ({L0}). "
+                f"Please reduce warmup and/or decay values."
+            )
+        
+        # Validate decay for all subsequent periods
+        for i, Li in enumerate(self.period_lengths[1:], start=1):
+            Di = self._resolve_decay(Li)
+            if Di > Li:
+                raise OLMoConfigurationError(
+                    f"Period {i}: decay ({Di}) exceeds period length ({Li}). "
+                    f"Please reduce decay value or increase period length."
+                )
 
     def _resolve_warmup(self, L0: int) -> int:
         if self.warmup is not None:
