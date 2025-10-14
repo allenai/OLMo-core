@@ -133,7 +133,6 @@ class InstanceSource(SourceABC):
         max_tokens: Optional[int] = None,
         max_instances: Optional[int] = None,
         seed: Optional[int] = None,
-        allow_repetition: Optional[bool] = None,
     ) -> "SamplingInstanceSource":
         """
         Create a :class:`SamplingInstanceSource` by sampling instances from this source.
@@ -148,9 +147,6 @@ class InstanceSource(SourceABC):
           Mutually exclusive with ``max_tokens``.
         :param seed: A random seed for sampling. If ``None``, no shuffling is done and instances
           are taken in order.
-        :param allow_repetition: Allow repeated instances (oversampling) to meet the target
-          ``max_instances`` if needed. If ``False``, ``max_tokens`` or ``max_instances`` must
-          be less than the size of the source.
         """
         from .sampling_instance_source import SamplingInstanceSource
 
@@ -159,7 +155,6 @@ class InstanceSource(SourceABC):
             max_tokens=max_tokens,
             max_instances=max_instances,
             seed=seed,
-            allow_repetition=allow_repetition,
             work_dir=self.common_work_dir,
         )
 

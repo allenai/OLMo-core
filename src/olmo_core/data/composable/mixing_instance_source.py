@@ -175,7 +175,6 @@ class MixingInstanceSource(InstanceSource):
                     max_tokens=int(sample_size),
                     work_dir=work_dir,
                     seed=None if seed is None else seed + i,
-                    allow_repetition=True,
                     label=spec.label or spec.source.label,
                 )
             )

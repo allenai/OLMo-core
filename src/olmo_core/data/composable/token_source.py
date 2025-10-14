@@ -127,7 +127,6 @@ class TokenSource(SourceABC):
         *,
         max_tokens: int,
         seed: Optional[int] = None,
-        allow_repetition: Optional[bool] = None,
     ) -> "SamplingTokenSource":
         """
         Create a :class:`SamplingTokenSource` by sampling tokens from this source.
@@ -137,9 +136,6 @@ class TokenSource(SourceABC):
 
         :param max_tokens: The maximum number of tokens to sample.
         :param seed: A seed to use to randomize the sampling.
-        :param allow_repetition: Whether to allow the same token to be sampled multiple times.
-            If ``False``, then ``max_tokens`` must be less than or equal to the number of tokens
-            in this source.
         """
         from .sampling_token_source import SamplingTokenSource
 
@@ -147,7 +143,6 @@ class TokenSource(SourceABC):
             self,
             max_tokens=max_tokens,
             seed=seed,
-            allow_repetition=allow_repetition,
             work_dir=self.common_work_dir,
         )
 
@@ -317,7 +312,6 @@ class DocumentSource(TokenSource):
         *,
         max_tokens: int,
         seed: Optional[int] = None,
-        allow_repetition: Optional[bool] = None,
     ) -> "SamplingDocumentSource":
         from .sampling_document_source import SamplingDocumentSource
 
@@ -325,7 +319,6 @@ class DocumentSource(TokenSource):
             self,
             max_tokens=max_tokens,
             seed=seed,
-            allow_repetition=allow_repetition,
             work_dir=self.common_work_dir,
         )
 

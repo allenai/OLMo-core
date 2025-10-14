@@ -8,7 +8,6 @@ from typing import List, Optional, Sequence, Tuple
 import numpy as np
 
 from olmo_core.aliases import PathOrStr
-from olmo_core.exceptions import OLMoConfigurationError
 
 from ..utils import get_rng
 from .token_source import TokenRange, TokenSource, TokenSourceConfig
@@ -26,7 +25,6 @@ class SamplingTokenSourceConfig(TokenSourceConfig):
     sources: List[TokenSourceConfig]
     max_tokens: int
     seed: Optional[int] = None
-    allow_repetition: Optional[bool] = None
     label: Optional[str] = None
 
     def build(self, work_dir: PathOrStr) -> List["SamplingTokenSource"]:  # type: ignore[override]
@@ -37,7 +35,6 @@ class SamplingTokenSourceConfig(TokenSourceConfig):
                 max_tokens=self.max_tokens,
                 seed=self.seed,
                 work_dir=work_dir,
-                allow_repetition=self.allow_repetition,
                 label=self.label,
             )
         ]
@@ -56,8 +53,6 @@ class SamplingTokenSource(TokenSource):
     :param max_tokens: The maximum number of tokens to sample.
     :param seed: A optional seed for sampling. If ``None``, the first ``N_s`` tokens are taken
         from each source where ``N_s`` is proportional to the size of the source.
-    :param allow_repetition: Allow repeated tokens (oversampling) to meet the target ``max_tokens``
-        if needed. If ``False`` then ``max_tokens`` can't exceed the total size of all sources.
     """
 
     Config = SamplingTokenSourceConfig
@@ -70,7 +65,6 @@ class SamplingTokenSource(TokenSource):
         max_tokens: int,
         seed: Optional[int] = None,
         work_dir: PathOrStr,
-        allow_repetition: Optional[bool] = None,
         label: Optional[str] = None,
     ):
         super().__init__(work_dir=work_dir, label=label)
@@ -80,12 +74,6 @@ class SamplingTokenSource(TokenSource):
 
         # Determine how many tokens to sample from each source.
         total_tokens = sum(source.num_tokens for source in sources)
-        if allow_repetition is None:
-            allow_repetition = max_tokens > total_tokens
-        if max_tokens > total_tokens and not allow_repetition:
-            raise OLMoConfigurationError(
-                "'max_tokens' cannot exceed the total number of tokens unless 'allow_repetition=True'"
-            )
         source_sample_sizes: List[int] = []
         for source in sources:
             # We want `source.num_tokens / total_tokens ~= source_sample_size / max_tokens`,

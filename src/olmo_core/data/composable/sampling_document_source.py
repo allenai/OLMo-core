@@ -10,7 +10,6 @@ import numpy as np
 import olmo_core.distributed.utils as dist_utils
 import olmo_core.io as io
 from olmo_core.aliases import PathOrStr
-from olmo_core.exceptions import OLMoConfigurationError
 
 from ..utils import get_rng, load_array_slice, write_array_to_disk
 from .token_source import (
@@ -33,7 +32,6 @@ class SamplingDocumentSourceConfig(DocumentSourceConfig):
     sources: List[DocumentSourceConfig]
     max_tokens: int
     seed: Optional[int] = None
-    allow_repetition: Optional[bool] = None
     label: Optional[str] = None
 
     def build(self, work_dir: PathOrStr) -> List["SamplingDocumentSource"]:  # type: ignore[override]
@@ -44,7 +42,6 @@ class SamplingDocumentSourceConfig(DocumentSourceConfig):
                 max_tokens=self.max_tokens,
                 seed=self.seed,
                 work_dir=work_dir,
-                allow_repetition=self.allow_repetition,
                 label=self.label,
             )
         ]
@@ -64,8 +61,6 @@ class SamplingDocumentSource(DocumentSource):
         at most this many tokens, but potentially less because only whole documents are sampled.
     :param seed: A optional seed for sampling documents. If ``None``, no shuffling is done and
         the first documents are taken up to ``max_tokens``.
-    :param allow_repetition: Allow repeated documents (oversampling) to meet the target ``max_tokens``
-        if needed. If ``False`` then ``max_tokens`` can't exceed the total size of all sources.
     """
 
     Config = SamplingDocumentSourceConfig
@@ -78,7 +73,6 @@ class SamplingDocumentSource(DocumentSource):
         max_tokens: int,
         seed: Optional[int] = None,
         work_dir: PathOrStr,
-        allow_repetition: Optional[bool] = None,
         label: Optional[str] = None,
     ):
         assert max_tokens > 0
@@ -96,7 +90,6 @@ class SamplingDocumentSource(DocumentSource):
         self._source = source
         self._max_tokens = max_tokens
         self._seed = seed
-        self._allow_repetition = allow_repetition
 
         # Sample tokens from the source.
         log.info(f"Sampling documents from {self.source}...")
@@ -121,12 +114,6 @@ class SamplingDocumentSource(DocumentSource):
             document_lengths = document_offsets[:, 1] - document_offsets[:, 0]
             cu_document_lengths = np.cumsum(document_lengths, dtype=np.uint64)
             total_tokens = int(cu_document_lengths[-1])
-            if allow_repetition is None:
-                allow_repetition = max_tokens > total_tokens
-            if max_tokens > total_tokens and not allow_repetition:
-                raise OLMoConfigurationError(
-                    "'max_tokens' cannot exceed the total number of tokens unless 'allow_repetition=True'"
-                )
 
             n_repetitions = max_tokens // total_tokens
             remaining_sample_size = max_tokens % total_tokens
@@ -197,7 +184,6 @@ class SamplingDocumentSource(DocumentSource):
                 f"source={self.source.fingerprint},"
                 f"max_tokens={self.max_tokens},"
                 f"seed={self.seed},"
-                f"repetition={self._allow_repetition},"
             ).encode()
         )
         return sha256_hash.hexdigest()
