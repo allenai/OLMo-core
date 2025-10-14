@@ -48,6 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added CLI script `src/scripts/unshard.py` for converting distributed checkpoints to regular PyTorch or safetensors format.
 - Added a custom block that does LayerNorm scaling.
 - Added `OLMo-mix-0625-150Bsample` data mix.
 - Added alias support to `DataMix` enum.
@@ -66,6 +67,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added additional internal configuration tools.
 - Added a new named data mix that we used for the 32B run
 - Added the ability for `GenerationModule` to load multiple checkpoints at once and average them.
+- Added internal OLMo3 7B midtraining config.
+- Added ability to convert OLMo3 models to/from HF format with support for rope scaling configs.
 
 
 ## [v2.2.0](https://github.com/allenai/OLMo-core/releases/tag/v2.2.0) - 2025-08-26
@@ -141,6 +144,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Optimization: avoid redundant calls to `model.train()` in `TransformerTrainModule`.
 - `NumpyDatasetConfig.expand_glob` now works with remote directories.
 - Fixed Attention block sharding when TP and head-wise QK norm are both applied.
+- Added RoPE scaling configs to `rope` module's exports.
 
 
 ## [v2.1.0](https://github.com/allenai/OLMo-core/releases/tag/v2.1.0) - 2025-04-14
