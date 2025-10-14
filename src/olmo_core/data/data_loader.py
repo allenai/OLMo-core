@@ -16,6 +16,7 @@ import numpy as np
 import torch
 import torch.distributed as dist
 import torch.utils.data
+from jedi.inference.gradual.typing import Callable
 from torch.distributed import DeviceMesh
 
 from ..aliases import PathOrStr
@@ -674,7 +675,8 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
             indices = indices[:, self.dp_rank :: self.dp_world_size]
 
         # Get instances for the batch.
-        if self.num_threads > 1:
+        map_fn: Callable
+        if self.num_threads is not None and self.num_threads > 1:
             map_fn = functools.partial(
                 bettermap.ordered_map_per_thread, parallelism=self.num_threads
             )
