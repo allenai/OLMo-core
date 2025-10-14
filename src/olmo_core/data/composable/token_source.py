@@ -1,9 +1,8 @@
 import functools as ft
 import hashlib
 import typing
-from abc import ABCMeta, abstractmethod
+from abc import abstractmethod
 from dataclasses import dataclass
-from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     ClassVar,
@@ -19,13 +18,11 @@ from typing import (
 import numpy as np
 from typing_extensions import NotRequired
 
-import olmo_core.distributed.utils as dist_utils
-import olmo_core.io as io
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import Config
-from olmo_core.exceptions import OLMoConfigurationError
 
 from ..tokenizer import TokenizerConfig
+from .source_abc import SourceABC
 from .utils import as_ndarray
 
 if TYPE_CHECKING:
@@ -46,7 +43,7 @@ class TokenRange(TypedDict):
     """An optional mask indicating which tokens should contribute to the loss."""
 
 
-class TokenSource(metaclass=ABCMeta):
+class TokenSource(SourceABC):
     """
     An abstract base class for a source of tokens, usually consumed by an :class:`InstanceSource`.
     It essentially represents an array of tokens.
@@ -56,59 +53,6 @@ class TokenSource(metaclass=ABCMeta):
     """
 
     DISPLAY_ICON: ClassVar[str] = "\ueb7e"  # Nerd Font icon for visualizations
-
-    def __init__(self, *, work_dir: PathOrStr, label: Optional[str] = None):
-        if io.is_url(work_dir):
-            raise OLMoConfigurationError(
-                f"'work_dir' should be a local path, not a URL ('{work_dir}')."
-            )
-        self._work_dir = Path(io.normalize_path(work_dir))
-        if self._work_dir.name == self.__class__.__name__:
-            self._work_dir = self._work_dir.parent
-        self._fs_local_rank = dist_utils.get_fs_local_rank()
-        self._rank = dist_utils.get_rank()
-        self._label = label
-
-    def __repr__(self) -> str:
-        return f"{self.__class__.__name__}({self.fingerprint})"
-
-    @property
-    def work_dir(self) -> Path:
-        """
-        A local working directly that can be used by the token source for caching files during
-        preprocessing.
-        """
-        return self._work_dir / self.__class__.__name__
-
-    @property
-    def fs_local_rank(self) -> int:
-        """
-        The local rank of the current process with respect to filesystem access of the working
-        directory.
-        """
-        return self._fs_local_rank
-
-    @property
-    def rank(self) -> int:
-        """The global rank of the current process across the entire distributed job."""
-        return self._rank
-
-    @property
-    def label(self) -> Optional[str]:
-        """The label assigned to this source."""
-        return self._label
-
-    @property
-    @abstractmethod
-    def fingerprint(self) -> str:
-        """A unique, deterministic string representing the contents of the source."""
-        raise NotImplementedError
-
-    @property
-    @abstractmethod
-    def num_tokens(self) -> int:
-        """The number of tokens available from this source, same as ``len(self)``."""
-        raise NotImplementedError
 
     def __len__(self) -> int:
         """The number of tokens available from this source, same as ``self.num_tokens``."""
@@ -158,18 +102,6 @@ class TokenSource(metaclass=ABCMeta):
                 f"for source {self} with {self.num_tokens:,d} tokens."
             )
         return start_idx, end_idx
-
-    @abstractmethod
-    def children(self) -> Iterable["TokenSource"]:
-        """Get the child token sources that make up this source, if any."""
-        raise NotImplementedError
-
-    @property
-    def is_leaf(self) -> bool:
-        """Check if this token source is a leaf node (i.e. has no children)."""
-        for _ in self.children():
-            return False
-        return True
 
     def __add__(self, other: "TokenSource") -> "ConcatenatedTokenSource":
         """

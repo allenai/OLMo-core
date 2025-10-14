@@ -63,8 +63,8 @@ Create a simple instance source that chunks up in-memory token sources::
 
 ::
 
-   ConcatAndChunkInstanceSource: 100 tokens
-   └─ InMemoryTokenSource: 100 tokens
+   ConcatAndChunkInstanceSource(ee7a76d): 100 tokens
+   └─ InMemoryTokenSource(73b91ee): 100 tokens
 
 Split the source into train and test sets::
 
@@ -74,13 +74,13 @@ Split the source into train and test sets::
 
 ::
 
-   SlicedInstanceSource: 80 tokens
-   └─ ConcatAndChunkInstanceSource: 100 tokens
-      └─ InMemoryTokenSource: 100 tokens
-
-   SlicedInstanceSource: 10 tokens
-   └─ ConcatAndChunkInstanceSource: 100 tokens
-      └─ InMemoryTokenSource: 100 tokens
+   SlicedInstanceSource(d01d0e2): 80 tokens
+   └─ ConcatAndChunkInstanceSource(ee7a76d): 100 tokens
+      └─ InMemoryTokenSource(73b91ee): 100 tokens
+ 
+   SlicedInstanceSource(a5a511f): 10 tokens
+   └─ ConcatAndChunkInstanceSource(ee7a76d): 100 tokens
+      └─ InMemoryTokenSource(73b91ee): 100 tokens
 
 Sample a subset of a source::
 
@@ -89,10 +89,10 @@ Sample a subset of a source::
 
 ::
 
-   SamplingInstanceSource: 50 tokens
-   └─ SlicedInstanceSource: 80 tokens
-      └─ ConcatAndChunkInstanceSource: 100 tokens
-         └─ InMemoryTokenSource: 100 tokens
+   SamplingInstanceSource(77d8031): 50 tokens
+   └─ SlicedInstanceSource(d01d0e2): 80 tokens
+      └─ ConcatAndChunkInstanceSource(ee7a76d): 100 tokens
+         └─ InMemoryTokenSource(73b91ee): 100 tokens
 
 Create a mix of token sources::
 
@@ -108,12 +108,12 @@ Create a mix of token sources::
 
 ::
 
-   ConcatAndChunkInstanceSource: 200 tokens
-   └─ MixingTokenSource: 200 tokens
-      ├─ SamplingTokenSource: 100 tokens [source1]
-      │  └─ InMemoryTokenSource: 100 tokens [source1]
-      └─ SamplingTokenSource: 100 tokens [source2]
-         └─ InMemoryTokenSource: 100 tokens [source2]
+   ConcatAndChunkInstanceSource(4820826): 200 tokens
+   └─ MixingTokenSource(5fc211a): 200 tokens
+      ├─ SamplingTokenSource(7adca21): 100 tokens [source1]
+      │  └─ InMemoryTokenSource(73b91ee): 100 tokens [source1]
+      └─ SamplingTokenSource(baf2e4f): 100 tokens [source2]
+         └─ InMemoryTokenSource(a9e49e1): 100 tokens [source2]
 
 Working with numpy source files
 -------------------------------
@@ -232,22 +232,22 @@ And then mix them together in a hierarchical fashion::
 
 ::
 
-   MixingInstanceSource: 40.6B tokens
-   ├─ SamplingInstanceSource: 20.3B tokens [code]
-   │  └─ MixingInstanceSource: 37.7B tokens
-   │     ├─ SamplingInstanceSource: 18.8B tokens [code_fim]
-   │     │  └─ ConcatAndChunkInstanceSource: 21.4B tokens [code_fim]
+   MixingInstanceSource(4d3e689): 40.6B tokens
+   ├─ SamplingInstanceSource(12ba409): 20.3B tokens [code]
+   │  └─ MixingInstanceSource(5d9386b): 37.7B tokens
+   │     ├─ SamplingInstanceSource(3563ba5): 18.8B tokens [code_fim]
+   │     │  └─ ConcatAndChunkInstanceSource(adb4562): 21.4B tokens [code_fim]
    │     │     └─ NumpyDocumentSource x 474: 21.4B tokens [code_fim]
-   │     └─ SamplingInstanceSource: 18.8B tokens [swallowcode]
-   │        └─ ConcatAndChunkInstanceSource: 18.8B tokens [swallowcode]
+   │     └─ SamplingInstanceSource(cc0d34b): 18.8B tokens [swallowcode]
+   │        └─ ConcatAndChunkInstanceSource(b2f2ef4): 18.8B tokens [swallowcode]
    │           └─ NumpyDocumentSource x 128: 18.8B tokens [swallowcode]
-   └─ SamplingInstanceSource: 20.3B tokens [math]
-      └─ MixingInstanceSource: 20.3B tokens
-         ├─ SamplingInstanceSource: 2.0B tokens [megamath]
-         │  └─ ConcatAndChunkInstanceSource: 3.9B tokens [megamath]
+   └─ SamplingInstanceSource(2380ca7): 20.3B tokens [math]
+      └─ MixingInstanceSource(0b8927b): 20.3B tokens
+         ├─ SamplingInstanceSource(d3ee3f9): 2.0B tokens [megamath]
+         │  └─ ConcatAndChunkInstanceSource(2b6a324): 3.9B tokens [megamath]
          │     └─ NumpyDocumentSource x 264: 3.9B tokens [megamath]
-         └─ SamplingInstanceSource: 18.3B tokens [dolminos2math]
-            └─ ConcatAndChunkInstanceSource: 18.3B tokens [dolminos2math]
+         └─ SamplingInstanceSource(0cf6aa7): 18.3B tokens [dolminos2math]
+            └─ ConcatAndChunkInstanceSource(b768b9a): 18.3B tokens [dolminos2math]
                └─ NumpyDocumentSource x 415: 18.3B tokens [dolminos2math]
 
 Reference
@@ -311,6 +311,7 @@ from .sampling_instance_source import (
 from .sampling_token_source import SamplingTokenSource, SamplingTokenSourceConfig
 from .sliced_instance_source import SlicedInstanceSource
 from .sliced_token_source import SlicedTokenSource
+from .source_abc import SourceABC
 from .token_source import (
     ConcatenatedDocumentSource,
     ConcatenatedTokenSource,
@@ -325,6 +326,7 @@ from .token_source import (
 
 __all__ = [
     # Base classes.
+    "SourceABC",
     "TokenSource",
     "TokenSourceConfig",
     "DocumentSource",

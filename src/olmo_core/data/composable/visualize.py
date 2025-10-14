@@ -1,9 +1,8 @@
-from typing import List, Optional, Union
+from typing import List, Optional
 
 import rich
 
-from .instance_source import InstanceSource
-from .token_source import TokenSource
+from .source_abc import SourceABC
 from .utils import format_token_count
 
 
@@ -18,11 +17,13 @@ def visualize_source(source, icons: bool = True):
 
     def _format_source(
         source_cls,
+        *,
         tokens: int,
         label: Optional[str],
         indent_spec: List[bool],
         is_leaf: bool,
         count: int = 1,
+        fingerprint: Optional[str] = None,
     ) -> str:
         del is_leaf
         indents = []
@@ -35,17 +36,21 @@ def visualize_source(source, icons: bool = True):
         count_str = f" x {count}" if count > 1 else ""
         label_str = rf" \[{_format_label(label)}]" if label else ""
         token_str = format_token_count(tokens)
+        fingerprint_str = f"({fingerprint[:7]})" if fingerprint else ""
         return (
-            f"{indent}[b cyan]{icon_str}{source_cls.__name__}[/]{count_str}: "
+            f"{indent}[b cyan]{icon_str}{source_cls.__name__}[/][cyan]{fingerprint_str}[/]{count_str}: "
             f"[green]{token_str}[/] tokens[magenta]{label_str}[/]"
         )
 
-    def _visualize_source(
-        source: Union[InstanceSource, TokenSource], indent_spec: List[bool]
-    ) -> str:
+    def _visualize_source(source: SourceABC, indent_spec: List[bool]) -> str:
         lines = [
             _format_source(
-                type(source), source.num_tokens, source.label, indent_spec, source.is_leaf
+                type(source),
+                tokens=source.num_tokens,
+                label=source.label,
+                indent_spec=indent_spec,
+                is_leaf=source.is_leaf,
+                fingerprint=source.fingerprint,
             )
         ]
         children = list(source.children())
@@ -71,10 +76,10 @@ def visualize_source(source, icons: bool = True):
             lines.append(
                 _format_source(
                     children[0].__class__,
-                    total_child_tokens,
-                    label,
-                    indent_spec + [True],
-                    True,
+                    tokens=total_child_tokens,
+                    label=label,
+                    indent_spec=indent_spec + [True],
+                    is_leaf=True,
                     count=len(children),
                 )
             )
