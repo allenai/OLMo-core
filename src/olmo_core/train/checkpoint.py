@@ -41,7 +41,7 @@ from ..io import (
 )
 from ..utils import wait_for
 from ..version import VERSION
-from .train_module import TrainModule
+from .train_module import TrainModule, TransformerTrainModule
 
 log = logging.getLogger(__name__)
 
@@ -156,7 +156,7 @@ class Checkpointer:
     def load(
         self,
         dir: PathOrStr,
-        train_module: TrainModule,
+        train_module: TransformerTrainModule,
         *,
         load_trainer_state: Optional[bool] = None,
         keys_to_ignore=None,
@@ -228,9 +228,10 @@ class Checkpointer:
             thread_count=self.load_thread_count,
             allow_partial_load=(keys_to_ignore is not None), # only if we're ignoring things on purpose!
         )
+        train_module.state_dict_load_opts.strict = (keys_to_ignore is None)
         train_module.load_state_dict(state_dict)
 
-        return trainer_state
+        return trainer_state    
 
     def write_file(self, dir: PathOrStr, fname: str, contents: Union[str, bytes]) -> PathOrStr:
         """
