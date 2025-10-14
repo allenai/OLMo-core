@@ -16,6 +16,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Dict, Optional, Tuple
 
+import rich
 import torch
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 import torch.nn.functional as F
@@ -31,7 +32,7 @@ from olmo_core.nn.conversion.state_mapping import StateType, TemplatePlaceholder
 from olmo_core.nn.hf.checkpoint import load_hf_model
 from olmo_core.nn.hf.convert import get_converter_from_hf
 from olmo_core.nn.moe.moe import MoEType
-from olmo_core.nn.transformer.config import TransformerConfig
+from olmo_core.nn.transformer.config import TransformerBlockConfig, TransformerConfig
 from olmo_core.nn.transformer.model import Transformer
 from olmo_core.utils import prepare_cli_environment
 
@@ -50,6 +51,8 @@ def _get_transformer_config(model_arch: str, vocab_size: int) -> TransformerConf
         "olmo2_7b": TransformerConfig.olmo2_7B,
         "olmo2_13b": TransformerConfig.olmo2_13B,
         "olmo2_32b": TransformerConfig.olmo2_32B,
+        "olmo3_190m": TransformerConfig.olmo3_190M,
+        "olmo3_7b": TransformerConfig.olmo3_7B,
         "smallmoe": TransformerConfig.smallmoe,
         "olmoe_1b_7b": TransformerConfig.olmoe_1B_7B,
         "ngpt_271m": TransformerConfig.ngpt_271M,
@@ -112,42 +115,58 @@ def convert_checkpoint_from_hf(
         del transformer_config_dict["float8_config"]
 
     model_config = TransformerConfig.from_dict(transformer_config_dict)
+    rich.print(model_config)
 
     validation_device = validation_device or torch.device("cpu")
 
-    if model_config.block.attention.name == AttentionType.fused:
-        # FusedAttention requires flash attention to even load the model, so we need to use the
-        # GPU for conversion and validation
-        backend = model_config.block.attention.backend
-        if backend is None:
-            assert (
-                model_config.block.attention.use_flash
-            ), "use_flash or flash backend is expected for fused attention"
-            backend = AttentionBackendName.flash_2
-
-        assert backend in (
-            AttentionBackendName.flash_2,
-            AttentionBackendName.flash_3,
-        ), "flash_2 or flash_3 backend is expected for fused attention"
-
-        try:
-            backend.assert_supported()
-            log.info(
-                f"Fused attention requires flash attention, using GPU and {backend} backend for conversion and validation"
-            )
-            device = torch.device("cuda")
-            validation_device = torch.device("cuda")
-            model_config.block.attention.backend = backend
-        except RuntimeError as e:
-            raise RuntimeError(
-                f"Fused attention requires a flash attention backend, but {backend} is not supported"
-            ) from e
-    elif validate and model_config.block.attention.backend != AttentionBackendName.torch:
-        log.info(
-            "Using torch backend for conversion and validation to make validation less likely to fail."
+    block_entries: list[tuple[str, TransformerBlockConfig]] = [("base block", model_config.block)]
+    if model_config.block_overrides:
+        block_entries.extend(
+            (f"block override {idx}", block_config)
+            for idx, block_config in sorted(model_config.block_overrides.items())
         )
-        model_config.block.attention.backend = AttentionBackendName.torch
-        model_config.block.attention.use_flash = False
+
+    def prepare_block_for_conversion(
+        block_label: str, block_config: TransformerBlockConfig
+    ) -> None:
+        nonlocal device, validation_device
+        attention_config = block_config.attention
+        if attention_config.name == AttentionType.fused:
+            backend = attention_config.backend
+            if backend is None:
+                assert (
+                    attention_config.use_flash
+                ), "use_flash or flash_2 backend is expected for fused attention"
+                backend = AttentionBackendName.flash_2
+
+            assert backend in (
+                AttentionBackendName.flash_2,
+                AttentionBackendName.flash_3,
+            ), "flash_2 or flash_3 backend is expected for fused attention"
+
+            try:
+                backend.assert_supported()
+                log.info(
+                    f"Fused attention requires flash attention for {block_label}, using GPU and {backend} backend for conversion and validation"
+                )
+                device = torch.device("cuda")
+                validation_device = torch.device("cuda")
+                attention_config.backend = backend
+            except RuntimeError as e:
+                raise RuntimeError(
+                    f"Fused attention requires a flash attention backend for {block_label}, but {backend} is not supported"
+                ) from e
+
+        elif validate and attention_config.backend != AttentionBackendName.torch:
+            backend_name = attention_config.backend.name if attention_config.backend else "None"
+            log.info(
+                f"Overriding attention backend from {backend_name} to torch for {block_label} conversion and validation to make validation less likely to fail."
+            )
+            attention_config.backend = AttentionBackendName.torch
+            attention_config.use_flash = False
+
+    for block_label, block_config in block_entries:
+        prepare_block_for_conversion(block_label, block_config)
 
     model = model_config.build(init_device="meta")
     model.to_empty(device=device or torch.device("cpu"))
