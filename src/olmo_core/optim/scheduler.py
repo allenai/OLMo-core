@@ -555,8 +555,8 @@ class WSDS(Scheduler):
       • A single warmup at the very beginning (period 0).
       • Multiple periods, each with a long STABLE phase followed by a short DECAY phase.
       • Period 0 = warmup + stable + decay. Periods 1..N = stable + decay.
-      • At the boundary between periods, LR is *reset* to eta_max (the 'initial_lr' for the group).
-      • End of each period: LR is set to EXACTLY 0.0 (for eta_min <= 0), which is ideal for checkpointing.
+      • At the start of each new period, LR resets to the peak learning rate.
+      • End of each period: LR is set to EXACTLY 0.0, which is ideal for checkpointing.
       • 'period_lengths' defines each period's total length in chosen 'units' (steps or tokens).
 
     Phases per period i (length L_i):
@@ -590,6 +590,9 @@ class WSDS(Scheduler):
         LR at start of warmup.
     decay_min_lr : float
         LR at end of decay. Can be 0.0 (recommended for "checkpoint when LR=0").
+
+    Note: The peak learning rate is provided via the 'initial_lr' parameter in get_lr().
+      This value remains constant and is reset at the start of each period.
     """
 
     period_lengths: List[int] = field(default_factory=list)
@@ -680,8 +683,8 @@ class WSDS(Scheduler):
         """
         Return the LR at 'current' (in 'units').
         Contract:
-        • At *end of each period* (current == boundary), LR == 0 if decay_min_lr <= 0 (exact).
-        • Right after a boundary (start of next period), LR resets to initial_lr (stable phase).
+        • At end of each period (current == boundary), LR == 0 if decay_min_lr <= 0 (exact).
+        • At start of each period, LR resets to the peak learning rate (stable phase).
         """
         total = self._cum_period_end[-1]
         if current >= total:
@@ -695,7 +698,7 @@ class WSDS(Scheduler):
         if pidx == 0:
             W = self._resolve_warmup(Li)
             D = self._resolve_decay(Li)
-            S = Li - W - D  # Removed max(., 0)
+            S = Li - W - D
             
             if pos < W:
                 return _linear_warmup(initial_lr, pos, W, self.warmup_min_lr)
@@ -706,7 +709,7 @@ class WSDS(Scheduler):
                 return _linear_decay(initial_lr, D - t, D, self.decay_min_lr)
         else:
             D = self._resolve_decay(Li)
-            S = Li - D  # Removed max(., 0)
+            S = Li - D
             
             if pos < S:
                 return initial_lr
