@@ -525,7 +525,7 @@ class TransformerGenerationModule(GenerationModule):
         cpu_kwargs["device"] = torch.device("cpu")
 
         log.info(
-            f"Loading checkpoints on CPU for merging, will transfer to target device at the end"
+            "Loading checkpoints on CPU for merging, will transfer to target device at the end"
         )
         log.info(f"Merging {checkpoint_dirs[0]}")
         first_generation_module = cls.from_checkpoint(
