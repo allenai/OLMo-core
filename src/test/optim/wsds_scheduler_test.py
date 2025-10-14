@@ -1,7 +1,7 @@
 import pytest
-import torch
-from olmo_core.optim import WSDS
+
 from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.optim import WSDS
 
 
 class TestWSDSScheduler:
@@ -17,18 +17,18 @@ class TestWSDSScheduler:
             decay_min_lr=0.0,
         )
         initial_lr = 1.0
-        
+
         # Test warmup phase (0-100)
         assert scheduler.get_lr(initial_lr, 0, 1000) == 0.0  # Start of warmup
         lr_mid_warmup = scheduler.get_lr(initial_lr, 50, 1000)
         assert 0.0 < lr_mid_warmup < initial_lr  # Increasing
         assert scheduler.get_lr(initial_lr, 100, 1000) == pytest.approx(initial_lr)  # End of warmup
-        
+
         # Test stable phase (100-700)
         assert scheduler.get_lr(initial_lr, 200, 1000) == initial_lr
         assert scheduler.get_lr(initial_lr, 500, 1000) == initial_lr
         assert scheduler.get_lr(initial_lr, 799, 1000) == initial_lr
-        
+
         # Test decay phase (800-1000)
         lr_mid_decay = scheduler.get_lr(initial_lr, 900, 1000)
         assert 0.0 < lr_mid_decay < initial_lr  # Decreasing
@@ -44,16 +44,16 @@ class TestWSDSScheduler:
             decay_min_lr=0.0,
         )
         initial_lr = 1.0
-        
+
         # End of first period
         assert scheduler.get_lr(initial_lr, 1000, 2000) == 0.0
-        
+
         # Start of second period - should reset to peak
         assert scheduler.get_lr(initial_lr, 1001, 2000) == initial_lr
-        
+
         # Middle of second period stable phase
         assert scheduler.get_lr(initial_lr, 1400, 2000) == initial_lr
-        
+
         # End of second period
         assert scheduler.get_lr(initial_lr, 2000, 2000) == 0.0
 
@@ -62,12 +62,12 @@ class TestWSDSScheduler:
         scheduler = WSDS(
             period_lengths=[1000],
             warmup_fraction=0.1,  # 100 steps
-            decay_fraction=0.2,   # 200 steps
+            decay_fraction=0.2,  # 200 steps
             warmup_min_lr=0.0,
             decay_min_lr=0.0,
         )
         initial_lr = 1.0
-        
+
         # Verify phases are correct length
         assert scheduler.get_lr(initial_lr, 0, 1000) == 0.0  # Start warmup
         assert scheduler.get_lr(initial_lr, 100, 1000) == pytest.approx(initial_lr)  # End warmup
@@ -84,7 +84,7 @@ class TestWSDSScheduler:
             decay_min_lr=0.0,
         )
         initial_lr = 1.0
-        
+
         # Stable phase should be 1000 - 50 - 300 = 650 steps
         # Phases: warmup [0, 50), stable [50, 700), decay [700, 1000]
         assert scheduler.get_lr(initial_lr, 50, 1000) == initial_lr  # Start of stable
@@ -102,7 +102,7 @@ class TestWSDSScheduler:
             decay=200,
         )
         initial_lr = 1.0
-        
+
         # Period 1 starts immediately at peak LR (no warmup)
         assert scheduler.get_lr(initial_lr, 1001, 2000) == initial_lr
 
@@ -115,7 +115,7 @@ class TestWSDSScheduler:
             decay_min_lr=0.0,
         )
         initial_lr = 1.0
-        
+
         # Beyond all periods, should stay at decay_min_lr
         assert scheduler.get_lr(initial_lr, 1001, 1000) == 0.0
         assert scheduler.get_lr(initial_lr, 5000, 1000) == 0.0
@@ -129,10 +129,10 @@ class TestWSDSScheduler:
             decay_min_lr=0.1,
         )
         initial_lr = 1.0
-        
+
         # End of decay should reach decay_min_lr
         assert scheduler.get_lr(initial_lr, 1000, 1000) == pytest.approx(0.1)
-        
+
         # Beyond all periods should stay at decay_min_lr
         assert scheduler.get_lr(initial_lr, 1500, 1000) == 0.1
 
@@ -145,7 +145,7 @@ class TestWSDSScheduler:
             warmup_min_lr=0.1,
         )
         initial_lr = 1.0
-        
+
         # Start of warmup should be at warmup_min_lr
         assert scheduler.get_lr(initial_lr, 0, 1000) == 0.1
 
@@ -240,7 +240,7 @@ class TestWSDSScheduler:
             decay=200,
         )
         initial_lr = 1.0
-        
+
         # Test each period ends at 0
         for i in range(num_periods):
             period_end = (i + 1) * 1000
@@ -251,14 +251,14 @@ class TestWSDSScheduler:
         """Test scheduler works with different period lengths."""
         warmup = int(0.1 * period_length)
         decay = int(0.2 * period_length)
-        
+
         scheduler = WSDS(
             period_lengths=[period_length],
             warmup=warmup,
             decay=decay,
         )
         initial_lr = 1.0
-        
+
         # Basic sanity checks
         assert scheduler.get_lr(initial_lr, 0, period_length) == 0.0
         assert scheduler.get_lr(initial_lr, period_length // 2, period_length) == initial_lr

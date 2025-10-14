@@ -27,7 +27,9 @@ class ZeroLRCheckpointerCallback(CheckpointerCallback):
     # user-provided exact steps to save at
     save_steps: Optional[List[int]] = None
 
-    _save_steps_set: Set[int] = field(default_factory=set, init=False, repr=False, metadata={"omegaconf_ignore": True})
+    _save_steps_set: Set[int] = field(
+        default_factory=set, init=False, repr=False, metadata={"omegaconf_ignore": True}
+    )
     _last_saved_step: int = field(default=-1, init=False, repr=False)
 
     def __post_init__(self):

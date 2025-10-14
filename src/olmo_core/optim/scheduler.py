@@ -616,13 +616,17 @@ class WSDS(Scheduler):
 
         # warmup validation (applies ONLY to the first period)
         if (self.warmup is None) == (self.warmup_fraction is None):
-            raise OLMoConfigurationError("Exactly one of 'warmup' or 'warmup_fraction' must be specified.")
+            raise OLMoConfigurationError(
+                "Exactly one of 'warmup' or 'warmup_fraction' must be specified."
+            )
         if self.warmup_fraction is not None and not (0.0 <= self.warmup_fraction <= 1.0):
             raise OLMoConfigurationError("'warmup_fraction' must be in [0, 1].")
 
         # decay validation (applies to ALL periods)
         if (self.decay is None) == (self.decay_fraction is None):
-            raise OLMoConfigurationError("Exactly one of 'decay' or 'decay_fraction' must be specified.")
+            raise OLMoConfigurationError(
+                "Exactly one of 'decay' or 'decay_fraction' must be specified."
+            )
         if self.decay_fraction is not None and not (0.0 <= self.decay_fraction <= 1.0):
             raise OLMoConfigurationError("'decay_fraction' must be in [0, 1].")
 
@@ -637,13 +641,13 @@ class WSDS(Scheduler):
         L0 = self.period_lengths[0]
         W = self._resolve_warmup(L0)
         D0 = self._resolve_decay(L0)
-        
+
         if W + D0 > L0:
             raise OLMoConfigurationError(
                 f"First period: warmup ({W}) + decay ({D0}) = {W + D0} exceeds period length ({L0}). "
                 f"Please reduce warmup and/or decay values."
             )
-        
+
         # Validate decay for remaining periods
         for i, Li in enumerate(self.period_lengths[1:], start=1):
             Di = self._resolve_decay(Li)
@@ -699,7 +703,7 @@ class WSDS(Scheduler):
             W = self._resolve_warmup(Li)
             D = self._resolve_decay(Li)
             S = Li - W - D
-            
+
             if pos < W:
                 return _linear_warmup(initial_lr, pos, W, self.warmup_min_lr)
             elif pos < W + S:
@@ -710,7 +714,7 @@ class WSDS(Scheduler):
         else:
             D = self._resolve_decay(Li)
             S = Li - D
-            
+
             if pos < S:
                 return initial_lr
             else:
