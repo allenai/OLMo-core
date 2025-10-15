@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Perform a garbage collection after checkpointing to avoid running out of CPU memory.
 - Avoidable overflow error when using NumpyPackedFSLDataset.
 - Fixed issue with NumpyFSLDatasetMixture + SourceMixtureDataset where not all instances would have the same sequence length.
+- Attention backend will no longer default to flash in non-CUDA environments.
 
 ### Changed
 
@@ -48,6 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added CLI script `src/scripts/unshard.py` for converting distributed checkpoints to regular PyTorch or safetensors format.
 - Added a custom block that does LayerNorm scaling.
 - Added `OLMo-mix-0625-150Bsample` data mix.
 - Added alias support to `DataMix` enum.
@@ -68,6 +70,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added internal OLMo3 7B midtraining config.
 - Added ability to convert OLMo3 models to/from HF format with support for rope scaling configs.
 - Added the `WSDS` (Warmup-Stable-Decay-Simplified) learning rate scheduler.
+- Added a script that can pull out a single training batch from a training job
+
 
 ## [v2.2.0](https://github.com/allenai/OLMo-core/releases/tag/v2.2.0) - 2025-08-26
 
