@@ -667,16 +667,14 @@ def follow_experiment(
     # Pull events until job is running (or fails)...
     events = set()
     while True:
-        job = beaker.job.get(job.id)
         for event in sorted(
             beaker.job.summarized_events(job), key=lambda event: event.latest_occurrence
         ):
             if event not in events:
                 events.add(event)
                 log.info(f"❯ {event.latest_message}")
-                if event.status.lower() == "started":
-                    break
 
+        job = beaker.job.get(job.id)
         if job.is_finalized or job.is_running:
             break
         elif launch_timeout is not None and (time.monotonic() - start_time) > launch_timeout:
