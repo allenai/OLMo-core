@@ -539,8 +539,6 @@ class TransformerGenerationModule(GenerationModule):
         # Free the first module since we have its state dict
         del first_generation_module
         gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
 
         # Average weights from all checkpoints
         for i, checkpoint_dir in enumerate(checkpoint_dirs[1:], start=2):
@@ -558,17 +556,13 @@ class TransformerGenerationModule(GenerationModule):
                     source_tensor = next_state_dict["model"].pop(key)
                     assert (target_tensor.shape == source_tensor.shape)
                     # in-place operations for better memory consumption
-                    target_tensor *= ((i - 1) / i)
-                    source_tensor *= (1 / i)
-                    target_tensor += source_tensor
+                    target_tensor.mul_((i-1)/i).add_(source_tensor, alpha=1.0/i)
                     del target_tensor
                     del source_tensor
 
             # Free memory from the temporary module and run garbage collection
             del next_state_dict
             gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
 
         # Now load the final model on the target device with the correct dtype
         if dtype == DType.float32:
