@@ -509,6 +509,7 @@ class TransformerGenerationModule(GenerationModule):
         return generation_module
 
     @classmethod
+    @torch.no_grad()
     def from_checkpoints(
         cls,
         checkpoint_dirs: List[PathOrStr],
