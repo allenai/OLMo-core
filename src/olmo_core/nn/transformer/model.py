@@ -35,6 +35,7 @@ from olmo_core.float8 import Float8Config
 from olmo_core.utils import get_default_device, mark_dynamic, move_to_device
 from olmo_core.nn.blt.config import BLTConfig
 from olmo_core.nn.functional.cross_entropy_loss import cross_entropy_loss
+from olmo_core.nn.attention import FlashAttention2Backend
 
 from ..attention import (
     Attention,
@@ -1275,8 +1276,8 @@ class BLTTransformer(Transformer):
         return_logits: Optional[bool] = None,
         blt_config: Optional[BLTConfig] = None,
         **kwargs,
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any], Dict[str, Any], Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
-        input_ids, labels, block_kwargs, _, lm_head_kwargs = super()._prepare_inputs(
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any], Dict[int, Dict[str, Any]], Dict[str, Any], Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
+        input_ids, labels, all_block_kwargs, per_block_kwargs, lm_head_kwargs = super()._prepare_inputs(
             input_ids,
             labels,
             ignore_index=ignore_index,
@@ -1323,7 +1324,8 @@ class BLTTransformer(Transformer):
         return (
             input_ids,
             labels,
-            block_kwargs,
+            all_block_kwargs,
+            per_block_kwargs,
             lm_head_kwargs,
             local_encoder_kwargs,
             local_decoder_kwargs,
@@ -1363,7 +1365,7 @@ class BLTTransformer(Transformer):
 
         :returns: The logits if ``labels`` is ``None`` or the losses if ``labels`` is not ``None``.
         """
-        input_ids, labels, block_kwargs, lm_head_kwargs, local_encoder_kwargs, local_decoder_kwargs, _ = self._prepare_inputs(
+        input_ids, labels, all_block_kwargs, per_block_kwargs, lm_head_kwargs, local_encoder_kwargs, local_decoder_kwargs, _ = self._prepare_inputs(
             input_ids,
             labels,
             ignore_index=ignore_index,
@@ -1384,11 +1386,13 @@ class BLTTransformer(Transformer):
         h_patch_global = h_patch.to(torch.bfloat16)
 
         # Run each block.
-        for block in self.blocks.values():
+        for block_key, block in self.blocks.items():
+            block_idx = int(block_key)
+            block_kwargs = per_block_kwargs.get(block_idx, {})
             # Mark sizes as dynamic for torch.compile().
             if self.compile_enabled:
                 mark_dynamic(h_patch_global, (0, 1), strict=False)
-            h_patch_global = block(h_patch_global, **block_kwargs)
+            h_patch_global = block(h_patch_global, **all_block_kwargs, **block_kwargs)
 
         h_patch_after_global = h_patch_global.to(h_patch.dtype)
 
@@ -1510,7 +1514,7 @@ class BLTDistillTransformer(BLTTransformer):
         if isinstance(self.teacher, BLTTransformer):
             raise NotImplementedError()
         elif isinstance(self.teacher, Transformer):
-            input_ids, labels, block_kwargs, _, lm_head_kwargs = self.teacher._prepare_inputs(
+            input_ids, labels, all_block_kwargs, per_block_kwargs, lm_head_kwargs = self.teacher._prepare_inputs(
                 input_ids,
                 labels,
                 ignore_index=ignore_index,
@@ -1536,17 +1540,20 @@ class BLTDistillTransformer(BLTTransformer):
 
             # Run each block.
             dtype = h_emb.dtype
-            global_dtype = torch.bfloat16 if self.blocks["0"].attention.use_flash else dtype  # type: ignore
+            global_dtype = torch.bfloat16 if isinstance(self.blocks["0"].attention.backend, FlashAttention2Backend) else dtype  # type: ignore
 
             h = h_emb.to(global_dtype)
 
-            for block in blocks.values():
+            # Run each block.
+            for block_key, block in blocks.items():
+                block_idx = int(block_key)
+                block_kwargs = per_block_kwargs.get(block_idx, {})
                 # Mark sizes as dynamic for torch.compile().
-                if self.teacher.compile_enabled:
+                if self.compile_enabled:
                     mark_dynamic(h, (0, 1), strict=False)
-                h = block(h, **block_kwargs)
+                h = block(h, **all_block_kwargs, **block_kwargs)
 
-                if int(block.block_idx) in (hidden_states_to_return or []):
+                if block_idx in (hidden_states_to_return or []):
                     out_hidden_states.append(h.detach().clone().to(dtype))
 
             h = h.to(dtype)
@@ -1846,24 +1853,28 @@ class BLTDistillTransformer(BLTTransformer):
         h_patch: torch.Tensor,
         hidden_states_to_return: Optional[list[int]] = None,
         limit: Optional[int] = None,
-        **block_kwargs,
+        all_block_kwargs: Optional[Dict[str, Any]] = None,
+        per_block_kwargs: Optional[Dict[int, Dict[str, Any]]] = None,
     ) -> tuple[torch.Tensor, list[torch.Tensor]]:
         h_patch_global = h_patch
 
         out_hidden_states = []
 
-        for block_idx, block in self.blocks.items():
-            block_idx = int(block_idx)
+        for block_key, block in self.blocks.items():
+            block_idx = int(block_key)
 
             if limit is not None and block_idx + 1 > limit:
                 break
+
+            all_block_kwargs = all_block_kwargs or {}
+            block_kwargs = per_block_kwargs.get(block_idx, {}) if per_block_kwargs is not None else {}
 
             # Mark sizes as dynamic for torch.compile().
             if self.compile_enabled:
                 mark_dynamic(h_patch_global, (0, 1), strict=False)
 
             # TODO(benjaminm): possibly no_grad for non-trainable layers
-            h_patch_global = block(h_patch_global, **block_kwargs)
+            h_patch_global = block(h_patch_global, **all_block_kwargs, **block_kwargs)
 
             if int(block_idx) in (hidden_states_to_return or []):
                 out_hidden_states.append(h_patch_global)
@@ -1891,7 +1902,7 @@ class BLTDistillTransformer(BLTTransformer):
         skip_teacher_blocks = blt_config.skip_teacher_blocks
         skip_teacher = blt_config.skip_teacher
 
-        input_ids, labels, block_kwargs, lm_head_kwargs, local_encoder_kwargs, local_decoder_kwargs, extra_kwargs = self._prepare_inputs(
+        input_ids, labels, all_block_kwargs, per_block_kwargs, lm_head_kwargs, local_encoder_kwargs, local_decoder_kwargs, extra_kwargs = self._prepare_inputs(
             input_ids,
             labels,
             ignore_index=ignore_index,
@@ -2046,17 +2057,19 @@ class BLTDistillTransformer(BLTTransformer):
                         h_patch,
                         hidden_states_to_return=list(range(blt_config.encoder_loss_lookahead)),
                         limit=blt_config.encoder_loss_lookahead,
-                        **block_kwargs,
+                        all_block_kwargs=all_block_kwargs,
+                        per_block_kwargs=per_block_kwargs,
                     )
             else:
                 dtype = h_patch.dtype
-                global_dtype = torch.bfloat16 if self.blocks["0"].attention.use_flash else dtype  # type: ignore
+                global_dtype = torch.bfloat16 if isinstance(self.blocks["0"].attention.backend, FlashAttention2Backend) else dtype  # type: ignore
 
                 with (torch.no_grad() if blt_config.student_blocks_no_grad else nullcontext()):
                     h_patch_after_global, student_hidden_states = self._block_forward(
                         h_patch.to(global_dtype),
                         hidden_states_to_return=list(range(blt_config.encoder_loss_lookahead)),
-                        **block_kwargs,
+                        all_block_kwargs=all_block_kwargs,
+                        per_block_kwargs=per_block_kwargs,
                     )
                 h_patch_after_global = h_patch_after_global.to(dtype)
                 student_hidden_states = [x.to(dtype) for x in student_hidden_states]
@@ -2322,7 +2335,7 @@ class BLTDistillTransformer(BLTTransformer):
         if blt_config is None:
             raise ValueError("`blt_config` must be provided for student_forward")
 
-        input_ids, labels, block_kwargs, lm_head_kwargs, local_encoder_kwargs, local_decoder_kwargs, extra_kwargs = self._prepare_inputs(
+        input_ids, labels, all_block_kwargs, per_block_kwargs, lm_head_kwargs, local_encoder_kwargs, local_decoder_kwargs, extra_kwargs = self._prepare_inputs(
             input_ids,
             labels,
             ignore_index=ignore_index,
@@ -2370,9 +2383,13 @@ class BLTDistillTransformer(BLTTransformer):
         )
 
         dtype = h_patch.dtype
-        global_dtype = torch.bfloat16 if self.blocks["0"].attention.use_flash else dtype  # type: ignore
+        global_dtype = torch.bfloat16 if isinstance(self.blocks["0"].attention.backend, FlashAttention2Backend) else dtype  # type: ignore
 
-        h_patch_after_global, _ = self._block_forward(h_patch.to(global_dtype), **block_kwargs)
+        h_patch_after_global, _ = self._block_forward(
+            h_patch.to(global_dtype),
+            all_block_kwargs=all_block_kwargs,
+            per_block_kwargs=per_block_kwargs,
+        )
         h_patch_after_global = h_patch_after_global.to(dtype)
 
         (h_out_for_boundaries, _), h_out_for_logits, _ = self.local_decoder(
@@ -2446,7 +2463,7 @@ class BLTDistillTransformer(BLTTransformer):
         if not blt_config.teacher_force_boundaries:
             raise ValueError("subword_forward only works with teacher_force_boundaries=True")
 
-        input_ids, labels, block_kwargs, lm_head_kwargs, local_encoder_kwargs, local_decoder_kwargs, extra_kwargs = self._prepare_inputs(
+        input_ids, labels, all_block_kwargs, per_block_kwargs, lm_head_kwargs, local_encoder_kwargs, local_decoder_kwargs, extra_kwargs = self._prepare_inputs(
             input_ids,
             labels,
             ignore_index=ignore_index,
@@ -2494,9 +2511,13 @@ class BLTDistillTransformer(BLTTransformer):
         )
 
         dtype = h_patch.dtype
-        global_dtype = torch.bfloat16 if self.blocks["0"].attention.use_flash else dtype  # type: ignore
+        global_dtype = torch.bfloat16 if isinstance(self.blocks["0"].attention.backend, FlashAttention2Backend) else dtype  # type: ignore
 
-        h_patch_after_global, _ = self._block_forward(h_patch.to(global_dtype), **block_kwargs)
+        h_patch_after_global, _ = self._block_forward(
+            h_patch.to(global_dtype),
+            all_block_kwargs=all_block_kwargs,
+            per_block_kwargs=per_block_kwargs,
+        )
         h_patch_after_global = h_patch_after_global.to(dtype)
 
         (h_out_for_boundaries, _), h_out_for_logits, _ = self.local_decoder(
@@ -2562,7 +2583,7 @@ class BLTDistillTransformer(BLTTransformer):
         sequence_start_indices: Optional[torch.Tensor] = None,
         **kwargs,
     ):
-        input_ids, labels, block_kwargs, lm_head_kwargs, local_encoder_kwargs, local_decoder_kwargs, extra_kwargs = self._prepare_inputs(
+        input_ids, labels, all_block_kwargs, per_block_kwargs, lm_head_kwargs, local_encoder_kwargs, local_decoder_kwargs, extra_kwargs = self._prepare_inputs(
             input_ids,
             blt_config=blt_config,
             **kwargs,
@@ -2603,7 +2624,7 @@ class BLTDistillTransformer(BLTTransformer):
         cached_encoder_outputs: Optional[Any] = None,
         **kwargs,
     ):
-        input_ids, labels, block_kwargs, lm_head_kwargs, local_encoder_kwargs, local_decoder_kwargs, extra_kwargs = self._prepare_inputs(
+        input_ids, labels, all_block_kwargs, per_block_kwargs, lm_head_kwargs, local_encoder_kwargs, local_decoder_kwargs, extra_kwargs = self._prepare_inputs(
             input_ids,
             blt_config=blt_config,
             **kwargs,
@@ -2631,7 +2652,11 @@ class BLTDistillTransformer(BLTTransformer):
                 for i, current_n_boundaries in enumerate(n_boundaries):
                     h_patch[i, -current_n_boundaries:] = h_patch[i, :current_n_boundaries].clone()
 
-            h_patch_after_global, _ = self._block_forward(h_patch.to(torch.bfloat16), **block_kwargs)
+            h_patch_after_global, _ = self._block_forward(
+                h_patch.to(torch.bfloat16),
+                all_block_kwargs=all_block_kwargs,
+                per_block_kwargs=per_block_kwargs,
+            )
             h_patch_after_global = h_patch_after_global.to(h_patch.dtype)
 
             if boundary_mask is not None: # prefill

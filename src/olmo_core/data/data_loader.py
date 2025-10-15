@@ -28,7 +28,6 @@ from ..utils import get_default_device, roundrobin, threaded_generator
 from .collator import DataCollator
 from .numpy_dataset import (
     NumpyDatasetBase,
-    NumpyDatasetType,
     NumpyByteFSLDataset,
     NumpyBytePaddedFSLDataset,
     NumpyFSLDatasetBase,

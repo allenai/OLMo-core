@@ -503,7 +503,7 @@ class LocalEncoder(nn.Module):
         
         Also inits HNetBoundaryPredictor q and k to weights to identity following HNet.
 
-        """            
+        """
         if embedding_init_path is not None:
             # load embedding inits (computed via compute_hash_embedding_init.py)
             if isinstance(self.embedding.weight.data, DTensor):

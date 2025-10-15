@@ -21,8 +21,8 @@ from olmo_core.config import Config, DType
 from olmo_core.data import (
     NumpyDataLoaderConfig,
     NumpyDatasetConfig,
-    NumpyDatasetType,
     NumpyByteFSLDataset,
+    NumpyByteFSLDatasetConfig,
     NumpyBytePaddedFSLDataset,
     ByteTokenizerConfig,
     TokenizerConfig,
@@ -152,11 +152,13 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
 
     if LOCAL_MODEL_STYLE == "blt":
         if OLMO_ARCH == "olmo2_1B_v2":
-            local_d_model = 1024
-        elif OLMO_ARCH == "olmo2_7B":
             local_d_model = 2048
+        elif OLMO_ARCH == "olmo2_7B":
+            local_d_model = 4096
+        elif OLMO_ARCH == "olmo3_7B":
+            local_d_model = 4096
         else:
-            raise ValueError(f"Unknown OLMO_ARCH: {OLMO_ARCH}. Must be one of 'olmo2_1B_v2', 'olmo2_7B'.")
+            raise ValueError(f"Unknown OLMO_ARCH: {OLMO_ARCH}. Must be one of 'olmo2_1B_v2', 'olmo2_7B', 'olmo3_7B'.")
 
         local_encoder_n_layers = 1
         local_decoder_n_layers = 9
@@ -195,8 +197,10 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             local_d_model = 2048
         elif OLMO_ARCH == "olmo2_7B":
             local_d_model = 4096
+        elif OLMO_ARCH == "olmo3_7B":
+            local_d_model = 4096
         else:
-            raise ValueError(f"Unknown OLMO_ARCH: {OLMO_ARCH}. Must be one of 'olmo2_1B_v2', 'olmo2_7B'.")
+            raise ValueError(f"Unknown OLMO_ARCH: {OLMO_ARCH}. Must be one of 'olmo2_1B_v2', 'olmo2_7B', 'olmo3_7B'.")
 
         local_encoder_n_layers = 4
         local_decoder_n_layers = 4
@@ -294,11 +298,10 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         ]
     )
 
-    dataset_config = NumpyDatasetConfig(
+    dataset_config = NumpyByteFSLDatasetConfig(
         paths=DATA_PATHS,
-        name=NumpyDatasetType.byte_fsl,
         sequence_length=SEQUENCE_LENGTH, # subword sequence length
-        max_sequence_length=SEQUENCE_LENGTH * BYTE_EXPANSION_FACTOR, # max. length of the byte sequence
+        byte_sequence_length=SEQUENCE_LENGTH * BYTE_EXPANSION_FACTOR, # max. length of the byte sequence
         tokenizer=byte_tokenizer_config,
         work_dir=os.path.join(SAVE_FOLDER, "data"),
     )
@@ -351,7 +354,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
 
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=LOCAL_BATCH_SIZE * SEQUENCE_LENGTH * BYTE_EXPANSION_FACTOR,
-        max_sequence_length=dataset_config.effective_sequence_length,
+        max_sequence_length=dataset_config.byte_sequence_length,
         optim=optim,
         compile_model=True,
         float8_config=Float8Config(enabled=False),
@@ -521,7 +524,7 @@ def main(run_name: str, overrides: List[str]):
             log.info(f"Key {missing_key} was not found in checkpoint, is randomly initialized (this is expected for local encoder/decoder and student lm head).")
 
         # init embeddings + scale appropriately
-        model.fix_init(trainer.train_module.blt_config, EMBEDDING_INIT_PATH)  # type: ignore
+        model.fix_init(trainer.train_module.blt_config, EMBEDDING_INIT_PATH or None)  # type: ignore
     else:
         if not OLMO_CKPT_PATH:
             # Load BOLMo checkpoint. all keys must match.

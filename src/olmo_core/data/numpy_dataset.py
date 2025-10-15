@@ -44,7 +44,7 @@ from ..io import _get_s3_client, get_file_size, glob_directory, is_url, normaliz
 from .mixes import DataMix, DataMixBase
 from .source_mixture import SourceMixtureDatasetConfig
 from .tokenizer import TokenizerConfig, ByteTokenizerConfig, ByteTokenizer
-from .types import LongDocStrategy, NumpyDatasetDType, NumpyDatasetType, NumpyUIntTypes
+from .types import LongDocStrategy, NumpyDatasetDType, NumpyUIntTypes
 from .utils import (
     bucket_documents,
     chunk_array,
@@ -3145,5 +3145,72 @@ class NumpyVSLDatasetConfig(NumpyDatasetConfig):
             metadata=metadata,
             include_instance_metadata=self.include_instance_metadata,
             instance_filter_config=self.instance_filter_config,
+        )
+        return self._finalize(dataset)
+
+
+@dataclass
+class NumpyByteFSLDatasetConfig(NumpyFSLDatasetConfig):
+    byte_sequence_length: int = 0  # needs default
+
+    def build(self) -> NumpyDatasetBase:
+        self.validate()
+
+        if self.source_mixture_config is not None:
+            raise NotImplementedError("Source mixtures are not supported for byte datasets")
+
+        paths, metadata, label_masks = self._resolve_paths_metadata(
+            allow_mix=True, label_mask_paths=self.label_mask_paths
+        )
+
+        dataset = NumpyByteFSLDataset(
+            *paths,
+            sequence_length=self.sequence_length,
+            byte_sequence_length=self.byte_sequence_length,
+            max_target_sequence_length=self.max_target_sequence_length,
+            tokenizer_config=self.tokenizer,  # type: ignore
+            pad_token_id=self.tokenizer.pad_token_id,
+            eos_token_id=self.tokenizer.eos_token_id,
+            vocab_size=self.tokenizer.vocab_size,
+            # self.get_dtype(), self.get_dtype() wrongly selects uint16 since the byte tokenizer has a vocab < 65536.
+            # hardcode uint32 for now but this is not robust.
+            dtype=np.uint32,
+            metadata=metadata,
+            include_instance_metadata=self.include_instance_metadata,
+            bos_token_id=self.tokenizer.bos_token_id,
+            instance_filter_config=self.instance_filter_config,
+            label_mask_paths=label_masks,
+            generate_doc_lengths=self.generate_doc_lengths,
+        )
+        return self._finalize(dataset)
+
+
+@dataclass
+class NumpyBytePaddedFSLDatasetConfig(NumpyPaddedFSLDatasetConfig):
+    byte_sequence_length: int = 0  # needs default
+
+    def build(self) -> NumpyDatasetBase:
+        self.validate()
+
+        paths, metadata, label_masks = self._resolve_paths_metadata(
+            allow_mix=True, label_mask_paths=self.label_mask_paths
+        )
+
+        dataset = NumpyBytePaddedFSLDataset(
+            *paths,
+            sequence_length=self.sequence_length,
+            byte_sequence_length=self.byte_sequence_length,
+            tokenizer_config=self.tokenizer,  # type: ignore
+            pad_token_id=self.tokenizer.pad_token_id,
+            eos_token_id=self.tokenizer.eos_token_id,
+            vocab_size=self.tokenizer.vocab_size,
+            # self.get_dtype(), self.get_dtype() wrongly selects uint16 since the byte tokenizer has a vocab < 65536.
+            # hardcode uint32 for now but this is not robust.
+            dtype=np.uint32,
+            bos_token_id=self.tokenizer.bos_token_id,
+            metadata=metadata,
+            include_instance_metadata=self.include_instance_metadata,
+            instance_filter_config=self.instance_filter_config,
+            label_mask_paths=label_masks,
         )
         return self._finalize(dataset)

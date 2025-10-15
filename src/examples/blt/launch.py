@@ -87,6 +87,7 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
     setup_steps += ["pip install xlstm"]
     setup_steps += ["pip install flash-linear-attention"]
     setup_steps += ["pip install --upgrade huggingface-hub"]
+    setup_steps += ["pip install bettermap"]
 
     if stage == "stage1":
         launch_script = "src/examples/blt/train_stage1.py"
