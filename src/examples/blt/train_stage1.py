@@ -345,7 +345,8 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             decay_fraction=0.2,
             decay_kind="inv_sqrt",
             cosine_decay_alpha=10,
-            decay_min_lr=1e-4, # probably best around 10% of peak LR
+            decay_min_lr=None,
+            decay_min_lr_ratio=0.1,
         )
     elif LR_SCHEDULE == "constant":
         scheduler = ConstantScheduler()

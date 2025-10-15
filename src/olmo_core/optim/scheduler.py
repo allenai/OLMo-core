@@ -156,7 +156,8 @@ class WSD(Scheduler):
     decay_steps: Optional[int] = None  # deprecated, use 'decay' instead.
     decay_fraction: Optional[float] = 0.1
     warmup_min_lr: float = 0.0
-    decay_min_lr: float = 0.0
+    decay_min_lr: Optional[float] = 0.0
+    decay_min_lr_ratio: Optional[float] = None
     decay_kind: str = "linear"
     cosine_decay_alpha: float = 10
 
@@ -199,6 +200,15 @@ class WSD(Scheduler):
     def get_lr(
         self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
     ) -> Union[float, torch.Tensor]:
+        assert (self.decay_min_lr is None) != (self.decay_min_lr_ratio is None)
+
+        decay_min_lr: float = (
+            self.decay_min_lr
+            if self.decay_min_lr is not None
+            else initial_lr * self.decay_min_lr_ratio  # type: ignore
+        )
+        assert decay_min_lr < initial_lr
+
         if self.warmup is None:
             assert self.warmup_fraction is not None
             warmup = round(t_max * self.warmup_fraction)
@@ -216,9 +226,9 @@ class WSD(Scheduler):
 
         if current >= t_max - decay:
             if self.decay_kind == "linear":
-                return _linear_decay(initial_lr, t_max - current, decay, self.decay_min_lr)
+                return _linear_decay(initial_lr, t_max - current, decay, decay_min_lr)
             elif self.decay_kind == "inv_sqrt":
-                return initial_lr + (self.decay_min_lr - initial_lr) / self.h(1) * self.h((current - (t_max - decay)) / decay)
+                return initial_lr + (decay_min_lr - initial_lr) / self.h(1) * self.h((current - (t_max - decay)) / decay)
             else:
                 raise OLMoConfigurationError("Invalid decay kind")
 
