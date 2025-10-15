@@ -657,7 +657,7 @@ def follow_experiment(
             if launch_timeout is not None and (time.monotonic() - start_time) > launch_timeout:
                 beaker.experiment.stop(experiment)
                 raise TimeoutError(
-                    f"Job failed to start within {launch_timeout} seconds. "
+                    f"Job failed to be created within {launch_timeout} seconds. "
                     f"Experiment has been stopped: {beaker.experiment.url(experiment)}"
                 )
             else:
@@ -674,6 +674,8 @@ def follow_experiment(
             if event not in events:
                 events.add(event)
                 log.info(f"❯ {event.latest_message}")
+                if event.status.lower() == "started":
+                    break
 
         if job.is_finalized or job.is_running:
             break
