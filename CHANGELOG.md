@@ -68,7 +68,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added additional internal configuration tools.
 - Added a new named data mix that we used for the 32B run
 - Added internal OLMo3 7B midtraining and long-context configs.
-- Added internal OLMo3 7B midtraining config.
 - Added ability to convert OLMo3 models to/from HF format with support for rope scaling configs.
 - Added a script that can pull out a single training batch from a training job
 
