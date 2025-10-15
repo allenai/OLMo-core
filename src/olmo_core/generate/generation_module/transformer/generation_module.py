@@ -549,19 +549,22 @@ class TransformerGenerationModule(GenerationModule):
                 checkpoint_dir, dtype=DType.float32, **cpu_kwargs
             )
             next_state_dict = next_generation_module.state_dict()
+            del next_generation_module
 
             # Average the weights
             for key in merged_state_dict["model"].keys():
                 if torch.is_tensor(merged_state_dict["model"][key]):
-                    assert (
-                        merged_state_dict["model"][key].shape == next_state_dict["model"][key].shape
-                    )
-                    merged_state_dict["model"][key] = merged_state_dict["model"][key] * (
-                        (i - 1) / i
-                    ) + next_state_dict["model"][key] * (1 / i)
+                    target_tensor = merged_state_dict["model"][key]
+                    source_tensor = next_state_dict["model"].pop(key)
+                    assert (target_tensor.shape == source_tensor.shape)
+                    # in-place operations for better memory consumption
+                    target_tensor *= ((i - 1) / i)
+                    source_tensor *= (1 / i)
+                    target_tensor += source_tensor
+                    del target_tensor
+                    del source_tensor
 
             # Free memory from the temporary module and run garbage collection
-            del next_generation_module
             del next_state_dict
             gc.collect()
             if torch.cuda.is_available():
