@@ -568,6 +568,7 @@ class BeakerLaunchConfig(Config):
         torchrun: Optional[bool] = None,
         entrypoint: Optional[str] = None,
         slack_notifications: Optional[bool] = None,
+        launch_timeout: Optional[int] = None,
     ) -> Experiment:
         """
         Launch a Beaker experiment using this config.
@@ -583,6 +584,8 @@ class BeakerLaunchConfig(Config):
             Defaults to 'python'.
         :param slack_notifications: If ``follow=True``, send Slack notifications when the run launches,
             fails, or succeeds. This requires the env var ``SLACK_WEBHOOK_URL``.
+        :param launch_timeout: A timeout in seconds to wait for the job to start after submitting it.
+            If the job doesn't start in time a timeout error will be raised.
 
         :returns: The Beaker experiment.
         """
@@ -617,7 +620,12 @@ class BeakerLaunchConfig(Config):
             return experiment
 
         try:
-            follow_experiment(self.beaker, experiment, slack_webhook_url=slack_webhook_url)
+            follow_experiment(
+                self.beaker,
+                experiment,
+                slack_webhook_url=slack_webhook_url,
+                launch_timeout=launch_timeout,
+            )
         except KeyboardInterrupt:
             log.warning("Caught keyboard interrupt...")
             if Confirm.ask("Would you like to cancel the experiment?"):
@@ -637,31 +645,46 @@ def follow_experiment(
     experiment: Experiment,
     tail: bool = False,
     slack_webhook_url: Optional[str] = None,
+    launch_timeout: Optional[int] = None,
 ):
-    # Wait for job to start...
+    start_time = time.monotonic()
+
+    # Wait for job to be created...
     job: Optional[Job] = beaker.experiment.tasks(experiment.id)[0].latest_job  # type: ignore
     if job is None:
         log.info("Waiting for job to be created...")
         while job is None:
-            time.sleep(1.0)
-            job = beaker.experiment.tasks(experiment.id)[0].latest_job  # type: ignore
+            if launch_timeout is not None and (time.monotonic() - start_time) > launch_timeout:
+                beaker.experiment.stop(experiment)
+                raise TimeoutError(
+                    f"Job failed to be created within {launch_timeout} seconds. "
+                    f"Experiment has been stopped: {beaker.experiment.url(experiment)}"
+                )
+            else:
+                time.sleep(1.0)
+                job = beaker.experiment.tasks(experiment.id)[0].latest_job  # type: ignore
 
     # Pull events until job is running (or fails)...
     events = set()
-    while not (job.is_finalized or job.is_running):
-        job = beaker.job.get(job.id)
+    while True:
         for event in sorted(
             beaker.job.summarized_events(job), key=lambda event: event.latest_occurrence
         ):
             if event not in events:
                 events.add(event)
                 log.info(f"❯ {event.latest_message}")
-                if event.status.lower() == "started":
-                    break
+
+        job = beaker.job.get(job.id)
+        if job.is_finalized or job.is_running:
+            break
+        elif launch_timeout is not None and (time.monotonic() - start_time) > launch_timeout:
+            beaker.experiment.stop(experiment)
+            raise TimeoutError(
+                f"Job failed to start within {launch_timeout} seconds. "
+                f"Experiment has been stopped: {beaker.experiment.url(experiment)}"
+            )
         else:
             time.sleep(1.0)
-            continue
-        break
 
     if slack_webhook_url is not None:
         _send_slack_notification_for_event(beaker, experiment, "launched", slack_webhook_url)
