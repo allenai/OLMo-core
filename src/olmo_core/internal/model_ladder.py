@@ -75,27 +75,27 @@ class SubCmd(StrEnum):
             else:
                 init_device = "meta"
 
-            try:
-                # Set RNG states on all devices.
-                seed_all(config.ladder.init_seed)
+            # Set RNG states on all devices.
+            seed_all(config.ladder.init_seed)
 
-                # Build components.
-                model = config.model.build(init_device=init_device)
-                train_module = config.train_module.build(model)
-                dataset = config.dataset.build()
-                data_loader = config.data_loader.build(
-                    dataset, dp_process_group=train_module.dp_process_group
-                )
-                trainer = config.trainer.build(train_module, data_loader)
+            # Build components.
+            model = config.model.build(init_device=init_device)
+            train_module = config.train_module.build(model)
+            dataset = config.dataset.build()
+            data_loader = config.data_loader.build(
+                dataset, dp_process_group=train_module.dp_process_group
+            )
+            trainer = config.trainer.build(train_module, data_loader)
 
-                # Record the config to W&B/Comet and each checkpoint dir.
-                config_dict = config.as_config_dict()
-                cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
+            # Record the config to W&B/Comet and each checkpoint dir.
+            config_dict = config.as_config_dict()
+            cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
 
-                # Train.
-                trainer.fit()
-            finally:
-                teardown_training_environment()
+            # Train.
+            trainer.fit()
+
+            # Clean up.
+            teardown_training_environment()
         else:
             raise NotImplementedError(self)
 
@@ -145,7 +145,7 @@ def build_config(
 
 def main(ladder_builder: Callable[[str], ModelLadder]):
     usage = f"""
-[yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]{'|'.join(SubCmd)}[/] [i b]SIZE RUN_DURATION CLUSTER[/] [i][OVERRIDES...][/]
+[yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]{"|".join(SubCmd)}[/] [i b]SIZE RUN_DURATION CLUSTER[/] [i][OVERRIDES...][/]
 
 [b]Subcommands[/]
 [b magenta]launch:[/]       Launch the script on Beaker with the [b magenta]train[/] subcommand.
@@ -155,7 +155,7 @@ def main(ladder_builder: Callable[[str], ModelLadder]):
 [b magenta]dry_run:[/]      Pretty print the config to run and exit.
 
 [b]Examples[/]
-$ [i]python {sys.argv[0]} {SubCmd.launch} 1B 1xC ai2/pluto-cirrascale --launch.num_nodes=2[/]
+$ [i]python {sys.argv[0]} {SubCmd.launch} 1B 1xC ai2/neptune --launch.num_nodes=2[/]
     """.strip()
 
     try:

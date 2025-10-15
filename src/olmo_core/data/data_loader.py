@@ -2,15 +2,16 @@
 Distributed, deterministic, stateful data loaders used by the :class:`~olmo_core.train.Trainer`.
 
 """
-
+import functools
 import logging
 import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from itertools import islice
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Tuple
 
+import bettermap
 import numpy as np
 import torch
 import torch.distributed as dist
@@ -22,6 +23,7 @@ from ..config import Config
 from ..distributed.parallel import get_dp_process_group
 from ..distributed.utils import barrier, get_fs_local_rank, get_rank, get_world_size
 from ..exceptions import OLMoConfigurationError
+from ..io import is_url, normalize_path
 from ..utils import get_default_device, roundrobin, threaded_generator
 from .collator import DataCollator
 from .numpy_dataset import (
@@ -70,7 +72,7 @@ class DataLoaderBase(ABC):
             # Reset internal bookkeeping.
             data_loader.reset()
 
-    :param work_dir: The working directory. Should be shared among local ranks.
+    :param work_dir: The working directory. Should be a local directory shared among local ranks.
     :param global_batch_size: The global batch size. The units for this depend on the data loader
         implementation.
     :param dp_world_size: The data parallel world size.
@@ -87,7 +89,11 @@ class DataLoaderBase(ABC):
         dp_rank: int = 0,
         fs_local_rank: int = 0,
     ):
-        self.work_dir = work_dir
+        if is_url(work_dir):
+            raise OLMoConfigurationError(
+                f"'work_dir' should be a local path, not a URL ('{work_dir}')."
+            )
+        self.work_dir = Path(normalize_path(work_dir))
         self._global_batch_size = global_batch_size
         assert dp_rank < dp_world_size
         self.dp_world_size = dp_world_size
@@ -412,21 +418,13 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
         )
         data_loader: DataLoaderBase
         if isinstance(dataset, NumpyFSLDatasetBase):
-            data_loader = NumpyFSLDataLoader(
-                dataset,
-                **kwargs,  # type: ignore
-            )
+            data_loader = NumpyFSLDataLoader(dataset, **kwargs)  # type: ignore
             if dataset.max_target_sequence_length is not None:
                 data_loader.chunk_size = (
                     dataset.max_target_sequence_length // dataset.sequence_length
                 )
         elif isinstance(dataset, NumpyVSLDataset):
-            kwargs.pop("allow_vlen", None)  # NumpyVSLDataLoader does not support variable-length sequences
-
-            data_loader = NumpyVSLDataLoader(
-                dataset,
-                **kwargs,  # type: ignore
-            )
+            data_loader = NumpyVSLDataLoader(dataset, **kwargs)  # type: ignore
         else:
             raise NotImplementedError
 
@@ -690,7 +688,7 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
             chunk=self.chunk_size if self.chunk_size > 1 else None,
             v=1,  # tick if logic changes
         )
-        return Path(self.work_dir) / f"{global_indices_fname}.npy"
+        return self.work_dir / f"{global_indices_fname}.npy"
 
     def _build_global_indices(self) -> np.ndarray:
         assert len(self.dataset) < np.iinfo(np.uint32).max
@@ -734,7 +732,14 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
             indices = indices[:, self.dp_rank :: self.dp_world_size]
 
         # Get instances for the batch.
-        instances = [self._get_dataset_item(int(idx)) for idx in indices[index]]
+        map_fn: Callable
+        if self.worker_info is None and self.num_threads is not None and self.num_threads > 1:
+            map_fn = functools.partial(
+                bettermap.ordered_map_per_thread, parallelism=self.num_threads
+            )
+        else:
+            map_fn = map
+        instances = list(map_fn(lambda idx: self._get_dataset_item(int(idx)), indices[index]))
 
         return self.collator(instances)
 
@@ -770,7 +775,7 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
     def state_dict(self) -> Dict[str, Any]:
         state_dict = super().state_dict()
         assert isinstance(self.dataset, NumpyFSLDatasetBase)
-        state_dict["dataset_type"] = str(NumpyDatasetType.fsl)
+        state_dict["dataset_type"] = "fsl"
         state_dict["sequence_length"] = self.dataset.sequence_length
         state_dict["max_target_sequence_length"] = self.dataset.max_target_sequence_length
         return state_dict
@@ -785,7 +790,7 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
         )
 
         assert isinstance(self.dataset, NumpyFSLDatasetBase)
-        if state_dict["dataset_type"] != NumpyDatasetType.fsl:
+        if state_dict["dataset_type"] != "fsl":
             raise RuntimeError(
                 "Dataset type mismatch: attempting to restore state from a variable sequence length dataset "
                 "into a fixed sequence length dataset"
@@ -853,7 +858,7 @@ class NumpyVSLDataLoader(NumpyDataLoaderBase):
             bz=self.global_batch_size,
         )
         return (
-            Path(self.work_dir)
+            self.work_dir
             / f"dataset-{self.dataset.fingerprint}"
             / self.dataset.curriculum.short_str
             / f"{global_indices_fname}.npy"
@@ -868,7 +873,7 @@ class NumpyVSLDataLoader(NumpyDataLoaderBase):
             epoch=self.epoch if self.shuffle else None,
         )
         return (
-            Path(self.work_dir)
+            self.work_dir
             / f"dataset-{self.dataset.fingerprint}"
             / self.dataset.curriculum.short_str
             / f"{bucket_indices_fname}.npy"
@@ -1007,7 +1012,7 @@ class NumpyVSLDataLoader(NumpyDataLoaderBase):
     def state_dict(self) -> Dict[str, Any]:
         state_dict = super().state_dict()
         assert isinstance(self.dataset, NumpyVSLDataset)
-        state_dict["dataset_type"] = str(NumpyDatasetType.vsl)
+        state_dict["dataset_type"] = "vsl"
         state_dict["vsl_curriculum"] = self.dataset.curriculum.short_str
         state_dict["max_sequence_length"] = self.dataset.max_sequence_length
         state_dict["min_sequence_length"] = self.dataset.min_sequence_length
@@ -1020,7 +1025,7 @@ class NumpyVSLDataLoader(NumpyDataLoaderBase):
         )
 
         assert isinstance(self.dataset, NumpyVSLDataset)
-        if state_dict["dataset_type"] != NumpyDatasetType.vsl:
+        if state_dict["dataset_type"] != "vsl":
             raise RuntimeError(
                 "Dataset type mismatch: attempting to restore state from a fixed sequence length dataset "
                 "into a variable sequence length dataset"
@@ -1141,8 +1146,13 @@ class NumpyDataLoaderConfig(Config):
             Alternatively you can pass the ``dp_process_group`` instead.
         :param dp_process_group: The data parallel process group.
         """
-        if self.work_dir is not None and not dataset.work_dir_set:
-            dataset.work_dir = Path(self.work_dir)
+        if self.work_dir is not None:
+            if is_url(self.work_dir):
+                raise OLMoConfigurationError(
+                    f"'work_dir' should be a local path, not a URL ('{self.work_dir}')."
+                )
+            if not dataset.work_dir_set:
+                dataset.work_dir = Path(normalize_path(self.work_dir))
 
         if dp_process_group is None and mesh is not None:
             dp_process_group = get_dp_process_group(mesh)

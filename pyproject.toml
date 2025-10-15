@@ -22,6 +22,7 @@ dependencies = [
     "omegaconf",
     "safetensors",
     "importlib_resources",
+    "bettermap"
 ]
 
 [project.urls]
@@ -38,19 +39,14 @@ dev = [
     "google-cloud-storage",
     "isort>=5.12,<5.14",
     "mypy>=1.0,<1.4",
-    "myst-parser>=1.0",
+    "myst-parser>=1.0,<3.0",
     "pytest",
     "pytest-memray",
     "pytest-sphinx",
     "pytest-xdist",
     "ruff",
     "setuptools",
-    "wheel",
-    "build",
-    "boto3",
-    "google-cloud-compute",
-    "google-cloud-storage",
-    "Sphinx>=6.0,<9.0",
+    "Sphinx>=6.0,<=8.1.3",
     "sphinx-autobuild",
     "sphinx-autodoc-typehints==1.23.3",
     "sphinx-copybutton",
@@ -58,7 +54,7 @@ dev = [
     "twine>=1.11.0",
     "wheel",
 ]
-beaker = ["beaker-py>=1.36.0,<2.0", "GitPython>=3.0,<4.0"]
+beaker = ["beaker-py>=1.37.0,<2.0", "GitPython>=3.0,<4.0", "google-cloud-compute"]
 comet = ["comet_ml"]
 eval = ["ai2-olmo-eval @ git+https://github.com/allenai/OLMo-in-loop-evals.git@962c2e25268469fdc1ed253158af2e04a41a5297"]
 torchao = ["torchao"]
@@ -155,6 +151,10 @@ exclude = [
 
 [tool.pyright]
 reportPrivateImportUsage = false
+
+[tool.ty.rules]
+possibly-unbound-attribute = "ignore"
+possibly-unbound-import = "ignore"
 
 [tool.mypy]
 ignore_missing_imports = true

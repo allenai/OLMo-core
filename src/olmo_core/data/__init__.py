@@ -6,8 +6,10 @@ Overview
 
 For text-based data you should prepare your data by writing token IDs to numpy arrays on disk, using the
 `Dolma toolkit <https://allenai.github.io/dolma/>`_ for example.
-Then configure and build your dataset using the :class:`~olmo_core.data.numpy_dataset.NumpyDatasetConfig`
-builder, build your data loader with the :class:`~olmo_core.data.data_loader.NumpyDataLoaderConfig`
+Then configure and build your dataset using one of the
+:class:`~olmo_core.data.numpy_dataset.NumpyDatasetConfigBase` builders (for example
+``NumpyFSLDatasetConfig``), build your data loader with the
+:class:`~olmo_core.data.data_loader.NumpyDataLoaderConfig`
 builder, and pass it to :meth:`TrainerConfig.build() <olmo_core.train.TrainerConfig.build>`.
 """
 
@@ -29,9 +31,14 @@ from .numpy_dataset import (
     NumpyBytePaddedFSLDataset,
     NumpyFSLDataset,
     NumpyFSLDatasetBase,
+    NumpyFSLDatasetConfig,
+    NumpyInterleavedFSLDatasetConfig,
     NumpyPackedFSLDataset,
+    NumpyPackedFSLDatasetConfig,
     NumpyPaddedFSLDataset,
+    NumpyPaddedFSLDatasetConfig,
     NumpyVSLDataset,
+    NumpyVSLDatasetConfig,
     VSLCurriculum,
     VSLCurriculumConfig,
     VSLCurriculumType,
@@ -41,7 +48,7 @@ from .numpy_dataset import (
     VSLNaturalCurriculum,
 )
 from .tokenizer import ByteTokenizerConfig, ByteTokenizer, TokenizerConfig, TokenizerName
-from .types import LongDocStrategy, NumpyDatasetDType, NumpyDatasetType
+from .types import LongDocStrategy, NumpyDatasetDType
 
 __all__ = [
     "NumpyDatasetBase",
@@ -58,7 +65,11 @@ __all__ = [
     "VSLGrowP2Curriculum",
     "VSLGrowLinearCurriculum",
     "NumpyDatasetConfig",
-    "NumpyDatasetType",
+    "NumpyFSLDatasetConfig",
+    "NumpyPaddedFSLDatasetConfig",
+    "NumpyPackedFSLDatasetConfig",
+    "NumpyInterleavedFSLDatasetConfig",
+    "NumpyVSLDatasetConfig",
     "InstanceFilterConfig",
     "VSLCurriculumType",
     "VSLCurriculumConfig",

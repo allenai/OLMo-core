@@ -14,6 +14,10 @@ __all__ = [
     "RoPEType",
     "RoPEConfig",
     "RoPEScalingConfig",
+    "ABFRoPEScalingConfig",
+    "PIRoPEScalingConfig",
+    "StepwiseRoPEScalingConfig",
+    "YaRNRoPEScalingConfig",
     "RotaryEmbeddingBase",
     "RotaryEmbedding",
     "FusedRotaryEmbedding",
@@ -64,6 +68,11 @@ class RoPEScalingConfig(Config):
         """Compute the scaled inverse frequencies for RoPE, and the attention rescaling factor."""
         raise NotImplementedError
 
+    @abstractmethod
+    def to_hf_config(self) -> dict:
+        """Convert to HuggingFace rope_scaling format."""
+        raise NotImplementedError
+
 
 @dataclass
 class ABFRoPEScalingConfig(RoPEScalingConfig):
@@ -77,6 +86,10 @@ class ABFRoPEScalingConfig(RoPEScalingConfig):
         del theta  # unused
         inv_freq = compute_inv_freqs(self.new_theta, dim, device)
         return inv_freq, self.attention_rescale_factor
+
+    def to_hf_config(self) -> dict:
+        """ABF scaling doesn't have a direct HF equivalent (just modify the config's base frequency)."""
+        raise NotImplementedError
 
 
 @dataclass
@@ -104,15 +117,19 @@ class PIRoPEScalingConfig(RoPEScalingConfig):
 
         return inv_freq, self.attention_rescale_factor
 
+    def to_hf_config(self) -> dict:
+        """PI scaling corresponds to HF's linear scaling."""
+        return {"rope_type": "linear", "factor": self.factor}
+
 
 @dataclass
 class StepwiseRoPEScalingConfig(RoPEScalingConfig):
-    """
-    Step-wise RoPE scaling (aka "Per-frequency" scaling or Llama-3.1 scaling).
+    """Step-wise RoPE scaling (aka "Per-frequency" scaling or Llama-3.1 scaling).
 
-    Reference: https://huggingface.co/meta-llama/Llama-3.1-8B/blob/refs%2Fpr%2F3/README.md
+    Reference: `Llama-3.1-8B README <https://huggingface.co/meta-llama/Llama-3.1-8B/blob/refs%2Fpr%2F3/README.md>`_
 
     Scales RoPE to longer sequence lengths by interpolating between high- and low-frequency components.
+
     1. **High-frequency band** (short wavelengths) – keeps the original frequencies unchanged.
         These correspond to the very first dimensions of the rotary embedding and already encode
         short-range ordering well.
@@ -168,6 +185,16 @@ class StepwiseRoPEScalingConfig(RoPEScalingConfig):
 
         return torch.where(is_mid_band, smoothed_inv_freq, inv_freq), self.attention_rescale_factor
 
+    def to_hf_config(self) -> dict:
+        """Stepwise scaling corresponds to HF's llama3 scaling."""
+        return {
+            "rope_type": "llama3",
+            "factor": self.factor,
+            "original_max_position_embeddings": self.old_context_len,
+            "low_freq_factor": 1.0 / (1 - self.low_freq_proportion),
+            "high_freq_factor": 1.0 / self.high_freq_proportion,
+        }
+
 
 @dataclass
 class YaRNRoPEScalingConfig(RoPEScalingConfig):
@@ -175,7 +202,7 @@ class YaRNRoPEScalingConfig(RoPEScalingConfig):
 
     Reference: https://arxiv.org/abs/2309.00071
 
-    Eextends a model’s context window by *blending* two sets of inverse frequencies:
+    Extends a model’s context window by *blending* two sets of inverse frequencies:
 
     1. **Interpolation frequencies** – the original RoPE frequencies divided
        by ``factor``.  These allow the model to *compress* positions and hence
@@ -234,6 +261,17 @@ class YaRNRoPEScalingConfig(RoPEScalingConfig):
         attention_rescale_factor = 0.1 * math.log(self.factor) + 1.0
 
         return inv_freq, attention_rescale_factor
+
+    def to_hf_config(self) -> dict:
+        """YaRN scaling corresponds to HF's yarn scaling."""
+        return {
+            "rope_type": "yarn",
+            "factor": self.factor,
+            "original_max_position_embeddings": self.old_context_len,
+            "beta_fast": self.beta_fast,
+            "beta_slow": self.beta_slow,
+            "attention_factor": 0.1 * math.log(self.factor) + 1.0,  # From YaRN paper
+        }
 
 
 @dataclass
@@ -556,7 +594,7 @@ class FusedRotaryEmbedding(RotaryEmbeddingBase):
                 )
             seq = torch.arange(seq_len, device=device, dtype=torch.float)
             freqs = torch.einsum("i , j -> i j", seq, inv_freq)  # (seq_len, head_size // 2)
-            # Note: no concat here, unlike the default implementation
+            # Note: no concat here, unlike the non-fused implementation
             pos_sin, pos_cos = freqs.sin(), freqs.cos()  # 2x (seq_len, head_size // 2)
 
         pos_sin = pos_sin * attention_rescale_factor

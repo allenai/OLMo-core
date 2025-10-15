@@ -2,15 +2,21 @@
 Launch experiments on `Beaker <https://beaker.org>`_.
 """
 
+import argparse
 import hashlib
 import logging
+import os
+import sys
 import tempfile
+import textwrap
 import time
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
-from typing import List, Optional, Set, Tuple
+from typing import List, Literal, Optional, Set, Tuple
 
+import requests
+import rich
 from beaker import (
     Beaker,
     Dataset,
@@ -29,9 +35,18 @@ from rich.prompt import Confirm
 
 from ..config import Config, StrEnum
 from ..distributed.utils import OLMO_SHARED_FS_ENV_VAR
-from ..exceptions import BeakerExperimentFailedError, OLMoConfigurationError
+from ..exceptions import (
+    BeakerExperimentFailedError,
+    OLMoConfigurationError,
+    OLMoEnvironmentError,
+)
 from ..train.callbacks.beaker import BEAKER_RESULT_DIR
-from ..utils import LOG_FILTER_TYPE_ENV_VAR, LogFilterType
+from ..utils import (
+    LOG_FILTER_TYPE_ENV_VAR,
+    LogFilterType,
+    generate_uuid,
+    prepare_cli_environment,
+)
 from ..version import VERSION
 from .select_beaker_hosts import get_beaker_hostname_constraints
 from .utils import GIT_BRANCH_ENV_VAR, GIT_REF_ENV_VAR, GIT_REPO_URL_ENV_VAR, GitConfig
@@ -51,7 +66,7 @@ __all__ = [
 
 BeakerPriority = Priority
 
-_DEFAULT_TORCH = "2.7.0".replace(".", "")
+_DEFAULT_TORCH = "2.7.1".replace(".", "")
 _DEFAULT_CUDA = "12.8".replace(".", "")
 
 
@@ -66,19 +81,34 @@ class OLMoCoreBeakerImage(StrEnum):
 
     # NOTE: when updating default images here, should also update images used in tests at .github/workflows/main.yml
 
-    stable = f"olmo-core-tch{_DEFAULT_TORCH}cu{_DEFAULT_CUDA}-2025-05-16"
+    stable = f"olmo-core-tch{_DEFAULT_TORCH}cu{_DEFAULT_CUDA}-2025-09-15"
     """
     Built with the latest compatible stable version of PyTorch.
     """
 
-    stable_cu126 = f"olmo-core-tch{_DEFAULT_TORCH}cu126-2025-05-16"
+    stable_cu126 = f"olmo-core-tch{_DEFAULT_TORCH}cu126-2025-09-15"
     """
     The stable image with CUDA pinned to 12.6.
     """
 
-    stable_cu128 = f"olmo-core-tch{_DEFAULT_TORCH}cu128-2025-05-16"
+    stable_cu128 = f"olmo-core-tch{_DEFAULT_TORCH}cu128-2025-09-15"
     """
     The stable image with CUDA pinned to 12.8.
+    """
+
+    tch280_cu128 = "olmo-core-tch280cu128-2025-09-19"
+    """
+    Built with torch 2.8.0 and CUDA 12.8.
+    """
+
+    tch280_cu129 = "olmo-core-tch280cu129-2025-09-23"
+    """
+    Built with torch 2.8.0 and CUDA 12.9.
+    """
+
+    flash_attn_3 = "tylerr/olmo-core-tch270cu128-2025-09-24"
+    """
+    Built flash-attn 3 (beta release) with torch 2.7.0 and CUDA 12.8.
     """
 
 
@@ -114,6 +144,23 @@ DEFAULT_SETUP_STEPS = (
 )
 
 
+def is_running_in_beaker() -> bool:
+    """
+    Check if the current process is running inside of a Beaker job (batch or session).
+    """
+    # There's a number of different environment variables set by the Beaker executor.
+    # Checking any one of these would suffice, but we check a couple to reduce the
+    # risk of false positives.
+    return "BEAKER_JOB_ID" in os.environ and "BEAKER_NODE_ID" in os.environ
+
+
+def is_running_in_beaker_batch_job() -> bool:
+    """
+    Check if the current process is running inside a Beaker batch job (as opposed to a session).
+    """
+    return is_running_in_beaker() and os.environ.get("BEAKER_JOB_KIND") == "batch"
+
+
 @dataclass
 class BeakerLaunchConfig(Config):
     """
@@ -127,10 +174,10 @@ class BeakerLaunchConfig(Config):
 
     cmd: List[str]
     """
-    The command to run in the container via ``torchrun``.
+    The command to run in the container.
     """
 
-    budget: str
+    budget: Optional[str] = None
     """
     The budget group to assign.
     """
@@ -178,7 +225,7 @@ class BeakerLaunchConfig(Config):
     The amount of shared memory to use.
     """
 
-    clusters: List[str] = field(default_factory=lambda: ["ai2/jupiter-cirrascale-2"])
+    clusters: List[str] = field(default_factory=lambda: ["ai2/jupiter"])
     """
     The allowed clusters to run on.
     """
@@ -290,7 +337,10 @@ class BeakerLaunchConfig(Config):
         The Beaker client.
         """
         if self._beaker is None:
-            self._beaker = Beaker.from_env(default_workspace=self.workspace)
+            kwargs = {}
+            if self.workspace:
+                kwargs["default_workspace"] = self.workspace
+            self._beaker = Beaker.from_env(**kwargs)
         return self._beaker
 
     def _get_env_vars(self) -> List[Tuple[str, str]]:
@@ -371,11 +421,17 @@ class BeakerLaunchConfig(Config):
                 raise exc
 
     def build_experiment_spec(
-        self, torchrun: bool = True, entrypoint: Optional[str] = None
+        self, torchrun: Optional[bool] = None, entrypoint: Optional[str] = None
     ) -> ExperimentSpec:
         """
         Get the Beaker experiment spec corresponding to this config instance.
         """
+        if torchrun is None:
+            if "torchrun" in self.cmd:
+                torchrun = False
+            else:
+                torchrun = self.num_gpus > 1
+
         if self.git is None:
             raise OLMoConfigurationError(
                 f"{self.__class__.__name__}.git field is required!\n"
@@ -395,7 +451,7 @@ class BeakerLaunchConfig(Config):
 
         entrypoint_script = [
             "#!/usr/bin/env bash",
-            "set -exuo pipefail",
+            "set -exo pipefail",
             "[[ -d /var/lib/tcpxo/lib64 ]] && export LD_LIBRARY_PATH=/var/lib/tcpxo/lib64:$LD_LIBRARY_PATH",
             # Setup the kernel cache directory used by pytorch
             "mkdir -p /root/.cache/torch/kernels && export PYTORCH_KERNEL_CACHE_PATH=/root/.cache/torch/kernels",
@@ -416,9 +472,12 @@ class BeakerLaunchConfig(Config):
                 )
                 entrypoint_script.append("export BEAKER_REPLICA_RANK=$BEAKER_REPLICA_RANK")
             entrypoint_script.append(" ".join(self._get_torchrun_cmd()) + ' "$@"')
-        else:
-            entrypoint = entrypoint or "python"
+        elif entrypoint:
             entrypoint_script.append(f'{entrypoint} "$@"')
+        elif self.cmd and os.path.isfile(self.cmd[0]) and self.cmd[0].endswith(".py"):
+            entrypoint_script.append('python "$@"')
+        else:
+            entrypoint_script.append('exec "$@"')
 
         entrypoint_dataset = self._create_script_dataset("entrypoint.sh", entrypoint_script)
 
@@ -504,7 +563,11 @@ class BeakerLaunchConfig(Config):
         )
 
     def launch(
-        self, follow: bool = False, torchrun: bool = True, entrypoint: Optional[str] = None
+        self,
+        follow: bool = False,
+        torchrun: Optional[bool] = None,
+        entrypoint: Optional[str] = None,
+        slack_notifications: Optional[bool] = None,
     ) -> Experiment:
         """
         Launch a Beaker experiment using this config.
@@ -514,12 +577,38 @@ class BeakerLaunchConfig(Config):
             :meth:`build_experiment_spec()`.
 
         :param follow: Stream the logs and follow the experiment until completion.
-        :param torchrun: Launch the target command with ``torchrun``.
+        :param torchrun: Launch the target command with ``torchrun``. This will default to ``True``
+            if ``num_gpus > 1`` and ``False`` otherwise.
         :param entrypoint: Provide an optional entrypoint program if ``torchrun`` is ``False``.
             Defaults to 'python'.
+        :param slack_notifications: If ``follow=True``, send Slack notifications when the run launches,
+            fails, or succeeds. This requires the env var ``SLACK_WEBHOOK_URL``.
 
         :returns: The Beaker experiment.
         """
+        # Check for webhook URL env var if needed.
+        slack_webhook_url: Optional[str] = None
+        if follow and slack_notifications is not False:
+            from olmo_core.train.callbacks.slack_notifier import (
+                SLACK_WEBHOOK_URL_ENV_VAR,
+            )
+
+            if SLACK_WEBHOOK_URL_ENV_VAR in os.environ:
+                slack_webhook_url = os.environ[SLACK_WEBHOOK_URL_ENV_VAR]
+            else:
+                # Pull from secret if available.
+                for env_secret in self.env_secrets:
+                    if env_secret.name == SLACK_WEBHOOK_URL_ENV_VAR:
+                        slack_webhook_url = self.beaker.secret.read(env_secret.secret)
+                        break
+
+            if slack_notifications is None:
+                slack_notifications = slack_webhook_url is not None
+            elif slack_notifications and slack_webhook_url is None:
+                raise OLMoEnvironmentError(
+                    f"Missing env var / secret '{SLACK_WEBHOOK_URL_ENV_VAR}' for Slack notifications"
+                )
+
         spec = self.build_experiment_spec(torchrun=torchrun, entrypoint=entrypoint)
         experiment = self.beaker.experiment.create(self.name, spec)
         log.info(f"Experiment submitted, see progress at {self.beaker.experiment.url(experiment)}")
@@ -528,7 +617,7 @@ class BeakerLaunchConfig(Config):
             return experiment
 
         try:
-            follow_experiment(self.beaker, experiment)
+            follow_experiment(self.beaker, experiment, slack_webhook_url=slack_webhook_url)
         except KeyboardInterrupt:
             log.warning("Caught keyboard interrupt...")
             if Confirm.ask("Would you like to cancel the experiment?"):
@@ -543,7 +632,12 @@ class BeakerLaunchConfig(Config):
         return experiment
 
 
-def follow_experiment(beaker: Beaker, experiment: Experiment, tail: bool = False):
+def follow_experiment(
+    beaker: Beaker,
+    experiment: Experiment,
+    tail: bool = False,
+    slack_webhook_url: Optional[str] = None,
+):
     # Wait for job to start...
     job: Optional[Job] = beaker.experiment.tasks(experiment.id)[0].latest_job  # type: ignore
     if job is None:
@@ -569,6 +663,9 @@ def follow_experiment(beaker: Beaker, experiment: Experiment, tail: bool = False
             continue
         break
 
+    if slack_webhook_url is not None:
+        _send_slack_notification_for_event(beaker, experiment, "launched", slack_webhook_url)
+
     # Stream logs...
     log.info("Showing logs:")
     print()
@@ -589,13 +686,212 @@ def follow_experiment(beaker: Beaker, experiment: Experiment, tail: bool = False
     exit_code = job.status.exit_code
 
     if exit_code is None:
+        if slack_webhook_url is not None:
+            _send_slack_notification_for_event(beaker, experiment, "failed", slack_webhook_url)
         raise BeakerExperimentFailedError(
             f"Experiment failed, see {beaker.experiment.url(experiment)} for details"
         )
     elif exit_code > 0:
+        if slack_webhook_url is not None:
+            _send_slack_notification_for_event(beaker, experiment, "failed", slack_webhook_url)
         raise BeakerExperimentFailedError(
             f"Experiment exited with non-zero code ({exit_code}), "
             f"see {beaker.experiment.url(experiment)} for details"
         )
     else:
         log.info(f"Experiment completed successfully: {beaker.experiment.url(experiment)}")
+        if slack_webhook_url is not None:
+            _send_slack_notification_for_event(beaker, experiment, "succeeded", slack_webhook_url)
+
+
+def _send_slack_notification_for_event(
+    beaker: Beaker,
+    experiment: Experiment,
+    event: Literal["launched", "succeeded", "failed"],
+    webhook_url: str,
+):
+    workload_name = experiment.full_name
+    workload_url = beaker.experiment.url(experiment)
+
+    if event == "launched":
+        text = f":check: Run <{workload_url}|*{workload_name}*> has launched! :runner:"
+    elif event == "failed":
+        text = f":check-failed: Run <{workload_url}|*{workload_name}*> failed!"
+    elif event == "succeeded":
+        text = f":check: Run <{workload_url}|*{workload_name}*> succeeded!"
+    else:
+        raise ValueError(f"Unknown event: {event}")
+
+    try:
+        requests.post(webhook_url, json={"text": text})
+    except Exception as e:
+        log.exception(f"Failed to send Slack notification: {e}")
+
+
+def _parse_args():
+    parser = argparse.ArgumentParser(
+        "olmo_core.launch.beaker",
+        usage="python -m olmo_core.launch.beaker [OPTIONS...] -- [CMD...]",
+        description=textwrap.dedent(
+            """
+            Launch a command on Beaker.
+            """
+        ),
+        epilog=textwrap.dedent(
+            """
+            examples:
+              ❯ python -m olmo_core.launch.beaker -- echo "Hello, World!"
+            """
+        ),
+        formatter_class=type(  # type: ignore[arg-type]
+            "CustomFormatter",
+            (
+                argparse.ArgumentDefaultsHelpFormatter,
+                argparse.RawDescriptionHelpFormatter,
+            ),
+            {},
+        ),
+    )
+    parser.add_argument(
+        "--name", type=str, default="olmo-core-test", help="A name to assign to the run."
+    )
+    parser.add_argument(
+        "--task-name", type=str, default="main", help="A name to assign to the task."
+    )
+    parser.add_argument("--gpus", type=int, default=0, help="The number of GPUs per node/replica.")
+    parser.add_argument("--nodes", type=int, default=1, help="The number of nodes/replicas.")
+    parser.add_argument("--budget", type=str, help="The Beaker budget account to use.")
+    parser.add_argument("--workspace", type=str, help="The Beaker workspace to use.")
+    parser.add_argument(
+        "--description", type=str, help="A description to assign to the Beaker experiment."
+    )
+    parser.add_argument(
+        "--cluster",
+        type=str,
+        nargs="*",
+        default=["ai2/jupiter", "ai2/ceres", "ai2/saturn", "ai2/prometheus"],
+        help="""Clusters to launch on (multiple allowed).""",
+    )
+    parser.add_argument(
+        "--priority",
+        choices=[p.value for p in Priority],
+        default=Priority.normal,
+        help="The priority level.",
+    )
+    parser.add_argument(
+        "--preemptible",
+        action="store_true",
+        help="""If the job should be preemptible.""",
+    )
+    parser.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help="""Allow launching with uncommitted changes.""",
+        default=False,
+    )
+    parser.add_argument(
+        "--beaker-image",
+        type=str,
+        default=OLMoCoreBeakerImage.stable,
+        help="""The Beaker image to use.""",
+    )
+    parser.add_argument(
+        "--shared-filesystem",
+        action="store_true",
+        help="""Use this flag if the save folder and working directory for each node is part of a global
+        shared filesystem (like weka or NFS).""",
+    )
+    parser.add_argument("--weka", type=str, nargs="*", help="Weka buckets to mount at '/weka/'.")
+    parser.add_argument(
+        "--torchrun",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="""If the command should be run via torchrun. This will default to true when '--gpus' is greater than 1.""",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="""Set debugging env vars, like 'CUDA_LAUNCH_BLOCKING=1'.""",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="""Do a dry run where the launch config is printed.""",
+    )
+    parser.add_argument(
+        "--env",
+        type=str,
+        nargs="*",
+        help="""Environment variables to add to the Beaker experiment.
+        Should be in the form '{NAME}={VALUE}'. Multiple allowed, space separated.""",
+    )
+    parser.add_argument(
+        "--env-secret",
+        type=str,
+        nargs="*",
+        help="""Environment variables to add to the Beaker experiment from Beaker secrets.
+        Should be in the form '{NAME}={SECRET_NAME}'. Multiple allowed, space separated.""",
+    )
+
+    if len(sys.argv) < 3 or "--" not in sys.argv:
+        parser.print_help()
+        sys.exit(1)
+
+    sep_index = sys.argv.index("--")
+    args = sys.argv[1:sep_index]
+    command = sys.argv[sep_index + 1 :]
+    opts = parser.parse_args(args)
+    return opts, command
+
+
+def _build_config(opts: argparse.Namespace, command: List[str]) -> BeakerLaunchConfig:
+    env_vars: List[BeakerEnvVar] = []
+    if opts.debug:
+        env_vars.append(BeakerEnvVar(name="CUDA_LAUNCH_BLOCKING", value="1"))
+        env_vars.append(BeakerEnvVar(name="NCCL_DEBUG", value="INFO"))
+    for e in opts.env or []:
+        if "=" not in e:
+            raise ValueError(f"Invalid env var '{e}', must be in the form NAME=VALUE")
+        name, value = e.split("=", 1)
+        env_vars.append(BeakerEnvVar(name=name, value=value))
+    env_secrets: List[BeakerEnvSecret] = []
+    for e in opts.env_secret or []:
+        if "=" not in e:
+            raise ValueError(f"Invalid env secret '{e}', must be in the form NAME=SECRET_NAME")
+        name, secret = e.split("=", 1)
+        env_secrets.append(BeakerEnvSecret(name=name, secret=secret))
+    return BeakerLaunchConfig(
+        name=f"{opts.name}-{generate_uuid()[:8]}",
+        budget=opts.budget,
+        cmd=command,
+        env_vars=env_vars,
+        env_secrets=env_secrets,
+        task_name=opts.task_name,
+        description=opts.description,
+        clusters=opts.cluster,
+        num_nodes=opts.nodes,
+        num_gpus=opts.gpus,
+        preemptible=opts.preemptible,
+        priority=opts.priority,
+        beaker_image=opts.beaker_image,
+        workspace=opts.workspace,
+        allow_dirty=opts.allow_dirty,
+        shared_filesystem=opts.shared_filesystem,
+        weka_buckets=[
+            BeakerWekaBucket(bucket=bucket, mount=f"/weka/{bucket}") for bucket in (opts.weka or [])
+        ],
+    )
+
+
+def main():
+    opts, command = _parse_args()
+    prepare_cli_environment()
+    config = _build_config(opts, command)
+    if opts.dry_run:
+        rich.print(config)
+    else:
+        config.launch(torchrun=opts.torchrun, follow=True)
+
+
+if __name__ == "__main__":
+    main()

@@ -10,7 +10,7 @@ from olmo_core.nn.rope import (
     StepwiseRoPEScalingConfig,
     YaRNRoPEScalingConfig,
 )
-from olmo_core.testing import DEVICES, requires_flash_attn, requires_gpu
+from olmo_core.testing import DEVICES, requires_flash_attn_2, requires_gpu
 
 
 @pytest.mark.parametrize("device", DEVICES)
@@ -65,7 +65,7 @@ def test_rope_with_past_key_values(device, head_first):
 
 
 @requires_gpu
-@requires_flash_attn
+@requires_flash_attn_2
 @pytest.mark.parametrize(
     "dtype",
     [pytest.param(torch.bfloat16, id="bf16"), pytest.param(torch.float32, id="fp32")],
@@ -390,7 +390,7 @@ def test_rope_start_pos_zero_matches_default(device, head_first, rope_cls):
 
 
 @requires_gpu
-@requires_flash_attn
+@requires_flash_attn_2
 def test_fused_rope_start_pos_zero_matches_default():
     B, T, d_model, n_heads = 2, 12, 16, 4
     head_size = d_model // n_heads
