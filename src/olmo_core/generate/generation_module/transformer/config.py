@@ -54,6 +54,7 @@ class TransformerGenerationModuleConfig(Config):
         work_dir: Optional[PathOrStr] = None,
         pre_download: bool = True,
         load_thread_count: Optional[int] = None,
+        **kwargs,
     ) -> "TransformerGenerationModule":
         """
         Build the corresponding :class:`TransformerGenerationModule`.
@@ -81,6 +82,8 @@ class TransformerGenerationModuleConfig(Config):
             config_dict["state_dict_load_opts"] = dist_cp_sd.StateDictOptions(
                 **state_dict_load_opts
             )
+
+        config_dict.update(kwargs)
         log_or_print(log, f"TransformerGenerationModuleConfig: {config_dict}")
 
         return TransformerGenerationModule.from_checkpoint(
