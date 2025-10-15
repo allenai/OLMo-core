@@ -1142,29 +1142,31 @@ class TransformerConfig(Config):
         new_config = self.copy()
         if new_config.block.attention.rope is None:
             raise ValueError("Cannot apply RoPE scaling to a model without RoPE.")
+        if new_config.block_overrides:
+            raise ValueError("Cannot apply RoPE scaling when block_overrides are already set.")
+
+        def apply_scaling(block_config: TransformerBlockConfig) -> None:
+            rope_config = block_config.attention.rope
+            if rope_config is None:
+                raise ValueError("Cannot apply RoPE scaling to a layer without RoPE.")
+            rope_config = rope_config.copy()
+            rope_config.scaling = rope_scaling
+            block_config.attention.rope = rope_config
 
         if not full_attn_layers_only:
-            new_config.block.attention.rope.scaling = rope_scaling
+            apply_scaling(new_config.block)
             return new_config
-        else:
 
-            def add_rope_scaling(block: TransformerBlockConfig) -> TransformerBlockConfig:
-                rope_config = block.attention.rope
-                if rope_config is None:
-                    raise ValueError("Cannot apply RoPE scaling to a layer without RoPE.")
-                rope_config.scaling = rope_scaling
-                block.attention.rope = rope_config
-                return block
+        # Add rope scaling only to layers that do not use sliding window attention
+        # We supply "block_overrides" for the layers we want to scale.
+        overrides: Dict[int, TransformerBlockConfig] = {}
+        for i in range(new_config.n_layers):
+            sliding_window_cfg = new_config.block.attention.sliding_window
+            if sliding_window_cfg and sliding_window_cfg.should_use_swa(i, new_config.n_layers):
+                continue
+            block_copy = new_config.block.copy()
+            apply_scaling(block_copy)
+            overrides[i] = block_copy
 
-            # Add rope scaling only to layers that do not use sliding window attention.
-            new_config.block_overrides = {
-                i: add_rope_scaling(new_config.block.copy())
-                for i in range(new_config.n_layers)
-                if not (
-                    new_config.block.attention.sliding_window
-                    and new_config.block.attention.sliding_window.should_use_swa(
-                        i, new_config.n_layers
-                    )
-                )
-            }
+        new_config.block_overrides = overrides or None
         return new_config

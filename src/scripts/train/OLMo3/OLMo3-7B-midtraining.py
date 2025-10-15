@@ -14,6 +14,8 @@ from olmo_core.train.train_module import TransformerTrainModuleConfig
 
 SEQ_LENGTH = 8192
 GLOBAL_BATCH_SIZE = 2**21  # ~2M tokens
+MAX_TOKENS = 100_000_000_000  # 100B
+LR = 0.00020712352850360292
 SEED = 1337
 
 
@@ -39,13 +41,10 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     tokenizer_config = TokenizerConfig.dolma2()
     model_config = TransformerConfig.olmo3_7B(vocab_size=tokenizer_config.padded_vocab_size())
 
-    max_tokens = 100_000_000_000  # 100B
-    max_duration = Duration.tokens(max_tokens)
-
     train_module_config: TransformerTrainModuleConfig = cookbook.configure_train_module(
         max_sequence_length=SEQ_LENGTH,
         rank_microbatch_size=SEQ_LENGTH * 2,
-        learning_rate=0.00020712352850360292,
+        learning_rate=LR,
         scheduler=LinearWithWarmup(units=SchedulerUnits.steps, warmup=0, alpha_f=0.0),
         activation_memory_budget=0.5,
     )
@@ -57,7 +56,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     dataset_config = NumpyFSLDatasetConfig.from_src_mix(
         src_mix=SourceMixtureDatasetConfig(
             source_list=source_list,
-            requested_tokens=max_tokens,
+            requested_tokens=MAX_TOKENS,
             global_batch_size=GLOBAL_BATCH_SIZE,
             processes=16,
             seed=SEED,
@@ -75,7 +74,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         load_path="gs://ai2-llm/checkpoints/OLMo25/step1413814",
         load_trainer_state=False,
         load_optim_state=True,
-        max_duration=max_duration,
+        max_duration=Duration.tokens(MAX_TOKENS),
         checkpoint_dir=save_dir,
         work_dir=work_dir,
     ).with_callbacks(
