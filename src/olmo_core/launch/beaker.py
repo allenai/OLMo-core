@@ -647,16 +647,24 @@ def follow_experiment(
     slack_webhook_url: Optional[str] = None,
     launch_timeout: Optional[int] = None,
 ):
-    # Wait for job to start...
+    start_time = time.monotonic()
+
+    # Wait for job to be created...
     job: Optional[Job] = beaker.experiment.tasks(experiment.id)[0].latest_job  # type: ignore
     if job is None:
         log.info("Waiting for job to be created...")
         while job is None:
-            time.sleep(1.0)
-            job = beaker.experiment.tasks(experiment.id)[0].latest_job  # type: ignore
+            if launch_timeout is not None and (time.monotonic() - start_time) > launch_timeout:
+                beaker.experiment.stop(experiment)
+                raise TimeoutError(
+                    f"Job failed to start within {launch_timeout} seconds. "
+                    f"Experiment has been stopped: {beaker.experiment.url(experiment)}"
+                )
+            else:
+                time.sleep(1.0)
+                job = beaker.experiment.tasks(experiment.id)[0].latest_job  # type: ignore
 
     # Pull events until job is running (or fails)...
-    start_time = time.monotonic()
     events = set()
     while True:
         job = beaker.job.get(job.id)
