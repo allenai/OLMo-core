@@ -131,10 +131,10 @@ def calculate_sample_sizes(
 
     ratios = np.array(target_ratios)
     sizes = np.array(source_sizes)
-    max_repetitions = np.array(max_repetition_factors)
+    max_repetition_factors_ = np.array(max_repetition_factors)
 
     assert (ratios > 0.0).all()
-    assert (max_repetitions >= 1.0).all()
+    assert (max_repetition_factors_ >= 1.0).all()
 
     if target_size is None:
         target_size = sizes.sum()
@@ -152,10 +152,10 @@ def calculate_sample_sizes(
     # not possible to match the target ratios without some dropping or oversampling.
     # So we first calculate how much oversampling/repetition is needed per source, and then cap that
     # according to the given `max_repetitions_per_source`.
-    max_repetitions_needed = np.maximum(ideal_sample_sizes / sizes, 1.0)
-    repetitions_to_use = np.minimum(max_repetitions, max_repetitions_needed)
+    max_repetition_factors_needed = np.maximum(ideal_sample_sizes / sizes, 1.0)
+    repetition_factors_to_use = np.minimum(max_repetition_factors_, max_repetition_factors_needed)
     # Now we can adjust sizes based on the repetitions needed.
-    sizes_to_use = sizes * repetitions_to_use
+    sizes_to_use = sizes * repetition_factors_to_use
     # Lastly, we need to adjust the ideal sample sizes down until by the smallest common factor
     # that would result in all sample sizes being less than or equal to the number of items available
     # from the corresponding source. We can calculate that factor by finding the source with the
