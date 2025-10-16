@@ -123,8 +123,3 @@ class SkipStepOptimizer(Optimizer):
         Returns a float tensor which will be `1.0` if the step was skipped and `0.0` otherwise.
         """
         return 1 - self.get_step_factor()
-
-
-x = torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0, float("nan")])
-x.masked_select(x.isfinite())
-std, mean = torch.std_mean(x)
