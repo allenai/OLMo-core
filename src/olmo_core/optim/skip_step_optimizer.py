@@ -94,18 +94,27 @@ class SkipStepOptimizer(Optimizer):
         if len(self._losses) < max(2, self.rolling_interval_length // 2):
             return move_to_device(torch.tensor(1.0), self.device)
 
-        loss_std, loss_mean = torch.std_mean(torch.stack(self._losses[:-1]))
+        losses = torch.stack(self._losses[:-1])
+        losses = losses.masked_select(losses.isfinite())
+        loss_std, loss_mean = torch.std_mean(losses)
         assert self.latest_loss is not None
         if self._grad_norms:
             assert self.latest_grad_norm is not None
-            grad_norm_std, grad_norm_mean = torch.std_mean(torch.stack(self._grad_norms[:-1]))
-            step_factor = torch.logical_and(
+            grad_norms = torch.stack(self._grad_norms[:-1])
+            grad_norms = grad_norms.masked_select(grad_norms.isfinite())
+            grad_norm_std, grad_norm_mean = torch.std_mean(grad_norms)
+            is_finite = torch.logical_and(
+                self.latest_loss.isfinite(), self.latest_grad_norm.isfinite()
+            )
+            is_within_bounds = torch.logical_and(
                 (self.latest_loss - loss_mean) <= self.sigma_factor * loss_std,
                 (self.latest_grad_norm - grad_norm_mean) <= self.sigma_factor * grad_norm_std,
             )
         else:
-            step_factor = (self.latest_loss - loss_mean) <= self.sigma_factor * loss_std
+            is_finite = self.latest_loss.isfinite()
+            is_within_bounds = (self.latest_loss - loss_mean) <= self.sigma_factor * loss_std
 
+        step_factor = torch.logical_and(is_finite, is_within_bounds)
         return step_factor.float()
 
     @property
@@ -114,3 +123,8 @@ class SkipStepOptimizer(Optimizer):
         Returns a float tensor which will be `1.0` if the step was skipped and `0.0` otherwise.
         """
         return 1 - self.get_step_factor()
+
+
+x = torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0, float("nan")])
+x.masked_select(x.isfinite())
+std, mean = torch.std_mean(x)
