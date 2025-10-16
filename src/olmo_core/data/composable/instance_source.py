@@ -14,7 +14,10 @@ from olmo_core.exceptions import OLMoConfigurationError
 from .source_abc import SourceABC
 
 if TYPE_CHECKING:
-    from .sampling_instance_source import SamplingInstanceSource
+    from .sampling_instance_source import (
+        SamplingInstanceSource,
+        SamplingInstanceSourceConfig,
+    )
     from .sliced_instance_source import SlicedInstanceSource
 
 
@@ -289,3 +292,45 @@ class InstanceSourceConfig(Config):
     def build(self, work_dir: PathOrStr) -> InstanceSource:
         """Build the :class:`InstanceSource`."""
         raise NotImplementedError
+
+    def sample(
+        self,
+        *,
+        max_tokens: Optional[int] = None,
+        max_instances: Optional[int] = None,
+        seed: Optional[int] = None,
+    ) -> "SamplingInstanceSourceConfig":
+        """
+        Create a :class:`SamplingInstanceSourceConfig` by sampling instances from this source.
+
+        :param max_tokens: The maximum number of tokens to sample from this source.
+          Mutually exclusive with ``max_instances``.
+        :param max_instances: The maximum number of instances to sample from this source.
+          Mutually exclusive with ``max_tokens``.
+        :param seed: A random seed for sampling. If ``None``, no shuffling is done and instances
+          are taken in order.
+        """
+        from .sampling_instance_source import SamplingInstanceSourceConfig
+
+        return SamplingInstanceSourceConfig(
+            sources=[self],
+            max_tokens=max_tokens,
+            max_instances=max_instances,
+            seed=seed,
+        )
+
+    def resize(self, factor: float, seed: Optional[int] = None) -> "SamplingInstanceSourceConfig":
+        """
+        Re-size this source by a given factor by sampling instances from it.
+
+        :param factor: The factor by which to resize this source.
+        :param seed: A random seed for sampling.
+        """
+        from .sampling_instance_source import SamplingInstanceSourceConfig
+
+        assert factor > 0
+        return SamplingInstanceSourceConfig(
+            sources=[self],
+            factor=factor,
+            seed=seed,
+        )

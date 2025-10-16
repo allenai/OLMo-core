@@ -27,15 +27,12 @@ class MixingTokenSourceSpecConfig(Config):
 
     source: TokenSourceConfig
     ratio: float
-    size_adjustment_factor: float = 1.0
     max_repetition_factor: float = 1.0
     label: Optional[str] = None
 
     def __post_init__(self):
         if self.ratio <= 0:
             raise OLMoConfigurationError("Ratio must be greater than 0.")
-        if self.size_adjustment_factor <= 0:
-            raise OLMoConfigurationError("Size adjustment factor must be greater than 0.")
         if self.max_repetition_factor < 1.0:
             raise OLMoConfigurationError("Max repetition must be at least 1.0.")
 
@@ -49,7 +46,6 @@ class MixingTokenSourceSpecConfig(Config):
         return MixingTokenSourceSpec(
             source=source,
             ratio=self.ratio,
-            size_adjustment_factor=self.size_adjustment_factor,
             max_repetition_factor=self.max_repetition_factor,
             label=self.label,
         )
@@ -64,6 +60,9 @@ class MixingTokenSourceConfig(TokenSourceConfig):
     seed: Optional[int] = None
     """A random seed for sampling."""
     label: Optional[str] = None
+    """An optional label for this source."""
+    num_tokens: Optional[int] = None
+    """An optional target number of tokens for the mixed source."""
 
     def build(self, work_dir: PathOrStr) -> List["MixingTokenSource"]:  # type: ignore[override]
         source_specs = [spec.build(work_dir) for spec in self.source_specs]
@@ -73,6 +72,7 @@ class MixingTokenSourceConfig(TokenSourceConfig):
                 work_dir=work_dir,
                 seed=self.seed,
                 label=self.label,
+                num_tokens=self.num_tokens,
             )
         ]
 
@@ -88,18 +88,9 @@ class MixingTokenSourceSpec:
     """The source."""
     ratio: float
     """The relative target ratio for this source."""
-    size_adjustment_factor: float = 1.0
-    """
-    An optional factor to adjust the effective size of this source prior to determining how many
-    tokens to sample. A factor less than 1.0 makes the source smaller, while a factor greater
-    than 1.0 makes it larger by oversampling.
-
-    Equivalently you could wrap the source in a :class:`SamplingTokenSource` to adjust its size.
-    """
     max_repetition_factor: float = 1.0
     """
-    The maximum amount of repetition allowed after applying the ``size_adjustment_factor``,
-    expressed as a factor greater than or equal to 1.0.
+    The maximum amount of repetition allowed, expressed as a factor greater than or equal to 1.0.
     A factor of 1.0 means no repetition is allowed. A factor of 2.0 means each token could be
     repeated at most once (i.e., seen twice).
     """
@@ -109,8 +100,6 @@ class MixingTokenSourceSpec:
     def __post_init__(self):
         if self.ratio <= 0:
             raise OLMoConfigurationError("Ratio must be greater than 0.")
-        if self.size_adjustment_factor <= 0:
-            raise OLMoConfigurationError("Size adjustment factor must be greater than 0.")
         if self.max_repetition_factor < 1.0:
             raise OLMoConfigurationError("Max repetition must be at least 1.0.")
 
@@ -132,8 +121,7 @@ class MixingTokenSource(TokenSource):
 
         If ``num_tokens`` is not specified, then the number of tokens this source produces will always
         be less than or equal to the sum of tokens across all of its immediate children defined in
-        the ``source_specs``, after applying their respective
-        :data:`MixingTokenSourceSpec.size_adjustment_factor` values.
+        the ``source_specs``.
 
         If ``num_tokens`` is specified, this class will try to match that size
         but may raise an :class:`~olmo_core.exceptions.OLMoConfigurationError` if it's not possible
@@ -168,7 +156,7 @@ class MixingTokenSource(TokenSource):
 
         # Determine the number of tokens to sample from each source.
         sample_sizes = calculate_sample_sizes(
-            [int(len(spec.source) * spec.size_adjustment_factor) for spec in source_specs],
+            [len(spec.source) for spec in source_specs],
             [spec.ratio for spec in source_specs],
             [spec.max_repetition_factor for spec in source_specs],
             target_size=num_tokens,

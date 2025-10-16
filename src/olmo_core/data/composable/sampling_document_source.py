@@ -10,6 +10,7 @@ import numpy as np
 import olmo_core.distributed.utils as dist_utils
 import olmo_core.io as io
 from olmo_core.aliases import PathOrStr
+from olmo_core.exceptions import OLMoConfigurationError
 
 from ..utils import get_rng, load_array_slice, write_array_to_disk
 from .token_source import (
@@ -30,16 +31,25 @@ class SamplingDocumentSourceConfig(DocumentSourceConfig):
     """
 
     sources: List[DocumentSourceConfig]
-    max_tokens: int
+    max_tokens: Optional[int] = None
+    factor: Optional[float] = None
     seed: Optional[int] = None
     label: Optional[str] = None
 
+    def __post_init__(self):
+        if (self.max_tokens is None) == (self.factor is None):
+            raise OLMoConfigurationError("Exactly one of 'max_tokens' or 'factor' must be set.")
+
     def build(self, work_dir: PathOrStr) -> List["SamplingDocumentSource"]:  # type: ignore[override]
         sources = [s for source in self.sources for s in source.build(work_dir=work_dir)]
+        max_tokens = self.max_tokens
+        if max_tokens is None:
+            assert self.factor is not None
+            max_tokens = int(self.factor * sum(source.num_tokens for source in sources))
         return [
             SamplingDocumentSource(
                 *sources,
-                max_tokens=self.max_tokens,
+                max_tokens=max_tokens,
                 seed=self.seed,
                 work_dir=work_dir,
                 label=self.label,

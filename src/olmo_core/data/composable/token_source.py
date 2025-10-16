@@ -26,8 +26,11 @@ from .source_abc import SourceABC
 from .utils import as_ndarray
 
 if TYPE_CHECKING:
-    from .sampling_document_source import SamplingDocumentSource
-    from .sampling_token_source import SamplingTokenSource
+    from .sampling_document_source import (
+        SamplingDocumentSource,
+        SamplingDocumentSourceConfig,
+    )
+    from .sampling_token_source import SamplingTokenSource, SamplingTokenSourceConfig
     from .sliced_token_source import SlicedTokenSource
 
 
@@ -439,6 +442,43 @@ class TokenSourceConfig(Config):
         """Build the token source."""
         raise NotImplementedError
 
+    def sample(
+        self,
+        *,
+        max_tokens: int,
+        seed: Optional[int] = None,
+    ) -> "SamplingTokenSourceConfig":
+        """
+        Create a :class:`SamplingTokenSourceConfig` by sampling tokens from this source.
+
+        :param max_tokens: The maximum number of tokens to sample.
+        :param seed: A seed to use to randomize the sampling.
+        """
+        from .sampling_token_source import SamplingTokenSourceConfig
+
+        return SamplingTokenSourceConfig(
+            sources=[self],
+            max_tokens=max_tokens,
+            seed=seed,
+        )
+
+    def resize(self, factor: float, seed: Optional[int] = None) -> "SamplingTokenSourceConfig":
+        """
+        Re-size this source by a given factor by sampling tokens from it.
+
+        :param factor: The factor to resize the source by. For example, ``0.5`` will create a source
+          with half the number of tokens, and ``2.0`` will create a source with twice the number of tokens.
+        :param seed: A seed to use to randomize the sampling.
+        """
+        from .sampling_token_source import SamplingTokenSourceConfig
+
+        assert factor > 0
+        return SamplingTokenSourceConfig(
+            sources=[self],
+            factor=factor,
+            seed=seed,
+        )
+
 
 @dataclass
 class DocumentSourceConfig(TokenSourceConfig):
@@ -448,3 +488,37 @@ class DocumentSourceConfig(TokenSourceConfig):
     def build(self, work_dir: PathOrStr) -> List[DocumentSource]:  # type: ignore[override]
         """Build the document source."""
         raise NotImplementedError
+
+    def sample(  # type: ignore[override]
+        self,
+        *,
+        max_tokens: int,
+        seed: Optional[int] = None,
+    ) -> "SamplingDocumentSourceConfig":
+        """
+        Create a :class:`SamplingDocumentSourceConfig` by sampling tokens from this source.
+
+        :param max_tokens: The maximum number of tokens to sample.
+        :param seed: A seed to use to randomize the sampling.
+        """
+        from .sampling_document_source import SamplingDocumentSourceConfig
+
+        return SamplingDocumentSourceConfig(
+            sources=[self],
+            max_tokens=max_tokens,
+            seed=seed,
+        )
+
+    def resize(  # type: ignore[override]
+        self,
+        factor: float,
+        seed: Optional[int] = None,
+    ) -> "SamplingDocumentSourceConfig":
+        from .sampling_document_source import SamplingDocumentSourceConfig
+
+        assert factor > 0
+        return SamplingDocumentSourceConfig(
+            sources=[self],
+            factor=factor,
+            seed=seed,
+        )

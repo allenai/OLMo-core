@@ -21,20 +21,36 @@ class SamplingInstanceSourceConfig(InstanceSourceConfig):
     sources: List[InstanceSourceConfig]
     max_tokens: Optional[int] = None
     max_instances: Optional[int] = None
+    factor: Optional[float] = None
     seed: Optional[int] = None
     label: Optional[str] = None
 
     def __post_init__(self):
-        if (self.max_tokens is None) == (self.max_instances is None):
+        if (
+            sum(
+                [
+                    (self.max_tokens is not None),
+                    (self.max_instances is not None),
+                    (self.factor is not None),
+                ]
+            )
+            != 1
+        ):
             raise OLMoConfigurationError(
-                "Either max_tokens or max_instances must be set, but not both."
+                "Either 'max_tokens', 'max_instances', or 'factor' must be set, but not more than one."
             )
 
     def build(self, work_dir: PathOrStr) -> "SamplingInstanceSource":
+        sources = [source.build(work_dir) for source in self.sources]
+        max_tokens = self.max_tokens
+        max_instances = self.max_instances
+        if max_tokens is None and max_instances is None:
+            assert self.factor is not None
+            max_tokens = int(self.factor * sum(source.num_tokens for source in sources))
         return SamplingInstanceSource(
-            *[source.build(work_dir) for source in self.sources],
-            max_tokens=self.max_tokens,
-            max_instances=self.max_instances,
+            *sources,
+            max_tokens=max_tokens,
+            max_instances=max_instances,
             work_dir=work_dir,
             seed=self.seed,
             label=self.label,

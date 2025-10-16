@@ -38,10 +38,7 @@ Each of those classes has a similar API, which accepts a sequence of "source spe
   Either a :class:`~olmo_core.data.composable.TokenSource`, :class:`~olmo_core.data.composable.DocumentSource`,
   or :class:`~olmo_core.data.composable.InstanceSource` depending on the mixing class.
 - ``ratio`` – The relative target ratio for the source in the final mixture.
-- ``size_adjustment_factor`` – An optional factor to adjust the effective size of this source prior to determining how many
-  tokens/instances to sample. A factor less than 1.0 makes the source smaller, while a factor greater
-  than 1.0 makes it larger by oversampling.
-- ``max_repetition_factor`` – The maximum amount of repetition allowed after applying the ``size_adjustment_factor``,
+- ``max_repetition_factor`` – The maximum amount of repetition allowed,
   expressed as a factor greater than or equal to 1.0.
   A factor of 1.0 means no repetition is allowed. A factor of 2.0 means each instance could be
   repeated at most once (i.e., seen twice).
@@ -67,6 +64,7 @@ In this example we'll demonstrate instance-level mixing with the "concat and chu
     )
     
     mix_config = MixingInstanceSource.Config(
+        num_tokens=1_000_000_000,
         source_specs=[
             MixingInstanceSource.Spec.Config(
                 source=npy_instance_source("/corpus/trex-facts/part-*.npy"),

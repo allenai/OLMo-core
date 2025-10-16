@@ -173,7 +173,8 @@ using :meth:`NumpyDocumentSourceConfig.from_source_groups`::
        tokenizer=tokenizer,
    )
 
-And then mix them together at the instance level in a hierarchical fashion with :class:`MixingInstanceSource`::
+And then mix them together at the instance level in a hierarchical fashion with a :class:`MixingInstanceSource`
+to get a source with 30B tokens::
 
    def make_instance_source(label: str) -> InstanceSourceConfig:
        return ConcatAndChunkInstanceSource.Config(
@@ -225,7 +226,8 @@ And then mix them together at the instance level in a hierarchical fashion with 
                ratio=0.5,
                label="math",
            ),
-       ]
+       ],
+       num_tokens=30_000_000_000,
    )
 
    mix = mix_config.build("/tmp/dataset-common")
@@ -233,8 +235,8 @@ And then mix them together at the instance level in a hierarchical fashion with 
 
 ::
 
-   MixingInstanceSource(4d3e689): 40.6B tokens
-   ├─ SamplingInstanceSource(12ba409): 20.3B tokens [code]
+   MixingInstanceSource(4d3e689): 30.0B tokens
+   ├─ SamplingInstanceSource(12ba409): 15.0B tokens [code]
    │  └─ MixingInstanceSource(5d9386b): 37.7B tokens
    │     ├─ SamplingInstanceSource(3563ba5): 18.8B tokens [code_fim]
    │     │  └─ ConcatAndChunkInstanceSource(adb4562): 21.4B tokens [code_fim]
@@ -242,7 +244,7 @@ And then mix them together at the instance level in a hierarchical fashion with 
    │     └─ SamplingInstanceSource(cc0d34b): 18.8B tokens [swallowcode]
    │        └─ ConcatAndChunkInstanceSource(b2f2ef4): 18.8B tokens [swallowcode]
    │           └─ NumpyDocumentSource x 128: 18.8B tokens [swallowcode]
-   └─ SamplingInstanceSource(2380ca7): 20.3B tokens [math]
+   └─ SamplingInstanceSource(2380ca7): 15.0B tokens [math]
       └─ MixingInstanceSource(0b8927b): 20.3B tokens
          ├─ SamplingInstanceSource(d3ee3f9): 2.0B tokens [megamath]
          │  └─ ConcatAndChunkInstanceSource(2b6a324): 3.9B tokens [megamath]
@@ -254,11 +256,9 @@ And then mix them together at the instance level in a hierarchical fashion with 
 .. tip::
     **Up-sampling:** In general general you can accomplish exact up-sampling by wrapping a source in
     a :class:`SamplingInstanceSource` (or :class:`SamplingTokenSource`, :class:`SamplingDocumentSource`),
-    but the :class:`MixingInstanceSourceSpec`
-    (or :class:`MixingTokenSourceSpec`, :class:`MixingDocumentSourceSpec`) also has a shortcut
-    for this via the ``size_adjustment_factor`` option.
+    or by using the ``.sample()`` or ``.resize()`` methods.
 
-    For example, if you want to up-sample a source by 3x, you can set ``size_adjustment_factor=3.0``.
+    For example, if you want to up-sample a source by 3x, you can call ``.resize(3.0)``.
 
 Reference
 ---------
