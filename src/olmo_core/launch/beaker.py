@@ -418,7 +418,7 @@ class BeakerLaunchConfig(Config):
 
         entrypoint_script = [
             "#!/usr/bin/env bash",
-            "set -exuo pipefail",
+            "set -exo pipefail",
             "[[ -d /var/lib/tcpxo/lib64 ]] && export LD_LIBRARY_PATH=/var/lib/tcpxo/lib64:$LD_LIBRARY_PATH",
             # Setup the kernel cache directory used by pytorch
             "mkdir -p /root/.cache/torch/kernels && export PYTORCH_KERNEL_CACHE_PATH=/root/.cache/torch/kernels",
@@ -438,10 +438,13 @@ class BeakerLaunchConfig(Config):
                     ")"
                 )
                 entrypoint_script.append("export BEAKER_REPLICA_RANK=$BEAKER_REPLICA_RANK")
-            entrypoint_script.append(" ".join(self._get_torchrun_cmd()) + ' "$@"')
-        else:
-            entrypoint = entrypoint or "python"
+            entrypoint_script.append("exec " + " ".join(self._get_torchrun_cmd()) + ' "$@"')
+        elif entrypoint:
             entrypoint_script.append(f'{entrypoint} "$@"')
+        elif self.cmd and os.path.isfile(self.cmd[0]) and self.cmd[0].endswith(".py"):
+            entrypoint_script.append('python "$@"')
+        else:
+            entrypoint_script.append('exec "$@"')
 
         entrypoint_dataset = self._create_script_dataset("entrypoint.sh", entrypoint_script)
 
@@ -488,7 +491,7 @@ class BeakerLaunchConfig(Config):
                         or any(["augusta" in cluster for cluster in self.clusters])
                     )
                 ),
-                #propagate_failure=True if self.num_nodes > 1 else None,
+                # propagate_failure=True if self.num_nodes > 1 else None,
                 propagate_failure=False,  # DEBUG
                 propagate_preemption=True if self.num_nodes > 1 else None,
                 synchronized_start_timeout="90m" if self.num_nodes > 1 else None,
