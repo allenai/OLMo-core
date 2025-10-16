@@ -57,7 +57,7 @@ class MixingDocumentSourceConfig(DocumentSourceConfig):
 
     source_specs: List[MixingDocumentSourceSpecConfig]
     """Mixing source specs."""
-    seed: Optional[int] = None
+    seed: Optional[int] = 0
     """A random seed for sampling."""
     label: Optional[str] = None
     """An optional label for this source."""
@@ -144,7 +144,7 @@ class MixingDocumentSource(DocumentSource):
         self,
         *source_specs: MixingDocumentSourceSpec,
         work_dir: PathOrStr,
-        seed: Optional[int] = None,
+        seed: Optional[int] = 0,
         label: Optional[str] = None,
         num_tokens: Optional[int] = None,
     ):

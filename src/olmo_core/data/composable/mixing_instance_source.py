@@ -51,7 +51,7 @@ class MixingInstanceSourceConfig(InstanceSourceConfig):
 
     source_specs: List[MixingInstanceSourceSpecConfig]
     """Mixing source specs."""
-    seed: Optional[int] = None
+    seed: Optional[int] = 0
     """A random seed for sampling."""
     label: Optional[str] = None
     """An optional label for this source."""
@@ -142,7 +142,7 @@ class MixingInstanceSource(InstanceSource):
         self,
         *source_specs: MixingInstanceSourceSpec,
         work_dir: PathOrStr,
-        seed: Optional[int] = None,
+        seed: Optional[int] = 0,
         label: Optional[str] = None,
         num_tokens: Optional[int] = None,
         num_instances: Optional[int] = None,

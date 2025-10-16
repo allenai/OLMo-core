@@ -27,6 +27,7 @@ def test_mixing_instance_source(tmp_path: Path):
             ratio=0.50,
         ),
         work_dir=tmp_path,
+        seed=None,
     )
     assert len(source) == 16
     assert list(source[0]["input_ids"]) == list(range(0, 8))

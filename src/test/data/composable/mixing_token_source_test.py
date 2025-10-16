@@ -15,6 +15,7 @@ def test_mixing_token_source(tmp_path: Path):
             ratio=0.50,
         ),
         work_dir=tmp_path,
+        seed=None,
     )
     assert len(source) == 16
     assert list(source[:]["input_ids"]) == list(range(0, 8)) + list(range(8, 16))
@@ -32,6 +33,7 @@ def test_mixing_token_source_with_repetition(tmp_path: Path):
             ratio=0.50,
         ),
         work_dir=tmp_path,
+        seed=None,
     )
     assert len(source) == 24
     assert list(source[:]["input_ids"]) == list(range(0, 8)) + list(range(0, 4)) + list(

@@ -57,7 +57,7 @@ class MixingTokenSourceConfig(TokenSourceConfig):
 
     source_specs: List[MixingTokenSourceSpecConfig]
     """Mixing source specs."""
-    seed: Optional[int] = None
+    seed: Optional[int] = 0
     """A random seed for sampling."""
     label: Optional[str] = None
     """An optional label for this source."""
@@ -143,7 +143,7 @@ class MixingTokenSource(TokenSource):
         self,
         *source_specs: MixingTokenSourceSpec,
         work_dir: PathOrStr,
-        seed: Optional[int] = None,
+        seed: Optional[int] = 0,
         label: Optional[str] = None,
         num_tokens: Optional[int] = None,
     ):
