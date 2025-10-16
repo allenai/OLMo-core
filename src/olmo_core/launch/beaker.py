@@ -471,7 +471,7 @@ class BeakerLaunchConfig(Config):
                     ")"
                 )
                 entrypoint_script.append("export BEAKER_REPLICA_RANK=$BEAKER_REPLICA_RANK")
-            entrypoint_script.append(" ".join(self._get_torchrun_cmd()) + ' "$@"')
+            entrypoint_script.append("exec " + " ".join(self._get_torchrun_cmd()) + ' "$@"')
         elif entrypoint:
             entrypoint_script.append(f'{entrypoint} "$@"')
         elif self.cmd and os.path.isfile(self.cmd[0]) and self.cmd[0].endswith(".py"):
