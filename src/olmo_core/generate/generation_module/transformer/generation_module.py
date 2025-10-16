@@ -541,34 +541,28 @@ class TransformerGenerationModule(GenerationModule):
         gc.collect()
 
         # Average weights from all checkpoints
-        from torch.profiler import profile, ProfilerActivity
-        with profile(activities=[ProfilerActivity.CPU], profile_memory=True, record_shapes=True, with_stack=True) as prof:
-            for i, checkpoint_dir in enumerate(checkpoint_dirs[1:], start=2):
-                log.info(f"Merging {checkpoint_dir}")
-                next_generation_module = cls.from_checkpoint(
-                    checkpoint_dir, dtype=DType.float32, **cpu_kwargs
-                )
-                next_state_dict = next_generation_module.state_dict()
-                del next_generation_module
+        for i, checkpoint_dir in enumerate(checkpoint_dirs[1:], start=2):
+            log.info(f"Merging {checkpoint_dir}")
+            next_generation_module = cls.from_checkpoint(
+                checkpoint_dir, dtype=DType.float32, **cpu_kwargs
+            )
+            next_state_dict = next_generation_module.state_dict()
+            del next_generation_module
 
-                # Average the weights
-                for key in merged_state_dict["model"].keys():
-                    if torch.is_tensor(merged_state_dict["model"][key]):
-                        target_tensor = merged_state_dict["model"][key]
-                        source_tensor = next_state_dict["model"].pop(key)
-                        assert (target_tensor.shape == source_tensor.shape)
-                        # in-place operations for better memory consumption
-                        target_tensor.mul_((i-1)/i).add_(source_tensor, alpha=1.0/i)
-                        del target_tensor
-                        del source_tensor
+            # Average the weights
+            for key in merged_state_dict["model"].keys():
+                if torch.is_tensor(merged_state_dict["model"][key]):
+                    target_tensor = merged_state_dict["model"][key]
+                    source_tensor = next_state_dict["model"].pop(key)
+                    assert (target_tensor.shape == source_tensor.shape)
+                    # in-place operations for better memory consumption
+                    target_tensor.mul_((i-1)/i).add_(source_tensor, alpha=1.0/i)
+                    del target_tensor
+                    del source_tensor
 
-                # Free memory from the temporary module and run garbage collection
-                del next_state_dict
-                gc.collect()
-
-                print(prof.key_averages().table(sort_by="self_cpu_memory_usage", row_limit=16))
-                prof.export_chrome_trace(f"{i}_trace.json")
-
+            # Free memory from the temporary module and run garbage collection
+            del next_state_dict
+            gc.collect()
 
         # Now load the final model on the target device with the correct dtype
         if dtype == DType.float32:
