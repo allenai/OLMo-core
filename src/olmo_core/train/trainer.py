@@ -1332,10 +1332,16 @@ class Trainer:
             ) is not None:
                 self.global_train_tokens_seen += global_num_tokens
 
+            should_skip = False
             if self.steps_to_skip:
                 for range_start, range_end in self.steps_to_skip:
                     if range_start <= self.global_step <= range_end:
                         log.warning(f"Skipping step {self.global_step:,d} intentionally...")
+                        should_skip = True
+                        break
+
+            if should_skip:
+                continue
 
             for callback in self._iter_callbacks():
                 callback.pre_step(batch)
