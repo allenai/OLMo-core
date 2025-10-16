@@ -46,6 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The `model_id` argument to `convert_state_from_hf` is deprecated. Conversion information is deduced from the model type.
 - Refactored the example conversion scripts to/from HF, including decreasing false failures in validation.
 - Small refactor to `source_mixture.py` to make it easier to define data mixes in yaml.
+- Reorganized/cleaned up internal training scripts.
 
 ### Added
 
