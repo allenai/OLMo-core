@@ -2354,6 +2354,11 @@ class NumpyDatasetConfig(Config, ABC):
         You can save a lot of time and disk space by setting this to a common directory across
         all of you runs.
     """
+    ignore_fingerprint_mismatch: bool = False
+    """
+    If True, ignore dataset fingerprint mismatches when loading from a checkpoint.
+    This is used when intentionally switching to a different dataset mix.
+    """
 
     @abstractmethod
     def build(self) -> NumpyDatasetBase:
