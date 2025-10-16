@@ -1263,6 +1263,8 @@ class Trainer:
 
         log.info(f"Starting epoch {self.epoch}...")
 
+        torch.autograd.set_detect_anomaly(True)
+
         for callback in self._iter_callbacks():
             callback.pre_epoch()
 
