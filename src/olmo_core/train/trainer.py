@@ -1336,23 +1336,22 @@ class Trainer:
             if self.steps_to_skip:
                 for range_start, range_end in self.steps_to_skip:
                     if range_start <= self.global_step <= range_end:
-                        log.warning(f"Skipping step {self.global_step:,d} intentionally...")
                         should_skip = True
                         break
-
-            if should_skip:
-                continue
 
             for callback in self._iter_callbacks():
                 callback.pre_step(batch)
 
-            self.train_module.train_batch(batch)
+            if should_skip:
+                log.warning(f"Skipping training on step {self.global_step:,d} intentionally...")
+            else:
+                self.train_module.train_batch(batch)
 
-            for callback in self._iter_callbacks():
-                callback.pre_optim_step()
+                for callback in self._iter_callbacks():
+                    callback.pre_optim_step()
 
-            self.train_module.optim_step()
-            self.train_module.zero_grads()
+                self.train_module.optim_step()
+                self.train_module.zero_grads()
 
             for callback in self._iter_callbacks():
                 callback.post_train_batch()
