@@ -28,6 +28,15 @@ def test_calculate_sample_sizes():
         [2.0, 1.0],
     ).tolist() == [12, 12]
 
+    # Case 4: a similar situation but this time our target size is small enough that we don't need
+    # to repeat any tokens to meet it.
+    assert calculate_sample_sizes(
+        [8, 16],
+        [0.5, 0.5],
+        [1.0, 1.0],
+        target_size=16,
+    ).tolist() == [8, 8]
+
 
 def test_build_global_indices(seed: int = 42):
     total_tokens = 24

@@ -110,19 +110,33 @@ class MixingInstanceSourceSpec:
 class MixingInstanceSource(InstanceSource):
     """
     An instance source for mixing other instance sources together with arbitrary ratios.
+    Sampling within each source is done using :class:`SamplingInstanceSource`, which samples
+    whole instances.
+
+    .. seealso::
+        - :class:`MixingTokenSource` for mixing token sources in a way that's agnostic of document
+          boundaries.
+        - :class:`MixingDocumentSource` for mixing document sources by sampling whole documents.
 
     .. important::
-        Sampling is done in a way that minimizes the number of dropped and repeated instances while
+        Sampling is done in a way that minimizes the number of dropped instances while
         matching the target ratios and respecting the :data:`MixingInstanceSourceSpec.max_repetition_factor`
         values.
 
-        The number of instances this source produces will always be less than or equal to the
-        sum of instances across all of its immediate children defined in the ``source_specs``,
+        If neither ``num_tokens`` nor ``num_instances`` is specified, then the number of instances
+        this source produces will always be less than or equal to the sum of instances across
+        all of its immediate children defined in the ``source_specs``,
         after applying their respective :data:`MixingInstanceSourceSpec.size_adjustment_factor` values.
 
-        You can always adjust the final size of a source by wrapping it in a :class:`SamplingInstanceSource`.
+        If ``num_tokens`` or ``num_instances`` is specified, this class will try to match that size
+        but may raise an :class:`~olmo_core.exceptions.OLMoConfigurationError` if it's not possible
+        with the given ``max_repetition_factor`` values.
 
     :param source_specs: The sources and how to sample from them.
+    :param num_tokens: An optional target number of tokens for the mixed source.
+        Mutually exclusive with ``num_instances``.
+    :param num_instances: An optional target number of instances for the mixed source.
+        Mutually exclusive with ``num_tokens``.
     """
 
     Config: ClassVar[Type[MixingInstanceSourceConfig]] = MixingInstanceSourceConfig
@@ -139,6 +153,8 @@ class MixingInstanceSource(InstanceSource):
         work_dir: PathOrStr,
         seed: Optional[int] = None,
         label: Optional[str] = None,
+        num_tokens: Optional[int] = None,
+        num_instances: Optional[int] = None,
     ):
         if not source_specs:
             raise OLMoConfigurationError("At least one source spec must be provided.")
@@ -159,12 +175,32 @@ class MixingInstanceSource(InstanceSource):
             label=label,
         )
 
+        if (
+            num_tokens is not None
+            and num_instances is not None
+            and num_tokens != num_instances * self.sequence_length
+        ):
+            raise OLMoConfigurationError("`num_tokens` and `num_instances` are mutually exclusive")
+        elif num_instances is not None:
+            num_tokens = num_instances * self.sequence_length
+
         # Determine the number of tokens to sample from each source.
         sample_sizes = calculate_sample_sizes(
             [int(spec.source.num_tokens * spec.size_adjustment_factor) for spec in source_specs],
             [spec.ratio for spec in source_specs],
             [spec.max_repetition_factor for spec in source_specs],
+            target_size=num_tokens,
         )
+
+        # If `num_tokens` was specified, check that the total sample size is close to it.
+        # Due to rounding, we allow the total sample size to come up short by one instance per source.
+        if num_tokens is not None:
+            total_sample_size = sample_sizes.sum()
+            if total_sample_size < (num_tokens - len(sources) * self.sequence_length):
+                raise OLMoConfigurationError(
+                    f"Unable to meet target size of {num_tokens:,d} tokens with the given "
+                    f"max repetition factors. The best we can do is {total_sample_size:,d} tokens."
+                )
 
         # Sample instances from each source.
         sampled_sources: List[SamplingInstanceSource] = []

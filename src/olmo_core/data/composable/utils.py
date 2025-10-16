@@ -122,6 +122,7 @@ def calculate_sample_sizes(
     source_sizes: Sequence[int],
     target_ratios: Sequence[float],
     max_repetition_factors: Sequence[float],
+    target_size: Optional[int] = None,
 ) -> np.ndarray:
     """
     Calculate the number of items needed to sample from each source in order to match the target ratios.
@@ -135,6 +136,9 @@ def calculate_sample_sizes(
     assert (ratios > 0.0).all()
     assert (max_repetitions >= 1.0).all()
 
+    if target_size is None:
+        target_size = sizes.sum()
+
     # Normalize ratios.
     ratios = ratios / ratios.sum()
 
@@ -143,8 +147,7 @@ def calculate_sample_sizes(
     # true to the sampling ratios while minimizing the number of dropped or over-sampled items.
     # To that end, the optimal natural distribution of items over sources is the one that
     # matches the target sampling ratios. We'll call that the 'ideal_sample_sizes'.
-    total_size = sizes.sum()
-    ideal_sample_sizes = total_size * ratios
+    ideal_sample_sizes = target_size * ratios
     # But since the actual (natural) distribution probably differs from the ideal one, it's
     # not possible to match the target ratios without some dropping or oversampling.
     # So we first calculate how much oversampling/repetition is needed per source, and then cap that
