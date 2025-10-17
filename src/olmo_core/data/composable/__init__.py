@@ -12,18 +12,18 @@ A composable data loading API for fixed sequence length text data.
 
 This API consists of a series of simple, composable, elements, including:
 
-1. :class:`TokenSource` and :class:`DocumentSource`: Token sources provide access to tokenized text data, while
+1. :class:`TokenSource` / :class:`DocumentSource`: Token sources provide access to tokenized text data, while
    document sources are special token sources that also provide information on where the document boundaries are.
    Examples include:
 
-   * :class:`InMemoryTokenSource` and :class:`InMemoryDocumentSource`: A simple token/document source that holds all tokens in memory.
-   * :class:`ConcatenatedTokenSource` and :class:`ConcatenatedDocumentSource`: A token/document source that combines multiple sources into one.
+   * :class:`InMemoryTokenSource` / :class:`InMemoryDocumentSource`: A simple token/document source that holds all tokens in memory.
+   * :class:`ConcatenatedTokenSource` / :class:`ConcatenatedDocumentSource`: A token/document source that combines multiple sources into one.
    * :class:`SlicedTokenSource`: A token source that provides a slice into another token source.
    * :class:`NumpyDocumentSource`: A document that reads tokens from one or more numpy source files, like those created
      from the dolma toolkit.
-   * :class:`SamplingTokenSource` and :class:`SamplingDocumentSource`: A token/document source that samples tokens/documents
+   * :class:`SamplingTokenSource` / :class:`SamplingDocumentSource`: A token/document source that samples tokens/documents
      from one or more other token/document sources.
-   * :class:`MixingTokenSource` and :class:`MixingDocumentSource`: A token/document source that mixes other token/document sources together.
+   * :class:`MixingTokenSource` / :class:`MixingDocumentSource`: A token/document source that mixes other token/document sources together.
 
 2. :class:`InstanceSource`: Instance sources convert token sources (or in some case other instance sources)
    into fixed-length instances.

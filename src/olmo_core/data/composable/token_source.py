@@ -132,7 +132,7 @@ class TokenSource(SourceABC):
         seed: Optional[int] = 0,
     ) -> "SamplingTokenSource":
         """
-        Create a :class:`SamplingTokenSource` by sampling tokens from this source.
+        Sample a contiguous chunk of tokens from this source.
 
         .. seealso::
             :meth:`resize()`
@@ -151,7 +151,7 @@ class TokenSource(SourceABC):
 
     def resize(self, factor: float, seed: Optional[int] = 0) -> "SamplingTokenSource":
         """
-        Re-size this source by a given factor by sampling tokens from it.
+        Re-size this source by a given factor by sampling a contiguous chunk of tokens from it.
 
         .. seealso::
             :meth:`sample()`
@@ -305,17 +305,27 @@ class ConcatenatedTokenSource(TokenSource):
 class DocumentSource(TokenSource):
     """
     An abstract base class for a particular type of :class:`TokenSource` that's aware of document
-    boundaries. This class provides one additional method: :meth:`get_document_offsets()`.
+    boundaries. This class has one additional abstract method: :meth:`get_document_offsets()`.
     """
 
     DISPLAY_ICON = "\uf15c"
 
-    def sample(  # type: ignore[override]
+    def sample_by_docs(
         self,
         *,
         max_tokens: int,
         seed: Optional[int] = 0,
     ) -> "SamplingDocumentSource":
+        """
+        Sample documents from this source.
+
+        .. seealso::
+            - :meth:`~TokenSource.sample()`
+            - :meth:`resize_by_docs()`
+
+        :param max_tokens: The maximum number of tokens to sample.
+        :param seed: A seed to use to randomize the sampling.
+        """
         from .sampling_document_source import SamplingDocumentSource
 
         return SamplingDocumentSource(
@@ -324,6 +334,21 @@ class DocumentSource(TokenSource):
             seed=seed,
             work_dir=self.common_work_dir,
         )
+
+    def resize_by_docs(self, factor: float, seed: Optional[int] = 0) -> "SamplingDocumentSource":
+        """
+        Re-size this source by a given factor by sampling documents from it.
+
+        .. seealso::
+            - :meth:`~TokenSource.resize()`
+            - :meth:`sample_by_docs()`
+
+        :param factor: The factor to resize the source by. For example, ``0.5`` will create a source
+          with half the number of tokens, and ``2.0`` will create a source with twice the number of tokens.
+        :param seed: A seed to use to randomize the sampling.
+        """
+        assert factor > 0
+        return self.sample_by_docs(max_tokens=int(self.num_tokens * factor), seed=seed)
 
     @abstractmethod
     def get_document_offsets(self) -> Iterable[tuple[int, int]]:
@@ -449,7 +474,7 @@ class TokenSourceConfig(Config):
         seed: Optional[int] = 0,
     ) -> "SamplingTokenSourceConfig":
         """
-        Create a :class:`SamplingTokenSourceConfig` by sampling tokens from this source.
+        Sample a contiguous chunk of tokens from this source.
 
         :param max_tokens: The maximum number of tokens to sample.
         :param seed: A seed to use to randomize the sampling.
@@ -464,7 +489,7 @@ class TokenSourceConfig(Config):
 
     def resize(self, factor: float, seed: Optional[int] = 0) -> "SamplingTokenSourceConfig":
         """
-        Re-size this source by a given factor by sampling tokens from it.
+        Re-size this source by a given factor by sampling a contiguous chunk of tokens from it.
 
         :param factor: The factor to resize the source by. For example, ``0.5`` will create a source
           with half the number of tokens, and ``2.0`` will create a source with twice the number of tokens.
@@ -489,14 +514,18 @@ class DocumentSourceConfig(TokenSourceConfig):
         """Build the document source."""
         raise NotImplementedError
 
-    def sample(  # type: ignore[override]
+    def sample_by_docs(
         self,
         *,
         max_tokens: int,
         seed: Optional[int] = 0,
     ) -> "SamplingDocumentSourceConfig":
         """
-        Create a :class:`SamplingDocumentSourceConfig` by sampling tokens from this source.
+        Sample documents from this source.
+
+        .. seealso::
+            - :meth:`~TokenSourceConfig.sample()`
+            - :meth:`resize_by_docs()`
 
         :param max_tokens: The maximum number of tokens to sample.
         :param seed: A seed to use to randomize the sampling.
@@ -509,11 +538,22 @@ class DocumentSourceConfig(TokenSourceConfig):
             seed=seed,
         )
 
-    def resize(  # type: ignore[override]
+    def resize_by_docs(
         self,
         factor: float,
         seed: Optional[int] = 0,
     ) -> "SamplingDocumentSourceConfig":
+        """
+        Re-size this source by a given factor by sampling documents from it.
+
+        .. seealso::
+            - :meth:`~TokenSourceConfig.resize()`
+            - :meth:`sample_by_docs()`
+
+        :param factor: The factor to resize the source by. For example, ``0.5`` will create a source
+          with half the number of tokens, and ``2.0`` will create a source with twice the number of tokens.
+        :param seed: A seed to use to randomize the sampling.
+        """
         from .sampling_document_source import SamplingDocumentSourceConfig
 
         assert factor > 0

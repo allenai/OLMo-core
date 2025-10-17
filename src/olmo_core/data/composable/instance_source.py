@@ -138,7 +138,7 @@ class InstanceSource(SourceABC):
         seed: Optional[int] = 0,
     ) -> "SamplingInstanceSource":
         """
-        Create a :class:`SamplingInstanceSource` by sampling instances from this source.
+        Sample instances from this source.
 
         .. seealso::
             - :meth:`resize()`
@@ -301,7 +301,7 @@ class InstanceSourceConfig(Config):
         seed: Optional[int] = 0,
     ) -> "SamplingInstanceSourceConfig":
         """
-        Create a :class:`SamplingInstanceSourceConfig` by sampling instances from this source.
+        Sample instances from this source.
 
         :param max_tokens: The maximum number of tokens to sample from this source.
           Mutually exclusive with ``max_instances``.
