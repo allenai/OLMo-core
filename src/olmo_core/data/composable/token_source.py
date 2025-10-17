@@ -129,7 +129,7 @@ class TokenSource(SourceABC):
         self,
         *,
         max_tokens: int,
-        seed: Optional[int] = None,
+        seed: Optional[int] = 0,
     ) -> "SamplingTokenSource":
         """
         Create a :class:`SamplingTokenSource` by sampling tokens from this source.
@@ -149,7 +149,7 @@ class TokenSource(SourceABC):
             work_dir=self.common_work_dir,
         )
 
-    def resize(self, factor: float, seed: Optional[int] = None) -> "SamplingTokenSource":
+    def resize(self, factor: float, seed: Optional[int] = 0) -> "SamplingTokenSource":
         """
         Re-size this source by a given factor by sampling tokens from it.
 
@@ -314,7 +314,7 @@ class DocumentSource(TokenSource):
         self,
         *,
         max_tokens: int,
-        seed: Optional[int] = None,
+        seed: Optional[int] = 0,
     ) -> "SamplingDocumentSource":
         from .sampling_document_source import SamplingDocumentSource
 
@@ -446,7 +446,7 @@ class TokenSourceConfig(Config):
         self,
         *,
         max_tokens: int,
-        seed: Optional[int] = None,
+        seed: Optional[int] = 0,
     ) -> "SamplingTokenSourceConfig":
         """
         Create a :class:`SamplingTokenSourceConfig` by sampling tokens from this source.
@@ -462,7 +462,7 @@ class TokenSourceConfig(Config):
             seed=seed,
         )
 
-    def resize(self, factor: float, seed: Optional[int] = None) -> "SamplingTokenSourceConfig":
+    def resize(self, factor: float, seed: Optional[int] = 0) -> "SamplingTokenSourceConfig":
         """
         Re-size this source by a given factor by sampling tokens from it.
 
@@ -493,7 +493,7 @@ class DocumentSourceConfig(TokenSourceConfig):
         self,
         *,
         max_tokens: int,
-        seed: Optional[int] = None,
+        seed: Optional[int] = 0,
     ) -> "SamplingDocumentSourceConfig":
         """
         Create a :class:`SamplingDocumentSourceConfig` by sampling tokens from this source.
@@ -512,7 +512,7 @@ class DocumentSourceConfig(TokenSourceConfig):
     def resize(  # type: ignore[override]
         self,
         factor: float,
-        seed: Optional[int] = None,
+        seed: Optional[int] = 0,
     ) -> "SamplingDocumentSourceConfig":
         from .sampling_document_source import SamplingDocumentSourceConfig
 

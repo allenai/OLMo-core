@@ -135,7 +135,7 @@ class InstanceSource(SourceABC):
         *,
         max_tokens: Optional[int] = None,
         max_instances: Optional[int] = None,
-        seed: Optional[int] = None,
+        seed: Optional[int] = 0,
     ) -> "SamplingInstanceSource":
         """
         Create a :class:`SamplingInstanceSource` by sampling instances from this source.
@@ -161,7 +161,7 @@ class InstanceSource(SourceABC):
             work_dir=self.common_work_dir,
         )
 
-    def resize(self, factor: float, seed: Optional[int] = None) -> "SamplingInstanceSource":
+    def resize(self, factor: float, seed: Optional[int] = 0) -> "SamplingInstanceSource":
         """
         Re-size this source by a given factor by sampling instances from it.
 
@@ -298,7 +298,7 @@ class InstanceSourceConfig(Config):
         *,
         max_tokens: Optional[int] = None,
         max_instances: Optional[int] = None,
-        seed: Optional[int] = None,
+        seed: Optional[int] = 0,
     ) -> "SamplingInstanceSourceConfig":
         """
         Create a :class:`SamplingInstanceSourceConfig` by sampling instances from this source.
@@ -319,7 +319,7 @@ class InstanceSourceConfig(Config):
             seed=seed,
         )
 
-    def resize(self, factor: float, seed: Optional[int] = None) -> "SamplingInstanceSourceConfig":
+    def resize(self, factor: float, seed: Optional[int] = 0) -> "SamplingInstanceSourceConfig":
         """
         Re-size this source by a given factor by sampling instances from it.
 
