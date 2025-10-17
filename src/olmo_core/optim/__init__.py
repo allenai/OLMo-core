@@ -4,6 +4,7 @@ from .config import INITIAL_LR_FIELD, LR_FIELD, OptimConfig, OptimGroupOverride
 from .lion import Lion, LionConfig, SkipStepLion, SkipStepLionConfig
 from .scheduler import (
     WSD,
+    WSDS,
     ConstantScheduler,
     ConstantWithWarmup,
     CosWithWarmup,
@@ -38,6 +39,7 @@ __all__ = [
     "LinearWithWarmup",
     "SequentialScheduler",
     "WSD",
+    "WSDS",
     "LR_FIELD",
     "INITIAL_LR_FIELD",
 ]
