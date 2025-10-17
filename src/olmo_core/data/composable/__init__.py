@@ -425,7 +425,7 @@ to focus on 75% code + 25% math. So let's start by building those two separate m
             └─ ConcatAndChunkInstanceSource(b768b9a): 18.3B tokens [dolminos2math]
                └─ NumpyDocumentSource x 415: 18.3B tokens [dolminos2math]
 
-Then when we build our data loader we'll pass it both of those mixes, in order, and specify
+Then when we build our :class:`ComposableDataLoader` we'll pass it both of those mixes, in order, and specify
 ``shuffle_strategy="intra_source"`` so that each mix is shuffled independently during its phase of training::
 
    data_loader = ComposableDataLoader.Config(
@@ -451,6 +451,7 @@ from .data_loader import (
 )
 from .instance_source import (
     ConcatenatedInstanceSource,
+    ConcatenatedInstanceSourceConfig,
     Instance,
     InstanceSource,
     InstanceSourceConfig,
@@ -499,7 +500,9 @@ from .sliced_token_source import SlicedTokenSource
 from .source_abc import SourceABC
 from .token_source import (
     ConcatenatedDocumentSource,
+    ConcatenatedDocumentSourceConfig,
     ConcatenatedTokenSource,
+    ConcatenatedTokenSourceConfig,
     DocumentSource,
     DocumentSourceConfig,
     InMemoryDocumentSource,
@@ -525,6 +528,7 @@ __all__ = [
     # Token/document source implementations.
     "InMemoryTokenSource",
     "ConcatenatedTokenSource",
+    "ConcatenatedTokenSourceConfig",
     "SlicedTokenSource",
     "SamplingTokenSource",
     "SamplingTokenSourceConfig",
@@ -532,6 +536,7 @@ __all__ = [
     "MixingTokenSourceConfig",
     "InMemoryDocumentSource",
     "ConcatenatedDocumentSource",
+    "ConcatenatedDocumentSourceConfig",
     "SamplingDocumentSource",
     "SamplingDocumentSourceConfig",
     "MixingDocumentSource",
@@ -546,6 +551,7 @@ __all__ = [
     "PackingInstanceSource",
     "PackingInstanceSourceConfig",
     "ConcatenatedInstanceSource",
+    "ConcatenatedInstanceSourceConfig",
     "SlicedInstanceSource",
     "SamplingInstanceSource",
     "SamplingInstanceSourceConfig",

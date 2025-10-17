@@ -216,10 +216,91 @@ class InstanceSource(SourceABC):
         visualize_source(self, icons=icons)
 
 
+@dataclass
+class InstanceSourceConfig(Config):
+    """A base config class for configuring and building an :class:`InstanceSource`."""
+
+    @abstractmethod
+    def build(self, work_dir: PathOrStr) -> InstanceSource:
+        """Build the :class:`InstanceSource`."""
+        raise NotImplementedError
+
+    def __add__(self, other: "InstanceSourceConfig") -> "ConcatenatedInstanceSourceConfig":
+        """Add two instance source configs together into a :class:`ConcatenatedInstanceSourceConfig`."""
+        if isinstance(other, InstanceSource):
+            return ConcatenatedInstanceSourceConfig(sources=[self, other])
+        else:
+            raise TypeError(f"Cannot add {type(self)} with {type(other)}.")
+
+    def __mul__(self, factor: float) -> "SamplingInstanceSourceConfig":
+        """Re-size this source by a given factor by sampling instances from it."""
+        if isinstance(factor, (float, int)):
+            return self.resize(factor)
+        else:
+            raise TypeError(f"Cannot multiply {type(self)} with {type(factor)}.")
+
+    def sample(
+        self,
+        *,
+        max_tokens: Optional[int] = None,
+        max_instances: Optional[int] = None,
+        seed: Optional[int] = 0,
+    ) -> "SamplingInstanceSourceConfig":
+        """
+        Sample instances from this source.
+
+        :param max_tokens: The maximum number of tokens to sample from this source.
+          Mutually exclusive with ``max_instances``.
+        :param max_instances: The maximum number of instances to sample from this source.
+          Mutually exclusive with ``max_tokens``.
+        :param seed: A random seed for sampling. If ``None``, no shuffling is done and instances
+          are taken in order.
+        """
+        from .sampling_instance_source import SamplingInstanceSourceConfig
+
+        return SamplingInstanceSourceConfig(
+            sources=[self],
+            max_tokens=max_tokens,
+            max_instances=max_instances,
+            seed=seed,
+        )
+
+    def resize(self, factor: float, seed: Optional[int] = 0) -> "SamplingInstanceSourceConfig":
+        """
+        Re-size this source by a given factor by sampling instances from it.
+
+        :param factor: The factor by which to resize this source.
+        :param seed: A random seed for sampling.
+        """
+        from .sampling_instance_source import SamplingInstanceSourceConfig
+
+        assert factor > 0
+        return SamplingInstanceSourceConfig(
+            sources=[self],
+            factor=factor,
+            seed=seed,
+        )
+
+
+@dataclass
+class ConcatenatedInstanceSourceConfig(InstanceSourceConfig):
+    """A config for a :class:`ConcatenatedInstanceSource`."""
+
+    sources: List[InstanceSourceConfig]
+
+    def build(self, work_dir: PathOrStr) -> "ConcatenatedInstanceSource":
+        return ConcatenatedInstanceSource(
+            *[source.build(work_dir=work_dir) for source in self.sources],
+            work_dir=work_dir,
+        )
+
+
 class ConcatenatedInstanceSource(InstanceSource):
     """
     An instance source that concatenates multiple instance sources together end-to-end.
     """
+
+    Config = ConcatenatedInstanceSourceConfig
 
     DISPLAY_ICON = "\uf51e"
 
@@ -282,55 +363,3 @@ class ConcatenatedInstanceSource(InstanceSource):
 
     def children(self):
         return self.sources
-
-
-@dataclass
-class InstanceSourceConfig(Config):
-    """A base config class for configuring and building an :class:`InstanceSource`."""
-
-    @abstractmethod
-    def build(self, work_dir: PathOrStr) -> InstanceSource:
-        """Build the :class:`InstanceSource`."""
-        raise NotImplementedError
-
-    def sample(
-        self,
-        *,
-        max_tokens: Optional[int] = None,
-        max_instances: Optional[int] = None,
-        seed: Optional[int] = 0,
-    ) -> "SamplingInstanceSourceConfig":
-        """
-        Sample instances from this source.
-
-        :param max_tokens: The maximum number of tokens to sample from this source.
-          Mutually exclusive with ``max_instances``.
-        :param max_instances: The maximum number of instances to sample from this source.
-          Mutually exclusive with ``max_tokens``.
-        :param seed: A random seed for sampling. If ``None``, no shuffling is done and instances
-          are taken in order.
-        """
-        from .sampling_instance_source import SamplingInstanceSourceConfig
-
-        return SamplingInstanceSourceConfig(
-            sources=[self],
-            max_tokens=max_tokens,
-            max_instances=max_instances,
-            seed=seed,
-        )
-
-    def resize(self, factor: float, seed: Optional[int] = 0) -> "SamplingInstanceSourceConfig":
-        """
-        Re-size this source by a given factor by sampling instances from it.
-
-        :param factor: The factor by which to resize this source.
-        :param seed: A random seed for sampling.
-        """
-        from .sampling_instance_source import SamplingInstanceSourceConfig
-
-        assert factor > 0
-        return SamplingInstanceSourceConfig(
-            sources=[self],
-            factor=factor,
-            seed=seed,
-        )

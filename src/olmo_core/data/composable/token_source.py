@@ -229,79 +229,6 @@ class InMemoryTokenSource(TokenSource):
         return []
 
 
-class ConcatenatedTokenSource(TokenSource):
-    """
-    A token source that can be created from concatenating multiple other token sources.
-    """
-
-    DISPLAY_ICON = "\uf51e"
-
-    def __init__(self, *sources: TokenSource, work_dir: PathOrStr, label: Optional[str] = None):
-        super().__init__(work_dir=work_dir, label=label)
-        unraveled_sources: List[TokenSource] = []
-        for source in sources:
-            if isinstance(source, ConcatenatedTokenSource):
-                unraveled_sources.extend(source.sources)
-            else:
-                unraveled_sources.append(source)
-        self._sources = tuple(unraveled_sources)
-
-    def __repr__(self) -> str:
-        return f"{self.__class__.__name__}{self.sources}"
-
-    @property
-    def sources(self) -> Tuple[TokenSource, ...]:
-        return self._sources
-
-    def children(self):
-        return self.sources
-
-    @ft.cached_property
-    def fingerprint(self) -> str:
-        sha256_hash = hashlib.sha256()
-        sha256_hash.update((f"class={self.__class__.__name__},").encode())
-        for source in self.sources:
-            sha256_hash.update(f"{source=},".encode())
-        return sha256_hash.hexdigest()
-
-    @property
-    def num_tokens(self) -> int:
-        return sum(source.num_tokens for source in self.sources)
-
-    def get_token_range(self, start_idx: int, end_idx: int) -> TokenRange:
-        start_idx, end_idx = self.validate_indices(start_idx, end_idx)
-
-        token_chunks: List[np.ndarray] = []
-        mask_chunks: List[np.ndarray] = []
-        source_start_offset = 0
-        for source in self.sources:
-            source_size = source.num_tokens
-            source_end_offset = source_start_offset + source_size
-
-            if source_start_offset <= start_idx < source_end_offset:
-                token_rng = source.get_token_range(
-                    start_idx - source_start_offset, min(end_idx - source_start_offset, source_size)
-                )
-                token_chunks.append(as_ndarray(token_rng["input_ids"]))
-                if "label_mask" in token_rng:
-                    mask_chunks.append(as_ndarray(token_rng["label_mask"]))
-
-                if end_idx - source_start_offset <= source_size:
-                    break
-                else:
-                    start_idx = source_end_offset
-
-            source_start_offset = source_end_offset
-        else:
-            raise IndexError(f"Failed to find tokens in range {start_idx=} → {end_idx=}.")
-
-        input_ids = np.concatenate(token_chunks)
-        out: TokenRange = {"input_ids": typing.cast(Sequence[int], input_ids)}
-        if mask_chunks:
-            out["label_mask"] = typing.cast(Sequence[bool], np.concatenate(mask_chunks))
-        return out
-
-
 class DocumentSource(TokenSource):
     """
     An abstract base class for a particular type of :class:`TokenSource` that's aware of document
@@ -421,43 +348,6 @@ class InMemoryDocumentSource(InMemoryTokenSource, DocumentSource):
             yield start_idx, self.num_tokens
 
 
-class ConcatenatedDocumentSource(ConcatenatedTokenSource, DocumentSource):
-    """
-    A document source that can be created from concatenating multiple other document sources.
-    """
-
-    def __init__(self, *sources: DocumentSource, work_dir: PathOrStr, label: Optional[str] = None):
-        super().__init__(*sources, work_dir=work_dir, label=label)
-
-    def __repr__(self) -> str:
-        return f"{self.__class__.__name__}{self.sources}"
-
-    @property
-    def sources(self) -> Tuple[DocumentSource, ...]:
-        return typing.cast(Tuple[DocumentSource, ...], self._sources)
-
-    def get_document_offsets(self) -> Iterable[tuple[int, int]]:
-        start_offset = 0
-        for source in self.sources:
-            source_size = source.num_tokens
-            last_doc_end = 0
-            for doc_start, doc_end in source.get_document_offsets():
-                assert doc_start == last_doc_end  # API assumes consecutive documents
-                yield doc_start + start_offset, doc_end + start_offset
-                last_doc_end = doc_end
-
-            # To avoid unexpected results, we ALWAYS treat the end of a source file as the end of
-            # a document, even if it doesn't end with an EOS token ID. This *should* always be the case
-            # anyway, but just to be careful.
-            if last_doc_end != source_size:
-                yield last_doc_end + start_offset, source_size + start_offset
-
-            start_offset += source_size
-
-    def children(self):
-        return self.sources
-
-
 @dataclass
 class TokenSourceConfig(Config):
     """A base config class for configuring and building a :class:`TokenSource`."""
@@ -466,6 +356,26 @@ class TokenSourceConfig(Config):
     def build(self, work_dir: PathOrStr) -> List[TokenSource]:
         """Build the token source."""
         raise NotImplementedError
+
+    def __add__(self, other: "TokenSourceConfig") -> "TokenSourceConfig":
+        """
+        Add two token source config together into a :class:`ConcatenatedTokenSourceConfig`
+        or :class:`ConcatenatedDocumentSourceConfig`
+        depending on the type of ``self`` and ``other``.
+        """
+        if isinstance(self, DocumentSourceConfig) and isinstance(other, DocumentSourceConfig):
+            return ConcatenatedDocumentSourceConfig(sources=[self, other])
+        elif isinstance(other, TokenSourceConfig):
+            return ConcatenatedTokenSourceConfig(sources=[self, other])
+        else:
+            raise TypeError(f"Cannot add {type(self)} with {type(other)}.")
+
+    def __mul__(self, factor: float) -> "SamplingTokenSourceConfig":
+        """Re-size this source by a given factor by sampling tokens from it."""
+        if isinstance(factor, (float, int)):
+            return self.resize(factor)
+        else:
+            raise TypeError(f"Cannot multiply {type(self)} with {type(factor)}.")
 
     def sample(
         self,
@@ -503,6 +413,101 @@ class TokenSourceConfig(Config):
             factor=factor,
             seed=seed,
         )
+
+
+@dataclass
+class ConcatenatedTokenSourceConfig(TokenSourceConfig):
+    """A base config class for configuring and building a :class:`ConcatenatedTokenSource`."""
+
+    sources: List[TokenSourceConfig]
+    label: Optional[str] = None
+
+    def build(self, work_dir: PathOrStr) -> List["ConcatenatedTokenSource"]:  # type: ignore[override]
+        sources = [
+            source for source_config in self.sources for source in source_config.build(work_dir)
+        ]
+        return [
+            ConcatenatedTokenSource(
+                *sources,
+                work_dir=work_dir,
+                label=self.label,
+            )
+        ]
+
+
+class ConcatenatedTokenSource(TokenSource):
+    """
+    A token source that can be created from concatenating multiple other token sources.
+    """
+
+    Config = ConcatenatedTokenSourceConfig
+
+    DISPLAY_ICON = "\uf51e"
+
+    def __init__(self, *sources: TokenSource, work_dir: PathOrStr, label: Optional[str] = None):
+        super().__init__(work_dir=work_dir, label=label)
+        unraveled_sources: List[TokenSource] = []
+        for source in sources:
+            if isinstance(source, ConcatenatedTokenSource):
+                unraveled_sources.extend(source.sources)
+            else:
+                unraveled_sources.append(source)
+        self._sources = tuple(unraveled_sources)
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}{self.sources}"
+
+    @property
+    def sources(self) -> Tuple[TokenSource, ...]:
+        return self._sources
+
+    def children(self):
+        return self.sources
+
+    @ft.cached_property
+    def fingerprint(self) -> str:
+        sha256_hash = hashlib.sha256()
+        sha256_hash.update((f"class={self.__class__.__name__},").encode())
+        for source in self.sources:
+            sha256_hash.update(f"{source=},".encode())
+        return sha256_hash.hexdigest()
+
+    @property
+    def num_tokens(self) -> int:
+        return sum(source.num_tokens for source in self.sources)
+
+    def get_token_range(self, start_idx: int, end_idx: int) -> TokenRange:
+        start_idx, end_idx = self.validate_indices(start_idx, end_idx)
+
+        token_chunks: List[np.ndarray] = []
+        mask_chunks: List[np.ndarray] = []
+        source_start_offset = 0
+        for source in self.sources:
+            source_size = source.num_tokens
+            source_end_offset = source_start_offset + source_size
+
+            if source_start_offset <= start_idx < source_end_offset:
+                token_rng = source.get_token_range(
+                    start_idx - source_start_offset, min(end_idx - source_start_offset, source_size)
+                )
+                token_chunks.append(as_ndarray(token_rng["input_ids"]))
+                if "label_mask" in token_rng:
+                    mask_chunks.append(as_ndarray(token_rng["label_mask"]))
+
+                if end_idx - source_start_offset <= source_size:
+                    break
+                else:
+                    start_idx = source_end_offset
+
+            source_start_offset = source_end_offset
+        else:
+            raise IndexError(f"Failed to find tokens in range {start_idx=} → {end_idx=}.")
+
+        input_ids = np.concatenate(token_chunks)
+        out: TokenRange = {"input_ids": typing.cast(Sequence[int], input_ids)}
+        if mask_chunks:
+            out["label_mask"] = typing.cast(Sequence[bool], np.concatenate(mask_chunks))
+        return out
 
 
 @dataclass
@@ -562,3 +567,62 @@ class DocumentSourceConfig(TokenSourceConfig):
             factor=factor,
             seed=seed,
         )
+
+
+@dataclass
+class ConcatenatedDocumentSourceConfig(DocumentSourceConfig):
+    """A base config class for configuring and building a :class:`ConcatenatedDocumentSource`."""
+
+    sources: List[DocumentSourceConfig]
+    label: Optional[str] = None
+
+    def build(self, work_dir: PathOrStr) -> List["ConcatenatedDocumentSource"]:  # type: ignore[override]
+        sources = [
+            source for source_config in self.sources for source in source_config.build(work_dir)
+        ]
+        return [
+            ConcatenatedDocumentSource(
+                *sources,
+                work_dir=work_dir,
+                label=self.label,
+            )
+        ]
+
+
+class ConcatenatedDocumentSource(ConcatenatedTokenSource, DocumentSource):
+    """
+    A document source that can be created from concatenating multiple other document sources.
+    """
+
+    Config = ConcatenatedDocumentSourceConfig  # type: ignore[assignment]
+
+    def __init__(self, *sources: DocumentSource, work_dir: PathOrStr, label: Optional[str] = None):
+        super().__init__(*sources, work_dir=work_dir, label=label)
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}{self.sources}"
+
+    @property
+    def sources(self) -> Tuple[DocumentSource, ...]:
+        return typing.cast(Tuple[DocumentSource, ...], self._sources)
+
+    def get_document_offsets(self) -> Iterable[tuple[int, int]]:
+        start_offset = 0
+        for source in self.sources:
+            source_size = source.num_tokens
+            last_doc_end = 0
+            for doc_start, doc_end in source.get_document_offsets():
+                assert doc_start == last_doc_end  # API assumes consecutive documents
+                yield doc_start + start_offset, doc_end + start_offset
+                last_doc_end = doc_end
+
+            # To avoid unexpected results, we ALWAYS treat the end of a source file as the end of
+            # a document, even if it doesn't end with an EOS token ID. This *should* always be the case
+            # anyway, but just to be careful.
+            if last_doc_end != source_size:
+                yield last_doc_end + start_offset, source_size + start_offset
+
+            start_offset += source_size
+
+    def children(self):
+        return self.sources
