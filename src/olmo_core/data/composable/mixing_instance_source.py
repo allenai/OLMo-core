@@ -2,6 +2,7 @@ import functools as ft
 import hashlib
 import logging
 import typing
+import warnings
 from dataclasses import dataclass
 from typing import ClassVar, List, Optional, Tuple, Type
 
@@ -158,6 +159,13 @@ class MixingInstanceSource(InstanceSource):
                 raise OLMoConfigurationError("All sources must have the same sequence length.")
             if source.max_sequence_length != max_sequence_length:
                 raise OLMoConfigurationError("All sources must have the same max sequence length.")
+
+        if seed is None and any([isinstance(source, MixingInstanceSource) for source in sources]):
+            warnings.warn(
+                "You're attempting to create a mix without randomness (seed=None) from sources that are mixes themselves. "
+                "This will probably result in samples that are not representative of their population due to biased sampling.",
+                UserWarning,
+            )
 
         super().__init__(
             work_dir=work_dir,
