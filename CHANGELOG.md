@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Avoidable overflow error when using NumpyPackedFSLDataset.
 - Fixed issue with NumpyFSLDatasetMixture + SourceMixtureDataset where not all instances would have the same sequence length.
 - Attention backend will no longer default to flash in non-CUDA environments.
+- Handle nan losses/gnorms in the `SkipStepOptimizer`.
 
 ### Changed
 
@@ -73,7 +74,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added internal OLMo3 7B midtraining and long-context configs.
 - Added ability to convert OLMo3 models to/from HF format with support for rope scaling configs.
 - Added a script that can pull out a single training batch from a training job
-
+- Added option to skip ranges of steps in the trainer.
 
 ## [v2.2.0](https://github.com/allenai/OLMo-core/releases/tag/v2.2.0) - 2025-08-26
 
