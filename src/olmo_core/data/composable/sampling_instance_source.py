@@ -88,9 +88,12 @@ class SamplingInstanceSource(InstanceSource):
         seed: Optional[int] = 0,
         label: Optional[str] = None,
     ):
+        from .mixing_instance_source import MixingInstanceSource
+
         if not sources:
             raise OLMoConfigurationError("At least one source must be provided.")
 
+        unwound_sources: List[InstanceSource] = []
         sequence_length = sources[0].sequence_length
         max_sequence_length = sources[0].max_sequence_length
         for source in sources:
@@ -98,6 +101,13 @@ class SamplingInstanceSource(InstanceSource):
                 raise OLMoConfigurationError("All sources must have the same sequence length.")
             if source.max_sequence_length != max_sequence_length:
                 raise OLMoConfigurationError("All sources must have the same max sequence length.")
+
+            # Unwind any MixingInstanceSources so that we sample directly from each of their
+            # sources in order to maintain the ratios.
+            if isinstance(source, MixingInstanceSource):
+                unwound_sources.extend(source.sampled_sources)
+            else:
+                unwound_sources.append(source)
 
         if (max_tokens is None) == (max_instances is None):
             raise OLMoConfigurationError(
@@ -117,7 +127,8 @@ class SamplingInstanceSource(InstanceSource):
             max_sequence_length=max_sequence_length,
             label=label,
         )
-        self._sources = sources
+        self._og_sources = sources
+        self._sources = tuple(unwound_sources)
         self._max_instances = max_instances
         self._seed = seed
         self._dtype = np.uint32
@@ -126,7 +137,7 @@ class SamplingInstanceSource(InstanceSource):
         total_instances = sum(len(source) for source in self.sources)
         chunk_size = self.max_sequence_length // self.sequence_length
         source_sample_sizes: List[int] = []
-        for source in sources:
+        for source in self.sources:
             # We want `len(source) / total_instances ~= source_sample_size / max_instances`,
             # so `source_sample_size = max_instances * (len(source) / total_instances)`.
             source_sample_size = int(max_instances * (len(source) / total_instances))
@@ -137,7 +148,7 @@ class SamplingInstanceSource(InstanceSource):
 
         # Sample indices from each source.
         source_sample_paths: List[PathOrStr] = []
-        for i, (source, sample_size) in enumerate(zip(sources, source_sample_sizes)):
+        for i, (source, sample_size) in enumerate(zip(self.sources, source_sample_sizes)):
             source_sample_path = (
                 self.work_dir / f"{self.fingerprint}-{source.fingerprint}-indices.npy"
             )
@@ -193,7 +204,7 @@ class SamplingInstanceSource(InstanceSource):
         return sha256_hash.hexdigest()
 
     def children(self):
-        return self.sources
+        return self._og_sources
 
     def __len__(self) -> int:
         return self.num_instances

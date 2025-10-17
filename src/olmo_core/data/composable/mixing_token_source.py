@@ -2,7 +2,6 @@ import functools as ft
 import hashlib
 import logging
 import typing
-import warnings
 from dataclasses import dataclass
 from typing import ClassVar, List, Optional, Tuple, Type
 
@@ -148,20 +147,10 @@ class MixingTokenSource(TokenSource):
         label: Optional[str] = None,
         num_tokens: Optional[int] = None,
     ):
-        from .mixing_document_source import MixingDocumentSource
-
         if not source_specs:
             raise OLMoConfigurationError("At least one source spec must be provided.")
 
         sources = [spec.source for spec in source_specs]
-        if seed is None and any(
-            [isinstance(source, (MixingTokenSource, MixingDocumentSource)) for source in sources]
-        ):
-            warnings.warn(
-                "You're attempting to create a mix without randomness (seed=None) from sources that are mixes themselves. "
-                "This will probably result in samples that are not representative of their population due to biased sampling.",
-                UserWarning,
-            )
 
         super().__init__(work_dir=work_dir, label=label)
 

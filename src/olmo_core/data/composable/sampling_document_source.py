@@ -85,18 +85,30 @@ class SamplingDocumentSource(DocumentSource):
         work_dir: PathOrStr,
         label: Optional[str] = None,
     ):
+        from .mixing_document_source import MixingDocumentSource
+
         assert max_tokens > 0
+        if not sources:
+            raise ValueError("At least one source must be provided.")
 
         super().__init__(work_dir=work_dir, label=label)
 
-        source: DocumentSource
-        if not sources:
-            raise ValueError("At least one source must be provided.")
-        elif len(sources) > 1:
-            source = ConcatenatedDocumentSource(*sources, work_dir=work_dir)
-        else:
-            source = sources[0]
+        unwound_sources: List[DocumentSource] = []
+        for s in sources:
+            # Unwind any mixing sources so that we sample directly from each of their
+            # sources in order to maintain the ratios.
+            if isinstance(s, MixingDocumentSource):
+                unwound_sources.extend(s.sampled_sources)
+            else:
+                unwound_sources.append(s)
 
+        source: DocumentSource
+        if len(unwound_sources) > 1:
+            source = ConcatenatedDocumentSource(*unwound_sources, work_dir=work_dir)
+        else:
+            source = unwound_sources[0]
+
+        self._og_sources = sources
         self._source = source
         self._max_tokens = max_tokens
         self._seed = seed
@@ -251,4 +263,4 @@ class SamplingDocumentSource(DocumentSource):
             start_offset = int(cu_doc_len)
 
     def children(self):
-        return self.source.children
+        return self._og_sources

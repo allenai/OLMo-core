@@ -77,15 +77,28 @@ class SamplingTokenSource(TokenSource):
         work_dir: PathOrStr,
         label: Optional[str] = None,
     ):
-        super().__init__(work_dir=work_dir, label=label)
+        from .mixing_document_source import MixingDocumentSource
+        from .mixing_token_source import MixingTokenSource
+
         if not sources:
             raise ValueError("At least one source must be provided.")
         assert max_tokens > 0
 
-        # Determine how many tokens to sample from each source.
-        total_tokens = sum(source.num_tokens for source in sources)
-        source_sample_sizes: List[int] = []
+        super().__init__(work_dir=work_dir, label=label)
+
+        unwound_sources: List[TokenSource] = []
         for source in sources:
+            # Unwind any mixing sources so that we sample directly from each of their
+            # sources in order to maintain the ratios.
+            if isinstance(source, (MixingTokenSource, MixingDocumentSource)):
+                unwound_sources.extend(source.sampled_sources)
+            else:
+                unwound_sources.append(source)
+
+        # Determine how many tokens to sample from each source.
+        total_tokens = sum(source.num_tokens for source in unwound_sources)
+        source_sample_sizes: List[int] = []
+        for source in unwound_sources:
             # We want `source.num_tokens / total_tokens ~= source_sample_size / max_tokens`,
             # so `source_sample_size = max_tokens * (source.num_tokens / total_tokens)`.
             source_sample_sizes.append(int(max_tokens * (source.num_tokens / total_tokens)))
@@ -94,7 +107,7 @@ class SamplingTokenSource(TokenSource):
         rng = None if seed is None else get_rng(seed)
         final_sources: List[TokenSource] = []
         source_sampling_offsets: List[Tuple[int, int]] = []
-        for source, source_sample_size in zip(sources, source_sample_sizes):
+        for source, source_sample_size in zip(unwound_sources, source_sample_sizes):
             n_repetitions = source_sample_size // source.num_tokens
             final_sources.extend([source] * n_repetitions)
             source_sampling_offsets.extend([(0, source.num_tokens)] * n_repetitions)
@@ -108,6 +121,7 @@ class SamplingTokenSource(TokenSource):
                     source_sampling_offsets.append((start_idx, start_idx + remaining_sample_size))
                 final_sources.append(source)
 
+        self._og_sources = sources
         self._sources = tuple(final_sources)
         self._source_sampling_offsets = tuple(source_sampling_offsets)
 
@@ -166,4 +180,4 @@ class SamplingTokenSource(TokenSource):
         return out
 
     def children(self):
-        return self.sources
+        return self._og_sources
