@@ -6,7 +6,7 @@ import torch
 
 import olmo_core.io as io
 from olmo_core.aliases import PathOrStr
-from olmo_core.exceptions import OLMoEnvironmentError
+from olmo_core.exceptions import OLMoConfigurationError, OLMoEnvironmentError
 
 from ..types import NumpyUIntTypes
 from ..utils import get_rng
@@ -123,11 +123,14 @@ def calculate_sample_sizes(
     target_ratios: Sequence[float],
     max_repetition_factors: Sequence[float],
     target_size: Optional[int] = None,
+    labels: Optional[Sequence[str]] = None,
 ) -> np.ndarray:
     """
     Calculate the number of items needed to sample from each source in order to match the target ratios.
     """
     assert len(source_sizes) == len(target_ratios) == len(max_repetition_factors)
+    if labels is not None:
+        assert len(labels) == len(source_sizes)
 
     ratios = np.array(target_ratios)
     sizes = np.array(source_sizes)
@@ -136,7 +139,9 @@ def calculate_sample_sizes(
     assert (ratios > 0.0).all()
     assert (max_repetition_factors_ >= 1.0).all()
 
+    strict = True
     if target_size is None:
+        strict = False
         target_size = sizes.sum()
 
     # Normalize ratios.
@@ -170,6 +175,21 @@ def calculate_sample_sizes(
     # And sample sizes shouldn't be larger than the number of items available.
     actual_sample_sizes = actual_sample_sizes.astype(np.uint64)
     assert (actual_sample_sizes <= sizes_to_use).all()
+    assert target_size is not None
+    actual_size = actual_sample_sizes.sum()
+    if strict and not np.allclose(target_size, actual_size):
+        source_idx_with_biggest_diff = np.argmin(sizes_to_use / ideal_sample_sizes)
+        label = (
+            labels[source_idx_with_biggest_diff]
+            if labels is not None
+            else str(source_idx_with_biggest_diff)
+        )
+        raise OLMoConfigurationError(
+            f"Unable to meet target size of {target_size:,d} for the mix with the given "
+            f"source ratios and max repetition factors. The best we can do is {actual_size:,d}. "
+            f"The source with the biggest discrepancy between its requested sample size and the size "
+            f"it can provide after accounting for the max repetition factor is source '{label}'."
+        )
 
     return actual_sample_sizes
 

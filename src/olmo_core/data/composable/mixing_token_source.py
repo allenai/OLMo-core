@@ -160,17 +160,10 @@ class MixingTokenSource(TokenSource):
             [spec.ratio for spec in source_specs],
             [spec.max_repetition_factor for spec in source_specs],
             target_size=num_tokens,
+            labels=[
+                spec.label or spec.source.label or str(i) for i, spec in enumerate(source_specs)
+            ],
         )
-
-        # If `num_tokens` was specified, check that the total sample size is close to it.
-        # Due to rounding, we allow the total sample size to come up short by one token per source.
-        if num_tokens is not None:
-            total_sample_size = sample_sizes.sum()
-            if total_sample_size < (num_tokens - len(sources)):
-                raise OLMoConfigurationError(
-                    f"Unable to meet target size of {num_tokens:,d} tokens with the given "
-                    f"max repetition factors. The best we can do is {total_sample_size:,d} tokens."
-                )
 
         # Sample tokens from each source.
         sampled_sources: List[SamplingTokenSource] = []
