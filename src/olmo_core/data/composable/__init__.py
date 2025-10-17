@@ -382,9 +382,9 @@ to focus on 75% code + 25% math. So let's start by building those two separate m
        ],
    )
    
-   mix1 = mix_config1.build("/tmp/dataset-common1")
+   mix1 = mix_config1.build("/tmp/dataset-common")
    mix1.visualize()
-   mix2 = mix_config2.build("/tmp/dataset-common1")
+   mix2 = mix_config2.build("/tmp/dataset-common")
    mix2.visualize()
 
 ::
