@@ -414,6 +414,47 @@ class TokenSourceConfig(Config):
             seed=seed,
         )
 
+    def split(self, ratio: float) -> Tuple["SplitTokenSourceConfig", "SplitTokenSourceConfig"]:
+        """
+        Split this source into two disjoint sources according to the given ratio.
+
+        :param ratio: The ratio of the first split to original source. E.g., ``0.8`` means
+          the first split will have 80% of the tokens and the second split will have 20%.
+        """
+        return SplitTokenSourceConfig(source=self, ratio=ratio, idx=0), SplitTokenSourceConfig(
+            source=self, ratio=ratio, idx=1
+        )
+
+
+@dataclass
+class SplitTokenSourceConfig(Config):
+    """A base config class for configuring and building a split :class:`TokenSource`."""
+
+    source: TokenSourceConfig
+    ratio: float
+    idx: int
+
+    def __post_init__(self):
+        assert 0 < self.ratio < 1
+        assert self.idx in (0, 1)
+
+    def build(self, work_dir: PathOrStr) -> List["SlicedTokenSource"]:  # type: ignore[override]
+        from .sliced_token_source import SlicedTokenSource
+
+        sources = self.source.build(work_dir)
+        source = (
+            sources[0]
+            if len(sources) == 0
+            else ConcatenatedTokenSource(*sources, work_dir=work_dir)
+        )
+        split_idx = int(self.ratio * source.num_tokens)
+        if self.idx == 0:
+            return [SlicedTokenSource(source, slice(0, split_idx), work_dir=work_dir)]
+        elif self.idx == 1:
+            return [SlicedTokenSource(source, slice(split_idx, -1), work_dir=work_dir)]
+        else:
+            raise ValueError(f"Invalid split index: {self.idx}")
+
 
 @dataclass
 class ConcatenatedTokenSourceConfig(TokenSourceConfig):

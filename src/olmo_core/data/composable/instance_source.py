@@ -281,6 +281,53 @@ class InstanceSourceConfig(Config):
             seed=seed,
         )
 
+    def split(
+        self, ratio: float, seed: Optional[int] = None
+    ) -> Tuple["SplitInstanceSourceConfig", "SplitInstanceSourceConfig"]:
+        """
+        Split this source into two disjoint sources according to the given ratio.
+
+        :param ratio: The ratio of the first split to original source. E.g., ``0.8`` means
+          the first split will have 80% of the instances and the second split will have 20%.
+        :param seed: A seed to use to randomize the split.
+        """
+        return SplitInstanceSourceConfig(
+            source=self,
+            ratio=ratio,
+            idx=0,
+            seed=seed,
+        ), SplitInstanceSourceConfig(source=self, ratio=ratio, idx=1, seed=seed)
+
+
+@dataclass
+class SplitInstanceSourceConfig(Config):
+    """A base config class for configuring and building a split :class:`InstanceSource`."""
+
+    source: InstanceSourceConfig
+    ratio: float
+    idx: int
+    seed: Optional[int] = None
+
+    def __post_init__(self):
+        assert 0 < self.ratio < 1
+        assert self.idx in (0, 1)
+
+    def build(self, work_dir: PathOrStr) -> InstanceSource:
+        from .sliced_instance_source import SlicedInstanceSource
+
+        source = self.source.build(work_dir)
+        split_idx = int(self.ratio * source.num_tokens)
+        if self.idx == 0:
+            return SlicedInstanceSource(
+                source, slice(0, split_idx), seed=self.seed, work_dir=work_dir
+            )
+        elif self.idx == 1:
+            return SlicedInstanceSource(
+                source, slice(split_idx, -1), seed=self.seed, work_dir=work_dir
+            )
+        else:
+            raise ValueError(f"Invalid split index: {self.idx}")
+
 
 @dataclass
 class ConcatenatedInstanceSourceConfig(InstanceSourceConfig):

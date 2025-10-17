@@ -455,6 +455,7 @@ from .instance_source import (
     Instance,
     InstanceSource,
     InstanceSourceConfig,
+    SplitInstanceSourceConfig,
 )
 from .mixing_document_source import (
     MixingDocumentSource,
@@ -507,6 +508,7 @@ from .token_source import (
     DocumentSourceConfig,
     InMemoryDocumentSource,
     InMemoryTokenSource,
+    SplitTokenSourceConfig,
     TokenRange,
     TokenSource,
     TokenSourceConfig,
@@ -530,6 +532,7 @@ __all__ = [
     "ConcatenatedTokenSource",
     "ConcatenatedTokenSourceConfig",
     "SlicedTokenSource",
+    "SplitTokenSourceConfig",
     "SamplingTokenSource",
     "SamplingTokenSourceConfig",
     "MixingTokenSource",
@@ -553,6 +556,7 @@ __all__ = [
     "ConcatenatedInstanceSource",
     "ConcatenatedInstanceSourceConfig",
     "SlicedInstanceSource",
+    "SplitInstanceSourceConfig",
     "SamplingInstanceSource",
     "SamplingInstanceSourceConfig",
     "MixingInstanceSource",
