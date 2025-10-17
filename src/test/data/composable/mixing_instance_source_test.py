@@ -2,8 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from olmo_core.data.composable import ConcatAndChunkInstanceSource, InMemoryTokenSource
-from olmo_core.data.composable.mixing_instance_source import MixingInstanceSource
+from olmo_core.data.composable import *
 from olmo_core.exceptions import OLMoConfigurationError
 
 

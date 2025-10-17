@@ -1,7 +1,6 @@
 from pathlib import Path
 
-from olmo_core.data.composable import ConcatAndChunkInstanceSource, InMemoryTokenSource
-from olmo_core.data.composable.sampling_instance_source import SamplingInstanceSource
+from olmo_core.data.composable import *
 
 
 def test_sampling_instance_source(tmp_path: Path):
@@ -26,6 +25,38 @@ def test_sampling_instance_source(tmp_path: Path):
 
     assert list(source[0]["input_ids"]) == list(range(0, 8))
     assert list(source[4]["input_ids"]) == list(range(64, 64 + 8))
+
+
+def test_sampling_instance_source_with_mixing_source(tmp_path: Path):
+    sequence_length = 8
+    source = SamplingInstanceSource(
+        MixingInstanceSource(
+            MixingInstanceSourceSpec(
+                source=ConcatAndChunkInstanceSource(
+                    InMemoryTokenSource(list(range(64)), work_dir=tmp_path),
+                    sequence_length=sequence_length,
+                    work_dir=tmp_path,
+                ),
+                ratio=0.25,
+            ),
+            MixingInstanceSourceSpec(
+                source=ConcatAndChunkInstanceSource(
+                    InMemoryTokenSource(list(range(64, 128)), work_dir=tmp_path),
+                    sequence_length=sequence_length,
+                    work_dir=tmp_path,
+                ),
+                ratio=0.75,
+            ),
+            work_dir=tmp_path,
+            num_instances=8,
+        ),
+        max_instances=4,
+        work_dir=tmp_path,
+        seed=None,
+    )
+    # Should unwind the mix's sources and maintain the sampling ratios.
+    assert source.source_sample_sizes == (1, 3)
+    assert len(source) == 4
 
 
 def test_sampling_instance_source_with_oversampling(tmp_path: Path):
