@@ -773,7 +773,7 @@ class ParallelDroplessMLP(ParallelMLPBase):
                 expert_indices=expert_indices,
                 indices=indices,
                 bin_ids=bin_ids,
-                bins=bins,
+                bins=bins_bounds,
                 batch_size_per_expert=batch_size_per_expert,
             )
 
@@ -1003,7 +1003,7 @@ class ParallelDroplessMLP(ParallelMLPBase):
         x = ops.gather(x, indices, bin_ids, bins, top_k)
 
         # Perform the expert computation.
-        x = self.mlp(x, batch_size_per_expert)
+        x = self.mlp(x, batch_size_per_expert.tolist())
 
         # Un-route the data for the MoE output.
         return ops.scatter(x, indices, bin_ids, expert_weights, bins, top_k)

@@ -58,7 +58,7 @@ log = logging.getLogger(__name__)
 
 
 SEQUENCE_LENGTH = 8192
-GLOBAL_BATCH_SIZE_SEQ=128
+GLOBAL_BATCH_SIZE_SEQ=512
 GLOBAL_BATCH_SIZE = (
     (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
 )  
@@ -66,20 +66,23 @@ MAX_DURATION = int(1000e9)  # int(6e12), don't forget to adjust the LR when you 
 EVAL_INTERVAL = 1000
 LR= 1e-4
 
-NUM_EXPERTS = 32
+NUM_EXPERTS = 16
 TOP_K = 4
-D_MODEL=2560
-HEAD_DIM=128
+D_MODEL=1024
+HEAD_DIM=64
 NUM_HEAD = D_MODEL // HEAD_DIM
 NUM_KV_HEAD=4
-MOE_HIDDEN_SIZE = 2560
+MOE_HIDDEN_SIZE = 1024
 NUM_SHARED_EXPERTS = 1  # Number of shared experts in the shared MLP
-SHARED_MLP_HIDDEN_SIZE = 2560  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
+SHARED_MLP_HIDDEN_SIZE = 1024  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
-MICRO_BSZ = 1
+MICRO_BSZ = 2
 # DP_DIM=2
 EP_DIM=2
 PP_DIM=2
+NUM_LAYERS= 8
+SPLIT_POINTS = None
+
 # NUM_LAYERS= 30
 # SPLIT_POINTS = [
 #     4, 8 ,
@@ -88,8 +91,19 @@ PP_DIM=2
 #     28, 
 #     ]
 
-NUM_LAYERS= 14
-SPLIT_POINTS =[8,]
+# NUM_LAYERS= 15
+# SPLIT_POINTS =[
+#     4,8,
+#     12,
+# ]
+
+# NUM_LAYERS= 24
+# SPLIT_POINTS =[
+#     6,12,
+#     18,
+# ]
+
+# NUM_LAYERS= 46
 # SPLIT_POINTS = [
 #     6, 12 ,
 #     18,24, 
@@ -97,12 +111,14 @@ SPLIT_POINTS =[8,]
 #     42, 
 # ]
 
-SPLIT_POINTS = None
+
+
+# SPLIT_POINTS = None
 USE_COMPILE=False
 USE_AC=False
 USE_TBO=False
 
-TAG=f'dev-ep{EP_DIM}-uni'
+TAG=f'dev-ep{EP_DIM}-uni-rs-step1b-pp'
 from olmo_core.nn.lm_head import LMHeadConfig, LMHeadType
 from olmo_core.nn.rope import RoPEConfig, RoPEScalingConfig, RoPEType
 from olmo_core.nn.attention import AttentionConfig, AttentionType
@@ -236,7 +252,8 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
             weight_decay=0.1,
             betas=(0.9, 0.95),
             group_overrides=[
-                OptimGroupOverride(params=["embeddings.weight", "*_norm.weight"], opts=dict(weight_decay=0.0))
+                OptimGroupOverride(params=["embeddings.weight", "*_norm.weight"], opts=dict(weight_decay=0.0)),
+                OptimGroupOverride(params=["*w_up_gate"], opts=dict(weight_decay=0.1)) # HACK: just to make a separate group to avoid OOM in RS
                 # OptimGroupOverride(params=["embeddings.weight", ], opts=dict(weight_decay=0.0)) #TODO: fix
             ],
             #TODO: weight decay for norm?
@@ -277,7 +294,7 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
         max_grad_norm=1.0,
         scheduler=WSD(
             units=SchedulerUnits.steps,
-            warmup=2000,
+            warmup=500,
             # NOTE: be aware of when decay will happen relative to batch_wup schedule
             decay=(int(50e9 / GLOBAL_BATCH_SIZE)),
             decay_fraction=None,
@@ -304,8 +321,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         .with_callback(
             "checkpointer",
             CheckpointerCallback(
-                save_interval=1000,
-                ephemeral_save_interval=500,
+                save_interval=2000,
+                ephemeral_save_interval=1000,
                 save_async=False,
                 pre_train_checkpoint=False,
             ),
@@ -314,10 +331,12 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "wandb",
             WandBCallback(
                 name=common.run_name,
-                entity="ai2-llm",
-                project="tianhua-moe",
+                # entity="ai2-llm",
+                # project="tianhua-moe",
+                entity="tianhuat-ai2",
+                project="olmo-core-moe",
                 # project="olmo3",
-                enabled=False,
+                enabled=True,
                 cancel_check_interval=cancel_check_interval,
             ),
         )
@@ -335,7 +354,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         )
         .with_callback(
             "profiler", 
-            NvidiaProfilerCallback(enabled=True, # NOTE: change this
+            NvidiaProfilerCallback(enabled=False, # NOTE: change this
                                    profile_ranks=[0, 8, 16, 24],
                                    start=10,
                                    end=13

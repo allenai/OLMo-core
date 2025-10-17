@@ -12,7 +12,7 @@ from liger_kernel.ops.utils import is_hip
 # The optimal maximum block size depends on your hardware, your kernel, and your dtype
 MAX_FUSED_SIZE = 65536 // 2
 
-
+# @torch.compile
 def fused_linear_cross_entropy_forward(
     _input,
     weight,
@@ -49,10 +49,10 @@ def fused_linear_cross_entropy_forward(
 
     # we use fp32 for loss and gradients accumulator
     if accum_dtype is None:
-        grad_weight = torch.zeros_like(weight, device=device) if weight.requires_grad else None
+        grad_weight = torch.zeros_like(weight.t(), device=device) if weight.requires_grad else None
         grad_bias = torch.zeros_like(bias, device=device) if bias is not None else None
     else:
-        grad_weight = torch.zeros_like(weight, dtype=accum_dtype, device=device) if weight.requires_grad else None
+        grad_weight = torch.zeros_like(weight.t(), dtype=accum_dtype, device=device) if weight.requires_grad else None
         grad_bias = torch.zeros_like(bias, dtype=accum_dtype, device=device) if bias is not None else None
 
     loss_1d = torch.zeros(BT, dtype=torch.float32, device=device)
@@ -136,20 +136,20 @@ def fused_linear_cross_entropy_forward(
 
             # make sure grad_weight is float32 ahead of time and stays that way.
             # Then fuse: C = 1.0 * C + 1.0 * (A @ B)
-            grad_weight.addmm_(
-                grad_logits_chunk.t().contiguous(),
-                _input_chunk.contiguous(),
-                beta=1.0,
-                alpha=1.0,
-            )
-
-            # or transposed layout:
             # grad_weight.addmm_(
-            #     _input_chunk.t().contiguous(), # (D, BT)
-            #     grad_logits_chunk.contiguous(), # (BT, V)
+            #     grad_logits_chunk.t().contiguous(),
+            #     _input_chunk.contiguous(),
             #     beta=1.0,
             #     alpha=1.0,
             # )
+
+            # or transposed layout:
+            grad_weight.addmm_(
+                _input_chunk.t().contiguous(), # (D, BT)
+                grad_logits_chunk.contiguous(), # (BT, V)
+                beta=1.0,
+                alpha=1.0,
+            )
 
         if bias is not None:
             torch.add(
@@ -169,7 +169,7 @@ def fused_linear_cross_entropy_forward(
         z_loss = torch.sum(z_loss_1d) if return_z_loss else None
 
     # Cast back to original dtype
-    grad_weight = grad_weight.to(weight.dtype) if grad_weight is not None else None
+    grad_weight = grad_weight.to(weight.dtype).t() if grad_weight is not None else None
     grad_bias = grad_bias.to(bias.dtype) if grad_bias is not None else None
 
     return loss, z_loss, grad_input, grad_weight, grad_bias
@@ -177,7 +177,8 @@ def fused_linear_cross_entropy_forward(
 
 def fused_linear_cross_entropy_backward(grad_output, grad_input, grad_weight, grad_bias):
     # If cross entropy is the last layer, grad_output is 1.0. Skip the mul to save time
-    if not torch.equal(grad_output, torch.tensor(1.0, device=grad_output.device)):
+    # if not torch.equal(grad_output, torch.tensor(1.0, device=grad_output.device)):
+    if True:
         # We use a Triton kernel instead of a PyTorch operation because modifying inputs in-place
         # for gradient storage and backward multiple times causes anomalies with PyTorch but not with Triton.
         BT, H = grad_input.shape

@@ -48,7 +48,7 @@ log = logging.getLogger(__name__)
 
 
 SEQUENCE_LENGTH = 8192
-GLOBAL_BATCH_SIZE_SEQ=256
+GLOBAL_BATCH_SIZE_SEQ=512
 GLOBAL_BATCH_SIZE = (
     (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
 )  
@@ -58,13 +58,14 @@ LR= 1e-4
 
 NUM_EXPERTS = 16
 TOP_K = 4
-D_MODEL=2048
-MOE_HIDDEN_SIZE = 2048
-SHARED_MLP_HIDDEN_SIZE = 2048  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
-
-MICRO_BSZ = 1
-NUM_LAYERS=4
-DP_DIM=4
+D_MODEL=1024
+MOE_HIDDEN_SIZE = 1024
+SHARED_MLP_HIDDEN_SIZE = 1024  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
+HEAD_DIM=64
+NUM_HEAD = D_MODEL // HEAD_DIM
+MICRO_BSZ = 8
+NUM_LAYERS=8
+DP_DIM=8
 EP_DIM=1
 PP_DIM=1
 SPLIT_POINTS = None
@@ -78,7 +79,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         d_model=d_model,
         vocab_size=common.tokenizer.padded_vocab_size(),
         n_layers=NUM_LAYERS,
-        n_heads=16,
+        n_heads=NUM_HEAD,
         n_kv_heads=4,
         name=TransformerType.moe,
         block_name=TransformerBlockType.moe_reordered_norm,
@@ -177,7 +178,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         max_grad_norm=1.0,
         scheduler=WSD(
             units=SchedulerUnits.steps,
-            warmup=2000,
+            warmup=500,
             # NOTE: be aware of when decay will happen relative to batch_wup schedule
             decay=(int(50e9 / GLOBAL_BATCH_SIZE)),
             decay_fraction=None,
@@ -212,10 +213,10 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "wandb",
             WandBCallback(
                 name=common.run_name,
-                entity="ai2-llm",
-                project="tianhua-moe",
+                entity="tianhuat-ai2",
+                project="olmo-core-moe",
                 # project="olmo3",
-                enabled=False,
+                enabled=True,
                 cancel_check_interval=cancel_check_interval,
             ),
         )
@@ -245,7 +246,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         # )
     )
 
-WORK_DIR = "/jfs/tianhua-tao/ws-olmoe"
+# WORK_DIR = "/jfs/tianhua-tao/ws-olmoe"
+WORK_DIR = "/weka/oe-training-default/tianhua/ws-megatron"
 
 def finalize_config(config: ExperimentConfig):
     # config.dataset.mix = 'OLMo-mix-0625' # new dataset mix
@@ -253,7 +255,8 @@ def finalize_config(config: ExperimentConfig):
     # config.dataset.mix = "OLMoE-mix-0824-dev"
     # config.data_loader.num_workers = 1
     
-    DATA_ROOT = "/jfs/tianhua-tao/ws-olmoe/data"
+    # DATA_ROOT = "/jfs/tianhua-tao/ws-olmoe/data"
+    DATA_ROOT = "/weka/oe-training-default/ai2-llm"
     
     DATA_WORK_DIR = "/tmp/dataset-cache"
     # SAVE_ROOT = "/tmp/olmo-core/runs"  # NOTE: change this to what you want

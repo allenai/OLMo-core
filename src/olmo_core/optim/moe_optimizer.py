@@ -524,11 +524,11 @@ class MoEFusedV2Optimizer(Optimizer):
             states_bytes += flat_exp_avg_sq.numel() * flat_exp_avg_sq.element_size()
 
         main_grad_bytes = main_param_bytes
-        print(f'Model param memory usage: {self._model_param_sz / 1024**3:.2f} GB')
-        print(f'Model grad memory usage: {self._model_param_sz / 1024**3:.2f} GB')
-        print(f'Main param memory usage: {main_param_bytes / 1024**3:.2f} GB')
-        print(f'Main grad memory usage: {main_grad_bytes / 1024**3:.2f} GB')
-        print(f'States memory usage: {states_bytes / 1024**3:.2f} GB')
+        print(f'Model param memory usage: {self._model_param_sz / 1024**3:.2f} GB - 1/(EP)')
+        print(f'Model grad memory usage: {self._model_param_sz / 1024**3:.2f} GB - 1/(EP)')
+        print(f'Main param memory usage: {main_param_bytes / 1024**3:.2f} GB - 1/(DP)')
+        print(f'Main grad memory usage: {main_grad_bytes / 1024**3:.2f} GB - 1/(DP)')
+        print(f'States memory usage: {states_bytes / 1024**3:.2f} GB - 1/(DP)')
 
         total_mem = self._model_param_sz + self._model_param_sz + main_param_bytes + states_bytes
         peak_mem = total_mem + main_grad_bytes
@@ -690,7 +690,12 @@ class MoEFusedV2Optimizer(Optimizer):
             # the optimizer has sharded main param + states in fp32
             # now call reduce scatter to collect averaged grads from dp ranks
             # directly into the owned main param views
-            self._reduce_scatter_model_grads()
+            dbg_mem_before_rs = torch.cuda.memory_allocated()/1024**3
+            dbg_mem_peak_before_rs = torch.cuda.max_memory_allocated()/1024**3
+            self._reduce_scatter_model_grads_chunked()
+            dbg_mem_after_rs = torch.cuda.memory_allocated()/1024**3
+            dbg_mem_peak_after_rs = torch.cuda.max_memory_allocated()/1024**3
+
         else:
             # Precondition: DDP model called all-reduce grads, bf16 model grads on dp ranks are the same
             # only copy the model grads to OWNED main grads
@@ -896,127 +901,110 @@ class MoEFusedV2Optimizer(Optimizer):
 
             assert off == flat_main_grad_buf.size(0), "Size mismatch: part of the buffer not used"
 
+    def _reduce_scatter_model_grads_chunked(self) -> None:
+        """
+        Same semantics as _reduce_scatter_model_grads, but stream the send buffer
+        in chunks. Each flush packs data rank-major:
+            [r0_block | r1_block | ... | r(ws-1)_block]
+        so that reduce_scatter's even split delivers the correct next K elements
+        of each rank's shard.
+        """
 
-    # def _reduce_scatter_model_grads(self) -> None:
-    #     """
-    #     Pack bf16/fp16 model grads in the stable concat order per PG, pad to ws multiple,
-    #     and perform reduce-scatter (SUM) to obtain the local shard of grads. Then scale by 1/ws
-    #     and place into each owned main view's .grad (fp32).
-    #     """
-    #     print('_reduce_scatter_model_grads start')
+        for tag in ("ep_dp", "dp"):
+            pg, order_list = self._pg_and_order_for_tag(tag)
+            if pg is None or not order_list:
+                continue
+            ws, my_rank = self._world_and_rank(pg)
 
-    #     for tag in ("dp", "ep_dp"):
-    #         pg, order = self._pg_and_order_for_tag(tag)
-    #         if pg is None or not order:
-    #             continue
-    #         ws, _ = self._world_and_rank(pg)
+            # Layout info / sizes
+            order_list, offsets, total = self._build_concat_layout(tag)
+            if total == 0:
+                continue
+            device = order_list[0].device
+            grad_dtype = torch.float32  # match the non-chunked path
+            padded_total = self._ceil_to_multiple(total, ws)
+            shard = padded_total // ws
 
-    #         order_list, offsets, total = self._build_concat_layout(tag)
-    #         if total == 0:
-    #             continue
+            # Output shard buffer for this rank
+            flat_main_grad_buf = torch.empty(shard, dtype=grad_dtype, device=device)
+            self._flat_main_grad_buf[tag] = flat_main_grad_buf  # used later (e.g., grad clipping)
 
-    #         device = order_list[0].device
-    #         grad_dtype = torch.float32          # force fp32 RS
+            # Build (or reuse) per-rank segment lists that define each rank's shard
+            segs_by_rank = self._segments_by_rank.get(tag)
+            # if not segs_by_rank:
+            #     segs_by_rank = self._build_segments_by_rank(tag)
+            #     self._segments_by_rank[tag] = segs_by_rank
 
-    #         padded_total = self._ceil_to_multiple(total, ws)
-    #         shard = padded_total // ws
+            # Cursors over the per-rank segment lists
+            cursor_idx = [0 for _ in range(ws)]   # which segment tuple we are on
+            cursor_off = [0 for _ in range(ws)]   # how much consumed inside that segment
 
-    #         flat_main_grad_buf = torch.empty(shard, dtype=grad_dtype, device=device)
-    #         self._flat_main_grad_buf[tag] = flat_main_grad_buf # record for grad clip
+            # Helper: copy up to `need` elems destined for rank r into dst at dst_off
+            def _fill_rank_piece(r: int, need: int, dst: torch.Tensor, dst_off: int) -> None:
+                wrote = 0
+                assert segs_by_rank is not None
 
-    #         # Choose a chunk budget (bytes) and convert to element count.
-    #         # You can tune _rs_chunk_bytes on the object; default ~2GB MiB.
-    #         chunk_budget_bytes = getattr(self, "_rs_chunk_bytes", 2 << 30)
-    #         elem_bytes = torch.tensor([], dtype=grad_dtype).element_size()
-    #         # At least ws elements, and ensure multiple of ws so RS splits evenly
-    #         chunk_capacity = max(ws, (chunk_budget_bytes // elem_bytes) // ws * ws)
+                segs = segs_by_rank[r]
+                while wrote < need:
+                    if cursor_idx[r] >= len(segs):
+                        # No more real elements in this rank's shard: pad with zeros
+                        remain = need - wrote
+                        dst.narrow(0, dst_off + wrote, remain).zero_()
+                        wrote += remain
+                        break
+                    p, s0, seg_len = segs[cursor_idx[r]]
+                    pos = cursor_off[r]
+                    take = min(seg_len - pos, need - wrote)
+                    if take > 0:
+                        src = p.grad.detach().view(-1).narrow(0, s0 + pos, take)
+                        dst.narrow(0, dst_off + wrote, take).copy_(src)
+                        wrote += take
+                        pos += take
+                    # advance or move to next segment
+                    if pos == seg_len:
+                        cursor_idx[r] += 1
+                        cursor_off[r] = 0
+                    else:
+                        cursor_off[r] = pos
 
-    #         # Reusable send buffer for one chunk
-    #         send_chunk = torch.zeros(chunk_capacity, dtype=grad_dtype, device=device)
-    #         filled = 0                 # how many elements are filled in current chunk
-    #         global_cursor = 0          # how many total elements have been packed (0..padded_total)
-    #         shard_cursor = 0           # where to write next RS output in flat_main_grad_buf
+            # Choose chunk capacity (multiple of ws) and buffers
+            chunk_budget_bytes = getattr(self, "_rs_chunk_bytes", 2 << 30)  # ~2 GiB by default
+            elem_bytes = torch.tensor([], dtype=grad_dtype).element_size()
+            chunk_capacity = max(ws, (chunk_budget_bytes // elem_bytes) // ws * ws)  # divisible by ws
+            per_rank_cap = chunk_capacity // ws
+            send_chunk = torch.empty(chunk_capacity, dtype=grad_dtype, device=device)
 
-    #         def _flush_chunk(n_elems: int):
-    #             """Reduce-scatter the first n_elems of send_chunk (n_elems % ws == 0)."""
-    #             nonlocal shard_cursor
-    #             if n_elems == 0:
-    #                 return
-    #             assert n_elems % ws == 0, "Chunk size must be divisible by world size for RS"
-    #             out_elems = n_elems // ws
-    #             out_view = flat_main_grad_buf.narrow(0, shard_cursor, out_elems)
-    #             # Use a narrowed view of send_chunk to avoid copying
-    #             in_view = send_chunk.narrow(0, 0, n_elems)
-    #             dist.reduce_scatter_tensor(out_view, in_view, group=pg, op=dist.ReduceOp.AVG)
-    #             shard_cursor += out_elems
-    #             # reset send buffer for reuse
-    #             send_chunk.zero_()
+            # Stream: each flush advances this rank's shard by out_elems
+            shard_cursor = 0
+            while shard_cursor < shard:
+                out_elems = min(per_rank_cap, shard - shard_cursor)
 
-    #         # --- Pack and stream per-parameter
-    #         for p in order_list:
-    #             if p.grad is None:
-    #                 continue
+                # rank-major packing
+                for r in range(ws):
+                    _fill_rank_piece(r, out_elems, send_chunk, r * out_elems)
 
-    #             src = p.grad.detach().view(-1)  # bf16/fp16 likely; will cast on copy_
-    #             remaining = src.numel()
-    #             src_off = 0
+                # reduce_scatter on the packed chunk
+                out_view = flat_main_grad_buf.narrow(0, shard_cursor, out_elems)
+                dist.reduce_scatter_tensor(out_view,
+                                        send_chunk.narrow(0, 0, out_elems * ws),
+                                        group=pg,
+                                        op=dist.ReduceOp.AVG)
+                shard_cursor += out_elems
 
-    #             while remaining > 0:
-    #                 space = chunk_capacity - filled
-    #                 take = remaining if remaining <= space else space
-    #                 # copy segment into the current chunk
-    #                 send_chunk.narrow(0, filled, take).copy_(src.narrow(0, src_off, take))
-    #                 filled += take
-    #                 src_off += take
-    #                 remaining -= take
-    #                 global_cursor += take
+            # Now it's safe to clear the low-precision model grads
+            for p in order_list:
+                p.grad = None
 
-    #                 # If the chunk is full, flush it
-    #                 if filled == chunk_capacity:
-    #                     _flush_chunk(chunk_capacity)
-    #                     filled = 0
+            # Point owned fp32 main.grad as views into the shard buffer
+            off = 0
+            for ov in self._owned_views:
+                if ov.pg_tag != tag:
+                    continue
+                n = ov.length
+                ov.main_param_view.grad = flat_main_grad_buf.narrow(0, off, n)
+                off += n
+            assert off == flat_main_grad_buf.numel(), "Size mismatch: part of the buffer not used"
 
-    #             # free the original low-precision grad as soon as we've packed it
-    #             p.grad = None
-
-    #         # --- Pad to padded_total with zeros (already zeroed in send_chunk) and flush
-    #         # We may have some leftover elements in the last chunk; we need to hit padded_total
-    #         # total padding is (padded_total - total) zeros.
-    #         to_pad = padded_total - total
-    #         while to_pad > 0:
-    #             space = chunk_capacity - filled
-    #             take = min(space, to_pad)
-    #             # zeros already present; just advance cursors
-    #             filled += take
-    #             to_pad -= take
-    #             global_cursor += take
-    #             if filled == chunk_capacity:
-    #                 _flush_chunk(chunk_capacity)
-    #                 filled = 0
-
-    #         # Flush the final partially filled chunk (if any). It must be divisible by ws now
-    #         if filled > 0:
-    #             # because global_cursor == padded_total, filled must be a multiple of ws
-    #             _flush_chunk(filled)
-    #             filled = 0
-
-    #         # Safety checks
-    #         assert shard_cursor == flat_main_grad_buf.numel(), \
-    #             f"Shard fill mismatch: wrote {shard_cursor}, expected {flat_main_grad_buf.numel()}"
-    #         assert global_cursor == padded_total, \
-    #             f"Packed {global_cursor}, expected {padded_total}"
-
-    #         # --- Point owned fp32 main.grad as views into the big buffer
-    #         off = 0
-    #         for ov in self._owned_views:
-    #             if ov.pg_tag != tag:
-    #                 continue
-    #             n = ov.length
-    #             ov.main_param_view.grad = flat_main_grad_buf.narrow(0, off, n)
-    #             off += n
-    #         assert off == flat_main_grad_buf.size(0), "Size mismatch: part of the buffer not used"
-
-    #     print('_reduce_scatter_model_grads done')
 
     def _copy_owned_model_grads_to_main_grads(self):
         """
@@ -1257,15 +1245,46 @@ class MoEFusedV2Optimizer(Optimizer):
             with torch.enable_grad():
                 closure()
 
-        step_factor = self.get_step_factor() # type: ignore
+        step_factor = self.get_step_factor()  # type: ignore
         step_factor = cast(torch.Tensor, step_factor)
         self._step_skipped = 1 - step_factor
+
+        # Allow overriding via attribute; default to 1B elements.
+        CHUNK_ELEMS = getattr(self, "_foreach_chunk_threshold", 1_000_000_000)
+
         for group in self.param_groups:
+            # Per-chunk accumulators
             params_with_grad: list[torch.Tensor] = []
             grads: list[torch.Tensor] = []
             exp_avgs: list[torch.Tensor] = []
             exp_avg_sqs: list[torch.Tensor] = []
-            steps_list = []  # create list outside loops
+            steps_list: list[torch.Tensor] = []
+            running_elems: int = 0
+
+            def flush_chunk():
+                nonlocal params_with_grad, grads, exp_avgs, exp_avg_sqs, steps_list, running_elems
+                if not params_with_grad:
+                    return
+                foreach_adamw_step(
+                    params_with_grad,
+                    grads,
+                    exp_avgs,
+                    exp_avg_sqs,
+                    steps_list,
+                    lr=group["lr"],
+                    betas=group["betas"],
+                    eps=group["eps"],
+                    weight_decay=group["weight_decay"],
+                    step_factor=step_factor,
+                    step_increment_bugfix=True,
+                )
+                # reset for next chunk
+                params_with_grad = []
+                grads = []
+                exp_avgs = []
+                exp_avg_sqs = []
+                steps_list = []
+                running_elems = 0
 
             for p in group["params"]:
                 if p.grad is None:
@@ -1274,35 +1293,73 @@ class MoEFusedV2Optimizer(Optimizer):
                 state = self.state[p]
                 if len(state) == 0:
                     raise RuntimeError("Optimizer state not initialized")
-                    # state["step"] = torch.zeros((), dtype=torch.float32, device=p.device)
-                    # state["exp_avg"] = torch.zeros_like(p, dtype=self.dtype)
-                    # state["exp_avg_sq"] = torch.zeros_like(p, dtype=self.dtype)
 
                 params_with_grad.append(p)
                 grads.append(p.grad)
                 exp_avgs.append(state["exp_avg"])
                 exp_avg_sqs.append(state["exp_avg_sq"])
                 steps_list.append(state["step"])
+                running_elems += p.numel()
 
-            if not params_with_grad:
-                continue  # nothing to update in this group
+                # Flush when we reach/exceed the threshold. It's OK to overshoot with the last add.
+                if running_elems >= CHUNK_ELEMS:
+                    flush_chunk()
 
-            foreach_adamw_step(
-                params_with_grad,
-                grads,
-                exp_avgs,
-                exp_avg_sqs,
-                steps_list,
-                lr=group["lr"],
-                betas=group["betas"],
-                eps=group["eps"],
-                weight_decay=group["weight_decay"],
-                step_factor=step_factor,
-                step_increment_bugfix=True,
-            )
-            # grads_size = sum([g.numel() * g.element_size() for g in grads])/1024**3
-            # exp_avgs_size = sum([ea.numel() * ea.element_size() for ea in exp_avgs])/1024**3
-            # exp_avg_sqs_size = sum([eas.numel() * eas.element_size() for eas in exp_avg_sqs])/1024**3
+            # Flush any tail chunk
+            flush_chunk()
+
+
+    # def _step_foreach(self, closure=None) -> None:
+    #     if closure is not None:
+    #         with torch.enable_grad():
+    #             closure()
+
+    #     step_factor = self.get_step_factor() # type: ignore
+    #     step_factor = cast(torch.Tensor, step_factor)
+    #     self._step_skipped = 1 - step_factor
+    #     for group in self.param_groups:
+    #         params_with_grad: list[torch.Tensor] = []
+    #         grads: list[torch.Tensor] = []
+    #         exp_avgs: list[torch.Tensor] = []
+    #         exp_avg_sqs: list[torch.Tensor] = []
+    #         steps_list = []  # create list outside loops
+
+    #         for p in group["params"]:
+    #             if p.grad is None:
+    #                 continue
+
+    #             state = self.state[p]
+    #             if len(state) == 0:
+    #                 raise RuntimeError("Optimizer state not initialized")
+    #                 # state["step"] = torch.zeros((), dtype=torch.float32, device=p.device)
+    #                 # state["exp_avg"] = torch.zeros_like(p, dtype=self.dtype)
+    #                 # state["exp_avg_sq"] = torch.zeros_like(p, dtype=self.dtype)
+
+    #             params_with_grad.append(p)
+    #             grads.append(p.grad)
+    #             exp_avgs.append(state["exp_avg"])
+    #             exp_avg_sqs.append(state["exp_avg_sq"])
+    #             steps_list.append(state["step"])
+
+    #         if not params_with_grad:
+    #             continue  # nothing to update in this group
+
+    #         foreach_adamw_step(
+    #             params_with_grad,
+    #             grads,
+    #             exp_avgs,
+    #             exp_avg_sqs,
+    #             steps_list,
+    #             lr=group["lr"],
+    #             betas=group["betas"],
+    #             eps=group["eps"],
+    #             weight_decay=group["weight_decay"],
+    #             step_factor=step_factor,
+    #             step_increment_bugfix=True,
+    #         )
+    #         # grads_size = sum([g.numel() * g.element_size() for g in grads])/1024**3
+    #         # exp_avgs_size = sum([ea.numel() * ea.element_size() for ea in exp_avgs])/1024**3
+    #         # exp_avg_sqs_size = sum([eas.numel() * eas.element_size() for eas in exp_avg_sqs])/1024**3
 
     def zero_grad(self, set_to_none=True):
         for group in self.param_groups:

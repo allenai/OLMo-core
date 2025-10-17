@@ -625,7 +625,8 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
 
         # step 3: MLP
         torch._dynamo.mark_dynamic(permutated_input_tokens, 0)
-        mlp_x = self.routed_experts(permutated_input_tokens, local_batch_size_per_global_routed_expert_cpu.tolist())
+        # mlp_x = self.routed_experts(permutated_input_tokens, local_batch_size_per_global_routed_expert_cpu.tolist())
+        mlp_x = self.routed_experts(permutated_input_tokens, local_batch_size_per_global_routed_expert_cpu)
 
         # step 4: unpermutate the output tokens
         with nvtx.annotate("Unpermute", color='green'):
@@ -1116,8 +1117,9 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 
         
         ## 6. MLP forwrad ##
+        # global_x = self.routed_experts(global_x, parallel_batch_size_per_local_expert_cpu.tolist())
 
-        global_x = self.routed_experts(global_x, parallel_batch_size_per_local_expert_cpu.tolist())
+        global_x = self.routed_experts(global_x, parallel_batch_size_per_local_expert_cpu)
         
         
         ## 7. Unpermute the output tokens to be ready for all-to-all communication ##

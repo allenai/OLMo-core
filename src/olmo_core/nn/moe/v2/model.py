@@ -59,12 +59,13 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         super().__init__(*args, **kwargs)
         self.ep_enabled = False # default
         self.recompute_all_blocks = False
-        self.recompute_each_block = True
+        self.recompute_each_block = False
 
-        if self.tbo:
-            self.first_moe_idx = self._check_tbo_requirements()
-        else:
-            self.first_moe_idx = None
+        # if self.tbo:
+        #     self.first_moe_idx = self._check_tbo_requirements()
+        # else:
+        #     self.first_moe_idx = None
+        # self.first_moe_idx = None
 
         assert not (self.recompute_all_blocks and self.recompute_each_block), "Only one of recompute_all_blocks and recompute_each_block can be True."
         assert not (self.tbo and self.recompute_each_block), "Cannot use TBO when recompute_each_block is True."
@@ -456,10 +457,12 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         # pipeline parallel configuration.
         h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
 
+        first_moe_idx = self._check_tbo_requirements() # check every forwrad to work with PP
+
         # forward dense blocks
         for block_idx, block in enumerate(self.blocks.values()):
             if block.is_moe: 
-                assert self.first_moe_idx == block_idx
+                assert first_moe_idx == block_idx, f"first_moe_idx {first_moe_idx}, block_idx {block_idx}, block.block_idx {block.block_idx}"
                 break
             # Mark sizes as dynamic for torch.compile().
             if self.compile_enabled:
@@ -636,25 +639,28 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
 
     def _forward_blocks(self, h, block_kwargs: Dict[str, Any]) -> torch.Tensor:
         # Run each block.
-        for block_idx, block in enumerate(self.blocks.values()):
+        for block_idx, (bock_key, block) in enumerate(self.blocks.items()):
             # Mark sizes as dynamic for torch.compile().
             if self.compile_enabled:
                 mark_dynamic(h, (0, 1), strict=False)
             with nvtx.annotate(f"fwd_block_{block_idx}", color="blue"):
                 if self.recompute_each_block:
-                    h = checkpoint(self._forwrad_one_block, h, block, block_kwargs, use_reentrant=False)
+                    h = checkpoint(self._forwrad_one_block, h, bock_key, block_kwargs, use_reentrant=False)
                     h = cast(torch.Tensor, h)
                 else:
-                    h = self._forwrad_one_block(h, block, block_kwargs)
+                    h = self._forwrad_one_block(h, bock_key, block_kwargs)
                 
         return h
 
-    def _forwrad_one_block(self, h, block: nn.Module, block_kwargs: Dict[str, Any]) -> torch.Tensor:
-        # debug_mem_block_start = torch.cuda.memory_allocated()/1024**3
+    def _forwrad_one_block(self, h, bock_key: str, block_kwargs: Dict[str, Any]) -> torch.Tensor:
+        debug_mem_block_start = torch.cuda.memory_allocated()/1024**3
+        block = self.blocks[bock_key]
         h = block(h, **block_kwargs)
-        # debug_mem_block_end = torch.cuda.memory_allocated()/1024**3
-        # mem_diff = debug_mem_block_end - debug_mem_block_start
-        # if torch.is_grad_enabled():
+
+        debug_mem_block_end = torch.cuda.memory_allocated()/1024**3
+
+        mem_diff = debug_mem_block_end - debug_mem_block_start
+        # if block.block_idx == 1:
         #     print(f'block mem: {mem_diff:.3f} GB')
         return h
 
@@ -745,8 +751,8 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
                 out = self.lm_head(h, **lm_head_kwargs)
 
             # check for nan
-            if torch.isnan(out.loss).any():
-                print('nan')
+            # if torch.isnan(out.loss).any():
+            #     print('nan')
 
         else:
             out = h
