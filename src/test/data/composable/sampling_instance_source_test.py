@@ -19,6 +19,7 @@ def test_sampling_instance_source(tmp_path: Path):
         ),
         max_instances=8,
         work_dir=tmp_path,
+        seed=None,
     )
     assert source.source_sample_sizes == (4, 4)
     assert len(source) == 8
@@ -42,6 +43,7 @@ def test_sampling_instance_source_with_oversampling(tmp_path: Path):
         ),
         max_instances=24,
         work_dir=tmp_path,
+        seed=None,
     )
     assert source.source_sample_sizes == (12, 12)
     assert len(source) == 24

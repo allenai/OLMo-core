@@ -22,7 +22,7 @@ class SamplingInstanceSourceConfig(InstanceSourceConfig):
     max_tokens: Optional[int] = None
     max_instances: Optional[int] = None
     factor: Optional[float] = None
-    seed: Optional[int] = None
+    seed: Optional[int] = 0
     label: Optional[str] = None
 
     def __post_init__(self):
@@ -85,7 +85,7 @@ class SamplingInstanceSource(InstanceSource):
         max_tokens: Optional[int] = None,
         max_instances: Optional[int] = None,
         work_dir: PathOrStr,
-        seed: Optional[int] = None,
+        seed: Optional[int] = 0,
         label: Optional[str] = None,
     ):
         if not sources:

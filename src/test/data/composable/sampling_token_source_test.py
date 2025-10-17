@@ -12,6 +12,7 @@ def test_sampling_token_source(tmp_path: Path):
         InMemoryTokenSource(list(range(10, 20)), work_dir=tmp_path),
         max_tokens=16,
         work_dir=tmp_path,
+        seed=None,
     )
     assert source.num_tokens == 16
     assert list(source[:]["input_ids"]) == list(range(8)) + list(range(10, 18))
@@ -24,6 +25,7 @@ def test_sampling_token_source_with_repetition(tmp_path: Path):
         InMemoryTokenSource(list(range(10, 20)), work_dir=tmp_path),
         max_tokens=24,
         work_dir=tmp_path,
+        seed=None,
     )
     assert source.num_tokens == 24
     assert list(source[:]["input_ids"]) == list(range(10)) + list(range(0, 2)) + list(

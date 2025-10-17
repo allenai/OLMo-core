@@ -33,7 +33,7 @@ class SamplingDocumentSourceConfig(DocumentSourceConfig):
     sources: List[DocumentSourceConfig]
     max_tokens: Optional[int] = None
     factor: Optional[float] = None
-    seed: Optional[int] = None
+    seed: Optional[int] = 0
     label: Optional[str] = None
 
     def __post_init__(self):
@@ -81,7 +81,7 @@ class SamplingDocumentSource(DocumentSource):
         self,
         *sources: DocumentSource,
         max_tokens: int,
-        seed: Optional[int] = None,
+        seed: Optional[int] = 0,
         work_dir: PathOrStr,
         label: Optional[str] = None,
     ):

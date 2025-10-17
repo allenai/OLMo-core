@@ -27,7 +27,7 @@ def test_sampling_document_source(tmp_path: Path):
     )
     assert og_source.num_tokens == len(data) == 14
 
-    sampled_source = SamplingDocumentSource(og_source, max_tokens=13, work_dir=tmp_path)
+    sampled_source = SamplingDocumentSource(og_source, max_tokens=13, work_dir=tmp_path, seed=None)
     # Last doc will be excluded from sample.
     assert sampled_source.num_docs == 3
     assert sampled_source.num_tokens == 12
@@ -70,6 +70,7 @@ def test_sampling_document_source_with_repetition(tmp_path: Path):
         og_source,
         max_tokens=20,
         work_dir=tmp_path,
+        seed=None,
     )
     assert sampled_source.num_docs == 5  # first doc will be repeated
     assert sampled_source.num_tokens == 19

@@ -124,6 +124,7 @@ def calculate_sample_sizes(
     max_repetition_factors: Sequence[float],
     target_size: Optional[int] = None,
     labels: Optional[Sequence[str]] = None,
+    unit: str = "tokens",
 ) -> np.ndarray:
     """
     Calculate the number of items needed to sample from each source in order to match the target ratios.
@@ -173,25 +174,32 @@ def calculate_sample_sizes(
     # Sample sizes should stay true to target ratios.
     assert np.allclose(ratios, actual_sample_sizes / actual_sample_sizes.sum())
     # And sample sizes shouldn't be larger than the number of items available.
-    actual_sample_sizes = actual_sample_sizes.astype(np.uint64)
-    assert (actual_sample_sizes <= sizes_to_use).all()
+    actual_sample_sizes_int = actual_sample_sizes.astype(np.uint64)
+    assert (actual_sample_sizes_int <= sizes_to_use).all()
     assert target_size is not None
     actual_size = actual_sample_sizes.sum()
     if strict and not np.allclose(target_size, actual_size):
-        source_idx_with_biggest_diff = np.argmin(sizes_to_use / ideal_sample_sizes)
-        label = (
-            labels[source_idx_with_biggest_diff]
-            if labels is not None
-            else str(source_idx_with_biggest_diff)
-        )
+        idx_of_max_diff = np.argmax(max_repetition_factors_needed - max_repetition_factors_)
+        label_str: str
+        if labels is not None:
+            label_str = f"with label '{labels[idx_of_max_diff]}'"
+        else:
+            label_str = f"with index {idx_of_max_diff}"
+        required_sample_size = int(ideal_sample_sizes[idx_of_max_diff])
+        provided_sample_size = int(sizes[idx_of_max_diff] * max_repetition_factors[idx_of_max_diff])
         raise OLMoConfigurationError(
-            f"Unable to meet target size of {target_size:,d} for the mix with the given "
-            f"source ratios and max repetition factors. The best we can do is {actual_size:,d}. "
-            f"The source with the biggest discrepancy between its requested sample size and the size "
-            f"it can provide after accounting for the max repetition factor is source '{label}'."
+            f"Unable to meet target size of {int(target_size):,d} {unit} with the given "
+            f"source ratios and max repetition factors. The best we can do is {int(actual_size):,d} {unit}. "
+            f"The source with the biggest discrepancy between its required sample size "
+            f"(~{required_sample_size:,d} {unit}, {100 * ratios[idx_of_max_diff]:.1f}% of mix) and "
+            f"the size it can provide after accounting for the max repetition factor "
+            f"({sizes[idx_of_max_diff]:,d} x {max_repetition_factors[idx_of_max_diff]:.2f} ~= {provided_sample_size:,d} {unit}) "
+            f"is the source {label_str}. Consider either decreasing the target size of the mix "
+            f"to {int(actual_size):,d} {unit} or increasing the max repetition factor for that source "
+            f"to {max_repetition_factors_needed[idx_of_max_diff]:.2f}."
         )
 
-    return actual_sample_sizes
+    return actual_sample_sizes_int
 
 
 def build_global_indices(
