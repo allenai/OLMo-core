@@ -147,6 +147,9 @@ For example::
        NumpyDocumentSource('gs://ai2-llm/preprocessed/midtraining-reasoning/tinyMATH/PoT/processed_data/processed-decon-sparkle-motion/allenai/dolma2-tokenizer/part-09-00000.npy',)
    ]
 
+Ratio-based mixing
+------------------
+
 Here's a more useful example where we create several groups of numpy sources, two code and two math,
 using :meth:`NumpyDocumentSourceConfig.from_source_groups`::
 
@@ -235,30 +238,202 @@ to get a source with 30B tokens::
 
 ::
 
-   MixingInstanceSource(4d3e689): 30.0B tokens
-   ├─ SamplingInstanceSource(12ba409): 15.0B tokens [code]
-   │  └─ MixingInstanceSource(5d9386b): 37.7B tokens
-   │     ├─ SamplingInstanceSource(3563ba5): 18.8B tokens [code_fim]
+   MixingInstanceSource(e421147): 30.0B tokens
+   ├─ SamplingInstanceSource(c65cde2): 15.0B tokens [code]
+   │  └─ MixingInstanceSource(73dfe43): 37.7B tokens
+   │     ├─ SamplingInstanceSource(85521bf): 18.8B tokens [code_fim]
    │     │  └─ ConcatAndChunkInstanceSource(adb4562): 21.4B tokens [code_fim]
    │     │     └─ NumpyDocumentSource x 474: 21.4B tokens [code_fim]
-   │     └─ SamplingInstanceSource(cc0d34b): 18.8B tokens [swallowcode]
+   │     └─ SamplingInstanceSource(8d7c840): 18.8B tokens [swallowcode]
    │        └─ ConcatAndChunkInstanceSource(b2f2ef4): 18.8B tokens [swallowcode]
    │           └─ NumpyDocumentSource x 128: 18.8B tokens [swallowcode]
-   └─ SamplingInstanceSource(2380ca7): 15.0B tokens [math]
-      └─ MixingInstanceSource(0b8927b): 20.3B tokens
-         ├─ SamplingInstanceSource(d3ee3f9): 2.0B tokens [megamath]
+   └─ SamplingInstanceSource(03941ca): 15.0B tokens [math]
+      └─ MixingInstanceSource(39aa7de): 20.3B tokens
+         ├─ SamplingInstanceSource(cbc20a2): 2.0B tokens [megamath]
          │  └─ ConcatAndChunkInstanceSource(2b6a324): 3.9B tokens [megamath]
          │     └─ NumpyDocumentSource x 264: 3.9B tokens [megamath]
-         └─ SamplingInstanceSource(0cf6aa7): 18.3B tokens [dolminos2math]
+         └─ SamplingInstanceSource(857de5e): 18.3B tokens [dolminos2math]
             └─ ConcatAndChunkInstanceSource(b768b9a): 18.3B tokens [dolminos2math]
                └─ NumpyDocumentSource x 415: 18.3B tokens [dolminos2math]
 
-.. tip::
-    **Up-sampling:** In general general you can accomplish exact up-sampling by wrapping a source in
-    a :class:`SamplingInstanceSource` (or :class:`SamplingTokenSource`, :class:`SamplingDocumentSource`),
-    or by using the ``.sample()`` or ``.resize()`` methods.
+Up-sampling or targeted repetition
+----------------------------------
 
-    For example, if you want to up-sample a source by 3x, you can call ``.resize(3.0)``.
+Suppose we wanted to simulate training 3 epochs on the mixture above, i.e. training on 3 repetitions
+of the data.
+In general you can do exact up-sampling by wrapping a source in
+a :class:`SamplingInstanceSource` (or :class:`SamplingTokenSource`, :class:`SamplingDocumentSource`),
+or by calling the ``.sample()`` / ``.resize()`` methods::
+
+   upsampled_mix = mix.resize(3.0)
+   upsampled_mix.visualize(icons=False)
+
+::
+
+   SamplingInstanceSource(de59d5e): 90.0B tokens
+   └─ MixingInstanceSource(e421147): 30.0B tokens
+      ├─ SamplingInstanceSource(c65cde2): 15.0B tokens [code]
+      │  └─ MixingInstanceSource(73dfe43): 37.7B tokens
+      │     ├─ SamplingInstanceSource(85521bf): 18.8B tokens [code_fim]
+      │     │  └─ ConcatAndChunkInstanceSource(adb4562): 21.4B tokens [code_fim]
+      │     │     └─ NumpyDocumentSource x 474: 21.4B tokens [code_fim]
+      │     └─ SamplingInstanceSource(8d7c840): 18.8B tokens [swallowcode]
+      │        └─ ConcatAndChunkInstanceSource(b2f2ef4): 18.8B tokens [swallowcode]
+      │           └─ NumpyDocumentSource x 128: 18.8B tokens [swallowcode]
+      └─ SamplingInstanceSource(03941ca): 15.0B tokens [math]
+         └─ MixingInstanceSource(39aa7de): 20.3B tokens
+            ├─ SamplingInstanceSource(cbc20a2): 2.0B tokens [megamath]
+            │  └─ ConcatAndChunkInstanceSource(2b6a324): 3.9B tokens [megamath]
+            │     └─ NumpyDocumentSource x 264: 3.9B tokens [megamath]
+            └─ SamplingInstanceSource(857de5e): 18.3B tokens [dolminos2math]
+               └─ ConcatAndChunkInstanceSource(b768b9a): 18.3B tokens [dolminos2math]
+                  └─ NumpyDocumentSource x 415: 18.3B tokens [dolminos2math]
+
+Curriculum learning
+-------------------
+
+The composable API also enables curriculum learning.
+Suppose we want the first half of training to focus on 25% code + 75% math, and the second half
+to focus on 75% code + 25% math. So let's start by building those two separate mixes::
+   
+   mix_config1 = MixingInstanceSource.Config(
+       num_tokens=25_000_000_000,
+       seed=0,
+       source_specs=[
+           MixingInstanceSource.Spec.Config(
+               source=MixingInstanceSource.Config(
+                   source_specs=[
+                       MixingInstanceSource.Spec.Config(
+                           source=make_instance_source("code_fim"),
+                           ratio=0.5,
+                           label="code_fim",
+                       ),
+                       MixingInstanceSource.Spec.Config(
+                           source=make_instance_source("swallowcode"),
+                           ratio=0.5,
+                           label="swallowcode",
+                       ),
+                   ]
+               ),
+               ratio=0.25,
+               label="code",
+           ),
+           MixingInstanceSource.Spec.Config(
+               source=MixingInstanceSource.Config(
+                   source_specs=[
+                       MixingInstanceSource.Spec.Config(
+                           source=make_instance_source("megamath"),
+                           ratio=0.1,
+                           label="megamath",
+                       ),
+                       MixingInstanceSource.Spec.Config(
+                           source=make_instance_source("dolminos2math"),
+                           ratio=0.9,
+                           label="dolminos2math",
+                       ),
+                   ]
+               ),
+               ratio=0.75,
+               label="math",
+           ),
+       ],
+   )
+   
+   mix_config2 = MixingInstanceSource.Config(
+       num_tokens=25_000_000_000,
+       seed=1,
+       source_specs=[
+           MixingInstanceSource.Spec.Config(
+               source=MixingInstanceSource.Config(
+                   source_specs=[
+                       MixingInstanceSource.Spec.Config(
+                           source=make_instance_source("code_fim"),
+                           ratio=0.5,
+                           label="code_fim",
+                       ),
+                       MixingInstanceSource.Spec.Config(
+                           source=make_instance_source("swallowcode"),
+                           ratio=0.5,
+                           label="swallowcode",
+                       ),
+                   ]
+               ),
+               ratio=0.75,
+               label="code",
+           ),
+           MixingInstanceSource.Spec.Config(
+               source=MixingInstanceSource.Config(
+                   source_specs=[
+                       MixingInstanceSource.Spec.Config(
+                           source=make_instance_source("megamath"),
+                           ratio=0.1,
+                           label="megamath",
+                       ),
+                       MixingInstanceSource.Spec.Config(
+                           source=make_instance_source("dolminos2math"),
+                           ratio=0.9,
+                           label="dolminos2math",
+                       ),
+                   ]
+               ),
+               ratio=0.25,
+               label="math",
+           ),
+       ],
+   )
+   
+   mix1 = mix_config1.build("/tmp/dataset-common1")
+   mix1.visualize()
+   mix2 = mix_config2.build("/tmp/dataset-common1")
+   mix2.visualize()
+
+::
+
+   MixingInstanceSource(783681e): 25.0B tokens
+   ├─ SamplingInstanceSource(46c206f): 6.2B tokens [code]
+   │  └─ MixingInstanceSource(73dfe43): 37.7B tokens
+   │     ├─ SamplingInstanceSource(85521bf): 18.8B tokens [code_fim]
+   │     │  └─ ConcatAndChunkInstanceSource(adb4562): 21.4B tokens [code_fim]
+   │     │     └─ NumpyDocumentSource x 474: 21.4B tokens [code_fim]
+   │     └─ SamplingInstanceSource(8d7c840): 18.8B tokens [swallowcode]
+   │        └─ ConcatAndChunkInstanceSource(b2f2ef4): 18.8B tokens [swallowcode]
+   │           └─ NumpyDocumentSource x 128: 18.8B tokens [swallowcode]
+   └─ SamplingInstanceSource(d555459): 18.7B tokens [math]
+      └─ MixingInstanceSource(39aa7de): 20.3B tokens
+         ├─ SamplingInstanceSource(cbc20a2): 2.0B tokens [megamath]
+         │  └─ ConcatAndChunkInstanceSource(2b6a324): 3.9B tokens [megamath]
+         │     └─ NumpyDocumentSource x 264: 3.9B tokens [megamath]
+         └─ SamplingInstanceSource(857de5e): 18.3B tokens [dolminos2math]
+            └─ ConcatAndChunkInstanceSource(b768b9a): 18.3B tokens [dolminos2math]
+               └─ NumpyDocumentSource x 415: 18.3B tokens [dolminos2math]
+   
+   MixingInstanceSource(bdd1e47): 25.0B tokens
+   ├─ SamplingInstanceSource(22b792a): 18.7B tokens [code]
+   │  └─ MixingInstanceSource(73dfe43): 37.7B tokens
+   │     ├─ SamplingInstanceSource(85521bf): 18.8B tokens [code_fim]
+   │     │  └─ ConcatAndChunkInstanceSource(adb4562): 21.4B tokens [code_fim]
+   │     │     └─ NumpyDocumentSource x 474: 21.4B tokens [code_fim]
+   │     └─ SamplingInstanceSource(8d7c840): 18.8B tokens [swallowcode]
+   │        └─ ConcatAndChunkInstanceSource(b2f2ef4): 18.8B tokens [swallowcode]
+   │           └─ NumpyDocumentSource x 128: 18.8B tokens [swallowcode]
+   └─ SamplingInstanceSource(bec1373): 6.2B tokens [math]
+      └─ MixingInstanceSource(39aa7de): 20.3B tokens
+         ├─ SamplingInstanceSource(cbc20a2): 2.0B tokens [megamath]
+         │  └─ ConcatAndChunkInstanceSource(2b6a324): 3.9B tokens [megamath]
+         │     └─ NumpyDocumentSource x 264: 3.9B tokens [megamath]
+         └─ SamplingInstanceSource(857de5e): 18.3B tokens [dolminos2math]
+            └─ ConcatAndChunkInstanceSource(b768b9a): 18.3B tokens [dolminos2math]
+               └─ NumpyDocumentSource x 415: 18.3B tokens [dolminos2math]
+
+Then when we build our data loader we'll pass it both of those mixes, in order, and specify
+``shuffle_strategy="intra_source"`` so that each mix is shuffled independently during its phase of training::
+
+   data_loader = ComposableDataLoader.Config(
+       tokenizer=tokenizer,
+       global_batch_size=512 * sequence_length,
+       seed=42,
+       shuffle_strategy=ShuffleStrategy.intra_source,
+   ).build(mix1, mix2, work_dir="/tmp/dataloader-common")
 
 Reference
 ---------
