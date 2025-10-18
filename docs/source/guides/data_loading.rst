@@ -40,14 +40,19 @@ Train data loading
 Once your data is pre-processed as above there are several different strategies available for loading that data for training.
 The built-in data loading strategies can be broadly categorized into two types: fixed sequence length (FSL) training and variable sequence length (VSL) training.
 
-FSL and VSL each have their own data loader classes (:class:`~olmo_core.data.data_loader.NumpyFSLDataLoader` and :class:`~olmo_core.data.data_loader.NumpyVSLDataLoader`),
-which you can set as the :data:`~olmo_core.train.Trainer.data_loader` of your :class:`~olmo_core.train.Trainer`.
+You can select between FSL and VSL training by choosing the appropriate data loader class to pass to your :class:`~olmo_core.train.Trainer`.
+For example, the :class:`~olmo_core.data.data_loader.NumpyFSLDataLoader` or :class:`~olmo_core.data.composable.ComposableDataLoader` can be used for FSL training,
+while the :class:`~olmo_core.data.data_loader.NumpyVSLDataLoader` can be used for VSL training.
 
-These data loaders accept datasets that are subclasses of :class:`~olmo_core.data.numpy_dataset.NumpyDatasetBase`, which
-handle the details of loading and sampling from your pre-tokenized numpy data files. Most of the interesting functionality is in the datasets, so we will focus on those here.
+The ``Numpy*DataLoader`` variants take a dataset that's a subclass of :class:`~olmo_core.data.numpy_dataset.NumpyDatasetBase`,
+which handles the details of loading and sampling from your pre-tokenized numpy data files,
+while the :class:`~olmo_core.data.composable.ComposableDataLoader` takes one or more :class:`~olmo_core.data.composable.InstanceSource` objects.
 
-Fixed sequence length (FSL) datasets
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+The rest of this section will focus on the ``Numpy*Dataset`` classes, but see the :mod:`olmo_core.data.composable` module documentation to learn
+more about the composable data loading API.
+
+Numpy fixed sequence length (FSL) datasets
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 The following datasets are for fixed sequence length (FSL) training with :class:`~olmo_core.data.data_loader.NumpyFSLDataLoader`, where every training instance is exactly the same length (``sequence_length``), possibly
 with document fragmentation across instances or padding within instances. They implement different strategies for how to create those training instances from your pre-tokenized numpy data files
 where the sequence lengths of individual documents may vary widely.
@@ -107,8 +112,8 @@ This dataset will form instances by chunking documents and then interleaving the
 force the model to attend to tokens that are far apart in the training instance, which may help with long-range dependencies.
 Does not support intra-document masking as that would largely defeat the purpose of interleaving.
 
-Variable sequence length (VSL) training
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Numpy variable sequence length (VSL) training
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 The natural alternative to FSL is variable sequence length (VSL) training. You can use this approach by setting
 a :class:`~olmo_core.data.data_loader.NumpyVSLDataLoader` as your trainer's :data:`~olmo_core.train.Trainer.data_loader`.
@@ -126,7 +131,6 @@ such that the total number of tokens in the batch is equal to your :data:`~olmo_
 must be able to handle sequences of up to ``max_sequence_length``.
 
 You can configure a :class:`~olmo_core.data.numpy_dataset.VSLCurriculum` to control the sampling probability of different sequence lengths over the course of an epoch.
-
 
 Using a custom data loader
 --------------------------
