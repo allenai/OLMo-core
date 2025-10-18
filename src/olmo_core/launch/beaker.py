@@ -491,8 +491,7 @@ class BeakerLaunchConfig(Config):
                         or any(["augusta" in cluster for cluster in self.clusters])
                     )
                 ),
-                # propagate_failure=True if self.num_nodes > 1 else None,
-                propagate_failure=False,  # DEBUG
+                propagate_failure=True if self.num_nodes > 1 else None,
                 propagate_preemption=True if self.num_nodes > 1 else None,
                 synchronized_start_timeout="90m" if self.num_nodes > 1 else None,
                 resources=TaskResources(gpu_count=self.num_gpus, shared_memory=self.shared_memory),
