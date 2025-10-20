@@ -198,7 +198,7 @@ class InstanceSource(SourceABC):
                 self, slice(0, split_idx), seed=seed, work_dir=self.common_work_dir
             ),
             SlicedInstanceSource(
-                self, slice(split_idx, -1), seed=seed, work_dir=self.common_work_dir
+                self, slice(split_idx, None), seed=seed, work_dir=self.common_work_dir
             ),
         )
 
@@ -227,7 +227,7 @@ class InstanceSourceConfig(Config):
 
     def __add__(self, other: "InstanceSourceConfig") -> "ConcatenatedInstanceSourceConfig":
         """Add two instance source configs together into a :class:`ConcatenatedInstanceSourceConfig`."""
-        if isinstance(other, InstanceSource):
+        if isinstance(other, InstanceSourceConfig):
             return ConcatenatedInstanceSourceConfig(sources=[self, other])
         else:
             raise TypeError(f"Cannot add {type(self)} with {type(other)}.")
@@ -323,7 +323,7 @@ class SplitInstanceSourceConfig(InstanceSourceConfig):
             )
         elif self.idx == 1:
             return SlicedInstanceSource(
-                source, slice(split_idx, -1), seed=self.seed, work_dir=work_dir
+                source, slice(split_idx, None), seed=self.seed, work_dir=work_dir
             )
         else:
             raise ValueError(f"Invalid split index: {self.idx}")

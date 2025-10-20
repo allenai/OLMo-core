@@ -20,7 +20,7 @@ def test_split(tmp_path: Path):
 
     source1a, source1b = source1.split(0.75)
     assert len(source1a) == 24
-    assert len(source1b) == 6
+    assert len(source1b) == 8
 
     source2 = RandomInstanceSource(
         tokenizer=tokenizer,
@@ -35,7 +35,7 @@ def test_split(tmp_path: Path):
 
     source2a, source2b = source2.split(0.75)
     assert len(source2a) == 12
-    assert len(source2b) == 3
+    assert len(source2b) == 4
 
     assert source2a.fingerprint == source1a.fingerprint
     assert source2b.fingerprint == source1b.fingerprint

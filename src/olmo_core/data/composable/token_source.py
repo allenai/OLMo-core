@@ -176,7 +176,7 @@ class TokenSource(SourceABC):
         split_idx = int(ratio * self.num_tokens)
         return (
             SlicedTokenSource(self, slice(0, split_idx), work_dir=self.common_work_dir),
-            SlicedTokenSource(self, slice(split_idx, -1), work_dir=self.common_work_dir),
+            SlicedTokenSource(self, slice(split_idx, None), work_dir=self.common_work_dir),
         )
 
 
@@ -444,14 +444,14 @@ class SplitTokenSourceConfig(TokenSourceConfig):
         sources = self.source.build(work_dir)
         source = (
             sources[0]
-            if len(sources) == 0
+            if len(sources) == 1
             else ConcatenatedTokenSource(*sources, work_dir=work_dir)
         )
         split_idx = int(self.ratio * source.num_tokens)
         if self.idx == 0:
             return [SlicedTokenSource(source, slice(0, split_idx), work_dir=work_dir)]
         elif self.idx == 1:
-            return [SlicedTokenSource(source, slice(split_idx, -1), work_dir=work_dir)]
+            return [SlicedTokenSource(source, slice(split_idx, None), work_dir=work_dir)]
         else:
             raise ValueError(f"Invalid split index: {self.idx}")
 

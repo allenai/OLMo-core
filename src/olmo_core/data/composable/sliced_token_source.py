@@ -52,7 +52,7 @@ class SlicedTokenSource(TokenSource):
         if self.source_slice.stop is None:
             return self.source.num_tokens
         elif self.source_slice.stop < 0:
-            return self.source.num_tokens + self.source_slice.stop + 1
+            return self.source.num_tokens + self.source_slice.stop
         else:
             return self.source_slice.stop
 
