@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from math import cos, pi, sqrt
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
+import numpy as np
 import torch
 
 from ..config import Config, StrEnum
@@ -564,6 +565,8 @@ class WSDS(Scheduler):
     decay_min_lr: float = 0.0
 
     _cum_period_end: List[int] = field(default_factory=list, init=False, repr=False)
+    _warmup_steps: int = field(default=0, init=False, repr=False)
+    _adjusted_period_lengths: List[int] = field(default_factory=list, init=False, repr=False)
 
     def __post_init__(self):
         if not self.period_lengths:
@@ -571,7 +574,7 @@ class WSDS(Scheduler):
         if any(p <= 0 for p in self.period_lengths):
             raise OLMoConfigurationError("All entries in 'period_lengths' must be > 0.")
 
-        # warmup validation (applies ONLY to the first period)
+        # warmup validation
         if (self.warmup is None) == (self.warmup_fraction is None):
             raise OLMoConfigurationError(
                 "Exactly one of 'warmup' or 'warmup_fraction' must be specified."
@@ -579,53 +582,51 @@ class WSDS(Scheduler):
         if self.warmup_fraction is not None and not (0.0 <= self.warmup_fraction <= 1.0):
             raise OLMoConfigurationError("'warmup_fraction' must be in [0, 1].")
 
-        # decay validation (applies to ALL periods)
+        # decay validation
         if (self.decay is None) == (self.decay_fraction is None):
             raise OLMoConfigurationError(
                 "Exactly one of 'decay' or 'decay_fraction' must be specified."
             )
         if self.decay_fraction is not None and not (0.0 <= self.decay_fraction <= 1.0):
             raise OLMoConfigurationError("'decay_fraction' must be in [0, 1].")
+        if self.decay_min_lr < 0.0:
+            raise OLMoConfigurationError("'decay_min_lr' must be >= 0.")
 
-        # Precompute cumulative ends
-        self._cum_period_end = []
-        s = 0
-        for L in self.period_lengths:
-            s += int(L)
-            self._cum_period_end.append(s)
-
-        # Validate warmup + decay for first period, and decay for all periods
+        # Resolve warmup based on first period length
         L0 = self.period_lengths[0]
-        W = self._resolve_warmup(L0)
-        D0 = self._resolve_decay(L0)
+        if self.warmup is not None:
+            self._warmup_steps = int(self.warmup)
+        else:
+            assert self.warmup_fraction is not None
+            self._warmup_steps = int(round(self.warmup_fraction * L0))
 
-        if W + D0 > L0:
+        # Validate first period: warmup + decay <= L0
+        D0 = self._resolve_decay(L0)
+        if self._warmup_steps + D0 > L0:
             raise OLMoConfigurationError(
-                f"First period: warmup ({W}) + decay ({D0}) = {W + D0} exceeds period length ({L0}). "
-                f"Please reduce warmup and/or decay values."
+                f"First period: warmup ({self._warmup_steps}) + decay ({D0}) = "
+                f"{self._warmup_steps + D0} exceeds period length ({L0})."
             )
 
-        # Validate decay for remaining periods
+        # Validate remaining periods: decay <= Li
         for i, Li in enumerate(self.period_lengths[1:], start=1):
             Di = self._resolve_decay(Li)
             if Di > Li:
                 raise OLMoConfigurationError(
-                    f"Period {i}: decay ({Di}) exceeds period length ({Li}). "
-                    f"Please reduce decay value or increase period length."
+                    f"Period {i}: decay ({Di}) exceeds period length ({Li})."
                 )
 
-    def _resolve_warmup(self, L0: int) -> int:
-        if self.warmup is not None:
-            return int(self.warmup)
-        else:
-            assert self.warmup_fraction is not None, "Either warmup or warmup_fraction must be set"
-            return int(round(self.warmup_fraction * L0))
+        # Adjust period lengths: subtract warmup from first period
+        self._adjusted_period_lengths = [L0 - self._warmup_steps] + self.period_lengths[1:]
+
+        # Precompute cumulative ends based on ADJUSTED periods
+        self._cum_period_end = np.cumsum(self._adjusted_period_lengths).tolist()
 
     def _resolve_decay(self, Li: int) -> int:
         if self.decay is not None:
             return int(self.decay)
         else:
-            assert self.decay_fraction is not None, "Either decay or decay_fraction must be set"
+            assert self.decay_fraction is not None
             return int(round(self.decay_fraction * Li))
 
     def _find_period(self, x: int) -> int:
@@ -637,33 +638,25 @@ class WSDS(Scheduler):
     def get_lr(
         self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
     ) -> Union[float, torch.Tensor]:
-        total = self._cum_period_end[-1]
-        if current >= total:
-            return 0.0 if self.decay_min_lr <= 0.0 else self.decay_min_lr
+        if current < self._warmup_steps:
+            return _linear_warmup(initial_lr, current, self._warmup_steps, self.warmup_min_lr)
 
-        pidx = self._find_period(current)
+        adjusted_current = current - self._warmup_steps
+
+        if adjusted_current >= self._cum_period_end[-1]:
+            return self.decay_min_lr
+
+        # Find current period (using adjusted boundaries)
+        pidx = self._find_period(adjusted_current)
         start = 0 if pidx == 0 else self._cum_period_end[pidx - 1]
-        Li = self.period_lengths[pidx]
-        pos = min(max(current - start, 0), Li)
+        Li = self._adjusted_period_lengths[pidx]
+        pos = min(max(adjusted_current - start, 0), Li)
 
-        if pidx == 0:
-            W = self._resolve_warmup(Li)
-            D = self._resolve_decay(Li)
-            S = Li - W - D
+        D = self._resolve_decay(self.period_lengths[pidx])
+        S = Li - D
 
-            if pos < W:
-                return _linear_warmup(initial_lr, pos, W, self.warmup_min_lr)
-            elif pos < W + S:
-                return initial_lr
-            else:
-                t = pos - (W + S)
-                return _linear_decay(initial_lr, D - t, D, self.decay_min_lr)
+        if pos < S:
+            return initial_lr
         else:
-            D = self._resolve_decay(Li)
-            S = Li - D
-
-            if pos < S:
-                return initial_lr
-            else:
-                t = pos - S
-                return _linear_decay(initial_lr, D - t, D, self.decay_min_lr)
+            t = pos - S
+            return _linear_decay(initial_lr, D - t, D, self.decay_min_lr)
