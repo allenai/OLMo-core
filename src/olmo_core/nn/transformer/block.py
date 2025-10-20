@@ -4,19 +4,17 @@ from typing import TYPE_CHECKING, Dict, Optional, Tuple, Union, cast
 
 import nvtx
 import torch
-import torch.distributed as dist
 import torch.nn as nn
 from torch.distributed import DeviceMesh
 from torch.distributed.fsdp import FSDPModule, fully_shard
 from torch.distributed.tensor import Placement, Shard
 from torch.distributed.tensor.parallel import PrepareModuleInput, parallelize_module
-from torch.utils.checkpoint import CheckpointFunction, checkpoint
+from torch.utils.checkpoint import checkpoint
 
 from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
-from olmo_core.distributed.utils import get_local_rank, get_local_tensor, get_rank
+from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.doc_utils import beta_feature
 from olmo_core.ops import attach_auxiliary_loss
-from olmo_core.ops import moe as ops
 from olmo_core.utils import get_or_init_stream
 
 from ..attention import AttentionConfig, RingAttentionLoadBalancerType
@@ -26,7 +24,7 @@ from ..functional import l2_normalize
 from ..layer_norm import LayerNormConfig
 from ..moe import MoEConfig, MoERouter
 from ..moe.parallel_mlp import ParallelDroplessMLP, ParallelMLPBase
-from ..moe.utils import async_copy_to_cpu, wait_stream_no_compile
+from ..moe.utils import wait_stream_no_compile
 from .config import TransformerDataParallelWrappingStrategy
 
 if TYPE_CHECKING:

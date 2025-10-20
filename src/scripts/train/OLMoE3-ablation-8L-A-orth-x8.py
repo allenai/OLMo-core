@@ -3,7 +3,6 @@ Train an OLMoE model. Run this script without any arguments to see usage info.
 """
 
 import logging
-import math
 from dataclasses import replace
 
 from olmo_core.config import DType
@@ -26,25 +25,15 @@ from olmo_core.nn.transformer import (
     TransformerConfig,
     TransformerType,
 )
-from olmo_core.optim import (
-    WSD,
-    AdamWConfig,
-    OptimGroupOverride,
-    SchedulerUnits,
-    SkipStepAdamWConfig,
-    ZeroAdamWConfig,
-)
+from olmo_core.optim import WSD, OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
     BatchSizeSchedulerCallback,
     CheckpointerCallback,
-    CometCallback,
     NvidiaProfilerCallback,
     WandBCallback,
 )
 from olmo_core.train.train_module import (
-    TransformerActivationCheckpointingConfig,
-    TransformerActivationCheckpointingMode,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerExpertParallelConfig,
@@ -77,11 +66,11 @@ EP_DIM = 1
 PP_DIM = 1
 SPLIT_POINTS = None
 
-TAG = f"abl"
+TAG = "abl"
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
-    from olmo_core.nn.moe import MoERouterGatingFunction, MoERouterType
+    from olmo_core.nn.moe import MoERouterType
 
     d_model = D_MODEL
 

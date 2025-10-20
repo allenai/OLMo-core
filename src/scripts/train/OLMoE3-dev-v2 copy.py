@@ -3,51 +3,28 @@ Train an OLMoE model. Run this script without any arguments to see usage info.
 """
 
 import logging
-import math
-from dataclasses import replace
 from typing import cast
-
-import torch
-import transformer_engine
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.parallel.pipeline_parallel import PipelineScheduleType
-from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
 from olmo_core.internal.experiment import CommonComponents, ExperimentConfig, main
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.feed_forward import FeedForwardConfig
 from olmo_core.nn.lm_head import LMLossImplementation
-from olmo_core.nn.moe import (
-    MoEConfig,
-    MoELoadBalancingLossGranularity,
-    MoERouterConfig,
-    MoERouterGatingFunction,
-    MoEType,
-)
-from olmo_core.nn.moe.v2.block import (
-    MoERouterConfigV2,
-    RoutedExpertsConfig,
-    SharedExpertsConfig,
-)
+from olmo_core.nn.moe import MoELoadBalancingLossGranularity, MoERouterGatingFunction
+from olmo_core.nn.moe.v2.block import MoERouterConfigV2
 from olmo_core.nn.transformer import (
     MoEFusedV2TransformerConfig,
     TransformerBlockType,
     TransformerConfig,
     TransformerType,
 )
-from olmo_core.optim import (
-    WSD,
-    AdamWConfig,
-    OptimGroupOverride,
-    SchedulerUnits,
-    SkipStepAdamWConfig,
-)
+from olmo_core.optim import WSD, OptimGroupOverride, SchedulerUnits
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
     BatchSizeSchedulerCallback,
     CheckpointerCallback,
-    CometCallback,
     NvidiaProfilerCallback,
     WandBCallback,
 )
@@ -56,14 +33,9 @@ from olmo_core.train.train_module import (
     TransformerActivationCheckpointingConfig,
     TransformerActivationCheckpointingMode,
     TransformerDataParallelConfig,
-    TransformerDataParallelWrappingStrategy,
     TransformerExpertParallelConfig,
-    TransformerTrainModuleConfig,
 )
 from olmo_core.train.train_module.transformer import TransformerPipelineParallelConfig
-from olmo_core.train.train_module.transformer.moe_train_module import (
-    MoEV2TransformerTrainModule,
-)
 
 log = logging.getLogger(__name__)
 
@@ -109,8 +81,8 @@ USE_TBO = False
 TAG = f"dev-ep{EP_DIM}-uni"
 from olmo_core.nn.attention import AttentionConfig, AttentionType
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
-from olmo_core.nn.lm_head import LMHeadConfig, LMHeadType
-from olmo_core.nn.rope import RoPEConfig, RoPEScalingConfig, RoPEType
+from olmo_core.nn.lm_head import LMHeadConfig
+from olmo_core.nn.rope import RoPEConfig, RoPEType
 from olmo_core.nn.transformer import TransformerBlockConfig
 
 
@@ -386,13 +358,7 @@ def finalize_config(config: ExperimentConfig):
     DATA_WORK_DIR = "/tmp/dataset-cache"
     # SAVE_ROOT = "/tmp/olmo-core/runs"  # NOTE: change this to what you want
 
-    from olmo_core.data import (
-        DataMix,
-        NumpyDataLoaderConfig,
-        NumpyDatasetConfig,
-        NumpyDatasetType,
-        TokenizerConfig,
-    )
+    from olmo_core.data import DataMix, NumpyDatasetConfig, TokenizerConfig
 
     dataset_config = NumpyDatasetConfig.from_data_mix(
         DataMix.OLMoE_mix_0824,

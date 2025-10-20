@@ -3,7 +3,6 @@ Train an OLMoE model. Run this script without any arguments to see usage info.
 """
 
 import logging
-import math
 from dataclasses import replace
 
 from olmo_core.config import DType
@@ -26,24 +25,15 @@ from olmo_core.nn.transformer import (
     TransformerConfig,
     TransformerType,
 )
-from olmo_core.optim import (
-    WSD,
-    AdamWConfig,
-    OptimGroupOverride,
-    SchedulerUnits,
-    SkipStepAdamWConfig,
-)
+from olmo_core.optim import WSD, OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
     BatchSizeSchedulerCallback,
     CheckpointerCallback,
-    CometCallback,
     NvidiaProfilerCallback,
     WandBCallback,
 )
 from olmo_core.train.train_module import (
-    TransformerActivationCheckpointingConfig,
-    TransformerActivationCheckpointingMode,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerExpertParallelConfig,
@@ -77,7 +67,7 @@ EP_DIM = 1
 PP_DIM = 1
 SPLIT_POINTS = None
 
-TAG = f"fsdp-old-dbg"
+TAG = "fsdp-old-dbg"
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
@@ -282,13 +272,7 @@ def finalize_config(config: ExperimentConfig):
     DATA_WORK_DIR = "/tmp/dataset-cache"
     # SAVE_ROOT = "/tmp/olmo-core/runs"  # NOTE: change this to what you want
 
-    from olmo_core.data import (
-        DataMix,
-        NumpyDataLoaderConfig,
-        NumpyDatasetConfig,
-        NumpyDatasetType,
-        TokenizerConfig,
-    )
+    from olmo_core.data import DataMix, NumpyDatasetConfig, TokenizerConfig
 
     dataset_config = NumpyDatasetConfig.from_data_mix(
         DataMix.OLMoE_mix_0824,

@@ -4,20 +4,12 @@ Train an OLMoE model. Run this script without any arguments to see usage info.
 
 import logging
 import math
-from dataclasses import replace
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
 from olmo_core.internal.experiment import CommonComponents, ExperimentConfig, main
-from olmo_core.nn.feed_forward import DenseMoEFeedForwardConfig, FeedForwardConfig
-from olmo_core.nn.moe import (
-    MoEConfig,
-    MoELoadBalancingLossGranularity,
-    MoERouterConfig,
-    MoERouterGatingFunction,
-    MoEType,
-)
+from olmo_core.nn.feed_forward import FeedForwardConfig
 from olmo_core.nn.transformer import (
     TransformerBlockType,
     TransformerConfig,

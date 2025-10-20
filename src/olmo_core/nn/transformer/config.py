@@ -21,10 +21,7 @@ from ..layer_norm import LayerNormConfig, LayerNormType
 from ..lm_head import LMHeadConfig, LMHeadType
 from ..moe import MoEConfig, MoERouterConfig, MoEType
 from ..rope import RoPEConfig, RoPEScalingConfig, RoPEType
-from .flops import (
-    num_floating_point_operations_for_logits,
-    num_floating_point_operations_for_single_layer,
-)
+from .flops import num_floating_point_operations_for_single_layer
 from .init import InitMethod
 
 if TYPE_CHECKING:
@@ -278,10 +275,7 @@ class TransformerBlockConfig(Config):
 
         # MTP parameters (not supported)
         args.mtp_num_layers = None  # set to None for non-MTP models
-        from olmo_core.nn.attention import (
-            AttentionConfig,
-            MultiheadLatentAttentionConfig,
-        )
+        from olmo_core.nn.attention import MultiheadLatentAttentionConfig
 
         # MLA parameters
         if isinstance(self.attention, MultiheadLatentAttentionConfig):
@@ -1285,7 +1279,7 @@ class MoEFusedV2TransformerConfig(TransformerConfig):
         :param init_device: The device to put the parameters on during initialization. In a
             distributed setting it usually makes sense to set this to "meta".
         """
-        from .model import MoETransformer, NormalizedTransformer, Transformer
+        from .model import Transformer
 
         log.info(
             f"Building transformer with {self.num_params:,d} total params, "

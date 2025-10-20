@@ -1,45 +1,21 @@
 import logging
-from functools import cached_property
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Dict,
-    List,
-    Literal,
-    Optional,
-    Set,
-    Tuple,
-    Union,
-    cast,
-)
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union, cast
 
 import nvtx
 import torch
-import torch.nn as nn
 from torch.distributed.device_mesh import DeviceMesh
-from torch.distributed.fsdp import FSDPModule, MixedPrecisionPolicy, fully_shard
-from torch.distributed.tensor import Replicate, Shard
-from torch.distributed.tensor.parallel import RowwiseParallel, parallelize_module
-from torch.utils.checkpoint import CheckpointFunction, checkpoint
+from torch.utils.checkpoint import checkpoint
 
 import olmo_core.nn.transformer
-from olmo_core.data.utils import get_cumulative_document_lengths
 from olmo_core.distributed.parallel import get_pp_mesh
 from olmo_core.distributed.utils import hide_from_torch, unhide_from_torch
-from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.float8 import Float8Config
 from olmo_core.ops import moe as ops
-from olmo_core.utils import get_default_device, mark_dynamic, move_to_device
+from olmo_core.utils import mark_dynamic
 
-from ...lm_head import LMHeadConfig, LMOutputWithLoss
-from ..utils import (
-    moe_permute_no_compile,
-    moe_sort_chunks_by_index_no_compile,
-    moe_unpermute_no_compile,
-)
-from .block import MoEFusedV2TransformerBlock, MoEFusedV2TransformerBlockConfig
-from .te.cpu_offload import CpuOffloadHook, get_cpu_offload_context
+from ...lm_head import LMOutputWithLoss
+from ..utils import moe_unpermute_no_compile
+from .block import MoEFusedV2TransformerBlock
 
 if TYPE_CHECKING:
     from olmo_core.train.common import ReduceType
@@ -325,12 +301,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         world_mesh: Dict[str, Optional[DeviceMesh]],
         model_part_idx: int = 0,
     ) -> torch.Generator:
-        from olmo_core.nn.attention import (
-            Attention,
-            FusedAttention,
-            RingAttentionLoadBalancer,
-            RingAttentionLoadBalancerType,
-        )
+        from olmo_core.nn.attention import Attention, FusedAttention
 
         from .block import MoEFusedV2TransformerBlock
 
@@ -544,7 +515,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
 
         # finish x1 last steps
         h0, h1 = self._tbo_last_step(x0, x1_ctx, lm_head_kwargs, labels0, labels1)
-        self._log_debug_mem(f"last_step")
+        self._log_debug_mem("last_step")
 
         # merge h0 h1
         if self.lm_head is None:

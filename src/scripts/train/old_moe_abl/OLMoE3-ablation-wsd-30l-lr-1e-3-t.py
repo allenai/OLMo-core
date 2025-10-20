@@ -3,7 +3,6 @@ Train an OLMoE model. Run this script without any arguments to see usage info.
 """
 
 import logging
-import math
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
@@ -23,7 +22,6 @@ from olmo_core.nn.transformer import (
     TransformerType,
 )
 from olmo_core.optim import (
-    WSD,
     OptimGroupOverride,
     PowerLR,
     SchedulerUnits,

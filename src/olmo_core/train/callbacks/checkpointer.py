@@ -309,4 +309,4 @@ class UpcycleCheckpointerCallback(Callback):
             dir=self.upcycled_model_path,
             train_module=self.trainer.train_module,
         )
-        log.info(f"UpcycleCheckpointerCallback: Done")
+        log.info("UpcycleCheckpointerCallback: Done")

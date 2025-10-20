@@ -3,34 +3,19 @@ import logging
 from collections import OrderedDict
 from dataclasses import replace
 from functools import cached_property
-from typing import (
-    Any,
-    Dict,
-    Generator,
-    Iterable,
-    List,
-    Optional,
-    Sequence,
-    Tuple,
-    TypeVar,
-    Union,
-    cast,
-)
+from typing import Any, Dict, Generator, List, Optional, Tuple, TypeVar, Union, cast
 
 import nvtx
 import torch
 import torch.distributed as dist
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 import torch.nn as nn
-from torch.distributed import ProcessGroup
 from torch.distributed.checkpoint.metadata import Metadata
 from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
 from torch.distributed.fsdp import FSDPModule
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.pipelining import PipelineStage
-from torch.distributed.tensor import DTensor, Placement, Replicate, Shard
+from torch.distributed.tensor import DTensor, Replicate, Shard
 from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.optim import Optimizer
 
 from olmo_core.data.utils import get_labels, split_batch
 from olmo_core.distributed.checkpoint import (
@@ -47,14 +32,11 @@ from olmo_core.distributed.parallel.context_parallel import ContextParallelConfi
 from olmo_core.distributed.parallel.data_parallel import (
     DataParallelConfig,
     DataParallelType,
-    DPMeshDimName,
 )
 from olmo_core.distributed.parallel.expert_parallel import ExpertParallelConfig
 from olmo_core.distributed.parallel.pipeline_parallel import (
     PipelineParallelConfig,
     PipelineSchedule,
-    PipelineScheduleType,
-    PipelineSplitStyle,
 )
 from olmo_core.distributed.parallel.tensor_parallel import TensorParallelConfig
 from olmo_core.distributed.utils import (
@@ -69,9 +51,8 @@ from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
 from olmo_core.nn.lm_head import LMOutputWithLoss
 from olmo_core.nn.moe.v2.model import MoEFusedV2Transformer
-from olmo_core.nn.transformer import MoETransformer, Transformer
-from olmo_core.nn.transformer.config import TransformerActivationCheckpointingMode
-from olmo_core.optim import MoEFusedV2OptimizerConfig, OptimConfig, SkipStepOptimizer
+from olmo_core.nn.transformer import Transformer
+from olmo_core.optim import MoEFusedV2OptimizerConfig
 from olmo_core.optim.scheduler import Scheduler
 from olmo_core.utils import gc_cuda, get_default_device, log_once, move_to_device
 
@@ -387,7 +368,7 @@ class MoEV2TransformerTrainModule(TrainModule):
 
         if ep is None:  # EP not used
             self.moe_mesh = None
-            log.info(f"Built moe_mesh None")
+            log.info("Built moe_mesh None")
 
         else:
             # Build up moe mesh dimensions. (PP , EP_DP, EP_MP)

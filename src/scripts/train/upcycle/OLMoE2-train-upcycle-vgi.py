@@ -3,8 +3,6 @@ Train a medium OLMoE model. Run this script without any arguments to see usage i
 """
 
 import logging
-import math
-from dataclasses import replace
 from functools import partial
 from typing import Optional
 
@@ -12,24 +10,17 @@ from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
 from olmo_core.internal.experiment import CommonComponents, ExperimentConfig, main
-from olmo_core.launch.beaker import OLMoCoreBeakerImage
 from olmo_core.nn.transformer import (
     TransformerBlockConfig,
     TransformerBlockType,
     TransformerConfig,
 )
-from olmo_core.optim import (
-    AdamWConfig,
-    CosWithWarmup,
-    CosWithWarmupAndLinearDecay,
-    OptimGroupOverride,
-)
+from olmo_core.optim import AdamWConfig, CosWithWarmupAndLinearDecay, OptimGroupOverride
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
     CheckpointerCallback,
     CometCallback,
     NvidiaProfilerCallback,
-    ProfilerCallback,
     UpcycleCheckpointerCallback,
     WandBCallback,
 )
@@ -74,8 +65,6 @@ def build_model_config(
         AttentionType,
         MultiheadLatentAttentionConfig,
     )
-    from olmo_core.nn.buffer_cache import BufferCache
-    from olmo_core.nn.feed_forward import FeedForwardConfig, FeedForwardType
     from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
     from olmo_core.nn.lm_head import LMHeadConfig
     from olmo_core.nn.moe import MoEConfig, MoERouterConfig, MoEType

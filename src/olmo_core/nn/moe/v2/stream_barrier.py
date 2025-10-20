@@ -1,7 +1,6 @@
-from typing import Any, List, Optional, Tuple, Union
+from typing import Optional
 
 import torch
-import torch.distributed as dist
 
 
 class _StreamBarrierFn(torch.autograd.Function):

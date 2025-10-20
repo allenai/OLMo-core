@@ -9,16 +9,11 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 from torch.distributed import DeviceMesh
-from torch.utils.checkpoint import CheckpointFunction, checkpoint
+from torch.utils.checkpoint import checkpoint
 
 from olmo_core.distributed.utils import get_local_tensor, get_world_size
 from olmo_core.ops import moe as ops
-from olmo_core.utils import (
-    ensure_multiple_of,
-    get_default_device,
-    mark_dynamic,
-    move_to_device,
-)
+from olmo_core.utils import ensure_multiple_of, get_default_device, move_to_device
 
 from ..buffer_cache import BufferCache
 from .mlp import DroplessMoEMLP, MoEMLP, MoEMLPBase

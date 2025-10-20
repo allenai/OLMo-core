@@ -6,15 +6,12 @@ from typing import (
     Any,
     Callable,
     Dict,
-    Generic,
     Iterable,
     List,
     NamedTuple,
     Optional,
     Set,
     Tuple,
-    Type,
-    TypeVar,
     Union,
     cast,
     overload,
@@ -24,12 +21,7 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 from torch.distributed import ProcessGroup
-from torch.distributed.algorithms.ddp_comm_hooks.ddp_zero_hook import (
-    hook_with_zero_step,
-    hook_with_zero_step_interleaved,
-)
 from torch.distributed.device_mesh import DeviceMesh
-from torch.distributed.optim import ZeroRedundancyOptimizer
 from torch.distributed.tensor import DTensor, Shard
 from torch.optim.optimizer import Optimizer
 
@@ -38,9 +30,8 @@ from olmo_core.utils import get_default_device, move_to_device
 from ..config import Config, DType
 from ..exceptions import OLMoConfigurationError
 from ..train.train_module import TrainModule
-from .adamw import adamw_step, foreach_adamw_step
-from .config import INITIAL_LR_FIELD, LR_FIELD, OptimConfig, OptimGroupOverride
-from .skip_step_optimizer import SkipStepOptimizer
+from .adamw import foreach_adamw_step
+from .config import INITIAL_LR_FIELD, LR_FIELD, OptimGroupOverride
 
 log = logging.getLogger(__name__)
 
@@ -481,10 +472,10 @@ class MoEFusedV2Optimizer(Optimizer):
                 new_param_groups.append(new_param_group)
 
         log_str = "\n"
-        log_str += f"Old param group:\n"
+        log_str += "Old param group:\n"
         log_str += _str_paramt(self.param_groups)
 
-        log_str += f"New param group:\n"
+        log_str += "New param group:\n"
         log_str += _str_paramt(new_param_groups)
 
         print(log_str)

@@ -55,7 +55,7 @@ SHARED_MLP_HIDDEN_SIZE = 2560  # Hidden size for shared MLP in MoE blocks
 ###### decay
 START_STEP = 21250 + 10000
 DECAY_STEPS = 1250
-LOAD_CKPT = f"/weka/oe-training-default/tianhua/ws-megatron/tmp/OLMoE3-ablation-wsd-30l-lr-5e-4-decay-20k-1.25k-1/step21250"
+LOAD_CKPT = "/weka/oe-training-default/tianhua/ws-megatron/tmp/OLMoE3-ablation-wsd-30l-lr-5e-4-decay-20k-1.25k-1/step21250"
 TOTAL_TOKENS = (
     START_STEP + DECAY_STEPS
 ) * GLOBAL_BATCH_SIZE  # 4096 is the sequence length, 1024 is the batch size at step 0

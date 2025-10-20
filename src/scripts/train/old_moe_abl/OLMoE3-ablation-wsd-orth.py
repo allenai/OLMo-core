@@ -54,7 +54,7 @@ SHARED_MLP_HIDDEN_SIZE = 2560  # Hidden size for shared MLP in MoE blocks
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
-    from olmo_core.nn.moe import MoERouterGatingFunction, MoERouterType
+    from olmo_core.nn.moe import MoERouterType
 
     d_model = 1536
 

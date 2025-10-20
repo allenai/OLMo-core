@@ -1,25 +1,15 @@
-import re
-from collections import Counter, defaultdict
-from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple, Union, cast
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
-import nvtx
 import torch
 import torch.distributed as dist
 from torch.distributed._composable import (
     replicate as _rep,  # type: ignore[attr-defined]
 )
 from torch.distributed.fsdp import FSDPModule, fully_shard
-from torch.fx.node import Argument
 from torch.nn.parallel import DistributedDataParallel
-from torch.utils._pytree import tree_map_only
 
 # from torch.distributed.pipelining._backward import stage_backward, stage_backward_input
-from .helpers import (
-    _free_tensor_inplace,
-    flatten_args,
-    normalize_model_output_as_tuple,
-    stage_backward,
-)
+from .helpers import _free_tensor_inplace, stage_backward
 
 
 def _make_tensor_from_meta(

@@ -5,7 +5,6 @@ from typing import List, Optional
 import torch
 from beaker import Beaker, BeakerError, SecretNotFound
 
-from olmo_core.distributed.utils import is_distributed
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.io import is_url
 from olmo_core.launch.beaker import (

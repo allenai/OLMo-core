@@ -11,7 +11,6 @@ import torch.nn.functional as F
 from torch.distributed import DeviceMesh
 from torch.distributed.fsdp import fully_shard
 from torch.distributed.tensor import Placement, Shard, distribute_tensor
-from torch.utils.checkpoint import CheckpointFunction, checkpoint
 
 from olmo_core.distributed.parallel import get_device_mesh_info
 from olmo_core.distributed.utils import get_local_tensor

@@ -1,32 +1,16 @@
-import math
-from abc import abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple, Union, cast
+from typing import TYPE_CHECKING, Dict, Optional, Tuple, Union, cast
 
 import nvtx
 import torch
 import torch.distributed as dist
-import torch.nn as nn
 from torch.distributed.device_mesh import DeviceMesh
-from torch.distributed.fsdp import FSDPModule, fully_shard
-from torch.distributed.tensor import Placement, Shard
-from torch.distributed.tensor.parallel import PrepareModuleInput, parallelize_module
-from torch.utils.checkpoint import CheckpointFunction, checkpoint
+from torch.distributed.tensor import Placement
+from torch.utils.checkpoint import checkpoint
 
 # import olmo_core.nn
 import olmo_core.nn.transformer
-from olmo_core.config import Config, DType, StrEnum
-from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
-from olmo_core.distributed.utils import (
-    barrier,
-    get_fs_local_rank,
-    get_local_rank,
-    get_local_tensor,
-    get_rank,
-    get_world_size,
-)
-from olmo_core.doc_utils import beta_feature
-from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.distributed.utils import get_world_size
 from olmo_core.nn.transformer.config import TransformerBlockConfig, TransformerBlockType
 from olmo_core.ops import attach_auxiliary_loss
 from olmo_core.ops import moe as ops
@@ -34,17 +18,9 @@ from olmo_core.utils import get_or_init_stream
 
 from ...attention import AttentionConfig, RingAttentionLoadBalancerType
 from ...buffer_cache import BufferCache
-from ...functional import l2_normalize
 from ...layer_norm import LayerNormConfig
-from ...moe import MoERouterConfig as MoERouterConfigV1
-from ...moe import MoERouterGatingFunction
-from ...moe.loss import MoELoadBalancingLossGranularity
 from ...moe.utils import async_copy_to_cpu, wait_stream_no_compile
-from ..utils import (
-    moe_permute_no_compile,
-    moe_sort_chunks_by_index_no_compile,
-    moe_unpermute_no_compile,
-)
+from ..utils import moe_permute_no_compile, moe_unpermute_no_compile
 from .routed_experts import RoutedExperts, RoutedExpertsConfig
 from .router import MoERouterConfigV2, MoERouterV2
 from .shared_experts import SharedExpertsConfig
@@ -142,10 +118,7 @@ class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
 
         # MTP parameters (not supported)
         args.mtp_num_layers = None  # set to None for non-MTP models
-        from olmo_core.nn.attention import (
-            AttentionConfig,
-            MultiheadLatentAttentionConfig,
-        )
+        from olmo_core.nn.attention import MultiheadLatentAttentionConfig
 
         # MLA parameters
         if isinstance(self.attention, MultiheadLatentAttentionConfig):
@@ -244,7 +217,6 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         self.d_model = d_model
         self.block_idx = block_idx
 
-        from .routed_experts import RoutedExperts
         from .shared_experts import SharedExperts
 
         self.routed_experts: Optional[RoutedExperts]

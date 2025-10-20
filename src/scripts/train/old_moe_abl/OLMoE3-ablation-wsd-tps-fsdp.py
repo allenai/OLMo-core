@@ -8,7 +8,6 @@ from dataclasses import replace
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
-from olmo_core.distributed.parallel.pipeline_parallel import PipelineScheduleType
 from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
 from olmo_core.internal.experiment import CommonComponents, ExperimentConfig, main
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
@@ -26,13 +25,7 @@ from olmo_core.nn.transformer import (
     TransformerConfig,
     TransformerType,
 )
-from olmo_core.optim import (
-    WSD,
-    AdamWConfig,
-    OptimGroupOverride,
-    SchedulerUnits,
-    SkipStepAdamWConfig,
-)
+from olmo_core.optim import WSD, OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
     BatchSizeSchedulerCallback,
@@ -42,14 +35,10 @@ from olmo_core.train.callbacks import (
     WandBCallback,
 )
 from olmo_core.train.train_module import (
-    TransformerActivationCheckpointingConfig,
-    TransformerActivationCheckpointingMode,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
-    TransformerExpertParallelConfig,
     TransformerTrainModuleConfig,
 )
-from olmo_core.train.train_module.transformer import TransformerPipelineParallelConfig
 
 log = logging.getLogger(__name__)
 

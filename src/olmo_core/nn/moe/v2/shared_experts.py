@@ -1,14 +1,12 @@
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional, Tuple, cast
+from typing import Tuple
 
 import nvtx
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from olmo_core.config import Config, DType, StrEnum
-from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
-from olmo_core.ops import moe as ops
+from olmo_core.config import Config, DType
 
 
 @dataclass

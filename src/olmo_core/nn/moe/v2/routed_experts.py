@@ -1,6 +1,5 @@
-from abc import abstractmethod
 from dataclasses import dataclass
-from typing import List, Optional, cast
+from typing import cast
 
 import grouped_gemm  # type: ignore
 import grouped_gemm.ops
@@ -9,12 +8,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributed.device_mesh import DeviceMesh
-from torch.distributed.tensor import Placement, Replicate, Shard, distribute_tensor
 
-from olmo_core.config import Config, DType, StrEnum
-from olmo_core.distributed.utils import get_local_tensor
-
-from ...moe import MoERouterConfig as MoERouterConfigV1
+from olmo_core.config import Config, DType
 
 
 @torch.compiler.disable

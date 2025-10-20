@@ -5,54 +5,19 @@ Virtual-group upcycling: MLP weights are sharded and duplicated across virtual g
 """
 
 import logging
-import math
 import re
-import sys
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
 from olmo_core.config import Config, DType
-from olmo_core.distributed.parallel import DataParallelType
-from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
-from olmo_core.internal.experiment import (
-    CommonComponents,
-    ExperimentConfig,
-    SubCmd,
-    build_config,
-    main,
-)
-from olmo_core.launch.beaker import OLMoCoreBeakerImage
+from olmo_core.internal.experiment import CommonComponents
 from olmo_core.nn.transformer import (
     TransformerBlockConfig,
     TransformerBlockType,
     TransformerConfig,
 )
-from olmo_core.optim import (
-    AdamWConfig,
-    CosWithWarmup,
-    CosWithWarmupAndLinearDecay,
-    OptimGroupOverride,
-)
-from olmo_core.train import Duration, TrainerConfig
-from olmo_core.train.callbacks import (
-    CheckpointerCallback,
-    CometCallback,
-    NvidiaProfilerCallback,
-    ProfilerCallback,
-    WandBCallback,
-)
-from olmo_core.train.checkpoint import (
-    Checkpointer,
-    CheckpointerConfig,
-    CompactablityCheckpointer,
-    UpcycleCheckpointer,
-)
-from olmo_core.train.train_module import (
-    TransformerDataParallelConfig,
-    TransformerDataParallelWrappingStrategy,
-    TransformerTrainModuleConfig,
-)
+from olmo_core.train.checkpoint import UpcycleCheckpointer
 from olmo_core.utils import prepare_cli_environment
 
 log = logging.getLogger(__name__)
@@ -84,8 +49,7 @@ def build_model_config(
         AttentionType,
         MultiheadLatentAttentionConfig,
     )
-    from olmo_core.nn.buffer_cache import BufferCache
-    from olmo_core.nn.feed_forward import FeedForwardConfig, FeedForwardType
+    from olmo_core.nn.feed_forward import FeedForwardConfig
     from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
     from olmo_core.nn.lm_head import LMHeadConfig
     from olmo_core.nn.moe import MoEConfig, MoERouterConfig, MoEType
@@ -196,9 +160,7 @@ class UpcycleConfig(Config):
     init_seed: int = 2025
 
 
-from transformers import AutoModelForCausalLM, AutoTokenizer
-
-from olmo_core.aliases import PathOrStr
+from transformers import AutoModelForCausalLM
 
 
 def upcycle_copy_mlp(source_model, target_model):

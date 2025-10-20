@@ -3,7 +3,6 @@ Train an OLMoE model. Run this script without any arguments to see usage info.
 """
 
 import logging
-import math
 from dataclasses import replace
 
 from olmo_core.config import DType
@@ -26,14 +25,7 @@ from olmo_core.nn.transformer import (
     TransformerConfig,
     TransformerType,
 )
-from olmo_core.optim import (
-    WSD,
-    AdamWConfig,
-    OptimGroupOverride,
-    SchedulerUnits,
-    SkipStepAdamWConfig,
-    ZeroAdamWConfig,
-)
+from olmo_core.optim import WSD, OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
     BatchSizeSchedulerCallback,
@@ -43,8 +35,6 @@ from olmo_core.train.callbacks import (
     WandBCallback,
 )
 from olmo_core.train.train_module import (
-    TransformerActivationCheckpointingConfig,
-    TransformerActivationCheckpointingMode,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerExpertParallelConfig,
@@ -92,7 +82,7 @@ SPLIT_POINTS = None
 # 36 37 38 39 40 41
 # 42 43 44 45 46 + loss
 
-TAG = f"debug"
+TAG = "debug"
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:

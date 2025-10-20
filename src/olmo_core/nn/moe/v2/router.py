@@ -1,7 +1,5 @@
-import logging
-from abc import abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple, Union, cast
+from typing import TYPE_CHECKING, Dict, Optional, Tuple, Union, cast
 
 import nvtx
 import torch
@@ -13,7 +11,7 @@ from torch.distributed.tensor import Replicate, Shard, distribute_tensor
 from torch.distributed.tensor.parallel import PrepareModuleInput, parallelize_module
 
 import olmo_core.ops.moe as ops
-from olmo_core.config import Config, DType, StrEnum
+from olmo_core.config import Config, DType
 from olmo_core.distributed.utils import (
     _HiddenTensor,
     distribute_like,
@@ -22,8 +20,6 @@ from olmo_core.distributed.utils import (
     is_distributed,
     unhide_from_torch,
 )
-from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.utils import get_default_device
 
 from ..loss import MoELoadBalancingLossGranularity, load_balancing_loss, router_z_loss
 from ..router import MoERouterGatingFunction, _uniform_expert_assignment

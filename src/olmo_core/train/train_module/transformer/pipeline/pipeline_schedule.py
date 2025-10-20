@@ -1,16 +1,13 @@
 import logging
 import re
-import time
 from collections import Counter, defaultdict
 from enum import Enum
-from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple, Union
+from typing import Any, Callable, List, NamedTuple, Optional, Union
 
 import nvtx
 import torch
 import torch.distributed as dist
 from torch.distributed.pipelining.microbatch import TensorChunkSpec
-from torch.fx.node import Argument
-from torch.utils._pytree import tree_map_only
 
 from .gpu_activation_offload import GPUActivationOffloader
 from .helpers import generate_stage_to_rank_mapping

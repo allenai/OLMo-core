@@ -18,7 +18,6 @@ from olmo_core.nn.attention import (
     AttentionConfig,
     AttentionType,
     FusedAttention,
-    MultiheadLatentAttention,
     MultiheadLatentAttentionConfig,
     NormalizedAttention,
     RingAttentionLoadBalancerType,

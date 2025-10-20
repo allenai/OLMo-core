@@ -1,49 +1,29 @@
 import logging
 from dataclasses import dataclass
-from typing import Optional, Tuple, Type, Union
+from typing import Optional
 
 import torch
 import torch.nn as nn
 import torch.optim.optimizer
-from torch.distributed.algorithms.ddp_comm_hooks.ddp_zero_hook import (
-    hook_with_zero_step,
-    hook_with_zero_step_interleaved,
-)
 from torch.distributed.optim import ZeroRedundancyOptimizer
 
-from ..config import DType
 from .config import OptimConfig
-from .skip_step_optimizer import SkipStepOptimizer
 
 log = logging.getLogger(__name__)
 
-from typing import (
-    Any,
-    Dict,
-    Generic,
-    Iterable,
-    List,
-    Optional,
-    Set,
-    Tuple,
-    Type,
-    TypeVar,
-    Union,
-    cast,
-)
+from typing import Any, Dict, List, TypeVar, cast
+
+from ..utils import move_to_device
+from .config import INITIAL_LR_FIELD, LR_FIELD
 
 # --------------------------------------------------------------------------- #
 # ZeRO-1 sharded Skip-Step AdamW
 # --------------------------------------------------------------------------- #
-from torch.distributed.optim import ZeroRedundancyOptimizer
 
-from ..utils import get_default_device, move_to_device
-from .config import INITIAL_LR_FIELD, LR_FIELD
 
 Opt = TypeVar("Opt", bound=torch.optim.Optimizer)
 
 from ..train.train_module import TrainModule
-from .config import OptimConfig, OptimGroupOverride
 
 
 @dataclass

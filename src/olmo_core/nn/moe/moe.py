@@ -24,7 +24,7 @@ from olmo_core.ops import attach_auxiliary_loss
 
 from ..buffer_cache import BufferCache
 from ..feed_forward import FeedForwardConfig
-from ..layer_norm import LayerNormConfig, LayerNormType
+from ..layer_norm import LayerNormConfig
 from .loss import MoELoadBalancingLossGranularity
 from .mlp import DroplessMoEMLP, MoEMLP
 from .parallel_mlp import ParallelDroplessMLP, ParallelMLP, ParallelMLPBase
