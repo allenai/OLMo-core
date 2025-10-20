@@ -3,6 +3,7 @@ import hashlib
 from typing import Optional
 
 from olmo_core.aliases import PathOrStr
+from olmo_core.exceptions import OLMoConfigurationError
 
 from .instance_source import Instance, InstanceSource
 from .utils import build_global_indices
@@ -36,6 +37,11 @@ class SlicedInstanceSource(InstanceSource):
             max_sequence_length=self.max_sequence_length,
             seed=seed,
         )[source_slice]
+        if self._sliced_indices.size == 0:
+            raise OLMoConfigurationError(
+                f"{self.__class__.__name__} created with an empty slice ({source_slice}) from source "
+                f"with {len(source):,d} instances."
+            )
 
     @property
     def source(self) -> InstanceSource:

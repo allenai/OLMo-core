@@ -138,8 +138,11 @@ def calculate_sample_sizes(
     sizes = np.array(source_sizes)
     max_repetition_factors_ = np.array(max_repetition_factors)
 
-    assert (ratios > 0.0).all()
-    assert (max_repetition_factors_ >= 1.0).all()
+    assert (ratios > 0.0).all(), f"All ratios must be positive! Got {target_ratios}"
+    assert (
+        max_repetition_factors_ >= 1.0
+    ).all(), f"All max repetition factors must be at least 1.0! Got {max_repetition_factors}"
+    assert (sizes > 0).all(), f"All source sizes must be positive! Got {sizes}"
 
     strict = True
     if target_size is None:
@@ -190,7 +193,10 @@ def calculate_sample_sizes(
 
     # Sanity check.
     # Sample sizes should stay true to target ratios.
-    assert np.allclose(ratios, actual_sample_sizes / actual_sample_sizes.sum())
+    actual_ratios = actual_sample_sizes / actual_sample_sizes.sum()
+    assert np.allclose(
+        ratios, actual_ratios
+    ), f"expected ratios: {ratios}, actual ratios: {actual_ratios}"
     # And sample sizes shouldn't be larger than the number of items available.
     actual_sample_sizes_int = actual_sample_sizes.astype(np.uint64)
     assert (actual_sample_sizes_int <= sizes_to_use).all()

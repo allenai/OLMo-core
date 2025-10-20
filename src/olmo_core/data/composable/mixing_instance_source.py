@@ -82,7 +82,10 @@ class MixingInstanceSourceSpec:
     source: InstanceSource
     """The source."""
     ratio: float
-    """The relative target ratio for this source."""
+    """
+    The relative target ratio for this source. If the ratios across all source specs don't sum
+    to 1.0 then they'll be normalized.
+    """
     max_repetition_factor: float = 1.0
     """
     The maximum amount of repetition allowed, expressed as a factor greater than or equal to 1.0.

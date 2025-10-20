@@ -300,7 +300,7 @@ class InstanceSourceConfig(Config):
 
 
 @dataclass
-class SplitInstanceSourceConfig(Config):
+class SplitInstanceSourceConfig(InstanceSourceConfig):
     """A base config class for configuring and building a split :class:`InstanceSource`."""
 
     source: InstanceSourceConfig
@@ -316,7 +316,7 @@ class SplitInstanceSourceConfig(Config):
         from .sliced_instance_source import SlicedInstanceSource
 
         source = self.source.build(work_dir)
-        split_idx = int(self.ratio * source.num_tokens)
+        split_idx = int(self.ratio * len(source))
         if self.idx == 0:
             return SlicedInstanceSource(
                 source, slice(0, split_idx), seed=self.seed, work_dir=work_dir

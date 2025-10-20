@@ -89,6 +89,9 @@ on it to get a :class:`~olmo_core.data.composable.InstanceSource` that you can p
 :class:`~olmo_core.data.composable.ComposableDataLoader` or wrap in another instance source such as
 the :class:`~olmo_core.data.composable.SamplingInstanceSource` to adjust the number of instances per epoch.
 
+.. tip::
+   See the :mod:`olmo_core.data.composable` module documentation for a more in-depth overview of this API.
+
 Via the :mod:`~olmo_core.data.source_mixture` API
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 

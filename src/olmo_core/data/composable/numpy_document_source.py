@@ -83,6 +83,8 @@ class NumpyDocumentSourceConfig(NumpyDocumentSourceConfigBase):
     ) -> Dict[str, "NumpyDocumentSourceConfig"]:
         """
         A more efficient way to create multiple configs from groups of source paths.
+        This will use a thread pool to expand all globs concurrently, which can be substantially
+        faster especially when some of the globs point to cloud storage URLs.
 
         :param source_path_groups: Groups of source paths to use. Each group will be put into its own config
             with the corresponding label.

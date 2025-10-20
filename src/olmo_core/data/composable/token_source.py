@@ -427,7 +427,7 @@ class TokenSourceConfig(Config):
 
 
 @dataclass
-class SplitTokenSourceConfig(Config):
+class SplitTokenSourceConfig(TokenSourceConfig):
     """A base config class for configuring and building a split :class:`TokenSource`."""
 
     source: TokenSourceConfig
