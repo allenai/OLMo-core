@@ -71,6 +71,7 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
             ],
             compile=True,
+            foreach=False,
         ),
         scheduler=CosWithWarmup(warmup_steps=2000),
         compile_model=True,
