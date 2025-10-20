@@ -3,6 +3,7 @@ from abc import abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple, Union, cast
 
+import nvtx
 import torch
 import torch.distributed as dist
 import torch.nn as nn
@@ -25,7 +26,7 @@ from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import get_default_device
 
 from .loss import MoELoadBalancingLossGranularity, load_balancing_loss, router_z_loss
-import nvtx
+
 if TYPE_CHECKING:
     from olmo_core.train.common import ReduceType
 
@@ -54,9 +55,9 @@ class _UniformExpertAssignment(torch.autograd.Function):
         return out.view(x.shape)
 
 
-_uniform_expert_assignment: Callable[
-    [torch.Tensor, int], torch.Tensor
-] = _UniformExpertAssignment.apply  # type: ignore
+_uniform_expert_assignment: Callable[[torch.Tensor, int], torch.Tensor] = (
+    _UniformExpertAssignment.apply
+)  # type: ignore
 
 
 class MoERouterType(StrEnum):
@@ -68,11 +69,11 @@ class MoERouterType(StrEnum):
     """
     ➡️ :class:`MoELinearRouter`
     """
-    
+
     orthogonal = "orthogonal"
-    
-    ema_default_vector = "ema_default_vector" 
-    
+
+    ema_default_vector = "ema_default_vector"
+
 
 class MoERouterGatingFunction(StrEnum):
     softmax = "softmax"
@@ -249,7 +250,7 @@ class MoERouter(nn.Module):
 
         if self.z_loss_weight is not None:
             self._z_loss = hide_from_torch(torch.zeros([], device=self.device))
-            
+
         if self.orth_loss_weight is not None:
             self._orth_loss = hide_from_torch(torch.zeros([], device=self.device))
 
@@ -326,11 +327,11 @@ class MoERouter(nn.Module):
             elif self._orth_loss.device != self.device:
                 self._orth_loss = self._orth_loss.to(self.device)
         return None if self._orth_loss is None else unhide_from_torch(self._orth_loss)
-    
+
     @orth_loss.setter
     def orth_loss(self, value: torch.Tensor):
         self._orth_loss = hide_from_torch(value)
-        
+
     @torch.no_grad()
     def post_batch(self, dry_run: bool = False):
         if self.bias_gamma is None or not self.training:
@@ -367,7 +368,7 @@ class MoERouter(nn.Module):
             noise = torch.rand_like(x)
             return x * (low + noise * (high - low))
 
-    @nvtx.annotate("MoERouter.get_top_k", color='blue')
+    @nvtx.annotate("MoERouter.get_top_k", color="blue")
     def get_top_k(self, scores: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         expert_weights: torch.Tensor
         expert_indices: torch.Tensor
@@ -380,7 +381,9 @@ class MoERouter(nn.Module):
             assert self.score_bias is not None
             with torch.no_grad():
                 _, expert_indices = torch.topk(
-                    scores + self.score_bias.unsqueeze(0), self.top_k, dim=-1  # type: ignore
+                    scores + self.score_bias.unsqueeze(0),
+                    self.top_k,
+                    dim=-1,  # type: ignore
                 )
             expert_weights = scores.gather(-1, expert_indices)
 
@@ -413,7 +416,7 @@ class MoERouter(nn.Module):
             batch_size_per_expert.max() / batch_size_per_expert.mean(dtype=torch.float),
             ReduceType.max,
         )
-        
+
         # record the number of tokens routed to each expert.
         if self.record_routing_batch_size:
             for i in range(self.num_experts):
@@ -442,7 +445,10 @@ class MoERouter(nn.Module):
 
         if self.orth_loss_weight is not None:
             assert self.orth_loss is not None
-            out["router orthogonal loss"] = (self.orth_loss_weight * self.orth_loss, ReduceType.mean)
+            out["router orthogonal loss"] = (
+                self.orth_loss_weight * self.orth_loss,
+                ReduceType.mean,
+            )
             out["router orthogonal loss unscaled"] = (self.orth_loss.clone(), ReduceType.mean)
 
         if reset:
@@ -460,7 +466,7 @@ class MoERouter(nn.Module):
         if (orth_loss := self.orth_loss) is not None:
             orth_loss.zero_()
 
-    @nvtx.annotate("MoERouter.forward", color='blue')
+    @nvtx.annotate("MoERouter.forward", color="blue")
     def forward(
         self,
         x: torch.Tensor,
@@ -488,7 +494,7 @@ class MoERouter(nn.Module):
             scores = F.sigmoid(logits)
             # to avoid NaNs in the load balancing loss
             # if all logits of a token are very negative for all experts, sigmoid gives 0 for all experts, causing NaNs when we div by the sum.
-            scores = scores + 1e-7  
+            scores = scores + 1e-7
         else:
             raise NotImplementedError(self.gating_function)
 
@@ -558,26 +564,26 @@ class MoERouter(nn.Module):
                 if self.orth_loss_weight is not None:
                     # TODO: should only compute orthogonal loss on the last micro batch because the loss is only computed on the router weights.
                     assert self.orth_loss is not None
-                    
+
                     # NOTE: loss_div_factor is the total number of tokens in the global batch.
                     # orth_loss_div_factor  is approximately the number of micro batches in the global batch.
                     # since the orthogonal loss is computed `num_micro_batches` times (should have the same loss each time since it does not chagne wrt data), we need to scale it down.
-                    if loss_div_factor is None: 
+                    if loss_div_factor is None:
                         raise NotImplementedError(
                             "Orthogonal loss requires a loss_div_factor to be set."
                         )
                     # orth_loss_factor = (logits.size(0) * logits.size(1)) / loss_div_factor  # --> divide by num_micro_batches
-                    # or 
-                    orth_loss_factor = 1 / loss_div_factor  # --> divide by num_tokens in micro batch
-                    
+                    # or
+                    orth_loss_factor = (
+                        1 / loss_div_factor
+                    )  # --> divide by num_tokens in micro batch
+
                     orth_loss = self.compute_orthogonal_loss() * orth_loss_factor
-                    
+
                     self.orth_loss += orth_loss.detach()
 
                     scaled_orth_loss = self.orth_loss_weight * orth_loss
-                    aux_loss = (
-                        scaled_orth_loss if aux_loss is None else aux_loss + scaled_orth_loss
-                    )
+                    aux_loss = scaled_orth_loss if aux_loss is None else aux_loss + scaled_orth_loss
             self.batch_size_per_expert += batch_size_per_expert
             if self.bias_gamma is not None:
                 assert self.score_bias_batch_size_per_expert is not None
@@ -651,16 +657,17 @@ class MoELinearRouter(MoERouter):
         self.register_parameter(
             "weight", nn.Parameter(distribute_tensor(self.weight, tp_mesh, [Replicate()]))
         )
-      
-@torch.compile()  
+
+
+@torch.compile()
 def get_orth_loss(x):
     w_ortho = torch.matmul(x.T, x)
     eye = torch.eye(x.shape[1], device=x.device)
     loss = torch.norm(w_ortho - eye, p=1)
-    return loss   
- 
+    return loss
+
+
 class MoEOrthogonalRouter(MoERouter):
-    
     def __init__(
         self,
         *,
@@ -695,21 +702,22 @@ class MoEOrthogonalRouter(MoERouter):
         self.register_parameter(
             "weight", nn.Parameter(distribute_tensor(self.weight, tp_mesh, [Replicate()]))
         )
-        
+
     def compute_orthogonal_loss(self, p=1) -> torch.Tensor:
         """
         Orthogonal regularization loss for a linear layer.
         """
-        w = self.weight # (d_model, num_experts)
+        w = self.weight  # (d_model, num_experts)
         loss = get_orth_loss(w)
 
         return loss
 
+
 def default_vector_ema_pytorch(
-    expert_outputs: torch.Tensor,     # (tokens, d_model)
-    expert_ids: torch.Tensor,         # (tokens,)
-    scores: torch.Tensor,             # (tokens, N)
-    default_vector: torch.Tensor,     # (N, d_model)
+    expert_outputs: torch.Tensor,  # (tokens, d_model)
+    expert_ids: torch.Tensor,  # (tokens,)
+    scores: torch.Tensor,  # (tokens, N)
+    default_vector: torch.Tensor,  # (N, d_model)
     beta: float,
     top_k: int,
 ) -> torch.Tensor:
@@ -738,4 +746,4 @@ def default_vector_ema_pytorch(
     tokens = scores.size(0)
     ids_matrix = expert_ids.view(tokens, top_k)
     masked_scores = scores.scatter(1, ids_matrix, 0.0)
-    return masked_scores @ default_vector        # (tokens, d_model)
+    return masked_scores @ default_vector  # (tokens, d_model)

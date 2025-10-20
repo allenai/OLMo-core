@@ -9,12 +9,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added option to skip ranges of steps in the trainer.
+
+## [v2.3.0](https://github.com/allenai/OLMo-core/releases/tag/v2.3.0) - 2025-10-17
+
+### Fixed
+
+- Fixed parsing username+password git remote URLs in `launch.beaker` module.
+- Fixed bug with default setup steps in `launch.beaker.BeakerLaunchConfig` when a branch can't be resolved.
+- Cluster names in Beaker have changed.
+- Fixed mixture rounding error with `SourceMixtureDataset`, which was previously causing samples to be repeated at the end of training.
+- Don't DDOS Beaker from big jobs.
+- A configuration error is now raised if you pass in a URL for the trainer or dataset's working directory.
+  Previously the URL would just get mangled into a local path, leading to unexpected behavior.
+- Fixed an issue where the `ConsoleLoggerCallback` would attempt to log before the first step.
+- Only call `teardown_distributed_environment()` when training ends cleanly to avoid a hang for the duration of the distributed backend's timeout when there's an error from one rank.
+- Fixed tensor parallelism issue with torch 2.8.
+- More fixes for Beaker cluster names.
+- `Callback.post_train()` will still be called even if the run is canceled before the dry-run batch.
+- `GarbageCollectorCallback` will restore `gc` settings even when `Trainer.fit()` exits on an error.
+- Make `move_to_device` blocking for MPS device to fix possible incorrect transfer of data from CPU to MPS.
+- Fixed bug where `glob_directory()` would fail to match certain glob patterns.
+- Added one more type of error to retry on when the Google Storage API throws it.
+- Perform a garbage collection after checkpointing to avoid running out of CPU memory.
+- Avoidable overflow error when using NumpyPackedFSLDataset.
+- Fixed issue with NumpyFSLDatasetMixture + SourceMixtureDataset where not all instances would have the same sequence length.
+- Attention backend will no longer default to flash in non-CUDA environments.
+
+### Changed
+
+- The `dir` option to `Trainer.maybe_load_checkpoint()` is now optional and defaults to the `save_folder`.
+- Set `fused_linear_cross_entropy_loss accum_dtype` to fp32 in `LMHead`.
+- Increased `NCCL_FASTRAK_PLUGIN_ACCEPT_TIMEOUT_MS` from 10 minutes to 30 minutes.
+- `SlackNotifierCallback` will now notify on checkpoint saved and post epoch events.
+- `BeakerLaunchConfig.launch()` will now send Slack notifications by default when `follow=True` if the env var `SLACK_WEBHOOK_URL` is set.
+- `src/examples/llama/` has been renamed to `src/examples/llm/`.
+- Refactored eval task groups into `task_groups.py`
+- The `use_flash` argument to the `Attention` classes is deprecated. Use `backend="flash_2"` instead.
+- Refactored `NumpyDatasetConfig` by splitting it into a separate config per underlying dataset class.
+- Refactored `internal/experiment` module to facilitate modifying datasets or supplying a fully custom `ExperimentConfig`.
+- Simplified `SourceMixtureDatasetConfig` by removing redundant `sequence_length` and `dtype` fields.
+- The `model_id` argument to `convert_state_from_hf` is deprecated. Conversion information is deduced from the model type.
+- Refactored the example conversion scripts to/from HF, including decreasing false failures in validation.
+- Small refactor to `source_mixture.py` to make it easier to define data mixes in yaml.
+- Reorganized/cleaned up internal training scripts.
+
+### Added
+
+- Added CLI script `src/scripts/unshard.py` for converting distributed checkpoints to regular PyTorch or safetensors format.
+- Added a custom block that does LayerNorm scaling.
+- Added `OLMo-mix-0625-150Bsample` data mix.
+- Added alias support to `DataMix` enum.
+- Added the `HalfCos` learning rate scheduler.
+- Added `CONTRIBUTING.md` guidelines.
+- Added a lightweight, gantry-like Beaker launch CLI: `python -m olmo_core.launch.beaker`.
+- Added [Beaker images with torch 2.8](https://beaker.allen.ai/orgs/ai2/workspaces/OLMo-core/images?searchQuery=tch280). There is `olmo-core-tch280cu128-2025-09-18` and `olmo-core-tch280cu129-2025-09-18` for CUDA 12.8 and 12.9, respectively.
+- Added TransformerEngine to Docker images and a TransformerEngine attention backend.
+- Added `Callback.close()` method, which is always called when exiting `Trainer.fit()`.
+- Added flash-attention 3 to Docker images, added `flash_3` attention backend.
+- Added support for sliding window attention to the Torch attention backend. Performance is not optimized, so other backends should be preferred.
+- Added `RoPEScalingConfig.to_hf_config()` for each RoPE scaling method to support automatic conversion to HuggingFace format.
+- Guide to dataset mixing in `docs/source/guides/data_mixing.rst`.
+- Added support for converting FlexOlmo models (with both dropless and default MoEs) between OLMo Core and HF formats.
+- Added `olmo3_7B` model config.
+- Added additional internal configuration tools.
+- Added a new named data mix that we used for the 32B run
+- Added internal OLMo3 7B midtraining and long-context configs.
+- Added ability to convert OLMo3 models to/from HF format with support for rope scaling configs.
+- Added a script that can pull out a single training batch from a training job
+
+## [v2.2.0](https://github.com/allenai/OLMo-core/releases/tag/v2.2.0) - 2025-08-26
+
+### Added
+
 - Added option to set LR scheduler based on tokens instead of steps (e.g. `--train_module.scheduler.units=tokens`).
 - Added a "packed" numpy FSL variant that packs documents into sequences using the best-fit-decreasing bin packing algorithm following the work from [Fewer Truncates Improve Language Modeling](https://arxiv.org/pdf/2404.10830).
 - Added module `olmo_core.testing`.
 - Added a "interleaved" numpy FSL variant that interleaves several documents into sequences following the work from [LongSkywork: A Training Recipe for Efficiently Extending Context Length in Large Language Models](https://arxiv.org/pdf/2406.00605).
 - Added sliding window attention as a feature
 - Added `BatchSizeSchedulerCallback` for setting a batch size schedule over the course of a training run.
+- Added optional `TrainModule` method, `.pre_train()`, which runs right after `Callback.pre_train()`.
 - The `BeakerCallback` will save the config and Python requirements to the results dataset.
 - Added `from_file` method to `Config` class.
 - Added in-loop evals for OLMES basic skills eval
@@ -30,6 +104,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added support for revisions in `convert_checkpoint_from_hf.py` and the `load_hf_model` method of `olmo_core.nn.hf.checkpoint`.
 - `foreach` support in `SkipStepAdamW`.
 - Added `budget` mode for activation checkpointing configuration.
+- Added `io.remove_file()` and `io.glob_directory` functions.
+- Added ABF, PI, and YaRN rope scaling strategies.
+- Added a script to compare two WandB runs
+- Added `namespace` option to `nn.buffer_cache.BufferCache`.
+- Added the option to configure `head_stride` for context parallelism with ring-flash-attn.
+- Added the option to group multiple npy source files together for packing with the packed FSL dataset by setting `source_group_size` to an integer greater than 1.
+- Added `load_optim_state: Optional[bool]` option to `Trainer.load_checkpoint()`.
+- Added `GenerationModule` for OLMo-core native autoregressive generation with support for kv caching.
+- Added optional hostname constraints for beaker experiments on Google clusters.
 
 ### Changed
 
@@ -40,6 +123,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Changed default cluster to `saturn` in `src/examples/llama/train_launch.py`.
 - Made some beaker secrets optional for internal experiments.
 - Changed `SlidingWindowAttentionConfig` to improve clarity.
+- Changed the default Beaker budget
 
 ### Fixed
 
@@ -58,6 +142,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Ensure sharded parameters are initialized differently on separate ranks.
 - Fixed fingerprinting for FSL datasets
 - Fixed bug where `step` state in `SkipStepAdamW` was not incremented, biasing the optimizer steps. Added option to restore the bug for backwards compatibility.
+- Removed `sklearn` from upstream dependency `ai2-olmo-eval`.
+- Made removing ephemeral checkpoints more robust.
+- Made running bookkeeping operations more robust.
+- Ensure RoPE modules with different settings use a unique sub-cache for their buffers.
+- Fixed bug with context parallelism where every transformer block would use the same RoPE buffers even if their RoPE was configured differently.
+- Fixed MFU computation to work with FSDP, corrected some device specs.
+- Optimization: avoid redundant calls to `model.train()` in `TransformerTrainModule`.
+- `NumpyDatasetConfig.expand_glob` now works with remote directories.
+- Fixed Attention block sharding when TP and head-wise QK norm are both applied.
+- Added RoPE scaling configs to `rope` module's exports.
+
 
 ## [v2.1.0](https://github.com/allenai/OLMo-core/releases/tag/v2.1.0) - 2025-04-14
 

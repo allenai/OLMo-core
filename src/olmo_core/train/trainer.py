@@ -3,6 +3,7 @@ import math
 import signal
 import time
 import uuid
+import warnings
 from collections import OrderedDict, defaultdict
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -14,6 +15,7 @@ from typing import (
     Dict,
     Generator,
     Iterable,
+    List,
     Optional,
     Tuple,
     Type,
@@ -42,7 +44,7 @@ from ..distributed.utils import (
 )
 from ..exceptions import OLMoConfigurationError
 from ..io import copy_file, file_exists, is_url, join_path, normalize_path
-from ..utils import cuda_sync_debug_mode, gc_cuda
+from ..utils import cuda_sync_debug_mode, gc_cuda, get_default_thread_count
 from .callbacks import (
     Callback,
     CheckpointerCallback,
@@ -171,6 +173,18 @@ class Trainer:
     The strategy for loading a checkpoint prior to training.
     """
 
+    load_trainer_state: Optional[bool] = None
+    """
+    Whether to load the trainer state (including dataloader state). If ``None``, this will attempt
+    to load the trainer state if it exists in the checkpoint, but will will not error if it doesn't.
+    """
+
+    load_optim_state: Optional[bool] = None
+    """
+    Whether to load the optimizer state. If ``None``, this will attempt to load the optimizer state
+    if it exists in the checkpoint, but will not error if it doesn't.
+    """
+
     metrics_collect_interval: int = 5
     """
     How often (in steps) to collect, reduce, and pass on metrics to the
@@ -253,6 +267,12 @@ class Trainer:
     This is useful for benchmarking.
     """
 
+    steps_to_skip: Optional[List[Tuple[int, int]]] = None
+    """
+    Ranges of steps to completely skip training on, in the form of ``[range_start, range_end]``,
+    where both endpoints are inclusive.
+    """
+
     # Internal bookkeeping
 
     _metrics: Dict[int, Dict[str, torch.Tensor]] = field(default_factory=OrderedDict)
@@ -262,7 +282,8 @@ class Trainer:
     _canceling_rank: Optional[int] = None
     _error: Optional[BaseException] = None
     _rank_batch_size: Optional[int] = None
-    _thread_pool: Optional[ThreadPoolExecutor] = None
+    _multi_thread_pool: Optional[ThreadPoolExecutor] = None
+    _single_thread_pool: Optional[ThreadPoolExecutor] = None
     # maps bookkeeping operation name to an ordereddict of operation ID to operation Future
     _bookkeeping_queue: Dict[str, Dict[str, Future]] = field(
         default_factory=lambda: defaultdict(OrderedDict)
@@ -284,8 +305,12 @@ class Trainer:
                 "or set 'FS_LOCAL_RANK' to the global rank for each process."
             )
 
-        # Configure working directory.
-        self.work_dir = Path(self.work_dir)
+        # Validate working directory.
+        if is_url(self.work_dir):
+            raise OLMoConfigurationError(
+                f"Trainer working directory must be a local path, got a URL instead ('{self.work_dir}')."
+            )
+        self.work_dir = Path(normalize_path(self.work_dir))
 
         # Ensure save folder and working directory exist.
         if get_fs_local_rank() == 0:
@@ -514,13 +539,27 @@ class Trainer:
         return self._bookkeeping_pg
 
     @property
-    def thread_pool(self) -> ThreadPoolExecutor:
+    def multi_thread_pool(self) -> ThreadPoolExecutor:
         """
-        A thread that can be used by callbacks to run bookkeeping tasks without blocking training.
+        A multi-threaded executor for bookkeeping tasks that don't involve distributed communication.
         """
-        if self._thread_pool is None:
-            self._thread_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="trainer")
-        return self._thread_pool
+        if self._multi_thread_pool is None:
+            self._multi_thread_pool = ThreadPoolExecutor(
+                max_workers=get_default_thread_count(),
+                thread_name_prefix="trainer-multi-thread-pool",
+            )
+        return self._multi_thread_pool
+
+    @property
+    def single_thread_pool(self) -> ThreadPoolExecutor:
+        """
+        A single-threaded executor for bookkeeping tasks that involve distributed communication.
+        """
+        if self._single_thread_pool is None:
+            self._single_thread_pool = ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="trainer-single-thread-pool"
+            )
+        return self._single_thread_pool
 
     @property
     def checkpoint_loaded(self) -> bool:
@@ -581,7 +620,10 @@ class Trainer:
         Asynchronously check if the run is canceled. Use :data:`is_canceled` to see the result.
         This needs to be called by all ranks at the same point in the training loop.
         """
-        self.run_bookkeeping_op(self._check_if_canceled, cancel_in_progress=True)
+        # NOTE: Do not set `allow_multiple` to `False` here!
+        # That could result in a situation where this op is canceled on one rank while it's running
+        # on another rank, leading to a deadlock.
+        self.run_bookkeeping_op(self._check_if_canceled)
 
     def fit(self):
         """
@@ -598,8 +640,12 @@ class Trainer:
             and not self.checkpoint_loaded
             and self.load_strategy != LoadStrategy.never
         ):
-            # Try loading from the save folder first.
-            self.maybe_load_checkpoint(self.save_folder)
+            # Try loading from the save folder first. The save folder is used for continuing
+            # existing runs that failed or were preempted, so we always load trainer state and
+            # optimizer state.
+            self.maybe_load_checkpoint(
+                self.save_folder, load_trainer_state=True, load_optim_state=True
+            )
 
             # Then fallback to the load path, if provided.
             if self.load_path is not None:
@@ -632,36 +678,39 @@ class Trainer:
 
         log.info("Callback order:")
         for i, callback_name in enumerate(self.callbacks.keys()):
-            log.info(f"  - Callback {i+1}: {callback_name}")
+            log.info(f"  - Callback {i + 1}: {callback_name}")
 
         log.info(f"Training for {self.max_steps:,d} steps")
-
-        for callback in self._iter_callbacks():
-            callback.pre_train()
-
-        barrier()
-
-        # Quick check if the run has already been canceled.
-        if self.is_canceled:
-            self._shutdown()
-            return
 
         # Install SIGTERM + SIGINT handlers.
         og_sigterm_handler = signal.signal(signal.SIGTERM, self._handle_os_signal)
         og_sigint_handler = signal.signal(signal.SIGINT, self._handle_os_signal)
 
-        # Do a dry-run for compiling and catch OOMs.
-        self._dry_run_batch()
-
         try:
+            for callback in self._iter_callbacks():
+                callback.pre_train()
+            self.train_module.pre_train()
+
+            # Quick check if the run has already been canceled.
+            if self.is_canceled:
+                for callback in self._iter_callbacks():
+                    callback.post_train()
+                self._shutdown()
+                return
+
+            # Do a dry-run for compiling and catch OOMs.
+            self._dry_run_batch()
+
+            # Iterate over epochs until done.
             while not self.training_complete:
                 self._fit_epoch()
         except BaseException as exc:
-            log.error(f"Training failed due to:\n{exc}")
-            orig = exc.__cause__
-            log.error(f"Cause:\n{type(orig)} = {orig}")
+            self._error = exc
+            log.error(f"Training failed due to:\n{type(exc).__name__}: {exc}")
             for callback in self._iter_callbacks():
                 callback.on_error(exc)
+            for callback in self._iter_callbacks():
+                callback.close()
             raise
         finally:
             # Restore original signal handlers.
@@ -677,8 +726,14 @@ class Trainer:
 
     def _shutdown(self):
         self._log_metrics()
-        self.thread_pool.shutdown(wait=True, cancel_futures=False)
-        self._thread_pool = None
+        for callback in self._iter_callbacks():
+            callback.close()
+        if self._multi_thread_pool is not None:
+            self._multi_thread_pool.shutdown(wait=True, cancel_futures=False)
+            self._multi_thread_pool = None
+        if self._single_thread_pool is not None:
+            self._single_thread_pool.shutdown(wait=True, cancel_futures=False)
+            self._single_thread_pool = None
         gc_cuda()
         barrier()
 
@@ -743,7 +798,13 @@ class Trainer:
                 "were saved with a different world size."
             )
 
-    def load_checkpoint(self, dir: PathOrStr, *, load_trainer_state: Optional[bool] = None):
+    def load_checkpoint(
+        self,
+        dir: PathOrStr,
+        *,
+        load_trainer_state: Optional[bool] = None,
+        load_optim_state: Optional[bool] = None,
+    ):
         """
         Load a checkpoint.
 
@@ -751,8 +812,25 @@ class Trainer:
             :meth:`fit()` may call this method automatically depending on the :data:`load_strategy`.
 
         :param dir: The path/URL to a checkpoint or a folder of checkpoints.
-        :param load_trainer_state: Load trainer state.
+        :param load_trainer_state: Load trainer state (data loader state, RNG states, and other bookkeeping).
+        :param load_optim_state: Load optimizer state in the train module.
         """
+        load_trainer_state = (
+            self.load_trainer_state if load_trainer_state is None else load_trainer_state
+        )
+        load_optim_state = self.load_optim_state if load_optim_state is None else load_optim_state
+        if dir == self.save_folder:
+            if load_trainer_state is False:
+                log.warning(
+                    "Loading from save_folder with 'load_trainer_state=False' is not recommended, "
+                    "since the save_folder is meant for continuing existing runs."
+                )
+            if load_optim_state is False:
+                log.warning(
+                    "Loading from save_folder with 'load_optim_state=False' is not recommended, "
+                    "since the save_folder is meant for continuing existing runs."
+                )
+
         dir = normalize_path(dir)
 
         # NOTE: to avoid making a ton of client requests (S3 or otherwise) we only make those
@@ -767,6 +845,7 @@ class Trainer:
             dir,
             self.train_module,
             load_trainer_state=load_trainer_state,
+            load_optim_state=load_optim_state,
         )
         if trainer_state is not None:
             self.load_state_dict(cast(TrainerStateDict, trainer_state))
@@ -778,7 +857,11 @@ class Trainer:
         log.info("Checkpoint successfully loaded")
 
     def maybe_load_checkpoint(
-        self, dir: PathOrStr, *, load_trainer_state: Optional[bool] = None
+        self,
+        dir: Optional[PathOrStr] = None,
+        *,
+        load_trainer_state: Optional[bool] = None,
+        load_optim_state: Optional[bool] = None,
     ) -> bool:
         """
         Like :meth:`load_checkpoint()` but is a no-op if there is no checkpoint in the ``dir`` provided.
@@ -788,6 +871,8 @@ class Trainer:
 
         :returns: If a checkpoint was loaded.
         """
+        if dir is None:
+            dir = self.save_folder
         should_load: bool = True
         if get_rank() == 0:
             should_load = self.checkpointer.contains_checkpoint(dir)
@@ -796,6 +881,7 @@ class Trainer:
             self.load_checkpoint(
                 dir,
                 load_trainer_state=load_trainer_state,
+                load_optim_state=load_optim_state,
             )
             assert self.checkpoint_loaded
             return True
@@ -805,6 +891,7 @@ class Trainer:
     def save_checkpoint(self) -> PathOrStr:
         """
         Save a checkpoint for the current step to the :data:`save_folder`.
+
 
         :returns: The path/URL to the checkpoint.
         """
@@ -970,6 +1057,9 @@ class Trainer:
         return target
 
     def add_callback(self, name: str, callback: Callback):
+        """
+        Add a callback to the trainer.
+        """
         if name in self.callbacks:
             raise OLMoConfigurationError(f"A callback with name '{name}' already exists!")
         callback.trainer = self
@@ -1035,44 +1125,79 @@ class Trainer:
         *args,
         cb: Optional[Callable[[T], None]] = None,
         op_name: Optional[str] = None,
-        cancel_in_progress: bool = False,
+        cancel_in_progress: Optional[bool] = None,  # deprecated
+        allow_multiple: bool = True,
+        soft_timeout: Optional[int] = None,
+        distributed: bool = True,
         **kwargs,
     ):
+        """
+        Run a bookkeeping operation, potentially in a background thread.
+
+        :param op: The operation to run.
+        :param args: Positional arguments to pass to the operation.
+        :param kwargs: Keyword arguments to pass to the operation.
+        :param cb: A callback to call with the result of the operation when it finishes.
+        :param op_name: A name for the operation, used for logging, debugging, and potentially canceling
+            old invocations of the same operation when ``allow_multiple`` is ``False``.
+        :param allow_multiple: If ``False``, only one bookkeeping operation with the given name is allowed
+            to run, so if there are other ops with the same name that are queued, those will be canceled,
+            and if there's another one that's already running, the current invocation will be ignored.
+        :param soft_timeout: A soft timeout, in seconds, to wait for the operation to finish. If the op
+            takes longer than this a warning will be issued.
+        :param distributed: This should only be set to ``False`` if the op doesn't use distributed
+            communication, in which case it will be allowed to run concurrently with other ops.
+        """
+        if cancel_in_progress is not None:
+            warnings.warn(
+                "'cancel_in_progress' argument to 'Trainer.run_bookkeeping_op' is deprecated, use 'allow_multiple' instead",
+                DeprecationWarning,
+            )
+            allow_multiple = not cancel_in_progress
+
         if op_name is None:
             op_name = op.__qualname__
-        op_id = uuid.uuid4().hex
+
+        if soft_timeout is None:
+            soft_timeout = self.bookkeeping_soft_timeout
 
         def wrapped_op(*args, **kwargs):
             start_time = time.perf_counter()
+            assert soft_timeout is not None  # for mypy
             try:
                 return op(*args, **kwargs)
             finally:
-                if (
-                    runtime := int(time.perf_counter() - start_time)
-                ) > self.bookkeeping_soft_timeout:
+                if (runtime := int(time.perf_counter() - start_time)) > soft_timeout:
                     log.warning(
-                        f"Bookeeping op '{op_name}' took longer than {self.bookkeeping_soft_timeout} "
+                        f"Bookeeping op '{op_name}' took longer than {soft_timeout} "
                         f"seconds ({runtime:,d} seconds)!"
                     )
 
-        if (
+        if not distributed or (
             self.async_bookkeeping
             and self.bookkeeping_device.type == "cpu"
             and self.bookkeeping_pg is not None
         ):
-            if cancel_in_progress:
-                for future in self._bookkeeping_queue[op_name].values():
-                    if future.cancel():
-                        self._bookkeeping_queue[op_name].clear()
-                    elif not future.done():
+            if not allow_multiple:
+                for op_id in list(self._bookkeeping_queue[op_name].keys()):
+                    future = self._bookkeeping_queue[op_name][op_id]
+                    if future.cancel() or future.done():
+                        self._bookkeeping_queue[op_name].pop(op_id)
+                    else:
                         log.warning(
-                            f"Attempted to cancel bookkeeping op '{op_name}' which was already in progress. "
-                            "If you see this message frequently, the op in question may be creating a backlog "
-                            "in the bookkeeping queue."
+                            f"Attempted to submit bookkeeping op '{op_name}' while a previous invocation was already in progress. "
+                            "Since 'allow_multiple' is set to 'False' for this op, the current invocation will be canceled.\n"
+                            "If you see this message frequently, the op in question may be taking longer than expected or is "
+                            "being submitted too often."
                         )
+                        return
 
-            # Can safely run in the thread pool.
-            future = self.thread_pool.submit(wrapped_op, *args, **kwargs)
+            if distributed:
+                future = self.single_thread_pool.submit(wrapped_op, *args, **kwargs)
+            else:
+                future = self.multi_thread_pool.submit(wrapped_op, *args, **kwargs)
+
+            op_id = uuid.uuid4().hex
             self._bookkeeping_queue[op_name][op_id] = future
 
             def callback(fut: Future[T]):
@@ -1083,7 +1208,7 @@ class Trainer:
                     log.exception(e)
                     self._error = e
                 finally:
-                    # Removed the completed op from the queue.
+                    # Remove the completed op from the queue.
                     assert op_name is not None  # for mypy
                     self._bookkeeping_queue[op_name].pop(op_id, None)
 
@@ -1186,9 +1311,11 @@ class Trainer:
 
         log.info("Starting forward/backward dry-run batch...")
 
-        dbg_mem_before_dry_run = torch.cuda.memory_allocated()/1024**3 # model param + main param
+        dbg_mem_before_dry_run = torch.cuda.memory_allocated() / 1024**3  # model param + main param
         self.train_module.train_batch(batch, dry_run=True)
-        dbg_mem_after_dry_run = torch.cuda.memory_allocated()/1024**3 # model param 2x + main param 4x + model grad 2x
+        dbg_mem_after_dry_run = (
+            torch.cuda.memory_allocated() / 1024**3
+        )  # model param 2x + main param 4x + model grad 2x
 
         log.info("Dry-run complete")
 
@@ -1214,19 +1341,30 @@ class Trainer:
             ) is not None:
                 self.global_train_tokens_seen += global_num_tokens
 
+            should_skip = False
+            if self.steps_to_skip:
+                for range_start, range_end in self.steps_to_skip:
+                    if range_start <= self.global_step <= range_end:
+                        should_skip = True
+                        break
+
             for callback in self._iter_callbacks():
                 callback.pre_step(batch)
 
-            dbg_mem_before_train_batch = torch.cuda.memory_allocated()/1024**3
+            dbg_mem_before_train_batch = torch.cuda.memory_allocated() / 1024**3
 
             self.train_module.train_batch(batch)
-            dbg_mem_after_train_batch = torch.cuda.memory_allocated()/1024**3
+            dbg_mem_after_train_batch = torch.cuda.memory_allocated() / 1024**3
+            if should_skip:
+                log.warning(f"Skipping training on step {self.global_step:,d} intentionally...")
+            else:
+                self.train_module.train_batch(batch)
 
-            for callback in self._iter_callbacks():
-                callback.pre_optim_step()
+                for callback in self._iter_callbacks():
+                    callback.pre_optim_step()
 
-            self.train_module.optim_step()
-            self.train_module.zero_grads()
+                self.train_module.optim_step()
+                self.train_module.zero_grads()
 
             for callback in self._iter_callbacks():
                 callback.post_train_batch()

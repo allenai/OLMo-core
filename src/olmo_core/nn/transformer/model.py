@@ -1,4 +1,5 @@
 import logging
+from collections import defaultdict
 from functools import cached_property
 from typing import (
     TYPE_CHECKING,
@@ -13,6 +14,7 @@ from typing import (
     cast,
 )
 
+import nvtx
 import torch
 import torch.nn as nn
 from torch.distributed import DeviceMesh
@@ -54,7 +56,7 @@ from .config import (
 )
 from .flops import num_floating_point_operations_for_logits
 from .init import InitMethod
-import nvtx
+
 if TYPE_CHECKING:
     from olmo_core.train.common import ReduceType
 
@@ -201,14 +203,17 @@ class Transformer(nn.Module):
 
     def get_rope_buffers(
         self, seq_len: int, device: Optional[torch.device] = None
-    ) -> Optional[RoPEBuffers]:
+    ) -> Dict[int, Optional[RoPEBuffers]]:
+        """
+        Get the RoPE buffers to pass to each layer.
+        """
         if device is None:
             device = self.device
-        for block in self.blocks.values():
+        rope_buffers = {}
+        for key, block in self.blocks.items():
             rope = cast(Optional[RotaryEmbeddingBase], block.attention.rope)  # type: ignore
-            if rope is not None:
-                return rope.get_buffers(seq_len, device)
-        return None
+            rope_buffers[int(key)] = None if rope is None else rope.get_buffers(seq_len, device)
+        return rope_buffers
 
     @torch.no_grad()
     def init_weights(
@@ -218,7 +223,6 @@ class Transformer(nn.Module):
         max_local_microbatch_size: Optional[int] = None,
         device: Optional[torch.device] = None,
         world_mesh: Optional[DeviceMesh] = None,
-        model_part_idx: int = 0,
     ) -> torch.Generator:
         """
         Initialize the model weights.
@@ -233,18 +237,21 @@ class Transformer(nn.Module):
         self.to_empty(device=device)
 
         for module in self.modules():
-            if hasattr(module, "reset_parameters"): # TODO: what's the point of this
+            if hasattr(module, "reset_parameters"):  # TODO: what's the point of this
                 module.reset_parameters()  # type: ignore
 
         seed = self.init_seed
         if world_mesh is not None and self.pp_enabled:
-            seed += get_pp_mesh(world_mesh).get_local_rank() # BUG: the same seed for all model parts on the same rank?
-            seed += model_part_idx * 997 # random prime
+            seed += get_pp_mesh(world_mesh).get_local_rank()
+
         generator = torch.Generator(device).manual_seed(seed)
 
         if self.embeddings is not None:
             self.init_method.init_embeddings(
-                self.embeddings, d_model=self.d_model, std=self.init_std, generator=generator
+                self.embeddings,
+                d_model=self.d_model,
+                std=self.init_std,
+                generator=generator,
             )
 
         for block in self.blocks.values():
@@ -252,6 +259,7 @@ class Transformer(nn.Module):
             #  assert isinstance(block, TransformerBlock)
             block = cast(TransformerBlock, block)
             from ..moe.v2.block import MoEFusedV2TransformerBlock
+
             if isinstance(block, MoEFusedV2TransformerBlock):
                 block = cast(MoEFusedV2TransformerBlock, block)
                 # v2 MoE blocks.
@@ -275,7 +283,6 @@ class Transformer(nn.Module):
                     std=self.init_std,
                     generator=generator,
                 )
-
 
             else:
                 att = cast(Union[Attention, FusedAttention], block.attention)
@@ -319,9 +326,24 @@ class Transformer(nn.Module):
                 if max_seq_len is not None and att.rope is not None:
                     att.rope.warmup_cache(max_seq_len, device)
 
+            # Warm up RoPE cache.
+            if max_seq_len is not None and att.rope is not None:
+                att.rope.warmup_cache(max_seq_len, device)
+
+            # Warm up attention backend cache.
+            if max_seq_len is not None and att.backend is not None:
+                att.backend.warmup_cache(max_seq_len, device)
+
+            # Warm up RoPE cache.
+            if max_seq_len is not None and att.rope is not None:
+                att.rope.warmup_cache(max_seq_len, device)
+
         if self.lm_head is not None:
             self.init_method.init_final_w_out(
-                self.lm_head.w_out, d_model=self.d_model, std=self.init_std, generator=generator
+                self.lm_head.w_out,
+                d_model=self.d_model,
+                std=self.init_std,
+                generator=generator,
             )
 
         # xx = self.lm_head.w_out.weight
@@ -338,29 +360,40 @@ class Transformer(nn.Module):
         z_loss_multiplier: Optional[float] = None,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         return_logits: Optional[bool] = None,
+        logits_to_keep: Union[int, torch.Tensor] = 0,
         **kwargs,
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any], Dict[str, Any]]:
+    ) -> Tuple[
+        torch.Tensor,
+        Optional[torch.Tensor],
+        Dict[str, Any],
+        Dict[int, Dict[str, Any]],
+        Dict[str, Any],
+    ]:
         # NOTE: with pipeline parallelism input_ids might actually be an intermediate output,
         # so we have to be careful here.
         B, S = input_ids.shape[:2]
 
-        block_kwargs: Dict[str, Any] = {}
-
+        all_block_kwargs: Dict[str, Any] = {}
+        per_block_kwargs: Dict[int, Dict[str, Any]] = defaultdict(dict)
         lm_head_kwargs: Dict[str, Any] = dict(
             ignore_index=ignore_index,
             loss_reduction=loss_reduction,
             z_loss_multiplier=z_loss_multiplier,
             return_logits=return_logits,
+            logits_to_keep=logits_to_keep,
         )
 
         if loss_div_factor is not None:
             loss_div_factor = move_to_device(loss_div_factor, self.device)
             lm_head_kwargs["loss_div_factor"] = loss_div_factor
-            block_kwargs["loss_div_factor"] = loss_div_factor
+            all_block_kwargs["loss_div_factor"] = loss_div_factor
 
         # Prepare document length inputs.
         max_doc_len: Optional[int] = None
         cu_doc_lens: Optional[torch.Tensor] = None
+        doc_lens: Optional[torch.Tensor] = None
+        cache_leftpad: Optional[torch.Tensor] = kwargs.pop("cache_leftpad", None)
+
         if (doc_lens := kwargs.pop("doc_lens", None)) is not None and (
             max_doc_lens := kwargs.pop("max_doc_lens", None)
         ) is not None:
@@ -375,29 +408,32 @@ class Transformer(nn.Module):
             keys = ["input_ids"]
 
             # NOTE: initialize buffer(s) on CPU to avoid possible host-device sync when sharding.
-            rope_buffers = self.get_rope_buffers(S, torch.device("cpu"))
-            if rope_buffers is not None:
-                if rope_buffers.pos_sin is not None:
-                    inputs.append(rope_buffers.pos_sin)
-                    seq_dims.append(0)
-                    pad_values.append(0.0)
-                    keys.append("pos_sin")
-                if rope_buffers.pos_cos is not None:
-                    inputs.append(rope_buffers.pos_cos)
-                    seq_dims.append(0)
-                    pad_values.append(0.0)
-                    keys.append("pos_cos")
-                if rope_buffers.freqs_cis is not None:
-                    inputs.append(rope_buffers.freqs_cis)
-                    seq_dims.append(0)
-                    pad_values.append(0.0)
-                    keys.append("freqs_cis")
+            for block_idx, rope_buffers in self.get_rope_buffers(S, torch.device("cpu")).items():
+                if rope_buffers is not None:
+                    if rope_buffers.pos_sin is not None:
+                        inputs.append(rope_buffers.pos_sin)
+                        seq_dims.append(0)
+                        pad_values.append(0.0)
+                        keys.append(f"block_{block_idx}.pos_sin")
+                    if rope_buffers.pos_cos is not None:
+                        inputs.append(rope_buffers.pos_cos)
+                        seq_dims.append(0)
+                        pad_values.append(0.0)
+                        keys.append(f"block_{block_idx}.pos_cos")
+                    if rope_buffers.freqs_cis is not None:
+                        inputs.append(rope_buffers.freqs_cis)
+                        seq_dims.append(0)
+                        pad_values.append(0.0)
+                        keys.append(f"block_{block_idx}.freqs_cis")
 
             if labels is not None:
                 inputs.append(labels)
                 seq_dims.append(1)
                 pad_values.append(ignore_index)
                 keys.append("labels")
+
+            if cache_leftpad is not None:
+                raise NotImplementedError("cache_leftpad is not supported with context parallelism")
 
             if cu_doc_lens is not None:
                 # NOTE: Can only shard properly here if 'input_ids' is flat, i.e. a single instance.
@@ -418,7 +454,8 @@ class Transformer(nn.Module):
                     length_multiple=16,
                 )
                 for key, value in additional_inputs.items():
-                    block_kwargs[key] = move_to_device(value, self.device)
+                    all_block_kwargs[key] = move_to_device(value, self.device)
+
             else:
                 inputs = cp_load_balancer.batch_shard(
                     inputs=inputs,
@@ -427,20 +464,32 @@ class Transformer(nn.Module):
                 )
 
             for key, value in zip(keys, inputs):
-                block_kwargs[key] = move_to_device(value, self.device)
+                if key.startswith("block_"):
+                    block_key, key = key.split(".", 1)
+                    block_idx = int(block_key.replace("block_", ""))
+                    per_block_kwargs[block_idx][key] = move_to_device(value, self.device)
+                else:
+                    all_block_kwargs[key] = move_to_device(value, self.device)
 
-            input_ids = block_kwargs.pop("input_ids")
-            labels = block_kwargs.pop("labels", None)
+            input_ids = all_block_kwargs.pop("input_ids")
+            labels = all_block_kwargs.pop("labels", None)
         else:
             input_ids = move_to_device(input_ids, self.device)
             labels = move_to_device(labels, self.device)
-            block_kwargs["max_doc_len"] = max_doc_len
-            block_kwargs["cu_doc_lens"] = move_to_device(cu_doc_lens, self.device)
+
+            if (max_doc_len is not None or cu_doc_lens is not None) and cache_leftpad is not None:
+                raise ValueError("max_doc_len/cu_doc_lens and cache_leftpad are mutually exclusive")
+            if max_doc_len is not None or cu_doc_lens is not None:
+                all_block_kwargs["max_doc_len"] = max_doc_len
+                all_block_kwargs["cu_doc_lens"] = move_to_device(cu_doc_lens, self.device)
+            if cache_leftpad is not None:
+                all_block_kwargs["cache_leftpad"] = move_to_device(cache_leftpad, self.device)
 
         return (
             input_ids,
             labels,
-            block_kwargs,
+            all_block_kwargs,
+            per_block_kwargs,
             lm_head_kwargs,
         )
 
@@ -454,16 +503,31 @@ class Transformer(nn.Module):
         z_loss_multiplier: Optional[float] = None,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         return_logits: Optional[bool] = None,
+        logits_to_keep: Union[int, torch.Tensor] = 0,
         **kwargs,
     ) -> Union[torch.Tensor, LMOutputWithLoss]:
         """
         Run the transformer on the token input IDs.
 
         :param input_ids: The token input IDs, shape ``(batch_size, seq_len)``.
+        :param labels: The token labels, shape ``(batch_size, seq_len)``.
+        :param ignore_index: The index to ignore in the loss computation. Default is -100.
+        :param loss_reduction: The reduction method for the loss. Can be "mean", "sum", or "none".
+        :param z_loss_multiplier: Optional multiplier for the z-loss regularization term.
+        :param loss_div_factor: Optional divisor for the loss, can be a scalar or tensor.
+        :param return_logits: Whether to return logits along with the loss when labels are provided.
+        :param logits_to_keep: Number of positions to keep from the end of the sequence (if int),
+            or tensor specifying which positions to keep. Default is 0 (keep all).
 
         :returns: The logits if ``labels`` is ``None`` or the losses if ``labels`` is not ``None``.
         """
-        input_ids, labels, block_kwargs, lm_head_kwargs = self._prepare_inputs(
+        (
+            input_ids,
+            labels,
+            all_block_kwargs,
+            per_block_kwargs,
+            lm_head_kwargs,
+        ) = self._prepare_inputs(
             input_ids,
             labels,
             ignore_index=ignore_index,
@@ -471,6 +535,7 @@ class Transformer(nn.Module):
             z_loss_multiplier=z_loss_multiplier,
             loss_div_factor=loss_div_factor,
             return_logits=return_logits,
+            logits_to_keep=logits_to_keep,
             **kwargs,
         )
 
@@ -479,12 +544,14 @@ class Transformer(nn.Module):
         h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
 
         # Run each block.
-        for block_idx, block in enumerate(self.blocks.values()):
+        for block_key, block in self.blocks.items():
+            block_idx = int(block_key)
+            block_kwargs = per_block_kwargs.get(block_idx, {})
             # Mark sizes as dynamic for torch.compile().
             if self.compile_enabled:
                 mark_dynamic(h, (0, 1), strict=False)
             with nvtx.annotate(f"fwd_block_{block_idx}", color="blue"):
-                h = block(h, **block_kwargs)
+                h = block(h, **all_block_kwargs, **block_kwargs)
 
         # Get final logits but again pass-through in case of pipeline parallelism.
         if self.lm_head is not None:
@@ -564,7 +631,12 @@ class Transformer(nn.Module):
         self._tp_enabled = True
         self._tp_mesh = tp_mesh
 
-    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType):
+    def apply_cp(
+        self,
+        cp_mesh: DeviceMesh,
+        load_balancer: RingAttentionLoadBalancerType,
+        head_stride: int = 1,
+    ):
         """
         Prepare the model for context-parallelism (CP).
 
@@ -573,7 +645,9 @@ class Transformer(nn.Module):
         """
         self._cp_load_balancer = load_balancer.build(cp_mesh)
         for block in self.blocks.values():
-            cast(TransformerBlockBase, block).apply_cp(cp_mesh, load_balancer)
+            cast(TransformerBlockBase, block).apply_cp(
+                cp_mesh, load_balancer, head_stride=head_stride
+            )
         if self.lm_head is not None:
             self.lm_head.apply_cp(cp_mesh, load_balancer)
 
@@ -742,7 +816,11 @@ class Transformer(nn.Module):
             )
 
         if self.embeddings is not None:
-            fully_shard(self.embeddings, reshard_after_forward=reshard_after_forward, **fsdp_config)
+            fully_shard(
+                self.embeddings,
+                reshard_after_forward=reshard_after_forward,
+                **fsdp_config,
+            )
             # Embedding params are not needed for backwards computation.
             cast(FSDPModule, self.embeddings).set_unshard_in_backward(False)
 
@@ -795,9 +873,9 @@ class Transformer(nn.Module):
                 torch._dynamo.config.optimize_ddp = "python_reducer_without_compiled_forward"  # type: ignore
             else:
                 torch._dynamo.config.optimize_ddp = "ddp_optimizer"  # type: ignore
-                
-        self.to(torch.bfloat16) # HACK, need fix
-        
+
+        self.to(torch.bfloat16)  # HACK, need fix
+
         replicate(self, device_mesh=dp_mesh, bucket_cap_mb=100)
         # Some inputs need to be on CPU initially, but DDP will move everything to model's
         # device if we don't hide it.
@@ -965,7 +1043,10 @@ class MoETransformer(Transformer):
             block = cast(MoETransformerBlock, block)
             block_metrics = block.compute_metrics(reset=reset)
             for metric_name, (metric_val, reduce_type) in block_metrics.items():
-                out[f"block {int(block_idx):02d}/{metric_name}"] = (metric_val, reduce_type)
+                out[f"block {int(block_idx):02d}/{metric_name}"] = (
+                    metric_val,
+                    reduce_type,
+                )
 
                 if self.pp_enabled and reduce_type == ReduceType.mean:
                     metric_val = metric_val.float() * mean_offset
@@ -978,7 +1059,10 @@ class MoETransformer(Transformer):
                         reduce_type,
                     )
                 elif reduce_type == ReduceType.max:
-                    out[metric_name] = (torch.max(out[metric_name][0], metric_val), reduce_type)
+                    out[metric_name] = (
+                        torch.max(out[metric_name][0], metric_val),
+                        reduce_type,
+                    )
                 else:
                     raise NotImplementedError(reduce_type)
         return out

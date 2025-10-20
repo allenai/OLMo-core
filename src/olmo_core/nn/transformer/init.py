@@ -7,7 +7,7 @@ from torch.distributed.tensor import DTensor
 from olmo_core.config import StrEnum
 from olmo_core.distributed.utils import distribute_like, get_local_tensor
 
-from ..attention import Attention, AttentionBase, FusedAttention, MultiheadLatentAttention
+from ..attention import Attention, AttentionBase, FusedAttention  # , MultiheadLatentAttention
 from ..feed_forward import FeedForward
 from ..moe import DroplessMoEMLP, MoEBase, MoELinearRouter, MoEMLP, MoEOrthogonalRouter
 
@@ -120,16 +120,16 @@ class InitMethod(StrEnum):
         elif isinstance(m, FusedAttention) or hasattr(m, "w_qkv"):
             m = cast(FusedAttention, m)
             self._init_linear(m.w_qkv, std=std, generator=generator)
-        elif isinstance(m, MultiheadLatentAttention):
-            m = cast(MultiheadLatentAttention, m)
-            if hasattr(m, "wq"):
-                self._init_linear(m.wq, std=std, generator=generator)
-            else:
-                self._init_linear(m.wq_a, std=std, generator=generator)
-                self._init_linear(m.wq_b, std=std, generator=generator)
-                
-            self._init_linear(m.wkv_a, std=std, generator=generator)
-            self._init_linear(m.wkv_b, std=std, generator=generator)
+        # elif isinstance(m, MultiheadLatentAttention):
+        #     m = cast(MultiheadLatentAttention, m)
+        #     if hasattr(m, "wq"):
+        #         self._init_linear(m.wq, std=std, generator=generator)
+        #     else:
+        #         self._init_linear(m.wq_a, std=std, generator=generator)
+        #         self._init_linear(m.wq_b, std=std, generator=generator)
+
+        #     self._init_linear(m.wkv_a, std=std, generator=generator)
+        #     self._init_linear(m.wkv_b, std=std, generator=generator)
         else:
             raise NotImplementedError(m)
 
@@ -241,6 +241,7 @@ class InitMethod(StrEnum):
             b=3 * std,
             generator=generator,
         )
+
     def init_moe_v2(
         self,
         b,
@@ -253,6 +254,7 @@ class InitMethod(StrEnum):
         ep_generator: Optional[torch.Generator] = None,
     ):
         from ..moe.v2.block import MoEFusedV2TransformerBlock
+
         b = cast(MoEFusedV2TransformerBlock, b)
         if self == InitMethod.llama:
             std = std / (2 * num_blocks) ** 0.5
@@ -295,7 +297,7 @@ class InitMethod(StrEnum):
                 std=std,
                 a=-3 * std,
                 b=3 * std,
-                generator=ep_generator, # might be sharded, use ep_generator
+                generator=ep_generator,  # might be sharded, use ep_generator
             )
             _apply_init(
                 nn.init.trunc_normal_,
@@ -304,7 +306,7 @@ class InitMethod(StrEnum):
                 std=std,
                 a=-3 * std,
                 b=3 * std,
-                generator=ep_generator, # might be sharded, use ep_generator
+                generator=ep_generator,  # might be sharded, use ep_generator
             )
         # shared experts
         if b.shared_experts:
@@ -326,4 +328,3 @@ class InitMethod(StrEnum):
                 b=3 * std,
                 generator=generator,
             )
-            

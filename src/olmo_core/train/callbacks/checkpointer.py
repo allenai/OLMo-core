@@ -15,7 +15,7 @@ from olmo_core.distributed.utils import (
     scatter_object,
 )
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.io import clear_directory, is_url
+from olmo_core.io import clear_directory, is_url, join_path, remove_file
 from olmo_core.utils import wait_for
 
 from ..checkpoint import Checkpointer, UpcycleCheckpointer
@@ -153,11 +153,27 @@ class CheckpointerCallback(Callback):
 
     def _remove_checkpoint(self, path: str):
         log.info(f"Removing old checkpoint at '{path}'...")
+
+        # Remove metadata file first to invalidate the checkpoint.
+        if get_rank() == 0:
+            try:
+                remove_file(join_path(path, self.trainer.checkpointer.METADATA_FNAME))
+            except FileNotFoundError:
+                pass
+
         if is_url(path):
             if get_rank() == 0:
-                self.trainer.run_bookkeeping_op(clear_directory, path)
+                self.trainer.run_bookkeeping_op(
+                    clear_directory,
+                    path,
+                    op_name=f"clear_directory {path}",
+                    distributed=False,
+                    soft_timeout=180,  # this can take a while on GCS, for example
+                )
         elif get_fs_local_rank() == 0:
-            self.trainer.run_bookkeeping_op(clear_directory, path)
+            self.trainer.run_bookkeeping_op(
+                clear_directory, path, op_name=f"clear_directory {path}", distributed=False
+            )
 
     def _schedule_for_removal(self, path: str):
         self._checkpoints_to_remove.append(path)
@@ -259,6 +275,7 @@ class CheckpointerCallback(Callback):
 
 from pathlib import Path
 
+
 @dataclass
 class UpcycleCheckpointerCallback(Callback):
     """
@@ -266,12 +283,12 @@ class UpcycleCheckpointerCallback(Callback):
     Make sure it's run before the main checkpointer callback because the main checkpointer
     will usally save the step 0 checkpoint.
     """
+
     priority: ClassVar[int] = 2
 
     enabled: bool = True
-    
-    upcycled_model_path: str = ""
 
+    upcycled_model_path: str = ""
 
     def pre_train(self):
         if not self.enabled:
@@ -282,16 +299,14 @@ class UpcycleCheckpointerCallback(Callback):
         if self.step != 0 or self.trainer.checkpoint_loaded:
             return
 
+        self.checkpointer = UpcycleCheckpointer(work_dir=Path("."))
 
-        self.checkpointer = UpcycleCheckpointer(
-            work_dir=Path('.')
+        log.info(
+            f"UpcycleCheckpointerCallback: Loading Upcycled checkpoint from '{self.upcycled_model_path}'..."
         )
-        
-        log.info(f"UpcycleCheckpointerCallback: Loading Upcycled checkpoint from '{self.upcycled_model_path}'...")
 
         self.checkpointer.load_upcycled_model(
-            dir=self.upcycled_model_path,\
-            train_module=self.trainer.train_module, \
+            dir=self.upcycled_model_path,
+            train_module=self.trainer.train_module,
         )
         log.info(f"UpcycleCheckpointerCallback: Done")
-        
