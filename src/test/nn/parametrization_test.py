@@ -12,11 +12,11 @@ from olmo_core.nn.cross_entropy_loss import CrossEntropyLoss
 from olmo_core.nn.feed_forward import FeedForwardConfig
 from olmo_core.nn.moe.moe import MoEConfig
 from olmo_core.nn.moe.router import MoERouterConfig
-from olmo_core.nn.mup import (
-    MuPConfig,
-    MuPHyperParam,
-    MuPOptimizerType,
-    MuPScalingStrategy,
+from olmo_core.nn.parametrization import (
+    ParametrizationConfig,
+    ParametrizationHyperParam,
+    ParametrizationOptimizerType,
+    ParametrizationScalingStrategy,
 )
 from olmo_core.nn.transformer.config import TransformerBlockType, TransformerConfig
 from olmo_core.nn.transformer.init import InitMethod
@@ -30,7 +30,7 @@ log = logging.getLogger(__name__)
 
 
 def get_transformer_config(
-    mup_config: Optional[MuPConfig] = None,
+    parametrization_config: Optional[ParametrizationConfig] = None,
     vocab_size: int = 100,
     init_seed: int = 0,
     d_model_multiplier: int = 1,
@@ -49,7 +49,7 @@ def get_transformer_config(
         layer_norm_eps=1e-6,
         fused_ops=False,
         use_flash=False,
-        mup=mup_config,
+        parametrization=parametrization_config,
         init_seed=init_seed,
     )
 
@@ -59,160 +59,160 @@ def get_transformer_inputs(vocab_size: int = 100) -> torch.Tensor:
 
 
 @pytest.mark.parametrize(
-    "mup_optimizer_type, mup_scaling_strategy, expected_multiplier",
+    "parametrization_optimizer_type, parametrization_scaling_strategy, expected_multiplier",
     [
-        pytest.param(MuPOptimizerType.adam, MuPScalingStrategy.constant_inputs, None),
-        pytest.param(MuPOptimizerType.adam, MuPScalingStrategy.constant_lr, 1 / (2 * 0.7)),
-        pytest.param(MuPOptimizerType.adam, MuPScalingStrategy.constant_init_std, 1 / (2 * 0.7)),
+        pytest.param(ParametrizationOptimizerType.adam, ParametrizationScalingStrategy.constant_inputs, None),
+        pytest.param(ParametrizationOptimizerType.adam, ParametrizationScalingStrategy.constant_lr, 1 / (2 * 0.7)),
+        pytest.param(ParametrizationOptimizerType.adam, ParametrizationScalingStrategy.constant_init_std, 1 / (2 * 0.7)),
     ],
 )
-def test_mup_input_multiplier_scaling_input(
-    mup_optimizer_type, mup_scaling_strategy, expected_multiplier
+def test_parametrization_input_multiplier_scaling_input(
+    parametrization_optimizer_type, parametrization_scaling_strategy, expected_multiplier
 ):
-    mup_config = MuPConfig(
-        mup_optimizer_type,
-        scaling_strategy=mup_scaling_strategy,
+    parametrization_config = ParametrizationConfig(
+        parametrization_optimizer_type,
+        scaling_strategy=parametrization_scaling_strategy,
         width_scalings={
-            MuPHyperParam.d_model: 2,
-            MuPHyperParam.hidden_size: 0.7,
-            MuPHyperParam.head_dim: 2,
+            ParametrizationHyperParam.d_model: 2,
+            ParametrizationHyperParam.hidden_size: 0.7,
+            ParametrizationHyperParam.head_dim: 2,
         },
     )
-    mup = mup_config.build({MuPHyperParam.d_model, MuPHyperParam.hidden_size}, None)
+    parametrization = parametrization_config.build({ParametrizationHyperParam.d_model, ParametrizationHyperParam.hidden_size}, None)
 
-    torch.testing.assert_close(mup.input_multiplier, expected_multiplier)
+    torch.testing.assert_close(parametrization.input_multiplier, expected_multiplier)
 
 
 @pytest.mark.parametrize(
-    "mup_optimizer_type, mup_scaling_strategy, expected_multiplier",
+    "parametrization_optimizer_type, parametrization_scaling_strategy, expected_multiplier",
     [
-        pytest.param(MuPOptimizerType.adam, MuPScalingStrategy.constant_inputs, None),
-        pytest.param(MuPOptimizerType.adam, MuPScalingStrategy.constant_lr, 1 / 2),
+        pytest.param(ParametrizationOptimizerType.adam, ParametrizationScalingStrategy.constant_inputs, None),
+        pytest.param(ParametrizationOptimizerType.adam, ParametrizationScalingStrategy.constant_lr, 1 / 2),
         pytest.param(
-            MuPOptimizerType.adam, MuPScalingStrategy.constant_init_std, 1 / (2 ** (1 / 2))
+            ParametrizationOptimizerType.adam, ParametrizationScalingStrategy.constant_init_std, 1 / (2 ** (1 / 2))
         ),
     ],
 )
-def test_mup_input_multiplier_scaling_input_and_output(
-    mup_optimizer_type, mup_scaling_strategy, expected_multiplier
+def test_parametrization_input_multiplier_scaling_input_and_output(
+    parametrization_optimizer_type, parametrization_scaling_strategy, expected_multiplier
 ):
-    mup_config = MuPConfig(
-        mup_optimizer_type,
-        scaling_strategy=mup_scaling_strategy,
+    parametrization_config = ParametrizationConfig(
+        parametrization_optimizer_type,
+        scaling_strategy=parametrization_scaling_strategy,
         width_scalings={
-            MuPHyperParam.d_model: 2,
-            MuPHyperParam.hidden_size: 0.7,
-            MuPHyperParam.head_dim: 2,
+            ParametrizationHyperParam.d_model: 2,
+            ParametrizationHyperParam.hidden_size: 0.7,
+            ParametrizationHyperParam.head_dim: 2,
         },
     )
-    mup = mup_config.build({MuPHyperParam.d_model}, {MuPHyperParam.hidden_size})
+    parametrization = parametrization_config.build({ParametrizationHyperParam.d_model}, {ParametrizationHyperParam.hidden_size})
 
-    torch.testing.assert_close(mup.input_multiplier, expected_multiplier)
+    torch.testing.assert_close(parametrization.input_multiplier, expected_multiplier)
 
 
 @pytest.mark.parametrize(
-    "mup_optimizer_type, mup_scaling_strategy, expected_multiplier",
+    "parametrization_optimizer_type, parametrization_scaling_strategy, expected_multiplier",
     [
-        pytest.param(MuPOptimizerType.adam, MuPScalingStrategy.constant_inputs, 1 / (2 * 0.7)),
-        pytest.param(MuPOptimizerType.adam, MuPScalingStrategy.constant_lr, None),
-        pytest.param(MuPOptimizerType.adam, MuPScalingStrategy.constant_init_std, None),
+        pytest.param(ParametrizationOptimizerType.adam, ParametrizationScalingStrategy.constant_inputs, 1 / (2 * 0.7)),
+        pytest.param(ParametrizationOptimizerType.adam, ParametrizationScalingStrategy.constant_lr, None),
+        pytest.param(ParametrizationOptimizerType.adam, ParametrizationScalingStrategy.constant_init_std, None),
     ],
 )
-def test_mup_init_std_multiplier_scaling_input(
-    mup_optimizer_type, mup_scaling_strategy, expected_multiplier
+def test_parametrization_init_std_multiplier_scaling_input(
+    parametrization_optimizer_type, parametrization_scaling_strategy, expected_multiplier
 ):
-    mup_config = MuPConfig(
-        mup_optimizer_type,
-        scaling_strategy=mup_scaling_strategy,
+    parametrization_config = ParametrizationConfig(
+        parametrization_optimizer_type,
+        scaling_strategy=parametrization_scaling_strategy,
         width_scalings={
-            MuPHyperParam.d_model: 2,
-            MuPHyperParam.hidden_size: 0.7,
-            MuPHyperParam.head_dim: 2,
+            ParametrizationHyperParam.d_model: 2,
+            ParametrizationHyperParam.hidden_size: 0.7,
+            ParametrizationHyperParam.head_dim: 2,
         },
     )
-    mup = mup_config.build({MuPHyperParam.d_model, MuPHyperParam.hidden_size}, None)
+    parametrization = parametrization_config.build({ParametrizationHyperParam.d_model, ParametrizationHyperParam.hidden_size}, None)
 
-    torch.testing.assert_close(mup.init_std_multiplier, expected_multiplier)
+    torch.testing.assert_close(parametrization.init_std_multiplier, expected_multiplier)
 
 
 @pytest.mark.parametrize(
-    "mup_optimizer_type, mup_scaling_strategy, expected_multiplier",
+    "parametrization_optimizer_type, parametrization_scaling_strategy, expected_multiplier",
     [
-        pytest.param(MuPOptimizerType.adam, MuPScalingStrategy.constant_inputs, 1 / (2 ** (1 / 2))),
-        pytest.param(MuPOptimizerType.adam, MuPScalingStrategy.constant_lr, 2 ** (1 / 2)),
-        pytest.param(MuPOptimizerType.adam, MuPScalingStrategy.constant_init_std, None),
+        pytest.param(ParametrizationOptimizerType.adam, ParametrizationScalingStrategy.constant_inputs, 1 / (2 ** (1 / 2))),
+        pytest.param(ParametrizationOptimizerType.adam, ParametrizationScalingStrategy.constant_lr, 2 ** (1 / 2)),
+        pytest.param(ParametrizationOptimizerType.adam, ParametrizationScalingStrategy.constant_init_std, None),
     ],
 )
-def test_mup_init_std_multiplier_scaling_input_and_output(
-    mup_optimizer_type, mup_scaling_strategy, expected_multiplier
+def test_parametrization_init_std_multiplier_scaling_input_and_output(
+    parametrization_optimizer_type, parametrization_scaling_strategy, expected_multiplier
 ):
-    mup_config = MuPConfig(
-        mup_optimizer_type,
-        scaling_strategy=mup_scaling_strategy,
+    parametrization_config = ParametrizationConfig(
+        parametrization_optimizer_type,
+        scaling_strategy=parametrization_scaling_strategy,
         width_scalings={
-            MuPHyperParam.d_model: 2,
-            MuPHyperParam.hidden_size: 0.7,
-            MuPHyperParam.head_dim: 2,
+            ParametrizationHyperParam.d_model: 2,
+            ParametrizationHyperParam.hidden_size: 0.7,
+            ParametrizationHyperParam.head_dim: 2,
         },
     )
-    mup = mup_config.build({MuPHyperParam.d_model}, {MuPHyperParam.hidden_size})
+    parametrization = parametrization_config.build({ParametrizationHyperParam.d_model}, {ParametrizationHyperParam.hidden_size})
 
-    torch.testing.assert_close(mup.init_std_multiplier, expected_multiplier)
+    torch.testing.assert_close(parametrization.init_std_multiplier, expected_multiplier)
 
 
 @pytest.mark.parametrize(
-    "mup_optimizer_type, mup_scaling_strategy",
+    "parametrization_optimizer_type, parametrization_scaling_strategy",
     [
-        pytest.param(mup_optimizer_type, scaling_strategy)
-        for mup_optimizer_type in MuPOptimizerType
-        for scaling_strategy in MuPScalingStrategy
+        pytest.param(parametrization_optimizer_type, scaling_strategy)
+        for parametrization_optimizer_type in ParametrizationOptimizerType
+        for scaling_strategy in ParametrizationScalingStrategy
     ],
 )
-def test_mup_no_width_scaling_same_output(mup_optimizer_type, mup_scaling_strategy):
+def test_parametrization_no_width_scaling_same_output(parametrization_optimizer_type, parametrization_scaling_strategy):
     model_config = get_transformer_config()
 
-    mup_config = MuPConfig(
-        mup_optimizer_type, width_scalings={}, scaling_strategy=mup_scaling_strategy
+    parametrization_config = ParametrizationConfig(
+        parametrization_optimizer_type, width_scalings={}, scaling_strategy=parametrization_scaling_strategy
     )
-    mup_model_config = get_transformer_config(mup_config)
+    parametrization_model_config = get_transformer_config(parametrization_config)
 
     model = model_config.build()
-    mup_model = mup_model_config.build()
+    parametrization_model = parametrization_model_config.build()
 
     model.init_weights()
-    mup_model.to_empty(device=model.device)
-    mup_model.load_state_dict(model.state_dict())
+    parametrization_model.to_empty(device=model.device)
+    parametrization_model.load_state_dict(model.state_dict())
 
     input_ids = get_transformer_inputs()
     logits = model(input_ids=input_ids)
-    mup_logits = mup_model(input_ids=input_ids)
+    parametrization_logits = parametrization_model(input_ids=input_ids)
 
-    torch.testing.assert_close(logits, mup_logits)
+    torch.testing.assert_close(logits, parametrization_logits)
 
 
 @pytest.mark.parametrize(
-    "optim_config_cls, mup_scaling_strategy",
+    "optim_config_cls, parametrization_scaling_strategy",
     [
         pytest.param(optim_config_cls, scaling_strategy)
         for optim_config_cls in [AdamConfig, AdamWConfig, SkipStepAdamWConfig]
-        for scaling_strategy in MuPScalingStrategy
+        for scaling_strategy in ParametrizationScalingStrategy
     ],
 )
-def test_mup_no_width_scaling_same_optim_groups(
-    optim_config_cls: Type[OptimConfig], mup_scaling_strategy
+def test_parametrization_no_width_scaling_same_optim_groups(
+    optim_config_cls: Type[OptimConfig], parametrization_scaling_strategy
 ):
     model_config = get_transformer_config()
 
-    mup_optimizer_type = optim_config_cls.mup_optimizer_type()
-    assert mup_optimizer_type is not None, "Optimizer does not support muP"
+    parametrization_optimizer_type = optim_config_cls.parametrization_optimizer_type()
+    assert parametrization_optimizer_type is not None, "Optimizer does not support parametrization"
 
-    mup_config = MuPConfig(
-        mup_optimizer_type, width_scalings={}, scaling_strategy=mup_scaling_strategy
+    parametrization_config = ParametrizationConfig(
+        parametrization_optimizer_type, width_scalings={}, scaling_strategy=parametrization_scaling_strategy
     )
-    mup_model_config = get_transformer_config(mup_config)
+    parametrization_model_config = get_transformer_config(parametrization_config)
 
     model = model_config.build()
-    mup_model = mup_model_config.build()
+    parametrization_model = parametrization_model_config.build()
 
     optim_config = optim_config_cls(
         lr=1e-2,
@@ -223,41 +223,41 @@ def test_mup_no_width_scaling_same_optim_groups(
     )
 
     model.init_weights()
-    mup_model.to_empty(device=model.device)
-    mup_model.load_state_dict(model.state_dict())
+    parametrization_model.to_empty(device=model.device)
+    parametrization_model.load_state_dict(model.state_dict())
 
     optim: torch.optim.Optimizer = optim_config.build(model)
-    mup_optim: torch.optim.Optimizer = optim_config.build(mup_model)
+    parametrization_optim: torch.optim.Optimizer = optim_config.build(parametrization_model)
 
-    torch.testing.assert_close(optim.param_groups, mup_optim.param_groups)
+    torch.testing.assert_close(optim.param_groups, parametrization_optim.param_groups)
 
 
 @pytest.mark.parametrize(
-    "mup_optimizer_type",
-    [pytest.param(mup_optimizer_type) for mup_optimizer_type in MuPOptimizerType],
+    "parametrization_optimizer_type",
+    [pytest.param(parametrization_optimizer_type) for parametrization_optimizer_type in ParametrizationOptimizerType],
 )
-def test_mup_no_input_scaling_same_output(mup_optimizer_type):
+def test_parametrization_no_input_scaling_same_output(parametrization_optimizer_type):
     model_config = get_transformer_config()
 
-    mup_config = MuPConfig(
-        mup_optimizer_type,
-        scaling_strategy=MuPScalingStrategy.constant_inputs,
-        width_scalings={MuPHyperParam.hidden_size: 2.0},
+    parametrization_config = ParametrizationConfig(
+        parametrization_optimizer_type,
+        scaling_strategy=ParametrizationScalingStrategy.constant_inputs,
+        width_scalings={ParametrizationHyperParam.hidden_size: 2.0},
     )
-    mup_model_config = get_transformer_config(mup_config)
+    parametrization_model_config = get_transformer_config(parametrization_config)
 
     model = model_config.build()
-    mup_model = mup_model_config.build()
+    parametrization_model = parametrization_model_config.build()
 
     model.init_weights()
-    mup_model.to_empty(device=model.device)
-    mup_model.load_state_dict(model.state_dict())
+    parametrization_model.to_empty(device=model.device)
+    parametrization_model.load_state_dict(model.state_dict())
 
     input_ids = get_transformer_inputs()
     logits = model(input_ids=input_ids)
-    mup_logits = mup_model(input_ids=input_ids)
+    parametrization_logits = parametrization_model(input_ids=input_ids)
 
-    torch.testing.assert_close(logits, mup_logits)
+    torch.testing.assert_close(logits, parametrization_logits)
 
 
 @pytest.mark.parametrize(
@@ -268,25 +268,25 @@ def test_mup_no_input_scaling_same_output(mup_optimizer_type):
         pytest.param(SkipStepAdamWConfig),
     ],
 )
-def test_mup_no_lr_scaling_same_optim_groups(optim_config_cls):
+def test_parametrization_no_lr_scaling_same_optim_groups(optim_config_cls):
     model_config = get_transformer_config()
 
-    mup_optimizer_type = optim_config_cls.mup_optimizer_type()
-    assert mup_optimizer_type is not None, "Optimizer does not support muP"
+    parametrization_optimizer_type = optim_config_cls.parametrization_optimizer_type()
+    assert parametrization_optimizer_type is not None, "Optimizer does not support parametrization"
 
-    mup_config = MuPConfig(
-        mup_optimizer_type,
-        scaling_strategy=MuPScalingStrategy.constant_lr,
+    parametrization_config = ParametrizationConfig(
+        parametrization_optimizer_type,
+        scaling_strategy=ParametrizationScalingStrategy.constant_lr,
         width_scalings={
-            MuPHyperParam.d_model: 2.0,
-            MuPHyperParam.head_dim: 2.0,
-            MuPHyperParam.hidden_size: 2.0,
+            ParametrizationHyperParam.d_model: 2.0,
+            ParametrizationHyperParam.head_dim: 2.0,
+            ParametrizationHyperParam.hidden_size: 2.0,
         },
     )
-    mup_model_config = get_transformer_config(mup_config)
+    parametrization_model_config = get_transformer_config(parametrization_config)
 
     model = model_config.build()
-    mup_model = mup_model_config.build()
+    parametrization_model = parametrization_model_config.build()
 
     optim_config = optim_config_cls(
         lr=1e-2,
@@ -297,13 +297,13 @@ def test_mup_no_lr_scaling_same_optim_groups(optim_config_cls):
     )
 
     model.init_weights()
-    mup_model.to_empty(device=model.device)
-    mup_model.load_state_dict(model.state_dict())
+    parametrization_model.to_empty(device=model.device)
+    parametrization_model.load_state_dict(model.state_dict())
 
     optim: torch.optim.Optimizer = optim_config.build(model)
-    mup_optim: torch.optim.Optimizer = optim_config.build(mup_model)
+    parametrization_optim: torch.optim.Optimizer = optim_config.build(parametrization_model)
 
-    torch.testing.assert_close(optim.param_groups, mup_optim.param_groups)
+    torch.testing.assert_close(optim.param_groups, parametrization_optim.param_groups)
 
 
 @contextmanager
@@ -340,7 +340,7 @@ def _submodule_output_collection(model: torch.nn.Module):
             handle.remove()
 
 
-def train_and_collect_mup_data(
+def train_and_collect_parametrization_data(
     model_generator: Callable[[int, int], Tuple[int, torch.nn.Module]],
     optim_config: OptimConfig,
     num_widths: int,
@@ -412,7 +412,7 @@ def train_and_collect_mup_data(
                 _ = model(_get_input(is_training=False, input_dim=input_dim).to(device=device))
                 seeded_final_submodule_outputs.append(submodule_outputs)
 
-    # First piece of muP data is average abs value of elements at initialization
+    # First piece of parametrization data is average abs value of elements at initialization
     # (a.k.a. "coordinate magnitudes" at init).
     seeded_init_coord_magnitudes: defaultdict[str, List[float]] = defaultdict(list)
     for initial_submodule_outputs in seeded_initial_submodule_outputs:
@@ -421,7 +421,7 @@ def train_and_collect_mup_data(
                 output.float().norm(p=1.0).item() / output.numel()
             )
 
-    # Second piece of muP data is std deviation of the change in "coordinates"
+    # Second piece of parametrization data is std deviation of the change in "coordinates"
     # from initialization to end of training.
     seeded_coord_change_stds: defaultdict[str, List[float]] = defaultdict(list)
     for initial_submodule_outputs, final_submodule_outputs in zip(
@@ -439,26 +439,26 @@ def train_and_collect_mup_data(
 
 
 @pytest.mark.parametrize(
-    "optim_config_cls, mup_scaling_strategy",
+    "optim_config_cls, parametrization_scaling_strategy",
     [
         pytest.param(optim_config_cls, scaling_strategy)
         for optim_config_cls in [AdamConfig, AdamWConfig, SkipStepAdamWConfig]
-        for scaling_strategy in MuPScalingStrategy
+        for scaling_strategy in ParametrizationScalingStrategy
     ],
 )
-def test_ffn_mup_const_coord_norm_at_init_scaling_input_output(
-    optim_config_cls, mup_scaling_strategy
+def test_ffn_parametrization_const_coord_norm_at_init_scaling_input_output(
+    optim_config_cls, parametrization_scaling_strategy
 ):
     """
-    This is the most important (and slowest) test of muP validity. It runs a base model and its muP
+    This is the most important (and slowest) test of parametrization validity. It runs a base model and its parametrization
     up-/down-scalings, and checks that the magnitude of the coordinates (i.e. entries) of the
     intermediate activations are not growing/decaying.
 
-    Growing coordinates are never expected in muP beyond noise, so the acceptable threshold of growth
+    Growing coordinates are never expected in parametrization beyond noise, so the acceptable threshold of growth
     is set closer to 1. Decaying is expected in attention logits and layers with scaling inputs at initialization,
-    and in general it takes a while for muP to get rid of decaying. Thus decay threshold is set further from 1.
+    and in general it takes a while for parametrization to get rid of decaying. Thus decay threshold is set further from 1.
     These thresholds are broken very easily by the standard parametrization but we try to keep them tight
-    because muP bugs might not break them as easily.
+    because parametrization bugs might not break them as easily.
     """
     MIN_NORMALIZED_SLOPE = -0.05
     MAX_NORMALIZED_SLOPE = 0.05
@@ -474,26 +474,26 @@ def test_ffn_mup_const_coord_norm_at_init_scaling_input_output(
         lr=1e-3,
         betas=(0.9, 0.95),
     )
-    mup_optimizer_type = optim_config.mup_optimizer_type()
-    assert mup_optimizer_type is not None, "Optimizer does not support muP"
+    parametrization_optimizer_type = optim_config.parametrization_optimizer_type()
+    assert parametrization_optimizer_type is not None, "Optimizer does not support parametrization"
 
     def generate_model(width_idx: int, seed_idx: int) -> Tuple[int, torch.nn.Module]:
         d_model = D_MODELS[width_idx]
         hidden_size = HIDDEN_SIZES[width_idx]
 
-        mup = MuPConfig(
-            mup_optimizer_type,
-            scaling_strategy=mup_scaling_strategy,
+        parametrization = ParametrizationConfig(
+            parametrization_optimizer_type,
+            scaling_strategy=parametrization_scaling_strategy,
             width_scalings={
-                MuPHyperParam.d_model: d_model / BASE_D_MODEL,
-                MuPHyperParam.hidden_size: hidden_size / BASE_HIDDEN_SIZE,
-                MuPHyperParam.head_dim: d_model / BASE_D_MODEL,
+                ParametrizationHyperParam.d_model: d_model / BASE_D_MODEL,
+                ParametrizationHyperParam.hidden_size: hidden_size / BASE_HIDDEN_SIZE,
+                ParametrizationHyperParam.head_dim: d_model / BASE_D_MODEL,
             },
         )
 
         ffn = FeedForwardConfig(
             hidden_size,
-            mup=mup,
+            parametrization=parametrization,
             bias=False,
         ).build(d_model)
 
@@ -507,7 +507,7 @@ def test_ffn_mup_const_coord_norm_at_init_scaling_input_output(
 
         return d_model, ffn
 
-    coord_magnitudes, activation_shapes = train_and_collect_mup_data(
+    coord_magnitudes, activation_shapes = train_and_collect_parametrization_data(
         generate_model,
         optim_config,
         len(D_MODELS),
@@ -538,26 +538,26 @@ def test_ffn_mup_const_coord_norm_at_init_scaling_input_output(
 
 @requires_gpu
 @pytest.mark.parametrize(
-    "optim_config_cls, mup_scaling_strategy",
+    "optim_config_cls, parametrization_scaling_strategy",
     [
         pytest.param(optim_config_cls, scaling_strategy)
         for optim_config_cls in [AdamConfig, AdamWConfig, SkipStepAdamWConfig]
-        for scaling_strategy in MuPScalingStrategy
+        for scaling_strategy in ParametrizationScalingStrategy
     ],
 )
-def test_moe_mup_const_coord_norm_at_init_scaling_input_output(
-    optim_config_cls, mup_scaling_strategy
+def test_moe_parametrization_const_coord_norm_at_init_scaling_input_output(
+    optim_config_cls, parametrization_scaling_strategy
 ):
     """
-    This is the most important (and slowest) test of muP validity. It runs a base model and its muP
+    This is the most important (and slowest) test of parametrization validity. It runs a base model and its parametrization
     up-/down-scalings, and checks that the magnitude of the coordinates (i.e. entries) of the
     intermediate activations are not growing/decaying.
 
-    Growing coordinates are never expected in muP beyond noise, so the acceptable threshold of growth
+    Growing coordinates are never expected in parametrization beyond noise, so the acceptable threshold of growth
     is set closer to 1. Decaying is expected in attention logits and layers with scaling inputs at initialization,
-    and in general it takes a while for muP to get rid of decaying. Thus decay threshold is set further from 1.
+    and in general it takes a while for parametrization to get rid of decaying. Thus decay threshold is set further from 1.
     These thresholds are broken very easily by the standard parametrization but we try to keep them tight
-    because muP bugs might not break them as easily.
+    because parametrization bugs might not break them as easily.
     """
     MIN_NORMALIZED_SLOPE = -0.05
     MAX_NORMALIZED_SLOPE = 0.05
@@ -580,8 +580,8 @@ def test_moe_mup_const_coord_norm_at_init_scaling_input_output(
         lr=1e-3,
         betas=(0.9, 0.95),
     )
-    mup_optimizer_type = optim_config.mup_optimizer_type()
-    assert mup_optimizer_type is not None, "Optimizer does not support muP"
+    parametrization_optimizer_type = optim_config.parametrization_optimizer_type()
+    assert parametrization_optimizer_type is not None, "Optimizer does not support parametrization"
 
     def generate_model(width_idx: int, seed_idx: int) -> Tuple[int, torch.nn.Module]:
         d_model = D_MODELS[width_idx]
@@ -590,15 +590,15 @@ def test_moe_mup_const_coord_norm_at_init_scaling_input_output(
         top_k = TOP_K[width_idx]
         shared_expert_hidden_size = SHARED_EXPERT_HIDDEN_SIZES[width_idx]
 
-        mup = MuPConfig(
-            mup_optimizer_type,
-            scaling_strategy=mup_scaling_strategy,
+        parametrization = ParametrizationConfig(
+            parametrization_optimizer_type,
+            scaling_strategy=parametrization_scaling_strategy,
             width_scalings={
-                MuPHyperParam.d_model: d_model / BASE_D_MODEL,
-                MuPHyperParam.hidden_size: hidden_size / BASE_HIDDEN_SIZE,
-                MuPHyperParam.head_dim: d_model / BASE_D_MODEL,
-                MuPHyperParam.num_experts: num_experts / BASE_NUM_EXPERTS,
-                MuPHyperParam.shared_expert_hidden_size: shared_expert_hidden_size
+                ParametrizationHyperParam.d_model: d_model / BASE_D_MODEL,
+                ParametrizationHyperParam.hidden_size: hidden_size / BASE_HIDDEN_SIZE,
+                ParametrizationHyperParam.head_dim: d_model / BASE_D_MODEL,
+                ParametrizationHyperParam.num_experts: num_experts / BASE_NUM_EXPERTS,
+                ParametrizationHyperParam.shared_expert_hidden_size: shared_expert_hidden_size
                 / BASE_SHARED_EXPERT_HIDDEN_SIZE,
             },
         )
@@ -612,12 +612,12 @@ def test_moe_mup_const_coord_norm_at_init_scaling_input_output(
             num_experts=num_experts,
             hidden_size=hidden_size,
             router=router,
-            mup=mup,
+            parametrization=parametrization,
             shared_mlp=FeedForwardConfig(
                 shared_expert_hidden_size,
-                mup=mup,
+                parametrization=parametrization,
                 bias=False,
-                hidden_size_mup_hyper_param=MuPHyperParam.shared_expert_hidden_size,
+                hidden_size_parametrization_hyper_param=ParametrizationHyperParam.shared_expert_hidden_size,
             ),
         ).build(d_model, init_device="cuda")
 
@@ -631,7 +631,7 @@ def test_moe_mup_const_coord_norm_at_init_scaling_input_output(
 
         return d_model, moe
 
-    coord_magnitudes, activation_shapes = train_and_collect_mup_data(
+    coord_magnitudes, activation_shapes = train_and_collect_parametrization_data(
         generate_model,
         optim_config,
         len(D_MODELS),
@@ -672,26 +672,26 @@ def test_moe_mup_const_coord_norm_at_init_scaling_input_output(
 
 
 @pytest.mark.parametrize(
-    "optim_config_cls, mup_scaling_strategy",
+    "optim_config_cls, parametrization_scaling_strategy",
     [
         pytest.param(optim_config_cls, scaling_strategy)
         for optim_config_cls in [AdamConfig, AdamWConfig, SkipStepAdamWConfig]
-        for scaling_strategy in MuPScalingStrategy
+        for scaling_strategy in ParametrizationScalingStrategy
     ],
 )
-def test_ffn_mup_non_growing_coord_norm_scaling_input_output(
-    optim_config_cls, mup_scaling_strategy
+def test_ffn_parametrization_non_growing_coord_norm_scaling_input_output(
+    optim_config_cls, parametrization_scaling_strategy
 ):
     """
-    This is the most important (and slowest) test of muP validity. It runs a base model and its muP
+    This is the most important (and slowest) test of parametrization validity. It runs a base model and its parametrization
     up-/down-scalings, and checks that the magnitude of the coordinates (i.e. entries) of the
     intermediate activations are not growing/decaying.
 
-    Growing coordinates are never expected in muP beyond noise, so the acceptable threshold of growth
+    Growing coordinates are never expected in parametrization beyond noise, so the acceptable threshold of growth
     is set closer to 1. Decaying is expected in attention logits and layers with scaling inputs at initialization,
-    and in general it takes a while for muP to get rid of decaying. Thus decay threshold is set further from 1.
+    and in general it takes a while for parametrization to get rid of decaying. Thus decay threshold is set further from 1.
     These thresholds are broken very easily by the standard parametrization but we try to keep them tight
-    because muP bugs might not break them as easily.
+    because parametrization bugs might not break them as easily.
     """
     MIN_NORMALIZED_SLOPE = -0.5
     MAX_NORMALIZED_SLOPE = 0.05
@@ -707,26 +707,26 @@ def test_ffn_mup_non_growing_coord_norm_scaling_input_output(
         lr=1e-3,
         betas=(0.9, 0.95),
     )
-    mup_optimizer_type = optim_config.mup_optimizer_type()
-    assert mup_optimizer_type is not None, "Optimizer does not support muP"
+    parametrization_optimizer_type = optim_config.parametrization_optimizer_type()
+    assert parametrization_optimizer_type is not None, "Optimizer does not support parametrization"
 
     def generate_model(width_idx: int, seed_idx: int) -> Tuple[int, torch.nn.Module]:
         d_model = D_MODELS[width_idx]
         hidden_size = HIDDEN_SIZES[width_idx]
 
-        mup = MuPConfig(
-            mup_optimizer_type,
-            scaling_strategy=mup_scaling_strategy,
+        parametrization = ParametrizationConfig(
+            parametrization_optimizer_type,
+            scaling_strategy=parametrization_scaling_strategy,
             width_scalings={
-                MuPHyperParam.d_model: d_model / BASE_D_MODEL,
-                MuPHyperParam.hidden_size: hidden_size / BASE_HIDDEN_SIZE,
-                MuPHyperParam.head_dim: d_model / BASE_D_MODEL,
+                ParametrizationHyperParam.d_model: d_model / BASE_D_MODEL,
+                ParametrizationHyperParam.hidden_size: hidden_size / BASE_HIDDEN_SIZE,
+                ParametrizationHyperParam.head_dim: d_model / BASE_D_MODEL,
             },
         )
 
         ffn = FeedForwardConfig(
             hidden_size,
-            mup=mup,
+            parametrization=parametrization,
             bias=False,
         ).build(d_model)
 
@@ -740,7 +740,7 @@ def test_ffn_mup_non_growing_coord_norm_scaling_input_output(
 
         return d_model, ffn
 
-    coord_magnitudes, activation_shapes = train_and_collect_mup_data(
+    coord_magnitudes, activation_shapes = train_and_collect_parametrization_data(
         generate_model,
         optim_config,
         len(D_MODELS),
@@ -770,24 +770,24 @@ def test_ffn_mup_non_growing_coord_norm_scaling_input_output(
 
 
 @pytest.mark.parametrize(
-    "optim_config_cls, mup_scaling_strategy",
+    "optim_config_cls, parametrization_scaling_strategy",
     [
         pytest.param(optim_config_cls, scaling_strategy)
         for optim_config_cls in [AdamConfig, AdamWConfig, SkipStepAdamWConfig]
-        for scaling_strategy in MuPScalingStrategy
+        for scaling_strategy in ParametrizationScalingStrategy
     ],
 )
-def test_ffn_mup_non_growing_coord_norm_scaling_d_model(optim_config_cls, mup_scaling_strategy):
+def test_ffn_parametrization_non_growing_coord_norm_scaling_d_model(optim_config_cls, parametrization_scaling_strategy):
     """
-    This is the most important (and slowest) test of muP validity. It runs a base model and its muP
+    This is the most important (and slowest) test of parametrization validity. It runs a base model and its parametrization
     up-/down-scalings, and checks that the magnitude of the coordinates (i.e. entries) of the
     intermediate activations are not growing/decaying.
 
-    Growing coordinates are never expected in muP beyond noise, so the acceptable threshold of growth
+    Growing coordinates are never expected in parametrization beyond noise, so the acceptable threshold of growth
     is set closer to 1. Decaying is expected in attention logits and layers with scaling inputs at initialization,
-    and in general it takes a while for muP to get rid of decaying. Thus decay threshold is set further from 1.
+    and in general it takes a while for parametrization to get rid of decaying. Thus decay threshold is set further from 1.
     These thresholds are broken very easily by the standard parametrization but we try to keep them tight
-    because muP bugs might not break them as easily.
+    because parametrization bugs might not break them as easily.
     """
     MIN_NORMALIZED_SLOPE = -0.3
     MAX_NORMALIZED_SLOPE = 0.05
@@ -803,26 +803,26 @@ def test_ffn_mup_non_growing_coord_norm_scaling_d_model(optim_config_cls, mup_sc
         lr=1e-3,
         betas=(0.9, 0.95),
     )
-    mup_optimizer_type = optim_config.mup_optimizer_type()
-    assert mup_optimizer_type is not None, "Optimizer does not support muP"
+    parametrization_optimizer_type = optim_config.parametrization_optimizer_type()
+    assert parametrization_optimizer_type is not None, "Optimizer does not support parametrization"
 
     def generate_model(width_idx: int, seed_idx: int) -> Tuple[int, torch.nn.Module]:
         d_model = D_MODELS[width_idx]
         hidden_size = HIDDEN_SIZES[width_idx]
 
-        mup = MuPConfig(
-            mup_optimizer_type,
-            scaling_strategy=mup_scaling_strategy,
+        parametrization = ParametrizationConfig(
+            parametrization_optimizer_type,
+            scaling_strategy=parametrization_scaling_strategy,
             width_scalings={
-                MuPHyperParam.d_model: d_model / BASE_D_MODEL,
-                MuPHyperParam.hidden_size: hidden_size / BASE_HIDDEN_SIZE,
-                MuPHyperParam.head_dim: d_model / BASE_D_MODEL,
+                ParametrizationHyperParam.d_model: d_model / BASE_D_MODEL,
+                ParametrizationHyperParam.hidden_size: hidden_size / BASE_HIDDEN_SIZE,
+                ParametrizationHyperParam.head_dim: d_model / BASE_D_MODEL,
             },
         )
 
         ffn = FeedForwardConfig(
             hidden_size,
-            mup=mup,
+            parametrization=parametrization,
             bias=False,
         ).build(d_model)
 
@@ -836,7 +836,7 @@ def test_ffn_mup_non_growing_coord_norm_scaling_d_model(optim_config_cls, mup_sc
 
         return d_model, ffn
 
-    coord_magnitudes, activation_shapes = train_and_collect_mup_data(
+    coord_magnitudes, activation_shapes = train_and_collect_parametrization_data(
         generate_model,
         optim_config,
         len(D_MODELS),
@@ -866,24 +866,24 @@ def test_ffn_mup_non_growing_coord_norm_scaling_d_model(optim_config_cls, mup_sc
 
 
 @pytest.mark.parametrize(
-    "optim_config_cls, mup_scaling_strategy",
+    "optim_config_cls, parametrization_scaling_strategy",
     [
         pytest.param(optim_config_cls, scaling_strategy)
         for optim_config_cls in [AdamConfig, AdamWConfig, SkipStepAdamWConfig]
-        for scaling_strategy in MuPScalingStrategy
+        for scaling_strategy in ParametrizationScalingStrategy
     ],
 )
-def test_mup_non_growing_coordinates(optim_config_cls: Type[OptimConfig], mup_scaling_strategy):
+def test_parametrization_non_growing_coordinates(optim_config_cls: Type[OptimConfig], parametrization_scaling_strategy):
     """
-    This is the most important (and slowest) test of muP validity. It runs a base model and its muP
+    This is the most important (and slowest) test of parametrization validity. It runs a base model and its parametrization
     up-/down-scalings, and checks that the magnitude of the coordinates (i.e. entries) of the
     intermediate activations are not growing/decaying.
 
-    Growing coordinates are never expected in muP beyond noise, so the acceptable threshold of growth
+    Growing coordinates are never expected in parametrization beyond noise, so the acceptable threshold of growth
     is set closer to 1. Decaying is expected in attention logits and layers with scaling inputs at initialization,
-    and in general it takes a while for muP to get rid of decaying. Thus decay threshold is set further from 1.
+    and in general it takes a while for parametrization to get rid of decaying. Thus decay threshold is set further from 1.
     These thresholds are broken very easily by the standard parametrization but we try to keep them tight
-    because muP bugs might not break them as easily.
+    because parametrization bugs might not break them as easily.
     """
     MIN_NORMALIZED_SLOPE = -0.6
     MAX_NORMALIZED_SLOPE = 0.05
@@ -902,13 +902,13 @@ def test_mup_non_growing_coordinates(optim_config_cls: Type[OptimConfig], mup_sc
             OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
         ],
     )
-    mup_optimizer_type = optim_config.mup_optimizer_type()
-    assert mup_optimizer_type is not None, "Optimizer does not support muP"
+    parametrization_optimizer_type = optim_config.parametrization_optimizer_type()
+    assert parametrization_optimizer_type is not None, "Optimizer does not support parametrization"
 
     def generate_model(width_idx: int, seed_idx: int) -> Tuple[int, torch.nn.Module]:
         d_model_multiplier = D_MODEL_MULTIPLIERS[width_idx]
 
-        non_mup_model_config = get_transformer_config(
+        non_parametrization_model_config = get_transformer_config(
             None,
             vocab_size=VOCAB_SIZE,
             d_model_multiplier=d_model_multiplier,
@@ -921,14 +921,14 @@ def test_mup_non_growing_coordinates(optim_config_cls: Type[OptimConfig], mup_sc
             init_seed=seed_idx,
         )
 
-        mup_config = MuPConfig(
-            mup_optimizer_type,
-            scaling_strategy=mup_scaling_strategy,
-            width_scalings=non_mup_model_config.get_mup_width_scalings(base_model_config),
+        parametrization_config = ParametrizationConfig(
+            parametrization_optimizer_type,
+            scaling_strategy=parametrization_scaling_strategy,
+            width_scalings=non_parametrization_model_config.get_parametrization_width_scalings(base_model_config),
         )
 
         model_config = get_transformer_config(
-            mup_config,
+            parametrization_config,
             vocab_size=VOCAB_SIZE,
             d_model_multiplier=d_model_multiplier,
             init_seed=seed_idx,
@@ -940,7 +940,7 @@ def test_mup_non_growing_coordinates(optim_config_cls: Type[OptimConfig], mup_sc
 
         return SEQ_LEN, model
 
-    seeded_init_coord_magnitudes, seeded_coord_change_stds = train_and_collect_mup_data(
+    seeded_init_coord_magnitudes, seeded_coord_change_stds = train_and_collect_parametrization_data(
         generate_model,
         optim_config,
         len(D_MODEL_MULTIPLIERS),

@@ -5,7 +5,7 @@ import torch
 
 from ..config import DType
 from ..distributed.utils import get_local_tensor
-from ..nn.mup import MuPOptimizerType
+from ..nn.parametrization import ParametrizationOptimizerType
 from .config import OptimConfig
 from .skip_step_optimizer import SkipStepOptimizer
 
@@ -245,8 +245,8 @@ class AdamWConfig(OptimConfig):  # NOTE: omagaconf doesn't like "OptimConfig[tor
     fused: Optional[bool] = None
 
     @classmethod
-    def mup_optimizer_type(cls) -> Optional[MuPOptimizerType]:
-        return MuPOptimizerType.adam_coupled_wd
+    def parametrization_optimizer_type(cls) -> Optional[ParametrizationOptimizerType]:
+        return ParametrizationOptimizerType.adam_coupled_wd
 
     @classmethod
     def optimizer(cls) -> Type[torch.optim.AdamW]:
@@ -290,8 +290,8 @@ class SkipStepAdamWConfig(OptimConfig):
     """
 
     @classmethod
-    def mup_optimizer_type(cls) -> Optional[MuPOptimizerType]:
-        return MuPOptimizerType.adam_coupled_wd
+    def parametrization_optimizer_type(cls) -> Optional[ParametrizationOptimizerType]:
+        return ParametrizationOptimizerType.adam_coupled_wd
 
     @classmethod
     def optimizer(cls) -> Type[SkipStepAdamW]:

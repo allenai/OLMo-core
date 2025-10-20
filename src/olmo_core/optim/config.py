@@ -23,7 +23,7 @@ import torch.nn as nn
 
 from ..config import Config
 from ..exceptions import OLMoConfigurationError
-from ..nn.mup import MuP, MuPOptimizerType
+from ..nn.parametrization import Parametrization, ParametrizationOptimizerType
 from ..utils import get_default_device, move_to_device
 
 __all__ = [
@@ -150,57 +150,57 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
         )
         group_overrides.append(default_override)
 
-        named_mups = MuP.named_mups(model)
-        # If muP is scaling LR up/down, create separate parameter groups based on the new LRs.
-        if any(mup.lr_multiplier for _, mup in named_mups.items()):
+        named_parametrizations = Parametrization.named_parametrizations(model)
+        # If parametrization is scaling LR up/down, create separate parameter groups based on the new LRs.
+        if any(parametrization.lr_multiplier for _, parametrization in named_parametrizations.items()):
             if initial_lr is None:
-                raise OLMoConfigurationError("Initial LR must be provided for muP")
+                raise OLMoConfigurationError("Initial LR must be provided for parametrization")
 
-            mup_optimizer_type = self.mup_optimizer_type()
-            if mup_optimizer_type is None:
+            parametrization_optimizer_type = self.parametrization_optimizer_type()
+            if parametrization_optimizer_type is None:
                 raise OLMoConfigurationError(
-                    f"Optimizer class {self.__class__.__name__} does not support muP but model has muP configs"
+                    f"Optimizer class {self.__class__.__name__} does not support parametrization but model has parametrization configs"
                 )
 
-            if any(mup.optimizer != mup_optimizer_type for _, mup in named_mups.items()):
+            if any(parametrization.optimizer != parametrization_optimizer_type for _, parametrization in named_parametrizations.items()):
                 raise OLMoConfigurationError(
-                    f"muP objects found with optimizer type not matching expected type {self.mup_optimizer_type()}"
+                    f"parametrization objects found with optimizer type not matching expected type {self.parametrization_optimizer_type()}"
                 )
 
-            if mup_optimizer_type.coupled_weight_decay and default_weight_decay is None:
+            if parametrization_optimizer_type.coupled_weight_decay and default_weight_decay is None:
                 raise OLMoConfigurationError(
-                    "Weight decay is required when applying muP to an optimizer with coupled weight decay"
+                    "Weight decay is required when applying parametrization to an optimizer with coupled weight decay"
                 )
 
             new_group_overrides = []
             for go in group_overrides:
-                params_name_by_mup_lr_and_wd: defaultdict[
+                params_name_by_parametrization_lr_and_wd: defaultdict[
                     Tuple[float, Optional[float]], List[str]
                 ] = defaultdict(list)
                 for name in go.params:
-                    lr = MuP.scale_lr(named_mups.get(name), go.opts.get("lr", initial_lr))
+                    lr = Parametrization.scale_lr(named_parametrizations.get(name), go.opts.get("lr", initial_lr))
 
-                    if mup_optimizer_type.coupled_weight_decay:
+                    if parametrization_optimizer_type.coupled_weight_decay:
                         assert default_weight_decay is not None
-                        weight_decay = MuP.scale_coupled_wd(
-                            named_mups.get(name), go.opts.get("weight_decay", default_weight_decay)
+                        weight_decay = Parametrization.scale_coupled_wd(
+                            named_parametrizations.get(name), go.opts.get("weight_decay", default_weight_decay)
                         )
                     else:
                         weight_decay = default_weight_decay
 
-                    params_name_by_mup_lr_and_wd[(lr, weight_decay)].append(name)
+                    params_name_by_parametrization_lr_and_wd[(lr, weight_decay)].append(name)
 
-                if mup_optimizer_type.coupled_weight_decay or default_weight_decay is not None:
+                if parametrization_optimizer_type.coupled_weight_decay or default_weight_decay is not None:
                     new_group_overrides += [
                         OptimGroupOverride(
                             param_names, {**go.opts, "lr": lr, "weight_decay": weight_decay}
                         )
-                        for (lr, weight_decay), param_names in params_name_by_mup_lr_and_wd.items()
+                        for (lr, weight_decay), param_names in params_name_by_parametrization_lr_and_wd.items()
                     ]
                 else:
                     new_group_overrides += [
                         OptimGroupOverride(param_names, {**go.opts, "lr": lr})
-                        for (lr, _), param_names in params_name_by_mup_lr_and_wd.items()
+                        for (lr, _), param_names in params_name_by_parametrization_lr_and_wd.items()
                     ]
 
             group_overrides = new_group_overrides
@@ -213,10 +213,10 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
 
     @classmethod
     @abstractmethod
-    def mup_optimizer_type(cls) -> Optional[MuPOptimizerType]:
+    def parametrization_optimizer_type(cls) -> Optional[ParametrizationOptimizerType]:
         """
-        Get the MuP optimizer type associated with this config. If ``None``, then this optimizer
-        does not support muP.
+        Get the Parametrization optimizer type associated with this config. If ``None``, then this optimizer
+        does not support parametrization.
         """
         raise NotImplementedError
 

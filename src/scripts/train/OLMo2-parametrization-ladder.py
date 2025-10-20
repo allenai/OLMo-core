@@ -8,11 +8,11 @@ from olmo_core.internal.common import get_beaker_username, get_work_dir
 from olmo_core.internal.model_ladder import RunDuration, main
 from olmo_core.io import join_path
 from olmo_core.model_ladder import ModelLadder, ModelSize
-from olmo_core.nn.mup import MuPConfig, MuPOptimizerType, MuPScalingStrategy
+from olmo_core.nn.parametrization import ParametrizationConfig, ParametrizationOptimizerType, ParametrizationScalingStrategy
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig, OptimConfig, OptimGroupOverride
 from olmo_core.optim.scheduler import WSD
-from olmo_core.train.callbacks.mup_coord_data import MuPCoordDataCallback
+from olmo_core.train.callbacks.parametrization_coord_data import ParametrizationCoordDataCallback
 from olmo_core.train.config import TrainerConfig
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
@@ -50,33 +50,33 @@ class BaselineModelLadder(ModelLadder):
     def _get_model_config(self, *, size: ModelSize) -> TransformerConfig:
         if size not in self.SUPPORTED_MODEL_SIZES:
             raise OLMoConfigurationError(
-                f"Size {size} not supported by this muP ladder (supported sizes: {self.SUPPORTED_MODEL_SIZES})."
+                f"Size {size} not supported by this parametrization ladder (supported sizes: {self.SUPPORTED_MODEL_SIZES})."
             )
 
-        model_config: TransformerConfig = getattr(TransformerConfig, f"olmo2_mup_{size}")(
+        model_config: TransformerConfig = getattr(TransformerConfig, f"olmo2_parametrization_{size}")(
             vocab_size=self.tokenizer.padded_vocab_size(),
             init_seed=self.init_seed,
             **self.MODEL_OVERRIDES.get(size, {}),
         )
 
         base_size = ModelSize.size_7B
-        base_model_config = getattr(TransformerConfig, f"olmo2_mup_{base_size}")(
+        base_model_config = getattr(TransformerConfig, f"olmo2_parametrization_{base_size}")(
             vocab_size=self.tokenizer.padded_vocab_size(),
             init_seed=self.init_seed,
             **self.MODEL_OVERRIDES.get(base_size, {}),
         )
-        mup_width_scalings = model_config.get_mup_width_scalings(base_model_config)
-        mup_config = MuPConfig(
-            MuPOptimizerType.adam_coupled_wd,
-            scaling_strategy=MuPScalingStrategy.constant_inputs,
-            width_scalings=mup_width_scalings,
+        parametrization_width_scalings = model_config.get_parametrization_width_scalings(base_model_config)
+        parametrization_config = ParametrizationConfig(
+            ParametrizationOptimizerType.adam_coupled_wd,
+            scaling_strategy=ParametrizationScalingStrategy.constant_inputs,
+            width_scalings=parametrization_width_scalings,
         )
 
-        # Need to reconstruct config to pass in muP config
-        return getattr(TransformerConfig, f"olmo2_mup_{size}")(
+        # Need to reconstruct config to pass in parametrization config
+        return getattr(TransformerConfig, f"olmo2_parametrization_{size}")(
             vocab_size=self.tokenizer.padded_vocab_size(),
             init_seed=self.init_seed,
-            mup=mup_config,
+            parametrization=parametrization_config,
             **self.MODEL_OVERRIDES.get(size, {}),
         )
 
@@ -125,8 +125,8 @@ class BaselineModelLadder(ModelLadder):
         )
 
         config = config.with_callback(
-            "mup_coord_data",
-            MuPCoordDataCallback(
+            "parametrization_coord_data",
+            ParametrizationCoordDataCallback(
                 enabled=True,
                 collection_step=10,
             ),
@@ -159,12 +159,12 @@ def build_ladder(root_dir: str) -> BaselineModelLadder:
         save_folder = str(join_path(root_dir, "checkpoints/ladder"))
     return BaselineModelLadder(
         name="OLMo2",
-        project="OLMo2-mup-ladder",
+        project="OLMo2-parametrization-ladder",
         mix_base_dir=root_dir,
         work_dir=get_work_dir(root_dir),
         save_folder=save_folder,
         sequence_length=4096,
-        beaker_workspace="ai2/OLMo-mup",
+        beaker_workspace="ai2/OLMo-parametrization",
     )
 
 

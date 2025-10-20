@@ -14,7 +14,7 @@ from torch.distributed.tensor import Placement, Shard, distribute_tensor
 from olmo_core.distributed.parallel import get_device_mesh_info
 from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.nn.mup import MuP, MuPConfig, MuPHyperParam
+from olmo_core.nn.parametrization import Parametrization, ParametrizationConfig, ParametrizationHyperParam
 from olmo_core.utils import log_once
 
 try:
@@ -47,7 +47,7 @@ class MoEMLPBase(nn.Module):
         self.hidden_sharding_degree = 1
         self.ep_mesh: Optional[DeviceMesh] = None
         self.ep_pg: Optional[dist.ProcessGroup] = None
-        self.mups: Dict[str, MuP] = {}
+        self.parametrizations: Dict[str, Parametrization] = {}
 
     def apply_ep(self, ep_mesh: DeviceMesh):
         """
@@ -135,7 +135,7 @@ class MoEMLP(MoEMLPBase):
         num_experts: int,
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
-        mup: Optional[MuPConfig] = None,
+        parametrization: Optional[ParametrizationConfig] = None,
     ):
         super().__init__(d_model=d_model, hidden_size=hidden_size, num_experts=num_experts)
         # NOTE: these parameters need to have a large enough first dimension (which would be num experts)
@@ -165,21 +165,21 @@ class MoEMLP(MoEMLPBase):
             ),
         )
 
-        if mup:
-            self.mups["w1"] = mup.build(
-                {MuPHyperParam.d_model},
-                {MuPHyperParam.hidden_size},
-                # {MuPHyperParam.hidden_size, MuPHyperParam.num_experts},
+        if parametrization:
+            self.parametrizations["w1"] = parametrization.build(
+                {ParametrizationHyperParam.d_model},
+                {ParametrizationHyperParam.hidden_size},
+                # {ParametrizationHyperParam.hidden_size, ParametrizationHyperParam.num_experts},
             )
-            self.mups["w2"] = mup.build(
-                {MuPHyperParam.hidden_size},
-                {MuPHyperParam.d_model},
-                # {MuPHyperParam.d_model, MuPHyperParam.num_experts},
+            self.parametrizations["w2"] = parametrization.build(
+                {ParametrizationHyperParam.hidden_size},
+                {ParametrizationHyperParam.d_model},
+                # {ParametrizationHyperParam.d_model, ParametrizationHyperParam.num_experts},
             )
-            self.mups["w3"] = mup.build(
-                {MuPHyperParam.d_model},
-                {MuPHyperParam.hidden_size},
-                # {MuPHyperParam.hidden_size, MuPHyperParam.num_experts},
+            self.parametrizations["w3"] = parametrization.build(
+                {ParametrizationHyperParam.d_model},
+                {ParametrizationHyperParam.hidden_size},
+                # {ParametrizationHyperParam.hidden_size, ParametrizationHyperParam.num_experts},
             )
 
         self.reset_parameters()
@@ -213,10 +213,10 @@ class MoEMLP(MoEMLPBase):
         x = x.type_as(w1)
 
         # Compute the MLP.
-        w1_output = torch.bmm(MuP.scale_input(self.mups.get("w1"), x), w1)
-        w3_output = torch.bmm(MuP.scale_input(self.mups.get("w3"), x), w3)
+        w1_output = torch.bmm(Parametrization.scale_input(self.parametrizations.get("w1"), x), w1)
+        w3_output = torch.bmm(Parametrization.scale_input(self.parametrizations.get("w3"), x), w3)
         return torch.bmm(
-            MuP.scale_input(self.mups.get("w2"), F.silu(w1_output) * w3_output),
+            Parametrization.scale_input(self.parametrizations.get("w2"), F.silu(w1_output) * w3_output),
             w2,
         ).to(dtype=og_dtype)
 
@@ -234,7 +234,7 @@ class DroplessMoEMLP(MoEMLPBase):
         num_experts: int,
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
-        mup: Optional[MuPConfig] = None,
+        parametrization: Optional[ParametrizationConfig] = None,
     ):
         super().__init__(d_model=d_model, hidden_size=hidden_size, num_experts=num_experts)
         # NOTE: these parameters need to have a large enough first dimension (which would be num experts)
@@ -264,21 +264,21 @@ class DroplessMoEMLP(MoEMLPBase):
             ),
         )
 
-        if mup:
-            self.mups["w1"] = mup.build(
-                {MuPHyperParam.d_model},
-                {MuPHyperParam.hidden_size},
-                # {MuPHyperParam.hidden_size, MuPHyperParam.num_experts},
+        if parametrization:
+            self.parametrizations["w1"] = parametrization.build(
+                {ParametrizationHyperParam.d_model},
+                {ParametrizationHyperParam.hidden_size},
+                # {ParametrizationHyperParam.hidden_size, ParametrizationHyperParam.num_experts},
             )
-            self.mups["w2"] = mup.build(
-                {MuPHyperParam.hidden_size},
-                {MuPHyperParam.d_model},
-                # {MuPHyperParam.d_model, MuPHyperParam.num_experts},
+            self.parametrizations["w2"] = parametrization.build(
+                {ParametrizationHyperParam.hidden_size},
+                {ParametrizationHyperParam.d_model},
+                # {ParametrizationHyperParam.d_model, ParametrizationHyperParam.num_experts},
             )
-            self.mups["w3"] = mup.build(
-                {MuPHyperParam.d_model},
-                {MuPHyperParam.hidden_size},
-                # {MuPHyperParam.hidden_size, MuPHyperParam.num_experts},
+            self.parametrizations["w3"] = parametrization.build(
+                {ParametrizationHyperParam.d_model},
+                {ParametrizationHyperParam.hidden_size},
+                # {ParametrizationHyperParam.hidden_size, ParametrizationHyperParam.num_experts},
             )
 
         self._gmm = gmm
@@ -331,10 +331,10 @@ class DroplessMoEMLP(MoEMLPBase):
 
         # Compute the MLP.
         x1 = self.gmm(
-            MuP.scale_input(self.mups.get("w1"), x), w1, batch_size_per_expert, trans_b=True
+            Parametrization.scale_input(self.parametrizations.get("w1"), x), w1, batch_size_per_expert, trans_b=True
         )
         x2 = self.gmm(
-            MuP.scale_input(self.mups.get("w3"), x), w3, batch_size_per_expert, trans_b=True
+            Parametrization.scale_input(self.parametrizations.get("w3"), x), w3, batch_size_per_expert, trans_b=True
         )
         x1 = F.silu(x1) * x2
-        return self.gmm(MuP.scale_input(self.mups.get("w2"), x1), w2, batch_size_per_expert)
+        return self.gmm(Parametrization.scale_input(self.parametrizations.get("w2"), x1), w2, batch_size_per_expert)

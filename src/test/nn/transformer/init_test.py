@@ -6,18 +6,18 @@ import torch
 from olmo_core.nn.attention import Attention, AttentionConfig
 from olmo_core.nn.feed_forward import FeedForwardConfig
 from olmo_core.nn.lm_head import LMHeadConfig
-from olmo_core.nn.mup import (
-    MuPConfig,
-    MuPHyperParam,
-    MuPOptimizerType,
-    MuPScalingStrategy,
+from olmo_core.nn.parametrization import (
+    ParametrizationConfig,
+    ParametrizationHyperParam,
+    ParametrizationOptimizerType,
+    ParametrizationScalingStrategy,
 )
 from olmo_core.nn.transformer.config import TransformerBlockType, TransformerConfig
 from olmo_core.nn.transformer.init import InitMethod
 
 
 def get_transformer_config(
-    mup_config: Optional[MuPConfig] = None,
+    parametrization_config: Optional[ParametrizationConfig] = None,
     vocab_size: int = 100,
 ) -> TransformerConfig:
     return TransformerConfig.llama_like(
@@ -33,7 +33,7 @@ def get_transformer_config(
         layer_norm_eps=1e-6,
         fused_ops=False,
         use_flash=False,
-        mup=mup_config,
+        parametrization=parametrization_config,
     )
 
 
@@ -69,175 +69,175 @@ def assert_distributions_close(
 
 
 @pytest.mark.parametrize(
-    "mup_scaling_strategy",
-    [pytest.param(scaling_strategy) for scaling_strategy in MuPScalingStrategy],
+    "parametrization_scaling_strategy",
+    [pytest.param(scaling_strategy) for scaling_strategy in ParametrizationScalingStrategy],
 )
-def test_mup_no_width_scaling_same_init(mup_scaling_strategy):
+def test_parametrization_no_width_scaling_same_init(parametrization_scaling_strategy):
     model_config = get_transformer_config()
 
-    mup_config = MuPConfig(
-        optimizer=MuPOptimizerType.adam, width_scalings={}, scaling_strategy=mup_scaling_strategy
+    parametrization_config = ParametrizationConfig(
+        optimizer=ParametrizationOptimizerType.adam, width_scalings={}, scaling_strategy=parametrization_scaling_strategy
     )
-    mup_model_config = get_transformer_config(mup_config)
+    parametrization_model_config = get_transformer_config(parametrization_config)
 
     model = model_config.build()
-    mup_model = mup_model_config.build()
+    parametrization_model = parametrization_model_config.build()
 
     model.init_weights()
-    mup_model.init_weights()
+    parametrization_model.init_weights()
 
     model_params = dict(model.named_parameters())
-    mup_model_params = dict(mup_model.named_parameters())
+    parametrization_model_params = dict(parametrization_model.named_parameters())
 
     for name, param in model_params.items():
-        assert_distributions_close(param, mup_model_params[name], name=name)
+        assert_distributions_close(param, parametrization_model_params[name], name=name)
 
 
-def test_mup_no_init_scaling_same_init():
+def test_parametrization_no_init_scaling_same_init():
     d_model_multiplier = 16
     model_config = get_transformer_config()
 
-    mup_config = MuPConfig(
-        optimizer=MuPOptimizerType.adam,
-        scaling_strategy=MuPScalingStrategy.constant_init_std,
+    parametrization_config = ParametrizationConfig(
+        optimizer=ParametrizationOptimizerType.adam,
+        scaling_strategy=ParametrizationScalingStrategy.constant_init_std,
         width_scalings={
-            MuPHyperParam.d_model: d_model_multiplier,
-            MuPHyperParam.head_dim: d_model_multiplier,
-            MuPHyperParam.hidden_size: d_model_multiplier,
+            ParametrizationHyperParam.d_model: d_model_multiplier,
+            ParametrizationHyperParam.head_dim: d_model_multiplier,
+            ParametrizationHyperParam.hidden_size: d_model_multiplier,
         },
     )
-    mup_model_config = get_transformer_config(mup_config)
+    parametrization_model_config = get_transformer_config(parametrization_config)
 
     model = model_config.build()
-    mup_model = mup_model_config.build()
+    parametrization_model = parametrization_model_config.build()
 
     model.init_weights()
-    mup_model.init_weights()
+    parametrization_model.init_weights()
 
     model_params = dict(model.named_parameters())
-    mup_model_params = dict(mup_model.named_parameters())
+    parametrization_model_params = dict(parametrization_model.named_parameters())
 
     for name, param in model_params.items():
-        assert_distributions_close(param, mup_model_params[name], name=name)
+        assert_distributions_close(param, parametrization_model_params[name], name=name)
 
 
 @pytest.mark.parametrize(
-    "mup_scaling_strategy",
-    [pytest.param(scaling_strategy) for scaling_strategy in MuPScalingStrategy],
+    "parametrization_scaling_strategy",
+    [pytest.param(scaling_strategy) for scaling_strategy in ParametrizationScalingStrategy],
 )
-def test_feed_forward_mup_scaling_init_std(mup_scaling_strategy):
+def test_feed_forward_parametrization_scaling_init_std(parametrization_scaling_strategy):
     d_model_multiplier = 16
     d_model = 8 * d_model_multiplier
     hidden_size = 64
 
     feed_forward = FeedForwardConfig(hidden_size, bias=False).build(d_model)
 
-    mup_config = MuPConfig(
-        optimizer=MuPOptimizerType.adam,
-        scaling_strategy=mup_scaling_strategy,
+    parametrization_config = ParametrizationConfig(
+        optimizer=ParametrizationOptimizerType.adam,
+        scaling_strategy=parametrization_scaling_strategy,
         width_scalings={
-            MuPHyperParam.d_model: d_model_multiplier,
-            MuPHyperParam.hidden_size: 1.0,
-            MuPHyperParam.head_dim: d_model_multiplier,
+            ParametrizationHyperParam.d_model: d_model_multiplier,
+            ParametrizationHyperParam.hidden_size: 1.0,
+            ParametrizationHyperParam.head_dim: d_model_multiplier,
         },
     )
-    mup_feed_forward = FeedForwardConfig(hidden_size, bias=False, mup=mup_config).build(d_model)
+    parametrization_feed_forward = FeedForwardConfig(hidden_size, bias=False, parametrization=parametrization_config).build(d_model)
 
     init = InitMethod.normal
     init.init_feed_forward(feed_forward, d_model=d_model, block_idx=2, num_blocks=8)
-    init.init_feed_forward(mup_feed_forward, d_model=d_model, block_idx=2, num_blocks=8)
+    init.init_feed_forward(parametrization_feed_forward, d_model=d_model, block_idx=2, num_blocks=8)
 
     params = dict(feed_forward.named_parameters())
-    mup_params = dict(mup_feed_forward.named_parameters())
+    parametrization_params = dict(parametrization_feed_forward.named_parameters())
 
     for name in ["w1.weight", "w2.weight", "w3.weight"]:
-        mup_init_std_multiplier = mup_feed_forward.mups[name].init_std_multiplier or 1.0
+        parametrization_init_std_multiplier = parametrization_feed_forward.parametrizations[name].init_std_multiplier or 1.0
         assert_distributions_close(
             params[name],
-            mup_params[name],
-            scale_factor=1 / mup_init_std_multiplier,
+            parametrization_params[name],
+            scale_factor=1 / parametrization_init_std_multiplier,
             name=name,
             atol=1e-3,
         )
 
 
 @pytest.mark.parametrize(
-    "mup_scaling_strategy",
-    [pytest.param(scaling_strategy) for scaling_strategy in MuPScalingStrategy],
+    "parametrization_scaling_strategy",
+    [pytest.param(scaling_strategy) for scaling_strategy in ParametrizationScalingStrategy],
 )
-def test_attention_mup_scaling_init_std(mup_scaling_strategy):
+def test_attention_parametrization_scaling_init_std(parametrization_scaling_strategy):
     d_model_multiplier = 16
     d_model = 8 * d_model_multiplier
     n_heads = 32
 
     attention = AttentionConfig(n_heads=n_heads, bias=False).build(d_model, layer_idx=0, n_layers=2)
 
-    mup_config = MuPConfig(
-        optimizer=MuPOptimizerType.adam,
-        scaling_strategy=mup_scaling_strategy,
+    parametrization_config = ParametrizationConfig(
+        optimizer=ParametrizationOptimizerType.adam,
+        scaling_strategy=parametrization_scaling_strategy,
         width_scalings={
-            MuPHyperParam.d_model: d_model_multiplier,
-            MuPHyperParam.hidden_size: 1.0,
-            MuPHyperParam.head_dim: d_model_multiplier,
+            ParametrizationHyperParam.d_model: d_model_multiplier,
+            ParametrizationHyperParam.hidden_size: 1.0,
+            ParametrizationHyperParam.head_dim: d_model_multiplier,
         },
     )
-    mup_attention = AttentionConfig(n_heads=n_heads, bias=False, mup=mup_config).build(
+    parametrization_attention = AttentionConfig(n_heads=n_heads, bias=False, parametrization=parametrization_config).build(
         d_model, layer_idx=0, n_layers=2
     )
-    assert isinstance(mup_attention, Attention)
+    assert isinstance(parametrization_attention, Attention)
 
     init = InitMethod.normal
     init.init_attention(attention, d_model=d_model, block_idx=2, num_blocks=8)
-    init.init_attention(mup_attention, d_model=d_model, block_idx=2, num_blocks=8)
+    init.init_attention(parametrization_attention, d_model=d_model, block_idx=2, num_blocks=8)
 
     params = dict(attention.named_parameters())
-    mup_params = dict(mup_attention.named_parameters())
+    parametrization_params = dict(parametrization_attention.named_parameters())
 
     for name in ["w_q.weight", "w_k.weight", "w_v.weight", "w_out.weight"]:
-        mup_init_std_multiplier = mup_attention.mups[name].init_std_multiplier or 1.0
+        parametrization_init_std_multiplier = parametrization_attention.parametrizations[name].init_std_multiplier or 1.0
         assert_distributions_close(
             params[name],
-            mup_params[name],
-            scale_factor=1 / mup_init_std_multiplier,
+            parametrization_params[name],
+            scale_factor=1 / parametrization_init_std_multiplier,
             name=name,
             atol=1e-3,
         )
 
 
 @pytest.mark.parametrize(
-    "mup_scaling_strategy",
-    [pytest.param(scaling_strategy) for scaling_strategy in MuPScalingStrategy],
+    "parametrization_scaling_strategy",
+    [pytest.param(scaling_strategy) for scaling_strategy in ParametrizationScalingStrategy],
 )
-def test_lm_head_mup_scaling_init_std(mup_scaling_strategy):
+def test_lm_head_parametrization_scaling_init_std(parametrization_scaling_strategy):
     d_model_multiplier = 16
     d_model = 8 * d_model_multiplier
     vocab_size = 100
 
     lm_head = LMHeadConfig().build(d_model=d_model, vocab_size=vocab_size)
 
-    mup_config = MuPConfig(
-        optimizer=MuPOptimizerType.adam,
-        scaling_strategy=mup_scaling_strategy,
+    parametrization_config = ParametrizationConfig(
+        optimizer=ParametrizationOptimizerType.adam,
+        scaling_strategy=parametrization_scaling_strategy,
         width_scalings={
-            MuPHyperParam.d_model: d_model_multiplier,
-            MuPHyperParam.hidden_size: 1.0,
-            MuPHyperParam.head_dim: d_model_multiplier,
+            ParametrizationHyperParam.d_model: d_model_multiplier,
+            ParametrizationHyperParam.hidden_size: 1.0,
+            ParametrizationHyperParam.head_dim: d_model_multiplier,
         },
     )
-    mup_lm_head = LMHeadConfig(mup=mup_config).build(d_model=d_model, vocab_size=vocab_size)
+    parametrization_lm_head = LMHeadConfig(parametrization=parametrization_config).build(d_model=d_model, vocab_size=vocab_size)
 
     init = InitMethod.normal
     init.init_final_w_out(lm_head.w_out, d_model=d_model)
-    init.init_final_w_out(mup_lm_head.w_out, d_model=d_model, mup=mup_lm_head.mups["w_out.weight"])
+    init.init_final_w_out(parametrization_lm_head.w_out, d_model=d_model, parametrization=parametrization_lm_head.parametrizations["w_out.weight"])
 
     params = dict(lm_head.named_parameters())
-    mup_params = dict(mup_lm_head.named_parameters())
+    parametrization_params = dict(parametrization_lm_head.named_parameters())
 
-    mup_init_std_multiplier = mup_lm_head.mups["w_out.weight"].init_std_multiplier or 1.0
+    parametrization_init_std_multiplier = parametrization_lm_head.parametrizations["w_out.weight"].init_std_multiplier or 1.0
     assert_distributions_close(
         params["w_out.weight"],
-        mup_params["w_out.weight"],
-        scale_factor=1 / mup_init_std_multiplier,
+        parametrization_params["w_out.weight"],
+        scale_factor=1 / parametrization_init_std_multiplier,
         name="w_out.weight",
         atol=1e-3,
     )

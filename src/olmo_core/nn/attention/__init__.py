@@ -20,7 +20,7 @@ from olmo_core.nn.attention.kv_cache import KVCacheManager
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
 from ..layer_norm import LayerNorm, LayerNormConfig
-from ..mup import MuP, MuPConfig, MuPHyperParam
+from ..parametrization import Parametrization, ParametrizationConfig, ParametrizationHyperParam
 from ..rope import (
     ComplexRotaryEmbedding,
     FusedRotaryEmbedding,
@@ -167,7 +167,7 @@ class AttentionConfig(Config):
     dtype: DType = DType.float32
     sliding_window: Optional[SlidingWindowAttentionConfig] = None
     use_head_qk_norm: Optional[bool] = None
-    mup: Optional[MuPConfig] = None
+    parametrization: Optional[ParametrizationConfig] = None
 
     def num_params(self, d_model: int) -> int:
         """
@@ -340,7 +340,7 @@ class Attention(AttentionBase):
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
         use_head_qk_norm: bool = False,
-        mup: Optional[MuPConfig] = None,
+        parametrization: Optional[ParametrizationConfig] = None,
     ):
         super().__init__()
 
@@ -355,16 +355,16 @@ class Attention(AttentionBase):
             d_model, self.n_kv_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device
         )
         self.w_out = nn.Linear(d_model, d_model, bias=bias, dtype=dtype, device=init_device)
-        self.mups: Dict[str, MuP] = {}
-        if mup:
-            self.mups["w_q.weight"] = mup.build({MuPHyperParam.d_model}, {MuPHyperParam.d_model})
-            self.mups["w_k.weight"] = mup.build(
-                {MuPHyperParam.d_model}, {MuPHyperParam.n_kv_heads, MuPHyperParam.head_dim}
+        self.parametrizations: Dict[str, Parametrization] = {}
+        if parametrization:
+            self.parametrizations["w_q.weight"] = parametrization.build({ParametrizationHyperParam.d_model}, {ParametrizationHyperParam.d_model})
+            self.parametrizations["w_k.weight"] = parametrization.build(
+                {ParametrizationHyperParam.d_model}, {ParametrizationHyperParam.n_kv_heads, ParametrizationHyperParam.head_dim}
             )
-            self.mups["w_v.weight"] = mup.build(
-                {MuPHyperParam.d_model}, {MuPHyperParam.n_kv_heads, MuPHyperParam.head_dim}
+            self.parametrizations["w_v.weight"] = parametrization.build(
+                {ParametrizationHyperParam.d_model}, {ParametrizationHyperParam.n_kv_heads, ParametrizationHyperParam.head_dim}
             )
-            self.mups["w_out.weight"] = mup.build({MuPHyperParam.d_model}, {MuPHyperParam.d_model})
+            self.parametrizations["w_out.weight"] = parametrization.build({ParametrizationHyperParam.d_model}, {ParametrizationHyperParam.d_model})
         self.clip_qkv = clip_qkv
         self.use_head_qk_norm = use_head_qk_norm
 
@@ -379,14 +379,14 @@ class Attention(AttentionBase):
                 self.k_norm = qk_norm.build(
                     size=self.n_kv_heads * self.head_dim, init_device=init_device
                 )
-            if mup:
-                self.mups["q_norm.weight"] = mup.build(None, None)
-                self.mups["k_norm.weight"] = mup.build(None, None)
+            if parametrization:
+                self.parametrizations["q_norm.weight"] = parametrization.build(None, None)
+                self.parametrizations["k_norm.weight"] = parametrization.build(None, None)
 
-        if mup:
-            self.mups["sdpa"] = mup.build({MuPHyperParam.head_dim}, None)
+        if parametrization:
+            self.parametrizations["sdpa"] = parametrization.build({ParametrizationHyperParam.head_dim}, None)
 
-            if (att_multiplier := self.mups["sdpa"].attention_multiplier) is not None:
+            if (att_multiplier := self.parametrizations["sdpa"].attention_multiplier) is not None:
                 softmax_scale = (
                     att_multiplier / math.sqrt(self.head_dim)
                     if softmax_scale is None
@@ -515,9 +515,9 @@ class Attention(AttentionBase):
         # shape: (batch_size, seq_len, n_heads * head_dim),
         #        (batch_size, seq_len, n_kv_heads * head_dim),
         #        (batch_size, seq_len, n_kv_heads * head_dim)
-        q = self.w_q(MuP.scale_input(self.mups.get("w_q.weight"), x))
-        k = self.w_k(MuP.scale_input(self.mups.get("w_k.weight"), x))
-        v = self.w_v(MuP.scale_input(self.mups.get("w_v.weight"), x))
+        q = self.w_q(Parametrization.scale_input(self.parametrizations.get("w_q.weight"), x))
+        k = self.w_k(Parametrization.scale_input(self.parametrizations.get("w_k.weight"), x))
+        v = self.w_v(Parametrization.scale_input(self.parametrizations.get("w_v.weight"), x))
 
         if self.clip_qkv is not None:
             q.clamp_(min=-self.clip_qkv, max=self.clip_qkv)
@@ -526,10 +526,10 @@ class Attention(AttentionBase):
 
         if not self.use_head_qk_norm:
             if self.q_norm is not None:
-                q = MuP.scale_input(self.mups.get("q_norm.weight"), q)
+                q = Parametrization.scale_input(self.parametrizations.get("q_norm.weight"), q)
                 q = self.q_norm(q)
             if self.k_norm is not None:
-                k = MuP.scale_input(self.mups.get("k_norm.weight"), k)
+                k = Parametrization.scale_input(self.parametrizations.get("k_norm.weight"), k)
                 k = self.k_norm(k)
 
         # NOTE: use -1 instead of `n_heads` / `n_kv_heads` to infer actual local size when
@@ -543,10 +543,10 @@ class Attention(AttentionBase):
 
         if self.use_head_qk_norm:
             if self.q_norm is not None:
-                q = MuP.scale_input(self.mups.get("q_norm.weight"), q)
+                q = Parametrization.scale_input(self.parametrizations.get("q_norm.weight"), q)
                 q = self.q_norm(q)
             if self.k_norm is not None:
-                k = MuP.scale_input(self.mups.get("k_norm.weight"), k)
+                k = Parametrization.scale_input(self.parametrizations.get("k_norm.weight"), k)
                 k = self.k_norm(k)
 
         if self.rope is not None:
@@ -570,8 +570,8 @@ class Attention(AttentionBase):
 
         att_scale: Optional[float] = None
         if (
-            "sdpa" in self.mups
-            and (att_multiplier := self.mups["sdpa"].attention_multiplier) is not None
+            "sdpa" in self.parametrizations
+            and (att_multiplier := self.parametrizations["sdpa"].attention_multiplier) is not None
         ):
             att_scale = att_multiplier / math.sqrt(self.head_dim)
 
@@ -594,7 +594,7 @@ class Attention(AttentionBase):
         att = att.view(B, T, -1)
 
         # shape: (batch_size, seq_len, d_model)
-        return self.w_out(MuP.scale_input(self.mups.get("w_out.weight"), att))
+        return self.w_out(Parametrization.scale_input(self.parametrizations.get("w_out.weight"), att))
 
     def apply_tp(
         self,
@@ -699,7 +699,7 @@ class NormalizedAttention(Attention):
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
-        mup: Optional[MuPConfig] = None,
+        parametrization: Optional[ParametrizationConfig] = None,
     ):
         super().__init__(
             d_model=d_model,
@@ -714,7 +714,7 @@ class NormalizedAttention(Attention):
             dtype=dtype,
             init_device=init_device,
             cache=cache,
-            mup=mup,
+            parametrization=parametrization,
         )
 
         self.sq_init_value = 1.0
@@ -763,9 +763,9 @@ class NormalizedAttention(Attention):
         # shape: (batch_size, seq_len, n_heads * head_dim),
         #        (batch_size, seq_len, n_kv_heads * head_dim),
         #        (batch_size, seq_len, n_kv_heads * head_dim)
-        q = self.w_q(MuP.scale_input(self.mups.get("w_q.weight"), x))
-        k = self.w_k(MuP.scale_input(self.mups.get("w_k.weight"), x))
-        v = self.w_v(MuP.scale_input(self.mups.get("w_v.weight"), x))
+        q = self.w_q(Parametrization.scale_input(self.parametrizations.get("w_q.weight"), x))
+        k = self.w_k(Parametrization.scale_input(self.parametrizations.get("w_k.weight"), x))
+        v = self.w_v(Parametrization.scale_input(self.parametrizations.get("w_v.weight"), x))
 
         if self.q_norm is not None and self.k_norm is not None:
             q = self.q_norm(q)
@@ -821,7 +821,7 @@ class NormalizedAttention(Attention):
         att = att.view(B, T, -1)
 
         # shape: (batch_size, seq_len, d_model)
-        return MuP.scale_input(self.mups.get("w_out.weight"), self.w_out(att))
+        return Parametrization.scale_input(self.parametrizations.get("w_out.weight"), self.w_out(att))
 
     def apply_tp(
         self,

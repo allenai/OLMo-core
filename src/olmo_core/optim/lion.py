@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 from torch.optim.optimizer import Optimizer
 
-from olmo_core.nn.mup import MuPOptimizerType
+from olmo_core.nn.parametrization import ParametrizationOptimizerType
 
 from .config import OptimConfig
 from .skip_step_optimizer import SkipStepOptimizer
@@ -151,7 +151,7 @@ class LionConfig(OptimConfig):
     weight_decay: float = 0.0
 
     @classmethod
-    def mup_optimizer_type(cls) -> Optional[MuPOptimizerType]:
+    def parametrization_optimizer_type(cls) -> Optional[ParametrizationOptimizerType]:
         return None
 
     @classmethod
@@ -172,7 +172,7 @@ class SkipStepLionConfig(OptimConfig):
     sigma_factor: int = 6
 
     @classmethod
-    def mup_optimizer_type(cls) -> Optional[MuPOptimizerType]:
+    def parametrization_optimizer_type(cls) -> Optional[ParametrizationOptimizerType]:
         return None
 
     @classmethod

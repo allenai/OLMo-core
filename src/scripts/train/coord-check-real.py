@@ -64,7 +64,7 @@ if __name__ == "__main__":
         nargs="+",
         type=str,
         required=True,
-        help="Local or remote paths of mup coord data",
+        help="Local or remote paths of parametrization coord data",
     )
     parser.add_argument(
         "--widths",
@@ -81,7 +81,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--title",
         type=str,
-        default="muP coord check",
+        default="parametrization coord check",
     )
     args = parser.parse_args()
 

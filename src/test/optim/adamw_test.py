@@ -11,7 +11,7 @@ from olmo_core.distributed.checkpoint import (
     load_model_and_optim_state,
     save_model_and_optim_state,
 )
-from olmo_core.nn.mup import MuPHyperParam, MuPScalingStrategy
+from olmo_core.nn.parametrization import ParametrizationHyperParam, ParametrizationScalingStrategy
 from olmo_core.optim import AdamWConfig, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.testing import DEVICES
 from olmo_core.utils import cuda_sync_debug_mode
@@ -193,8 +193,8 @@ def test_adamw_equivalence(
 
 
 @pytest.mark.parametrize("optim_config_cls", [AdamWConfig, SkipStepAdamWConfig])
-def test_adamw_mup_unchanged_weight_decay(optim_config_cls):
-    from olmo_core.nn.mup import MuPConfig, MuPOptimizerType
+def test_adamw_parametrization_unchanged_weight_decay(optim_config_cls):
+    from olmo_core.nn.parametrization import ParametrizationConfig, ParametrizationOptimizerType
 
     lr = 1e-3
 
@@ -206,25 +206,25 @@ def test_adamw_mup_unchanged_weight_decay(optim_config_cls):
         weight_decay=0.1,
         lr=lr,
     )
-    mup_optimizer_type = optim_config.mup_optimizer_type()
-    assert mup_optimizer_type == MuPOptimizerType.adam_coupled_wd
+    parametrization_optimizer_type = optim_config.parametrization_optimizer_type()
+    assert parametrization_optimizer_type == ParametrizationOptimizerType.adam_coupled_wd
 
-    mup_config = MuPConfig(
-        optimizer=mup_optimizer_type,
+    parametrization_config = ParametrizationConfig(
+        optimizer=parametrization_optimizer_type,
         width_scalings={
-            MuPHyperParam.d_model: 2,
-            MuPHyperParam.hidden_size: 3,
-            MuPHyperParam.head_dim: 2,
+            ParametrizationHyperParam.d_model: 2,
+            ParametrizationHyperParam.hidden_size: 3,
+            ParametrizationHyperParam.head_dim: 2,
         },
-        scaling_strategy=MuPScalingStrategy.constant_inputs,
+        scaling_strategy=ParametrizationScalingStrategy.constant_inputs,
     )
-    assert mup_config.optimizer.coupled_weight_decay
+    assert parametrization_config.optimizer.coupled_weight_decay
 
     model = MyModel(bias=False)
-    model.mups = {
-        "wte.weight": mup_config.build(None, None),
-        "fc1.weight": mup_config.build({MuPHyperParam.d_model}, {MuPHyperParam.hidden_size}),
-        "fc2.weight": mup_config.build({MuPHyperParam.hidden_size}, None),
+    model.parametrizations = {
+        "wte.weight": parametrization_config.build(None, None),
+        "fc1.weight": parametrization_config.build({ParametrizationHyperParam.d_model}, {ParametrizationHyperParam.hidden_size}),
+        "fc2.weight": parametrization_config.build({ParametrizationHyperParam.hidden_size}, None),
     }
     optim = optim_config.build(model)
 
@@ -241,7 +241,7 @@ def test_adamw_mup_unchanged_weight_decay(optim_config_cls):
             param_name = param_to_name[p]
             assert param_name in expected_weight_decays, param_name
             expected_weight_decay = expected_weight_decays[param_name]
-            # lr should be scaled by MuP except for wte.weight.
+            # lr should be scaled by Parametrization except for wte.weight.
             assert group["lr"] != lr or param_name == "wte.weight", param_name
-            # Overall weight decay should be unaffected by MuP scaling.
+            # Overall weight decay should be unaffected by Parametrization scaling.
             assert group["weight_decay"] * group["lr"] == expected_weight_decay, param_name

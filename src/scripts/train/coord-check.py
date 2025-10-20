@@ -8,13 +8,13 @@ from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
 from olmo_core.internal.experiment import CommonComponents, main
-from olmo_core.nn.mup import MuPConfig, MuPHyperParam, MuPScalingStrategy
+from olmo_core.nn.parametrization import ParametrizationConfig, ParametrizationHyperParam, ParametrizationScalingStrategy
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.nn.transformer.config import TransformerBlockType
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
 from olmo_core.train import TrainerConfig
 from olmo_core.train.callbacks.comet import CometCallback
-from olmo_core.train.callbacks.mup_coord_data import MuPCoordDataCallback
+from olmo_core.train.callbacks.parametrization_coord_data import ParametrizationCoordDataCallback
 from olmo_core.train.callbacks.wandb import WandBCallback
 from olmo_core.train.common import Duration
 from olmo_core.train.train_module import (
@@ -46,12 +46,12 @@ def build_model_config(
         layer_norm_eps=1e-6,
         fused_ops=False,
         use_flash=False,
-        mup=MuPConfig(
-            scaling_strategy=MuPScalingStrategy.constant_inputs,
+        parametrization=ParametrizationConfig(
+            scaling_strategy=ParametrizationScalingStrategy.constant_inputs,
             width_scalings={
-                MuPHyperParam.d_model: D_MODEL_MULTIPLIER,
-                MuPHyperParam.hidden_size: D_MODEL_MULTIPLIER,
-                MuPHyperParam.head_dim: D_MODEL_MULTIPLIER,
+                ParametrizationHyperParam.d_model: D_MODEL_MULTIPLIER,
+                ParametrizationHyperParam.hidden_size: D_MODEL_MULTIPLIER,
+                ParametrizationHyperParam.head_dim: D_MODEL_MULTIPLIER,
             },
         ),
     )
@@ -113,8 +113,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             ),
         )
         .with_callback(
-            "mup_coord_data",
-            MuPCoordDataCallback(
+            "parametrization_coord_data",
+            ParametrizationCoordDataCallback(
                 enabled=True,
                 collection_step=COLLECTION_STEP,
             ),

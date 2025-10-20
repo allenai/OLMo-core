@@ -15,9 +15,9 @@ log = logging.getLogger(__name__)
 
 
 @dataclass
-class MuPCoordDataCallback(Callback):
+class ParametrizationCoordDataCallback(Callback):
     """
-    Collects muP coordinate check data. Does not require muP to be configured/enabled to be used.
+    Collects parametrization coordinate check data. Does not require parametrization to be configured/enabled to be used.
     """
 
     enabled: bool = False
