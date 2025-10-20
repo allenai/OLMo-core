@@ -19,7 +19,7 @@ from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.transformer import (
     TransformerConfig,
 )
-from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
+from olmo_core.optim import HalfCosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.script_utils import ExperimentConfig, main
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
@@ -56,11 +56,16 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         work_dir=opts.work_dir,
     )
 
+    global_batch_size = SEQUENCE_LENGTH * 512
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=SEQUENCE_LENGTH * 512,
+        global_batch_size=global_batch_size,
         seed=34521,
         num_workers=8,
     )
+
+    # Scheduler settings from the first half
+    original_warmup_steps = 2000
+    original_max_steps = int(5e12) // global_batch_size
 
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=2 * SEQUENCE_LENGTH,
@@ -73,7 +78,9 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
             ],
         ),
-        scheduler=CosWithWarmup(warmup_steps=2000),
+        scheduler=HalfCosWithWarmup(  # Scheduler updated to extend lr from where we left off.
+            warmup_steps=original_max_steps // 2 + original_warmup_steps // 2
+        ),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.hsdp,
@@ -92,8 +99,8 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=10,
-            max_duration=Duration.tokens(int(5e12)),
-            hard_stop=Duration.tokens(int(4e12)),
+            max_duration=Duration.tokens(int(7e12)),  # Changed from 5T -> 7T
+            hard_stop=Duration.epochs(1),
         )
         .with_callback(
             "checkpointer",
