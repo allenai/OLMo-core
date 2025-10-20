@@ -7,15 +7,18 @@ from torch.distributed.tensor import DTensor
 from olmo_core.config import StrEnum
 from olmo_core.distributed.utils import distribute_like, get_local_tensor
 
-from ..attention import Attention, AttentionBase, FusedAttention
+from ..attention import (  # , MultiheadLatentAttention
+    Attention,
+    AttentionBase,
+    FusedAttention,
+)
 from ..feed_forward import FeedForward
-from ..moe import DroplessMoEMLP, MoEBase, MoELinearRouter, MoEMLP
+from ..moe import DroplessMoEMLP, MoEBase, MoELinearRouter, MoEMLP, MoEOrthogonalRouter
 
 
 def _apply_init(init_fun, x: torch.Tensor, *args, **kwargs):
     if not isinstance(x, DTensor):
         init_fun(x, *args, **kwargs)
-        return
 
     # Initialize full version of x locally, then apply init to that.
     full_x = torch.zeros(x.shape, dtype=x.dtype, device=x.device)
@@ -121,6 +124,16 @@ class InitMethod(StrEnum):
         elif isinstance(m, FusedAttention) or hasattr(m, "w_qkv"):
             m = cast(FusedAttention, m)
             self._init_linear(m.w_qkv, std=std, generator=generator)
+        # elif isinstance(m, MultiheadLatentAttention):
+        #     m = cast(MultiheadLatentAttention, m)
+        #     if hasattr(m, "wq"):
+        #         self._init_linear(m.wq, std=std, generator=generator)
+        #     else:
+        #         self._init_linear(m.wq_a, std=std, generator=generator)
+        #         self._init_linear(m.wq_b, std=std, generator=generator)
+
+        #     self._init_linear(m.wkv_a, std=std, generator=generator)
+        #     self._init_linear(m.wkv_b, std=std, generator=generator)
         else:
             raise NotImplementedError(m)
 
@@ -177,15 +190,34 @@ class InitMethod(StrEnum):
         elif self == InitMethod.llama_depth:
             std = std / (2 * (block_idx + 1)) ** 0.5
 
-        _apply_init(
-            nn.init.trunc_normal_,
-            cast(MoELinearRouter, m.router).weight,
-            mean=0.0,
-            std=std,
-            a=-3 * std,
-            b=3 * std,
-            generator=generator,
-        )
+        if isinstance(m.router, MoELinearRouter):
+            _apply_init(
+                nn.init.trunc_normal_,
+                cast(MoELinearRouter, m.router).weight,
+                mean=0.0,
+                std=std,
+                a=-3 * std,
+                b=3 * std,
+                generator=generator,
+            )
+        elif isinstance(m.router, MoEOrthogonalRouter):
+            # _apply_init(
+            #     nn.init.trunc_normal_,
+            #     cast(MoEOrthogonalRouter, m.router).weight,
+            #     mean=0.0,
+            #     std=std,
+            #     a=-3 * std,
+            #     b=3 * std,
+            #     generator=generator,
+            # )
+            _apply_init(
+                nn.init.orthogonal_,
+                cast(MoEOrthogonalRouter, m.router).weight,
+                gain=1,
+                generator=generator,
+            )
+            # x = cast(MoEOrthogonalRouter, m.router).weight.full_tensor()
+            # pass
         _apply_init(
             nn.init.trunc_normal_,
             cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp).w1,
@@ -213,3 +245,90 @@ class InitMethod(StrEnum):
             b=3 * std,
             generator=generator,
         )
+
+    def init_moe_v2(
+        self,
+        b,
+        *,
+        d_model: int,
+        block_idx: int,
+        num_blocks: int,
+        std: float = 0.02,
+        generator: Optional[torch.Generator] = None,
+        ep_generator: Optional[torch.Generator] = None,
+    ):
+        from ..moe.v2.block import MoEFusedV2TransformerBlock
+
+        b = cast(MoEFusedV2TransformerBlock, b)
+        if self == InitMethod.llama:
+            std = std / (2 * num_blocks) ** 0.5
+        elif self == InitMethod.llama_depth:
+            std = std / (2 * (block_idx + 1)) ** 0.5
+
+        if ep_generator is None:
+            assert b.ep_enabled is False, "ep_generator should be provided when ep_enabled is True"
+            # use default generator for ep_generator
+            # which means (EP is not used)
+            ep_generator = generator
+
+        # router
+        if b.shared_experts_router:
+            _apply_init(
+                nn.init.trunc_normal_,
+                b.shared_experts_router.weight,
+                mean=0.0,
+                std=std,
+                a=-3 * std,
+                b=3 * std,
+                generator=generator,
+            )
+        if b.routed_experts_router:
+            _apply_init(
+                nn.init.trunc_normal_,
+                b.routed_experts_router.weight,
+                mean=0.0,
+                std=std,
+                a=-3 * std,
+                b=3 * std,
+                generator=generator,
+            )
+        # routed experts
+        if b.routed_experts:
+            _apply_init(
+                nn.init.trunc_normal_,
+                b.routed_experts.w_up_gate,
+                mean=0.0,
+                std=std,
+                a=-3 * std,
+                b=3 * std,
+                generator=ep_generator,  # might be sharded, use ep_generator
+            )
+            _apply_init(
+                nn.init.trunc_normal_,
+                b.routed_experts.w_down,
+                mean=0.0,
+                std=std,
+                a=-3 * std,
+                b=3 * std,
+                generator=ep_generator,  # might be sharded, use ep_generator
+            )
+        # shared experts
+        if b.shared_experts:
+            _apply_init(
+                nn.init.trunc_normal_,
+                b.shared_experts.w_up_gate,
+                mean=0.0,
+                std=std,
+                a=-3 * std,
+                b=3 * std,
+                generator=generator,
+            )
+            _apply_init(
+                nn.init.trunc_normal_,
+                b.shared_experts.w_down,
+                mean=0.0,
+                std=std,
+                a=-3 * std,
+                b=3 * std,
+                generator=generator,
+            )

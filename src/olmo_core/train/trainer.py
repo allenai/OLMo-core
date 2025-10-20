@@ -1310,7 +1310,15 @@ class Trainer:
             return  # for backwards compatibility
 
         log.info("Starting forward/backward dry-run batch...")
+
+        dbg_mem_before_dry_run = (
+            torch.cuda.memory_allocated() / 1024**3
+        )  # model param + main param
         self.train_module.train_batch(batch, dry_run=True)
+        dbg_mem_after_dry_run = (
+            torch.cuda.memory_allocated() / 1024**3
+        )  # model param 2x + main param 4x + model grad 2x
+
         log.info("Dry-run complete")
 
     def _fit_epoch(self):
@@ -1325,6 +1333,9 @@ class Trainer:
 
         first_batch = True
         for batch in self._iter_batches():
+            if first_batch:
+                log.info("First batch loaded")
+
             # Bookkeeping.
             self.global_step += 1
             if (
@@ -1342,6 +1353,10 @@ class Trainer:
             for callback in self._iter_callbacks():
                 callback.pre_step(batch)
 
+            dbg_mem_before_train_batch = torch.cuda.memory_allocated() / 1024**3
+
+            self.train_module.train_batch(batch)
+            dbg_mem_after_train_batch = torch.cuda.memory_allocated() / 1024**3
             if should_skip:
                 log.warning(f"Skipping training on step {self.global_step:,d} intentionally...")
             else:

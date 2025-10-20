@@ -35,7 +35,7 @@ from olmo_core.train.callbacks import (
     ProfilerCallback,
     SlackNotifierCallback,
 )
-from olmo_core.train.train_module import TransformerTrainModuleConfig
+from olmo_core.train.train_module import TrainModuleConfig, TransformerTrainModuleConfig
 from olmo_core.utils import prepare_cli_environment, seed_all
 
 from .common import build_launch_config, get_beaker_username, get_root_dir, get_work_dir
@@ -90,7 +90,7 @@ class ExperimentConfig(Config):
     model: TransformerConfig
     dataset: NumpyDatasetConfig
     data_loader: NumpyDataLoaderConfig
-    train_module: TransformerTrainModuleConfig
+    train_module: TrainModuleConfig
     trainer: TrainerConfig
     init_seed: int = 12536
     backend: Optional[str] = "cpu:gloo,cuda:nccl"
@@ -103,6 +103,7 @@ class SubCmd(StrEnum):
     prep = "prep"
     launch_prep = "launch_prep"
     dry_run = "dry_run"
+    utils = "utils"
 
     def post_launch_subcmd(self) -> "SubCmd":
         if self in (SubCmd.launch_prep, SubCmd.prep):
