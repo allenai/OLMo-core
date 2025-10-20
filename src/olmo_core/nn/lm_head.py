@@ -27,7 +27,7 @@ from .functional import (
     l2_normalize,
 )
 from .layer_norm import LayerNormConfig
-from .parametrization import Parametrization, ParametrizationConfig, ParametrizationHyperParam
+from .parametrization import ParametrizationBase, ParametrizationConfig, WidthHyperParam
 
 __all__ = [
     "LMHeadType",
@@ -175,9 +175,11 @@ class LMHead(nn.Module):
             None if layer_norm is None else layer_norm.build(d_model, init_device=init_device)
         )
         self.w_out = nn.Linear(d_model, vocab_size, bias=bias, dtype=dtype, device=init_device)
-        self.parametrizations: Dict[str, Parametrization] = {}
+        self.parametrizations: Dict[str, ParametrizationBase] = {}
         if parametrization:
-            self.parametrizations["w_out.weight"] = parametrization.build({ParametrizationHyperParam.d_model}, None)
+            self.parametrizations["w_out.weight"] = parametrization.build(
+                {WidthHyperParam.d_model}, None
+            )
         self._d_model = d_model
         self._vocab_size = vocab_size
         self._loss_implementation = loss_implementation
@@ -249,14 +251,16 @@ class LMHead(nn.Module):
         if labels is None:
             if return_logits is False:
                 raise RuntimeError("'return_logits=False' is only valid when 'labels' is provided")
-            return self.w_out(Parametrization.scale_input(self.parametrizations.get("w_out.weight"), h))
+            return self.w_out(
+                ParametrizationBase.scale_input(self.parametrizations.get("w_out.weight"), h)
+            )
 
         logits: Optional[torch.Tensor]
         loss: torch.Tensor
         ce_loss: torch.Tensor
         z_loss: Optional[torch.Tensor]
         if self.loss_implementation == LMLossImplementation.default:
-            h = Parametrization.scale_input(self.parametrizations.get("w_out.weight"), h)
+            h = ParametrizationBase.scale_input(self.parametrizations.get("w_out.weight"), h)
             logits = self.w_out(h)
             assert logits is not None
             ce_loss, z_loss = cross_entropy_loss(
@@ -273,7 +277,7 @@ class LMHead(nn.Module):
                 loss = ce_loss
         elif self.loss_implementation == LMLossImplementation.fused_linear:
             logits = None
-            h = Parametrization.scale_input(self.parametrizations.get("w_out.weight"), h)
+            h = ParametrizationBase.scale_input(self.parametrizations.get("w_out.weight"), h)
             loss, z_loss = fused_linear_cross_entropy_loss(
                 get_local_tensor(h).contiguous().view(-1, self.d_model),
                 weight=get_local_tensor(self.w_out.weight),
@@ -492,7 +496,9 @@ class NormalizedLMHead(LMHead):
                 labels = labels.gather(1, logits_to_keep)
 
         sz = self.sz * (self.sz_init_value / self.sz_init_scaling)
-        logits = sz * self.w_out(Parametrization.scale_input(self.parametrizations.get("w_out.weight"), x))
+        logits = sz * self.w_out(
+            ParametrizationBase.scale_input(self.parametrizations.get("w_out.weight"), x)
+        )
         if labels is None:
             if return_logits is False:
                 raise RuntimeError("'return_logits=False' is only valid when 'labels' is provided")

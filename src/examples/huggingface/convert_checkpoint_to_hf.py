@@ -137,7 +137,8 @@ def convert_checkpoint_to_hf(
 
     if (
         model_config.block.attention.parametrization is not None
-        and model_config.block.attention.parametrization.scaling_strategy != ParametrizationScalingStrategy.constant_inputs
+        and model_config.block.attention.parametrization.scaling_strategy
+        != ParametrizationScalingStrategy.constant_inputs
     ):
         raise NotImplementedError(
             f"Conversion of parametrization models to HF is not yet supported for parametrization models not using {ParametrizationScalingStrategy.constant_inputs} strategy."
@@ -145,7 +146,8 @@ def convert_checkpoint_to_hf(
     if (
         (feed_forward := model_config.block.feed_forward) is not None
         and feed_forward.parametrization is not None
-        and feed_forward.parametrization.scaling_strategy != ParametrizationScalingStrategy.constant_inputs
+        and feed_forward.parametrization.scaling_strategy
+        != ParametrizationScalingStrategy.constant_inputs
     ):
         raise NotImplementedError(
             f"Conversion of parametrization models to HF is not yet supported for parametrization models not using {ParametrizationScalingStrategy.constant_inputs} strategy."

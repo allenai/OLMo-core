@@ -13,7 +13,7 @@ from ..config import Config, DType, StrEnum
 from ..doc_utils import beta_feature
 from ..exceptions import OLMoConfigurationError
 from .functional import l2_normalize
-from .parametrization import Parametrization, ParametrizationConfig, ParametrizationHyperParam
+from .parametrization import ParametrizationBase, ParametrizationConfig, WidthHyperParam
 from .utils import get_tp_wrappers
 
 __all__ = ["FeedForwardType", "FeedForwardConfig", "FeedForward", "NormalizedFeedForward"]
@@ -52,7 +52,7 @@ class FeedForwardConfig(Config):
     """
     The parametrization config.
     """
-    hidden_size_parametrization_hyper_param: Optional[ParametrizationHyperParam] = None
+    hidden_size_parametrization_hyper_param: Optional[WidthHyperParam] = None
     """
     When using parametrization, this specifies which hyper parameter modifies the hidden size. Defaults
     to ``ParametrizationHyperParam.hidden_size``.
@@ -122,7 +122,7 @@ class FeedForward(nn.Module):
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
         parametrization: Optional[ParametrizationConfig] = None,
-        hidden_size_parametrization_hyper_param: Optional[ParametrizationHyperParam] = None,
+        hidden_size_parametrization_hyper_param: Optional[WidthHyperParam] = None,
     ):
         super().__init__()
         self.d_model = d_model
@@ -130,17 +130,19 @@ class FeedForward(nn.Module):
         self.w1 = nn.Linear(d_model, hidden_size, bias=bias, dtype=dtype, device=init_device)
         self.w2 = nn.Linear(hidden_size, d_model, bias=bias, dtype=dtype, device=init_device)
         self.w3 = nn.Linear(d_model, hidden_size, bias=bias, dtype=dtype, device=init_device)
-        self.parametrizations: Dict[str, Parametrization] = {}
+        self.parametrizations: Dict[str, ParametrizationBase] = {}
         if parametrization:
-            hidden_size_parametrization_hyper_param = hidden_size_parametrization_hyper_param or ParametrizationHyperParam.hidden_size
+            hidden_size_parametrization_hyper_param = (
+                hidden_size_parametrization_hyper_param or WidthHyperParam.hidden_size
+            )
             self.parametrizations["w1.weight"] = parametrization.build(
-                {ParametrizationHyperParam.d_model}, {hidden_size_parametrization_hyper_param}
+                {WidthHyperParam.d_model}, {hidden_size_parametrization_hyper_param}
             )
             self.parametrizations["w2.weight"] = parametrization.build(
-                {hidden_size_parametrization_hyper_param}, {ParametrizationHyperParam.d_model}
+                {hidden_size_parametrization_hyper_param}, {WidthHyperParam.d_model}
             )
             self.parametrizations["w3.weight"] = parametrization.build(
-                {ParametrizationHyperParam.d_model}, {hidden_size_parametrization_hyper_param}
+                {WidthHyperParam.d_model}, {hidden_size_parametrization_hyper_param}
             )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -149,9 +151,17 @@ class FeedForward(nn.Module):
 
         :param x: The input of shape ``(*, d_model)``.
         """
-        w1_output = self.w1(Parametrization.scale_input(self.parametrizations.get("w1.weight"), x))
-        w3_output = self.w3(Parametrization.scale_input(self.parametrizations.get("w3.weight"), x))
-        return self.w2(Parametrization.scale_input(self.parametrizations.get("w2.weight"), F.silu(w1_output) * w3_output))
+        w1_output = self.w1(
+            ParametrizationBase.scale_input(self.parametrizations.get("w1.weight"), x)
+        )
+        w3_output = self.w3(
+            ParametrizationBase.scale_input(self.parametrizations.get("w3.weight"), x)
+        )
+        return self.w2(
+            ParametrizationBase.scale_input(
+                self.parametrizations.get("w2.weight"), F.silu(w1_output) * w3_output
+            )
+        )
 
     def apply_tp(
         self,

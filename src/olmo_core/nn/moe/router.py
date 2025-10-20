@@ -22,7 +22,11 @@ from olmo_core.distributed.utils import (
     unhide_from_torch,
 )
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.nn.parametrization import Parametrization, ParametrizationConfig, ParametrizationHyperParam
+from olmo_core.nn.parametrization import (
+    ParametrizationBase,
+    ParametrizationConfig,
+    WidthHyperParam,
+)
 from olmo_core.utils import get_default_device
 
 from .loss import MoELoadBalancingLossGranularity, load_balancing_loss, router_z_loss
@@ -549,9 +553,11 @@ class MoELinearRouter(MoERouter):
             torch.empty(self.num_experts * self.d_model, device=init_device, dtype=dtype)
         )
 
-        self.parametrizations: Dict[str, Parametrization] = {}
+        self.parametrizations: Dict[str, ParametrizationBase] = {}
         if parametrization:
-            self.parametrizations["weight"] = parametrization.build({ParametrizationHyperParam.d_model}, {ParametrizationHyperParam.num_experts})
+            self.parametrizations["weight"] = parametrization.build(
+                {WidthHyperParam.d_model}, {WidthHyperParam.num_experts}
+            )
 
         self.reset_parameters()
 
@@ -567,7 +573,7 @@ class MoELinearRouter(MoERouter):
         return f"in_features={self.d_model}, num_experts={self.num_experts}"
 
     def get_expert_logits(self, x: torch.Tensor) -> torch.Tensor:
-        x = Parametrization.scale_input(self.parametrizations.get("weight"), x)
+        x = ParametrizationBase.scale_input(self.parametrizations.get("weight"), x)
         return F.linear(
             x.float(), get_local_tensor(self.weight).view(self.num_experts, self.d_model).float()
         )

@@ -11,7 +11,7 @@ from olmo_core.distributed.checkpoint import (
     load_model_and_optim_state,
     save_model_and_optim_state,
 )
-from olmo_core.nn.parametrization import ParametrizationHyperParam, ParametrizationScalingStrategy
+from olmo_core.nn.parametrization import ParametrizationScalingStrategy, WidthHyperParam
 from olmo_core.optim import AdamWConfig, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.testing import DEVICES
 from olmo_core.utils import cuda_sync_debug_mode
@@ -194,7 +194,10 @@ def test_adamw_equivalence(
 
 @pytest.mark.parametrize("optim_config_cls", [AdamWConfig, SkipStepAdamWConfig])
 def test_adamw_parametrization_unchanged_weight_decay(optim_config_cls):
-    from olmo_core.nn.parametrization import ParametrizationConfig, ParametrizationOptimizerType
+    from olmo_core.nn.parametrization import (
+        ParametrizationConfig,
+        ParametrizationOptimizerType,
+    )
 
     lr = 1e-3
 
@@ -212,9 +215,9 @@ def test_adamw_parametrization_unchanged_weight_decay(optim_config_cls):
     parametrization_config = ParametrizationConfig(
         optimizer=parametrization_optimizer_type,
         width_scalings={
-            ParametrizationHyperParam.d_model: 2,
-            ParametrizationHyperParam.hidden_size: 3,
-            ParametrizationHyperParam.head_dim: 2,
+            WidthHyperParam.d_model: 2,
+            WidthHyperParam.hidden_size: 3,
+            WidthHyperParam.head_dim: 2,
         },
         scaling_strategy=ParametrizationScalingStrategy.constant_inputs,
     )
@@ -223,8 +226,10 @@ def test_adamw_parametrization_unchanged_weight_decay(optim_config_cls):
     model = MyModel(bias=False)
     model.parametrizations = {
         "wte.weight": parametrization_config.build(None, None),
-        "fc1.weight": parametrization_config.build({ParametrizationHyperParam.d_model}, {ParametrizationHyperParam.hidden_size}),
-        "fc2.weight": parametrization_config.build({ParametrizationHyperParam.hidden_size}, None),
+        "fc1.weight": parametrization_config.build(
+            {WidthHyperParam.d_model}, {WidthHyperParam.hidden_size}
+        ),
+        "fc2.weight": parametrization_config.build({WidthHyperParam.hidden_size}, None),
     }
     optim = optim_config.build(model)
 

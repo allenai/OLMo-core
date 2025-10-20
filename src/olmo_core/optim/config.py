@@ -23,7 +23,7 @@ import torch.nn as nn
 
 from ..config import Config
 from ..exceptions import OLMoConfigurationError
-from ..nn.parametrization import Parametrization, ParametrizationOptimizerType
+from ..nn.parametrization import ParametrizationBase, ParametrizationOptimizerType
 from ..utils import get_default_device, move_to_device
 
 __all__ = [
@@ -150,9 +150,11 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
         )
         group_overrides.append(default_override)
 
-        named_parametrizations = Parametrization.named_parametrizations(model)
+        named_parametrizations = ParametrizationBase.named_parametrizations(model)
         # If parametrization is scaling LR up/down, create separate parameter groups based on the new LRs.
-        if any(parametrization.lr_multiplier for _, parametrization in named_parametrizations.items()):
+        if any(
+            parametrization.lr_multiplier for _, parametrization in named_parametrizations.items()
+        ):
             if initial_lr is None:
                 raise OLMoConfigurationError("Initial LR must be provided for parametrization")
 
@@ -162,7 +164,10 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
                     f"Optimizer class {self.__class__.__name__} does not support parametrization but model has parametrization configs"
                 )
 
-            if any(parametrization.optimizer != parametrization_optimizer_type for _, parametrization in named_parametrizations.items()):
+            if any(
+                parametrization.optimizer != parametrization_optimizer_type
+                for _, parametrization in named_parametrizations.items()
+            ):
                 raise OLMoConfigurationError(
                     f"parametrization objects found with optimizer type not matching expected type {self.parametrization_optimizer_type()}"
                 )
@@ -178,24 +183,33 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
                     Tuple[float, Optional[float]], List[str]
                 ] = defaultdict(list)
                 for name in go.params:
-                    lr = Parametrization.scale_lr(named_parametrizations.get(name), go.opts.get("lr", initial_lr))
+                    lr = ParametrizationBase.scale_lr(
+                        named_parametrizations.get(name), go.opts.get("lr", initial_lr)
+                    )
 
                     if parametrization_optimizer_type.coupled_weight_decay:
                         assert default_weight_decay is not None
-                        weight_decay = Parametrization.scale_coupled_wd(
-                            named_parametrizations.get(name), go.opts.get("weight_decay", default_weight_decay)
+                        weight_decay = ParametrizationBase.scale_coupled_wd(
+                            named_parametrizations.get(name),
+                            go.opts.get("weight_decay", default_weight_decay),
                         )
                     else:
                         weight_decay = default_weight_decay
 
                     params_name_by_parametrization_lr_and_wd[(lr, weight_decay)].append(name)
 
-                if parametrization_optimizer_type.coupled_weight_decay or default_weight_decay is not None:
+                if (
+                    parametrization_optimizer_type.coupled_weight_decay
+                    or default_weight_decay is not None
+                ):
                     new_group_overrides += [
                         OptimGroupOverride(
                             param_names, {**go.opts, "lr": lr, "weight_decay": weight_decay}
                         )
-                        for (lr, weight_decay), param_names in params_name_by_parametrization_lr_and_wd.items()
+                        for (
+                            lr,
+                            weight_decay,
+                        ), param_names in params_name_by_parametrization_lr_and_wd.items()
                     ]
                 else:
                     new_group_overrides += [

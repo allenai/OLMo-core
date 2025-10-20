@@ -24,7 +24,11 @@ from olmo_core.nn.attention import (
     SlidingWindowAttentionConfig,
 )
 from olmo_core.nn.layer_norm import LayerNormConfig
-from olmo_core.nn.parametrization import ParametrizationConfig, ParametrizationOptimizerType, ParametrizationScalingStrategy
+from olmo_core.nn.parametrization import (
+    ParametrizationConfig,
+    ParametrizationOptimizerType,
+    ParametrizationScalingStrategy,
+)
 from olmo_core.nn.rope import RoPEConfig, RoPEType
 from olmo_core.testing import (
     BACKENDS,
@@ -1133,7 +1137,9 @@ def test_attention_parametrization_no_width_scaling_same_output(parametrization_
     attn_config = AttentionConfig(name=AttentionType.default, n_heads=8, n_kv_heads=2)
 
     parametrization_config = ParametrizationConfig(
-        optimizer=ParametrizationOptimizerType.adam, width_scalings={}, scaling_strategy=parametrization_scaling_strategy
+        optimizer=ParametrizationOptimizerType.adam,
+        width_scalings={},
+        scaling_strategy=parametrization_scaling_strategy,
     )
     parametrization_attn_config = AttentionConfig(
         name=AttentionType.default, n_heads=8, n_kv_heads=2, parametrization=parametrization_config

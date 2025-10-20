@@ -8,13 +8,19 @@ from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
 from olmo_core.internal.experiment import CommonComponents, main
-from olmo_core.nn.parametrization import ParametrizationConfig, ParametrizationHyperParam, ParametrizationScalingStrategy
+from olmo_core.nn.parametrization import (
+    ParametrizationConfig,
+    ParametrizationScalingStrategy,
+    WidthHyperParam,
+)
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.nn.transformer.config import TransformerBlockType
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
 from olmo_core.train import TrainerConfig
 from olmo_core.train.callbacks.comet import CometCallback
-from olmo_core.train.callbacks.parametrization_coord_data import ParametrizationCoordDataCallback
+from olmo_core.train.callbacks.parametrization_coord_data import (
+    ParametrizationCoordDataCallback,
+)
 from olmo_core.train.callbacks.wandb import WandBCallback
 from olmo_core.train.common import Duration
 from olmo_core.train.train_module import (
@@ -49,9 +55,9 @@ def build_model_config(
         parametrization=ParametrizationConfig(
             scaling_strategy=ParametrizationScalingStrategy.constant_inputs,
             width_scalings={
-                ParametrizationHyperParam.d_model: D_MODEL_MULTIPLIER,
-                ParametrizationHyperParam.hidden_size: D_MODEL_MULTIPLIER,
-                ParametrizationHyperParam.head_dim: D_MODEL_MULTIPLIER,
+                WidthHyperParam.d_model: D_MODEL_MULTIPLIER,
+                WidthHyperParam.hidden_size: D_MODEL_MULTIPLIER,
+                WidthHyperParam.head_dim: D_MODEL_MULTIPLIER,
             },
         ),
     )

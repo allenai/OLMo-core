@@ -14,9 +14,9 @@ from olmo_core.nn.moe.moe import MoEConfig
 from olmo_core.nn.moe.router import MoERouterConfig
 from olmo_core.nn.parametrization import (
     ParametrizationConfig,
-    ParametrizationHyperParam,
     ParametrizationOptimizerType,
     ParametrizationScalingStrategy,
+    WidthHyperParam,
 )
 from olmo_core.nn.transformer.config import TransformerBlockType, TransformerConfig
 from olmo_core.nn.transformer.init import InitMethod
@@ -61,9 +61,19 @@ def get_transformer_inputs(vocab_size: int = 100) -> torch.Tensor:
 @pytest.mark.parametrize(
     "parametrization_optimizer_type, parametrization_scaling_strategy, expected_multiplier",
     [
-        pytest.param(ParametrizationOptimizerType.adam, ParametrizationScalingStrategy.constant_inputs, None),
-        pytest.param(ParametrizationOptimizerType.adam, ParametrizationScalingStrategy.constant_lr, 1 / (2 * 0.7)),
-        pytest.param(ParametrizationOptimizerType.adam, ParametrizationScalingStrategy.constant_init_std, 1 / (2 * 0.7)),
+        pytest.param(
+            ParametrizationOptimizerType.adam, ParametrizationScalingStrategy.constant_inputs, None
+        ),
+        pytest.param(
+            ParametrizationOptimizerType.adam,
+            ParametrizationScalingStrategy.constant_lr,
+            1 / (2 * 0.7),
+        ),
+        pytest.param(
+            ParametrizationOptimizerType.adam,
+            ParametrizationScalingStrategy.constant_init_std,
+            1 / (2 * 0.7),
+        ),
     ],
 )
 def test_parametrization_input_multiplier_scaling_input(
@@ -73,12 +83,14 @@ def test_parametrization_input_multiplier_scaling_input(
         parametrization_optimizer_type,
         scaling_strategy=parametrization_scaling_strategy,
         width_scalings={
-            ParametrizationHyperParam.d_model: 2,
-            ParametrizationHyperParam.hidden_size: 0.7,
-            ParametrizationHyperParam.head_dim: 2,
+            WidthHyperParam.d_model: 2,
+            WidthHyperParam.hidden_size: 0.7,
+            WidthHyperParam.head_dim: 2,
         },
     )
-    parametrization = parametrization_config.build({ParametrizationHyperParam.d_model, ParametrizationHyperParam.hidden_size}, None)
+    parametrization = parametrization_config.build(
+        {WidthHyperParam.d_model, WidthHyperParam.hidden_size}, None
+    )
 
     torch.testing.assert_close(parametrization.input_multiplier, expected_multiplier)
 
@@ -86,10 +98,16 @@ def test_parametrization_input_multiplier_scaling_input(
 @pytest.mark.parametrize(
     "parametrization_optimizer_type, parametrization_scaling_strategy, expected_multiplier",
     [
-        pytest.param(ParametrizationOptimizerType.adam, ParametrizationScalingStrategy.constant_inputs, None),
-        pytest.param(ParametrizationOptimizerType.adam, ParametrizationScalingStrategy.constant_lr, 1 / 2),
         pytest.param(
-            ParametrizationOptimizerType.adam, ParametrizationScalingStrategy.constant_init_std, 1 / (2 ** (1 / 2))
+            ParametrizationOptimizerType.adam, ParametrizationScalingStrategy.constant_inputs, None
+        ),
+        pytest.param(
+            ParametrizationOptimizerType.adam, ParametrizationScalingStrategy.constant_lr, 1 / 2
+        ),
+        pytest.param(
+            ParametrizationOptimizerType.adam,
+            ParametrizationScalingStrategy.constant_init_std,
+            1 / (2 ** (1 / 2)),
         ),
     ],
 )
@@ -100,12 +118,14 @@ def test_parametrization_input_multiplier_scaling_input_and_output(
         parametrization_optimizer_type,
         scaling_strategy=parametrization_scaling_strategy,
         width_scalings={
-            ParametrizationHyperParam.d_model: 2,
-            ParametrizationHyperParam.hidden_size: 0.7,
-            ParametrizationHyperParam.head_dim: 2,
+            WidthHyperParam.d_model: 2,
+            WidthHyperParam.hidden_size: 0.7,
+            WidthHyperParam.head_dim: 2,
         },
     )
-    parametrization = parametrization_config.build({ParametrizationHyperParam.d_model}, {ParametrizationHyperParam.hidden_size})
+    parametrization = parametrization_config.build(
+        {WidthHyperParam.d_model}, {WidthHyperParam.hidden_size}
+    )
 
     torch.testing.assert_close(parametrization.input_multiplier, expected_multiplier)
 
@@ -113,9 +133,19 @@ def test_parametrization_input_multiplier_scaling_input_and_output(
 @pytest.mark.parametrize(
     "parametrization_optimizer_type, parametrization_scaling_strategy, expected_multiplier",
     [
-        pytest.param(ParametrizationOptimizerType.adam, ParametrizationScalingStrategy.constant_inputs, 1 / (2 * 0.7)),
-        pytest.param(ParametrizationOptimizerType.adam, ParametrizationScalingStrategy.constant_lr, None),
-        pytest.param(ParametrizationOptimizerType.adam, ParametrizationScalingStrategy.constant_init_std, None),
+        pytest.param(
+            ParametrizationOptimizerType.adam,
+            ParametrizationScalingStrategy.constant_inputs,
+            1 / (2 * 0.7),
+        ),
+        pytest.param(
+            ParametrizationOptimizerType.adam, ParametrizationScalingStrategy.constant_lr, None
+        ),
+        pytest.param(
+            ParametrizationOptimizerType.adam,
+            ParametrizationScalingStrategy.constant_init_std,
+            None,
+        ),
     ],
 )
 def test_parametrization_init_std_multiplier_scaling_input(
@@ -125,12 +155,14 @@ def test_parametrization_init_std_multiplier_scaling_input(
         parametrization_optimizer_type,
         scaling_strategy=parametrization_scaling_strategy,
         width_scalings={
-            ParametrizationHyperParam.d_model: 2,
-            ParametrizationHyperParam.hidden_size: 0.7,
-            ParametrizationHyperParam.head_dim: 2,
+            WidthHyperParam.d_model: 2,
+            WidthHyperParam.hidden_size: 0.7,
+            WidthHyperParam.head_dim: 2,
         },
     )
-    parametrization = parametrization_config.build({ParametrizationHyperParam.d_model, ParametrizationHyperParam.hidden_size}, None)
+    parametrization = parametrization_config.build(
+        {WidthHyperParam.d_model, WidthHyperParam.hidden_size}, None
+    )
 
     torch.testing.assert_close(parametrization.init_std_multiplier, expected_multiplier)
 
@@ -138,9 +170,21 @@ def test_parametrization_init_std_multiplier_scaling_input(
 @pytest.mark.parametrize(
     "parametrization_optimizer_type, parametrization_scaling_strategy, expected_multiplier",
     [
-        pytest.param(ParametrizationOptimizerType.adam, ParametrizationScalingStrategy.constant_inputs, 1 / (2 ** (1 / 2))),
-        pytest.param(ParametrizationOptimizerType.adam, ParametrizationScalingStrategy.constant_lr, 2 ** (1 / 2)),
-        pytest.param(ParametrizationOptimizerType.adam, ParametrizationScalingStrategy.constant_init_std, None),
+        pytest.param(
+            ParametrizationOptimizerType.adam,
+            ParametrizationScalingStrategy.constant_inputs,
+            1 / (2 ** (1 / 2)),
+        ),
+        pytest.param(
+            ParametrizationOptimizerType.adam,
+            ParametrizationScalingStrategy.constant_lr,
+            2 ** (1 / 2),
+        ),
+        pytest.param(
+            ParametrizationOptimizerType.adam,
+            ParametrizationScalingStrategy.constant_init_std,
+            None,
+        ),
     ],
 )
 def test_parametrization_init_std_multiplier_scaling_input_and_output(
@@ -150,12 +194,14 @@ def test_parametrization_init_std_multiplier_scaling_input_and_output(
         parametrization_optimizer_type,
         scaling_strategy=parametrization_scaling_strategy,
         width_scalings={
-            ParametrizationHyperParam.d_model: 2,
-            ParametrizationHyperParam.hidden_size: 0.7,
-            ParametrizationHyperParam.head_dim: 2,
+            WidthHyperParam.d_model: 2,
+            WidthHyperParam.hidden_size: 0.7,
+            WidthHyperParam.head_dim: 2,
         },
     )
-    parametrization = parametrization_config.build({ParametrizationHyperParam.d_model}, {ParametrizationHyperParam.hidden_size})
+    parametrization = parametrization_config.build(
+        {WidthHyperParam.d_model}, {WidthHyperParam.hidden_size}
+    )
 
     torch.testing.assert_close(parametrization.init_std_multiplier, expected_multiplier)
 
@@ -168,11 +214,15 @@ def test_parametrization_init_std_multiplier_scaling_input_and_output(
         for scaling_strategy in ParametrizationScalingStrategy
     ],
 )
-def test_parametrization_no_width_scaling_same_output(parametrization_optimizer_type, parametrization_scaling_strategy):
+def test_parametrization_no_width_scaling_same_output(
+    parametrization_optimizer_type, parametrization_scaling_strategy
+):
     model_config = get_transformer_config()
 
     parametrization_config = ParametrizationConfig(
-        parametrization_optimizer_type, width_scalings={}, scaling_strategy=parametrization_scaling_strategy
+        parametrization_optimizer_type,
+        width_scalings={},
+        scaling_strategy=parametrization_scaling_strategy,
     )
     parametrization_model_config = get_transformer_config(parametrization_config)
 
@@ -207,7 +257,9 @@ def test_parametrization_no_width_scaling_same_optim_groups(
     assert parametrization_optimizer_type is not None, "Optimizer does not support parametrization"
 
     parametrization_config = ParametrizationConfig(
-        parametrization_optimizer_type, width_scalings={}, scaling_strategy=parametrization_scaling_strategy
+        parametrization_optimizer_type,
+        width_scalings={},
+        scaling_strategy=parametrization_scaling_strategy,
     )
     parametrization_model_config = get_transformer_config(parametrization_config)
 
@@ -234,7 +286,10 @@ def test_parametrization_no_width_scaling_same_optim_groups(
 
 @pytest.mark.parametrize(
     "parametrization_optimizer_type",
-    [pytest.param(parametrization_optimizer_type) for parametrization_optimizer_type in ParametrizationOptimizerType],
+    [
+        pytest.param(parametrization_optimizer_type)
+        for parametrization_optimizer_type in ParametrizationOptimizerType
+    ],
 )
 def test_parametrization_no_input_scaling_same_output(parametrization_optimizer_type):
     model_config = get_transformer_config()
@@ -242,7 +297,7 @@ def test_parametrization_no_input_scaling_same_output(parametrization_optimizer_
     parametrization_config = ParametrizationConfig(
         parametrization_optimizer_type,
         scaling_strategy=ParametrizationScalingStrategy.constant_inputs,
-        width_scalings={ParametrizationHyperParam.hidden_size: 2.0},
+        width_scalings={WidthHyperParam.hidden_size: 2.0},
     )
     parametrization_model_config = get_transformer_config(parametrization_config)
 
@@ -278,9 +333,9 @@ def test_parametrization_no_lr_scaling_same_optim_groups(optim_config_cls):
         parametrization_optimizer_type,
         scaling_strategy=ParametrizationScalingStrategy.constant_lr,
         width_scalings={
-            ParametrizationHyperParam.d_model: 2.0,
-            ParametrizationHyperParam.head_dim: 2.0,
-            ParametrizationHyperParam.hidden_size: 2.0,
+            WidthHyperParam.d_model: 2.0,
+            WidthHyperParam.head_dim: 2.0,
+            WidthHyperParam.hidden_size: 2.0,
         },
     )
     parametrization_model_config = get_transformer_config(parametrization_config)
@@ -485,9 +540,9 @@ def test_ffn_parametrization_const_coord_norm_at_init_scaling_input_output(
             parametrization_optimizer_type,
             scaling_strategy=parametrization_scaling_strategy,
             width_scalings={
-                ParametrizationHyperParam.d_model: d_model / BASE_D_MODEL,
-                ParametrizationHyperParam.hidden_size: hidden_size / BASE_HIDDEN_SIZE,
-                ParametrizationHyperParam.head_dim: d_model / BASE_D_MODEL,
+                WidthHyperParam.d_model: d_model / BASE_D_MODEL,
+                WidthHyperParam.hidden_size: hidden_size / BASE_HIDDEN_SIZE,
+                WidthHyperParam.head_dim: d_model / BASE_D_MODEL,
             },
         )
 
@@ -594,11 +649,11 @@ def test_moe_parametrization_const_coord_norm_at_init_scaling_input_output(
             parametrization_optimizer_type,
             scaling_strategy=parametrization_scaling_strategy,
             width_scalings={
-                ParametrizationHyperParam.d_model: d_model / BASE_D_MODEL,
-                ParametrizationHyperParam.hidden_size: hidden_size / BASE_HIDDEN_SIZE,
-                ParametrizationHyperParam.head_dim: d_model / BASE_D_MODEL,
-                ParametrizationHyperParam.num_experts: num_experts / BASE_NUM_EXPERTS,
-                ParametrizationHyperParam.shared_expert_hidden_size: shared_expert_hidden_size
+                WidthHyperParam.d_model: d_model / BASE_D_MODEL,
+                WidthHyperParam.hidden_size: hidden_size / BASE_HIDDEN_SIZE,
+                WidthHyperParam.head_dim: d_model / BASE_D_MODEL,
+                WidthHyperParam.num_experts: num_experts / BASE_NUM_EXPERTS,
+                WidthHyperParam.shared_expert_hidden_size: shared_expert_hidden_size
                 / BASE_SHARED_EXPERT_HIDDEN_SIZE,
             },
         )
@@ -617,7 +672,7 @@ def test_moe_parametrization_const_coord_norm_at_init_scaling_input_output(
                 shared_expert_hidden_size,
                 parametrization=parametrization,
                 bias=False,
-                hidden_size_parametrization_hyper_param=ParametrizationHyperParam.shared_expert_hidden_size,
+                hidden_size_parametrization_hyper_param=WidthHyperParam.shared_expert_hidden_size,
             ),
         ).build(d_model, init_device="cuda")
 
@@ -718,9 +773,9 @@ def test_ffn_parametrization_non_growing_coord_norm_scaling_input_output(
             parametrization_optimizer_type,
             scaling_strategy=parametrization_scaling_strategy,
             width_scalings={
-                ParametrizationHyperParam.d_model: d_model / BASE_D_MODEL,
-                ParametrizationHyperParam.hidden_size: hidden_size / BASE_HIDDEN_SIZE,
-                ParametrizationHyperParam.head_dim: d_model / BASE_D_MODEL,
+                WidthHyperParam.d_model: d_model / BASE_D_MODEL,
+                WidthHyperParam.hidden_size: hidden_size / BASE_HIDDEN_SIZE,
+                WidthHyperParam.head_dim: d_model / BASE_D_MODEL,
             },
         )
 
@@ -777,7 +832,9 @@ def test_ffn_parametrization_non_growing_coord_norm_scaling_input_output(
         for scaling_strategy in ParametrizationScalingStrategy
     ],
 )
-def test_ffn_parametrization_non_growing_coord_norm_scaling_d_model(optim_config_cls, parametrization_scaling_strategy):
+def test_ffn_parametrization_non_growing_coord_norm_scaling_d_model(
+    optim_config_cls, parametrization_scaling_strategy
+):
     """
     This is the most important (and slowest) test of parametrization validity. It runs a base model and its parametrization
     up-/down-scalings, and checks that the magnitude of the coordinates (i.e. entries) of the
@@ -814,9 +871,9 @@ def test_ffn_parametrization_non_growing_coord_norm_scaling_d_model(optim_config
             parametrization_optimizer_type,
             scaling_strategy=parametrization_scaling_strategy,
             width_scalings={
-                ParametrizationHyperParam.d_model: d_model / BASE_D_MODEL,
-                ParametrizationHyperParam.hidden_size: hidden_size / BASE_HIDDEN_SIZE,
-                ParametrizationHyperParam.head_dim: d_model / BASE_D_MODEL,
+                WidthHyperParam.d_model: d_model / BASE_D_MODEL,
+                WidthHyperParam.hidden_size: hidden_size / BASE_HIDDEN_SIZE,
+                WidthHyperParam.head_dim: d_model / BASE_D_MODEL,
             },
         )
 
@@ -873,7 +930,9 @@ def test_ffn_parametrization_non_growing_coord_norm_scaling_d_model(optim_config
         for scaling_strategy in ParametrizationScalingStrategy
     ],
 )
-def test_parametrization_non_growing_coordinates(optim_config_cls: Type[OptimConfig], parametrization_scaling_strategy):
+def test_parametrization_non_growing_coordinates(
+    optim_config_cls: Type[OptimConfig], parametrization_scaling_strategy
+):
     """
     This is the most important (and slowest) test of parametrization validity. It runs a base model and its parametrization
     up-/down-scalings, and checks that the magnitude of the coordinates (i.e. entries) of the
@@ -924,7 +983,9 @@ def test_parametrization_non_growing_coordinates(optim_config_cls: Type[OptimCon
         parametrization_config = ParametrizationConfig(
             parametrization_optimizer_type,
             scaling_strategy=parametrization_scaling_strategy,
-            width_scalings=non_parametrization_model_config.get_parametrization_width_scalings(base_model_config),
+            width_scalings=non_parametrization_model_config.get_parametrization_width_scalings(
+                base_model_config
+            ),
         )
 
         model_config = get_transformer_config(

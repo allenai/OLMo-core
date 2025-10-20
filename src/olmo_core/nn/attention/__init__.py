@@ -20,7 +20,11 @@ from olmo_core.nn.attention.kv_cache import KVCacheManager
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
 from ..layer_norm import LayerNorm, LayerNormConfig
-from ..parametrization import Parametrization, ParametrizationConfig, ParametrizationHyperParam
+from ..parametrization import (
+    ParametrizationBase,
+    ParametrizationConfig,
+    WidthHyperParam,
+)
 from ..rope import (
     ComplexRotaryEmbedding,
     FusedRotaryEmbedding,
@@ -355,16 +359,20 @@ class Attention(AttentionBase):
             d_model, self.n_kv_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device
         )
         self.w_out = nn.Linear(d_model, d_model, bias=bias, dtype=dtype, device=init_device)
-        self.parametrizations: Dict[str, Parametrization] = {}
+        self.parametrizations: Dict[str, ParametrizationBase] = {}
         if parametrization:
-            self.parametrizations["w_q.weight"] = parametrization.build({ParametrizationHyperParam.d_model}, {ParametrizationHyperParam.d_model})
+            self.parametrizations["w_q.weight"] = parametrization.build(
+                {WidthHyperParam.d_model}, {WidthHyperParam.d_model}
+            )
             self.parametrizations["w_k.weight"] = parametrization.build(
-                {ParametrizationHyperParam.d_model}, {ParametrizationHyperParam.n_kv_heads, ParametrizationHyperParam.head_dim}
+                {WidthHyperParam.d_model}, {WidthHyperParam.n_kv_heads, WidthHyperParam.head_dim}
             )
             self.parametrizations["w_v.weight"] = parametrization.build(
-                {ParametrizationHyperParam.d_model}, {ParametrizationHyperParam.n_kv_heads, ParametrizationHyperParam.head_dim}
+                {WidthHyperParam.d_model}, {WidthHyperParam.n_kv_heads, WidthHyperParam.head_dim}
             )
-            self.parametrizations["w_out.weight"] = parametrization.build({ParametrizationHyperParam.d_model}, {ParametrizationHyperParam.d_model})
+            self.parametrizations["w_out.weight"] = parametrization.build(
+                {WidthHyperParam.d_model}, {WidthHyperParam.d_model}
+            )
         self.clip_qkv = clip_qkv
         self.use_head_qk_norm = use_head_qk_norm
 
@@ -384,7 +392,7 @@ class Attention(AttentionBase):
                 self.parametrizations["k_norm.weight"] = parametrization.build(None, None)
 
         if parametrization:
-            self.parametrizations["sdpa"] = parametrization.build({ParametrizationHyperParam.head_dim}, None)
+            self.parametrizations["sdpa"] = parametrization.build({WidthHyperParam.head_dim}, None)
 
             if (att_multiplier := self.parametrizations["sdpa"].attention_multiplier) is not None:
                 softmax_scale = (
@@ -515,9 +523,9 @@ class Attention(AttentionBase):
         # shape: (batch_size, seq_len, n_heads * head_dim),
         #        (batch_size, seq_len, n_kv_heads * head_dim),
         #        (batch_size, seq_len, n_kv_heads * head_dim)
-        q = self.w_q(Parametrization.scale_input(self.parametrizations.get("w_q.weight"), x))
-        k = self.w_k(Parametrization.scale_input(self.parametrizations.get("w_k.weight"), x))
-        v = self.w_v(Parametrization.scale_input(self.parametrizations.get("w_v.weight"), x))
+        q = self.w_q(ParametrizationBase.scale_input(self.parametrizations.get("w_q.weight"), x))
+        k = self.w_k(ParametrizationBase.scale_input(self.parametrizations.get("w_k.weight"), x))
+        v = self.w_v(ParametrizationBase.scale_input(self.parametrizations.get("w_v.weight"), x))
 
         if self.clip_qkv is not None:
             q.clamp_(min=-self.clip_qkv, max=self.clip_qkv)
@@ -526,10 +534,10 @@ class Attention(AttentionBase):
 
         if not self.use_head_qk_norm:
             if self.q_norm is not None:
-                q = Parametrization.scale_input(self.parametrizations.get("q_norm.weight"), q)
+                q = ParametrizationBase.scale_input(self.parametrizations.get("q_norm.weight"), q)
                 q = self.q_norm(q)
             if self.k_norm is not None:
-                k = Parametrization.scale_input(self.parametrizations.get("k_norm.weight"), k)
+                k = ParametrizationBase.scale_input(self.parametrizations.get("k_norm.weight"), k)
                 k = self.k_norm(k)
 
         # NOTE: use -1 instead of `n_heads` / `n_kv_heads` to infer actual local size when
@@ -543,10 +551,10 @@ class Attention(AttentionBase):
 
         if self.use_head_qk_norm:
             if self.q_norm is not None:
-                q = Parametrization.scale_input(self.parametrizations.get("q_norm.weight"), q)
+                q = ParametrizationBase.scale_input(self.parametrizations.get("q_norm.weight"), q)
                 q = self.q_norm(q)
             if self.k_norm is not None:
-                k = Parametrization.scale_input(self.parametrizations.get("k_norm.weight"), k)
+                k = ParametrizationBase.scale_input(self.parametrizations.get("k_norm.weight"), k)
                 k = self.k_norm(k)
 
         if self.rope is not None:
@@ -594,7 +602,9 @@ class Attention(AttentionBase):
         att = att.view(B, T, -1)
 
         # shape: (batch_size, seq_len, d_model)
-        return self.w_out(Parametrization.scale_input(self.parametrizations.get("w_out.weight"), att))
+        return self.w_out(
+            ParametrizationBase.scale_input(self.parametrizations.get("w_out.weight"), att)
+        )
 
     def apply_tp(
         self,
@@ -763,9 +773,9 @@ class NormalizedAttention(Attention):
         # shape: (batch_size, seq_len, n_heads * head_dim),
         #        (batch_size, seq_len, n_kv_heads * head_dim),
         #        (batch_size, seq_len, n_kv_heads * head_dim)
-        q = self.w_q(Parametrization.scale_input(self.parametrizations.get("w_q.weight"), x))
-        k = self.w_k(Parametrization.scale_input(self.parametrizations.get("w_k.weight"), x))
-        v = self.w_v(Parametrization.scale_input(self.parametrizations.get("w_v.weight"), x))
+        q = self.w_q(ParametrizationBase.scale_input(self.parametrizations.get("w_q.weight"), x))
+        k = self.w_k(ParametrizationBase.scale_input(self.parametrizations.get("w_k.weight"), x))
+        v = self.w_v(ParametrizationBase.scale_input(self.parametrizations.get("w_v.weight"), x))
 
         if self.q_norm is not None and self.k_norm is not None:
             q = self.q_norm(q)
@@ -821,7 +831,9 @@ class NormalizedAttention(Attention):
         att = att.view(B, T, -1)
 
         # shape: (batch_size, seq_len, d_model)
-        return Parametrization.scale_input(self.parametrizations.get("w_out.weight"), self.w_out(att))
+        return ParametrizationBase.scale_input(
+            self.parametrizations.get("w_out.weight"), self.w_out(att)
+        )
 
     def apply_tp(
         self,

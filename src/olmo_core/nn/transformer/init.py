@@ -10,7 +10,7 @@ from olmo_core.distributed.utils import distribute_like, get_local_tensor
 from ..attention import Attention, AttentionBase, FusedAttention
 from ..feed_forward import FeedForward
 from ..moe import DroplessMoEMLP, MoEBase, MoELinearRouter, MoEMLP
-from ..parametrization import Parametrization
+from ..parametrization import ParametrizationBase
 
 
 def _apply_init(init_fun, x: torch.Tensor, *args, **kwargs):
@@ -57,9 +57,9 @@ class InitMethod(StrEnum):
         *,
         std: float = 0.02,
         generator: Optional[torch.Generator] = None,
-        parametrization: Optional[Parametrization] = None,
+        parametrization: Optional[ParametrizationBase] = None,
     ):
-        std = Parametrization.scale_init_std(parametrization, std)
+        std = ParametrizationBase.scale_init_std(parametrization, std)
         _apply_init(
             nn.init.trunc_normal_,
             weight,
@@ -76,7 +76,7 @@ class InitMethod(StrEnum):
         *,
         std: float = 0.02,
         generator: Optional[torch.Generator] = None,
-        parametrization: Optional[Parametrization] = None,
+        parametrization: Optional[ParametrizationBase] = None,
     ):
         self._init_weight(m.weight, std=std, generator=generator, parametrization=parametrization)
 
@@ -113,7 +113,7 @@ class InitMethod(StrEnum):
         d_model: int,
         std: float = 0.02,
         generator: Optional[torch.Generator] = None,
-        parametrization: Optional[Parametrization] = None,
+        parametrization: Optional[ParametrizationBase] = None,
     ):
         if self in (InitMethod.llama, InitMethod.llama_depth, InitMethod.normalized):
             std = d_model**-0.5
@@ -136,7 +136,9 @@ class InitMethod(StrEnum):
         if isinstance(m, Attention) or hasattr(m, "w_q"):
             m = cast(Attention, m)
             for name, w in zip(("w_q.weight", "w_k.weight", "w_v.weight"), (m.w_q, m.w_k, m.w_v)):
-                self._init_linear(w, std=std, generator=generator, parametrization=m.parametrizations.get(name))
+                self._init_linear(
+                    w, std=std, generator=generator, parametrization=m.parametrizations.get(name)
+                )
         elif isinstance(m, FusedAttention) or hasattr(m, "w_qkv"):
             m = cast(FusedAttention, m)
             # FusedAttention does not support parametrization, so no parametrization scaling
@@ -151,9 +153,14 @@ class InitMethod(StrEnum):
         elif self == InitMethod.normalized:
             std = std / (2 * num_blocks) ** 0.5
 
-        parametrizations: Optional[Dict[str, Parametrization]] = getattr(m, "parametrizations", None)
+        parametrizations: Optional[Dict[str, ParametrizationBase]] = getattr(
+            m, "parametrizations", None
+        )
         self._init_linear(
-            m.w_out, std=std, generator=generator, parametrization=parametrizations.get("w_out.weight") if parametrizations else None
+            m.w_out,
+            std=std,
+            generator=generator,
+            parametrization=parametrizations.get("w_out.weight") if parametrizations else None,
         )
 
     def init_feed_forward(
@@ -169,19 +176,25 @@ class InitMethod(StrEnum):
         if self == InitMethod.normalized:
             std = d_model**-0.5
 
-        self._init_linear(m.w1, std=std, generator=generator, parametrization=m.parametrizations.get("w1.weight"))
+        self._init_linear(
+            m.w1, std=std, generator=generator, parametrization=m.parametrizations.get("w1.weight")
+        )
 
         if self == InitMethod.llama:
             std = std / (2 * num_blocks) ** 0.5
         elif self == InitMethod.llama_depth:
             std = std / (2 * (block_idx + 1)) ** 0.5
 
-        self._init_linear(m.w3, std=std, generator=generator, parametrization=m.parametrizations.get("w3.weight"))
+        self._init_linear(
+            m.w3, std=std, generator=generator, parametrization=m.parametrizations.get("w3.weight")
+        )
 
         if self == InitMethod.normalized:
             std = std / (2 * num_blocks) ** 0.5
 
-        self._init_linear(m.w2, std=std, generator=generator, parametrization=m.parametrizations.get("w2.weight"))
+        self._init_linear(
+            m.w2, std=std, generator=generator, parametrization=m.parametrizations.get("w2.weight")
+        )
 
     def init_feed_forward_moe(
         self,
@@ -202,10 +215,19 @@ class InitMethod(StrEnum):
 
         router = cast(MoELinearRouter, m.router)
         self._init_weight(
-            router.weight, std=std, generator=generator, parametrization=router.parametrizations.get("router")
+            router.weight,
+            std=std,
+            generator=generator,
+            parametrization=router.parametrizations.get("router"),
         )
 
         mlp = cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp)
-        self._init_weight(mlp.w1, std=std, generator=generator, parametrization=mlp.parametrizations.get("w1"))
-        self._init_weight(mlp.w2, std=std, generator=generator, parametrization=mlp.parametrizations.get("w2"))
-        self._init_weight(mlp.w3, std=std, generator=generator, parametrization=mlp.parametrizations.get("w3"))
+        self._init_weight(
+            mlp.w1, std=std, generator=generator, parametrization=mlp.parametrizations.get("w1")
+        )
+        self._init_weight(
+            mlp.w2, std=std, generator=generator, parametrization=mlp.parametrizations.get("w2")
+        )
+        self._init_weight(
+            mlp.w3, std=std, generator=generator, parametrization=mlp.parametrizations.get("w3")
+        )

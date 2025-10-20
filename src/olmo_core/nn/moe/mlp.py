@@ -14,7 +14,11 @@ from torch.distributed.tensor import Placement, Shard, distribute_tensor
 from olmo_core.distributed.parallel import get_device_mesh_info
 from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.nn.parametrization import Parametrization, ParametrizationConfig, ParametrizationHyperParam
+from olmo_core.nn.parametrization import (
+    ParametrizationBase,
+    ParametrizationConfig,
+    WidthHyperParam,
+)
 from olmo_core.utils import log_once
 
 try:
@@ -47,7 +51,7 @@ class MoEMLPBase(nn.Module):
         self.hidden_sharding_degree = 1
         self.ep_mesh: Optional[DeviceMesh] = None
         self.ep_pg: Optional[dist.ProcessGroup] = None
-        self.parametrizations: Dict[str, Parametrization] = {}
+        self.parametrizations: Dict[str, ParametrizationBase] = {}
 
     def apply_ep(self, ep_mesh: DeviceMesh):
         """
@@ -167,18 +171,18 @@ class MoEMLP(MoEMLPBase):
 
         if parametrization:
             self.parametrizations["w1"] = parametrization.build(
-                {ParametrizationHyperParam.d_model},
-                {ParametrizationHyperParam.hidden_size},
+                {WidthHyperParam.d_model},
+                {WidthHyperParam.hidden_size},
                 # {ParametrizationHyperParam.hidden_size, ParametrizationHyperParam.num_experts},
             )
             self.parametrizations["w2"] = parametrization.build(
-                {ParametrizationHyperParam.hidden_size},
-                {ParametrizationHyperParam.d_model},
+                {WidthHyperParam.hidden_size},
+                {WidthHyperParam.d_model},
                 # {ParametrizationHyperParam.d_model, ParametrizationHyperParam.num_experts},
             )
             self.parametrizations["w3"] = parametrization.build(
-                {ParametrizationHyperParam.d_model},
-                {ParametrizationHyperParam.hidden_size},
+                {WidthHyperParam.d_model},
+                {WidthHyperParam.hidden_size},
                 # {ParametrizationHyperParam.hidden_size, ParametrizationHyperParam.num_experts},
             )
 
@@ -213,10 +217,16 @@ class MoEMLP(MoEMLPBase):
         x = x.type_as(w1)
 
         # Compute the MLP.
-        w1_output = torch.bmm(Parametrization.scale_input(self.parametrizations.get("w1"), x), w1)
-        w3_output = torch.bmm(Parametrization.scale_input(self.parametrizations.get("w3"), x), w3)
+        w1_output = torch.bmm(
+            ParametrizationBase.scale_input(self.parametrizations.get("w1"), x), w1
+        )
+        w3_output = torch.bmm(
+            ParametrizationBase.scale_input(self.parametrizations.get("w3"), x), w3
+        )
         return torch.bmm(
-            Parametrization.scale_input(self.parametrizations.get("w2"), F.silu(w1_output) * w3_output),
+            ParametrizationBase.scale_input(
+                self.parametrizations.get("w2"), F.silu(w1_output) * w3_output
+            ),
             w2,
         ).to(dtype=og_dtype)
 
@@ -266,18 +276,18 @@ class DroplessMoEMLP(MoEMLPBase):
 
         if parametrization:
             self.parametrizations["w1"] = parametrization.build(
-                {ParametrizationHyperParam.d_model},
-                {ParametrizationHyperParam.hidden_size},
+                {WidthHyperParam.d_model},
+                {WidthHyperParam.hidden_size},
                 # {ParametrizationHyperParam.hidden_size, ParametrizationHyperParam.num_experts},
             )
             self.parametrizations["w2"] = parametrization.build(
-                {ParametrizationHyperParam.hidden_size},
-                {ParametrizationHyperParam.d_model},
+                {WidthHyperParam.hidden_size},
+                {WidthHyperParam.d_model},
                 # {ParametrizationHyperParam.d_model, ParametrizationHyperParam.num_experts},
             )
             self.parametrizations["w3"] = parametrization.build(
-                {ParametrizationHyperParam.d_model},
-                {ParametrizationHyperParam.hidden_size},
+                {WidthHyperParam.d_model},
+                {WidthHyperParam.hidden_size},
                 # {ParametrizationHyperParam.hidden_size, ParametrizationHyperParam.num_experts},
             )
 
@@ -331,10 +341,20 @@ class DroplessMoEMLP(MoEMLPBase):
 
         # Compute the MLP.
         x1 = self.gmm(
-            Parametrization.scale_input(self.parametrizations.get("w1"), x), w1, batch_size_per_expert, trans_b=True
+            ParametrizationBase.scale_input(self.parametrizations.get("w1"), x),
+            w1,
+            batch_size_per_expert,
+            trans_b=True,
         )
         x2 = self.gmm(
-            Parametrization.scale_input(self.parametrizations.get("w3"), x), w3, batch_size_per_expert, trans_b=True
+            ParametrizationBase.scale_input(self.parametrizations.get("w3"), x),
+            w3,
+            batch_size_per_expert,
+            trans_b=True,
         )
         x1 = F.silu(x1) * x2
-        return self.gmm(Parametrization.scale_input(self.parametrizations.get("w2"), x1), w2, batch_size_per_expert)
+        return self.gmm(
+            ParametrizationBase.scale_input(self.parametrizations.get("w2"), x1),
+            w2,
+            batch_size_per_expert,
+        )

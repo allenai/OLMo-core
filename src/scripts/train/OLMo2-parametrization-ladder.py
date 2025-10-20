@@ -8,11 +8,17 @@ from olmo_core.internal.common import get_beaker_username, get_work_dir
 from olmo_core.internal.model_ladder import RunDuration, main
 from olmo_core.io import join_path
 from olmo_core.model_ladder import ModelLadder, ModelSize
-from olmo_core.nn.parametrization import ParametrizationConfig, ParametrizationOptimizerType, ParametrizationScalingStrategy
+from olmo_core.nn.parametrization import (
+    ParametrizationConfig,
+    ParametrizationOptimizerType,
+    ParametrizationScalingStrategy,
+)
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig, OptimConfig, OptimGroupOverride
 from olmo_core.optim.scheduler import WSD
-from olmo_core.train.callbacks.parametrization_coord_data import ParametrizationCoordDataCallback
+from olmo_core.train.callbacks.parametrization_coord_data import (
+    ParametrizationCoordDataCallback,
+)
 from olmo_core.train.config import TrainerConfig
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
@@ -53,7 +59,9 @@ class BaselineModelLadder(ModelLadder):
                 f"Size {size} not supported by this parametrization ladder (supported sizes: {self.SUPPORTED_MODEL_SIZES})."
             )
 
-        model_config: TransformerConfig = getattr(TransformerConfig, f"olmo2_parametrization_{size}")(
+        model_config: TransformerConfig = getattr(
+            TransformerConfig, f"olmo2_parametrization_{size}"
+        )(
             vocab_size=self.tokenizer.padded_vocab_size(),
             init_seed=self.init_seed,
             **self.MODEL_OVERRIDES.get(size, {}),
@@ -65,7 +73,9 @@ class BaselineModelLadder(ModelLadder):
             init_seed=self.init_seed,
             **self.MODEL_OVERRIDES.get(base_size, {}),
         )
-        parametrization_width_scalings = model_config.get_parametrization_width_scalings(base_model_config)
+        parametrization_width_scalings = model_config.get_parametrization_width_scalings(
+            base_model_config
+        )
         parametrization_config = ParametrizationConfig(
             ParametrizationOptimizerType.adam_coupled_wd,
             scaling_strategy=ParametrizationScalingStrategy.constant_inputs,
