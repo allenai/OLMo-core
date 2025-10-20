@@ -4,12 +4,13 @@ Train an OLMoE model. Run this script without any arguments to see usage info.
 
 import logging
 import math
+from dataclasses import replace
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.parallel.pipeline_parallel import PipelineScheduleType
 from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
-from olmo_core.internal.experiment import CommonComponents, main, ExperimentConfig
+from olmo_core.internal.experiment import CommonComponents, ExperimentConfig, main
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.feed_forward import FeedForwardConfig
 from olmo_core.nn.lm_head import LMLossImplementation
@@ -25,25 +26,31 @@ from olmo_core.nn.transformer import (
     TransformerConfig,
     TransformerType,
 )
-from olmo_core.optim import WSD, OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig, AdamWConfig
+from olmo_core.optim import (
+    WSD,
+    AdamWConfig,
+    OptimGroupOverride,
+    SchedulerUnits,
+    SkipStepAdamWConfig,
+)
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
     BatchSizeSchedulerCallback,
     CheckpointerCallback,
     CometCallback,
+    NvidiaProfilerCallback,
     WandBCallback,
-    NvidiaProfilerCallback
 )
 from olmo_core.train.train_module import (
-    TransformerDataParallelConfig,
-    TransformerDataParallelWrappingStrategy,
-    TransformerTrainModuleConfig,
     TransformerActivationCheckpointingConfig,
     TransformerActivationCheckpointingMode,
-    TransformerExpertParallelConfig
+    TransformerDataParallelConfig,
+    TransformerDataParallelWrappingStrategy,
+    TransformerExpertParallelConfig,
+    TransformerTrainModuleConfig,
 )
 from olmo_core.train.train_module.transformer import TransformerPipelineParallelConfig
-from dataclasses import replace
+
 log = logging.getLogger(__name__)
 
 
@@ -55,11 +62,12 @@ MAX_DURATION = int(500e9)  # int(6e12), don't forget to adjust the LR when you i
 EVAL_INTERVAL = 1000
 NUM_EXPERTS = 128
 TOP_K = 8
-NUM_LAYERS=32
+NUM_LAYERS = 32
 MOE_HIDDEN_SIZE = 1024
 USE_SHARED_MLP = False  # Use shared MLP in MoE blocks
 SHARED_MLP_HIDDEN_SIZE = 4096  # Hidden size for shared MLP in MoE blocks
 MICRO_BSZ = 6
+
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     d_model = 2048
@@ -100,26 +108,27 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
             lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
             scale_loss_by_num_layers=False,
         ),
-         feed_forward=FeedForwardConfig(hidden_size=SHARED_MLP_HIDDEN_SIZE, bias=False),
+        feed_forward=FeedForwardConfig(hidden_size=SHARED_MLP_HIDDEN_SIZE, bias=False),
         init_std=0.01,
     )
-    
+
     config.lm_head.loss_implementation = LMLossImplementation.fused_linear
-    
+
     config.block.attention.sliding_window = SlidingWindowAttentionConfig(
         force_first=False, pattern=[True, True, True, False]
     )
     config.block.attention.use_flash = True
     config.block.attention.use_head_qk_norm = True
-    
+
     # First block will be a regular transformer block (no MoE component).
     config.block_overrides = {
         0: replace(
-            config.block, 
-            name=TransformerBlockType.reordered_norm, 
+            config.block,
+            name=TransformerBlockType.reordered_norm,
             feed_forward_moe=None,
-            feed_forward=FeedForwardConfig(hidden_size=(SHARED_MLP_HIDDEN_SIZE + TOP_K * MOE_HIDDEN_SIZE), bias=False),
-
+            feed_forward=FeedForwardConfig(
+                hidden_size=(SHARED_MLP_HIDDEN_SIZE + TOP_K * MOE_HIDDEN_SIZE), bias=False
+            ),
         ),
     }
 
@@ -130,8 +139,8 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
     return TransformerTrainModuleConfig(
         rank_microbatch_size=MICRO_BSZ * SEQUENCE_LENGTH,
         max_sequence_length=common.dataset.effective_sequence_length,
-         optim=SkipStepAdamWConfig(
-        # optim=AdamWConfig(
+        optim=SkipStepAdamWConfig(
+            # optim=AdamWConfig(
             lr=1.6e-4
             * math.sqrt(
                 GLOBAL_BATCH_SIZE / (4096 * 512)
@@ -190,10 +199,10 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     # assert common.launch is not None
     # assert len(common.launch.clusters) == 1
     # cluster = common.launch.clusters[0]
-    cluster = 'ai2/jupiter-cirrascale-2'
+    cluster = "ai2/jupiter-cirrascale-2"
     return (
         TrainerConfig(
-            save_folder=f'/workspace/tmp/{common.run_name}',
+            save_folder=f"/workspace/tmp/{common.run_name}",
             save_overwrite=True,
             metrics_collect_interval=5,
             cancel_check_interval=cancel_check_interval,
@@ -241,12 +250,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             ),
         )
         .with_callback(
-            "profiler", 
-            NvidiaProfilerCallback(enabled=False,
-                                   profile_ranks=[0],
-                                   start=10,
-                                   end=13
-            )
+            "profiler", NvidiaProfilerCallback(enabled=False, profile_ranks=[0], start=10, end=13)
         )
         # TODO: might not be able to run in-loop evals depending on parallel strategies
         # .with_recommended_evals(
@@ -257,11 +261,16 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
 def finalize_config(config: ExperimentConfig):
     # add active & total params to the wandb name
-    total_params_in_B = config.model.num_params/1000/1000/1000
-    active_params_in_B = config.model.num_active_params/1000/1000/1000
-    config.trainer.callbacks['wandb'].name += f"_{active_params_in_B:.2f}@{total_params_in_B:.2f}B"  # print to 2 decimal places
-    config.trainer.callbacks['wandb'].name += f"_{TOP_K}K{NUM_EXPERTS}N"  # print to 2 decimal places
-    
+    total_params_in_B = config.model.num_params / 1000 / 1000 / 1000
+    active_params_in_B = config.model.num_active_params / 1000 / 1000 / 1000
+    config.trainer.callbacks[
+        "wandb"
+    ].name += f"_{active_params_in_B:.2f}@{total_params_in_B:.2f}B"  # print to 2 decimal places
+    config.trainer.callbacks[
+        "wandb"
+    ].name += f"_{TOP_K}K{NUM_EXPERTS}N"  # print to 2 decimal places
+
+
 if __name__ == "__main__":
     main(
         global_batch_size=GLOBAL_BATCH_SIZE,

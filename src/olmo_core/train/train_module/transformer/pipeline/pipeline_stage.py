@@ -1,24 +1,24 @@
+import re
+from collections import Counter, defaultdict
+from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple, Union, cast
 
-
-
+import nvtx
 import torch
 import torch.distributed as dist
-from collections import Counter, defaultdict
-from torch.utils._pytree import tree_map_only
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union, NamedTuple, cast
-import torch
-from torch.fx.node import Argument
-from torch.distributed._composable import replicate as _rep # type: ignore[attr-defined]
-from torch.nn.parallel import DistributedDataParallel
+from torch.distributed._composable import (
+    replicate as _rep,  # type: ignore[attr-defined]
+)
 from torch.distributed.fsdp import FSDPModule, fully_shard
+from torch.fx.node import Argument
+from torch.nn.parallel import DistributedDataParallel
+from torch.utils._pytree import tree_map_only
+
 # from torch.distributed.pipelining._backward import stage_backward, stage_backward_input
-from .helpers import stage_backward
-import re
-import nvtx
-from .helpers import(
+from .helpers import (
     _free_tensor_inplace,
     flatten_args,
     normalize_model_output_as_tuple,
+    stage_backward,
 )
 
 
@@ -35,6 +35,7 @@ def _make_tensor_from_meta(
         layout=example.layout,
         device=device,
     )
+
 
 class RecvInfo:
     """
@@ -54,23 +55,23 @@ class RecvInfo:
         # Buffer to receive the input into.
         self.buffer = buffer
 
-
     def __repr__(self):
-        return f"RecvInfo(input={self.input_name}, source={self.source}, shape={self.buffer.size()})"
-
+        return (
+            f"RecvInfo(input={self.input_name}, source={self.source}, shape={self.buffer.size()})"
+        )
 
 
 class CustomPipelineStage:
     """
     Drop-in replacement for :class:`PipelineStage` that adds a few features:
-    
+
     1. keeps only a *small
     pool* (≤ pipeline depth) of receive/grad buffers and re-uses them across
     micro-batches.
-    
+
     2. override `forward_maybe_with_nosync` and `backward_maybe_with_nosync` to
     support torch.distributed._composable.replicate (used to be just torch.nn.parallel.DistributedDataParallel)
-    
+
     """
 
     def __init__(
@@ -83,9 +84,7 @@ class CustomPipelineStage:
         **kwargs,
     ):
         if stage_index >= num_stages:
-            raise ValueError(
-                f"Stage index {stage_index} is out of range of {num_stages}"
-            )
+            raise ValueError(f"Stage index {stage_index} is out of range of {num_stages}")
 
         # Whether this stage is using replicate (composable) DDP, affects how to control gradient sync in backward
         self.is_rddp: bool = kwargs.pop("is_rddp", False)
@@ -95,18 +94,18 @@ class CustomPipelineStage:
 
         # current stage index
         self.stage_index = stage_index
-        
+
         # total number of stages
         self.num_stages = num_stages
-        
+
         # current device
         self.device = device
-        
+
         # PP process group
         self.group = group
 
         # hidden states size, used for creating p2p buffers
-        d_model = getattr(submodule, 'd_model', None)
+        d_model = getattr(submodule, "d_model", None)
         assert isinstance(d_model, int), "submodule must have d_model (int) attribute"
         self.d_model: int = d_model
 
@@ -124,11 +123,13 @@ class CustomPipelineStage:
         # map microbatch ID to list of forward tensor args
         # used for: (1) after forward, need to store it before sending to next stage
         #           (2) before backward, need to the stage output for the autograd graph
-        self.fwd_cache: dict[int, tuple[torch.Tensor, torch.Tensor]] = {} # mb_idx -> (stage_input, stage_output)
+        self.fwd_cache: dict[
+            int, tuple[torch.Tensor, torch.Tensor]
+        ] = {}  # mb_idx -> (stage_input, stage_output)
 
         # map microbatch ID to list of backward grad tensor args
         # used for: after backward, need to store the stage input grads before sending to previous stage
-        self.bwd_cache: dict[int, torch.Tensor] = {} # mb_idx -> stage_input_grads
+        self.bwd_cache: dict[int, torch.Tensor] = {}  # mb_idx -> stage_input_grads
 
         # Initialize has_backward to false; this will be set to true if loss
         # function is passed to pipeline schedule
@@ -150,14 +151,12 @@ class CustomPipelineStage:
         # these are the buffers used in backwards send/recv, they are allocated later
         # self.outputs_grad: list[torch.Tensor] = []
 
-        
-        # self.output_chunks: dict = {} 
+        # self.output_chunks: dict = {}
 
         # runtime per step info (can change in each step())
         self._step_global_batch_size: Optional[int] = None
         self._step_micro_batch_size: Optional[int] = None
         self._step_seqlen: Optional[int] = None
-
 
     @property
     def has_backward(self) -> bool:
@@ -165,8 +164,6 @@ class CustomPipelineStage:
         Returns true if this stage has a backward pass.
         """
         return self._has_backward
-
-
 
     @has_backward.setter
     def has_backward(self, has_backward: bool):
@@ -196,8 +193,6 @@ class CustomPipelineStage:
     #             f"Chunk id {chunk_id} is out of range [0, {self.chunks})"
     #         )
 
-
-
     def forward_one_chunk(
         self,
         fwd_chunk_id: int,
@@ -214,7 +209,7 @@ class CustomPipelineStage:
             # Activations only come in args form
             stage_input = self._retrieve_recv_activations(fwd_chunk_id)
             stage_input.requires_grad_(True)
-            composite_args = (stage_input, ) # make it a tuple
+            composite_args = (stage_input,)  # make it a tuple
 
         composite_kwargs = kwargs or {}
 
@@ -235,7 +230,6 @@ class CustomPipelineStage:
         )
         # print(f"{self.stage_index}.forward_one_chunk({fwd_chunk_id}) ret")
         return output
-    
 
     def backward_one_chunk(
         self,
@@ -256,7 +250,7 @@ class CustomPipelineStage:
         """
         # print(f"{self.stage_index}.backward_one_chunk({bwd_chunk_id})")
 
-        _ = torch.zeros(128, device=self.device) # to make nvtx ranges more visible
+        _ = torch.zeros(128, device=self.device)  # to make nvtx ranges more visible
 
         # self._check_chunk_id(bwd_chunk_id)
 
@@ -272,7 +266,7 @@ class CustomPipelineStage:
             bwd_kwargs = {
                 "stage_output": stage_output,
                 "output_grads": None,
-                "input_values": [input_values], # need to be a list
+                "input_values": [input_values],  # need to be a list
             }
         else:
             # Otherwise, receive gradients from next stage
@@ -283,7 +277,7 @@ class CustomPipelineStage:
             bwd_kwargs = {
                 "stage_output": stage_output,
                 "output_grads": grads_output,
-                "input_values": [input_values], # need to be a list
+                "input_values": [input_values],  # need to be a list
             }
 
         grads_of_stage_input: Tuple[Optional[torch.Tensor], ...] = ()
@@ -301,8 +295,8 @@ class CustomPipelineStage:
             # check for nan
             # if torch.isnan(grads_of_stage_input[0]).any():
             #     raise RuntimeError("NaN detected in gradients of stage input")
-            self.bwd_cache[bwd_chunk_id] = grads_of_stage_input[0] # only one input expected
-        
+            self.bwd_cache[bwd_chunk_id] = grads_of_stage_input[0]  # only one input expected
+
         if self.is_last and not self.is_first:
             # Autograd dependencies:
             #    rest_of_autograd_graph -> stage_output -> loss
@@ -314,8 +308,7 @@ class CustomPipelineStage:
                 if not t._is_view():  # views are not detachable in-place
                     t.detach_()
 
-        _ = torch.zeros(128, device=self.device) # to make nvtx ranges more visible
-
+        _ = torch.zeros(128, device=self.device)  # to make nvtx ranges more visible
 
     def _get_recv_ops(self, source_stage_index, recv_buffer) -> List[dist.P2POp]:
         return self._get_p2p_ops(source_stage_index, recv_buffer, dist.irecv)
@@ -323,26 +316,25 @@ class CustomPipelineStage:
     def _get_send_ops(self, dest_stage_index, send_buffer) -> List[dist.P2POp]:
         return self._get_p2p_ops(dest_stage_index, send_buffer, dist.isend)
 
-    def _get_p2p_ops(self, source_stage_index: int, recv_buffer: torch.Tensor, p2p_type: Callable) -> List[dist.P2POp]:
+    def _get_p2p_ops(
+        self, source_stage_index: int, recv_buffer: torch.Tensor, p2p_type: Callable
+    ) -> List[dist.P2POp]:
         ops: list[dist.P2POp] = []
         assert source_stage_index >= 0
         assert source_stage_index < self.num_stages
         peer_rank = self.stage_index_to_group_rank[source_stage_index]
         peer_global_rank = (
-            peer_rank
-            if self.group is None
-            else dist.get_global_rank(self.group, peer_rank)
+            peer_rank if self.group is None else dist.get_global_rank(self.group, peer_rank)
         )
-        ops.append(
-            dist.P2POp(p2p_type, recv_buffer, peer_global_rank, self.group)
-        )
+        ops.append(dist.P2POp(p2p_type, recv_buffer, peer_global_rank, self.group))
 
         return ops
+
     # ------------------- fwd ---------------------
     def get_fwd_recv_ops(self, fwd_chunk_id: int) -> List[dist.P2POp]:
         if self.is_first:
             return []
-        
+
         source_stage_index = self.stage_index - 1
         meta = self.inputs_meta
         assert meta is not None
@@ -357,7 +349,7 @@ class CustomPipelineStage:
     def get_fwd_send_ops(self, fwd_chunk_id: int) -> List[dist.P2POp]:
         if self.is_last:
             return []
-        
+
         dst_stage_index = self.stage_index + 1
         meta = self.outputs_meta
         assert meta is not None
@@ -370,17 +362,16 @@ class CustomPipelineStage:
         ops = self._get_send_ops(dst_stage_index, buffer.detach())
         return ops
 
-
     # ------------------- bwd ---------------------
 
     def get_bwd_send_ops(self, bwd_chunk_id: int) -> list[dist.P2POp]:
         if not self.has_backward or self.is_first:
             return []
-        
+
         dest_stage_index = self.stage_index - 1
         assert dest_stage_index >= 0
 
-        meta = self.inputs_meta # in backward, send grad has the same shape as stage input
+        meta = self.inputs_meta  # in backward, send grad has the same shape as stage input
         assert meta is not None
         send_buffer = self.bwd_cache.pop(bwd_chunk_id)
 
@@ -389,10 +380,8 @@ class CustomPipelineStage:
 
         ops = self._get_send_ops(dest_stage_index, send_buffer.detach())
         return ops
-    
 
     def get_bwd_recv_ops(self, bwd_chunk_id: int) -> List[dist.P2POp]:
-        
         # don't need to recv in backward if last stage or no backward
         if not self.has_backward or self.is_last:
             return []
@@ -400,17 +389,15 @@ class CustomPipelineStage:
         source_stage_index = self.stage_index + 1
         assert source_stage_index < self.num_stages
 
-
-        meta = self.outputs_meta # in backward, recv grad has the same shape as stage output
+        meta = self.outputs_meta  # in backward, recv grad has the same shape as stage output
         assert meta is not None
         recv_buffer = _make_tensor_from_meta(meta, self.device)
-        
+
         ops = self._get_recv_ops(source_stage_index, recv_buffer)
 
         self.received_grads[bwd_chunk_id] = recv_buffer
         return ops
-        
-    
+
     def _retrieve_recv_activations(self, fwd_chunk_id: int):
         return self.received_activations.pop(fwd_chunk_id)
 
@@ -419,21 +406,19 @@ class CustomPipelineStage:
         bwd_chunk_id: int,
     ):
         return self.received_grads.pop(bwd_chunk_id)
-    
-    
+
     def _prepare_forward_backward_meta(self, num_microbatches: int, args_mb, kwargs_mb=None):
         """
         Prepare the meta tensors (to record shapes and dtypes) for forward and backward.
         """
-       
 
         assert self._step_micro_batch_size is not None, "Need to call prepare_step"
         assert self._step_seqlen is not None, "Need to call prepare_step"
         assert self.submod.d_model is not None
         example_p2p_tensor = torch.empty(
-            (self._step_micro_batch_size, self._step_seqlen, self.d_model),  
-            device="meta", 
-            dtype=self.p2p_dtype
+            (self._step_micro_batch_size, self._step_seqlen, self.d_model),
+            device="meta",
+            dtype=self.p2p_dtype,
         )
 
         if self.is_first:
@@ -452,7 +437,6 @@ class CustomPipelineStage:
             # (mbsz, seqlen, hidden)
             self.outputs_meta = example_p2p_tensor.clone()
 
-    
     def clear_step_info(self):
         self._step_global_batch_size = None
         self._step_micro_batch_size = None
@@ -462,8 +446,8 @@ class CustomPipelineStage:
         self._step_global_batch_size = global_batch_size
         self._step_micro_batch_size = micro_batch_size
         self._step_seqlen = seqlen
-    
-   # ---------------- reclamation helper -----------------
+
+    # ---------------- reclamation helper -----------------
 
     def release_microbatch_buffers(self, mb_idx: int):
         """Free activation & grad buffers for *mb_idx*."""
@@ -489,13 +473,15 @@ class CustomPipelineStage:
         if isinstance(self.submod, DistributedDataParallel):
             with self.submod.no_sync():  # type: ignore[operator]
                 out_val = self.submod(*args, **kwargs)
-        elif self.is_rddp: # composable.replicate
-            assert getattr(self.submod, 'set_requires_gradient_sync', None) is not None, "submod must have set_requires_gradient_sync method"
+        elif self.is_rddp:  # composable.replicate
+            assert (
+                getattr(self.submod, "set_requires_gradient_sync", None) is not None
+            ), "submod must have set_requires_gradient_sync method"
             assert isinstance(self.submod.set_requires_gradient_sync, Callable)
 
-            self.submod.set_requires_gradient_sync(False) 
+            self.submod.set_requires_gradient_sync(False)
             out_val = self.submod(*args, **kwargs)
-            self.submod.set_requires_gradient_sync(True) 
+            self.submod.set_requires_gradient_sync(True)
         else:
             out_val = self.submod(*args, **kwargs)
         return out_val
@@ -523,7 +509,7 @@ class CustomPipelineStage:
                         bwd_kwargs["output_grads"],
                         bwd_kwargs["input_values"],
                     ),
-                    None, # param_groups
+                    None,  # param_groups
                 )
             else:
                 raise RuntimeError(f"Unknown backward type: {backward_type}")
@@ -544,10 +530,10 @@ class CustomPipelineStage:
             else:
                 with self.submod.no_sync():  # type: ignore[operator]
                     result = perform_backward(backward_type)()
-        elif self.is_rddp: # composable.replicate
+        elif self.is_rddp:  # composable.replicate
             if last_backward:
-                state = _rep.state(self.submod)            # grab _ReplicateState
-                ddp_impl = state._ddp                      # the hidden real DDP
+                state = _rep.state(self.submod)  # grab _ReplicateState
+                ddp_impl = state._ddp  # the hidden real DDP
                 ddp_impl.reducer.prepare_for_backward(  # type: ignore[union-attr, operator]
                     list(
                         torch.nn.parallel.distributed._find_tensors(  # type: ignore[attr-defined]
@@ -557,10 +543,10 @@ class CustomPipelineStage:
                 )
                 result = perform_backward(backward_type)()
             else:
-                self.submod.set_requires_gradient_sync(False) # type: ignore
+                self.submod.set_requires_gradient_sync(False)  # type: ignore
                 result = perform_backward(backward_type)()
-                self.submod.set_requires_gradient_sync(True) # type: ignore
-        
+                self.submod.set_requires_gradient_sync(True)  # type: ignore
+
         # If submod is a FSDP module
         elif isinstance(self.submod, FSDPModule):
             self.submod.set_is_last_backward(False)
@@ -605,4 +591,3 @@ class CustomPipelineStage:
             for p in self.submod.parameters():
                 if p.grad is not None:
                     p.grad.div_(grad_scale_factor)
-

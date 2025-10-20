@@ -8,7 +8,7 @@ import math
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
-from olmo_core.internal.experiment import CommonComponents, main, ExperimentConfig
+from olmo_core.internal.experiment import CommonComponents, ExperimentConfig, main
 from olmo_core.nn.feed_forward import FeedForwardConfig
 from olmo_core.nn.moe import (
     MoEConfig,
@@ -47,21 +47,24 @@ MAX_DURATION = int(500e9)  # int(6e12), don't forget to adjust the LR when you i
 EVAL_INTERVAL = 1000
 NUM_EXPERTS = 64
 TOP_K = 8
-NUM_LAYERS=30
+NUM_LAYERS = 30
 MOE_HIDDEN_SIZE = 768
 USE_SHARED_MLP = False  # Use shared MLP in MoE blocks
 SHARED_MLP_HIDDEN_SIZE = 2560  # Hidden size for shared MLP in MoE blocks
 
-###### decay 
+###### decay
 START_STEP = 20000
-DECAY_STEPS= 1250
-LOAD_CKPT = f'/weka/oe-training-default/tianhua/ws-megatron/tmp/OLMoE3-ablation-wsd-30l-lr-5e-4/step{START_STEP}'
-TOTAL_TOKENS = (START_STEP+ DECAY_STEPS) * GLOBAL_BATCH_SIZE  # 4096 is the sequence length, 1024 is the batch size at step 0
+DECAY_STEPS = 1250
+LOAD_CKPT = f"/weka/oe-training-default/tianhua/ws-megatron/tmp/OLMoE3-ablation-wsd-30l-lr-5e-4/step{START_STEP}"
+TOTAL_TOKENS = (
+    START_STEP + DECAY_STEPS
+) * GLOBAL_BATCH_SIZE  # 4096 is the sequence length, 1024 is the batch size at step 0
 MAX_DURATION = int(TOTAL_TOKENS)
 EVAL_INTERVAL = 250
 ## change "decay=(int(50e9 / GLOBAL_BATCH_SIZE))""
 ## add load_path=LOAD_CKPT,  # Load from the before decay
 ############
+
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     d_model = 1536
@@ -82,7 +85,9 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
             hidden_size=MOE_HIDDEN_SIZE,
             capacity_factor=1.25,
             router=MoERouterConfig(top_k=TOP_K, gating_function=MoERouterGatingFunction.sigmoid),
-            shared_mlp=FeedForwardConfig(hidden_size=SHARED_MLP_HIDDEN_SIZE, bias=False) if USE_SHARED_MLP else None,
+            shared_mlp=FeedForwardConfig(hidden_size=SHARED_MLP_HIDDEN_SIZE, bias=False)
+            if USE_SHARED_MLP
+            else None,
             lb_loss_weight=0.05,
             z_loss_weight=None,
             lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
@@ -144,7 +149,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             warmup=2000,
             decay=(int(DECAY_STEPS)),
             decay_fraction=None,
-            decay_min_lr=1.5e-4
+            decay_min_lr=1.5e-4,
         ),
     )
 
@@ -155,10 +160,10 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     # assert common.launch is not None
     # assert len(common.launch.clusters) == 1
     # cluster = common.launch.clusters[0]
-    cluster = 'ai2/jupiter-cirrascale-2'
+    cluster = "ai2/jupiter-cirrascale-2"
     return (
         TrainerConfig(
-            save_folder=f'/workspace/tmp/{common.run_name}',
+            save_folder=f"/workspace/tmp/{common.run_name}",
             save_overwrite=True,
             metrics_collect_interval=5,
             cancel_check_interval=cancel_check_interval,
@@ -214,11 +219,16 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
 def finalize_config(config: ExperimentConfig):
     # add active & total params to the wandb name
-    total_params_in_B = config.model.num_params/1000/1000/1000
-    active_params_in_B = config.model.num_active_params/1000/1000/1000
-    config.trainer.callbacks['wandb'].name += f"_{active_params_in_B:.2f}@{total_params_in_B:.2f}B"  # print to 2 decimal places
-    config.trainer.callbacks['wandb'].name += f"_{TOP_K}K{NUM_EXPERTS}N"  # print to 2 decimal places
-    
+    total_params_in_B = config.model.num_params / 1000 / 1000 / 1000
+    active_params_in_B = config.model.num_active_params / 1000 / 1000 / 1000
+    config.trainer.callbacks[
+        "wandb"
+    ].name += f"_{active_params_in_B:.2f}@{total_params_in_B:.2f}B"  # print to 2 decimal places
+    config.trainer.callbacks[
+        "wandb"
+    ].name += f"_{TOP_K}K{NUM_EXPERTS}N"  # print to 2 decimal places
+
+
 if __name__ == "__main__":
     main(
         global_batch_size=GLOBAL_BATCH_SIZE,
@@ -229,5 +239,4 @@ if __name__ == "__main__":
         include_instance_filter=False,  # We use SkipStepOptimizer for this problem.
         include_default_evals=False,
         finalize_config=finalize_config,
-        
     )

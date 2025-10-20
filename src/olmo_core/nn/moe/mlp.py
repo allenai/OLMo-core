@@ -3,6 +3,7 @@ import math
 import warnings
 from typing import List, Optional
 
+import nvtx
 import torch
 import torch.distributed as dist
 import torch.nn as nn
@@ -10,13 +11,12 @@ import torch.nn.functional as F
 from torch.distributed import DeviceMesh
 from torch.distributed.fsdp import fully_shard
 from torch.distributed.tensor import Placement, Shard, distribute_tensor
+from torch.utils.checkpoint import CheckpointFunction, checkpoint
 
 from olmo_core.distributed.parallel import get_device_mesh_info
 from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import log_once
-import nvtx
-from torch.utils.checkpoint import checkpoint, CheckpointFunction
 
 try:
     import grouped_gemm  # type: ignore
@@ -293,29 +293,26 @@ class DroplessMoEMLP(MoEMLPBase):
         )
         # assert batch_size_per_expert.device == torch.device("cpu"), "batch_size_per_expert must be on CPU for grouped_gemm"
         # batch_size_per_expert = batch_size_per_expert.cpu() # NOTE: even though it's on CPU, this line is still needed, otherwise it will cause "not batch_size.is_cpu()" error in gmm() backward recompute, if we use activation checkpointing. No idea why.
-        
+
         assert isinstance(batch_size_per_expert, List), "only accept List for batch_size_per_expert"
         batch_size_per_expert_tensor = torch.tensor(
-            batch_size_per_expert, 
-            device='cpu', 
+            batch_size_per_expert,
+            device="cpu",
             dtype=torch.int64,  # NOTE: int64 required for grouped_gemm
         )
         # batch_size_per_expert = batch_size_per_expert.cpu()
         # Compute the MLP.
 
-        
         # print(f"before MLP rank {dist.get_rank()} x shape {x.shape}")
 
         if x.numel() == 0:
             return x
-        
+
         x1 = self.gmm(x, w1, batch_size_per_expert_tensor, trans_b=True)
         x2 = self.gmm(x, w3, batch_size_per_expert_tensor, trans_b=True)
         x1 = F.silu(x1) * x2
 
         out = self.gmm(x1, w2, batch_size_per_expert_tensor)
-        
 
-            
         # print(f"after MLP rank {dist.get_rank()} out shape {out.shape}")
         return out

@@ -4,12 +4,13 @@ Train an OLMoE model. Run this script without any arguments to see usage info.
 
 import logging
 import math
+from dataclasses import replace
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
-from olmo_core.internal.experiment import CommonComponents, main, ExperimentConfig
-from olmo_core.nn.feed_forward import FeedForwardConfig, DenseMoEFeedForwardConfig
+from olmo_core.internal.experiment import CommonComponents, ExperimentConfig, main
+from olmo_core.nn.feed_forward import DenseMoEFeedForwardConfig, FeedForwardConfig
 from olmo_core.nn.moe import (
     MoEConfig,
     MoELoadBalancingLossGranularity,
@@ -35,7 +36,6 @@ from olmo_core.train.train_module import (
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
-from dataclasses import replace
 
 log = logging.getLogger(__name__)
 
@@ -48,10 +48,11 @@ MAX_DURATION = int(300e9)  # int(6e12), don't forget to adjust the LR when you i
 EVAL_INTERVAL = 1000
 NUM_EXPERTS = 1
 TOP_K = 1
-NUM_LAYERS=16
+NUM_LAYERS = 16
 # MOE_HIDDEN_SIZE = 1024
 # USE_SHARED_MLP = True  # Use shared MLP in MoE blocks
 MLP_HIDDEN_SIZE = 8192  # Hidden size for shared MLP in MoE blocks
+
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     d_model = 2048
@@ -76,11 +77,11 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     # First block will be a regular transformer block (no MoE component).
     # config.block_overrides = {
     #     0: replace(
-    #         config.block, 
-    #         name=TransformerBlockType.reordered_norm, 
+    #         config.block,
+    #         name=TransformerBlockType.reordered_norm,
     #         feed_forward_moe=None,
     #         feed_forward=FeedForwardConfig(hidden_size=(SHARED_MLP_HIDDEN_SIZE + TOP_K * MOE_HIDDEN_SIZE), bias=False),
-            
+
     #         # feed_forward=FeedForwardConfig(hidden_size=2560, bias=False),
     #     ),
     # }
@@ -140,10 +141,10 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     # assert common.launch is not None
     # assert len(common.launch.clusters) == 1
     # cluster = common.launch.clusters[0]
-    cluster = 'ai2/jupiter-cirrascale-2'
+    cluster = "ai2/jupiter-cirrascale-2"
     return (
         TrainerConfig(
-            save_folder=f'/workspace/tmp/{common.run_name}',
+            save_folder=f"/workspace/tmp/{common.run_name}",
             save_overwrite=True,
             metrics_collect_interval=5,
             cancel_check_interval=cancel_check_interval,
@@ -199,12 +200,18 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
 def finalize_config(config: ExperimentConfig):
     from typing import cast
+
     # add active & total params to the wandb name
-    total_params_in_B = config.model.num_params/1000/1000/1000
-    active_params_in_B = config.model.num_active_params/1000/1000/1000
-    cast(WandBCallback, config.trainer.callbacks['wandb']).name += f"_{active_params_in_B:.2f}@{total_params_in_B:.2f}B"  # print to 2 decimal places
-    cast(WandBCallback, config.trainer.callbacks['wandb']).name += f"_{TOP_K}K{NUM_EXPERTS}N"  # print to 2 decimal places
-    
+    total_params_in_B = config.model.num_params / 1000 / 1000 / 1000
+    active_params_in_B = config.model.num_active_params / 1000 / 1000 / 1000
+    cast(
+        WandBCallback, config.trainer.callbacks["wandb"]
+    ).name += f"_{active_params_in_B:.2f}@{total_params_in_B:.2f}B"  # print to 2 decimal places
+    cast(
+        WandBCallback, config.trainer.callbacks["wandb"]
+    ).name += f"_{TOP_K}K{NUM_EXPERTS}N"  # print to 2 decimal places
+
+
 if __name__ == "__main__":
     main(
         global_batch_size=GLOBAL_BATCH_SIZE,
@@ -215,5 +222,4 @@ if __name__ == "__main__":
         include_instance_filter=False,  # We use SkipStepOptimizer for this problem.
         include_default_evals=False,
         finalize_config=finalize_config,
-        
     )

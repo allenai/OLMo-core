@@ -214,6 +214,7 @@ class WSD(Scheduler):
 
         return initial_lr
 
+
 @dataclass
 class PowerLR(Scheduler):
     """
@@ -223,7 +224,7 @@ class PowerLR(Scheduler):
        `warmup` steps/tokens.
     2. **Power phase** where the LR decays following a power‑law
        `lr = initial_lr * (current / warmup) ** b`.
-       This makes the LR independent of the eventual training horizon.  
+       This makes the LR independent of the eventual training horizon.
     3. **Optional linear decay tail** during the last `decay` steps/tokens to
        smoothly anneal to `decay_min_lr`.
 
@@ -238,12 +239,12 @@ class PowerLR(Scheduler):
 
     b: float = -0.51  # power‑law exponent (negative)
     warmup: Optional[int] = None
-    warmup_steps: Optional[int] = None      # deprecated alias
+    warmup_steps: Optional[int] = None  # deprecated alias
     warmup_fraction: Optional[float] = None
     warmup_min_lr: float = 0.0
 
     decay: Optional[int] = None
-    decay_steps: Optional[int] = None       # deprecated alias
+    decay_steps: Optional[int] = None  # deprecated alias
     decay_fraction: Optional[float] = 0.1
     decay_min_lr: float = 0.0
 
@@ -272,7 +273,9 @@ class PowerLR(Scheduler):
             raise OLMoConfigurationError("'warmup_fraction' must be between 0 and 1.")
 
         if (self.decay_fraction is None) == (self.decay is None):
-            raise OLMoConfigurationError("Either 'decay_fraction' or 'decay' must be specified. Never both.")
+            raise OLMoConfigurationError(
+                "Either 'decay_fraction' or 'decay' must be specified. Never both."
+            )
 
         if self.decay_fraction is not None and not (0 <= self.decay_fraction <= 1):
             raise OLMoConfigurationError("'decay_fraction' must be between 0 and 1.")
@@ -301,7 +304,7 @@ class PowerLR(Scheduler):
         """
         # --- warm‑up and decay extents ------------------------------------------------
         warmup = self.warmup if self.warmup is not None else round(t_max * self.warmup_fraction)
-        decay  = self.decay  if self.decay  is not None else round(t_max * self.decay_fraction)
+        decay = self.decay if self.decay is not None else round(t_max * self.decay_fraction)
 
         # --- phase 1: warm‑up ---------------------------------------------------------
         if current <= warmup:
@@ -316,7 +319,8 @@ class PowerLR(Scheduler):
         # --- phase 2: power‑law region -----------------------------------------------
         lr = initial_lr * (current / warmup) ** self.b
         return lr
-    
+
+
 @dataclass
 class LinearWithWarmup(Scheduler):
     """
@@ -549,7 +553,7 @@ class CosWithWarmupAndLinearDecay(CosWithWarmup):
 
         if self.decay_fraction is not None and (self.decay_fraction < 0 or self.decay_fraction > 1):
             raise OLMoConfigurationError("'decay_fraction' must be between 0 and 1.")
-        
+
         super().__post_init__()
 
     def get_lr(

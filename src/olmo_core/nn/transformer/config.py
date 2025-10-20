@@ -278,7 +278,10 @@ class TransformerBlockConfig(Config):
 
         # MTP parameters (not supported)
         args.mtp_num_layers = None  # set to None for non-MTP models
-        from olmo_core.nn.attention import AttentionConfig, MultiheadLatentAttentionConfig
+        from olmo_core.nn.attention import (
+            AttentionConfig,
+            MultiheadLatentAttentionConfig,
+        )
 
         # MLA parameters
         if isinstance(self.attention, MultiheadLatentAttentionConfig):

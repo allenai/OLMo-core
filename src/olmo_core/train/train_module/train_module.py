@@ -71,17 +71,13 @@ class EvalBatchSpec:
 
 from olmo_core.config import Config
 
+
 @dataclass
 class TrainModuleConfig(Config):
-
     @abstractmethod
-    def build(
-        self,
-        *args,
-        **kargs
-    ) -> "TrainModule":
+    def build(self, *args, **kargs) -> "TrainModule":
         raise NotImplementedError
-    
+
 
 class TrainModule(Stateful, metaclass=ABCMeta):
     """

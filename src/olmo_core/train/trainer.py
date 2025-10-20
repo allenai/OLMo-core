@@ -1311,7 +1311,9 @@ class Trainer:
 
         log.info("Starting forward/backward dry-run batch...")
 
-        dbg_mem_before_dry_run = torch.cuda.memory_allocated() / 1024**3  # model param + main param
+        dbg_mem_before_dry_run = (
+            torch.cuda.memory_allocated() / 1024**3
+        )  # model param + main param
         self.train_module.train_batch(batch, dry_run=True)
         dbg_mem_after_dry_run = (
             torch.cuda.memory_allocated() / 1024**3

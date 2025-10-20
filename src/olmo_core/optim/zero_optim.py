@@ -1,26 +1,22 @@
+import logging
 from dataclasses import dataclass
 from typing import Optional, Tuple, Type, Union
 
 import torch
 import torch.nn as nn
 import torch.optim.optimizer
-
-from ..config import DType
-from .config import OptimConfig
-from .skip_step_optimizer import SkipStepOptimizer
-import logging
-from torch.distributed.optim import ZeroRedundancyOptimizer
 from torch.distributed.algorithms.ddp_comm_hooks.ddp_zero_hook import (
     hook_with_zero_step,
     hook_with_zero_step_interleaved,
 )
+from torch.distributed.optim import ZeroRedundancyOptimizer
+
+from ..config import DType
+from .config import OptimConfig
+from .skip_step_optimizer import SkipStepOptimizer
 
 log = logging.getLogger(__name__)
 
-# --------------------------------------------------------------------------- #
-# ZeRO-1 sharded Skip-Step AdamW
-# --------------------------------------------------------------------------- #
-from torch.distributed.optim import ZeroRedundancyOptimizer
 from typing import (
     Any,
     Dict,
@@ -35,25 +31,32 @@ from typing import (
     Union,
     cast,
 )
-from .config import LR_FIELD, INITIAL_LR_FIELD
+
+# --------------------------------------------------------------------------- #
+# ZeRO-1 sharded Skip-Step AdamW
+# --------------------------------------------------------------------------- #
+from torch.distributed.optim import ZeroRedundancyOptimizer
+
 from ..utils import get_default_device, move_to_device
+from .config import INITIAL_LR_FIELD, LR_FIELD
+
 Opt = TypeVar("Opt", bound=torch.optim.Optimizer)
 
 from ..train.train_module import TrainModule
+from .config import OptimConfig, OptimGroupOverride
 
-from .config import OptimConfig, OptimGroupOverride 
 
 @dataclass
 class ZeroOptimConfig(OptimConfig):
-
     inner_optimizer: OptimConfig
 
     @classmethod
     def optimizer(cls):
         return ZeroRedundancyOptimizer
-    
 
-    def build(self, model: nn.Module, train_module: TrainModule, strict: bool = True, param_filter=None):
+    def build(
+        self, model: nn.Module, train_module: TrainModule, strict: bool = True, param_filter=None
+    ):
         """
         Build the optimizer.
 
@@ -65,13 +68,15 @@ class ZeroOptimConfig(OptimConfig):
         kwargs.pop("compile")
         kwargs.pop("fixed_fields")
 
-        inner_optimizer = self.inner_optimizer.build(model, train_module, strict=strict, param_filter=param_filter)
+        inner_optimizer = self.inner_optimizer.build(
+            model, train_module, strict=strict, param_filter=param_filter
+        )
 
         optim: torch.optim.Optimizer = self.optimizer()(
-            self.build_groups(model, strict=strict), 
+            self.build_groups(model, strict=strict),
             optimizer_class=torch.optim.AdamW,
             process_group=train_module.dp_process_group,
-            **kwargs
+            **kwargs,
         )
 
         # Set 'lr' and 'initial_lr' in each group if needed.
@@ -121,4 +126,3 @@ class ZeroOptimConfig(OptimConfig):
         optim.register_load_state_dict_post_hook(reset_fixed_fields)
 
         return cast(Opt, optim)
-    

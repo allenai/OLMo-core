@@ -23,9 +23,8 @@ import torch.nn as nn
 
 from ..config import Config
 from ..exceptions import OLMoConfigurationError
-from ..utils import get_default_device, move_to_device
-
 from ..train.train_module import TrainModule
+from ..utils import get_default_device, move_to_device
 
 __all__ = [
     "OptimConfig",
@@ -131,7 +130,7 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
         frozen_params: set = set()
         for n, p in model.named_parameters():
             if p.requires_grad:
-                if param_filter is None: # No filter applied
+                if param_filter is None:  # No filter applied
                     all_params[n] = p
                 else:
                     # Apply the parameter filter
@@ -152,7 +151,7 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
             [name for name in all_params.keys() if name not in overriden_param_names], {}
         )
         # group_overrides.append(default_override)
-        group_overrides.insert(0, default_override) # to ensure default is first
+        group_overrides.insert(0, default_override)  # to ensure default is first
 
         return [
             {"params": [all_params[param_name] for param_name in go.params], **go.opts}
@@ -168,16 +167,18 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
         """
         raise NotImplementedError
 
-    def build(self, model: nn.Module, train_module: TrainModule, strict: bool = True, param_filter=None) -> Opt:
+    def build(
+        self, model: nn.Module, train_module: TrainModule, strict: bool = True, param_filter=None
+    ) -> Opt:
         """
         Build the optimizer.
 
         :param strict: If ``True`` an error is raised if a pattern in ``group_overrides`` doesn't
             match any parameter.
         """
-        
+
         # not used: train_module
-        
+
         kwargs = self.as_dict()
         kwargs.pop("group_overrides")
         kwargs.pop("compile")

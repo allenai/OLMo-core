@@ -5,64 +5,93 @@ Virtual-group upcycling: MLP weights are sharded and duplicated across virtual g
 """
 
 import logging
-from dataclasses import replace
+import math
+import re
+import sys
+from dataclasses import dataclass, replace
+from pathlib import Path
+from typing import Optional
 
-from olmo_core.config import DType
+from olmo_core.config import Config, DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
-from olmo_core.internal.experiment import CommonComponents, ExperimentConfig, main
+from olmo_core.internal.experiment import (
+    CommonComponents,
+    ExperimentConfig,
+    SubCmd,
+    build_config,
+    main,
+)
 from olmo_core.launch.beaker import OLMoCoreBeakerImage
-from olmo_core.nn.transformer import TransformerBlockType, TransformerConfig, TransformerBlockConfig
-from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride, CosWithWarmupAndLinearDecay
-from olmo_core.train import TrainerConfig, Duration
-from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback, ProfilerCallback, NvidiaProfilerCallback
+from olmo_core.nn.transformer import (
+    TransformerBlockConfig,
+    TransformerBlockType,
+    TransformerConfig,
+)
+from olmo_core.optim import (
+    AdamWConfig,
+    CosWithWarmup,
+    CosWithWarmupAndLinearDecay,
+    OptimGroupOverride,
+)
+from olmo_core.train import Duration, TrainerConfig
+from olmo_core.train.callbacks import (
+    CheckpointerCallback,
+    CometCallback,
+    NvidiaProfilerCallback,
+    ProfilerCallback,
+    WandBCallback,
+)
+from olmo_core.train.checkpoint import (
+    Checkpointer,
+    CheckpointerConfig,
+    CompactablityCheckpointer,
+    UpcycleCheckpointer,
+)
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
-import math
-from olmo_core.train.checkpoint import Checkpointer, CheckpointerConfig, CompactablityCheckpointer, UpcycleCheckpointer
-from olmo_core.internal.experiment import build_config, SubCmd
-import sys
 from olmo_core.utils import prepare_cli_environment
-from olmo_core.config import Config
-from dataclasses import dataclass
-from pathlib import Path
-import re
-from typing import Optional
-log = logging.getLogger(__name__)
 
+log = logging.getLogger(__name__)
 
 
 global_args = dict()
 
 
-NUM_LAYERS=16
+NUM_LAYERS = 16
 USE_MOE = True
 USE_MLA = False
 
-def build_model_config(routed_expert_norm=False, 
-                        shared_expert_norm=False,
-                        feed_forward_norm=True,
-                        common: Optional[CommonComponents] = None
-                       ) -> TransformerConfig:
+
+def build_model_config(
+    routed_expert_norm=False,
+    shared_expert_norm=False,
+    feed_forward_norm=True,
+    common: Optional[CommonComponents] = None,
+) -> TransformerConfig:
     d_model = 2048
-    NUM_EXPERTS = global_args['NUM_EXPERTS']
-    TOP_K = global_args['TOP_K']
-    MOE_EXPANSION_FACTOR = global_args['MOE_EXPANSION_FACTOR']
-    SHARED_EXPERT_EXPANSION_FACTOR = global_args['SHARED_EXPERT_EXPANSION_FACTOR']
-    
-    from olmo_core.nn.lm_head import LMHeadConfig
-    from olmo_core.nn.attention import AttentionConfig, AttentionType, MultiheadLatentAttentionConfig
-    from olmo_core.nn.feed_forward import FeedForwardConfig, FeedForwardType
-    from olmo_core.nn.rope import RoPEConfig, RoPEType
-    from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
-    from olmo_core.nn.buffer_cache import BufferCache
-    from olmo_core.nn.moe import MoEConfig, MoERouterConfig, MoEType
+    NUM_EXPERTS = global_args["NUM_EXPERTS"]
+    TOP_K = global_args["TOP_K"]
+    MOE_EXPANSION_FACTOR = global_args["MOE_EXPANSION_FACTOR"]
+    SHARED_EXPERT_EXPANSION_FACTOR = global_args["SHARED_EXPERT_EXPANSION_FACTOR"]
+
     from olmo_core.data import TokenizerConfig
+    from olmo_core.nn.attention import (
+        AttentionConfig,
+        AttentionType,
+        MultiheadLatentAttentionConfig,
+    )
+    from olmo_core.nn.buffer_cache import BufferCache
+    from olmo_core.nn.feed_forward import FeedForwardConfig, FeedForwardType
+    from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
+    from olmo_core.nn.lm_head import LMHeadConfig
+    from olmo_core.nn.moe import MoEConfig, MoERouterConfig, MoEType
+    from olmo_core.nn.rope import RoPEConfig, RoPEType
     from olmo_core.nn.transformer.config import TransformerType
-    
+
     dtype = DType.float32
     layer_norm = LayerNormConfig(
         name=LayerNormType.rms,
@@ -70,7 +99,7 @@ def build_model_config(routed_expert_norm=False,
         bias=False,
         dtype=dtype,
     )
-    
+
     if USE_MLA:
         attn_config = MultiheadLatentAttentionConfig(
             n_heads=24,
@@ -78,7 +107,7 @@ def build_model_config(routed_expert_norm=False,
             dropout=0.0,
             dtype=dtype,
             q_lora_rank=1024,
-            kv_lora_rank=512, 
+            kv_lora_rank=512,
             qk_nope_head_dim=192,
             # qk_nope_head_dim=128,
             qk_rope_head_dim=64,
@@ -99,11 +128,10 @@ def build_model_config(routed_expert_norm=False,
             use_flash=False,
             dtype=dtype,
         )
-    
-    
+
     if USE_MOE:
         block_name = TransformerBlockType.moe_reordered_norm
-        
+
         config = TransformerConfig(
             name=TransformerType.moe,
             d_model=d_model,
@@ -122,7 +150,9 @@ def build_model_config(routed_expert_norm=False,
                     hidden_size=int(MOE_EXPANSION_FACTOR * d_model),
                     capacity_factor=1.25,
                     router=MoERouterConfig(top_k=TOP_K),
-                    shared_mlp=FeedForwardConfig(hidden_size=int(d_model*SHARED_EXPERT_EXPANSION_FACTOR), bias=False),
+                    shared_mlp=FeedForwardConfig(
+                        hidden_size=int(d_model * SHARED_EXPERT_EXPANSION_FACTOR), bias=False
+                    ),
                     lb_loss_weight=0.01,
                     z_loss_weight=0.001,
                     routed_expert_norm=layer_norm if routed_expert_norm else None,
@@ -157,53 +187,51 @@ def build_model_config(routed_expert_norm=False,
     return config
 
 
-
-
-
 @dataclass
 class UpcycleConfig(Config):
-    source_model_checkpoint: str  
-    target_model_output_path: str 
+    source_model_checkpoint: str
+    target_model_output_path: str
     method: str
     target_model: TransformerConfig
     init_seed: int = 2025
-from olmo_core.aliases import PathOrStr
+
 
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-def upcycle_copy_mlp(
-    source_model,
-    target_model 
-):
-    NUM_EXPERTS = global_args['NUM_EXPERTS']
+from olmo_core.aliases import PathOrStr
+
+
+def upcycle_copy_mlp(source_model, target_model):
+    NUM_EXPERTS = global_args["NUM_EXPERTS"]
+
     def map_up_proj_to_w1(weight):
-        '''
+        """
         source weight: (intermediate_size, d_model)
         target weight: (d_model * NUM_EXPERTS, intermediate_size)
 
-        '''    
+        """
         # 1) transpose so that rows = d_model, cols = intermediate_size
         target_weight = weight.transpose(0, 1).repeat(NUM_EXPERTS, 1)
         return target_weight
-    
+
     def map_down_proj_to_w2(weight):
-        '''
+        """
         source weight: (d_model, intermediate_size)
         target weight: (intermediate_size * NUM_EXPERTS, d_model)
-        '''    
-        
+        """
+
         target_model = weight.transpose(0, 1).repeat(NUM_EXPERTS, 1)
         return target_model
-    
+
     def map_gate_proj_to_w3(weight):
-        '''
+        """
         source weight: (intermediate_size, d_model)
         target weight: (d_model * NUM_EXPERTS, intermediate_size)
 
-        '''    
+        """
         target_model = weight.transpose(0, 1).repeat(NUM_EXPERTS, 1)
         return target_model
-    
+
     src_tgt_mapping = {
         "model.embed_tokens.weight": "embeddings.weight",
         "model.layers.$LAYER.self_attn.q_proj.weight": "blocks.$LAYER.attention.w_q.weight",
@@ -212,22 +240,31 @@ def upcycle_copy_mlp(
         "model.layers.$LAYER.self_attn.o_proj.weight": "blocks.$LAYER.attention.w_out.weight",
         "model.layers.$LAYER.self_attn.q_norm.weight": "blocks.$LAYER.attention.q_norm.weight",
         "model.layers.$LAYER.self_attn.k_norm.weight": "blocks.$LAYER.attention.k_norm.weight",
-        "model.layers.$LAYER.mlp.gate_proj.weight": ('blocks.$LAYER.feed_forward_moe.experts.mlp.w3', map_gate_proj_to_w3), # means special handling
-        "model.layers.$LAYER.mlp.up_proj.weight": ('blocks.$LAYER.feed_forward_moe.experts.mlp.w1', map_up_proj_to_w1), # means special handling
-        "model.layers.$LAYER.mlp.down_proj.weight": ('blocks.$LAYER.feed_forward_moe.experts.mlp.w2', map_down_proj_to_w2), # means special handling
+        "model.layers.$LAYER.mlp.gate_proj.weight": (
+            "blocks.$LAYER.feed_forward_moe.experts.mlp.w3",
+            map_gate_proj_to_w3,
+        ),  # means special handling
+        "model.layers.$LAYER.mlp.up_proj.weight": (
+            "blocks.$LAYER.feed_forward_moe.experts.mlp.w1",
+            map_up_proj_to_w1,
+        ),  # means special handling
+        "model.layers.$LAYER.mlp.down_proj.weight": (
+            "blocks.$LAYER.feed_forward_moe.experts.mlp.w2",
+            map_down_proj_to_w2,
+        ),  # means special handling
         "model.layers.$LAYER.post_attention_layernorm.weight": "blocks.$LAYER.attention_norm.weight",
         "model.layers.$LAYER.post_feedforward_layernorm.weight": "blocks.$LAYER.feed_forward_norm.weight",
         "model.norm.weight": "lm_head.norm.weight",
-        "lm_head.weight": "lm_head.w_out.weight"
+        "lm_head.weight": "lm_head.w_out.weight",
     }
-    
+
     untouched_target_keys = [
-        'blocks.*.feed_forward_moe.router.weight',
-        'blocks.*.feed_forward_moe.shared_mlp.w1.weight',
-        'blocks.*.feed_forward_moe.shared_mlp.w2.weight',
-        'blocks.*.feed_forward_moe.shared_mlp.w3.weight',
+        "blocks.*.feed_forward_moe.router.weight",
+        "blocks.*.feed_forward_moe.shared_mlp.w1.weight",
+        "blocks.*.feed_forward_moe.shared_mlp.w2.weight",
+        "blocks.*.feed_forward_moe.shared_mlp.w3.weight",
     ]
-    
+
     # expand the $LAYER in src_tgt_mapping
     src_tgt_mapping_expanded = {}
     for src_key, tgt_key in src_tgt_mapping.items():
@@ -237,16 +274,15 @@ def upcycle_copy_mlp(
                 # check if tgt_key is typle
                 if isinstance(tgt_key, tuple):
                     tgt_key_expanded = (tgt_key[0].replace("$LAYER", str(i)), tgt_key[1])
-                else: # just string
+                else:  # just string
                     tgt_key_expanded = tgt_key.replace("$LAYER", str(i))
                 src_tgt_mapping_expanded[src_key_expanded] = tgt_key_expanded
         else:
             src_tgt_mapping_expanded[src_key] = tgt_key
-    
-    
+
     # make a copy of the target model keys
     all_target_keys = set(target_model.state_dict().keys())
-    
+
     print("\n\nStart copying weights from source to target model...\n")
     # copy weights from source to target
     for src_key, tgt_key in src_tgt_mapping_expanded.items():
@@ -256,8 +292,8 @@ def upcycle_copy_mlp(
             tgt_key, map_func = tgt_key
         else:
             print(f"{src_key} -> {tgt_key}")
-            map_func = lambda x: x # identity function
-            
+            map_func = lambda x: x  # identity function
+
         # check if the key is in source model
         if src_key not in source_model.state_dict():
             raise ValueError(f"Key {src_key} not found in source model")
@@ -286,12 +322,11 @@ def upcycle_copy_mlp(
 
     return target_model
 
+
 def upcycle_virtual_group_init(
     source_model,
     target_model,
 ):
-
-
     # ------------------------------------------------------------------
     # 0. Hyper‑params that control the sharding/scaling logic
     # ------------------------------------------------------------------
@@ -316,11 +351,10 @@ def upcycle_virtual_group_init(
     }
 
     untouched_target_keys = [
-        'blocks.*.feed_forward_moe.shared_mlp.w1.weight',
-        'blocks.*.feed_forward_moe.shared_mlp.w2.weight',
-        'blocks.*.feed_forward_moe.shared_mlp.w3.weight',
+        "blocks.*.feed_forward_moe.shared_mlp.w1.weight",
+        "blocks.*.feed_forward_moe.shared_mlp.w2.weight",
+        "blocks.*.feed_forward_moe.shared_mlp.w3.weight",
     ]
-
 
     # expand the $LAYER in src_tgt_mapping
     src_tgt_mapping_expanded = {}
@@ -347,24 +381,16 @@ def upcycle_virtual_group_init(
     # 3. Prepare constants for sharding the dense MLP into virtual groups
     # ------------------------------------------------------------------
     # dense dims
-    inter_dense, d_model = source_model.state_dict()[
-        "model.layers.0.mlp.up_proj.weight"
-    ].shape
+    inter_dense, d_model = source_model.state_dict()["model.layers.0.mlp.up_proj.weight"].shape
     # expert hidden size in the MoE
-    _, expert_hidden = target_model.state_dict()[
-        "blocks.0.feed_forward_moe.experts.mlp.w1"
-    ].shape
+    _, expert_hidden = target_model.state_dict()["blocks.0.feed_forward_moe.experts.mlp.w1"].shape
 
     G = inter_dense // expert_hidden  # #shards per layer
-    assert (
-        G * expert_hidden == inter_dense
-    ), "expert_hidden does not divide intermediate_size"
-    assert (
-        NUM_EXPERTS % G == 0
-    ), "NUM_EXPERTS must be an integer multiple of shard count G"
+    assert G * expert_hidden == inter_dense, "expert_hidden does not divide intermediate_size"
+    assert NUM_EXPERTS % G == 0, "NUM_EXPERTS must be an integer multiple of shard count G"
 
-    dup_per_shard = NUM_EXPERTS // G          # this is “E” in the paper
-    scale = ((dup_per_shard * (G**2)) / TOP_K) ** (1/3)
+    dup_per_shard = NUM_EXPERTS // G  # this is “E” in the paper
+    scale = ((dup_per_shard * (G**2)) / TOP_K) ** (1 / 3)
 
     print(
         f"\n[virtual-group-init] Sharding MLP: inter_dense={inter_dense}, "
@@ -376,9 +402,13 @@ def upcycle_virtual_group_init(
     # ------------------------------------------------------------------
     for layer in range(NUM_LAYERS):
         # dense weights
-        up = source_model.state_dict()[f"model.layers.{layer}.mlp.up_proj.weight"].T  # (d_model, inter)
+        up = source_model.state_dict()[
+            f"model.layers.{layer}.mlp.up_proj.weight"
+        ].T  # (d_model, inter)
         gate = source_model.state_dict()[f"model.layers.{layer}.mlp.gate_proj.weight"].T
-        down = source_model.state_dict()[f"model.layers.{layer}.mlp.down_proj.weight"].T  # (inter, d_model)
+        down = source_model.state_dict()[
+            f"model.layers.{layer}.mlp.down_proj.weight"
+        ].T  # (inter, d_model)
 
         # target aggregated expert weight tensors
         w1_key = f"blocks.{layer}.feed_forward_moe.experts.mlp.w1"
@@ -405,7 +435,7 @@ def upcycle_virtual_group_init(
             assert w1[row_start:row_end, :].shape == up[:, col_start:col_end].shape
             assert w3[row_start:row_end, :].shape == gate[:, col_start:col_end].shape
             assert w2[exp_col_start:exp_col_end, :].shape == down[col_start:col_end, :].shape
-            
+
             # W1 / gate : (d_model, expert_hidden)
             w1[row_start:row_end, :].copy_(up[:, col_start:col_end] * scale)
             w3[row_start:row_end, :].copy_(gate[:, col_start:col_end] * scale)
@@ -414,12 +444,12 @@ def upcycle_virtual_group_init(
             w2[exp_col_start:exp_col_end, :].copy_(down[col_start:col_end, :] / scale)
 
         # ---------- router (virtual-group duplication, flattened param) ----------
-        router_key   = f"blocks.{layer}.feed_forward_moe.router.weight"
-        router_w_flat = target_model.state_dict()[router_key]          # (N*d_model,)
-        router_2d     = router_w_flat.view(NUM_EXPERTS, d_model)       # (N, d_model)
+        router_key = f"blocks.{layer}.feed_forward_moe.router.weight"
+        router_w_flat = target_model.state_dict()[router_key]  # (N*d_model,)
+        router_2d = router_w_flat.view(NUM_EXPERTS, d_model)  # (N, d_model)
 
         # first G rows are the prototypes for the G shard-groups
-        prototypes = router_2d[:G].clone()                             # (G, d_model)
+        prototypes = router_2d[:G].clone()  # (G, d_model)
         for expert_idx in range(NUM_EXPERTS):
             group_id = expert_idx % G
             router_2d[expert_idx].copy_(prototypes[group_id])
@@ -431,9 +461,10 @@ def upcycle_virtual_group_init(
         remaining_target_keys.discard(w1_key)
         remaining_target_keys.discard(w2_key)
         remaining_target_keys.discard(w3_key)
-        
-        print(f"\n[virtual-group-init] Layer {layer}: {w1_key}, {w2_key}, {w3_key}, {router_key} | shape = {w1.shape} {w2.shape}, {w3.shape}, {router_2d.shape}")
-        
+
+        print(
+            f"\n[virtual-group-init] Layer {layer}: {w1_key}, {w2_key}, {w3_key}, {router_key} | shape = {w1.shape} {w2.shape}, {w3.shape}, {router_2d.shape}"
+        )
 
     # ------------------------------------------------------------------
     # 5. Final sanity check — every remaining key must match an untouched pattern
@@ -453,12 +484,8 @@ def upcycle_virtual_group_init(
     print("\n✔  All parameters (including router) accounted for.")
     return target_model
 
-def upcycle_copy_mlp_as_shared_expert(
-    source_model,
-    target_model,
-    norm_type
-):
-    
+
+def upcycle_copy_mlp_as_shared_expert(source_model, target_model, norm_type):
     if norm_type == "1":
         src_tgt_mapping = {
             "model.embed_tokens.weight": "embeddings.weight",
@@ -468,20 +495,20 @@ def upcycle_copy_mlp_as_shared_expert(
             "model.layers.$LAYER.self_attn.o_proj.weight": "blocks.$LAYER.attention.w_out.weight",
             "model.layers.$LAYER.self_attn.q_norm.weight": "blocks.$LAYER.attention.q_norm.weight",
             "model.layers.$LAYER.self_attn.k_norm.weight": "blocks.$LAYER.attention.k_norm.weight",
-            "model.layers.$LAYER.mlp.gate_proj.weight": 'blocks.$LAYER.feed_forward_moe.shared_mlp.w3.weight',
-            "model.layers.$LAYER.mlp.up_proj.weight": 'blocks.$LAYER.feed_forward_moe.shared_mlp.w1.weight',
-            "model.layers.$LAYER.mlp.down_proj.weight": 'blocks.$LAYER.feed_forward_moe.shared_mlp.w2.weight',
+            "model.layers.$LAYER.mlp.gate_proj.weight": "blocks.$LAYER.feed_forward_moe.shared_mlp.w3.weight",
+            "model.layers.$LAYER.mlp.up_proj.weight": "blocks.$LAYER.feed_forward_moe.shared_mlp.w1.weight",
+            "model.layers.$LAYER.mlp.down_proj.weight": "blocks.$LAYER.feed_forward_moe.shared_mlp.w2.weight",
             "model.layers.$LAYER.post_attention_layernorm.weight": "blocks.$LAYER.attention_norm.weight",
             "model.layers.$LAYER.post_feedforward_layernorm.weight": "blocks.$LAYER.feed_forward_norm.weight",
             "model.norm.weight": "lm_head.norm.weight",
             "lm_head.weight": "lm_head.w_out.weight",
         }
-        
+
         untouched_target_keys = [
-            'blocks.*.feed_forward_moe.router.weight',
-            'blocks.*.feed_forward_moe.experts.mlp.w1',
-            'blocks.*.feed_forward_moe.experts.mlp.w2',
-            'blocks.*.feed_forward_moe.experts.mlp.w3',
+            "blocks.*.feed_forward_moe.router.weight",
+            "blocks.*.feed_forward_moe.experts.mlp.w1",
+            "blocks.*.feed_forward_moe.experts.mlp.w2",
+            "blocks.*.feed_forward_moe.experts.mlp.w3",
         ]
     elif norm_type == "2":
         src_tgt_mapping = {
@@ -492,22 +519,22 @@ def upcycle_copy_mlp_as_shared_expert(
             "model.layers.$LAYER.self_attn.o_proj.weight": "blocks.$LAYER.attention.w_out.weight",
             "model.layers.$LAYER.self_attn.q_norm.weight": "blocks.$LAYER.attention.q_norm.weight",
             "model.layers.$LAYER.self_attn.k_norm.weight": "blocks.$LAYER.attention.k_norm.weight",
-            "model.layers.$LAYER.mlp.gate_proj.weight": 'blocks.$LAYER.feed_forward_moe.shared_mlp.w3.weight',
-            "model.layers.$LAYER.mlp.up_proj.weight": 'blocks.$LAYER.feed_forward_moe.shared_mlp.w1.weight',
-            "model.layers.$LAYER.mlp.down_proj.weight": 'blocks.$LAYER.feed_forward_moe.shared_mlp.w2.weight',
+            "model.layers.$LAYER.mlp.gate_proj.weight": "blocks.$LAYER.feed_forward_moe.shared_mlp.w3.weight",
+            "model.layers.$LAYER.mlp.up_proj.weight": "blocks.$LAYER.feed_forward_moe.shared_mlp.w1.weight",
+            "model.layers.$LAYER.mlp.down_proj.weight": "blocks.$LAYER.feed_forward_moe.shared_mlp.w2.weight",
             "model.layers.$LAYER.post_attention_layernorm.weight": "blocks.$LAYER.attention_norm.weight",
             "model.layers.$LAYER.post_feedforward_layernorm.weight": "blocks.$LAYER.feed_forward_norm.weight",
             "model.norm.weight": "lm_head.norm.weight",
             "lm_head.weight": "lm_head.w_out.weight",
         }
-        
+
         untouched_target_keys = [
-            'blocks.*.feed_forward_moe.router.weight',
-            'blocks.*.feed_forward_moe.experts.mlp.w1',
-            'blocks.*.feed_forward_moe.experts.mlp.w2',
-            'blocks.*.feed_forward_moe.experts.mlp.w3',
-            'blocks.*.feed_forward_moe.routed_expert_norm.weight',
-            'blocks.*.feed_forward_moe.shared_expert_norm.weight',
+            "blocks.*.feed_forward_moe.router.weight",
+            "blocks.*.feed_forward_moe.experts.mlp.w1",
+            "blocks.*.feed_forward_moe.experts.mlp.w2",
+            "blocks.*.feed_forward_moe.experts.mlp.w3",
+            "blocks.*.feed_forward_moe.routed_expert_norm.weight",
+            "blocks.*.feed_forward_moe.shared_expert_norm.weight",
         ]
     elif norm_type == "2B":
         src_tgt_mapping = {
@@ -518,22 +545,22 @@ def upcycle_copy_mlp_as_shared_expert(
             "model.layers.$LAYER.self_attn.o_proj.weight": "blocks.$LAYER.attention.w_out.weight",
             "model.layers.$LAYER.self_attn.q_norm.weight": "blocks.$LAYER.attention.q_norm.weight",
             "model.layers.$LAYER.self_attn.k_norm.weight": "blocks.$LAYER.attention.k_norm.weight",
-            "model.layers.$LAYER.mlp.gate_proj.weight": 'blocks.$LAYER.feed_forward_moe.shared_mlp.w3.weight',
-            "model.layers.$LAYER.mlp.up_proj.weight": 'blocks.$LAYER.feed_forward_moe.shared_mlp.w1.weight',
-            "model.layers.$LAYER.mlp.down_proj.weight": 'blocks.$LAYER.feed_forward_moe.shared_mlp.w2.weight',
+            "model.layers.$LAYER.mlp.gate_proj.weight": "blocks.$LAYER.feed_forward_moe.shared_mlp.w3.weight",
+            "model.layers.$LAYER.mlp.up_proj.weight": "blocks.$LAYER.feed_forward_moe.shared_mlp.w1.weight",
+            "model.layers.$LAYER.mlp.down_proj.weight": "blocks.$LAYER.feed_forward_moe.shared_mlp.w2.weight",
             "model.layers.$LAYER.post_attention_layernorm.weight": "blocks.$LAYER.attention_norm.weight",
             "model.layers.$LAYER.post_feedforward_layernorm.weight": "blocks.$LAYER.feed_forward_moe.shared_expert_norm.weight",
             "model.norm.weight": "lm_head.norm.weight",
             "lm_head.weight": "lm_head.w_out.weight",
         }
-        
+
         untouched_target_keys = [
-            'blocks.*.feed_forward_moe.router.weight',
-            'blocks.*.feed_forward_moe.experts.mlp.w1',
-            'blocks.*.feed_forward_moe.experts.mlp.w2',
-            'blocks.*.feed_forward_moe.experts.mlp.w3',
-            'blocks.*.feed_forward_norm.weight',
-            'blocks.*.feed_forward_moe.routed_expert_norm.weight'
+            "blocks.*.feed_forward_moe.router.weight",
+            "blocks.*.feed_forward_moe.experts.mlp.w1",
+            "blocks.*.feed_forward_moe.experts.mlp.w2",
+            "blocks.*.feed_forward_moe.experts.mlp.w3",
+            "blocks.*.feed_forward_norm.weight",
+            "blocks.*.feed_forward_moe.routed_expert_norm.weight",
         ]
     elif norm_type == "3":
         src_tgt_mapping = {
@@ -544,22 +571,22 @@ def upcycle_copy_mlp_as_shared_expert(
             "model.layers.$LAYER.self_attn.o_proj.weight": "blocks.$LAYER.attention.w_out.weight",
             "model.layers.$LAYER.self_attn.q_norm.weight": "blocks.$LAYER.attention.q_norm.weight",
             "model.layers.$LAYER.self_attn.k_norm.weight": "blocks.$LAYER.attention.k_norm.weight",
-            "model.layers.$LAYER.mlp.gate_proj.weight": 'blocks.$LAYER.feed_forward_moe.shared_mlp.w3.weight',
-            "model.layers.$LAYER.mlp.up_proj.weight": 'blocks.$LAYER.feed_forward_moe.shared_mlp.w1.weight',
-            "model.layers.$LAYER.mlp.down_proj.weight": 'blocks.$LAYER.feed_forward_moe.shared_mlp.w2.weight',
+            "model.layers.$LAYER.mlp.gate_proj.weight": "blocks.$LAYER.feed_forward_moe.shared_mlp.w3.weight",
+            "model.layers.$LAYER.mlp.up_proj.weight": "blocks.$LAYER.feed_forward_moe.shared_mlp.w1.weight",
+            "model.layers.$LAYER.mlp.down_proj.weight": "blocks.$LAYER.feed_forward_moe.shared_mlp.w2.weight",
             "model.layers.$LAYER.post_attention_layernorm.weight": "blocks.$LAYER.attention_norm.weight",
             "model.layers.$LAYER.post_feedforward_layernorm.weight": "blocks.$LAYER.feed_forward_moe.shared_expert_norm.weight",
             "model.norm.weight": "lm_head.norm.weight",
-            "lm_head.weight": "lm_head.w_out.weight"
+            "lm_head.weight": "lm_head.w_out.weight",
         }
-        
+
         untouched_target_keys = [
-            'blocks.*.feed_forward_moe.router.weight',
-            'blocks.*.feed_forward_moe.experts.mlp.w1',
-            'blocks.*.feed_forward_moe.experts.mlp.w2',
-            'blocks.*.feed_forward_moe.experts.mlp.w3',
+            "blocks.*.feed_forward_moe.router.weight",
+            "blocks.*.feed_forward_moe.experts.mlp.w1",
+            "blocks.*.feed_forward_moe.experts.mlp.w2",
+            "blocks.*.feed_forward_moe.experts.mlp.w3",
             # 'blocks.*.feed_forward_norm.weight',
-            'blocks.*.feed_forward_moe.routed_expert_norm.weight',
+            "blocks.*.feed_forward_moe.routed_expert_norm.weight",
         ]
     elif norm_type == "4":
         src_tgt_mapping = {
@@ -570,25 +597,25 @@ def upcycle_copy_mlp_as_shared_expert(
             "model.layers.$LAYER.self_attn.o_proj.weight": "blocks.$LAYER.attention.w_out.weight",
             "model.layers.$LAYER.self_attn.q_norm.weight": "blocks.$LAYER.attention.q_norm.weight",
             "model.layers.$LAYER.self_attn.k_norm.weight": "blocks.$LAYER.attention.k_norm.weight",
-            "model.layers.$LAYER.mlp.gate_proj.weight": 'blocks.$LAYER.feed_forward_moe.shared_mlp.w3.weight',
-            "model.layers.$LAYER.mlp.up_proj.weight": 'blocks.$LAYER.feed_forward_moe.shared_mlp.w1.weight',
-            "model.layers.$LAYER.mlp.down_proj.weight": 'blocks.$LAYER.feed_forward_moe.shared_mlp.w2.weight',
+            "model.layers.$LAYER.mlp.gate_proj.weight": "blocks.$LAYER.feed_forward_moe.shared_mlp.w3.weight",
+            "model.layers.$LAYER.mlp.up_proj.weight": "blocks.$LAYER.feed_forward_moe.shared_mlp.w1.weight",
+            "model.layers.$LAYER.mlp.down_proj.weight": "blocks.$LAYER.feed_forward_moe.shared_mlp.w2.weight",
             "model.layers.$LAYER.post_attention_layernorm.weight": "blocks.$LAYER.attention_norm.weight",
-            "model.layers.$LAYER.post_feedforward_layernorm.weight": "blocks.$LAYER.feed_forward_norm.weight", # the mlp norm
+            "model.layers.$LAYER.post_feedforward_layernorm.weight": "blocks.$LAYER.feed_forward_norm.weight",  # the mlp norm
             "model.norm.weight": "lm_head.norm.weight",
             "lm_head.weight": "lm_head.w_out.weight",
         }
-        
+
         untouched_target_keys = [
-            'blocks.*.feed_forward_moe.router.weight',
-            'blocks.*.feed_forward_moe.experts.mlp.w1',
-            'blocks.*.feed_forward_moe.experts.mlp.w2',
-            'blocks.*.feed_forward_moe.experts.mlp.w3',
-            'blocks.*.feed_forward_moe.routed_expert_norm.weight',
+            "blocks.*.feed_forward_moe.router.weight",
+            "blocks.*.feed_forward_moe.experts.mlp.w1",
+            "blocks.*.feed_forward_moe.experts.mlp.w2",
+            "blocks.*.feed_forward_moe.experts.mlp.w3",
+            "blocks.*.feed_forward_moe.routed_expert_norm.weight",
         ]
     else:
         raise ValueError(f"Unknown norm_type: {norm_type}")
-    
+
     # expand the $LAYER in src_tgt_mapping
     src_tgt_mapping_expanded = {}
     for src_key, tgt_key in src_tgt_mapping.items():
@@ -598,16 +625,15 @@ def upcycle_copy_mlp_as_shared_expert(
                 # check if tgt_key is typle
                 if isinstance(tgt_key, tuple):
                     tgt_key_expanded = (tgt_key[0].replace("$LAYER", str(i)), tgt_key[1])
-                else: # just string
+                else:  # just string
                     tgt_key_expanded = tgt_key.replace("$LAYER", str(i))
                 src_tgt_mapping_expanded[src_key_expanded] = tgt_key_expanded
         else:
             src_tgt_mapping_expanded[src_key] = tgt_key
-    
-    
+
     # make a copy of the target model keys
     all_target_keys = set(target_model.state_dict().keys())
-    
+
     print("\n\nStart copying weights from source to target model...\n")
     # copy weights from source to target
     for src_key, tgt_key in src_tgt_mapping_expanded.items():
@@ -617,8 +643,8 @@ def upcycle_copy_mlp_as_shared_expert(
             tgt_key, map_func = tgt_key
         else:
             print(f"{src_key} -> {tgt_key}")
-            map_func = lambda x: x # identity function
-            
+            map_func = lambda x: x  # identity function
+
         # check if the key is in source model
         if src_key not in source_model.state_dict():
             raise ValueError(f"Key {src_key} not found in source model")
@@ -647,27 +673,27 @@ def upcycle_copy_mlp_as_shared_expert(
 
     return target_model
 
+
 def upcycle(config: UpcycleConfig):
-    
     target_model = config.target_model.build()
-    
+
     source_model = AutoModelForCausalLM.from_pretrained(config.source_model_checkpoint)
 
     source_model_state_dict = source_model.state_dict()
-    
+
     # print key + size
     print("\n--- target_model ---")
     for key, value in target_model.state_dict().items():
         print(key, tuple(value.size()))
-    
+
     print("\n--- source_model ---")
-    for key , value in source_model_state_dict.items():
+    for key, value in source_model_state_dict.items():
         print(key, tuple(value.size()))
 
     # method 1: "copy-mlp"
     if config.method == "copy-mlp":
         target_model = upcycle_copy_mlp(source_model, target_model)
-    
+
     # method 2: "copy-mlp-noise"
     elif config.method == "copy-mlp-noise":
         pass
@@ -686,23 +712,22 @@ def upcycle(config: UpcycleConfig):
     # method 3: virtual group initialization
     elif config.method == "virtual-group":
         target_model = upcycle_virtual_group_init(source_model, target_model)
-    
+
     else:
         raise ValueError(f"Unknown method: {config.method}")
-    
-    UpcycleCheckpointer(work_dir=Path('.')).save_upcycled_model(
+
+    UpcycleCheckpointer(work_dir=Path(".")).save_upcycled_model(
         dir=config.target_model_output_path,
         model_state_dict=target_model.state_dict(),
     )
-    
+
     print("\n\n--- target_model saved ---")
-    
-    
+
+
 if __name__ == "__main__":
-    
     prepare_cli_environment()
     SRC_CKPT = "/weka/oe-training-default/tianhua/ws-megatron/OLMo-2-0425-1B/stage1-step1907359-tokens4001B"
-    
+
     # # copy-mlp
     # global_args['NUM_EXPERTS'] = 8
     # global_args['TOP_K'] = 2
@@ -714,7 +739,7 @@ if __name__ == "__main__":
     #     target_model_output_path="/workspace/tmp/upcycled-OLMo-2-0425-1B/copy-mlp",
     #     method="copy-mlp",
     # )
-    
+
     # upcycle(upcycle_config)
 
     # # copy-mlp-as-shared-expert-type1
@@ -729,7 +754,6 @@ if __name__ == "__main__":
     #     method="copy-mlp-as-shared-expert-type1",
     # )
     # upcycle(upcycle_config)
-
 
     # # copy-mlp-as-shared-expert-type2
     # global_args['NUM_EXPERTS'] = 32
@@ -756,7 +780,7 @@ if __name__ == "__main__":
     #     method="copy-mlp-as-shared-expert-type2B",
     # )
     # upcycle(upcycle_config)
-    
+
     # # copy-mlp-as-shared-expert-type3
     # global_args['NUM_EXPERTS'] = 32
     # global_args['TOP_K'] = 8
@@ -769,7 +793,7 @@ if __name__ == "__main__":
     #     method="copy-mlp-as-shared-expert-type3",
     # )
     # upcycle(upcycle_config)
-    
+
     #  # copy-mlp-as-shared-expert-type4
     # global_args['NUM_EXPERTS'] = 32
     # global_args['TOP_K'] = 8
@@ -782,12 +806,12 @@ if __name__ == "__main__":
     #     method="copy-mlp-as-shared-expert-type4",
     # )
     # upcycle(upcycle_config)
-    
+
     # virtual group init
-    global_args['NUM_EXPERTS'] = 32
-    global_args['TOP_K'] = 8
-    global_args['MOE_EXPANSION_FACTOR'] = 1
-    global_args['SHARED_EXPERT_EXPANSION_FACTOR'] = 4
+    global_args["NUM_EXPERTS"] = 32
+    global_args["TOP_K"] = 8
+    global_args["MOE_EXPANSION_FACTOR"] = 1
+    global_args["SHARED_EXPERT_EXPANSION_FACTOR"] = 4
     upcycle_config = UpcycleConfig(
         source_model_checkpoint=SRC_CKPT,
         target_model=build_model_config(routed_expert_norm=False, shared_expert_norm=False),
