@@ -198,7 +198,6 @@ def calculate_sample_sizes(
     actual_size = actual_sample_sizes.sum()
     if strict and not np.allclose(target_size, actual_size):
         idx_of_max_diff = np.argmax(max_repetition_factors_needed - max_repetition_factors_)
-        label_str: str
         if labels is not None:
             label_str = f"with label '{labels[idx_of_max_diff]}'"
         else:
