@@ -20,7 +20,7 @@ from olmo_core.train.train_module import (
 SEQUENCE_LENGTH = 8 * 1024
 GLOBAL_BATCH_SIZE = 4 * 1024 * 1024  # ~4M
 
-# OLMo3-7B.py train OLMo3 ai2/augusta-google-1 --launch.num_nodes=64 --launch.workspace=ai2/OLMo_3 \
+# OLMo3-7B-second-half.py train OLMo3 ai2/augusta-google-1 --launch.num_nodes=64 --launch.workspace=ai2/OLMo_3 \
 #   --dataset.mix=OLMo-mix-0625 --data_loader.num_workers=8
 
 

@@ -20,7 +20,7 @@ from olmo_core.train.train_module import (
 SEQUENCE_LENGTH = 8 * 1024
 GLOBAL_BATCH_SIZE = 4 * 1024 * 1024  # ~4M
 
-# OLMo3-7B.py train OLMo3 ai2/augusta-google-1 --launch.num_nodes=64 --launch.workspace=ai2/OLMo_3 \
+# OLMo3-7B-first-half.py train OLMo3 ai2/augusta-google-1 --launch.num_nodes=64 --launch.workspace=ai2/OLMo_3 \
 #   --dataset.mix=OLMo-mix-0625 --data_loader.num_workers=8
 
 
@@ -79,7 +79,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             save_overwrite=True,
             metrics_collect_interval=50,
             cancel_check_interval=cancel_check_interval,
-            max_duration=Duration.tokens(int(5e12)),  # Scheduled for 5T
+            max_duration=Duration.tokens(int(5e12)),  # Originally scheduled for 5T
             hard_stop=Duration.steps(  # But at this step we decided to extend schedule to 7T. See OLMo3-7B-second-half.py
                 int(597046)
             ),

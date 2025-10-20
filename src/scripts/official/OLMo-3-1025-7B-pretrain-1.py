@@ -92,8 +92,10 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=10,
-            max_duration=Duration.tokens(int(5e12)),
-            hard_stop=Duration.tokens(int(4e12)),
+            max_duration=Duration.tokens(int(5e12)),  # Originally scheduled for 5T
+            hard_stop=Duration.steps(  # But at this step we decided to extend schedule to 7T. See OLMo3-7B-second-half.py
+                int(597046)
+            ),
         )
         .with_callback(
             "checkpointer",
