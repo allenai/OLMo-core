@@ -1,4 +1,5 @@
 import concurrent.futures
+import warnings
 from typing import Callable, List, Literal, Optional, Sequence, Type, TypeVar, Union
 
 import numpy as np
@@ -146,7 +147,24 @@ def calculate_sample_sizes(
         target_size = sizes.sum()
 
     # Normalize ratios.
-    ratios = ratios / ratios.sum()
+    ratio_total = ratios.sum()
+    if not np.allclose(ratio_total, 1.0):
+        ratios = ratios / ratio_total
+        new_ratio_summary_lines = []
+        for i in range(len(ratios)):
+            label_str: str
+            if labels is not None:
+                label_str = f"'{labels[i]}'"
+            else:
+                label_str = f"{i}"
+            new_ratio_summary_lines.append(
+                f" ❯ Source {label_str}: target ratio adjusted from {target_ratios[i]} to {ratios[i]}"
+            )
+        new_ratio_summary = "\n".join(new_ratio_summary_lines)
+        warnings.warn(
+            f"Target mixing ratios don't sum to 1. They will be normalized as follows:\n{new_ratio_summary}",
+            UserWarning,
+        )
 
     # Determine the number of items to sample from each source.
     # This is tricky because the sources may have different sizes, yet we want to stay
