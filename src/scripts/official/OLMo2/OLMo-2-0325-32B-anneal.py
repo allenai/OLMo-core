@@ -44,6 +44,8 @@ from olmo_core.train.train_module import (
 
 log = logging.getLogger(__name__)
 
+DEFAULT_SEQUENCE_LENGTH = 4096
+
 
 class AnnealingDataMix(DataMixBase):
     """
@@ -75,6 +77,7 @@ class AnnealingDataMix(DataMixBase):
 
 
 def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentConfig:
+    sequence_length = opts.sequence_length or DEFAULT_SEQUENCE_LENGTH
     tokenizer_config = TokenizerConfig.dolma2()
 
     # Starting LR should be where the checkpoint left off.
@@ -88,7 +91,7 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
             AnnealingDataMix.dolmino100,
             tokenizer=tokenizer_config,
             mix_base_dir=opts.data_root,
-            sequence_length=opts.sequence_length,
+            sequence_length=sequence_length,
             work_dir=opts.work_dir,
         ),
         data_loader=NumpyDataLoaderConfig(
@@ -98,7 +101,7 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         ),
         train_module=TransformerTrainModuleConfig(
             rank_microbatch_size=2 * 4096,  # NOTE: again this is specified in tokens.
-            max_sequence_length=opts.sequence_length,
+            max_sequence_length=sequence_length,
             z_loss_multiplier=1e-5,
             compile_model=True,
             optim=SkipStepAdamWConfig(
