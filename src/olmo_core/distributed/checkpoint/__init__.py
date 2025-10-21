@@ -652,6 +652,7 @@ def _prepare_env_for_save(
         raise FileExistsError(dir)
 
     # Code to work around a suspected FasTrak bug
+    log.warning("Temporary debug check: _prepare_env_for_save barrier reached")
     torch.cuda.synchronize()
     import time
     time.sleep(1)
