@@ -15,6 +15,7 @@ from typing import (
     Dict,
     Generator,
     Iterable,
+    List,
     Optional,
     Tuple,
     Type,
@@ -264,6 +265,12 @@ class Trainer:
     """
     Set this to ``True`` to disable evaluator callbacks.
     This is useful for benchmarking.
+    """
+
+    steps_to_skip: Optional[List[Tuple[int, int]]] = None
+    """
+    Ranges of steps to completely skip training on, in the form of ``[range_start, range_end]``,
+    where both endpoints are inclusive.
     """
 
     # Internal bookkeeping
@@ -1334,16 +1341,26 @@ class Trainer:
             ) is not None:
                 self.global_train_tokens_seen += global_num_tokens
 
+            should_skip = False
+            if self.steps_to_skip:
+                for range_start, range_end in self.steps_to_skip:
+                    if range_start <= self.global_step <= range_end:
+                        should_skip = True
+                        break
+
             for callback in self._iter_callbacks():
                 callback.pre_step(batch)
 
-            self.train_module.train_batch(batch)
+            if should_skip:
+                log.warning(f"Skipping training on step {self.global_step:,d} intentionally...")
+            else:
+                self.train_module.train_batch(batch)
 
-            for callback in self._iter_callbacks():
-                callback.pre_optim_step()
+                for callback in self._iter_callbacks():
+                    callback.pre_optim_step()
 
-            self.train_module.optim_step()
-            self.train_module.zero_grads()
+                self.train_module.optim_step()
+                self.train_module.zero_grads()
 
             for callback in self._iter_callbacks():
                 callback.post_train_batch()

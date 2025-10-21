@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+- Added option to skip ranges of steps in the trainer.
+
+## [v2.3.0](https://github.com/allenai/OLMo-core/releases/tag/v2.3.0) - 2025-10-17
+
 ### Fixed
 
 - Fixed parsing username+password git remote URLs in `launch.beaker` module.
@@ -28,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Perform a garbage collection after checkpointing to avoid running out of CPU memory.
 - Avoidable overflow error when using NumpyPackedFSLDataset.
 - Fixed issue with NumpyFSLDatasetMixture + SourceMixtureDataset where not all instances would have the same sequence length.
+- Attention backend will no longer default to flash in non-CUDA environments.
 
 ### Changed
 
@@ -45,9 +52,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The `model_id` argument to `convert_state_from_hf` is deprecated. Conversion information is deduced from the model type.
 - Refactored the example conversion scripts to/from HF, including decreasing false failures in validation.
 - Small refactor to `source_mixture.py` to make it easier to define data mixes in yaml.
+- Reorganized/cleaned up internal training scripts.
 
 ### Added
 
+- Added CLI script `src/scripts/unshard.py` for converting distributed checkpoints to regular PyTorch or safetensors format.
 - Added a custom block that does LayerNorm scaling.
 - Added `OLMo-mix-0625-150Bsample` data mix.
 - Added alias support to `DataMix` enum.
@@ -65,9 +74,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `olmo3_7B` model config.
 - Added additional internal configuration tools.
 - Added a new named data mix that we used for the 32B run
-- Added internal OLMo3 7B midtraining config.
+- Added internal OLMo3 7B midtraining and long-context configs.
 - Added ability to convert OLMo3 models to/from HF format with support for rope scaling configs.
-
+- Added a script that can pull out a single training batch from a training job
 
 ## [v2.2.0](https://github.com/allenai/OLMo-core/releases/tag/v2.2.0) - 2025-08-26
 
