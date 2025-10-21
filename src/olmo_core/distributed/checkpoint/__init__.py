@@ -663,7 +663,7 @@ def _prepare_env_for_save(
     # 2. And otherwise we are checking if the directory is empty and raising an error if it's not,
     # so we need to make sure all ranks are synchronized on that check before they can proceed
     # to write to the directory.
-    barrier()
+    barrier(process_group)
 
     if not is_url(dir):
         if get_fs_local_rank(process_group) == 0:
