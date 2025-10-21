@@ -1,3 +1,4 @@
+import dataclasses
 import functools as ft
 import hashlib
 import typing
@@ -23,7 +24,7 @@ class RandomInstanceSourceConfig(InstanceSourceConfig):
     tokenizer: TokenizerConfig
     sequence_length: int
     avg_document_length: int
-    seed: int = SEED_NOT_SET
+    seed: int = dataclasses.field(default_factory=lambda: resolve_seed(SEED_NOT_SET))
     num_instances: Optional[int] = None
     num_tokens: Optional[int] = None
     max_sequence_length: Optional[int] = None

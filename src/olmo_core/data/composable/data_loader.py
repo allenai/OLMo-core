@@ -1,3 +1,4 @@
+import dataclasses
 import functools as ft
 import hashlib
 import logging
@@ -69,7 +70,7 @@ class ComposableDataLoaderConfig(Config):
 
     tokenizer: TokenizerConfig
     global_batch_size: int
-    seed: int = SEED_NOT_SET
+    seed: int = dataclasses.field(default_factory=lambda: resolve_seed(SEED_NOT_SET))
     work_dir: Optional[str] = None
     shuffle: bool = True
     shuffle_strategy: ShuffleStrategy = ShuffleStrategy.inter_source

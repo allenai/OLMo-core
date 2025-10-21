@@ -331,6 +331,7 @@ class SplitInstanceSourceConfig(InstanceSourceConfig):
     def __post_init__(self):
         assert 0 < self.ratio < 1
         assert self.idx in (0, 1)
+        self.seed = resolve_seed(self.seed)
 
     def build(self, work_dir: PathOrStr) -> InstanceSource:
         from .sliced_instance_source import SlicedInstanceSource

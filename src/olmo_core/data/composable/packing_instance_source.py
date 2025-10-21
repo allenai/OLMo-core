@@ -26,7 +26,7 @@ from ..utils import (
 from .instance_source import Instance, InstanceSource, InstanceSourceConfig
 from .numpy_document_source import NumpyDocumentSource
 from .token_source import DocumentSource, DocumentSourceConfig
-from .utils import as_ndarray, path_map
+from .utils import as_ndarray, path_map, resolve_seed
 
 log = logging.getLogger(__name__)
 
@@ -67,7 +67,7 @@ class PackingInstanceSourceConfig(InstanceSourceConfig):
                     source_paths=list(npy_paths),
                     tokenizer=tokenizer,
                     dtype=dtype,
-                    source_permutation_seed=source_permutation_seed,
+                    source_permutation_seed=resolve_seed(source_permutation_seed),
                     source_group_size=source_group_size,
                     label_mask_paths=label_mask_paths,
                     expand_glob=expand_glob,

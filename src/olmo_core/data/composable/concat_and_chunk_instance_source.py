@@ -10,6 +10,7 @@ from ..types import NumpyDatasetDType
 from .instance_source import Instance, InstanceSource, InstanceSourceConfig
 from .numpy_document_source import NumpyDocumentSource
 from .token_source import TokenSource, TokenSourceConfig
+from .utils import resolve_seed
 
 
 @dataclass
@@ -46,7 +47,7 @@ class ConcatAndChunkInstanceSourceConfig(InstanceSourceConfig):
                     source_paths=list(npy_paths),
                     tokenizer=tokenizer,
                     dtype=dtype,
-                    source_permutation_seed=source_permutation_seed,
+                    source_permutation_seed=resolve_seed(source_permutation_seed),
                     source_group_size=source_group_size,
                     label_mask_paths=label_mask_paths,
                     expand_glob=expand_glob,

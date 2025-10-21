@@ -1,7 +1,8 @@
 from pathlib import Path
 
 from olmo_core.data import TokenizerConfig
-from olmo_core.data.composable import RandomInstanceSource
+from olmo_core.data.composable import *
+from olmo_core.data.composable.utils import SEED_NOT_SET
 
 
 def test_split(tmp_path: Path):
@@ -39,3 +40,19 @@ def test_split(tmp_path: Path):
 
     assert source2a.fingerprint == source1a.fingerprint
     assert source2b.fingerprint == source1b.fingerprint
+
+
+def test_config():
+    tokenizer = TokenizerConfig.dolma2()
+
+    config = RandomInstanceSourceConfig(
+        tokenizer=tokenizer,
+        sequence_length=16,
+        max_sequence_length=32,
+        avg_document_length=8,
+        num_tokens=512,
+    )
+
+    # Upon creating the config, the seed should be concrete.
+    assert config.seed is not SEED_NOT_SET
+    assert config.seed == 0

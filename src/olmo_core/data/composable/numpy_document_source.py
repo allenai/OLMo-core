@@ -19,7 +19,7 @@ from ..tokenizer import TokenizerConfig
 from ..types import NumpyDatasetDType, NumpyUIntTypes
 from ..utils import chunked, iter_document_indices, load_array_slice
 from .token_source import DocumentSource, DocumentSourceConfig, TokenRange
-from .utils import path_map
+from .utils import path_map, resolve_seed
 
 log = logging.getLogger(__name__)
 
@@ -42,6 +42,7 @@ class NumpyDocumentSourceConfigBase(DocumentSourceConfig):
     def __post_init__(self):
         if self.source_group_size < -1 or self.source_group_size == 0:
             raise OLMoConfigurationError("'source_group_size' must be -1 or a positive integer.")
+        self.source_permutation_seed = resolve_seed(self.source_permutation_seed)
 
     def get_dtype(self) -> NumpyUIntTypes:
         if self.dtype is not None:

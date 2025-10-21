@@ -1,11 +1,7 @@
 from pathlib import Path
 
 from olmo_core.data import TokenizerConfig
-from olmo_core.data.composable.token_source import (
-    ConcatenatedDocumentSource,
-    InMemoryDocumentSource,
-    InMemoryTokenSource,
-)
+from olmo_core.data.composable import *
 
 
 def test_in_memory_token_source(tmp_path: Path):
