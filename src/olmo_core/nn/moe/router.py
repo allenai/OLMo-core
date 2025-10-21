@@ -92,6 +92,7 @@ class MoERouterConfig(Config):
     bias_gamma: Optional[float] = None
     gating_function: MoERouterGatingFunction = MoERouterGatingFunction.softmax
     dtype: Optional[DType] = None
+    disabled_experts: Optional[Union[Tuple[int, ...], list[int]]] = None
 
     def num_params(self, d_model: int, num_experts: int) -> int:
         """
@@ -182,6 +183,7 @@ class MoERouter(nn.Module):
         lb_loss_granularity: MoELoadBalancingLossGranularity = MoELoadBalancingLossGranularity.local_batch,
         z_loss_weight: Optional[float] = None,
         init_device: str = "cpu",
+        disabled_experts: Optional[Union[Tuple[int, ...], list[int]]] = None,
     ):
         super().__init__()
         self.d_model = d_model
@@ -204,6 +206,17 @@ class MoERouter(nn.Module):
             self.register_buffer("score_bias", torch.zeros(self.num_experts, device=init_device))
         else:
             self.register_buffer("score_bias", None)
+
+        # Optional mask to disable specific experts from routing
+        if disabled_experts is not None and len(disabled_experts) > 0:
+            idx_tensor = torch.tensor(list(disabled_experts), device=init_device, dtype=torch.long)
+            if (idx_tensor < 0).any() or (idx_tensor >= num_experts).any():
+                raise OLMoConfigurationError("disabled_experts contains out-of-range indices")
+            mask = torch.zeros(num_experts, device=init_device, dtype=torch.bool)
+            mask[idx_tensor] = True
+            self.register_buffer("disabled_expert_mask", mask)
+        else:
+            self.register_buffer("disabled_expert_mask", None)
 
         # NOTE: we don't use buffers for t hese because we don't want FSDP to manage them, and we
         # don't use a BufferCache because `torch.compile()` doesn't handle that well when we're modifying
@@ -431,6 +444,18 @@ class MoERouter(nn.Module):
 
         # shape: (batch_size, seq_len, num_experts)
         logits = self.get_expert_logits(x).float()
+
+        # If certain experts are disabled, set their logits to -inf so they will never be selected.
+        if self.disabled_expert_mask is not None:
+            mask = cast(torch.Tensor, self.disabled_expert_mask)
+            disabled_count = int(mask.sum().item())
+            available = self.num_experts - disabled_count
+            if self.top_k > available:
+                raise OLMoConfigurationError(
+                    f"top_k={self.top_k} exceeds available experts {available} after masking; "
+                    "reduce top_k or unmask experts."
+                )
+            logits[..., mask] = float("-inf")
 
         # shape: (batch_size, seq_len, num_experts)
         if self.gating_function == MoERouterGatingFunction.softmax:
