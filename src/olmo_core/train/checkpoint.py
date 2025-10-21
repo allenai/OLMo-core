@@ -111,6 +111,7 @@ class Checkpointer:
                 process_group=self.process_group,
                 thread_count=self.save_thread_count,
                 throttle_uploads=self.throttle_uploads,
+                enable_plan_caching=True,
                 # NOTE: we've already checked and cleared the directory at this point so we can skip
                 # the extra synchronization.
                 _skip_prepare=True,
@@ -143,6 +144,7 @@ class Checkpointer:
             process_group=self.process_group,
             thread_count=self.save_thread_count,
             throttle_uploads=self.throttle_uploads,
+            enable_plan_caching=True,
             # NOTE: we've already checked and cleared the directory at this point so we can skip
             # the extra synchronization.
             _skip_prepare=True,

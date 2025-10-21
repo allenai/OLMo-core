@@ -77,6 +77,7 @@ def save_state_dict(
     save_overwrite: bool = False,
     thread_count: Optional[int] = None,
     throttle_uploads: bool = False,
+    enable_plan_caching: bool = False,
     _skip_prepare: bool = False,
 ):
     """
@@ -97,7 +98,9 @@ def save_state_dict(
     """
     if not _skip_prepare:
         dir = _prepare_env_for_save(dir, process_group=process_group, save_overwrite=save_overwrite)
-    planner = DefaultSavePlanner(dedup_save_to_lowest_rank=True)
+    planner = DefaultSavePlanner(
+        dedup_save_to_lowest_rank=True, enable_plan_caching=enable_plan_caching
+    )
     dist_cp.state_dict_saver.save(
         state_dict,
         storage_writer=RemoteFileSystemWriter(
@@ -120,6 +123,7 @@ def async_save_state_dict(
     save_overwrite: bool = False,
     thread_count: Optional[int] = None,
     throttle_uploads: bool = False,
+    enable_plan_caching: bool = False,
     _skip_prepare: bool = False,
 ) -> Future[None]:
     """
@@ -129,7 +133,9 @@ def async_save_state_dict(
     """
     if not _skip_prepare:
         dir = _prepare_env_for_save(dir, process_group=process_group, save_overwrite=save_overwrite)
-    planner = DefaultSavePlanner(dedup_save_to_lowest_rank=True)
+    planner = DefaultSavePlanner(
+        dedup_save_to_lowest_rank=True, enable_plan_caching=enable_plan_caching
+    )
     return dist_cp.state_dict_saver.async_save(
         state_dict,
         storage_writer=RemoteFileSystemWriter(
@@ -184,6 +190,7 @@ def save_model_and_optim_state(
     flatten_optimizer_state: bool = False,
     thread_count: Optional[int] = None,
     throttle_uploads: bool = False,
+    enable_plan_caching: bool = False,
 ) -> None:
     """
     Save model and optimizer state dictionaries. The model state can be a sharded model, in which
@@ -222,7 +229,9 @@ def save_model_and_optim_state(
         process_group=process_group,
         flatten_optimizer_state=flatten_optimizer_state,
     )
-    planner = DefaultSavePlanner(dedup_save_to_lowest_rank=True)
+    planner = DefaultSavePlanner(
+        dedup_save_to_lowest_rank=True, enable_plan_caching=enable_plan_caching
+    )
     dist_cp.state_dict_saver.save(
         state_dict,
         storage_writer=RemoteFileSystemWriter(
@@ -247,6 +256,7 @@ def async_save_model_and_optim_state(
     flatten_optimizer_state: bool = False,
     thread_count: Optional[int] = None,
     throttle_uploads: bool = False,
+    enable_plan_caching: bool = False,
 ) -> Future[None]:
     """
     An async version of :func:`save_model_and_optim_state()`.
@@ -260,7 +270,9 @@ def async_save_model_and_optim_state(
         process_group=process_group,
         flatten_optimizer_state=flatten_optimizer_state,
     )
-    planner = DefaultSavePlanner(dedup_save_to_lowest_rank=True)
+    planner = DefaultSavePlanner(
+        dedup_save_to_lowest_rank=True, enable_plan_caching=enable_plan_caching
+    )
     return dist_cp.state_dict_saver.async_save(
         state_dict,
         storage_writer=RemoteFileSystemWriter(
