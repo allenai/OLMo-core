@@ -13,6 +13,7 @@ from ..tokenizer import TokenizerConfig
 from ..types import NumpyUIntTypes
 from ..utils import get_rng
 from .instance_source import Instance, InstanceSource, InstanceSourceConfig
+from .utils import SEED_NOT_SET, resolve_seed
 
 
 @dataclass
@@ -21,8 +22,8 @@ class RandomInstanceSourceConfig(InstanceSourceConfig):
 
     tokenizer: TokenizerConfig
     sequence_length: int
-    seed: int
     avg_document_length: int
+    seed: int = SEED_NOT_SET
     num_instances: Optional[int] = None
     num_tokens: Optional[int] = None
     max_sequence_length: Optional[int] = None
@@ -49,8 +50,8 @@ class RandomInstanceSource(InstanceSource):
         *,
         tokenizer: TokenizerConfig,
         sequence_length: int,
-        seed: int,
         avg_document_length: int,
+        seed: int = SEED_NOT_SET,
         num_instances: Optional[int] = None,
         num_tokens: Optional[int] = None,
         max_sequence_length: Optional[int] = None,
@@ -79,6 +80,8 @@ class RandomInstanceSource(InstanceSource):
         self._num_tokens = self.max_sequence_length * (num_tokens // self.max_sequence_length)
         self._tokenizer = tokenizer
         self._avg_document_length = avg_document_length
+        seed = resolve_seed(seed)
+        assert seed is not None
         self._seed = seed
 
     @property
