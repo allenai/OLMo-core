@@ -651,6 +651,11 @@ def _prepare_env_for_save(
     elif not dir_is_empty(dir):
         raise FileExistsError(dir)
 
+    # Code to work around a suspected FasTrak bug
+    torch.cuda.synchronize()
+    import time
+    time.sleep(1)
+
     barrier(process_group)
 
     if not is_url(dir):
