@@ -384,7 +384,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         return self._tp_enabled
 
     def get_dense_stream(self, for_x1=False) -> torch.cuda.Stream:
-        if for_x1:
+        if for_x1: # not used for now
             return get_or_init_stream(id=3, priority=20)
         else:
             return get_or_init_stream(id=2, priority=20)
@@ -478,10 +478,11 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         **kwargs,
     ) -> torch.Tensor:
+        """Reserved for no-routed-experts case (only shared experts), equivalent to a dense model"""
         assert self.routed_experts is None
         assert self.routed_experts_router is None
         assert self.shared_experts is not None
-        raise NotImplementedError
+        raise NotImplementedError("combined_forward_shared_only is not implemented")
 
     @torch.compiler.disable
     def async_copy_to_cpu(
@@ -503,6 +504,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         **kwargs,
     ) -> torch.Tensor:
+        """Forward function without EP"""
         assert self.routed_experts is not None
         assert self.routed_experts_router is not None
     
@@ -519,8 +521,6 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         # remove attention kwargs
         kwargs.pop("max_doc_len", None)
         kwargs.pop("cu_doc_lens", None)
-
-
 
 
         # routed expert router
@@ -692,19 +692,12 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         **kwargs,
     ) -> torch.Tensor:
+        """Forward function with EP"""
         # assert self.routed_experts is not None
         assert self.routed_experts_router is not None
         assert self.ep_enabled == True
         assert self.num_local_routed_experts is not None
 
-        # if torch.distributed.get_rank() == 0:
-        #     type_id = id(type(self.routed_experts))
-        #     type_id_attn = id(type(self.attention))
-        #     print(f'rank={torch.distributed.get_rank()}', type_id, type_id_attn)
-        # if self.type_id is None:
-        #     self.type_id = type_id
-        # else:
-        #     assert self.type_id == type_id, "RoutedExperts instance cannot be reused after torch.compile"
 
         B, S, D = x.shape
 

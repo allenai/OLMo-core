@@ -14,6 +14,7 @@ from torch.distributed.device_mesh import DeviceMesh
 
 from torch.distributed.tensor import Placement, Replicate, Shard, distribute_tensor
 from olmo_core.distributed.utils import get_local_tensor
+import transformer_engine
 
 @torch.compiler.disable
 def gmm_no_compile(a, b, batch_sizes, trans_b=False):
@@ -103,7 +104,14 @@ class RoutedExperts(nn.Module):
                 device=init_device
             ),
         )
-
+        # self.w_up_gate_te = transformer_engine.pytorch.GroupedLinear(
+        #     num_gemms=num_experts,
+        #     in_features=d_model,
+        #     out_features=2 * hidden_size,
+        #     bias = False,
+        #     params_dtype=dtype.as_pt(),
+        #     device=init_device,
+        # )
         self.w_down = nn.Parameter(
             torch.empty(
                 num_experts,
@@ -160,8 +168,6 @@ class RoutedExperts(nn.Module):
         return h
 
     def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
-        # ep_dp_mesh = ep_mesh['ep_dp']
-        # ep_mp_mesh = ep_mesh['ep_mp']
         # shard dim 0 to ep_mp, replicate on ep_dp mesh
         self.ep_mesh = ep_mesh['ep_dp', 'ep_mp']
         # with torch.no_grad():  # just to avoid tracking the rebind below

@@ -374,7 +374,7 @@ class PipelineSchedule:
         )
         
 
-        torch.save(schedule.pipeline_order, 'tmp.pt')
+        # torch.save(schedule.pipeline_order, 'tmp.pt')
         if torch.distributed.get_rank() == 0:
             debug_save_pp_schedule(schedule=schedule)
         

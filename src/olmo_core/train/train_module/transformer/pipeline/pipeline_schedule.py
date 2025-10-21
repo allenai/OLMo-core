@@ -256,17 +256,6 @@ class CustomScheduleInterleaved1F1B():
             loss = self._loss_fn(output, target_mbs[mb_index])  # type: ignore[index]
             self._internal_losses.append(loss.detach())
 
-    # def _maybe_get_loss(self, stage, mb_index):
-    #     valid_index = 0 <= mb_index < len(self._internal_losses)
-    #     if stage.is_last and self._has_backward and valid_index:
-    #         return self._internal_losses[mb_index]
-    #     elif len(self._internal_losses) != 0 and not valid_index:
-    #         raise RuntimeError(
-    #             f"Loss for microbatch {mb_index} is not available. "
-    #             f"Available losses for microbatches: {self._internal_losses}"
-    #         )
-    #     else:
-    #         return None
 
     def step(self, *args, target: Optional[torch.Tensor] =None, losses: Optional[List] = None, **kwargs):
         """
@@ -341,7 +330,6 @@ class CustomScheduleInterleaved1F1B():
         losses: Optional[list] = None,
     ):
 
-
         if not self._stages_initialized:
             self._initialize_stages(arg_mbs[0], kwarg_mbs[0])
 
@@ -362,6 +350,7 @@ class CustomScheduleInterleaved1F1B():
         # count either full_backward or backward_weight together, to determine when to sync DP grads
         backward_counter: Counter[int] = Counter()
         handles = []
+        past_first_backward = False
         # reload_event: Optional[torch.cuda.Event] = None
         for time_step, action in enumerate(self.pipeline_order[self.rank]):
             # print(f'{action}-Start')
@@ -372,8 +361,6 @@ class CustomScheduleInterleaved1F1B():
                 debug_mem_before_reload = torch.cuda.memory_allocated() / (1024**3)
                 _ = self.gpu_activation_offloader.async_reload(f"{next_action.stage_index}F{next_action.microbatch_index}") # in saving, using "F" group for both F and B
                 debug_mem_after_reload = torch.cuda.memory_allocated() / (1024**3)
-
-
 
             ops: list[dist.P2POp] = []
             if action is not None:
@@ -407,10 +394,10 @@ class CustomScheduleInterleaved1F1B():
                     # make sure the reload is done
                     if action.need_reload and self.use_gpu_activation_offload:
                         self.gpu_activation_offloader.wait_reload(f"{action.stage_index}F{action.microbatch_index}") # in saving, using "F" group for both F and B
-                    # time.sleep(1)
+
                     # perform backward computation
                     stage = stage_index_to_stage[stage_index]
-                    # loss = self._maybe_get_loss(stage, mb_index)
+
                     backward_counter[stage_index] += 1
                     last_backward = (
                         backward_counter[stage_index] == self._n_microbatches
@@ -432,6 +419,7 @@ class CustomScheduleInterleaved1F1B():
                         self.gpu_activation_offloader.manual_release_group(f"{action.stage_index}F{action.microbatch_index}")
                         debug_mem_after_release = torch.cuda.memory_allocated() / (1024**3)
                     ops.extend(stage.get_bwd_send_ops(mb_index))
+                    past_first_backward = True
                 elif computation_type == PipelineActionType.FULL_BACKWARD_CONT:
                     # continuation of full backward, no computation
                     pass
@@ -502,26 +490,21 @@ class CustomScheduleInterleaved1F1B():
                             f"Unknown computation type {computation_type}"
                         )
 
-
-
-            if ops:
-                # if action is None:
-                #     nvtx_tag = "bubble"
-                # else:
-                #     nvtx_tag = f"p2p"
-                # with nvtx.annotate(nvtx_tag, color='purple'):
-                handles = dist.batch_isend_irecv(ops)
-                # for handle in handles:
-                #     handle.wait()
-                # del handles
-
-
-            # do the communication
-            # TODO: wait for previous communication to finish (in interleaved 1F1B, comm at step N only need be be done before the start of step N+2 compute, which is the end of step N+1)
+            # at the end of step N, wait for the N-1 communication to finish, because N+1 compute may use the data from N-1 communication (F-B-F)
             if handles:
                 for handle in handles:
                     handle.wait()
                 handles.clear()
+
+            if ops:
+                handles = dist.batch_isend_irecv(ops)
+
+            # do the communication
+            if handles:
+                if not past_first_backward: # it's only safe collect the p2p handles at N+1 step in the stable 1F1B phase. Need to collect it immediately in the warmup phase
+                    for handle in handles:
+                        handle.wait()
+                    handles.clear()
 
             # print(f'{action}-Done')
 
@@ -612,6 +595,9 @@ class CustomScheduleInterleaved1F1B():
         return rank_ops
 
 def configure_offload(rank_pipeline_order: dict[int, list[Optional[PipelineAction]]]):
+    """
+    This function configures activation offloading schedule to keep the number of held activations under a limit.
+    """
     total_ranks = len(rank_pipeline_order)
     total_steps = len(rank_pipeline_order[0])
 
@@ -664,6 +650,7 @@ def configure_offload(rank_pipeline_order: dict[int, list[Optional[PipelineActio
     return rank_pipeline_order
 
 def pad_to_max_length(rank_pipeline_order: dict[int, list[Optional[PipelineAction]]]):
+    """Pads all rank operation lists to the maximum length with None (no-op) actions."""
     max_length = max(len(ops) for ops in rank_pipeline_order.values())
     for rank, ops in rank_pipeline_order.items():
         if len(ops) < max_length:
@@ -698,10 +685,7 @@ def _get_interleaved_1f1b_rank_ops(
     # warmup_ops = calculated above
     post_warmup_ops = 2 * (pp_group_size - 1 - rank)
 
-
     total_ops = warmup_ops + fwd_bwd_ops + cooldown_ops
-
-
 
     for op in range(total_ops):
         # Warmup phase

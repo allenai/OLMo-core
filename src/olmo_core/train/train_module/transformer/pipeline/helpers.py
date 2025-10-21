@@ -49,8 +49,6 @@ def generate_stage_to_rank_mapping(
     return mapping
 
 
-
-
 def flatten_args(args):
     """
     Flatten the args into a list form.

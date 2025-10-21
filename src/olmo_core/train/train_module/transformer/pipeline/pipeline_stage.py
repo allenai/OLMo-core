@@ -465,23 +465,23 @@ class CustomPipelineStage:
     
    # ---------------- reclamation helper -----------------
 
-    def release_microbatch_buffers(self, mb_idx: int):
-        """Free activation & grad buffers for *mb_idx*."""
-        for store in (
-            getattr(self, "args_recv_info", None),
-            getattr(self, "grad_recv_info", None),
-        ):
-            if not store:
-                continue
-            entry = store[mb_idx]
-            if entry is None:
-                continue
-            container = store
-            for rec in entry:
-                if isinstance(rec, RecvInfo):
-                    _free_tensor_inplace(rec.buffer)
-            # Drop the tuple reference itself so the GC can reclaim it.
-            container[mb_idx] = None
+    # def release_microbatch_buffers(self, mb_idx: int):
+    #     """Free activation & grad buffers for *mb_idx*."""
+    #     for store in (
+    #         getattr(self, "args_recv_info", None),
+    #         getattr(self, "grad_recv_info", None),
+    #     ):
+    #         if not store:
+    #             continue
+    #         entry = store[mb_idx]
+    #         if entry is None:
+    #             continue
+    #         container = store
+    #         for rec in entry:
+    #             if isinstance(rec, RecvInfo):
+    #                 _free_tensor_inplace(rec.buffer)
+    #         # Drop the tuple reference itself so the GC can reclaim it.
+    #         container[mb_idx] = None
 
     def forward_maybe_with_nosync(self, *args, **kwargs):
         # If submod is wrapped with DDP, we use the `no_sync` context manager to
@@ -588,7 +588,7 @@ class CustomPipelineStage:
 
     def clear_runtime_states(self) -> None:
         pass
-        # TODO
+        # TODO: anything to clear?
 
     def scale_grads(self, grad_scale_factor: int) -> None:
         """Scale gradients model gradients by `grad_scale_factor`, which should be specified in coordination with the

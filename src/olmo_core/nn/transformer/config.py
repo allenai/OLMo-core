@@ -500,7 +500,7 @@ class TransformerConfig(Config):
         """
         return self.num_active_params - self.d_model * self.vocab_size
 
-    def num_flops_per_token(self, seq_len: int) -> int:
+    def num_flops_per_token_old(self, seq_len: int) -> int:
         """
         Get the approximate number of flops per token.
         """
@@ -519,6 +519,22 @@ class TransformerConfig(Config):
         flop_per_token = 6 * self.num_non_embedding_params + 12 * n * h * q * t
 
         return flop_per_token
+    
+    def num_flops_per_token(self, seq_len: int) -> int:
+
+        flops = []
+
+        # calculate flops for each block (each block might have different config)
+        for block_idx in range(self.n_layers):
+            block_config = self.block
+            if self.block_overrides is not None and block_idx in self.block_overrides:
+                block_config = self.block_overrides[block_idx]
+
+            flops.append(block_config.flops_per_token(self.d_model, seq_len))
+
+        flops.append(num_floating_point_operations_for_logits(self, seq_len) / seq_len)
+
+        return sum(flops)
 
     @classmethod
     def olmo2_190M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
@@ -1135,7 +1151,15 @@ class TransformerConfig(Config):
 @dataclass
 class MoEFusedV2TransformerConfig(TransformerConfig):
 
+    # Two-batch-overlap to overlap the compute and all2all communication when EP is enabled. Micro batch size needs to be a multiple of 2.
     two_batch_overlap: bool = False
+
+    # Recompute all blocks in one chunk (not per layer). This is useful when PP is enabled to reduce activation memory that's held in early PP stages. It should not be used when PP is disabled as it increases recomputation overhead for nothing.
+    recompute_all_blocks_by_chunk: bool = False
+
+    # Recompute each block individually. This reduces the activation memory to just one block at a time, but increases recomputation overhead. Works with or without PP. It does not work with TBO
+    recompute_each_block: bool = False
+
 
     def build(
         self,
@@ -1170,6 +1194,8 @@ class MoEFusedV2TransformerConfig(TransformerConfig):
                 init_std=self.init_std,
                 block_overrides=self.block_overrides,
                 two_batch_overlap=self.two_batch_overlap,
+                recompute_all_blocks_by_chunk=self.recompute_all_blocks_by_chunk,
+                recompute_each_block=self.recompute_each_block,
             )
         else:
             raise NotImplementedError(self.name)

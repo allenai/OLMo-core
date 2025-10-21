@@ -58,7 +58,7 @@ log = logging.getLogger(__name__)
 
 
 SEQUENCE_LENGTH = 8192
-GLOBAL_BATCH_SIZE_SEQ=512
+GLOBAL_BATCH_SIZE_SEQ=32
 GLOBAL_BATCH_SIZE = (
     (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
 )  
@@ -66,55 +66,53 @@ MAX_DURATION = int(1000e9)  # int(6e12), don't forget to adjust the LR when you 
 EVAL_INTERVAL = 1000
 LR= 1e-4
 
-NUM_EXPERTS = 16
-TOP_K = 4
-D_MODEL=1024
+NUM_EXPERTS = 32
+TOP_K = 2
+D_MODEL=2048 + 512
 HEAD_DIM=64
 NUM_HEAD = D_MODEL // HEAD_DIM
 NUM_KV_HEAD=4
-MOE_HIDDEN_SIZE = 1024
-NUM_SHARED_EXPERTS = 1  # Number of shared experts in the shared MLP
-SHARED_MLP_HIDDEN_SIZE = 1024  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
+MOE_HIDDEN_SIZE = 4096
+NUM_SHARED_EXPERTS = 0  # Number of shared experts in the shared MLP
+SHARED_MLP_HIDDEN_SIZE = 2048  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
+
+EFFECTIVE_MLP = (MOE_HIDDEN_SIZE * TOP_K + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
+MLP_RATIO = EFFECTIVE_MLP / D_MODEL
 
 MICRO_BSZ = 2
 # DP_DIM=2
-EP_DIM=2
+EP_DIM=1
 PP_DIM=2
-NUM_LAYERS= 8
-SPLIT_POINTS = None
 
-# NUM_LAYERS= 30
-# SPLIT_POINTS = [
-#     4, 8 ,
-#     12,16, 
-#     20,24 , 
-#     28, 
-#     ]
 
-# NUM_LAYERS= 15
-# SPLIT_POINTS =[
-#     4,8,
-#     12,
-# ]
+def _get_split_points(original_num_layers: int, num_stages: int, minus_last_stage: int):
+    assert original_num_layers % num_stages == 0, "Original number of layers must be divisible by number of stages"
+    layers_per_stage = original_num_layers // num_stages
 
-# NUM_LAYERS= 24
-# SPLIT_POINTS =[
-#     6,12,
-#     18,
-# ]
+    new_num_layers = original_num_layers - minus_last_stage
 
-# NUM_LAYERS= 46
-# SPLIT_POINTS = [
-#     6, 12 ,
-#     18,24, 
-#     30,36 , 
-#     42, 
-# ]
+    split_points = []
+    for i in range(1, num_stages):
+        split_points.append(i * layers_per_stage)
+    # if minus_last_stage > 0:
+    #     split_points.append(original_num_layers - minus_last_stage)
+    return new_num_layers, split_points
+        
 
+
+NUM_LAYERS= 16
+
+if PP_DIM > 1:
+    MINUS_LAST_STAGE=1
+    NUM_LAYERS, SPLIT_POINTS = _get_split_points(NUM_LAYERS, PP_DIM * 2, minus_last_stage=MINUS_LAST_STAGE)
+else:
+    SPLIT_POINTS = None
+
+############
 
 
 # SPLIT_POINTS = None
-USE_COMPILE=False
+USE_COMPILE=True
 USE_AC=False
 USE_TBO=False
 
@@ -237,7 +235,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                 feed_forward_norm=layer_norm,
             ) 
     }
-
+    # flops = config.num_flops_per_token(4096)
     return config
 
 
@@ -253,7 +251,7 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
             betas=(0.9, 0.95),
             group_overrides=[
                 OptimGroupOverride(params=["embeddings.weight", "*_norm.weight"], opts=dict(weight_decay=0.0)),
-                OptimGroupOverride(params=["*w_up_gate"], opts=dict(weight_decay=0.1)) # HACK: just to make a separate group to avoid OOM in RS
+                # OptimGroupOverride(params=["*w_up_gate"], opts=dict(weight_decay=0.1)) # HACK: just to make a separate group to avoid OOM in RS
                 # OptimGroupOverride(params=["embeddings.weight", ], opts=dict(weight_decay=0.0)) #TODO: fix
             ],
             #TODO: weight decay for norm?
@@ -354,7 +352,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         )
         .with_callback(
             "profiler", 
-            NvidiaProfilerCallback(enabled=False, # NOTE: change this
+            NvidiaProfilerCallback(enabled=True, # NOTE: change this
                                    profile_ranks=[0, 8, 16, 24],
                                    start=10,
                                    end=13

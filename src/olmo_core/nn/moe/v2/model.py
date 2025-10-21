@@ -56,32 +56,29 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
 
     def __init__(self, *args, **kwargs):
         self.tbo = kwargs.pop('two_batch_overlap')
+        self.recompute_all_blocks_by_chunk = kwargs.pop('recompute_all_blocks_by_chunk')
+        self.recompute_each_block = kwargs.pop('recompute_each_block')
+
         super().__init__(*args, **kwargs)
         self.ep_enabled = False # default
-        self.recompute_all_blocks = False
-        self.recompute_each_block = False
 
-        # if self.tbo:
-        #     self.first_moe_idx = self._check_tbo_requirements()
-        # else:
-        #     self.first_moe_idx = None
-        # self.first_moe_idx = None
-
-        assert not (self.recompute_all_blocks and self.recompute_each_block), "Only one of recompute_all_blocks and recompute_each_block can be True."
+        assert not (self.recompute_all_blocks_by_chunk and self.recompute_each_block), "Only one of recompute_all_blocks_by_chunk and recompute_each_block can be True."
         assert not (self.tbo and self.recompute_each_block), "Cannot use TBO when recompute_each_block is True."
 
 
         self._debug_alloc_mem_layer_logs = []
         self._debug_max_alloc_mem_layer_logs = []
-    #     self.cpu_offload = True
+        
+        self.cpu_offload = False    # NOTE : CPU activation offload is not useful due to low pcie bandwidth, so disable it for now
 
-    #     self.offload_context, self.offload_sync_func = get_cpu_offload_context(
-    #         enabled=self.cpu_offload,
-    #         num_layers=4,
-    #         model_layers=self.n_layers,
-    #     )
+        # not used
+        # self.offload_context, self.offload_sync_func = get_cpu_offload_context(
+        #     enabled=self.cpu_offload,
+        #     num_layers=4,
+        #     model_layers=self.n_layers,
+        # )
 
-    # def reset_offload_handler(self):
+    # def reset_offload_handler(self): # NOTE: cpu activation offload should not be used
     #     if self.cpu_offload:
     #         assert isinstance(self.offload_context, CpuOffloadHook)
     #         self.offload_context.offload_handler.groupid_reset()
@@ -89,13 +86,16 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
     def _log_debug_mem(self, tag: str):
         self._debug_alloc_mem_layer_logs.append((tag, torch.cuda.memory_allocated()/1024**3))
         self._debug_max_alloc_mem_layer_logs.append((tag, torch.cuda.max_memory_allocated()/1024**3))
+
     def _reset_debug_mem_logs(self):
         self._debug_alloc_mem_layer_logs = []
         self._debug_max_alloc_mem_layer_logs = []
 
     def _check_tbo_requirements(self):
         # make sure dense blocks only appear before moe blocks
-        
+        # because TBO requires that moe blocks are consecutive
+        # [dense, dense, moe, moe] is ok
+        # [dense, moe, dense, moe] is not ok
         found_moe = False
         first_moe_idx = None
         for idx, block in enumerate(self.blocks.values()):
@@ -110,13 +110,14 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         return first_moe_idx
 
     def purge_cuda_events(self):
-        # set all events to None (so that the model can be deepcopied)
+        # set all events to None (so that the model can be deepcopied in PP split)
         for layer in self.blocks.values():
             if layer.is_moe:
                 layer = cast(MoEFusedV2TransformerBlock, layer)
                 layer.purge_cuda_events()
 
     def install_cuda_events(self):
+        # re-install events after deepcopy
         for layer in self.blocks.values():
             if layer.is_moe:
                 layer = cast(MoEFusedV2TransformerBlock, layer)
@@ -457,7 +458,9 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         # pipeline parallel configuration.
         h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
 
-        first_moe_idx = self._check_tbo_requirements() # check every forwrad to work with PP
+        # can only check this in every forward. 
+        # We cannot put this in __init__ because of PP might change model layers. 
+        first_moe_idx = self._check_tbo_requirements() 
 
         # forward dense blocks
         for block_idx, block in enumerate(self.blocks.values()):
@@ -476,9 +479,8 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
                 #     use_reentrant=False,
                 #     **block_kwargs,
                 # )
-                h = cast(torch.Tensor, h)
+                # h = cast(torch.Tensor, h)
                 self._log_debug_mem(f'{block_idx}')
-
 
 
             # commit cpu offload
@@ -639,22 +641,22 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
 
     def _forward_blocks(self, h, block_kwargs: Dict[str, Any]) -> torch.Tensor:
         # Run each block.
-        for block_idx, (bock_key, block) in enumerate(self.blocks.items()):
+        for block_idx, (block_key, block) in enumerate(self.blocks.items()):
             # Mark sizes as dynamic for torch.compile().
             if self.compile_enabled:
                 mark_dynamic(h, (0, 1), strict=False)
             with nvtx.annotate(f"fwd_block_{block_idx}", color="blue"):
-                if self.recompute_each_block:
-                    h = checkpoint(self._forwrad_one_block, h, bock_key, block_kwargs, use_reentrant=False)
+                if self.recompute_each_block or block_key == '0':
+                    h = checkpoint(self._forwrad_one_block, h, block_key, block_kwargs, use_reentrant=False)
                     h = cast(torch.Tensor, h)
                 else:
-                    h = self._forwrad_one_block(h, bock_key, block_kwargs)
+                    h = self._forwrad_one_block(h, block_key, block_kwargs)
                 
         return h
 
-    def _forwrad_one_block(self, h, bock_key: str, block_kwargs: Dict[str, Any]) -> torch.Tensor:
+    def _forwrad_one_block(self, h, block_key: str, block_kwargs: Dict[str, Any]) -> torch.Tensor:
         debug_mem_block_start = torch.cuda.memory_allocated()/1024**3
-        block = self.blocks[bock_key]
+        block = self.blocks[block_key]
         h = block(h, **block_kwargs)
 
         debug_mem_block_end = torch.cuda.memory_allocated()/1024**3
@@ -730,7 +732,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         #     with nvtx.annotate(f"fwd_block_{block_idx}", color="blue"):
         #         h = block(h, **block_kwargs)
 
-        if self.recompute_all_blocks:
+        if self.recompute_all_blocks_by_chunk:
             h = checkpoint(self._forward_blocks, h, block_kwargs, use_reentrant=False)
             h = cast(torch.Tensor, h)
         else:

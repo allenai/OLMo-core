@@ -507,6 +507,33 @@ class MoEFusedV2Optimizer(Optimizer):
         self.print_memory_summary()
         self._check_model_param_main_param_the_same()
 
+    def offload_optimizer_states(self):
+        raise NotImplementedError()
+        # Offload optimizer states to CPU to save GPU memory
+        dbg_mem1 = torch.cuda.memory_allocated() / (1024**3)
+        for tag in ("dp", "ep_dp"):
+            pg, order = self._pg_and_order_for_tag(tag)
+            if pg is None or not order:
+                continue
+            flat_main = getattr(self, f"_flat_main_{tag}")
+            flat_exp_avg = getattr(self, f"_flat_exp_avg_{tag}")
+            flat_exp_avg_sq = getattr(self, f"_flat_exp_avg_sq_{tag}")
+            flat_main.data = flat_main.data.to('cpu')
+            flat_exp_avg.data = flat_exp_avg.data.to('cpu')
+            flat_exp_avg_sq.data = flat_exp_avg_sq.data.to('cpu')
+        
+        dbg_mem2 = torch.cuda.memory_allocated() / (1024**3)
+        pass
+        
+
+    def reload_optimizer_states_to_device(self,):
+        raise NotImplementedError()
+        # Reload optimizer states to the given device
+        for ov in self._owned_views:
+            ov.exp_avg_view.data = ov.exp_avg_view.data.to(self.device)
+            ov.exp_avg_sq_view.data = ov.exp_avg_sq_view.data.to(self.device)
+            ov.main_param_view.data = ov.main_param_view.data.to(self.device)
+
     def print_memory_summary(self):
         main_param_bytes = 0 
         states_bytes = 0
@@ -968,7 +995,7 @@ class MoEFusedV2Optimizer(Optimizer):
                         cursor_off[r] = pos
 
             # Choose chunk capacity (multiple of ws) and buffers
-            chunk_budget_bytes = getattr(self, "_rs_chunk_bytes", 2 << 30)  # ~2 GiB by default
+            chunk_budget_bytes = getattr(self, "_rs_chunk_bytes", 1 << 30)  # ~1 GiB by default
             elem_bytes = torch.tensor([], dtype=grad_dtype).element_size()
             chunk_capacity = max(ws, (chunk_budget_bytes // elem_bytes) // ws * ws)  # divisible by ws
             per_rank_cap = chunk_capacity // ws
@@ -1159,12 +1186,6 @@ class MoEFusedV2Optimizer(Optimizer):
                             off += length
                         del recv_buf
 
-    # def _copy_main_params_to_model_params(self):
-    #     # Only needed for the float16 params.
-    #     model_data, main_data = self._get_model_and_main_params_data_float16()
-    #     _multi_tensor_cp(
-    #         src=main_data, dst=model_data,
-    #     )
 
     def _dealloc_main_grad(self):
         for main_param_group in self.param_groups:
@@ -1174,44 +1195,6 @@ class MoEFusedV2Optimizer(Optimizer):
         for tag in self._flat_main_grad_buf:
             self._flat_main_grad_buf[tag] = None
 
-    # def _copy_model_params_to_main_params(self, state_dict=None):
-    #     assert state_dict is None, "Initialize main params from state dict is not supported"
-    #     # Only needed for the float16 params.
-    #     model_data, main_data = self._get_model_and_main_params_data_float16()
-    #     _multi_tensor_cp(
-    #         src=model_data, dst=main_data,
-    #     )
-
-    # def _get_model_and_main_params_data_float16(self):
-    #     model_data = []
-    #     main_data = []
-    #     for model_group, main_group in zip(self.float16_groups, self.fp32_from_float16_groups):
-    #         for model_param, main_param in zip(model_group, main_group):
-    #             model_data.append(model_param.data)
-    #             main_data.append(main_param.data)
-    #     return model_data, main_data
-    
-    # def _copy_model_grads_to_main_grads(self):
-    #     # This only needs to be done for the float16 group.
-    #     for model_group, main_group in zip(self.float16_groups, self.fp32_from_float16_groups):
-    #         for model_param, main_param in zip(model_group, main_group):
-    #             assert model_param.main_param is main_param, 'main param pointer mismatch'
-    #             if hasattr(model_param, 'main_grad'):
-    #                 assert False, "Use main_param.grad, not model_param.main_grad"
-    #                 main_param.grad = model_param.main_grad.float()
-    #             else:
-    #                 if model_param.grad is not None:
-    #                     main_param.grad = model_param.grad.float()
-
-    #             # Safe to deallocate model's grad/main_grad after copying.
-    #             # (If using contiguous buffers, main_grad's memory should
-    #             # persist and therefore should not be deallocated.)
-    #             # model_param.grad = None
-
-    #     # For fp32 grads, we need to reset the grads to main grad.
-    #     for model_group in self.fp32_from_fp32_groups:
-    #         for model_param in model_group:
-    #             model_param.grad = model_param.main_grad
 
     @torch._dynamo.disable()
     def get_step_factor(self) -> torch.Tensor:
@@ -1241,6 +1224,10 @@ class MoEFusedV2Optimizer(Optimizer):
 
 
     def _step_foreach(self, closure=None) -> None:
+        """Performs adamw step using foreach impl, limiting chunk size to reduce memory usage."""
+
+        # TODO: step can be performed directly on the flat buffers instead of the views.
+
         if closure is not None:
             with torch.enable_grad():
                 closure()
@@ -1249,8 +1236,8 @@ class MoEFusedV2Optimizer(Optimizer):
         step_factor = cast(torch.Tensor, step_factor)
         self._step_skipped = 1 - step_factor
 
-        # Allow overriding via attribute; default to 1B elements.
-        CHUNK_ELEMS = getattr(self, "_foreach_chunk_threshold", 1_000_000_000)
+        # Allow overriding via attribute; default to 500M elements.
+        CHUNK_ELEMS = getattr(self, "_foreach_chunk_threshold", 500_000_000)
 
         for group in self.param_groups:
             # Per-chunk accumulators

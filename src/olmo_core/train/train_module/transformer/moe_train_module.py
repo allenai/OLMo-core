@@ -21,7 +21,7 @@ from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
 from torch.distributed.tensor import Placement, Replicate, Shard
 from torch.distributed.pipelining import PipelineStage
 from ...common import MetricMergeStrategy, ReduceType
-
+import math
 from torch.distributed import ProcessGroup
 from olmo_core.data.utils import get_labels, split_batch
 from olmo_core.distributed.checkpoint import (
@@ -340,17 +340,39 @@ class MoEV2TransformerTrainModule(TrainModule):
         dims: List[int] = []
 
         # Pipeline parallel first.
+        use_paired_pp = False # TODO: move to config
+        # TODO 2: implement paired pp properly
         if pp is not None:
             names.append(MeshDimName.pp)
-            dims.append(pp.degree)
+            if use_paired_pp:
+                dims.append(pp.degree // 2)
+            else:
+                dims.append(pp.degree)
 
         # Then data parallel.
         names.append(MeshDimName.dp)
         dims.append(dp_world_size)
 
+        if pp is not None and use_paired_pp:
+            names.append('pp_paired')
+            dims.append(2)
 
+        with torch.device("cpu"):
+            mesh = torch.arange(math.prod(tuple(dims)), dtype=torch.int).view(tuple(dims))
 
-        self.dense_mesh = init_device_mesh(device_type, tuple(dims), mesh_dim_names=tuple(names))
+        if pp is not None and use_paired_pp:
+            r = mesh.permute(0, 2, 1).contiguous()
+            pp_dim, pp_paired, dp_dim = r.shape
+            r_merged = r.reshape(pp_dim * pp_paired, dp_dim)      # (pp*pp_paired, dp)
+            mesh = r_merged
+            names.remove('pp_paired')
+
+        self.dense_mesh  = DeviceMesh(
+            device_type=device_type,
+            mesh=mesh,
+            mesh_dim_names=tuple(names),
+        )
+        # self.dense_mesh = init_device_mesh(device_type, tuple(dims), mesh_dim_names=tuple(names))
         log.info(f"Built dense_mesh {get_device_mesh_info(self.dense_mesh)}")
 
         if ep is None: # EP not used
@@ -364,8 +386,12 @@ class MoEV2TransformerTrainModule(TrainModule):
 
             # Pipeline parallel first.
             if pp is not None:
+                    
                 names.append(MeshDimName.pp)
-                dims.append(pp.degree)
+                if use_paired_pp:
+                    dims.append(pp.degree // 2)
+                else:
+                    dims.append(pp.degree)
 
             # Then EP data parallel.
             ep_dp_world_size = dp_world_size // ep.degree
@@ -377,7 +403,27 @@ class MoEV2TransformerTrainModule(TrainModule):
             names.append(MeshDimName.ep_mp)
             dims.append(ep_mp_world_size)
 
-            self.moe_mesh = init_device_mesh(device_type, tuple(dims), mesh_dim_names=tuple(names))
+            if pp is not None and use_paired_pp:
+                names.append('pp_paired')
+                dims.append(2)
+
+            with torch.device("cpu"):
+                mesh = torch.arange(math.prod(tuple(dims)), dtype=torch.int).view(tuple(dims))
+
+            if pp is not None and use_paired_pp:
+                r = mesh.permute(0, 3, 1, 2).contiguous() # (pp, ep_dp, ep_mp, pp_paired) -> (pp, pp_paired, ep_dp, ep_mp)
+                pp_dim, pp_paired, ep_dp_dim, ep_mp_dim = r.shape
+                r_merged = r.reshape(pp_dim * pp_paired, ep_dp_dim, ep_mp_dim)      # (pp*pp_paired, ep_dp, ep_mp)
+                mesh = r_merged
+                names.remove('pp_paired')
+            
+            device_mesh = DeviceMesh(
+                device_type=device_type,
+                mesh=mesh,
+                mesh_dim_names=tuple(names),
+            )
+            self.moe_mesh = device_mesh
+            # self.moe_mesh = init_device_mesh(device_type, tuple(dims), mesh_dim_names=tuple(names))
 
             log.info(f"Built moe_mesh{get_device_mesh_info(self.moe_mesh)}")
 
@@ -698,7 +744,7 @@ class MoEV2TransformerTrainModule(TrainModule):
                 **model_kwargs,
             )   
         #############################
-        debug_norm = [torch.nn.utils.get_total_norm([p.grad for p in model_part.parameters()]) for model_part in self.model_parts]
+        # debug_norm = [torch.nn.utils.get_total_norm([p.grad for p in model_part.parameters()]) for model_part in self.model_parts]
 
         for model in self.model_parts:
             model.post_batch(dry_run=dry_run)
@@ -814,6 +860,8 @@ class MoEV2TransformerTrainModule(TrainModule):
         ce_batch_loss: Optional[torch.Tensor] = None
         z_batch_loss: Optional[torch.Tensor] = None
 
+        # self.optim.offload_optimizer_states()
+
         def capture_losses(
             model: Transformer, args: Tuple[torch.Tensor, ...], output: Any
         ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
@@ -857,15 +905,17 @@ class MoEV2TransformerTrainModule(TrainModule):
         for handle in handles:
             handle.remove()
 
+        # self.optim.reload_optimizer_states_to_device()
+
         return ce_batch_loss, z_batch_loss
 
 
     def optim_step(self):
         from olmo_core.optim.moe_optimizer import MoEFusedV2Optimizer
-        
         if self.reduce_scatter_grads:
             pass
         else:
+            # TODO: disable this branch  
             assert self.pp_enabled == False, "Pipeline parallelism with all-reduce grad is not supported"
             model = self.model_parts[0]
             # Maybe clip gradients.
