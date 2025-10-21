@@ -38,6 +38,8 @@ from olmo_core.train.train_module import (
 )
 
 DEFAULT_SEQUENCE_LENGTH = 8192
+GLOBAL_BATCH_SIZE = 8192 * 512  # ~4M tokens
+LR = 3e-4
 
 
 def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentConfig:
@@ -58,22 +60,21 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         work_dir=opts.work_dir,
     )
 
-    global_batch_size = 8192 * 512
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=global_batch_size,
+        global_batch_size=GLOBAL_BATCH_SIZE,
         seed=34521,
         num_workers=8,
     )
 
     # Scheduler settings from the first half
     original_warmup_steps = 2000
-    original_max_steps = int(5e12) // global_batch_size
+    original_max_steps = int(5e12) // GLOBAL_BATCH_SIZE
 
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=2 * 8192,
         max_sequence_length=sequence_length,
         optim=SkipStepAdamWConfig(
-            lr=3e-4,
+            lr=LR,
             weight_decay=0.1,
             betas=(0.9, 0.95),
             group_overrides=[
