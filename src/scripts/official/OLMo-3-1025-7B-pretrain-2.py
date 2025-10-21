@@ -28,6 +28,7 @@ from olmo_core.train.callbacks import (
     ConfigSaverCallback,
     DownstreamEvaluatorCallbackConfig,
     LMEvaluatorCallbackConfig,
+    MonkeyPatcherCallback,
     WandBCallback,
 )
 from olmo_core.train.train_module import (
@@ -36,10 +37,11 @@ from olmo_core.train.train_module import (
     TransformerTrainModuleConfig,
 )
 
-SEQUENCE_LENGTH = 8192
+DEFAULT_SEQUENCE_LENGTH = 8192
 
 
 def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentConfig:
+    sequence_length = opts.sequence_length or DEFAULT_SEQUENCE_LENGTH
     tokenizer_config = TokenizerConfig.dolma2()
 
     model_config = TransformerConfig.olmo3_7B(
@@ -51,12 +53,12 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         DataMix.OLMo_mix_0625,
         tokenizer=tokenizer_config,
         mix_base_dir=opts.data_root,
-        sequence_length=opts.sequence_length,  # note: actual seq len was 8192
-        max_target_sequence_length=max(8192, opts.sequence_length),
+        sequence_length=sequence_length,  # note: actual seq len was 8192
+        max_target_sequence_length=max(8192, sequence_length),
         work_dir=opts.work_dir,
     )
 
-    global_batch_size = SEQUENCE_LENGTH * 512
+    global_batch_size = 8192 * 512
     data_loader_config = NumpyDataLoaderConfig(
         global_batch_size=global_batch_size,
         seed=34521,
@@ -68,8 +70,8 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
     original_max_steps = int(5e12) // global_batch_size
 
     train_module_config = TransformerTrainModuleConfig(
-        rank_microbatch_size=2 * SEQUENCE_LENGTH,
-        max_sequence_length=opts.sequence_length,
+        rank_microbatch_size=2 * 8192,
+        max_sequence_length=sequence_length,
         optim=SkipStepAdamWConfig(
             lr=3e-4,
             weight_decay=0.1,
@@ -102,6 +104,7 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
             max_duration=Duration.tokens(int(7e12)),  # Changed from 5T -> 7T
             hard_stop=Duration.epochs(1),
         )
+        .with_callback("monkey_patcher", MonkeyPatcherCallback())
         .with_callback(
             "checkpointer",
             CheckpointerCallback(
@@ -133,7 +136,7 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
                 eval_dataset=NumpyPaddedFSLDatasetConfig.from_data_mix(
                     DataMix.v3_small_ppl_validation,
                     mix_base_dir=opts.data_root,
-                    sequence_length=opts.sequence_length,
+                    sequence_length=sequence_length,
                     tokenizer=tokenizer_config,
                     work_dir=opts.work_dir,
                 ),

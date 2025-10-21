@@ -37,8 +37,11 @@ from olmo_core.train.train_module import (
     TransformerTrainModuleConfig,
 )
 
+DEFAULT_SEQUENCE_LENGTH = 4096
+
 
 def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentConfig:
+    sequence_length = opts.sequence_length or DEFAULT_SEQUENCE_LENGTH
     tokenizer_config = TokenizerConfig.dolma2()
 
     model_config = TransformerConfig.olmo2_32B(
@@ -49,8 +52,8 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         DataMix.OLMoE_mix_0824,
         tokenizer=tokenizer_config,
         mix_base_dir=opts.data_root,
-        sequence_length=opts.sequence_length,
-        max_target_sequence_length=max(8192, opts.sequence_length),
+        sequence_length=sequence_length,
+        max_target_sequence_length=max(8192, sequence_length),
         work_dir=opts.work_dir,
     )
 
@@ -62,7 +65,7 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
 
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=4 * 4096,
-        max_sequence_length=opts.sequence_length,
+        max_sequence_length=sequence_length,
         optim=SkipStepAdamWConfig(
             lr=6e-4,
             weight_decay=0.1,
@@ -136,7 +139,7 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
                 eval_dataset=NumpyPaddedFSLDatasetConfig.from_data_mix(
                     DataMix.v3_small_ppl_validation,
                     mix_base_dir=opts.data_root,
-                    sequence_length=opts.sequence_length,
+                    sequence_length=sequence_length,
                     tokenizer=tokenizer_config,
                     work_dir=opts.work_dir,
                 ),
