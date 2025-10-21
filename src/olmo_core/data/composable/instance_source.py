@@ -12,6 +12,7 @@ from olmo_core.config import Config
 from olmo_core.exceptions import OLMoConfigurationError
 
 from .source_abc import SourceABC
+from .utils import SEED_NOT_SET, resolve_seed
 
 if TYPE_CHECKING:
     from .sampling_instance_source import (
@@ -135,7 +136,7 @@ class InstanceSource(SourceABC):
         *,
         max_tokens: Optional[int] = None,
         max_instances: Optional[int] = None,
-        seed: Optional[int] = 0,
+        seed: Optional[int] = SEED_NOT_SET,
     ) -> "SamplingInstanceSource":
         """
         Sample instances from this source.
@@ -157,11 +158,11 @@ class InstanceSource(SourceABC):
             self,
             max_tokens=max_tokens,
             max_instances=max_instances,
-            seed=seed,
+            seed=resolve_seed(seed),
             work_dir=self.common_work_dir,
         )
 
-    def resize(self, factor: float, seed: Optional[int] = 0) -> "SamplingInstanceSource":
+    def resize(self, factor: float, seed: Optional[int] = SEED_NOT_SET) -> "SamplingInstanceSource":
         """
         Re-size this source by a given factor by sampling instances from it.
 
@@ -201,6 +202,14 @@ class InstanceSource(SourceABC):
                 self, slice(split_idx, None), seed=seed, work_dir=self.common_work_dir
             ),
         )
+
+    def random_split(
+        self, ratio: float, seed: int = SEED_NOT_SET
+    ) -> Tuple["SlicedInstanceSource", "SlicedInstanceSource"]:
+        """
+        Like :meth:`split()` but always a random split.
+        """
+        return self.split(ratio, seed=seed)
 
     def visualize(self, icons: bool = True):
         """
@@ -244,7 +253,7 @@ class InstanceSourceConfig(Config):
         *,
         max_tokens: Optional[int] = None,
         max_instances: Optional[int] = None,
-        seed: Optional[int] = 0,
+        seed: Optional[int] = SEED_NOT_SET,
     ) -> "SamplingInstanceSourceConfig":
         """
         Sample instances from this source.
@@ -262,10 +271,12 @@ class InstanceSourceConfig(Config):
             sources=[self],
             max_tokens=max_tokens,
             max_instances=max_instances,
-            seed=seed,
+            seed=resolve_seed(seed),
         )
 
-    def resize(self, factor: float, seed: Optional[int] = 0) -> "SamplingInstanceSourceConfig":
+    def resize(
+        self, factor: float, seed: Optional[int] = SEED_NOT_SET
+    ) -> "SamplingInstanceSourceConfig":
         """
         Re-size this source by a given factor by sampling instances from it.
 
@@ -278,7 +289,7 @@ class InstanceSourceConfig(Config):
         return SamplingInstanceSourceConfig(
             sources=[self],
             factor=factor,
-            seed=seed,
+            seed=resolve_seed(seed),
         )
 
     def split(
@@ -291,12 +302,21 @@ class InstanceSourceConfig(Config):
           the first split will have 80% of the instances and the second split will have 20%.
         :param seed: A seed to use to randomize the split.
         """
+        seed = resolve_seed(seed)
         return SplitInstanceSourceConfig(
             source=self,
             ratio=ratio,
             idx=0,
             seed=seed,
         ), SplitInstanceSourceConfig(source=self, ratio=ratio, idx=1, seed=seed)
+
+    def random_split(
+        self, ratio: float, seed: int = SEED_NOT_SET
+    ) -> Tuple["SplitInstanceSourceConfig", "SplitInstanceSourceConfig"]:
+        """
+        Like :meth:`split()` but always a random split.
+        """
+        return self.split(ratio, seed=seed)
 
 
 @dataclass
@@ -317,13 +337,12 @@ class SplitInstanceSourceConfig(InstanceSourceConfig):
 
         source = self.source.build(work_dir)
         split_idx = int(self.ratio * len(source))
+        seed = resolve_seed(self.seed)
         if self.idx == 0:
-            return SlicedInstanceSource(
-                source, slice(0, split_idx), seed=self.seed, work_dir=work_dir
-            )
+            return SlicedInstanceSource(source, slice(0, split_idx), seed=seed, work_dir=work_dir)
         elif self.idx == 1:
             return SlicedInstanceSource(
-                source, slice(split_idx, None), seed=self.seed, work_dir=work_dir
+                source, slice(split_idx, None), seed=seed, work_dir=work_dir
             )
         else:
             raise ValueError(f"Invalid split index: {self.idx}")

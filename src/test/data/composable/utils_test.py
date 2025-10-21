@@ -1,6 +1,13 @@
 import numpy as np
 
-from olmo_core.data.composable.utils import build_global_indices, calculate_sample_sizes
+from olmo_core.data.composable.utils import (
+    SEED_NOT_SET,
+    build_global_indices,
+    calculate_sample_sizes,
+    reset_composable_seed,
+    resolve_seed,
+    set_composable_seed,
+)
 
 
 def test_calculate_sample_sizes():
@@ -62,3 +69,31 @@ def test_build_global_indices(seed: int = 42):
         seed=seed,
     )
     assert (np.repeat(indices2, 2) == indices1 // 2).all()
+
+
+def test_set_and_resolve_seed():
+    try:
+        # Seeds explicitly set to None should always resolve to None.
+        assert resolve_seed(None) is None
+
+        # Before 'set_seed()' has been called, 'SEED_NOT_SET' should always resolve to a concrete 0.
+        assert resolve_seed(SEED_NOT_SET) is not SEED_NOT_SET
+        assert resolve_seed(SEED_NOT_SET) == 0
+
+        # Now set the set.
+        set_composable_seed(1234)
+
+        # Seeds explicitly set to None should always resolve to None.
+        assert resolve_seed(None) is None
+
+        # After 'set_seed()' has been called, 'SEED_NOT_SET' should resolve to a new seed.
+        seed = resolve_seed(SEED_NOT_SET)
+        assert isinstance(seed, int)
+        assert seed is not SEED_NOT_SET
+
+        # And we should get something different each time.
+        seed2 = resolve_seed(SEED_NOT_SET)
+        assert isinstance(seed2, int)
+        assert seed2 != seed
+    finally:
+        reset_composable_seed()

@@ -302,13 +302,19 @@ Curriculum learning
 
 The composable API also enables curriculum learning.
 Suppose we want the first half of training to focus on 25% code + 75% math, and the second half
-to focus on 75% code + 25% math. Let's start by randomly splitting each of our sources::
+to focus on 75% code + 25% math.
+
+We'll start by randomly splitting each of our sources, and since we'll want to set RNG seeds in
+multiple places, we'll use the helper function :func:`set_composable_seed` to set the global starting seed
+so that we don't have to set a different seed explicitly everywhere one is required::
+
+   set_composable_seed(42)
 
    instance_sources = {
-       "code_fim": make_instance_source("code_fim").split(0.25, seed=0),
-       "swallowcode": make_instance_source("swallowcode").split(0.25, seed=1),
-       "megamath": make_instance_source("megamath").split(0.75, seed=2),
-       "dolminos2math": make_instance_source("dolminos2math").split(0.75, seed=3),
+       "code_fim": make_instance_source("code_fim").random_split(0.25),
+       "swallowcode": make_instance_source("swallowcode").random_split(0.25),
+       "megamath": make_instance_source("megamath").random_split(0.75),
+       "dolminos2math": make_instance_source("dolminos2math").random_split(0.75),
    }
 
 And then we can create two separate mixes with the splits::
@@ -321,7 +327,6 @@ And then we can create two separate mixes with the splits::
        )
    
    mix_config1 = MixingInstanceSource.Config(
-       seed=0,
        source_specs=[
            MixingInstanceSource.Spec.Config(
                source=MixingInstanceSource.Config(
@@ -347,7 +352,6 @@ And then we can create two separate mixes with the splits::
    )
    
    mix_config2 = MixingInstanceSource.Config(
-       seed=1,
        source_specs=[
            MixingInstanceSource.Spec.Config(
                source=MixingInstanceSource.Config(
@@ -430,7 +434,6 @@ so that each mix is shuffled independently during its phase of training::
    data_loader = ComposableDataLoader.Config(
        tokenizer=tokenizer,
        global_batch_size=512 * sequence_length,
-       seed=42,
        shuffle_strategy=ShuffleStrategy.intra_source,
    ).build(mix1, mix2, work_dir="/tmp/dataloader-common")
 
@@ -512,6 +515,7 @@ from .token_source import (
     TokenSource,
     TokenSourceConfig,
 )
+from .utils import reset_composable_seed, set_composable_seed
 
 __all__ = [
     # Base classes.
@@ -572,4 +576,7 @@ __all__ = [
     "MixingTokenSourceSpecConfig",
     "MixingDocumentSourceSpec",
     "MixingDocumentSourceSpecConfig",
+    # Functions.
+    "set_composable_seed",
+    "reset_composable_seed",
 ]

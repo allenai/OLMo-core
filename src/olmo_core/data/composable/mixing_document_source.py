@@ -1,3 +1,4 @@
+import dataclasses
 import functools as ft
 import hashlib
 import logging
@@ -16,7 +17,12 @@ from .token_source import (
     DocumentSourceConfig,
     TokenRange,
 )
-from .utils import calculate_sample_sizes, format_token_count
+from .utils import (
+    SEED_NOT_SET,
+    calculate_sample_sizes,
+    format_token_count,
+    resolve_seed,
+)
 
 log = logging.getLogger(__name__)
 
@@ -57,7 +63,7 @@ class MixingDocumentSourceConfig(DocumentSourceConfig):
 
     source_specs: List[MixingDocumentSourceSpecConfig]
     """Mixing source specs."""
-    seed: Optional[int] = 0
+    seed: Optional[int] = dataclasses.field(default_factory=lambda: resolve_seed(SEED_NOT_SET))
     """A random seed for sampling."""
     label: Optional[str] = None
     """An optional label for this source."""
@@ -147,7 +153,7 @@ class MixingDocumentSource(DocumentSource):
         self,
         *source_specs: MixingDocumentSourceSpec,
         work_dir: PathOrStr,
-        seed: Optional[int] = 0,
+        seed: Optional[int] = SEED_NOT_SET,
         label: Optional[str] = None,
         num_tokens: Optional[int] = None,
     ):
@@ -170,6 +176,7 @@ class MixingDocumentSource(DocumentSource):
         )
 
         # Sample documents from each source.
+        seed = resolve_seed(seed)
         sampled_sources: List[SamplingDocumentSource] = []
         for i, (spec, sample_size) in enumerate(zip(source_specs, sample_sizes)):
             sampled_sources.append(

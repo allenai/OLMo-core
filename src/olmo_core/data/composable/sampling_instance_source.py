@@ -1,3 +1,4 @@
+import dataclasses
 import functools as ft
 import hashlib
 from dataclasses import dataclass
@@ -11,7 +12,7 @@ from olmo_core.exceptions import OLMoConfigurationError
 
 from ..utils import load_array_slice, write_array_to_disk
 from .instance_source import Instance, InstanceSource, InstanceSourceConfig
-from .utils import build_global_indices
+from .utils import SEED_NOT_SET, build_global_indices, resolve_seed
 
 
 @dataclass
@@ -22,7 +23,7 @@ class SamplingInstanceSourceConfig(InstanceSourceConfig):
     max_tokens: Optional[int] = None
     max_instances: Optional[int] = None
     factor: Optional[float] = None
-    seed: Optional[int] = 0
+    seed: Optional[int] = dataclasses.field(default_factory=lambda: resolve_seed(SEED_NOT_SET))
     label: Optional[str] = None
 
     def __post_init__(self):
@@ -85,7 +86,7 @@ class SamplingInstanceSource(InstanceSource):
         max_tokens: Optional[int] = None,
         max_instances: Optional[int] = None,
         work_dir: PathOrStr,
-        seed: Optional[int] = 0,
+        seed: Optional[int] = SEED_NOT_SET,
         label: Optional[str] = None,
     ):
         from .mixing_instance_source import MixingInstanceSource
@@ -130,7 +131,7 @@ class SamplingInstanceSource(InstanceSource):
         self._og_sources = sources
         self._sources = tuple(unwound_sources)
         self._max_instances = max_instances
-        self._seed = seed
+        self._seed = resolve_seed(seed)
         self._dtype = np.uint32
 
         # Determine how many instances to sample from each source.
@@ -160,7 +161,7 @@ class SamplingInstanceSource(InstanceSource):
                     len(source),
                     sequence_length=self.sequence_length,
                     max_sequence_length=self.max_sequence_length,
-                    seed=None if seed is None else seed + i,
+                    seed=None if self.seed is None else self.seed + i,
                     dtype=self._dtype,
                 )
                 sample_indices = source_indices[:remaining_sample_size]

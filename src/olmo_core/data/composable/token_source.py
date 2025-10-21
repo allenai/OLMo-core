@@ -23,7 +23,7 @@ from olmo_core.config import Config
 
 from ..tokenizer import TokenizerConfig
 from .source_abc import SourceABC
-from .utils import as_ndarray
+from .utils import SEED_NOT_SET, as_ndarray, resolve_seed
 
 if TYPE_CHECKING:
     from .sampling_document_source import (
@@ -129,7 +129,7 @@ class TokenSource(SourceABC):
         self,
         *,
         max_tokens: int,
-        seed: Optional[int] = 0,
+        seed: Optional[int] = SEED_NOT_SET,
     ) -> "SamplingTokenSource":
         """
         Sample a contiguous chunk of tokens from this source.
@@ -149,7 +149,7 @@ class TokenSource(SourceABC):
             work_dir=self.common_work_dir,
         )
 
-    def resize(self, factor: float, seed: Optional[int] = 0) -> "SamplingTokenSource":
+    def resize(self, factor: float, seed: Optional[int] = SEED_NOT_SET) -> "SamplingTokenSource":
         """
         Re-size this source by a given factor by sampling a contiguous chunk of tokens from it.
 
@@ -241,7 +241,7 @@ class DocumentSource(TokenSource):
         self,
         *,
         max_tokens: int,
-        seed: Optional[int] = 0,
+        seed: Optional[int] = SEED_NOT_SET,
     ) -> "SamplingDocumentSource":
         """
         Sample documents from this source.
@@ -262,7 +262,9 @@ class DocumentSource(TokenSource):
             work_dir=self.common_work_dir,
         )
 
-    def resize_by_docs(self, factor: float, seed: Optional[int] = 0) -> "SamplingDocumentSource":
+    def resize_by_docs(
+        self, factor: float, seed: Optional[int] = SEED_NOT_SET
+    ) -> "SamplingDocumentSource":
         """
         Re-size this source by a given factor by sampling documents from it.
 
@@ -381,7 +383,7 @@ class TokenSourceConfig(Config):
         self,
         *,
         max_tokens: int,
-        seed: Optional[int] = 0,
+        seed: Optional[int] = SEED_NOT_SET,
     ) -> "SamplingTokenSourceConfig":
         """
         Sample a contiguous chunk of tokens from this source.
@@ -394,10 +396,12 @@ class TokenSourceConfig(Config):
         return SamplingTokenSourceConfig(
             sources=[self],
             max_tokens=max_tokens,
-            seed=seed,
+            seed=resolve_seed(seed),
         )
 
-    def resize(self, factor: float, seed: Optional[int] = 0) -> "SamplingTokenSourceConfig":
+    def resize(
+        self, factor: float, seed: Optional[int] = SEED_NOT_SET
+    ) -> "SamplingTokenSourceConfig":
         """
         Re-size this source by a given factor by sampling a contiguous chunk of tokens from it.
 
@@ -411,7 +415,7 @@ class TokenSourceConfig(Config):
         return SamplingTokenSourceConfig(
             sources=[self],
             factor=factor,
-            seed=seed,
+            seed=resolve_seed(seed),
         )
 
     def split(self, ratio: float) -> Tuple["SplitTokenSourceConfig", "SplitTokenSourceConfig"]:
@@ -564,7 +568,7 @@ class DocumentSourceConfig(TokenSourceConfig):
         self,
         *,
         max_tokens: int,
-        seed: Optional[int] = 0,
+        seed: Optional[int] = SEED_NOT_SET,
     ) -> "SamplingDocumentSourceConfig":
         """
         Sample documents from this source.
@@ -581,13 +585,13 @@ class DocumentSourceConfig(TokenSourceConfig):
         return SamplingDocumentSourceConfig(
             sources=[self],
             max_tokens=max_tokens,
-            seed=seed,
+            seed=resolve_seed(seed),
         )
 
     def resize_by_docs(
         self,
         factor: float,
-        seed: Optional[int] = 0,
+        seed: Optional[int] = SEED_NOT_SET,
     ) -> "SamplingDocumentSourceConfig":
         """
         Re-size this source by a given factor by sampling documents from it.
@@ -606,7 +610,7 @@ class DocumentSourceConfig(TokenSourceConfig):
         return SamplingDocumentSourceConfig(
             sources=[self],
             factor=factor,
-            seed=seed,
+            seed=resolve_seed(seed),
         )
 
 

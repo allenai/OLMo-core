@@ -1,3 +1,4 @@
+import dataclasses
 import functools as ft
 import hashlib
 import logging
@@ -12,7 +13,7 @@ from olmo_core.exceptions import OLMoConfigurationError
 
 from ..utils import get_rng
 from .token_source import TokenRange, TokenSource, TokenSourceConfig
-from .utils import as_ndarray
+from .utils import SEED_NOT_SET, as_ndarray, resolve_seed
 
 log = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ class SamplingTokenSourceConfig(TokenSourceConfig):
     sources: List[TokenSourceConfig]
     max_tokens: Optional[int] = None
     factor: Optional[float] = None
-    seed: Optional[int] = 0
+    seed: Optional[int] = dataclasses.field(default_factory=lambda: resolve_seed(SEED_NOT_SET))
     label: Optional[str] = None
 
     def __post_init__(self):
@@ -73,7 +74,7 @@ class SamplingTokenSource(TokenSource):
         self,
         *sources: TokenSource,
         max_tokens: int,
-        seed: Optional[int] = 0,
+        seed: Optional[int] = SEED_NOT_SET,
         work_dir: PathOrStr,
         label: Optional[str] = None,
     ):
@@ -104,6 +105,7 @@ class SamplingTokenSource(TokenSource):
             source_sample_sizes.append(int(max_tokens * (source.num_tokens / total_tokens)))
 
         # Determine number of repetitions and sampling start/end offsets for each source.
+        seed = resolve_seed(seed)
         rng = None if seed is None else get_rng(seed)
         final_sources: List[TokenSource] = []
         source_sampling_offsets: List[Tuple[int, int]] = []

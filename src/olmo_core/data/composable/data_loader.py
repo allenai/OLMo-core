@@ -29,7 +29,13 @@ from ..utils import (
     memmap_to_write,
 )
 from .instance_source import InstanceSource
-from .utils import as_tensor, build_global_indices, format_fname_from_fields
+from .utils import (
+    SEED_NOT_SET,
+    as_tensor,
+    build_global_indices,
+    format_fname_from_fields,
+    resolve_seed,
+)
 
 log = logging.getLogger(__name__)
 
@@ -63,7 +69,7 @@ class ComposableDataLoaderConfig(Config):
 
     tokenizer: TokenizerConfig
     global_batch_size: int
-    seed: int
+    seed: int = SEED_NOT_SET
     work_dir: Optional[str] = None
     shuffle: bool = True
     shuffle_strategy: ShuffleStrategy = ShuffleStrategy.inter_source
@@ -167,7 +173,7 @@ class ComposableDataLoader(TextDataLoaderBase):
         dp_world_size: int = 1,
         dp_rank: int = 0,
         fs_local_rank: Optional[int] = None,
-        seed: int = 0,
+        seed: int = SEED_NOT_SET,
         shuffle: bool = True,
         shuffle_strategy: ShuffleStrategy = ShuffleStrategy.inter_source,
         num_threads: Optional[int] = None,
@@ -194,7 +200,7 @@ class ComposableDataLoader(TextDataLoaderBase):
             raise OLMoConfigurationError(
                 "'tokenizer.pad_token_id' must match 'collator.pad_token_id'."
             )
-        self.seed = seed
+        self.seed = resolve_seed(seed)
         self.shuffle = shuffle
         self.shuffle_strategy = shuffle_strategy
         self.sources = tuple(sources)

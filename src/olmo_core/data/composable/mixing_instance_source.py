@@ -1,3 +1,4 @@
+import dataclasses
 import functools as ft
 import hashlib
 import logging
@@ -16,7 +17,12 @@ from .instance_source import (
     InstanceSourceConfig,
 )
 from .sampling_instance_source import SamplingInstanceSource
-from .utils import calculate_sample_sizes, format_token_count
+from .utils import (
+    SEED_NOT_SET,
+    calculate_sample_sizes,
+    format_token_count,
+    resolve_seed,
+)
 
 log = logging.getLogger(__name__)
 
@@ -51,7 +57,7 @@ class MixingInstanceSourceConfig(InstanceSourceConfig):
 
     source_specs: List[MixingInstanceSourceSpecConfig]
     """Mixing source specs."""
-    seed: Optional[int] = 0
+    seed: Optional[int] = dataclasses.field(default_factory=lambda: resolve_seed(SEED_NOT_SET))
     """A random seed for sampling."""
     label: Optional[str] = None
     """An optional label for this source."""
@@ -145,7 +151,7 @@ class MixingInstanceSource(InstanceSource):
         self,
         *source_specs: MixingInstanceSourceSpec,
         work_dir: PathOrStr,
-        seed: Optional[int] = 0,
+        seed: Optional[int] = SEED_NOT_SET,
         label: Optional[str] = None,
         num_tokens: Optional[int] = None,
         num_instances: Optional[int] = None,
@@ -190,6 +196,7 @@ class MixingInstanceSource(InstanceSource):
         )
 
         # Sample instances from each source.
+        seed = resolve_seed(seed)
         sampled_sources: List[SamplingInstanceSource] = []
         for i, (spec, sample_size) in enumerate(zip(source_specs, sample_sizes)):
             sampled_sources.append(

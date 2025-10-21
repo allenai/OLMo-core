@@ -264,3 +264,47 @@ def build_global_indices(
     indices = indices.reshape((-1, chunk_size)) + np.arange(0, chunk_size).reshape((1, -1))
     indices = indices.reshape(-1)
     return indices
+
+
+class _NOT_SET_INT_TYPE(int):
+    pass
+
+
+SEED_NOT_SET = _NOT_SET_INT_TYPE()
+"""
+A placeholder for the default seed, which can be changed by calling :func:`set_composable_seed()`.
+"""
+
+_SEED_RNG: Optional[np.random.Generator] = None
+
+
+S = TypeVar("S", int, None, Optional[int])
+
+
+def resolve_seed(default: S) -> S:
+    global _SEED_RNG
+    if default is SEED_NOT_SET:
+        if _SEED_RNG is None:
+            return 0  # type: ignore[return-type]
+        else:
+            return int(_SEED_RNG.integers(0, 2**31 - 1))  # type: ignore[return-type]
+    else:
+        return default
+
+
+def set_composable_seed(seed: int):
+    """
+    Set the global seed for the composable module.
+    """
+    global _SEED_RNG
+
+    _SEED_RNG = get_rng(seed)
+
+
+def reset_composable_seed():
+    """
+    Reset the global seed for the composable module.
+    """
+    global _SEED_RNG
+
+    _SEED_RNG = None

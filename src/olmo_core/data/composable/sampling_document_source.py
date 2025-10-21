@@ -1,3 +1,4 @@
+import dataclasses
 import functools as ft
 import hashlib
 import logging
@@ -19,7 +20,7 @@ from .token_source import (
     DocumentSourceConfig,
     TokenRange,
 )
-from .utils import as_ndarray
+from .utils import SEED_NOT_SET, as_ndarray, resolve_seed
 
 log = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ class SamplingDocumentSourceConfig(DocumentSourceConfig):
     sources: List[DocumentSourceConfig]
     max_tokens: Optional[int] = None
     factor: Optional[float] = None
-    seed: Optional[int] = 0
+    seed: Optional[int] = dataclasses.field(default_factory=lambda: resolve_seed(SEED_NOT_SET))
     label: Optional[str] = None
 
     def __post_init__(self):
@@ -81,7 +82,7 @@ class SamplingDocumentSource(DocumentSource):
         self,
         *sources: DocumentSource,
         max_tokens: int,
-        seed: Optional[int] = 0,
+        seed: Optional[int] = SEED_NOT_SET,
         work_dir: PathOrStr,
         label: Optional[str] = None,
     ):
@@ -111,7 +112,7 @@ class SamplingDocumentSource(DocumentSource):
         self._og_sources = sources
         self._source = source
         self._max_tokens = max_tokens
-        self._seed = seed
+        self._seed = resolve_seed(seed)
 
         # Sample tokens from the source.
         log.info(f"Sampling documents from {self.source}...")

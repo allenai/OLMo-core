@@ -1,3 +1,4 @@
+import dataclasses
 import functools as ft
 import hashlib
 import logging
@@ -16,7 +17,12 @@ from .token_source import (
     TokenSource,
     TokenSourceConfig,
 )
-from .utils import calculate_sample_sizes, format_token_count
+from .utils import (
+    SEED_NOT_SET,
+    calculate_sample_sizes,
+    format_token_count,
+    resolve_seed,
+)
 
 log = logging.getLogger(__name__)
 
@@ -57,7 +63,7 @@ class MixingTokenSourceConfig(TokenSourceConfig):
 
     source_specs: List[MixingTokenSourceSpecConfig]
     """Mixing source specs."""
-    seed: Optional[int] = 0
+    seed: Optional[int] = dataclasses.field(default_factory=lambda: resolve_seed(SEED_NOT_SET))
     """A random seed for sampling."""
     label: Optional[str] = None
     """An optional label for this source."""
@@ -146,7 +152,7 @@ class MixingTokenSource(TokenSource):
         self,
         *source_specs: MixingTokenSourceSpec,
         work_dir: PathOrStr,
-        seed: Optional[int] = 0,
+        seed: Optional[int] = SEED_NOT_SET,
         label: Optional[str] = None,
         num_tokens: Optional[int] = None,
     ):
@@ -169,6 +175,7 @@ class MixingTokenSource(TokenSource):
         )
 
         # Sample tokens from each source.
+        seed = resolve_seed(seed)
         sampled_sources: List[SamplingTokenSource] = []
         for i, (spec, sample_size) in enumerate(zip(source_specs, sample_sizes)):
             sampled_sources.append(

@@ -6,7 +6,7 @@ from olmo_core.aliases import PathOrStr
 from olmo_core.exceptions import OLMoConfigurationError
 
 from .instance_source import Instance, InstanceSource
-from .utils import build_global_indices
+from .utils import build_global_indices, resolve_seed
 
 
 class SlicedInstanceSource(InstanceSource):
@@ -30,12 +30,12 @@ class SlicedInstanceSource(InstanceSource):
         )
         self._source = source
         self._slice = source_slice
-        self._seed = seed
+        self._seed = resolve_seed(seed)
         self._sliced_indices = build_global_indices(
             len(source),
             sequence_length=self.sequence_length,
             max_sequence_length=self.max_sequence_length,
-            seed=seed,
+            seed=self.seed,
         )[source_slice]
         if self._sliced_indices.size == 0:
             raise OLMoConfigurationError(
