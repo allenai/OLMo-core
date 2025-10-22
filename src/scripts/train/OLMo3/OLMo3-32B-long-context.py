@@ -82,7 +82,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             activation_memory_budget=0.1,  # 0.5
         ),
         # When CP is used, the CP mesh gets folded into the DP_shard mesh.
-        cp_config=TransformerContextParallelConfig.llama3(degree=8, head_stride=4),  # 8
+        cp_config=TransformerContextParallelConfig.zig_zag(degree=8, head_stride=4),  # 8
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
