@@ -161,6 +161,22 @@ def load_state_dict(
     reader = RemoteFileSystemReader(
         dir, thread_count=thread_count, pre_download=pre_download, work_dir=work_dir
     )
+    
+    # Handle missing disabled_expert_mask keys in the state dict before loading
+    metadata = reader.read_metadata()
+    if metadata and hasattr(metadata, 'state_dict_metadata'):
+        existing_keys = set(metadata.state_dict_metadata.keys())
+        
+        # Remove disabled_expert_mask keys that don't exist in the checkpoint
+        keys_to_remove = []
+        for key in state_dict.keys():
+            if key.endswith("disabled_expert_mask") and key not in existing_keys:
+                keys_to_remove.append(key)
+        
+        for key in keys_to_remove:
+            log.warning(f"Removing missing key from state dict: {key}")
+            del state_dict[key]
+    
     dist_cp.load(
         state_dict,
         checkpoint_id=dir,
@@ -337,6 +353,25 @@ def load_model_and_optim_state(
 
     if key_mapping is not None:
         swap_param_keys(state_dict, key_mapping, metadata=metadata)
+
+    # Handle missing disabled_expert_mask keys in the state dict before loading
+    def _remove_missing_disabled_expert_mask_keys(state_dict):
+        """Remove disabled_expert_mask keys from state dict if they don't exist in checkpoint metadata."""
+        if metadata and hasattr(metadata, 'state_dict_metadata'):
+            # Check which disabled_expert_mask keys exist in the checkpoint
+            existing_keys = set(metadata.state_dict_metadata.keys())
+            
+            # Remove disabled_expert_mask keys that don't exist in the checkpoint
+            keys_to_remove = []
+            for key in state_dict["model"].keys():
+                if key.endswith("disabled_expert_mask") and key not in existing_keys:
+                    keys_to_remove.append(key)
+            
+            for key in keys_to_remove:
+                log.warning(f"Removing missing key from state dict: {key}")
+                del state_dict["model"][key]
+    
+    _remove_missing_disabled_expert_mask_keys(state_dict)
 
     dist_cp.load(
         state_dict,
