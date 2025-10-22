@@ -565,6 +565,11 @@ def main(run_name: str, overrides: List[str]):
             key_mapping.update({
                 f"teacher.{key}": key for key in model.teacher.state_dict().keys() if not key.startswith("blocks")  # type: ignore
             }) # set non-block keys (embeddings, lm head)
+        else:
+            no_teacher_random_init_keys = ["embeddings", "lm_head"]
+            key_mapping.update({
+                key: None for key in model.state_dict().keys() if not any(key.startswith(x) for x in no_teacher_random_init_keys)
+            })
         incompatible_keys = load_model_and_optim_state(
             OLMO_CKPT_PATH,
             model,
