@@ -153,7 +153,7 @@ def merge_checkpoints(
     log.info(f"Successfully saved merged checkpoint to {output_path}")
 
 
-@click.command()
+@click.command(context_settings={"help_option_names": ["-h", "--help"]})
 @click.option(
     "--model",
     "-m",
