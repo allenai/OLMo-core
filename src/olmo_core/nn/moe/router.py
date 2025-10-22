@@ -210,8 +210,12 @@ class MoERouter(nn.Module):
         # Optional mask to disable specific experts from routing
         if disabled_experts is not None and len(disabled_experts) > 0:
             idx_tensor = torch.tensor(list(disabled_experts), device=init_device, dtype=torch.long)
-            if (idx_tensor < 0).any() or (idx_tensor >= num_experts).any():
-                raise OLMoConfigurationError("disabled_experts contains out-of-range indices")
+            
+            # Skip validation for meta tensors (they don't have actual data)
+            if init_device != "meta":
+                if (idx_tensor < 0).any() or (idx_tensor >= num_experts).any():
+                    raise OLMoConfigurationError("disabled_experts contains out-of-range indices")
+            
             mask = torch.zeros(num_experts, device=init_device, dtype=torch.bool)
             mask[idx_tensor] = True
             self.register_buffer("disabled_expert_mask", mask)
