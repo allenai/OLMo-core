@@ -2,7 +2,11 @@ from datetime import datetime
 from functools import partial
 
 from olmo_core.config import DType
-from olmo_core.data import InstanceFilterConfig, NumpyDataLoaderConfig, NumpyPackedFSLDatasetConfig
+from olmo_core.data import (
+    InstanceFilterConfig,
+    NumpyDataLoaderConfig,
+    NumpyFSLDatasetConfig,
+)
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
@@ -162,7 +166,27 @@ def build_data_components(
     configuration with default settings.
     """
 
-    dataset_config = NumpyPackedFSLDatasetConfig.glob(
+    # dataset_config = NumpyPackedFSLDatasetConfig.glob(
+    #     str(
+    #         join_path(
+    #             common.root_dir,
+    #             "preprocessed/tylerr/lc-reshard-final/v0.6/allenai/dolma2-tokenizer/*.npy",
+    #         )
+    #     ),
+    #     tokenizer=common.tokenizer,
+    #     work_dir=common.work_dir,
+    #     sequence_length=common.max_sequence_length,
+    #     generate_doc_lengths=True,  # enables intra-document masking
+    #     source_group_size=8,
+    #     source_permutation_seed=123,
+    #     instance_filter_config=None
+    #     if not include_instance_filter
+    #     else InstanceFilterConfig(
+    #         repetition_max_period=13, repetition_min_period=1, repetition_max_count=32
+    #     ),
+    # )
+
+    dataset_config = NumpyFSLDatasetConfig.glob(
         str(
             join_path(
                 common.root_dir,
@@ -173,14 +197,13 @@ def build_data_components(
         work_dir=common.work_dir,
         sequence_length=common.max_sequence_length,
         generate_doc_lengths=True,  # enables intra-document masking
-        source_group_size=8,
+        # source_group_size=8,
         source_permutation_seed=123,
         instance_filter_config=None
         if not include_instance_filter
         else InstanceFilterConfig(
             repetition_max_period=13, repetition_min_period=1, repetition_max_count=32
         ),
-        # Do we want instance filter?
     )
 
     data_loader_config = NumpyDataLoaderConfig(
