@@ -182,7 +182,7 @@ def merge_checkpoints(
     "--device",
     "-d",
     default="cpu",
-    help="Device to load models on (default: cpu). Use 'cuda' for GPU.",
+    help="Device to load models on (default: cpu)",
 )
 def main(
     model_name_or_paths: tuple,
