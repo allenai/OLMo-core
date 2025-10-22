@@ -740,6 +740,7 @@ class TEAttentionBackend(AttentionBackend):
                 max_doc_len_k,
             )
         ):
+            # NOTE: TE will throw an error internally if a padding mask is used with CP
             attn_mask_type = "padding_causal"
 
         q, k, v = qkv
