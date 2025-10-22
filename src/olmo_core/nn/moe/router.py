@@ -555,6 +555,27 @@ class MoERouter(nn.Module):
     def apply_cp(self, cp_mesh: DeviceMesh):
         self.cp_mesh = cp_mesh
 
+    def load_state_dict(self, state_dict, strict: bool = True, assign: bool = False):
+        """
+        Load state dict with backward compatibility for missing disabled_expert_mask.
+        
+        This method handles the case where older checkpoints don't have the 
+        disabled_expert_mask buffer, initializing it to None if missing.
+        """
+        # Check if disabled_expert_mask is missing from the state dict
+        if "disabled_expert_mask" not in state_dict:
+            log.info("disabled_expert_mask not found in checkpoint, initializing to None (no experts disabled)")
+            # Set the buffer to None before loading
+            self.disabled_expert_mask = None
+            # Load with strict=False to avoid missing key errors
+            result = super().load_state_dict(state_dict, strict=False, assign=assign)
+            # Re-register the buffer properly
+            self.register_buffer("disabled_expert_mask", None)
+            return result
+        else:
+            # Normal loading when disabled_expert_mask is present
+            return super().load_state_dict(state_dict, strict=strict, assign=assign)
+
 
 class MoELinearRouter(MoERouter):
     """
