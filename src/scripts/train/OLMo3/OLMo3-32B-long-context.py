@@ -2,12 +2,7 @@ from datetime import datetime
 from functools import partial
 
 from olmo_core.config import DType
-from olmo_core.data import (
-    DataMix,
-    InstanceFilterConfig,
-    NumpyDataLoaderConfig,
-    NumpyFSLDatasetConfig,
-)
+from olmo_core.data import InstanceFilterConfig, NumpyDataLoaderConfig, NumpyPackedFSLDatasetConfig
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
@@ -17,6 +12,7 @@ from olmo_core.internal.experiment import (
     build_config,
     main,
 )
+from olmo_core.io import join_path
 from olmo_core.nn.attention import AttentionBackendName, SlidingWindowAttentionConfig
 from olmo_core.nn.transformer import (
     TransformerActivationCheckpointingMode,
@@ -27,6 +23,7 @@ from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
     CheckpointerCallback,
     CometCallback,
+    ProfilerCallback,
     SlackNotifierCallback,
     WandBCallback,
 )
@@ -50,7 +47,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         force_full_attention_on_last_layer=True,
         pattern=[4096, 4096, 4096, -1],
     )
-    config.block.attention.backend = AttentionBackendName.te
+    config.block.attention.backend = AttentionBackendName.te  # much faster for CP
     return config
 
 
@@ -78,12 +75,14 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
-            shard_degree=64,
+            shard_degree=8,  # 64
         ),
         ac_config=TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.budget, activation_memory_budget=0.5
+            mode=TransformerActivationCheckpointingMode.budget,
+            activation_memory_budget=0.1,  # 0.5
         ),
-        cp_config=TransformerContextParallelConfig.llama3(degree=8, head_stride=4),
+        # When CP is used, the CP mesh gets folded into the DP_shard mesh.
+        cp_config=TransformerContextParallelConfig.llama3(degree=8, head_stride=4),  # 8
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
@@ -104,9 +103,14 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         TrainerConfig(
             save_folder=f"gs://ai2-llm/checkpoints/{common.run_name}/",
             save_overwrite=True,
-            metrics_collect_interval=50,
+            metrics_collect_interval=5,
             cancel_check_interval=cancel_check_interval,
-            max_duration=Duration.epochs(1),
+            max_duration=Duration.tokens(MAX_TOKENS),
+            hard_stop=Duration.steps(16),
+        )
+        .with_callback(
+            "profiler",
+            ProfilerCallback(enabled=False, skip_first=3, wait=10, warmup=2, active=3, repeat=1),
         )
         .with_callback(
             "checkpointer",
@@ -159,20 +163,26 @@ def build_data_components(
     Default dataset and data loader configurations. Constructs a simple FSL dataset and data loader
     configuration with default settings.
     """
-    dataset_config = NumpyFSLDatasetConfig.from_data_mix(
-        DataMix.OLMo_mix_0925,
+
+    dataset_config = NumpyPackedFSLDatasetConfig.glob(
+        str(
+            join_path(
+                common.root_dir,
+                "preprocessed/tylerr/lc-reshard-final/v0.6/allenai/dolma2-tokenizer/*.npy",
+            )
+        ),
         tokenizer=common.tokenizer,
-        mix_base_dir=common.root_dir,
         work_dir=common.work_dir,
         sequence_length=common.max_sequence_length,
-        # max target sequence length doesn't affect how the data is loaded, just how it's cached behind the scenes
-        max_target_sequence_length=max(common.max_sequence_length, 8192),
-        generate_doc_lengths=intra_document_masking,
+        generate_doc_lengths=True,  # enables intra-document masking
+        source_group_size=8,
+        source_permutation_seed=123,
         instance_filter_config=None
         if not include_instance_filter
         else InstanceFilterConfig(
             repetition_max_period=13, repetition_min_period=1, repetition_max_count=32
         ),
+        # Do we want instance filter?
     )
 
     data_loader_config = NumpyDataLoaderConfig(
@@ -186,7 +196,7 @@ if __name__ == "__main__":
     config_builder = partial(
         build_config,
         global_batch_size=GLOBAL_BATCH_SIZE,
-        sequence_length=SEQUENCE_LENGTH,
+        max_sequence_length=SEQUENCE_LENGTH,
         data_config_builder=build_data_components,
         model_config_builder=build_model_config,
         train_module_config_builder=build_train_module_config,
