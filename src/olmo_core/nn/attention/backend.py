@@ -664,7 +664,7 @@ class TEAttentionBackend(AttentionBackend):
             self.head_dim,
             num_gqa_groups=self.n_kv_heads,
             attention_dropout=self.dropout_p,
-            attn_mask_type="causal",
+            # attn_mask_type="causal",  # see forward pass
             window_size=(self.window_size[0], 0),  # be explicit about causal mask
             qkv_format="bshd",
             softmax_scale=self.scale,
@@ -728,6 +728,7 @@ class TEAttentionBackend(AttentionBackend):
         if isinstance(qkv, torch.Tensor):
             raise RuntimeError(f"'{self.__class__.__name__}' doesn't support packed QKV")
 
+        attn_mask_type = "causal"
         if any(
             opt is not None
             for opt in (
@@ -739,15 +740,14 @@ class TEAttentionBackend(AttentionBackend):
                 max_doc_len_k,
             )
         ):
-            raise RuntimeError(
-                f"'{self.__class__.__name__}' doesn't currently support intra-document masking"
-            )
+            attn_mask_type = "padding_causal"
 
         q, k, v = qkv
         return self.te_attn(
             q,
             k,
             v,
+            attn_mask_type=attn_mask_type,
             cu_seqlens_q=cu_doc_lens if cu_doc_lens is not None else cu_doc_lens_q,
             cu_seqlens_kv=cu_doc_lens if cu_doc_lens is not None else cu_doc_lens_k,
             max_seqlen_q=max_doc_len if max_doc_len is not None else max_doc_len_q,

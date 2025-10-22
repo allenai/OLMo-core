@@ -115,6 +115,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         .with_callback(
             "checkpointer",
             CheckpointerCallback(
+                enabled=False,  # todo turn back on for real thing
                 save_interval=1000,
                 ephemeral_save_interval=None,
                 save_async=False,
@@ -145,11 +146,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "slack_notifier",
             SlackNotifierCallback(
                 name=run_name,
-                enabled=True,
+                enabled=False,  # todo turn back on for real thing
             ),
-        )
-        .with_recommended_evals(
-            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=1000
         )
     )
 
