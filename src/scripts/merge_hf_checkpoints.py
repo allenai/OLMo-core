@@ -73,7 +73,7 @@ def merge_checkpoints(
 
             # Load model
             load_kwargs = {
-                "torch_dtype": "auto",
+                "dtype": "auto",
                 "low_cpu_mem_usage": False,
             }
             if revision is not None:
