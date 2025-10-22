@@ -92,7 +92,7 @@ class MoERouterConfig(Config):
     bias_gamma: Optional[float] = None
     gating_function: MoERouterGatingFunction = MoERouterGatingFunction.softmax
     dtype: Optional[DType] = None
-    disabled_experts: Optional[Union[Tuple[int, ...], list[int]]] = None
+    disabled_experts: Optional[list[int]] = None
 
     def num_params(self, d_model: int, num_experts: int) -> int:
         """
@@ -183,7 +183,7 @@ class MoERouter(nn.Module):
         lb_loss_granularity: MoELoadBalancingLossGranularity = MoELoadBalancingLossGranularity.local_batch,
         z_loss_weight: Optional[float] = None,
         init_device: str = "cpu",
-        disabled_experts: Optional[Union[Tuple[int, ...], list[int]]] = None,
+        disabled_experts: Optional[list[int]] = None,
     ):
         super().__init__()
         self.d_model = d_model
