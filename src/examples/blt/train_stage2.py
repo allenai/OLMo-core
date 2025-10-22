@@ -551,21 +551,24 @@ def main(run_name: str, overrides: List[str]):
         prefixes_to_duplicate = ["blocks"]
         extend_key_mapping = {}
 
-        for prefix in prefixes_to_duplicate:
-            extend_key_mapping.update({
-                key: key.replace(f"{prefix}", f"teacher.{prefix}")
-                for key in model.state_dict().keys() if key.startswith(prefix)
-            })
+        if model.teacher is not None:
+            for prefix in prefixes_to_duplicate:
+                extend_key_mapping.update({
+                    key: key.replace(f"{prefix}", f"teacher.{prefix}")
+                    for key in model.state_dict().keys() if key.startswith(prefix)
+                })
 
         key_mapping = {
             key: None for key in model.state_dict().keys() if any(key.startswith(x) for x in random_init_keys)
-        } | {
-            f"teacher.{key}": key for key in model.teacher.state_dict().keys() if not key.startswith("blocks")  # type: ignore
-        } # set non-block keys (embeddings, lm head)
+        }
+        if model.teacher is not None:
+            key_mapping.update({
+                f"teacher.{key}": key for key in model.teacher.state_dict().keys() if not key.startswith("blocks")  # type: ignore
+            }) # set non-block keys (embeddings, lm head)
         incompatible_keys = load_model_and_optim_state(
             OLMO_CKPT_PATH,
             model,
-            key_mapping=key_mapping,
+            key_mapping=key_mapping,  # type: ignore
             extend_key_mapping=extend_key_mapping,
             strict=False,  # allow missing keys for local encoder/decoder and student lm head
         )
