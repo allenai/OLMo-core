@@ -147,14 +147,22 @@ class DataLoaderBase(ABC):
     @abstractmethod
     def total_batches(self) -> Optional[int]:
         """
-        The total number of batches that the dataset will produce over the course of an epoch, if known.
+        The total number of batches that the dataset will produce over the course of the current epoch, if known.
         Otherwise this should return ``None``.
         """
         raise NotImplementedError
 
+    def batches_in_epoch(self, epoch: int) -> Optional[int]:
+        """
+        By default this is the same as :meth:`total_batches`, though some data loaders might generate
+        a different number of batches per epoch.
+        """
+        del epoch
+        return self.total_batches
+
     def __len__(self) -> int:
         """
-        Returns the total number of batches in an epoch (same as :data:`total_batches`) if known,
+        Returns the total number of batches in the current epoch (same as :data:`total_batches`) if known,
         otherwise a :class:`TypeError` is raised.
         """
         if self.total_batches is not None:
@@ -540,6 +548,10 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
         return out
 
     def _iter_batches(self) -> Iterable[Dict[str, Any]]:
+        # If we're already at the end of epoch we can skip creating the iterator.
+        if self.total_batches is not None and self.batches_processed >= self.total_batches:
+            yield from ()
+
         def _build_batch_iterator():
             return iter(
                 torch.utils.data.DataLoader(

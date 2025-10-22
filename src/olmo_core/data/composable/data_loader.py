@@ -1,12 +1,11 @@
 import dataclasses
 import functools as ft
-import hashlib
 import logging
 import math
 from dataclasses import dataclass
 from itertools import islice
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, Optional
+from typing import Any, Dict, Iterable, Iterator, Optional, Tuple
 
 import numpy as np
 import torch
@@ -74,6 +73,7 @@ class ComposableDataLoaderConfig(Config):
     work_dir: Optional[str] = None
     shuffle: bool = True
     shuffle_strategy: ShuffleStrategy = ShuffleStrategy.inter_source
+    sources_per_epoch: int = -1
     num_threads: Optional[int] = None
     num_workers: int = 0
     prefetch_factor: Optional[int] = None
@@ -81,6 +81,12 @@ class ComposableDataLoaderConfig(Config):
     generate_doc_lengths: bool = False
     instance_filter_config: Optional[InstanceFilterConfig] = None
     display_source_visualization: bool = True
+
+    def __post_init__(self):
+        if self.sources_per_epoch == 0 or self.sources_per_epoch < -1:
+            raise OLMoConfigurationError(
+                "'sources_per_epoch' must be -1 (for all sources) or a positive integer."
+            )
 
     def build(
         self,
@@ -123,6 +129,7 @@ class ComposableDataLoaderConfig(Config):
             seed=self.seed,
             shuffle=self.shuffle,
             shuffle_strategy=self.shuffle_strategy,
+            sources_per_epoch=self.sources_per_epoch,
             num_threads=self.num_threads,
             num_workers=self.num_workers,
             prefetch_factor=self.prefetch_factor,
@@ -177,6 +184,7 @@ class ComposableDataLoader(TextDataLoaderBase):
         seed: int = SEED_NOT_SET,
         shuffle: bool = True,
         shuffle_strategy: ShuffleStrategy = ShuffleStrategy.inter_source,
+        sources_per_epoch: int = -1,
         num_threads: Optional[int] = None,
         num_workers: int = 0,
         prefetch_factor: Optional[int] = None,
@@ -185,6 +193,24 @@ class ComposableDataLoader(TextDataLoaderBase):
         instance_filter_config: Optional[InstanceFilterConfig] = None,
         display_source_visualization: bool = True,
     ):
+        if not sources:
+            raise OLMoConfigurationError("'sources' must contain at least one InstanceSource.")
+
+        if sources_per_epoch == 0 or sources_per_epoch < -1:
+            raise OLMoConfigurationError(
+                "'sources_per_epoch' must be -1 (for all sources) or a positive integer."
+            )
+
+        if sources_per_epoch > 0 and len(sources) % sources_per_epoch != 0:
+            raise OLMoConfigurationError(
+                "'sources_per_epoch' must evenly divide into the number of sources."
+            )
+
+        if tokenizer.pad_token_id is not None and tokenizer.pad_token_id != collator.pad_token_id:
+            raise OLMoConfigurationError(
+                "'tokenizer.pad_token_id' must match 'collator.pad_token_id'."
+            )
+
         super().__init__(
             collator=collator,
             work_dir=work_dir,
@@ -194,19 +220,11 @@ class ComposableDataLoader(TextDataLoaderBase):
             fs_local_rank=fs_local_rank,
         )
         self.tokenizer = tokenizer
-        if (
-            self.tokenizer.pad_token_id is not None
-            and self.tokenizer.pad_token_id != self.collator.pad_token_id
-        ):
-            raise OLMoConfigurationError(
-                "'tokenizer.pad_token_id' must match 'collator.pad_token_id'."
-            )
         self.seed = resolve_seed(seed)
         self.shuffle = shuffle
         self.shuffle_strategy = shuffle_strategy
+        self.sources_per_epoch = sources_per_epoch if sources_per_epoch > 0 else len(sources)
         self.sources = tuple(sources)
-        if not self.sources:
-            raise OLMoConfigurationError("'sources' must contain at least one InstanceSource.")
         self.sequence_length = self.sources[0].sequence_length
         self.max_sequence_length = self.sources[0].max_sequence_length
         for i, source in enumerate(self.sources):
@@ -250,22 +268,27 @@ class ComposableDataLoader(TextDataLoaderBase):
                 source.visualize()
                 print()
 
+    @property
+    def sources_for_this_epoch(self) -> Tuple[InstanceSource, ...]:
+        return self.sources_for_epoch(self._epoch or 1)
+
+    def sources_for_epoch(self, epoch: int) -> Tuple[InstanceSource, ...]:
+        assert self.sources_per_epoch > 0
+        assert len(self.sources) % self.sources_per_epoch == 0
+        num_groups = len(self.sources) // self.sources_per_epoch
+        start_offset = ((epoch - 1) % num_groups) * self.sources_per_epoch
+        return self.sources[start_offset : start_offset + self.sources_per_epoch]
+
     @ft.cached_property
-    def source_fingerprint(self) -> str:
-        sha256_hash = hashlib.sha256()
-        for source in self.sources:
-            sha256_hash.update(f"source={source.fingerprint},".encode())
-        return sha256_hash.hexdigest()
+    def source_fingerprints(self) -> Tuple[str, ...]:
+        return tuple(source.fingerprint for source in self.sources)
 
     @property
     def total_instances(self) -> int:
-        chunk_size = self.max_sequence_length // self.sequence_length
-        if self.shuffle_strategy == ShuffleStrategy.intra_source:
-            return sum(chunk_size * (len(source) // chunk_size) for source in self.sources)
-        elif self.shuffle_strategy == ShuffleStrategy.inter_source:
-            return chunk_size * (sum(len(source) for source in self.sources) // chunk_size)
-        else:
-            raise NotImplementedError(f"Unknown shuffle strategy: {self.shuffle_strategy}")
+        return self.instances_in_epoch(self._epoch or 1)
+
+    def instances_in_epoch(self, epoch: int) -> int:
+        return sum(len(source) for source in self.sources_for_epoch(epoch))
 
     @property
     def total_tokens(self) -> int:
@@ -273,7 +296,10 @@ class ComposableDataLoader(TextDataLoaderBase):
 
     @property
     def total_batches(self) -> Optional[int]:
-        return self.total_instances // (self.global_batch_size // self.sequence_length)
+        return self.batches_in_epoch(self._epoch or 1)
+
+    def batches_in_epoch(self, epoch: int) -> Optional[int]:
+        return self.instances_in_epoch(epoch) // (self.global_batch_size // self.sequence_length)
 
     @property
     def worker_info(self):
@@ -281,7 +307,7 @@ class ComposableDataLoader(TextDataLoaderBase):
 
     def state_dict(self) -> Dict[str, Any]:
         return dict(
-            source_fingerprint=self.source_fingerprint,
+            source_fingerprints=self.source_fingerprints,
             batches_processed=self.batches_processed,
             tokens_processed=self.tokens_processed,
             global_batch_size=self.global_batch_size,
@@ -289,41 +315,67 @@ class ComposableDataLoader(TextDataLoaderBase):
             max_sequence_length=self.max_sequence_length,
             shuffle=self.shuffle,
             shuffle_strategy=self.shuffle_strategy,
+            sources_per_epoch=self.sources_per_epoch,
             seed=self.seed,
             epoch=self._epoch,
         )
 
     def load_state_dict(self, state_dict: Dict[str, Any]):
-        if state_dict["source_fingerprint"] != self.source_fingerprint:
+        if state_dict["sources_per_epoch"] != self.sources_per_epoch:
             raise RuntimeError(
-                "Restoring state from a different dataset source is not supported (fingerprints don't match)!"
+                "Restoring data loader state with a different 'sources_per_epoch' is not supported!"
             )
-        self.tokens_processed = state_dict["tokens_processed"]
-        # Account for change in batch size / sequence length.
-        self.batches_processed = self.tokens_processed // self.global_batch_size
+
+        if state_dict["source_fingerprints"] != self.source_fingerprints:
+            # We're allowed to append more sources provided 'sources_per_epoch' hasn't changed
+            # (checked above), the existing sources haven't changed, and we haven't already
+            # iterated over the original set of sources.
+            num_og_sources = len(state_dict["source_fingerprints"])
+            if (
+                num_og_sources < len(self.source_fingerprints)
+                and state_dict["source_fingerprints"] == self.source_fingerprints[:num_og_sources]
+            ):
+                max_epochs = num_og_sources // self.sources_per_epoch
+                if state_dict["epoch"] is not None and state_dict["epoch"] > max_epochs:
+                    raise RuntimeError(
+                        "Restoring data loader state after appending new sources can only be done "
+                        "when the original sources haven't been iterated over yet!"
+                    )
+            else:
+                raise RuntimeError(
+                    "Restoring data loader state from different dataset source is not supported (fingerprints don't match)!"
+                )
+
         if state_dict["max_sequence_length"] != self.max_sequence_length:
             raise RuntimeError(
                 "Restoring data loading state with a different 'max_sequence_length' is not supported!"
             )
+
+        if state_dict["shuffle_strategy"] != self.shuffle_strategy:
+            raise RuntimeError(
+                "Restoring data loading state with a different 'shuffle_strategy' is not supported!"
+            )
+
+        # Account for change in batch size / sequence length.
+        self.tokens_processed = state_dict["tokens_processed"]
+        self.batches_processed = self.tokens_processed // self.global_batch_size
+
         if state_dict["shuffle"] != self.shuffle:
             log.warning(
                 "Restoring data loading state with a different shuffle setting, "
                 "will use setting from state dict for data order consistency."
             )
             self.shuffle = state_dict["shuffle"]
-        if state_dict["shuffle_strategy"] != self.shuffle_strategy:
-            log.warning(
-                "Restoring data loading state with a different shuffle strategy, "
-                "will use setting from state dict for data order consistency."
-            )
-            self.shuffle_strategy = state_dict["shuffle_strategy"]
+
         if state_dict["seed"] != self.seed and self.shuffle:
             log.warning(
                 "Restoring data loading state with a different data seed, "
                 "will use data seed from state dict for data order consistency."
             )
             self.seed = state_dict["seed"]
+
         self._epoch = state_dict["epoch"] or self._epoch
+
         log.info(
             f"Data loader will resume from batch {self.batches_processed:,d}/{self.total_batches:,d} "
             f"based on batch size of {self.global_batch_size:,d} tokens"
@@ -339,6 +391,10 @@ class ComposableDataLoader(TextDataLoaderBase):
         self.build_and_save_global_indices()
 
     def _iter_batches(self) -> Iterable[Dict[str, Any]]:
+        # If we're already at the end of epoch we can skip creating the iterator.
+        if self.total_batches is not None and self.batches_processed >= self.total_batches:
+            yield from ()
+
         def _build_batch_iterator():
             return iter(
                 torch.utils.data.DataLoader(
@@ -377,7 +433,7 @@ class ComposableDataLoader(TextDataLoaderBase):
         if idx < 0:
             idx = self.total_instances + idx
         source_start_offset = 0
-        for source in self.sources:
+        for source in self.sources_for_this_epoch:
             source_end_offset = source_start_offset + len(source)
 
             if source_start_offset <= idx < source_end_offset:
@@ -494,22 +550,20 @@ class ComposableDataLoader(TextDataLoaderBase):
                 self.total_instances,
                 sequence_length=self.sequence_length,
                 max_sequence_length=self.max_sequence_length,
-                seed=self.seed + self.epoch if self.shuffle else None,
+                seed=(self.seed + self.epoch) if self.shuffle else None,
             )
         elif self.shuffle_strategy == ShuffleStrategy.intra_source:
             indices_per_source = []
-            chunk_size = self.max_sequence_length // self.sequence_length
             offset = 0
-            for source in self.sources:
-                source_size = chunk_size * (len(source) // chunk_size)
+            for i, source in enumerate(self.sources_for_this_epoch):
                 indices = build_global_indices(
-                    source_size,
+                    len(source),
                     sequence_length=self.sequence_length,
                     max_sequence_length=self.max_sequence_length,
-                    seed=self.seed + self.epoch if self.shuffle else None,
+                    seed=(self.seed + self.epoch + i) if self.shuffle else None,
                 )
                 indices_per_source.append(indices + offset)
-                offset += source_size
+                offset += len(source)
             return np.concatenate(indices_per_source)
         else:
             raise NotImplementedError(f"Unknown shuffle strategy: {self.shuffle_strategy}")

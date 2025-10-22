@@ -437,6 +437,15 @@ so that each mix is shuffled independently during its phase of training::
        shuffle_strategy=ShuffleStrategy.intra_source,
    ).build(mix1, mix2, work_dir="/tmp/dataloader-common")
 
+Alternatively you could set ``sources_per_epoch=1`` to tell the data loader to use only the first source
+for the first epoch, the second source for the second epoch, and so on::
+
+   data_loader = ComposableDataLoader.Config(
+       tokenizer=tokenizer,
+       global_batch_size=512 * sequence_length,
+       sources_per_epoch=1,
+   ).build(mix1, mix2, work_dir="/tmp/dataloader-common")
+
 Reference
 ---------
 """
