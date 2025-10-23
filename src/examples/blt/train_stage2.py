@@ -294,7 +294,8 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         local_decoder=local_decoder,
         teacher_config=teacher_model_config,
         share_blocks_between_teacher_and_student=False,
-        use_teacher_embs_with_vocab_size=subword_tokenizer_config.padded_vocab_size() if TEACHER_MODE == "stage1" else None,
+        # use for stage1 teacher, or to take init from if no stage1 ckpt
+        use_teacher_embs_with_vocab_size=subword_tokenizer_config.padded_vocab_size() if TEACHER_MODE == "stage1" or not STAGE1_CKPT_PATH else None,
         freeze_params=[
             "boundary_predictor.*", # temporary
             "teacher_embeddings.*",
@@ -570,6 +571,10 @@ def main(run_name: str, overrides: List[str]):
             key_mapping.update({
                 key: None for key in model.state_dict().keys() if any(key.startswith(x) for x in no_teacher_random_init_keys)
             })
+
+        if config.model.use_teacher_embs_with_vocab_size is not None:
+            key_mapping["teacher_embeddings.weight"] = "embeddings.weight"  # type: ignore
+
         incompatible_keys = load_model_and_optim_state(
             OLMO_CKPT_PATH,
             model,

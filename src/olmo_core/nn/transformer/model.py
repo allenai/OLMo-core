@@ -1420,10 +1420,10 @@ class BLTDistillTransformer(BLTTransformer):
         # if not None, keep & use the teacher embeddings (for distilling from stage1 local decoder transfer)
         self.use_teacher_embs_with_vocab_size = use_teacher_embs_with_vocab_size
 
-        if self.teacher is not None and self.use_teacher_embs_with_vocab_size is not None:
+        if self.use_teacher_embs_with_vocab_size is not None:
             self.teacher_embeddings = nn.Embedding(
                 self.use_teacher_embs_with_vocab_size,
-                self.teacher.d_model,
+                self.d_model,
                 dtype=dtype,
                 device=init_device,
             )
@@ -1593,7 +1593,8 @@ class BLTDistillTransformer(BLTTransformer):
             original_input_ids=torch.zeros((1, dummy_size), dtype=torch.long, device=self.device),
             blt_config=blt_config
         )
-        self.local_encoder.fix_init(embedding_init_path, self.teacher.embeddings.weight)  # type: ignore
+        teacher_embs = self.teacher.embeddings.weight if self.teacher is not None else self.teacher_embeddings.weight  # type: ignore
+        self.local_encoder.fix_init(embedding_init_path, teacher_embs)  # type: ignore
 
         for block in list(self.local_encoder.blocks.values()) + list(self.local_decoder.blocks.values()):  # type: ignore
             if hasattr(block, "xlstm"):
