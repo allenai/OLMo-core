@@ -585,7 +585,7 @@ def main(run_name: str, overrides: List[str]):
             log.info(f"Key {missing_key} was not found in checkpoint, is randomly initialized (this is expected for local encoder/decoder and student lm head).")
 
         # do not support path for heuristic embeddings for now, just rescale encoder out
-       model.fix_init(trainer.train_module.blt_config, None)  # type: ignore
+        model.fix_init(trainer.train_module.blt_config, None)  # type: ignore
 
     # TODO(benjaminm): this is not a nice place?
     register_fsdp_forward_method(model, "student_forward")
