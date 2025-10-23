@@ -5,7 +5,7 @@ from olmo_core.config import DType
 from olmo_core.data import (
     InstanceFilterConfig,
     NumpyDataLoaderConfig,
-    NumpyPackedFSLDatasetConfig,
+    NumpyFSLDatasetConfig,
 )
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
@@ -39,6 +39,8 @@ from olmo_core.train.train_module import (
     TransformerTrainModuleConfig,
 )
 
+# This one disables itra-doc masking and switches to TE attention backend, which is faster.
+
 SEQUENCE_LENGTH = 64 * 1024  # 64k seq len
 GLOBAL_BATCH_SIZE = 8 * 1024 * 1024  # ~8M tokens
 MAX_TOKENS = 50_000_000_000  # 50B
@@ -51,7 +53,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         force_full_attention_on_last_layer=True,
         pattern=[4096, 4096, 4096, -1],
     )
-    config.block.attention.backend = AttentionBackendName.flash_2  # much faster for CP
+    config.block.attention.backend = AttentionBackendName.te  # much faster for CP
     return config
 
 
@@ -86,7 +88,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             activation_memory_budget=0.3,
         ),
         # When CP is used, the CP mesh gets folded into the DP_shard mesh.
-        cp_config=TransformerContextParallelConfig.llama3(degree=8, head_stride=4),  # 8
+        cp_config=TransformerContextParallelConfig.zig_zag(degree=8, head_stride=4),  # 8
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
@@ -157,7 +159,27 @@ def build_data_components(
     configuration with default settings.
     """
 
-    dataset_config = NumpyPackedFSLDatasetConfig.glob(
+    # dataset_config = NumpyPackedFSLDatasetConfig.glob(
+    #     str(
+    #         join_path(
+    #             common.root_dir,
+    #             "preprocessed/tylerr/lc-reshard-final/v0.6/allenai/dolma2-tokenizer/*.npy",
+    #         )
+    #     ),
+    #     tokenizer=common.tokenizer,
+    #     work_dir=common.work_dir,
+    #     sequence_length=common.max_sequence_length,
+    #     generate_doc_lengths=intra_document_masking,  # enables intra-document masking
+    #     source_group_size=8,
+    #     source_permutation_seed=123,
+    #     instance_filter_config=None
+    #     if not include_instance_filter
+    #     else InstanceFilterConfig(
+    #         repetition_max_period=13, repetition_min_period=1, repetition_max_count=32
+    #     ),
+    # )
+
+    dataset_config = NumpyFSLDatasetConfig.glob(
         str(
             join_path(
                 common.root_dir,
@@ -167,8 +189,8 @@ def build_data_components(
         tokenizer=common.tokenizer,
         work_dir=common.work_dir,
         sequence_length=common.max_sequence_length,
-        generate_doc_lengths=intra_document_masking,  # enables intra-document masking
-        source_group_size=8,
+        generate_doc_lengths=intra_document_masking,
+        # source_group_size=8,
         source_permutation_seed=123,
         instance_filter_config=None
         if not include_instance_filter
@@ -194,9 +216,9 @@ if __name__ == "__main__":
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
         beaker_image="petew/olmo-core-tch280cu128-2025-09-19",
+        intra_document_masking=False,
         include_instance_filter=True,
         include_default_evals=False,
-        intra_document_masking=True,
     )
 
     main(config_builder=config_builder)
