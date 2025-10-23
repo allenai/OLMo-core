@@ -700,7 +700,7 @@ class TEAttentionBackend(AttentionBackend):
         load_balancer: RingAttentionLoadBalancerType,
         head_stride: int = 1,
     ):
-        if load_balancer != RingAttentionLoadBalancerType.zig_zag:
+        if load_balancer == RingAttentionLoadBalancerType.zig_zag:
             cp_comm_type = "p2p"
         elif load_balancer == RingAttentionLoadBalancerType.ulysses:
             cp_comm_type = "a2a"
