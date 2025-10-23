@@ -57,6 +57,7 @@ from olmo_core.train.train_module import (
     TransformerActivationCheckpointingConfig,
     TransformerActivationCheckpointingMode,
     TransformerDataParallelConfig,
+    TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
 from olmo_core.train.train_module.transformer.config import (
@@ -293,6 +294,29 @@ class SFTConfig(Config):
         dp_shard_degree = GPUS_PER_NODE // (bs_config.cp_degree or 1)
         if not dp_shard_degree > 0:
             raise OLMoConfigurationError(f"dp_shard_degree ({dp_shard_degree}) must be positive.")
+        
+        ac_config = TransformerActivationCheckpointingConfig(
+            mode=TransformerActivationCheckpointingMode.selected_modules,
+            modules=["blocks.*.feed_forward"],
+        )
+
+        cp_config = (
+            (
+                TransformerContextParallelConfig.llama3(degree=bs_config.cp_degree)
+                if dataset_config.generate_doc_lengths  # only use llama3 if we're masking docs
+                else TransformerContextParallelConfig.zig_zag(degree=bs_config.cp_degree)
+            )
+            if bs_config.cp_degree
+            else None
+        )
+
+        dp_config = TransformerDataParallelConfig(
+            name=DataParallelType.hsdp,
+            param_dtype=DType.bfloat16,
+            reduce_dtype=DType.float32,
+            shard_degree=GPUS_PER_NODE  # try to keep communication w/in a node
+            // (bs_config.cp_degree or 1),
+        )
 
         if model_name == "olmo2-7b":
             model = TransformerConfig.olmo2_7B(  # Based on https://github.com/allenai/OLMo-core/blob/dustins/anneal-repro/src/scripts/train/lc_cont_train/OLMo2-7B-lc_anneal_tp4.py
@@ -349,6 +373,21 @@ class SFTConfig(Config):
                 for i in range(model.n_layers)
                 if model.block.attention.sliding_window.should_use_swa(i, model.n_layers)
             }
+
+            ac_config = TransformerActivationCheckpointingConfig(
+                mode=TransformerActivationCheckpointingMode.budget,
+                activation_memory_budget=0.3,
+            )
+
+            cp_config = TransformerContextParallelConfig.llama3(degree=8, head_stride=4)
+
+            dp_config = TransformerDataParallelConfig(
+                name=DataParallelType.hsdp,
+                param_dtype=DType.bfloat16,
+                reduce_dtype=DType.float32,
+                wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
+                shard_degree=8,  # 64
+            )
         else:
             raise OLMoConfigurationError(f"Must set a valid model_name: {model_name}")
 
@@ -396,26 +435,9 @@ class SFTConfig(Config):
                     betas=(0.9, 0.95),
                     compile=False,
                 ),
-                dp_config=TransformerDataParallelConfig(
-                    name=DataParallelType.hsdp,
-                    param_dtype=DType.bfloat16,
-                    reduce_dtype=DType.float32,
-                    shard_degree=GPUS_PER_NODE  # try to keep communication w/in a node
-                    // (bs_config.cp_degree or 1),
-                ),
-                cp_config=(
-                    (
-                        TransformerContextParallelConfig.llama3(degree=bs_config.cp_degree)
-                        if dataset_config.generate_doc_lengths  # only use llama3 if we're masking docs
-                        else TransformerContextParallelConfig.zig_zag(degree=bs_config.cp_degree)
-                    )
-                    if bs_config.cp_degree
-                    else None
-                ),
-                ac_config=TransformerActivationCheckpointingConfig(
-                    mode=TransformerActivationCheckpointingMode.selected_modules,
-                    modules=["blocks.*.feed_forward"],
-                ),
+                dp_config=dp_config,
+                cp_config=cp_config,
+                ac_config=ac_config,
                 scheduler=LinearWithWarmup(
                     warmup_fraction=0.03,
                     alpha_f=0.0,  # lr drops all the way to 0.0 at the end
