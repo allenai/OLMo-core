@@ -15,7 +15,7 @@ from olmo_core.train.train_module import TransformerTrainModuleConfig
 SEQ_LENGTH = 8192
 GLOBAL_BATCH_SIZE = 2**21  # ~2M tokens
 MAX_TOKENS = 100_000_000_000  # 100B
-LR = 0.00020712352850360292
+LR = 0.00020712352850360292 #TO BE UPDATED
 SEED = 1337
 
 
@@ -78,7 +78,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     trainer_config = cookbook.configure_trainer(
-        load_path="gs://ai2-llm/checkpoints/OLMo25/step1413814",
+        load_path="gs://ai2-llm/checkpoints/OLMo25/step1413814", #TO BE UPDATED
         load_trainer_state=False,
         load_optim_state=True,
         max_duration=Duration.tokens(MAX_TOKENS),
