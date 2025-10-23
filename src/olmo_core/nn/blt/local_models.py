@@ -504,6 +504,17 @@ class LocalEncoder(nn.Module):
         Also inits HNetBoundaryPredictor q and k to weights to identity following HNet.
 
         """
+        def maybe_distribute(tensor: torch.Tensor) -> DTensor | torch.Tensor:
+            if isinstance(self.embedding.weight.data, DTensor):
+                return distribute_tensor(
+                    tensor,
+                    device_mesh=self.embedding.weight.data.device_mesh,
+                )
+            else:
+                return tensor
+
+        target_embeddings = maybe_distribute(target_embeddings)
+
         if embedding_init_path is not None:
             # load embedding inits (computed via compute_hash_embedding_init.py)
             if isinstance(self.embedding.weight.data, DTensor):
@@ -543,15 +554,6 @@ class LocalEncoder(nn.Module):
             patch_lens=patch_lens,
             patch_ids=patch_ids,
         )
-
-        def maybe_distribute(tensor: torch.Tensor) -> DTensor | torch.Tensor:
-            if isinstance(self.embedding.weight.data, DTensor):
-                return distribute_tensor(
-                    tensor,
-                    device_mesh=self.embedding.weight.data.device_mesh,
-                )
-            else:
-                return tensor
 
         h_patch_mean = h_patch[0].mean(0)
         h_patch_std = h_patch[0].var(0).sqrt()
