@@ -698,14 +698,19 @@ class TEAttentionBackend(AttentionBackend):
         head_stride: int = 1,
     ):
         if load_balancer != RingAttentionLoadBalancerType.zig_zag:
-            raise RuntimeError(f"'{self.__class__.__name__}' only supports zig-zag load balancing")
+            cp_comm_type = "p2p"
+        elif load_balancer == RingAttentionLoadBalancerType.ulysses:
+            cp_comm_type = "a2a"
+        else:
+            raise RuntimeError(f"'{self.__class__.__name__}' does not support {load_balancer=}")
+
         super().apply_cp(cp_mesh, load_balancer, head_stride=head_stride)
         self.te_attn.set_context_parallel_group(
             cp_group=cp_mesh.get_group(),
             cp_global_ranks=dist.get_process_group_ranks(cp_mesh.get_group()),
             cp_stream=torch.cuda.default_stream(),
             #  cp_stream=get_or_init_stream("cp"),  # this doesn't seem to help
-            cp_comm_type="p2p",
+            cp_comm_type=cp_comm_type,
         )
 
     def forward(

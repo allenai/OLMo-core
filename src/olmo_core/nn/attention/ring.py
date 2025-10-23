@@ -25,6 +25,11 @@ class RingAttentionLoadBalancerType(StrEnum):
     ➡️ :class:`RingAttentionLlama3LoadBalancer`
     """
 
+    ulysses = "ulysses"
+    """
+    ➡️ :class:`UlyssesA2ALoadBalancer`
+    """
+
     def build(self, cp_mesh: DeviceMesh) -> "RingAttentionLoadBalancer":
         """
         Build the load balancer.
@@ -36,6 +41,8 @@ class RingAttentionLoadBalancerType(StrEnum):
             return RingAttentionZigZagLoadBalancer(cp_rank=cp_rank, cp_world_size=cp_world_size)
         elif self == self.llama3:
             return RingAttentionLlama3LoadBalancer(cp_rank=cp_rank, cp_world_size=cp_world_size)
+        elif self == self.ulysses:
+            return UlyssesA2ALoadBalancer(cp_rank=cp_rank, cp_world_size=cp_world_size)
         else:
             raise NotImplementedError(self)
 
@@ -90,7 +97,7 @@ class RingAttentionLoadBalancer(metaclass=ABCMeta):
 
 class RingAttentionZigZagLoadBalancer(RingAttentionLoadBalancer):
     """
-    Implements the zig-zag load-balancing strategy.
+    Implements the zig-zag load-balancing strategy. Assumes 2xCP chunking and alternation to smooth ring waves.
     """
 
     def batch_shard(
@@ -362,3 +369,204 @@ class RingAttentionLlama3LoadBalancer(RingAttentionLoadBalancer):
     ) -> Tuple[torch.Tensor, int]:
         padding = (0, 0) * (x.ndim - seq_dim - 1) + (0, padding_to_add)
         return F.pad(x, padding, value=value), padding_to_add
+
+
+class UlyssesA2ALoadBalancer(RingAttentionLoadBalancer):
+    """
+    Implements *contiguous* sequence sharding for Ulysses-style (A2A) context parallelism.
+
+    Notes
+    -----
+    - This is *not* a ring strategy; no zig-zag interleaving and no ring metadata.
+    - For fixed-length batches, we simply slice the sequence evenly across CP ranks.
+    - For intra-document masking, we return local 'cu_doc_lens' and 'max_doc_len'
+      for the *local* slice on each CP rank.
+    - Padding is applied at the *end* (global tail). If padding is required and
+      no pad_value(s) are provided, we raise an error (matches existing style).
+    """
+
+    # ---------------------------
+    # Public API
+    # ---------------------------
+
+    def batch_shard(
+        self,
+        *,
+        inputs: List[torch.Tensor],
+        seq_dims: List[int],
+        pad_values: Optional[List[Union[int, float]]] = None,
+        length_multiple: Optional[int] = None,
+    ) -> List[torch.Tensor]:
+        assert len(inputs) == len(seq_dims)
+        # All inputs must share the same sequence length (but may place it on different dims)
+        seq_lens = [x.shape[seq_dim] for x, seq_dim in zip(inputs, seq_dims)]
+        assert len(set(seq_lens)) == 1, "all inputs must have the same sequence length"
+        if pad_values is not None:
+            assert len(inputs) == len(pad_values)
+
+        # We want global length to be a multiple of both 'cp_world_size' and any requested multiple.
+        required_multiple = self._required_multiple(length_multiple)
+        target_len = self._ensure_multiple(seq_lens[0], required_multiple)
+
+        # Pad (at the global tail) if needed.
+        if target_len != seq_lens[0]:
+            if pad_values is None:
+                raise RuntimeError(
+                    f"sequence dimension size ({seq_lens[0]}) must be divisible by "
+                    f"{required_multiple}, otherwise provide a padding value"
+                )
+
+        out: List[torch.Tensor] = []
+        for idx, (x, seq_dim) in enumerate(zip(inputs, seq_dims)):
+            pad_value = None if pad_values is None else pad_values[idx]
+            if target_len != x.shape[seq_dim]:
+                assert pad_value is not None
+                x, _ = self._pad_tail(x, seq_dim, pad_value, target_len)
+            local = self._slice_contiguous_rank_chunk(x, seq_dim, target_len)
+            out.append(local.contiguous())
+        return out
+
+    def batch_shard_by_document(
+        self,
+        *,
+        inputs: List[torch.Tensor],
+        seq_dims: List[int],
+        cu_doc_lens: torch.Tensor,
+        pad_values: Optional[List[Union[int, float]]] = None,
+        length_multiple: Optional[int] = None,
+    ) -> Tuple[List[torch.Tensor], Dict[str, Any]]:
+        assert len(inputs) == len(seq_dims)
+        if pad_values is not None:
+            assert len(inputs) == len(pad_values)
+
+        # Validate cu_doc_lens
+        if cu_doc_lens.device.type != "cpu":
+            raise RuntimeError("expected 'cu_doc_lens' to be on CPU")
+        if cu_doc_lens.ndim != 1:
+            raise RuntimeError("expected 'cu_doc_lens' to be a 1D tensor")
+        if cu_doc_lens[0] != 0:
+            raise RuntimeError("expected 'cu_doc_lens' to start with a 0")
+
+        total_len = int(cu_doc_lens[-1])
+        # Make the *global* length a multiple of both 'cp_world_size' and any requested multiple.
+        required_multiple = self._required_multiple(length_multiple)
+        target_len = self._ensure_multiple(total_len, required_multiple)
+        padding_to_add = target_len - total_len
+        local_len = target_len // self.cp_world_size
+        start = self.cp_rank * local_len
+        end = (self.cp_rank + 1) * local_len
+
+        # If we need global tail padding, extend cu_doc_lens by one terminal entry.
+        if padding_to_add > 0:
+            if pad_values is None:
+                raise RuntimeError(
+                    f"'pad_values' is required since global tail padding ({padding_to_add}) is needed"
+                )
+            cu_doc_lens = torch.cat(
+                [
+                    cu_doc_lens,
+                    torch.tensor(
+                        [total_len + padding_to_add],
+                        dtype=cu_doc_lens.dtype,
+                        device=cu_doc_lens.device,
+                    ),
+                ]
+            )
+
+        # Shard each input contiguously, padding at tail if needed.
+        out: List[torch.Tensor] = []
+        for idx, (x, seq_dim) in enumerate(zip(inputs, seq_dims)):
+            if x.shape[seq_dim] != total_len:
+                raise RuntimeError(
+                    f"expected input to have size {total_len} on the sequence dimension, "
+                    f"but got {x.shape[seq_dim]}"
+                )
+            if padding_to_add > 0:
+                assert pad_values is not None
+                x, _ = self._pad_tail(x, seq_dim, pad_values[idx], target_len)
+            # NOTE: can use torch.ops.aten.slice for parity with other impls
+            local = torch.ops.aten.slice(x, dim=seq_dim, start=start, end=end)  # type: ignore
+            out.append(local.contiguous())
+
+        # Build *local* cu_doc_lens for the [start, end) window.
+        local_cu_doc_lens = self._clip_and_shift_cu_doc_lens(cu_doc_lens, start, end)
+        local_max_doc_len = int((local_cu_doc_lens[1:] - local_cu_doc_lens[:-1]).max().item())
+
+        return out, dict(cu_doc_lens=local_cu_doc_lens, max_doc_len=local_max_doc_len)
+
+    # ---------------------------
+    # Helpers
+    # ---------------------------
+
+    def _required_multiple(self, length_multiple: Optional[int]) -> int:
+        """
+        Return the global length multiple we must satisfy. This is LCM(cp_world_size, length_multiple or 1).
+        """
+        user_mult = 1 if length_multiple is None else length_multiple
+        # Python 3.9+: math.lcm
+        return math.lcm(self.cp_world_size, user_mult)
+
+    @staticmethod
+    def _ensure_multiple(length: int, multiple: int) -> int:
+        """
+        Return the smallest value >= length that is divisible by 'multiple'.
+        """
+        if length % multiple == 0:
+            return length
+        return ((length + multiple - 1) // multiple) * multiple
+
+    @staticmethod
+    def _pad_tail(
+        x: torch.Tensor,
+        seq_dim: int,
+        pad_value: Union[int, float],
+        pad_to: int,
+    ) -> Tuple[torch.Tensor, int]:
+        """
+        Right-pad along 'seq_dim' to reach 'pad_to'. Returns (tensor, padding_added).
+        """
+        pad_add = pad_to - x.shape[seq_dim]
+        if pad_add < 0:
+            raise RuntimeError("pad_to must be >= current length")
+        padding = (0, 0) * (x.ndim - seq_dim - 1) + (0, pad_add)
+        return F.pad(x, padding, value=pad_value), pad_add
+
+    def _slice_contiguous_rank_chunk(
+        self, x: torch.Tensor, seq_dim: int, global_len: int
+    ) -> torch.Tensor:
+        """
+        Extract this rank's contiguous chunk along 'seq_dim' from a (possibly padded) global tensor of length 'global_len'.
+        """
+        local_len = global_len // self.cp_world_size
+        start = self.cp_rank * local_len
+        end = (self.cp_rank + 1) * local_len
+        # Use normal slicing for readability here.
+        sl = [slice(None)] * x.ndim
+        sl[seq_dim] = slice(start, end)
+        return x[tuple(sl)]
+
+    @staticmethod
+    def _clip_and_shift_cu_doc_lens(
+        cu_doc_lens: torch.Tensor, start: int, end: int
+    ) -> torch.Tensor:
+        """
+        Intersect global cu_doc_lens with [start, end) and shift so that local start becomes 0.
+        Ensures 0 and local_len are present as sentinels.
+        """
+        # Keep boundaries that intersect [start, end)
+        # For each boundary t, clamp to [start, end] and shift by -start
+        inside = []
+        prev = start
+        for t in cu_doc_lens.tolist():
+            t_clamped = min(max(t, start), end)
+            if t_clamped != prev:
+                inside.append(t_clamped - start)
+                prev = t_clamped
+        # Ensure 0 at head
+        if not inside or inside[0] != 0:
+            inside = [0] + inside
+        # Ensure local_len at tail
+        local_len = end - start
+        if inside[-1] != local_len:
+            inside.append(local_len)
+        return torch.tensor(inside, dtype=cu_doc_lens.dtype, device=cu_doc_lens.device)
