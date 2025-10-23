@@ -6,21 +6,94 @@ Data Mixing
 .. note::
    This guide discussions functionality that is specific to text-based data.
 
-`olmo_core` provides three ways to mix sets of pre-tokenized numpy files for training:
+``olmo_core`` provides three ways to mix sets of pre-tokenized numpy files for training:
 
-- Fine-grained, ratio-based sampling driven by :mod:`olmo_core.data.source_mixture`
-- Predefined, catalog-style mixes exposed through :mod:`olmo_core.data.mixes`
+- Fine-grained, ratio-based sampling driven by :mod:`olmo_core.data.source_mixture` or
+  the various composable mixing classes in :mod:`olmo_core.data.composable`.
+- Predefined, catalog-style mixes exposed through :mod:`olmo_core.data.mixes`.
 - Simple path/glob lists passed directly to a
-  :class:`~olmo_core.data.numpy_dataset.NumpyDatasetConfig`
-
+  :class:`~olmo_core.data.numpy_dataset.NumpyDatasetConfig` or
+  :class:`~olmo_core.data.composable.NumpyDocumentSource` if you prefer the
+  :mod:`olmo_core.data.composable` API.
 
 Fine-grained source mixtures
 ----------------------------
 
-Use :class:`~olmo_core.data.source_mixture.SourceMixtureConfig` and
-:class:`~olmo_core.data.source_mixture.SourceMixtureDatasetConfig` when you
-need precise control over per-source proportions, repetition limits, or source
-fractions.
+Use :class:`~olmo_core.data.source_mixture.SourceMixtureConfig` with
+:class:`~olmo_core.data.source_mixture.SourceMixtureDatasetConfig`,
+or the mixing classes in :mod:`olmo_core.data.composable`,
+when you need precise control over per-source proportions, repetition limits, or source fractions.
+
+Via the composable API
+^^^^^^^^^^^^^^^^^^^^^^
+
+The composable data loading API allows you to build fine-grained mixtures by mixing/sampling at various
+levels: either the token-level (:class:`~olmo_core.data.composable.MixingTokenSource`),
+document-level (:class:`~olmo_core.data.composable.MixingDocumentSource`),
+or instance-level (:class:`~olmo_core.data.composable.MixingInstanceSource`).
+
+Each of those classes has a similar API, which accepts a sequence of "source specs" with the following parameters:
+
+- ``source`` – The underlying source to sample from.
+  Either a :class:`~olmo_core.data.composable.TokenSource`, :class:`~olmo_core.data.composable.DocumentSource`,
+  or :class:`~olmo_core.data.composable.InstanceSource` depending on the mixing class.
+- ``ratio`` – The relative target ratio for the source in the final mixture.
+- ``max_repetition_factor`` – The maximum amount of repetition allowed,
+  expressed as a factor greater than or equal to 1.0.
+  A factor of 1.0 means no repetition is allowed. A factor of 2.0 means each instance could be
+  repeated at most once (i.e., seen twice).
+- ``label`` – An optional label to assign the source for logging and debugging purposes.
+
+In this example we'll demonstrate instance-level mixing with the "concat and chunk"
+(:class:`~olmo_core.data.composable.ConcatAndChunkInstanceSource`) strategy for building instances.
+
+::
+
+    import functools as ft
+    
+    from olmo_core.data import TokenizerConfig
+    from olmo_core.data.composable import *
+    
+    tokenizer = TokenizerConfig.dolma2()
+    sequence_length = 2048
+    
+    npy_instance_source = ft.partial(
+        ConcatAndChunkInstanceSource.Config.from_npy,
+        tokenizer=tokenizer,
+        sequence_length=sequence_length,
+    )
+    
+    mix_config = MixingInstanceSource.Config(
+        num_tokens=1_000_000_000,
+        source_specs=[
+            MixingInstanceSource.Spec.Config(
+                source=npy_instance_source("/corpus/trex-facts/part-*.npy"),
+                ratio=0.6,
+                label="trex-facts",
+            ),
+            MixingInstanceSource.Spec.Config(
+                source=npy_instance_source("/corpus/triceratops-facts/shard-*.npy"),
+                ratio=0.3,
+                label="triceratops-knowledge",
+            ),
+            MixingInstanceSource.Spec.Config(
+                source=npy_instance_source("/corpus/stegosaurus-high-quality/*.npy"),
+                ratio=0.1,
+                label="stegosaurus-high-quality",
+            ),
+        ]
+    )
+
+Once you have your mix config, you can call :meth:`~olmo_core.data.composable.InstanceSourceConfig.build()`
+on it to get a :class:`~olmo_core.data.composable.InstanceSource` that you can pass to a
+:class:`~olmo_core.data.composable.ComposableDataLoader` or wrap in another instance source such as
+the :class:`~olmo_core.data.composable.SamplingInstanceSource` to adjust the number of instances per epoch.
+
+.. tip::
+   See the :mod:`olmo_core.data.composable` module documentation for a more in-depth overview of this API.
+
+Via the :mod:`~olmo_core.data.source_mixture` API
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Defining the sources
 ~~~~~~~~~~~~~~~~~~~~
@@ -143,7 +216,7 @@ injects any shard labels into the dataset metadata. You only need to supply the 
 location (for example an S3 prefix or shared filesystem path).
 
 Extending the catalog
-~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^
 
 If you need to register a new preset mix, subclass :class:`~olmo_core.data.mixes.DataMixBase`
 inside your project, add an enum value, and provide a matching ``.txt`` manifest
