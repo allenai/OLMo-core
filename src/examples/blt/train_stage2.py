@@ -568,7 +568,7 @@ def main(run_name: str, overrides: List[str]):
         else:
             no_teacher_random_init_keys = ["embeddings", "lm_head"]
             key_mapping.update({
-                key: None for key in model.state_dict().keys() if not any(key.startswith(x) for x in no_teacher_random_init_keys)
+                key: None for key in model.state_dict().keys() if any(key.startswith(x) for x in no_teacher_random_init_keys)
             })
         incompatible_keys = load_model_and_optim_state(
             OLMO_CKPT_PATH,
