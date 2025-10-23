@@ -27,6 +27,7 @@ from ..rope import (
     RotaryEmbedding,
 )
 from ..utils import get_tp_wrappers
+from . import flash_attn_api
 from .backend import (
     AttentionBackend,
     AttentionBackendName,
@@ -397,7 +398,7 @@ class Attention(AttentionBase):
             if window_size <= 0:
                 raise OLMoConfigurationError(f"'window_size' must be positive (got {window_size})")
 
-            if backend is None:
+            if backend is None and flash_attn_api.has_flash_attn_2():
                 # note: flash_3 and te backends are faster than flash_2 and also support SWA
                 backend = AttentionBackendName.flash_2
 
