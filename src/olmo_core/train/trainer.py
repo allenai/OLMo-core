@@ -491,7 +491,7 @@ class Trainer:
                 else max(self.data_loader.total_batches - self.data_loader.batches_processed, 0)
             )
             steps_remaining = steps_remaining_this_epoch
-            for e in range(self.epoch, duration.value + 1):
+            for e in range(self.epoch + 1, duration.value + 1):
                 if (b := self.data_loader.batches_in_epoch(e)) is not None:
                     steps_remaining += b
                 else:
