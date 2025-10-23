@@ -138,4 +138,4 @@ if __name__ == "__main__":
 
     prepare_cli_environment()
 
-    build_config(run_name, overrides).launch(follow=False)
+    build_config(run_name, overrides).launch(follow=False, torchrun=True)
