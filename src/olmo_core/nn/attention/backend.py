@@ -708,7 +708,6 @@ class TEAttentionBackend(AttentionBackend):
             raise RuntimeError(f"'{self.__class__.__name__}' does not support {load_balancer=}")
 
         super().apply_cp(cp_mesh, load_balancer, head_stride=head_stride)
-        log.info(f"Applying CP to {self.__class__.__name__} with {cp_comm_type=}")
         self.te_attn.set_context_parallel_group(
             cp_group=cp_mesh.get_group(),
             cp_global_ranks=dist.get_process_group_ranks(cp_mesh.get_group()),
