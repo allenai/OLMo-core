@@ -554,9 +554,9 @@ class TransformerGenerationModule(GenerationModule):
                 if torch.is_tensor(merged_state_dict["model"][key]):
                     target_tensor = merged_state_dict["model"][key]
                     source_tensor = next_state_dict["model"].pop(key)
-                    assert (target_tensor.shape == source_tensor.shape)
+                    assert target_tensor.shape == source_tensor.shape
                     # in-place operations for better memory consumption
-                    target_tensor.mul_((i-1)/i).add_(source_tensor, alpha=1.0/i)
+                    target_tensor.mul_((i - 1) / i).add_(source_tensor, alpha=1.0 / i)
                     del target_tensor
                     del source_tensor
 

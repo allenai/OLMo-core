@@ -113,7 +113,7 @@ def merge_checkpoints(
                 torch.cuda.empty_cache()
 
         # Average and convert back to original dtypes
-        log.info(f"Averaging weights and converting back to original dtypes...")
+        log.info("Averaging weights and converting back to original dtypes...")
         averaged_state_dict = {}
         for key in list(accumulated_state_dict.keys()):
             value = accumulated_state_dict.pop(key)
