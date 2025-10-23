@@ -290,6 +290,7 @@ class RoPEConfig(Config):
     theta: int = 500_000
     """The base frequency parameter for the RoPE."""
 
+    rotary_dim: Optional[int] = None
     full_precision: bool = True
     """Whether to always apply RoPE in full precision regardless of the input data type."""
 
@@ -308,7 +309,7 @@ class RoPEConfig(Config):
         """
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         kwargs.pop("name")
-        kwargs.update(head_size=head_size, cache=cache)
+        kwargs.update(head_size=kwargs.pop("rotary_dim", head_size), cache=cache)
 
         try:
             if self.name == "default":

@@ -15,11 +15,15 @@ from ..attention import (
     AttentionType,
     SlidingWindowAttentionConfig,
 )
+from ..mamba import MambaConfig
+from ..xlstm import XLSTMConfig
+from ..fla import FLAConfig
 from ..buffer_cache import BufferCache
 from ..feed_forward import FeedForwardConfig, FeedForwardType
 from ..layer_norm import LayerNormConfig, LayerNormType
 from ..lm_head import LMHeadConfig, LMHeadType
 from ..moe import MoEConfig, MoERouterConfig, MoEType
+from ..blt.config import LocalEncoderConfig, LocalDecoderConfig
 from ..rope import RoPEConfig, RoPEScalingConfig, RoPEType
 from .init import InitMethod
 
@@ -89,6 +93,16 @@ class TransformerType(StrEnum):
     ➡️ :class:`MoETransformer`
     """
 
+    blt = "blt"
+    """
+    ➡️ :class:`BLTTransformer`
+    """
+
+    blt_distill = "blt_distill"
+    """
+    ➡️ :class:`BLTDistillTransformer`
+    """
+
 
 class TransformerBlockType(StrEnum):
     """
@@ -130,6 +144,21 @@ class TransformerBlockType(StrEnum):
     ➡️ :class:`MoEHybridReorderedNormTransformerBlock`
     """
 
+    mamba = "mamba"
+    """
+    ➡️ :class:`MambaBlock`
+    """
+
+    xlstm = "xlstm"
+    """
+    ➡️ :class:`XLSTMBlock`
+    """
+
+    fla = "fla"
+    """
+    ➡️ :class:`FLABlock`
+    """
+
     default_scaled = "default_scaled"
     """
     ➡️ :class:`LayerNormScaledTransformerBlock` (applies LayerNorm Scaling)
@@ -158,6 +187,9 @@ class TransformerBlockConfig(Config):
     """
     The config for the MoE feed-forward layer. Required for MoE blocks.
     """
+    mamba: Optional[MambaConfig] = None
+    xlstm: Optional[XLSTMConfig] = None
+    fla: Optional[FLAConfig] = None
     name: TransformerBlockType = TransformerBlockType.default
     """
     The block type.
@@ -185,6 +217,9 @@ class TransformerBlockConfig(Config):
             NormalizedTransformerBlock,
             ReorderedNormTransformerBlock,
             TransformerBlock,
+            MambaBlock,
+            XLSTMBlock,
+            FLABlock,
         )
 
         kwargs = self.as_dict(exclude_none=True, recurse=False)
@@ -214,6 +249,15 @@ class TransformerBlockConfig(Config):
                 return MoEHybridTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.moe_hybrid_reordered_norm:
                 return MoEHybridReorderedNormTransformerBlock(**kwargs)
+            elif self.name == TransformerBlockType.mamba:
+                kwargs.pop("attention")  # Mamba does not use attention
+                return MambaBlock(**kwargs)
+            elif self.name == TransformerBlockType.xlstm:
+                kwargs.pop("attention")  # XLSTM does not use attention
+                return XLSTMBlock(**kwargs)
+            elif self.name == TransformerBlockType.fla:
+                kwargs.pop("attention")  # FLA does not use attention
+                return FLABlock(**kwargs)
             else:
                 raise NotImplementedError(self.name)
         except TypeError as e:
@@ -278,6 +322,13 @@ class TransformerConfig(Config):
     init_std: float = 0.02
     freeze_params: Optional[List[str]] = None
     block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None
+    # BLT config
+    local_encoder: Optional[LocalEncoderConfig] = None
+    local_decoder: Optional[LocalDecoderConfig] = None
+    # teacher config for distillation
+    teacher_config: "TransformerConfig | None" = None
+    share_blocks_between_teacher_and_student: bool = False
+    use_teacher_embs_with_vocab_size: Optional[int] = None
 
     def build(
         self,
@@ -290,12 +341,15 @@ class TransformerConfig(Config):
         :param init_device: The device to put the parameters on during initialization. In a
             distributed setting it usually makes sense to set this to "meta".
         """
-        from .model import MoETransformer, NormalizedTransformer, Transformer
+        from .model import MoETransformer, NormalizedTransformer, Transformer, BLTTransformer, BLTDistillTransformer
 
-        log.info(
-            f"Building transformer with {self.num_params:,d} total params, "
-            f"{self.num_non_embedding_params:,d} non-embedding params"
-        )
+        if self.name not in {TransformerType.blt, TransformerType.blt_distill}:
+            # not implemented for BLTTransformer
+            log.info(
+                f"Building transformer with {self.num_params:,d} total params, "
+                f"{self.num_non_embedding_params:,d} non-embedding params"
+            )
+
         model: Transformer
         if self.name == TransformerType.default:
             model = Transformer(
@@ -339,6 +393,56 @@ class TransformerConfig(Config):
                 init_std=self.init_std,
                 block_overrides=self.block_overrides,
             )
+        elif self.name == TransformerType.blt:
+            if self.local_encoder is None or self.local_decoder is None:
+                raise OLMoConfigurationError(
+                    f"Both local_encoder and local_decoder must be specified for BLTTransformer, got {self.local_encoder} and {self.local_decoder}"
+                )
+
+            if self.teacher_config is not None:
+                raise OLMoConfigurationError(
+                    f"Teacher config must be None for BLTTransformer (use BLTDistillTransformer)."
+                )
+
+            model = BLTTransformer(
+                d_model=self.d_model,
+                vocab_size=self.vocab_size,
+                n_layers=self.n_layers,
+                block=self.block,
+                lm_head=self.lm_head,
+                dtype=self.dtype.as_pt(),
+                init_method=self.init_method,
+                init_device=init_device,
+                init_seed=self.init_seed,
+                init_std=self.init_std,
+                block_overrides=self.block_overrides,
+                local_encoder=self.local_encoder,
+                local_decoder=self.local_decoder,
+            )
+        elif self.name == TransformerType.blt_distill:
+            if self.local_encoder is None or self.local_decoder is None:
+                raise OLMoConfigurationError(
+                    f"Both local_encoder and local_decoder must be specified for BLTTransformer, got {self.local_encoder} and {self.local_decoder}"
+                )
+
+            model = BLTDistillTransformer(
+                d_model=self.d_model,
+                vocab_size=self.vocab_size,
+                n_layers=self.n_layers,
+                block=self.block,
+                lm_head=self.lm_head,
+                dtype=self.dtype.as_pt(),
+                init_method=self.init_method,
+                init_device=init_device,
+                init_seed=self.init_seed,
+                init_std=self.init_std,
+                block_overrides=self.block_overrides,
+                local_encoder=self.local_encoder,
+                local_decoder=self.local_decoder,
+                teacher=self.teacher_config.build(init_device=init_device) if self.teacher_config is not None else None,
+                share_blocks=self.share_blocks_between_teacher_and_student,
+                use_teacher_embs_with_vocab_size=self.use_teacher_embs_with_vocab_size,
+            )
         else:
             raise NotImplementedError(self.name)
 
@@ -367,6 +471,9 @@ class TransformerConfig(Config):
         """
         The total number of parameters that a model from this config would have.
         """
+        if self.name in {TransformerType.blt, TransformerType.blt_distill}:
+            raise NotImplementedError("BLTTransformer config does not support num_params")
+
         num_params = 0
 
         # Embedding params.
@@ -393,6 +500,9 @@ class TransformerConfig(Config):
         """
         The total number of active parameters that a model from this config would have.
         """
+        if self.name in {TransformerType.blt, TransformerType.blt_distill}:
+            raise NotImplementedError("BLTTransformer config does not support num_active_params")
+
         num_active_params = 0
 
         # Embedding params.
@@ -419,6 +529,9 @@ class TransformerConfig(Config):
         """
         The number of parameters excluding embedding parameters.
         """
+        if self.name in {TransformerType.blt, TransformerType.blt_distill}:
+            raise NotImplementedError("BLTTransformer config does not support num_non_embedding_params")
+
         return self.num_params - self.d_model * self.vocab_size
 
     @property
@@ -426,6 +539,9 @@ class TransformerConfig(Config):
         """
         The number of active parameters excluding embedding parameters.
         """
+        if self.name in {TransformerType.blt, TransformerType.blt_distill}:
+            raise NotImplementedError("BLTTransformer config does not support num_active_non_embedding_params")
+
         return self.num_active_params - self.d_model * self.vocab_size
 
     def num_flops_per_token(self, seq_len: int) -> int:
@@ -922,6 +1038,63 @@ class TransformerConfig(Config):
         )
 
     @classmethod
+    def hnet_1stage_L(cls, vocab_size=256, **kwargs):
+        return cls.hnet_like(
+            d_model=1536,
+            vocab_size=vocab_size,
+            n_layers=22,
+            n_heads=16,
+            local_encoder_n_layers=4,
+            local_decoder_n_layers=4,
+            local_d_model=1024,
+        )
+
+    @classmethod
+    def hnet_1stage_XL(cls, vocab_size=256, **kwargs):
+        return cls.hnet_like(
+            d_model=2048,
+            vocab_size=vocab_size,
+            n_layers=24,
+            n_heads=16,
+            local_encoder_n_layers=4,
+            local_decoder_n_layers=4,
+            local_d_model=1024,
+            hidden_size_multiple_of=128,
+        )
+
+    @classmethod
+    def blt_1b(cls, vocab_size=260, **kwargs):
+        return cls.blt_like(
+            d_model=2048,
+            vocab_size=vocab_size,
+            n_layers=25,
+            n_heads=16,
+            local_encoder_n_layers=1,
+            local_decoder_n_layers=9,
+            local_d_model=1024,
+            local_attn_n_heads=16,
+            local_cross_attn_n_heads=16,
+            blt_k=2,
+            **kwargs,
+        )
+
+    @classmethod
+    def blt_7b(cls, vocab_size=260, **kwargs):
+        return cls.blt_like(
+            d_model=4096,
+            vocab_size=vocab_size,
+            n_layers=32,
+            n_heads=32,
+            local_encoder_n_layers=1,
+            local_decoder_n_layers=6,
+            local_d_model=1280,
+            local_attn_n_heads=20,
+            local_cross_attn_n_heads=20,
+            blt_k=4,
+            **kwargs,
+        )
+
+    @classmethod
     def llama_like(
         cls,
         *,
@@ -1025,6 +1198,287 @@ class TransformerConfig(Config):
             block_overrides=block_overrides,
             **kwargs,
         )
+
+    @classmethod
+    def hnet_like(
+        cls,
+        *,
+        d_model: int,
+        vocab_size: int,
+        n_layers: int,
+        n_heads: int,
+        local_encoder_n_layers: int,
+        local_decoder_n_layers: int,
+        local_d_model: int,
+        n_kv_heads: Optional[int] = None,
+        qk_norm: bool = False,
+        layer_norm_eps: float = 1e-5,
+        rope_theta: int = 10_000,
+        rope_type: Optional[RoPEType] = None,
+        hidden_size_multiple_of: int = 256,
+        hidden_size_multiplier: Optional[float] = None,
+        fused_ops: bool = False,
+        use_flash: bool = False,
+        block_name: TransformerBlockType = TransformerBlockType.default,
+        dtype: DType = DType.float32,
+        rope_scaling: Optional[RoPEScalingConfig] = None,
+        feed_forward: Optional[FeedForwardConfig] = None,
+        feed_forward_moe: Optional[MoEConfig] = None,
+        skip_local_encoder_decoder: bool = False,
+        **kwargs,
+    ) -> "TransformerConfig":
+        """
+        TODO
+        """
+        hidden_size = int(8 * d_model / 3)
+        if hidden_size_multiplier is not None:
+            hidden_size = int(hidden_size_multiplier * hidden_size)
+        hidden_size = ensure_multiple_of(hidden_size, hidden_size_multiple_of)
+
+        # Configure global layer norm.
+        layer_norm = LayerNormConfig(
+            name=LayerNormType.fused_rms if fused_ops else LayerNormType.rms,
+            eps=layer_norm_eps,
+            bias=False,
+            dtype=dtype,
+        )
+
+        # HNet uses fused attn / RoPE impl
+        att_type = AttentionType.fused
+        rope_type = RoPEType.fused
+
+        # Feed-forward.
+        if feed_forward is None and feed_forward_moe is None:
+            feed_forward = FeedForwardConfig(
+                hidden_size=hidden_size,
+                bias=False,
+                dtype=dtype,
+                act_name="swiglu" # HNet uses swiglu
+            )
+
+        # Configure blocks.
+        block = TransformerBlockConfig(
+            name=block_name,
+            attention=AttentionConfig(
+                name=att_type,
+                n_heads=n_heads,
+                n_kv_heads=n_kv_heads,
+                bias=False,
+                rope=RoPEConfig(
+                    name=rope_type,
+                    rotary_dim=d_model // n_heads // 2,
+                    theta=rope_theta,
+                    scaling=rope_scaling
+                ),
+                qk_norm=layer_norm if qk_norm else None,
+                use_flash=use_flash,
+                dtype=dtype,
+            ),
+            feed_forward=feed_forward,
+            feed_forward_moe=feed_forward_moe,
+            layer_norm=layer_norm,
+        )
+
+        # local encoder / decoder setup
+        local_hidden_size = int(8 * local_d_model / 3)
+        if hidden_size_multiplier is not None:
+            local_hidden_size = int(hidden_size_multiplier * local_hidden_size)
+        local_hidden_size = ensure_multiple_of(local_hidden_size, hidden_size_multiple_of)
+
+        local_block = TransformerBlockConfig(
+            name=TransformerBlockType.mamba,
+            attention=AttentionConfig(), # not used
+            mamba=MambaConfig(
+                chunk_size=256,
+                d_conv=4,
+                d_state=128,
+                expand=2,
+            ),
+            feed_forward=None,
+            layer_norm=layer_norm,
+        )
+
+        local_encoder = LocalEncoderConfig(
+            add_hash_embeddings=False,
+            d_model=local_d_model,
+            n_layers=local_encoder_n_layers,
+            sliding_window_size=0,
+            cross_attn_n_heads=0,
+            block_config=local_block,
+            add_norm_after_last_block=True,
+            pooling="hnet",
+            boundary_predictor="hnet",
+        )
+        local_decoder = LocalDecoderConfig(
+            d_model=local_d_model,
+            n_layers=local_decoder_n_layers,
+            sliding_window_size=0,
+            cross_attn_n_heads=0,
+            block_config=local_block,
+            add_norm_before_first_block=True,
+            add_in_projection=True,
+            depooling="hnet",
+        )
+
+        if skip_local_encoder_decoder:
+            return cls(
+                name=TransformerType.default,
+                d_model=d_model,
+                vocab_size=vocab_size,
+                n_layers=n_layers,
+                block=block,
+                lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype),
+                dtype=dtype,
+                **kwargs,
+            )
+        else:
+            return cls(
+                name=TransformerType.blt,
+                d_model=d_model,
+                vocab_size=vocab_size,
+                n_layers=n_layers,
+                block=block,
+                lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype),
+                local_encoder=local_encoder,
+                local_decoder=local_decoder,
+                dtype=dtype,
+                **kwargs,
+            )
+
+    @classmethod
+    def blt_like(
+        cls,
+        *,
+        d_model: int,
+        vocab_size: int,
+        n_layers: int,
+        n_heads: int,
+        local_encoder_n_layers: int,
+        local_decoder_n_layers: int,
+        local_d_model: int,
+        local_attn_n_heads: int,
+        local_cross_attn_n_heads: int,
+        blt_k: int,
+        n_kv_heads: Optional[int] = None,
+        qk_norm: bool = False,
+        layer_norm_eps: float = 1e-5,
+        rope_theta: int = 500_000,
+        rope_type: Optional[RoPEType] = None,
+        hidden_size_multiple_of: int = 256,
+        hidden_size_multiplier: Optional[float] = None,
+        fused_ops: bool = False,
+        use_flash: bool = False,
+        block_name: TransformerBlockType = TransformerBlockType.default,
+        dtype: DType = DType.float32,
+        rope_scaling: Optional[RoPEScalingConfig] = None,
+        feed_forward: Optional[FeedForwardConfig] = None,
+        feed_forward_moe: Optional[MoEConfig] = None,
+        skip_local_encoder_decoder: bool = False,
+        **kwargs,
+    ) -> "TransformerConfig":
+        """
+        TODO
+        """
+        # Resolve hidden size of FFN in blocks.
+        hidden_size = int(8 * d_model / 3)
+        if hidden_size_multiplier is not None:
+            hidden_size = int(hidden_size_multiplier * hidden_size)
+        hidden_size = ensure_multiple_of(hidden_size, hidden_size_multiple_of)
+
+        # Configure global layer norm.
+        layer_norm = LayerNormConfig(
+            name=LayerNormType.fused_rms if fused_ops else LayerNormType.rms,
+            eps=layer_norm_eps,
+            bias=False,
+            dtype=dtype,
+        )
+
+        # Decide on attention/rope implementations.
+        att_type = AttentionType.default
+        if rope_type is None:
+            rope_type = RoPEType.complex # BLT different from Llama
+
+        # Feed-forward.
+        if feed_forward is None and feed_forward_moe is None:
+            feed_forward = FeedForwardConfig(hidden_size=hidden_size, bias=False, dtype=dtype)
+
+        # Configure blocks.
+        block = TransformerBlockConfig(
+            name=block_name,
+            attention=AttentionConfig(
+                name=att_type,
+                n_heads=n_heads,
+                n_kv_heads=n_kv_heads,
+                bias=False,
+                rope=RoPEConfig(name=rope_type, theta=rope_theta, scaling=rope_scaling),
+                qk_norm=layer_norm if qk_norm else None,
+                use_flash=use_flash,
+                dtype=dtype,
+            ),
+            feed_forward=feed_forward,
+            feed_forward_moe=feed_forward_moe,
+            layer_norm=layer_norm,
+        )
+
+        # local encoder / decoder setup
+        local_hidden_size = int(8 * local_d_model / 3)
+        if hidden_size_multiplier is not None:
+            local_hidden_size = int(hidden_size_multiplier * local_hidden_size)
+        local_hidden_size = ensure_multiple_of(local_hidden_size, hidden_size_multiple_of)
+
+        local_block = block.replace(
+            attention=block.attention.replace(n_heads=local_attn_n_heads),
+            feed_forward=FeedForwardConfig(hidden_size=local_hidden_size, bias=False, dtype=dtype),
+        )
+
+        local_encoder = LocalEncoderConfig(
+            hash_byte_group_size=[3, 4, 5, 6, 7, 8],
+            hash_byte_group_vocab=[500_002] * 6,
+            hash_byte_group_nb_functions=1,
+            sliding_window_size=512,
+            d_model=local_d_model,
+            n_layers=local_encoder_n_layers,
+            cross_attn_n_heads=local_cross_attn_n_heads,
+            block_config=local_block,
+            blt_k=blt_k,
+            blt_compat=True,
+            add_out_projection=blt_k * local_d_model != d_model,
+        )
+        local_decoder = LocalDecoderConfig(
+            sliding_window_size=512,
+            d_model=local_d_model,
+            n_layers=local_decoder_n_layers,
+            cross_attn_n_heads=local_cross_attn_n_heads,
+            block_config=local_block,
+            blt_k=blt_k,
+            blt_compat=True,
+        )
+
+        if skip_local_encoder_decoder:
+            return cls(
+                name=TransformerType.default,
+                d_model=d_model,
+                vocab_size=vocab_size,
+                n_layers=n_layers,
+                block=block,
+                lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype),
+                dtype=dtype,
+                **kwargs,
+            )
+        else:
+            return cls(
+                name=TransformerType.blt,
+                d_model=d_model,
+                vocab_size=vocab_size,
+                n_layers=n_layers,
+                block=block,
+                lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype),
+                local_encoder=local_encoder,
+                local_decoder=local_decoder,
+                dtype=dtype,
+                **kwargs,
+            )
+
 
     @classmethod
     def llama_like_moe(
