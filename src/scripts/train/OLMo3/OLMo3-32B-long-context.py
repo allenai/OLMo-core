@@ -83,7 +83,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         ),
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.budget,
-            activation_memory_budget=0.5,
+            activation_memory_budget=0.3,
         ),
         # When CP is used, the CP mesh gets folded into the DP_shard mesh.
         cp_config=TransformerContextParallelConfig.llama3(degree=8, head_stride=4),  # 8
