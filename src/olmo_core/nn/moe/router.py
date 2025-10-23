@@ -220,7 +220,9 @@ class MoERouter(nn.Module):
             mask[idx_tensor] = True
             self.register_buffer("disabled_expert_mask", mask)
         else:
-            self.register_buffer("disabled_expert_mask", None)
+            # Register a tensor with all False (no experts disabled) instead of None
+            mask = torch.zeros(num_experts, device=init_device, dtype=torch.bool)
+            self.register_buffer("disabled_expert_mask", mask)
 
         # NOTE: we don't use buffers for t hese because we don't want FSDP to manage them, and we
         # don't use a BufferCache because `torch.compile()` doesn't handle that well when we're modifying
@@ -450,8 +452,9 @@ class MoERouter(nn.Module):
         logits = self.get_expert_logits(x).float()
 
         # If certain experts are disabled, set their logits to -inf so they will never be selected.
-        if self.disabled_expert_mask is not None:
-            mask = cast(torch.Tensor, self.disabled_expert_mask)
+        # Check if any experts are actually disabled (mask has any True values)
+        if self.disabled_expert_mask.any():
+            mask = self.disabled_expert_mask
             disabled_count = int(mask.sum().item())
             available = self.num_experts - disabled_count
             if self.top_k > available:
@@ -560,17 +563,19 @@ class MoERouter(nn.Module):
         Load state dict with backward compatibility for missing disabled_expert_mask.
         
         This method handles the case where older checkpoints don't have the 
-        disabled_expert_mask buffer, initializing it to None if missing.
+        disabled_expert_mask buffer, initializing it to all False if missing.
         """
         # Check if disabled_expert_mask is missing from the state dict
         if "disabled_expert_mask" not in state_dict:
-            log.info("disabled_expert_mask not found in checkpoint, initializing to None (no experts disabled)")
-            # Set the buffer to None before loading
-            self.disabled_expert_mask = None
+            log.info("disabled_expert_mask not found in checkpoint, initializing to all False (no experts disabled)")
+            # Create a tensor with all False (no experts disabled)
+            mask = torch.zeros(self.num_experts, device=self.device, dtype=torch.bool)
+            # Set the buffer before loading
+            self.disabled_expert_mask = mask
             # Load with strict=False to avoid missing key errors
             result = super().load_state_dict(state_dict, strict=False, assign=assign)
             # Re-register the buffer properly
-            self.register_buffer("disabled_expert_mask", None)
+            self.register_buffer("disabled_expert_mask", mask)
             return result
         else:
             # Normal loading when disabled_expert_mask is present
