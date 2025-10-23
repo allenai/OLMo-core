@@ -13,6 +13,8 @@ import time
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
+from queue import Empty, Queue
+from threading import Thread
 from typing import List, Literal, Optional, Set, Tuple
 
 import requests
@@ -689,18 +691,56 @@ def follow_experiment(
     if slack_webhook_url is not None:
         _send_slack_notification_for_event(beaker, experiment, "launched", slack_webhook_url)
 
+    queue: Queue = Queue()
+    sentinel = object()
+
+    def fill_queue():
+        assert job is not None
+        try:
+            for line_bytes in beaker.job.follow(
+                job,
+                include_timestamps=False,
+                since=None if not tail else timedelta(seconds=10),
+            ):
+                line = line_bytes.decode(errors="ignore")
+                if line.endswith("\n"):
+                    line = line[:-1]
+                    queue.put(line)
+        except Exception as e:
+            queue.put(e)
+        finally:
+            queue.put(sentinel)
+
+    thread = Thread(target=fill_queue, daemon=True)
+    thread.start()
+
     # Stream logs...
     log.info("Showing logs:")
     print()
-    for line_bytes in beaker.job.follow(
-        job,
-        include_timestamps=False,
-        since=None if not tail else timedelta(seconds=10),
-    ):
-        line = line_bytes.decode(errors="ignore")
-        if line.endswith("\n"):
-            line = line[:-1]
-        print(line)
+    last_event = time.monotonic()
+    last_inactivity_warning = 0.0
+    while True:
+        try:
+            result = queue.get(timeout=1.0)
+            last_event = time.monotonic()
+            if result is sentinel:
+                break
+            elif isinstance(result, Exception):
+                raise result
+            else:
+                print(result)
+        except Empty:
+            cur_time = time.monotonic()
+            # Warn if no logs in the past 10 minutes and we haven't already warned in the last hour.
+            if (
+                slack_webhook_url is not None
+                and (cur_time - last_event) > 600
+                and (cur_time - last_inactivity_warning) > 3600
+            ):
+                _send_slack_notification_for_event(
+                    beaker, experiment, "inactive", slack_webhook_url
+                )
+                last_inactivity_warning = cur_time
     print()
     log.info("End logs")
 
@@ -730,7 +770,7 @@ def follow_experiment(
 def _send_slack_notification_for_event(
     beaker: Beaker,
     experiment: Experiment,
-    event: Literal["launched", "succeeded", "failed"],
+    event: Literal["launched", "succeeded", "failed", "inactive"],
     webhook_url: str,
 ):
     workload_name = experiment.full_name
@@ -742,6 +782,8 @@ def _send_slack_notification_for_event(
         text = f":check-failed: Run <{workload_url}|*{workload_name}*> failed!"
     elif event == "succeeded":
         text = f":check: Run <{workload_url}|*{workload_name}*> succeeded!"
+    elif event == "inactive":
+        text = f":warning: Run <{workload_url}|*{workload_name}*> appears to be stuck!"
     else:
         raise ValueError(f"Unknown event: {event}")
 
