@@ -267,11 +267,11 @@ class Trainer:
     This is useful for benchmarking.
     """
 
-    steps_to_skip: Optional[List[Tuple[int, int]]] = None
-    """
-    Ranges of steps to completely skip training on, in the form of ``[range_start, range_end]``,
-    where both endpoints are inclusive.
-    """
+    # steps_to_skip: Optional[List[Tuple[int, int]]] = None
+    # """
+    # Ranges of steps to completely skip training on, in the form of ``[range_start, range_end]``,
+    # where both endpoints are inclusive.
+    # """
 
     # Internal bookkeeping
 
@@ -1342,11 +1342,11 @@ class Trainer:
                 self.global_train_tokens_seen += global_num_tokens
 
             should_skip = False
-            if self.steps_to_skip:
-                for range_start, range_end in self.steps_to_skip:
-                    if range_start <= self.global_step <= range_end:
-                        should_skip = True
-                        break
+            # if self.steps_to_skip:
+            #     for range_start, range_end in self.steps_to_skip:
+            #         if range_start <= self.global_step <= range_end:
+            #             should_skip = True
+            #             break
 
             for callback in self._iter_callbacks():
                 callback.pre_step(batch)
