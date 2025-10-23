@@ -267,11 +267,11 @@ class Trainer:
     This is useful for benchmarking.
     """
 
-    steps_to_skip: Optional[List[Tuple[int, int]]] = None
-    """
-    Ranges of steps to completely skip training on, in the form of ``[range_start, range_end]``,
-    where both endpoints are inclusive.
-    """
+    # steps_to_skip: Optional[List[Tuple[int, int]]] = None
+    # """
+    # Ranges of steps to completely skip training on, in the form of ``[range_start, range_end]``,
+    # where both endpoints are inclusive.
+    # """
 
     # Internal bookkeeping
 
@@ -835,10 +835,19 @@ class Trainer:
 
         # NOTE: to avoid making a ton of client requests (S3 or otherwise) we only make those
         # requests from rank 0 then scatter the result to the other ranks.
+        dir_to_scatter: Optional[PathOrStr] = dir
+        error: Optional[Exception] = None
         if get_rank() == 0 and not self.checkpointer.dir_is_checkpoint(dir):
-            # Try to find the latest checkpoint in the directory.
-            dir = self.checkpointer.latest_checkpoint(dir)
-        dir = scatter_object(dir)
+            try:
+                dir_to_scatter = self.checkpointer.latest_checkpoint(dir)
+            except FileNotFoundError as e:  # defer raising until after the scatter
+                dir_to_scatter, error = None, e
+        dir_to_scatter = scatter_object(dir_to_scatter)
+        if dir_to_scatter is None:
+            if error is None:
+                raise FileNotFoundError(f"No checkpoints found in '{dir}'")
+            raise error
+        dir = dir_to_scatter
 
         log.info(f"Loading checkpoint from '{dir}'...")
         trainer_state = self.checkpointer.load(
@@ -1333,11 +1342,11 @@ class Trainer:
                 self.global_train_tokens_seen += global_num_tokens
 
             should_skip = False
-            if self.steps_to_skip:
-                for range_start, range_end in self.steps_to_skip:
-                    if range_start <= self.global_step <= range_end:
-                        should_skip = True
-                        break
+            # if self.steps_to_skip:
+            #     for range_start, range_end in self.steps_to_skip:
+            #         if range_start <= self.global_step <= range_end:
+            #             should_skip = True
+            #             break
 
             for callback in self._iter_callbacks():
                 callback.pre_step(batch)

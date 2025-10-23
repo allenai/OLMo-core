@@ -346,9 +346,11 @@ def run_moe_hybrid_combined_forward(
         vocab_size=16_000,
         n_layers=2,
         block=TransformerBlockConfig(
-            name=TransformerBlockType.moe_hybrid_reordered_norm
-            if reordered_norm
-            else TransformerBlockType.moe_hybrid,
+            name=(
+                TransformerBlockType.moe_hybrid_reordered_norm
+                if reordered_norm
+                else TransformerBlockType.moe_hybrid
+            ),
             attention=AttentionConfig(n_heads=8, rope=RoPEConfig(), qk_norm=layer_norm),
             layer_norm=layer_norm,
             feed_forward=FeedForwardConfig(hidden_size=1024, bias=False),
@@ -356,9 +358,9 @@ def run_moe_hybrid_combined_forward(
                 name=MoEType.dropless if dropless else MoEType.default,
                 num_experts=4,
                 hidden_size=256,
-                shared_mlp=FeedForwardConfig(hidden_size=512, bias=False)
-                if shared_experts
-                else None,
+                shared_mlp=(
+                    FeedForwardConfig(hidden_size=512, bias=False) if shared_experts else None
+                ),
                 router=MoERouterConfig(uniform_expert_assignment=True),
             ),
         ),

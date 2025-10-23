@@ -46,8 +46,9 @@ def run_save_and_load_torch_fsdp_model(dir, model_factory, model_data_factory, u
     load_model_and_optim_state(dir, fsdp_model2, optim2)
 
     # Check model parameters.
-    with FSDP.summon_full_params(fsdp_model, recurse=True), FSDP.summon_full_params(
-        fsdp_model2, recurse=True
+    with (
+        FSDP.summon_full_params(fsdp_model, recurse=True),
+        FSDP.summon_full_params(fsdp_model2, recurse=True),
     ):
         torch.testing.assert_close(fsdp_model.state_dict(), fsdp_model2.state_dict())
 

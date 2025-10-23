@@ -239,9 +239,9 @@ def reduce_metrics(
     max_metric_values: List[torch.Tensor] = []
 
     for step in sorted(metrics.keys()):
-        step_metrics_reduce_type: Dict[
-            str, Optional[ReduceType]
-        ] = all_steps_metrics_reduce_type.get(step, metrics_reduce_type)
+        step_metrics_reduce_type: Dict[str, Optional[ReduceType]] = (
+            all_steps_metrics_reduce_type.get(step, metrics_reduce_type)
+        )
         step_sum_metric_names: List[str] = []
         step_sum_metric_values: List[torch.Tensor] = []
         step_max_metric_names: List[str] = []
