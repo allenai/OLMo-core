@@ -171,10 +171,7 @@ def save_hf_model(
     hf_model.config.vocab_size = vocab_size or model.vocab_size
     hf_model.resize_token_embeddings(hf_model.config.vocab_size)
 
-    hf_model.generation_config.eos_token_id = [
-        100265, # <|im_end|>
-        100257  # <|endoftext|>
-    ]
+    hf_model.generation_config.eos_token_id = [100265, 100257]  # <|im_end|>  # <|endoftext|>
     hf_model.generation_config.pad_token = 100277
 
     if get_fs_local_rank(process_group) == 0:

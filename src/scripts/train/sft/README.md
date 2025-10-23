@@ -53,20 +53,20 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
 4. Launch the SFT training script using a command like:
 
     ```bash
-    CKPT="/weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_4K_20B/step33379"
-    python src/scripts/train/sft/OLMo2-7B-sft.py launch \
-        model_name $CKPT \
+    BASE_CKPT="/weka/oe-training-default/ai2-llm/checkpoints/tylerr/long-context/olmo25_7b_lc_64k_6T_M100B_round5-sparkle_6634-pre_s2pdf_gzip2080_cweN-yake-all-olmo_packing_yarn-fullonly_50B-fb13a737/step11921"
+    python src/scripts/train/sft/Olmo-sft.py launch \
+        MODEL_NAME_HERE $BASE_CKPT \
             ai2/jupiter-cirrascale-2 \
         --trainer.callbacks.wandb.enabled=True \
         --trainer.max_duration.value=2 \
-        --train_module.optim.lr=5e-5 \
+        --train_module.optim.lr=1e-4 \
         --launch.priority=high \
-        --seq_len=16384 \
+        --seq_len=32768 \
         --launch.num_gpus=8 \
         --num_nodes=1 \
         --budget ai2/oe-adapt \
         --workspace ai2/<your_workspace> \
-        --model_name olmo2-7b \
+        --model_name olmo3-7b \
         --dataset_path /weka/<bucket-name>/path/to/dataset
     ```
 
@@ -80,10 +80,7 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
 
 1. Convert the model to a Huggingface model using a command such as:
 
-### OLMo 2
     ```bash
-    MODEL_NAME=olmo3_r2_7t-tulu_3_sft-5e_-5-3_epochs
-    INPUT_PATH=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmo2-7B-sft/$MODEL_NAME/step2226
     gantry run --cluster ai2/saturn-cirrascale --timeout -1 -y --budget ai2/oe-adapt --workspace ai2/<your_workspace> \
             --install "curl -LsSf https://astral.sh/uv/install.sh | sh && /root/.local/bin/uv sync --all-extras" \
             --weka=oe-adapt-default:/weka/oe-adapt-default \
@@ -91,8 +88,8 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
             --priority high \
             --gpus 1 \
             -- /root/.local/bin/uv run python src/examples/huggingface/convert_checkpoint_to_hf.py \
-                -i $INPUT_PATH \
-                -o /weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft/usable-tulu/$MODEL_NAME \
+                -i /weka/oe-training-default/$USER/checkpoints/path-to-model/stepFINAL_STEP \
+                -o /weka/oe-adapt-default/$USER/checkpoints/path-to-model/stepFINAL_STEP-hf \
                 --max-sequence-length 65536
     ```
 
@@ -101,64 +98,12 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
         * Recommended to use one GPU. This is currently the only way to "reserve" CPUs for your job, and conversion takes <10 minutes.
         * If you'll be evaluating your model using `submit_eval_jobs.py` in open-instruct, your converted model must be saved in the `oe-adapt-default` weka bucket.
 
-### OLMo 3
-
-    Currently, the only way to convert an OLMo 3 checkpoint to Huggingface is with the [olmo cookbook](https://github.com/allenai/olmo-cookbook). Follow their installation instructions, and then you can convert your model with a command like:
-
-    ```bash
-    olmo-cookbook-eval convert \
-        "/oe-training-default/ai2-llm/checkpoints/jacobm/olmo2-7B-sft/$MODEL_NAME/$STEP" \
-        -t olmo-core-v2 --use-beaker \
-        --olmo-core-v2-commit-hash 326b7b01cc77750343510919801316d5a5622d87 \
-        --huggingface-transformers-git-url https://github.com/2015aroras/transformers.git \
-        --huggingface-transformers-commit-hash  5db7e35d42636e86ee37a43f56a1587daadb7c1b \
-        --huggingface-output-dir /oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft/olmo3-hparam-search/$MODEL_NAME/ \
-        --dtype float32
-    ```
-
-    The olmo cookbook currently adds extra files that make assumptions that do not align with the assumptions made in open-instruct (this will be updated soon). To fix this, run these commands after converting your model:
-
-    ```bash
-    rm /weka/oe-adapt-default/path/to/your/model/tokenizer_config.json
-    rm /weka/oe-adapt-default/path/to/your/model/vocab.json
-    rm /weka/oe-adapt-default/path/to/your/model/tokenizer.json
-    rm /weka/oe-adapt-default/path/to/your/model/special_tokens_map.json
-    rm /weka/oe-adapt-default/path/to/your/model/generation_config.json
-
-    cp /weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft/usable-tulu/olmo2-7B-lc-tulu3-olmo2-mix/generation_config.json /weka/oe-adapt-default/path/to/your/model/
-
-    cp /weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft-tokenizer-olmo-chat-template/* /weka/oe-adapt-default/path/to/your/model/
-    ```
-
-    > TIP: If you'll be evaluating your model using `submit_eval_jobs.py` in open-instruct, your converted model must be saved in the `oe-adapt-default` weka bucket.
-
-2. Copy over the tokenizer files to your hf model directory. If you havent made any changes to tokenization, you can copy the files located at `/weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft-tokenizer-(olmo|olmo_thinker)-chat-template/`:
-
-    ```bash
-    cp /weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft-tokenizer-olmo-chat-template/* /weka/oe-adapt-default/path/to/huggingface/model
-    ```
-
-    *If training a reasoning model, copy these tokenizer files instead*:
-    ```bash
-    cp /weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft-tokenizer-olmo_thinker-chat-template/* /weka/oe-adapt-default/path/to/reasoning/model
-    ```
-
-    * **NOTE**: Be careful with this step, and it's worth double checking the tokenizer configuration. We plan to automate this in the future to help avoid bugs resulting from manual tokenizer configuration.
-    
-    * Tip: If you're copying tokenizer files to make checkpoints saved in the same directory, you can run a command like this instead:
-
-    ```bash
-    find /weka/oe-adapt-default/path/where/all/your/models/are/saved/ -maxdepth 1 -type d -name "*regex-for-model-names*" -exec cp /weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft-tokenizer-olmo-chat-template/* {} \;
-    ```
-
-    This will copy all of the relevant tokenizer files to every 1-level-down subdirectory in your model directory.
-
-3. Launch evaluations using the submit_eval_jobs.sh script in `open-instruct` using a command such as:
+2. Launch evaluations using the submit_eval_jobs.sh script in `open-instruct` using a command such as:
 
     ```bash
     python scripts/submit_eval_jobs.py \
-        --model_name olmo2-7b-sft-tulu3mix-fromolmocore \
-        --location /weka/oe-adapt-default/tylerr/checkpoints/olmo2-7B-sft/olmo2-7B-sft-tulu3mix/step4143-hf \
+        --model_name MODEL_NAME_HERE \
+        --location /weka/oe-adapt-default/$USER/checkpoints/path-to-model/stepFINAL_STEP-hf \
         --cluster ai2/saturn-cirrascale ai2/neptune-cirrascale \
         --is_tuned \
         --priority high \
@@ -166,10 +111,27 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
         --use_hf_tokenizer_template \
         --run_oe_eval_experiments \
         --evaluate_on_weka \
-        --run_id https://wandb.ai/ai2-llm/tylerr-7B-sft/runs/nitys50e \
-        --oe_eval_max_length 4096 \
+        --oe_eval_max_length 32768 \
         --workspace tulu-3-results \
-        --skip_oi_evals
+        --skip_oi_evals \
+        --process_output r1_style
     ```
 
-    * **NOTE**: If you're evaluating olmo3 models, you must include the flag `--beaker_image oe-eval-beaker/oe_eval_olmo3_auto`
+-----
+
+UPDATED COMMANDS:
+
+train:
+should be the same?
+
+convert:
+gantry run --cluster ai2/saturn-cirrascale -y --budget ai2/oe-adapt --workspace ai2/olmo-instruct \
+      --install "curl -LsSf https://astral.sh/uv/install.sh | sh && /root/.local/bin/uv sync --all-extras" \
+      --weka=oe-adapt-default:/weka/oe-adapt-default \
+      --weka=oe-training-default:/weka/oe-training-default \
+      --priority urgent \
+      --gpus 1 \
+      -- /root/.local/bin/uv run python src/examples/huggingface/convert_checkpoint_to_hf.py \
+            -i /weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmo2-7B-sft/olmo3-7b-sft-reasoner-normal-smoke-test/step3710 \
+            -o /weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft/olmo3-hparam-search/test-tokenizer-copy \
+            --max-sequence-length 65536

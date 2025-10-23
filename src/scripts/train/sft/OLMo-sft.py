@@ -16,7 +16,11 @@ from urllib.parse import urlparse
 from rich import print
 
 from olmo_core.config import Config, DType
-from olmo_core.data import NumpyDataLoaderConfig, NumpyPackedFSLDatasetConfig, TokenizerConfig
+from olmo_core.data import (
+    NumpyDataLoaderConfig,
+    NumpyPackedFSLDatasetConfig,
+    TokenizerConfig,
+)
 from olmo_core.data.types import LongDocStrategy
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_local_rank
@@ -82,9 +86,9 @@ class BatchSizeConfig:
     def __post_init__(self):
         assert self.global_batch_size_tokens > 0, "global_batch_size_tokens must be positive"
         assert self.sequence_length > 0, "sequence_length must be positive"
-        assert (self.sequence_length & (self.sequence_length - 1)) == 0, (
-            "sequence_length must be a power of 2"
-        )
+        assert (
+            self.sequence_length & (self.sequence_length - 1)
+        ) == 0, "sequence_length must be a power of 2"
         assert self.world_size > 0, "world_size must be positive"
         assert (self.world_size & (self.world_size - 1)) == 0, "world_size must be a power of 2"
 
@@ -148,7 +152,6 @@ class BatchSizeConfig:
         )
 
 
-
 def _separate_prefix_and_glob(prefix: str) -> Tuple[str, str]:
     if any(char in prefix for char in ["*", "?", "[", "]"]):
         parts = prefix.split("/")
@@ -170,7 +173,11 @@ def _separate_prefix_and_glob(prefix: str) -> Tuple[str, str]:
 
 def glob_remote_dataset(prefix: str) -> List[str]:
     parsed_path = urlparse(prefix)
-    scheme, bucket, parsed_prefix = parsed_path.scheme, parsed_path.netloc, parsed_path.path.lstrip("/")
+    scheme, bucket, parsed_prefix = (
+        parsed_path.scheme,
+        parsed_path.netloc,
+        parsed_path.path.lstrip("/"),
+    )
     parsed_prefix_pre_glob, glob_str = _separate_prefix_and_glob(parsed_prefix)
     base_prefix_without_scheme = Path(f"{bucket}/{parsed_prefix_pre_glob}")
 
@@ -178,7 +185,7 @@ def glob_remote_dataset(prefix: str) -> List[str]:
 
     for path in list_directory(f"{scheme}://{base_prefix_without_scheme}"):
         parsed_path = urlparse(path)
-        path_without_scheme = Path(parsed_path.netloc) / parsed_path.path.lstrip('/')
+        path_without_scheme = Path(parsed_path.netloc) / parsed_path.path.lstrip("/")
         relative_to_base_prefix = path_without_scheme.relative_to(base_prefix_without_scheme)
 
         if glob_str and not fnmatch.fnmatch(str(relative_to_base_prefix), glob_str):
@@ -189,7 +196,6 @@ def glob_remote_dataset(prefix: str) -> List[str]:
         paths.append(path)
 
     return paths
-
 
 
 def build_sft_dataset(
@@ -306,12 +312,38 @@ class SFTConfig(Config):
             model.block.attention.rope.scaling = YaRNRoPEScalingConfig(
                 factor=8, beta_fast=32, beta_slow=1, old_context_len=8192
             )
+
             def no_rope_scaling(block: TransformerBlockConfig) -> TransformerBlockConfig:
                 rope_config = block.attention.rope
                 if rope_config is not None:
                     rope_config.scaling = None
                     block.attention.rope = rope_config
                 return block
+
+            model.block_overrides = {
+                i: no_rope_scaling(model.block.copy())
+                for i in range(model.n_layers)
+                if model.block.attention.sliding_window.should_use_swa(i, model.n_layers)
+            }
+        elif model_name == "olmo3-32b":
+            model = TransformerConfig.olmo2_32B(vocab_size=tokenizer_config.padded_vocab_size())
+            model.block.attention.sliding_window = SlidingWindowAttentionConfig(
+                force_full_attention_on_first_layer=False,
+                force_full_attention_on_last_layer=True,
+                pattern=[4096, 4096, 4096, -1],
+            )
+            model.block.attention.use_flash = True
+            model.block.attention.rope.scaling = YaRNRoPEScalingConfig(
+                factor=8, beta_fast=32, beta_slow=1, old_context_len=8192
+            )
+
+            def no_rope_scaling(block: TransformerBlockConfig) -> TransformerBlockConfig:
+                rope_config = block.attention.rope
+                if rope_config is not None:
+                    rope_config.scaling = None
+                    block.attention.rope = rope_config
+                return block
+
             model.block_overrides = {
                 i: no_rope_scaling(model.block.copy())
                 for i in range(model.n_layers)
@@ -452,7 +484,6 @@ def train(checkpoint: str, config: SFTConfig, save_tokenizer: bool):
                 log.info(f"Saving tokenizer to {destination_path}")
                 shutil.copytree(tokenizer_path, destination_path, dirs_exist_ok=True)
 
-
     # Record the config to W&B/Comet and each checkpoint dir.
     config_dict = config.as_config_dict()
     cast(WandBCallback, trainer.callbacks["wandb"]).config = config_dict
@@ -509,10 +540,16 @@ Examples:
         "--num_nodes", type=int, help="The number of nodes to use.", default=DEFAULT_NUM_NODES
     )
     parser.add_argument(
-        "--follow", type=bool, help="Whether to follow the experiment in the terminal.", default=False
+        "--follow",
+        type=bool,
+        help="Whether to follow the experiment in the terminal.",
+        default=False,
     )
     parser.add_argument(
-        "--save_tokenizer", type=bool, help="Whether to save the dataset's tokenizer in the model directory.", default=True
+        "--save_tokenizer",
+        type=bool,
+        help="Whether to save the dataset's tokenizer in the model directory.",
+        default=True,
     )
     parser.add_argument(
         "--global_batch_size",
