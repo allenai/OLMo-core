@@ -1,3 +1,4 @@
+import logging
 from abc import abstractmethod
 from typing import Optional, Tuple, Type, Union
 
@@ -26,6 +27,8 @@ from .flash_attn_api import (
 )
 from .ring import RingAttentionLoadBalancerType
 from .te_attn_api import TEDotProductAttention, has_te_attn
+
+log = logging.getLogger(__name__)
 
 
 class AttentionBackendName(StrEnum):
@@ -664,7 +667,7 @@ class TEAttentionBackend(AttentionBackend):
             self.head_dim,
             num_gqa_groups=self.n_kv_heads,
             attention_dropout=self.dropout_p,
-            attn_mask_type="causal",
+            # attn_mask_type="causal",  # see forward pass
             window_size=(self.window_size[0], 0),  # be explicit about causal mask
             qkv_format="bshd",
             softmax_scale=self.scale,
@@ -697,15 +700,20 @@ class TEAttentionBackend(AttentionBackend):
         load_balancer: RingAttentionLoadBalancerType,
         head_stride: int = 1,
     ):
-        if load_balancer != RingAttentionLoadBalancerType.zig_zag:
-            raise RuntimeError(f"'{self.__class__.__name__}' only supports zig-zag load balancing")
+        if load_balancer == RingAttentionLoadBalancerType.zig_zag:
+            cp_comm_type = "p2p"
+        elif load_balancer == RingAttentionLoadBalancerType.ulysses:
+            cp_comm_type = "a2a"
+        else:
+            raise RuntimeError(f"'{self.__class__.__name__}' does not support {load_balancer=}")
+
         super().apply_cp(cp_mesh, load_balancer, head_stride=head_stride)
         self.te_attn.set_context_parallel_group(
             cp_group=cp_mesh.get_group(),
             cp_global_ranks=dist.get_process_group_ranks(cp_mesh.get_group()),
             cp_stream=torch.cuda.default_stream(),
             #  cp_stream=get_or_init_stream("cp"),  # this doesn't seem to help
-            cp_comm_type="p2p",
+            cp_comm_type=cp_comm_type,
         )
 
     def forward(
@@ -728,6 +736,7 @@ class TEAttentionBackend(AttentionBackend):
         if isinstance(qkv, torch.Tensor):
             raise RuntimeError(f"'{self.__class__.__name__}' doesn't support packed QKV")
 
+        attn_mask_type = "causal"
         if any(
             opt is not None
             for opt in (
@@ -739,15 +748,15 @@ class TEAttentionBackend(AttentionBackend):
                 max_doc_len_k,
             )
         ):
-            raise RuntimeError(
-                f"'{self.__class__.__name__}' doesn't currently support intra-document masking"
-            )
+            # NOTE: TE will throw an error internally if a padding mask is used with CP
+            attn_mask_type = "padding_causal"
 
         q, k, v = qkv
         return self.te_attn(
             q,
             k,
             v,
+            attn_mask_type=attn_mask_type,
             cu_seqlens_q=cu_doc_lens if cu_doc_lens is not None else cu_doc_lens_q,
             cu_seqlens_kv=cu_doc_lens if cu_doc_lens is not None else cu_doc_lens_k,
             max_seqlen_q=max_doc_len if max_doc_len is not None else max_doc_len_q,

@@ -411,7 +411,7 @@ def build_config(
 def launch(config: ExperimentConfig):
     log.info(config)
     assert config.launch is not None
-    config.launch.launch(follow=True, launch_timeout=5 * 60)
+    config.launch.launch(follow=True, launch_timeout=5 * 60, slack_notifications=False)
 
 
 def launch_prep(config: ExperimentConfig):

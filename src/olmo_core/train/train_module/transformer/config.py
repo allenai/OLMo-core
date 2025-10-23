@@ -205,6 +205,14 @@ class TransformerContextParallelConfig(ContextParallelConfig):
             head_stride=head_stride,
         )
 
+    @classmethod
+    def ulysses(cls, degree: int, head_stride: int = 1) -> "TransformerContextParallelConfig":
+        return cls(
+            degree=degree,
+            load_balancer=RingAttentionLoadBalancerType.ulysses,
+            head_stride=head_stride,
+        )
+
 
 @dataclass
 class TransformerExpertParallelConfig(ExpertParallelConfig):

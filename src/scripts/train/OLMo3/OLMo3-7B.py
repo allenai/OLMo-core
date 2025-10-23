@@ -10,7 +10,12 @@ from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import Duration, TrainerConfig
-from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
+from olmo_core.train.callbacks import (
+    CheckpointerCallback,
+    CometCallback,
+    MonkeyPatcherCallback,
+    WandBCallback,
+)
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
@@ -87,6 +92,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 save_async=False,
             ),
         )
+        .with_callback("monkey_patcher", MonkeyPatcherCallback())
         .with_callback(
             "comet",
             CometCallback(
