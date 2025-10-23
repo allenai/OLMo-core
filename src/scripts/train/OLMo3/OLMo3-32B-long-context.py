@@ -26,7 +26,7 @@ from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConf
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
     CheckpointerCallback,
-    CometCallback,
+    MonkeyPatcherCallback,
     ProfilerCallback,
     SlackNotifierCallback,
     WandBCallback,
@@ -116,6 +116,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "profiler",
             ProfilerCallback(enabled=False, skip_first=3, wait=10, warmup=2, active=3, repeat=1),
         )
+        .with_callback("monkey_patcher", MonkeyPatcherCallback())
         .with_callback(
             "checkpointer",
             CheckpointerCallback(
@@ -126,23 +127,13 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             ),
         )
         .with_callback(
-            "comet",
-            CometCallback(
-                name=run_name,
-                workspace="ai2",
-                project="olmo3",
-                enabled=False,
-                cancel_check_interval=cancel_check_interval,
-            ),
-        )
-        .with_callback(
             "wandb",
             WandBCallback(
                 name=run_name,
                 group=common.run_name,
                 entity="ai2-llm",
                 project="olmo3",
-                enabled=True,
+                enabled=False,
                 cancel_check_interval=cancel_check_interval,
             ),
         )
