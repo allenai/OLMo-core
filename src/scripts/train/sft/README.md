@@ -27,8 +27,6 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
             --max_seq_length 16384
     ```
 
-    *Until these two PRs: [1](https://github.com/allenai/open-instruct/pull/765) and [2](https://github.com/allenai/open-instruct/pull/749) are merged, you need to check out the branch `tyler/olmocore-tokenization-bug-fix-label-mask`*
-
     *Be careful with your choice of chat template!* It is highly recommended to use the `olmo` chat template for tokenization. Olmo-core uses `[eos]` tokens to find document boundaries, and the `olmo` chat template uses a single `eos` token to mark the end of a conversation, enabling document packing to work correctly.
 
     > TIP: Using `uv` you can install gantry on your machine with `uv tool install beaker-gantry`.
