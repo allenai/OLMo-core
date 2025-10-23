@@ -551,6 +551,7 @@ class SequentialScheduler(Scheduler):
 class WSDS(Scheduler):
     """
     Warmup–Stable–Decay—Simplified (WSD‑S) scheduler for continual pretraining.
+    Reference: https://arxiv.org/abs/2410.05192
     """
 
     period_lengths: List[int] = field(default_factory=list)

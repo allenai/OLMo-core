@@ -40,7 +40,6 @@ class ListCheckpointerCallback(CheckpointerCallback):
         super().__post_init__()
         if not self.save_steps:
             raise ValueError("'save_steps' must be provided (list of step indices to checkpoint).")
-        # store as a set
         self._save_steps_set = {int(s) for s in self.save_steps}
 
     def post_train_batch(self):
