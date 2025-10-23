@@ -705,7 +705,7 @@ def follow_experiment(
                 line = line_bytes.decode(errors="ignore")
                 if line.endswith("\n"):
                     line = line[:-1]
-                    queue.put(line)
+                queue.put(line)
         except Exception as e:
             queue.put(e)
         finally:
