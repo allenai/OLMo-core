@@ -3,7 +3,7 @@ import tempfile
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import torch
 import torch.distributed as dist
