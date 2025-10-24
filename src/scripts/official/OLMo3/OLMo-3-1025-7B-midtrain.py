@@ -19,6 +19,7 @@ from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.transformer import (
     TransformerConfig,
 )
+from olmo_core.nn.transformer.config import TransformerActivationCheckpointingMode
 from olmo_core.optim import LinearWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.script_utils import ExperimentConfig, main
 from olmo_core.train import Duration, TrainerConfig
@@ -29,11 +30,13 @@ from olmo_core.train.callbacks import (
     MonkeyPatcherCallback,
     WandBCallback,
 )
+from olmo_core.train.common import LoadStrategy
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
+from olmo_core.train.train_module.transformer.config import TransformerActivationCheckpointingConfig
 
 DEFAULT_SEQUENCE_LENGTH = 8192
 GLOBAL_BATCH_SIZE = 2**21  # ~2M tokens
@@ -93,7 +96,10 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
         ),
-        ac_config=None,  ##  TODO
+        ac_config=TransformerActivationCheckpointingConfig(
+            mode=TransformerActivationCheckpointingMode.selected_modules,
+            modules=["blocks.*.feed_forward"],
+        ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
@@ -107,6 +113,8 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         TrainerConfig(
             save_folder=opts.save_folder,
             save_overwrite=True,
+            load_path=load_path,
+            load_strategy=LoadStrategy.always,
             load_trainer_state=False,
             load_optim_state=True,
             max_duration=Duration.tokens(MAX_TOKENS),
