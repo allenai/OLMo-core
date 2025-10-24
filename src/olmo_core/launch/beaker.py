@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import logging
 import os
+import re
 import sys
 import tempfile
 import textwrap
@@ -571,6 +572,8 @@ class BeakerLaunchConfig(Config):
         entrypoint: Optional[str] = None,
         slack_notifications: Optional[bool] = None,
         launch_timeout: Optional[int] = None,
+        step_timeout: Optional[int] = None,
+        step_soft_timeout: Optional[int] = None,
     ) -> Experiment:
         """
         Launch a Beaker experiment using this config.
@@ -627,6 +630,8 @@ class BeakerLaunchConfig(Config):
                 experiment,
                 slack_webhook_url=slack_webhook_url,
                 launch_timeout=launch_timeout,
+                step_timeout=step_timeout,
+                step_soft_timeout=step_soft_timeout,
             )
         except KeyboardInterrupt:
             log.warning("Caught keyboard interrupt...")
@@ -642,12 +647,18 @@ class BeakerLaunchConfig(Config):
         return experiment
 
 
+# Regex for detecting training (and eval) steps in logs.
+_STEP_REGEX = re.compile(r"\[olmo_core\..+\]\s+\[.*step\=\d+.*\]")
+
+
 def follow_experiment(
     beaker: Beaker,
     experiment: Experiment,
     tail: bool = False,
     slack_webhook_url: Optional[str] = None,
     launch_timeout: Optional[int] = None,
+    step_timeout: Optional[int] = None,
+    step_soft_timeout: Optional[int] = None,
 ):
     start_time = time.monotonic()
 
@@ -717,30 +728,56 @@ def follow_experiment(
     # Stream logs...
     log.info("Showing logs:")
     print()
-    last_event = time.monotonic()
+    first_step_detected = False
+    start_time = time.monotonic()
+    last_step_time = 0.0
     last_inactivity_warning = 0.0
     while True:
         try:
             result = queue.get(timeout=1.0)
-            last_event = time.monotonic()
             if result is sentinel:
                 break
             elif isinstance(result, Exception):
                 raise result
             else:
+                assert isinstance(result, str)
+                if (
+                    step_timeout is not None or step_soft_timeout is not None
+                ) and _STEP_REGEX.search(result) is not None:
+                    first_step_detected = True
+                    last_step_time = time.monotonic()
                 print(result)
         except Empty:
             cur_time = time.monotonic()
-            # Warn if no logs in the past 10 minutes and we haven't already warned in the last hour.
+
+            # If (a) we've detected training steps already or (b) the run has been up for over 30 min,
+            # then we warn if we haven't detected new steps with the past `step_soft_timeout` seconds.
+            # But we only send a warning at most once per hour.
             if (
                 slack_webhook_url is not None
-                and (cur_time - last_event) > 600
+                and step_soft_timeout is not None
+                and (first_step_detected or (cur_time - start_time) > max(step_soft_timeout, 1800))
+                and (cur_time - last_step_time) > step_soft_timeout
                 and (cur_time - last_inactivity_warning) > 3600
             ):
                 _send_slack_notification_for_event(
                     beaker, experiment, "inactive", slack_webhook_url
                 )
                 last_inactivity_warning = cur_time
+
+            # If (a) we've detected training steps already or (b) the run has been up for over 60 min,
+            # then we kill the job if we haven't detected new steps with the past `step_timeout` seconds.
+            if (
+                step_timeout is not None
+                and (first_step_detected or (cur_time - start_time) > max(step_timeout, 3600))
+                and (cur_time - last_step_time) > step_timeout
+            ):
+                beaker.experiment.stop(experiment)
+                raise TimeoutError(
+                    f"No training steps detected within {step_timeout} seconds. "
+                    f"Experiment has been stopped: {beaker.experiment.url(experiment)}"
+                )
+
     print()
     log.info("End logs")
 
