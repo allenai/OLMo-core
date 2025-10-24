@@ -61,9 +61,9 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} gs://ai2-llm/checkpoints/OLMo25/step23
     olmo3_spec = importlib.util.spec_from_file_location(
         "OLMo3-7B", Path(__file__).parent / "OLMo3-7B.py"
     )
-    assert (
-        olmo3_spec is not None and olmo3_spec.loader is not None
-    ), "Failed to load OLMo3-7B module"
+    assert olmo3_spec is not None and olmo3_spec.loader is not None, (
+        "Failed to load OLMo3-7B module"
+    )
     olmo3_module = importlib.util.module_from_spec(olmo3_spec)
     assert olmo3_module is not None, "Failed to create OLMo3-7B module"
     sys.modules["OLMo3-7B"] = olmo3_module

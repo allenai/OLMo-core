@@ -8,7 +8,7 @@ from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
 from olmo_core.internal.experiment import CommonComponents, build_config, main
 from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
+from olmo_core.optim import HalfCosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
 from olmo_core.train.train_module import (
@@ -18,7 +18,10 @@ from olmo_core.train.train_module import (
 )
 
 SEQUENCE_LENGTH = 8 * 1024
-GLOBAL_BATCH_SIZE = 4 * 1024 * 1024
+GLOBAL_BATCH_SIZE = 4 * 1024 * 1024  # ~4M
+
+# OLMo3-7B-second-half.py train OLMo3 ai2/augusta-google-1 --launch.num_nodes=64 --launch.workspace=ai2/OLMo_3 \
+#   --dataset.mix=OLMo-mix-0625 --data_loader.num_workers=8
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
@@ -35,6 +38,10 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         gpus = {CLUSTER_TO_GPU_TYPE.get(c, "unknown") for c in common.launch.clusters}
         if all("B200" in g for g in gpus):
             rank_microbatch_size *= 2
+
+    # Scheduler settings from the first half
+    original_warmup_steps = 2000
+    original_max_steps = int(5e12) // GLOBAL_BATCH_SIZE
 
     return TransformerTrainModuleConfig(
         rank_microbatch_size=rank_microbatch_size,
@@ -57,7 +64,9 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
-        scheduler=CosWithWarmup(warmup_steps=2000),
+        scheduler=HalfCosWithWarmup(  # Scheduler updated to extend lr from where we left off.
+            warmup_steps=original_max_steps // 2 + original_warmup_steps // 2
+        ),
     )
 
 
@@ -74,10 +83,10 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         TrainerConfig(
             save_folder=f"gs://ai2-llm/checkpoints/{common.run_name}/",
             save_overwrite=True,
-            metrics_collect_interval=10,
+            metrics_collect_interval=50,
             cancel_check_interval=cancel_check_interval,
-            max_duration=Duration.tokens(int(5e12)),
-            hard_stop=Duration.tokens(int(4e12)),
+            max_duration=Duration.tokens(int(7e12)),  # Changed from 5T -> 7T
+            hard_stop=Duration.epochs(1),
         )
         .with_callback(
             "checkpointer",
