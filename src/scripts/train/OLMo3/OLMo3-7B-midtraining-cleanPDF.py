@@ -33,7 +33,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         cluster=cli_context.cluster,
         root_dir=root_dir,
         workspace="ai2/olmo-3-microanneals",
-        num_nodes=4,
+        num_nodes=16,
         nccl_debug=True,
         # override priority from the CLI eg `--launch.priority=high`
     )
@@ -58,7 +58,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             source_list=source_list,
             requested_tokens=MAX_TOKENS,
             global_batch_size=GLOBAL_BATCH_SIZE,
-            processes=4,
+            processes=16,
             seed=SEED,
         ),
         tokenizer=tokenizer_config,
