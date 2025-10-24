@@ -9,7 +9,7 @@ from olmo_core.config import DType
 from olmo_core.data import NumpyDataLoaderConfig, NumpyPackedFSLDatasetConfig, TokenizerConfig
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
-from olmo_core.io import join_path
+from olmo_core.io import dir_is_empty, join_path
 from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.rope import YaRNRoPEScalingConfig
 from olmo_core.nn.transformer import TransformerConfig
@@ -23,6 +23,7 @@ from olmo_core.train.callbacks import (
     MonkeyPatcherCallback,
     WandBCallback,
 )
+from olmo_core.train.common import LoadStrategy
 from olmo_core.train.train_module import (
     TransformerContextParallelConfig,
     TransformerDataParallelConfig,
@@ -86,7 +87,7 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
             shard_degree=1,
         ),
         cp_config=TransformerContextParallelConfig.llama3(degree=8, head_stride=4),
-        ac_config=None,  ## TODO
+        ac_config=None,
         float8_config=Float8Config(
             enabled=True,
             ao=AOFloat8LinearConfig(
@@ -99,10 +100,18 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         max_grad_norm=1.0,
     )
 
+    load_path = "gs://ai2-llm/checkpoints/allysone/anneal-round5-100B-olmo25_7b-anneal-6T-decon-sparkle-motion-8730626c/step47684"
+    if load_path and dir_is_empty(load_path):
+        raise FileNotFoundError(f"{load_path=} was provided, but the directory is empty.")
+
     trainer_config = (
         TrainerConfig(
             save_folder=opts.save_folder,
             save_overwrite=True,
+            load_path=load_path,
+            load_strategy=LoadStrategy.always,
+            load_trainer_state=False,
+            load_optim_state=True,
             metrics_collect_interval=10,
             cancel_check_interval=10,
             max_duration=Duration.tokens(int(5e12)),  # Originally scheduled for 5T

@@ -15,6 +15,7 @@ from olmo_core.data import (
 )
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
+from olmo_core.io import dir_is_empty
 from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.transformer import (
     TransformerConfig,
@@ -31,6 +32,7 @@ from olmo_core.train.callbacks import (
     MonkeyPatcherCallback,
     WandBCallback,
 )
+from olmo_core.train.common import LoadStrategy
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
@@ -96,10 +98,18 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         max_grad_norm=1.0,
     )
 
+    load_path = "gs://ai2-llm/checkpoints/OLMo25/step596047/"
+    if load_path and dir_is_empty(load_path):
+        raise FileNotFoundError(f"{load_path=} was provided, but the directory is empty.")
+
     trainer_config = (
         TrainerConfig(
             save_folder=opts.save_folder,
             save_overwrite=True,
+            load_path=load_path,
+            load_strategy=LoadStrategy.always,
+            load_trainer_state=True,
+            load_optim_state=True,
             metrics_collect_interval=10,
             cancel_check_interval=10,
             max_duration=Duration.tokens(int(7e12)),  # Changed from 5T -> 7T
