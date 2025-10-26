@@ -203,7 +203,7 @@ class Checkpointer:
 
         state_dict = train_module.state_dict_to_load(metadata)
         # if we have keys to ignore, remove them
-        if keys_to_ignore:
+        if keys_to_ignore and "/step0" in dir:
             log.info(f"Filtering {len(state_dict['model'])} model keys down to ignore these keys: {keys_to_ignore}")
             keys_to_ignore = [re.compile(key) for key in keys_to_ignore]
             state_dict['model'] = {
@@ -226,7 +226,7 @@ class Checkpointer:
             pre_download=is_url(dir) and self.pre_download,
             work_dir=self.work_dir,
             thread_count=self.load_thread_count,
-            allow_partial_load=(keys_to_ignore is not None), # only if we're ignoring things on purpose!
+            allow_partial_load=(keys_to_ignore is not None and "/step0" in dir), # only if we're ignoring things on purpose!
         )
         train_module.state_dict_load_opts.strict = (keys_to_ignore is None)
         train_module.load_state_dict(state_dict)
