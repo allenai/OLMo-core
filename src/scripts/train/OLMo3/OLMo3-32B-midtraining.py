@@ -50,7 +50,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
 
     train_module_config: TransformerTrainModuleConfig = cookbook.configure_train_module(
         max_sequence_length=SEQ_LENGTH,
-        rank_microbatch_size=SEQ_LENGTH * 2,
+        rank_microbatch_size=SEQ_LENGTH,
         learning_rate=LR,
         scheduler=LinearWithWarmup(units=SchedulerUnits.steps, warmup=0, alpha_f=0.0),
         activation_memory_budget=0.5,
