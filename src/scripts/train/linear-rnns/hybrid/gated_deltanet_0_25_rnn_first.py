@@ -61,7 +61,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     config.block.n_heads = 16
 
     # RNN first, 1:3 ratio (1 RNN for every 3 ATTN)
-    config.block.fla_hybrid_attention_indices = [i for i in range(n_layers) if i % 4 != 0]
+    config.block.fla_hybrid_attention_indices = [i for i in range(16) if i % 4 != 0]
 
     # We need to set attention properties because it will be used!
     #  config.block.attention.qk_norm = None
