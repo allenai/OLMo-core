@@ -100,7 +100,8 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         max_grad_norm=1.0,
     )
 
-    load_path = "gs://ai2-llm/checkpoints/allysone/anneal-round5-100B-olmo25_7b-anneal-6T-decon-sparkle-motion-8730626c/step47684"
+    # load_path = "gs://ai2-llm/checkpoints/allysone/anneal-round5-100B-olmo25_7b-anneal-6T-decon-sparkle-motion-8730626c/step47684"
+    load_path = "https://olmo-checkpoints.org/ai2-llm/Olmo-3-1025-7B/stage2/step47684/"
     if load_path and dir_is_empty(load_path):
         raise FileNotFoundError(f"{load_path=} was provided, but the directory is empty.")
 
