@@ -12,6 +12,8 @@ from olmo_core.optim.scheduler import LinearWithWarmup, SchedulerUnits
 from olmo_core.train import Duration
 from olmo_core.train.train_module import TransformerTrainModuleConfig
 
+from olmo_core.nn.attention import SlidingWindowAttentionConfig
+
 SEQ_LENGTH = 8192
 GLOBAL_BATCH_SIZE = 2**22  # ~2M tokens
 MAX_TOKENS = 100_000_000_000  # 100B
