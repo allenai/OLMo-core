@@ -13,7 +13,7 @@ from olmo_core.train import Duration
 from olmo_core.train.train_module import TransformerTrainModuleConfig
 
 SEQ_LENGTH = 8192
-GLOBAL_BATCH_SIZE = 2**21  # ~2M tokens
+GLOBAL_BATCH_SIZE = 2**22  # ~2M tokens
 MAX_TOKENS = 100_000_000_000  # 100B
 LR = 0.00020712352850360292 #TO BE UPDATED
 SEED = 1337
