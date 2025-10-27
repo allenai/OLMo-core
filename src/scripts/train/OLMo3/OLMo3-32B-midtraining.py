@@ -40,7 +40,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
 
     tokenizer_config = TokenizerConfig.dolma2()
     # model_config = TransformerConfig.olmo3_7B(vocab_size=tokenizer_config.padded_vocab_size())
-    model_config = TransformerConfig.olmo2_32B(vocab_size=common.tokenizer.padded_vocab_size())
+    model_config = TransformerConfig.olmo2_32B(vocab_size=tokenizer_config.padded_vocab_size())
     model_config.block.attention.sliding_window = SlidingWindowAttentionConfig(
         force_full_attention_on_first_layer=False,
         force_full_attention_on_last_layer=True,
