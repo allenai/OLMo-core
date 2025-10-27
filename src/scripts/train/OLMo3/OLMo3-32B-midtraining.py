@@ -54,6 +54,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         learning_rate=LR,
         scheduler=LinearWithWarmup(units=SchedulerUnits.steps, warmup=0, alpha_f=0.0),
         activation_memory_budget=0.5,
+        dp_shard_degree=64,
     )
 
     source_list = SourceMixtureList.from_yaml(
