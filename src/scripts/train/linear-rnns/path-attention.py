@@ -41,7 +41,7 @@ SAVE_INTERVAL = 1000
 EVAL_INTERVAL = 1000
 
 # Reduce per-device batch size to save on memory.
-MICROBATCH_DISCOUNT = 1
+MICROBATCH_DISCOUNT = 16
 
 # Use this to change whether the job is preemptible or not.
 PREEMPTIBLE = True
@@ -76,7 +76,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         gpus = {CLUSTER_TO_GPU_TYPE.get(c, "unknown") for c in common.launch.clusters}
         if all("B200" in g for g in gpus):
             rank_microbatch_size *= 2
-    
+
     # Added because FLA models seem to use more memory than transformers.
     rank_microbatch_size = int(rank_microbatch_size // MICROBATCH_DISCOUNT)
 
