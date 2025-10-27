@@ -5,11 +5,14 @@ Launch experiments on `Beaker <https://beaker.org>`_.
 import hashlib
 import logging
 import os
+import re
 import tempfile
 import time
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
+from queue import Empty, Queue
+from threading import Thread
 from typing import List, Literal, Optional, Set, Tuple
 
 import requests
@@ -536,6 +539,8 @@ class BeakerLaunchConfig(Config):
         entrypoint: Optional[str] = None,
         slack_notifications: Optional[bool] = None,
         launch_timeout: Optional[int] = None,
+        step_timeout: Optional[int] = None,
+        step_soft_timeout: Optional[int] = None,
     ) -> Experiment:
         """
         Launch a Beaker experiment using this config.
@@ -591,6 +596,8 @@ class BeakerLaunchConfig(Config):
                 experiment,
                 slack_webhook_url=slack_webhook_url,
                 launch_timeout=launch_timeout,
+                step_timeout=step_timeout,
+                step_soft_timeout=step_soft_timeout,
             )
         except KeyboardInterrupt:
             log.warning("Caught keyboard interrupt...")
@@ -606,12 +613,18 @@ class BeakerLaunchConfig(Config):
         return experiment
 
 
+# Regex for detecting training (and eval) steps in logs.
+_STEP_REGEX = re.compile(r"\[olmo_core\..+\]\s+\[.*step\=\d+.*\]")
+
+
 def follow_experiment(
     beaker: Beaker,
     experiment: Experiment,
     tail: bool = False,
     slack_webhook_url: Optional[str] = None,
     launch_timeout: Optional[int] = None,
+    step_timeout: Optional[int] = None,
+    step_soft_timeout: Optional[int] = None,
 ):
     start_time = time.monotonic()
 
@@ -655,18 +668,82 @@ def follow_experiment(
     if slack_webhook_url is not None:
         _send_slack_notification_for_event(beaker, experiment, "launched", slack_webhook_url)
 
+    queue: Queue = Queue()
+    sentinel = object()
+
+    def fill_queue():
+        assert job is not None
+        try:
+            for line_bytes in beaker.job.follow(
+                job,
+                include_timestamps=False,
+                since=None if not tail else timedelta(seconds=10),
+            ):
+                line = line_bytes.decode(errors="ignore")
+                if line.endswith("\n"):
+                    line = line[:-1]
+                queue.put(line)
+        except Exception as e:
+            queue.put(e)
+        finally:
+            queue.put(sentinel)
+
+    thread = Thread(target=fill_queue, daemon=True)
+    thread.start()
+
     # Stream logs...
     log.info("Showing logs:")
     print()
-    for line_bytes in beaker.job.follow(
-        job,
-        include_timestamps=False,
-        since=None if not tail else timedelta(seconds=10),
-    ):
-        line = line_bytes.decode(errors="ignore")
-        if line.endswith("\n"):
-            line = line[:-1]
-        print(line)
+    first_step_detected = False
+    start_time = time.monotonic()
+    last_step_time = 0.0
+    last_inactivity_warning = 0.0
+    while True:
+        try:
+            result = queue.get(timeout=1.0)
+            if result is sentinel:
+                break
+            elif isinstance(result, Exception):
+                raise result
+            else:
+                assert isinstance(result, str)
+                if (
+                    step_timeout is not None or step_soft_timeout is not None
+                ) and _STEP_REGEX.search(result) is not None:
+                    first_step_detected = True
+                    last_step_time = time.monotonic()
+                print(result)
+        except Empty:
+            cur_time = time.monotonic()
+
+            # If (a) we've detected training steps already or (b) the run has been up for over 30 min,
+            # then we warn if we haven't detected new steps within the past `step_soft_timeout` seconds.
+            # But we only send a warning at most once per hour.
+            if (
+                slack_webhook_url is not None
+                and step_soft_timeout is not None
+                and (first_step_detected or (cur_time - start_time) > max(step_soft_timeout, 1800))
+                and (cur_time - last_step_time) > step_soft_timeout
+                and (cur_time - last_inactivity_warning) > 3600
+            ):
+                _send_slack_notification_for_event(
+                    beaker, experiment, "inactive", slack_webhook_url
+                )
+                last_inactivity_warning = cur_time
+
+            # If (a) we've detected training steps already or (b) the run has been up for over 60 min,
+            # then we kill the job if we haven't detected new steps within the past `step_timeout` seconds.
+            if (
+                step_timeout is not None
+                and (first_step_detected or (cur_time - start_time) > max(step_timeout, 3600))
+                and (cur_time - last_step_time) > step_timeout
+            ):
+                beaker.experiment.stop(experiment)
+                raise TimeoutError(
+                    f"No training steps detected within {step_timeout} seconds. "
+                    f"Experiment has been stopped: {beaker.experiment.url(experiment)}"
+                )
+
     print()
     log.info("End logs")
 
@@ -696,7 +773,7 @@ def follow_experiment(
 def _send_slack_notification_for_event(
     beaker: Beaker,
     experiment: Experiment,
-    event: Literal["launched", "succeeded", "failed"],
+    event: Literal["launched", "succeeded", "failed", "inactive"],
     webhook_url: str,
 ):
     workload_name = experiment.full_name
@@ -708,6 +785,8 @@ def _send_slack_notification_for_event(
         text = f":check-failed: Run <{workload_url}|*{workload_name}*> failed!"
     elif event == "succeeded":
         text = f":check: Run <{workload_url}|*{workload_name}*> succeeded!"
+    elif event == "inactive":
+        text = f":warning: Run <{workload_url}|*{workload_name}*> appears to be stuck!"
     else:
         raise ValueError(f"Unknown event: {event}")
 
