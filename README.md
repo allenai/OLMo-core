@@ -62,19 +62,20 @@ If the published images do not work for your use-case for any of the above reaso
 ## Official training scripts
 
 Official training scripts for released models can be found in [`src/scripts/official/`](https://github.com/allenai/OLMo-core/tree/main/src/scripts/official).
+
 These scripts are meant to be launched with ``torchrun``, or with OLMo-core's Beaker launch CLI if you have access to Beaker.
 
 For example:
 
 ```bash
-torchrun --nproc-per-node=8 src/scripts/official/OLMo-2-0325-32B-train.py \
+torchrun --nproc-per-node=8 src/scripts/official/OLMo2/OLMo-2-0325-32B-train.py \
   --save-folder=/path/to/save/checkpoints
 ```
 
 You can override most configuration options from the command-line. For example, to override the learning rate you could launch the script like this:
 
 ```bash
-torchrun --nproc-per-node=8 src/scripts/train/OLMo-2-0325-32B-train.py \
+torchrun --nproc-per-node=8 src/scripts/official/OLMo2/OLMo-2-0325-32B-train.py \
   --save-folder=/path/to/save/checkpoints \
   --train_module.optim.lr=6e-3
 ```
@@ -82,7 +83,7 @@ torchrun --nproc-per-node=8 src/scripts/train/OLMo-2-0325-32B-train.py \
 To continue annealing from a checkpoint, we use a separate script which can be launched like this:
 
 ```bash
-torchrun --nproc-per-node=8 src/scripts/train/OLMo-2-0325-32B-anneal.py \
+torchrun --nproc-per-node=8 src/scripts/official/OLMo2/OLMo-2-0325-32B-anneal.py \
   --save-folder=/path/to/save/checkpoints \
   --checkpoint=https://olmo-checkpoints.org/ai2-llm/peteish32/step721901
 ```
