@@ -11,7 +11,7 @@ from olmo_core.distributed.checkpoint import (
     load_model_and_optim_state,
     save_model_and_optim_state,
 )
-from olmo_core.nn.parametrization import ParametrizationScalingStrategy, WidthHyperParam
+from olmo_core.nn.parametrization import MupScalingStrategy, WidthHyperParam
 from olmo_core.optim import AdamWConfig, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.testing import DEVICES
 from olmo_core.utils import cuda_sync_debug_mode
@@ -219,7 +219,7 @@ def test_adamw_parametrization_unchanged_weight_decay(optim_config_cls):
             WidthHyperParam.hidden_size: 3,
             WidthHyperParam.head_dim: 2,
         },
-        scaling_strategy=ParametrizationScalingStrategy.constant_inputs,
+        scaling_strategy=MupScalingStrategy.constant_inputs,
     )
     assert parametrization_config.optimizer.coupled_weight_decay
 

@@ -27,7 +27,7 @@ from .functional import (
     l2_normalize,
 )
 from .layer_norm import LayerNormConfig
-from .parametrization import ParametrizationBase, ParametrizationConfig, WidthHyperParam
+from .parametrization import ParametrizationBase, ParametrizationConfig
 
 __all__ = [
     "LMHeadType",
@@ -178,8 +178,13 @@ class LMHead(nn.Module):
         self.parametrizations: Dict[str, ParametrizationBase] = {}
         if parametrization:
             self.parametrizations["w_out.weight"] = parametrization.build(
-                {WidthHyperParam.d_model}, None
+                input_dim=self.w_out.weight.shape[1], output_dim=self.w_out.weight.shape[0]
             )
+            if layer_norm is not None:
+                assert self.norm is not None
+                self.parametrizations["norm.weight"] = parametrization.build(
+                    input_dim=1, output_dim=self.norm.weight.shape[0]
+                )
         self._d_model = d_model
         self._vocab_size = vocab_size
         self._loss_implementation = loss_implementation

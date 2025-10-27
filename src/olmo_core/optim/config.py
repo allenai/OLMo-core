@@ -184,13 +184,13 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
                 ] = defaultdict(list)
                 for name in go.params:
                     lr = ParametrizationBase.scale_lr(
-                        named_parametrizations.get(name), go.opts.get("lr", initial_lr)
+                        named_parametrizations[name], go.opts.get("lr", initial_lr)
                     )
 
                     if parametrization_optimizer_type.coupled_weight_decay:
                         assert default_weight_decay is not None
                         weight_decay = ParametrizationBase.scale_coupled_wd(
-                            named_parametrizations.get(name),
+                            named_parametrizations[name],
                             go.opts.get("weight_decay", default_weight_decay),
                         )
                     else:

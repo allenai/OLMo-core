@@ -9,9 +9,9 @@ from olmo_core.internal.model_ladder import RunDuration, main
 from olmo_core.io import join_path
 from olmo_core.model_ladder import ModelLadder, ModelSize
 from olmo_core.nn.parametrization import (
+    MupScalingStrategy,
     ParametrizationConfig,
     ParametrizationOptimizerType,
-    ParametrizationScalingStrategy,
 )
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig, OptimConfig, OptimGroupOverride
@@ -78,7 +78,7 @@ class BaselineModelLadder(ModelLadder):
         )
         parametrization_config = ParametrizationConfig(
             ParametrizationOptimizerType.adam_coupled_wd,
-            scaling_strategy=ParametrizationScalingStrategy.constant_inputs,
+            scaling_strategy=MupScalingStrategy.constant_inputs,
             width_scalings=parametrization_width_scalings,
         )
 

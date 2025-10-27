@@ -21,7 +21,7 @@ from ..feed_forward import FeedForwardConfig, FeedForwardType
 from ..layer_norm import LayerNormConfig, LayerNormType
 from ..lm_head import LMHeadConfig, LMHeadType
 from ..moe import MoEConfig, MoERouterConfig, MoEType
-from ..parametrization import ParametrizationConfig, WidthHyperParam
+from ..parametrization import ParametrizationConfig
 from ..rope import RoPEConfig, RoPEScalingConfig, RoPEType
 from .init import InitMethod
 
@@ -257,58 +257,6 @@ class TransformerBlockConfig(Config):
         ) - self.feed_forward_moe.num_active_params(d_model)
         return num_params - num_inactive_params
 
-    def get_parametrization_width_scalings(
-        self, base_block: "TransformerBlockConfig", d_model: int, base_d_model: int
-    ) -> Dict[WidthHyperParam, float]:
-        if self.feed_forward:
-            if base_block.feed_forward is None:
-                raise ValueError("Feed forward config is missing in m")
-
-            hidden_size = self.feed_forward.hidden_size
-            base_hidden_size = base_block.feed_forward.hidden_size
-
-        if self.feed_forward_moe:
-            if base_block.feed_forward_moe is None:
-                raise ValueError(
-                    "Cannot get parametrization width scalings between MoE and non-MoE models"
-                )
-
-            hidden_size = self.feed_forward_moe.hidden_size
-            base_hidden_size = base_block.feed_forward_moe.hidden_size
-        else:
-            raise ValueError("Model has no feed forward layer")
-
-        width_scalings = {
-            WidthHyperParam.d_model: d_model / base_d_model,
-            WidthHyperParam.hidden_size: hidden_size / base_hidden_size,
-            WidthHyperParam.n_heads: self.attention.n_heads / base_block.attention.n_heads,
-            WidthHyperParam.n_kv_heads: (self.attention.n_kv_heads or self.attention.n_heads)
-            / (base_block.attention.n_kv_heads or base_block.attention.n_heads),
-            WidthHyperParam.head_dim: (d_model / self.attention.n_heads)
-            / (base_d_model / base_block.attention.n_heads),
-        }
-
-        if self.feed_forward_moe:
-            assert base_block.feed_forward_moe is not None
-            width_scalings[WidthHyperParam.num_experts] = (
-                self.feed_forward_moe.num_experts / base_block.feed_forward_moe.num_experts
-            )
-
-            if self.feed_forward_moe.shared_mlp is not None:
-                if base_block.feed_forward_moe.shared_mlp is None:
-                    raise ValueError("Model has shared mlp but base model does not.")
-
-                width_scalings[WidthHyperParam.shared_expert_hidden_size] = (
-                    self.feed_forward_moe.shared_mlp.hidden_size
-                    / base_block.feed_forward_moe.shared_mlp.hidden_size
-                )
-
-        return {
-            hyper_param: scaling
-            for hyper_param, scaling in width_scalings.items()
-            if not math.isclose(scaling, 1)
-        }
-
 
 @dataclass
 class TransformerConfig(Config):
@@ -332,6 +280,7 @@ class TransformerConfig(Config):
     init_std: float = 0.02
     freeze_params: Optional[List[str]] = None
     block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None
+    parametrization: Optional[ParametrizationConfig] = None
 
     def build(
         self,
@@ -364,8 +313,12 @@ class TransformerConfig(Config):
                 init_seed=self.init_seed,
                 init_std=self.init_std,
                 block_overrides=self.block_overrides,
+                parametrization=self.parametrization,
             )
         elif self.name == TransformerType.normalized:
+            if self.parametrization is not None:
+                raise NotImplementedError("NormalizedTransformer does not support parametrization.")
+
             model = NormalizedTransformer(
                 d_model=self.d_model,
                 vocab_size=self.vocab_size,
@@ -392,6 +345,7 @@ class TransformerConfig(Config):
                 init_seed=self.init_seed,
                 init_std=self.init_std,
                 block_overrides=self.block_overrides,
+                parametrization=self.parametrization,
             )
         else:
             raise NotImplementedError(self.name)
@@ -501,61 +455,6 @@ class TransformerConfig(Config):
         flop_per_token = 6 * self.num_non_embedding_params + 12 * n * h * q * t
 
         return flop_per_token
-
-    def get_parametrization_width_scalings(
-        self, base_model: "TransformerConfig"
-    ) -> Dict[WidthHyperParam, float]:
-        if self.block.feed_forward:
-            if base_model.block.feed_forward is None:
-                raise ValueError("Feed forward config is missing in m")
-
-            hidden_size = self.block.feed_forward.hidden_size
-            base_hidden_size = base_model.block.feed_forward.hidden_size
-        elif self.block.feed_forward_moe:
-            if base_model.block.feed_forward_moe is None:
-                raise ValueError(
-                    "Cannot get parametrization width scalings between MoE and non-MoE models"
-                )
-
-            hidden_size = self.block.feed_forward_moe.hidden_size
-            base_hidden_size = base_model.block.feed_forward_moe.hidden_size
-        else:
-            raise ValueError("Model has no feed forward layer")
-
-        width_scalings = {
-            WidthHyperParam.d_model: self.d_model / base_model.d_model,
-            WidthHyperParam.hidden_size: hidden_size / base_hidden_size,
-            WidthHyperParam.n_heads: self.block.attention.n_heads
-            / base_model.block.attention.n_heads,
-            WidthHyperParam.n_kv_heads: (
-                self.block.attention.n_kv_heads or self.block.attention.n_heads
-            )
-            / (base_model.block.attention.n_kv_heads or base_model.block.attention.n_heads),
-            WidthHyperParam.head_dim: (self.d_model / self.block.attention.n_heads)
-            / (base_model.d_model / base_model.block.attention.n_heads),
-        }
-
-        if self.block.feed_forward_moe:
-            assert base_model.block.feed_forward_moe is not None
-            width_scalings[WidthHyperParam.num_experts] = (
-                self.block.feed_forward_moe.num_experts
-                / base_model.block.feed_forward_moe.num_experts
-            )
-
-            if self.block.feed_forward_moe.shared_mlp is not None:
-                if base_model.block.feed_forward_moe.shared_mlp is None:
-                    raise ValueError("Model has shared mlp but base model does not.")
-
-                width_scalings[WidthHyperParam.shared_expert_hidden_size] = (
-                    self.block.feed_forward_moe.shared_mlp.hidden_size
-                    / base_model.block.feed_forward_moe.shared_mlp.hidden_size
-                )
-
-        return {
-            hyper_param: scaling
-            for hyper_param, scaling in width_scalings.items()
-            if not math.isclose(scaling, 1)
-        }
 
     @classmethod
     def olmo2_30M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
@@ -1098,6 +997,7 @@ class TransformerConfig(Config):
         hidden_size_multiple_of: int = 256,
         hidden_size_multiplier: Optional[float] = None,
         fused_ops: bool = False,
+        softmax_scale: Optional[float] = None,
         use_flash: Optional[bool] = None,
         attn_backend: Optional[AttentionBackendName] = None,
         sliding_window: Optional[SlidingWindowAttentionConfig] = None,
@@ -1133,6 +1033,7 @@ class TransformerConfig(Config):
             eps=layer_norm_eps,
             bias=False,
             dtype=dtype,
+            parametrization=parametrization,
         )
 
         # Decide on attention/rope implementations.
@@ -1159,6 +1060,7 @@ class TransformerConfig(Config):
                 bias=False,
                 rope=RoPEConfig(name=rope_type, theta=rope_theta, scaling=rope_scaling),
                 qk_norm=layer_norm if qk_norm else None,
+                softmax_scale=softmax_scale,
                 use_flash=use_flash,
                 backend=attn_backend,
                 sliding_window=sliding_window,
@@ -1190,6 +1092,7 @@ class TransformerConfig(Config):
             ),
             dtype=dtype,
             block_overrides=block_overrides,
+            parametrization=parametrization,
             **kwargs,
         )
 
@@ -1244,7 +1147,6 @@ class TransformerConfig(Config):
                     hidden_size=shared_expert_hidden_size,
                     bias=False,
                     parametrization=parametrization,
-                    hidden_size_parametrization_hyper_param=WidthHyperParam.shared_expert_hidden_size,
                 ),
                 lb_loss_weight=lb_loss_weight,
                 z_loss_weight=z_loss_weight,

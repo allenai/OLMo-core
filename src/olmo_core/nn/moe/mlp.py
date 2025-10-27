@@ -14,11 +14,7 @@ from torch.distributed.tensor import Placement, Shard, distribute_tensor
 from olmo_core.distributed.parallel import get_device_mesh_info
 from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.nn.parametrization import (
-    ParametrizationBase,
-    ParametrizationConfig,
-    WidthHyperParam,
-)
+from olmo_core.nn.parametrization import ParametrizationBase, ParametrizationConfig
 from olmo_core.utils import log_once
 
 try:
@@ -171,19 +167,16 @@ class MoEMLP(MoEMLPBase):
 
         if parametrization:
             self.parametrizations["w1"] = parametrization.build(
-                {WidthHyperParam.d_model},
-                {WidthHyperParam.hidden_size},
-                # {ParametrizationHyperParam.hidden_size, ParametrizationHyperParam.num_experts},
+                input_dim=self.w1.shape[0],
+                output_dim=self.w1.shape[1],
             )
             self.parametrizations["w2"] = parametrization.build(
-                {WidthHyperParam.hidden_size},
-                {WidthHyperParam.d_model},
-                # {ParametrizationHyperParam.d_model, ParametrizationHyperParam.num_experts},
+                input_dim=self.w2.shape[0],
+                output_dim=self.w2.shape[1],
             )
             self.parametrizations["w3"] = parametrization.build(
-                {WidthHyperParam.d_model},
-                {WidthHyperParam.hidden_size},
-                # {ParametrizationHyperParam.hidden_size, ParametrizationHyperParam.num_experts},
+                input_dim=self.w3.shape[0],
+                output_dim=self.w3.shape[1],
             )
 
         self.reset_parameters()
@@ -276,19 +269,16 @@ class DroplessMoEMLP(MoEMLPBase):
 
         if parametrization:
             self.parametrizations["w1"] = parametrization.build(
-                {WidthHyperParam.d_model},
-                {WidthHyperParam.hidden_size},
-                # {ParametrizationHyperParam.hidden_size, ParametrizationHyperParam.num_experts},
+                input_dim=self.w1.shape[0],
+                output_dim=self.w1.shape[1],
             )
             self.parametrizations["w2"] = parametrization.build(
-                {WidthHyperParam.hidden_size},
-                {WidthHyperParam.d_model},
-                # {ParametrizationHyperParam.d_model, ParametrizationHyperParam.num_experts},
+                input_dim=self.w2.shape[0],
+                output_dim=self.w2.shape[1],
             )
             self.parametrizations["w3"] = parametrization.build(
-                {WidthHyperParam.d_model},
-                {WidthHyperParam.hidden_size},
-                # {ParametrizationHyperParam.hidden_size, ParametrizationHyperParam.num_experts},
+                input_dim=self.w3.shape[0],
+                output_dim=self.w3.shape[1],
             )
 
         self._gmm = gmm

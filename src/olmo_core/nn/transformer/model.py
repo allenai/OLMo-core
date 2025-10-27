@@ -27,6 +27,8 @@ from olmo_core.distributed.utils import hide_from_torch, unhide_from_torch
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
+from olmo_core.nn.parametrization.config import ParametrizationConfig
+from olmo_core.nn.parametrization.parametrization import ParametrizationBase
 from olmo_core.utils import get_default_device, mark_dynamic, move_to_device
 
 from ..attention import (
@@ -97,6 +99,7 @@ class Transformer(nn.Module):
         init_seed: int = 0,
         init_std: float = 0.02,
         block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None,
+        parametrization: Optional[ParametrizationConfig] = None,
     ):
         super().__init__()
 
@@ -126,6 +129,13 @@ class Transformer(nn.Module):
         self.lm_head = lm_head.build(
             d_model=d_model, vocab_size=vocab_size, init_device=init_device
         )
+
+        self.parametrizations: Dict[str, ParametrizationBase] = {}
+        if parametrization:
+            self.parametrizations["embeddings.weight"] = parametrization.build(
+                input_dim=self.embeddings.weight.shape[1],
+                output_dim=self.embeddings.weight.shape[0],
+            )
 
         self.init_device = init_device
         self.init_method = InitMethod(init_method)

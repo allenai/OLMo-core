@@ -8,11 +8,7 @@ from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
 from olmo_core.internal.experiment import CommonComponents, main
-from olmo_core.nn.parametrization import (
-    ParametrizationConfig,
-    ParametrizationScalingStrategy,
-    WidthHyperParam,
-)
+from olmo_core.nn.parametrization import MupScalingStrategy, ParametrizationConfig
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.nn.transformer.config import TransformerBlockType
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
@@ -53,7 +49,7 @@ def build_model_config(
         fused_ops=False,
         use_flash=False,
         parametrization=ParametrizationConfig(
-            scaling_strategy=ParametrizationScalingStrategy.constant_inputs,
+            scaling_strategy=MupScalingStrategy.constant_inputs,
             width_scalings={
                 WidthHyperParam.d_model: D_MODEL_MULTIPLIER,
                 WidthHyperParam.hidden_size: D_MODEL_MULTIPLIER,

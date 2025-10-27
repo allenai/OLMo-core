@@ -31,7 +31,7 @@ from olmo_core.nn.conversion.state_mapping import StateType, TemplatePlaceholder
 from olmo_core.nn.hf.checkpoint import save_hf_model
 from olmo_core.nn.hf.convert import get_converter_to_hf
 from olmo_core.nn.moe.moe import MoEType
-from olmo_core.nn.parametrization import ParametrizationScalingStrategy
+from olmo_core.nn.parametrization import MupScalingStrategy
 from olmo_core.nn.transformer.config import TransformerBlockConfig, TransformerConfig
 from olmo_core.nn.transformer.model import Transformer
 from olmo_core.utils import prepare_cli_environment
@@ -138,19 +138,18 @@ def convert_checkpoint_to_hf(
     if (
         model_config.block.attention.parametrization is not None
         and model_config.block.attention.parametrization.scaling_strategy
-        != ParametrizationScalingStrategy.constant_inputs
+        != MupScalingStrategy.constant_inputs
     ):
         raise NotImplementedError(
-            f"Conversion of parametrization models to HF is not yet supported for parametrization models not using {ParametrizationScalingStrategy.constant_inputs} strategy."
+            f"Conversion of parametrization models to HF is not yet supported for parametrization models not using {MupScalingStrategy.constant_inputs} strategy."
         )
     if (
         (feed_forward := model_config.block.feed_forward) is not None
         and feed_forward.parametrization is not None
-        and feed_forward.parametrization.scaling_strategy
-        != ParametrizationScalingStrategy.constant_inputs
+        and feed_forward.parametrization.scaling_strategy != MupScalingStrategy.constant_inputs
     ):
         raise NotImplementedError(
-            f"Conversion of parametrization models to HF is not yet supported for parametrization models not using {ParametrizationScalingStrategy.constant_inputs} strategy."
+            f"Conversion of parametrization models to HF is not yet supported for parametrization models not using {MupScalingStrategy.constant_inputs} strategy."
         )
 
     model = model_config.build(init_device="meta")

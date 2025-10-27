@@ -1,6 +1,5 @@
-import math
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Dict, Optional, Set
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Optional
 
 from ...config import Config, StrEnum
 from ...exceptions import OLMoConfigurationError
@@ -9,9 +8,8 @@ if TYPE_CHECKING:
     from .parametrization import ParametrizationBase
 
 __all__ = [
-    "WidthHyperParam",
     "ParametrizationOptimizerType",
-    "ParametrizationScalingStrategy",
+    "MupScalingStrategy",
     "ParametrizationConfig",
 ]
 
@@ -32,20 +30,6 @@ class ParametrizationType(StrEnum):
     """
 
 
-class WidthHyperParam(StrEnum):
-    """
-    Hyperparameters that the parametrization logic treats as affecting model ``width``.
-    """
-
-    d_model = "d_model"
-    hidden_size = "hidden_size"
-    n_heads = "n_heads"
-    n_kv_heads = "n_kv_heads"
-    head_dim = "head_dim"
-    num_experts = "num_experts"
-    shared_expert_hidden_size = "shared_expert_hidden_size"
-
-
 class ParametrizationOptimizerType(StrEnum):
     """
     Optimizer variants that require distinct parametrization scaling behaviour.
@@ -63,9 +47,9 @@ class ParametrizationOptimizerType(StrEnum):
         return self in (ParametrizationOptimizerType.adam_coupled_wd,)
 
 
-class ParametrizationScalingStrategy(StrEnum):
+class MupScalingStrategy(StrEnum):
     """
-    Strategies for how much the parametrization scales initialization, outputs, and learning rates of wider or
+    Strategies for how much MuP scales initialization, outputs, and learning rates of wider or
     narrower models.
 
     The parametrization allows trading off output scaling against initialization and learning-rate adjustments.
@@ -100,7 +84,7 @@ class ParametrizationConfig(Config):
     Configuration for applying the parametrization to scale initialization, outputs, and learning rates.
     """
 
-    name = ParametrizationType.default
+    name: ParametrizationType = ParametrizationType.default
     """
     The type of parametrization.
     """
@@ -111,65 +95,16 @@ class ParametrizationConfig(Config):
     other factors.
     """
 
-    scaling_strategy: ParametrizationScalingStrategy = (
-        ParametrizationScalingStrategy.constant_inputs
-    )
+    scaling_strategy: Optional[MupScalingStrategy] = None
     """
     Controls how the parametrization balances scaling adjustments across inputs, initialization, and learning rates.
     This is possible due to Lemma J.1 of the Maximal Update Parametrization paper.
     """
 
-    width_hyperparams: Dict[WidthHyperParam, float] = field(default_factory=dict)
-    """
-    The values of width-related hyperparameters.
-    """
-
-    base_model_width_hyperparams: Optional[Dict[WidthHyperParam, float]] = None
-    """
-    The values of width-related hyperparameters in a base model, if there is a base model. This is used to
-    determine scaling factors relative to the base model.
-    """
-
-    def _validate_hyperparameters(self, width_hyperparams: Dict[WidthHyperParam, float]):
-        if (
-            WidthHyperParam.d_model in width_hyperparams
-            and WidthHyperParam.hidden_size not in width_hyperparams
-        ):
-            raise OLMoConfigurationError(
-                f"Parametrization scaling for {WidthHyperParam.d_model} is provided but scaling for {WidthHyperParam.hidden_size} is not. "
-                f"This implies that {WidthHyperParam.d_model} is being varied but {WidthHyperParam.hidden_size} is not. "
-                f"This is likely a mistake. If this is intentional, set scaling for {WidthHyperParam.hidden_size} to 1."
-            )
-
-        if (
-            WidthHyperParam.n_heads in width_hyperparams
-            and WidthHyperParam.n_kv_heads not in width_hyperparams
-        ):
-            raise OLMoConfigurationError(
-                f"Parametrization scaling for {WidthHyperParam.n_heads} is provided but scaling for {WidthHyperParam.n_kv_heads} is not. "
-                f"This implies that {WidthHyperParam.n_heads} is being varied but {WidthHyperParam.n_kv_heads} is not. "
-                f"This may be a mistake. If this is intentional, set scaling for {WidthHyperParam.n_kv_heads} to 1."
-            )
-
-        head_dim_scaling = width_hyperparams.get(WidthHyperParam.head_dim, 1.0)
-        computed_head_dim_scaling = width_hyperparams.get(
-            WidthHyperParam.d_model, 1.0
-        ) / width_hyperparams.get(WidthHyperParam.n_heads, 1.0)
-        if not math.isclose(head_dim_scaling, computed_head_dim_scaling):
-            raise OLMoConfigurationError(
-                f"Parametrization scaling {head_dim_scaling} for {WidthHyperParam.head_dim} does not match estimate "
-                f"{computed_head_dim_scaling} computed from {WidthHyperParam.d_model} and {WidthHyperParam.n_heads}."
-            )
-
-    def __post_init__(self):
-        self._validate_hyperparameters(self.width_hyperparams)
-        if self.base_model_width_hyperparams is not None:
-            self._validate_hyperparameters(self.base_model_width_hyperparams)
-
     def build(
         self,
-        input_dim_hyperparams: Optional[Set[WidthHyperParam]],
-        output_dim_hyperparams: Optional[Set[WidthHyperParam]],
+        input_dim: int,
+        output_dim: int,
     ) -> "ParametrizationBase":
         """
         Build a `Parametrization` helper for applying scaling to parameters with the given input and output
@@ -184,17 +119,26 @@ class ParametrizationConfig(Config):
         :param output_dim_hyperparams: A set of hyperparameters that affect the output dimension of
             the parameter.
         """
-        from .parametrization import MaximalUpdateParametrization
+        from .parametrization import (
+            MaximalUpdateParametrization,
+            StandardParametrization,
+        )
 
         kwargs = self.as_dict(exclude_none=True, recurse=False)
 
-        input_scaling = self._get_scaling(input_dim_hyperparams) if input_dim_hyperparams else 1.0
-        output_scaling = (
-            self._get_scaling(output_dim_hyperparams) if output_dim_hyperparams else 1.0
+        kwargs.pop("name")
+        kwargs.update(
+            input_dim=input_dim,
+            output_dim=output_dim,
         )
 
         try:
-            return MaximalUpdateParametrization(**kwargs)
+            if self.name == ParametrizationType.default:
+                return StandardParametrization(**kwargs)
+            elif self.name == ParametrizationType.mup:
+                return MaximalUpdateParametrization(**kwargs)
+            else:
+                raise NotImplementedError(self.name)
         except TypeError as e:
             raise OLMoConfigurationError(
                 f"invalid options for {self.__class__.__name__}, {e}"

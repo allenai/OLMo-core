@@ -7,9 +7,9 @@ from olmo_core.nn.attention import Attention, AttentionConfig
 from olmo_core.nn.feed_forward import FeedForwardConfig
 from olmo_core.nn.lm_head import LMHeadConfig
 from olmo_core.nn.parametrization import (
+    MupScalingStrategy,
     ParametrizationConfig,
     ParametrizationOptimizerType,
-    ParametrizationScalingStrategy,
     WidthHyperParam,
 )
 from olmo_core.nn.transformer.config import TransformerBlockType, TransformerConfig
@@ -70,7 +70,7 @@ def assert_distributions_close(
 
 @pytest.mark.parametrize(
     "parametrization_scaling_strategy",
-    [pytest.param(scaling_strategy) for scaling_strategy in ParametrizationScalingStrategy],
+    [pytest.param(scaling_strategy) for scaling_strategy in MupScalingStrategy],
 )
 def test_parametrization_no_width_scaling_same_init(parametrization_scaling_strategy):
     model_config = get_transformer_config()
@@ -101,7 +101,7 @@ def test_parametrization_no_init_scaling_same_init():
 
     parametrization_config = ParametrizationConfig(
         optimizer=ParametrizationOptimizerType.adam,
-        scaling_strategy=ParametrizationScalingStrategy.constant_init_std,
+        scaling_strategy=MupScalingStrategy.constant_init_std,
         width_scalings={
             WidthHyperParam.d_model: d_model_multiplier,
             WidthHyperParam.head_dim: d_model_multiplier,
@@ -125,7 +125,7 @@ def test_parametrization_no_init_scaling_same_init():
 
 @pytest.mark.parametrize(
     "parametrization_scaling_strategy",
-    [pytest.param(scaling_strategy) for scaling_strategy in ParametrizationScalingStrategy],
+    [pytest.param(scaling_strategy) for scaling_strategy in MupScalingStrategy],
 )
 def test_feed_forward_parametrization_scaling_init_std(parametrization_scaling_strategy):
     d_model_multiplier = 16
@@ -169,7 +169,7 @@ def test_feed_forward_parametrization_scaling_init_std(parametrization_scaling_s
 
 @pytest.mark.parametrize(
     "parametrization_scaling_strategy",
-    [pytest.param(scaling_strategy) for scaling_strategy in ParametrizationScalingStrategy],
+    [pytest.param(scaling_strategy) for scaling_strategy in MupScalingStrategy],
 )
 def test_attention_parametrization_scaling_init_std(parametrization_scaling_strategy):
     d_model_multiplier = 16
@@ -214,7 +214,7 @@ def test_attention_parametrization_scaling_init_std(parametrization_scaling_stra
 
 @pytest.mark.parametrize(
     "parametrization_scaling_strategy",
-    [pytest.param(scaling_strategy) for scaling_strategy in ParametrizationScalingStrategy],
+    [pytest.param(scaling_strategy) for scaling_strategy in MupScalingStrategy],
 )
 def test_lm_head_parametrization_scaling_init_std(parametrization_scaling_strategy):
     d_model_multiplier = 16

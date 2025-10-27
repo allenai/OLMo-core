@@ -1,9 +1,12 @@
 from dataclasses import dataclass
-from typing import Optional
+from typing import Dict, Optional
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from olmo_core.nn.parametrization.config import ParametrizationConfig
+from olmo_core.nn.parametrization.parametrization import ParametrizationBase
 
 from ..config import Config, DType, StrEnum
 from ..exceptions import OLMoConfigurationError
@@ -52,6 +55,7 @@ class LayerNormConfig(Config):
     bias: Optional[bool] = None
     full_precision: Optional[bool] = None
     dtype: Optional[DType] = None
+    parametrization: Optional[ParametrizationConfig] = None
 
     def num_params(self, size: int) -> int:
         """
@@ -79,7 +83,7 @@ class LayerNormConfig(Config):
         :param size: The size of the input along the dimension to be normalized.
         :param init_device: The device initialize the parameters on, e.g. "cpu", "meta".
         """
-        kwargs = self.as_dict(exclude_none=True)
+        kwargs = self.as_dict(exclude_none=True, recurse=False)
         kwargs.pop("name")
         if (dtype := kwargs.pop("dtype", None)) is not None:
             kwargs.update(dtype=dtype.as_pt())
@@ -128,6 +132,7 @@ class LayerNorm(nn.Module):
         full_precision: bool = True,
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
+        parametrization: Optional[ParametrizationConfig] = None,
     ):
         super().__init__()
         self.normalized_shape = (size,)
@@ -146,6 +151,17 @@ class LayerNorm(nn.Module):
         else:
             self.register_parameter("bias", None)
             self.register_parameter("weight", None)
+
+        if parametrization:
+            self.parametrizations: Dict[str, ParametrizationBase] = {}
+            self.parametrizations["weight"] = parametrization.build(
+                input_dim=1, output_dim=self.weight.shape[0]
+            )
+            if bias:
+                self.parametrizations["bias"] = parametrization.build(
+                    input_dim=1, output_dim=self.bias.shape[0]
+                )
+
         self.reset_parameters()
 
     def reset_parameters(self):

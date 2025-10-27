@@ -20,11 +20,7 @@ from olmo_core.nn.attention.kv_cache import KVCacheManager
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
 from ..layer_norm import LayerNorm, LayerNormConfig
-from ..parametrization import (
-    ParametrizationBase,
-    ParametrizationConfig,
-    WidthHyperParam,
-)
+from ..parametrization import ParametrizationBase, ParametrizationConfig
 from ..rope import (
     ComplexRotaryEmbedding,
     FusedRotaryEmbedding,
@@ -166,6 +162,7 @@ class AttentionConfig(Config):
     clip_qkv: Optional[float] = None
     qk_norm: Optional[LayerNormConfig] = None
     dropout: Optional[float] = None
+    softmax_scale: Optional[float] = None
     use_flash: Optional[bool] = None
     backend: Optional[AttentionBackendName] = None
     dtype: DType = DType.float32
@@ -362,16 +359,16 @@ class Attention(AttentionBase):
         self.parametrizations: Dict[str, ParametrizationBase] = {}
         if parametrization:
             self.parametrizations["w_q.weight"] = parametrization.build(
-                {WidthHyperParam.d_model}, {WidthHyperParam.d_model}
+                input_dim=self.w_q.weight.shape[1], output_dim=self.w_q.weight.shape[0]
             )
             self.parametrizations["w_k.weight"] = parametrization.build(
-                {WidthHyperParam.d_model}, {WidthHyperParam.n_kv_heads, WidthHyperParam.head_dim}
+                input_dim=self.w_k.weight.shape[1], output_dim=self.w_k.weight.shape[0]
             )
             self.parametrizations["w_v.weight"] = parametrization.build(
-                {WidthHyperParam.d_model}, {WidthHyperParam.n_kv_heads, WidthHyperParam.head_dim}
+                input_dim=self.w_v.weight.shape[1], output_dim=self.w_v.weight.shape[0]
             )
             self.parametrizations["w_out.weight"] = parametrization.build(
-                {WidthHyperParam.d_model}, {WidthHyperParam.d_model}
+                input_dim=self.w_out.weight.shape[1], output_dim=self.w_out.weight.shape[0]
             )
         self.clip_qkv = clip_qkv
         self.use_head_qk_norm = use_head_qk_norm
@@ -388,18 +385,25 @@ class Attention(AttentionBase):
                     size=self.n_kv_heads * self.head_dim, init_device=init_device
                 )
             if parametrization:
-                self.parametrizations["q_norm.weight"] = parametrization.build(None, None)
-                self.parametrizations["k_norm.weight"] = parametrization.build(None, None)
+                self.parametrizations["q_norm.weight"] = parametrization.build(
+                    input_dim=1, output_dim=self.q_norm.weight.shape[0]
+                )
+                self.parametrizations["k_norm.weight"] = parametrization.build(
+                    input_dim=1, output_dim=self.k_norm.weight.shape[0]
+                )
 
         if parametrization:
-            self.parametrizations["sdpa"] = parametrization.build({WidthHyperParam.head_dim}, None)
+            self.parametrizations["sdpa"] = parametrization.build(
+                input_dim=self.head_dim, output_dim=1
+            )
 
-            if (att_multiplier := self.parametrizations["sdpa"].attention_multiplier) is not None:
+            if (
+                softmax_scale_multiplier := self.parametrizations["sdpa"].softmax_scale_multiplier
+            ) is not None:
                 softmax_scale = (
-                    att_multiplier / math.sqrt(self.head_dim)
-                    if softmax_scale is None
-                    else att_multiplier * softmax_scale
+                    softmax_scale if softmax_scale is not None else 1.0 / math.sqrt(self.head_dim)
                 )
+                softmax_scale *= softmax_scale_multiplier
 
         self.rope: Optional[Union[RotaryEmbedding, ComplexRotaryEmbedding]] = None
         if rope is not None:
@@ -575,13 +579,6 @@ class Attention(AttentionBase):
                 pos_cos=pos_cos,
                 freqs_cis=freqs_cis,
             )
-
-        att_scale: Optional[float] = None
-        if (
-            "sdpa" in self.parametrizations
-            and (att_multiplier := self.parametrizations["sdpa"].attention_multiplier) is not None
-        ):
-            att_scale = att_multiplier / math.sqrt(self.head_dim)
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
         att = self.sdpa(

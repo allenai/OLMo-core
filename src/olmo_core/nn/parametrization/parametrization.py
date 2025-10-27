@@ -1,19 +1,12 @@
 import math
 from abc import abstractmethod
-from collections.abc import Set
-from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
 
 from ...config import StrEnum
-from .config import (
-    ParametrizationOptimizerType,
-    ParametrizationScalingStrategy,
-    ParametrizationType,
-    WidthHyperParam,
-)
+from .config import MupScalingStrategy, ParametrizationOptimizerType
 
 __all__ = ["ParametrizationBase"]
 
@@ -52,8 +45,16 @@ class ParametrizationBase:
     Base class for parametrization implementations.
     """
 
-    def __init__(self, *, optimizer: ParametrizationOptimizerType):
+    def __init__(
+        self,
+        *,
+        optimizer: ParametrizationOptimizerType,
+        input_dim: int,
+        output_dim: int,
+    ):
         self.optimizer = optimizer
+        self.input_dim = input_dim
+        self.output_dim = output_dim
 
     @property
     @abstractmethod
@@ -72,8 +73,19 @@ class ParametrizationBase:
 
     @property
     @abstractmethod
-    def attention_multiplier(self) -> Optional[float]:
+    def softmax_scale_multiplier(self) -> Optional[float]:
         pass
+
+    def set_base_dims(
+        self,
+        base_input_dim: Optional[int] = None,
+        base_output_dim: Optional[int] = None,
+    ) -> None:
+        """
+        Passes in the input and output dimensions of the base model's corresponding parameter,
+        which are used to compute scaling multipliers.
+        """
+        del base_input_dim, base_output_dim  # Default implementation does nothing.
 
     @classmethod
     def scale_input(
@@ -146,8 +158,23 @@ class ParametrizationBase:
 
         return named_parametrizations
 
+    @classmethod
+    def set_base_model_dims(cls, model: nn.Module, base_model: nn.Module) -> None:
+        named_parametrizations = cls.named_parametrizations(model)
+        base_named_parametrizations = cls.named_parametrizations(base_model)
 
-@dataclass
+        if named_parametrizations.keys() != base_named_parametrizations.keys():
+            raise ValueError("Model and base model do not have the same parametrization keys")
+
+        for key in named_parametrizations.keys():
+            parametrization = named_parametrizations[key]
+            base_parametrization = base_named_parametrizations[key]
+
+            parametrization.set_base_dims(
+                base_parametrization.input_dim, base_parametrization.output_dim
+            )
+
+
 class StandardParametrization(ParametrizationBase):
     """
     The standard parametrization, where no scaling is applied.
@@ -166,7 +193,7 @@ class StandardParametrization(ParametrizationBase):
         return None
 
     @property
-    def attention_multiplier(self) -> Optional[float]:
+    def softmax_scale_multiplier(self) -> Optional[float]:
         return None
 
 
@@ -178,28 +205,28 @@ class MaximalUpdateParametrization(ParametrizationBase):
     def __init__(
         self,
         *,
-        name: ParametrizationType,
         optimizer: ParametrizationOptimizerType,
-        scaling_strategy: ParametrizationScalingStrategy,
-        width_hyperparams: Dict[WidthHyperParam, float],
-        base_model_width_hyperparams: Optional[Dict[WidthHyperParam, float]],
-        input_dim_hyperparams: Optional[Set[WidthHyperParam]],
-        output_dim_hyperparams: Optional[Set[WidthHyperParam]],
+        scaling_strategy: MupScalingStrategy,
+        input_dim: int,
+        output_dim: int,
+        scaling_type: Optional[ParameterScalingType] = None,
     ):
-        super().__init__(
-            optimizer=optimizer,
-        )
-        self.name = name
+        super().__init__(optimizer=optimizer, input_dim=input_dim, output_dim=output_dim)
         self.scaling_strategy = scaling_strategy
-        self.width_hyperparams = width_hyperparams
-        self.base_model_width_hyperparams = base_model_width_hyperparams
-        self.input_dim_hyperparams = input_dim_hyperparams or set()
-        self.output_dim_hyperparams = output_dim_hyperparams or set()
-        self.input_scaling = self._get_scaling(self.input_dim_hyperparams)
-        self.output_scaling = self._get_scaling(self.output_dim_hyperparams)
-        self.scaling_type = self._get_scaling_type(
-            input_scaling=self.input_scaling, output_scaling=self.output_scaling
-        )
+        self.scaling_type_override = scaling_type
+
+        self.set_base_dims(base_input_dim=None, base_output_dim=None)
+
+    def set_base_dims(
+        self,
+        base_input_dim: Optional[int] = None,
+        base_output_dim: Optional[int] = None,
+    ) -> None:
+        base_input_dim = base_input_dim if base_input_dim is not None else 1
+        base_output_dim = base_output_dim if base_output_dim is not None else 1
+        self.input_dim_ratio = self.input_dim / base_input_dim
+        self.output_dim_ratio = self.output_dim / base_output_dim
+        self.scaling_type = self.scaling_type_override or self._get_scaling_type()
 
         input_multiplier, init_std_multiplier, lr_multiplier = self._get_parametrization_scalars()
         self._input_multiplier = (
@@ -209,24 +236,14 @@ class MaximalUpdateParametrization(ParametrizationBase):
             init_std_multiplier if not math.isclose(init_std_multiplier, 1.0) else None
         )
         self._lr_multiplier = lr_multiplier if not math.isclose(lr_multiplier, 1.0) else None
-        self._attention_multiplier = (
-            1 / self.input_scaling if not math.isclose(self.input_scaling, 1.0) else None
-        )
 
-    def _get_scaling(self, hyperparams: Set[WidthHyperParam]) -> float:
-        base_model_width_hyperparams = self.base_model_width_hyperparams or {}
-        scalings = [
-            self.width_hyperparams.get(hyperparam, 1.0)
-            / base_model_width_hyperparams.get(hyperparam, 1.0)
-            for hyperparam in hyperparams
-        ]
-        return math.prod(scalings)
+        # We want softmax scaling to be such that `softmax_scale * multiplier = sqrt(base_input_dim) / input_dim`.
+        # The normal softmax scale is `1 / sqrt(input_dim)`, so we have `multiplier = sqrt(base_input_dim / input_dim)`.
+        self._softmax_scale_multiplier = math.sqrt(base_input_dim / self.input_dim)
 
-    def _get_scaling_type(
-        self, input_scaling: float, output_scaling: float
-    ) -> ParameterScalingType:
-        scaling_input = not math.isclose(input_scaling, 1)
-        scaling_output = not math.isclose(output_scaling, 1)
+    def _get_scaling_type(self) -> ParameterScalingType:
+        scaling_input = not math.isclose(self.input_dim_ratio, 1)
+        scaling_output = not math.isclose(self.output_dim_ratio, 1)
 
         if scaling_input and scaling_output:
             return ParameterScalingType.scaling_input_output
@@ -249,26 +266,26 @@ class MaximalUpdateParametrization(ParametrizationBase):
         ] = {
             ParametrizationOptimizerType.adam: {
                 ParameterScalingType.scaling_input: (
-                    1.0 / self.input_scaling,
                     1.0,
-                    1.0,
+                    1.0 / self.input_dim_ratio,
+                    1.0 / self.input_dim_ratio,
                 ),
                 ParameterScalingType.scaling_input_output: (
                     1.0,
-                    1.0 / math.sqrt(self.input_scaling),
-                    1.0 / self.input_scaling,
+                    1.0 / math.sqrt(self.input_dim_ratio),
+                    1.0 / self.input_dim_ratio,
                 ),
             },
             ParametrizationOptimizerType.adam_coupled_wd: {
                 ParameterScalingType.scaling_input: (
-                    1.0 / self.input_scaling,
                     1.0,
-                    1.0,
+                    1.0 / self.input_dim_ratio,
+                    1.0 / self.input_dim_ratio,
                 ),
                 ParameterScalingType.scaling_input_output: (
                     1.0,
-                    1.0 / math.sqrt(self.input_scaling),
-                    1.0 / self.input_scaling,
+                    1.0 / math.sqrt(self.input_dim_ratio),
+                    1.0 / self.input_dim_ratio,
                 ),
             },
         }
@@ -285,17 +302,17 @@ class MaximalUpdateParametrization(ParametrizationBase):
             ParametrizationOptimizerType.adam,
             ParametrizationOptimizerType.adam_coupled_wd,
         )
-        if self.scaling_strategy == ParametrizationScalingStrategy.constant_inputs:
+        if self.scaling_strategy == MupScalingStrategy.constant_inputs:
             input_rescaling = 1 / input_multiplier
             init_std_rescaling = input_multiplier
             lr_rescaling = input_multiplier**2 if scale_lr_twice else input_multiplier
-        elif self.scaling_strategy == ParametrizationScalingStrategy.constant_init_std:
+        elif self.scaling_strategy == MupScalingStrategy.constant_init_std:
             input_rescaling = init_std_multiplier
             init_std_rescaling = 1 / init_std_multiplier
             lr_rescaling = (
                 (1 / init_std_multiplier) ** 2 if scale_lr_twice else 1 / init_std_multiplier
             )
-        elif self.scaling_strategy == ParametrizationScalingStrategy.constant_lr:
+        elif self.scaling_strategy == MupScalingStrategy.constant_lr:
             input_rescaling = lr_multiplier
             init_std_rescaling = 1 / lr_multiplier
             lr_rescaling = 1 / lr_multiplier
@@ -324,5 +341,5 @@ class MaximalUpdateParametrization(ParametrizationBase):
         return self._lr_multiplier
 
     @property
-    def attention_multiplier(self) -> Optional[float]:
-        return self._attention_multiplier
+    def softmax_scale_multiplier(self) -> Optional[float]:
+        return self._softmax_scale_multiplier

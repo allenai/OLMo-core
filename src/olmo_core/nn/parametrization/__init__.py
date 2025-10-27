@@ -1,15 +1,13 @@
 from .config import (
+    MupScalingStrategy,
     ParametrizationConfig,
     ParametrizationOptimizerType,
-    ParametrizationScalingStrategy,
-    WidthHyperParam,
 )
 from .parametrization import ParametrizationBase
 
 __all__ = [
     "ParametrizationOptimizerType",
-    "ParametrizationScalingStrategy",
+    "MupScalingStrategy",
     "ParametrizationConfig",
     "ParametrizationBase",
-    "WidthHyperParam",
 ]

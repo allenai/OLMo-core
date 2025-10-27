@@ -22,11 +22,7 @@ from olmo_core.distributed.utils import (
     unhide_from_torch,
 )
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.nn.parametrization import (
-    ParametrizationBase,
-    ParametrizationConfig,
-    WidthHyperParam,
-)
+from olmo_core.nn.parametrization import ParametrizationBase, ParametrizationConfig
 from olmo_core.utils import get_default_device
 
 from .loss import MoELoadBalancingLossGranularity, load_balancing_loss, router_z_loss
@@ -97,6 +93,7 @@ class MoERouterConfig(Config):
     bias_gamma: Optional[float] = None
     gating_function: MoERouterGatingFunction = MoERouterGatingFunction.softmax
     dtype: Optional[DType] = None
+    parametrization: Optional[ParametrizationConfig] = None
 
     def num_params(self, d_model: int, num_experts: int) -> int:
         """
@@ -556,7 +553,7 @@ class MoELinearRouter(MoERouter):
         self.parametrizations: Dict[str, ParametrizationBase] = {}
         if parametrization:
             self.parametrizations["weight"] = parametrization.build(
-                {WidthHyperParam.d_model}, {WidthHyperParam.num_experts}
+                input_dim=self.d_model, output_dim=self.num_experts
             )
 
         self.reset_parameters()

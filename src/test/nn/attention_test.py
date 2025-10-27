@@ -25,9 +25,9 @@ from olmo_core.nn.attention import (
 )
 from olmo_core.nn.layer_norm import LayerNormConfig
 from olmo_core.nn.parametrization import (
+    MupScalingStrategy,
     ParametrizationConfig,
     ParametrizationOptimizerType,
-    ParametrizationScalingStrategy,
 )
 from olmo_core.nn.rope import RoPEConfig, RoPEType
 from olmo_core.testing import (
@@ -1126,7 +1126,7 @@ def test_context_parallel_attention(load_balancer_type, head_stride: int, tmp_pa
 
 @pytest.mark.parametrize(
     "parametrization_scaling_strategy",
-    [pytest.param(scaling_strategy) for scaling_strategy in ParametrizationScalingStrategy],
+    [pytest.param(scaling_strategy) for scaling_strategy in MupScalingStrategy],
 )
 def test_attention_parametrization_no_width_scaling_same_output(parametrization_scaling_strategy):
     torch.random.manual_seed(0)
