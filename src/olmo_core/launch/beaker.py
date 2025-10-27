@@ -751,7 +751,7 @@ def follow_experiment(
             cur_time = time.monotonic()
 
             # If (a) we've detected training steps already or (b) the run has been up for over 30 min,
-            # then we warn if we haven't detected new steps with the past `step_soft_timeout` seconds.
+            # then we warn if we haven't detected new steps within the past `step_soft_timeout` seconds.
             # But we only send a warning at most once per hour.
             if (
                 slack_webhook_url is not None
@@ -766,7 +766,7 @@ def follow_experiment(
                 last_inactivity_warning = cur_time
 
             # If (a) we've detected training steps already or (b) the run has been up for over 60 min,
-            # then we kill the job if we haven't detected new steps with the past `step_timeout` seconds.
+            # then we kill the job if we haven't detected new steps within the past `step_timeout` seconds.
             if (
                 step_timeout is not None
                 and (first_step_detected or (cur_time - start_time) > max(step_timeout, 3600))
