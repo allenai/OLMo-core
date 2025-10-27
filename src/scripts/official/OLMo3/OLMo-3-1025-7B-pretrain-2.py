@@ -100,8 +100,9 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
 
     # load_path = "gs://ai2-llm/checkpoints/OLMo25/step596047/"
     load_path = "https://olmo-checkpoints.org/ai2-llm/Olmo-3-1025-7B/stage1/step596047/"
-    if load_path and dir_is_empty(load_path):
-        raise FileNotFoundError(f"{load_path=} was provided, but the directory is empty.")
+    # load_path = "r2://ai2-llm/Olmo-3-1025-7B/stage1/step596047/"
+    # if load_path and dir_is_empty(load_path):
+    #     raise FileNotFoundError(f"{load_path=} was provided, but the directory is empty.")
 
     trainer_config = (
         TrainerConfig(
