@@ -54,6 +54,7 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         attn_backend=AttentionBackendName.flash_2,
     )
 
+    # TODO: allow changing source mixture list base_dir
     source_list = SourceMixtureList.from_yaml(
         "src/olmo_core/data/source_mixtures/OLMo3-7B-midtraining.yaml"
     )
@@ -105,7 +106,8 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         max_grad_norm=1.0,
     )
 
-    load_path = "gs://ai2-llm/checkpoints/OLMo25/step1413814"
+    # load_path = "gs://ai2-llm/checkpoints/OLMo25/step1413814"
+    load_path = "https://olmo-checkpoints.org/ai2-llm/Olmo-3-1025-7B/stage1/step1413814/"
     if load_path and dir_is_empty(load_path):
         raise FileNotFoundError(f"{load_path=} was provided, but the directory is empty.")
 
