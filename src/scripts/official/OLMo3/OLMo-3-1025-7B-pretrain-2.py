@@ -20,6 +20,7 @@ from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.transformer import (
     TransformerConfig,
 )
+from olmo_core.nn.transformer.config import TransformerActivationCheckpointingMode
 from olmo_core.optim import HalfCosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.script_utils import ExperimentConfig, main
 from olmo_core.train import Duration, TrainerConfig
@@ -38,6 +39,7 @@ from olmo_core.train.train_module import (
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
+from olmo_core.train.train_module.transformer.config import TransformerActivationCheckpointingConfig
 
 DEFAULT_SEQUENCE_LENGTH = 8192
 GLOBAL_BATCH_SIZE = 8192 * 512  # ~4M tokens
@@ -92,6 +94,10 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
+        ),
+        ac_config=TransformerActivationCheckpointingConfig(  # TODO: remove after testing
+            mode=TransformerActivationCheckpointingMode.budget,
+            activation_memory_budget=0.25,
         ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
