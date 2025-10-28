@@ -2,6 +2,7 @@ import io
 import logging
 import os
 import pickle
+import random
 import re
 import shutil
 import time
@@ -511,8 +512,10 @@ def deserialize_from_tensor(data: torch.Tensor) -> Any:
 ######################
 
 
-def _wait_before_retry(attempt: int):
-    time.sleep(min(0.5 * 2**attempt, 3.0))
+def _wait_before_retry(attempt: int, jitter: float = 0.5):
+    base_delay = min(0.5 * 2**attempt, 3.0)
+    jittered_delay = base_delay * (1.0 + jitter * (2.0 * random.random() - 1.0))
+    time.sleep(max(0.0, jittered_delay))
 
 
 def _format_bytes(num: Union[int, float], suffix="B") -> str:
@@ -581,7 +584,13 @@ def _http_file_size(url: str) -> int:
     return int(content_length)
 
 
-@retriable()
+@retriable(
+    retry_condition=lambda exc: (
+        isinstance(exc, requests.exceptions.HTTPError)
+        and exc.response is not None
+        and exc.response.status_code == 502
+    ),
+)
 def _http_get_bytes_range(url: str, bytes_start: int, num_bytes: int) -> bytes:
     response = requests.get(
         url, headers={"Range": f"bytes={bytes_start}-{bytes_start + num_bytes - 1}"}
