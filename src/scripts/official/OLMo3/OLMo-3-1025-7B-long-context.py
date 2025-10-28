@@ -9,7 +9,7 @@ from olmo_core.config import DType
 from olmo_core.data import NumpyDataLoaderConfig, NumpyPackedFSLDatasetConfig, TokenizerConfig
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
-from olmo_core.io import dir_is_empty, join_path
+from olmo_core.io import join_path
 from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.rope import YaRNRoPEScalingConfig
 from olmo_core.nn.transformer import TransformerConfig
