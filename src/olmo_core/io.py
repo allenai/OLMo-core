@@ -512,10 +512,8 @@ def deserialize_from_tensor(data: torch.Tensor) -> Any:
 ######################
 
 
-def _wait_before_retry(attempt: int, jitter: float = 0.5):
-    base_delay = min(0.5 * 2**attempt, 3.0)
-    jittered_delay = base_delay * (1.0 + jitter * (2.0 * random.random() - 1.0))
-    time.sleep(max(0.0, jittered_delay))
+def _wait_before_retry(attempt: int):
+    time.sleep(min(0.5 * 2**attempt, 3.0))
 
 
 def _format_bytes(num: Union[int, float], suffix="B") -> str:
@@ -578,7 +576,7 @@ def retriable(
 def _http_file_size(url: str) -> int:
     response = requests.head(url, allow_redirects=True)
     content_length = response.headers.get("content-length")
-    assert content_length, (
+    assert content_length is not None, (
         f"No content-length header found for {url}. Headers: {dict(response.headers)}"
     )
     return int(content_length)
@@ -594,10 +592,6 @@ def _http_file_size(url: str) -> int:
 def _http_get_bytes_range(url: str, bytes_start: int, num_bytes: int) -> bytes:
     response = requests.get(
         url, headers={"Range": f"bytes={bytes_start}-{bytes_start + num_bytes - 1}"}
-    )
-    log.debug(
-        f"HTTP GET {url} (bytes={bytes_start}-{bytes_start + num_bytes - 1}): "
-        f"status={response.status_code}, headers={dict(response.headers)}"
     )
 
     if response.status_code == 404:
