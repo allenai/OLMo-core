@@ -120,12 +120,7 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         .with_callback("monkey_patcher", MonkeyPatcherCallback())
         .with_callback(
             "checkpointer",
-            CheckpointerCallback(
-                save_interval=1000,
-                ephemeral_save_interval=100,
-                save_async=False,
-                pre_download=True,  #  R2 backing https://olmo-checkpoints.org can be unreliable, so we pre-download the checkpoint
-            ),
+            CheckpointerCallback(save_interval=1000, ephemeral_save_interval=100, save_async=False),
         )
         .with_callback(
             "comet",
