@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from typing import Any, Dict, Sequence, Union
 
 import torch
@@ -155,3 +156,104 @@ class DataCollator:
             out["metadata"] = all_metadata
 
         return out
+
+
+@dataclass
+class ByteDataCollator(DataCollator):
+    def __call__(
+        self, items: Union[Sequence[Dict[str, Any]], Sequence[torch.Tensor]]
+    ) -> Dict[str, Any]:
+        batch = super().__call__(items)
+
+        all_original_input_ids = []
+        all_expanded_input_ids = []
+        all_patch_lengths = []
+        all_space_patch_lengths = []
+        all_bpe_merges = []
+
+        max_original_len = max(
+            len(x["original_input_ids"]) if isinstance(x, dict) and "original_input_ids" in x else math.nan for x in items
+        )
+        max_bpe_merges_len = max(
+            len(x["bpe_merges"]) if isinstance(x, dict) and "bpe_merges" in x else math.nan for x in items
+        )
+
+        for x in items:
+            original_input_ids = x.get("original_input_ids") if isinstance(x, dict) else None
+            expanded_input_ids = x.get("expanded_input_ids") if isinstance(x, dict) else None
+            patch_lengths = x.get("patch_lens") if isinstance(x, dict) else None
+            space_patch_lengths = x.get("space_patch_lens") if isinstance(x, dict) else None
+            bpe_merges = x.get("bpe_merges") if isinstance(x, dict) else None
+
+            if bpe_merges is not None:
+                assert isinstance(max_bpe_merges_len, int)
+                bpe_merges = F.pad(
+                    torch.tensor(bpe_merges, dtype=torch.long),
+                    (0, max_bpe_merges_len - len(bpe_merges)),
+                    value=-1,
+                )
+                all_bpe_merges.append(bpe_merges)
+
+            if expanded_input_ids is not None:
+                pad_shape = (
+                    (batch["input_ids"].shape[1] - len(expanded_input_ids), 0)
+                    if self.pad_direction == PaddingDirection.left
+                    else (0, batch["input_ids"].shape[1] - len(expanded_input_ids))
+                )
+
+                expanded_input_ids = F.pad(
+                    expanded_input_ids,
+                    pad_shape,
+                    mode="constant",
+                    value=self.pad_token_id,
+                )
+                all_expanded_input_ids.append(expanded_input_ids.to(dtype=torch.long))
+
+            if original_input_ids is not None:
+                # both or neither
+                assert patch_lengths is not None and space_patch_lengths is not None
+
+                max_original_len = int(max_original_len)
+
+                pad_shape = (
+                    (max_original_len - len(original_input_ids), 0)
+                    if self.pad_direction == PaddingDirection.left
+                    else (0, max_original_len - len(original_input_ids))
+                )
+
+                # Pad input IDs.
+                all_original_input_ids.append(
+                    F.pad(
+                        original_input_ids.to(dtype=torch.long),
+                        pad_shape,
+                        value=self.pad_token_id,
+                    )
+                )
+                # Pad byte lengths.
+                all_patch_lengths.append(
+                    F.pad(
+                        patch_lengths.to(dtype=torch.long),
+                        pad_shape,
+                        value=0,
+                    )
+                )
+                all_space_patch_lengths.append(
+                    F.pad(
+                        space_patch_lengths.to(dtype=torch.long),
+                        pad_shape,
+                        value=0,
+                    )
+                )
+
+        if all_original_input_ids:
+            batch["original_input_ids"] = torch.stack(all_original_input_ids, dim=0)
+        if all_expanded_input_ids:
+            batch["expanded_input_ids"] = torch.stack(all_expanded_input_ids, dim=0)
+        if all_patch_lengths:
+            batch["patch_lens"] = torch.stack(all_patch_lengths, dim=0)
+        if all_space_patch_lengths:
+            batch["space_patch_lens"] = torch.stack(all_space_patch_lengths, dim=0)
+        if all_bpe_merges:
+            batch["bpe_merges"] = torch.stack(all_bpe_merges, dim=0)
+
+        return batch

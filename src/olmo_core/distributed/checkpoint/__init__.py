@@ -39,6 +39,7 @@ import torch.nn as nn
 from rich.progress import track
 from torch.distributed.checkpoint.default_planner import DefaultSavePlanner
 from torch.distributed.checkpoint.metadata import Metadata, TensorStorageMetadata
+from torch.nn.modules.module import _IncompatibleKeys
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import StrEnum
@@ -293,13 +294,14 @@ def load_model_and_optim_state(
     optim: Optional[torch.optim.Optimizer] = None,
     *,
     process_group: Optional[dist.ProcessGroup] = None,
-    key_mapping: Optional[Dict[str, str]] = None,
+    key_mapping: Optional[Dict[str, str | None]] = None,
+    extend_key_mapping: Optional[Dict[str, str]] = None,
     pre_download: bool = False,
     work_dir: Optional[PathOrStr] = None,
     strict: bool = True,
     flatten_optimizer_state: bool = False,
     thread_count: Optional[int] = None,
-):
+) -> _IncompatibleKeys:
     """
     Load model and optimizer state in-place from a checkpoint saved via :func:`save_model_and_optim_state()`.
     This method is agnostic to the distributed topology in that it can load checkpoints saved with a different
@@ -351,6 +353,12 @@ def load_model_and_optim_state(
     )
     metadata = reader.read_metadata()
 
+    if extend_key_mapping is not None:
+        if key_mapping is None:
+            key_mapping = {}
+
+        key_mapping = key_mapping | {value: None for key, value in extend_key_mapping.items()}
+
     if key_mapping is not None:
         swap_param_keys(state_dict, key_mapping, metadata=metadata)
 
@@ -364,7 +372,11 @@ def load_model_and_optim_state(
     if key_mapping is not None:
         swap_param_keys(state_dict, key_mapping, reverse=True, quiet=True)
 
-    dist_cp_sd.set_model_state_dict(
+    if extend_key_mapping is not None:
+        for key, value in extend_key_mapping.items():
+            state_dict["model"][value] = state_dict["model"][key].clone()
+
+    incompatible_keys = dist_cp_sd.set_model_state_dict(
         model, state_dict["model"], options=dist_cp_sd.StateDictOptions(strict=strict)
     )
     gc_cuda()
@@ -379,6 +391,8 @@ def load_model_and_optim_state(
             ),
         )
         gc_cuda()
+
+    return incompatible_keys
 
 
 class UnshardStrategyType(StrEnum):
@@ -711,25 +725,28 @@ def _prepare_state_dict(
 
 def swap_param_keys(
     state_dict: Dict[str, Any],
-    key_mapping: Dict[str, str],
+    key_mapping: Dict[str, str | None],
     metadata: Optional[Metadata] = None,
     reverse: bool = False,
     quiet: bool = False,
 ):
     for current_key, original_key in key_mapping.items():
-        if metadata is not None and f"model.{original_key}" not in metadata.state_dict_metadata:
+        if metadata is not None and (original_key is not None and f"model.{original_key}" not in metadata.state_dict_metadata):
             continue
 
         if reverse:
             current_key, original_key = original_key, current_key
 
-        if current_key not in state_dict["model"]:
+        if current_key is None or current_key not in state_dict["model"]:
             continue
 
         if not quiet:
             log.info(f"Mapping current param '{current_key}' to '{original_key}' in checkpoint")
 
-        state_dict["model"][original_key] = state_dict["model"].pop(current_key)
+        value = state_dict["model"].pop(current_key)
+
+        if original_key is not None:
+            state_dict["model"][original_key] = value
 
         if "optim" not in state_dict:
             continue

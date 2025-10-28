@@ -1,7 +1,10 @@
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+import tempfile
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from pathlib import Path
+import json
 
 import torch
 import torch.distributed as dist
@@ -13,7 +16,9 @@ from olmo_core.data import (
     NumpyVSLDatasetConfig,
     TextDataLoaderBase,
     TokenizerConfig,
+    ByteTokenizerConfig,
 )
+from olmo_core.io import is_url, join_path, upload, normalize_path
 from olmo_core.data.utils import get_labels
 from olmo_core.distributed.utils import get_rank, get_world_size, is_distributed
 from olmo_core.eval import Evaluator
@@ -76,6 +81,10 @@ class EvaluatorCallback(Callback):
     log_interval: int = 5
     """
     How often to log eval progress to the console during an eval loop.
+    """
+    save_results: bool = False
+    """
+    Whether to dump the per-example results of the evaluation to a file.
     """
 
     def post_attach(self):
@@ -153,6 +162,34 @@ class EvaluatorCallback(Callback):
                 f"Finished {evaluator.name} evals in {time.monotonic() - start_time:.1f} seconds. Metrics:\n"
                 + "\n".join(metrics_str)
             )
+
+            if self.save_results and get_rank(self.trainer.dp_process_group) == 0:
+                eval_dir = join_path(self.trainer.save_folder, "evals")
+
+                if not is_url(eval_dir) and not Path(eval_dir).exists():
+                    Path(eval_dir).mkdir(parents=True, exist_ok=True)
+
+                eval_step_file = join_path(eval_dir, f"{evaluator.name}_{evaluator.label}_step_{self.trainer.training_progress.current_step}.json")  # type: ignore
+
+                data = {
+                    "examples": evaluator.task.samples,  # type: ignore
+                    "bpbs": evaluator.metric.bpbs,  # type: ignore
+                    "celosses": evaluator.metric.celosses,  # type: ignore
+                }
+
+                # adapated from olmo_core.distributed.checkpoint.filesystem._write_items
+                tmp_path = Path(
+                    tempfile.mktemp(suffix=".json", dir=None if is_url(eval_dir) else Path(eval_dir))
+                )
+                try:
+                    open(tmp_path, "w").write(json.dumps(data))
+
+                    if is_url(eval_step_file):
+                        upload(tmp_path, normalize_path(eval_step_file))
+                    else:
+                        tmp_path.rename(eval_step_file)
+                finally:
+                    tmp_path.unlink(missing_ok=True)
 
         # Sort by evaluator_times in ascending order
         sorted_evaluators = sorted(
@@ -293,6 +330,7 @@ class DownstreamEvaluator(Evaluator):
         tokenizer: "HFTokenizer",
         device: Optional[torch.device] = None,
         dp_process_group: Optional[dist.ProcessGroup] = None,
+        batch_kwargs: Optional[Dict[str, Any]] = None,
     ):
         from olmo_eval import ICLMetric, ICLMultiChoiceTaskDataset, build_task
 
@@ -369,6 +407,14 @@ class DownstreamEvaluator(Evaluator):
 
         super().__init__(name=name, batches=data_loader, device=device)
 
+        self.batch_kwargs = batch_kwargs or {}
+
+    def __iter__(self):
+        for batch in super().__iter__():
+            batch = batch | self.batch_kwargs
+
+            yield batch
+
     def update_metrics(
         self, batch: Dict[str, Any], ce_loss: Optional[torch.Tensor], logits: Optional[torch.Tensor]
     ) -> None:
@@ -396,7 +442,11 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
     eval_on_startup: bool = False
     cancel_after_first_eval: bool = False
     log_interval: int = 5
+    save_results: bool = False
     enabled: bool = True
+    batch_size: Optional[int] = None
+    names: Optional[List[str]] = None
+    batch_kwargs: Optional[List[Dict[str, Any]]] = None
 
     def build(self, trainer: "Trainer") -> Optional[Callback]:
         if not self.enabled:
@@ -404,28 +454,43 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
 
         from olmo_eval import HFTokenizer
 
-        if self.tokenizer.identifier is None:
-            raise OLMoConfigurationError(
-                "Tokenizer 'identifier' required to build a concrete tokenizer"
-            )
+        if isinstance(self.tokenizer, ByteTokenizerConfig):
+            if self.tokenizer.original_identifier is None:
+                raise OLMoConfigurationError(
+                    "ByteTokenizer 'original_identifier' required to build a concrete tokenizer"
+                )
+
+            identifier = self.tokenizer.original_identifier
+        else:
+            if self.tokenizer.identifier is None:
+                raise OLMoConfigurationError(
+                    "Tokenizer 'identifier' required to build a concrete tokenizer"
+                )
+
+            identifier = self.tokenizer.identifier
 
         tokenizer = HFTokenizer(
-            self.tokenizer.identifier,
+            identifier,
             pad_token_id=self.tokenizer.pad_token_id,
             eos_token_id=self.tokenizer.eos_token_id,
             bos_token_id=self.tokenizer.bos_token_id,
         )
 
+        batch_spec = trainer.train_module.eval_batch_spec
+        if self.batch_size is not None:
+            batch_spec = replace(batch_spec, rank_batch_size=self.batch_size)
+
         evaluators: List[Evaluator] = []
-        for task in sorted(self.tasks):
+        for task_idx, task in enumerate(self.tasks):
             evaluators.append(
                 DownstreamEvaluator(
-                    name="downstream",
+                    name="downstream" if self.names is None else self.names[task_idx],
                     task=task,
-                    batch_spec=trainer.train_module.eval_batch_spec,
+                    batch_spec=batch_spec,
                     tokenizer=tokenizer,
                     device=trainer.device,
                     dp_process_group=trainer.dp_process_group,
+                    batch_kwargs=self.batch_kwargs[task_idx] if self.batch_kwargs else None,
                 )
             )
 
@@ -435,5 +500,6 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
             eval_on_startup=self.eval_on_startup,
             cancel_after_first_eval=self.cancel_after_first_eval,
             log_interval=self.log_interval,
+            save_results=self.save_results,
             eval_duration=self.eval_duration,
         )
