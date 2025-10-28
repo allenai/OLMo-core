@@ -622,7 +622,6 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
                     f"Expected batch size of {self.rank_batch_size:,d} tokens on rank {self.dp_rank}, "
                     f"got input IDs with shape {tuple(batch['input_ids'].shape)} = {batch['input_ids'].numel():,d} tokens"
                 )
-            self.tokens_processed += self.global_batch_size
             yield batch
 
     def _get_dataset_item(self, idx: int) -> Dict[str, Any]:
