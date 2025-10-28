@@ -14,7 +14,6 @@ from olmo_core.data import (
 from olmo_core.data.source_mixture import SourceMixtureDatasetConfig, SourceMixtureList
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
-from olmo_core.io import dir_is_empty
 from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.transformer import (
     TransformerConfig,
@@ -121,7 +120,12 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         .with_callback("monkey_patcher", MonkeyPatcherCallback())
         .with_callback(
             "checkpointer",
-            CheckpointerCallback(save_interval=1000, ephemeral_save_interval=100, save_async=False),
+            CheckpointerCallback(
+                save_interval=1000,
+                ephemeral_save_interval=100,
+                save_async=False,
+                pre_download=True,  #  R2 backing https://olmo-checkpoints.org can be unreliable, so we pre-download the checkpoint
+            ),
         )
         .with_callback(
             "comet",
