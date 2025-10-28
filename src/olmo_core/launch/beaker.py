@@ -648,7 +648,7 @@ class BeakerLaunchConfig(Config):
 
 
 # Regex for detecting training (and eval) steps in logs.
-_STEP_REGEX = re.compile(r"\[olmo_core\..+\]\s+\[.*step\=\d+.*\]")
+_STEP_REGEX = re.compile(r"\[olmo_core\..+\].+\[.*step\=\d+.*\]")
 
 
 def follow_experiment(
