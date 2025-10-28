@@ -580,11 +580,20 @@ def _http_file_size(url: str) -> int:
     return int(content_length)
 
 
-@retriable()
+@retriable(
+    max_attempts=5,
+    retriable_errors=(
+        requests.exceptions.ConnectionError,
+        requests.exceptions.Timeout,
+        requests.exceptions.ChunkedEncodingError,
+    ),
+)
 def _http_get_bytes_range(url: str, bytes_start: int, num_bytes: int) -> bytes:
     response = requests.get(
         url, headers={"Range": f"bytes={bytes_start}-{bytes_start + num_bytes - 1}"}
     )
+    log.info(f"HTTP GET {url} (bytes={bytes_start}-{bytes_start + num_bytes - 1}): status={response.status_code}, headers={dict(response.headers)}")
+
     if response.status_code == 404:
         raise FileNotFoundError(url)
 
