@@ -93,11 +93,31 @@ class SourceMixtureConfig(Config):
             if "*" in path_str:
                 matches = sorted(glob_directory(path_str))
                 if not matches:
-                    raise FileNotFoundError(f"Glob pattern '{path_str}' did not match any files")
+                    error_msg = f"Glob pattern '{path_str}' did not match any files"
+                    # Add helpful hint for mix-0625 which has unavailable files
+                    if "0625" in path_str:
+                        error_msg += (
+                            "\n\nNOTE: Some files in OLMo-mix-0625 are not available. "
+                            "If you are resuming training from a checkpoint that used mix-0625, you will need to "
+                            "switch to a newer mix such as OLMo-mix-0925. To continue training with a different "
+                            "dataset mix, set 'ignore_fingerprint_mismatch=True' in your NumpyDataLoaderConfig "
+                            "to bypass the fingerprint mismatch error."
+                        )
+                    raise FileNotFoundError(error_msg)
                 resolved.extend(matches)
             else:
                 if not file_exists(path_str):
-                    raise FileNotFoundError(f"Path '{path_str}' does not exist")
+                    error_msg = f"Path '{path_str}' does not exist"
+                    # Add helpful hint for mix-0625 which has unavailable files
+                    if "0625" in path_str:
+                        error_msg += (
+                            "\n\nNOTE: Some files in OLMo-mix-0625 are not available. "
+                            "If you are resuming training from a checkpoint that used mix-0625, you will need to "
+                            "switch to a newer mix such as OLMo-mix-0925. To continue training with a different "
+                            "dataset mix, set 'ignore_fingerprint_mismatch=True' in your NumpyDataLoaderConfig "
+                            "to bypass the fingerprint mismatch error."
+                        )
+                    raise FileNotFoundError(error_msg)
                 resolved.append(path_str)
 
         self._resolved_paths = resolved
