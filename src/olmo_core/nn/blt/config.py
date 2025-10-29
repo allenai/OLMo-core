@@ -45,6 +45,7 @@ class BLTConfig(Config):
     boundary_threshold: str = "sample:0" # sample:<temperature> or topk:<value>
     inference_sampling_strategies: str | None = None
     xlstm_igate_bias_init: float = -10.0
+    skip_boundary_before_eos: bool = True
 
 
 @dataclass
@@ -122,6 +123,7 @@ class LocalDecoderConfig(Config):
     hnet_modulate: bool = True
     blt_k: Optional[int] = None  # used in blt
     blt_compat: bool = False # for compat with BLT checkpoints
+    fuse_boundaries: bool = True
     dtype: DType = DType.float32
 
     def build(self, vocab_size: int, d_global_model: int) -> nn.Module:
@@ -145,5 +147,6 @@ class LocalDecoderConfig(Config):
             hnet_modulate=self.hnet_modulate,
             blt_k=self.blt_k,
             blt_compat=self.blt_compat,
+            fuse_boundaries=self.fuse_boundaries,
             dtype=self.dtype.as_pt(),
         )

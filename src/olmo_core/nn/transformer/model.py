@@ -1161,6 +1161,8 @@ class BLTTransformer(Transformer):
         self.eos_token_dolma2 = 100257
         self.space_mask_blt = blt_utils.get_blt_space_mask()
         self.end_of_subword_token_blt = 3
+        self.eos_token_blt = 1
+        self.vocab_size_blt = (4 + 256)
 
     def apply_fsdp(
         self,
@@ -1914,6 +1916,7 @@ class BLTDistillTransformer(BLTTransformer):
             return_logits=True,  # needed for distillation
             **kwargs,
         )
+        assert labels is not None
 
         # losses (incl. distillation losses)
         metrics = {}
@@ -1935,6 +1938,13 @@ class BLTDistillTransformer(BLTTransformer):
 
         boundary_labels = torch.zeros_like(byte_mask, dtype=torch.float32)
         boundary_labels.scatter_(1, patch_end_indices, 1.0)
+        if blt_config.skip_boundary_before_eos:
+            boundary_labels[:, :-1] = torch.where( # no boundary before eos
+                input_ids[:, 1:] == self.eos_token_blt,
+                0.0,
+                boundary_labels[:, :-1]
+            )
+            boundary_labels[:, 0] = 1 # bos must still be boundary
 
         h_byte, h_patch, boundary_logprobs, boundary_mask = self.local_encoder(
             input_ids,
@@ -2052,7 +2062,27 @@ class BLTDistillTransformer(BLTTransformer):
                 assert teacher_last_hidden_state is not None
                 assert blt_config.teacher_force_boundaries
 
-                h_patch_after_global = teacher_last_hidden_state
+                if blt_config.skip_boundary_before_eos:
+                    # need to align
+                    teacher_indices_to_select = torch.gather(
+                        local_encoder_kwargs["patch_ids"],
+                        dim=1,
+                        index=seq_sorted_indices,
+                    )
+                    mask = patch_mask & (teacher_indices_to_select < teacher_last_hidden_state.shape[1])
+                    teacher_indices_to_select = torch.where(
+                        mask,
+                        teacher_indices_to_select,
+                        torch.zeros_like(teacher_indices_to_select),
+                    ).unsqueeze(-1).expand(-1, -1, teacher_last_hidden_state.shape[-1])
+                    h_patch_after_global = torch.gather(
+                        teacher_last_hidden_state,
+                        dim=1,
+                        index=teacher_indices_to_select,
+                    )
+                else:
+                    h_patch_after_global = teacher_last_hidden_state
+
                 with (torch.no_grad() if blt_config.student_blocks_no_grad else nullcontext()):
                     _, student_hidden_states = self._block_forward(
                         h_patch,
@@ -2098,11 +2128,17 @@ class BLTDistillTransformer(BLTTransformer):
                 **local_decoder_kwargs,
             )
 
-            true_boundary_logits = self.lm_head(h_out_for_true_boundaries, **lm_head_kwargs)
-            all_boundary_logits = self.lm_head(h_out_for_all_boundaries, **lm_head_kwargs)
+            if self.local_decoder.fuse_boundaries:
+                # no separate boundary logits
+                true_boundary_logits = None
+                all_boundary_logits = None
+            else:
+                true_boundary_logits = self.lm_head(h_out_for_true_boundaries, **lm_head_kwargs)
+                all_boundary_logits = self.lm_head(h_out_for_all_boundaries, **lm_head_kwargs)
+
             logits = self.lm_head(h_out_for_logits, **lm_head_kwargs)
             logprobs = F.log_softmax(logits.float() / blt_config.temperature, dim=-1)
-            main_path_logprobs = torch.gather(logprobs, -1, input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
+            main_path_logprobs = torch.gather(logprobs, -1, labels[:, :-1].clip(min=0).unsqueeze(-1)).squeeze(-1)
         else:
             student_hidden_states = None
             true_boundary_logits = None
@@ -2118,57 +2154,60 @@ class BLTDistillTransformer(BLTTransformer):
             assert logits is not None
             assert labels is not None
 
-            ce_loss, _ = cross_entropy_loss(logits.view(-1, logits.shape[-1]), labels[:, :-1].reshape(-1))
+            ce_loss, _ = cross_entropy_loss(logits.view(-1, logits.shape[-1]), labels[:, :logits.shape[1]].reshape(-1))
             metrics["blt/ce_loss"] = ce_loss
 
-            if blt_config.merge_boundary_loss:
-                boundary_ce_loss, _ = cross_entropy_loss(
-                    true_boundary_logits.view(-1, true_boundary_logits.shape[-1]),
-                    torch.full(
-                        (true_boundary_logits.shape[0] * true_boundary_logits.shape[1],),
-                        fill_value=self.end_of_subword_token_blt,
-                        device=true_boundary_logits.device,
-                        dtype=torch.long
-                    ),
-                )
-                metrics["blt/boundary_ce_loss"] = boundary_ce_loss
-
-                ce_loss = ce_loss + boundary_ce_loss * patch_mask.shape[1] / byte_mask.shape[1]
-                output_boundary_loss = torch.nan
-            else:
-                all_output_boundary_logprobs = F.log_softmax(all_boundary_logits, dim=-1)[..., self.end_of_subword_token_blt]
-
-                if blt_config.use_output_boundary_jsd:
-                    elementwise_boundary_jsd_loss = blt_utils.jsd(
-                        all_output_boundary_logprobs,
-                        boundary_logprobs[:, 1:],
+            if not self.local_decoder.fuse_boundaries:
+                if blt_config.merge_boundary_loss:
+                    boundary_ce_loss, _ = cross_entropy_loss(
+                        true_boundary_logits.view(-1, true_boundary_logits.shape[-1]),
+                        torch.full(
+                            (true_boundary_logits.shape[0] * true_boundary_logits.shape[1],),
+                            fill_value=self.end_of_subword_token_blt,
+                            device=true_boundary_logits.device,
+                            dtype=torch.long
+                        ),
                     )
-                    output_boundary_loss = (elementwise_boundary_jsd_loss * boundary_byte_mask[:, 1:]).mean()
-                    metrics["blt/output_boundary_loss"] = output_boundary_loss / (boundary_byte_mask[:, 1:].float().mean() + blt_config.epsilon)
+                    metrics["blt/boundary_ce_loss"] = boundary_ce_loss
+
+                    ce_loss = ce_loss + boundary_ce_loss * patch_mask.shape[1] / byte_mask.shape[1]
+                    output_boundary_loss = torch.nan
                 else:
-                    # shift one
-                    elementwise_boundary_ce_loss = blt_utils.binary_cross_entropy_with_logprobs(
-                        all_output_boundary_logprobs,
-                        boundary_mask[:, 1:],
-                    )
-                    output_boundary_loss = (elementwise_boundary_ce_loss * boundary_byte_mask[:, 1:]).mean()
-                    metrics["blt/output_boundary_loss"] = output_boundary_loss / (boundary_byte_mask[:, 1:].float().mean() + blt_config.epsilon)
+                    all_output_boundary_logprobs = F.log_softmax(all_boundary_logits, dim=-1)[..., self.end_of_subword_token_blt]
 
-                metrics["blt/output_boundary_logmae"] = (
-                    torch.abs(all_output_boundary_logprobs - boundary_logprobs[:, 1:]) * boundary_byte_mask[:, 1:]
-                ).mean() / (boundary_byte_mask[:, 1:].float().mean() + blt_config.epsilon)
+                    if blt_config.use_output_boundary_jsd:
+                        elementwise_boundary_jsd_loss = blt_utils.jsd(
+                            all_output_boundary_logprobs,
+                            boundary_logprobs[:, 1:],
+                        )
+                        output_boundary_loss = (elementwise_boundary_jsd_loss * boundary_byte_mask[:, 1:]).mean()
+                        metrics["blt/output_boundary_loss"] = output_boundary_loss / (boundary_byte_mask[:, 1:].float().mean() + blt_config.epsilon)
+                    else:
+                        # shift one
+                        elementwise_boundary_ce_loss = blt_utils.binary_cross_entropy_with_logprobs(
+                            all_output_boundary_logprobs,
+                            boundary_mask[:, 1:],
+                        )
+                        output_boundary_loss = (elementwise_boundary_ce_loss * boundary_byte_mask[:, 1:]).mean()
+                        metrics["blt/output_boundary_loss"] = output_boundary_loss / (boundary_byte_mask[:, 1:].float().mean() + blt_config.epsilon)
 
-            true_boundary_positives = boundary_mask[:, 1:] & boundary_byte_mask[:, 1:]
-            true_boundary_negatives = (~boundary_mask[:, 1:]) & boundary_byte_mask[:, 1:]
+                    metrics["blt/output_boundary_logmae"] = (
+                        torch.abs(all_output_boundary_logprobs - boundary_logprobs[:, 1:]) * boundary_byte_mask[:, 1:]
+                    ).mean() / (boundary_byte_mask[:, 1:].float().mean() + blt_config.epsilon)
 
-            metrics["blt/boundary_true_positives"] = (
-                ((all_boundary_logits.argmax(-1) == self.end_of_subword_token_blt) & true_boundary_positives).float().mean()
-                / (true_boundary_positives.float().mean() + blt_config.epsilon)
-            )
-            metrics["blt/boundary_true_negatives"] = (
-                ((all_boundary_logits.argmax(-1) != self.end_of_subword_token_blt) & true_boundary_negatives).float().mean()
-                / (true_boundary_negatives.float().mean() + blt_config.epsilon)
-            )
+                true_boundary_positives = boundary_mask[:, 1:] & boundary_byte_mask[:, 1:]
+                true_boundary_negatives = (~boundary_mask[:, 1:]) & boundary_byte_mask[:, 1:]
+
+                metrics["blt/boundary_true_positives"] = (
+                    ((all_boundary_logits.argmax(-1) == self.end_of_subword_token_blt) & true_boundary_positives).float().mean()
+                    / (true_boundary_positives.float().mean() + blt_config.epsilon)
+                )
+                metrics["blt/boundary_true_negatives"] = (
+                    ((all_boundary_logits.argmax(-1) != self.end_of_subword_token_blt) & true_boundary_negatives).float().mean()
+                    / (true_boundary_negatives.float().mean() + blt_config.epsilon)
+                )
+            else:
+                output_boundary_loss = torch.nan
         else:
             output_boundary_loss = torch.nan
             ce_loss = torch.nan
@@ -2196,9 +2235,10 @@ class BLTDistillTransformer(BLTTransformer):
             assert teacher_main_path_logprobs is not None
             assert teacher_embeds is not None
             assert teacher_loss_mask is not None
-            assert true_boundary_logits is not None
 
-            if blt_config.teacher_force_boundaries:
+            if not self.local_decoder.fuse_boundaries and blt_config.teacher_force_boundaries:
+                assert true_boundary_logits is not None
+
                 debiasing_logprobs = F.log_softmax(
                     true_boundary_logits.float() / blt_config.temperature,
                     dim=-1
@@ -2347,6 +2387,12 @@ class BLTDistillTransformer(BLTTransformer):
             return_logits=True,  # needed for distillation
             **kwargs,
         )
+        if labels is None:
+            labels = F.pad(
+                input_ids[:, 1:],
+                (0, 1),
+                value=ignore_index,
+            )
 
         byte_mask = labels != ignore_index
         shifted_patch_lens = F.pad(
@@ -2363,6 +2409,13 @@ class BLTDistillTransformer(BLTTransformer):
         )
         boundary_labels = torch.zeros_like(byte_mask, dtype=torch.float32)
         boundary_labels.scatter_(1, patch_end_indices, 1.0)
+        if blt_config.skip_boundary_before_eos:
+            boundary_labels[:, :-1] = torch.where( # no boundary before eos
+                input_ids[:, 1:] == self.eos_token_blt,
+                0.0,
+                boundary_labels[:, :-1]
+            )
+            boundary_labels[:, 0] = 1 # bos must still be boundary
 
         h_byte, h_patch, boundary_logprobs, boundary_mask = self.local_encoder(
             input_ids,
@@ -2382,6 +2435,10 @@ class BLTDistillTransformer(BLTTransformer):
             (torch.arange(patch_mask.shape[1], device=patch_mask.device)[None, :] <= last_increasing_index.indices[:, None]) |
             (torch.zeros_like(patch_mask) == last_increasing_index.values[:, None]) # case where never not increasing (no padding)
         )
+        if self.local_decoder.fuse_boundaries:
+            shift_boundary_mask = boundary_mask[:, 1:]
+            label_offsets = shift_boundary_mask * self.vocab_size_blt
+            labels[:, :-1] += label_offsets
 
         dtype = h_patch.dtype
         global_dtype = torch.bfloat16 if isinstance(self.blocks["0"].attention.backend, FlashAttention2Backend) else dtype  # type: ignore
@@ -2402,41 +2459,56 @@ class BLTDistillTransformer(BLTTransformer):
             **local_decoder_kwargs,
         )
         logits = self.lm_head(h_out_for_logits, **lm_head_kwargs)
-        boundary_logits = self.lm_head(h_out_for_boundaries, **lm_head_kwargs)
+        if self.local_decoder.fuse_boundaries:
+            ce_loss, _ = cross_entropy_loss(logits.view(-1, logits.shape[-1]), labels.view(-1))  # type: ignore
 
-        logits = torch.concatenate([
-            logits,
-            torch.zeros((logits.shape[0], 1, logits.shape[2]), device=logits.device, dtype=logits.dtype)
-        ], dim=1)
-
-        ce_loss, _ = cross_entropy_loss(logits.view(-1, logits.shape[-1]), labels.view(-1))  # type: ignore
-
-        if blt_config.eval_add_boundary_logp:
-            main_path_logprobs = torch.gather(F.log_softmax(logits[:, :-1].float(), dim=-1), -1, input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
-            main_path_boundary_logprobs = F.log_softmax(boundary_logits.float(), dim=-1)[..., self.end_of_subword_token_blt]  # type: ignore
-
-            y_hat = main_path_logprobs.scatter_add(
-                src=torch.where(
-                    patch_mask[:, 1:],
-                    main_path_boundary_logprobs,
-                    torch.zeros_like(main_path_boundary_logprobs),
-                ),
-                dim=-1,
-                index=torch.where(
-                    patch_mask[:, 1:],
-                    seq_sorted_indices[:, 1:] - 1,
-                    torch.zeros_like(seq_sorted_indices[:, 1:])
-                ),
-            )
-            remaining_logpmass = log1mexp(y_hat)
+            # replace plain (single byte) logits with byte + boundary logits where boundaries occur
+            main_path_logprobs = torch.gather(F.log_softmax(logits[:, :-1].float(), dim=-1), -1, labels[:, :-1].clip(0).unsqueeze(-1)).squeeze(-1)
+            remaining_logpmass = log1mexp(main_path_logprobs)
             remaining_logp_uniform = remaining_logpmass - math.log(logits.shape[2] - 1)  # -1 to skip the main path token
             logits.zero_()
             logits[:, :-1, :] = remaining_logp_uniform.unsqueeze(-1)
             logits.scatter_(
                 -1,
                 input_ids[:, 1:].unsqueeze(-1),
-                y_hat.to(logits.dtype).unsqueeze(-1),
+                main_path_logprobs.to(logits.dtype).unsqueeze(-1),
             )
+        else:
+            logits = torch.concatenate([
+                logits,
+                torch.zeros((logits.shape[0], 1, logits.shape[2]), device=logits.device, dtype=logits.dtype)
+            ], dim=1)
+
+            ce_loss, _ = cross_entropy_loss(logits.view(-1, logits.shape[-1]), labels.view(-1))  # type: ignore
+
+            if blt_config.eval_add_boundary_logp:
+                boundary_logits = self.lm_head(h_out_for_boundaries, **lm_head_kwargs)
+
+                main_path_logprobs = torch.gather(F.log_softmax(logits[:, :-1].float(), dim=-1), -1, input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
+                main_path_boundary_logprobs = F.log_softmax(boundary_logits.float(), dim=-1)[..., self.end_of_subword_token_blt]  # type: ignore
+
+                y_hat = main_path_logprobs.scatter_add(
+                    src=torch.where(
+                        patch_mask[:, 1:],
+                        main_path_boundary_logprobs,
+                        torch.zeros_like(main_path_boundary_logprobs),
+                    ),
+                    dim=-1,
+                    index=torch.where(
+                        patch_mask[:, 1:],
+                        seq_sorted_indices[:, 1:] - 1,
+                        torch.zeros_like(seq_sorted_indices[:, 1:])
+                    ),
+                )
+                remaining_logpmass = log1mexp(y_hat)
+                remaining_logp_uniform = remaining_logpmass - math.log(logits.shape[2] - 1)  # -1 to skip the main path token
+                logits.zero_()
+                logits[:, :-1, :] = remaining_logp_uniform.unsqueeze(-1)
+                logits.scatter_(
+                    -1,
+                    input_ids[:, 1:].unsqueeze(-1),
+                    y_hat.to(logits.dtype).unsqueeze(-1),
+                )
 
         return LMOutputWithLoss(
             logits=logits,

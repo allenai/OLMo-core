@@ -553,6 +553,9 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
         if isinstance(self.dataset, NumpyByteFSLDataset) or isinstance(self.dataset, NumpyBytePaddedFSLDataset):
             byte_to_patch_ratio = self.dataset.sequence_length // self.dataset.patch_sequence_length
 
+            # fused upper half reserved for boundaries
+            input_ids //= 2
+
             # random lengths for debugging,
             patch_lengths = torch.randint(
                 int(byte_to_patch_ratio * 0.5),

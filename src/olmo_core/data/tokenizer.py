@@ -201,7 +201,8 @@ class ByteTokenizerConfig(TokenizerConfig):
         ]
 
         return cls(
-            vocab_size=len(special_tokens) + 256,
+            # *2 to accomodate fused boundary token if fuse_boundaries=True
+            vocab_size=(len(special_tokens) + 256) * 2,
             special_tokens=special_tokens,
             bos_token_id=special_tokens.index("<bos>"),
             pad_token_id=special_tokens.index("<pad>"),

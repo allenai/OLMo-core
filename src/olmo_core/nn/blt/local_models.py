@@ -516,16 +516,6 @@ class LocalEncoder(nn.Module):
         target_embeddings = maybe_distribute(target_embeddings)
 
         if embedding_init_path is not None:
-            # load embedding inits (computed via compute_hash_embedding_init.py)
-            if isinstance(self.embedding.weight.data, DTensor):
-                self.embedding.weight.data[:] = distribute_tensor(
-                    torch.load(resource_path(embedding_init_path, "embedding_init.pth", local_cache=cache_dir)),
-                    device_mesh=self.embedding.weight.data.device_mesh,
-                    placements=self.embedding.weight.data.placements,
-                )
-            else:
-                self.embedding.weight.data[:] = torch.load(Path(embedding_init_path) / "embedding_init.pth")
-
             if self.hash_embeddings is not None:
                 for i, hash_embedding in enumerate(self.hash_embeddings):
                     if isinstance(hash_embedding.weight.data, DTensor):
@@ -966,6 +956,7 @@ class LocalDecoder(nn.Module):
         hnet_modulate: bool = True,
         blt_k: Optional[int] = None,
         blt_compat: bool = False,  # for compat with BLT checkpoints
+        fuse_boundaries: bool = True,
         init_device: str = "cpu",
         dtype: torch.dtype = torch.float32,
     ):
@@ -983,6 +974,7 @@ class LocalDecoder(nn.Module):
         self.hnet_modulate = hnet_modulate
         self.blt_k = blt_k
         self.blt_compat = blt_compat
+        self.fuse_boundaries = fuse_boundaries
         self.dtype = dtype
 
         if self.depooling == "cross_attn":
@@ -1058,7 +1050,11 @@ class LocalDecoder(nn.Module):
         else:
             self.patch_residuals_projection = None
 
-        self.boundary_embedding = nn.Embedding(1, d_model, dtype=dtype, device=init_device)
+        if not self.fuse_boundaries:
+            self.boundary_embedding = nn.Embedding(1, d_model, dtype=dtype, device=init_device)
+        else:
+            self.boundary_embedding = None
+
         self.has_cache = False
 
     def apply_fsdp(
@@ -1125,6 +1121,9 @@ class LocalDecoder(nn.Module):
         epsilon: float = 1e-3,
     ) -> tuple[tuple[torch.Tensor, torch.Tensor], torch.Tensor, torch.Tensor]:
         if self.has_cache and self.cache_seqlens > 0:
+            if self.fuse_boundaries:
+                raise NotImplementedError("Fused boundaries not implemented for cached HNet depooling.")
+
             assert boundary_state is not None
             assert not self.hnet_smooth # not implemented for now
 
@@ -1195,69 +1194,80 @@ class LocalDecoder(nn.Module):
             else:
                 depool_out_modulated = depool_out
 
-            # skip bos - considered boundary
-            h = (depool_out_modulated[:, :-1] + embeds[:, 1:])
-            h_b = (self.boundary_embedding.weight.unsqueeze(0) + prepool_out)
+            if self.fuse_boundaries:
+                h = depool_out_modulated + embeds
 
-            # +1 to keep multiple of
-            h_with_b = torch.zeros(
-                (h.shape[0], h.shape[1] + patch_embeds.shape[1] + 1, h.shape[2]),
-                device=h.device,
-                dtype=h.dtype
-            )
+                for block_idx in range(self.n_layers):
+                    block = self.blocks[str(block_idx)]
+                    h = block(h)
 
-            if self.has_cache:
-                self.last_value.copy_(prepool_out[:, -1])
-                self.cache_seqlens += h_with_b.shape[1]
+                return (h, h), h, h
+            else:
+                assert self.boundary_embedding is not None
+                
+                # skip bos - considered boundary
+                h = (depool_out_modulated[:, :-1] + embeds[:, 1:])
+                h_b = (self.boundary_embedding.weight.unsqueeze(0) + prepool_out)
 
-            non_b_indices = torch.arange(len(h[0]), device=h.device).unsqueeze(0).repeat(len(h), 1)
-            non_b_indices += plug_back_idx[:, :-1] + 1 # offset by bos
-            b_indices = seq_sorted_indices + torch.arange(patch_embeds.shape[1], device=h.device).unsqueeze(0)
-            b_indices = torch.where(patch_mask, b_indices, torch.ones_like(b_indices))
+                # +1 to keep multiple of
+                h_with_b = torch.zeros(
+                    (h.shape[0], h.shape[1] + patch_embeds.shape[1] + 1, h.shape[2]),
+                    device=h.device,
+                    dtype=h.dtype
+                )
 
-            if sequence_start_indices is not None:
-                pad_mask = torch.arange(h.shape[1], device=h.device)[None, :] < sequence_start_indices[:, None]
-                h = torch.where(pad_mask.unsqueeze(-1), torch.zeros_like(h), h)
+                if self.has_cache:
+                    self.last_value.copy_(prepool_out[:, -1])
+                    self.cache_seqlens += h_with_b.shape[1]
 
-                offsets = patch_embeds.shape[1] - boundary_mask.sum(-1)
-                sequence_start_indices += offsets
-                b_indices += offsets.unsqueeze(-1)
-                non_b_indices += offsets.unsqueeze(-1)
+                non_b_indices = torch.arange(len(h[0]), device=h.device).unsqueeze(0).repeat(len(h), 1)
+                non_b_indices += plug_back_idx[:, :-1] + 1 # offset by bos
+                b_indices = seq_sorted_indices + torch.arange(patch_embeds.shape[1], device=h.device).unsqueeze(0)
+                b_indices = torch.where(patch_mask, b_indices, torch.ones_like(b_indices))
 
-            h_with_b.scatter_(
-                1,
-                non_b_indices.unsqueeze(-1).expand(-1, -1, self.d_model), # skip bos - considered boundary
-                h
-            )
-            h_with_b.scatter_add_(
-                1,
-                b_indices.unsqueeze(-1).expand(-1, -1, self.d_model),
-                torch.where(patch_mask.unsqueeze(-1), h_b, torch.zeros_like(h_b))
-            )
+                if sequence_start_indices is not None:
+                    pad_mask = torch.arange(h.shape[1], device=h.device)[None, :] < sequence_start_indices[:, None]
+                    h = torch.where(pad_mask.unsqueeze(-1), torch.zeros_like(h), h)
 
-            for block_idx in range(self.n_layers):
-                block = self.blocks[str(block_idx)]
-                h_with_b = block(h_with_b, sequence_start_indices=sequence_start_indices)
+                    offsets = patch_embeds.shape[1] - boundary_mask.sum(-1)
+                    sequence_start_indices += offsets
+                    b_indices += offsets.unsqueeze(-1)
+                    non_b_indices += offsets.unsqueeze(-1)
 
-            h_for_true_boundaries = torch.gather(
-                h_with_b,
-                dim=1,
-                # can't predict first boundary / bos
-                index=(b_indices[:, 1:] - 1).unsqueeze(-1).expand(-1, -1, self.d_model),
-            )
-            h_for_all_boundaries = torch.gather(
-                h_with_b,
-                dim=1,
-                index=non_b_indices.unsqueeze(-1).expand(-1, -1, self.d_model),
-            )
-            h_for_logits = torch.gather(
-                h_with_b,
-                dim=1,
-                index=(non_b_indices - 1).unsqueeze(-1).expand(-1, -1, self.d_model),
-            )
+                h_with_b.scatter_(
+                    1,
+                    non_b_indices.unsqueeze(-1).expand(-1, -1, self.d_model), # skip bos - considered boundary
+                    h
+                )
+                h_with_b.scatter_add_(
+                    1,
+                    b_indices.unsqueeze(-1).expand(-1, -1, self.d_model),
+                    torch.where(patch_mask.unsqueeze(-1), h_b, torch.zeros_like(h_b))
+                )
 
-            # [:-1] to strip multiple of
-            return (h_for_true_boundaries, h_for_all_boundaries), h_for_logits, h_with_b[:, :-1]
+                for block_idx in range(self.n_layers):
+                    block = self.blocks[str(block_idx)]
+                    h_with_b = block(h_with_b, sequence_start_indices=sequence_start_indices)
+
+                h_for_true_boundaries = torch.gather(
+                    h_with_b,
+                    dim=1,
+                    # can't predict first boundary / bos
+                    index=(b_indices[:, 1:] - 1).unsqueeze(-1).expand(-1, -1, self.d_model),
+                )
+                h_for_all_boundaries = torch.gather(
+                    h_with_b,
+                    dim=1,
+                    index=non_b_indices.unsqueeze(-1).expand(-1, -1, self.d_model),
+                )
+                h_for_logits = torch.gather(
+                    h_with_b,
+                    dim=1,
+                    index=(non_b_indices - 1).unsqueeze(-1).expand(-1, -1, self.d_model),
+                )
+
+                # [:-1] to strip multiple of
+                return (h_for_true_boundaries, h_for_all_boundaries), h_for_logits, h_with_b[:, :-1]
 
     def _depool_blt(
         self,
@@ -1267,6 +1277,9 @@ class LocalDecoder(nn.Module):
     ) -> tuple[tuple[torch.Tensor, torch.Tensor], torch.Tensor, torch.Tensor]:
         if self.patch_embedding_projection is None or self.blt_k is None:
             raise ValueError("Patch embedding projection is not defined, can not depool with BLT method.")
+
+        if not self.fuse_boundaries:
+            raise NotImplementedError("Non-fused boundaries not implemented for BLT depooling.")
 
         # expand seq length by a factor of k (k=2 in BLT released checkpoints)
         patch_embeds_projected = self.patch_embedding_projection(patch_embeds).reshape(
