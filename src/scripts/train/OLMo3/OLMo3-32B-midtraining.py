@@ -72,13 +72,13 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             global_batch_size=GLOBAL_BATCH_SIZE,
             processes=16,
             seed=SEED,
-            instance_filter_config=InstanceFilterConfig(
-                repetition_max_period=13, repetition_min_period=1, repetition_max_count=32
-                )
         ),
         tokenizer=tokenizer_config,
         work_dir=work_dir,
         sequence_length=SEQ_LENGTH,
+        instance_filter_config=InstanceFilterConfig(
+                repetition_max_period=13, repetition_min_period=1, repetition_max_count=32
+                )
     )
 
     data_loader_config = NumpyDataLoaderConfig(
