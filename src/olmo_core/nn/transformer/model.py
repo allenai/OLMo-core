@@ -2149,8 +2149,6 @@ class BLTDistillTransformer(BLTTransformer):
 
         # compute CE
         if not skip_blocks:
-            assert true_boundary_logits is not None
-            assert all_boundary_logits is not None
             assert logits is not None
             assert labels is not None
 
@@ -2158,6 +2156,9 @@ class BLTDistillTransformer(BLTTransformer):
             metrics["blt/ce_loss"] = ce_loss
 
             if not self.local_decoder.fuse_boundaries:
+                assert true_boundary_logits is not None
+                assert all_boundary_logits is not None
+
                 if blt_config.merge_boundary_loss:
                     boundary_ce_loss, _ = cross_entropy_loss(
                         true_boundary_logits.view(-1, true_boundary_logits.shape[-1]),
