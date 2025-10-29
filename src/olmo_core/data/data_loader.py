@@ -443,7 +443,10 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
                     "Dataset fingerprint does not match the fingerprint in the checkpoint, "
                     "set ignore_fingerprint_mismatch=True to ignore this error."
                 )
-            log.warning("Fingerprint mismatch ignored since ignore_fingerprint_mismatch=True")
+            log.warning(
+                "Fingerprint mismatch ignored since ignore_fingerprint_mismatch=True. "
+                "Warning: The data order will be different!"
+            )
 
         if state_dict["seed"] != self.seed:
             log.warning(
