@@ -219,7 +219,7 @@ class TrainingProgress:
     """
     The current training step.
     """
-    total_steps: int
+    total_steps: Optional[int] = None
     """
     The step that training will stop at.
     """
@@ -229,10 +229,13 @@ class TrainingProgress:
     """
 
     def __str__(self) -> str:
-        progress_perc = min(100, int(100 * self.current_step / self.total_steps))
-        progress_str = (
-            f"{progress_perc}% complete (step {self.current_step:,d}/{self.total_steps:,d})"
-        )
+        if self.total_steps is not None:
+            progress_perc = min(100, int(100 * self.current_step / self.total_steps))
+            progress_str = (
+                f"{progress_perc}% complete (step {self.current_step:,d}/{self.total_steps:,d})"
+            )
+        else:
+            progress_str = f"step {self.current_step:,d}/???"
         if self.time_remaining is not None:
             progress_str += f", eta {format_timedelta(self.time_remaining)}"
         return progress_str

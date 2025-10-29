@@ -1264,6 +1264,7 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
             *source_paths,
             max_sequence_length=self.sequence_length,
             eos_token_id=self.eos_token_id,
+            bos_token_id=self.bos_token_id,
             dtype=self.dtype,
             indices_dtype=self.indices_dtype,
             long_doc_strategy=self._long_doc_strategy,

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added `olmo_core.data.composable` module.
 - Added option to skip ranges of steps in the trainer.
 - Send a Slack notification when a Beaker job appears to be stuck.
 
