@@ -442,7 +442,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
                 raise RuntimeError(
                     "Dataset fingerprint does not match the fingerprint in the checkpoint, "
                     "set ignore_fingerprint_mismatch=True to ignore this error. "
-                    "Note that this will change the data order!"
+                    "This will probably result in a different data order!"
                 )
             log.warning(
                 "Fingerprint mismatch ignored since ignore_fingerprint_mismatch=True. "

@@ -2399,7 +2399,7 @@ class NumpyDatasetConfig(Config, ABC):
                         "If you are resuming training from a checkpoint that used mix-0625, you will need to "
                         "switch to a newer mix such as OLMo-mix-0925. To continue training with a different "
                         "dataset mix, set 'ignore_fingerprint_mismatch=True' in your NumpyDataLoaderConfig "
-                        "to bypass the fingerprint mismatch error. Note that this will change the data order!"
+                        "to bypass the fingerprint mismatch error. This will probably result in a different data order!"
                     )
                 raise FileNotFoundError(error_msg)
             for match in matches:
