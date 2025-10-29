@@ -348,7 +348,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
         dp_world_size: int = 1,
         dp_rank: int = 0,
         fs_local_rank: int = 0,
-        ignore_fingerprint_mismatch: bool = False
+        ignore_fingerprint_mismatch: bool = False,
     ):
         super().__init__(
             collator=collator,
