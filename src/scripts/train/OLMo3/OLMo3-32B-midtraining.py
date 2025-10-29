@@ -14,6 +14,8 @@ from olmo_core.train.train_module import TransformerTrainModuleConfig
 
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
 
+from olmo_core.data import InstanceFilterConfig
+
 SEQ_LENGTH = 8192
 GLOBAL_BATCH_SIZE = 2**22  # ~4M tokens
 MAX_TOKENS = 100_000_000_000  # 100B
@@ -70,6 +72,9 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             global_batch_size=GLOBAL_BATCH_SIZE,
             processes=16,
             seed=SEED,
+            instance_filter_config=InstanceFilterConfig(
+                repetition_max_period=13, repetition_min_period=1, repetition_max_count=32
+                )
         ),
         tokenizer=tokenizer_config,
         work_dir=work_dir,
