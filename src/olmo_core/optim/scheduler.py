@@ -661,3 +661,51 @@ class WSDS(Scheduler):
         else:
             t = pos - S
             return _linear_decay(initial_lr, D - t, D, self.decay_min_lr)
+
+
+@dataclass
+class ExponentialScheduler(Scheduler):
+    """
+    Exponential learning rate schedule that increases from a minimum LR to a maximum LR.
+
+    This scheduler is useful for LR range tests to find optimal starting learning rates.
+    It starts at a very low learning rate (lr_min) and exponentially increases it until
+    reaching the maximum (initial) LR at t_max steps.
+
+    The exponential growth formula is:
+        lr(t) = lr_min * (lr_max / lr_min)^(t / t_max)
+
+    This ensures:
+        - At step 0: lr = lr_min
+        - At step t_max: lr = lr_max (initial_lr)
+
+    Typical usage: Run a short training (e.g., 10k steps) with lr_min=1e-9 and lr_max=10,
+    observe when training becomes unstable, then use a learning rate slightly below that
+    instability point as your starting LR for the full training run.
+    """
+
+    lr_min: float = 1e-9
+    """Minimum learning rate to start from."""
+
+    def __post_init__(self):
+        if self.lr_min <= 0:
+            raise OLMoConfigurationError("'lr_min' must be positive.")
+
+    def get_lr(
+        self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
+    ) -> Union[float, torch.Tensor]:
+        if current >= t_max:
+            return initial_lr
+
+        if current == 0:
+            return self.lr_min
+
+        # Exponential growth: lr(t) = lr_min * (lr_max / lr_min)^(t / t_max)
+        # This ensures: lr(0) = lr_min, lr(t_max) = initial_lr
+        ratio = current / t_max
+        if isinstance(initial_lr, torch.Tensor):
+            growth_factor = torch.pow(initial_lr / self.lr_min, ratio)
+        else:
+            growth_factor = (initial_lr / self.lr_min) ** ratio
+
+        return self.lr_min * growth_factor

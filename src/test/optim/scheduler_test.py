@@ -7,6 +7,7 @@ from olmo_core.optim import (
     WSDS,
     ConstantWithWarmup,
     CosWithWarmup,
+    ExponentialScheduler,
     InvSqrtWithWarmup,
     LinearWithWarmup,
     SequentialScheduler,
@@ -346,3 +347,44 @@ class TestWSDSScheduler:
         assert scheduler.get_lr(initial_lr, 0, period_length) == 0.0
         assert scheduler.get_lr(initial_lr, period_length // 2, period_length) == initial_lr
         assert scheduler.get_lr(initial_lr, period_length, period_length) == 0.0
+
+
+def test_exponential_scheduler():
+    """Test exponential LR scheduler for LR range testing."""
+    initial_lr = 10.0  # max LR
+    lr_min = 1e-9
+    max_steps = 10_000
+    scheduler = ExponentialScheduler(lr_min=lr_min)
+
+    # At step 0, should be at lr_min
+    assert scheduler.get_lr(initial_lr, 0, max_steps) == pytest.approx(lr_min)
+
+    # At step t_max, should be at initial_lr (max LR)
+    assert scheduler.get_lr(initial_lr, max_steps, max_steps) == pytest.approx(initial_lr)
+
+    # At step t_max/2, should be at geometric mean of lr_min and lr_max
+    # lr(t_max/2) = lr_min * (lr_max/lr_min)^0.5 = sqrt(lr_min * lr_max)
+    expected_mid = math.sqrt(lr_min * initial_lr)
+    assert scheduler.get_lr(initial_lr, max_steps // 2, max_steps) == pytest.approx(expected_mid)
+
+    # Verify exponential growth at various points
+    # lr(t) = lr_min * (lr_max / lr_min)^(t / t_max)
+    for step in [1_000, 5_000, 8_000]:
+        ratio = step / max_steps
+        expected_lr = lr_min * (initial_lr / lr_min) ** ratio
+        assert scheduler.get_lr(initial_lr, step, max_steps) == pytest.approx(expected_lr)
+
+    # Verify LR is monotonically increasing
+    lr_at_1000 = scheduler.get_lr(initial_lr, 1_000, max_steps)
+    lr_at_5000 = scheduler.get_lr(initial_lr, 5_000, max_steps)
+    lr_at_9000 = scheduler.get_lr(initial_lr, 9_000, max_steps)
+    assert lr_min < lr_at_1000 < lr_at_5000 < lr_at_9000 < initial_lr
+
+
+def test_exponential_scheduler_error():
+    """Test that ExponentialScheduler raises error for invalid lr_min."""
+    with pytest.raises(OLMoConfigurationError, match="must be positive"):
+        ExponentialScheduler(lr_min=0.0)
+
+    with pytest.raises(OLMoConfigurationError, match="must be positive"):
+        ExponentialScheduler(lr_min=-1e-9)
