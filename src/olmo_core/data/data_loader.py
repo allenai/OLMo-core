@@ -446,7 +446,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
                 )
             log.warning(
                 "Fingerprint mismatch ignored since ignore_fingerprint_mismatch=True. "
-                "Warning: The data order will be different!"
+                "This will probably result in a different data order!"
             )
 
         if state_dict["seed"] != self.seed:
