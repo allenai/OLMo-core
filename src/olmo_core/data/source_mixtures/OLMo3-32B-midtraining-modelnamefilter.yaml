@@ -12,7 +12,7 @@ sources:
     target_ratio: 0.1
     paths:
       # 18,833,636,683
-      - gs://ai2-llm/preprocessed/tokyotech-llm/swallowcode/scor_final_data-decon-sparkle-motion-with-ids/allenai/dolma2-tokenizer/*.npy
+      - gs://ai2-llm/preprocessed/tokyotech-llm/swallowcode/scor_final_data-decon-sparkle-motion/allenai/dolma2-tokenizer/*.npy
   - source_name: megamatt
     # 20% less the ratio for dolminos2math
     target_ratio: 0.01726210713
