@@ -1,0 +1,326 @@
+#!/usr/bin/env python3
+"""
+CLI script for chatbot-style text generation using TransformerGenerationModule.
+
+Example usage:
+    python -m olmo_core.generate.chat path/to/checkpoint --max-new-tokens 512 --temperature 0.7
+"""
+
+import argparse
+import json
+import logging
+import sys
+from typing import Optional
+
+import torch
+from rich.console import Console
+from rich.panel import Panel
+from rich.prompt import Prompt
+from rich.text import Text
+from transformers import AutoTokenizer
+
+from olmo_core.aliases import PathOrStr
+from olmo_core.config import DType
+from olmo_core.data.tokenizer import TokenizerConfig
+from olmo_core.generate import GenerationConfig, TransformerGenerationModule
+from olmo_core.utils import get_default_device, log_or_print
+
+log = logging.getLogger(__name__)
+console = Console()
+
+
+def load_tokenizer(tokenizer_config: TokenizerConfig):
+    """Load the actual tokenizer from the tokenizer config identifier."""
+    if tokenizer_config.identifier is None:
+        raise ValueError(
+            "Tokenizer config has no identifier. Cannot load tokenizer. "
+            "Please ensure the checkpoint has a tokenizer config with an identifier."
+        )
+    return AutoTokenizer.from_pretrained(tokenizer_config.identifier)
+
+
+def load_tokenizer_config_from_checkpoint(checkpoint_dir: PathOrStr) -> Optional[TokenizerConfig]:
+    """Load tokenizer config from checkpoint's config.json."""
+    from cached_path import cached_path
+
+    from olmo_core.io import join_path, normalize_path
+
+    checkpoint_dir = normalize_path(checkpoint_dir)
+    config_path = join_path(checkpoint_dir, "config.json")
+    try:
+        with cached_path(config_path).open() as f:
+            config_dict = json.load(f)
+        return TokenizerConfig.from_dict(config_dict["dataset"]["tokenizer"])
+    except (KeyError, FileNotFoundError) as e:
+        log_or_print(
+            log,
+            f"Could not load tokenizer config from checkpoint: {e}",
+            level=logging.WARNING,
+        )
+        return None
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Chatbot-style text generation using OLMo TransformerGenerationModule",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Basic usage
+  python -m olmo_core.generate.chat /path/to/checkpoint
+
+  # With custom generation parameters
+  python -m olmo_core.generate.chat /path/to/checkpoint \\
+      --max-new-tokens 512 --temperature 0.7 --top-p 0.9
+
+  # Greedy decoding (deterministic)
+  python -m olmo_core.generate.chat /path/to/checkpoint \\
+      --max-new-tokens 256 --do-sample False
+        """,
+    )
+    parser.add_argument(
+        "checkpoint_dir",
+        type=str,
+        help="Path to checkpoint directory",
+    )
+    parser.add_argument(
+        "--max-new-tokens",
+        type=int,
+        default=256,
+        help="Maximum number of new tokens to generate (default: 256)",
+    )
+    parser.add_argument(
+        "--max-length",
+        type=int,
+        default=None,
+        help="Maximum total length (prompt + generation). Overrides --max-new-tokens if set.",
+    )
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=0.7,
+        help="Temperature for sampling (default: 0.7). Set to 0.0 for greedy decoding.",
+    )
+    parser.add_argument(
+        "--top-k",
+        type=int,
+        default=-1,
+        help="Top-k sampling. -1 means no top-k filtering (default: -1)",
+    )
+    parser.add_argument(
+        "--top-p",
+        type=float,
+        default=0.9,
+        help="Top-p (nucleus) sampling (default: 0.9)",
+    )
+    parser.add_argument(
+        "--do-sample",
+        action="store_true",
+        default=True,
+        help="Use sampling (default: True). Set --no-do-sample for greedy decoding.",
+    )
+    parser.add_argument(
+        "--no-do-sample",
+        dest="do_sample",
+        action="store_false",
+        help="Disable sampling (use greedy decoding)",
+    )
+    parser.add_argument(
+        "--use-cache",
+        action="store_true",
+        default=True,
+        help="Use KV cache for faster generation (default: True)",
+    )
+    parser.add_argument(
+        "--no-use-cache",
+        dest="use_cache",
+        action="store_false",
+        help="Disable KV cache",
+    )
+    parser.add_argument(
+        "--device",
+        type=str,
+        default=None,
+        help="Device to use (default: auto-detect)",
+    )
+    parser.add_argument(
+        "--system-prompt",
+        type=str,
+        default=None,
+        help="System prompt to prepend to all conversations",
+    )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Suppress generation statistics",
+    )
+
+    args = parser.parse_args()
+
+    # Setup logging
+    logging.basicConfig(
+        level=logging.INFO if not args.quiet else logging.WARNING,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
+
+    # Determine device
+    device = torch.device(args.device) if args.device else get_default_device()
+    console.print(f"Using device: {device}")
+    if device.type != "cuda":
+        console.print(
+            f"[bold yellow]Warning:[/bold yellow] Expected CUDA device for optimal performance, got {device.type}",
+            style="yellow",
+        )
+
+    # Load tokenizer config and tokenizer
+    tokenizer_config = load_tokenizer_config_from_checkpoint(args.checkpoint_dir)
+    if tokenizer_config is None:
+        console.print(
+            "[bold yellow]Warning:[/bold yellow] Could not load tokenizer config from checkpoint. Falling back to dolma2.",
+            style="yellow",
+        )
+        tokenizer_config = TokenizerConfig.dolma2()
+
+    try:
+        tokenizer = load_tokenizer(tokenizer_config)
+    except Exception as e:
+        console.print(
+            f"[bold red]Failed to load tokenizer from identifier '{tokenizer_config.identifier}':[/bold red] {e}"
+        )
+        sys.exit(1)
+
+    # Build generation config
+    generation_config = GenerationConfig(
+        pad_token_id=tokenizer_config.pad_token_id,
+        eos_token_id=tokenizer_config.eos_token_id,
+        max_new_tokens=args.max_new_tokens if args.max_length is None else None,
+        max_length=args.max_length,
+        do_sample=args.do_sample,
+        temperature=args.temperature,
+        top_k=args.top_k,
+        top_p=args.top_p,
+        use_cache=args.use_cache,
+    )
+
+    # Load generation module
+    console.print("[bold green]Loading checkpoint...")
+    try:
+        generation_module = TransformerGenerationModule.from_checkpoint(
+            checkpoint_dir=args.checkpoint_dir,
+            generation_config=generation_config,
+            device=device,
+            dtype=DType.bfloat16,
+        )
+    except Exception as e:
+        console.print(f"[bold red]Failed to load checkpoint:[/bold red] {e}")
+        sys.exit(1)
+
+    console.print("[bold green]✓ Model loaded successfully![/bold green]")
+
+    # Display generation config in a panel
+    config_info = f"""
+[bold]Generation Parameters:[/bold]
+  • Max new tokens: {args.max_new_tokens if args.max_length is None else "N/A"}
+  • Max length: {args.max_length if args.max_length is not None else "N/A"}
+  • Temperature: {args.temperature}
+  • Top-k: {args.top_k if args.top_k != -1 else "unlimited"}
+  • Top-p: {args.top_p}
+  • Sampling: {"enabled" if args.do_sample else "disabled (greedy)"}
+  • KV cache: {"enabled" if args.use_cache else "disabled"}
+"""
+    console.print(
+        Panel(config_info, title="[bold blue]Generation Config[/bold blue]", border_style="blue")
+    )
+
+    # Welcome message
+    welcome_text = Text()
+    welcome_text.append("Chatbot ready! ", style="bold green")
+    welcome_text.append("Type your message and press Enter.\n\n", style="dim")
+    welcome_text.append("Commands:\n", style="bold")
+    welcome_text.append("  /quit or /exit ", style="cyan")
+    welcome_text.append("- Exit the chatbot\n", style="dim")
+    welcome_text.append("  /clear ", style="cyan")
+    welcome_text.append("- Clear conversation history\n", style="dim")
+    welcome_text.append("  /help ", style="cyan")
+    welcome_text.append("- Show this help message", style="dim")
+
+    console.print(Panel(welcome_text, title="[bold blue]Welcome[/bold blue]", border_style="blue"))
+    console.print()
+
+    # Conversation history
+    conversation_history: list[str] = []
+    if args.system_prompt:
+        conversation_history.append(args.system_prompt)
+
+    try:
+        while True:
+            try:
+                user_input = Prompt.ask("[bold cyan]You[/bold cyan]").strip()
+            except (EOFError, KeyboardInterrupt):
+                console.print("\n[bold yellow]Goodbye![/bold yellow]")
+                break
+
+            if not user_input:
+                continue
+
+            # Handle commands
+            if user_input.lower() in ["/quit", "/exit"]:
+                console.print("[bold yellow]Goodbye![/bold yellow]")
+                break
+            elif user_input.lower() == "/clear":
+                conversation_history = []
+                if args.system_prompt:
+                    conversation_history.append(args.system_prompt)
+                console.print("[bold green]✓ Conversation history cleared.[/bold green]\n")
+                continue
+            elif user_input.lower() == "/help":
+                help_text = Text()
+                help_text.append("Commands:\n", style="bold")
+                help_text.append("  /quit or /exit ", style="cyan")
+                help_text.append("- Exit the chatbot\n", style="dim")
+                help_text.append("  /clear ", style="cyan")
+                help_text.append("- Clear conversation history\n", style="dim")
+                help_text.append("  /help ", style="cyan")
+                help_text.append("- Show this help message", style="dim")
+                console.print(
+                    Panel(help_text, title="[bold blue]Help[/bold blue]", border_style="blue")
+                )
+                console.print()
+                continue
+
+            # Build prompt from conversation history
+            conversation_history.append(f"User: {user_input}")
+            prompt = "\n".join(conversation_history) + "\nAssistant:"
+
+            # Tokenize prompt
+            input_ids = tokenizer.encode(prompt, return_tensors="pt")
+
+            # Generate response
+            console.print("[bold magenta]Assistant:[/bold magenta] ", end="")
+            try:
+                generated_ids, _, _ = generation_module.generate_batch(
+                    input_ids, completions_only=True, log_timing=False
+                )
+
+                # Decode only the new tokens
+                response_text = tokenizer.decode(generated_ids[0], skip_special_tokens=True)
+                console.print(response_text)
+
+                # Update conversation history
+                conversation_history.append(f"Assistant: {response_text}")
+
+            except Exception as e:
+                log_or_print(log, f"Generation error: {e}", level=logging.ERROR)
+                console.print(f"[bold red]Error:[/bold red] {e}")
+                conversation_history.pop()
+
+            console.print()  # Empty line for readability
+
+    except Exception as e:
+        log_or_print(log, f"Unexpected error: {e}", level=logging.ERROR)
+        console.print(f"[bold red]Unexpected error:[/bold red] {e}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
