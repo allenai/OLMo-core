@@ -1973,6 +1973,10 @@ class BLTDistillTransformer(BLTTransformer):
             seq_sorted_indices,
             torch.ones_like(seq_sorted_indices),
         )
+        if self.local_decoder.fuse_boundaries:
+            shift_boundary_mask = (boundary_mask[:, 1:] & byte_mask[:, 1:])
+            label_offsets = shift_boundary_mask * self.vocab_size_blt
+            labels[:, :-1] += label_offsets
 
         # compute the boundary loss
         elementwise_boundary_loss = blt_utils.binary_cross_entropy_with_logprobs(
@@ -2437,7 +2441,7 @@ class BLTDistillTransformer(BLTTransformer):
             (torch.zeros_like(patch_mask) == last_increasing_index.values[:, None]) # case where never not increasing (no padding)
         )
         if self.local_decoder.fuse_boundaries:
-            shift_boundary_mask = boundary_mask[:, 1:]
+            shift_boundary_mask = (boundary_mask[:, 1:] & byte_mask[:, 1:])
             label_offsets = shift_boundary_mask * self.vocab_size_blt
             labels[:, :-1] += label_offsets
 
