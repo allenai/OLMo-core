@@ -13,7 +13,8 @@ import sys
 from typing import Optional
 
 import torch
-from rich.console import Console
+from cached_path import cached_path
+from rich.console import Console, Group
 from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.text import Text
@@ -23,28 +24,129 @@ from olmo_core.aliases import PathOrStr
 from olmo_core.config import DType
 from olmo_core.data.tokenizer import TokenizerConfig
 from olmo_core.generate import GenerationConfig, TransformerGenerationModule
-from olmo_core.utils import get_default_device, log_or_print
+from olmo_core.io import join_path, normalize_path
+from olmo_core.utils import log_or_print
 
 log = logging.getLogger(__name__)
 console = Console()
 
 
+def render_assistant_message(message: str) -> Panel:
+    """Render an assistant message as a chat bubble."""
+    text = Text(message, style="default")
+    return Panel(
+        text,
+        title="[bold magenta]Assistant[/bold magenta]",
+        title_align="left",
+        border_style="magenta",
+        padding=(0, 1),
+        width=None,
+    )
+
+
+def render_system_message(message: str) -> Panel:
+    """Render a system prompt message with a distinct style."""
+    text = Text(message, style="dim")
+    return Panel(
+        text,
+        title="[bold yellow]System[/bold yellow]",
+        title_align="left",
+        border_style="yellow",
+        padding=(0, 1),
+        width=None,
+    )
+
+
+def render_tokenizer_info(tokenizer_config: TokenizerConfig, tokenizer) -> Panel:
+    """Render tokenizer configuration details."""
+    lines = []
+
+    # OLMo-core TokenizerConfig info
+    lines.append("[bold]OLMo-core TokenizerConfig:[/bold]")
+    lines.append(f"  • Identifier: {tokenizer_config.identifier or 'N/A'}")
+    lines.append(f"  • Vocab size: {tokenizer_config.vocab_size:,}")
+    lines.append(f"  • EOS token ID: {tokenizer_config.eos_token_id}")
+    lines.append(f"  • Pad token ID: {tokenizer_config.pad_token_id}")
+    lines.append(f"  • BOS token ID: {tokenizer_config.bos_token_id}")
+
+    lines.append("")
+
+    # HuggingFace tokenizer info
+    lines.append("[bold]HuggingFace Tokenizer:[/bold]")
+    lines.append(f"  • Vocab size: {tokenizer.vocab_size:,}")
+
+    model_max_length = getattr(tokenizer, "model_max_length", None)
+    lines.append(f"  • Model max length: {model_max_length:,}")
+
+    # Special tokens
+    all_special_tokens = getattr(tokenizer, "all_special_tokens", None)
+    if all_special_tokens:
+        special_tokens_str = ", ".join(all_special_tokens[:5])
+        if len(all_special_tokens) > 5:
+            special_tokens_str += f" ... ({len(all_special_tokens)} total)"
+        lines.append(f"  • Special tokens: {special_tokens_str}")
+    else:
+        lines.append("  • Special tokens: N/A")
+
+    # Token IDs and strings
+    eos_token = getattr(tokenizer, "eos_token", None)
+    eos_token_id = getattr(tokenizer, "eos_token_id", None)
+    lines.append(f"  • EOS token: {eos_token} (ID: {eos_token_id})")
+    pad_token = getattr(tokenizer, "pad_token", None)
+    pad_token_id = getattr(tokenizer, "pad_token_id", None)
+    lines.append(f"  • Pad token: {pad_token} (ID: {pad_token_id})")
+    bos_token = getattr(tokenizer, "bos_token", None)
+    bos_token_id = getattr(tokenizer, "bos_token_id", None)
+    lines.append(f"  • BOS token: {bos_token} (ID: {bos_token_id})")
+
+    content = "\n".join(lines)
+
+    chat_template = getattr(tokenizer, "chat_template", None)
+    if chat_template:
+        template_str = str(chat_template)
+    else:
+        template_str = "N/A (defaulting to a basic 'User:... Assistant:...' format)"
+    chat_template_panel = Panel(
+        template_str,
+        title="[bold cyan]Chat Template[/bold cyan]",
+        border_style="dim",
+        padding=(0, 1),
+    )
+    combined_content = Group(content, "", chat_template_panel)
+    return Panel(
+        combined_content, title="[bold green]Tokenizer Info[/bold green]", border_style="green"
+    )
+
+
+def render_generation_config(generation_config: GenerationConfig) -> Panel:
+    """Render generation configuration details."""
+    lines = []
+    lines.append("[bold]Generation Parameters:[/bold]")
+    lines.append(f"  • Max new tokens: {generation_config.max_new_tokens}")
+    lines.append(f"  • Max length: {generation_config.max_length}")
+    if generation_config.do_sample:
+        lines.append("  • Sampling: enabled")
+        lines.append(f"  • Temperature: {generation_config.temperature}")
+        top_k_str = "unlimited" if generation_config.top_k == -1 else str(generation_config.top_k)
+        lines.append(f"  • Top-k: {top_k_str}")
+        lines.append(f"  • Top-p: {generation_config.top_p}")
+    else:
+        lines.append("  • Sampling: disabled (greedy)")
+    cache_status = "enabled" if generation_config.use_cache else "disabled"
+    lines.append(f"  • KV cache: {cache_status}")
+    config_info = "\n".join(lines)
+    return Panel(config_info, title="[bold blue]Generation Config[/bold blue]", border_style="blue")
+
+
 def load_tokenizer(tokenizer_config: TokenizerConfig):
-    """Load the actual tokenizer from the tokenizer config identifier."""
+    """Load the actual tokenizer from HF Hub using the tokenizer config identifier."""
     if tokenizer_config.identifier is None:
-        raise ValueError(
-            "Tokenizer config has no identifier. Cannot load tokenizer. "
-            "Please ensure the checkpoint has a tokenizer config with an identifier."
-        )
+        raise ValueError("Tokenizer config has no identifier. Cannot load tokenizer. ")
     return AutoTokenizer.from_pretrained(tokenizer_config.identifier)
 
 
 def load_tokenizer_config_from_checkpoint(checkpoint_dir: PathOrStr) -> Optional[TokenizerConfig]:
     """Load tokenizer config from checkpoint's config.json."""
-    from cached_path import cached_path
-
-    from olmo_core.io import join_path, normalize_path
-
     checkpoint_dir = normalize_path(checkpoint_dir)
     config_path = join_path(checkpoint_dir, "config.json")
     try:
@@ -86,8 +188,8 @@ Examples:
     parser.add_argument(
         "--max-new-tokens",
         type=int,
-        default=256,
-        help="Maximum number of new tokens to generate (default: 256)",
+        default=1024,
+        help="Maximum number of new tokens to generate (default: 1024)",
     )
     parser.add_argument(
         "--max-length",
@@ -138,33 +240,32 @@ Examples:
         help="Disable KV cache",
     )
     parser.add_argument(
-        "--device",
-        type=str,
-        default=None,
-        help="Device to use (default: auto-detect)",
-    )
-    parser.add_argument(
         "--system-prompt",
         type=str,
         default=None,
         help="System prompt to prepend to all conversations",
     )
     parser.add_argument(
-        "--quiet",
+        "--show-special-tokens",
         action="store_true",
-        help="Suppress generation statistics",
+        default=False,
+        help="Show special tokens (e.g., <|endoftext|>, <|endofsequence|>) in generated text (default: False)",
+    )
+    parser.add_argument(
+        "--verbosity",
+        type=str,
+        default="WARNING",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Logging verbosity level (default: INFO)",
     )
 
     args = parser.parse_args()
-
-    # Setup logging
     logging.basicConfig(
-        level=logging.INFO if not args.quiet else logging.WARNING,
+        level=getattr(logging, args.verbosity),
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
-    # Determine device
-    device = torch.device(args.device) if args.device else get_default_device()
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     console.print(f"Using device: {device}")
     if device.type != "cuda":
         console.print(
@@ -189,7 +290,10 @@ Examples:
         )
         sys.exit(1)
 
-    # Build generation config
+    # Display tokenizer info
+    console.print(render_tokenizer_info(tokenizer_config, tokenizer))
+    console.print()
+
     generation_config = GenerationConfig(
         pad_token_id=tokenizer_config.pad_token_id,
         eos_token_id=tokenizer_config.eos_token_id,
@@ -202,8 +306,7 @@ Examples:
         use_cache=args.use_cache,
     )
 
-    # Load generation module
-    console.print("[bold green]Loading checkpoint...")
+    console.print("[bold green]Loading model from checkpoint...")
     try:
         generation_module = TransformerGenerationModule.from_checkpoint(
             checkpoint_dir=args.checkpoint_dir,
@@ -213,24 +316,13 @@ Examples:
         )
     except Exception as e:
         console.print(f"[bold red]Failed to load checkpoint:[/bold red] {e}")
+        log.error(f"Failed to load checkpoint: {e}", exc_info=True)
         sys.exit(1)
 
     console.print("[bold green]✓ Model loaded successfully![/bold green]")
 
-    # Display generation config in a panel
-    config_info = f"""
-[bold]Generation Parameters:[/bold]
-  • Max new tokens: {args.max_new_tokens if args.max_length is None else "N/A"}
-  • Max length: {args.max_length if args.max_length is not None else "N/A"}
-  • Temperature: {args.temperature}
-  • Top-k: {args.top_k if args.top_k != -1 else "unlimited"}
-  • Top-p: {args.top_p}
-  • Sampling: {"enabled" if args.do_sample else "disabled (greedy)"}
-  • KV cache: {"enabled" if args.use_cache else "disabled"}
-"""
-    console.print(
-        Panel(config_info, title="[bold blue]Generation Config[/bold blue]", border_style="blue")
-    )
+    # Display generation config
+    console.print(render_generation_config(generation_config))
 
     # Welcome message
     welcome_text = Text()
@@ -247,15 +339,23 @@ Examples:
     console.print(Panel(welcome_text, title="[bold blue]Welcome[/bold blue]", border_style="blue"))
     console.print()
 
-    # Conversation history
-    conversation_history: list[str] = []
+    # Check if tokenizer has a chat template
+    has_chat_template = getattr(tokenizer, "chat_template", None) is not None
+
+    # Conversation history: list of message dicts for chat template, or strings for fallback
+    conversation_history: list[dict[str, str]] = []
     if args.system_prompt:
-        conversation_history.append(args.system_prompt)
+        conversation_history.append({"role": "system", "content": args.system_prompt})
+
+    # Display system prompt if provided
+    if args.system_prompt:
+        console.print(render_system_message(args.system_prompt))
+        console.print()
 
     try:
         while True:
             try:
-                user_input = Prompt.ask("[bold cyan]You[/bold cyan]").strip()
+                user_input = Prompt.ask("\n[bold cyan]You[/bold cyan]").strip()
             except (EOFError, KeyboardInterrupt):
                 console.print("\n[bold yellow]Goodbye![/bold yellow]")
                 break
@@ -270,7 +370,10 @@ Examples:
             elif user_input.lower() == "/clear":
                 conversation_history = []
                 if args.system_prompt:
-                    conversation_history.append(args.system_prompt)
+                    conversation_history.append({"role": "system", "content": args.system_prompt})
+                    console.print()
+                    console.print(render_system_message(args.system_prompt))
+                    console.print()
                 console.print("[bold green]✓ Conversation history cleared.[/bold green]\n")
                 continue
             elif user_input.lower() == "/help":
@@ -288,37 +391,58 @@ Examples:
                 console.print()
                 continue
 
-            # Build prompt from conversation history
-            conversation_history.append(f"User: {user_input}")
-            prompt = "\n".join(conversation_history) + "\nAssistant:"
+            # Display user message
+            console.print()
 
-            # Tokenize prompt
-            input_ids = tokenizer.encode(prompt, return_tensors="pt")
+            # Add user message to conversation history
+            conversation_history.append({"role": "user", "content": user_input})
 
-            # Generate response
-            console.print("[bold magenta]Assistant:[/bold magenta] ", end="")
-            try:
-                generated_ids, _, _ = generation_module.generate_batch(
-                    input_ids, completions_only=True, log_timing=False
+            # Build prompt using chat template if available, otherwise fall back to string format
+            if has_chat_template:
+                prompt = tokenizer.apply_chat_template(
+                    conversation_history, tokenize=False, add_generation_prompt=True
                 )
+            else:
+                # Fallback: build prompt manually
+                prompt_parts = []
+                for msg in conversation_history:
+                    if msg["role"] == "system":
+                        prompt_parts.append(msg["content"])
+                    elif msg["role"] == "user":
+                        prompt_parts.append(f"User: {msg['content']}")
+                    elif msg["role"] == "assistant":
+                        prompt_parts.append(f"Assistant: {msg['content']}")
+                prompt = "\n".join(prompt_parts) + "\nAssistant:"
 
-                # Decode only the new tokens
-                response_text = tokenizer.decode(generated_ids[0], skip_special_tokens=True)
-                console.print(response_text)
+            try:
+                with console.status("[dim]Generating response...", spinner="dots"):
+                    input_ids = tokenizer.encode(prompt, return_tensors="pt")
+                    generated_ids, _, _ = generation_module.generate_batch(
+                        input_ids, completions_only=True, log_timing=False
+                    )
+                    response_text = tokenizer.decode(
+                        generated_ids[0], skip_special_tokens=not args.show_special_tokens
+                    )
 
-                # Update conversation history
-                conversation_history.append(f"Assistant: {response_text}")
+                console.print()
+                console.print(render_assistant_message(response_text))
+                conversation_history.append({"role": "assistant", "content": response_text})
 
             except Exception as e:
                 log_or_print(log, f"Generation error: {e}", level=logging.ERROR)
-                console.print(f"[bold red]Error:[/bold red] {e}")
+                error_panel = Panel(
+                    Text(f"Error: {e}", style="red"),
+                    title="[bold red]Error[/bold red]",
+                    border_style="red",
+                    padding=(0, 1),
+                )
+                console.print()
+                console.print(error_panel)
                 conversation_history.pop()
 
-            console.print()  # Empty line for readability
-
     except Exception as e:
-        log_or_print(log, f"Unexpected error: {e}", level=logging.ERROR)
         console.print(f"[bold red]Unexpected error:[/bold red] {e}")
+        log.error(f"Unexpected error: {e}", exc_info=True)
         sys.exit(1)
 
 
