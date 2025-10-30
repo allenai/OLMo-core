@@ -1,168 +1,168 @@
 <div align="center">
-  <!-- <img src="https://github.com/allenai/OLMo/assets/8812459/774ac485-a535-4768-8f7c-db7be20f5cc3" width="300"/> -->
-  <img src="https://huggingface.co/datasets/allenai/blog-images/resolve/main/olmo2/olmo.png" alt="OLMo Logo" width="280" style="margin-left:'auto' margin-right:'auto' display:'block'"/>
-  <br>
   <h1>OLMo-core</h1>
-  <h4>Building blocks for OLMo modeling and training</h4>
 </div>
 <p align="center">
-  <a href="https://olmo-core.readthedocs.io/en/latest/">
-    <img alt="Docs" src="https://img.shields.io/badge/API-docs-red">
-  </a>
-  <a href="https://github.com/allenai/OLMo-core/tree/main/src/examples">
-    <img alt="Examples" src="https://img.shields.io/badge/API-examples-994B00">
-  </a>
-  <a href="https://github.com/allenai/OLMo-core/releases/tag/v1.9.0">
-    <img alt="Pypi" src="https://img.shields.io/pypi/v/ai2-olmo-core.svg">
-  </a>
-  <a href="https://github.com/allenai/OLMo-core/blob/main/LICENSE">
+  <a href="XXX">
     <img alt="GitHub License" src="https://img.shields.io/github/license/allenai/OLMo">
   </a>
-  <a href="https://arxiv.org/pdf/2501.00656.pdf">
-    <img alt="Paper URL" src="https://img.shields.io/badge/arxiv-2402.00838-orange">
+  <a href="XXX">
+    <img alt="GitHub release" src="https://img.shields.io/github/release/allenai/OLMo.svg">
   </a>
-  <a href="https://playground.allenai.org">
-    <img alt="Playground" src="https://img.shields.io/badge/Ai2-Playground-F0529C">
-  </a>
-  <a href="https://discord.gg/sZq3jTNVNG">
-    <img alt="Discord" src="https://img.shields.io/badge/Discord%20-%20blue?style=flat&logo=discord&label=Ai2&color=%235B65E9">
+  <a href="XXX">
+    <img alt="Paper URL" src="https://img.shields.io/badge/arxiv-2402.00838-blue">
   </a>
 </p>
 
+`OLMo-core` is a repository for training and using OLMo3, AI2's state-of-the-art open language model. It is designed by scientists, for scientists.
+
+This is a one-page recipe to launch a pretraining experiment from scratch, from tokenization to downstream evaluations.
+
 ## Installation
+Create or activate a Python virtual environment with a Python version ≥ 3.10, then install [PyTorch](https://pytorch.org/).
 
-First install [PyTorch](https://pytorch.org) according to the instructions specific to your operating system and hardware.
-
-For development, we recommend installing from source:
-
+For development, we recommend installing `OLMo-core` from source:
 ```bash
 git clone https://github.com/allenai/OLMo-core.git
 cd OLMo-core
 pip install -e .[all]
 ```
-Or you can install from PyPI with:
 
+Or you can install `OLMo-core` from PyPI with:
 ```bash
 pip install ai2-olmo-core
 ```
 
-There are a number of optional dependencies that must be installed to use certain functionality as well, including:
-- [flash-attn](https://github.com/Dao-AILab/flash-attention), [ring-flash-attn](https://github.com/zhuzilin/ring-flash-attention), and [TransformerEngine](https://github.com/NVIDIA/TransformerEngine) for the corresponding attention backends.
-- [Liger-Kernel](https://github.com/linkedin/Liger-Kernel) for a low-memory "fused-linear" loss implementation.
-- [torchao](https://github.com/pytorch/ao) for float8 training.
-- [grouped_gemm](https://github.com/tgale96/grouped_gemm) for dropless mixture-of-experts (MoE) models. You may need to compile from source until [PR #21](https://github.com/tgale96/grouped_gemm/pull/21) is released (post v0.1.6).
+## Pretraining
 
-The published [Docker images](https://github.com/orgs/allenai/packages?repo_name=OLMo-core) contain all core and optional dependencies, and are regularly tested on our in-house H100 clusters.
-But there are several things to keep in mind if you intend to use these images:
-- They do not come with the OLMo-core package installed, only its dependencies, to accommodate for regular code changes.
-- They may not work on your own cluster if you have different hardware or driver/CUDA versions.
+We will use the script `src/examples/llm/train.py` to launch our first pretraining run. Official training scripts for released models can be found in `src/scripts/official/`.
 
-If the published images do not work for your use-case for any of the above reasons, you could adapt our [Dockerfile](https://github.com/allenai/OLMo-core/blob/main/src/Dockerfile) to build your own images.
-
-## Official training scripts
-
-Official training scripts for released models can be found in [`src/scripts/official/`](https://github.com/allenai/OLMo-core/tree/main/src/scripts/official).
-These scripts are meant to be launched with ``torchrun``, or with OLMo-core's Beaker launch CLI if you have access to Beaker.
-
-For example:
+### Data download
 
 ```bash
-torchrun --nproc-per-node=8 src/scripts/official/OLMo-2-0325-32B-train.py \
-  --save-folder=/path/to/save/checkpoints
+aria2c -i links.sh -x 16 -s 16 -j 8 -c --auto-file-renaming=false
 ```
 
-You can override most configuration options from the command-line. For example, to override the learning rate you could launch the script like this:
+### Defining a config
+Near the top of the script we'll find the config dataclass.
+
+```python
+@dataclass
+class ExperimentConfig(Config):
+    model: TransformerConfig
+    """Model config."""
+    dataset: NumpyDatasetConfig
+    """Dataset config."""
+    data_loader: NumpyDataLoaderConfig
+    """Data loader config."""
+    trainer: TrainerConfig
+    """Trainer config."""
+    train_module: TransformerTrainModuleConfig
+    """Train module config. Contains settings for optimizer."""
+    init_seed: int = 12536
+    """Random seed to initialize model weights."""
+    load_path: Optional[str] = None
+    """Path to load checkpoint from if no checkpoint is found in the save folder.
+    Mainly used when you want to fine-tune from a pretrained model."""
+    load_trainer_state: bool = False
+    """Whether to load the trainer state (including data loader state) when loading from `load_path`.
+    This only makes sense when trainer state is available in the checkpoint and you're resuming
+    on the same dataset."""
+```
+
+To override any fields in the config at runtime, we can simply pass them in as command-line options. For instance, adding `--data_loader.prefetch_factor=4` would update the `prefetch_factor` field within the `data_loader` part of the config. To validate that our overrides are applied correctly, we can print the config without actually launching training using the `--dry-run` flag.
 
 ```bash
-torchrun --nproc-per-node=8 src/scripts/train/OLMo-2-0325-32B-train.py \
-  --save-folder=/path/to/save/checkpoints \
-  --train_module.optim.lr=6e-3
+python src/examples/llm/train.py tutorial-run-01 --dry-run
 ```
-
-To continue annealing from a checkpoint, we use a separate script which can be launched like this:
-
+Note that the single positional argument provided, here `tutorial-run-01`, is the name of the run. Now we can try overriding a few config options and verify that the corresponding fields in the printed config have changed.
 ```bash
-torchrun --nproc-per-node=8 src/scripts/train/OLMo-2-0325-32B-anneal.py \
-  --save-folder=/path/to/save/checkpoints \
-  --checkpoint=https://olmo-checkpoints.org/ai2-llm/peteish32/step721901
+python src/examples/llm/train.py tutorial-run-01 --dry-run \
+  --data_loader.prefetch_factor=4 \
+  --trainer.callbacks.wandb.enabled=true
 ```
 
-## OLMo-2 Model Training
-
-OLMo-2 32B pretraining follows a two-stage training procedure.
-In the first stage, we train on large amounts of mostly web-based data: [OLMo-mix-1124](https://huggingface.co/datasets/allenai/olmo-mix-1124).
-In the second stage, we train on a smaller amount of high-quality, targeted data: Dolmino-mix-0324 (releasing soon).
-
-| Stage | Model Size | Training | Checkpoint | Monitoring |
-|-------|------------|----------|------------|------------|
-| stage 1 | **32B** | 6T tokens | [stage1-step721901-tokens6056B](https://huggingface.co/allenai/OLMo-2-0325-32B/tree/stage1-step721901-tokens6056B) | [comet.ml/OLMo2-32B](https://www.comet.com/ai2/olmo-2-0325-32b/reports/olmo-2-0325-32b?shareable=WhT37Wy7jqttDoy6ysDBumQzf) |
-| stage 2 | **32B** | random seed 1110, 100B tokens | [stage2-ingredient1-step11921-tokens101B](https://huggingface.co/allenai/OLMo-2-0325-32B/tree/stage2-ingredient1-step11921-tokens101B) | [comet.ml/OLMo2-32B](https://www.comet.com/ai2/olmo-2-0325-32b/reports/olmo-2-0325-32b-anneal?shareable=WhT37Wy7jqttDoy6ysDBumQzf) |
-| |  | random seed 2662, 100B tokens | [stage2-ingredient2-step11921-tokens101B](https://huggingface.co/allenai/OLMo-2-0325-32B/tree/stage2-ingredient2-step11921-tokens101B) | [comet.ml/OLMo2-32B](https://www.comet.com/ai2/olmo-2-0325-32b/reports/olmo-2-0325-32b-anneal?shareable=WhT37Wy7jqttDoy6ysDBumQzf) |
-|  |  | random seed 2662, 300B tokens | [stage2-ingredient3-step35763-tokens301B](https://huggingface.co/allenai/OLMo-2-0325-32B/tree/stage2-ingredient3-step35763-tokens301B) | [comet.ml/OLMo2-32B](https://www.comet.com/ai2/olmo-2-0325-32b/reports/olmo-2-0325-32b-anneal?shareable=WhT37Wy7jqttDoy6ysDBumQzf) |
-|  |  | **Final Souped Model** | [main](https://huggingface.co/allenai/OLMo-2-0325-32B/tree/main) | No config, weights averaged in Python | - |
-
-The table below lists the checkpoints for Stage 1 and Stage 2 of OLMo-2, along with their corresponding Hugging Face format.
-
-| Variant | OLMo Format (Stage 1) | OLMo Format (Stage 2) | Hugging Face Format |
-|---------|-----------------------|-----------------------|---------------------|
-| **OLMo-2 32B**  | [OLMo-2 32B](https://github.com/allenai/OLMo-core/blob/main/src/scripts/official/OLMo-2-0325-32B.csv)     | [OLMo-2 32B](https://github.com/allenai/OLMo-core/blob/main/src/scripts/official/OLMo-2-0325-32B-stage2.csv)      | [Hugging Face for the 32B variant](https://huggingface.co/allenai/OLMo-2-0325-32B)  |
-
-
-> Note: OLMo-2 7B and 13B models were trained using [the old OLMo trainer](https://github.com/allenai/OLMo). All related checkpoints, configs, and scripts for these models can be found there. While you can train 7B and 13B models with this trainer, please note that the configs and script in the old training codebase are not compatible with this repo.
-
-## Inference
-
-You can use our Hugging Face integration to run inference on the OLMo transformers checkpoints:
+Finally, we can change the model architecture via the `--model-factory` argument. The options for this argument are the various classmethods of [TransformerConfig](https://olmo-core.readthedocs.io/en/latest/nn/transformer.html#olmo_core.nn.transformer.TransformerConfig), which define preset model configurations. By default, `model-factory` is set to `llama2_271M`, which constructs a small transformer with 271M params. Alternatively, you can hardcode the desired config by replacing the following lines
 
 ```python
-from transformers import AutoModelForCausalLM, AutoTokenizer
-olmo = AutoModelForCausalLM.from_pretrained("allenai/OLMo-2-0325-32B")
-tokenizer = AutoTokenizer.from_pretrained("allenai/OLMo-2-0325-32B")
-message = ["Language modeling is "]
-inputs = tokenizer(message, return_tensors='pt', return_token_type_ids=False)
-# inputs = {k: v.to('cuda') for k,v in inputs.items()} # optional verifying cuda
-# olmo = olmo.to('cuda')
-response = olmo.generate(**inputs, max_new_tokens=100, do_sample=True, top_k=50, top_p=0.95)
-print(tokenizer.batch_decode(response, skip_special_tokens=True)[0])
+    try:
+        factory = getattr(TransformerConfig, opts.model_factory)
+    except AttributeError:
+        raise ValueError(f"Unknown model factory: {opts.model_factory}")
+    model_config = factory(
+        vocab_size=tokenizer_config.padded_vocab_size(),  # a little bigger than actual vocab size to make it a multiple of 128
+    )
 ```
 
-Alternatively, with the Hugging Face pipeline abstraction:
+with a particular `TransformerConfig` instance, such as an OLMo2 1B model, as follows.
 
 ```python
-from transformers import pipeline
-olmo_pipe = pipeline("text-generation", model="allenai/OLMo-2-0325-32B")
-print(olmo_pipe("Language modeling is"))
-```
-### Quantization
-
-```python
-olmo = AutoModelForCausalLM.from_pretrained("allenai/OLMo-2-0325-32B", torch_dtype=torch.float16, load_in_8bit=True)  # requires bitsandbytes
+    model_config = TransformerConfig.olmo2_1B(
+        vocab_size=tokenizer_config.padded_vocab_size()
+    )
 ```
 
-## Evaluation
+To specify a new model config, we recommend creating a new classmethod under `TransformerConfig`. Keep in mind that as you change the model size and architecture you’ll likely want to adjust hyperparameters and performance settings such as the learning rate and micro-batch size (`--train_module.rank_microbatch_size`).
 
-Additional tools for evaluating OLMo models are available at the [OLMo Eval](https://github.com/allenai/OLMo-eval) and [olmes](https://github.com/allenai/olmes) repositories.
+### Launching the run
+Now that we know how to change settings on the fly, we're ready to launch the run. For the first run, we'll use overrides to disable the in-loop perplexity evaluator, in-loop downstream task evaluator, checkpoint, and terminate the training at step 100. Assuming you have two GPUs available, the command would be
+```bash
+torchrun --nproc-per-node=2 src/examples/llm/train.py \
+  tutorial-run-01 \
+  --save-folder=/tmp/tutorial-run-01 \
+  --work-dir=/tmp/dataset-cache \
+  --trainer.callbacks.lm_evaluator.enabled=false \
+  --trainer.callbacks.downstream_evaluator.enabled=false \
+  --trainer.no_checkpoints \
+  --trainer.hard_stop='{value: 100, unit: steps}'
+```
+This should take only a few minutes on two NVIDIA 40GB A100s.
 
-## Development
+### Finetuning pretrained models
 
-The Python library source code is located in `src/olmo_core`. The corresponding tests are located in `src/test`. The library docs are located in `docs`. You can build the docs locally with `make docs`.
+This script can be used for finetuning pretrained models as well. To tell `Trainer` to load pretrained weights at the beginning of the run, use the `--load-path` option. You may also need to convert your model into a format that the `Trainer` expects. See this [HF conversion guide](You need to convert the pretrained weights into a format that the Trainer expects. See this HF conversion guide for an example of converting weights from HuggingFace into the right format.) for an example of converting weights from HuggingFace into the right format.
 
-Code checks:
-- We use `pytest` to run tests. You can run all tests with `pytest -v src/test`. You can also point `pytest` at a specific test file to run it individually.
-- We use `isort` and `black` for code formatting. Ideally you should integrate these into your editor, but you can also run them manually or configure them with a pre-commit hook. To validate that all files are formatted correctly, run `make style-check`.
-- We use `ruff` as our primary linter. You can run it with `make lint-check`.
-- We use `mypy` as our type checker. You can run it with `make type-check`.
+## Providing your own data
+To provide our own dataset for pretraining, we will want to use the Dolma Toolkit housed at [allenai/dolma](https://github.com/allenai/dolma), which can be installed with `pip install dolma`. Then, we can access the `dolma tokens` command for tokenizing documents. The tool can be used with any HuggingFace-compatible tokenizer.
 
-## Citing
+### Raw data format
 
-```bibtex
-@misc{olmo20242olmo2furious,
-      title={{2 OLMo 2 Furious}},
-      author={{Team OLMo} and Pete Walsh and Luca Soldaini and Dirk Groeneveld and Kyle Lo and Shane Arora and Akshita Bhagia and Yuling Gu and Shengyi Huang and Matt Jordan and Nathan Lambert and Dustin Schwenk and Oyvind Tafjord and Taira Anderson and David Atkinson and Faeze Brahman and Christopher Clark and Pradeep Dasigi and Nouha Dziri and Michal Guerquin and Hamish Ivison and Pang Wei Koh and Jiacheng Liu and Saumya Malik and William Merrill and Lester James V. Miranda and Jacob Morrison and Tyler Murray and Crystal Nam and Valentina Pyatkin and Aman Rangapur and Michael Schmitz and Sam Skjonsberg and David Wadden and Christopher Wilhelm and Michael Wilson and Luke Zettlemoyer and Ali Farhadi and Noah A. Smith and Hannaneh Hajishirzi},
-      year={2024},
-      eprint={2501.00656},
-      archivePrefix={arXiv},
-      primaryClass={cs.CL},
-      url={https://arxiv.org/abs/2501.00656},
+The raw data should in `.jsonl` format, ideally with `gz` or `zst` compression. Each line of the JSONL file is a JSON object representing a single document, with the following format
+
+```
+{
+    "id": "...",             # MANDATORY: source-specific identifier
+    "text": "foo",           # MANDATORY: content of the document
+    "source": "...",         # MANDATORY: source of the data, such as peS2o, common-crawl, etc.
+    "added": "...",          # OPTIONAL: timestamp ai2 acquired this data
+    "created": "..."         # OPTIONAL: timestamp when orig document was created (best-guess if not available)
+    "metadata": {...}        # OPTIONAL: source-specific metadata
 }
 ```
+
+Note that the `id` field only needs to be unique within the `source`. For example, having the two documents `{"source": "c4", "id": "123"}` and `{"source": "github", "id": "123"}` would be acceptable.
+
+### Tokenization
+Now, we can tokenize our raw data with the following command. Please use `dolma tokens --help` for the full list of parameters accepted by `dolma tokens`.
+
+```bash
+dolma tokens \
+    --documents "/path/to/documents/*" \
+    --destination "/path/to/destination" \
+    --tokenizer.name_or_path allenai/dolma2-tokenizer \
+    --tokenizer.eos_token_id 100257 \
+    --tokenizer.pad_token_id 100277 \
+    --tokenizer.encode_special_tokens \
+    --processes $(python3 -c "import multiprocessing; print(multiprocessing.cpu_count())") \
+    --dtype uint32
+```
+
+### Tokenized data format
+
+The output is in the form of `.npy` files containing concatenated tokenized documents, and a `.csv.gz` file containing all the metadata. The metadata has the following columns and one row for each document:
+- `start` (int): The start index of the document/chunk in the `.npy` tokenized file (0-indexed)
+- `end` (int): The end index of the document/chunk in the `.npy` tokenized file (0-indexed, exclusive)
+- `id` (str): The unique identifier of the original document
+- `src` (str): The source file path where the original document came from
+- `loc` (int): The line number/location of the document in the original source file (1-indexed)
+
+Now that we have the output data paths, we can pass them into our script by enumerating a list as in `--dataset.paths='["/path/to/data1.npy", "/path/to/data2.npy"]'`, or, by using arbitrary wildcards, as in `--dataset.paths='["/path/to/data/*.npy"]'`.
