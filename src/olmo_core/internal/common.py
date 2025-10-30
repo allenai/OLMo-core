@@ -221,6 +221,15 @@ def build_launch_config(
         ],
     )
 
+    if cluster == "ai2/augusta":
+        # Print out host metadata for easy debugging.
+        launch_config.setup_steps.insert(
+            0,
+            """ID=$(curl -s -H Metadata-Flavor:Google http://metadata.google.internal/computeMetadata/v1/instance/id); """
+            """TOPOLOGY=$(curl -s -H Metadata-Flavor:Google http://metadata.google.internal/computeMetadata/v1/instance/attributes/physical_host_topology); """
+            """printf 'Google Instance Metadata: {"id":"%s","physical_host_topology":%s}' "$ID" "$TOPOLOGY" | tr -d '[:space:]'; echo""",
+        )
+
     if google_creds:
         launch_config.setup_steps += [
             "mkdir -p ~/.google",
