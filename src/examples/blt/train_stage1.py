@@ -91,6 +91,8 @@ elif DATA_SOURCE == "dolmino":
     _DATA_SOURCES = open(Path(__file__).parent / "data_sources_dolmino.txt").read().strip().splitlines()
 elif DATA_SOURCE == "dolma2_code_string":
     _DATA_SOURCES = open(Path(__file__).parent / "data_sources_dolma2_code_string.txt").read().strip().splitlines()
+elif DATA_SOURCE == "dolma2_150b_code_string":
+    _DATA_SOURCES = open(Path(__file__).parent / "data_sources_dolma2_150b_code_string.txt").read().strip().splitlines()
 elif DATA_SOURCE == "dolmino_code_string":
     _DATA_SOURCES = open(Path(__file__).parent / "data_sources_dolmino_code_string.txt").read().strip().splitlines()
 elif DATA_SOURCE == "tulu3":
