@@ -58,6 +58,7 @@ def get_hosts_metadata_from_gcp(
         )
         for page in instance_pages
         for instance in page.items
+        if instance.status == "RUNNING"
     }
 
 
