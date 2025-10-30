@@ -174,7 +174,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             WandBCallback(
                 name=run_name,
                 group=common.run_name,
-                entity="ai2-llm",
+                entity="yanhong-lbh",
                 project="linear-rnns",
                 enabled=True,
                 cancel_check_interval=cancel_check_interval,
