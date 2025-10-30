@@ -49,8 +49,9 @@ def get_cli_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--sequence-length",
         type=int,
-        default=4096,
-        help="""The sequence length to train and eval on.""",
+        default=None,
+        help="""The sequence length to train and eval on. Different scripts have different default
+        sequence-length values. If a value is not specified here, the default value is used.""",
     )
     parser.add_argument(
         "--data-root",

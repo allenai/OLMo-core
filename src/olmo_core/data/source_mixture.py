@@ -16,7 +16,7 @@ from olmo_core.aliases import PathOrStr
 from olmo_core.config import Config
 from olmo_core.data.types import NumpyUIntTypes
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.io import file_exists, get_file_size, glob_directory
+from olmo_core.io import file_exists, get_file_size, glob_directory, join_path
 
 __all__ = [
     "SourceMixtureConfig",
@@ -60,6 +60,7 @@ class SourceMixtureConfig(Config):
     The maximum ratio of the source data to include in the mixture.
     """
 
+    _mix_base_dir: Optional[str] = None
     _resolved_paths: Optional[List[str]] = None
 
     def validate(self):
@@ -78,18 +79,26 @@ class SourceMixtureConfig(Config):
         if not 0 <= self.max_source_fraction <= 1:
             raise OLMoConfigurationError("max_source_fraction must be in the range [0, 1]")
 
-    @property
-    def resolved_paths(self) -> List[str]:
+    def resolved_paths(self, mix_base_dir: str) -> List[str]:
         """
         Resolve the paths, expanding any globs and validating existence.
         Caches the result after the first access.
         """
-        if self._resolved_paths is not None:
+        if self._resolved_paths is not None and self._mix_base_dir == mix_base_dir:
             return self._resolved_paths
 
         resolved: List[str] = []
         for path in self.paths:
             path_str = str(path)
+            # Prepend mix_base_dir if path is relative
+            if path_str.startswith(("/", "gs://", "s3://", "weka://", "http://", "https://")):
+                log.warning(
+                    f"Path '{path_str}' is already absolute, skipping `mix_base_dir` prepend"
+                )
+                resolved.append(path_str)
+            else:
+                path_str = str(join_path(mix_base_dir, path_str))
+
             if "*" in path_str:
                 matches = sorted(glob_directory(path_str))
                 if not matches:
@@ -121,6 +130,7 @@ class SourceMixtureConfig(Config):
                 resolved.append(path_str)
 
         self._resolved_paths = resolved
+        self._mix_base_dir = mix_base_dir
         return resolved
 
 
@@ -257,6 +267,10 @@ class SourceMixtureDatasetConfig(Config):
     """
     A list of source configurations contained in a SourceMixtureList.
     """
+    mix_base_dir: str
+    """
+    The base directory of the data mix.
+    """
     requested_tokens: int
     """
     The desired dataset size, in tokens. This is used to determine the number of tokens to select from each source.
@@ -298,7 +312,7 @@ class SourceMixtureDatasetConfig(Config):
         for source_config in self.source_list.sources:
             log.info(f"Counting tokens for source: {source_config.source_name}")
             available_tokens_by_source[source_config.source_name] = self._count_tokens_for_paths(
-                paths=cast(List[PathOrStr], source_config.resolved_paths),
+                paths=cast(List[PathOrStr], source_config.resolved_paths(self.mix_base_dir)),
                 source=source_config.source_name,
                 npdtype=npdtype,
             )
@@ -342,9 +356,9 @@ class SourceMixtureDatasetConfig(Config):
         # We adjust the number of tokens per path so that we can complete the desired number
         # of training steps while still retaining the target ratios.
         training_steps = math.ceil(self.requested_tokens / self.global_batch_size)
-        assert (
-            self.global_batch_size % sequence_length == 0
-        ), "global_batch_size must be multiple of sequence_length"
+        assert self.global_batch_size % sequence_length == 0, (
+            "global_batch_size must be multiple of sequence_length"
+        )
         num_instances_per_batch = self.global_batch_size // sequence_length
         requested_instances = training_steps * num_instances_per_batch
 
@@ -467,7 +481,7 @@ class SourceMixtureDatasetConfig(Config):
         take_ratio = token_details.num_selected / token_details.population
         path_tokens: List[SourcePathTokens] = []
 
-        resolved_paths = source_config.resolved_paths
+        resolved_paths = source_config.resolved_paths(self.mix_base_dir)
         token_counts_by_path = {
             path: self._count_tokens_for_file(path, npdtype) for path in resolved_paths
         }
