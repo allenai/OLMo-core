@@ -14,6 +14,7 @@ from typing import Optional
 
 import torch
 from cached_path import cached_path
+from rich.columns import Columns
 from rich.console import Console, Group
 from rich.panel import Panel
 from rich.prompt import Prompt
@@ -29,6 +30,19 @@ from olmo_core.utils import log_or_print
 
 log = logging.getLogger(__name__)
 console = Console()
+
+DEFAULT_CHAT_TEMPLATE = """{%- for message in messages %}
+{%- if message['role'] == 'system' -%}
+System: {{ message['content'] }}
+{%- elif message['role'] == 'user' -%}
+User: {{ message['content'] }}
+{%- elif message['role'] == 'assistant' -%}
+Assistant: {{ message['content'] }}
+{%- endif -%}
+{%- endfor -%}
+{%- if add_generation_prompt -%}
+Assistant:
+{%- endif -%}"""
 
 
 def render_assistant_message(message: str) -> Panel:
@@ -57,26 +71,26 @@ def render_system_message(message: str) -> Panel:
     )
 
 
-def render_tokenizer_info(tokenizer_config: TokenizerConfig, tokenizer) -> Panel:
+def render_tokenizer_info(
+    tokenizer_config: TokenizerConfig, tokenizer, custom_template: Optional[str] = None
+) -> Panel:
     """Render tokenizer configuration details."""
-    lines = []
-
     # OLMo-core TokenizerConfig info
-    lines.append("[bold]OLMo-core TokenizerConfig:[/bold]")
-    lines.append(f"  • Identifier: {tokenizer_config.identifier or 'N/A'}")
-    lines.append(f"  • Vocab size: {tokenizer_config.vocab_size:,}")
-    lines.append(f"  • EOS token ID: {tokenizer_config.eos_token_id}")
-    lines.append(f"  • Pad token ID: {tokenizer_config.pad_token_id}")
-    lines.append(f"  • BOS token ID: {tokenizer_config.bos_token_id}")
-
-    lines.append("")
+    left_lines = []
+    left_lines.append("OLMo-core TokenizerConfig:")
+    left_lines.append(f"  • Identifier: {tokenizer_config.identifier or 'N/A'}")
+    left_lines.append(f"  • Vocab size: {tokenizer_config.vocab_size:,}")
+    left_lines.append(f"  • EOS token ID: {tokenizer_config.eos_token_id}")
+    left_lines.append(f"  • Pad token ID: {tokenizer_config.pad_token_id}")
+    left_lines.append(f"  • BOS token ID: {tokenizer_config.bos_token_id}")
 
     # HuggingFace tokenizer info
-    lines.append("[bold]HuggingFace Tokenizer:[/bold]")
-    lines.append(f"  • Vocab size: {tokenizer.vocab_size:,}")
+    right_lines = []
+    right_lines.append("HuggingFace Tokenizer:")
+    right_lines.append(f"  • Vocab size: {tokenizer.vocab_size:,}")
 
     model_max_length = getattr(tokenizer, "model_max_length", None)
-    lines.append(f"  • Model max length: {model_max_length:,}")
+    right_lines.append(f"  • Model max length: {model_max_length:,}")
 
     # Special tokens
     all_special_tokens = getattr(tokenizer, "all_special_tokens", None)
@@ -84,35 +98,45 @@ def render_tokenizer_info(tokenizer_config: TokenizerConfig, tokenizer) -> Panel
         special_tokens_str = ", ".join(all_special_tokens[:5])
         if len(all_special_tokens) > 5:
             special_tokens_str += f" ... ({len(all_special_tokens)} total)"
-        lines.append(f"  • Special tokens: {special_tokens_str}")
+        right_lines.append(f"  • Special tokens: {special_tokens_str}")
     else:
-        lines.append("  • Special tokens: N/A")
+        right_lines.append("  • Special tokens: N/A")
 
     # Token IDs and strings
     eos_token = getattr(tokenizer, "eos_token", None)
     eos_token_id = getattr(tokenizer, "eos_token_id", None)
-    lines.append(f"  • EOS token: {eos_token} (ID: {eos_token_id})")
+    right_lines.append(f"  • EOS token: {eos_token} (ID: {eos_token_id})")
     pad_token = getattr(tokenizer, "pad_token", None)
     pad_token_id = getattr(tokenizer, "pad_token_id", None)
-    lines.append(f"  • Pad token: {pad_token} (ID: {pad_token_id})")
+    right_lines.append(f"  • Pad token: {pad_token} (ID: {pad_token_id})")
     bos_token = getattr(tokenizer, "bos_token", None)
     bos_token_id = getattr(tokenizer, "bos_token_id", None)
-    lines.append(f"  • BOS token: {bos_token} (ID: {bos_token_id})")
+    right_lines.append(f"  • BOS token: {bos_token} (ID: {bos_token_id})")
 
-    content = "\n".join(lines)
+    left_text = Text("\n".join(left_lines))
+    right_text = Text("\n".join(right_lines))
+    columns = Columns([left_text, right_text], equal=True, expand=True)
 
-    chat_template = getattr(tokenizer, "chat_template", None)
-    if chat_template:
-        template_str = str(chat_template)
+    # Determine which template to display
+    if custom_template:
+        template_str = custom_template
+        template_title = "[bold cyan]Chat Template (Custom)[/bold cyan]"
     else:
-        template_str = "N/A (defaulting to a basic 'User:... Assistant:...' format)"
+        chat_template = getattr(tokenizer, "chat_template", None)
+        if chat_template:
+            template_str = str(chat_template)
+            template_title = "[bold cyan]Chat Template[/bold cyan]"
+        else:
+            template_str = DEFAULT_CHAT_TEMPLATE
+            template_title = "[bold cyan]Chat Template (Default)[/bold cyan]"
+
     chat_template_panel = Panel(
         template_str,
-        title="[bold cyan]Chat Template[/bold cyan]",
+        title=template_title,
         border_style="dim",
         padding=(0, 1),
     )
-    combined_content = Group(content, "", chat_template_panel)
+    combined_content = Group(columns, "", chat_template_panel)
     return Panel(
         combined_content, title="[bold green]Tokenizer Info[/bold green]", border_style="green"
     )
@@ -120,22 +144,29 @@ def render_tokenizer_info(tokenizer_config: TokenizerConfig, tokenizer) -> Panel
 
 def render_generation_config(generation_config: GenerationConfig) -> Panel:
     """Render generation configuration details."""
-    lines = []
-    lines.append("[bold]Generation Parameters:[/bold]")
-    lines.append(f"  • Max new tokens: {generation_config.max_new_tokens}")
-    lines.append(f"  • Max length: {generation_config.max_length}")
+    left_items = []
+    right_items = []
+
+    left_items.append(f"• Max new tokens: {generation_config.max_new_tokens}")
+    right_items.append(f"• Max length: {generation_config.max_length}")
+
     if generation_config.do_sample:
-        lines.append("  • Sampling: enabled")
-        lines.append(f"  • Temperature: {generation_config.temperature}")
+        left_items.append("• Sampling: enabled")
+        left_items.append(f"• Temperature: {generation_config.temperature}")
         top_k_str = "unlimited" if generation_config.top_k == -1 else str(generation_config.top_k)
-        lines.append(f"  • Top-k: {top_k_str}")
-        lines.append(f"  • Top-p: {generation_config.top_p}")
+        left_items.append(f"• Top-k: {top_k_str}")
+        left_items.append(f"• Top-p: {generation_config.top_p}")
     else:
-        lines.append("  • Sampling: disabled (greedy)")
+        left_items.append("• Sampling: disabled (greedy)")
+
     cache_status = "enabled" if generation_config.use_cache else "disabled"
-    lines.append(f"  • KV cache: {cache_status}")
-    config_info = "\n".join(lines)
-    return Panel(config_info, title="[bold blue]Generation Config[/bold blue]", border_style="blue")
+    right_items.append(f"• KV cache: {cache_status}")
+
+    left_text = Text("\n".join(left_items))
+    right_text = Text("\n".join(right_items))
+    columns = Columns([left_text, right_text], equal=True, expand=True)
+    content = Group("[bold]Generation Parameters:[/bold]", columns)
+    return Panel(content, title="[bold blue]Generation Config[/bold blue]", border_style="blue")
 
 
 def load_tokenizer(tokenizer_config: TokenizerConfig):
@@ -252,6 +283,12 @@ Examples:
         help="Show special tokens (e.g., <|endoftext|>, <|endofsequence|>) in generated text (default: False)",
     )
     parser.add_argument(
+        "--chat-template",
+        type=str,
+        default=None,
+        help="Custom Jinja2 chat template string. If provided, this will override the tokenizer's default chat template.",
+    )
+    parser.add_argument(
         "--verbosity",
         type=str,
         default="WARNING",
@@ -291,7 +328,9 @@ Examples:
         sys.exit(1)
 
     # Display tokenizer info
-    console.print(render_tokenizer_info(tokenizer_config, tokenizer))
+    console.print(
+        render_tokenizer_info(tokenizer_config, tokenizer, custom_template=args.chat_template)
+    )
     console.print()
 
     generation_config = GenerationConfig(
@@ -339,10 +378,14 @@ Examples:
     console.print(Panel(welcome_text, title="[bold blue]Welcome[/bold blue]", border_style="blue"))
     console.print()
 
-    # Check if tokenizer has a chat template
-    has_chat_template = getattr(tokenizer, "chat_template", None) is not None
+    # Determine which chat template to use
+    if args.chat_template:
+        chat_template = args.chat_template
+    else:
+        chat_template = getattr(tokenizer, "chat_template", None)
+        if chat_template is None:
+            chat_template = DEFAULT_CHAT_TEMPLATE
 
-    # Conversation history: list of message dicts for chat template, or strings for fallback
     conversation_history: list[dict[str, str]] = []
     if args.system_prompt:
         conversation_history.append({"role": "system", "content": args.system_prompt})
@@ -356,6 +399,7 @@ Examples:
         while True:
             try:
                 user_input = Prompt.ask("\n[bold cyan]You[/bold cyan]").strip()
+                console.print()
             except (EOFError, KeyboardInterrupt):
                 console.print("\n[bold yellow]Goodbye![/bold yellow]")
                 break
@@ -391,28 +435,16 @@ Examples:
                 console.print()
                 continue
 
-            # Display user message
-            console.print()
-
             # Add user message to conversation history
             conversation_history.append({"role": "user", "content": user_input})
 
-            # Build prompt using chat template if available, otherwise fall back to string format
-            if has_chat_template:
-                prompt = tokenizer.apply_chat_template(
-                    conversation_history, tokenize=False, add_generation_prompt=True
-                )
-            else:
-                # Fallback: build prompt manually
-                prompt_parts = []
-                for msg in conversation_history:
-                    if msg["role"] == "system":
-                        prompt_parts.append(msg["content"])
-                    elif msg["role"] == "user":
-                        prompt_parts.append(f"User: {msg['content']}")
-                    elif msg["role"] == "assistant":
-                        prompt_parts.append(f"Assistant: {msg['content']}")
-                prompt = "\n".join(prompt_parts) + "\nAssistant:"
+            # Build prompt using chat template
+            prompt = tokenizer.apply_chat_template(
+                conversation_history,
+                tokenize=False,
+                add_generation_prompt=True,
+                chat_template=chat_template,
+            )
 
             try:
                 with console.status("[dim]Generating response...", spinner="dots"):
