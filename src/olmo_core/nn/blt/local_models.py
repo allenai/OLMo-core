@@ -505,7 +505,12 @@ class LocalEncoder(nn.Module):
 
         """
         def maybe_distribute(tensor: torch.Tensor) -> DTensor | torch.Tensor:
-            if isinstance(self.embedding.weight.data, DTensor):
+            if isinstance(tensor, DTensor):
+                return tensor.redistribute(
+                    device_mesh=self.embedding.weight.data.device_mesh,  # type: ignore
+                    placements=self.embedding.weight.data.placements,  # type: ignore
+                )
+            elif isinstance(self.embedding.weight.data, DTensor):
                 return distribute_tensor(
                     tensor,
                     device_mesh=self.embedding.weight.data.device_mesh,
