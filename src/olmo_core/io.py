@@ -766,8 +766,10 @@ def _gcs_list_directory(
         except NotFound:
             raise FileNotFoundError(f"gs://{bucket_name}/{prefix}")
 
-        if include_files:
-            for blob in blobs:
+        # NOTE: need to iterate over these blobs even if not yielding files, otherwise 'blobs.prefixes'
+        # won't be populated.
+        for blob in blobs:
+            if include_files:
                 yield f"gs://{bucket_name}/{blob.name}"
 
         for folder in blobs.prefixes:
