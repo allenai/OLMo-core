@@ -90,7 +90,7 @@ def render_tokenizer_info(
     right_lines.append(f"  • Vocab size: {tokenizer.vocab_size:,}")
 
     model_max_length = getattr(tokenizer, "model_max_length", None)
-    right_lines.append(f"  • Model max length: {model_max_length:,}")
+    right_lines.append(f"  • Model max length: {model_max_length}")
 
     # Special tokens
     all_special_tokens = getattr(tokenizer, "all_special_tokens", None)
@@ -126,7 +126,7 @@ def render_tokenizer_info(
         if chat_template:
             template_str = str(chat_template)
             template_title = "[bold cyan]Chat Template[/bold cyan]"
-        else:
+        else:  # if tokenizer has no chat template, use default
             template_str = DEFAULT_CHAT_TEMPLATE
             template_title = "[bold cyan]Chat Template (Default)[/bold cyan]"
 
