@@ -90,7 +90,8 @@ class LMEvaluator(Evaluator):
     def update_metrics(
         self, batch: Dict[str, Any], ce_loss: Optional[torch.Tensor], logits: Optional[torch.Tensor]
     ) -> None:
-        if logits is None or ce_loss is None:
+        del logits
+        if ce_loss is None:
             return
 
         for idx, (metadata, tokens_loss) in enumerate(zip(batch["metadata"], ce_loss)):
