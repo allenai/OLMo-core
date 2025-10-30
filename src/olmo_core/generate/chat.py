@@ -1,9 +1,15 @@
-#!/usr/bin/env python3
 """
 CLI script for chatbot-style text generation using TransformerGenerationModule.
 
 Example usage:
+    # Basic usage
     python -m olmo_core.generate.chat path/to/checkpoint --max-new-tokens 512 --temperature 0.7
+
+    # With custom chat template
+    python -m olmo_core.generate.chat path/to/checkpoint --chat-template "{% for message in messages %}{{ message['content'] }}{% if not loop.last %}{% endif %}{% endfor %}"
+
+    # Greedy decoding (deterministic)
+    python -m olmo_core.generate.chat path/to/checkpoint --do-sample False
 """
 
 import argparse
