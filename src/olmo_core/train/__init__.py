@@ -83,7 +83,7 @@ def prepare_training_environment(
     *,
     seed: Optional[int] = None,
     backend: Optional[str] = "cpu:gloo,cuda:nccl",
-    timeout: timedelta = timedelta(minutes=10),
+    timeout: timedelta = timedelta(minutes=15),
     log_filter_type: Optional[LogFilterType] = None,
 ):
     """
