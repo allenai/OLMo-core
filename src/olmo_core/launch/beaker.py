@@ -277,6 +277,11 @@ class BeakerLaunchConfig(Config):
     updated on preemption.
     """
 
+    hostnames: Optional[List[str]] = None
+    """
+    Manual hostname constraints. Takes priority over :data:`clusters` and :data:`use_hostname_constraints`.
+    """
+
     num_execution_units: Optional[int] = None
     """
     Number of "execution units", defaults to ``max(1, num_nodes // 32)``. An "execution unit" is abstraction
@@ -451,7 +456,9 @@ class BeakerLaunchConfig(Config):
 
         entrypoint_dataset = self._create_script_dataset("entrypoint.sh", entrypoint_script)
 
-        if (
+        if self.hostnames:
+            constraints_kwargs = {"hostname": self.hostnames}
+        elif (
             self.use_hostname_constraints
             and len(self.clusters) == 1
             and "augusta" in self.clusters[0]
