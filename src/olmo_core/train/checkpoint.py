@@ -291,7 +291,7 @@ class Checkpointer:
         Find checkpoints within a directory.
         """
         dir = normalize_path(dir)
-        for path in list_directory(dir, include_files=False):
+        for path in list_directory(dir):
             name = os.path.basename(path)
             if (m := re.match("^" + cls.CHECKPOINT_DIR.format(step=r"(\d+)$"), name)) is not None:
                 step = int(m.group(1))
