@@ -22,6 +22,7 @@ from beaker import (
     DatasetConflict,
     DatasetNotFound,
     Experiment,
+    ExperimentConflict,
     ExperimentSpec,
     ImageNotFound,
     Job,
@@ -609,8 +610,14 @@ class BeakerLaunchConfig(Config):
         except KeyboardInterrupt:
             log.warning("Caught keyboard interrupt...")
             if Confirm.ask("Would you like to cancel the experiment?"):
-                self.beaker.experiment.stop(experiment)
-                log.warning(f"Experiment stopped: {self.beaker.experiment.url(experiment)}")
+                try:
+                    self.beaker.experiment.stop(experiment)
+                except ExperimentConflict:
+                    log.warning(
+                        f"Experiment already stopped: {self.beaker.experiment.url(experiment)}"
+                    )
+                else:
+                    log.warning(f"Experiment stopped: {self.beaker.experiment.url(experiment)}")
             else:
                 log.info(
                     "You can follow the experiment on the Beaker UI: "
@@ -641,7 +648,10 @@ def follow_experiment(
         log.info("Waiting for job to be created...")
         while job is None:
             if launch_timeout is not None and (time.monotonic() - start_time) > launch_timeout:
-                beaker.experiment.stop(experiment)
+                try:
+                    beaker.experiment.stop(experiment)
+                except ExperimentConflict:
+                    pass
                 raise TimeoutError(
                     f"Job failed to be created within {launch_timeout} seconds. "
                     f"Experiment has been stopped: {beaker.experiment.url(experiment)}"
@@ -664,7 +674,10 @@ def follow_experiment(
         if job.is_finalized or job.is_running:
             break
         elif launch_timeout is not None and (time.monotonic() - start_time) > launch_timeout:
-            beaker.experiment.stop(experiment)
+            try:
+                beaker.experiment.stop(experiment)
+            except ExperimentConflict:
+                pass
             raise TimeoutError(
                 f"Job failed to start within {launch_timeout} seconds. "
                 f"Experiment has been stopped: {beaker.experiment.url(experiment)}"
@@ -746,7 +759,10 @@ def follow_experiment(
                 and (first_step_detected or (cur_time - start_time) > max(step_timeout, 3600))
                 and (cur_time - last_step_time) > step_timeout
             ):
-                beaker.experiment.stop(experiment)
+                try:
+                    beaker.experiment.stop(experiment)
+                except ExperimentConflict:
+                    pass
                 raise TimeoutError(
                     f"No training steps detected within {step_timeout} seconds. "
                     f"Experiment has been stopped: {beaker.experiment.url(experiment)}"
