@@ -98,7 +98,9 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
                 "enp6s0,enp7s0,enp13s0,enp14s0,enp134s0,enp135s0,enp141s0,enp142s0",
             )
             set_env_var("NCCL_SOCKET_IFNAME", "enp0s12")
-            set_env_var("NCCL_DEBUG_SUBSYS", "INIT,NET,COLL")
+            set_env_var(  # Add COLL here to log all collective operations. Extreamly verbose, dont use for production.
+                "NCCL_DEBUG_SUBSYS", "INIT,NET"
+            )
             set_env_var(
                 "NCCL_NVLSTREE_MAX_CHUNKSIZE", "131072"
             )  # set b/c enforced by the new library versions google recommended to us.
