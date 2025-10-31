@@ -65,7 +65,7 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
             set_env_var("NCCL_P2P_PCI_CHUNKSIZE", "524288")
             set_env_var("NCCL_P2P_NVL_CHUNKSIZE", "1048576")
             set_env_var("NCCL_FASTRAK_NUM_FLOWS", "2")
-            set_env_var("NCCL_FASTRAK_ENABLE_CONTROL_CHANNEL", "0")
+            set_env_var("NCCL_FASTRAK_ENABLE_CONTROL_CHANNEL", "0")  # NCCL 225+
             set_env_var("NCCL_BUFFSIZE", "8388608")
             set_env_var("NCCL_FASTRAK_USE_SNAP", "1")
             set_env_var("CUDA_VISIBLE_DEVICES", "0,1,2,3,4,5,6,7")
@@ -99,6 +99,9 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
             )
             set_env_var("NCCL_SOCKET_IFNAME", "enp0s12")
             set_env_var("NCCL_DEBUG_SUBSYS", "INIT,NET,COLL")
+            set_env_var(  # Use 1 nic instead of all nics, disable google stuff sanity check
+                "NCCL_NET", "Socket"
+            )
 
     if backend_supports_cuda(backend):
         # Set CUDA device.
