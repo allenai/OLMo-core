@@ -12,23 +12,25 @@ sources:
     target_ratio: 0.1
     paths:
       # 18,833,636,683
-      - gs://ai2-llm/preprocessed/tokyotech-llm/swallowcode/scor_final_data-decon-sparkle-motion/allenai/dolma2-tokenizer/*.npy
+      - gs://ai2-llm/preprocessed/tokyotech-llm/swallowcode/scor_final_data-decon-sparkle-motion-with-ids-modelnamefilter2/allenai/dolma2-tokenizer/*.npy
   - source_name: megamatt
     # 20% less the ratio for dolminos2math
     # target_ratio: 0.01726210713
-    target_ratio: 0.01726300199
+    # target_ratio: 0.01726300199
+    target_ratio: 0.01726315213
     paths:
       # 3,883,674,937
-      - gs://ai2-llm/preprocessed/megamath_web_pro_max/beaker_rewrites-decon-sparkle-motion-modelnamefilter-openai/**/allenai/dolma2-tokenizer/*.npy
+      - gs://ai2-llm/preprocessed/megamath_web_pro_max/beaker_rewrites-decon-sparkle-motion-modelnamefilter2/**/allenai/dolma2-tokenizer/*.npy
   - source_name: dolminos2math
     # 18,273,789,287
     # target_ratio: 0.18273789287
-    target_ratio: 0.18273699801
+    # target_ratio: 0.18273699801
+    target_ratio: 0.18273684787
     paths:
       # 5_624_449_531
-      - gs://ai2-llm/preprocessed/tokyotech-llm/swallowmath/beaker_outputs-decon-sparkle-motion-withids-modelnamefilter-openai/allenai/dolma2-tokenizer/*.npy
+      - gs://ai2-llm/preprocessed/tokyotech-llm/swallowmath/beaker_outputs-decon-sparkle-motion-withids-modelnamefilter2/allenai/dolma2-tokenizer/*.npy
       # 10,687,987,907
-      - gs://ai2-llm/preprocessed/midtraining-reasoning/flat_dolmino_math-decon-sparkle-motion-SCHEMAFIX-modelnamefilter-noclaudegem/allenai/dolma2-tokenizer/*.npy
+      - gs://ai2-llm/preprocessed/midtraining-reasoning/flat_dolmino_math-decon-sparkle-motion-SCHEMAFIX-modelnamefilter2/allenai/dolma2-tokenizer/*.npy
       # 1.99B
       # 850,848,999
       - gs://ai2-llm/preprocessed/midtraining-reasoning/OpenMathReasoning/OpenMathReasoning-rewrite-full-thoughts/jsonls-decon-sparkle-motion/allenai/dolma2-tokenizer/*.npy
@@ -62,7 +64,7 @@ sources:
     target_ratio: 0.011
     paths:
       # 1,639,399,859
-      - gs://ai2-llm/preprocessed/ai2-llm/preprocessed/tulu-3-sft-for-olmo-3-midtraining/partitioned/v0-data-simple-concat-with-double-new-line-with-generation-prompt-decon-sparkle-motion-modelnamefilter/allenai/dolma2-tokenizer/*.npy
+      - gs://ai2-llm/preprocessed/ai2-llm/preprocessed/tulu-3-sft-for-olmo-3-midtraining/partitioned/v0-data-simple-concat-with-double-new-line-with-generation-prompt-decon-sparkle-motion-modelnamefilter2/allenai/dolma2-tokenizer/*.npy
   - source_name: flan
     target_ratio: .05
     paths:
@@ -72,27 +74,27 @@ sources:
     target_ratio: 0.01875
     paths:
       # 2,483,453,165
-      - gs://ai2-llm/preprocessed/thinking-data/big-reasoning-traces-reformatted-keyword-filter-datecutoff-chinese-ngram-no-special-tokens-decon-sparkle-motion-modelnamefilter/allenai/dolma2-tokenizer/*.npy
+      - gs://ai2-llm/preprocessed/thinking-data/big-reasoning-traces-reformatted-keyword-filter-datecutoff-chinese-ngram-no-special-tokens-decon-sparkle-motion-modelnamefilter2/allenai/dolma2-tokenizer/*.npy
   - source_name: qwq_reasoning
     target_ratio: 0.01875
     paths:
       # 4,774,150,082
-      - gs://ai2-llm/preprocessed/thinking-data/qwq-redo-reformatted-ngram-no-special-tokens-decon-sparkle-motion-modelnamefilter/allenai/dolma2-tokenizer/*.npy
+      - gs://ai2-llm/preprocessed/thinking-data/qwq-redo-reformatted-ngram-no-special-tokens-decon-sparkle-motion-modelnamefilter2/allenai/dolma2-tokenizer/*.npy
   - source_name: gemini_reasoning
     # new 245,738,848
     target_ratio: 0.00245738848
     paths:
-      - gs://ai2-llm/preprocessed/thinking-data/gemini-redo-reformatted-ngram-no-special-tokens-decon-sparkle-motion-modelnamefilter/allenai/dolma2-tokenizer/*.npy
+      - gs://ai2-llm/preprocessed/thinking-data/gemini-redo-reformatted-ngram-no-special-tokens-decon-sparkle-motion-modelnamefilter2/allenai/dolma2-tokenizer/*.npy
   - source_name: llamanemotron_reasoning
     target_ratio: .0125
     paths:
       # 20.9B
-      - gs://ai2-llm/preprocessed/thinking-data/llama-nemotron-processed-chinese-filtered-ngram-filtered-with-token-counts-decon-sparkle-motion-modelnamefilter/allenai/dolma2-tokenizer/*.npy
+      - gs://ai2-llm/preprocessed/thinking-data/llama-nemotron-processed-chinese-filtered-ngram-filtered-with-token-counts-decon-sparkle-motion-modelnamefilter2/allenai/dolma2-tokenizer/*.npy
   - source_name: openthoughts2
     # 5,601,836,260
     target_ratio: 0.01254261152
     paths:
-      - gs://ai2-llm/preprocessed/thinking-data/openthoughts2-filtered-chinese-filtered-ngram-filtered-with-token-counts-stripped-decon-sparkle-motion-modelnamefilter/allenai/dolma2-tokenizer/*.npy
+      - gs://ai2-llm/preprocessed/thinking-data/openthoughts2-filtered-chinese-filtered-ngram-filtered-with-token-counts-stripped-decon-sparkle-motion-modelnamefilter2/allenai/dolma2-tokenizer/*.npy
   - source_name: verifiable_41
     target_ratio: 0.001323656354
     paths:
@@ -108,7 +110,7 @@ sources:
   - source_name: code_meta
     target_ratio: 0.004596570853
     paths:
-      - gs://ai2-llm/preprocessed/midtraining-reasoning/code-meta-reasoning-cleaned-latex-delim-randomly-cleaned-with-id-decon-sparkle-motion-modelnamefilter/allenai/dolma2-tokenizer/*.npy
+      - gs://ai2-llm/preprocessed/midtraining-reasoning/code-meta-reasoning-cleaned-latex-delim-randomly-cleaned-with-id-decon-sparkle-motion-modelnamefilter2/allenai/dolma2-tokenizer/*.npy
   
 
   # PDF 0.05
