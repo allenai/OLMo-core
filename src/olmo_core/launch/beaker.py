@@ -705,6 +705,7 @@ def follow_experiment(
     start_time = time.monotonic()
     last_step_time = 0.0
     last_inactivity_warning = 0.0
+    last_status_check = start_time
     while True:
         try:
             result = queue.get(timeout=1.0)
@@ -750,6 +751,13 @@ def follow_experiment(
                     f"No training steps detected within {step_timeout} seconds. "
                     f"Experiment has been stopped: {beaker.experiment.url(experiment)}"
                 )
+
+            # Periodically check if the job is finalized in case the log streaming thread gets stuck.
+            if (cur_time - last_status_check) > 5 * 60:
+                job = beaker.job.get(job.id)
+                last_status_check = cur_time
+                if job.status.finalized is not None:
+                    break
 
     print()
     log.info("End logs")
