@@ -99,9 +99,6 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
             )
             set_env_var("NCCL_SOCKET_IFNAME", "enp0s12")
             set_env_var("NCCL_DEBUG_SUBSYS", "INIT,NET,COLL")
-            set_env_var(  # Use 1 nic instead of all nics, disable google stuff sanity check
-                "NCCL_NET", "Socket"
-            )
 
     if backend_supports_cuda(backend):
         # Set CUDA device.
