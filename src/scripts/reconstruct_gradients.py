@@ -12,6 +12,8 @@ from typing import Any, Dict, Tuple
 
 import click
 import torch
+from safetensors import safe_open
+from safetensors.torch import save_file
 
 from olmo_core.utils import prepare_cli_environment
 
@@ -19,72 +21,68 @@ log = logging.getLogger(__name__)
 
 
 def load_shard(filepath: Path) -> Tuple[torch.Tensor, Dict[str, Any]]:
-    """Load gradient shard and extract DTensor metadata (shard_dim, full_shape, placements)."""
-    grad = torch.load(filepath, map_location="cpu", weights_only=False)
+    """Load gradient shard from safetensors and extract metadata."""
+    with safe_open(str(filepath), framework="pt", device="cpu") as f:
+        grad = f.get_tensor("gradient")
+        file_metadata = f.metadata() or {}
 
     metadata = {
-        "is_dtensor": False,
-        "shard_dim": None,
-        "full_shape": None,
-        "placements": None,
+        "shard_dim": int(file_metadata["shard_dim"]) if "shard_dim" in file_metadata else 0,
+        "full_shape": tuple(json.loads(file_metadata["full_shape"]))
+        if "full_shape" in file_metadata
+        else None,
     }
 
-    # Check if it's a DTensor (FSDP/HSDP saves with _local_tensor attribute)
-    if hasattr(grad, "_local_tensor"):
-        local_tensor = grad._local_tensor
-        metadata["is_dtensor"] = True
-
-        # Extract placements to get shard dimension
-        if hasattr(grad, "placements") and grad.placements:
-            metadata["placements"] = grad.placements
-            for placement in grad.placements:
-                if placement.is_shard():
-                    metadata["shard_dim"] = placement.dim
-                    break
-
-        # Extract full shape of unsharded parameter from spec
-        if hasattr(grad, "_spec") and hasattr(grad._spec, "shape"):
-            metadata["full_shape"] = tuple(grad._spec.shape)  # type: ignore[assignment]
-
-        return local_tensor, metadata
-
-    # Not a DTensor
     return grad, metadata
 
 
-def load_config(grad_dir: Path) -> Dict[str, Any]:
-    """Load gradient dumper config (world_size, shard_degree, num_replicas)."""
-    config_path = grad_dir / "config.json"
-    if not config_path.exists():
-        raise FileNotFoundError(f"config.json not found in {grad_dir}")
+def infer_config_from_files(param_to_files: Dict[str, Dict[int, Path]]) -> Dict[str, Any]:
+    """Infer distributed configuration from the gradient files themselves."""
+    if not param_to_files:
+        raise ValueError("No gradient files found")
 
-    with open(config_path) as f:
-        metadata = json.load(f)
+    # Get any parameter's file dict to infer config
+    sample_param_files = next(iter(param_to_files.values()))
 
-    return metadata
+    # shard_degree = number of ranks that have shards
+    shard_degree = len(sample_param_files)
+
+    # world_size = max rank + 1
+    world_size = max(sample_param_files.keys()) + 1
+
+    # num_replicas = world_size / shard_degree (for HSDP)
+    num_replicas = world_size // shard_degree if shard_degree > 0 else 1
+
+    return {
+        "world_size": world_size,
+        "shard_degree": shard_degree,
+        "num_replicas": num_replicas,
+        "parallel_type": "hsdp" if num_replicas > 1 else "fsdp",
+    }
 
 
 def collect_gradient_files(grad_dir: Path, step: int) -> Dict[str, Dict[int, Path]]:
     """Collect and group gradient files by parameter: {param_name: {rank: filepath}}."""
-    grad_files = list(grad_dir.glob(f"rank*_step{step}_*.pt"))
+    step_dir = grad_dir / f"step{step}"
+    if not step_dir.exists():
+        raise ValueError(f"Step directory not found: {step_dir}")
+
+    grad_files = list(step_dir.glob("rank*.safetensors"))
     if not grad_files:
-        raise ValueError(f"No gradient files found for step {step} in {grad_dir}")
+        raise ValueError(f"No gradient files found for step {step} in {step_dir}")
 
     params: Dict[str, Dict[int, Path]] = defaultdict(dict)
     for filepath in grad_files:
-        # Parse filename: rank{N}_step{S}_{param_name}.pt
-        parts = filepath.stem.split("_", 2)
-        if len(parts) != 3:
+        # Parse filename: rank{N}_{param_name}.safetensors
+        parts = filepath.stem.split("_", 1)
+        if len(parts) != 2:
             log.warning(f"Skipping malformed filename: {filepath.name}")
             continue
 
         try:
             rank = int(parts[0].replace("rank", ""))
-            file_step = int(parts[1].replace("step", ""))
-            param_name = parts[2]
-
-            if file_step == step:
-                params[param_name][rank] = filepath
+            param_name = parts[1]
+            params[param_name][rank] = filepath
         except (ValueError, IndexError) as e:
             log.warning(f"Error parsing filename {filepath.name}: {e}")
             continue
@@ -114,27 +112,14 @@ def reconstruct_gradients(
 
         # Load shards from first replica only (ranks 0 to shard_degree-1)
         shards = []
-        shard_metadata = []
         for rank in required_ranks:
             grad, metadata = load_shard(rank_files[rank])
             shards.append(grad)
-            shard_metadata.append(metadata)
 
-        shard_dim = None
-        expected_shape = None
-        for metadata in shard_metadata:
-            if metadata["is_dtensor"] and metadata["shard_dim"] is not None:
-                shard_dim = metadata["shard_dim"]
-                expected_shape = metadata["full_shape"]
-                break
-
-        # Fallback to dim=0 if no DTensor metadata found (FSDP default)
-        if shard_dim is None:
-            if verbose:
-                log.warning(
-                    f"  No shard dimension found for {param_name}, defaulting to dim=0 (FSDP default)"
-                )
-            shard_dim = 0
+        # Get metadata from first shard (all shards should have same metadata)
+        _, metadata = load_shard(rank_files[required_ranks[0]])
+        shard_dim = metadata["shard_dim"]
+        expected_shape = metadata["full_shape"]
 
         # Verify all shards have consistent shapes along all dimensions except the shard dimension
         shapes = [s.shape for s in shards]
@@ -157,7 +142,7 @@ def reconstruct_gradients(
                 f"expected {expected_shape}"
             )
 
-        # Verify against other replicas
+        # Verify against other replicas (only for HSDP)
         if verify and num_replicas > 1:
             for replica_id in range(1, num_replicas):
                 replica_shards = []
@@ -189,13 +174,17 @@ def reconstruct_gradients(
 
 
 @click.command()
-@click.argument(
-    "grad_dir",
+@click.option(
+    "--grad-dir",
     type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=Path),
+    required=True,
+    help="Directory containing gradient dumps",
 )
-@click.argument(
-    "output_dir",
+@click.option(
+    "--output-dir",
     type=click.Path(file_okay=False, dir_okay=True, path_type=Path),
+    required=True,
+    help="Directory where reconstructed gradients will be saved",
 )
 @click.option(
     "--step",
@@ -239,35 +228,28 @@ def main(
     """
     Reconstruct full gradients from FSDP/HSDP sharded gradient dumps.
 
-    GRAD_DIR: Directory containing gradient dumps (with config.json)
-
-    OUTPUT_DIR: Directory where reconstructed gradients will be saved
+    Reads from: {grad_dir}/step{N}/rank*.safetensors
+    Saves to:   {output_dir}/step{N}/*.safetensors
 
     Example:
 
         python src/scripts/reconstruct_gradients.py \\
-            /tmp/tutorial-run-4gpus/grad_dumper \\
-            /tmp/full_gradients \\
+            --grad-dir /tmp/tutorial-run-4gpus/grad_dumper \\
+            --output-dir /tmp/full_gradients \\
             --step 2
     """
-    # Load configuration
-    try:
-        config = load_config(grad_dir)
-    except FileNotFoundError as e:
-        log.error(str(e))
-        sys.exit(1)
+    param_to_files = collect_gradient_files(grad_dir, step)
 
+    config = infer_config_from_files(param_to_files)
     shard_degree = config["shard_degree"]
     num_replicas = config["num_replicas"]
 
     if not quiet:
-        log.info(f"Configuration: {config['parallel_type']}")
-        log.info(f"World size: {config['world_size']}")
-        log.info(f"Shard degree: {shard_degree}")
-        log.info(f"Num replicas: {num_replicas}")
-
-    param_to_files = collect_gradient_files(grad_dir, step)
-    if not quiet:
+        log.info("Inferred configuration from gradient files:")
+        log.info(f"  Parallel type: {config['parallel_type']}")
+        log.info(f"  World size: {config['world_size']}")
+        log.info(f"  Shard degree: {shard_degree}")
+        log.info(f"  Num replicas: {num_replicas}")
         log.info(f"\nFound {len(param_to_files)} parameters with gradient files")
 
     gradients = reconstruct_gradients(
@@ -282,15 +264,17 @@ def main(
         log.error("No gradients were successfully reconstructed!")
         sys.exit(1)
 
-    output_dir.mkdir(exist_ok=True, parents=True)
+    # Create step-specific subdirectory
+    step_output_dir = output_dir / f"step{step}"
+    step_output_dir.mkdir(exist_ok=True, parents=True)
 
     if not skip_individual:
         for param_name, grad in gradients.items():
-            output_file = output_dir / f"step{step}_{param_name}.pt"
-            torch.save(grad, output_file)
+            output_file = step_output_dir / f"{param_name}.safetensors"
+            save_file({"gradient": grad}, str(output_file))
 
-    all_grads_file = output_dir / f"step{step}_all_gradients.pt"
-    torch.save(gradients, all_grads_file)
+    all_grads_file = step_output_dir / "all_gradients.safetensors"
+    save_file(gradients, str(all_grads_file))
 
     summary = {
         "step": step,
@@ -301,14 +285,14 @@ def main(
         "parameter_norms": {name: float(grad.norm().item()) for name, grad in gradients.items()},
     }
 
-    summary_file = output_dir / f"step{step}_metadata.json"
+    summary_file = step_output_dir / "metadata.json"
     with open(summary_file, "w") as f:
         json.dump(summary, f, indent=2)
 
     if not quiet:
-        log.info(f"Reconstructed gradients saved to: {output_dir}")
+        log.info(f"Reconstructed gradients saved to: {step_output_dir}")
         if not skip_individual:
-            log.info(f"Individual files: step{step}_{{param_name}}.pt")
+            log.info("Individual files: {param_name}.safetensors")
         log.info(f"All gradients: {all_grads_file.name}")
         log.info(f"Metadata: {summary_file.name}")
 
