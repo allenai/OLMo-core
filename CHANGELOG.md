@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Send a Slack notification when a Beaker job appears to be stuck.
 - Added `ignore_fingerprint_mismatch` parameter to `NumpyDataLoaderConfig` to allow resuming training from a checkpoint with a different dataset mix.
 - Added helpful error messages when OLMo-mix-0625 files are not found, directing users to use OLMo-mix-0925 and the fingerprint override flag.
+- Added `GradientDumperCallback` for saving gradient shards during FSDP/HSDP training and `reconstruct_gradients.py` script for combining shards into full gradients. Gradients are saved as safetensors with embedded DTensor metadata (shard dimension, full shape) for accurate reconstruction. Supports two modes: per-rank sharded saving for full reconstruction, or preview mode (`save_first_n`) to gather and save only the first N elements to rank 0 for quick inspection. Files are organized into step-specific directories.
 
 ## [v2.3.0](https://github.com/allenai/OLMo-core/releases/tag/v2.3.0) - 2025-10-17
 

@@ -39,6 +39,7 @@ from olmo_core.train.callbacks import (
     ConfigSaverCallback,
     DownstreamEvaluatorCallbackConfig,
     GPUMemoryMonitorCallback,
+    GradientDumperCallback,
     LMEvaluatorCallbackConfig,
     ProfilerCallback,
     WandBCallback,
@@ -246,6 +247,10 @@ def build_config(opts, overrides: List[str]) -> ExperimentConfig:
                 tokenizer=tokenizer_config,
                 eval_interval=250,
             ),
+        )
+        .with_callback(
+            "grad_dump",
+            GradientDumperCallback(),
         )
     )
 

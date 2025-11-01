@@ -16,6 +16,7 @@ from .evaluator_callback import (
 )
 from .garbage_collector import GarbageCollectorCallback
 from .gpu_memory_monitor import GPUMemoryMonitorCallback
+from .gradient_dumper import GradientDumperCallback
 from .list_checkpointer import ListCheckpointerCallback
 from .monkey_patcher import MonkeyPatcherCallback
 from .profiler import ProfilerCallback
@@ -48,6 +49,7 @@ __all__ = [
     "BatchSizeSchedulerCallback",
     "MonkeyPatcherCallback",
     "ListCheckpointerCallback",
+    "GradientDumperCallback",
 ]
 
 __doc__ += "\n"
