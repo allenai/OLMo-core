@@ -72,6 +72,7 @@ def init_distributed(
             set_env_var("NCCL_P2P_NET_CHUNKSIZE", "524288")
             set_env_var("NCCL_P2P_PCI_CHUNKSIZE", "524288")
             set_env_var("NCCL_P2P_NVL_CHUNKSIZE", "1048576")
+            set_env_var("NCCL_NVLSTREE_MAX_CHUNKSIZE", "131072")
             set_env_var("NCCL_FASTRAK_NUM_FLOWS", "2")
             set_env_var("NCCL_FASTRAK_ENABLE_CONTROL_CHANNEL", "0")
             set_env_var("NCCL_BUFFSIZE", "8388608")
