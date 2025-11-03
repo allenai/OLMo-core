@@ -17,7 +17,7 @@ from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.data import InstanceFilterConfig
 
 SEQ_LENGTH = 8192
-GLOBAL_BATCH_SIZE = 2**22  # ~4M tokens
+GLOBAL_BATCH_SIZE = 4 * 1024 * 1024  # ~4M tokens
 MAX_TOKENS = 100_000_000_000  # 100B
 LR = 0.00020712352850360292 #TO BE UPDATED
 SEED = 1337
