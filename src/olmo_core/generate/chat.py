@@ -349,8 +349,6 @@ Examples:
     console.print(Panel(welcome_text, title="[bold blue]Welcome[/bold blue]", border_style="blue"))
     console.print()
 
-    chat_template = args.chat_template
-
     conversation_history: list[dict[str, str]] = []
     if args.system_prompt:
         conversation_history.append({"role": "system", "content": args.system_prompt})
