@@ -59,19 +59,15 @@ log = logging.getLogger(__name__)
 SEQUENCE_LENGTH = 2048
 TOKENIZER_CONFIG = TokenizerConfig.gpt2()
 
-# C4 data path - options:
-# 1. NFS (usually available on most clusters): "/net/nfs/allennlp/llm-data/c4/en/"
-# 2. Weka (fast, but may not be on all clusters): "/weka/oe-training-default/ai2-llm/examples/c4-en/gpt2/"
-# 3. HTTP streaming (slowest, but works everywhere): "http://olmo-data.org/examples/c4-en/gpt2"
-# Using HTTP for ai2/prior since it doesn't have Weka/NFS access
-DATA_ROOT = "http://olmo-data.org/examples/c4-en/gpt2"
+# C4 data path - using Weka on ai2/augusta (fast and reliable)
+DATA_ROOT = "/weka/oe-training-default/ai2-llm/examples/c4-en/gpt2"
 DATA_PATHS = [f"{DATA_ROOT}/c4-train.00000-00099.npy"]
 
-GLOBAL_BATCH_SIZE = 256 * 1024  # tokens
+GLOBAL_BATCH_SIZE = 32 * 1024  # tokens (reduced for single GPU testing)
 RANK_MICROBATCH_SIZE = 16 * 1024  # tokens
 
 # Model config - use olmo2_370M or smaller
-MODEL_FACTORY = "olmo2_370M"  # Can change to olmo2_30M, olmo2_190M, etc.
+MODEL_FACTORY = "olmo2_370M" 
 
 # LR Range Test Configuration
 LR_MIN = 1e-9
@@ -79,9 +75,9 @@ LR_MAX = 10.0
 MAX_STEPS = 10_000
 
 # Beaker configuration
-BEAKER_CLUSTER = "ai2/prior"  # Using ai2/prior (triton doesn't allow tasks)
+BEAKER_CLUSTER = "ai2/jupiter"  # Has Weka access
 NUM_NODES = 1
-NUM_GPUS = 1  # Just need 1 GPU for testing!
+NUM_GPUS = 1  
 BEAKER_WORKSPACE = "ai2/OLMo-core"
 BEAKER_BUDGET = "ai2/oe-base"  # Using oe-base budget
 
@@ -107,15 +103,12 @@ class ExperimentConfig(Config):
 
 
 def build_config(script: str, run_name: str, overrides: List[str]) -> ExperimentConfig:
-    # Use custom GCS bucket for ai2/prior since it doesn't have Weka
-    if BEAKER_CLUSTER == "ai2/prior":
-        root_dir = "gs://ai2-baileyk/checkpoints"
-    else:
-        root_dir = get_root_dir(BEAKER_CLUSTER)
-
-    work_dir = get_work_dir(root_dir)
     beaker_user = get_beaker_username()
     assert beaker_user is not None
+
+    # Use standard paths (augusta has Weka access)
+    root_dir = get_root_dir(BEAKER_CLUSTER)
+    work_dir = get_work_dir(root_dir)
 
     # Model config
     factory = getattr(TransformerConfig, MODEL_FACTORY)
@@ -156,7 +149,7 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
             reduce_dtype=DType.float32,
         ),
         max_grad_norm=1.0,
-        # Exponential scheduler: 1e-9 -> 10 over 10k steps
+        # Use ExponentialScheduler for LR range test: 1e-9 -> 10 over 10k steps
         scheduler=ExponentialScheduler(lr_min=LR_MIN),
     )
 
@@ -166,7 +159,7 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         TrainerConfig(
             save_folder=f"{root_dir}/checkpoints/{beaker_user.lower()}/lr-range-tests/{run_name}",
             save_overwrite=True,  # Safe since checkpointing is disabled and in test folder
-            metrics_collect_interval=5,
+            metrics_collect_interval=50,  # Log every 50 steps (200 points over 10k)
             cancel_check_interval=5,
             max_duration=Duration.steps(MAX_STEPS),
         )
@@ -202,7 +195,7 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         launch=build_launch_config(
             name=run_name,
             root_dir=root_dir,
-            cmd=[script, "train", run_name, *overrides],
+            cmd=["torchrun", "--nproc-per-node=1", script, "train", run_name, *overrides],
             cluster=BEAKER_CLUSTER,
             workspace=BEAKER_WORKSPACE,
             budget=BEAKER_BUDGET,

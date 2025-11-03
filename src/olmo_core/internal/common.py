@@ -21,9 +21,7 @@ from olmo_core.utils import generate_uuid
 
 log = logging.getLogger(__name__)
 
-GOOGLE_CLUSTERS = [
-    "ai2/augusta",
-]
+GOOGLE_CLUSTERS = []  # Augusta moved to Weka clusters
 
 
 @lru_cache()
@@ -84,6 +82,7 @@ def get_root_dir(cluster: str) -> str:
         "ai2/rhea",
         "ai2/phobos",
         "ai2/triton",  # Added for testing
+        "ai2/augusta",  # Has Weka access
     ]:
         return "/weka/oe-training-default/ai2-llm"
     elif cluster in ["ai2/prior"] + GOOGLE_CLUSTERS:
