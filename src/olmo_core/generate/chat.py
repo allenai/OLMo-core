@@ -32,7 +32,7 @@ from olmo_core.config import DType
 from olmo_core.data.tokenizer import TokenizerConfig
 from olmo_core.generate import GenerationConfig, TransformerGenerationModule
 from olmo_core.io import join_path, normalize_path
-from olmo_core.utils import log_or_print
+from olmo_core.utils import log_or_print, prepare_cli_environment
 
 log = logging.getLogger(__name__)
 console = Console()
@@ -268,10 +268,10 @@ Examples:
     )
 
     args = parser.parse_args()
-    logging.basicConfig(
-        level=getattr(logging, args.verbosity),
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
+    # logging.basicConfig(
+    #     level=getattr(logging, args.verbosity),
+    #     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    # )
 
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     console.print(f"Using device: {device}")
@@ -346,7 +346,7 @@ Examples:
     welcome_text.append("  /help ", style="cyan")
     welcome_text.append("- Show this help message", style="dim")
 
-    console.print(Panel(welcome_text, title="[bold blue]Welcome[/bold blue]", border_style="blue"))
+    console.print(Panel(welcome_text, title="[bold red]Welcome[/bold red]", border_style="red"))
     console.print()
 
     conversation_history: list[dict[str, str]] = []
@@ -442,4 +442,5 @@ Examples:
 
 
 if __name__ == "__main__":
+    prepare_cli_environment()
     main()
