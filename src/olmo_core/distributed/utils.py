@@ -58,7 +58,7 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
             # NOTE: For single-node training we still need all of these settings and we also
             # need host networking enabled so that the ethernet interface names don't change.
             set_env_var("NCCL_CROSS_NIC", "0")
-            set_env_var("NCCL_ALGO", "Ring,Tree")
+            #  set_env_var("NCCL_ALGO", "Ring,Tree")
             set_env_var("NCCL_PROTO", "Simple,LL128")
             set_env_var("NCCL_MIN_NCHANNELS", "4")
             set_env_var("NCCL_P2P_NET_CHUNKSIZE", "524288")
@@ -74,7 +74,7 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
             set_env_var(
                 "NCCL_FASTRAK_PLUGIN_ACCEPT_TIMEOUT_MS", str(int(timeout.total_seconds() * 1000))
             )
-            set_env_var("NCCL_NVLS_ENABLE", "0")
+            #  set_env_var("NCCL_NVLS_ENABLE", "0")
             set_env_var("NCCL_USE_SNAP", "1")
             set_env_var("NCCL_FASTRAK_USE_LLCM", "1")
             set_env_var("NCCL_FASTRAK_LLCM_DEVICE_DIRECTORY", "/dev/aperture_devices")
