@@ -40,11 +40,18 @@ jobs:
             run: |
               pytest -v --color=yes --durations=3 -n auto --dist=loadfile \
                 --ignore-glob='src/test/distributed/checkpoint*' \
+                --ignore-glob='src/test/train/checkpoint*' \
+                --ignore-glob='src/test/nn/*' \
                 src/test/
 
           - name: Test checkpoint
             run: |
               pytest -v --color=yes --durations=3 src/test/distributed/checkpoint*
+
+          - name: Test nn
+            run: |
+              pytest -v --color=yes --durations=3 \
+                src/test/nn/
 
           - name: Type check
             run: make type-check
