@@ -21,7 +21,9 @@ from olmo_core.utils import generate_uuid
 
 log = logging.getLogger(__name__)
 
-GOOGLE_CLUSTERS = []  # Augusta moved to Weka clusters
+GOOGLE_CLUSTERS = [
+    "ai2/augusta",
+]
 
 
 @lru_cache()
@@ -81,12 +83,9 @@ def get_root_dir(cluster: str) -> str:
         "ai2/titan",
         "ai2/rhea",
         "ai2/phobos",
-        "ai2/triton",  # Added for testing
-        "ai2/augusta",  # Has Weka access
     ]:
         return "/weka/oe-training-default/ai2-llm"
-    elif cluster in ["ai2/prior"] + GOOGLE_CLUSTERS:
-        # ai2/prior doesn't support Weka, use Google Cloud Storage
+    elif cluster in GOOGLE_CLUSTERS:
         return "gs://ai2-llm"
     elif "local" in cluster:
         return "gs://ai2-llm"
@@ -115,7 +114,6 @@ def build_launch_config(
     flight_recorder: bool = False,
     beaker_image: str = OLMoCoreBeakerImage.stable,
     num_nodes: int = 1,
-    num_gpus: int = 8,
     use_hostname_constraints: bool = False,
     num_execution_units: Optional[int] = None,
 ) -> BeakerLaunchConfig:
@@ -208,7 +206,7 @@ def build_launch_config(
         weka_buckets=weka_buckets,
         beaker_image=beaker_image,
         num_nodes=num_nodes,
-        num_gpus=num_gpus,
+        num_gpus=8,
         use_hostname_constraints=use_hostname_constraints,
         num_execution_units=num_execution_units,
         shared_filesystem=not is_url(root_dir),

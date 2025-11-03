@@ -167,7 +167,7 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         .with_callback(
             "checkpointer",
             CheckpointerCallback(
-                enabled=False,  # Disable checkpointing - this is just a test
+                ephemeral_save_interval=500,  # Save every 500 steps (can resume if job crashes)
             ),
         )
         .with_callback(
