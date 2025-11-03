@@ -6,7 +6,7 @@ Example usage:
     python -m olmo_core.generate.chat path/to/checkpoint --max-new-tokens 512 --temperature 0.7
 
     # With custom chat template
-    python -m olmo_core.generate.chat path/to/checkpoint --chat-template "{% for message in messages %}{{ message['content'] }}{% if not loop.last %}{% endif %}{% endfor %}"
+    python -m olmo_core.generate.chat path/to/checkpoint --chat-template "{% for message in messages %}{{ message['content'] }}{% endfor %}"
 
     # Greedy decoding (deterministic)
     python -m olmo_core.generate.chat path/to/checkpoint --do-sample False
@@ -37,18 +37,8 @@ from olmo_core.utils import log_or_print
 log = logging.getLogger(__name__)
 console = Console()
 
-DEFAULT_CHAT_TEMPLATE = """{%- for message in messages %}
-{%- if message['role'] == 'system' -%}
-System: {{ message['content'] }}
-{%- elif message['role'] == 'user' -%}
-User: {{ message['content'] }}
-{%- elif message['role'] == 'assistant' -%}
-Assistant: {{ message['content'] }}
-{%- endif -%}
-{%- endfor -%}
-{%- if add_generation_prompt -%}
-Assistant:
-{%- endif -%}"""
+# Just concatenate the messages, no system prompt, no assistant prompt.
+DEFAULT_CHAT_TEMPLATE = """{% for message in messages %}{{ message['content'] }}{% endfor %}"""
 
 
 def render_assistant_message(message: str) -> Panel:
@@ -78,7 +68,7 @@ def render_system_message(message: str) -> Panel:
 
 
 def render_tokenizer_info(
-    tokenizer_config: TokenizerConfig, tokenizer, custom_template: Optional[str] = None
+    tokenizer_config: TokenizerConfig, tokenizer, chat_template: Optional[str] = None
 ) -> Panel:
     """Render tokenizer configuration details."""
     # OLMo-core TokenizerConfig info
@@ -123,22 +113,9 @@ def render_tokenizer_info(
     right_text = Text("\n".join(right_lines))
     columns = Columns([left_text, right_text], equal=True, expand=True)
 
-    # Determine which template to display
-    if custom_template:
-        template_str = custom_template
-        template_title = "[bold cyan]Chat Template (Custom)[/bold cyan]"
-    else:
-        chat_template = getattr(tokenizer, "chat_template", None)
-        if chat_template:
-            template_str = str(chat_template)
-            template_title = "[bold cyan]Chat Template[/bold cyan]"
-        else:  # if tokenizer has no chat template, use default
-            template_str = DEFAULT_CHAT_TEMPLATE
-            template_title = "[bold cyan]Chat Template (Default)[/bold cyan]"
-
     chat_template_panel = Panel(
-        template_str,
-        title=template_title,
+        chat_template,
+        title="[bold cyan]Chat Template[/bold cyan]",
         border_style="dim",
         padding=(0, 1),
     )
@@ -254,25 +231,15 @@ Examples:
     )
     parser.add_argument(
         "--do-sample",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=True,
         help="Use sampling (default: True). Set --no-do-sample for greedy decoding.",
     )
     parser.add_argument(
-        "--no-do-sample",
-        dest="do_sample",
-        action="store_false",
-        help="Disable sampling (use greedy decoding)",
-    )
-    parser.add_argument(
         "--use-cache",
-        action="store_true",
-        help="Use KV cache for faster generation (default: True)",
-    )
-    parser.add_argument(
-        "--no-use-cache",
-        dest="use_cache",
-        action="store_false",
-        help="Disable KV cache",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Use KV cache for faster generation (default: True). Set --no-use-cache for no cache.",
     )
     parser.add_argument(
         "--system-prompt",
@@ -289,8 +256,8 @@ Examples:
     parser.add_argument(
         "--chat-template",
         type=str,
-        default=None,
-        help="Custom Jinja2 chat template string. If provided, this will override the tokenizer's default chat template.",
+        default=DEFAULT_CHAT_TEMPLATE,
+        help="Jinja2 chat template string. The default is to just concatenate the messages, no system prompt, no assistant prompt.",
     )
     parser.add_argument(
         "--verbosity",
@@ -299,9 +266,6 @@ Examples:
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Logging verbosity level (default: INFO)",
     )
-
-    # Set defaults for mutually exclusive boolean flags
-    parser.set_defaults(do_sample=True, use_cache=True)
 
     args = parser.parse_args()
     logging.basicConfig(
@@ -385,13 +349,7 @@ Examples:
     console.print(Panel(welcome_text, title="[bold blue]Welcome[/bold blue]", border_style="blue"))
     console.print()
 
-    # Determine which chat template to use
-    if args.chat_template:
-        chat_template = args.chat_template
-    else:
-        chat_template = getattr(tokenizer, "chat_template", None)
-        if chat_template is None:
-            chat_template = DEFAULT_CHAT_TEMPLATE
+    chat_template = args.chat_template
 
     conversation_history: list[dict[str, str]] = []
     if args.system_prompt:
@@ -450,7 +408,7 @@ Examples:
                 conversation_history,
                 tokenize=False,
                 add_generation_prompt=True,
-                chat_template=chat_template,
+                chat_template=args.chat_template,
             )
 
             try:
