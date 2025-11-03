@@ -3,8 +3,7 @@
 
 torchrun --nproc-per-node=2 src/examples/llm/train.py \
   gradient_dumping_example \
-  --save-folder=/tmp/grad_dumper_unshard \
-  --work-dir=/tmp/dataset-cache \
+  --save-folder=gs://allennlp-kevinf/ \
   --trainer.callbacks.lm_evaluator.enabled=false \
   --trainer.callbacks.downstream_evaluator.enabled=false \
   --trainer.no_checkpoints \
@@ -15,6 +14,7 @@ torchrun --nproc-per-node=2 src/examples/llm/train.py \
   --trainer.callbacks.grad_dump.step_interval=2 \
   --trainer.callbacks.grad_dump.end_step=10 \
   --trainer.callbacks.grad_dump.save_first_n=1000 \
+  # --work-dir=gs://allennlp-kevinf/ \
   # --model-factory "olmo2_7B"
 
 

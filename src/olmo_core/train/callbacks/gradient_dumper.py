@@ -1,6 +1,7 @@
 import json
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 import torch
@@ -8,6 +9,7 @@ import torch.distributed as dist
 from safetensors.torch import save_file
 
 from olmo_core.distributed.utils import get_rank, get_world_size, is_distributed
+from olmo_core.io import copy_dir, join_path
 
 from .callback import Callback
 
@@ -21,8 +23,10 @@ class GradientDumperCallback(Callback):
     end_step: Optional[int] = None
     step_interval: int = 1
     save_first_n: Optional[int] = None
+    
 
     def pre_optim_step(self):
+
         if not self.enabled:
             return
 
@@ -39,14 +43,15 @@ class GradientDumperCallback(Callback):
         if self.save_first_n is not None and self.save_first_n <= 0:
             raise ValueError(f"save_first_n must be positive, got {self.save_first_n}")
 
-        output_dir = self.trainer.work_dir / "grad_dumper"
+        output_dir = self.trainer.work_dir / "gradient_dumper"
         output_dir.mkdir(exist_ok=True, parents=True)
 
         step_dir = output_dir / f"step{self.step}"
         step_dir.mkdir(exist_ok=True, parents=True)
 
         assert hasattr(self.trainer.train_module, "model")
-        for name, p in self.trainer.train_module.model.named_parameters():
+        model = getattr(self.trainer.train_module, "model")
+        for name, p in model.named_parameters():
             if p.grad is None:
                 continue
 
@@ -130,4 +135,15 @@ class GradientDumperCallback(Callback):
                     slice_filepath = step_dir / slice_filename
                     save_file({"gradient": sliced_grad}, str(slice_filepath), metadata=metadata)
                     log.info(f"Saved first {actual_n} of '{name}' to '{slice_filepath}'")
-        log.info(f"Saved gradients for step {self.step} on rank {get_rank()}")
+                                     
+        log.info(f"Saved gradients for step {self.step} on rank {get_rank()} to '{step_dir}'")
+
+        # Persist directory to save_folder if different from work_dir
+        # In distributed mode, only rank 0 uploads to avoid conflicts
+        rel_step_dir = step_dir.relative_to(self.trainer.work_dir)
+        target_dir = join_path(self.trainer.save_folder, rel_step_dir)
+        if str(step_dir) != str(target_dir):
+            if not is_distributed() or get_rank() == 0:
+                log.info(f"Uploading gradients for step {self.step} to '{target_dir}'...")
+                copy_dir(step_dir, target_dir, save_overwrite=self.trainer.save_overwrite, quiet=True)
+                log.info(f"Gradients for step {self.step} uploaded to '{target_dir}'")
