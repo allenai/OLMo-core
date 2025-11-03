@@ -116,6 +116,7 @@ def build_launch_config(
     flight_recorder: bool = False,
     beaker_image: str = OLMoCoreBeakerImage.stable,
     num_nodes: int = 1,
+    num_gpus: int = 8,
     use_hostname_constraints: bool = False,
     num_execution_units: Optional[int] = None,
 ) -> BeakerLaunchConfig:
@@ -208,7 +209,7 @@ def build_launch_config(
         weka_buckets=weka_buckets,
         beaker_image=beaker_image,
         num_nodes=num_nodes,
-        num_gpus=8,
+        num_gpus=num_gpus,
         use_hostname_constraints=use_hostname_constraints,
         num_execution_units=num_execution_units,
         shared_filesystem=not is_url(root_dir),
