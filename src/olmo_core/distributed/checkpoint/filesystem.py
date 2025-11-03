@@ -372,9 +372,9 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
                 )
                 target_tensor = planner.resolve_tensor(read_item).detach()
 
-                assert target_tensor.size() == tensor.size(), (
-                    f"req {read_item.storage_index} mismatch sizes {target_tensor.size()} vs {tensor.size()}"
-                )
+                assert (
+                    target_tensor.size() == tensor.size()
+                ), f"req {read_item.storage_index} mismatch sizes {target_tensor.size()} vs {tensor.size()}"
                 target_tensor.copy_(tensor)
                 planner.commit_tensor(read_item, target_tensor)
 

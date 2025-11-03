@@ -121,8 +121,6 @@ class EvaluatorCallback(Callback):
                     labels = get_labels(batch)
                     output = self.trainer.train_module.eval_batch(batch, labels=labels)
                     assert isinstance(output, LMOutputWithLoss)
-
-                    # logits: (batch_size * (seq_len - 1), vocab_size), ce_loss: (batch_size * (seq_len - 1),)
                     logits, _, ce_loss, _ = output
 
                     # NOTE: might have host-device syncs here but that's okay.
