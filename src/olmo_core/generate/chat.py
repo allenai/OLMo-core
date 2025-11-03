@@ -237,8 +237,8 @@ Examples:
     parser.add_argument(
         "--temperature",
         type=float,
-        default=0.7,
-        help="Temperature for sampling (default: 0.7). Set to 0.0 for greedy decoding.",
+        default=1.0,
+        help="Temperature for sampling (default: 1.0). Set to 0.0 for greedy decoding.",
     )
     parser.add_argument(
         "--top-k",
@@ -249,13 +249,12 @@ Examples:
     parser.add_argument(
         "--top-p",
         type=float,
-        default=0.9,
-        help="Top-p (nucleus) sampling (default: 0.9)",
+        default=0.7,
+        help="Top-p (nucleus) sampling (default: 0.7)",
     )
     parser.add_argument(
         "--do-sample",
         action="store_true",
-        default=True,
         help="Use sampling (default: True). Set --no-do-sample for greedy decoding.",
     )
     parser.add_argument(
@@ -267,7 +266,6 @@ Examples:
     parser.add_argument(
         "--use-cache",
         action="store_true",
-        default=True,
         help="Use KV cache for faster generation (default: True)",
     )
     parser.add_argument(
@@ -301,6 +299,9 @@ Examples:
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Logging verbosity level (default: INFO)",
     )
+
+    # Set defaults for mutually exclusive boolean flags
+    parser.set_defaults(do_sample=True, use_cache=True)
 
     args = parser.parse_args()
     logging.basicConfig(
