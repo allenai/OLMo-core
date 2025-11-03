@@ -83,6 +83,8 @@ def get_root_dir(cluster: str) -> str:
         "ai2/titan",
         "ai2/rhea",
         "ai2/phobos",
+        "ai2/triton",  # Added for testing
+        "ai2/prior",   # Added for testing
     ]:
         return "/weka/oe-training-default/ai2-llm"
     elif cluster in GOOGLE_CLUSTERS:
