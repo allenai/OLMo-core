@@ -300,7 +300,7 @@ Examples:
 
     # Display tokenizer info
     console.print(
-        render_tokenizer_info(tokenizer_config, tokenizer, custom_template=args.chat_template)
+        render_tokenizer_info(tokenizer_config, tokenizer, chat_template=args.chat_template)
     )
     console.print()
 
