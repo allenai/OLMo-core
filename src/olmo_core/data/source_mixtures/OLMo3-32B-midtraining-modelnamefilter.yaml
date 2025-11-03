@@ -16,16 +16,16 @@ sources:
   - source_name: megamatt
     # 20% less the ratio for dolminos2math
     # target_ratio: 0.01726210713
-    # target_ratio: 0.01726300199
-    target_ratio: 0.01726315213
+    target_ratio: 0.01726300199
+    # target_ratio: 0.01726315213
     paths:
       # 3,883,674,937
       - gs://ai2-llm/preprocessed/megamath_web_pro_max/beaker_rewrites-decon-sparkle-motion-modelnamefilter2/**/allenai/dolma2-tokenizer/*.npy
   - source_name: dolminos2math
     # 18,273,789,287
     # target_ratio: 0.18273789287
-    # target_ratio: 0.18273699801
-    target_ratio: 0.18273684787
+    target_ratio: 0.18273699801
+    # target_ratio: 0.18273684787
     paths:
       # 5_624_449_531
       - gs://ai2-llm/preprocessed/tokyotech-llm/swallowmath/beaker_outputs-decon-sparkle-motion-withids-modelnamefilter2/allenai/dolma2-tokenizer/*.npy
