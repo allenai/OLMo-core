@@ -84,10 +84,10 @@ def get_root_dir(cluster: str) -> str:
         "ai2/rhea",
         "ai2/phobos",
         "ai2/triton",  # Added for testing
-        "ai2/prior",   # Added for testing
     ]:
         return "/weka/oe-training-default/ai2-llm"
-    elif cluster in GOOGLE_CLUSTERS:
+    elif cluster in ["ai2/prior"] + GOOGLE_CLUSTERS:
+        # ai2/prior doesn't support Weka, use Google Cloud Storage
         return "gs://ai2-llm"
     elif "local" in cluster:
         return "gs://ai2-llm"
