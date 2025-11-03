@@ -10,6 +10,9 @@ Example usage:
 
     # Greedy decoding (deterministic)
     python -m olmo_core.generate.chat path/to/checkpoint --do-sample False
+
+    # Example usage from a Mac M4 with a public checkpoint (`--attention-backend torch --no-use-cache` to avoid flash attn dependency)
+    python -m olmo_core.generate.chat https://olmo-checkpoints.org/ai2-llm/Olmo-3-1025-7B/stage2/step47684/ --attention-backend torch --no-use-cache
 """
 
 import argparse
@@ -18,7 +21,6 @@ import logging
 import sys
 from typing import Optional
 
-import torch
 from cached_path import cached_path
 from rich.columns import Columns
 from rich.console import Console, Group
@@ -32,7 +34,8 @@ from olmo_core.config import DType
 from olmo_core.data.tokenizer import TokenizerConfig
 from olmo_core.generate import GenerationConfig, TransformerGenerationModule
 from olmo_core.io import join_path, normalize_path
-from olmo_core.utils import log_or_print, prepare_cli_environment
+from olmo_core.nn.attention import AttentionBackendName
+from olmo_core.utils import get_default_device, log_or_print, prepare_cli_environment
 
 log = logging.getLogger(__name__)
 console = Console()
@@ -68,7 +71,7 @@ def render_system_message(message: str) -> Panel:
 
 
 def render_tokenizer_info(
-    tokenizer_config: TokenizerConfig, tokenizer, chat_template: Optional[str] = None
+    tokenizer_config: TokenizerConfig, tokenizer, chat_template: str
 ) -> Panel:
     """Render tokenizer configuration details."""
     # OLMo-core TokenizerConfig info
@@ -192,6 +195,10 @@ Examples:
   # Greedy decoding (deterministic)
   python -m olmo_core.generate.chat /path/to/checkpoint \\
       --max-new-tokens 256 --do-sample False
+
+  # Override attention backend
+  python -m olmo_core.generate.chat /path/to/checkpoint \\
+      --attention-backend torch
         """,
     )
     parser.add_argument(
@@ -242,6 +249,20 @@ Examples:
         help="Use KV cache for faster generation (default: True). Set --no-use-cache for no cache.",
     )
     parser.add_argument(
+        "--attention-backend",
+        type=str,
+        default=None,
+        choices=[backend.value for backend in AttentionBackendName],
+        help=f"Override attention backend (default: auto-chosen based on --use-cache). Options: {[backend.value for backend in AttentionBackendName]}",
+    )
+    parser.add_argument(
+        "--dtype",
+        type=str,
+        default="bfloat16",
+        choices=[dtype.value for dtype in DType],
+        help=f"Data type for model parameters (default: bfloat16). Options: {[dtype.value for dtype in DType]}",
+    )
+    parser.add_argument(
         "--system-prompt",
         type=str,
         default=None,
@@ -268,40 +289,27 @@ Examples:
     )
 
     args = parser.parse_args()
-    # logging.basicConfig(
-    #     level=getattr(logging, args.verbosity),
-    #     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    # )
 
-    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    console.print(f"Using device: {device}")
-    if device.type != "cuda":
-        console.print(
-            f"[bold yellow]Warning:[/bold yellow] Expected CUDA device for optimal performance, got {device.type}",
-            style="yellow",
-        )
+    device = get_default_device()
+    log.info(f"Using device: {device}")
 
     # Load tokenizer config and tokenizer
     tokenizer_config = load_tokenizer_config_from_checkpoint(args.checkpoint_dir)
     if tokenizer_config is None:
-        console.print(
-            "[bold yellow]Warning:[/bold yellow] Could not load tokenizer config from checkpoint. Falling back to dolma2.",
-            style="yellow",
-        )
+        log.warning("Could not load tokenizer config from checkpoint. Falling back to dolma2.")
         tokenizer_config = TokenizerConfig.dolma2()
 
     try:
         tokenizer = load_tokenizer(tokenizer_config)
     except Exception as e:
-        console.print(
-            f"[bold red]Failed to load tokenizer from identifier '{tokenizer_config.identifier}':[/bold red] {e}"
+        log.error(
+            f"Failed to load tokenizer from identifier '{tokenizer_config.identifier}': {e}",
+            exc_info=True,
         )
-        sys.exit(1)
+        raise e
 
     # Display tokenizer info
-    console.print(
-        render_tokenizer_info(tokenizer_config, tokenizer, chat_template=args.chat_template)
-    )
+    console.print(render_tokenizer_info(tokenizer_config, tokenizer, args.chat_template))
     console.print()
 
     generation_config = GenerationConfig(
@@ -316,16 +324,24 @@ Examples:
         use_cache=args.use_cache,
     )
 
-    console.print("[bold green]Loading model from checkpoint...")
+    attention_backend = None
+    if args.attention_backend:
+        attention_backend = AttentionBackendName(args.attention_backend)
+        log.info(f"Using explicitly specified attention backend: {attention_backend}")
+
+    dtype = DType(args.dtype)
+    log.info(f"Using dtype: {dtype}")
+
+    log.info("Loading model from checkpoint...")
     try:
         generation_module = TransformerGenerationModule.from_checkpoint(
             checkpoint_dir=args.checkpoint_dir,
             generation_config=generation_config,
             device=device,
-            dtype=DType.bfloat16,
+            dtype=dtype,
+            attention_backend=attention_backend,
         )
     except Exception as e:
-        console.print(f"[bold red]Failed to load checkpoint:[/bold red] {e}")
         log.error(f"Failed to load checkpoint: {e}", exc_info=True)
         sys.exit(1)
 

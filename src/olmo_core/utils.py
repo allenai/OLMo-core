@@ -143,7 +143,7 @@ def get_default_device() -> torch.device:
             return torch.device("cpu")
         else:
             raise NotImplementedError(backend)
-    elif torch.cuda.is_available() and torch.cuda.is_initialized():
+    elif torch.cuda.is_available():
         return torch.device("cuda")
     elif torch.mps.is_available():
         return torch.device("mps")
