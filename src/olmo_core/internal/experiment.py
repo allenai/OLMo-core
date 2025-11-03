@@ -1,4 +1,5 @@
 import logging
+import os
 import sys
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, cast
@@ -35,6 +36,7 @@ from olmo_core.train.callbacks import (
     ProfilerCallback,
     SlackNotifierCallback,
 )
+from olmo_core.train.callbacks.slack_notifier import SLACK_WEBHOOK_URL_ENV_VAR
 from olmo_core.train.train_module import TransformerTrainModuleConfig
 from olmo_core.utils import prepare_cli_environment, seed_all
 
@@ -411,7 +413,22 @@ def build_config(
 def launch(config: ExperimentConfig):
     log.info(config)
     assert config.launch is not None
-    config.launch.launch(follow=True, launch_timeout=5 * 60)
+
+    # Only send local Slack notifications when slack callback is enabled.
+    slack_enabled = False
+    for callback in config.trainer.callbacks.values():
+        if isinstance(callback, SlackNotifierCallback):
+            if callback.enabled and SLACK_WEBHOOK_URL_ENV_VAR in os.environ:
+                slack_enabled = True
+            break
+
+    config.launch.launch(
+        follow=True,
+        slack_notifications=slack_enabled,
+        launch_timeout=5 * 60,
+        #  step_timeout=30 * 60,  # hard timeout kills the job
+        step_soft_timeout=10 * 60,  # soft timeout only sends slack warning
+    )
 
 
 def launch_prep(config: ExperimentConfig):
