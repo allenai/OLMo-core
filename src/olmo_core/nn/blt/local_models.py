@@ -842,6 +842,7 @@ class LocalEncoder(nn.Module):
         patch_lens: torch.Tensor,
         patch_ids: torch.Tensor,
         boundary_state: MaskState,
+        pad_state: MaskState,
         expanded_input_ids: Optional[torch.Tensor] = None,
         cross_attn_mask: BlockMask | None = None,
         sequence_start_indices: Optional[torch.Tensor] = None,
@@ -857,13 +858,13 @@ class LocalEncoder(nn.Module):
                 self.rolling_past_tokens[:, -tokens_to_cache.shape[1]:] = tokens_to_cache
                 self.n_rolling_past_tokens += tokens_to_cache.shape[1]
             elif self.has_cache:
-                boundary_state.selective_put(
-                    torch.roll(boundary_state.selective_get(self.rolling_past_tokens, inv=True), shifts=-1, dims=1),
+                pad_state.selective_put(
+                    torch.roll(pad_state.selective_get(self.rolling_past_tokens, inv=True), shifts=-1, dims=1),
                     self.rolling_past_tokens,
                     inv=True,
                 )
-                boundary_state.selective_put(
-                    boundary_state.selective_get(tokens[:, -1], inv=True),
+                pad_state.selective_put(
+                    pad_state.selective_get(tokens[:, -1], inv=True),
                     self.rolling_past_tokens[:, -1],
                     inv=True,
                 )
@@ -889,16 +890,20 @@ class LocalEncoder(nn.Module):
 
         # pass through encoder layers
         if self.has_cache and self.cache_seqlens > 0:
-            if not boundary_state.all():
-                h = boundary_state.selective_get(embeddings, inv=True)
+            # step those batch positions which are not currently idle (i.e. at a boundary position)
+            # if all batch positions are idle, skip the step entirely
+            # all positions being idle only happens if fuse_boundaries=False. In this case, the step where we
+            # obtain a new representation from the global model will have all positions for the local encoder being idle.
+            if not pad_state.all():
+                h = pad_state.selective_get(embeddings, inv=True)
 
                 for block in self.blocks.values():
-                    h = block(h, cache_mask=boundary_state)
+                    h = block(h, cache_mask=pad_state)
 
                 if self.post_last_block_norm is not None:
                     h = self.post_last_block_norm(h)
 
-                boundary_state.selective_put(h[:, -1, :], self.last_h, inv=True)
+                pad_state.selective_put(h[:, -1, :], self.last_h, inv=True)
 
             h = self.last_h.unsqueeze(1)
         else:
@@ -1119,37 +1124,39 @@ class LocalDecoder(nn.Module):
         patch_embeds: torch.Tensor,
         boundary_logprobs: torch.Tensor,
         boundary_mask: Optional[torch.Tensor],
-        boundary_state: Optional[MaskState] = None,
+        pad_state: Optional[MaskState] = None,
         sequence_start_indices: Optional[torch.Tensor] = None,
         block_size: int = 256,
         headdim: int = 32,
         epsilon: float = 1e-3,
     ) -> tuple[tuple[torch.Tensor, torch.Tensor], torch.Tensor, torch.Tensor]:
         if self.has_cache and self.cache_seqlens > 0:
-            if self.fuse_boundaries:
-                raise NotImplementedError("Fused boundaries not implemented for cached HNet depooling.")
-
-            assert boundary_state is not None
+            assert pad_state is not None
             assert not self.hnet_smooth # not implemented for now
 
             if patch_embeds.numel() > 0:
                 # we got a new value from the global model, so must be at boundary position
                 h_patch = patch_embeds[:, -1:, :self.d_model]
-                h = self.boundary_embedding.weight.unsqueeze(0) + h_patch
+                if self.fuse_boundaries:
+                    h = embeds + h_patch
+                else:
+                    assert self.boundary_embedding is not None
+                    h = self.boundary_embedding.weight.unsqueeze(0) + h_patch
+
                 self.last_value.copy_(h_patch[:, -1])
             else:
                 h = embeds + self.last_value.unsqueeze(1)
 
-            # skip positions where we have a boundary until we get a new value from the global model
+            # skip pad positions until we get a new value from the global model
             if patch_embeds.numel() == 0:
-                h = boundary_state.selective_get(h, inv=True)
+                h = pad_state.selective_get(h, inv=True)
             else:
-                boundary_state = None
+                pad_state = None
 
             if h.shape[0] > 0:
                 for block_idx in range(self.n_layers):
                     block = self.blocks[str(block_idx)]
-                    h = block(h, cache_mask=boundary_state)
+                    h = block(h, cache_mask=pad_state)
 
             # TODO(benjaminm): clean up / return None / don't return so many things?
             return (h, h), h, h
@@ -1206,10 +1213,14 @@ class LocalDecoder(nn.Module):
                     block = self.blocks[str(block_idx)]
                     h = block(h)
 
+                if self.has_cache:
+                    self.last_value.copy_(prepool_out[:, -1])
+                    self.cache_seqlens += h.shape[1]
+
                 return (h, h), h, h
             else:
                 assert self.boundary_embedding is not None
-                
+
                 # skip bos - considered boundary
                 h = (depool_out_modulated[:, :-1] + embeds[:, 1:])
                 h_b = (self.boundary_embedding.weight.unsqueeze(0) + prepool_out)
@@ -1313,7 +1324,7 @@ class LocalDecoder(nn.Module):
         boundary_logprobs: torch.Tensor,
         boundary_mask: torch.Tensor | None,
         cross_attn_mask: BlockMask | None = None,
-        boundary_state: Optional[MaskState] = None,
+        pad_state: Optional[MaskState] = None,
         sequence_start_indices: Optional[torch.Tensor] = None,
     ) -> tuple[tuple[torch.Tensor, torch.Tensor], torch.Tensor, torch.Tensor]:
         if self.depooling == "cross_attn":
@@ -1324,8 +1335,8 @@ class LocalDecoder(nn.Module):
                 patch_embeds,
                 boundary_logprobs,
                 boundary_mask,
-                boundary_state,
-                sequence_start_indices,
+                pad_state,
+                sequence_start_indices=sequence_start_indices,
             )
         else:
             raise ValueError(f"Unknown depooling method: {self.depooling}. Supported methods are 'cross_attn' and 'hnet'.")
@@ -1369,7 +1380,7 @@ class LocalDecoder(nn.Module):
         patch_embeds: torch.Tensor,
         patch_residuals: torch.Tensor,
         boundary_logprobs: torch.Tensor,
-        boundary_state: MaskState,
+        pad_state: MaskState,
         boundary_mask: torch.Tensor | None,
         cross_attn_mask: BlockMask | None = None,
         sequence_start_indices: Optional[torch.Tensor] = None,
@@ -1396,6 +1407,6 @@ class LocalDecoder(nn.Module):
             boundary_logprobs=boundary_logprobs,
             boundary_mask=boundary_mask,
             cross_attn_mask=cross_attn_mask,
-            boundary_state=boundary_state,
+            pad_state=pad_state,
             sequence_start_indices=sequence_start_indices,
         )

@@ -67,6 +67,11 @@ def parse_args():
         choices=["float32", "float16", "bfloat16"],
         help="Model dtype",
     )
+    parser.add_argument(
+        "--text",
+        type=str,
+        default="The quick brown fox jumps over the lazy dog.",
+    )
     parser.add_argument("--interactive", action="store_true", help="Run in interactive mode")
     return parser.parse_args()
 
@@ -253,7 +258,7 @@ def main():
         run_interactive_mode(generation_module, tokenizer, device)
     else:
         # Single generation example
-        test_prompt = ["A quick brown fo", "Once upon a time in a land far"]
+        test_prompt = [args.text] * args.batch_size
         responses = generate_text(
             generation_module, test_prompt, tokenizer, device, args.batch_size
         )

@@ -2680,13 +2680,13 @@ class BLTDistillTransformer(BLTTransformer):
         boundary_labels = torch.zeros_like(byte_mask, dtype=torch.float32)
         boundary_labels.scatter_(1, patch_end_indices, 1.0)
 
-        # TODO(benjaminm): reuse h_byte, h_patch, etc.
         h_byte, h_patch, boundary_logprobs, boundary_mask = self.local_encoder.inference_forward(  # type: ignore
             input_ids,
             teacher_force_boundaries=blt_config.teacher_force_boundaries,
             boundary_threshold=blt_config.boundary_threshold,
             true_boundary_mask=boundary_labels > 0.5,
             boundary_state=blt_utils.MaskState(torch.full((input_ids.shape[0],), fill_value=last_token_is_boundary, device=input_ids.device, dtype=torch.bool)),
+            pad_state=blt_utils.MaskState(torch.full((input_ids.shape[0],), fill_value=last_token_is_boundary and not self.local_decoder.fuse_boundaries, device=input_ids.device, dtype=torch.bool)),
             sequence_start_indices=sequence_start_indices,
             **local_encoder_kwargs
         )
@@ -2698,6 +2698,7 @@ class BLTDistillTransformer(BLTTransformer):
         input_ids: torch.Tensor,
         blt_config: BLTConfig,
         boundary_state: torch.Tensor,
+        pad_state: torch.Tensor,
         sequence_start_indices: Optional[torch.Tensor] = None,
         cached_encoder_outputs: Optional[Any] = None,
         **kwargs,
@@ -2714,6 +2715,7 @@ class BLTDistillTransformer(BLTTransformer):
             h_byte, h_patch, _, _ = self.local_encoder.inference_forward(  # type: ignore
                 input_ids,
                 boundary_state=boundary_state,
+                pad_state=pad_state,
                 sequence_start_indices=sequence_start_indices,
                 **local_encoder_kwargs
             )
@@ -2751,7 +2753,7 @@ class BLTDistillTransformer(BLTTransformer):
             patch_residuals=h_patch,
             boundary_logprobs=boundary_logprobs,
             boundary_mask=boundary_mask,
-            boundary_state=boundary_state,
+            pad_state=pad_state,
             sequence_start_indices=sequence_start_indices,
             **local_decoder_kwargs,
         )
