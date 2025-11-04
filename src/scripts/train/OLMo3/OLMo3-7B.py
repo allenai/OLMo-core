@@ -21,7 +21,7 @@ SEQUENCE_LENGTH = 8 * 1024
 GLOBAL_BATCH_SIZE = 4 * 1024 * 1024  # ~4M tokens
 
 # When training Olmo3-7B, we specified the dataset mix from the command line using a command like this:
-# OLMo3-7B.py launch OLMo3 ai2/augusta-google-1 --dataset.mix=OLMo-mix-0625 --launch.num_nodes=128 --data_loader.num_workers=8
+# python src/scripts/train/OLMo3/OLMo3-7B.py launch OLMo3-7B ai2/augusta-google-1 --dataset.mix=OLMo-mix-0625 --launch.num_nodes=128 --data_loader.num_workers=8
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
