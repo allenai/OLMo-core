@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from math import cos, pi, sqrt
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
+import numpy as np
 import torch
 
 from ..config import Config, StrEnum
@@ -544,3 +545,119 @@ class SequentialScheduler(Scheduler):
 
         assert t_max > 0
         return self.schedulers[-1].get_lr(initial_lr, current, t_max)
+
+
+@dataclass
+class WSDS(Scheduler):
+    """
+    Warmup–Stable–Decay—Simplified (WSD‑S) scheduler for continual pretraining.
+    Reference: https://arxiv.org/abs/2410.05192
+    """
+
+    period_lengths: List[int] = field(default_factory=list)
+
+    warmup: Optional[int] = None
+    warmup_fraction: Optional[float] = None
+
+    decay: Optional[int] = None
+    decay_fraction: Optional[float] = None
+
+    warmup_min_lr: float = 0.0
+    decay_min_lr: float = 0.0
+
+    _cum_period_end: List[int] = field(default_factory=list, init=False, repr=False)
+    _warmup_steps: int = field(default=0, init=False, repr=False)
+    _adjusted_period_lengths: List[int] = field(default_factory=list, init=False, repr=False)
+
+    def __post_init__(self):
+        if not self.period_lengths:
+            raise OLMoConfigurationError("'period_lengths' must be provided and non-empty.")
+        if any(p <= 0 for p in self.period_lengths):
+            raise OLMoConfigurationError("All entries in 'period_lengths' must be > 0.")
+
+        # warmup validation
+        if (self.warmup is None) == (self.warmup_fraction is None):
+            raise OLMoConfigurationError(
+                "Exactly one of 'warmup' or 'warmup_fraction' must be specified."
+            )
+        if self.warmup_fraction is not None and not (0.0 <= self.warmup_fraction <= 1.0):
+            raise OLMoConfigurationError("'warmup_fraction' must be in [0, 1].")
+
+        # decay validation
+        if (self.decay is None) == (self.decay_fraction is None):
+            raise OLMoConfigurationError(
+                "Exactly one of 'decay' or 'decay_fraction' must be specified."
+            )
+        if self.decay_fraction is not None and not (0.0 <= self.decay_fraction <= 1.0):
+            raise OLMoConfigurationError("'decay_fraction' must be in [0, 1].")
+        if self.decay_min_lr < 0.0:
+            raise OLMoConfigurationError("'decay_min_lr' must be >= 0.")
+
+        # Resolve warmup based on first period length
+        L0 = self.period_lengths[0]
+        if self.warmup is not None:
+            self._warmup_steps = int(self.warmup)
+        else:
+            assert self.warmup_fraction is not None
+            self._warmup_steps = int(round(self.warmup_fraction * L0))
+
+        # Validate first period: warmup + decay <= L0
+        D0 = self._resolve_decay(L0)
+        if self._warmup_steps + D0 > L0:
+            raise OLMoConfigurationError(
+                f"First period: warmup ({self._warmup_steps}) + decay ({D0}) = "
+                f"{self._warmup_steps + D0} exceeds period length ({L0})."
+            )
+
+        # Validate remaining periods: decay <= Li
+        for i, Li in enumerate(self.period_lengths[1:], start=1):
+            Di = self._resolve_decay(Li)
+            if Di > Li:
+                raise OLMoConfigurationError(
+                    f"Period {i}: decay ({Di}) exceeds period length ({Li})."
+                )
+
+        # Adjust period lengths: subtract warmup from first period
+        self._adjusted_period_lengths = [L0 - self._warmup_steps] + self.period_lengths[1:]
+
+        # Precompute cumulative ends based on ADJUSTED periods
+        self._cum_period_end = np.cumsum(self._adjusted_period_lengths).tolist()
+
+    def _resolve_decay(self, Li: int) -> int:
+        if self.decay is not None:
+            return int(self.decay)
+        else:
+            assert self.decay_fraction is not None
+            return int(round(self.decay_fraction * Li))
+
+    def _find_period(self, x: int) -> int:
+        for idx, end in enumerate(self._cum_period_end):
+            if x <= end:
+                return idx
+        return len(self._cum_period_end) - 1
+
+    def get_lr(
+        self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
+    ) -> Union[float, torch.Tensor]:
+        if current < self._warmup_steps:
+            return _linear_warmup(initial_lr, current, self._warmup_steps, self.warmup_min_lr)
+
+        adjusted_current = current - self._warmup_steps
+
+        if adjusted_current >= self._cum_period_end[-1]:
+            return self.decay_min_lr
+
+        # Find current period (using adjusted boundaries)
+        pidx = self._find_period(adjusted_current)
+        start = 0 if pidx == 0 else self._cum_period_end[pidx - 1]
+        Li = self._adjusted_period_lengths[pidx]
+        pos = min(max(adjusted_current - start, 0), Li)
+
+        D = self._resolve_decay(self.period_lengths[pidx])
+        S = Li - D
+
+        if pos < S:
+            return initial_lr
+        else:
+            t = pos - S
+            return _linear_decay(initial_lr, D - t, D, self.decay_min_lr)
