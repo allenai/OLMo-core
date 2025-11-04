@@ -12,7 +12,6 @@ from olmo_core.launch.beaker import (
     BeakerEnvVar,
     BeakerLaunchConfig,
     BeakerWekaBucket,
-    OLMoCoreBeakerImage,
     is_running_in_beaker_batch_job,
 )
 from olmo_core.utils import generate_uuid
