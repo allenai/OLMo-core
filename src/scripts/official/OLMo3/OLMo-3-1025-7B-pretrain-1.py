@@ -44,19 +44,6 @@ GLOBAL_BATCH_SIZE = 8192 * 512  # ~4M tokens
 LR = 3e-4
 
 
-#  python -m olmo_core.launch.beaker --gpus 2 \
-#   --weka=oe-training-default --cluster ai2/titan \
-#   --shared-filesystem --preemptible --priority low \
-#   -- \
-# src/scripts/official/OLMo3/OLMo-3-1025-7B-pretrain-1.py \
-#   --name OLMo-3-1025-7B-pretrain-1-test \
-#   --save-folder="/weka/oe-training-default/$USER/OLMo-3-1025-7B-pretrain-1-test" \
-#   --work-dir="/weka/oe-training-default/$USER/dataset-cache" \
-#   --trainer.callbacks.lm_evaluator.enabled=false \
-#   --trainer.callbacks.downstream_evaluator.enabled=false \
-#   --trainer.no_checkpoints --trainer.hard_stop='{value: 100, unit: steps}'
-
-
 def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentConfig:
     sequence_length = opts.sequence_length or DEFAULT_SEQUENCE_LENGTH
     tokenizer_config = TokenizerConfig.dolma2()
