@@ -120,7 +120,7 @@ class SkipStepAdamW(SkipStepOptimizer):
         foreach: bool = False,
         step_increment_bugfix: bool = True,
     ) -> None:
-        assert lr > 0.0
+        assert lr >= 0.0
         assert all([0.0 <= beta <= 1.0 for beta in betas])
         defaults = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
         super().__init__(
