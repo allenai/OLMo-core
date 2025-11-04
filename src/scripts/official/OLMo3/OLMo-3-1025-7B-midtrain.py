@@ -53,9 +53,8 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         attn_backend=AttentionBackendName.flash_2,
     )
 
-    # TODO: adjust the source mixture list with the official paths! Remove prefix
     source_list = SourceMixtureList.from_yaml(
-        "src/olmo_core/data/source_mixtures/OLMo3-7B-midtraining.yaml"
+        "src/olmo_core/data/source_mixtures/OLMo3-7B-midtraining-official.yaml"
     )
     source_list.validate()
     dataset_config = NumpyFSLDatasetConfig.from_src_mix(
