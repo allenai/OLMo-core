@@ -467,9 +467,9 @@ def test_numpy_fsl_mixture_dataset(tmp_path: Path):
     # Note that changing the seed here could result in the inclusion of the first sequence from the mock data.
     # assert not np.array_equal(first_src_sequence, first_ds_item)
     expected = "aff421"
-    assert ds.fingerprint.endswith(expected), (
-        f"Fingerprint mismatch, expected {expected}, got {ds.fingerprint[-6:]}...Do you need to update expected fingerprint?"
-    )
+    assert ds.fingerprint.endswith(
+        expected
+    ), f"Fingerprint mismatch, expected {expected}, got {ds.fingerprint[-6:]}...Do you need to update expected fingerprint?"
     assert first_ds_item == [56423, 24546, 15796, 52203]  # stable because we pass a seed
     assert ds.num_tokens == 10_112  # oversamples to handle rounding error
     assert len(ds) == 2528
@@ -550,9 +550,9 @@ def test_numpy_fsl_mixture_dataset_with_repetition(
     ).build()
     ds.prepare()
 
-    assert ds.fingerprint.endswith(expected_fingerprint), (
-        f"Fingerprint mismatch, expected {expected_fingerprint}, got {ds.fingerprint[-6:]}...Do you need to update expected fingerprint?"
-    )
+    assert ds.fingerprint.endswith(
+        expected_fingerprint
+    ), f"Fingerprint mismatch, expected {expected_fingerprint}, got {ds.fingerprint[-6:]}...Do you need to update expected fingerprint?"
 
     first_ds_item = ds[0]["input_ids"].tolist()
     # NOTE: This is commented out until we fix behavior of the source mixture dataset
@@ -571,9 +571,9 @@ def test_numpy_fsl_mixture_dataset_with_repetition(
     # Iterate through dataset to verify all instances have correct length
     for idx in range(len(ds)):
         instance = ds[idx]
-        assert len(instance["input_ids"]) == sequence_length, (
-            f"Instance {idx} has incorrect length: {len(instance['input_ids'])} != {sequence_length}"
-        )
+        assert (
+            len(instance["input_ids"]) == sequence_length
+        ), f"Instance {idx} has incorrect length: {len(instance['input_ids'])} != {sequence_length}"
 
 
 def write_data_file(data: List[int], path: Path, dtype, eos_token_id: int):
