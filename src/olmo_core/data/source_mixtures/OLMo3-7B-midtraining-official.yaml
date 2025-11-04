@@ -1,0 +1,283 @@
+sources:
+  - source_name: stem-heavy-crawl
+    target_ratio: 0.05
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/stem-heavy-crawl/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: stack_edu-fim
+    target_ratio: 0.1
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/stack_edu-fim/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: cranecode
+    target_ratio: 0.1
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/cranecode/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: megamath
+    target_ratio: 0.01726210713
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/megamatt/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: moremath
+    target_ratio: 0.18273789287
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/cranemath/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/dolmino-math/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/omr-rewrite-fullthoughts/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/tinymath-mind/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/tinymath-pot/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: reddit_to_flashcards
+    target_ratio: 0.059
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/reddit_to_flashcards-high_relevance/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/reddit_to_flashcards-low_relevance/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: wiki_to_rcqa
+    target_ratio: 0.03
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/wiki_to_rcqa/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: nemotron-synth-qa
+    target_ratio: .05
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/nemotron-synth-qa/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: tulu-3-sft
+    target_ratio: 0.011
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/tulu-3-sft/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: flan
+    target_ratio: .05
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/dolmino_1-flan/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: r1_reasoning
+    target_ratio: 0.01875
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/r1-reasoning-traces/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: qwq_reasoning
+    target_ratio: 0.01875
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/qwq-reasoning-traces/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: gemini_reasoning
+    target_ratio: 0.00245738848
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/gemini-reasoning-traces/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: llamanemotron_reasoning
+    target_ratio: .0125
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/llama_nemotron-reasoning-traces/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: openthoughts2
+    target_ratio: 0.01254261152
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/openthoughts2-reasoning-traces/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: verifiable-reasoning
+    target_ratio: .01
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/verifiable-gpt41/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/verifiable-o4mini/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/math-meta-reasoning/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/code-meta-reasoning/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: pdf-quality-art_design
+    target_ratio: 0.000035
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/olmocr_science_pdfs-high_quality/length_2e12/art_design/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/olmocr_science_pdfs-high_quality/length_2e13/art_design/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: pdf-quality-crime_law
+    target_ratio: 0.000775
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/olmocr_science_pdfs-high_quality/length_2e12/crime_law/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/olmocr_science_pdfs-high_quality/length_2e13/crime_law/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: pdf-quality-education_jobs
+    target_ratio: 0.00258
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/olmocr_science_pdfs-high_quality/length_2e12/education_jobs/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/olmocr_science_pdfs-high_quality/length_2e13/education_jobs/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: pdf-quality-entertainment
+    target_ratio: 0.00011
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/olmocr_science_pdfs-high_quality/length_2e12/entertainment/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/olmocr_science_pdfs-high_quality/length_2e13/entertainment/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: pdf-quality-finance_business
+    target_ratio: 0.0007
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/olmocr_science_pdfs-high_quality/length_2e12/finance_business/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/olmocr_science_pdfs-high_quality/length_2e13/finance_business/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: pdf-quality-hardware
+    target_ratio: 0.00024
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/olmocr_science_pdfs-high_quality/length_2e12/hardware/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/olmocr_science_pdfs-high_quality/length_2e13/hardware/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: pdf-quality-health
+    target_ratio: 0.005935
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/olmocr_science_pdfs-high_quality/length_2e12/health/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/olmocr_science_pdfs-high_quality/length_2e13/health/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: pdf-quality-history
+    target_ratio: 0.00027
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/olmocr_science_pdfs-high_quality/length_2e12/history/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/olmocr_science_pdfs-high_quality/length_2e13/history/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: pdf-quality-home_hobbies
+    target_ratio: 0.000035
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/olmocr_science_pdfs-high_quality/length_2e12/home_hobbies/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/olmocr_science_pdfs-high_quality/length_2e13/home_hobbies/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: pdf-quality-industrial
+    target_ratio: 0.00269
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/olmocr_science_pdfs-high_quality/length_2e12/industrial/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/olmocr_science_pdfs-high_quality/length_2e13/industrial/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: pdf-quality-literature
+    target_ratio: 0.00045
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/olmocr_science_pdfs-high_quality/length_2e12/literature/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/olmocr_science_pdfs-high_quality/length_2e13/literature/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: pdf-quality-politics
+    target_ratio: 0.00092
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/olmocr_science_pdfs-high_quality/length_2e12/politics/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/olmocr_science_pdfs-high_quality/length_2e13/politics/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: pdf-quality-religion
+    target_ratio: 0.00026
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/olmocr_science_pdfs-high_quality/length_2e12/religion/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/olmocr_science_pdfs-high_quality/length_2e13/religion/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: pdf-quality-science_tech
+    target_ratio: 0.02976
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/olmocr_science_pdfs-high_quality/length_2e12/science_tech/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/olmocr_science_pdfs-high_quality/length_2e13/science_tech/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: pdf-quality-software
+    target_ratio: 0.00059
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/olmocr_science_pdfs-high_quality/length_2e12/software/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/olmocr_science_pdfs-high_quality/length_2e13/software/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: pdf-quality-software_dev
+    target_ratio: 0.00435
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/olmocr_science_pdfs-high_quality/length_2e12/software_dev/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/olmocr_science_pdfs-high_quality/length_2e13/software_dev/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: pdf-quality-sports_fitness
+    target_ratio: 0.00019
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/olmocr_science_pdfs-high_quality/length_2e12/sports_fitness/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/olmocr_science_pdfs-high_quality/length_2e13/sports_fitness/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: pdf-quality-transportation
+    target_ratio: 0.00011
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/olmocr_science_pdfs-high_quality/length_2e12/transportation/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/olmocr_science_pdfs-high_quality/length_2e13/transportation/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: common_crawl-high-quality-adult_content
+    target_ratio: 0.0002556935
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0018_subset-decon-2/adult_content/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0020_subset-decon-2/adult_content/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: common_crawl-high-quality-art_and_design
+    target_ratio: 0.0028240385
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0018_subset-decon-2/art_and_design/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0020_subset-decon-2/art_and_design/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: common_crawl-high-quality-crime_and_law
+    target_ratio: 0.0065884955
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0018_subset-decon-2/crime_and_law/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0020_subset-decon-2/crime_and_law/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: common_crawl-high-quality-education_and_jobs
+    target_ratio: 0.0096539490
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0018_subset-decon-2/education_and_jobs/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0020_subset-decon-2/education_and_jobs/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: common_crawl-high-quality-electronics_and_hardware
+    target_ratio: 0.0077935890
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0018_subset-decon-2/electronics_and_hardware/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0020_subset-decon-2/electronics_and_hardware/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: common_crawl-high-quality-entertainment
+    target_ratio: 0.0216076590
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0018_subset-decon-2/entertainment/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0020_subset-decon-2/entertainment/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: common_crawl-high-quality-fashion_and_beauty
+    target_ratio: 0.0000286700
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0018_subset-decon-2/fashion_and_beauty/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0020_subset-decon-2/fashion_and_beauty/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: common_crawl-high-quality-finance_and_business
+    target_ratio: 0.0091422550
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0018_subset-decon-2/finance_and_business/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0020_subset-decon-2/finance_and_business/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: common_crawl-high-quality-food_and_dining
+    target_ratio: 0.0031632340
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0018_subset-decon-2/food_and_dining/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0020_subset-decon-2/food_and_dining/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: common_crawl-high-quality-games
+    target_ratio: 0.0154939065
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0018_subset-decon-2/games/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0020_subset-decon-2/games/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: common_crawl-high-quality-health
+    target_ratio: 0.0224049655
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0018_subset-decon-2/health/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0020_subset-decon-2/health/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: common_crawl-high-quality-history_and_geography
+    target_ratio: 0.0061185640
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0018_subset-decon-2/history_and_geography/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0020_subset-decon-2/history_and_geography/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: common_crawl-high-quality-home_and_hobbies
+    target_ratio: 0.0020584890
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0018_subset-decon-2/home_and_hobbies/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0020_subset-decon-2/home_and_hobbies/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: common_crawl-high-quality-industrial
+    target_ratio: 0.0035336085
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0018_subset-decon-2/industrial/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0020_subset-decon-2/industrial/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: common_crawl-high-quality-literature
+    target_ratio: 0.0153408140
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0018_subset-decon-2/literature/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0020_subset-decon-2/literature/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: common_crawl-high-quality-politics
+    target_ratio: 0.0048655335
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0018_subset-decon-2/politics/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0020_subset-decon-2/politics/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: common_crawl-high-quality-religion
+    target_ratio: 0.0044465105
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0018_subset-decon-2/religion/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0020_subset-decon-2/religion/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: common_crawl-high-quality-science_math_and_technology
+    target_ratio: 0.0473059895
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0018_subset-decon-2/science_math_and_technology/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0020_subset-decon-2/science_math_and_technology/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: common_crawl-high-quality-social_life
+    target_ratio: 0.0010352740
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0018_subset-decon-2/social_life/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0020_subset-decon-2/social_life/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: common_crawl-high-quality-software_development
+    target_ratio: 0.0106495710
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0018_subset-decon-2/software_development/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0020_subset-decon-2/software_development/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: common_crawl-high-quality-software
+    target_ratio: 0.0250799635
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0018_subset-decon-2/software/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0020_subset-decon-2/software/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: common_crawl-high-quality-sports_and_fitness
+    target_ratio: 0.0029238175
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0018_subset-decon-2/sports_and_fitness/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0020_subset-decon-2/sports_and_fitness/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: common_crawl-high-quality-transportation
+    target_ratio: 0.0021929705
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0018_subset-decon-2/transportation/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0020_subset-decon-2/transportation/**/allenai/dolma2-tokenizer/*.npy
+  - source_name: common_crawl-high-quality-travel_and_tourism
+    target_ratio: 0.0004924385
+    paths:
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0018_subset-decon-2/travel_and_tourism/**/allenai/dolma2-tokenizer/*.npy
+      - preprocessed/dolma3-dolmino-official/pool/common_crawl-high-quality/vigintile_0020_subset-decon-2/travel_and_tourism/**/allenai/dolma2-tokenizer/*.npy
