@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `ignore_fingerprint_mismatch` parameter to `NumpyDataLoaderConfig` to allow resuming training from a checkpoint with a different dataset mix.
 - Added helpful error messages when OLMo-mix-0625 files are not found, directing users to use OLMo-mix-0925 and the fingerprint override flag.
 - Added `olmo_core.generate.chat` module to allow interacting with OlmoCore models without conversion to other formats.
+- Added a `NoOpOptimizer` that does nothing, uses no memory, and can be used for debugging.
 
 ### Fixed
 
