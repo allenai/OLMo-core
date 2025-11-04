@@ -62,7 +62,7 @@ class NoOpOptimizer(SkipStepOptimizer):
                     state["step"] = torch.zeros((), dtype=torch.int64, device=p.device)
 
                 # Increment step counter
-                state["step"] += 1
+                state["step"] += step_factor
 
 
 @dataclass
