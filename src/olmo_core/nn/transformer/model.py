@@ -2753,7 +2753,7 @@ class BLTDistillTransformer(BLTTransformer):
             patch_residuals=h_patch,
             boundary_logprobs=boundary_logprobs,
             boundary_mask=boundary_mask,
-            pad_state=pad_state,
+            boundary_state=boundary_state,
             sequence_start_indices=sequence_start_indices,
             **local_decoder_kwargs,
         )

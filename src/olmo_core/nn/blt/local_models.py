@@ -1124,14 +1124,14 @@ class LocalDecoder(nn.Module):
         patch_embeds: torch.Tensor,
         boundary_logprobs: torch.Tensor,
         boundary_mask: Optional[torch.Tensor],
-        pad_state: Optional[MaskState] = None,
+        boundary_state: Optional[MaskState] = None,
         sequence_start_indices: Optional[torch.Tensor] = None,
         block_size: int = 256,
         headdim: int = 32,
         epsilon: float = 1e-3,
     ) -> tuple[tuple[torch.Tensor, torch.Tensor], torch.Tensor, torch.Tensor]:
         if self.has_cache and self.cache_seqlens > 0:
-            assert pad_state is not None
+            assert boundary_state is not None
             assert not self.hnet_smooth # not implemented for now
 
             if patch_embeds.numel() > 0:
@@ -1149,14 +1149,14 @@ class LocalDecoder(nn.Module):
 
             # skip pad positions until we get a new value from the global model
             if patch_embeds.numel() == 0:
-                h = pad_state.selective_get(h, inv=True)
+                h = boundary_state.selective_get(h, inv=True)
             else:
-                pad_state = None
+                boundary_state = None
 
             if h.shape[0] > 0:
                 for block_idx in range(self.n_layers):
                     block = self.blocks[str(block_idx)]
-                    h = block(h, cache_mask=pad_state)
+                    h = block(h, cache_mask=boundary_state)
 
             # TODO(benjaminm): clean up / return None / don't return so many things?
             return (h, h), h, h
@@ -1324,7 +1324,7 @@ class LocalDecoder(nn.Module):
         boundary_logprobs: torch.Tensor,
         boundary_mask: torch.Tensor | None,
         cross_attn_mask: BlockMask | None = None,
-        pad_state: Optional[MaskState] = None,
+        boundary_state: Optional[MaskState] = None,
         sequence_start_indices: Optional[torch.Tensor] = None,
     ) -> tuple[tuple[torch.Tensor, torch.Tensor], torch.Tensor, torch.Tensor]:
         if self.depooling == "cross_attn":
@@ -1335,7 +1335,7 @@ class LocalDecoder(nn.Module):
                 patch_embeds,
                 boundary_logprobs,
                 boundary_mask,
-                pad_state,
+                boundary_state,
                 sequence_start_indices=sequence_start_indices,
             )
         else:
@@ -1380,7 +1380,7 @@ class LocalDecoder(nn.Module):
         patch_embeds: torch.Tensor,
         patch_residuals: torch.Tensor,
         boundary_logprobs: torch.Tensor,
-        pad_state: MaskState,
+        boundary_state: MaskState,
         boundary_mask: torch.Tensor | None,
         cross_attn_mask: BlockMask | None = None,
         sequence_start_indices: Optional[torch.Tensor] = None,
@@ -1407,6 +1407,6 @@ class LocalDecoder(nn.Module):
             boundary_logprobs=boundary_logprobs,
             boundary_mask=boundary_mask,
             cross_attn_mask=cross_attn_mask,
-            pad_state=pad_state,
+            boundary_state=boundary_state,
             sequence_start_indices=sequence_start_indices,
         )

@@ -949,12 +949,23 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         expanded_input_ids = []
         patch_lens = []
 
+        forced_decoding_ids: list[int | None] = [None] * input_ids.shape[0]
+
         for example_idx in range(input_ids.shape[0]):
             current_byte_input_ids, current_patch_lens = self.tokenizer.get_tokens_and_patch_lengths(
                 input_ids[example_idx].tolist(),
                 add_bos=True,
                 strip_pad=True
             )
+
+            if fuse_boundaries:
+                # need to roll one byte back and force decoding to detect whether the last byte is a boundary
+                forced_decoding_ids[example_idx] = current_byte_input_ids[-1]
+                current_byte_input_ids = current_byte_input_ids[:-1]
+                current_patch_lens[-1] -= 1
+                if current_patch_lens[-1] == 0:
+                    current_patch_lens = current_patch_lens[:-1]
+
             byte_input_ids.append(torch.tensor(current_byte_input_ids, dtype=torch.long))
             if expand_input_ids:
                 expanded_input_ids.append(torch.tensor(self.tokenizer.expand_byte_ids(current_byte_input_ids), dtype=torch.long))
@@ -1083,7 +1094,6 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
             )
             assert not (
                 (input_ids_for_model == self.model.end_of_subword_token_blt) |
-                (input_ids_for_model == pad) |
                 (input_ids_for_model >= boundary_offset)
             ).any().item()  # type: ignore
             if expand_input_ids:
@@ -1126,6 +1136,22 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                 inference_sampling_strategies = self.blt_config.inference_sampling_strategies.split(",")
             else:
                 inference_sampling_strategies = []
+
+            if any(x is not None for x in forced_decoding_ids):
+                # only supported for the first token atm, so len(next_token_logits) == batch_size
+                assert len(next_token_logits) == batch_size and is_first_forward
+                for example_idx in range(batch_size):
+                    forced_decoding_id = forced_decoding_ids[example_idx]
+
+                    if forced_decoding_id is not None:
+                        no_boundary_logit = next_token_logits[example_idx, 0, forced_decoding_id].item()
+                        boundary_logit = next_token_logits[example_idx, 0, forced_decoding_id + boundary_offset].item()
+
+                        next_token_logits[example_idx, 0, :] = -100_000
+                        next_token_logits[example_idx, 0, forced_decoding_id] = no_boundary_logit
+                        next_token_logits[example_idx, 0, forced_decoding_id + boundary_offset] = boundary_logit
+
+                        forced_decoding_ids[example_idx] = None  # only force once
 
             for strategy in inference_sampling_strategies:
                 if strategy.startswith("gen_eos_bias"):
@@ -1379,7 +1405,8 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         generated_subword_ids = []
 
         for example_idx in range(generated.shape[0]):
-            completion_text = self.tokenizer.decode(generated[example_idx, prompt_len:].tolist())
+            # +1 if fuse boundaries since we rolled one byte back
+            completion_text = self.tokenizer.decode(generated[example_idx, prompt_len + int(fuse_boundaries):].tolist())  # type: ignore
             completion_subword_tokens = self.tokenizer.hf_tokenizer.encode(completion_text)
 
             if completions_only:
