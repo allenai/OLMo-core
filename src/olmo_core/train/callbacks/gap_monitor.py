@@ -26,6 +26,8 @@ class GAPMonitorCallback(Callback):
     _local_batch_size_instances: int = dataclasses.field(default=1, repr=False)
 
     def post_attach(self):
+        if not self.enabled:
+            return
         if not isinstance(self.trainer.train_module, TransformerTrainModule):
             raise ValueError(f"{type(self).__name__ } only works with the TransformerTrainModule.")
 
@@ -45,6 +47,9 @@ class GAPMonitorCallback(Callback):
         self._handles = handles
 
     def pre_step(self, batch: Dict[str, Any]):
+        if not self.enabled:
+            return
+
         self._local_batch_size_instances = batch["input_ids"].shape[0]
 
     def pre_optim_step(self):
@@ -74,7 +79,7 @@ class GAPMonitorCallback(Callback):
         self, name: str, tensor: torch.Tensor, kind: Literal["grad", "activation", "param"]
     ):
         tensor = tensor.detach()
-        prefix = f"{kind}s"
+        prefix = f"gap/{kind}s"
         if kind == "activation":
             # For activations we'll just compute the local stats *per instance* and then average them
             # across the global batch.
