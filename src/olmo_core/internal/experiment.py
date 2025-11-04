@@ -197,6 +197,7 @@ def build_common_components(
             use_hostname_constraints=use_hostname_constraints,
             num_execution_units=num_execution_units,
         )
+        launch_config.launch_timeout = 5 * 60
 
     if beaker_user is not None:
         save_folder = f"{root_dir}/checkpoints/{beaker_user.lower()}/{cli_context.run_name}"
@@ -425,7 +426,6 @@ def launch(config: ExperimentConfig):
     config.launch.launch(
         follow=True,
         slack_notifications=slack_enabled,
-        launch_timeout=5 * 60,
         #  step_timeout=30 * 60,  # hard timeout kills the job
         step_soft_timeout=10 * 60,  # soft timeout only sends slack warning
     )
