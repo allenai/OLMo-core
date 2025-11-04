@@ -70,18 +70,16 @@ def test_noop_vs_zero_lr_adamw(device: torch.device):
             test_out1 = model1(test_input)
             test_out2 = model2(test_input)
 
-        assert torch.allclose(test_out1, test_out2, atol=1e-6), (
-            f"Step {step}: Outputs differ between SkipStepAdamW(lr=0) and NoOpOptimizer"
-        )
+        assert torch.allclose(
+            test_out1, test_out2, atol=1e-6
+        ), f"Step {step}: Outputs differ between SkipStepAdamW(lr=0) and NoOpOptimizer"
 
     # Verify final model parameters are identical
     for (name1, param1), (name2, param2) in zip(
         model1.named_parameters(), model2.named_parameters()
     ):
         assert name1 == name2
-        assert torch.equal(param1, param2), (
-            f"Parameter {name1} differs between models"
-        )
+        assert torch.equal(param1, param2), f"Parameter {name1} differs between models"
 
 
 @pytest.mark.parametrize("device", DEVICES)
@@ -107,6 +105,6 @@ def test_noop_no_parameter_updates(device: torch.device):
 
     # Verify parameters haven't changed
     for name, param in model.named_parameters():
-        assert torch.equal(param, initial_params[name]), (
-            f"Parameter {name} was modified by NoOpOptimizer"
-        )
+        assert torch.equal(
+            param, initial_params[name]
+        ), f"Parameter {name} was modified by NoOpOptimizer"
