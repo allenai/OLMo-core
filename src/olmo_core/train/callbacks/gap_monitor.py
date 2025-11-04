@@ -23,7 +23,7 @@ class GAPMonitorCallback(Callback):
     enabled: bool = True
 
     _handles = None
-    _local_batch_size_instances: int = dataclasses.field(default=0, repr=False)
+    _local_batch_size_instances: int = dataclasses.field(default=1, repr=False)
 
     def post_attach(self):
         if not isinstance(self.trainer.train_module, TransformerTrainModule):
