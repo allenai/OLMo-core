@@ -59,7 +59,7 @@ class NoOpOptimizer(SkipStepOptimizer):
                 # Initialize state if needed (for consistency)
                 state = self.state[p]
                 if len(state) == 0:
-                    state["step"] = torch.zeros((), dtype=torch.int64, device=p.device)
+                    state["step"] = torch.zeros((), dtype=torch.float32, device=p.device)
 
                 # Increment step counter
                 state["step"] += step_factor
