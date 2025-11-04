@@ -1,5 +1,7 @@
 """
 Official pre-training script for OLMo-3-1025-7B.
+
+Part 1 of 2. See OLMo-3-1025-7B-pretrain-2.py for part 2.
 """
 
 import argparse
@@ -110,7 +112,7 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
             metrics_collect_interval=10,
             cancel_check_interval=10,
             max_duration=Duration.tokens(int(5e12)),  # Originally scheduled for 5T
-            hard_stop=Duration.steps(  # But at this step we decided to extend schedule to 7T. See OLMo3-7B-second-half.py
+            hard_stop=Duration.steps(  # But at this step we decided to extend schedule to 7T. See OLMo-3-1025-7B-pretrain-2.py
                 int(597046)
             ),
         )
