@@ -1,6 +1,5 @@
 import logging
 import math
-import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from itertools import chain
@@ -272,7 +271,8 @@ class SourceMixtureDatasetConfig(Config):
     """
     seed: int = 42
     """
-    The seed used to generate the dataset.
+    The seed used to generate the dataset. Specifically this seed is used when sampling the actual
+    instances to use from each source.
     """
     render_tables: bool = True
     """
@@ -287,7 +287,6 @@ class SourceMixtureDatasetConfig(Config):
 
     def build(self, *, npdtype: NumpyUIntTypes, sequence_length: int) -> SourceMixtureDataset:
         self.validate()
-        random.seed(self.seed)
         available_tokens_by_source: Dict[str, int] = {}
 
         log.info("---------------------------------------------------------")
@@ -342,9 +341,9 @@ class SourceMixtureDatasetConfig(Config):
         # We adjust the number of tokens per path so that we can complete the desired number
         # of training steps while still retaining the target ratios.
         training_steps = math.ceil(self.requested_tokens / self.global_batch_size)
-        assert (
-            self.global_batch_size % sequence_length == 0
-        ), "global_batch_size must be multiple of sequence_length"
+        assert self.global_batch_size % sequence_length == 0, (
+            "global_batch_size must be multiple of sequence_length"
+        )
         num_instances_per_batch = self.global_batch_size // sequence_length
         requested_instances = training_steps * num_instances_per_batch
 
