@@ -1,6 +1,5 @@
 import logging
 import math
-import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from itertools import chain
@@ -272,7 +271,8 @@ class SourceMixtureDatasetConfig(Config):
     """
     seed: int = 42
     """
-    The seed used to generate the dataset.
+    The seed used to generate the dataset. Specifically this seed is used when sampling the actual
+    instances to use from each source.
     """
     render_tables: bool = True
     """
@@ -287,7 +287,6 @@ class SourceMixtureDatasetConfig(Config):
 
     def build(self, *, npdtype: NumpyUIntTypes, sequence_length: int) -> SourceMixtureDataset:
         self.validate()
-        random.seed(self.seed)
         available_tokens_by_source: Dict[str, int] = {}
 
         log.info("---------------------------------------------------------")
