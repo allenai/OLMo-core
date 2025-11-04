@@ -1,5 +1,7 @@
 """
 Official pre-training script for OLMo-3-1025-7B.
+
+Part 2 of 2. See OLMo-3-1025-7B-pretrain-1.py for part 1.
 """
 
 import argparse
@@ -56,7 +58,7 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         DataMix.OLMo_mix_0625_official,
         tokenizer=tokenizer_config,
         mix_base_dir=opts.data_root,
-        sequence_length=sequence_length,  # note: actual seq len was 8192
+        sequence_length=sequence_length,
         max_target_sequence_length=max(8192, sequence_length),
         work_dir=opts.work_dir,
     )
