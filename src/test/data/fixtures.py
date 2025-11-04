@@ -17,12 +17,10 @@ from .utils import mk_mmaps
 def get_fsl_mixture(
     tmp_path: Path,
     dtype: Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]] = np.uint32,
-    seed: int = 42,
     sequence_length: int = 4,
     num_tokens: int = 20 * 1000,
     eos: int = 0,
 ) -> NumpyDatasetBase:
-    seed = 42
     mmap1 = mk_mmaps(
         tmp_path, "mmap1", 1, num_tokens * 2, dtype, eos=eos, seed=seed, seq_length=sequence_length
     )
@@ -52,7 +50,6 @@ def get_fsl_mixture(
                 ),
             ]
         ),
-        seed=seed,
         global_batch_size=sequence_length * 32,
     )
 

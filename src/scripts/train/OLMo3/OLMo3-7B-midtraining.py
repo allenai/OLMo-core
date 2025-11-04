@@ -59,7 +59,6 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             requested_tokens=MAX_TOKENS,
             global_batch_size=GLOBAL_BATCH_SIZE,
             processes=16,
-            seed=SEED,
         ),
         tokenizer=tokenizer_config,
         work_dir=work_dir,
