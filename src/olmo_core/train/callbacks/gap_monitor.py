@@ -108,4 +108,4 @@ class GAPMonitorCallback(Callback):
         if self._handles is not None:
             for h in self._handles:
                 h.remove()
-                self._handles = None
+            self._handles = None
