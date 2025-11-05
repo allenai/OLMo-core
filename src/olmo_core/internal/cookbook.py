@@ -118,6 +118,7 @@ def configure_trainer(
         load_strategy=load_strategy,
         load_trainer_state=load_trainer_state,
         load_optim_state=load_optim_state,
+        metrics_collect_interval=50,
         save_overwrite=True,
     )
     return trainer_config
@@ -132,7 +133,7 @@ def configure_default_callbacks(
     callbacks = {
         "checkpointer": CheckpointerCallback(
             save_interval=checkpoint_save_interval,
-            ephemeral_save_interval=100,
+            ephemeral_save_interval=None,
             save_async=False,  # TODO: enable async saving when augusta stops being silly
         ),
         "config_saver": ConfigSaverCallback(),
