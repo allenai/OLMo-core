@@ -3,7 +3,7 @@ import json
 import logging
 import tempfile
 from tempfile import TemporaryDirectory
-from typing import List, Optional, Dict, Tuple
+from typing import List, Optional, Dict, Tuple, Any
 
 import click
 import torch
@@ -20,7 +20,7 @@ from olmo_core.utils import prepare_cli_environment
 log = logging.getLogger(__name__)
 
 
-def load_config(checkpoint_input_dir: PathOrStr) -> Optional[dict]:
+def load_config(checkpoint_input_dir: PathOrStr) -> Dict:
     if not file_exists(f"{checkpoint_input_dir}/config.json"):
         raise RuntimeError(f"Config file not found at {checkpoint_input_dir}")
 
@@ -38,8 +38,6 @@ def load_config(checkpoint_input_dir: PathOrStr) -> Optional[dict]:
 def config_dicts_from_path(model_path: str) -> Tuple[Dict, Dict]:
     # Load and preprocess configs
     experiment_config = load_config(model_path)
-    if experiment_config is None:
-        raise RuntimeError(f"Experiment config not found at {model_path}")
 
     transformer_config_dict = experiment_config["model"]
     # Remove deprecated transformer config options
@@ -60,18 +58,10 @@ def config_dicts_from_path(model_path: str) -> Tuple[Dict, Dict]:
 def model_config_from_path(model_path: str) -> TransformerConfig:
     transformer_config_dict, _ = config_dicts_from_path(model_path)
     model_config = TransformerConfig.from_dict(transformer_config_dict)
-
-    block_entries: list[tuple[str, TransformerBlockConfig]] = [("base block", model_config.block)]
-    if model_config.block_overrides:
-        block_entries.extend(
-            (f"block override {idx}", block_config)
-            for idx, block_config in sorted(model_config.block_overrides.items())
-        )
-
     return model_config
 
 
-def state_dict_from_path(model_path: str) -> Dict[str, torch.Tensor]:
+def state_dict_from_path(model_path: str) -> Dict[str, Any]:
     model_config = model_config_from_path(model_path)
     model = model_config.build(init_device="meta")
     model.to_empty(device=torch.device("cpu"))
@@ -162,7 +152,7 @@ def merge_checkpoints(
     "model_paths",
     multiple=True,
     required=True,
-    help="Model checkpoint path. Can be specified multiple times for different checkpoints"
+    help="Model checkpoint path. Should be specified multiple times for different checkpoints"
 )
 @click.option(
     "--output",
