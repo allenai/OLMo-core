@@ -1268,6 +1268,7 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
             indices_dtype=self.indices_dtype,
             long_doc_strategy=self._long_doc_strategy,
         )
+
         document_indices = document_indices.reshape(-1)
 
         instance_start_offset = 0
@@ -2307,6 +2308,10 @@ class NumpyDatasetConfig(Config, ABC):
     """
     The tokenizer config.
     """
+    sequence_length: Optional[int] = None
+    """
+    The sequence length for a :class:`NumpyFSLDataset`.
+    """
     paths: Optional[List[str]] = None
     """
     The paths/URLs to the numpy token ID arrays.
@@ -2353,6 +2358,15 @@ class NumpyDatasetConfig(Config, ABC):
     .. tip::
         You can save a lot of time and disk space by setting this to a common directory across
         all of you runs.
+    """
+    label_mask_paths: Optional[List[str]] = None
+    """
+    The paths/URLs to numpy bool files indicating which tokens should be masked. Expects these paths
+    to be matched 1:1 with the paths in :data:`paths`.
+    """
+    long_doc_strategy: Optional[LongDocStrategy] = None
+    """
+    Determines how long documents are handled with the packed FSL dataset.
     """
     ignore_fingerprint_mismatch: bool = False
     """
