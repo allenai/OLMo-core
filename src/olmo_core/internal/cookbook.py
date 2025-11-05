@@ -128,11 +128,12 @@ def configure_default_callbacks(
     wandb_group_name: str,
     wandb_project: str = "olmo-cookbook",
     checkpoint_save_interval: int = 1000,
+    ephemeral_checkpoint_save_interval: int = 250,
 ) -> Dict[str, Callback]:
     callbacks = {
         "checkpointer": CheckpointerCallback(
             save_interval=checkpoint_save_interval,
-            ephemeral_save_interval=100,
+            ephemeral_save_interval=ephemeral_checkpoint_save_interval,
             save_async=False,  # TODO: enable async saving when augusta stops being silly
         ),
         "config_saver": ConfigSaverCallback(),
