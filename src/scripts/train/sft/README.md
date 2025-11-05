@@ -1,6 +1,6 @@
 # Supervised Finetuning (SFT) using Olmo-core
 
-In our experiments, we observed *8x compute efficiency* when running SFT on an OLMo2 7B model
+In our experiments, we observed *8x compute efficiency* when running SFT on an OLMo 7B model
 using Olmo-core compared to open-instruct. This comes from a combination of a more efficient
 training codebase and better dataloading via a bin-packing algorithm.
 
@@ -18,13 +18,13 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
         --weka=oe-training-default:/weka/oe-training-default \
         --env-secret HF_TOKEN=HF_TOKEN \
         -- /root/.local/bin/uv run python scripts/data/convert_sft_data_for_olmocore.py \
-            --dataset_mixer_list allenai/hardcoded-integration-tests 1.0 \
-                jacobmorrison/verifiable-tasks-o3-7500 1.0 \
-            --tokenizer_name_or_path /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_final_anneal/step11921-hf \
+            --dataset_mixer_list hf-dataset/number_1 1.0 \
+                hf-dataset/number_2 1.0 \
+            --tokenizer_name_or_path /path/to/hf-style/tokenizer \
             --output_dir /weka/oe-training-default/ai2-llm/jacobm/data/sft/usable-tulu-16k/example-tokenized-dataset \
             --visualize True \
             --chat_template_name olmo \
-            --max_seq_length 16384
+            --max_seq_length 32768
     ```
 
     *Be careful with your choice of chat template!* It is highly recommended to use the `olmo` chat template for tokenization. Olmo-core uses `[eos]` tokens to find document boundaries, and the `olmo` chat template uses a single `eos` token to mark the end of a conversation, enabling document packing to work correctly.
@@ -41,8 +41,8 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
     * `{beaker_username}_COMET_API_KEY`  (optional)
 
 2. Ensure that the dataset and model you want to use are available on the correct storage bucket for the cluster you are using.
-    * For example, if you are using `ai2/jupiter-cirrascale-2`, the dataset and model should be available on the `/weka/oe-training-default/ai2-llm` bucket.
-    * If you are using ai2/augusta-google-1, the dataset and model should be available on the `gs://ai2-llm` bucket.
+    * For example, if you are using `ai2/jupiter`, the dataset and model should be available on the `/weka/oe-training-default/ai2-llm` bucket.
+    * If you are using ai2/augusta, the dataset and model should be available on the `gs://ai2-llm` bucket.
     * Both can be copied to/from gcs/weka using the `gsutil` command line tool.
         * From a machine with weka mounted: `gsutil cp -r /weka/<bucket-name>/path/to/dataset_or_model gs://ai2-llm/path/to/dataset_or_model`
 
@@ -51,10 +51,10 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
 4. Launch the SFT training script using a command like:
 
     ```bash
-    BASE_CKPT="/weka/oe-training-default/ai2-llm/checkpoints/tylerr/long-context/olmo25_7b_lc_64k_6T_M100B_round5-sparkle_6634-pre_s2pdf_gzip2080_cweN-yake-all-olmo_packing_yarn-fullonly_50B-fb13a737/step11921"
+    BASE_CKPT="/weka/oe-training-default/ai2-llm/path/to-base/checkpoint/step12345"
     python src/scripts/train/sft/Olmo-sft.py launch \
         MODEL_NAME_HERE $BASE_CKPT \
-            ai2/jupiter-cirrascale-2 \
+            ai2/jupiter \
         --trainer.callbacks.wandb.enabled=True \
         --trainer.max_duration.value=2 \
         --train_module.optim.lr=1e-4 \
@@ -62,7 +62,7 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
         --seq_len=32768 \
         --launch.num_gpus=8 \
         --num_nodes=1 \
-        --budget ai2/oe-adapt \
+        --budget ai2/BUDGET \
         --workspace ai2/<your_workspace> \
         --model_name olmo3-7b \
         --dataset_path /weka/<bucket-name>/path/to/dataset
@@ -71,7 +71,7 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
     * Tips:
         * The "launch" command automatically creates a Beaker experiment and runs the exact same command remotely with "train" substituted for launch.
         * Highly recommended: Tokenize and train at the same context length (recommended 16k)
-        * `--model_name`: Loads the correct model config. Currently supported: `olmo2-7b` and `olmo3-7b`
+        * `--model_name`: Loads the correct model config. Currently supported: `olmo2-7b`, `olmo3-7b`, and `olmo3-32b`.
         * `--dataset_path`: Path to your tokenized dataset. If on Augusta, you must copy it to GCP. Include `gs://`.
 
 ## Evaluation
@@ -114,22 +114,3 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
         --skip_oi_evals \
         --process_output r1_style
     ```
-
------
-
-UPDATED COMMANDS:
-
-train:
-should be the same?
-
-convert:
-gantry run --cluster ai2/saturn-cirrascale -y --budget ai2/oe-adapt --workspace ai2/olmo-instruct \
-      --install "curl -LsSf https://astral.sh/uv/install.sh | sh && /root/.local/bin/uv sync --all-extras" \
-      --weka=oe-adapt-default:/weka/oe-adapt-default \
-      --weka=oe-training-default:/weka/oe-training-default \
-      --priority urgent \
-      --gpus 1 \
-      -- /root/.local/bin/uv run python src/examples/huggingface/convert_checkpoint_to_hf.py \
-            -i /weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmo2-7B-sft/olmo3-7b-sft-reasoner-normal-smoke-test/step3710 \
-            -o /weka/oe-adapt-default/jacobm/checkpoints/olmo2-7B-sft/olmo3-hparam-search/test-tokenizer-copy \
-            --max-sequence-length 65536
