@@ -38,9 +38,11 @@ class DataMix(DataMixBase):
     OLMoE_mix_0824 = "OLMoE-mix-0824"
     dolma17 = "dolma17"
     v3_small_ppl_validation = "v3-small-ppl-validation"
-    OLMo_mix_0625 = "OLMo-mix-0625"
-    OLMo_mix_0925 = "OLMo-mix-0925"
     OLMo_mix_0625_150Bsample = "OLMo-mix-0625-150Bsample"
+    OLMo_mix_0625_700Bsample = "OLMo-mix-0625-700Bsample"
+    OLMo_mix_0625 = "OLMo-mix-0625"
+    OLMo_mix_0625_official = "OLMo-mix-0625-official"
+    OLMo_mix_0925 = "OLMo-mix-0925"
 
     @classmethod
     def _missing_(cls, value: object) -> "DataMix | None":
@@ -74,6 +76,9 @@ class DataMix(DataMixBase):
         elif self == DataMix.OLMo_mix_0625:
             if tokenizer == TokenizerName.dolma2_sigdig:
                 tokenizer_id = "dolma2-tokenizer-sigdig"
+        elif self == DataMix.OLMo_mix_0625_official:
+            if tokenizer == TokenizerName.dolma2:
+                tokenizer_id = "allenai/dolma3-tokenizer"
         elif tokenizer == TokenizerName.gpt_neox_olmo_dolma_v1_5:
             tokenizer_id = "gpt-neox-olmo-dolma-v1_5"
 
@@ -87,7 +92,7 @@ class DataMix(DataMixBase):
                         continue
                     label, path = line.split(",")
                     if "{TOKENIZER}" not in path:
-                        raise ValueError(f"line {line_num+1} in data mix '{self}' is invalid")
+                        raise ValueError(f"line {line_num + 1} in data mix '{self}' is invalid")
                     path = path.replace("{TOKENIZER}", tokenizer_id)
                     paths.append(f"{base_dir}{path}")
                     labels.append(label)
