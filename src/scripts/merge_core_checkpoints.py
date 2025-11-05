@@ -14,6 +14,7 @@ from olmo_core.aliases import PathOrStr
 from olmo_core.distributed.checkpoint import load_model_and_optim_state, save_model_and_optim_state
 from olmo_core.io import file_exists, join_path, copy_file
 from olmo_core.nn.transformer import TransformerConfig, TransformerBlockConfig
+from olmo_core.optim import OptimConfig
 from olmo_core.utils import prepare_cli_environment
 
 
@@ -35,7 +36,7 @@ def load_config(checkpoint_input_dir: PathOrStr) -> Dict:
     return config_dict
 
 
-def config_dicts_from_path(model_path: str) -> Tuple[Dict, Dict]:
+def config_dicts_from_path(model_path: str) -> Tuple[Dict, Dict, Dict]:
     # Load and preprocess configs
     experiment_config = load_config(model_path)
 
@@ -51,18 +52,20 @@ def config_dicts_from_path(model_path: str) -> Tuple[Dict, Dict]:
         del transformer_config_dict["float8_config"]
 
     tokenizer_config_dict = experiment_config.get("dataset", {}).get("tokenizer")
+    optim_config_dict = experiment_config["train_module"]["optim"]
 
-    return transformer_config_dict, tokenizer_config_dict
+    return transformer_config_dict, tokenizer_config_dict, optim_config_dict
 
 
-def model_config_from_path(model_path: str) -> TransformerConfig:
-    transformer_config_dict, _ = config_dicts_from_path(model_path)
+def model_and_optim_config_from_path(model_path: str) -> Tuple[TransformerConfig, OptimConfig]:
+    transformer_config_dict, _, optim_config_dict = config_dicts_from_path(model_path)
     model_config = TransformerConfig.from_dict(transformer_config_dict)
-    return model_config
+    optim_config = OptimConfig.from_dict(optim_config_dict)
+    return model_config, optim_config
 
 
 def state_dict_from_path(model_path: str) -> Dict[str, Any]:
-    model_config = model_config_from_path(model_path)
+    model_config, optim_config = model_and_optim_config_from_path(model_path)
     model = model_config.build(init_device="meta")
     model.to_empty(device=torch.device("cpu"))
 
@@ -118,15 +121,20 @@ def merge_checkpoints(
     gc.collect()
 
     # Save the model
-    transformer_config_dict, tokenizer_config_dict = config_dicts_from_path(model_paths[0])
-    model_config = model_config_from_path(model_paths[0])
+    transformer_config_dict, tokenizer_config_dict, optim_config_dict = config_dicts_from_path(model_paths[0])
+    model_config, optim_config = model_and_optim_config_from_path(model_paths[0])
     model = model_config.build(init_device="meta")
     model.to_empty(device=torch.device("cpu"))
+    optim = optim_config.build(model, strict=True)
+    first_model_path = model_paths[0]
+    if not first_model_path.endswith("/model_and_optim"):
+        first_model_path = first_model_path.rstrip("/") + "/model_and_optim"
+    load_model_and_optim_state(first_model_path, model, optim, flatten_optimizer_state=True)
     model.load_state_dict(accumulator_sd)
 
     model_and_optim_dir = join_path(output_path, "model_and_optim")
     log.info(f"Saving OLMo core checkpoint to '{model_and_optim_dir}'")
-    save_model_and_optim_state(model_and_optim_dir, model, save_overwrite=True)
+    save_model_and_optim_state(model_and_optim_dir, model, optim, save_overwrite=True)
     log.info(f"Saved merged model to '{output_path}'")
 
     config_path = join_path(output_path, "config.json")
@@ -137,6 +145,11 @@ def merge_checkpoints(
             "tokenizer": tokenizer_config_dict,
         },
     }
+
+    copy_file(
+        join_path(model_paths[0], ".metadata.json"),
+        join_path(output_path, ".metadata.json"),
+        save_overwrite=True)
 
     with tempfile.NamedTemporaryFile(prefix="merge_core_checkpoints-", mode="w") as temp_file:
         json.dump(experiment_config_dict, temp_file)
@@ -167,6 +180,8 @@ def main(model_paths: tuple, output_path: str):
 
     Weights are accumulated in float32 for numerical stability, then converted
     back to the original dtype of the checkpoints.
+
+    Optimizer state is taken from the first model in the list.
 
     Examples:
 
