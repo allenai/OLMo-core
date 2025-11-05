@@ -29,7 +29,7 @@ log = logging.getLogger(__name__)
 
 def init_distributed(
     backend: str = "nccl",
-    timeout: timedelta = timedelta(minutes=30),
+    timeout: timedelta = timedelta(minutes=10),
     shared_filesytem: Optional[bool] = True,
     **kwargs,
 ):
