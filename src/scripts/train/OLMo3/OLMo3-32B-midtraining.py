@@ -1,20 +1,22 @@
 from datetime import datetime
 from typing import Optional
 
-from olmo_core.data import NumpyDataLoaderConfig, NumpyFSLDatasetConfig, TokenizerConfig
+from olmo_core.data import (
+    InstanceFilterConfig,
+    NumpyDataLoaderConfig,
+    NumpyFSLDatasetConfig,
+    TokenizerConfig,
+)
 from olmo_core.data.source_mixture import SourceMixtureDatasetConfig, SourceMixtureList
 from olmo_core.internal import cookbook
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
 from olmo_core.launch.beaker import BeakerLaunchConfig
+from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim.scheduler import LinearWithWarmup, SchedulerUnits
 from olmo_core.train import Duration
 from olmo_core.train.train_module import TransformerTrainModuleConfig
-
-from olmo_core.nn.attention import SlidingWindowAttentionConfig
-
-from olmo_core.data import InstanceFilterConfig
 
 SEQ_LENGTH = 8192
 GLOBAL_BATCH_SIZE = 4 * 1024 * 1024  # ~4M tokens
@@ -36,7 +38,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         cmd=cli_context.remote_cmd,
         cluster=cli_context.cluster,
         root_dir=root_dir,
-        workspace="ai2/olmo-3-microanneals",
+        workspace="ai2/OLMo_3",
         num_nodes=64,
         nccl_debug=False,
         # override priority from the CLI eg `--launch.priority=high`
@@ -77,8 +79,8 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         work_dir=work_dir,
         sequence_length=SEQ_LENGTH,
         instance_filter_config=InstanceFilterConfig(
-                repetition_max_period=13, repetition_min_period=1, repetition_max_count=32
-                )
+            repetition_max_period=13, repetition_min_period=1, repetition_max_count=32
+        ),
     )
 
     data_loader_config = NumpyDataLoaderConfig(
@@ -86,7 +88,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     trainer_config = cookbook.configure_trainer(
-        load_path="gs://ai2-llm/checkpoints/stego32-highlr-filter3/step656000", 
+        load_path="gs://ai2-llm/checkpoints/stego32-highlr-filter3/step656000",
         load_trainer_state=False,
         load_optim_state=True,
         max_duration=Duration.tokens(MAX_TOKENS),
