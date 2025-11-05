@@ -2523,6 +2523,8 @@ class NumpyDatasetConfig(Config):
                     for path, size in zip(dataset.paths, dataset.file_sizes):
                         print(f"path={os.path.basename(path)},size={size}")
                         #sha256_hash.update(f"path={os.path.basename(path)},size={size},".encode())
+
+                    print(f"FINGER PRINT IS: {dataset.fingerprint}")
                 except Exception as e:
                     print(f"Error during fingerprint reconstruction: {e}")
 
