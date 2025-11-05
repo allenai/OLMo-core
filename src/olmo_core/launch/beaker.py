@@ -310,6 +310,12 @@ class BeakerLaunchConfig(Config):
     For internal experiments, this defaults to the number of data-parallel model replicas instead.
     """
 
+    launch_timeout: Optional[int] = None
+    """
+    A timeout in seconds to wait for the job to start after submitting it.
+    If the job doesn't start in time a timeout error will be raised.
+    """
+
     # NOTE: don't assign a type here because omegaconf can't validate arbitrary classes
     #  _beaker: Optional[Beaker] = None
     _beaker = None
@@ -589,11 +595,13 @@ class BeakerLaunchConfig(Config):
             Defaults to 'python'.
         :param slack_notifications: If ``follow=True``, send Slack notifications when the run launches,
             fails, or succeeds. This requires the env var ``SLACK_WEBHOOK_URL``.
-        :param launch_timeout: A timeout in seconds to wait for the job to start after submitting it.
-            If the job doesn't start in time a timeout error will be raised.
+        :param launch_timeout: Overrides :data:`launch_timeout`.
 
         :returns: The Beaker experiment.
         """
+        if launch_timeout is None:
+            launch_timeout = self.launch_timeout
+
         # Check for webhook URL env var if needed.
         slack_webhook_url: Optional[str] = None
         if follow and slack_notifications is not False:
