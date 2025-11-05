@@ -28,6 +28,7 @@ class GAPMonitorCallback(Callback):
 
     _handles: Optional[list] = dataclasses.field(default=None, repr=False)
     _local_batch_size_instances: int = dataclasses.field(default=1, repr=False)
+    _dry_run_complete: bool = dataclasses.field(default=False, repr=False)
 
     def post_attach(self):
         if not self.enabled:
@@ -55,6 +56,7 @@ class GAPMonitorCallback(Callback):
         if not self.enabled:
             return
 
+        self._dry_run_complete = True
         self._local_batch_size_instances = batch["input_ids"].shape[0]
 
     def pre_optim_step(self):
@@ -107,27 +109,30 @@ class GAPMonitorCallback(Callback):
             # we use the "sum" merge strategy.
             var = var.float().sum() / self._local_batch_size_instances
             mean = mean.float().sum() / self._local_batch_size_instances
-            self.trainer.record_metric(
-                f"{prefix}/{name}/mean",
-                mean,
-                reduce_type=ReduceType.mean,
-                merge_strategy=MetricMergeStrategy.sum,
-            )
-            self.trainer.record_metric(
-                f"{prefix}/{name}/var",
-                var,
-                reduce_type=ReduceType.mean,
-                merge_strategy=MetricMergeStrategy.sum,
-            )
+            if self._dry_run_complete:
+                self.trainer.record_metric(
+                    f"{prefix}/{name}/mean",
+                    mean,
+                    reduce_type=ReduceType.mean,
+                    merge_strategy=MetricMergeStrategy.sum,
+                )
+                self.trainer.record_metric(
+                    f"{prefix}/{name}/var",
+                    var,
+                    reduce_type=ReduceType.mean,
+                    merge_strategy=MetricMergeStrategy.sum,
+                )
         else:
             var, mean = var_mean(tensor)
-            self.trainer.record_metric(f"{prefix}/{name}/mean", mean, reduce_type=None)
-            self.trainer.record_metric(f"{prefix}/{name}/var", var, reduce_type=None)
+            if self._dry_run_complete:
+                self.trainer.record_metric(f"{prefix}/{name}/mean", mean, reduce_type=None)
+                self.trainer.record_metric(f"{prefix}/{name}/var", var, reduce_type=None)
 
     def close(self):
         self._reset()
 
     def _reset(self):
+        self._dry_run_complete = False
         if self._handles is not None:
             for h in self._handles:
                 h.remove()
