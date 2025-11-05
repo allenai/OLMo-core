@@ -1,5 +1,6 @@
 import dataclasses
 import functools as ft
+import math
 import typing
 from dataclasses import dataclass
 from typing import Any, Dict, List, Literal, Optional
@@ -85,17 +86,21 @@ class GAPMonitorCallback(Callback):
     def record_tensor_stats(
         self, name: str, tensor: torch.Tensor, kind: Literal["grad", "activation", "param"]
     ):
+        if tensor.numel() <= 1:
+            return
+
         tensor = tensor.detach()
         prefix = f"gap/{kind}s"
         if kind == "activation":
-            # For activations we'll just compute the local stats *per instance* and then average them
-            # across the global batch.
-            # Technically it might be better to compute global stats directly, but this way is
-            # cheaper, much simpler, and probably good enough.
             if tensor.ndim <= 1:
                 # No point in computing stats for 0-dim or 1-dim activations (like the loss).
                 return
-            tensor = get_local_tensor(tensor).view(tensor.shape[0], -1)
+            # For activations we'll compute the local stats *per instance* and then average them
+            # across the global batch.
+            # Technically it might be better to compute global stats directly, but this way is
+            # cheaper, much simpler, and probably good enough.
+            tensor = get_local_tensor(tensor)
+            tensor = tensor.view(tensor.shape[0], -1)
             var, mean = var_mean(tensor, dim=-1)
             # NOTE: to handle gradient accumulation we divide by local batch size (in instances),
             # which is recorded in `self.pre_step()`, as opposed to micro-batch size, and then
@@ -130,11 +135,14 @@ class GAPMonitorCallback(Callback):
 
 
 def var_mean(tensor: torch.Tensor, dim: Optional[int] = None) -> tuple[torch.Tensor, torch.Tensor]:
-    # NOTE: 'torch.var_mean()' not implement for DTensor.
     if not isinstance(tensor, DTensor):
         return torch.var_mean(tensor, dim=dim)
     else:
+        # NOTE: 'torch.var_mean()' not implemented for DTensor.
         numel = tensor.numel() if dim is None else tensor.size(dim)
         mean = get_full_tensor(tensor.mean(dim=dim))
-        var = get_full_tensor(((tensor - mean) ** 2).sum(dim=dim).float()) / max(1, numel - 1)
+        stdd = get_full_tensor(torch.linalg.vector_norm(tensor - mean, dim=dim)) / math.sqrt(
+            max(1, numel - 1)
+        )
+        var = stdd**2
         return var, mean
