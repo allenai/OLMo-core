@@ -85,8 +85,10 @@ class GAPMonitorCallback(Callback):
             # across the global batch.
             # Technically it might be better to compute global stats directly, but this way is
             # cheaper, much simpler, and probably good enough.
-            # NOTE: assume first dimension is batch.
-            mean, var = torch.var_mean(tensor.view(tensor.shape[0], -1), dim=-1)
+            if tensor.ndim > 1:
+                # NOTE: assume first dimension is batch.
+                tensor.view(tensor.shape[0], -1)
+            mean, var = torch.var_mean(tensor, dim=-1)
             # NOTE: to handle gradient accumulation we divide by local batch size (in instances),
             # which is recorded in `self.pre_step()`, as opposed to micro-batch size, and then
             # we use the "sum" merge strategy.
