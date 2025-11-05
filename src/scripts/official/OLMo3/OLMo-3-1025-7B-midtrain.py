@@ -53,12 +53,12 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         attn_backend=AttentionBackendName.flash_2,
     )
 
-    dataset_path = join_path(
-        opts.mix_base_dir,
+    dataset_glob = join_path(
+        opts.data_root,
         "preprocessed/dolma3-dolmino-official/100B/allenai/dolma3-tokenizer/**/*.npy",
     )
     dataset_config = NumpyFSLDatasetConfig.glob(
-        str(dataset_path),
+        str(dataset_glob),
         tokenizer=tokenizer_config,
         work_dir=opts.work_dir,
         sequence_length=sequence_length,
