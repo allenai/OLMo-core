@@ -137,25 +137,14 @@ def merge_checkpoints(
     save_model_and_optim_state(model_and_optim_dir, model, optim, save_overwrite=True)
     log.info(f"Saved merged model to '{output_path}'")
 
-    config_path = join_path(output_path, "config.json")
-    log.info(f"Writing partial experiment config to '{config_path}'")
-    experiment_config_dict = {
-        "model": transformer_config_dict,
-        "dataset": {
-            "tokenizer": tokenizer_config_dict,
-        },
-    }
-
     copy_file(
         join_path(model_paths[0], ".metadata.json"),
         join_path(output_path, ".metadata.json"),
         save_overwrite=True)
-
-    with tempfile.NamedTemporaryFile(prefix="merge_core_checkpoints-", mode="w") as temp_file:
-        json.dump(experiment_config_dict, temp_file)
-        temp_file.flush()  # make sure data is written to disk, json.dump doesn't flush.
-        copy_file(temp_file.name, config_path, save_overwrite=True)
-        log.info(f"Wrote partial experiment config to '{config_path}'")
+    copy_file(
+        join_path(model_paths[0], "config.json"),
+        join_path(output_path, "config.json"),
+        save_overwrite=True)
 
 
 @click.command(context_settings={"help_option_names": ["-h", "--help"]})
