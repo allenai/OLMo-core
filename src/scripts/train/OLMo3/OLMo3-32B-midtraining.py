@@ -86,7 +86,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     trainer_config = cookbook.configure_trainer(
-        load_path="gs://ai2-llm/checkpoints/stego32-highlr-filter3/step656000+655000+654000+653000", 
+        load_path="gs://ai2-llm/checkpoints/stego32-highlr-filter3/step656000+655000+654000+653000/model_and_optim/", 
         load_trainer_state=False,
         load_optim_state=True,
         max_duration=Duration.tokens(MAX_TOKENS),
