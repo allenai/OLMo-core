@@ -45,7 +45,7 @@ class GAPMonitorCallback(Callback):
             # Register forward hook to monitor activations.
             h = m.register_forward_hook(ft.partial(self.forward_hook, module_name=n))
             handles.append(h)
-        self._handles = handles
+        self._handles = handles  # type: ignore[assignment]
 
     def pre_step(self, batch: Dict[str, Any]):
         if not self.enabled:
