@@ -36,6 +36,7 @@ class GAPMonitorCallback(Callback):
             return
 
         assert isinstance(self.trainer.train_module, TransformerTrainModule)
+        self._reset()
         handles: List[torch.utils.hooks.RemovableHandle] = []
         for n, m in self.trainer.train_module.model.named_modules():
             m = typing.cast(nn.Module, m)
@@ -64,6 +65,8 @@ class GAPMonitorCallback(Callback):
 
     def forward_hook(self, module: nn.Module, args, output, module_name: str):
         del module, args
+        if not self.enabled:
+            return
 
         # Record activation stats.
         if isinstance(output, torch.Tensor):
@@ -112,6 +115,9 @@ class GAPMonitorCallback(Callback):
             self.trainer.record_metric(f"{prefix}/{name}/var", var, reduce_type=None)
 
     def close(self):
+        self._reset()
+
+    def _reset(self):
         if self._handles is not None:
             for h in self._handles:
                 h.remove()
