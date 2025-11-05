@@ -63,6 +63,7 @@ class GAPMonitorCallback(Callback):
             if p.grad is not None:
                 self.record_tensor_stats(n, p.grad, "grad")
 
+    @torch._dynamo.disable()
     def forward_hook(self, module: nn.Module, args, output, module_name: str):
         del module, args
         if not self.enabled:
