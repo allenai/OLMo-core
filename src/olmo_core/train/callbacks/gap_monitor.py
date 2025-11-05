@@ -2,7 +2,7 @@ import dataclasses
 import functools as ft
 import typing
 from dataclasses import dataclass
-from typing import Any, Dict, List, Literal
+from typing import Any, Dict, List, Literal, Optional
 
 import torch
 import torch.nn as nn
@@ -22,7 +22,7 @@ class GAPMonitorCallback(Callback):
 
     enabled: bool = True
 
-    _handles = None
+    _handles: Optional[list] = dataclasses.field(default=None, repr=False)
     _local_batch_size_instances: int = dataclasses.field(default=1, repr=False)
 
     def post_attach(self):
