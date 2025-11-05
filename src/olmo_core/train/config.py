@@ -3,7 +3,7 @@ import tempfile
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import torch
 import torch.distributed as dist
@@ -17,7 +17,7 @@ from ..io import is_url
 from ..utils import get_default_device
 from .callbacks import Callback, CallbackConfig
 from .checkpoint import CheckpointerConfig
-from .common import Duration, LoadStrategy
+from .common import Duration, LoadStrategy, StepSkipRange
 from .train_module import TrainModule
 from .trainer import Trainer
 
@@ -51,7 +51,7 @@ class TrainerConfig(Config):
     bookkeeping_soft_timeout: int = 30
     no_checkpoints: bool = False
     no_evals: bool = False
-    steps_to_skip: Optional[List[Tuple[int, int]]] = None
+    steps_to_skip: Optional[List[StepSkipRange]] = None
 
     def add_callback(self, name: str, callback: Callback):
         """
