@@ -2513,7 +2513,7 @@ class NumpyDatasetConfig(Config):
                     instance_filter_config=self.instance_filter_config,
                 )
 
-                try:
+                """try:
                     print(f"class={dataset.__class__.__name__}")
                     #sha256_hash.update(f"class={self.__class__.__name__}".encode())
                     for field_name in dataset.fingerprint_fields:
@@ -2527,7 +2527,7 @@ class NumpyDatasetConfig(Config):
                     print(f"FINGER PRINT IS: {dataset.fingerprint}")
                 except Exception as e:
                     print(f"Error during fingerprint reconstruction: {e}")
-
+                """
 
             else:
                 dataset = NumpyFSLDataset(

@@ -444,7 +444,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
             import os
             #sha256_hash = hashlib.sha256()
 
-            try:
+            """try:
                 print(f"class={self.dataset.__class__.__name__}")
                 #sha256_hash.update(f"class={self.__class__.__name__}".encode())
                 for field_name in self.dataset.fingerprint_fields:
@@ -461,7 +461,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
             raise RuntimeError(
                 f"Restoring state from a different dataset is not supported! (fingerprint doesn't match). state_dict fingerprint: {state_dict['dataset_fingerprint']}, dataset fingerprint: {self.dataset.fingerprint}"
             )
-
+            """
         if state_dict["seed"] != self.seed:
             log.warning(
                 "Restoring data loading state with a different data seed, "
