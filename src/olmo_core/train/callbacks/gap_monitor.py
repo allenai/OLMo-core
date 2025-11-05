@@ -6,6 +6,9 @@ from typing import Any, Dict, List, Literal, Optional
 
 import torch
 import torch.nn as nn
+from torch.distributed.tensor import DTensor
+
+from olmo_core.distributed.utils import get_local_tensor
 
 from ..common import MetricMergeStrategy, ReduceType
 from ..train_module import TransformerTrainModule
@@ -89,6 +92,7 @@ class GAPMonitorCallback(Callback):
             # across the global batch.
             # Technically it might be better to compute global stats directly, but this way is
             # cheaper, much simpler, and probably good enough.
+            tensor = get_local_tensor(tensor)
             if tensor.ndim > 1:
                 # NOTE: assume first dimension is batch.
                 tensor = tensor.view(tensor.shape[0], -1)
@@ -111,7 +115,12 @@ class GAPMonitorCallback(Callback):
                 merge_strategy=MetricMergeStrategy.sum,
             )
         else:
-            mean, var = torch.var_mean(tensor)  # NOTE: this will reduce over DTensors automatically
+            if isinstance(tensor, DTensor):
+                # NOTE: 'torch.var_mean()' not implement for DTensor.
+                mean = tensor.mean()
+                var = ((tensor - mean) ** 2).sum() / (tensor.numel() - 1)
+            else:
+                mean, var = torch.var_mean(tensor)
             self.trainer.record_metric(f"{prefix}/{name}/mean", mean, reduce_type=None)
             self.trainer.record_metric(f"{prefix}/{name}/var", var, reduce_type=None)
 
