@@ -205,11 +205,6 @@ class Trainer:
         sync.
     """
 
-    process_group: Optional[dist.ProcessGroup] = None
-    """
-    The default process group to use for distributed communication.
-    """
-
     dp_process_group: Optional[dist.ProcessGroup] = None
     """
     The distributed process group for all data parallel ranks.
@@ -303,9 +298,7 @@ class Trainer:
             self.load_path = normalize_path(self.load_path)
 
         # If save folder is a local directory, make sure we're using a shared filesystem.
-        if not is_url(self.save_folder) and get_fs_local_rank(self.process_group) != get_rank(
-            self.process_group
-        ):
+        if not is_url(self.save_folder) and get_fs_local_rank() != get_rank():
             raise OLMoConfigurationError(
                 "Checkpointing to a local directory requires a shared filesystem. "
                 "If you do have a shared filesystem please set the env var 'OLMO_SHARED_FS=1' "
@@ -320,7 +313,7 @@ class Trainer:
         self.work_dir = Path(normalize_path(self.work_dir))
 
         # Ensure save folder and working directory exist.
-        if get_fs_local_rank(self.process_group) == 0:
+        if get_fs_local_rank() == 0:
             self.work_dir.mkdir(exist_ok=True, parents=True)
             if not is_url(self.save_folder):
                 Path(self.save_folder).mkdir(exist_ok=True, parents=True)
@@ -349,26 +342,16 @@ class Trainer:
         self._sort_callbacks()
 
         if self.dp_process_group is None:
-            self.dp_process_group = self.train_module.dp_process_group or self.process_group
+            self.dp_process_group = self.train_module.dp_process_group
 
         # Maybe create separate process group for bookkeeping.
         if self._bookkeeping_pg is None and is_distributed():
             if self.async_bookkeeping is None:
-                self.async_bookkeeping = backend_supports_cpu() and self.process_group is None
+                self.async_bookkeeping = backend_supports_cpu()
             if self.async_bookkeeping:
                 if not backend_supports_cpu():
                     raise OLMoConfigurationError(
                         "A CPU-only backend is required for async bookkeeping"
-                    )
-                if self.process_group is not None and dist.get_process_group_ranks(
-                    self.process_group
-                ) != dist.get_process_group_ranks(None):
-                    raise OLMoConfigurationError(
-                        "Cannot create new process group for async bookkeeping automatically since "
-                        "the trainer's process group is not the default process group. "
-                        "This would lead to a distributed dead-lock since new groups must be created "
-                        "from all ranks simultaneously. Please create the group before instantiating "
-                        "the trainer or turn off async bookkeeping."
                     )
                 log.info("Creating new process group for async bookkeeping")
                 self._bookkeeping_pg = dist.new_group()
@@ -384,10 +367,10 @@ class Trainer:
                 "data loader's DP rank appears to be configured incorrectly, "
                 f"got {self.data_loader.dp_rank}, expected {get_rank(self.dp_process_group)}."
             )
-        if self.data_loader.fs_local_rank != get_fs_local_rank(self.process_group):
+        if self.data_loader.fs_local_rank != get_fs_local_rank():
             raise OLMoConfigurationError(
                 "data loader's FS local rank appears to be configured incorrectly, "
-                f"got {self.data_loader.fs_local_rank}, expected {get_fs_local_rank(self.process_group)}."
+                f"got {self.data_loader.fs_local_rank}, expected {get_fs_local_rank()}."
             )
 
         for callback in self.callbacks.values():
@@ -553,10 +536,7 @@ class Trainer:
         Since bookkeeping collectives might be done in a separate thread, we need a separate process
         group to avoid potential race conditions.
         """
-        if self._bookkeeping_pg is None:
-            return self.process_group
-        else:
-            return self._bookkeeping_pg
+        return self._bookkeeping_pg
 
     @property
     def multi_thread_pool(self) -> ThreadPoolExecutor:
@@ -628,12 +608,12 @@ class Trainer:
         if self.is_canceled:
             return
 
-        self._canceling_rank = get_rank(self.process_group)
+        self._canceling_rank = get_rank()
         self._cancel_reason = reason
         if no_sync:
             self._canceled = True
             log.warning(f"Run canceled from all ranks. Reason: {reason}")
-            barrier(self.process_group)
+            barrier()
 
     def check_if_canceled(self):
         """
@@ -688,7 +668,7 @@ class Trainer:
                         f"load path ('{self.load_path}'), will train from scratch..."
                     )
 
-        barrier(self.process_group)
+        barrier()
 
         # It's possible that we tried restarting a run that had already finished.
         if self.training_complete:
@@ -755,7 +735,7 @@ class Trainer:
             self._single_thread_pool.shutdown(wait=True, cancel_futures=False)
             self._single_thread_pool = None
         gc_cuda()
-        barrier(self.process_group)
+        barrier()
 
     def state_dict(self) -> TrainerStateDict:
         """
@@ -767,7 +747,7 @@ class Trainer:
             "max_steps": self.max_steps,
             "data_loader": self.data_loader.state_dict(),
             "epoch": self.epoch,
-            "world_size": get_world_size(self.process_group),  # global world size here on purpose
+            "world_size": get_world_size(),  # global world size here on purpose
             "rng": EnvRngStates.current_state().as_dict(),
             "callbacks": {k: cb.state_dict() for k, cb in self.callbacks.items()},
         }
@@ -806,9 +786,7 @@ class Trainer:
 
         log.info(f"Will resume training from step {self.global_step}, epoch {self.epoch}")
 
-        if state_dict["world_size"] == get_world_size(
-            self.process_group
-        ):  # global world size here on purpose
+        if state_dict["world_size"] == get_world_size():  # global world size here on purpose
             rng_state = EnvRngStates.from_dict(state_dict["rng"])
             if not rng_state.restore():
                 log.warning(
@@ -857,10 +835,10 @@ class Trainer:
 
         # NOTE: to avoid making a ton of client requests (S3 or otherwise) we only make those
         # requests from rank 0 then scatter the result to the other ranks.
-        if get_rank(self.process_group) == 0 and not self.checkpointer.dir_is_checkpoint(dir):
+        if get_rank() == 0 and not self.checkpointer.dir_is_checkpoint(dir):
             # Try to find the latest checkpoint in the directory.
             dir = self.checkpointer.latest_checkpoint(dir)
-        dir = scatter_object(dir, group=self.process_group)
+        dir = scatter_object(dir)
 
         log.info(f"Loading checkpoint from '{dir}'...")
         trainer_state = self.checkpointer.load(
@@ -896,9 +874,9 @@ class Trainer:
         if dir is None:
             dir = self.save_folder
         should_load: bool = True
-        if get_rank(self.process_group) == 0:
+        if get_rank() == 0:
             should_load = self.checkpointer.contains_checkpoint(dir)
-        should_load = scatter_object(should_load, group=self.process_group)
+        should_load = scatter_object(should_load)
         if should_load:
             self.load_checkpoint(
                 dir,
