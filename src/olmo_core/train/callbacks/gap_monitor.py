@@ -91,7 +91,7 @@ class GAPMonitorCallback(Callback):
             # cheaper, much simpler, and probably good enough.
             if tensor.ndim > 1:
                 # NOTE: assume first dimension is batch.
-                tensor.view(tensor.shape[0], -1)
+                tensor = tensor.view(tensor.shape[0], -1)
             mean, var = torch.var_mean(tensor, dim=-1)
             # NOTE: to handle gradient accumulation we divide by local batch size (in instances),
             # which is recorded in `self.pre_step()`, as opposed to micro-batch size, and then
