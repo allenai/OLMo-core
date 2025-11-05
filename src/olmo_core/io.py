@@ -61,6 +61,58 @@ def join_path(path1: PathOrStr, path2: PathOrStr) -> PathOrStr:
         return Path(path1) / path2
 
 
+def _cached_path_with_retry(url: str, max_attempts: int = 5, quiet: bool = True) -> Path:
+    """
+    HACK: This is a hack to retry on rate limiting errors (429 TooManyRequests).
+
+    Wrapper around cached_path that retries on rate limiting errors (429 TooManyRequests).
+
+    :param url: The URL to download.
+    :param max_attempts: Maximum number of retry attempts.
+    :param quiet: Whether to suppress progress output.
+    """
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return cached_path(url, quiet=quiet)
+        except Exception as exc:
+            # Check if this is a rate limiting error (429)
+            is_rate_limit = False
+
+            # Check for google.api_core.exceptions.TooManyRequests
+            try:
+                from google.api_core.exceptions import TooManyRequests
+
+                if isinstance(exc, TooManyRequests):
+                    is_rate_limit = True
+            except ImportError:
+                pass
+
+            # Also check error message for 429/rate limit indicators
+            error_str = str(exc).lower()
+            if "429" in error_str or "too many requests" in error_str or "rate limit" in error_str:
+                is_rate_limit = True
+
+            if is_rate_limit:
+                if attempt >= max_attempts:
+                    raise OLMoNetworkError(
+                        f"Failed to download '{url}' after {max_attempts} attempts due to rate limiting: {exc}"
+                    ) from exc
+                else:
+                    # Exponential backoff with longer initial wait for rate limits
+                    wait_time = min(2.0 * (2 ** (attempt - 1)), 60.0)  # Cap at 60 seconds
+                    log.warning(
+                        f"Rate limited when downloading '{url}' (attempt {attempt}/{max_attempts}). "
+                        f"Retrying in {wait_time:.1f}s..."
+                    )
+                    time.sleep(wait_time)
+            else:
+                # Not a rate limit error, re-raise immediately
+                raise
+
+    # Should never reach here, but just in case
+    raise OLMoNetworkError(f"Failed to download '{url}' after {max_attempts} attempts")
+
+
 def resource_path(folder: PathOrStr, fname: str, local_cache: Optional[PathOrStr] = None) -> Path:
     """
     Returns an actual path for local or remote file, potentially downloading it if a copy doesn't
@@ -71,7 +123,7 @@ def resource_path(folder: PathOrStr, fname: str, local_cache: Optional[PathOrStr
         log.info(f"Found local cache of {fname} at {local_path}")
         return local_path
     else:
-        return cached_path(f"{folder}/{fname}", quiet=True)
+        return _cached_path_with_retry(f"{folder}/{fname}", quiet=True)
 
 
 def is_url(path: PathOrStr) -> bool:
@@ -193,7 +245,7 @@ def copy_file(
     """
     source = normalize_path(source)
     target = normalize_path(target)
-    local_source = cached_path(source, quiet=True)
+    local_source = _cached_path_with_retry(source, quiet=True)
     if is_url(target):
         upload(local_source, target, save_overwrite=save_overwrite, quiet=quiet)
     else:
