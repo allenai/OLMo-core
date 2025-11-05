@@ -2512,6 +2512,21 @@ class NumpyDatasetConfig(Config):
                     path_offset_index=mixture.to_index(),
                     instance_filter_config=self.instance_filter_config,
                 )
+
+                try:
+                    print(f"class={dataset.__class__.__name__}")
+                    #sha256_hash.update(f"class={self.__class__.__name__}".encode())
+                    for field_name in dataset.fingerprint_fields:
+                        field_value = getattr(dataset, field_name)
+                        print(f"{field_name}={field_value}")
+                        #sha256_hash.update(f"{field_name}={field_value},".encode())
+                    for path, size in zip(dataset.paths, dataset.file_sizes):
+                        print(f"path={os.path.basename(path)},size={size}")
+                        #sha256_hash.update(f"path={os.path.basename(path)},size={size},".encode())
+                except Exception as e:
+                    print(f"Error during fingerprint reconstruction: {e}")
+
+
             else:
                 dataset = NumpyFSLDataset(
                     *paths,
