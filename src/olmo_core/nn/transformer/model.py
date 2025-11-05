@@ -2468,16 +2468,10 @@ class BLTDistillTransformer(BLTTransformer):
             ce_loss, _ = cross_entropy_loss(logits.view(-1, logits.shape[-1]), labels.view(-1))  # type: ignore
 
             # replace plain (single byte) logits with byte + boundary logits where boundaries occur
-            main_path_logprobs = torch.gather(F.log_softmax(logits[:, :-1].float(), dim=-1), -1, labels[:, :-1].clip(0).unsqueeze(-1)).squeeze(-1)
-            remaining_logpmass = log1mexp(main_path_logprobs)
-            remaining_logp_uniform = remaining_logpmass - math.log(logits.shape[2] - 1)  # -1 to skip the main path token
-            logits.zero_()
-            logits[:, :-1, :] = remaining_logp_uniform.unsqueeze(-1)
-            logits.scatter_(
-                -1,
-                input_ids[:, 1:].unsqueeze(-1),
-                main_path_logprobs.to(logits.dtype).unsqueeze(-1),
-            )
+            probs = F.softmax(logits.float(), dim=-1)
+            probs[..., :self.vocab_size_blt] += probs[..., self.vocab_size_blt:self.vocab_size_blt*2]
+            logits = torch.log(probs)
+            logits[..., self.vocab_size_blt:self.vocab_size_blt*2] = -100_000
         else:
             logits = torch.concatenate([
                 logits,

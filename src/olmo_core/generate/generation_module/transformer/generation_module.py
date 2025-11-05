@@ -915,7 +915,7 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         stream: bool = False,
         verify: bool = False,
         force_boundary_every: Optional[int] = None,
-        max_patch_length_decode: Optional[int] = None, # 128 is longest dolma2 tokenizer token
+        max_patch_length_decode: Optional[int] = 128, # 128 is longest dolma2 tokenizer token
         stop_on_exceed_patch_length: bool = True, # chances are slim to produce something useful
         profile: bool = False,
         **generation_kwargs,
@@ -1244,11 +1244,16 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                     next_tokens[:] = 36
 
             if max_patch_length_decode is not None:
-                if fuse_boundaries:
-                    raise NotImplementedError("max_patch_length_decode not implemented with fuse_boundaries=True")
-
                 stop_mask = bytes_since_boundary >= max_patch_length_decode
-                next_tokens[stop_mask] = self.model.end_of_subword_token_blt # type: ignore
+
+                if fuse_boundaries:
+                    next_tokens = torch.where(
+                        (next_tokens < boundary_offset) & stop_mask,
+                        next_tokens + boundary_offset,
+                        next_tokens,
+                    )
+                else:
+                    next_tokens[stop_mask] = self.model.end_of_subword_token_blt  # type: ignore
 
                 if stop_on_exceed_patch_length:
                     finished |= stop_mask
