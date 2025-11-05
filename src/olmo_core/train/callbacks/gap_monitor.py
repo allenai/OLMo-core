@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 from torch.distributed.tensor import DTensor
 
-from olmo_core.distributed.utils import get_local_tensor
+from olmo_core.distributed.utils import get_full_tensor, get_local_tensor
 
 from ..common import MetricMergeStrategy, ReduceType
 from ..train_module import TransformerTrainModule
@@ -96,12 +96,12 @@ class GAPMonitorCallback(Callback):
                 # No point in computing stats for 0-dim or 1-dim activations (like the loss).
                 return
             tensor = get_local_tensor(tensor).view(tensor.shape[0], -1)
-            mean, var = torch.var_mean(tensor, dim=-1)
+            var, mean = var_mean(tensor, dim=-1)
             # NOTE: to handle gradient accumulation we divide by local batch size (in instances),
             # which is recorded in `self.pre_step()`, as opposed to micro-batch size, and then
             # we use the "sum" merge strategy.
-            mean = mean.float().sum() / self._local_batch_size_instances
             var = var.float().sum() / self._local_batch_size_instances
+            mean = mean.float().sum() / self._local_batch_size_instances
             self.trainer.record_metric(
                 f"{prefix}/{name}/mean",
                 mean,
@@ -115,12 +115,7 @@ class GAPMonitorCallback(Callback):
                 merge_strategy=MetricMergeStrategy.sum,
             )
         else:
-            if isinstance(tensor, DTensor):
-                # NOTE: 'torch.var_mean()' not implement for DTensor.
-                mean = tensor.mean()
-                var = ((tensor - mean) ** 2).sum() / max(1, tensor.numel() - 1)
-            else:
-                mean, var = torch.var_mean(tensor)
+            var, mean = var_mean(tensor)
             self.trainer.record_metric(f"{prefix}/{name}/mean", mean, reduce_type=None)
             self.trainer.record_metric(f"{prefix}/{name}/var", var, reduce_type=None)
 
@@ -132,3 +127,14 @@ class GAPMonitorCallback(Callback):
             for h in self._handles:
                 h.remove()
             self._handles = None
+
+
+def var_mean(tensor: torch.Tensor, dim: Optional[int] = None) -> tuple[torch.Tensor, torch.Tensor]:
+    # NOTE: 'torch.var_mean()' not implement for DTensor.
+    if not isinstance(tensor, DTensor):
+        return torch.var_mean(tensor, dim=dim)
+    else:
+        numel = tensor.numel() if dim is None else tensor.size(dim)
+        mean = get_full_tensor(tensor.mean(dim=dim))
+        var = get_full_tensor(((tensor - mean) ** 2).sum(dim=dim).float()) / max(1, numel - 1)
+        return var, mean
