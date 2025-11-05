@@ -439,8 +439,27 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
                 "this could mean the data has changed"
             )
         elif state_dict["dataset_fingerprint"] != self.dataset.fingerprint:
+
+            import hashlib
+            import os
+            #sha256_hash = hashlib.sha256()
+
+            try:
+                print(f"class={self.dataset.__class__.__name__}")
+                #sha256_hash.update(f"class={self.__class__.__name__}".encode())
+                for field_name in self.dataset.fingerprint_fields:
+                    field_value = getattr(self, field_name)
+                    print(f"{field_name}={field_value}")
+                    #sha256_hash.update(f"{field_name}={field_value},".encode())
+                for path, size in zip(self.dataset.paths, self.dataset.file_sizes):
+                    print(f"path={os.path.basename(path)},size={size}")
+                    #sha256_hash.update(f"path={os.path.basename(path)},size={size},".encode())
+            except Exception as e:
+                print(f"Error during fingerprint reconstruction: {e}")
+                
+
             raise RuntimeError(
-                "Restoring state from a different dataset is not supported! (fingerprint doesn't match)"
+                f"Restoring state from a different dataset is not supported! (fingerprint doesn't match). state_dict fingerprint: {state_dict['dataset_fingerprint']}, dataset fingerprint: {self.dataset.fingerprint}"
             )
 
         if state_dict["seed"] != self.seed:
