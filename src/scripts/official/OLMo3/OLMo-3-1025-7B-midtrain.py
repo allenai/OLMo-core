@@ -11,9 +11,9 @@ from olmo_core.data import (
     NumpyFSLDatasetConfig,
     TokenizerConfig,
 )
-from olmo_core.data.source_mixture import SourceMixtureDatasetConfig, SourceMixtureList
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
+from olmo_core.io import join_path
 from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.transformer import (
     TransformerConfig,
@@ -53,19 +53,12 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         attn_backend=AttentionBackendName.flash_2,
     )
 
-    source_list = SourceMixtureList.from_yaml(
-        "src/olmo_core/data/source_mixtures/OLMo3-7B-midtraining-official.yaml"
+    dataset_path = join_path(
+        opts.mix_base_dir,
+        "preprocessed/dolma3-dolmino-official/100B/allenai/dolma3-tokenizer/**/*.npy",
     )
-    source_list.validate()
-    dataset_config = NumpyFSLDatasetConfig.from_src_mix(
-        src_mix=SourceMixtureDatasetConfig(
-            source_list=source_list,
-            mix_base_dir=opts.mix_base_dir,
-            requested_tokens=MAX_TOKENS,
-            global_batch_size=GLOBAL_BATCH_SIZE,
-            processes=16,
-            seed=SEED,
-        ),
+    dataset_config = NumpyFSLDatasetConfig.glob(
+        str(dataset_path),
         tokenizer=tokenizer_config,
         work_dir=opts.work_dir,
         sequence_length=sequence_length,
