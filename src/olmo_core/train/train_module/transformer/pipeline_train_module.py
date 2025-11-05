@@ -14,6 +14,7 @@ from torch.distributed.pipelining import PipelineStage
 from torch.distributed.tensor import DTensor
 from torch.optim import Optimizer
 
+import olmo_core.distributed.utils as dist_utils
 from olmo_core.data.utils import get_labels
 from olmo_core.distributed.checkpoint import (
     merge_state_dicts,
@@ -26,13 +27,6 @@ from olmo_core.distributed.parallel import (
     get_device_mesh_info,
     get_dp_process_group,
     get_pp_mesh,
-)
-from olmo_core.distributed.utils import (
-    get_global_rank,
-    get_local_tensor,
-    get_rank,
-    get_reduce_divide_factor,
-    get_world_size,
 )
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
@@ -135,7 +129,7 @@ class TransformerPipelineTrainModule(TrainModule):
         self.world_mesh = build_world_mesh(
             dp=dp_config, tp=tp_config, cp=cp_config, pp=pp_config, device_type=self.device.type
         )
-        self.dp_world_size = get_world_size(self.dp_process_group)
+        self.dp_world_size = dist_utils.get_world_size(self.dp_process_group)
         log.info(f"Data parallel world size = {self.dp_world_size:,d}")
 
         self._pp_config = pp_config
@@ -145,8 +139,8 @@ class TransformerPipelineTrainModule(TrainModule):
         self._pp_stages: Optional[List[PipelineStage]] = None
         self.pp_mesh = get_pp_mesh(self.world_mesh)
         self.pp_group = self.pp_mesh.get_group()
-        self.pp_group_rank = get_rank(self.pp_group)
-        self.pp_group_size = get_world_size(self.pp_group)
+        self.pp_group_rank = dist_utils.get_rank(self.pp_group)
+        self.pp_group_size = dist_utils.get_world_size(self.pp_group)
         self.pp_prev_rank = (self.pp_group_rank - 1) % self.pp_group_size
         self.pp_next_rank = (self.pp_group_rank + 1) % self.pp_group_size
         self.pp_final_stage_rank = self._pp_config.final_stage_rank()
@@ -207,7 +201,7 @@ class TransformerPipelineTrainModule(TrainModule):
     @property
     def eval_batch_spec(self) -> EvalBatchSpec:
         # Determine the number of micro-batches.
-        rank_batch_size = self.trainer.global_batch_size // get_world_size(
+        rank_batch_size = self.trainer.global_batch_size // dist_utils.get_world_size(
             self.trainer.dp_process_group
         )
         rank_batch_size_instances = rank_batch_size // self.max_sequence_length
@@ -234,7 +228,7 @@ class TransformerPipelineTrainModule(TrainModule):
 
     @cached_property
     def _reduce_divide_factor(self) -> float:
-        return get_reduce_divide_factor(get_world_size(self.dp_process_group))
+        return dist_utils.get_reduce_divide_factor(dist_utils.get_world_size(self.dp_process_group))
 
     def loss_fn(self, output: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         # NOTE: the output is the loss.
@@ -243,7 +237,7 @@ class TransformerPipelineTrainModule(TrainModule):
 
     def pre_train(self):
         # Validate batch size.
-        dp_ws = get_world_size(self.trainer.dp_process_group)
+        dp_ws = dist_utils.get_world_size(self.trainer.dp_process_group)
         if self.trainer.global_batch_size % (self.rank_microbatch_size * dp_ws) != 0:
             raise OLMoConfigurationError(
                 f"global batch size ({self.trainer.global_batch_size:,d}) must be divisible by "
@@ -455,7 +449,7 @@ class TransformerPipelineTrainModule(TrainModule):
             assert x is not None
             # Reduce across DP process group.
             x.div_(self._reduce_divide_factor)
-            dist.all_reduce(x, group=self.dp_process_group)
+            dist_utils.all_reduce(x, group=self.dp_process_group)
             x.div_(self.dp_world_size)
             x.mul_(self._reduce_divide_factor)
         else:
@@ -473,14 +467,14 @@ class TransformerPipelineTrainModule(TrainModule):
         ops: List[dist.P2POp] = []
         if src_rank is not None:
             log.debug(
-                f"Rank {get_rank()} (pp group rank {self.pp_group_rank}) receiving from rank "
-                f"{get_global_rank(src_rank, group=self.pp_group)} (pp group rank {src_rank})"
+                f"Rank {dist_utils.get_rank()} (pp group rank {self.pp_group_rank}) receiving from rank "
+                f"{dist_utils.get_global_rank(src_rank, group=self.pp_group)} (pp group rank {src_rank})"
             )
             ops.append(dist.P2POp(dist.irecv, x, group=self.pp_group, group_peer=src_rank))
         if dst_rank is not None:
             log.debug(
-                f"Rank {get_rank()} (pp group rank {self.pp_group_rank}) sending to rank "
-                f"{get_global_rank(dst_rank, group=self.pp_group)} (pp group rank {dst_rank})"
+                f"Rank {dist_utils.get_rank()} (pp group rank {self.pp_group_rank}) sending to rank "
+                f"{dist_utils.get_global_rank(dst_rank, group=self.pp_group)} (pp group rank {dst_rank})"
             )
             ops.append(dist.P2POp(dist.isend, x, group=self.pp_group, group_peer=dst_rank))
 
@@ -562,16 +556,16 @@ class TransformerPipelineTrainModule(TrainModule):
                 assert isinstance(output, LMOutputWithLoss)
                 _, loss, ce_loss, z_loss = output
                 if ce_batch_loss is None:
-                    ce_batch_loss = get_local_tensor(ce_loss.detach())
+                    ce_batch_loss = dist_utils.get_local_tensor(ce_loss.detach())
                 else:
-                    ce_batch_loss += get_local_tensor(ce_loss.detach())
+                    ce_batch_loss += dist_utils.get_local_tensor(ce_loss.detach())
 
                 if self.z_loss_multiplier is not None:
                     assert z_loss is not None
                     if z_batch_loss is None:
-                        z_batch_loss = get_local_tensor(z_loss.detach())
+                        z_batch_loss = dist_utils.get_local_tensor(z_loss.detach())
                     else:
-                        z_batch_loss += get_local_tensor(z_loss.detach())
+                        z_batch_loss += dist_utils.get_local_tensor(z_loss.detach())
 
                 return loss.unsqueeze(0)
             else:
@@ -655,10 +649,10 @@ class TransformerPipelineTrainModule(TrainModule):
             total_norm = total_norm.full_tensor()
 
         if math.isinf(norm_type):
-            dist.all_reduce(total_norm, op=dist.ReduceOp.MAX, group=self.pp_group)
+            dist_utils.all_reduce(total_norm, op=dist.ReduceOp.MAX, group=self.pp_group)
         else:
             total_norm **= norm_type
-            dist.all_reduce(total_norm, op=dist.ReduceOp.SUM, group=self.pp_group)
+            dist_utils.all_reduce(total_norm, op=dist.ReduceOp.SUM, group=self.pp_group)
             total_norm **= 1.0 / norm_type
 
         torch.nn.utils.clip_grads_with_norm_(parameters, max_grad_norm, total_norm, foreach=foreach)

@@ -5,6 +5,7 @@ Distributed helpers, most of which work in a non-distributed context as well for
 import logging
 import math
 import os
+from contextlib import contextmanager
 from datetime import timedelta
 from typing import Callable, List, Optional, TypeVar, Union, cast
 
@@ -25,6 +26,35 @@ BEAKER_HOSTNAME_ENV_VAR = "BEAKER_NODE_HOSTNAME"
 
 
 log = logging.getLogger(__name__)
+
+_DEFAULT_GROUP: Optional[dist.ProcessGroup] = None
+
+
+@contextmanager
+def _reset_group_context(reset_group: Optional[dist.ProcessGroup]):
+    global _DEFAULT_GROUP
+    try:
+        yield
+    finally:
+        _DEFAULT_GROUP = reset_group
+
+
+def set_default_group(group: dist.ProcessGroup):
+    """
+    Set a default process group to use for all communication.
+    This can also be used as a context manager to temporarily change the default group.
+    """
+    global _DEFAULT_GROUP
+    ctx = _reset_group_context(_DEFAULT_GROUP)
+    _DEFAULT_GROUP = group
+    return ctx
+
+
+def get_default_group() -> Optional[dist.ProcessGroup]:
+    """
+    Get the default process group configured by :func:`set_default_group()`.
+    """
+    return _DEFAULT_GROUP
 
 
 def init_distributed(
@@ -183,7 +213,7 @@ def barrier(group: Optional[dist.ProcessGroup] = None) -> None:
     Wait for all ranks in the group.
     """
     if is_distributed():
-        dist.barrier(group)
+        dist.barrier(group or get_default_group())
 
 
 def get_rank(group: Optional[dist.ProcessGroup] = None) -> int:
@@ -191,7 +221,7 @@ def get_rank(group: Optional[dist.ProcessGroup] = None) -> int:
     Get the rank within the process group.
     """
     if is_distributed():
-        return dist.get_rank(group)
+        return dist.get_rank(group or get_default_group())
     else:
         return 0
 
@@ -200,6 +230,7 @@ def get_global_rank(group_rank: int, group: Optional[dist.ProcessGroup] = None) 
     """
     Translate a rank within a group into it's global rank.
     """
+    group = group or get_default_group()
     if group is None or not is_distributed():
         return group_rank
     else:
@@ -248,13 +279,23 @@ def get_fs_local_rank(group: Optional[dist.ProcessGroup] = None) -> int:
 
 def get_world_size(group: Optional[dist.ProcessGroup] = None) -> int:
     """
-    Get the world size of the default distributed process group.
+    Get the world size of a distributed process group.
 
     .. warning::
         This will always return 1 if a distributed group has not been initialized.
     """
     if is_distributed():
-        return dist.get_world_size(group)
+        return dist.get_world_size(group or get_default_group())
+    else:
+        return 1
+
+
+def get_global_world_size() -> int:
+    """
+    Get the global world size.
+    """
+    if is_distributed():
+        return dist.get_world_size()
     else:
         return 1
 
@@ -287,10 +328,20 @@ def get_num_nodes() -> int:
     """
     if not is_distributed():
         return 1
-    elif OLMO_NUM_NODES_ENV_VAR in os.environ:
+    elif get_default_group() is None and OLMO_NUM_NODES_ENV_VAR in os.environ:
         return int(os.environ[OLMO_NUM_NODES_ENV_VAR])
     else:
         return get_world_size() // get_local_world_size()
+
+
+def get_process_group_ranks(group: Optional[dist.ProcessGroup] = None) -> List[int]:
+    """
+    Get the global ranks of all processes in the given process group.
+    """
+    if not is_distributed():
+        return [0]
+    else:
+        return dist.get_process_group_ranks(group or get_default_group())
 
 
 V = TypeVar("V", bool, int, float, torch.Tensor)
@@ -309,7 +360,7 @@ def synchronize_value(
             if is_tensor
             else move_to_device(torch.tensor(value), device)
         )  # type: ignore
-        dist.broadcast(value_tensor, src, group=group)
+        dist.broadcast(value_tensor, src, group=group or get_default_group())
         return value_tensor if is_tensor else value_tensor.item()  # type: ignore
     else:
         return value
@@ -321,7 +372,16 @@ def synchronize_flag(
     """
     Synchronize a boolean across the distributed process group.
     """
-    return synchronize_value(flag, device, group=group)
+    return synchronize_value(flag, device, group=group or get_default_group())
+
+
+def all_reduce(
+    tensor: torch.Tensor,
+    op=dist.ReduceOp.SUM,
+    group: Optional[dist.ProcessGroup] = None,
+    async_op: bool = False,
+):
+    dist.all_reduce(tensor, op=op, group=group or get_default_group(), async_op=async_op)
 
 
 def all_reduce_value(
@@ -337,7 +397,7 @@ def all_reduce_value(
             if is_tensor
             else move_to_device(torch.tensor(value), device)
         )  # type: ignore
-        dist.all_reduce(value_tensor, op=op, group=group)
+        dist.all_reduce(value_tensor, op=op, group=group or get_default_group())
         return value_tensor if is_tensor else value_tensor.item()  # type: ignore
     else:
         return value
@@ -353,6 +413,7 @@ def scatter_object(obj: T, src: int = 0, group: Optional[dist.ProcessGroup] = No
     if not is_distributed():
         return obj
 
+    group = group or get_default_group()
     output_list: List[T] = [obj]
     input_list = [obj] * get_world_size(group) if get_rank(group) == src else None
     dist.scatter_object_list(output_list, input_list, src=src, group=group)
@@ -368,6 +429,7 @@ def all_gather(
     if not is_distributed():
         return [tensor]
 
+    group = group or get_default_group()
     shapes = all_gather_object(tensor.shape, group=group)
     output_list = [
         move_to_device(torch.zeros(shape, dtype=tensor.dtype), tensor.device) for shape in shapes
@@ -383,6 +445,7 @@ def all_gather_object(obj: T, group: Optional[dist.ProcessGroup] = None) -> List
     if not is_distributed():
         return [obj]
 
+    group = group or get_default_group()
     output_list = [obj] * get_world_size(group)
     dist.all_gather_object(output_list, obj, group=group)
     return output_list

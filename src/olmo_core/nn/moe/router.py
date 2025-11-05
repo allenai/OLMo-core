@@ -11,16 +11,9 @@ from torch.distributed import DeviceMesh
 from torch.distributed.tensor import Replicate, Shard, distribute_tensor
 from torch.distributed.tensor.parallel import PrepareModuleInput, parallelize_module
 
+import olmo_core.distributed.utils as dist_utils
 import olmo_core.ops.moe as ops
 from olmo_core.config import Config, DType, StrEnum
-from olmo_core.distributed.utils import (
-    _HiddenTensor,
-    distribute_like,
-    get_local_tensor,
-    hide_from_torch,
-    is_distributed,
-    unhide_from_torch,
-)
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import get_default_device
 
@@ -208,15 +201,15 @@ class MoERouter(nn.Module):
         # NOTE: we don't use buffers for t hese because we don't want FSDP to manage them, and we
         # don't use a BufferCache because `torch.compile()` doesn't handle that well when we're modifying
         # values in the cache.
-        self._batch_size_per_expert = hide_from_torch(
+        self._batch_size_per_expert = dist_utils.hide_from_torch(
             torch.zeros(self.num_experts, device=init_device)
         )
-        self._score_bias_batch_size_per_expert: Optional[_HiddenTensor] = None
-        self._load_balancing_loss: Optional[_HiddenTensor] = None
-        self._z_loss: Optional[_HiddenTensor] = None
+        self._score_bias_batch_size_per_expert: Optional[dist_utils._HiddenTensor] = None
+        self._load_balancing_loss: Optional[dist_utils._HiddenTensor] = None
+        self._z_loss: Optional[dist_utils._HiddenTensor] = None
 
     def reset_parameters(self):
-        self._batch_size_per_expert = hide_from_torch(
+        self._batch_size_per_expert = dist_utils.hide_from_torch(
             torch.zeros(self.num_experts, device=self.device)
         )
 
@@ -224,15 +217,17 @@ class MoERouter(nn.Module):
             assert self.score_bias is not None
             score_bias = cast(torch.Tensor, self.score_bias)
             score_bias.zero_()
-            self._score_bias_batch_size_per_expert = hide_from_torch(
+            self._score_bias_batch_size_per_expert = dist_utils.hide_from_torch(
                 torch.zeros(self.num_experts, device=self.device)
             )
 
         if self.lb_loss_weight is not None:
-            self._load_balancing_loss = hide_from_torch(torch.zeros([], device=self.device))
+            self._load_balancing_loss = dist_utils.hide_from_torch(
+                torch.zeros([], device=self.device)
+            )
 
         if self.z_loss_weight is not None:
-            self._z_loss = hide_from_torch(torch.zeros([], device=self.device))
+            self._z_loss = dist_utils.hide_from_torch(torch.zeros([], device=self.device))
 
     @property
     def device(self) -> torch.device:
@@ -242,7 +237,7 @@ class MoERouter(nn.Module):
     def score_bias_batch_size_per_expert(self) -> Optional[torch.Tensor]:
         if self.bias_gamma is not None:
             if self._score_bias_batch_size_per_expert is None:
-                self._score_bias_batch_size_per_expert = hide_from_torch(
+                self._score_bias_batch_size_per_expert = dist_utils.hide_from_torch(
                     torch.zeros(self.num_experts, device=self.device)
                 )
             elif self._score_bias_batch_size_per_expert.device != self.device:
@@ -252,52 +247,54 @@ class MoERouter(nn.Module):
         return (
             None
             if self._score_bias_batch_size_per_expert is None
-            else unhide_from_torch(self._score_bias_batch_size_per_expert)
+            else dist_utils.unhide_from_torch(self._score_bias_batch_size_per_expert)
         )
 
     @score_bias_batch_size_per_expert.setter
     def score_bias_batch_size_per_expert(self, value: torch.Tensor):
-        self._score_bias_batch_size_per_expert = hide_from_torch(value)
+        self._score_bias_batch_size_per_expert = dist_utils.hide_from_torch(value)
 
     @property
     def batch_size_per_expert(self) -> torch.Tensor:
         if self._batch_size_per_expert.device != self.device:
             self._batch_size_per_expert = self._batch_size_per_expert.to(self.device)
-        return unhide_from_torch(self._batch_size_per_expert)
+        return dist_utils.unhide_from_torch(self._batch_size_per_expert)
 
     @batch_size_per_expert.setter
     def batch_size_per_expert(self, value: torch.Tensor):
-        self._batch_size_per_expert = hide_from_torch(value)
+        self._batch_size_per_expert = dist_utils.hide_from_torch(value)
 
     @property
     def load_balancing_loss(self) -> Optional[torch.Tensor]:
         if self.lb_loss_weight is not None:
             if self._load_balancing_loss is None:
-                self._load_balancing_loss = hide_from_torch(torch.zeros([], device=self.device))
+                self._load_balancing_loss = dist_utils.hide_from_torch(
+                    torch.zeros([], device=self.device)
+                )
             elif self._load_balancing_loss.device != self.device:
                 self._load_balancing_loss = self._load_balancing_loss.to(self.device)
         return (
             None
             if self._load_balancing_loss is None
-            else unhide_from_torch(self._load_balancing_loss)
+            else dist_utils.unhide_from_torch(self._load_balancing_loss)
         )
 
     @load_balancing_loss.setter
     def load_balancing_loss(self, value: torch.Tensor):
-        self._load_balancing_loss = hide_from_torch(value)
+        self._load_balancing_loss = dist_utils.hide_from_torch(value)
 
     @property
     def z_loss(self) -> Optional[torch.Tensor]:
         if self.z_loss_weight is not None:
             if self._z_loss is None:
-                self._z_loss = hide_from_torch(torch.zeros([], device=self.device))
+                self._z_loss = dist_utils.hide_from_torch(torch.zeros([], device=self.device))
             elif self._z_loss.device != self.device:
                 self._z_loss = self._z_loss.to(self.device)
-        return None if self._z_loss is None else unhide_from_torch(self._z_loss)
+        return None if self._z_loss is None else dist_utils.unhide_from_torch(self._z_loss)
 
     @z_loss.setter
     def z_loss(self, value: torch.Tensor):
-        self._z_loss = hide_from_torch(value)
+        self._z_loss = dist_utils.hide_from_torch(value)
 
     @torch.no_grad()
     def post_batch(self, dry_run: bool = False):
@@ -310,18 +307,17 @@ class MoERouter(nn.Module):
         batch_size_per_expert = self.score_bias_batch_size_per_expert
 
         # Maybe reduce across the process group.
-        if is_distributed():
-            dist.all_reduce(batch_size_per_expert, group=self.group)
+        dist_utils.all_reduce(batch_size_per_expert, group=self.group)
 
         ideal_batch_size_per_expert = batch_size_per_expert.mean(
             dim=0, keepdim=True, dtype=torch.float32
         )
         bias_delta = self.bias_gamma * (ideal_batch_size_per_expert - batch_size_per_expert).sign()
         # NOTE: have to be careful here to manage the case where `score_bias` is a DTensor.
-        bias_delta = distribute_like(score_bias, bias_delta)
+        bias_delta = dist_utils.distribute_like(score_bias, bias_delta)
 
         if not dry_run:
-            get_local_tensor(score_bias).add_(get_local_tensor(bias_delta))
+            dist_utils.get_local_tensor(score_bias).add_(dist_utils.get_local_tensor(bias_delta))
 
         # Reset the accumulator.
         batch_size_per_expert.zero_()
@@ -561,7 +557,8 @@ class MoELinearRouter(MoERouter):
 
     def get_expert_logits(self, x: torch.Tensor) -> torch.Tensor:
         return F.linear(
-            x.float(), get_local_tensor(self.weight).view(self.num_experts, self.d_model).float()
+            x.float(),
+            dist_utils.get_local_tensor(self.weight).view(self.num_experts, self.d_model).float(),
         )
 
     def apply_tp(self, tp_mesh: DeviceMesh, float8_enabled: bool = False):

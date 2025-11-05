@@ -13,14 +13,9 @@ import torch.nn.functional as F
 import torch.version
 from packaging.version import parse as parse_version
 
+import olmo_core.distributed.utils as dist_utils
+
 from ..config import Config
-from ..distributed.utils import (
-    all_gather_object,
-    get_local_tensor,
-    get_reduce_divide_factor,
-    get_world_size,
-    is_distributed,
-)
 from ..utils import cuda_sync_debug_mode, move_to_device
 from .common import ReduceType
 
@@ -124,7 +119,7 @@ def move_metrics(
 ) -> Dict[int, Dict[str, torch.Tensor]]:
     # Collate all metrics together, then transfer to device all at once.
     metrics_to_move_list = [
-        get_local_tensor(m)
+        dist_utils.get_local_tensor(m)
         for step_metrics in source.values()
         for m in step_metrics.values()
         # NOTE: compare device type since 'torch.device("cuda") != torch.device("cuda:0")'
@@ -158,7 +153,9 @@ def get_metrics_reduce_type_by_step(
     metrics_reduce_type: Dict[str, Optional[ReduceType]],
     process_group: Optional[dist.ProcessGroup] = None,
 ) -> Dict[int, Dict[str, Optional[ReduceType]]]:
-    all_ranks_metrics_reduce_type = all_gather_object(metrics_reduce_type, group=process_group)
+    all_ranks_metrics_reduce_type = dist_utils.all_gather_object(
+        metrics_reduce_type, group=process_group
+    )
 
     out: Dict[int, Dict[str, Optional[ReduceType]]] = defaultdict(dict)
     for step in metrics.keys():
@@ -174,9 +171,9 @@ def get_metric_world_sizes_by_step(
     metrics_reduce_type: Dict[str, Optional[ReduceType]],
     process_group: Optional[dist.ProcessGroup] = None,
 ) -> Dict[int, Dict[str, int]]:
-    all_ranks_metrics_reduce_type: List[Dict[str, Optional[ReduceType]]] = all_gather_object(
-        metrics_reduce_type, group=process_group
-    )
+    all_ranks_metrics_reduce_type: List[
+        Dict[str, Optional[ReduceType]]
+    ] = dist_utils.all_gather_object(metrics_reduce_type, group=process_group)
 
     all_steps_world_sizes: Dict[int, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
     for step in metrics.keys():
@@ -192,8 +189,10 @@ def check_metrics_consistent(
     process_group: Optional[dist.ProcessGroup] = None,
 ) -> bool:
     metrics_to_reduce: Set[str] = set(k for k, v in metrics_reduce_type.items() if v is not None)
-    all_ranks_metrics_to_reduce = all_gather_object(metrics_to_reduce, group=process_group)
-    for rank in range(get_world_size(process_group)):
+    all_ranks_metrics_to_reduce = dist_utils.all_gather_object(
+        metrics_to_reduce, group=process_group
+    )
+    for rank in range(dist_utils.get_world_size(process_group)):
         if metrics_to_reduce != all_ranks_metrics_to_reduce[rank]:
             return False
     return True
@@ -210,14 +209,14 @@ def reduce_metrics(
     metrics = move_metrics(metrics, device)
     out: Dict[int, Dict[str, float]] = defaultdict(dict)
 
-    if not is_distributed():
+    if not dist_utils.is_distributed():
         for step, step_metrics in metrics.items():
             for name, value in step_metrics.items():
                 out[step][name] = value.item()
         return out
 
-    world_size = get_world_size(process_group)
-    divide_factor = get_reduce_divide_factor(world_size)
+    world_size = dist_utils.get_world_size(process_group)
+    divide_factor = dist_utils.get_reduce_divide_factor(world_size)
     all_steps_metric_world_sizes: Dict[int, Dict[str, int]] = {}
     all_steps_metrics_reduce_type: Dict[int, Dict[str, Optional[ReduceType]]] = {}
     if not metrics_consistent:
@@ -311,15 +310,13 @@ def reduce_metrics(
 
     all_sum_metrics.div_(divide_factor)
 
-    dist.all_reduce(
+    dist_utils.all_reduce(
         all_sum_metrics,
-        #  get_global_rank(0, group=process_group),
         op=dist.ReduceOp.SUM,
         group=process_group,
     )
-    dist.all_reduce(
+    dist_utils.all_reduce(
         all_max_metrics,
-        #  get_global_rank(0, group=process_group),
         op=dist.ReduceOp.MAX,
         group=process_group,
     )

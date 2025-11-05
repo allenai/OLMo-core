@@ -1,10 +1,11 @@
 import logging
 from typing import List, Optional, Tuple
 
-from torch.distributed import DeviceMesh, ProcessGroup, init_device_mesh
+import torch
+from torch.distributed import DeviceMesh, ProcessGroup
 
 from olmo_core.config import StrEnum
-from olmo_core.distributed.utils import get_world_size
+from olmo_core.distributed.utils import get_process_group_ranks, get_world_size
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import get_default_device
 
@@ -102,7 +103,7 @@ _WORLD_MESH: Optional[DeviceMesh] = None
 
 def get_world_mesh() -> Optional[DeviceMesh]:
     """
-    Get the global world mesh built with :meth:`build_world_mesh()`.
+    Get the default world mesh built with :meth:`build_world_mesh()`.
     """
     global _WORLD_MESH
     return _WORLD_MESH
@@ -116,6 +117,7 @@ def build_world_mesh(
     pp: Optional[PipelineParallelConfig] = None,
     ep: Optional[ExpertParallelConfig] = None,
     device_type: Optional[str] = None,
+    group: Optional[ProcessGroup] = None,
 ) -> DeviceMesh:
     """
     Build a :class:`~torch.distributed.device_mesh.DeviceMesh` suitable for the given parallel strategies.
@@ -144,6 +146,7 @@ def build_world_mesh(
     :param pp: Pipeline parallel config.
     :param ep: Expert parallel config.
     :param device_type: The device type.
+    :param group: The process group to build the mesh from.
 
     :returns: The world mesh with a shape compatible with the given parallel configs.
     """
@@ -153,17 +156,20 @@ def build_world_mesh(
         raise RuntimeError("world mesh already exists! You can only call 'build_world_mesh' once!")
 
     device_type = device_type or get_default_device().type
-    dp_world_size = get_world_size()
+    dp_world_size = get_world_size(group)
 
     if pp is None and tp is None and cp is None and dp is None and ep is None:
-        return init_device_mesh(device_type, (dp_world_size,), mesh_dim_names=(MeshDimName.dp,))
+        mesh_device_ids = torch.tensor(
+            get_process_group_ranks(group), device="cpu", dtype=torch.int
+        )
+        return DeviceMesh(device_type, mesh_device_ids, mesh_dim_names=(MeshDimName.dp,))
 
     if dp is None:
         raise OLMoConfigurationError(
             "Data parallel config is required in addition to expert/tensor/context/pipeline parallel configs"
         )
 
-    # Validate parallelism degrees while adjust the DP degree.
+    # Validate parallelism degrees while adjusting the DP degree.
     if pp is not None:
         if pp.degree < 1 or dp_world_size % pp.degree != 0:
             raise OLMoConfigurationError(
@@ -243,7 +249,12 @@ def build_world_mesh(
         names.append(MeshDimName.tp)
         dims.append(tp.degree)
 
-    mesh = init_device_mesh(device_type, tuple(dims), mesh_dim_names=tuple(names))
+    # NOTE: Always initialize the mesh's device ID tensor on CPU, regardless of what the
+    # external device type has been set to be (e.g. meta).
+    mesh_device_ids = torch.tensor(
+        get_process_group_ranks(group), device="cpu", dtype=torch.int
+    ).view(dims)
+    mesh = DeviceMesh(device_type, mesh_device_ids, mesh_dim_names=tuple(names))
     log.info(f"Built {get_device_mesh_info(mesh)}")
 
     # Ensure data parallel process group is created here.
@@ -273,7 +284,9 @@ def get_device_mesh_info(device_mesh: DeviceMesh) -> str:
 
 
 def build_expert_parallel_mesh(
-    ep_config: ExpertParallelConfig, device_type: Optional[str] = None
+    ep_config: ExpertParallelConfig,
+    device_type: Optional[str] = None,
+    group: Optional[ProcessGroup] = None,
 ) -> DeviceMesh:
     device_type = device_type or get_default_device().type
     world_size = get_world_size()
@@ -297,7 +310,10 @@ def build_expert_parallel_mesh(
     names.append(MeshDimName.ep_shard)
     dims.append(ep_degree)
 
-    mesh = init_device_mesh(device_type, tuple(dims), mesh_dim_names=tuple(names))
+    mesh_device_ids = torch.tensor(
+        get_process_group_ranks(group), device="cpu", dtype=torch.int
+    ).view(dims)
+    mesh = DeviceMesh(device_type, mesh_device_ids, mesh_dim_names=tuple(names))
     log.info(f"Built {get_device_mesh_info(mesh)}")
 
     return mesh

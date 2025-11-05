@@ -4,8 +4,8 @@ import torch
 import torch.distributed as dist
 from torch.distributed.tensor import DTensor, Replicate, Shard
 
+import olmo_core.distributed.utils as dist_utils
 from olmo_core.config import StrEnum
-from olmo_core.distributed.utils import get_local_tensor
 
 
 class MoELoadBalancingLossGranularity(StrEnum):
@@ -39,9 +39,9 @@ def load_balancing_loss(
     cp_mesh: Optional[dist.DeviceMesh] = None,
 ) -> torch.Tensor:
     expert_scores, batch_size_per_expert, batched_batch_size_per_expert = (
-        get_local_tensor(expert_scores),
-        get_local_tensor(batch_size_per_expert),
-        get_local_tensor(batched_batch_size_per_expert),
+        dist_utils.get_local_tensor(expert_scores),
+        dist_utils.get_local_tensor(batch_size_per_expert),
+        dist_utils.get_local_tensor(batched_batch_size_per_expert),
     )
 
     B, S, _ = expert_scores.shape
@@ -54,13 +54,13 @@ def load_balancing_loss(
         # NOTE: for CP it suffices to reduce the 'batched_batch_size_per_expert' across the CP group
         # and do the rest of the computation locally.
         if cp_mesh is not None:
-            dist.all_reduce(batched_batch_size_per_expert, group=cp_mesh.get_group())
+            dist_utils.all_reduce(batched_batch_size_per_expert, group=cp_mesh.get_group())
 
         # NOTE: for TP, the end result needs to be a DTensor over the TP mesh, so we handle this case
         # a little differently.
         if tp_mesh is not None:
             # NOTE: assumes sharded on sequence dimension and equal splits across TP group.
-            dist.all_reduce(batched_batch_size_per_expert, group=tp_mesh.get_group())
+            dist_utils.all_reduce(batched_batch_size_per_expert, group=tp_mesh.get_group())
             batched_batch_size_per_expert = DTensor.from_local(
                 batched_batch_size_per_expert, tp_mesh, (Replicate(),)
             )
@@ -118,7 +118,7 @@ def router_z_loss(
     tp_mesh: Optional[dist.DeviceMesh] = None,
     cp_mesh: Optional[dist.DeviceMesh] = None,
 ) -> torch.Tensor:
-    expert_logits = get_local_tensor(expert_logits)
+    expert_logits = dist_utils.get_local_tensor(expert_logits)
     B, S, _ = expert_logits.shape
 
     # NOTE: with TP, end result has to be a DTensor over the TP mesh, so we wrap as a DTensor

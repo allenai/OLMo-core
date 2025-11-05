@@ -16,6 +16,7 @@ from torch.distributed.tensor import DTensor
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import Optimizer
 
+import olmo_core.distributed.utils as dist_utils
 from olmo_core.data.utils import get_labels, split_batch
 from olmo_core.distributed.checkpoint import (
     merge_state_dicts,
@@ -26,12 +27,6 @@ from olmo_core.distributed.parallel import (
     DataParallelType,
     build_world_mesh,
     get_dp_process_group,
-)
-from olmo_core.distributed.utils import (
-    get_local_tensor,
-    get_reduce_divide_factor,
-    get_world_size,
-    is_distributed,
 )
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
@@ -128,11 +123,13 @@ class TransformerTrainModule(TrainModule):
         # Build world mesh.
         self.device = device or get_default_device()
         self.world_mesh: Optional[DeviceMesh] = None
-        if is_distributed():
+        if dist_utils.is_distributed():
             self.world_mesh = build_world_mesh(
                 dp=dp_config, tp=tp_config, cp=cp_config, ep=ep_config, device_type=self.device.type
             )
-            log.info(f"Data parallel world size = {get_world_size(self.dp_process_group):,d}")
+            log.info(
+                f"Data parallel world size = {dist_utils.get_world_size(self.dp_process_group):,d}"
+            )
         elif (
             dp_config is not None
             or tp_config is not None
@@ -222,17 +219,17 @@ class TransformerTrainModule(TrainModule):
 
     @cached_property
     def world_size(self) -> int:
-        return get_world_size()
+        return dist_utils.get_world_size()
 
     @cached_property
     def _reduce_divide_factor(self) -> float:
-        return get_reduce_divide_factor(self.world_size)
+        return dist_utils.get_reduce_divide_factor(self.world_size)
 
     def pre_train(self):
         # Validate batch size.
         # NOTE: we run this in `pre_train()` instead of, say, `on_attach()` because callbacks
         # like `BatchSizeScheduler` may change the global batch size after the module is attached.
-        dp_ws = get_world_size(self.trainer.dp_process_group)
+        dp_ws = dist_utils.get_world_size(self.trainer.dp_process_group)
         if self.trainer.global_batch_size % (self.rank_microbatch_size * dp_ws) != 0:
             raise OLMoConfigurationError(
                 f"global batch size ({self.trainer.global_batch_size:,d}) must be divisible by "
@@ -393,11 +390,11 @@ class TransformerTrainModule(TrainModule):
                 )
 
                 # Update total batch CE and Z loss.
-                ce_batch_loss += get_local_tensor(ce_loss.detach())
+                ce_batch_loss += dist_utils.get_local_tensor(ce_loss.detach())
                 del ce_loss
                 if z_batch_loss is not None:
                     assert z_loss is not None
-                    z_batch_loss += get_local_tensor(z_loss.detach())
+                    z_batch_loss += dist_utils.get_local_tensor(z_loss.detach())
                     del z_loss
 
                 # Run backward pass.
@@ -414,9 +411,9 @@ class TransformerTrainModule(TrainModule):
         # Record loss metrics.
         if isinstance(self.optim, SkipStepOptimizer):
             # Need to reduce the loss right away for the SkipStepOptimizer.
-            if is_distributed():
+            if dist_utils.is_distributed():
                 ce_batch_loss.div_(self._reduce_divide_factor)
-                dist.all_reduce(ce_batch_loss)
+                dist_utils.all_reduce(ce_batch_loss)
                 ce_batch_loss.div_(self.world_size)
                 ce_batch_loss.mul_(self._reduce_divide_factor)
             self.record_ce_loss(ce_batch_loss)

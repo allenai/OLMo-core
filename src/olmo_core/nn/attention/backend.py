@@ -7,6 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributed import DeviceMesh
 
+import olmo_core.distributed.utils as dist_utils
 from olmo_core.config import StrEnum
 from olmo_core.nn.attention.kv_cache import KVCacheManager
 from olmo_core.nn.buffer_cache import BufferCache
@@ -582,6 +583,7 @@ class FlashAttention3Backend(AttentionBackend):
         local_k_slice: Optional[slice] = None,
         kv_cache_manager: Optional[KVCacheManager] = None,
     ) -> torch.Tensor:
+        del local_k_slice
         if isinstance(qkv, torch.Tensor):
             if kv_cache_manager is not None:
                 raise RuntimeError(
@@ -702,7 +704,7 @@ class TEAttentionBackend(AttentionBackend):
         super().apply_cp(cp_mesh, load_balancer, head_stride=head_stride)
         self.te_attn.set_context_parallel_group(
             cp_group=cp_mesh.get_group(),
-            cp_global_ranks=dist.get_process_group_ranks(cp_mesh.get_group()),
+            cp_global_ranks=dist_utils.get_process_group_ranks(cp_mesh.get_group()),
             cp_stream=torch.cuda.default_stream(),
             #  cp_stream=get_or_init_stream("cp"),  # this doesn't seem to help
             cp_comm_type="p2p",
