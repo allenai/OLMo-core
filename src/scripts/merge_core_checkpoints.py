@@ -107,7 +107,11 @@ def merge_checkpoints(
     # Load the rest of the models and accumulate
     for model_path in model_paths[1:]:
         sd = state_dict_from_path(model_path)
-        assert sd.keys() == accumulator_sd.keys()
+        if sd.keys() != accumulator_sd.keys():
+            raise RuntimeError(
+                f"Checkpoint at {model_path} has different keys than the first checkpoint. "
+                f"Cannot merge checkpoints with different architectures."
+            )
         for key in sd.keys():
             t = sd[key]
             if isinstance(t, torch.Tensor):
