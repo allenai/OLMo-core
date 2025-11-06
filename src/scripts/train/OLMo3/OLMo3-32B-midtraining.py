@@ -31,7 +31,15 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
     root_dir = get_root_dir(cli_context.cluster)
     work_dir = get_work_dir(root_dir)
-    save_dir = f"{root_dir}/checkpoints/{run_name_with_ts}"
+
+    # HACK because we screwed this up the first time
+    if "stego32-midtraining-run-2" in cli_context.run_name:
+        save_folder_run_name = "gs://ai2-llm/checkpoints/stego32-midtraining-run-2-20251106T000248+0000"
+    elif "stego32-midtraining-run-3" in cli_context.run_name:
+        save_folder_run_name = "gs://ai2-llm/checkpoints/stego32-midtraining-run-3-20251106T000454+0000"
+    else:
+        save_folder_run_name = cli_context.run_name
+    save_dir = f"{root_dir}/checkpoints/{save_folder_run_name}"
 
     beaker_launch_config: Optional[BeakerLaunchConfig] = build_launch_config(
         name=cli_context.run_name,
