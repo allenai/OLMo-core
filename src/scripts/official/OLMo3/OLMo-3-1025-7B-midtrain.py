@@ -53,6 +53,7 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         attn_backend=AttentionBackendName.flash_2,
     )
 
+    # TODO: create a mix that explicitly lists the paths
     dataset_glob = join_path(
         opts.data_root,
         "preprocessed/dolma3-dolmino-official/100B/allenai/dolma3-tokenizer/**/*.npy",
