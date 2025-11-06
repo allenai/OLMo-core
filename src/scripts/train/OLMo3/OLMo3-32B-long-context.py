@@ -42,11 +42,26 @@ from olmo_core.train.train_module import (
     TransformerTrainModuleConfig,
 )
 
+"""
+python src/scripts/train/OLMo3/OLMo3-32B-midtraining.py launch \
+    stego32-longcontext-smoketest-1 \
+    ai2/augusta \
+    --launch.priority=urgent \
+    --launch.use_hostname_constraints=true \
+    --launch.preemptible=false \
+    --launch.num_nodes=8 \
+    --launch.workspace=ai2/long-contexts \
+    --trainer.callbacks.slack_notifier.enabled=False \
+    --trainer.callbacks.wandb.enabled=False \
+    --trainer.hard_stop='{value: 25, unit: steps}'
+"""
+
 SEQUENCE_LENGTH = 64 * 1024  # 64k seq len
 GLOBAL_BATCH_SIZE = 8 * 1024 * 1024  # ~8M tokens
 MAX_TOKENS = 100_000_000_000  # 100B
 
-7B_LR = 0.00020712352850360292
+# 7B_LR = 0.00020712352850360292
+
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     config = TransformerConfig.olmo2_32B(vocab_size=common.tokenizer.padded_vocab_size())
@@ -114,7 +129,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             load_optim_state=True,
             save_folder=f"gs://ai2-llm/checkpoints/{common.run_name}/",
             save_overwrite=True,
-            metrics_collect_interval=50,
+            metrics_collect_interval=5,  #  TODO: update to 50
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(MAX_TOKENS),
             hard_stop=None,
