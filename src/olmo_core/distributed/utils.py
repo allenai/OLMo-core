@@ -74,6 +74,7 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
             set_env_var("NCCL_FASTRAK_PLUGIN_ACCEPT_TIMEOUT_MS", "600000")
             set_env_var("NCCL_NVLS_ENABLE", "0")
             set_env_var("NCCL_USE_SNAP", "1")
+            set_env_var("NCCL_NVLSTREE_MAX_CHUNKSIZE", "131072")
             set_env_var("NCCL_FASTRAK_USE_LLCM", "1")
             set_env_var("NCCL_FASTRAK_LLCM_DEVICE_DIRECTORY", "/dev/aperture_devices")
             # NOTE: This path var must be set prior to launching Python
@@ -85,6 +86,9 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
             set_env_var("NCCL_TUNER_PLUGIN", "libnccl-tuner.so")
             set_env_var(
                 "NCCL_TUNER_CONFIG_PATH", "/var/lib/tcpxo/lib64/a3plus_tuner_config_ll128.textproto"
+            )
+            set_env_var(  # Add COLL here to log all collective operations. Extreamly verbose, dont use for production.
+                "NCCL_DEBUG_SUBSYS", "INIT,NET"
             )
             set_env_var(
                 "NCCL_SHIMNET_GUEST_CONFIG_CHECKER_CONFIG_FILE",
