@@ -95,7 +95,7 @@ class ExperimentConfig(Config):
     train_module: TransformerTrainModuleConfig
     trainer: TrainerConfig
     init_seed: int = 12536
-    backend: Optional[str] = "cuda:nccl"
+    backend: Optional[str] = "cpu:gloo,cuda:nccl"
 
 
 class SubCmd(StrEnum):
