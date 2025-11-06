@@ -43,14 +43,14 @@ from olmo_core.train.train_module import (
 )
 
 """
-python src/scripts/train/OLMo3/OLMo3-32B-midtraining.py launch \
+python src/scripts/train/OLMo3/OLMo3-32B-long-context.py launch \
     stego32-longcontext-smoketest-1 \
     ai2/augusta \
     --launch.priority=urgent \
     --launch.use_hostname_constraints=true \
     --launch.preemptible=false \
     --launch.num_nodes=8 \
-    --launch.workspace=ai2/long-contexts \
+    --launch.workspace=ai2/OLMo_3 \
     --trainer.callbacks.slack_notifier.enabled=False \
     --trainer.callbacks.wandb.enabled=False \
     --trainer.hard_stop='{value: 25, unit: steps}'
@@ -195,7 +195,7 @@ if __name__ == "__main__":
     config_builder = partial(
         build_config,
         global_batch_size=GLOBAL_BATCH_SIZE,
-        sequence_length=SEQUENCE_LENGTH,
+        max_sequence_length=SEQUENCE_LENGTH,
         data_config_builder=build_data_components,
         model_config_builder=build_model_config,
         train_module_config_builder=build_train_module_config,
