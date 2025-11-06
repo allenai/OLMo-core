@@ -130,7 +130,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             load_optim_state=True,
             save_folder=f"gs://ai2-llm/checkpoints/{common.run_name}/",
             save_overwrite=True,
-            metrics_collect_interval=5,  #  TODO: update to 50
+            metrics_collect_interval=50,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(MAX_TOKENS),
             hard_stop=None,
