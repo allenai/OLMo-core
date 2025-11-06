@@ -103,10 +103,10 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
-            shard_degree=64,  # same as pretraining
+            shard_degree=8,
         ),
-        ac_config=TransformerActivationCheckpointingConfig(  # same as pretraining
-            mode=TransformerActivationCheckpointingMode.budget, activation_memory_budget=0.5
+        ac_config=TransformerActivationCheckpointingConfig(
+            mode=TransformerActivationCheckpointingMode.budget, activation_memory_budget=0.3
         ),
         cp_config=TransformerContextParallelConfig.llama3(
             degree=8,  # 64k tokens per instance -> 8k tokens per device
