@@ -155,20 +155,13 @@ def merge_checkpoints(
     model = model_config.build(init_device="meta")
     model.to_empty(device=torch.device("cpu"))
     optim = optim_config.build(model, strict=True)
-    first_model_path = model_paths[0]
-    if not first_model_path.endswith("/model_and_optim"):
-        first_model_path = first_model_path.rstrip("/") + "/model_and_optim"
-    load_model_and_optim_state(first_model_path, model, optim, flatten_optimizer_state=True)
-
-    dist_cp_sd.set_model_state_dict(
-        model,
-        accumulator_model_sd,
-        options=_state_dict_options,
-    )
-    dist_cp_sd.set_optimizer_state_dict(
+    #first_model_path = join_path(model_paths[0], "model_and_optim")
+    #load_model_and_optim_state(first_model_path, model, optim, flatten_optimizer_state=True)
+    dist_cp_sd.set_state_dict(
         model,
         optim,
-        accumulator_optim_sd,
+        model_state_dict=accumulator_model_sd,
+        optim_state_dict=accumulator_optim_sd,
         options=_state_dict_options,
     )
 
