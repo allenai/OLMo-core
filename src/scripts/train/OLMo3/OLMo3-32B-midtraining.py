@@ -34,9 +34,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
 
     # HACK because we screwed this up the first time
     if "stego32-midtraining-run-2" in cli_context.run_name:
-        save_folder_run_name = "stego32-midtraining-run-2-20251106T000248+0000"
-    elif "stego32-midtraining-run-3" in cli_context.run_name:
-        save_folder_run_name = "stego32-midtraining-run-3-20251106T000454+0000"
+        save_folder_run_name = "stego32-midtraining-run-2-20251105T225302+0000"
     else:
         save_folder_run_name = cli_context.run_name
     save_dir = f"{root_dir}/checkpoints/{save_folder_run_name}"
