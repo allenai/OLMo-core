@@ -70,7 +70,8 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         force_full_attention_on_last_layer=True,
         pattern=[4096, 4096, 4096, -1],
     )
-    config.block.attention.backend = AttentionBackendName.te
+    # config.block.attention.backend = AttentionBackendName.te
+    config.block.attention.backend = AttentionBackendName.flash_2
 
     config = config.with_rope_scaling(
         YaRNRoPEScalingConfig(factor=8, beta_fast=32, beta_slow=1, old_context_len=8192)
