@@ -64,10 +64,17 @@ def model_and_optim_config_from_path(model_path: str) -> Tuple[TransformerConfig
     return model_config, optim_config
 
 
-def state_dict_from_path(model_path: str) -> Dict[str, Any]:
+_state_dict_options = dist_cp_sd.StateDictOptions(
+    flatten_optimizer_state_dict=True,
+    cpu_offload=True
+)
+
+
+def state_dicts_from_path(model_path: str) -> Tuple[Dict, Dict]:
     model_config, optim_config = model_and_optim_config_from_path(model_path)
     model = model_config.build(init_device="meta")
     model.to_empty(device=torch.device("cpu"))
+    optim = optim_config.build(model, strict=True)
 
     with TemporaryDirectory(prefix="merge_core_checkpoints-") as work_dir:
         model_and_optim_dir = join_path(model_path, "model_and_optim")
@@ -75,12 +82,14 @@ def state_dict_from_path(model_path: str) -> Dict[str, Any]:
         load_model_and_optim_state(
             model_and_optim_dir,
             model,
+            optim,
+            flatten_optimizer_state=True,
             work_dir=work_dir,
         )
-        state_dict_options = dist_cp_sd.StateDictOptions(
-            flatten_optimizer_state_dict=True, cpu_offload=True
+        return (
+            dist_cp_sd.get_model_state_dict(model, options=_state_dict_options),
+            dist_cp_sd.get_optimizer_state_dict(model, optim, options=_state_dict_options)
         )
-        return dist_cp_sd.get_model_state_dict(model, options=state_dict_options)
 
 
 def merge_checkpoints(
@@ -88,40 +97,60 @@ def merge_checkpoints(
     output_path: str,
 ) -> None:
     # Load the first model, in float32 for accuracy
-    accumulator_sd = state_dict_from_path(model_paths[0])
-    dtypes = {}
-    for key in accumulator_sd.keys():
-        t = accumulator_sd[key]
+    # OLMo-core models are already stored in float32, so this is mostly a no-op. But it's analogous to the
+    # logic for the huggingface checkpoints (which are stored in bf16), and it's insurance for a future in which
+    # we might store checkpoints in lower precision.
+    accumulator_model_sd, accumulator_optim_sd = state_dicts_from_path(model_paths[0])
+    model_dtypes = {}
+    for key in accumulator_model_sd.keys():
+        t = accumulator_model_sd[key]
         if isinstance(t, torch.Tensor):
-            dtypes[key] = t.dtype
-            accumulator_sd[key] = t.to(torch.float32)
+            model_dtypes[key] = t.dtype
+            accumulator_model_sd[key] = t.to(torch.float32)
+        else:
+            logging.info(f"{key} in model state is not a tensor. Will take the value from the first checkpoint ({model_paths[0]})")
+    gc.collect()
+    optim_dtypes = {}
+    for key in accumulator_optim_sd.keys():
+        t = accumulator_optim_sd[key]
+        if isinstance(t, torch.Tensor):
+            optim_dtypes[key] = t.dtype
+            accumulator_optim_sd[key] = t.to(torch.float32)
+        else:
+            logging.info(f"{key} in optimizer state is not a tensor. Will take the value from the first checkpoint ({model_paths[0]})")
     gc.collect()
 
     # Load the rest of the models and accumulate
     for model_path in model_paths[1:]:
-        sd = state_dict_from_path(model_path)
-        if sd.keys() != accumulator_sd.keys():
+        msd, osd = state_dicts_from_path(model_path)
+        if msd.keys() != accumulator_model_sd.keys():
             raise RuntimeError(
                 f"Checkpoint at {model_path} has different keys than the first checkpoint. "
                 f"Cannot merge checkpoints with different architectures."
             )
-        for key in sd.keys():
-            t = sd[key]
-            if isinstance(t, torch.Tensor):
-                accumulator_sd[key] += t
-        del sd
+        if osd.keys() != accumulator_optim_sd.keys():
+            raise RuntimeError(
+                f"Checkpoint at {model_path} has different keys in the optimizer than the first checkpoint. "
+                f"Cannot merge checkpoints with different architectures."
+            )
+        for acc_sd, sd in [(accumulator_model_sd, msd), (accumulator_optim_sd, osd)]:
+            for key in sd.keys():
+                t = sd[key]
+                if isinstance(t, torch.Tensor):
+                    acc_sd[key] += t
+        del msd, osd
         gc.collect()
 
     # Average and cast back down
-    for key in accumulator_sd.keys():
-        t = accumulator_sd[key]
-        if isinstance(t, torch.Tensor):
-            t /= len(model_paths)
-            accumulator_sd[key] = t.to(dtypes[key])
+    for acc_sd, dtypes in [(accumulator_model_sd, model_dtypes), (accumulator_optim_sd, optim_dtypes)]:
+        for key in acc_sd.keys():
+            t = acc_sd[key]
+            if isinstance(t, torch.Tensor):
+                t /= len(model_paths)
+                acc_sd[key] = t.to(dtypes[key])
     gc.collect()
 
     # Save the model
-    transformer_config_dict, tokenizer_config_dict, optim_config_dict = config_dicts_from_path(model_paths[0])
     model_config, optim_config = model_and_optim_config_from_path(model_paths[0])
     model = model_config.build(init_device="meta")
     model.to_empty(device=torch.device("cpu"))
@@ -130,7 +159,18 @@ def merge_checkpoints(
     if not first_model_path.endswith("/model_and_optim"):
         first_model_path = first_model_path.rstrip("/") + "/model_and_optim"
     load_model_and_optim_state(first_model_path, model, optim, flatten_optimizer_state=True)
-    model.load_state_dict(accumulator_sd)
+
+    dist_cp_sd.set_model_state_dict(
+        model,
+        accumulator_model_sd,
+        options=_state_dict_options,
+    )
+    dist_cp_sd.set_optimizer_state_dict(
+        model,
+        optim,
+        accumulator_optim_sd,
+        options=_state_dict_options,
+    )
 
     model_and_optim_dir = join_path(output_path, "model_and_optim")
     log.info(f"Saving OLMo core checkpoint to '{model_and_optim_dir}'")
