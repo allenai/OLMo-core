@@ -147,7 +147,7 @@ def _worker_process(
         dp_mesh=init_device_mesh("cpu", (ws,)),
     )
     model.to_empty(device=torch.device("cpu"))
-    optim = optim_config.build(model, strict=True)
+    optim = optim_config.build(model, strict=True, dry_run_only=True)
 
     with TemporaryDirectory(prefix=f"reshard_core_checkpoints-rank{get_rank()}-") as work_dir:
         model_and_optim_dir = join_path(input_path, "model_and_optim")

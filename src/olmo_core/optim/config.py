@@ -159,14 +159,14 @@ class OptimConfig(Config, Generic[Opt], metaclass=ABCMeta):
         """
         raise NotImplementedError
 
-    def build(self, model: nn.Module, strict: bool = True) -> Opt:
+    def build(self, model: nn.Module, strict: bool = True, **kwargs) -> Opt:
         """
         Build the optimizer.
 
         :param strict: If ``True`` an error is raised if a pattern in ``group_overrides`` doesn't
             match any parameter.
         """
-        kwargs = self.as_dict()
+        kwargs = {**self.as_dict(), **kwargs}
         kwargs.pop("group_overrides")
         kwargs.pop("compile")
         kwargs.pop("fixed_fields")

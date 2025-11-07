@@ -119,6 +119,7 @@ class SkipStepAdamW(SkipStepOptimizer):
         dtype: Optional[Union[torch.dtype, DType]] = None,
         foreach: bool = False,
         step_increment_bugfix: bool = True,
+        dry_run_only: bool = False
     ) -> None:
         assert lr >= 0.0
         assert all([0.0 <= beta <= 1.0 for beta in betas])
@@ -135,6 +136,7 @@ class SkipStepAdamW(SkipStepOptimizer):
         self.foreach = foreach
         self.stepfix = step_increment_bugfix
         self._step_skipped: Optional[torch.Tensor] = None
+        self.dry_run_only = dry_run_only
 
     @property
     def step_skipped(self) -> torch.Tensor:
@@ -168,19 +170,20 @@ class SkipStepAdamW(SkipStepOptimizer):
                     state["exp_avg"] = torch.zeros_like(p, dtype=self.dtype)
                     state["exp_avg_sq"] = torch.zeros_like(p, dtype=self.dtype)
 
-                adamw_step(
-                    get_local_tensor(p),
-                    get_local_tensor(p.grad),
-                    lr=group["lr"],
-                    betas=group["betas"],
-                    eps=group["eps"],
-                    weight_decay=group["weight_decay"],
-                    exp_avg=get_local_tensor(state["exp_avg"]),
-                    exp_avg_sq=get_local_tensor(state["exp_avg_sq"]),
-                    step=state["step"],
-                    step_factor=step_factor,
-                    step_increment_bugfix=self.stepfix,
-                )
+                if not self.dry_run_only:
+                    adamw_step(
+                        get_local_tensor(p),
+                        get_local_tensor(p.grad),
+                        lr=group["lr"],
+                        betas=group["betas"],
+                        eps=group["eps"],
+                        weight_decay=group["weight_decay"],
+                        exp_avg=get_local_tensor(state["exp_avg"]),
+                        exp_avg_sq=get_local_tensor(state["exp_avg_sq"]),
+                        step=state["step"],
+                        step_factor=step_factor,
+                        step_increment_bugfix=self.stepfix,
+                    )
 
     def _step_foreach(self, closure=None) -> None:
         if closure is not None:
@@ -215,19 +218,20 @@ class SkipStepAdamW(SkipStepOptimizer):
             if not params_with_grad:
                 continue  # nothing to update in this group
 
-            foreach_adamw_step(
-                params_with_grad,
-                grads,
-                exp_avgs,
-                exp_avg_sqs,
-                steps_list,
-                lr=group["lr"],
-                betas=group["betas"],
-                eps=group["eps"],
-                weight_decay=group["weight_decay"],
-                step_factor=step_factor,
-                step_increment_bugfix=self.stepfix,
-            )
+            if not self.dry_run_only:
+                foreach_adamw_step(
+                    params_with_grad,
+                    grads,
+                    exp_avgs,
+                    exp_avg_sqs,
+                    steps_list,
+                    lr=group["lr"],
+                    betas=group["betas"],
+                    eps=group["eps"],
+                    weight_decay=group["weight_decay"],
+                    step_factor=step_factor,
+                    step_increment_bugfix=self.stepfix,
+                )
 
 
 @dataclass
