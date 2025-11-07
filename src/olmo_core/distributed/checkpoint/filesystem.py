@@ -346,6 +346,7 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
                 read_item_content_futures.append(
                     executor.submit(self._get_content_for_read, read_item)
                 )
+
             for f in as_completed(read_item_content_futures):
                 try:
                     read_item, content = f.result()
@@ -356,15 +357,16 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
                     raise OLMoCheckpointError(f"Original error:\n{traceback.format_exc()}")
 
                 # Modified from `FileSystemReader.read_data()`
-                bytes = io.BytesIO(content)
-                bytes.seek(0)
+                bytes_io = io.BytesIO(content)
+                bytes_io.seek(0)
                 if read_item.type == LoadItemType.BYTE_IO:
-                    planner.load_bytes(read_item, bytes)
+                    planner.load_bytes(read_item, bytes_io)
                 else:
                     # NOTE: 'weights_only=False' needed to load torchao's float8 linear layer checkpoints
                     tensor = cast(
-                        torch.Tensor, torch.load(bytes, map_location="cpu", weights_only=False)
+                        torch.Tensor, torch.load(bytes_io, map_location="cpu", weights_only=False)
                     )
+                    log.debug(f"Loaded tensor with shape {tensor.shape}")
                     tensor = _narrow_tensor_by_index(
                         tensor, read_item.storage_offsets, read_item.lengths
                     )
@@ -375,6 +377,8 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
                     ), f"req {read_item.storage_index} mismatch sizes {target_tensor.size()} vs {tensor.size()}"
                     target_tensor.copy_(tensor)
                     planner.commit_tensor(read_item, target_tensor)
+                    del tensor
+                del bytes_io, content
 
         fut: Future = Future()
         fut.set_result(None)
