@@ -1,0 +1,263 @@
+import json
+import logging
+import os
+import random
+import shutil
+import socket
+from datetime import timedelta
+from tempfile import TemporaryDirectory
+from typing import Tuple, Dict
+
+import click
+import torch
+import torch.distributed as dist
+import torch.distributed.checkpoint.state_dict as dist_cp_sd
+import torch.multiprocessing as mp
+from cached_path import cached_path
+from torch.distributed import init_device_mesh
+
+from olmo_core.aliases import PathOrStr
+from olmo_core.distributed.checkpoint import load_model_and_optim_state, save_model_and_optim_state
+from olmo_core.distributed.utils import (
+    OLMO_LOCAL_RANK_ENV_VAR,
+    OLMO_LOCAL_WORLD_SIZE_ENV_VAR,
+    OLMO_NUM_NODES_ENV_VAR,
+    get_rank,
+    get_world_size,
+)
+from olmo_core.io import join_path, file_exists
+from olmo_core.nn.transformer import TransformerConfig
+from olmo_core.optim import OptimConfig
+from olmo_core.train.train_module.transformer.common import parallelize_model
+from olmo_core.utils import prepare_cli_environment
+
+log = logging.getLogger(__name__)
+
+
+def _port_in_use(host: str, port: int) -> bool:
+    """Check if a port is in use."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex((host, port)) == 0
+
+
+def _get_next_port() -> int:
+    """Get a random port in the range 29500-30000."""
+    return random.randint(29500, 30000)
+
+
+def _find_open_port(host: str = "127.0.0.1") -> int:
+    """Find an available port for process group coordination."""
+    port = _get_next_port()
+    attempts = 0
+    while _port_in_use(host, port):
+        port = _get_next_port()
+        attempts += 1
+        if attempts >= 10:
+            raise RuntimeError("Failed to find an open port after 10 attempts")
+    return port
+
+
+def load_config(checkpoint_input_dir: PathOrStr) -> Dict:
+    if not file_exists(f"{checkpoint_input_dir}/config.json"):
+        raise RuntimeError(f"Config file not found at {checkpoint_input_dir}")
+
+    with cached_path(f"{checkpoint_input_dir}/config.json").open("r", encoding="utf-8") as f:
+        config_dict = json.load(f)
+
+    return config_dict
+
+
+def config_dicts_from_path(model_path: str) -> Tuple[Dict, Dict, Dict]:
+    # Load and preprocess configs
+    experiment_config = load_config(model_path)
+
+    transformer_config_dict = experiment_config["model"]
+    # Remove deprecated transformer config options
+    if "compile" in transformer_config_dict:
+        del transformer_config_dict["compile"]
+    if "dp_config" in transformer_config_dict:
+        del transformer_config_dict["dp_config"]
+    if "tp_config" in transformer_config_dict:
+        del transformer_config_dict["tp_config"]
+    if "float8_config" in transformer_config_dict:
+        del transformer_config_dict["float8_config"]
+
+    tokenizer_config_dict = experiment_config.get("dataset", {}).get("tokenizer")
+    optim_config_dict = experiment_config["train_module"]["optim"]
+
+    return transformer_config_dict, tokenizer_config_dict, optim_config_dict
+
+
+def model_and_optim_config_from_path(model_path: str) -> Tuple[TransformerConfig, OptimConfig]:
+    transformer_config_dict, _, optim_config_dict = config_dicts_from_path(model_path)
+    model_config = TransformerConfig.from_dict(transformer_config_dict)
+    optim_config = OptimConfig.from_dict(optim_config_dict)
+    return model_config, optim_config
+
+
+_state_dict_options = dist_cp_sd.StateDictOptions(flatten_optimizer_state_dict=True, cpu_offload=True)
+
+
+def _worker_process(
+    process_rank: int,
+    world_size: int,
+    primary_addr: str,
+    primary_port: int,
+    input_path: str,
+    output_path: str,
+) -> None:
+    """
+    Worker process that initializes the Gloo process group and prints verification messages.
+
+    Args:
+        process_rank: Rank of this process in the process group
+        world_size: Total number of processes in the group
+        primary_addr: Address of the primary process for coordination
+        primary_port: Port for process group coordination
+        input_path: Input checkpoint path
+        output_path: Output checkpoint path
+    """
+    # Set required environment variables for OLMo-core distributed utilities
+    os.environ.setdefault(OLMO_NUM_NODES_ENV_VAR, "1")
+    os.environ.setdefault(OLMO_LOCAL_WORLD_SIZE_ENV_VAR, str(world_size))
+    os.environ.setdefault(OLMO_LOCAL_RANK_ENV_VAR, str(process_rank))
+
+    # Initialize distributed process group with Gloo backend
+    dist.init_process_group(
+        "gloo",
+        timeout=timedelta(minutes=5),
+        init_method=f"tcp://{primary_addr}:{primary_port}",
+        world_size=world_size,
+        rank=process_rank)
+
+    # Print verification messages
+    rank = get_rank()
+    ws = get_world_size()
+
+    print(f"[Rank {rank}/{ws}] Process group successfully initialized!")
+    print(f"[Rank {rank}/{ws}] Backend: {dist.get_backend()}")
+    print(f"[Rank {rank}/{ws}] Process group size: {ws}")
+    print(f"[Rank {rank}/{ws}] Input: {input_path}")
+    print(f"[Rank {rank}/{ws}] Output: {output_path}")
+
+    # Load model
+    model_config, optim_config = model_and_optim_config_from_path(input_path)
+    model = model_config.build(init_device="meta")
+    model.apply_fsdp(
+        dp_mesh=init_device_mesh("cpu", (ws,)),
+    )
+    model.to_empty(device=torch.device("cpu"))
+    optim = optim_config.build(model, strict=True)
+
+    with TemporaryDirectory(prefix=f"reshard_core_checkpoints-rank{get_rank()}-") as work_dir:
+        model_and_optim_dir = join_path(input_path, "model_and_optim")
+        log.info(f"Loading checkpoint from '{model_and_optim_dir}'")
+        load_model_and_optim_state(
+            model_and_optim_dir,
+            model,
+            optim,
+            flatten_optimizer_state=True,
+            work_dir=work_dir,
+        )
+        del model_and_optim_dir
+
+    # Save model
+    log.info(f"Saving resharded model to '{output_path}'")
+    if rank == 0:
+        if os.path.exists(output_path):
+            shutil.rmtree(output_path)
+
+        def ignore_subdir(path: str, files):
+            if os.path.basename(path) == "model_and_optim":
+                return files
+            else:
+                return []
+
+        shutil.copytree(input_path, output_path, ignore=ignore_subdir)
+    dist.barrier()
+
+    model_and_optim_dir = join_path(output_path, "model_and_optim")
+    save_model_and_optim_state(model_and_optim_dir, model, optim, save_overwrite=True)
+    log.info(f"Saved resharded model to '{output_path}'")
+
+    # Barrier to ensure all processes finish together
+    dist.barrier()
+
+    if rank == 0:
+        print(f"\n[Rank 0] All {ws} processes completed successfully!")
+
+    # Clean up
+    dist.destroy_process_group()
+
+
+@click.command(context_settings={"help_option_names": ["-h", "--help"]})
+@click.option(
+    "--input",
+    "-i",
+    "input_path",
+    required=True,
+    help="Input checkpoint path",
+)
+@click.option(
+    "--output",
+    "-o",
+    "output_path",
+    required=True,
+    help="Output checkpoint path",
+)
+@click.option(
+    "--num-processes",
+    "-n",
+    type=int,
+    default=2,
+    help="Number of processes to spawn for the Gloo process group (default: 2)",
+)
+def main(input_path: str, output_path: str, num_processes: int) -> None:
+    """
+    Reshard an OLMo-core checkpoint across different process group configurations.
+
+    This script establishes a Gloo process group with the specified number of processes
+    to perform checkpoint resharding operations (implementation to be added).
+
+    The script will launch multiple worker processes using torch.multiprocessing and
+    coordinate them using a TCP-based rendezvous on localhost.
+
+    Examples:
+
+    \b
+    # Reshard checkpoint with 4 processes
+    python reshard_core_checkpoint.py \\
+        --input gs://bucket/checkpoint-in \\
+        --output ./checkpoint-out \\
+        --num-processes 4
+
+    \b
+    # Reshard with default 2 processes
+    python reshard_core_checkpoint.py -i ./input -o ./output
+    """
+    if num_processes < 2:
+        raise ValueError(f"num_processes must be at least 2, got {num_processes}")
+
+    # Find an available port for process coordination
+    primary_addr = "127.0.0.1"
+    primary_port = _find_open_port(host=primary_addr)
+
+    log.info(f"Launching {num_processes} worker processes on port {primary_port}...")
+    print(f"Launching {num_processes} worker processes...")
+    print(f"Coordination endpoint: tcp://{primary_addr}:{primary_port}\n")
+
+    # Launch worker processes using torch.multiprocessing
+    # Use 'fork' start method for Gloo backend (CPU operations)
+    mp.start_processes(
+        _worker_process,
+        args=(num_processes, primary_addr, primary_port, input_path, output_path),
+        nprocs=num_processes,
+        start_method="fork",
+    )
+
+    print("\n✓ All worker processes completed successfully!")
+
+
+if __name__ == "__main__":
+    prepare_cli_environment()
+    main()
