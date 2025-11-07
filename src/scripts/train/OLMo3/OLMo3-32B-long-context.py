@@ -127,8 +127,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     return (
         TrainerConfig(
             # load_path="gs://ai2-llm/checkpoints/stego32-highlr-filter3/step679000+678000+677000+676000/model_and_optim/",  # TODO: update to actual checkpoint
-            load_path="gs://ai2-llm/checkpoints/stego32-midtraining-run-2-20251105T225302+0000/step23842",
+            # load_path="gs://ai2-llm/checkpoints/stego32-midtraining-run-2-20251105T225302+0000/step23842",  # < best not soup
             # load_path="gs://ai2-llm/checkpoints/stego32-midtraining-run-4/step23842",
+            load_path="gs://ai2-llm/checkpoints/stego32-midtraining-runs-merged-step23842-resharded16",
             load_strategy=LoadStrategy.always,
             load_trainer_state=False,
             load_optim_state=True,  # worked when false for soup
