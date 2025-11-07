@@ -127,7 +127,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             load_path="gs://ai2-llm/checkpoints/stego32-highlr-filter3/step679000+678000+677000+676000/model_and_optim/",  # TODO: update to actual checkpoint
             load_strategy=LoadStrategy.always,
             load_trainer_state=False,
-            load_optim_state=True,
+            load_optim_state=False,
             save_folder=f"gs://ai2-llm/checkpoints/{common.run_name}/",
             save_overwrite=True,
             metrics_collect_interval=50,
