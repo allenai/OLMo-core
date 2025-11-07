@@ -354,22 +354,28 @@ def load_model_and_optim_state(
     if key_mapping is not None:
         swap_param_keys(state_dict, key_mapping, metadata=metadata)
 
+    log.info("Am going to load the model state dict now.")
     dist_cp.load(
         state_dict,
         checkpoint_id=dir,
         storage_reader=reader,
         process_group=process_group,
     )
+    log.info("Finished loading the model state dict.")
+    gc_cuda()
 
     if key_mapping is not None:
         swap_param_keys(state_dict, key_mapping, reverse=True, quiet=True)
 
+    log.info("Am going to set the model state dict now.")
     dist_cp_sd.set_model_state_dict(
         model, state_dict["model"], options=dist_cp_sd.StateDictOptions(strict=strict)
     )
+    log.info("Finished setting model state dict.")
     gc_cuda()
 
     if optim is not None:
+        log.info("Am going to set the optim state dict now.")
         dist_cp_sd.set_optimizer_state_dict(
             model,
             optim,
@@ -378,6 +384,7 @@ def load_model_and_optim_state(
                 strict=strict, flatten_optimizer_state_dict=flatten_optimizer_state
             ),
         )
+        log.info("Finished setting the optim state dict.")
         gc_cuda()
 
 
