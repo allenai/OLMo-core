@@ -350,25 +350,24 @@ class TransformerTrainModule(TrainModule):
             (batch["labels"] != self.label_ignore_index).sum(), self.device
         )
 
-        if not dry_run:
-            # Record percentage of masked labels.
+        # Record percentage of masked labels.
+        self.record_metric(
+            "train/masked labels (%)",  # just a proportion, not a percentage
+            (batch_num_tokens - batch_num_tokens_for_loss) / batch_num_tokens,
+            ReduceType.mean,
+        )
+
+        # Record percentage of masked instances.
+        if (instance_mask := batch.get("instance_mask")) is not None:
             self.record_metric(
-                "train/masked labels (%)",  # just a proportion, not a percentage
-                (batch_num_tokens - batch_num_tokens_for_loss) / batch_num_tokens,
+                "train/masked instances (%)",  # just a proportion, not a percentage
+                (~instance_mask).float().mean(),
                 ReduceType.mean,
             )
-
-            # Record percentage of masked instances.
-            if (instance_mask := batch.get("instance_mask")) is not None:
-                self.record_metric(
-                    "train/masked instances (%)",  # just a proportion, not a percentage
-                    (~instance_mask).float().mean(),
-                    ReduceType.mean,
-                )
-                # WARN: When we mask out all local instances with the instance filter, we add a small epsilon
-                # to the loss divisor to avoid division by zero while minimizing the impact on loss calculation.
-                all_local_instances_masked = (~instance_mask).all()
-                batch_num_tokens_for_loss += all_local_instances_masked * 1e-5
+            # WARN: When we mask out all local instances with the instance filter, we add a small epsilon
+            # to the loss divisor to avoid division by zero while minimizing the impact on loss calculation.
+            all_local_instances_masked = (~instance_mask).all()
+            batch_num_tokens_for_loss += all_local_instances_masked * 1e-5
 
         # Batch losses to record.
         ce_batch_loss = move_to_device(torch.tensor(0.0), self.device)
