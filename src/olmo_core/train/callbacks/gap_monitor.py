@@ -83,18 +83,21 @@ class GAPMonitorCallback(Callback):
 
         if isinstance(output, torch.Tensor):
             self.record_tensor_stats(module_name, output, "activation")
-        else:
+        elif output is not None:
             raise RuntimeError(f"unsupported output type {type(output)} for module '{module_name}'")
 
     @torch._dynamo.disable()
     def backward_hook(self, module: nn.Module, grad_output, module_name: str):
         del module
+        if not self.enabled:
+            return
+
         if isinstance(grad_output, tuple):
             grad_output = grad_output[0]
 
         if isinstance(grad_output, torch.Tensor):
             self.record_tensor_stats(module_name, grad_output, "activation_grad")
-        else:
+        elif grad_output is not None:
             raise RuntimeError(
                 f"unsupported grad_output type {type(grad_output)} for module '{module_name}'"
             )
