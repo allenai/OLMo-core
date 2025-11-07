@@ -1,4 +1,5 @@
 import dataclasses
+import gc
 import io
 import logging
 import operator
@@ -340,25 +341,12 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
         if isinstance(self.path, str):
             init_client(self.path)
 
-        with ThreadPoolExecutor(max_workers=self.thread_count) as executor:
-            read_item_content_futures = []
-            for read_item in plan.items:
-                read_item_content_futures.append(
-                    executor.submit(self._get_content_for_read, read_item)
-                )
-            read_item_content_results = []
-            for f in as_completed(read_item_content_futures):
-                try:
-                    read_item_content_results.append(f.result())
-                except BaseException:
-                    # NOTE: we might get an error here that can't be pickled, which causes a different failure
-                    # later when PyTorch tries to reduce that error across ranks. So here we just make
-                    # sure we're raising a simple error type that can be pickled.
-                    raise OLMoCheckpointError(f"Original error:\n{traceback.format_exc()}")
+        assert self.thread_count == 1
 
-        # Modified from `FileSystemReader.read_data()`
-        for read_item, content in read_item_content_results:
+        for read_item in plan.items:
+            read_item, content = self._get_content_for_read(read_item)
             bytes = io.BytesIO(content)
+            del content
             bytes.seek(0)
             if read_item.type == LoadItemType.BYTE_IO:
                 planner.load_bytes(read_item, bytes)
@@ -376,7 +364,11 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
                     target_tensor.size() == tensor.size()
                 ), f"req {read_item.storage_index} mismatch sizes {target_tensor.size()} vs {tensor.size()}"
                 target_tensor.copy_(tensor)
+                del tensor
                 planner.commit_tensor(read_item, target_tensor)
+            del bytes
+            del read_item
+            gc.collect()
 
         fut: Future = Future()
         fut.set_result(None)
