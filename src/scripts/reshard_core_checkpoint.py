@@ -158,6 +158,7 @@ def _worker_process(
             optim,
             flatten_optimizer_state=True,
             work_dir=work_dir,
+            thread_count=1
         )
         del model_and_optim_dir
 
