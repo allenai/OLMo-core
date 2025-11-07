@@ -123,6 +123,7 @@ class GAPMonitorCallback(Callback):
             # cheaper, much simpler, and probably good enough.
             tensor = get_local_tensor(tensor)
             tensor = tensor.view(tensor.shape[0], -1)
+            max_ = tensor.abs().max()
             var, mean = var_mean(tensor, dim=-1)
             # NOTE: to handle gradient accumulation we divide by local batch size (in instances),
             # which is recorded in `self.pre_step()`, as opposed to micro-batch size, and then
@@ -130,6 +131,12 @@ class GAPMonitorCallback(Callback):
             var = var.float().sum() / self._local_batch_size_instances
             mean = mean.float().sum() / self._local_batch_size_instances
             if self._dry_run_complete:
+                self.trainer.record_metric(
+                    f"{prefix}/{name}/max",
+                    max_,
+                    reduce_type=ReduceType.max,
+                    merge_strategy=MetricMergeStrategy.max,
+                )
                 self.trainer.record_metric(
                     f"{prefix}/{name}/mean",
                     mean,
@@ -143,8 +150,10 @@ class GAPMonitorCallback(Callback):
                     merge_strategy=MetricMergeStrategy.sum,
                 )
         else:
+            max_ = get_local_tensor(tensor).abs().max()
             var, mean = var_mean(tensor)
             if self._dry_run_complete:
+                self.trainer.record_metric(f"{prefix}/{name}/max", max_, reduce_type=ReduceType.max)
                 self.trainer.record_metric(f"{prefix}/{name}/mean", mean, reduce_type=None)
                 self.trainer.record_metric(f"{prefix}/{name}/var", var, reduce_type=None)
 
