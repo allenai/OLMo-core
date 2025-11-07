@@ -344,11 +344,11 @@ class TransformerTrainModule(TrainModule):
         if "labels" not in batch:
             batch["labels"] = get_labels(batch, label_ignore_index=self.label_ignore_index)
 
-        # Record how many instances are going to be skipped (masked out).
-        if (instance_mask := batch.get("instance_mask")) is not None and not dry_run:
-            self.record_metric(
-                "train/masked instances (%)", (~instance_mask).float().mean(), ReduceType.mean
-            )
+        # # Record how many instances are going to be skipped (masked out).
+        # if (instance_mask := batch.get("instance_mask")) is not None and not dry_run:
+        #     self.record_metric(
+        #         "train/masked instances (%)", (~instance_mask).float().mean(), ReduceType.mean
+        #     )
 
         # Calculate and record how many tokens are going to be used in the loss.
         batch_num_tokens = batch["labels"].numel()

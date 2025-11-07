@@ -128,7 +128,7 @@ def inspect_batch(
 
     # Reshuffle to prepare for iteration
     print("Reshuffling data loader...")
-    data_loader.reshuffle(epoch=0)
+    data_loader.reshuffle(epoch=1)
 
     # Get the first batch
     print("\nGetting first batch...")
