@@ -1,3 +1,4 @@
+import logging
 from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, Optional, Union
@@ -6,21 +7,22 @@ import torch
 import torch.distributed as dist
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 import torch.nn as nn
-from torch.distributed.checkpoint.metadata import Metadata
-from torch.distributed.checkpoint.stateful import Stateful
-from torch.optim import Optimizer
-
 from olmo_core.config import StrEnum
 from olmo_core.data.utils import get_labels, split_batch
 from olmo_core.distributed.utils import get_local_tensor, get_world_size
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.functional.cross_entropy_loss import cross_entropy_loss
 from olmo_core.utils import move_to_device
+from torch.distributed.checkpoint.metadata import Metadata
+from torch.distributed.checkpoint.stateful import Stateful
+from torch.optim import Optimizer
 
 from ..common import MetricMergeStrategy, ReduceType, get_inputs_for_loss
 
 if TYPE_CHECKING:
     from ..trainer import Trainer
+
+log = logging.getLogger(__name__)
 
 
 class EvalBatchSizeUnit(StrEnum):
@@ -298,6 +300,8 @@ class BasicTrainModule(TrainModule):
     def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
         self.model.train()
 
+        log.info("TRAINING A BATCH")
+        print("(PRINT STATEMENT) TRAINING BATCH")
         # Move tensors to the right device.
         batch = move_to_device(batch, self.trainer.device)
 
