@@ -2,15 +2,12 @@ import gc
 import logging
 import os
 import shutil
-from concurrent.futures import ThreadPoolExecutor
-from threading import Lock
-from typing import Any, Dict, List
+from typing import List, Dict, Any
 
 import click
 import torch
 from torch.distributed.checkpoint import TensorStorageMetadata
 
-from olmo_core.data.utils import chunked
 from olmo_core.distributed.checkpoint import (
     get_checkpoint_metadata,
     load_state_dict,
@@ -20,43 +17,6 @@ from olmo_core.io import join_path
 from olmo_core.utils import prepare_cli_environment
 
 log = logging.getLogger(__name__)
-
-
-def process_checkpoint_key(
-    path: str,
-    key: str,
-    meta: Any,
-    merged_state_dict: Dict[str, Any],
-    checkpoint_index: int,
-    total_checkpoints: int,
-    lock: Lock,
-) -> None:
-    """Process a single key from a checkpoint, loading and merging it into the merged state dict."""
-    if not isinstance(meta, TensorStorageMetadata):
-        with lock:
-            if key in merged_state_dict:
-                log.info(
-                    f"Skipping non-tensor '{key}' from checkpoint {checkpoint_index} because we already have a value..."
-                )
-            else:
-                log.info(f"Loading non-tensor '{key}' from checkpoint {checkpoint_index}...")
-                mini_state_dict = {key: None}
-                load_state_dict(path, mini_state_dict)
-                merged_state_dict[key] = mini_state_dict[key]
-    else:
-        # Initialize the tensor in merged_state_dict if it doesn't exist yet
-        with lock:
-            if key not in merged_state_dict:
-                merged_state_dict[key] = torch.zeros(meta.size)
-
-        log.info(f"Loading '{key}' from checkpoint {checkpoint_index}...")
-        # Load into a temporary tensor (no lock needed for local operation)
-        tensor = torch.empty_like(merged_state_dict[key])
-        load_state_dict(path, {key: tensor})
-
-        # Add to merged tensor with lock protection
-        with lock:
-            merged_state_dict[key].add_(tensor, alpha=1 / total_checkpoints)
 
 
 def merge_checkpoints(
@@ -73,29 +33,25 @@ def merge_checkpoints(
     checkpoint_paths = [join_path(p, "model_and_optim") for p in model_paths]
     checkpoint_metadata = [get_checkpoint_metadata(path) for path in checkpoint_paths]
     merged_state_dict: Dict[str, Any] = {}
-    lock = Lock()
-    total_checkpoints = len(checkpoint_paths)
-
     for i, (path, metadata) in enumerate(zip(checkpoint_paths, checkpoint_metadata)):
-        # Process all keys in this checkpoint in parallel using a thread pool
-        max_workers = min(os.cpu_count() or 1, 32)
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = [
-                executor.submit(
-                    process_checkpoint_key,
-                    path,
-                    key,
-                    meta,
-                    merged_state_dict,
-                    i,
-                    total_checkpoints,
-                    lock,
-                )
-                for key, meta in metadata.state_dict_metadata.items()
-            ]
-            # Wait for all tasks to complete and propagate any exceptions
-            for future in futures:
-                future.result()
+        for key, meta in metadata.state_dict_metadata.items():
+            if not isinstance(meta, TensorStorageMetadata):
+                if key in merged_state_dict:
+                    log.info(
+                        f"Skipping non-tensor '{key}' from checkpoint {i} because we already have a value..."
+                    )
+                else:
+                    log.info(f"Loading non-tensor '{key}' from checkpoint {i}...")
+                    mini_state_dict = {key: None}
+                    load_state_dict(path, mini_state_dict)
+                    merged_state_dict[key] = mini_state_dict[key]
+            else:
+                if key not in merged_state_dict:
+                    merged_state_dict[key] = torch.zeros(meta.size)
+                log.info(f"Loading '{key}' from checkpoint {i}...")
+                tensor = torch.empty_like(merged_state_dict[key])
+                load_state_dict(path, {key: tensor})
+                merged_state_dict[key].add_(tensor, alpha=1 / len(checkpoint_paths))
         gc.collect()
 
     # create the output dir
