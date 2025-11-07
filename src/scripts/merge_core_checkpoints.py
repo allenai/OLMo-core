@@ -1,27 +1,20 @@
 import gc
-import json
 import logging
 import os
 import shutil
-import tempfile
-from fnmatch import fnmatch
-from tempfile import TemporaryDirectory
-from typing import List, Optional, Dict, Tuple, Any
+from typing import List, Dict, Any
 
 import click
 import torch
-import torch.distributed.checkpoint.state_dict as dist_cp_sd
-from cached_path import cached_path
 from torch.distributed.checkpoint import TensorStorageMetadata
 
-from olmo_core.aliases import PathOrStr
-from olmo_core.distributed.checkpoint import load_model_and_optim_state, save_model_and_optim_state, \
-    get_checkpoint_metadata, load_state_dict, save_state_dict
-from olmo_core.io import file_exists, join_path, copy_file
-from olmo_core.nn.transformer import TransformerConfig, TransformerBlockConfig
-from olmo_core.optim import OptimConfig
+from olmo_core.distributed.checkpoint import (
+    get_checkpoint_metadata,
+    load_state_dict,
+    save_state_dict,
+)
+from olmo_core.io import join_path
 from olmo_core.utils import prepare_cli_environment
-
 
 log = logging.getLogger(__name__)
 
@@ -39,12 +32,14 @@ def merge_checkpoints(
     # merge checkpoints
     checkpoint_paths = [join_path(p, "model_and_optim") for p in model_paths]
     checkpoint_metadata = [get_checkpoint_metadata(path) for path in checkpoint_paths]
-    merged_state_dict = {}
+    merged_state_dict: Dict[str, Any] = {}
     for i, (path, metadata) in enumerate(zip(checkpoint_paths, checkpoint_metadata)):
         for key, meta in metadata.state_dict_metadata.items():
             if not isinstance(meta, TensorStorageMetadata):
                 if key in merged_state_dict:
-                    log.info(f"Skipping non-tensor '{key}' from checkpoint {i} because we already have a value...")
+                    log.info(
+                        f"Skipping non-tensor '{key}' from checkpoint {i} because we already have a value..."
+                    )
                 else:
                     log.info(f"Loading non-tensor '{key}' from checkpoint {i}...")
                     mini_state_dict = {key: None}
@@ -63,11 +58,13 @@ def merge_checkpoints(
     log.info(f"Saving merged checkpoint to {output_path}...")
     if os.path.exists(output_path):
         shutil.rmtree(output_path)
+
     def ignore_subdir(path: str, files):
         if os.path.basename(path) == "model_and_optim":
             return files
         else:
             return []
+
     shutil.copytree(model_paths[0], output_path, ignore=ignore_subdir)
     save_state_dict(join_path(output_path, "model_and_optim"), merged_state_dict)
 
@@ -79,7 +76,7 @@ def merge_checkpoints(
     "model_paths",
     multiple=True,
     required=True,
-    help="Model checkpoint path. Should be specified multiple times for different checkpoints"
+    help="Model checkpoint path. Should be specified multiple times for different checkpoints",
 )
 @click.option(
     "--output",
