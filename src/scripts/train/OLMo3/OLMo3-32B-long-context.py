@@ -59,8 +59,7 @@ python src/scripts/train/OLMo3/OLMo3-32B-long-context.py launch \
 SEQUENCE_LENGTH = 64 * 1024  # 64k seq len
 GLOBAL_BATCH_SIZE = 8 * 1024 * 1024  # ~8M tokens
 MAX_TOKENS = 100_000_000_000  # 100B
-
-# 7B_LR = 0.00020712352850360292
+LR = 0.0002071235285  # same as midtraining
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
@@ -90,7 +89,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         rank_microbatch_size=rank_microbatch_size,
         max_sequence_length=common.max_sequence_length,
         optim=SkipStepAdamWConfig(
-            lr=6e-4,  # todo: set to appropriate value for the 32B
+            lr=LR,
             weight_decay=0.1,
             betas=(0.9, 0.95),
             group_overrides=[
