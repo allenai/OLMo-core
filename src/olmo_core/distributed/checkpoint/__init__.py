@@ -45,7 +45,7 @@ from olmo_core.config import StrEnum
 from olmo_core.io import clear_directory, dir_is_empty, is_url, normalize_path
 from olmo_core.utils import gc_cuda, get_element_size, wait_for
 
-from ..utils import barrier, get_fs_local_rank, get_local_rank, is_distributed
+from ..utils import barrier, get_fs_local_rank, is_distributed
 from .filesystem import RemoteFileSystemReader, RemoteFileSystemWriter
 
 __all__ = [
@@ -299,7 +299,6 @@ def load_model_and_optim_state(
     strict: bool = True,
     flatten_optimizer_state: bool = False,
     thread_count: Optional[int] = None,
-    sequential_loading: bool = False,
 ):
     """
     Load model and optimizer state in-place from a checkpoint saved via :func:`save_model_and_optim_state()`.
@@ -342,83 +341,19 @@ def load_model_and_optim_state(
         the setting used when saving the state dict and is needed in a distributed setting when
         the params in some param groups may differ between ranks, such as with pipeline parallelism.
     :param thread_count: Set the number of threads used for certain operations.
-    :param sequential_loading: If True, load checkpoints sequentially per node (one rank per node at a time)
-        to reduce peak CPU memory usage. This is useful for very large models where all ranks loading
-        simultaneously would exceed available CPU RAM. With 8 nodes × 8 GPUs, this loads 8 ranks in parallel
-        (one per node) instead of all 64 ranks simultaneously. Default: False.
     """
     dir = normalize_path(dir)
-
-    # Sequential loading: load one rank per node at a time to reduce peak memory
-    # This reduces peak CPU memory from (num_ranks_per_node × model_size) to just (model_size) per node
-    # For example, with 8 nodes × 8 GPUs and a 380GB model:
-    #   - Without: 64×380GB = 24TB total (3TB per node) → OOM
-    #   - With: 8×380GB = 3TB total (380GB per node) → fits in 1.8TB per node
-    # Each rank waits for previous local ranks on its node to finish loading before starting
-    # All nodes can load in parallel (one rank per node at a time)
-    if sequential_loading and is_distributed():
-        local_rank = get_local_rank()
-
-        # Wait for all previous local ranks on this node to finish loading
-        # This synchronizes globally (across all nodes) but ensures only one rank per node
-        # is loading at a time, allowing parallel loading across nodes
-        for _ in range(local_rank):
-            barrier(process_group)
-
-    # STEP 1: Create state dict structure
-    # This creates a state dict containing references to the model's and optimizer's parameters.
-    # With cpu_offload=True (default):
-    #   - For FSDP models: Unshard parameters (collect full params from all ranks) and move to CPU
-    #   - For regular models: Move parameters to CPU
-    #   - State dict tensors are on CPU and will be populated with checkpoint data
-    #   - MEMORY: Full model size on CPU (unsharded if FSDP) - can cause CPU OOM for large models
-    #   - Later, set_model_state_dict() moves data from CPU to GPU and applies FSDP sharding
-    #
-    # With cpu_offload=False (if modified in _prepare_state_dict):
-    #   - For FSDP models: Unshard parameters but keep them on GPU (model's device)
-    #   - For regular models: Parameters stay on GPU
-    #   - State dict tensors are on GPU and will be populated with checkpoint data directly
-    #   - MEMORY: Full model size on GPU (unsharded if FSDP) - can cause GPU OOM for large models
-    #   - set_model_state_dict() only needs to apply FSDP sharding (no device movement)
-    #
-    # Trade-off: cpu_offload=True avoids GPU OOM but risks CPU OOM. cpu_offload=False avoids CPU OOM
-    # but risks GPU OOM. For very large models, cpu_offload=True is typically safer since CPU RAM
-    # is usually larger than GPU memory.
     state_dict = _prepare_state_dict(
         model, optim, process_group=process_group, flatten_optimizer_state=flatten_optimizer_state
     )
-
-    # STEP 2: Initialize checkpoint reader
-    # Creates a reader that can load checkpoint data from local filesystem or remote storage (S3, etc.)
     reader = RemoteFileSystemReader(
         dir, thread_count=thread_count, pre_download=pre_download, work_dir=work_dir
     )
-
-    # STEP 3: Read checkpoint metadata
-    # Loads the checkpoint metadata which contains information about:
-    #   - What tensors are in the checkpoint
-    #   - Their sizes, dtypes, and storage locations
-    #   - How data is sharded/stored
     metadata = reader.read_metadata()
 
-    # STEP 4: Apply key mapping if needed
-    # Allows loading checkpoints where parameter names differ from current model
     if key_mapping is not None:
         swap_param_keys(state_dict, key_mapping, metadata=metadata)
 
-    # STEP 5: Load checkpoint data into state dict
-    # This is where the actual checkpoint data is read from storage and written into the state dict.
-    # The process:
-    #   1. StorageReader.read_data() downloads/reads checkpoint files
-    #   2. Data is deserialized and loaded into the tensors in state_dict
-    #      - With cpu_offload=True: Data loads into CPU tensors (target tensors are on CPU)
-    #      - With cpu_offload=False: Data loads to CPU first (map_location="cpu" in read_data),
-    #        then copies to GPU target tensors. This avoids GPU memory spikes during deserialization.
-    #   3. For FSDP: Each rank loads only its required shards
-    #   4. For regular models: Each rank loads the full model
-    # MEMORY PEAK (cpu_offload=True): CPU state dict (full model) + checkpoint data being loaded (temporary)
-    # MEMORY PEAK (cpu_offload=False): GPU state dict (full model) + CPU temp tensors + checkpoint data (temporary)
-    # The RemoteFileSystemReader processes items incrementally to minimize peak memory.
     dist_cp.load(
         state_dict,
         checkpoint_id=dir,
@@ -426,37 +361,14 @@ def load_model_and_optim_state(
         process_group=process_group,
     )
 
-    # STEP 6: Reverse key mapping if needed
-    # Restores original key names after loading
     if key_mapping is not None:
         swap_param_keys(state_dict, key_mapping, reverse=True, quiet=True)
 
-    # STEP 7: Apply FSDP sharding (and device movement if cpu_offload=True)
-    # This is where the state dict is properly sharded for FSDP and moved to GPU if needed.
-    # set_model_state_dict() handles:
-    #   With cpu_offload=True (default):
-    #     1. Device movement: Moves tensors from CPU to GPU (model's device)
-    #     2. FSDP sharding: For FSDP models, shards the full parameters according to FSDP's
-    #        sharding strategy and updates the model's GPU parameters
-    #     3. For non-FSDP models: Simply moves parameters to GPU
-    #   With cpu_offload=False:
-    #     1. FSDP sharding: For FSDP models, shards the full GPU parameters according to FSDP's
-    #        sharding strategy (no device movement needed)
-    #     2. For non-FSDP models: Parameters already on GPU, no action needed
-    # After this call:
-    #   - Model parameters are on GPU (sharded if FSDP)
-    #   - State dict can be freed (happens automatically when it goes out of scope)
-    # MEMORY (cpu_offload=True): CPU state dict is freed, GPU has sharded model parameters
-    # MEMORY (cpu_offload=False): GPU state dict is freed, GPU has sharded model parameters
     dist_cp_sd.set_model_state_dict(
         model, state_dict["model"], options=dist_cp_sd.StateDictOptions(strict=strict)
     )
     gc_cuda()
 
-    # STEP 8: Move optimizer state from CPU to GPU and apply FSDP sharding
-    # Similar to model state, but for optimizer state (momentum buffers, etc.)
-    # For FSDP: Optimizer state is sharded to match parameter sharding
-    # MEMORY: CPU optimizer state dict is freed, GPU has sharded optimizer state
     if optim is not None:
         dist_cp_sd.set_optimizer_state_dict(
             model,
@@ -467,11 +379,6 @@ def load_model_and_optim_state(
             ),
         )
         gc_cuda()
-
-    # If using sequential loading, synchronize after this rank finishes loading
-    # This allows the next rank to proceed
-    if sequential_loading and is_distributed():
-        barrier(process_group)
 
 
 class UnshardStrategyType(StrEnum):
