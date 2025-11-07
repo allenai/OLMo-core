@@ -36,69 +36,68 @@ def merge_checkpoints(
     checkpoint_metadata = [get_checkpoint_metadata(path) for path in checkpoint_paths]
     merged_state_dict: Dict[str, Any] = {}
     for i, (path, metadata) in enumerate(zip(checkpoint_paths, checkpoint_metadata)):
-        # Process keys in batches of 128
-        total_keys = len(metadata.state_dict_metadata)
+        # Separate non-tensor and tensor keys upfront
+        non_tensor_keys = []
+        tensor_keys = []
+
+        for key, meta in metadata.state_dict_metadata.items():
+            if not isinstance(meta, TensorStorageMetadata):
+                non_tensor_keys.append((key, meta))
+            else:
+                tensor_keys.append((key, meta))
+
+        # Load all non-tensor keys in one chunk
+        if non_tensor_keys:
+            non_tensor_batch_dict = {}
+            for key, meta in non_tensor_keys:
+                if key in merged_state_dict:
+                    log.info(
+                        f"Skipping non-tensor '{key}' from checkpoint {i} because we already have a value..."
+                    )
+                else:
+                    non_tensor_batch_dict[key] = None
+
+            if non_tensor_batch_dict:
+                log.info(
+                    f"Loading {len(non_tensor_batch_dict)} non-tensor keys from checkpoint {i}..."
+                )
+                load_state_dict(path, non_tensor_batch_dict)
+                for key in non_tensor_batch_dict:
+                    merged_state_dict[key] = non_tensor_batch_dict[key]
+
+        # Process tensor keys in batches of 128
+        total_tensor_keys = len(tensor_keys)
         keys_processed = 0
         start_time = time.time()
 
-        for batch in chunked(list(metadata.state_dict_metadata.items()), 128):
-            # Separate non-tensor and tensor keys
-            non_tensor_keys = []
-            tensor_keys = []
-
+        for batch in chunked(tensor_keys, 128):
+            # Initialize tensors in merged_state_dict
             for key, meta in batch:
-                if not isinstance(meta, TensorStorageMetadata):
-                    non_tensor_keys.append((key, meta))
-                else:
-                    tensor_keys.append((key, meta))
+                if key not in merged_state_dict:
+                    merged_state_dict[key] = torch.zeros(meta.size)
 
-            # Load non-tensor keys in batch
-            if non_tensor_keys:
-                non_tensor_batch_dict = {}
-                for key, meta in non_tensor_keys:
-                    if key in merged_state_dict:
-                        log.info(
-                            f"Skipping non-tensor '{key}' from checkpoint {i} because we already have a value..."
-                        )
-                    else:
-                        non_tensor_batch_dict[key] = None
+            # Build batch dict with temporary tensors
+            tensor_batch_dict = {}
+            for key, meta in batch:
+                tensor_batch_dict[key] = torch.empty_like(merged_state_dict[key])
 
-                if non_tensor_batch_dict:
-                    load_state_dict(path, non_tensor_batch_dict)
-                    for key in non_tensor_batch_dict:
-                        merged_state_dict[key] = non_tensor_batch_dict[key]
+            # Load all tensors in one call
+            load_state_dict(path, tensor_batch_dict)
 
-            # Load tensor keys in batch
-            if tensor_keys:
-                # Initialize tensors in merged_state_dict
-                for key, meta in tensor_keys:
-                    if key not in merged_state_dict:
-                        merged_state_dict[key] = torch.zeros(meta.size)
-
-                # Build batch dict with temporary tensors
-                tensor_batch_dict = {}
-                for key, meta in tensor_keys:
-                    tensor_batch_dict[key] = torch.empty_like(merged_state_dict[key])
-
-                # Load all tensors in one call
-                load_state_dict(path, tensor_batch_dict)
-
-                # Add to merged_state_dict
-                for key, meta in tensor_keys:
-                    merged_state_dict[key].add_(
-                        tensor_batch_dict[key], alpha=1 / len(checkpoint_paths)
-                    )
+            # Add to merged_state_dict
+            for key, meta in batch:
+                merged_state_dict[key].add_(tensor_batch_dict[key], alpha=1 / len(checkpoint_paths))
 
             # Update progress and log
             keys_processed += len(batch)
             elapsed_time = time.time() - start_time
-            keys_remaining = total_keys - keys_processed
+            keys_remaining = total_tensor_keys - keys_processed
 
             if keys_processed > 0 and elapsed_time > 0:
                 time_per_key = elapsed_time / keys_processed
                 eta_seconds = time_per_key * keys_remaining
                 log.info(
-                    f"Checkpoint {i}: processed {keys_processed}/{total_keys} keys, "
+                    f"Checkpoint {i}: processed {keys_processed}/{total_tensor_keys} tensor keys, "
                     f"ETA: {eta_seconds:.1f}s"
                 )
 
