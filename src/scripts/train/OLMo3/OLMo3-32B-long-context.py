@@ -4,7 +4,7 @@ from functools import partial
 from olmo_core.config import DType
 from olmo_core.data import (
     NumpyDataLoaderConfig,
-    NumpyFSLDatasetConfig,
+    NumpyPackedFSLDatasetConfig,
 )
 from olmo_core.data.numpy_dataset import InstanceFilterConfig
 from olmo_core.distributed.parallel import DataParallelType
@@ -124,8 +124,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
     return (
         TrainerConfig(
-            load_path="gs://ai2-llm/checkpoints/stego32-highlr-filter3/step679000+678000+677000+676000/model_and_optim/",  # TODO: update to actual checkpoint
-            # load_path="gs://ai2-llm/checkpoints/stego32-midtraining-run-2-20251105T225302+0000/step23842",
+            # load_path="gs://ai2-llm/checkpoints/stego32-highlr-filter3/step679000+678000+677000+676000/model_and_optim/",  # TODO: update to actual checkpoint
+            load_path="gs://ai2-llm/checkpoints/stego32-midtraining-run-2-20251105T225302+0000/step23842",
+            # load_path="gs://ai2-llm/checkpoints/stego32-midtraining-run-4/step23842",
             load_strategy=LoadStrategy.always,
             load_trainer_state=False,
             load_optim_state=True,  # worked when false for soup
@@ -174,35 +175,35 @@ def build_data_components(
     Default dataset and data loader configurations. Constructs a simple FSL dataset and data loader
     configuration with default settings.
     """
-    # dataset_config = NumpyPackedFSLDatasetConfig.glob(
-    #     "gs://ai2-llm/preprocessed/tylerr/lc-reshard-final-cleaned/v0.1/allenai/dolma2-tokenizer/*.npy",
-    #     tokenizer=common.tokenizer,
-    #     work_dir=common.work_dir,
-    #     sequence_length=common.max_sequence_length,
-    #     generate_doc_lengths=intra_document_masking,  # enables intra-document masking  # True
-    #     source_group_size=8,
-    #     source_permutation_seed=123,
-    #     instance_filter_config=None
-    #     if not include_instance_filter
-    #     else InstanceFilterConfig(
-    #         repetition_max_period=13, repetition_min_period=1, repetition_max_count=32
-    #     ),
-    # )
-
-    dataset_config = NumpyFSLDatasetConfig.glob(
+    dataset_config = NumpyPackedFSLDatasetConfig.glob(
         "gs://ai2-llm/preprocessed/tylerr/lc-reshard-final-cleaned/v0.1/allenai/dolma2-tokenizer/*.npy",
         tokenizer=common.tokenizer,
         work_dir=common.work_dir,
         sequence_length=common.max_sequence_length,
         generate_doc_lengths=intra_document_masking,  # enables intra-document masking  # True
-        # source_group_size=8,
-        # source_permutation_seed=123,
+        source_group_size=8,
+        source_permutation_seed=123,
         instance_filter_config=None
         if not include_instance_filter
         else InstanceFilterConfig(
             repetition_max_period=13, repetition_min_period=1, repetition_max_count=32
         ),
     )
+
+    # dataset_config = NumpyFSLDatasetConfig.glob(
+    #     "gs://ai2-llm/preprocessed/tylerr/lc-reshard-final-cleaned/v0.1/allenai/dolma2-tokenizer/*.npy",
+    #     tokenizer=common.tokenizer,
+    #     work_dir=common.work_dir,
+    #     sequence_length=common.max_sequence_length,
+    #     generate_doc_lengths=intra_document_masking,  # enables intra-document masking  # True
+    #     # source_group_size=8,
+    #     # source_permutation_seed=123,
+    #     instance_filter_config=None
+    #     if not include_instance_filter
+    #     else InstanceFilterConfig(
+    #         repetition_max_period=13, repetition_min_period=1, repetition_max_count=32
+    #     ),
+    # )
 
     data_loader_config = NumpyDataLoaderConfig(
         global_batch_size=common.global_batch_size, seed=34521, num_workers=8
