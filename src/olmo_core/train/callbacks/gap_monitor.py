@@ -50,6 +50,9 @@ class GAPMonitorCallback(Callback):
             # Register forward hook to monitor activations.
             h = m.register_forward_hook(ft.partial(self.forward_hook, module_name=n))
             handles.append(h)
+            # Register backward pre-hook to monitor gradients wrt activations.
+            h = m.register_full_backward_pre_hook(ft.partial(self.backward_hook, module_name=n))
+            handles.append(h)
         self._handles = handles  # type: ignore[assignment]
 
     def pre_step(self, batch: Dict[str, Any]):
@@ -75,29 +78,43 @@ class GAPMonitorCallback(Callback):
         if not self.enabled:
             return
 
-        # Record activation stats.
+        if isinstance(output, tuple):
+            output = output[0]
+
         if isinstance(output, torch.Tensor):
             self.record_tensor_stats(module_name, output, "activation")
-        elif isinstance(output, tuple):
-            for o in output:
-                if isinstance(o, torch.Tensor):
-                    self.record_tensor_stats(module_name, o, "activation")
         else:
             raise RuntimeError(f"unsupported output type {type(output)} for module '{module_name}'")
 
+    @torch._dynamo.disable()
+    def backward_hook(self, module: nn.Module, grad_output, module_name: str):
+        del module
+        if isinstance(grad_output, tuple):
+            grad_output = grad_output[0]
+
+        if isinstance(grad_output, torch.Tensor):
+            self.record_tensor_stats(module_name, grad_output, "activation_grad")
+        else:
+            raise RuntimeError(
+                f"unsupported grad_output type {type(grad_output)} for module '{module_name}'"
+            )
+
     def record_tensor_stats(
-        self, name: str, tensor: torch.Tensor, kind: Literal["grad", "activation", "param"]
+        self,
+        name: str,
+        tensor: torch.Tensor,
+        kind: Literal["grad", "activation", "activation_grad", "param"],
     ):
         if tensor.numel() <= 1:
             return
 
         tensor = tensor.detach()
         prefix = f"gap/{kind}s"
-        if kind == "activation":
+        if kind in ("activation", "activation_grad"):
             if tensor.ndim <= 1:
                 # No point in computing stats for 0-dim or 1-dim activations (like the loss).
                 return
-            # For activations we'll compute the local stats *per instance* and then average them
+            # For activations/output-grads we'll compute the local stats *per instance* and then average them
             # across the global batch.
             # Technically it might be better to compute global stats directly, but this way is
             # cheaper, much simpler, and probably good enough.
