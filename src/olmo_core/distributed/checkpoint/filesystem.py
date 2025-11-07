@@ -311,6 +311,7 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
             raise ValueError("thread count must be at least 1")
         self.path = normalize_path(path)
         self.thread_count = thread_count or get_default_thread_count()
+        log.info(f"RemoteFileSystemReader thread count: {self.thread_count}")
         self.pre_download = pre_download
         self.work_dir = normalize_path(work_dir) if work_dir is not None else None
         self.storage_data: Dict[MetadataIndex, _StorageInfo] = dict()
@@ -346,37 +347,40 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
                 read_item_content_futures.append(
                     executor.submit(self._get_content_for_read, read_item)
                 )
-            read_item_content_results = []
+            # Process items incrementally as they complete to avoid OOM with large checkpoints.
+            # This allows memory to be freed after each item is processed rather than accumulating
+            # all raw bytes and tensors in memory simultaneously.
             for f in as_completed(read_item_content_futures):
                 try:
-                    read_item_content_results.append(f.result())
+                    read_item, content = f.result()
                 except BaseException:
                     # NOTE: we might get an error here that can't be pickled, which causes a different failure
                     # later when PyTorch tries to reduce that error across ranks. So here we just make
                     # sure we're raising a simple error type that can be pickled.
                     raise OLMoCheckpointError(f"Original error:\n{traceback.format_exc()}")
 
-        # Modified from `FileSystemReader.read_data()`
-        for read_item, content in read_item_content_results:
-            bytes = io.BytesIO(content)
-            bytes.seek(0)
-            if read_item.type == LoadItemType.BYTE_IO:
-                planner.load_bytes(read_item, bytes)
-            else:
-                # NOTE: 'weights_only=False' needed to load torchao's float8 linear layer checkpoints
-                tensor = cast(
-                    torch.Tensor, torch.load(bytes, map_location="cpu", weights_only=False)
-                )
-                tensor = _narrow_tensor_by_index(
-                    tensor, read_item.storage_offsets, read_item.lengths
-                )
-                target_tensor = planner.resolve_tensor(read_item).detach()
+                # Process immediately and let content go out of scope after this iteration
+                # Modified from `FileSystemReader.read_data()`
+                bytes = io.BytesIO(content)
+                bytes.seek(0)
+                if read_item.type == LoadItemType.BYTE_IO:
+                    planner.load_bytes(read_item, bytes)
+                else:
+                    # NOTE: 'weights_only=False' needed to load torchao's float8 linear layer checkpoints
+                    tensor = cast(
+                        torch.Tensor, torch.load(bytes, map_location="cpu", weights_only=False)
+                    )
+                    tensor = _narrow_tensor_by_index(
+                        tensor, read_item.storage_offsets, read_item.lengths
+                    )
+                    target_tensor = planner.resolve_tensor(read_item).detach()
 
-                assert (
-                    target_tensor.size() == tensor.size()
-                ), f"req {read_item.storage_index} mismatch sizes {target_tensor.size()} vs {tensor.size()}"
-                target_tensor.copy_(tensor)
-                planner.commit_tensor(read_item, target_tensor)
+                    assert target_tensor.size() == tensor.size(), (
+                        f"req {read_item.storage_index} mismatch sizes {target_tensor.size()} vs {tensor.size()}"
+                    )
+                    target_tensor.copy_(tensor)
+                    planner.commit_tensor(read_item, target_tensor)
+                # content and bytes are freed here after each item is processed
 
         fut: Future = Future()
         fut.set_result(None)
