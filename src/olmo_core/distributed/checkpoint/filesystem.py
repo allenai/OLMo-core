@@ -366,7 +366,9 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
                     tensor = cast(
                         torch.Tensor, torch.load(bytes_io, map_location="cpu", weights_only=False)
                     )
-                    log.debug(f"Loaded tensor with shape {tensor.shape}")
+                    log.debug(
+                        "Loaded tensor with shape %s from read item: %s", tensor.shape, read_item
+                    )
                     tensor = _narrow_tensor_by_index(
                         tensor, read_item.storage_offsets, read_item.lengths
                     )
