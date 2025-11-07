@@ -28,7 +28,7 @@ from olmo_core.optim import (
     SchedulerUnits,
     SkipStepAdamWConfig,
 )
-from olmo_core.train import Duration, TrainerConfig
+from olmo_core.train import Duration, LoadStrategy, TrainerConfig
 from olmo_core.train.callbacks import (
     CheckpointerCallback,
     SlackNotifierCallback,
@@ -125,7 +125,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
     return (
         TrainerConfig(
-            load_path="gs://ai2-llm/checkpoints/stego32-highlr-filter3/step679000+678000+677000+676000",  # TODO: update to actual checkpoint
+            load_path="gs://ai2-llm/checkpoints/stego32-highlr-filter3/step679000+678000+677000+676000/model_and_optim/",  # TODO: update to actual checkpoint
+            load_strategy=LoadStrategy.always,
             load_trainer_state=False,
             load_optim_state=True,
             save_folder=f"gs://ai2-llm/checkpoints/{common.run_name}/",
