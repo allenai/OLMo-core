@@ -5,7 +5,7 @@ from olmo_core.config import DType
 from olmo_core.data import (
     InstanceFilterConfig,
     NumpyDataLoaderConfig,
-    NumpyPackedFSLDatasetConfig,
+    NumpyFSLDatasetConfig,
 )
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
@@ -171,14 +171,29 @@ def build_data_components(
     Default dataset and data loader configurations. Constructs a simple FSL dataset and data loader
     configuration with default settings.
     """
-    dataset_config = NumpyPackedFSLDatasetConfig.glob(
+    # dataset_config = NumpyPackedFSLDatasetConfig.glob(
+    #     "gs://ai2-llm/preprocessed/tylerr/lc-reshard-final-cleaned/v0.1/allenai/dolma2-tokenizer/*.npy",
+    #     tokenizer=common.tokenizer,
+    #     work_dir=common.work_dir,
+    #     sequence_length=common.max_sequence_length,
+    #     generate_doc_lengths=intra_document_masking,  # enables intra-document masking  # True
+    #     source_group_size=8,
+    #     source_permutation_seed=123,
+    #     instance_filter_config=None
+    #     if not include_instance_filter
+    #     else InstanceFilterConfig(
+    #         repetition_max_period=13, repetition_min_period=1, repetition_max_count=32
+    #     ),
+    # )
+
+    dataset_config = NumpyFSLDatasetConfig.glob(
         "gs://ai2-llm/preprocessed/tylerr/lc-reshard-final-cleaned/v0.1/allenai/dolma2-tokenizer/*.npy",
         tokenizer=common.tokenizer,
         work_dir=common.work_dir,
         sequence_length=common.max_sequence_length,
         generate_doc_lengths=intra_document_masking,  # enables intra-document masking  # True
-        source_group_size=8,
-        source_permutation_seed=123,
+        # source_group_size=8,
+        # source_permutation_seed=123,
         instance_filter_config=None
         if not include_instance_filter
         else InstanceFilterConfig(
@@ -204,8 +219,8 @@ if __name__ == "__main__":
         trainer_config_builder=build_trainer_config,
         beaker_image="petew/olmo-core-tch270cu128-2025-05-16",
         include_instance_filter=True,
-        include_default_evals=False,
         intra_document_masking=True,
+        include_default_evals=False,
     )
 
     main(config_builder=config_builder)
