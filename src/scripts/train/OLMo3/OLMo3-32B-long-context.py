@@ -28,7 +28,7 @@ from olmo_core.optim import (
     SchedulerUnits,
     SkipStepAdamWConfig,
 )
-from olmo_core.train import Duration, LoadStrategy, TrainerConfig
+from olmo_core.train import CheckpointerConfig, Duration, LoadStrategy, TrainerConfig
 from olmo_core.train.callbacks import (
     CheckpointerCallback,
     SlackNotifierCallback,
@@ -135,6 +135,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(MAX_TOKENS),
             hard_stop=None,
+            checkpointer=CheckpointerConfig(
+                pre_download=True,
+            ),
         )
         .with_callback(
             "checkpointer",
