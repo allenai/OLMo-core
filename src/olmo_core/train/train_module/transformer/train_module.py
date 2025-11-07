@@ -361,6 +361,17 @@ class TransformerTrainModule(TrainModule):
             ReduceType.mean,
         )
 
+        # Record how many instances are going to be skipped (masked out).
+        if (instance_mask := batch.get("instance_mask")) is not None and not dry_run:
+            self.record_metric(
+                "train/masked instances (%)", (~instance_mask).float().mean(), ReduceType.mean
+            )
+            # When we mask out instances with the instance filter, we count those tokens for the loss
+            # anyways. They will count as tokens with a zero loss. This means we get an artificially
+            # low loss for these batches. But it is really hard (and slow) to do this properly in a
+            # distributed setup.
+            batch_num_tokens_for_loss += (~instance_mask).sum() * batch["labels"].shape[1]
+
         # Batch losses to record.
         ce_batch_loss = move_to_device(torch.tensor(0.0), self.device)
         z_batch_loss: Optional[torch.Tensor] = None
