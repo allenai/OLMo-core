@@ -2,6 +2,7 @@ import gc
 import logging
 import os
 import shutil
+import time
 from typing import Any, Dict, List
 
 import click
@@ -35,8 +36,12 @@ def merge_checkpoints(
     checkpoint_metadata = [get_checkpoint_metadata(path) for path in checkpoint_paths]
     merged_state_dict: Dict[str, Any] = {}
     for i, (path, metadata) in enumerate(zip(checkpoint_paths, checkpoint_metadata)):
-        # Process keys in batches of 64
-        for batch in chunked(list(metadata.state_dict_metadata.items()), 64):
+        # Process keys in batches of 128
+        total_keys = len(metadata.state_dict_metadata)
+        keys_processed = 0
+        start_time = time.time()
+
+        for batch in chunked(list(metadata.state_dict_metadata.items()), 128):
             # Separate non-tensor and tensor keys
             non_tensor_keys = []
             tensor_keys = []
@@ -59,9 +64,6 @@ def merge_checkpoints(
                         non_tensor_batch_dict[key] = None
 
                 if non_tensor_batch_dict:
-                    log.info(
-                        f"Loading {len(non_tensor_batch_dict)} non-tensor keys from checkpoint {i}..."
-                    )
                     load_state_dict(path, non_tensor_batch_dict)
                     for key in non_tensor_batch_dict:
                         merged_state_dict[key] = non_tensor_batch_dict[key]
@@ -79,7 +81,6 @@ def merge_checkpoints(
                     tensor_batch_dict[key] = torch.empty_like(merged_state_dict[key])
 
                 # Load all tensors in one call
-                log.info(f"Loading {len(tensor_keys)} tensor keys from checkpoint {i}...")
                 load_state_dict(path, tensor_batch_dict)
 
                 # Add to merged_state_dict
@@ -87,6 +88,20 @@ def merge_checkpoints(
                     merged_state_dict[key].add_(
                         tensor_batch_dict[key], alpha=1 / len(checkpoint_paths)
                     )
+
+            # Update progress and log
+            keys_processed += len(batch)
+            elapsed_time = time.time() - start_time
+            keys_remaining = total_keys - keys_processed
+
+            if keys_processed > 0 and elapsed_time > 0:
+                time_per_key = elapsed_time / keys_processed
+                eta_seconds = time_per_key * keys_remaining
+                log.info(
+                    f"Checkpoint {i}: processed {keys_processed}/{total_keys} keys, "
+                    f"ETA: {eta_seconds:.1f}s"
+                )
+
         gc.collect()
 
     # create the output dir
