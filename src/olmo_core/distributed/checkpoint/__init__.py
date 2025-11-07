@@ -696,7 +696,7 @@ def _prepare_state_dict(
     del process_group  # I feel like these torch functions should take a process group argument.
     sd_options = dist_cp_sd.StateDictOptions(
         full_state_dict=False,
-        cpu_offload=True,
+        cpu_offload=False,
         flatten_optimizer_state_dict=flatten_optimizer_state,
     )
 
