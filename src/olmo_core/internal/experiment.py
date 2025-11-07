@@ -30,6 +30,7 @@ from olmo_core.train.callbacks import (
     Callback,
     ConfigSaverCallback,
     DownstreamEvaluatorCallbackConfig,
+    GAPMonitorCallback,
     GarbageCollectorCallback,
     GPUMemoryMonitorCallback,
     LMEvaluatorCallbackConfig,
@@ -254,6 +255,7 @@ def _build_required_callbacks(common: CommonComponents) -> Dict[str, Callback]:
         "profiler": ProfilerCallback(enabled=False),
         "garbage_collector": GarbageCollectorCallback(),
         "slack_notifier": SlackNotifierCallback(name=common.run_name, enabled=False),
+        "gap_monitor": GAPMonitorCallback(enabled=False),
     }
     if common.launch is not None:
         callbacks["beaker"] = BeakerCallback()
