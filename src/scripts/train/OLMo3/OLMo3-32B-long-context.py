@@ -56,8 +56,10 @@ python src/scripts/train/OLMo3/OLMo3-32B-long-context.py launch \
     --trainer.hard_stop='{value: 25, unit: steps}'
 """
 
-SEQUENCE_LENGTH = 64 * 1024  # 64k seq len
-GLOBAL_BATCH_SIZE = 8 * 1024 * 1024  # ~8M tokens
+SEQUENCE_LENGTH = 64 * 1024  # 64k seq len # 65536
+GLOBAL_BATCH_SIZE = 8 * 1024 * 1024  # ~8M tokens  # 2**23
+# 128 sequences per global batch
+
 MAX_TOKENS = 100_000_000_000  # 100B
 LR = 0.0002071235285  # same as midtraining
 
@@ -190,6 +192,10 @@ def build_data_components(
         ),
     )
 
+    data_loader_config = NumpyDataLoaderConfig(
+        global_batch_size=common.global_batch_size, seed=34521, num_workers=8
+    )
+
     # dataset_config = NumpyFSLDatasetConfig.glob(
     #     "gs://ai2-llm/preprocessed/tylerr/lc-reshard-final-cleaned/v0.1/allenai/dolma2-tokenizer/*.npy",
     #     tokenizer=common.tokenizer,
@@ -204,10 +210,6 @@ def build_data_components(
     #         repetition_max_period=13, repetition_min_period=1, repetition_max_count=32
     #     ),
     # )
-
-    data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=common.global_batch_size, seed=34521, num_workers=8
-    )
 
     return DataComponents(dataset=dataset_config, data_loader=data_loader_config)
 
