@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Set missing `NCCL_NVLSTREE_MAX_CHUNKSIZE` env var that is now needed for running jobs on Augusta cluster.
 - Fixed bug with `RemoteFileSystemReader` that caused excess memory usage.
 - No longer overrides `random`'s RNG seed when building `SourceMixtureDatasetConfig`.
+- Fix potential NaN loss that can occur when using instance masking.
 
 ## [v2.3.0](https://github.com/allenai/OLMo-core/releases/tag/v2.3.0) - 2025-10-17
 

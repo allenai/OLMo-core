@@ -354,7 +354,7 @@ class TransformerTrainModule(TrainModule):
         if not dry_run:
             # Record percentage of masked labels.
             self.record_metric(
-                "train/masked labels (%)",
+                "train/masked labels (%)",  # just a proportion, not a percentage
                 (batch_num_tokens - batch_num_tokens_for_loss) / batch_num_tokens,
                 ReduceType.mean,
             )
@@ -362,7 +362,9 @@ class TransformerTrainModule(TrainModule):
             # Record percentage of masked instances.
             if (instance_mask := batch.get("instance_mask")) is not None:
                 self.record_metric(
-                    "train/masked instances (%)", (~instance_mask).float().mean(), ReduceType.mean
+                    "train/masked instances (%)",  # just a proportion, not a percentage
+                    (~instance_mask).float().mean(),
+                    ReduceType.mean,
                 )
                 # WARN: When we mask out instances with the instance filter, we count those tokens
                 # for the loss anyways. They will count as tokens with a zero loss. This means we
