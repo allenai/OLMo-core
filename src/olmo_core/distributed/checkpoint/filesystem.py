@@ -1,4 +1,5 @@
 import dataclasses
+import gc
 import io
 import logging
 import operator
@@ -361,15 +362,22 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
 
                 # Process immediately and let content go out of scope after this iteration
                 # Modified from `FileSystemReader.read_data()`
-                bytes = io.BytesIO(content)
-                bytes.seek(0)
+                bytes_io = io.BytesIO(content)
+                bytes_io.seek(0)
+                # Free the raw content bytes immediately after creating BytesIO to reduce peak memory
+                del content
+
                 if read_item.type == LoadItemType.BYTE_IO:
-                    planner.load_bytes(read_item, bytes)
+                    planner.load_bytes(read_item, bytes_io)
+                    del bytes_io
                 else:
                     # NOTE: 'weights_only=False' needed to load torchao's float8 linear layer checkpoints
                     tensor = cast(
-                        torch.Tensor, torch.load(bytes, map_location="cpu", weights_only=False)
+                        torch.Tensor, torch.load(bytes_io, map_location="cpu", weights_only=False)
                     )
+                    # Free BytesIO immediately after deserialization
+                    del bytes_io
+
                     tensor = _narrow_tensor_by_index(
                         tensor, read_item.storage_offsets, read_item.lengths
                     )
@@ -380,7 +388,10 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
                     )
                     target_tensor.copy_(tensor)
                     planner.commit_tensor(read_item, target_tensor)
-                # content and bytes are freed here after each item is processed
+                    # Free the loaded tensor immediately after copying to reduce peak memory
+                    del tensor
+                # All temporary objects are freed here before processing the next item
+                gc.collect()
 
         fut: Future = Future()
         fut.set_result(None)
