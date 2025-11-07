@@ -300,8 +300,6 @@ class BasicTrainModule(TrainModule):
     def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
         self.model.train()
 
-        log.info("TRAINING A BATCH")
-        print("(PRINT STATEMENT) TRAINING BATCH")
         # Move tensors to the right device.
         batch = move_to_device(batch, self.trainer.device)
 

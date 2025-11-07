@@ -8,25 +8,9 @@ import torch
 import torch.distributed as dist
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 import torch.nn as nn
-from torch.distributed import DeviceMesh
-from torch.distributed.checkpoint.metadata import Metadata
-from torch.distributed.fsdp import FSDPModule
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-from torch.distributed.tensor import DTensor
-from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.optim import Optimizer
-
 from olmo_core.data.utils import get_labels, split_batch
-from olmo_core.distributed.checkpoint import (
-    merge_state_dicts,
-    prune_state_dict,
-    swap_param_keys,
-)
-from olmo_core.distributed.parallel import (
-    DataParallelType,
-    build_world_mesh,
-    get_dp_process_group,
-)
+from olmo_core.distributed.checkpoint import merge_state_dicts, prune_state_dict, swap_param_keys
+from olmo_core.distributed.parallel import DataParallelType, build_world_mesh, get_dp_process_group
 from olmo_core.distributed.utils import (
     get_local_tensor,
     get_reduce_divide_factor,
@@ -41,6 +25,13 @@ from olmo_core.nn.transformer.config import TransformerActivationCheckpointingMo
 from olmo_core.optim import OptimConfig, SkipStepOptimizer
 from olmo_core.optim.scheduler import Scheduler
 from olmo_core.utils import gc_cuda, get_default_device, log_once, move_to_device
+from torch.distributed import DeviceMesh
+from torch.distributed.checkpoint.metadata import Metadata
+from torch.distributed.fsdp import FSDPModule
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+from torch.distributed.tensor import DTensor
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.optim import Optimizer
 
 from ...common import ReduceType
 from ..train_module import EvalBatchSpec, TrainModule
@@ -340,6 +331,8 @@ class TransformerTrainModule(TrainModule):
         # Set model to train mode if it isn't already.
         self._set_model_mode("train")
 
+        log.info("LOGGING TRAIN STEP")
+        print("(PRINT STATEMENT) TRAIN STEP")
         # Generate labels.
         if "labels" not in batch:
             batch["labels"] = get_labels(batch, label_ignore_index=self.label_ignore_index)
