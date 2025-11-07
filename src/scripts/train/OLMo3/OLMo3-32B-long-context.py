@@ -3,10 +3,10 @@ from functools import partial
 
 from olmo_core.config import DType
 from olmo_core.data import (
-    InstanceFilterConfig,
     NumpyDataLoaderConfig,
     NumpyFSLDatasetConfig,
 )
+from olmo_core.data.numpy_dataset import InstanceFilterConfig
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
@@ -124,11 +124,11 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
     return (
         TrainerConfig(
-            # load_path="gs://ai2-llm/checkpoints/stego32-highlr-filter3/step679000+678000+677000+676000/model_and_optim/",  # TODO: update to actual checkpoint
-            load_path="gs://ai2-llm/checkpoints/stego32-midtraining-run-2-20251105T225302+0000/step23842",
+            load_path="gs://ai2-llm/checkpoints/stego32-highlr-filter3/step679000+678000+677000+676000/model_and_optim/",  # TODO: update to actual checkpoint
+            # load_path="gs://ai2-llm/checkpoints/stego32-midtraining-run-2-20251105T225302+0000/step23842",
             load_strategy=LoadStrategy.always,
             load_trainer_state=False,
-            load_optim_state=True,  # maybe false for soup?
+            load_optim_state=True,  # worked when false for soup
             save_folder=f"gs://ai2-llm/checkpoints/{common.run_name}/",
             save_overwrite=True,
             metrics_collect_interval=50,
