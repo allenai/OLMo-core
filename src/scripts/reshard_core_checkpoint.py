@@ -6,7 +6,7 @@ import shutil
 import socket
 from datetime import timedelta
 from tempfile import TemporaryDirectory
-from typing import Tuple, Dict
+from typing import Dict, Tuple
 
 import click
 import torch
@@ -17,7 +17,10 @@ from cached_path import cached_path
 from torch.distributed import init_device_mesh
 
 from olmo_core.aliases import PathOrStr
-from olmo_core.distributed.checkpoint import load_model_and_optim_state, save_model_and_optim_state
+from olmo_core.distributed.checkpoint import (
+    load_model_and_optim_state,
+    save_model_and_optim_state,
+)
 from olmo_core.distributed.utils import (
     OLMO_LOCAL_RANK_ENV_VAR,
     OLMO_LOCAL_WORLD_SIZE_ENV_VAR,
@@ -25,7 +28,7 @@ from olmo_core.distributed.utils import (
     get_rank,
     get_world_size,
 )
-from olmo_core.io import join_path, file_exists
+from olmo_core.io import file_exists, join_path
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import OptimConfig
 from olmo_core.train.train_module.transformer.common import parallelize_model
@@ -95,7 +98,9 @@ def model_and_optim_config_from_path(model_path: str) -> Tuple[TransformerConfig
     return model_config, optim_config
 
 
-_state_dict_options = dist_cp_sd.StateDictOptions(flatten_optimizer_state_dict=True, cpu_offload=True)
+_state_dict_options = dist_cp_sd.StateDictOptions(
+    flatten_optimizer_state_dict=True, cpu_offload=True
+)
 
 
 def _worker_process(
@@ -105,6 +110,7 @@ def _worker_process(
     primary_port: int,
     input_path: str,
     output_path: str,
+    skip_optimizer_state: bool = False,
 ) -> None:
     """
     Worker process that initializes the Gloo process group and prints verification messages.
@@ -116,6 +122,7 @@ def _worker_process(
         primary_port: Port for process group coordination
         input_path: Input checkpoint path
         output_path: Output checkpoint path
+        skip_optimizer_state: If True, skip loading and saving optimizer state
     """
     # Set required environment variables for OLMo-core distributed utilities
     os.environ.setdefault(OLMO_NUM_NODES_ENV_VAR, "1")
@@ -128,7 +135,8 @@ def _worker_process(
         timeout=timedelta(minutes=5),
         init_method=f"tcp://{primary_addr}:{primary_port}",
         world_size=world_size,
-        rank=process_rank)
+        rank=process_rank,
+    )
 
     # Print verification messages
     rank = get_rank()
@@ -147,7 +155,13 @@ def _worker_process(
         dp_mesh=init_device_mesh("cpu", (ws,)),
     )
     model.to_empty(device=torch.device("cpu"))
-    optim = optim_config.build(model, strict=True, dry_run_only=True)
+
+    # Conditionally create optimizer
+    if skip_optimizer_state:
+        optim = None
+        log.info("Skipping optimizer state (--skip-optimizer-state flag set)")
+    else:
+        optim = optim_config.build(model, strict=True, dry_run_only=True)
 
     with TemporaryDirectory(prefix=f"reshard_core_checkpoints-rank{get_rank()}-") as work_dir:
         model_and_optim_dir = join_path(input_path, "model_and_optim")
@@ -158,7 +172,7 @@ def _worker_process(
             optim,
             flatten_optimizer_state=True,
             work_dir=work_dir,
-            thread_count=1
+            thread_count=1,
         )
         del model_and_optim_dir
 
@@ -213,12 +227,18 @@ def _worker_process(
     default=2,
     help="Number of processes to spawn for the Gloo process group (default: 2)",
 )
-def main(input_path: str, output_path: str, num_processes: int) -> None:
+@click.option(
+    "--skip-optimizer-state",
+    "-s",
+    is_flag=True,
+    help="Skip loading and saving optimizer state (only reshard model weights)",
+)
+def main(input_path: str, output_path: str, num_processes: int, skip_optimizer_state: bool) -> None:
     """
     Reshard an OLMo-core checkpoint across different process group configurations.
 
     This script establishes a Gloo process group with the specified number of processes
-    to perform checkpoint resharding operations (implementation to be added).
+    to perform checkpoint resharding operations.
 
     The script will launch multiple worker processes using torch.multiprocessing and
     coordinate them using a TCP-based rendezvous on localhost.
@@ -235,6 +255,13 @@ def main(input_path: str, output_path: str, num_processes: int) -> None:
     \b
     # Reshard with default 2 processes
     python reshard_core_checkpoint.py -i ./input -o ./output
+
+    \b
+    # Reshard without optimizer state (model weights only)
+    python reshard_core_checkpoint.py \\
+        --input ./checkpoint-in \\
+        --output ./checkpoint-out \\
+        --skip-optimizer-state
     """
     if num_processes < 2:
         raise ValueError(f"num_processes must be at least 2, got {num_processes}")
@@ -251,7 +278,14 @@ def main(input_path: str, output_path: str, num_processes: int) -> None:
     # Use 'fork' start method for Gloo backend (CPU operations)
     mp.start_processes(
         _worker_process,
-        args=(num_processes, primary_addr, primary_port, input_path, output_path),
+        args=(
+            num_processes,
+            primary_addr,
+            primary_port,
+            input_path,
+            output_path,
+            skip_optimizer_state,
+        ),
         nprocs=num_processes,
         start_method="fork",
     )
