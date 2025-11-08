@@ -346,6 +346,7 @@ class TransformerTrainModule(TrainModule):
 
         # Calculate how many tokens will be used in the loss.
         batch_num_tokens = batch["labels"].numel()
+        batch_num_tokens_per_instance = batch["labels"].shape[1]
         batch_num_tokens_for_loss = move_to_device(
             (batch["labels"] != self.label_ignore_index).sum(), self.device
         )
@@ -364,10 +365,13 @@ class TransformerTrainModule(TrainModule):
                 (~instance_mask).float().mean(),
                 ReduceType.mean,
             )
-            # WARN: When we mask out all local instances with the instance filter, we add a small epsilon
-            # to the loss divisor to avoid division by zero while minimizing the impact on loss calculation.
-            all_local_instances_masked = (~instance_mask).all()
-            batch_num_tokens_for_loss += all_local_instances_masked * 1e-5
+
+            # WARN: When we mask out instances with the instance filter, we count those tokens
+            # for the loss anyways. They will count as tokens with a zero loss. This means we
+            # get an artificially *low* loss for these batches. But it is really hard (and slow)
+            # to do this properly in a distributed setup. We add back in the full number of tokens
+            # for the loss so that each rank contributes to the loss calculation fairly.
+            batch_num_tokens_for_loss += (~instance_mask).sum() * batch_num_tokens_per_instance
 
         # Batch losses to record.
         ce_batch_loss = move_to_device(torch.tensor(0.0), self.device)
