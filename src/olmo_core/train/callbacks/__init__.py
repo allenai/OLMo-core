@@ -17,6 +17,7 @@ from .evaluator_callback import (
 from .garbage_collector import GarbageCollectorCallback
 from .gpu_memory_monitor import GPUMemoryMonitorCallback
 from .monkey_patcher import MonkeyPatcherCallback
+from .nan_checker import NaNCheckerCallback
 from .profiler import ProfilerCallback
 from .sequence_length_scheduler import SequenceLengthSchedulerCallback
 from .slack_notifier import SlackNotificationSetting, SlackNotifierCallback
@@ -37,6 +38,7 @@ __all__ = [
     "DownstreamEvaluatorCallbackConfig",
     "GarbageCollectorCallback",
     "GPUMemoryMonitorCallback",
+    "NaNCheckerCallback",
     "ProfilerCallback",
     "SlackNotifierCallback",
     "SlackNotificationSetting",
