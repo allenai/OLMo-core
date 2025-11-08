@@ -24,6 +24,7 @@ log = logging.getLogger(__name__)
 def merge_checkpoints(
     model_paths: List[str],
     output_path: str,
+    skip_optimizer_state: bool = False,
 ) -> None:
     # sanity check
     if any(p.rstrip("/").endswith("model_and_optim") for p in model_paths):
@@ -41,6 +42,8 @@ def merge_checkpoints(
         tensor_keys = []
 
         for key, meta in metadata.state_dict_metadata.items():
+            if skip_optimizer_state and key.startswith("optim."):
+                continue  # Skip optimizer state keys
             if not isinstance(meta, TensorStorageMetadata):
                 non_tensor_keys.append((key, meta))
             else:
@@ -134,14 +137,22 @@ def merge_checkpoints(
     required=True,
     help="Output directory for the merged checkpoint",
 )
-def main(model_paths: tuple, output_path: str):
+@click.option(
+    "--skip-optimizer-state",
+    "-s",
+    is_flag=True,
+    help="Skip loading and merging optimizer state (only merge model weights)",
+)
+def main(model_paths: tuple, output_path: str, skip_optimizer_state: bool):
     """
     Merge OLMo-core model checkpoints by averaging their weights.
 
     Weights are accumulated in float32 for numerical stability, then converted
     back to the original dtype of the checkpoints.
 
-    Optimizer state is taken from the first model in the list.
+    Optimizer state is taken from the first model in the list, unless
+    --skip-optimizer-state is specified, in which case optimizer state
+    is excluded from the merged checkpoint.
 
     Examples:
 
@@ -151,8 +162,20 @@ def main(model_paths: tuple, output_path: str):
         --model gs://ai2-llm/checkpoints/stego32-highlr-filter3/step656000 \\
         --model gs://ai2-llm/checkpoints/stego32-highlr-filter3/step655000 \\
         --output ./merged_checkpoint
+
+    \b
+    # Merge checkpoints without optimizer state (model weights only)
+    python merge_core_checkpoints.py \\
+        --model gs://ai2-llm/checkpoints/stego32-highlr-filter3/step656000 \\
+        --model gs://ai2-llm/checkpoints/stego32-highlr-filter3/step655000 \\
+        --output ./merged_checkpoint \\
+        --skip-optimizer-state
     """
-    merge_checkpoints(model_paths=list(model_paths), output_path=output_path)
+    merge_checkpoints(
+        model_paths=list(model_paths),
+        output_path=output_path,
+        skip_optimizer_state=skip_optimizer_state,
+    )
 
 
 if __name__ == "__main__":
