@@ -498,7 +498,7 @@ def parse_args():
     parser.add_argument(
         "-o",
         "--huggingface-output-dir",
-        type=Path,
+        type=str,
         required=True,
         help="Local or remote directory where the converted checkpoint should be saved.",
     )
