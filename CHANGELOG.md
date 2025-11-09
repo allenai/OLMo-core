@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed bug with `RemoteFileSystemReader` that caused excess memory usage.
 - No longer overrides `random`'s RNG seed when building `SourceMixtureDatasetConfig`.
 - Fix handling URLs in `olmo_core.nn.hf.checkpoint.save_hf_model` and in `examples/huggingface`.
+- Fix potential NaN loss that can occur when using instance masking.
 
 ## [v2.3.0](https://github.com/allenai/OLMo-core/releases/tag/v2.3.0) - 2025-10-17
 
