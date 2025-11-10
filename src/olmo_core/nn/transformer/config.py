@@ -557,6 +557,20 @@ class TransformerConfig(Config):
             layer_norm_eps=1e-6,
             **kwargs,
         )
+    
+    @classmethod
+    def olmo2_7B_preorder(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 7B OLMo model config.
+        """
+        return cls.llama2_7B(
+            vocab_size,
+            block_name=kwargs.pop("block_name", TransformerBlockType.default),
+            qk_norm=kwargs.pop("qk_norm", True),
+            rope_theta=kwargs.pop("rope_theta", 500_000),
+            layer_norm_eps=1e-6,
+            **kwargs,
+        )
 
     @classmethod
     def olmo2_13B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
