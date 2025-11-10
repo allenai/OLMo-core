@@ -355,6 +355,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
         dp_world_size: int = 1,
         dp_rank: int = 0,
         fs_local_rank: Optional[int] = None,
+        ignore_fingerprint_mismatch: bool = False,
     ):
         super().__init__(
             collator=collator,
@@ -372,6 +373,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
         self.prefetch_factor = prefetch_factor
         self.target_device_type = target_device_type
         self._global_indices: Optional[np.ndarray] = None
+        self.ignore_fingerprint_mismatch = ignore_fingerprint_mismatch
 
     @classmethod
     def wrap_numpy_dataset(
@@ -390,6 +392,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
         prefetch_factor: Optional[int] = None,
         target_device_type: str = "cpu",
         shuffle: bool = True,
+        ignore_fingerprint_mismatch: bool = False,
     ) -> "NumpyDataLoaderBase":
         """
         Construct the corresponding :class:`NumpyDataLoaderBase` instance for the given :class:`NumpyDatasetBase`.
@@ -409,6 +412,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
             prefetch_factor=prefetch_factor,
             target_device_type=target_device_type,
             shuffle=shuffle,
+            ignore_fingerprint_mismatch=ignore_fingerprint_mismatch,
         )
         data_loader: DataLoaderBase
         if isinstance(dataset, NumpyFSLDatasetBase):
@@ -441,8 +445,15 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
                 "this could mean the data has changed"
             )
         elif state_dict["dataset_fingerprint"] != self.dataset.fingerprint:
-            raise RuntimeError(
-                "Restoring state from a different dataset is not supported! (fingerprint doesn't match)"
+            if not self.ignore_fingerprint_mismatch:
+                raise RuntimeError(
+                    "Dataset fingerprint does not match the fingerprint in the checkpoint, "
+                    "set ignore_fingerprint_mismatch=True to ignore this error. "
+                    "This will probably result in a different data order!"
+                )
+            log.warning(
+                "Fingerprint mismatch ignored since ignore_fingerprint_mismatch=True. "
+                "This will probably result in a different data order!"
             )
 
         if state_dict["seed"] != self.seed:
@@ -1080,6 +1091,7 @@ class NumpyDataLoaderConfig(Config):
     num_workers: int = 0
     prefetch_factor: Optional[int] = None
     target_device_type: Optional[str] = None
+    ignore_fingerprint_mismatch: bool = False
 
     def build(
         self,
@@ -1124,5 +1136,6 @@ class NumpyDataLoaderConfig(Config):
             num_workers=self.num_workers,
             prefetch_factor=self.prefetch_factor,
             target_device_type=self.target_device_type or get_default_device().type,
+            ignore_fingerprint_mismatch=self.ignore_fingerprint_mismatch,
         )
         return data_loader

@@ -1,114 +1,151 @@
 """
-Official pre-training script for OLMo-2-0325-32B.
+Official annealing script for OLMo-2-0325-32B.
 """
 
 import argparse
-from typing import List
+import logging
+from typing import List, Tuple
 
 from olmo_core.config import DType
 from olmo_core.data import (
-    DataMix,
+    DataMixBase,
     NumpyDataLoaderConfig,
     NumpyFSLDatasetConfig,
-    NumpyPaddedFSLDatasetConfig,
     TokenizerConfig,
+    TokenizerName,
 )
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_world_size
-from olmo_core.nn.transformer import (
-    TransformerActivationCheckpointingMode,
-    TransformerConfig,
+from olmo_core.nn.transformer import TransformerConfig
+from olmo_core.optim import LinearWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
+from olmo_core.script_utils import (
+    ExperimentConfig,
+    get_cli_parser,
+    get_lr_from_checkpoint,
+    main,
 )
-from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
-from olmo_core.script_utils import ExperimentConfig, main
-from olmo_core.train import Duration, TrainerConfig
+from olmo_core.train import Duration, LoadStrategy, TrainerConfig
 from olmo_core.train.callbacks import (
     CheckpointerCallback,
     CometCallback,
     ConfigSaverCallback,
     DownstreamEvaluatorCallbackConfig,
+    GarbageCollectorCallback,
     GPUMemoryMonitorCallback,
-    LMEvaluatorCallbackConfig,
     WandBCallback,
 )
+from olmo_core.train.checkpoint import CheckpointerConfig
 from olmo_core.train.train_module import (
     TransformerActivationCheckpointingConfig,
+    TransformerActivationCheckpointingMode,
     TransformerDataParallelConfig,
     TransformerTrainModuleConfig,
 )
 
+log = logging.getLogger(__name__)
+
+DEFAULT_SEQUENCE_LENGTH = 4096
+
+
+class AnnealingDataMix(DataMixBase):
+    """
+    Defines the annealing mixes. To create a new mix, make a new file in this folder and add its
+    name (without the '.txt' extension) below.
+    """
+
+    dolmino100 = "dolmino100"
+    dolmino300 = "dolmino300"
+    jallyrun = "jallyrun"
+
+    def build(self, base_dir: str, tokenizer: str) -> Tuple[List[str], List[str]]:
+        if not base_dir.endswith("/"):
+            base_dir = base_dir + "/"
+
+        assert tokenizer == TokenizerName.dolma2
+        paths = []
+        labels = []
+
+        with open(f"src/scripts/train/anneal/{self}.txt") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                paths.append(f"{base_dir}{line}")
+                labels.append(line.split("/")[1])
+
+        return paths, labels
+
 
 def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentConfig:
+    sequence_length = opts.sequence_length or DEFAULT_SEQUENCE_LENGTH
     tokenizer_config = TokenizerConfig.dolma2()
 
-    model_config = TransformerConfig.olmo2_32B(
-        vocab_size=tokenizer_config.padded_vocab_size(),  # a little bigger than actual vocab size to make it a multiple of 128
-    )
+    # Starting LR should be where the checkpoint left off.
+    log.info("Inferring LR from checkpoint...")
+    starting_lr = get_lr_from_checkpoint(opts.checkpoint)
+    log.info(f"Will start annealing from LR={starting_lr}")
 
-    dataset_config = NumpyFSLDatasetConfig.from_data_mix(
-        DataMix.OLMoE_mix_0824,
-        tokenizer=tokenizer_config,
-        mix_base_dir=opts.data_root,
-        sequence_length=opts.sequence_length,
-        max_target_sequence_length=max(8192, opts.sequence_length),
-        work_dir=opts.work_dir,
-    )
-
-    data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=2048 * 4096,
-        seed=34521,
-        num_workers=4,
-    )
-
-    train_module_config = TransformerTrainModuleConfig(
-        rank_microbatch_size=4 * 4096,
-        max_sequence_length=opts.sequence_length,
-        optim=SkipStepAdamWConfig(
-            lr=6e-4,
-            weight_decay=0.1,
-            betas=(0.9, 0.95),
-            group_overrides=[
-                OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
-            ],
-            compile=True,
+    config = ExperimentConfig(
+        model=TransformerConfig.olmo2_32B(vocab_size=tokenizer_config.padded_vocab_size()),
+        dataset=NumpyFSLDatasetConfig.from_data_mix(
+            AnnealingDataMix.dolmino100,
+            tokenizer=tokenizer_config,
+            mix_base_dir=opts.data_root,
+            sequence_length=sequence_length,
+            work_dir=opts.work_dir,
         ),
-        scheduler=CosWithWarmup(warmup_steps=2000),
-        compile_model=True,
-        dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.hsdp,
-            param_dtype=DType.bfloat16,
-            reduce_dtype=DType.float32,
-            num_replicas=get_world_size() // 64,  # NOTE: tune this
+        data_loader=NumpyDataLoaderConfig(
+            global_batch_size=2048 * 4096,  # NOTE: this is specified in TOKENS, not instances.
+            seed=34521,  # NOTE: can update this to change data order.
+            num_workers=4,
         ),
-        ac_config=TransformerActivationCheckpointingConfig(
-            TransformerActivationCheckpointingMode.full
+        train_module=TransformerTrainModuleConfig(
+            rank_microbatch_size=2 * 4096,  # NOTE: again this is specified in tokens.
+            max_sequence_length=sequence_length,
+            z_loss_multiplier=1e-5,
+            compile_model=True,
+            optim=SkipStepAdamWConfig(
+                lr=starting_lr,
+                weight_decay=0.1,
+                betas=(0.9, 0.95),
+                group_overrides=[
+                    OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
+                ],
+                compile=True,
+            ),
+            dp_config=TransformerDataParallelConfig(
+                name=DataParallelType.fsdp,
+                param_dtype=DType.bfloat16,
+                reduce_dtype=DType.float32,
+                num_replicas=get_world_size() // 64,  # NOTE: tune this,
+            ),
+            ac_config=TransformerActivationCheckpointingConfig(
+                mode=TransformerActivationCheckpointingMode.selected_modules,
+                modules=["blocks.*.feed_forward"],
+            ),
+            scheduler=LinearWithWarmup(
+                warmup_steps=0,
+                alpha_f=0.0,
+            ),
+            max_grad_norm=1.0,
         ),
-        z_loss_multiplier=1e-5,
-        max_grad_norm=1.0,
-    )
-
-    # If you have 1024 GPUs, you can run slightly faster with a different config.
-    if get_world_size() >= 1024:
-        train_module_config.rank_microbatch_size //= 2
-        train_module_config.ac_config = TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.selected_modules,
-            modules=["blocks.*.feed_forward"],
-        )
-
-    trainer_config = (
-        TrainerConfig(
+        trainer=TrainerConfig(
             save_folder=opts.save_folder,
+            load_strategy=LoadStrategy.always,
+            checkpointer=CheckpointerConfig(
+                save_thread_count=1, load_thread_count=8, throttle_uploads=True
+            ),
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=10,
-            max_duration=Duration.tokens(int(6.5e12)),
+            max_duration=Duration.tokens(int(100e9)),
         )
         .with_callback("gpu_monitor", GPUMemoryMonitorCallback())
         .with_callback(
             "checkpointer",
             CheckpointerCallback(
                 save_interval=1000,
-                ephemeral_save_interval=200,
+                ephemeral_save_interval=500,
                 save_async=True,
             ),
         )
@@ -116,32 +153,20 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
             "comet",
             CometCallback(
                 name=opts.name,
-                cancel_check_interval=10,
                 enabled=False,  # NOTE: change to true to enable
+                cancel_check_interval=10,
             ),
         )
         .with_callback(
             "wandb",
             WandBCallback(
                 name=opts.name,
-                cancel_check_interval=10,
                 enabled=False,  # NOTE: change to true to enable
+                cancel_check_interval=10,
             ),
         )
         .with_callback("config_saver", ConfigSaverCallback())
-        .with_callback(
-            "lm_evaluator",
-            LMEvaluatorCallbackConfig(
-                eval_dataset=NumpyPaddedFSLDatasetConfig.from_data_mix(
-                    DataMix.v3_small_ppl_validation,
-                    mix_base_dir=opts.data_root,
-                    sequence_length=opts.sequence_length,
-                    tokenizer=tokenizer_config,
-                    work_dir=opts.work_dir,
-                ),
-                eval_interval=1000,
-            ),
-        )
+        .with_callback("garbage_collector", GarbageCollectorCallback())
         .with_callback(
             "downstream_evaluator",
             DownstreamEvaluatorCallbackConfig(
@@ -219,17 +244,25 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
                 tokenizer=tokenizer_config,
                 eval_interval=1000,
             ),
-        )
-    )
-
-    return ExperimentConfig(
-        model=model_config,
-        dataset=dataset_config,
-        data_loader=data_loader_config,
-        train_module=train_module_config,
-        trainer=trainer_config,
+        ),
+        load_path=opts.checkpoint,
     ).merge(overrides)
+
+    # Make sure this is an 'AnnealingDataMix' instance.
+    config.dataset.mix = AnnealingDataMix(config.dataset.mix)
+    return config
+
+
+def _get_parser() -> argparse.ArgumentParser:
+    parser = get_cli_parser()
+    parser.add_argument(
+        "--checkpoint",
+        type=str,
+        required=True,
+        help="Path to the OLMo-2-0325-32B checkpoint to load and anneal from.",
+    )
+    return parser
 
 
 if __name__ == "__main__":
-    main(build_config)
+    main(build_config, parser=_get_parser())

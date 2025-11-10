@@ -239,3 +239,13 @@ class TrainingProgress:
         if self.time_remaining is not None:
             progress_str += f", eta {format_timedelta(self.time_remaining)}"
         return progress_str
+
+
+@dataclass
+class StepSkipRange:
+    """Defines a range of steps to skip during training."""
+
+    start: int
+    """The first step to skip (steps start at 1, not 0)."""
+    stop: int
+    """The endpoint of the range (exclusive)."""

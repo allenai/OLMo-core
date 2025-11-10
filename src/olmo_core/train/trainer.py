@@ -62,6 +62,7 @@ from .common import (
     LoadStrategy,
     MetricMergeStrategy,
     ReduceType,
+    StepSkipRange,
     TrainingProgress,
 )
 from .train_module import TrainModule
@@ -267,10 +268,9 @@ class Trainer:
     This is useful for benchmarking.
     """
 
-    steps_to_skip: Optional[List[Tuple[int, int]]] = None
+    steps_to_skip: Optional[List[StepSkipRange]] = None
     """
-    Ranges of steps to completely skip training on, in the form of ``[range_start, range_end]``,
-    where both endpoints are inclusive.
+    Ranges of steps to completely skip training on.
     """
 
     # Internal bookkeeping
@@ -1340,8 +1340,8 @@ class Trainer:
 
             should_skip = False
             if self.steps_to_skip:
-                for range_start, range_end in self.steps_to_skip:
-                    if range_start <= self.global_step <= range_end:
+                for step_range in self.steps_to_skip:
+                    if step_range.start <= self.global_step < step_range.stop:
                         should_skip = True
                         break
 

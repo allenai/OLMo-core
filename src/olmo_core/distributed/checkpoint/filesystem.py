@@ -346,37 +346,41 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
                 read_item_content_futures.append(
                     executor.submit(self._get_content_for_read, read_item)
                 )
-            read_item_content_results = []
+
             for f in as_completed(read_item_content_futures):
                 try:
-                    read_item_content_results.append(f.result())
+                    read_item, content = f.result()
                 except BaseException:
                     # NOTE: we might get an error here that can't be pickled, which causes a different failure
                     # later when PyTorch tries to reduce that error across ranks. So here we just make
                     # sure we're raising a simple error type that can be pickled.
                     raise OLMoCheckpointError(f"Original error:\n{traceback.format_exc()}")
 
-        # Modified from `FileSystemReader.read_data()`
-        for read_item, content in read_item_content_results:
-            bytes = io.BytesIO(content)
-            bytes.seek(0)
-            if read_item.type == LoadItemType.BYTE_IO:
-                planner.load_bytes(read_item, bytes)
-            else:
-                # NOTE: 'weights_only=False' needed to load torchao's float8 linear layer checkpoints
-                tensor = cast(
-                    torch.Tensor, torch.load(bytes, map_location="cpu", weights_only=False)
-                )
-                tensor = _narrow_tensor_by_index(
-                    tensor, read_item.storage_offsets, read_item.lengths
-                )
-                target_tensor = planner.resolve_tensor(read_item).detach()
+                # Modified from `FileSystemReader.read_data()`
+                bytes_io = io.BytesIO(content)
+                bytes_io.seek(0)
+                if read_item.type == LoadItemType.BYTE_IO:
+                    planner.load_bytes(read_item, bytes_io)
+                else:
+                    # NOTE: 'weights_only=False' needed to load torchao's float8 linear layer checkpoints
+                    tensor = cast(
+                        torch.Tensor, torch.load(bytes_io, map_location="cpu", weights_only=False)
+                    )
+                    log.debug(
+                        "Loaded tensor with shape %s from read item: %s", tensor.shape, read_item
+                    )
+                    tensor = _narrow_tensor_by_index(
+                        tensor, read_item.storage_offsets, read_item.lengths
+                    )
+                    target_tensor = planner.resolve_tensor(read_item).detach()
 
-                assert (
-                    target_tensor.size() == tensor.size()
-                ), f"req {read_item.storage_index} mismatch sizes {target_tensor.size()} vs {tensor.size()}"
-                target_tensor.copy_(tensor)
-                planner.commit_tensor(read_item, target_tensor)
+                    assert (
+                        target_tensor.size() == tensor.size()
+                    ), f"req {read_item.storage_index} mismatch sizes {target_tensor.size()} vs {tensor.size()}"
+                    target_tensor.copy_(tensor)
+                    planner.commit_tensor(read_item, target_tensor)
+                    del tensor
+                del bytes_io, content
 
         fut: Future = Future()
         fut.set_result(None)

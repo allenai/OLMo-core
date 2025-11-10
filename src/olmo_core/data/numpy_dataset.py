@@ -2355,6 +2355,11 @@ class NumpyDatasetConfig(Config, ABC):
         You can save a lot of time and disk space by setting this to a common directory across
         all of you runs.
     """
+    ignore_fingerprint_mismatch: bool = False
+    """
+    If True, ignore dataset fingerprint mismatches when loading from a checkpoint.
+    This is used when intentionally switching to a different dataset mix.
+    """
 
     @abstractmethod
     def build(self) -> NumpyDatasetBase:
@@ -2387,7 +2392,17 @@ class NumpyDatasetConfig(Config, ABC):
             log.info(f"Expanding '{pattern}'...")
             matches = sorted(glob_directory(pattern))
             if not matches:
-                raise FileNotFoundError(pattern)
+                error_msg = f"Pattern '{pattern}' did not match any files"
+                # Add helpful hint for mix-0625 which has unavailable files
+                if "0625" in pattern:
+                    error_msg += (
+                        "\n\nNOTE: Some files in OLMo-mix-0625 are not available. "
+                        "If you are resuming training from a checkpoint that used mix-0625, you will need to "
+                        "switch to a newer mix such as OLMo-mix-0925. To continue training with a different "
+                        "dataset mix, set 'ignore_fingerprint_mismatch=True' in your NumpyDataLoaderConfig "
+                        "to bypass the fingerprint mismatch error. This will probably result in a different data order!"
+                    )
+                raise FileNotFoundError(error_msg)
             for match in matches:
                 log.info(f" - '{match}'")
             expanded.extend(matches)
