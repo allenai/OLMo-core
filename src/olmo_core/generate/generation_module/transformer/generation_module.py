@@ -556,7 +556,8 @@ class TransformerGenerationModule(GenerationModule):
 
             # Average the weights
             for key in merged_state_dict["model"].keys():
-                if torch.is_tensor(merged_state_dict["model"][key]):
+                target_tensor = merged_state_dict["model"][key]
+                if torch.is_tensor(target_tensor) and torch.is_floating_point(target_tensor):
                     target_tensor = merged_state_dict["model"][key]
                     source_tensor = next_state_dict["model"].pop(key)
                     assert target_tensor.shape == source_tensor.shape
