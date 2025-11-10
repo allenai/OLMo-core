@@ -1,10 +1,11 @@
 from datetime import datetime
+from functools import partial
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
-from olmo_core.internal.experiment import CommonComponents, main
+from olmo_core.internal.experiment import CommonComponents, build_config, main
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
@@ -41,7 +42,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
 
     return TransformerTrainModuleConfig(
         rank_microbatch_size=rank_microbatch_size,
-        max_sequence_length=common.dataset.effective_sequence_length,
+        max_sequence_length=common.max_sequence_length,
         optim=SkipStepAdamWConfig(
             lr=3e-4,
             weight_decay=0.1,
@@ -127,11 +128,14 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
 if __name__ == "__main__":
     main(
-        global_batch_size=GLOBAL_BATCH_SIZE,
-        sequence_length=SEQUENCE_LENGTH,
-        model_config_builder=build_model_config,
-        train_module_config_builder=build_train_module_config,
-        trainer_config_builder=build_trainer_config,
-        include_instance_filter=False,  # We use SkipStepOptimizer for this problem.
-        include_default_evals=False,
+        config_builder=partial(
+            build_config,
+            global_batch_size=GLOBAL_BATCH_SIZE,
+            max_sequence_length=SEQUENCE_LENGTH,
+            model_config_builder=build_model_config,
+            train_module_config_builder=build_train_module_config,
+            trainer_config_builder=build_trainer_config,
+            include_instance_filter=False,  # We use SkipStepOptimizer for this problem.
+            include_default_evals=False,
+        )
     )

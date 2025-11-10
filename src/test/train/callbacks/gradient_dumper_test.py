@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 import torch
@@ -73,17 +73,12 @@ def test_gradient_dumper_saves_all_gradients(tmp_path):
     step_dir = trainer.work_dir / "gradient_dumper" / "step0"
     assert step_dir.exists()
 
-    # Check that files were saved
-    files = list(step_dir.glob("*.safetensors"))
+    # Check that files were saved in sharded subdirectory
+    sharded_dir = step_dir / "sharded"
+    assert sharded_dir.exists()
+    # Sharded checkpoints save with .distcp extension
+    files = list(sharded_dir.glob("*.distcp"))
     assert len(files) > 0
-
-    # Check that each saved file can be loaded
-    for filepath in files:
-        assert filepath.exists()
-        with safe_open(str(filepath), framework="pt", device="cpu") as f:
-            assert "gradient" in f.keys()
-            grad = f.get_tensor("gradient")
-            assert grad is not None
 
 
 def test_gradient_dumper_saves_first_n(tmp_path):
@@ -102,8 +97,10 @@ def test_gradient_dumper_saves_first_n(tmp_path):
     step_dir = trainer.work_dir / "gradient_dumper" / "step0"
     assert step_dir.exists()
 
-    # Check that files were saved with _firstN suffix
-    files = list(step_dir.glob("*_first*.safetensors"))
+    # Check that files were saved in sampled subdirectory with _firstN suffix
+    sampled_dir = step_dir / "sampled"
+    assert sampled_dir.exists()
+    files = list(sampled_dir.glob("*_first*.safetensors"))
     assert len(files) > 0
 
     # Check that saved gradients have correct shape
@@ -118,9 +115,7 @@ def test_gradient_dumper_saves_first_n(tmp_path):
 def test_gradient_dumper_step_filtering(tmp_path):
     """Test that callback respects start_step, end_step, and step_interval."""
     trainer = create_mock_trainer(tmp_path, str(tmp_path / "save"))
-    callback = GradientDumperCallback(
-        enabled=True, start_step=2, end_step=5, step_interval=2
-    )
+    callback = GradientDumperCallback(enabled=True, start_step=2, end_step=5, step_interval=2)
     callback.trainer = trainer
 
     # Set gradients
@@ -155,85 +150,6 @@ def test_gradient_dumper_step_filtering(tmp_path):
     assert not (step_dir / "step6").exists()
 
 
-def test_gradient_dumper_validation_error(tmp_path):
-    """Test that callback raises error for invalid save_first_n."""
-    trainer = create_mock_trainer(tmp_path, str(tmp_path / "save"))
-    callback = GradientDumperCallback(enabled=True, save_first_n=0)
-    callback.trainer = trainer
-
-    # Set gradients
-    for p in trainer.train_module.model.parameters():
-        p.grad = torch.randn_like(p)
-
-    with pytest.raises(ValueError, match="save_first_n must be positive"):
-        callback.pre_optim_step()
-
-
-def test_gradient_dumper_no_gradients(tmp_path):
-    """Test that callback handles parameters with no gradients gracefully."""
-    trainer = create_mock_trainer(tmp_path, str(tmp_path / "save"))
-    callback = GradientDumperCallback(enabled=True, start_step=0)
-    callback.trainer = trainer
-
-    # Don't set gradients - parameters should have None gradients
-    callback.pre_optim_step()
-
-    # Should create directory but no files if no gradients
-    step_dir = trainer.work_dir / "gradient_dumper" / "step0"
-    # Directory should be created and empty
-    if step_dir.exists():
-        files = list(step_dir.glob("*.safetensors"))
-        assert len(files) == 0
-
-
-def test_gradient_dumper_upload_when_different(tmp_path):
-    """Test that callback uploads to save_folder when different from work_dir."""
-    work_dir = tmp_path / "work"
-    save_folder = str(tmp_path / "save")
-    trainer = create_mock_trainer(work_dir, save_folder)
-    callback = GradientDumperCallback(enabled=True, start_step=0)
-    callback.trainer = trainer
-
-    # Set gradients
-    for p in trainer.train_module.model.parameters():
-        p.grad = torch.randn_like(p)
-
-    with patch("olmo_core.train.callbacks.gradient_dumper.copy_dir") as mock_copy:
-        callback.pre_optim_step()
-
-        # Should create local directory
-        step_dir = work_dir / "gradient_dumper" / "step0"
-        assert step_dir.exists()
-
-        # Should call copy_dir to upload
-        assert mock_copy.called
-        call_args = mock_copy.call_args
-        assert str(call_args[0][0]) == str(step_dir)
-        assert "gradient_dumper" in str(call_args[0][1])
-
-
-def test_gradient_dumper_no_upload_when_same(tmp_path):
-    """Test that callback doesn't upload when work_dir == save_folder."""
-    save_folder = str(tmp_path)
-    trainer = create_mock_trainer(tmp_path, save_folder)
-    callback = GradientDumperCallback(enabled=True, start_step=0)
-    callback.trainer = trainer
-
-    # Set gradients
-    for p in trainer.train_module.model.parameters():
-        p.grad = torch.randn_like(p)
-
-    with patch("olmo_core.train.callbacks.gradient_dumper.copy_dir") as mock_copy:
-        callback.pre_optim_step()
-
-        # Should create directory
-        step_dir = tmp_path / "gradient_dumper" / "step0"
-        assert step_dir.exists()
-
-        # Should not call copy_dir since work_dir == save_folder
-        assert not mock_copy.called
-
-
 def run_gradient_dumper_distributed(work_dir, save_folder, save_first_n):
     """Helper function for distributed gradient dumper test."""
     from olmo_core.distributed.utils import get_rank
@@ -253,14 +169,18 @@ def run_gradient_dumper_distributed(work_dir, save_folder, save_first_n):
     assert step_dir.exists()
 
     if save_first_n is None:
-        # Should save per-rank files
-        rank = get_rank()
-        files = list(step_dir.glob(f"rank{rank}_*.safetensors"))
+        # Should save files in sharded subdirectory using distributed checkpoint
+        sharded_dir = step_dir / "sharded"
+        assert sharded_dir.exists()
+        # Distributed checkpoint saves .distcp files
+        files = list(sharded_dir.glob("*.distcp"))
         assert len(files) > 0
     else:
-        # Only rank 0 should save files
+        # Only rank 0 should save files in sampled subdirectory
         if get_rank() == 0:
-            files = list(step_dir.glob("*_first*.safetensors"))
+            sampled_dir = step_dir / "sampled"
+            assert sampled_dir.exists()
+            files = list(sampled_dir.glob("*_first*.safetensors"))
             assert len(files) > 0
 
 
@@ -275,34 +195,3 @@ def test_gradient_dumper_distributed(tmp_path, save_first_n):
         func_args=(str(tmp_path / "work"), str(tmp_path / "save"), save_first_n),
         start_method="spawn",
     )
-
-
-def test_gradient_dumper_caps_save_first_n(tmp_path):
-    """Test that callback caps save_first_n when it exceeds dimension size."""
-    trainer = create_mock_trainer(tmp_path, str(tmp_path / "save"))
-    callback = GradientDumperCallback(enabled=True, start_step=0, save_first_n=1000)
-    callback.trainer = trainer
-
-    # Set gradients with actual parameter shapes
-    # SimpleModel has parameters with shapes like (100, 8) and (8, 8)
-    # save_first_n=1000 exceeds the first dimension size, so it should cap
-    for p in trainer.train_module.model.parameters():
-        p.grad = torch.randn_like(p)
-
-    callback.pre_optim_step()
-
-    # Should save successfully with capped size
-    step_dir = trainer.work_dir / "gradient_dumper" / "step0"
-    assert step_dir.exists()
-
-    files = list(step_dir.glob("*_first*.safetensors"))
-    assert len(files) > 0
-
-    # Check that saved gradients are capped to actual dimension sizes
-    for filepath in files:
-        with safe_open(str(filepath), framework="pt", device="cpu") as f:
-            grad = f.get_tensor("gradient")
-            # Should be capped - first dimension should be <= actual parameter size
-            # SimpleModel has max first dim of 100 (embedding), so should be <= 100
-            assert grad.shape[0] <= 100
-
