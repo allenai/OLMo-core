@@ -39,7 +39,7 @@ from olmo_core.train.train_module.transformer.common import parallelize_model
 from olmo_core.train.train_module.transformer.config import (
     TransformerDataParallelConfig,
 )
-from olmo_core.utils import get_default_device, log_or_print, move_to_device
+from olmo_core.utils import get_default_device, log_or_print, move_to_device, gc_cuda
 
 log = logging.getLogger(__name__)
 
@@ -543,7 +543,7 @@ class TransformerGenerationModule(GenerationModule):
 
         # Free the first module since we have its state dict
         del first_generation_module
-        gc.collect()
+        gc_cuda()
 
         # Average weights from all checkpoints
         for i, checkpoint_dir in enumerate(checkpoint_dirs[1:], start=2):
@@ -567,7 +567,7 @@ class TransformerGenerationModule(GenerationModule):
 
             # Free memory from the temporary module and run garbage collection
             del next_state_dict
-            gc.collect()
+            gc_cuda()
 
         # Now load the final model on the target device with the correct dtype
         if dtype == DType.float32:
@@ -600,8 +600,6 @@ class TransformerGenerationModule(GenerationModule):
 
         final_generation_module.load_state_dict(merged_state_dict)
 
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        gc_cuda()
 
         return final_generation_module
