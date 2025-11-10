@@ -59,6 +59,10 @@ class ShuffleStrategy(StrEnum):
     Shuffle within each source, then concatenate the sources in order. This can be used to create
     a data curriculum.
     """
+    interleaved_source = "interleaved_source"
+    """
+    Shuffle within each source and then interleave instances from each source.
+    """
 
 
 @dataclass
@@ -72,7 +76,7 @@ class ComposableDataLoaderConfig(Config):
     seed: int = dataclasses.field(default_factory=lambda: resolve_seed(SEED_NOT_SET))
     work_dir: Optional[str] = None
     shuffle: bool = True
-    shuffle_strategy: ShuffleStrategy = ShuffleStrategy.inter_source
+    shuffle_strategy: Optional[ShuffleStrategy] = None
     sources_per_epoch: int = -1
     num_threads: Optional[int] = None
     num_workers: int = 0
@@ -87,6 +91,8 @@ class ComposableDataLoaderConfig(Config):
             raise OLMoConfigurationError(
                 "'sources_per_epoch' must be -1 (for all sources) or a positive integer."
             )
+        if not self.shuffle and self.shuffle_strategy is not None:
+            raise OLMoConfigurationError("'shuffle_strategy' cannot be set if 'shuffle' is False.")
 
     def build(
         self,
@@ -156,7 +162,8 @@ class ComposableDataLoader(TextDataLoaderBase):
       of the working directory.
     :param seed: The random seed to use when shuffling data.
     :param shuffle: Whether to shuffle data at the start of each epoch.
-    :param shuffle_strategy: How to shuffle the data.
+    :param shuffle_strategy: How to shuffle the data. Defaults to :data:`ShuffleStrategy.inter_source`.
+    :param sources_per_epoch: The number of sources to use per epoch. If -1, all sources are used.
     :param num_threads: The number of threads to use for loading data within each worker process.
     :param num_workers: The number of worker processes to use for loading data.
     :param prefetch_factor: The number of batches to prefetch from each worker process.
@@ -183,7 +190,7 @@ class ComposableDataLoader(TextDataLoaderBase):
         fs_local_rank: Optional[int] = None,
         seed: int = SEED_NOT_SET,
         shuffle: bool = True,
-        shuffle_strategy: ShuffleStrategy = ShuffleStrategy.inter_source,
+        shuffle_strategy: Optional[ShuffleStrategy] = None,
         sources_per_epoch: int = -1,
         num_threads: Optional[int] = None,
         num_workers: int = 0,
@@ -210,6 +217,12 @@ class ComposableDataLoader(TextDataLoaderBase):
             raise OLMoConfigurationError(
                 "'tokenizer.pad_token_id' must match 'collator.pad_token_id'."
             )
+
+        if not shuffle and shuffle_strategy is not None:
+            raise OLMoConfigurationError("'shuffle_strategy' cannot be set if 'shuffle' is False.")
+
+        if shuffle and shuffle_strategy is None:
+            shuffle_strategy = ShuffleStrategy.inter_source
 
         super().__init__(
             collator=collator,
@@ -288,7 +301,15 @@ class ComposableDataLoader(TextDataLoaderBase):
         return self.instances_in_epoch(self._epoch or 1)
 
     def instances_in_epoch(self, epoch: int) -> int:
-        return sum(len(source) for source in self.sources_for_epoch(epoch))
+        sources_in_epoch = self.sources_for_epoch(epoch)
+        if self.shuffle and self.shuffle_strategy == ShuffleStrategy.interleaved_source:
+            # When interleaving sources, we need to make sure that each source contributes
+            # equally to the total number of instances, so we take the minimum length
+            # across all sources and multiply by the number of sources.
+            min_length = min(len(source) for source in sources_in_epoch)
+            return min_length * len(sources_in_epoch)
+        else:
+            return sum(len(source) for source in sources_in_epoch)
 
     @property
     def total_tokens(self) -> int:
@@ -356,16 +377,14 @@ class ComposableDataLoader(TextDataLoaderBase):
                 "Restoring data loading state with a different 'shuffle_strategy' is not supported!"
             )
 
+        if state_dict["shuffle"] != self.shuffle:
+            raise RuntimeError(
+                "Restoring data loading state with a different shuffle setting is not supported!"
+            )
+
         # Account for change in batch size / sequence length.
         self.tokens_processed = state_dict["tokens_processed"]
         self.batches_processed = self.tokens_processed // self.global_batch_size
-
-        if state_dict["shuffle"] != self.shuffle:
-            log.warning(
-                "Restoring data loading state with a different shuffle setting, "
-                "will use setting from state dict for data order consistency."
-            )
-            self.shuffle = state_dict["shuffle"]
 
         if state_dict["seed"] != self.seed and self.shuffle:
             log.warning(
@@ -545,12 +564,14 @@ class ComposableDataLoader(TextDataLoaderBase):
         dist_utils.barrier()
 
     def _build_global_indices(self) -> np.ndarray:
+        dtype = np.uint32
         if self.shuffle_strategy == ShuffleStrategy.inter_source:
             return build_global_indices(
                 self.total_instances,
                 sequence_length=self.sequence_length,
                 max_sequence_length=self.max_sequence_length,
                 seed=(self.seed + self.epoch) if self.shuffle else None,
+                dtype=dtype,
             )
         elif self.shuffle_strategy == ShuffleStrategy.intra_source:
             indices_per_source = []
@@ -561,10 +582,25 @@ class ComposableDataLoader(TextDataLoaderBase):
                     sequence_length=self.sequence_length,
                     max_sequence_length=self.max_sequence_length,
                     seed=(self.seed + self.epoch + i) if self.shuffle else None,
+                    dtype=dtype,
                 )
                 indices_per_source.append(indices + offset)
                 offset += len(source)
             return np.concatenate(indices_per_source)
+        elif self.shuffle_strategy == ShuffleStrategy.interleaved_source:
+            source_size = min(len(source) for source in self.sources_for_this_epoch)
+            num_sources = len(self.sources_for_this_epoch)
+            interleaved_indices = np.empty((num_sources * source_size,), dtype=np.uint32)
+            for i, source in enumerate(self.sources_for_this_epoch):
+                indices = build_global_indices(
+                    source_size,
+                    sequence_length=self.sequence_length,
+                    max_sequence_length=self.max_sequence_length,
+                    seed=(self.seed + self.epoch + i) if self.shuffle else None,
+                    dtype=dtype,
+                )
+                interleaved_indices[i::num_sources] = indices
+            return interleaved_indices
         else:
             raise NotImplementedError(f"Unknown shuffle strategy: {self.shuffle_strategy}")
 
