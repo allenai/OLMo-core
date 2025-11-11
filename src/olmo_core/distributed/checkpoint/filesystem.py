@@ -39,7 +39,7 @@ from olmo_core.io import (
     resource_path,
     upload,
 )
-from olmo_core.utils import generate_uuid, get_default_thread_count, get_element_size
+from olmo_core.utils import generate_uuid, get_default_thread_count, get_element_size, threaded_generator
 
 log = logging.getLogger(__name__)
 
@@ -340,24 +340,12 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
         if isinstance(self.path, str):
             init_client(self.path)
 
-        with ThreadPoolExecutor(max_workers=self.thread_count) as executor:
-            read_item_content_futures = []
-            for read_item in plan.items:
-                read_item_content_futures.append(
-                    executor.submit(self._get_content_for_read, read_item)
-                )
-            read_item_content_results = []
-            for f in as_completed(read_item_content_futures):
-                try:
-                    read_item_content_results.append(f.result())
-                except BaseException:
-                    # NOTE: we might get an error here that can't be pickled, which causes a different failure
-                    # later when PyTorch tries to reduce that error across ranks. So here we just make
-                    # sure we're raising a simple error type that can be pickled.
-                    raise OLMoCheckpointError(f"Original error:\n{traceback.format_exc()}")
+        contents = (self._get_content_for_read(item) for item in plan.items)
+        if self.thread_count > 0:
+            contents = threaded_generator(contents, maxsize=self.thread_count)
 
         # Modified from `FileSystemReader.read_data()`
-        for read_item, content in read_item_content_results:
+        for read_item, content in contents:
             bytes = io.BytesIO(content)
             bytes.seek(0)
             if read_item.type == LoadItemType.BYTE_IO:
