@@ -48,5 +48,5 @@ python -m olmo_core.launch.beaker \
   --train_module.dp_config.wrapping_strategy="full" \
   --train_module.rank_microbatch_size=2048 \
   --data_loader.global_batch_size=32768 \
-  # --trainer.callbacks.grad_dump.save_first_n=100 \
+  --trainer.callbacks.grad_dump.save_first_n=null
 
