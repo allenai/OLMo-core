@@ -32,6 +32,7 @@ from olmo_core.nn.conversion.state_mapping import StateType, TemplatePlaceholder
 from olmo_core.nn.hf.checkpoint import load_hf_model
 from olmo_core.nn.hf.convert import get_converter_from_hf
 from olmo_core.nn.moe.moe import MoEType
+from olmo_core.nn.rope import YaRNRoPEScalingConfig
 from olmo_core.nn.transformer.config import TransformerBlockConfig, TransformerConfig
 from olmo_core.nn.transformer.model import Transformer
 from olmo_core.utils import prepare_cli_environment
@@ -39,7 +40,10 @@ from olmo_core.utils import prepare_cli_environment
 log = logging.getLogger(__name__)
 
 
-def _get_transformer_config(model_arch: str, vocab_size: int) -> TransformerConfig:
+def _get_transformer_config(
+    model_arch: str, vocab_size: int, max_sequence_length: int
+) -> TransformerConfig:
+    model_arch = model_arch.lower()
     transformer_configs = {
         "olmo2_190m": TransformerConfig.olmo2_190M,
         "olmo2_370m": TransformerConfig.olmo2_370M,
@@ -70,7 +74,16 @@ def _get_transformer_config(model_arch: str, vocab_size: int) -> TransformerConf
         "llama3_405b": TransformerConfig.llama3_405B,
     }
 
-    return transformer_configs[model_arch.lower()](vocab_size)
+    result = transformer_configs[model_arch](vocab_size)
+
+    if model_arch.startswith("olmo3") and max_sequence_length != 8192:
+        result = result.with_rope_scaling(
+            YaRNRoPEScalingConfig(
+                factor=max_sequence_length / 8192, beta_fast=32, beta_slow=1, old_context_len=8192
+            )
+        )
+
+    return result
 
 
 def _get_tokenizer_config(tokenizer_id: str) -> TokenizerConfig:
@@ -593,9 +606,12 @@ def main():
         assert args.model_arch is not None
         assert args.tokenizer is not None
         tokenizer_config = _get_tokenizer_config(args.tokenizer)
-        transformer_config_dict = _get_transformer_config(
-            args.model_arch, tokenizer_config.padded_vocab_size()
-        ).as_config_dict()
+        transformer_config = _get_transformer_config(
+            args.model_arch,
+            tokenizer_config.padded_vocab_size(),
+            experiment_config["max_position_embeddings"],
+        )
+        transformer_config_dict = transformer_config.as_config_dict()
         tokenizer_config_dict = tokenizer_config.as_config_dict()
 
     assert transformer_config_dict is not None
