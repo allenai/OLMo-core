@@ -32,6 +32,12 @@ from olmo_core.nn.conversion.state_mapping import StateType, TemplatePlaceholder
 from olmo_core.nn.hf.checkpoint import load_hf_model
 from olmo_core.nn.hf.convert import get_converter_from_hf
 from olmo_core.nn.moe.moe import MoEType
+from olmo_core.nn.rope import (
+    PIRoPEScalingConfig,
+    RoPEScalingConfig,
+    StepwiseRoPEScalingConfig,
+    YaRNRoPEScalingConfig,
+)
 from olmo_core.nn.transformer.config import TransformerBlockConfig, TransformerConfig
 from olmo_core.nn.transformer.model import Transformer
 from olmo_core.utils import prepare_cli_environment
@@ -83,6 +89,91 @@ def _get_tokenizer_config(tokenizer_id: str) -> TokenizerConfig:
     return tokenizer_configs[tokenizer_id.lower()]()
 
 
+def _rope_scaling_from_hf_config(hf_rope_scaling: Dict[str, Any]) -> RoPEScalingConfig:
+    """
+    Convert a HuggingFace rope_scaling config dict to an OLMo core RoPEScalingConfig.
+
+    Args:
+        hf_rope_scaling: The rope_scaling dict from HF config (e.g., {"rope_type": "yarn", ...})
+
+    Returns:
+        The corresponding OLMo core RoPEScalingConfig instance.
+    """
+    if not isinstance(hf_rope_scaling, dict):
+        raise ValueError(f"Expected rope_scaling to be a dict, got {type(hf_rope_scaling)}")
+
+    rope_type = hf_rope_scaling.get("rope_type")
+    if rope_type is None:
+        raise ValueError("rope_scaling dict must have a 'rope_type' field")
+
+    if rope_type == "linear":
+        # Position-Interpolation (PI) scaling
+        factor = hf_rope_scaling.get("factor")
+        if factor is None:
+            raise ValueError("linear rope_scaling must have a 'factor' field")
+        attention_rescale_factor = hf_rope_scaling.get("attention_rescale_factor", 1.0)
+        return PIRoPEScalingConfig(factor=factor, attention_rescale_factor=attention_rescale_factor)
+
+    elif rope_type == "llama3":
+        # Stepwise (Llama-3.1) scaling
+        factor = hf_rope_scaling.get("factor")
+        if factor is None:
+            raise ValueError("llama3 rope_scaling must have a 'factor' field")
+        original_max_position_embeddings = hf_rope_scaling.get("original_max_position_embeddings")
+        if original_max_position_embeddings is None:
+            raise ValueError(
+                "llama3 rope_scaling must have an 'original_max_position_embeddings' field"
+            )
+        low_freq_factor = hf_rope_scaling.get("low_freq_factor")
+        high_freq_factor = hf_rope_scaling.get("high_freq_factor")
+        if low_freq_factor is None or high_freq_factor is None:
+            raise ValueError(
+                "llama3 rope_scaling must have 'low_freq_factor' and 'high_freq_factor' fields"
+            )
+        attention_rescale_factor = hf_rope_scaling.get("attention_rescale_factor", 1.0)
+
+        # Convert low_freq_factor and high_freq_factor to proportions
+        # low_freq_factor = 1 / (1 - low_freq_proportion) => low_freq_proportion = 1 - 1/low_freq_factor
+        # high_freq_factor = 1 / high_freq_proportion => high_freq_proportion = 1 / high_freq_factor
+        low_freq_proportion = 1.0 - (1.0 / low_freq_factor)
+        high_freq_proportion = 1.0 / high_freq_factor
+
+        return StepwiseRoPEScalingConfig(
+            factor=factor,
+            low_freq_proportion=low_freq_proportion,
+            high_freq_proportion=high_freq_proportion,
+            old_context_len=original_max_position_embeddings,
+            attention_rescale_factor=attention_rescale_factor,
+        )
+
+    elif rope_type == "yarn":
+        # YaRN scaling
+        factor = hf_rope_scaling.get("factor")
+        if factor is None:
+            raise ValueError("yarn rope_scaling must have a 'factor' field")
+        original_max_position_embeddings = hf_rope_scaling.get("original_max_position_embeddings")
+        if original_max_position_embeddings is None:
+            raise ValueError(
+                "yarn rope_scaling must have an 'original_max_position_embeddings' field"
+            )
+        beta_fast = hf_rope_scaling.get("beta_fast", 32)
+        beta_slow = hf_rope_scaling.get("beta_slow", 1)
+        # Note: attention_factor in HF config corresponds to attention_rescale_factor in OLMo core
+        # but YaRN computes it automatically, so we ignore it if present
+        return YaRNRoPEScalingConfig(
+            factor=factor,
+            beta_fast=beta_fast,
+            beta_slow=beta_slow,
+            old_context_len=original_max_position_embeddings,
+        )
+
+    else:
+        raise NotImplementedError(
+            f"Unsupported rope_scaling type: {rope_type}. "
+            f"Supported types are: 'linear' (PI), 'llama3' (Stepwise), 'yarn' (YaRN)"
+        )
+
+
 def convert_checkpoint_from_hf(
     hf_checkpoint_path: str | Path,
     output_path: str | Path,
@@ -115,7 +206,40 @@ def convert_checkpoint_from_hf(
     if "float8_config" in transformer_config_dict:
         del transformer_config_dict["float8_config"]
 
+    # Load HF config early to check for rope_scaling
+    log.info(f"Loading HF config from '{hf_checkpoint_path}' (revision '{hf_revision}')")
+    hf_config = AutoConfig.from_pretrained(hf_checkpoint_path, revision=hf_revision)
+
+    # Build initial model config
     model_config = TransformerConfig.from_dict(transformer_config_dict)
+
+    # Apply rope scaling from HF config if present
+    hf_rope_scaling = getattr(hf_config, "rope_scaling", None)
+    if hf_rope_scaling is not None:
+        log.info(f"Found rope_scaling in HF config: {hf_rope_scaling}")
+        try:
+            # Handle case where rope_scaling might be a string (JSON) or dict
+            if isinstance(hf_rope_scaling, str):
+                hf_rope_scaling = json.loads(hf_rope_scaling)
+            elif not isinstance(hf_rope_scaling, dict):
+                raise ValueError(
+                    f"Expected rope_scaling to be dict or JSON string, got {type(hf_rope_scaling)}"
+                )
+
+            rope_scaling_config = _rope_scaling_from_hf_config(hf_rope_scaling)
+            log.info(f"Converted to OLMo core rope scaling: {rope_scaling_config}")
+            # Apply rope scaling to full attention layers only (not sliding window layers)
+            model_config = model_config.with_rope_scaling(
+                rope_scaling_config, full_attn_layers_only=True
+            )
+            log.info("Applied rope scaling to transformer config")
+        except Exception as e:
+            log.warning(
+                f"Failed to apply rope scaling from HF config: {e}. Continuing without rope scaling."
+            )
+    else:
+        log.info("No rope_scaling found in HF config, using default RoPE configuration")
+
     rich.print(model_config)
 
     validation_device = validation_device or torch.device("cpu")
@@ -135,9 +259,9 @@ def convert_checkpoint_from_hf(
         if attention_config.name == AttentionType.fused:
             backend = attention_config.backend
             if backend is None:
-                assert (
-                    attention_config.use_flash
-                ), "use_flash or flash_2 backend is expected for fused attention"
+                assert attention_config.use_flash, (
+                    "use_flash or flash_2 backend is expected for fused attention"
+                )
                 backend = AttentionBackendName.flash_2
 
             assert backend in (
@@ -219,8 +343,10 @@ def convert_checkpoint_from_hf(
 
     config_path = join_path(output_path, "config.json")
     log.info(f"Writing partial experiment config to '{config_path}'")
+    # Convert model_config back to dict to include any rope scaling that was applied
+    updated_transformer_config_dict = model_config.as_config_dict()
     experiment_config_dict = {
-        "model": transformer_config_dict,
+        "model": updated_transformer_config_dict,
         "dataset": {
             "tokenizer": tokenizer_config_dict,
         },
