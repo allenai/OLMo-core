@@ -577,10 +577,11 @@ class TransformerConfig(Config):
         """
         A 7B OLMo model config.
         """
+        kwargs.pop("qk_norm", False)  # ignore qk_norm arg 
         return cls.llama2_7B(
             vocab_size,
             block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
-            qk_norm=kwargs.pop("qk_norm", False),
+            qk_norm=False,
             rope_theta=kwargs.pop("rope_theta", 500_000),
             layer_norm_eps=1e-6,
             **kwargs,

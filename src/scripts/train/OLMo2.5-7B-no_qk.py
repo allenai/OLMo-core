@@ -23,7 +23,7 @@ GLOBAL_BATCH_SIZE = 4 * 1024 * 1024
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
-    config = TransformerConfig.olmo2_7B_preorder(vocab_size=common.tokenizer.padded_vocab_size())
+    config = TransformerConfig.olmo2_7B_noqk(vocab_size=common.tokenizer.padded_vocab_size())
     config.block.attention.sliding_window = SlidingWindowAttentionConfig(
         force_full_attention_on_first_layer=False,
         force_full_attention_on_last_layer=True,
@@ -89,7 +89,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             metrics_collect_interval=10,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(int(5e12)),
-            hard_stop=Duration.tokens(int(145e9)) # stop at 145B tokens for this run 
+            hard_stop=Duration.tokens(int(145e9)) # stop at 145B tokens for this run,
+            keys_to_ignore=[r'q_norm', r'k_norm'], # don't want qk norm params loaded
         )
         .with_callback(
             "checkpointer",
