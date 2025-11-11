@@ -10,7 +10,8 @@ Run the example training script:
 bash src/examples/gradient_dumping/run.sh
 ```
 
-This trains a small model on 2 GPUs with FSDP and dumps gradients at steps 0, 2, 4, 6, 8, 10.
+This trains a model on multi-GPU with FSDP and dumps gradients at steps 0, 2, 4, 6, 8, 10.
+
 
 ## Overview
 
