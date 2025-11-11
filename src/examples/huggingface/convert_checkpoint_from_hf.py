@@ -76,11 +76,15 @@ def _get_transformer_config(
 
     result = transformer_configs[model_arch](vocab_size)
 
-    if model_arch.startswith("olmo3") and max_sequence_length != 8192:
+    if model_arch.startswith("olmo3_") and max_sequence_length != 8192:
         result = result.with_rope_scaling(
             YaRNRoPEScalingConfig(
                 factor=max_sequence_length / 8192, beta_fast=32, beta_slow=1, old_context_len=8192
             )
+        )
+    elif model_arch.startswith("olmo2_") and max_sequence_length != 4096:
+        raise RuntimeError(
+            "If you get here, you have to add code that reflects how you extended RoPE when you did you long context training."
         )
 
     return result
@@ -608,7 +612,9 @@ def main():
         tokenizer_config = _get_tokenizer_config(args.tokenizer)
 
         # We still need to load the HF config, to get the right sequence length.
-        with cached_path(args.config_path or f"{args.checkpoint_input_path}/config.json").open("r", encoding="utf-8") as f:
+        with cached_path(args.config_path or f"{args.checkpoint_input_path}/config.json").open(
+            "r", encoding="utf-8"
+        ) as f:
             hf_config_dict = json.load(f)
 
         transformer_config = _get_transformer_config(
