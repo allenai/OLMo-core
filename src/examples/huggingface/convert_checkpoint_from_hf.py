@@ -606,10 +606,15 @@ def main():
         assert args.model_arch is not None
         assert args.tokenizer is not None
         tokenizer_config = _get_tokenizer_config(args.tokenizer)
+
+        # We still need to load the HF config, to get the right sequence length.
+        with cached_path(args.config_path or f"{args.checkpoint_input_path}/config.json").open("r", encoding="utf-8") as f:
+            hf_config_dict = json.load(f)
+
         transformer_config = _get_transformer_config(
             args.model_arch,
             tokenizer_config.padded_vocab_size(),
-            experiment_config["max_position_embeddings"],
+            hf_config_dict["max_position_embeddings"],
         )
         transformer_config_dict = transformer_config.as_config_dict()
         tokenizer_config_dict = tokenizer_config.as_config_dict()
