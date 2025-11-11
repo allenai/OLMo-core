@@ -55,12 +55,6 @@ class RoPEScalingConfig(Config):
     Base class for RoPE scaling configs. Defines a strategy for scaling RoPE to longer sequences.
     """
 
-    attention_rescale_factor: float = 1.0
-    """
-    Factor to rescale attention scores by when using scaled RoPE. Can be used to compensate for
-    the larger effective context. 1.0 means no rescaling.
-    """
-
     @abstractmethod
     def compute_scaled_inv_freq(
         self, theta: int, dim: int, device: torch.device
@@ -77,6 +71,12 @@ class RoPEScalingConfig(Config):
 @dataclass
 class ABFRoPEScalingConfig(RoPEScalingConfig):
     """Absolute base frequency scaling (ABF). Simply uses a new base frequency parameter."""
+
+    attention_rescale_factor: float = 1.0
+    """
+    Factor to rescale attention scores by when using scaled RoPE. Can be used to compensate for
+    the larger effective context. 1.0 means no rescaling.
+    """
 
     new_theta: int = 8_000_000
 
@@ -100,6 +100,12 @@ class PIRoPEScalingConfig(RoPEScalingConfig):
     Interpolate the rotary angles instead of extrapolating them when the context window at
     inference time exceeds the window used during training. In practice, this amounts to linearly
     *compressing* the original position indices by a constant factor ``factor``.
+    """
+
+    attention_rescale_factor: float = 1.0
+    """
+    Factor to rescale attention scores by when using scaled RoPE. Can be used to compensate for
+    the larger effective context. 1.0 means no rescaling.
     """
 
     factor: float = 2.0
@@ -138,6 +144,12 @@ class StepwiseRoPEScalingConfig(RoPEScalingConfig):
         spreading the very low frequencies across a longer context window (similar to PI scaling).
     3. **Medium-frequency band** – linearly interpolates (in inverse-frequency space) between the
         unscaled and the fully-scaled value so that the full spectrum changes smoothly.
+    """
+
+    attention_rescale_factor: float = 1.0
+    """
+    Factor to rescale attention scores by when using scaled RoPE. Can be used to compensate for
+    the larger effective context. 1.0 means no rescaling.
     """
 
     factor: float = 32.0
