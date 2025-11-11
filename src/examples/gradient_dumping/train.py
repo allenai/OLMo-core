@@ -45,9 +45,9 @@ from olmo_core.train.callbacks import (
     WandBCallback,
 )
 from olmo_core.train.train_module import (
+    TransformerActivationCheckpointingConfig,
     TransformerDataParallelConfig,
     TransformerTrainModuleConfig,
-    TransformerActivationCheckpointingConfig,
 )
 from olmo_core.utils import seed_all
 
