@@ -341,7 +341,9 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
         if isinstance(self.path, str):
             init_client(self.path)
 
-        for i, read_item in enumerate(plan.items):
+        assert self.thread_count == 1
+
+        for read_item in plan.items:
             read_item, content = self._get_content_for_read(read_item)
             bytes = io.BytesIO(content)
             del content
@@ -366,8 +368,7 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
                 planner.commit_tensor(read_item, target_tensor)
             del bytes
             del read_item
-            if i % 64 == 63:
-                gc.collect()
+            gc.collect()
 
         fut: Future = Future()
         fut.set_result(None)
