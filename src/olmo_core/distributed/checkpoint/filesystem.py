@@ -14,6 +14,7 @@ from typing import Dict, List, Optional, Sequence, Tuple, cast
 import torch
 import torch.distributed as dist
 import torch.distributed.checkpoint as dist_cp
+from bettermap import ordered_map_per_thread
 from torch.distributed.checkpoint.filesystem import WriteResult
 from torch.distributed.checkpoint.metadata import Metadata, MetadataIndex, StorageMeta
 from torch.distributed.checkpoint.planner import (
@@ -340,9 +341,10 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
         if isinstance(self.path, str):
             init_client(self.path)
 
-        contents = (self._get_content_for_read(item) for item in plan.items)
         if self.thread_count > 0:
-            contents = threaded_generator(contents, maxsize=self.thread_count)
+            contents = ordered_map_per_thread(self._get_content_for_read, plan.items, parallelism=self.thread_count)
+        else:
+            contents = (self._get_content_for_read(item) for item in plan.items)
 
         # Modified from `FileSystemReader.read_data()`
         for read_item, content in contents:
