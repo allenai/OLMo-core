@@ -53,6 +53,7 @@ def _get_transformer_config(model_arch: str, vocab_size: int) -> TransformerConf
         "olmo2_32b": TransformerConfig.olmo2_32B,
         "olmo3_190m": TransformerConfig.olmo3_190M,
         "olmo3_7b": TransformerConfig.olmo3_7B,
+        "olmo3_32b": TransformerConfig.olmo3_32B,
         "smallmoe": TransformerConfig.smallmoe,
         "olmoe_1b_7b": TransformerConfig.olmoe_1B_7B,
         "ngpt_271m": TransformerConfig.ngpt_271M,
