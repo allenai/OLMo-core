@@ -257,10 +257,11 @@ class YaRNRoPEScalingConfig(RoPEScalingConfig):
         # 3. Blend the two spectra according to the ramp weights
         inv_freq = inv_freq_interpolation * ramp + inv_freq_extrapolation * (1.0 - ramp)
 
-        # Attention rescale factor (section 3.4)
-        attention_rescale_factor = 0.1 * math.log(self.factor) + 1.0
+        return inv_freq, self.get_attention_rescale_factor()
 
-        return inv_freq, attention_rescale_factor
+    def get_attention_rescale_factor(self) -> float:
+        """Compute the attention rescale factor based on section 3.4 of the YaRN paper"""
+        return 0.1 * math.log(self.factor) + 1.0
 
     def to_hf_config(self) -> dict:
         """YaRN scaling corresponds to HF's yarn scaling."""
@@ -270,7 +271,7 @@ class YaRNRoPEScalingConfig(RoPEScalingConfig):
             "original_max_position_embeddings": self.old_context_len,
             "beta_fast": self.beta_fast,
             "beta_slow": self.beta_slow,
-            "attention_factor": 0.1 * math.log(self.factor) + 1.0,  # From YaRN paper
+            "attention_factor": self.get_attention_rescale_factor(),
         }
 
 
