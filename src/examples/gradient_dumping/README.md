@@ -4,13 +4,13 @@ This example demonstrates how to dump gradients during distributed FSDP/HSDP tra
 
 ## Quick Start
 
-Run the example training script:
+Run the example gradient dumping script:
 
 ```bash
 bash src/examples/gradient_dumping/run.sh
 ```
 
-This trains a model on multi-GPU with FSDP and dumps gradients at steps 0, 2, 4, 6, 8, 10.
+This uses the dedicated `src/examples/gradient_dumping/train.py` script, which is optimized for gradient dumping with larger models (7B+). It trains on multi-GPU with HSDP, activation checkpointing enabled, and dumps gradients at steps 0, 2, 4, 6, 8, 10.
 
 
 ## Overview

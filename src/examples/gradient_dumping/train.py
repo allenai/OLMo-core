@@ -1,9 +1,14 @@
 """
-Example of how to train a transformer language model.
+Example of training with gradient dumping for 7B+ models.
+
+This training script is optimized for:
+- Larger models (7B+) with activation checkpointing enabled by default
+- Gradient dumping for analysis and debugging
+- Multi-node distributed training on Beaker
 
 Launch this with torchrun:
 
-    torchrun --nproc-per-node=4 src/examples/llm/train.py run_name [OVERRIDES...]
+    torchrun --nproc-per-node=4 src/examples/gradient_dumping/train.py run_name [OVERRIDES...]
 """
 
 import argparse
@@ -67,22 +72,10 @@ for dir in (
 DATA_ROOT = os.environ.get("OLMO_DATA_ROOT", DEFAULT_DATA_ROOT).rstrip("/")
 DATA_PATHS = [
     f"{DATA_ROOT}/c4-train.00000-00099.npy",
-    # Uncomment for full dataset which might not be available on NFS or Weka.
-    #  f"{DATA_ROOT}/c4-train.00100-00199.npy",
-    #  f"{DATA_ROOT}/c4-train.00200-00299.npy",
-    #  f"{DATA_ROOT}/c4-train.00300-00399.npy",
-    #  f"{DATA_ROOT}/c4-train.00400-00499.npy",
-    #  f"{DATA_ROOT}/c4-train.00500-00599.npy",
-    #  f"{DATA_ROOT}/c4-train.00600-00699.npy",
-    #  f"{DATA_ROOT}/c4-train.00700-00799.npy",
-    #  f"{DATA_ROOT}/c4-train.00800-00899.npy",
-    #  f"{DATA_ROOT}/c4-train.00900-00999.npy",
-    #  f"{DATA_ROOT}/c4-train.01000-01023.npy",
 ]
 EVAL_DATA_PATHS = [f"{DATA_ROOT}/c4-validation.00000-00008.npy"]
 
 
-# docs: start-define-config
 @dataclass
 class ExperimentConfig(Config):
     model: TransformerConfig
@@ -98,46 +91,32 @@ class ExperimentConfig(Config):
     init_seed: int = 12536
     """Random seed to initialize model weights."""
     load_path: Optional[str] = None
-    """Path to load checkpoint from if no checkpoint is found in the save folder.
-    Mainly used when you want to fine-tune from a pretrained model."""
+    """Path to load checkpoint from if no checkpoint is found in the save folder."""
     load_trainer_state: bool = False
-    """Whether to load the trainer state (including data loader state) when loading from `load_path`.
-    This only makes sense when trainer state is available in the checkpoint and you're resuming
-    on the same dataset."""
-    # docs: end-define-config
+    """Whether to load the trainer state when loading from `load_path`."""
 
 
 def train(config: ExperimentConfig):
     if get_rank() == 0:
         rich.print(config)
 
-    # Set RNG states on all devices.
     seed_all(config.init_seed)
 
-    # docs: start-build-components
-    # Build components.
     model = config.model.build(init_device="meta")
     train_module = config.train_module.build(model)
     dataset = config.dataset.build()
     data_loader = config.data_loader.build(dataset, dp_process_group=train_module.dp_process_group)
     trainer = config.trainer.build(train_module, data_loader)
-    # docs: end-build-components
 
-    # Save config to W&B and each checkpoint dir.
     config_dict = config.as_config_dict()
     cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
 
-    # docs: start-load-path
-    # If we have a load path set and there is no checkpoint in the save folder, load the
-    # checkpoint from the load path.
     if not trainer.no_checkpoints and not trainer.maybe_load_checkpoint() and config.load_path:
         log.info(
             f"Loading checkpoint from {config.load_path} since no checkpoints were found in the save folder..."
         )
         trainer.load_checkpoint(config.load_path, load_trainer_state=config.load_trainer_state)
-    # docs: end-load-path
 
-    # Train.
     trainer.fit()
 
 
@@ -152,15 +131,11 @@ def build_config(opts, overrides: List[str]) -> ExperimentConfig:
 
     tokenizer_config = TokenizerConfig.gpt2()
 
-    # docs: start-model-config
     try:
         factory = getattr(TransformerConfig, opts.model_factory)
     except AttributeError:
         raise ValueError(f"Unknown model factory: {opts.model_factory}")
-    model_config = factory(
-        vocab_size=tokenizer_config.padded_vocab_size(),  # a little bigger than actual vocab size to make it a multiple of 128
-    )
-    # docs: end-model-config
+    model_config = factory(vocab_size=tokenizer_config.padded_vocab_size())
 
     log.info(f"Using data root: {DATA_ROOT}")
     dataset_config = NumpyFSLDatasetConfig(
@@ -170,14 +145,15 @@ def build_config(opts, overrides: List[str]) -> ExperimentConfig:
         work_dir=work_dir,
     )
 
+    # Optimized for larger models (7B+) with gradient dumping
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=256 * 1024,  # NOTE: this is specified in tokens, not instances
+        global_batch_size=128 * 1024,
         seed=0,
         num_workers=4,
     )
 
     train_module_config = TransformerTrainModuleConfig(
-        rank_microbatch_size=16 * 1024,  # NOTE: this is specified in tokens, not instances
+        rank_microbatch_size=8 * 1024,
         max_sequence_length=opts.sequence_length,
         optim=AdamWConfig(
             lr=1e-3,
@@ -185,13 +161,15 @@ def build_config(opts, overrides: List[str]) -> ExperimentConfig:
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
             ],
         ),
-        compile_model=True,
+        compile_model=False,  # Disabled for stability with FSDP + gradient dumping
         dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
+            name=DataParallelType.hsdp,
+            param_dtype=DType.bfloat16,
+            reduce_dtype=DType.float32,
         ),
+        ac_config=TransformerActivationCheckpointingConfig(),  # Required for 7B+ models
         max_grad_norm=1.0,
         scheduler=CosWithWarmup(warmup_steps=100),
-        ac_config=TransformerActivationCheckpointingConfig(),
     )
 
     trainer_config = (
@@ -215,7 +193,7 @@ def build_config(opts, overrides: List[str]) -> ExperimentConfig:
             CometCallback(
                 name=opts.run_name,
                 cancel_check_interval=10,
-                enabled=False,  # change to true to enable
+                enabled=False,
             ),
         )
         .with_callback(
@@ -223,7 +201,7 @@ def build_config(opts, overrides: List[str]) -> ExperimentConfig:
             WandBCallback(
                 name=opts.run_name,
                 cancel_check_interval=10,
-                enabled=False,  # change to true to enable
+                enabled=False,
             ),
         )
         .with_callback("config_saver", ConfigSaverCallback())
@@ -252,7 +230,13 @@ def build_config(opts, overrides: List[str]) -> ExperimentConfig:
         )
         .with_callback(
             "grad_dump",
-            GradientDumperCallback(enabled=False),
+            GradientDumperCallback(
+                enabled=True,
+                start_step=0,
+                step_interval=10,
+                end_step=100,
+                save_first_n=100,
+            ),
         )
     )
 
@@ -264,10 +248,7 @@ def build_config(opts, overrides: List[str]) -> ExperimentConfig:
         trainer=trainer_config,
     )
 
-    # Apply overrides.
-    # docs: start-config-merge
     config = config.merge(overrides)
-    # docs: end-config-merge
 
     return config
 
@@ -276,16 +257,15 @@ def parser_args():
     parser = argparse.ArgumentParser(
         prog=sys.argv[0],
         usage=f"python {sys.argv[0]} RUN_NAME [OPTIONS...] [CONFIG_OVERRIDES...]",
-        description="Train a transformer language model on c4.",
+        description="Train a transformer with gradient dumping.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("run_name", type=str, help="""The name of the run.""")
     parser.add_argument(
         "--model-factory",
         type=str,
-        default="llama2_271M",
-        help="""The name of the model factory to use.
-        This can be any classmethod on the TransformerConfig class.""",
+        default="olmo2_7B",
+        help="""The name of the model factory to use.""",
     )
     parser.add_argument(
         "--sequence-length",
@@ -296,14 +276,12 @@ def parser_args():
     parser.add_argument(
         "--save-folder",
         type=str,
-        help="""A local or remote directory to save checkpoints to.
-        Defaults to a temporary directory if not provided.""",
+        help="""A local or remote directory to save checkpoints to.""",
     )
     parser.add_argument(
         "--work-dir",
         type=str,
-        help="""A local working directory for dataset preprocessing.
-        Defaults to a temporary directory if not provided.""",
+        help="""A local working directory for dataset preprocessing.""",
     )
     parser.add_argument(
         "--dry-run",
