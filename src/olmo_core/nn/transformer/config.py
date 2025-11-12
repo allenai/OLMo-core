@@ -259,6 +259,11 @@ class TransformerBlockConfig(Config):
             if self.layer_norm is not None:
                 block_params += self.layer_norm.num_params(d_model)
 
+        # Two extra norms for Peri-LN block type.
+        if self.name == TransformerBlockType.peri_norm:
+            assert self.layer_norm is not None
+            block_params += 2 * self.layer_norm.num_params(d_model)
+
         return block_params
 
     def num_active_params(self, d_model: int) -> int:
