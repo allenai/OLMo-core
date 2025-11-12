@@ -18,11 +18,8 @@ from olmo_core.config import Config, DType
 from olmo_core.data import (
     NumpyDataLoaderConfig,
     NumpyDatasetConfig,
-    NumpyDatasetType,
-    NumpyByteFSLDataset,
-    ByteTokenizerConfig,
+    NumpyFSLDatasetConfig,
     TokenizerConfig,
-    ByteDataCollator,
 )
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.checkpoint import load_model_and_optim_state
@@ -45,7 +42,6 @@ from olmo_core.train.callbacks import (
     WandBCallback,
 )
 from olmo_core.train.common import LoadStrategy
-from olmo_core.nn.blt.config import BLTConfig
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerTrainModuleConfig,
@@ -115,9 +111,8 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         vocab_size=tokenizer_config.padded_vocab_size(),
     )
 
-    dataset_config = NumpyDatasetConfig(
+    dataset_config = NumpyFSLDatasetConfig(
         paths=DATA_PATHS,
-        name=NumpyDatasetType.fsl,
         sequence_length=SEQUENCE_LENGTH, # subword sequence length
         tokenizer=tokenizer_config,
         work_dir=os.path.join(SAVE_FOLDER, "data"),
@@ -141,7 +136,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
 
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=LOCAL_BATCH_SIZE * SEQUENCE_LENGTH,
-        max_sequence_length=dataset_config.effective_sequence_length,
+        max_sequence_length=dataset_config.sequence_length,
         optim=optim,
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
@@ -247,7 +242,6 @@ def main(run_name: str, overrides: List[str]):
     dataset = config.dataset.build()
     data_loader = config.data_loader.build(
         dataset,
-        collator=ByteDataCollator(pad_token_id=dataset.pad_token_id) if isinstance(dataset, NumpyByteFSLDataset) else None,
         dp_process_group=train_module.dp_process_group
     )
     trainer = config.trainer.build(train_module, data_loader)
