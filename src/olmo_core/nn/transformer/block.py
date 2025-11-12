@@ -7,11 +7,7 @@ import torch.nn as nn
 from torch.distributed import DeviceMesh
 from torch.distributed.fsdp import FSDPModule, fully_shard
 from torch.distributed.tensor import Placement, Shard
-from torch.distributed.tensor.parallel import (
-    PrepareModuleInput,
-    PrepareModuleInputOutput,
-    parallelize_module,
-)
+from torch.distributed.tensor.parallel import PrepareModuleInput, parallelize_module
 
 from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
 from olmo_core.distributed.utils import get_local_tensor
@@ -162,18 +158,6 @@ class TransformerBlock(TransformerBlockBase):
         parallelize_module(
             self.attention_norm, device_mesh=tp_mesh, parallelize_plan=SequenceParallel()
         )
-        parallelize_module(
-            self.attention_residual_stream,
-            device_mesh=tp_mesh,
-            parallelize_plan=PrepareModuleInputOutput(
-                input_layouts=(Shard(1), Shard(1)),  # type: ignore[arg-type]
-                desired_input_layouts=(Shard(1), Shard(1)),  # type: ignore[arg-type]
-                use_local_input=True,
-                output_layouts=Shard(1),
-                desired_output_layouts=Shard(1),
-                use_local_output=False,
-            ),
-        )
 
         self.attention.apply_tp(
             tp_mesh,
@@ -185,18 +169,6 @@ class TransformerBlock(TransformerBlockBase):
 
         parallelize_module(
             self.feed_forward_norm, device_mesh=tp_mesh, parallelize_plan=SequenceParallel()
-        )
-        parallelize_module(
-            self.feed_forward_residual_stream,
-            device_mesh=tp_mesh,
-            parallelize_plan=PrepareModuleInputOutput(
-                input_layouts=(Shard(1), Shard(1)),  # type: ignore[arg-type]
-                desired_input_layouts=(Shard(1), Shard(1)),  # type: ignore[arg-type]
-                use_local_input=True,
-                output_layouts=Shard(1),
-                desired_output_layouts=Shard(1),
-                use_local_output=False,
-            ),
         )
 
         self.feed_forward.apply_tp(
