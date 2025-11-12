@@ -367,6 +367,13 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
                 ), f"req {read_item.storage_index} mismatch sizes {target_tensor.size()} vs {tensor.size()}"
                 target_tensor.copy_(tensor)
                 planner.commit_tensor(read_item, target_tensor)
+                del tensor
+            del read_item
+            del bytes
+            del content
+            # It might be tempting to do a GS here, but that tanks performance during checkpoint loading,
+            # and most of the time it's not necessary. If you run out of CPU memory while loading checkpoints,
+            # and you're desperate, try throwing a gc.collect() in here.
 
         fut: Future = Future()
         fut.set_result(None)
