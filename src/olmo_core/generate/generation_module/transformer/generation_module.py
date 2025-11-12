@@ -39,7 +39,7 @@ from olmo_core.train.train_module.transformer.common import parallelize_model
 from olmo_core.train.train_module.transformer.config import (
     TransformerDataParallelConfig,
 )
-from olmo_core.utils import get_default_device, log_or_print, move_to_device, gc_cuda
+from olmo_core.utils import gc_cuda, get_default_device, log_or_print, move_to_device
 
 log = logging.getLogger(__name__)
 

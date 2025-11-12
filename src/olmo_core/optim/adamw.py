@@ -119,7 +119,7 @@ class SkipStepAdamW(SkipStepOptimizer):
         dtype: Optional[Union[torch.dtype, DType]] = None,
         foreach: bool = False,
         step_increment_bugfix: bool = True,
-        dry_run_only: bool = False
+        dry_run_only: bool = False,
     ) -> None:
         assert lr >= 0.0
         assert all([0.0 <= beta <= 1.0 for beta in betas])

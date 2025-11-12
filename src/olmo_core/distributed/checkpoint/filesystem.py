@@ -40,7 +40,12 @@ from olmo_core.io import (
     resource_path,
     upload,
 )
-from olmo_core.utils import generate_uuid, get_default_thread_count, get_element_size, threaded_generator
+from olmo_core.utils import (
+    generate_uuid,
+    get_default_thread_count,
+    get_element_size,
+    threaded_generator,
+)
 
 log = logging.getLogger(__name__)
 
@@ -342,7 +347,9 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
             init_client(self.path)
 
         if self.thread_count > 0:
-            contents = ordered_map_per_thread(self._get_content_for_read, plan.items, parallelism=self.thread_count)
+            contents = ordered_map_per_thread(
+                self._get_content_for_read, plan.items, parallelism=self.thread_count
+            )
         else:
             contents = (self._get_content_for_read(item) for item in plan.items)
 
