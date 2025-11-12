@@ -250,7 +250,9 @@ def build_config(opts, overrides: List[str]) -> ExperimentConfig:
         )
         .with_callback(
             "grad_dump",
-            GradientDumperCallback(),
+            GradientDumperCallback(
+                enabled=False,
+            ),
         )
     )
 

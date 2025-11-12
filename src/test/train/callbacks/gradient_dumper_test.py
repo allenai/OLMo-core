@@ -73,11 +73,11 @@ def test_gradient_dumper_saves_all_gradients(tmp_path):
     step_dir = trainer.work_dir / "gradient_dumper" / "step0"
     assert step_dir.exists()
 
-    # Check that files were saved in sharded subdirectory
-    sharded_dir = step_dir / "sharded"
-    assert sharded_dir.exists()
-    # Sharded checkpoints save with .distcp extension
-    files = list(sharded_dir.glob("*.distcp"))
+    # Check that files were saved in full_gradients subdirectory
+    full_gradients_dir = step_dir / "full_gradients"
+    assert full_gradients_dir.exists()
+    # Distributed checkpoints save with .distcp extension
+    files = list(full_gradients_dir.glob("*.distcp"))
     assert len(files) > 0
 
 
@@ -97,8 +97,8 @@ def test_gradient_dumper_saves_first_n(tmp_path):
     step_dir = trainer.work_dir / "gradient_dumper" / "step0"
     assert step_dir.exists()
 
-    # Check that files were saved in sampled subdirectory with _firstN suffix
-    sampled_dir = step_dir / "sampled"
+    # Check that files were saved in sampled_gradients subdirectory with _firstN suffix
+    sampled_dir = step_dir / "sampled_gradients"
     assert sampled_dir.exists()
     files = list(sampled_dir.glob("*_first*.safetensors"))
     assert len(files) > 0
@@ -169,16 +169,16 @@ def run_gradient_dumper_distributed(work_dir, save_folder, save_first_n):
     assert step_dir.exists()
 
     if save_first_n is None:
-        # Should save files in sharded subdirectory using distributed checkpoint
-        sharded_dir = step_dir / "sharded"
-        assert sharded_dir.exists()
+        # Should save files in full_gradients subdirectory using distributed checkpoint
+        full_gradients_dir = step_dir / "full_gradients"
+        assert full_gradients_dir.exists()
         # Distributed checkpoint saves .distcp files
-        files = list(sharded_dir.glob("*.distcp"))
+        files = list(full_gradients_dir.glob("*.distcp"))
         assert len(files) > 0
     else:
-        # Only rank 0 should save files in sampled subdirectory
+        # Only rank 0 should save files in sampled_gradients subdirectory
         if get_rank() == 0:
-            sampled_dir = step_dir / "sampled"
+            sampled_dir = step_dir / "sampled_gradients"
             assert sampled_dir.exists()
             files = list(sampled_dir.glob("*_first*.safetensors"))
             assert len(files) > 0
