@@ -77,16 +77,16 @@ def _load_config(checkpoint_dir):
             f"Failed to load config from checkpoint at {config_path}: missing required field {e}"
         ) from e
 
-    return transformer_config, tokenizer_config
+    return transformer_config, tokenizer_config, config_dict
 
 def _load_our_model(checkpoint_dir, device, max_sequence_length: int, teacher_config=None):
     if get_rank() == 0:
-        transformer_config, tokenizer_config = _load_config(checkpoint_dir)
+        transformer_config, tokenizer_config, config_dict = _load_config(checkpoint_dir)
     else:
         transformer_config = None
         tokenizer_config = None
 
-    transformer_config, tokenizer_config = scatter_object((transformer_config, tokenizer_config))
+    transformer_config, tokenizer_config, config_dict = scatter_object((transformer_config, tokenizer_config, config_dict))
 
     if is_distributed():
         world_mesh = build_world_mesh()
@@ -107,11 +107,11 @@ def _load_our_model(checkpoint_dir, device, max_sequence_length: int, teacher_co
 
     _load_state_dict(checkpoint_dir, model)
 
-    return transformer_config, tokenizer_config, model
+    return transformer_config, tokenizer_config, config_dict, model
 
 def _load_model(checkpoint_dir, device, max_sequence_length):
     if get_rank() == 0:
-        transformer_config, tokenizer_config = _load_config(checkpoint_dir)
+        transformer_config, tokenizer_config, _ = _load_config(checkpoint_dir)
     else:
         transformer_config = None
         tokenizer_config = None
@@ -148,7 +148,7 @@ def main():
 
     _, _, base_model = _load_model(base_checkpoint_dir, args.device, args.max_sequence_length)
     instruct_config, instruct_tokenizer_config, instruct_model = _load_model(instruct_checkpoint_dir, args.device, args.max_sequence_length)
-    transformer_config, tokenizer_config, model = _load_our_model(
+    transformer_config, tokenizer_config, config_dict, model = _load_our_model(
         checkpoint_dir,
         device=args.device,
         max_sequence_length=args.max_sequence_length,
@@ -175,11 +175,15 @@ def main():
     config_path = join_path(output, "config.json")
     log.info(f"Writing partial experiment config to '{config_path}'")
 
+    config_dict.pop("model")
+    config_dict.pop("dataset")
+
     experiment_config_dict = {
         "model": transformer_config.as_config_dict(),
         "dataset": {
             "tokenizer": tokenizer_config.as_config_dict(),  # type: ignore
-        }
+        },
+        **config_dict,
     }
 
     with tempfile.NamedTemporaryFile(mode="w") as temp_file:

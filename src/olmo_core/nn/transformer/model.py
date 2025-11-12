@@ -2175,7 +2175,7 @@ class BLTDistillTransformer(BLTTransformer):
                 **local_decoder_kwargs,
             )
 
-            if self.local_decoder.fuse_boundaries:
+            if self.local_decoder.fuse_boundaries or self.local_decoder.no_boundaries:
                 # no separate boundary logits
                 true_boundary_logits = None
                 all_boundary_logits = None
@@ -2202,7 +2202,7 @@ class BLTDistillTransformer(BLTTransformer):
             ce_loss, _ = cross_entropy_loss(logits.view(-1, logits.shape[-1]), labels[:, :logits.shape[1]].reshape(-1))
             metrics["blt/ce_loss"] = ce_loss
 
-            if not self.local_decoder.fuse_boundaries:
+            if not self.local_decoder.fuse_boundaries and not self.local_decoder.no_boundaries:
                 assert true_boundary_logits is not None
                 assert all_boundary_logits is not None
 
@@ -2284,7 +2284,7 @@ class BLTDistillTransformer(BLTTransformer):
             assert teacher_embeds is not None
             assert teacher_loss_mask is not None
 
-            if not self.local_decoder.fuse_boundaries and blt_config.teacher_force_boundaries:
+            if not self.local_decoder.fuse_boundaries and and not self.local_decoder.no_boundaries and blt_config.teacher_force_boundaries:
                 assert true_boundary_logits is not None
 
                 debiasing_logprobs = F.log_softmax(
