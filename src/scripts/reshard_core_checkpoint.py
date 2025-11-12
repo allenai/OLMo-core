@@ -30,7 +30,7 @@ from olmo_core.distributed.utils import (
 )
 from olmo_core.io import file_exists, join_path
 from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.optim import OptimConfig
+from olmo_core.optim import OptimConfig, SkipStepAdamWConfig
 from olmo_core.train.train_module.transformer.common import parallelize_model
 from olmo_core.utils import prepare_cli_environment
 
@@ -160,8 +160,13 @@ def _worker_process(
     if skip_optimizer_state:
         optim = None
         log.info("Skipping optimizer state (--skip-optimizer-state flag set)")
-    else:
+    elif isinstance(optim_config, SkipStepAdamWConfig):
+        # To initialize its own state, the optimizer runs a single step. In this script, that happens on
+        # CPU. For a 32B model, that takes a long time. To skip doing that, we pass `dry_run_only`. But
+        # only SkipStepAdamW supports that.
         optim = optim_config.build(model, strict=True, dry_run_only=True)
+    else:
+        optim = optim_config.build(model, strict=True)
 
     with TemporaryDirectory(prefix=f"reshard_core_checkpoints-rank{get_rank()}-") as work_dir:
         model_and_optim_dir = join_path(input_path, "model_and_optim")
