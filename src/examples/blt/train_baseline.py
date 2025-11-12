@@ -58,16 +58,19 @@ DATA_SOURCE = os.environ.get("DATA_SOURCE", "dclm")
 OLMO_ARCH = os.environ.get("OLMO_ARCH", "olmo2_1B_v2")
 
 if DATA_SOURCE == "dclm":
-    _DATA_SOURCES = open(
-        Path(__file__).parent / "data_sources.txt").read().strip().splitlines()
+    _DATA_SOURCES = open(Path(__file__).parent / "data_sources.txt").read().strip().splitlines()
 elif DATA_SOURCE == "dolmino":
     _DATA_SOURCES = open(Path(__file__).parent / "data_sources_dolmino.txt").read().strip().splitlines()
-elif DATA_SOURCE == "dolma2_string":
-    _DATA_SOURCES = open(Path(__file__).parent / "data_sources_dolma2_string.txt").read().strip().splitlines()
+elif DATA_SOURCE == "dolma2_code_string":
+    _DATA_SOURCES = open(Path(__file__).parent / "data_sources_dolma2_code_string.txt").read().strip().splitlines()
+elif DATA_SOURCE == "dolma2_150b_code_string":
+    _DATA_SOURCES = open(Path(__file__).parent / "data_sources_dolma2_150b_code_string.txt").read().strip().splitlines()
 elif DATA_SOURCE == "dolmino_code_string":
     _DATA_SOURCES = open(Path(__file__).parent / "data_sources_dolmino_code_string.txt").read().strip().splitlines()
+elif DATA_SOURCE == "tulu3":
+    _DATA_SOURCES = open(Path(__file__).parent / "data_sources_tulu3.txt").read().strip().splitlines()
 else:
-    raise ValueError(f"Unknown DATA_SOURCE: {DATA_SOURCE}. Must be one of 'dclm', 'dolmino'.")
+    raise ValueError(f"Unknown DATA_SOURCE: {DATA_SOURCE}. Must be one of 'dclm', 'dolmino', 'dolma2_code_string', 'dolmino_code_string'.")
 
 OLMO_ARCH = os.environ.get("OLMO_ARCH", "olmo2_1B_v2")
 
