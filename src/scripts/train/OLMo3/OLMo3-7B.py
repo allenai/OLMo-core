@@ -6,7 +6,7 @@ from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
 from olmo_core.internal.experiment import CommonComponents, build_config, main
-from olmo_core.nn.attention import SlidingWindowAttentionConfig
+from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import Duration, TrainerConfig
@@ -18,17 +18,17 @@ from olmo_core.train.train_module import (
 )
 
 SEQUENCE_LENGTH = 8 * 1024
-GLOBAL_BATCH_SIZE = 4 * 1024 * 1024
+GLOBAL_BATCH_SIZE = 4 * 1024 * 1024  # ~4M tokens
+
+# When training Olmo3-7B, we specified the dataset mix from the command line using a command like this:
+# python src/scripts/train/OLMo3/OLMo3-7B.py launch OLMo3-7B ai2/augusta-google-1 --dataset.mix=OLMo-mix-0625 --launch.num_nodes=128 --data_loader.num_workers=8
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
-    config = TransformerConfig.olmo2_7B(vocab_size=common.tokenizer.padded_vocab_size())
-    config.block.attention.sliding_window = SlidingWindowAttentionConfig(
-        force_full_attention_on_first_layer=False,
-        force_full_attention_on_last_layer=True,
-        pattern=[4096, 4096, 4096, -1],
+    config = TransformerConfig.olmo3_7B(
+        vocab_size=common.tokenizer.padded_vocab_size(),
+        attn_backend=AttentionBackendName.flash_2,
     )
-    config.block.attention.use_flash = True
     return config
 
 
@@ -77,7 +77,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         TrainerConfig(
             save_folder=f"gs://ai2-llm/checkpoints/{common.run_name}/",
             save_overwrite=True,
-            metrics_collect_interval=10,
+            metrics_collect_interval=50,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(int(5e12)),
             hard_stop=Duration.tokens(int(4e12)),

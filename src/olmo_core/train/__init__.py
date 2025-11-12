@@ -58,6 +58,7 @@ from .common import (
     LoadStrategy,
     MetricMergeStrategy,
     ReduceType,
+    StepSkipRange,
 )
 from .config import TrainerConfig
 from .trainer import Trainer
@@ -74,6 +75,7 @@ __all__ = [
     "DurationUnit",
     "ReduceType",
     "MetricMergeStrategy",
+    "StepSkipRange",
 ]
 
 

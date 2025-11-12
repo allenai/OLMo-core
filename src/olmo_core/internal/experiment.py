@@ -1,4 +1,5 @@
 import logging
+import os
 import sys
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, cast
@@ -29,12 +30,14 @@ from olmo_core.train.callbacks import (
     Callback,
     ConfigSaverCallback,
     DownstreamEvaluatorCallbackConfig,
+    GAPMonitorCallback,
     GarbageCollectorCallback,
     GPUMemoryMonitorCallback,
     LMEvaluatorCallbackConfig,
     ProfilerCallback,
     SlackNotifierCallback,
 )
+from olmo_core.train.callbacks.slack_notifier import SLACK_WEBHOOK_URL_ENV_VAR
 from olmo_core.train.train_module import TransformerTrainModuleConfig
 from olmo_core.utils import prepare_cli_environment, seed_all
 
@@ -195,6 +198,7 @@ def build_common_components(
             use_hostname_constraints=use_hostname_constraints,
             num_execution_units=num_execution_units,
         )
+        launch_config.launch_timeout = 5 * 60
 
     if beaker_user is not None:
         save_folder = f"{root_dir}/checkpoints/{beaker_user.lower()}/{cli_context.run_name}"
@@ -251,6 +255,7 @@ def _build_required_callbacks(common: CommonComponents) -> Dict[str, Callback]:
         "profiler": ProfilerCallback(enabled=False),
         "garbage_collector": GarbageCollectorCallback(),
         "slack_notifier": SlackNotifierCallback(name=common.run_name, enabled=False),
+        "gap_monitor": GAPMonitorCallback(enabled=False),
     }
     if common.launch is not None:
         callbacks["beaker"] = BeakerCallback()
@@ -411,7 +416,21 @@ def build_config(
 def launch(config: ExperimentConfig):
     log.info(config)
     assert config.launch is not None
-    config.launch.launch(follow=True)
+
+    # Only send local Slack notifications when slack callback is enabled.
+    slack_enabled = False
+    for callback in config.trainer.callbacks.values():
+        if isinstance(callback, SlackNotifierCallback):
+            if callback.enabled and SLACK_WEBHOOK_URL_ENV_VAR in os.environ:
+                slack_enabled = True
+            break
+
+    config.launch.launch(
+        follow=True,
+        slack_notifications=slack_enabled,
+        #  step_timeout=30 * 60,  # hard timeout kills the job
+        step_soft_timeout=10 * 60,  # soft timeout only sends slack warning
+    )
 
 
 def launch_prep(config: ExperimentConfig):
