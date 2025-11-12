@@ -158,6 +158,11 @@ class TransformerBlock(TransformerBlockBase):
         parallelize_module(
             self.attention_norm, device_mesh=tp_mesh, parallelize_plan=SequenceParallel()
         )
+        parallelize_module(
+            self.attention_residual_stream.dropout,
+            device_mesh=tp_mesh,
+            parallelize_plan=SequenceParallel(),
+        )
 
         self.attention.apply_tp(
             tp_mesh,
@@ -169,6 +174,11 @@ class TransformerBlock(TransformerBlockBase):
 
         parallelize_module(
             self.feed_forward_norm, device_mesh=tp_mesh, parallelize_plan=SequenceParallel()
+        )
+        parallelize_module(
+            self.feed_forward_residual_stream.dropout,
+            device_mesh=tp_mesh,
+            parallelize_plan=SequenceParallel(),
         )
 
         self.feed_forward.apply_tp(
