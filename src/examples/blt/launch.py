@@ -80,11 +80,12 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
         # slow setup (need appropriate torch / cuda build)
         setup_steps = list(DEFAULT_SETUP_STEPS)
 
-    setup_steps += ["pip install flash-attn --no-build-isolation"]
-    setup_steps += ["pip install mlstm_kernels"]
-    setup_steps += ["pip install xlstm"]
-    setup_steps += ["pip install flash-linear-attention"]
-    setup_steps += ["pip install --upgrade huggingface-hub"]
+    setup_steps += ["pip install flash-attn==2.8.0.post2 --no-build-isolation"]
+    setup_steps += ["pip install mlstm_kernels==2.0.1"]
+    setup_steps += ["pip install xlstm==2.0.5"]
+    setup_steps += ["pip install flash-linear-attention==0.3.1"]
+    setup_steps += ["pip install --upgrade huggingface-hub==0.35.3"]
+    setup_steps += ["pip install bettermap==1.3.1"]
 
     if stage == "stage1":
         launch_script = "src/examples/blt/train_stage1.py"
