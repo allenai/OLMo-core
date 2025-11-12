@@ -7,11 +7,11 @@ from typing import List, Optional
 from pathlib import Path
 
 from cached_path import cached_path
+import torch
 from torch.distributed.checkpoint.metadata import Metadata
 
 from olmo_core.distributed.checkpoint import load_model_and_optim_state, save_model_and_optim_state
 from olmo_core.distributed.parallel import build_world_mesh
-from olmo_core.utils import get_default_device
 from olmo_core.train.train_module.transformer.common import parallelize_model
 from olmo_core.data.tokenizer import TokenizerConfig
 from olmo_core.distributed.checkpoint import get_checkpoint_metadata, load_state_dict
@@ -46,6 +46,8 @@ def parse_args():
                         help="Include instruct teacher in the merged model")
     parser.add_argument("--alpha", type=float, default=1.0,
                         help="Alpha value for diff merge")
+    parser.add_argument("--device", type=torch.device, default=torch.device("cpu"),
+                        help="Device to use for instructifying.")
     parser.add_argument("--max-sequence-length", type=int, default=4096,
                         help="Max sequence length")
     return parser.parse_args()
@@ -77,7 +79,7 @@ def _load_config(checkpoint_dir):
 
     return transformer_config, tokenizer_config
 
-def _load_our_model(checkpoint_dir, max_sequence_length: int, teacher_config=None):
+def _load_our_model(checkpoint_dir, device, max_sequence_length: int, teacher_config=None):
     if get_rank() == 0:
         transformer_config, tokenizer_config = _load_config(checkpoint_dir)
     else:
@@ -97,7 +99,7 @@ def _load_our_model(checkpoint_dir, max_sequence_length: int, teacher_config=Non
     model = parallelize_model(
         model,
         world_mesh=world_mesh,
-        device=get_default_device(),
+        device=device,
         max_sequence_length=max_sequence_length * BYTE_EXPANSION_FACTOR,
         rank_microbatch_size=1,
         compile_model=True,
@@ -107,7 +109,7 @@ def _load_our_model(checkpoint_dir, max_sequence_length: int, teacher_config=Non
 
     return transformer_config, tokenizer_config, model
 
-def _load_model(checkpoint_dir, max_sequence_length):
+def _load_model(checkpoint_dir, device, max_sequence_length):
     if get_rank() == 0:
         transformer_config, tokenizer_config = _load_config(checkpoint_dir)
     else:
@@ -125,7 +127,7 @@ def _load_model(checkpoint_dir, max_sequence_length):
     model = parallelize_model(
         model,
         world_mesh=world_mesh,
-        device=get_default_device(),
+        device=device,
         max_sequence_length=max_sequence_length,
         rank_microbatch_size=1,
         compile_model=True,
@@ -144,10 +146,11 @@ def main():
     instruct_checkpoint_dir = normalize_path(args.instruct_checkpoint_dir)
     output = normalize_path(args.output)
 
-    _, _, base_model = _load_model(base_checkpoint_dir, args.max_sequence_length)
-    instruct_config, instruct_tokenizer_config, instruct_model = _load_model(instruct_checkpoint_dir, args.max_sequence_length)
+    _, _, base_model = _load_model(base_checkpoint_dir, args.device, args.max_sequence_length)
+    instruct_config, instruct_tokenizer_config, instruct_model = _load_model(instruct_checkpoint_dir, args.device, args.max_sequence_length)
     transformer_config, tokenizer_config, model = _load_our_model(
         checkpoint_dir,
+        device=args.device,
         max_sequence_length=args.max_sequence_length,
         teacher_config=instruct_config if args.include_instruct_teacher else None,
     )

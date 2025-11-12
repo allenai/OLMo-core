@@ -258,7 +258,7 @@ def main():
         run_interactive_mode(generation_module, tokenizer, device)
     else:
         # Single generation example
-        test_prompt = [args.text] * args.batch_size
+        test_prompt = ["Lorem ipsum dolor sit", "The quick brown fo"]
         responses = generate_text(
             generation_module, test_prompt, tokenizer, device, args.batch_size
         )
