@@ -625,15 +625,6 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
                 current_global_batch_size = self.global_batch_size
                 batch_iterator = _build_batch_iterator()
 
-    def __iter__(self) -> Iterator[Dict[str, Any]]:
-        for batch in super().__iter__():
-            if not self.allow_vlen and batch["input_ids"].numel() != self.rank_batch_size:
-                raise RuntimeError(
-                    f"Expected batch size of {self.rank_batch_size:,d} tokens on rank {self.dp_rank}, "
-                    f"got input IDs with shape {tuple(batch['input_ids'].shape)} = {batch['input_ids'].numel():,d} tokens"
-                )
-            yield batch
-
     def _get_dataset_item(self, idx: int) -> Dict[str, Any]:
         item = self.dataset[idx]
         if isinstance(item, dict):
