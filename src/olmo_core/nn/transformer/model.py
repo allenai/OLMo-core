@@ -2284,7 +2284,7 @@ class BLTDistillTransformer(BLTTransformer):
             assert teacher_embeds is not None
             assert teacher_loss_mask is not None
 
-            if not self.local_decoder.fuse_boundaries and and not self.local_decoder.no_boundaries and blt_config.teacher_force_boundaries:
+            if not self.local_decoder.fuse_boundaries and not self.local_decoder.no_boundaries and blt_config.teacher_force_boundaries:
                 assert true_boundary_logits is not None
 
                 debiasing_logprobs = F.log_softmax(
