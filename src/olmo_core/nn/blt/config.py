@@ -16,6 +16,7 @@ class BLTConfig(Config):
     binarization_temp: float = 1.0
     temperature: float = 1.0
     div_fn: str = "tvd_temp_limit"
+    boundary_mode: str = "end" # "end", "start"
     merge_boundary_loss: bool = False
     use_output_boundary_jsd: bool = False
     eval_add_boundary_logp: bool = False
@@ -124,6 +125,7 @@ class LocalDecoderConfig(Config):
     blt_k: Optional[int] = None  # used in blt
     blt_compat: bool = False # for compat with BLT checkpoints
     fuse_boundaries: bool = True
+    no_boundaries: bool = False
     dtype: DType = DType.float32
 
     def build(self, vocab_size: int, d_global_model: int) -> nn.Module:
@@ -148,5 +150,6 @@ class LocalDecoderConfig(Config):
             blt_k=self.blt_k,
             blt_compat=self.blt_compat,
             fuse_boundaries=self.fuse_boundaries,
+            no_boundaries=self.no_boundaries,
             dtype=self.dtype.as_pt(),
         )

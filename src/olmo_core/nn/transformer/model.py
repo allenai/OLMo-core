@@ -1935,16 +1935,30 @@ class BLTDistillTransformer(BLTTransformer):
             patch_end_indices,
             torch.zeros_like(patch_end_indices), # effectively mask out, index 0 is always start
         )
+        patch_start_indices = torch.cumsum(local_encoder_kwargs["patch_lens"], dim=1)
+        patch_start_indices = torch.where(
+            patch_start_indices < byte_mask.shape[1],
+            patch_start_indices,
+            torch.zeros_like(patch_start_indices), # effectively mask out, index 0 is always start
+        )
 
         boundary_labels = torch.zeros_like(byte_mask, dtype=torch.float32)
-        boundary_labels.scatter_(1, patch_end_indices, 1.0)
-        if blt_config.skip_boundary_before_eos:
+
+        if blt_config.boundary_mode == "end":
+            boundary_labels.scatter_(1, patch_end_indices, 1.0)
+        elif blt_config.boundary_mode == "start":
+            boundary_labels.scatter_(1, patch_start_indices, 1.0)
+        else:
+            raise ValueError(f"Unknown boundary mode '{blt_config.boundary_mode}'")
+
+        if blt_config.boundary_mode == "end" and blt_config.skip_boundary_before_eos:
             boundary_labels[:, :-1] = torch.where( # no boundary before eos
                 input_ids[:, 1:] == self.eos_token_blt,
                 0.0,
                 boundary_labels[:, :-1]
             )
-            boundary_labels[:, 0] = 1 # bos must still be boundary
+
+        boundary_labels[:, 0] = 1 # bos must always be boundary
 
         h_byte, h_patch, boundary_logprobs, boundary_mask = self.local_encoder(
             input_ids,
@@ -2026,6 +2040,35 @@ class BLTDistillTransformer(BLTTransformer):
                     hidden_states_to_return=list(range(blt_config.encoder_loss_lookahead)),
                     **kwargs,
                 )
+                if blt_config.boundary_mode == "start":
+                    if teacher_last_hidden_state is not None:
+                        # in this case, the teacher bos embedding corresponds to two student embeddings
+                        # once for bos, and once for the first patch start, so we duplicate the first position
+                        # discard the last token in this case to keep length the same
+                        teacher_last_hidden_state = torch.cat(
+                            [
+                                teacher_last_hidden_state[:, :1],
+                                teacher_last_hidden_state[:, :-1],
+                            ],
+                            dim=1,
+                        )
+                    if teacher_embeds is not None:
+                        teacher_embeds = torch.cat(
+                            [
+                                teacher_embeds[:, :1],
+                                teacher_embeds[:, :-1],
+                            ],
+                            dim=1,
+                        )
+                    for i in range(len(teacher_hidden_states)):
+                        teacher_hidden_states[i] = torch.cat(
+                            [
+                                teacher_hidden_states[i][:, :1],
+                                teacher_hidden_states[i][:, :-1],
+                            ],
+                            dim=1,
+                        )
+
                 teacher_logits = teacher_out.logits if teacher_out is not None else None
                 if teacher_logits is not None:
                     teacher_logprobs = F.log_softmax(teacher_logits.float() / blt_config.temperature, dim=-1) # type: ignore
@@ -2412,15 +2455,29 @@ class BLTDistillTransformer(BLTTransformer):
             patch_end_indices,
             torch.zeros_like(patch_end_indices), # effectively mask out, index 0 is always start
         )
+        patch_start_indices = torch.cumsum(local_encoder_kwargs["patch_lens"], dim=1)
+        patch_start_indices = torch.where(
+            patch_start_indices < byte_mask.shape[1],
+            patch_start_indices,
+            torch.zeros_like(patch_start_indices), # effectively mask out, index 0 is always start
+        )
+
         boundary_labels = torch.zeros_like(byte_mask, dtype=torch.float32)
-        boundary_labels.scatter_(1, patch_end_indices, 1.0)
-        if blt_config.skip_boundary_before_eos:
+
+        if blt_config.boundary_mode == "end":
+            boundary_labels.scatter_(1, patch_end_indices, 1.0)
+        elif blt_config.boundary_mode == "start":
+            boundary_labels.scatter_(1, patch_start_indices, 1.0)
+        else:
+            raise ValueError(f"Unknown boundary mode '{blt_config.boundary_mode}'")
+
+        if blt_config.boundary_mode == "end" and blt_config.skip_boundary_before_eos:
             boundary_labels[:, :-1] = torch.where( # no boundary before eos
                 input_ids[:, 1:] == self.eos_token_blt,
                 0.0,
                 boundary_labels[:, :-1]
             )
-            boundary_labels[:, 0] = 1 # bos must still be boundary
+        boundary_labels[:, 0] = 1 # bos must always be boundary
 
         h_byte, h_patch, boundary_logprobs, boundary_mask = self.local_encoder(
             input_ids,
@@ -2472,6 +2529,10 @@ class BLTDistillTransformer(BLTTransformer):
             probs[..., :self.vocab_size_blt] += probs[..., self.vocab_size_blt:self.vocab_size_blt*2]
             logits = torch.log(probs)
             logits[..., self.vocab_size_blt:self.vocab_size_blt*2] = -100_000
+        elif self.local_decoder.no_boundaries:
+            ce_loss, _ = cross_entropy_loss(logits.view(-1, logits.shape[-1]), labels.view(-1))  # type: ignore
+
+            # no need to process logits further
         else:
             logits = torch.concatenate([
                 logits,

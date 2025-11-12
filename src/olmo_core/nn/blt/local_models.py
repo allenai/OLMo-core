@@ -978,9 +978,13 @@ class LocalDecoder(nn.Module):
         blt_k: Optional[int] = None,
         blt_compat: bool = False,  # for compat with BLT checkpoints
         fuse_boundaries: bool = True,
+        no_boundaries: bool = False,
         init_device: str = "cpu",
         dtype: torch.dtype = torch.float32,
     ):
+        if fuse_boundaries and no_boundaries:
+            raise ValueError("fuse_boundaries and no_boundaries are mutually exclusive.")
+
         super().__init__()
         self.sliding_window_size = sliding_window_size
         self.d_model = d_model
@@ -996,6 +1000,7 @@ class LocalDecoder(nn.Module):
         self.blt_k = blt_k
         self.blt_compat = blt_compat
         self.fuse_boundaries = fuse_boundaries
+        self.no_boundaries = no_boundaries
         self.dtype = dtype
 
         if self.depooling == "cross_attn":
@@ -1071,7 +1076,7 @@ class LocalDecoder(nn.Module):
         else:
             self.patch_residuals_projection = None
 
-        if not self.fuse_boundaries:
+        if not self.fuse_boundaries and not self.no_boundaries:
             self.boundary_embedding = nn.Embedding(1, d_model, dtype=dtype, device=init_device)
         else:
             self.boundary_embedding = None
@@ -1148,7 +1153,7 @@ class LocalDecoder(nn.Module):
             if patch_embeds.numel() > 0:
                 # we got a new value from the global model, so must be at boundary position
                 h_patch = patch_embeds[:, -1:, :self.d_model]
-                if self.fuse_boundaries:
+                if self.fuse_boundaries or self.no_boundaries:
                     h = embeds + h_patch
                 else:
                     assert self.boundary_embedding is not None
@@ -1217,7 +1222,7 @@ class LocalDecoder(nn.Module):
             else:
                 depool_out_modulated = depool_out
 
-            if self.fuse_boundaries:
+            if self.fuse_boundaries or self.no_boundaries:
                 h = depool_out_modulated + embeds
 
                 for block_idx in range(self.n_layers):
@@ -1305,7 +1310,7 @@ class LocalDecoder(nn.Module):
         if self.patch_embedding_projection is None or self.blt_k is None:
             raise ValueError("Patch embedding projection is not defined, can not depool with BLT method.")
 
-        if not self.fuse_boundaries:
+        if not self.fuse_boundaries and not self.no_boundaries:
             raise NotImplementedError("Non-fused boundaries not implemented for BLT depooling.")
 
         # expand seq length by a factor of k (k=2 in BLT released checkpoints)
