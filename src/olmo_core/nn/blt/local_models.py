@@ -186,11 +186,22 @@ class HNetBoundaryPredictor(nn.Module):
         sequence_start_indices: Optional[torch.Tensor] = None,
         epsilon: float = 1e-3,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        cos_sim = torch.einsum(
-            "b l d, b l d -> b l",
-            F.normalize(self.q_proj_layer(hidden_states[:, :-self.boundary_predictor_lookahead]), dim=-1),
-            F.normalize(self.k_proj_layer(hidden_states[:, self.boundary_predictor_lookahead:]), dim=-1),
-        )
+        if self.boundary_predictor_lookahead == 0:
+            # do not use the same rep for k and v, use current and one before as in H-Net + pad with negative to the left
+            cos_sim = torch.cat([
+                torch.ones((hidden_states.shape[0], 1), device=hidden_states.device, dtype=hidden_states.dtype) * -1,
+                torch.einsum(
+                    "b l d, b l d -> b l",
+                    F.normalize(self.q_proj_layer(hidden_states[:, :-1]), dim=-1),
+                    F.normalize(self.k_proj_layer(hidden_states[:, 1:]), dim=-1),
+                )
+            ], dim=1)
+        else:
+            cos_sim = torch.einsum(
+                "b l d, b l d -> b l",
+                F.normalize(self.q_proj_layer(hidden_states[:, :-self.boundary_predictor_lookahead]), dim=-1),
+                F.normalize(self.k_proj_layer(hidden_states[:, self.boundary_predictor_lookahead:]), dim=-1),
+            )
         boundary_logprobs = torch.log1p(-cos_sim.float().clip(max=1.0 - epsilon)) - math.log(2)
         POSITIVE_LOGPROB = 0.0
         NEGATIVE_LOGPROB = -100_000
