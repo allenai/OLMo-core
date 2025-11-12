@@ -222,7 +222,7 @@ def copy_dir(
     """
     Copy a directory from ``source`` to ``target``.
 
-    :param source: The path/URL to the source file.
+    :param source: The path/URL to the source directory.
     :param target: The path/URL to the target location.
     :param save_overwrite: Overwrite any existing files.
     :param num_threads: The number of threads to use.
