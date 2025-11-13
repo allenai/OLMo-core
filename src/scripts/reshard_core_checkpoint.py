@@ -188,7 +188,9 @@ def _worker_process(
     dist.barrier()
 
     model_and_optim_dir = join_path(output_path, "model_and_optim")
-    save_model_and_optim_state(model_and_optim_dir, model, optim, save_overwrite=True)
+    save_model_and_optim_state(
+        model_and_optim_dir, model, optim, save_overwrite=True, flatten_optimizer_state=True
+    )
     log.info(f"Saved resharded model to '{output_path}'")
 
     # Barrier to ensure all processes finish together
