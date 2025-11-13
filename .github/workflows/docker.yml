@@ -38,6 +38,14 @@ jobs:
         torch:
           - version: 2.7.0
             channel: whl/test
+          - version: 2.9.0
+            channel: whl/test
+        exclude:
+          # Unsupported combination of CUDA and PyTorch version.
+          - cuda: "13.0.2"
+            torch:
+              - version: 2.7.0
+                channel: whl/test
     steps:
       - uses: actions/checkout@v4
 
