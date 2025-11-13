@@ -166,7 +166,6 @@ def build_config(opts, overrides: List[str]) -> ExperimentConfig:
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
         ),
-
         max_grad_norm=1.0,
         scheduler=CosWithWarmup(warmup_steps=100),
     )
