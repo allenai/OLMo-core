@@ -7,13 +7,13 @@ from typing import List
 
 from olmo_core.config import DType
 from olmo_core.data import (
+    DataMix,
     NumpyDataLoaderConfig,
     NumpyFSLDatasetConfig,
     TokenizerConfig,
 )
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
-from olmo_core.io import join_path
 from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.transformer import (
     TransformerConfig,
@@ -53,22 +53,17 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         attn_backend=AttentionBackendName.flash_2,
     )
 
-    # TODO: create a mix that explicitly lists the paths
-    dataset_glob = join_path(
-        opts.data_root,
-        "preprocessed/dolma3-dolmino-official/100B/allenai/dolma3-tokenizer/**/*.npy",
-    )
-    dataset_config = NumpyFSLDatasetConfig.glob(
-        str(dataset_glob),
+    dataset_config = NumpyFSLDatasetConfig.from_data_mix(
+        mix=DataMix.OLMo_midtraining_mix_1025_100B,
         tokenizer=tokenizer_config,
-        work_dir=opts.work_dir,
+        mix_base_dir=opts.data_root,
         sequence_length=sequence_length,
+        max_target_sequence_length=max(8192, sequence_length),
+        work_dir=opts.work_dir,
     )
 
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=GLOBAL_BATCH_SIZE,
-        seed=SEED,
-        num_workers=4,
+        global_batch_size=GLOBAL_BATCH_SIZE, seed=SEED, num_workers=4
     )
 
     train_module_config = TransformerTrainModuleConfig(

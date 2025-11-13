@@ -43,6 +43,7 @@ class DataMix(DataMixBase):
     OLMo_mix_0625 = "OLMo-mix-0625"
     OLMo_mix_0625_official = "OLMo-mix-0625-official"
     OLMo_mix_0925 = "OLMo-mix-0925"
+    OLMo_midtraining_mix_1025_100B = "OLMo-midtraining-mix-1025-100B"
 
     @classmethod
     def _missing_(cls, value: object) -> "DataMix | None":
@@ -76,7 +77,7 @@ class DataMix(DataMixBase):
         elif self == DataMix.OLMo_mix_0625:
             if tokenizer == TokenizerName.dolma2_sigdig:
                 tokenizer_id = "dolma2-tokenizer-sigdig"
-        elif self == DataMix.OLMo_mix_0625_official:
+        elif self in [DataMix.OLMo_mix_0625_official, DataMix.OLMo_midtraining_mix_1025_100B]:
             if tokenizer == TokenizerName.dolma2:
                 tokenizer_id = "allenai/dolma3-tokenizer"
         elif tokenizer == TokenizerName.gpt_neox_olmo_dolma_v1_5:
