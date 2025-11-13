@@ -91,7 +91,9 @@ def get_file_size(path: PathOrStr) -> int:
 
     :param path: Path/URL to the file.
     """
+    log.info(f"Getting file size of {path}")
     path = normalize_path(path)
+    log.info(f"Normalized path: {path}")
 
     if is_url(path):
         from urllib.parse import urlparse
@@ -433,9 +435,7 @@ def list_directory(
                 include_dirs=include_dirs,
             )
         else:
-            raise NotImplementedError(
-                f"list_directory size not implemented for '{parsed.scheme}' URLs"
-            )
+            raise NotImplementedError(f"list_directory not implemented for '{parsed.scheme}' URLs")
 
 
 def glob_directory(pattern: str) -> Generator[str, None, None]:
@@ -591,9 +591,9 @@ def _http_file_size(url: str) -> int:
     session = _get_http_session()
     response = session.head(url, allow_redirects=True)
     content_length = response.headers.get("content-length")
-    assert (
-        content_length is not None
-    ), f"No content-length header found for {url}. Headers: {dict(response.headers)}"
+    assert content_length is not None, (
+        f"No content-length header found for {url}. Headers: {dict(response.headers)}"
+    )
     return int(content_length)
 
 
