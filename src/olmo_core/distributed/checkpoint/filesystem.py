@@ -40,11 +40,7 @@ from olmo_core.io import (
     resource_path,
     upload,
 )
-from olmo_core.utils import (
-    generate_uuid,
-    get_default_thread_count,
-    get_element_size,
-)
+from olmo_core.utils import generate_uuid, get_default_thread_count, get_element_size
 
 log = logging.getLogger(__name__)
 

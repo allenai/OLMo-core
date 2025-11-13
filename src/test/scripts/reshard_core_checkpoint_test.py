@@ -24,6 +24,8 @@ from olmo_core.optim import AdamWConfig
 spec = importlib.util.spec_from_file_location(
     "reshard_core_checkpoint", "src/scripts/reshard_core_checkpoint.py"
 )
+if spec is None or spec.loader is None:
+    raise ImportError("Could not load reshard_core_checkpoint.py")
 reshard_module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(reshard_module)
 

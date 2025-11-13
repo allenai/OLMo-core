@@ -94,7 +94,7 @@ def config_dicts_from_path(model_path: str) -> Tuple[Dict, Dict, Dict]:
 def model_and_optim_config_from_path(model_path: str) -> Tuple[TransformerConfig, OptimConfig]:
     transformer_config_dict, _, optim_config_dict = config_dicts_from_path(model_path)
     model_config = TransformerConfig.from_dict(transformer_config_dict)
-    optim_config = OptimConfig.from_dict(optim_config_dict)
+    optim_config: OptimConfig = OptimConfig.from_dict(optim_config_dict)
     return model_config, optim_config
 
 
