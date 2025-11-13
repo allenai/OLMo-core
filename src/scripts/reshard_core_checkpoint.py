@@ -31,8 +31,7 @@ from olmo_core.distributed.utils import (
 )
 from olmo_core.io import file_exists, join_path
 from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.optim import OptimConfig, SkipStepAdamWConfig
-from olmo_core.train.train_module.transformer.common import parallelize_model
+from olmo_core.optim import OptimConfig
 from olmo_core.utils import prepare_cli_environment
 
 log = logging.getLogger(__name__)

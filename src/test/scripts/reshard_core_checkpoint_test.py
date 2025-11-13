@@ -1,6 +1,8 @@
 """
 Tests for the reshard_core_checkpoint.py script.
 """
+# Import the script module using importlib to access its main function
+import importlib.util
 import json
 import shutil
 import tempfile
@@ -19,11 +21,8 @@ from olmo_core.distributed.checkpoint import (
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig
 
-# Import the script module using importlib to access its main function
-import importlib.util
 spec = importlib.util.spec_from_file_location(
-    "reshard_core_checkpoint",
-    "src/scripts/reshard_core_checkpoint.py"
+    "reshard_core_checkpoint", "src/scripts/reshard_core_checkpoint.py"
 )
 reshard_module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(reshard_module)
@@ -61,19 +60,12 @@ def create_test_checkpoint(
 
     config_dict = {
         "model": model_config.as_dict(),
-        "dataset": {
-            "tokenizer": {
-                "identifier": "test_tokenizer",
-                "type": "test"
-            }
-        },
-        "train_module": {
-            "optim": optim_dict
-        }
+        "dataset": {"tokenizer": {"identifier": "test_tokenizer", "type": "test"}},
+        "train_module": {"optim": optim_dict},
     }
 
     config_path = checkpoint_dir / "config.json"
-    with open(config_path, 'w') as f:
+    with open(config_path, "w") as f:
         json.dump(config_dict, f, indent=2)
 
     # Create model and optimizer
@@ -130,24 +122,21 @@ def create_test_checkpoint(
             )
 
             # Copy config.json to temp checkpoint
-            shutil.copy(
-                checkpoint_dir / "config.json",
-                temp_checkpoint / "config.json"
-            )
+            shutil.copy(checkpoint_dir / "config.json", temp_checkpoint / "config.json")
 
             # Now reshard from 1 to world_size using the CLI
             run_reshard_cli(
                 input_path=str(temp_checkpoint),
                 output_path=str(checkpoint_dir),
                 num_processes=world_size,
-                skip_optimizer=not include_optimizer
+                skip_optimizer=not include_optimizer,
             )
 
 
 def load_config_from_checkpoint(checkpoint_dir: Path) -> dict:
     """Load config.json from a checkpoint directory."""
     config_path = checkpoint_dir / "config.json"
-    with open(config_path, 'r') as f:
+    with open(config_path, "r") as f:
         return json.load(f)
 
 
@@ -161,25 +150,22 @@ def checkpoint_has_optimizer_state(checkpoint_dir: Path) -> bool:
 
     # Check if any optimizer-related keys are in the metadata
     # Optimizer state keys typically start with "optim."
-    return any(
-        key.startswith("optim.")
-        for key in checkpoint_meta.state_dict_metadata.keys()
-    )
+    return any(key.startswith("optim.") for key in checkpoint_meta.state_dict_metadata.keys())
 
 
 def run_reshard_cli(
-    input_path: str,
-    output_path: str,
-    num_processes: int = 1,
-    skip_optimizer: bool = False
+    input_path: str, output_path: str, num_processes: int = 1, skip_optimizer: bool = False
 ) -> None:
     """Run the reshard script using Click's test runner."""
     runner = CliRunner()
 
     args = [
-        "--input", input_path,
-        "--output", output_path,
-        "--num-processes", str(num_processes),
+        "--input",
+        input_path,
+        "--output",
+        output_path,
+        "--num-processes",
+        str(num_processes),
     ]
     if skip_optimizer:
         args.append("--skip-optimizer-state")
@@ -206,8 +192,9 @@ def test_reshard_single_process(tmp_path):
     create_test_checkpoint(source_dir, model_config, world_size=1, include_optimizer=True)
 
     # Verify source has optimizer state
-    assert checkpoint_has_optimizer_state(source_dir), \
-        "Source checkpoint should have optimizer state"
+    assert checkpoint_has_optimizer_state(
+        source_dir
+    ), "Source checkpoint should have optimizer state"
 
     # Reshard to target (single process)
     target_dir = tmp_path / "target_checkpoint"
@@ -217,7 +204,7 @@ def test_reshard_single_process(tmp_path):
         input_path=str(source_dir),
         output_path=str(target_dir),
         num_processes=1,
-        skip_optimizer=False
+        skip_optimizer=False,
     )
 
     # Verify the checkpoint was created
@@ -230,8 +217,9 @@ def test_reshard_single_process(tmp_path):
     assert source_config == target_config
 
     # Verify target also has optimizer state
-    assert checkpoint_has_optimizer_state(target_dir), \
-        "Target checkpoint should have optimizer state when not skipping"
+    assert checkpoint_has_optimizer_state(
+        target_dir
+    ), "Target checkpoint should have optimizer state when not skipping"
 
 
 def test_reshard_single_process_skip_optimizer(tmp_path):
@@ -249,8 +237,9 @@ def test_reshard_single_process_skip_optimizer(tmp_path):
     create_test_checkpoint(source_dir, model_config, world_size=1, include_optimizer=True)
 
     # Verify source has optimizer state
-    assert checkpoint_has_optimizer_state(source_dir), \
-        "Source checkpoint should have optimizer state"
+    assert checkpoint_has_optimizer_state(
+        source_dir
+    ), "Source checkpoint should have optimizer state"
 
     # Reshard without optimizer state
     target_dir = tmp_path / "target_checkpoint"
@@ -260,7 +249,7 @@ def test_reshard_single_process_skip_optimizer(tmp_path):
         input_path=str(source_dir),
         output_path=str(target_dir),
         num_processes=1,
-        skip_optimizer=True
+        skip_optimizer=True,
     )
 
     # Verify the checkpoint was created
@@ -268,8 +257,9 @@ def test_reshard_single_process_skip_optimizer(tmp_path):
     assert (target_dir / "model_and_optim").exists()
 
     # Verify no optimizer state in target by checking metadata
-    assert not checkpoint_has_optimizer_state(target_dir), \
-        "Optimizer state should not exist when skip_optimizer_state=True"
+    assert not checkpoint_has_optimizer_state(
+        target_dir
+    ), "Optimizer state should not exist when skip_optimizer_state=True"
 
 
 def run_multi_process_reshard_test(source_ws, target_ws, skip_optimizer=False):
@@ -297,7 +287,7 @@ def run_multi_process_reshard_test(source_ws, target_ws, skip_optimizer=False):
             input_path=str(source_dir),
             output_path=str(target_dir),
             num_processes=target_ws,
-            skip_optimizer=skip_optimizer
+            skip_optimizer=skip_optimizer,
         )
 
         # Verify the checkpoint was created
@@ -310,11 +300,7 @@ def test_reshard_multi_process_2_workers(tmp_path):
     run_multi_process_reshard_test(source_ws=1, target_ws=2)
 
 
-@pytest.mark.parametrize(
-    "world_size",
-    [2, 4],
-    ids=["world_size=2", "world_size=4"]
-)
+@pytest.mark.parametrize("world_size", [2, 4], ids=["world_size=2", "world_size=4"])
 def test_reshard_multi_process_various_workers(tmp_path, world_size):
     """Test resharding with various numbers of worker processes."""
     run_multi_process_reshard_test(source_ws=1, target_ws=world_size)
@@ -344,7 +330,7 @@ def test_reshard_1_to_2_processes(tmp_path):
         input_path=str(source_dir),
         output_path=str(target_dir),
         num_processes=2,
-        skip_optimizer=False
+        skip_optimizer=False,
     )
 
     # Verify checkpoint structure
@@ -378,7 +364,7 @@ def test_reshard_2_to_1_processes(tmp_path):
         input_path=str(source_dir),
         output_path=str(target_dir),
         num_processes=1,
-        skip_optimizer=False
+        skip_optimizer=False,
     )
 
     # Verify checkpoint structure
@@ -412,7 +398,7 @@ def test_reshard_2_to_4_processes(tmp_path):
         input_path=str(source_dir),
         output_path=str(target_dir),
         num_processes=4,
-        skip_optimizer=False
+        skip_optimizer=False,
     )
 
     # Verify checkpoint structure
@@ -451,7 +437,7 @@ def test_reshard_preserves_model_state(tmp_path):
         input_path=str(source_dir),
         output_path=str(intermediate_dir),
         num_processes=2,
-        skip_optimizer=False
+        skip_optimizer=False,
     )
 
     # Second reshard: 2 -> 1
@@ -459,7 +445,7 @@ def test_reshard_preserves_model_state(tmp_path):
         input_path=str(intermediate_dir),
         output_path=str(final_dir),
         num_processes=1,
-        skip_optimizer=False
+        skip_optimizer=False,
     )
 
     # Load final model state
@@ -477,7 +463,7 @@ def test_reshard_preserves_model_state(tmp_path):
         torch.testing.assert_close(
             original_state[key],
             final_state[key],
-            msg=f"Mismatch in parameter '{key}' after round-trip resharding"
+            msg=f"Mismatch in parameter '{key}' after round-trip resharding",
         )
 
 
@@ -520,7 +506,7 @@ def test_reshard_preserves_optimizer_state(tmp_path):
         input_path=str(source_dir),
         output_path=str(target_dir),
         num_processes=1,
-        skip_optimizer=False
+        skip_optimizer=False,
     )
 
     # Load resharded model and optimizer
@@ -566,7 +552,7 @@ def test_reshard_roundtrip(tmp_path):
         input_path=str(checkpoint_1),
         output_path=str(checkpoint_2),
         num_processes=2,
-        skip_optimizer=False
+        skip_optimizer=False,
     )
 
     # Reshard 2 -> 1
@@ -575,7 +561,7 @@ def test_reshard_roundtrip(tmp_path):
         input_path=str(checkpoint_2),
         output_path=str(checkpoint_3),
         num_processes=1,
-        skip_optimizer=False
+        skip_optimizer=False,
     )
 
     # Load final model state
@@ -593,5 +579,5 @@ def test_reshard_roundtrip(tmp_path):
         torch.testing.assert_close(
             initial_state[key],
             final_state[key],
-            msg=f"Mismatch in parameter '{key}' after roundtrip resharding"
+            msg=f"Mismatch in parameter '{key}' after roundtrip resharding",
         )
