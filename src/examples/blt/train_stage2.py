@@ -107,11 +107,11 @@ ENTROPY_CKPT_PATH = os.environ.get("ENTROPY_CKPT_PATH", "/weka/oe-training-defau
 DATA_PATHS = ["/weka/oe-training-default/" + x for x in _DATA_SOURCES]
 
 if not os.environ.get("HAS_WEKA"):
-    ENTROPY_PATH_ROOT = ENTROPY_PATH_ROOT.replace("/weka/oe-training-default/", "gs://ai2-llm/")
-    CROSS_ENTROPY_PATH_ROOT = CROSS_ENTROPY_PATH_ROOT.replace("/weka/oe-training-default/", "gs://ai2-llm/")
-    ENTROPY_PATH_SUB = ENTROPY_PATH_SUB.replace("/weka/oe-training-default/", "gs://ai2-llm/")
-    STAGE1_CKPT_PATH = STAGE1_CKPT_PATH.replace("/weka/oe-training-default/", "gs://ai2-llm/")
-    OLMO_CKPT_PATH = OLMO_CKPT_PATH.replace("/weka/oe-training-default/", "gs://ai2-llm/")
+    ENTROPY_PATH_ROOT = ENTROPY_PATH_ROOT.replace("/weka/oe-training-default/ai2-llm/", "gs://ai2-llm/").replace("/weka/oe-training-default/", "gs://ai2-llm/")
+    CROSS_ENTROPY_PATH_ROOT = CROSS_ENTROPY_PATH_ROOT.replace("/weka/oe-training-default/ai2-llm/", "gs://ai2-llm/").replace("/weka/oe-training-default/", "gs://ai2-llm/")
+    ENTROPY_PATH_SUB = ENTROPY_PATH_SUB.replace("/weka/oe-training-default/ai2-llm/", "gs://ai2-llm/").replace("/weka/oe-training-default/", "gs://ai2-llm/")
+    STAGE1_CKPT_PATH = STAGE1_CKPT_PATH.replace("/weka/oe-training-default/ai2-llm/", "gs://ai2-llm/").replace("/weka/oe-training-default/", "gs://ai2-llm/")
+    OLMO_CKPT_PATH = OLMO_CKPT_PATH.replace("/weka/oe-training-default/ai2-llm/", "gs://ai2-llm/").replace("/weka/oe-training-default/", "gs://ai2-llm/")
     DATA_PATHS = [x.replace("/weka/oe-training-default/", "gs://") for x in DATA_PATHS] # slight inconsistency
 
 log = logging.getLogger(__name__)
