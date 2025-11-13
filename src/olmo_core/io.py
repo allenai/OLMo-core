@@ -591,9 +591,9 @@ def _http_file_size(url: str) -> int:
     session = _get_http_session()
     response = session.head(url, allow_redirects=True)
     content_length = response.headers.get("content-length")
-    assert content_length is not None, (
-        f"No content-length header found for {url}. Headers: {dict(response.headers)}"
-    )
+    assert (
+        content_length is not None
+    ), f"No content-length header found for {url}. Headers: {dict(response.headers)}"
     return int(content_length)
 
 
