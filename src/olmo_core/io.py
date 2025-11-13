@@ -513,7 +513,7 @@ def deserialize_from_tensor(data: torch.Tensor) -> Any:
 
 
 def _wait_before_retry(attempt: int):
-    time.sleep(min(1.0 * 2**attempt, 16.0))
+    time.sleep(min(1.0 * 2**attempt, 60.0))
 
 
 def _format_bytes(num: Union[int, float], suffix="B") -> str:
@@ -525,7 +525,7 @@ def _format_bytes(num: Union[int, float], suffix="B") -> str:
 
 
 def retriable(
-    max_attempts: int = 5,
+    max_attempts: int = 7,
     retriable_errors: Tuple[Type[Exception], ...] = (
         requests.exceptions.ConnectionError,
         requests.exceptions.Timeout,
