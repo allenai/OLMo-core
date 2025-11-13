@@ -15,9 +15,7 @@ from olmo_core.data import (
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
 from olmo_core.nn.attention import AttentionBackendName
-from olmo_core.nn.transformer import (
-    TransformerConfig,
-)
+from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.nn.transformer.config import TransformerActivationCheckpointingMode
 from olmo_core.optim import LinearWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.script_utils import ExperimentConfig, main
@@ -35,7 +33,9 @@ from olmo_core.train.train_module import (
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
-from olmo_core.train.train_module.transformer.config import TransformerActivationCheckpointingConfig
+from olmo_core.train.train_module.transformer.config import (
+    TransformerActivationCheckpointingConfig,
+)
 
 DEFAULT_SEQUENCE_LENGTH = 8192
 GLOBAL_BATCH_SIZE = 2**21  # ~2M tokens
