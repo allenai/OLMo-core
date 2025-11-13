@@ -206,7 +206,7 @@ class BeakerLaunchConfig(Config):
     and other arbitrary setup steps.
     """
 
-    beaker_image: str = OLMoCoreBeakerImage.stable
+    beaker_image: str = OLMoCoreBeakerImage.flash_attn_3
     """
     The Beaker image to use.
 
