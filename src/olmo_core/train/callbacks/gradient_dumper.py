@@ -67,7 +67,9 @@ class GradientDumperCallback(Callback):
         else:
             # Save first N elements of full gradients, gather all gradients and save from rank 0
             sampled_gradients_dir = step_dir / "sampled_gradients"
-            sampled_gradients_dir.mkdir(exist_ok=True, parents=True)
+            # Only rank 0 creates the directory and logs summary since only rank 0 writes files
+            if get_rank() == 0:
+                sampled_gradients_dir.mkdir(exist_ok=True, parents=True)
 
             for name, p in model.named_parameters():
                 if p.grad is None:
@@ -97,14 +99,15 @@ class GradientDumperCallback(Callback):
 
                 del full_grad
 
-            log.info(f"Saved sampled gradients for step {self.step} to '{sampled_gradients_dir}'")
+            if get_rank() == 0:
+                log.info(f"Saved sampled gradients for step {self.step} to '{sampled_gradients_dir}'")
 
         # Persist directory to save_folder if different from work_dir
         # In distributed mode, only rank 0 uploads to avoid conflicts
         rel_step_dir = step_dir.relative_to(self.trainer.work_dir)
         target_dir = join_path(self.trainer.save_folder, rel_step_dir)
         if str(step_dir) != str(target_dir):
-            if not is_distributed() or get_rank() == 0:
+            if get_rank() == 0:
                 log.info(f"Uploading gradients for step {self.step} to '{target_dir}'...")
                 copy_dir(
                     step_dir, target_dir, save_overwrite=self.trainer.save_overwrite, quiet=True
