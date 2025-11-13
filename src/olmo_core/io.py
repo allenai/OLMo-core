@@ -91,7 +91,6 @@ def get_file_size(path: PathOrStr) -> int:
 
     :param path: Path/URL to the file.
     """
-    log.info(f"Getting file size of {path}")
     path = normalize_path(path)
 
     if is_url(path):

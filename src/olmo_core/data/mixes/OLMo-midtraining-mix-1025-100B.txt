@@ -7021,93 +7021,93 @@ olmocr_science_pdfs-high_quality_length_2e12_literature,preprocessed/dolma3-dolm
 olmocr_science_pdfs-high_quality_length_2e12_literature,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/literature/part-39-00000.npy
 olmocr_science_pdfs-high_quality_length_2e12_literature,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/literature/part-40-00000.npy
 olmocr_science_pdfs-high_quality_length_2e12_literature,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/literature/part-41-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-00-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-01-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-02-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-03-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-05-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-06-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-07-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-08-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-09-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-10-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-11-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-12-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-13-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-14-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-15-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-16-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-17-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-18-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-19-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-20-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-21-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-22-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-23-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-24-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-25-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-26-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-27-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-28-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-29-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-30-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-31-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-32-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-33-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-34-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-35-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-36-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-37-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-38-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-39-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-40-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-41-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-42-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-43-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-44-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-45-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-46-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-47-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-48-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-49-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-50-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-51-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-52-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-53-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-54-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-55-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-56-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-00-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-01-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-02-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-03-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-04-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-05-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-06-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-07-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-08-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-09-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-10-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-11-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-12-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-13-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-14-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-15-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-16-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-17-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-18-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-19-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-20-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-21-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-22-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-23-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-24-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-25-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-26-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-27-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-28-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-29-00000.npy
-# olmocr_science_pdfs-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-30-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-00-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-01-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-02-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-03-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-05-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-06-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-07-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-08-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-09-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-10-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-11-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-12-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-13-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-14-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-15-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-16-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-17-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-18-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-19-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-20-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-21-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-22-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-23-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-24-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-25-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-26-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-27-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-28-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-29-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-30-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-31-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-32-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-33-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-34-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-35-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-36-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-37-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-38-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-39-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-40-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-41-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-42-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-43-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-44-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-45-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-46-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-47-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-48-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-49-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-50-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-51-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-52-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-53-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-54-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-55-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_politics,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/politics/part-56-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-00-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-01-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-02-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-03-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-04-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-05-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-06-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-07-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-08-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-09-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-10-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-11-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-12-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-13-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-14-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-15-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-16-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-17-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-18-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-19-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-20-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-21-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-22-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-23-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-24-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-25-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-26-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-27-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-28-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-29-00000.npy
+olmocr_science_pdfs-high_quality_length_2e12_politics-high_quality_length_2e12_religion,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/religion/part-30-00000.npy
 olmocr_science_pdfs-high_quality_length_2e12_science_tech,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/science_tech/part-000-00000.npy
 olmocr_science_pdfs-high_quality_length_2e12_science_tech,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/science_tech/part-001-00000.npy
 olmocr_science_pdfs-high_quality_length_2e12_science_tech,preprocessed/dolma3-dolmino-official/100B/{TOKENIZER}/olmocr_science_pdfs-high_quality/length_2e12/science_tech/part-002-00000.npy
