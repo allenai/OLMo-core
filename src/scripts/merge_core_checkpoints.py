@@ -51,7 +51,7 @@ def merge_checkpoints(
 
         # Load all non-tensor keys in one chunk
         if non_tensor_keys:
-            non_tensor_batch_dict = {}
+            non_tensor_batch_dict: Dict[str, Any] = {}
             for key, meta in non_tensor_keys:
                 if key in merged_state_dict:
                     log.info(
