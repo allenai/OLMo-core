@@ -69,7 +69,7 @@ RUN git clone --depth 1 --recurse-submodules --shallow-submodules https://github
     git checkout ${FLASH_ATTN_3_SHA} && \
     git submodule update --init --depth 1 && \
     cd hopper && \
-    FLASH_ATTENTION_DISABLE_FP16=TRUE python setup.py install && \
+    FLASH_ATTENTION_DISABLE_FP16=TRUE MAX_JOBS=32 python setup.py install && \
     cd /app/build && \
     rm -rf flash-attention
 
