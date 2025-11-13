@@ -18,6 +18,7 @@ from torch.distributed import init_device_mesh
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.distributed.checkpoint import (
+    get_checkpoint_metadata,
     load_model_and_optim_state,
     save_model_and_optim_state,
 )
@@ -161,12 +162,21 @@ def _worker_process(
 
     with TemporaryDirectory(prefix=f"reshard_core_checkpoints-rank{get_rank()}-") as work_dir:
         model_and_optim_dir = join_path(input_path, "model_and_optim")
+
+        # find out whether we have a flat or non-flat optimizer
+        flatten_optimizer_state = False
+        if optim is not None:
+            checkpoint_meta = get_checkpoint_metadata(model_and_optim_dir)
+            flatten_optimizer_state = (
+                "optim.param_groups.0.params" not in checkpoint_meta.state_dict_metadata.keys()
+            )
+
         log.info(f"Loading checkpoint from '{model_and_optim_dir}'")
         load_model_and_optim_state(
             model_and_optim_dir,
             model,
             optim,
-            flatten_optimizer_state=True,
+            flatten_optimizer_state=flatten_optimizer_state,
             work_dir=work_dir,
             thread_count=1,
         )
@@ -189,7 +199,11 @@ def _worker_process(
 
     model_and_optim_dir = join_path(output_path, "model_and_optim")
     save_model_and_optim_state(
-        model_and_optim_dir, model, optim, save_overwrite=True, flatten_optimizer_state=True
+        model_and_optim_dir,
+        model,
+        optim,
+        save_overwrite=True,
+        flatten_optimizer_state=flatten_optimizer_state,
     )
     log.info(f"Saved resharded model to '{output_path}'")
 
