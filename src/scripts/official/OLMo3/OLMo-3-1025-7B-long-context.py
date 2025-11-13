@@ -53,7 +53,7 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
     dataset_config = NumpyPackedFSLDatasetConfig.glob(
         str(
             join_path(
-                opts.root_dir,
+                opts.data_root,
                 "preprocessed/tylerr/lc-reshard-final/v0.6/allenai/dolma2-tokenizer/*.npy",
             )
         ),
