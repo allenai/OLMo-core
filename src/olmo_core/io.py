@@ -512,7 +512,7 @@ def deserialize_from_tensor(data: torch.Tensor) -> Any:
 
 
 def _wait_before_retry(attempt: int):
-    time.sleep(min(0.5 * 2**attempt, 3.0))
+    time.sleep(min(1.0 * 2**attempt, 16.0))
 
 
 def _format_bytes(num: Union[int, float], suffix="B") -> str:
@@ -524,7 +524,7 @@ def _format_bytes(num: Union[int, float], suffix="B") -> str:
 
 
 def retriable(
-    max_attempts: int = 3,
+    max_attempts: int = 5,
     retriable_errors: Tuple[Type[Exception], ...] = (
         requests.exceptions.ConnectionError,
         requests.exceptions.Timeout,
@@ -575,9 +575,9 @@ def retriable(
 def _http_file_size(url: str) -> int:
     response = requests.head(url, allow_redirects=True)
     content_length = response.headers.get("content-length")
-    assert (
-        content_length is not None
-    ), f"No content-length header found for {url}. Headers: {dict(response.headers)}"
+    assert content_length is not None, (
+        f"No content-length header found for {url}. Headers: {dict(response.headers)}"
+    )
     return int(content_length)
 
 
