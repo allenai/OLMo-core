@@ -50,7 +50,6 @@ from olmo_core.train.callbacks import (
     WandBCallback,
 )
 from olmo_core.train.train_module import (
-    TransformerActivationCheckpointingConfig,
     TransformerDataParallelConfig,
     TransformerTrainModuleConfig,
 )
@@ -167,7 +166,7 @@ def build_config(opts, overrides: List[str]) -> ExperimentConfig:
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
         ),
-        ac_config=TransformerActivationCheckpointingConfig(),  # Required for 7B+ models
+
         max_grad_norm=1.0,
         scheduler=CosWithWarmup(warmup_steps=100),
     )
