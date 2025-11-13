@@ -6,7 +6,11 @@ import argparse
 from typing import List
 
 from olmo_core.config import DType
-from olmo_core.data import NumpyDataLoaderConfig, NumpyPackedFSLDatasetConfig, TokenizerConfig
+from olmo_core.data import (
+    NumpyDataLoaderConfig,
+    NumpyPackedFSLDatasetConfig,
+    TokenizerConfig,
+)
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
 from olmo_core.io import join_path
