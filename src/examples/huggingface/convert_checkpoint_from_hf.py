@@ -76,7 +76,7 @@ def _get_transformer_config(
 
     result = transformer_configs[model_arch](vocab_size)
 
-    if model_arch.startswith("olmo3_") and max_sequence_length != 8192:
+    if model_arch.startswith("olmo3_") and max_sequence_length > 8192:
         result = result.with_rope_scaling(
             YaRNRoPEScalingConfig(
                 factor=max_sequence_length / 8192, beta_fast=32, beta_slow=1, old_context_len=8192
