@@ -54,6 +54,12 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Print system resources
+        run: |
+          echo "CPU cores: $(nproc)"
+          echo "RAM:"
+          free -h
+
       - name: Set env vars
         run: |
           echo "BEAKER_WORKSPACE=$(make get-beaker-workspace)" >> $GITHUB_ENV
