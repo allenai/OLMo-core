@@ -215,20 +215,19 @@ class SkipStepAdamW(SkipStepOptimizer):
             if not params_with_grad:
                 continue  # nothing to update in this group
 
-            if not self.dry_run_only:
-                foreach_adamw_step(
-                    params_with_grad,
-                    grads,
-                    exp_avgs,
-                    exp_avg_sqs,
-                    steps_list,
-                    lr=group["lr"],
-                    betas=group["betas"],
-                    eps=group["eps"],
-                    weight_decay=group["weight_decay"],
-                    step_factor=step_factor,
-                    step_increment_bugfix=self.stepfix,
-                )
+            foreach_adamw_step(
+                params_with_grad,
+                grads,
+                exp_avgs,
+                exp_avg_sqs,
+                steps_list,
+                lr=group["lr"],
+                betas=group["betas"],
+                eps=group["eps"],
+                weight_decay=group["weight_decay"],
+                step_factor=step_factor,
+                step_increment_bugfix=self.stepfix,
+            )
 
 
 @dataclass
