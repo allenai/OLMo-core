@@ -24,7 +24,7 @@ on:
 
 jobs:
   docker:
-    name: CUDA ${{ matrix.cuda }} ${{ matrix.target }}
+    name: CUDA ${{ matrix.cuda }} PyTorch ${{ matrix.torch.version }}
     runs-on: ubuntu-latest-m
     timeout-minutes: 60
     env:
