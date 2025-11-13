@@ -36,7 +36,7 @@ jobs:
       matrix:
         cuda: ["12.8.1", "13.0.2"]  # NOTE: check tags for options: https://hub.docker.com/r/nvidia/cuda/tags
         torch:
-          - version: 2.7.0
+          - version: 2.7.1
             channel: whl/test
           - version: 2.9.0
             channel: whl/test
@@ -44,8 +44,8 @@ jobs:
           # Unsupported combination of CUDA and PyTorch version.
           - cuda: "13.0.2"
             torch:
-              - version: 2.7.0
-                channel: whl/test
+              version: 2.7.1
+              channel: whl/test
     steps:
       - uses: actions/checkout@v4
 
