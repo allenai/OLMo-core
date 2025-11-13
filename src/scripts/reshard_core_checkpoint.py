@@ -160,11 +160,6 @@ def _worker_process(
     if skip_optimizer_state:
         optim = None
         log.info("Skipping optimizer state (--skip-optimizer-state flag set)")
-    elif isinstance(optim_config, SkipStepAdamWConfig):
-        # To initialize its own state, the optimizer runs a single step. In this script, that happens on
-        # CPU. For a 32B model, that takes a long time. To skip doing that, we pass `dry_run_only`. But
-        # only SkipStepAdamW supports that.
-        optim = optim_config.build(model, strict=True, dry_run_only=True)
     else:
         optim = optim_config.build(model, strict=True)
 
