@@ -142,11 +142,7 @@ def _worker_process(
     rank = get_rank()
     ws = get_world_size()
 
-    print(f"[Rank {rank}/{ws}] Process group successfully initialized!")
-    print(f"[Rank {rank}/{ws}] Backend: {dist.get_backend()}")
-    print(f"[Rank {rank}/{ws}] Process group size: {ws}")
-    print(f"[Rank {rank}/{ws}] Input: {input_path}")
-    print(f"[Rank {rank}/{ws}] Output: {output_path}")
+    log.info("Rank %d initialized, starting to load model", rank)
 
     # Load model
     model_config, optim_config = model_and_optim_config_from_path(input_path)
@@ -198,9 +194,6 @@ def _worker_process(
     # Barrier to ensure all processes finish together
     dist.barrier()
 
-    if rank == 0:
-        print(f"\n[Rank 0] All {ws} processes completed successfully!")
-
     # Clean up
     dist.destroy_process_group()
 
@@ -224,8 +217,8 @@ def _worker_process(
     "--num-processes",
     "-n",
     type=int,
-    default=2,
-    help="Number of processes to spawn for the Gloo process group (default: 2)",
+    default=1,
+    help="Number of processes to use. Use 1 to run in main process without multiprocessing (default: 1)",
 )
 @click.option(
     "--skip-optimizer-state",
@@ -237,13 +230,18 @@ def main(input_path: str, output_path: str, num_processes: int, skip_optimizer_s
     """
     Reshard an OLMo-core checkpoint across different process group configurations.
 
-    This script establishes a Gloo process group with the specified number of processes
-    to perform checkpoint resharding operations.
+    This script can run in single-process mode (default) or establish a Gloo process group
+    with multiple processes to perform checkpoint resharding operations.
 
-    The script will launch multiple worker processes using torch.multiprocessing and
-    coordinate them using a TCP-based rendezvous on localhost.
+    When using a single process (n=1), the script runs directly in the main process without
+    spawning additional processes. For multiple processes, it uses torch.multiprocessing
+    and coordinates them using a TCP-based rendezvous on localhost.
 
     Examples:
+
+    \b
+    # Reshard with single process (default, no multiprocessing)
+    python reshard_core_checkpoint.py -i ./input -o ./output
 
     \b
     # Reshard checkpoint with 4 processes
@@ -253,44 +251,50 @@ def main(input_path: str, output_path: str, num_processes: int, skip_optimizer_s
         --num-processes 4
 
     \b
-    # Reshard with default 2 processes
-    python reshard_core_checkpoint.py -i ./input -o ./output
-
-    \b
     # Reshard without optimizer state (model weights only)
     python reshard_core_checkpoint.py \\
         --input ./checkpoint-in \\
         --output ./checkpoint-out \\
         --skip-optimizer-state
     """
-    if num_processes < 2:
-        raise ValueError(f"num_processes must be at least 2, got {num_processes}")
+    if num_processes < 1:
+        raise ValueError(f"num_processes must be at least 1, got {num_processes}")
 
-    # Find an available port for process coordination
     primary_addr = "127.0.0.1"
     primary_port = _find_open_port(host=primary_addr)
 
-    log.info(f"Launching {num_processes} worker processes on port {primary_port}...")
-    print(f"Launching {num_processes} worker processes...")
-    print(f"Coordination endpoint: tcp://{primary_addr}:{primary_port}\n")
+    if num_processes == 1:
+        # Run directly in the main process for single process mode
+        log.info("Running in single process mode (no multiprocessing)")
 
-    # Launch worker processes using torch.multiprocessing
-    # Use 'fork' start method for Gloo backend (CPU operations)
-    mp.start_processes(
-        _worker_process,
-        args=(
-            num_processes,
-            primary_addr,
-            primary_port,
-            input_path,
-            output_path,
-            skip_optimizer_state,
-        ),
-        nprocs=num_processes,
-        start_method="fork",
-    )
+        # Run the worker process directly in the main process
+        _worker_process(
+            process_rank=0,
+            world_size=1,
+            primary_addr=primary_addr,
+            primary_port=primary_port,
+            input_path=input_path,
+            output_path=output_path,
+            skip_optimizer_state=skip_optimizer_state,
+        )
+    else:
+        log.info(f"Launching {num_processes} worker processes on port {primary_port}...")
 
-    print("\n✓ All worker processes completed successfully!")
+        # Launch worker processes using torch.multiprocessing
+        # Use 'fork' start method for Gloo backend (CPU operations)
+        mp.start_processes(
+            _worker_process,
+            args=(
+                num_processes,
+                primary_addr,
+                primary_port,
+                input_path,
+                output_path,
+                skip_optimizer_state,
+            ),
+            nprocs=num_processes,
+            start_method="fork",
+        )
 
 
 if __name__ == "__main__":
