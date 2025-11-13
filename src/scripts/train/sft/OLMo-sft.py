@@ -266,7 +266,7 @@ class SFTConfig(Config):
         workspace: str,
         budget: str,
         model_name: str,
-        init_seed: int = 543210,
+        init_seed: int = 33333,
         dataset_path: Optional[str],
     ) -> "SFTConfig":
         root_dir = get_root_dir(cluster)
@@ -294,7 +294,7 @@ class SFTConfig(Config):
         dp_shard_degree = GPUS_PER_NODE // (bs_config.cp_degree or 1)
         if not dp_shard_degree > 0:
             raise OLMoConfigurationError(f"dp_shard_degree ({dp_shard_degree}) must be positive.")
-
+        
         ac_config = TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.selected_modules,
             modules=["blocks.*.feed_forward"],
