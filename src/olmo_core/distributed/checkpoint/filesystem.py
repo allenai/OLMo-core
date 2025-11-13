@@ -44,7 +44,6 @@ from olmo_core.utils import (
     generate_uuid,
     get_default_thread_count,
     get_element_size,
-    threaded_generator,
 )
 
 log = logging.getLogger(__name__)
