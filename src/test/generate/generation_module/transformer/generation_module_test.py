@@ -480,6 +480,7 @@ def create_test_checkpoint_for_merging(
 
     # Save config.json so from_checkpoint can load the config
     import json
+
     config_path = checkpoint_dir / "config.json"
     with open(config_path, "w") as f:
         # from_checkpoint expects the config to be nested under "model" key
@@ -554,7 +555,9 @@ def test_from_checkpoints_weight_averaging(tmp_path: Path):
 
         # Verify dtype is float32 (default) for floating point tensors
         if merged_state[key].is_floating_point():
-            assert merged_state[key].dtype == torch.float32, f"Expected float32 for {key}, got {merged_state[key].dtype}"
+            assert (
+                merged_state[key].dtype == torch.float32
+            ), f"Expected float32 for {key}, got {merged_state[key].dtype}"
 
         # Calculate expected average
         tensors = [state_dict[key].float() for state_dict in state_dicts]
