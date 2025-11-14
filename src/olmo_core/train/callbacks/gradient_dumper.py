@@ -106,6 +106,6 @@ class GradientDumperCallback(Callback):
         if get_rank() == 0:
             rel_step_dir = step_dir.relative_to(self.trainer.work_dir)
             target_dir = self.trainer.persist_working_subdir(rel_step_dir)
-            log.info(f"Gradients for step {self.step} uploaded to '{target_dir}'")
+            log.info(f"Gradients for step {self.step} saved to '{target_dir}'")
 
         gc_cuda()
