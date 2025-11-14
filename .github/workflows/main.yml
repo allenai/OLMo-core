@@ -58,8 +58,9 @@ jobs:
 
           - name: Test scripts
             run: |
-              pytest -v --color=yes -s --log-cli-level=DEBUG \
-                src/test/scripts/
+              pytest -v --color=yes src/test/scripts/reshard_core_checkpoint_test.py
+              pytest -v --color=yes src/test/scripts/ \
+                --ignore src/test/scripts/reshard_core_checkpoint_test.py
 
           - name: Type check
             run: make type-check
