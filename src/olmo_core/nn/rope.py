@@ -55,12 +55,6 @@ class RoPEScalingConfig(Config):
     Base class for RoPE scaling configs. Defines a strategy for scaling RoPE to longer sequences.
     """
 
-    attention_rescale_factor: float = 1.0
-    """
-    Factor to rescale attention scores by when using scaled RoPE. Can be used to compensate for
-    the larger effective context. 1.0 means no rescaling.
-    """
-
     @abstractmethod
     def compute_scaled_inv_freq(
         self, theta: int, dim: int, device: torch.device
@@ -77,6 +71,12 @@ class RoPEScalingConfig(Config):
 @dataclass
 class ABFRoPEScalingConfig(RoPEScalingConfig):
     """Absolute base frequency scaling (ABF). Simply uses a new base frequency parameter."""
+
+    attention_rescale_factor: float = 1.0
+    """
+    Factor to rescale attention scores by when using scaled RoPE. Can be used to compensate for
+    the larger effective context. 1.0 means no rescaling.
+    """
 
     new_theta: int = 8_000_000
 
@@ -100,6 +100,12 @@ class PIRoPEScalingConfig(RoPEScalingConfig):
     Interpolate the rotary angles instead of extrapolating them when the context window at
     inference time exceeds the window used during training. In practice, this amounts to linearly
     *compressing* the original position indices by a constant factor ``factor``.
+    """
+
+    attention_rescale_factor: float = 1.0
+    """
+    Factor to rescale attention scores by when using scaled RoPE. Can be used to compensate for
+    the larger effective context. 1.0 means no rescaling.
     """
 
     factor: float = 2.0
@@ -138,6 +144,12 @@ class StepwiseRoPEScalingConfig(RoPEScalingConfig):
         spreading the very low frequencies across a longer context window (similar to PI scaling).
     3. **Medium-frequency band** – linearly interpolates (in inverse-frequency space) between the
         unscaled and the fully-scaled value so that the full spectrum changes smoothly.
+    """
+
+    attention_rescale_factor: float = 1.0
+    """
+    Factor to rescale attention scores by when using scaled RoPE. Can be used to compensate for
+    the larger effective context. 1.0 means no rescaling.
     """
 
     factor: float = 32.0
@@ -257,10 +269,11 @@ class YaRNRoPEScalingConfig(RoPEScalingConfig):
         # 3. Blend the two spectra according to the ramp weights
         inv_freq = inv_freq_interpolation * ramp + inv_freq_extrapolation * (1.0 - ramp)
 
-        # Attention rescale factor (section 3.4)
-        attention_rescale_factor = 0.1 * math.log(self.factor) + 1.0
+        return inv_freq, self.get_attention_rescale_factor()
 
-        return inv_freq, attention_rescale_factor
+    def get_attention_rescale_factor(self) -> float:
+        """Compute the attention rescale factor based on section 3.4 of the YaRN paper"""
+        return 0.1 * math.log(self.factor) + 1.0
 
     def to_hf_config(self) -> dict:
         """YaRN scaling corresponds to HF's yarn scaling."""
@@ -270,7 +283,7 @@ class YaRNRoPEScalingConfig(RoPEScalingConfig):
             "original_max_position_embeddings": self.old_context_len,
             "beta_fast": self.beta_fast,
             "beta_slow": self.beta_slow,
-            "attention_factor": 0.1 * math.log(self.factor) + 1.0,  # From YaRN paper
+            "attention_factor": self.get_attention_rescale_factor(),
         }
 
 

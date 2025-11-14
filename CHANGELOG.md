@@ -16,7 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `olmo_core.generate.chat` module to allow interacting with OlmoCore models without conversion to other formats.
 - Added `GAPMonitorCallback` for monitoring gradients, activations, and parameters (GAP).
 - Added official OLMo3-7B pretraining scripts and data mix.
+- Added official OLMo3-7B midtraining script and data mix.
 - Added a `NoOpOptimizer` that does nothing, uses no memory, and can be used for debugging.
+- Added official config for Olmo 3 32B.
 
 ### Fixed
 
@@ -25,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - No longer overrides `random`'s RNG seed when building `SourceMixtureDatasetConfig`.
 - Fix handling URLs in `olmo_core.nn.hf.checkpoint.save_hf_model` and in `examples/huggingface`.
 - Fix potential NaN loss that can occur when using instance masking.
+
+### Changed
+
+- Removed unused field in `YaRNRoPEScalingConfig`.
 
 ## [v2.3.0](https://github.com/allenai/OLMo-core/releases/tag/v2.3.0) - 2025-10-17
 
