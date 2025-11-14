@@ -4,6 +4,7 @@ Tests for the merge_core_checkpoints.py script.
 import importlib.util
 import json
 import shutil
+import tempfile
 from pathlib import Path
 from typing import List, Optional
 
@@ -15,6 +16,7 @@ from olmo_core.distributed.checkpoint import (
     get_checkpoint_metadata,
     load_model_and_optim_state,
     save_model_and_optim_state,
+    unshard_checkpoint,
 )
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig
@@ -48,36 +50,51 @@ def create_test_checkpoint_with_seed(
         optim_config: Optimizer configuration (optional, defaults to AdamWConfig with lr=1e-3)
         include_optimizer: Whether to include optimizer state
     """
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+    # Set default optimizer config if not provided
     if optim_config is None:
         optim_config = AdamWConfig(lr=1e-3)
+
+    # Create config.json
+    optim_dict = optim_config.as_dict()
+    optim_dict["_CLASS_"] = f"{optim_config.__class__.__module__}.{optim_config.__class__.__name__}"
+
+    config_dict = {
+        "model": model_config.as_dict(),
+        "dataset": {"tokenizer": {"identifier": "test_tokenizer", "type": "test"}},
+        "train_module": {"optim": optim_dict},
+    }
+
+    config_path = checkpoint_dir / "config.json"
+    with open(config_path, "w") as f:
+        json.dump(config_dict, f, indent=2)
 
     # Set random seed for reproducible weights
     torch.manual_seed(seed)
 
     # Build model
     model = model_config.build(init_device="cpu")
-    model.init_weights(device=torch.device("cpu"), max_seq_len=512)
+    model.init_weights(device=torch.device("cpu"))
 
     # Create optimizer if needed
-    optim = optim_config.build(model) if include_optimizer else None
+    optim = None
+    if include_optimizer:
+        optim = optim_config.build(model)
+        # Take a step to initialize optimizer state
+        loss = model(input_ids=torch.randint(0, model_config.vocab_size, (2, 16))).sum()
+        loss.backward()
+        optim.step()
 
     # Save checkpoint
     model_and_optim_dir = checkpoint_dir / "model_and_optim"
     save_model_and_optim_state(
-        model_and_optim_dir,
+        str(model_and_optim_dir),
         model,
         optim,
         save_overwrite=True,
+        flatten_optimizer_state=False
     )
-
-    # Save config.json
-    config = {
-        "model": model_config.as_dict(),
-        "dataset": {"tokenizer": {"identifier": "test_tokenizer"}},
-        "train_module": {"optim": optim_config.as_dict()},
-    }
-    with (checkpoint_dir / "config.json").open("w") as f:
-        json.dump(config, f)
 
 
 def run_merge_cli(
@@ -137,6 +154,8 @@ def load_checkpoint_state_dict(checkpoint_dir: Path, model_config: TransformerCo
     """
     Load a checkpoint's state dict for verification.
 
+    Uses unshard_checkpoint() to load without requiring distributed setup.
+
     Args:
         checkpoint_dir: Checkpoint directory
         model_config: Model configuration
@@ -144,15 +163,13 @@ def load_checkpoint_state_dict(checkpoint_dir: Path, model_config: TransformerCo
     Returns:
         State dict
     """
-    model = model_config.build(init_device="cpu")
-    optim = AdamWConfig(lr=1e-3).build(model)
-
     model_and_optim_dir = checkpoint_dir / "model_and_optim"
-    load_model_and_optim_state(model_and_optim_dir, model, optim)
 
-    state_dict = {}
-    for name, param in model.named_parameters():
-        state_dict[name] = param.detach().clone()
+    # Unshard to a temp directory (works without distributed setup)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path, _ = unshard_checkpoint(str(model_and_optim_dir), Path(tmpdir), optim=False)
+        # Load unsharded checkpoint
+        state_dict = torch.load(model_path, map_location="cpu", weights_only=True)
 
     return state_dict
 
@@ -278,7 +295,11 @@ def test_merge_two_checkpoints_skip_optimizer(tmp_path):
     assert not checkpoint_has_optimizer_state(output), "Optimizer state should be skipped"
 
 
-@pytest.mark.skip(reason="Requires distributed setup to load merged checkpoint")
+#@pytest.mark.skip(
+#    reason="Merged checkpoint saved by save_state_dict() requires distributed setup to load, "
+#    "unlike checkpoints saved with save_model_and_optim_state(). Would need distributed "
+#    "test setup or unshard/reload approach which adds complexity."
+#)
 def test_weights_are_averaged_correctly(tmp_path):
     """Load merged checkpoint and verify weights equal mean of input weights."""
     model_config = TransformerConfig.llama_like(
@@ -301,7 +322,6 @@ def test_weights_are_averaged_correctly(tmp_path):
     assert result.exit_code == 0
 
     # Verify weights are averaged
-    # NOTE: This requires distributed setup which we don't have in single-process tests
     verify_averaged_weights(output, [ckpt1, ckpt2], model_config)
 
 
