@@ -2,18 +2,16 @@
 Tests for the reshard_core_checkpoint.py script.
 """
 import gc
-
-# Import the script module using importlib to access its main function
-import importlib.util
 import json
 import shutil
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Optional
 
 import pytest
 import torch
-from click.testing import CliRunner
 
 from olmo_core.distributed.checkpoint import (
     get_checkpoint_metadata,
@@ -23,13 +21,8 @@ from olmo_core.distributed.checkpoint import (
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig
 
-spec = importlib.util.spec_from_file_location(
-    "reshard_core_checkpoint", "src/scripts/reshard_core_checkpoint.py"
-)
-if spec is None or spec.loader is None:
-    raise ImportError("Could not load reshard_core_checkpoint.py")
-reshard_module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(reshard_module)
+# Path to the reshard script
+RESHARD_SCRIPT = Path("src/scripts/reshard_core_checkpoint.py")
 
 
 # ==================== Helper Functions ====================
@@ -162,10 +155,10 @@ def checkpoint_has_optimizer_state(checkpoint_dir: Path) -> bool:
 def run_reshard_cli(
     input_path: str, output_path: str, num_processes: int = 1, skip_optimizer: bool = False
 ) -> None:
-    """Run the reshard script using Click's test runner."""
-    runner = CliRunner()
-
+    """Run the reshard script as a subprocess to avoid fork() issues in pytest."""
     args = [
+        sys.executable,
+        str(RESHARD_SCRIPT),
         "--input",
         input_path,
         "--output",
@@ -176,8 +169,8 @@ def run_reshard_cli(
     if skip_optimizer:
         args.append("--skip-optimizer-state")
 
-    result = runner.invoke(reshard_module.main, args)
-    assert result.exit_code == 0, f"Resharding failed: {result.output}"
+    result = subprocess.run(args, capture_output=True, text=True)
+    assert result.returncode == 0, f"Resharding failed with exit code {result.returncode}:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
     gc.collect()
 
 
