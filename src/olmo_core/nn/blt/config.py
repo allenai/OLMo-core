@@ -149,7 +149,7 @@ class LocalDecoderConfig(Config):
             hnet_modulate=self.hnet_modulate,
             blt_k=self.blt_k,
             blt_compat=self.blt_compat,
-            #fuse_boundaries=self.fuse_boundaries,
-            #no_boundaries=self.no_boundaries,
+            fuse_boundaries=self.fuse_boundaries,
+            no_boundaries=self.no_boundaries,
             dtype=self.dtype.as_pt(),
         )
