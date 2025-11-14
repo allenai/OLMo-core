@@ -488,6 +488,35 @@ def test_incompatible_model_shapes(tmp_path):
         run_merge_cli([str(ckpt1), str(ckpt2)], str(output), skip_optimizer=True)
 
 
+def test_incompatible_model_layers(tmp_path):
+    """Test that merging checkpoints with different layer counts fails."""
+    # Create two checkpoints with same shapes except different number of layers
+    model_config1 = TransformerConfig.llama_like(
+        vocab_size=1000,
+        d_model=128,
+        n_layers=2,
+        n_heads=4,
+    )
+    model_config2 = TransformerConfig.llama_like(
+        vocab_size=1000,
+        d_model=128,
+        n_layers=3,  # Different number of layers
+        n_heads=4,
+    )
+
+    ckpt1 = tmp_path / "checkpoint1"
+    ckpt2 = tmp_path / "checkpoint2"
+    output = tmp_path / "merged"
+
+    create_test_checkpoint_with_seed(ckpt1, model_config1, seed=42, include_optimizer=False)
+    create_test_checkpoint_with_seed(ckpt2, model_config2, seed=123, include_optimizer=False)
+
+    # Run merge - should fail due to mismatched architectures
+    # One checkpoint has keys that don't exist in the other
+    with pytest.raises(BaseException):
+        run_merge_cli([str(ckpt1), str(ckpt2)], str(output), skip_optimizer=True)
+
+
 def test_path_validation_model_and_optim():
     """Test that paths ending with 'model_and_optim' are rejected."""
     runner = CliRunner()
