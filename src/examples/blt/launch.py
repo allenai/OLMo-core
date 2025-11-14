@@ -26,6 +26,7 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
     shared_filesystem = False
 
     for transparent_env_var in [
+        "SEQUENCE_LENGTH",
         "STAGE1_CKPT_PATH",
         "EMBEDDING_INIT_PATH",
         "OLMO_CKPT_PATH",
@@ -42,6 +43,7 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
         "ADD_EXPANDED_EMBEDDINGS",
         "TEACHER_MODE",
         "GLOBAL_MODEL_LEARNING_RATE",
+        "NUM_WORKERS",
     ]:
         if transparent_env_var in os.environ:
             env_vars.append(BeakerEnvVar(name=transparent_env_var, value=os.environ[transparent_env_var]))
@@ -93,8 +95,10 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
         launch_script = "src/examples/blt/train_stage2.py"
     elif stage == "baseline":
         launch_script = "src/examples/blt/train_baseline.py"
+    elif stage == "compute_entropies":
+        launch_script = "src/examples/blt/compute_entropies.py"
     else:
-        raise ValueError(f"Unknown stage: {stage}. Must be 'stage1', 'stage2' or 'baseline'.")
+        raise ValueError(f"Unknown stage: {stage}. Must be 'stage1', 'stage2', 'baseline' or 'compute_entropies'.")
 
     beaker_username = get_beaker_username()
 
@@ -134,4 +138,4 @@ if __name__ == "__main__":
 
     prepare_cli_environment()
 
-    build_config(run_name, overrides).launch(follow=False)
+    build_config(run_name, overrides).launch(follow=False, torchrun=True)

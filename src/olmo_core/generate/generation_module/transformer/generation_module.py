@@ -65,6 +65,7 @@ class TransformerGenerationModule(GenerationModule):
         state_dict_load_opts: Optional[dist_cp_sd.StateDictOptions] = None,
         state_dict_save_opts: Optional[dist_cp_sd.StateDictOptions] = None,
         load_key_mapping: Optional[Dict[str, str]] = None,
+        **kwargs,
     ):
         super().__init__()
 
@@ -145,6 +146,85 @@ class TransformerGenerationModule(GenerationModule):
         self._set_model_mode("eval")
         input_ids = move_to_device(input_ids, self.device)
         return self.model(input_ids, **kwargs)
+
+    @torch.inference_mode()
+    def benchmark(
+        self,
+        batch_size: int,
+        n_prefill: int,
+        n_generate: int,
+        profile: bool = False,
+        vocab_size: int = 10_000,
+    ):
+        input_ids = torch.randint(
+            low=0,
+            high=vocab_size,
+            size=(batch_size, n_prefill),
+        )
+        attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
+
+        if profile:
+            prof = torch.profiler.profile(
+                activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
+                record_shapes=True,
+                with_stack=True,
+                profile_memory=True,
+                with_flops=True,
+                schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=2),
+                on_trace_ready=torch.profiler.tensorboard_trace_handler('/tmp/profiles/transformer_generation_module'),
+            )
+            prof.__enter__()
+        else:
+            prof = None
+
+        start_time = time.perf_counter()
+
+        self.prepare_inference_cache(batch_size, n_prefill + n_generate)
+        prefill_cache_leftpad = attention_mask_to_cache_leftpad(attention_mask).to(self.device)
+
+        torch.cuda.synchronize()
+        cache_prepare_time = time.perf_counter() - start_time
+
+        # prefill
+        next_token_logits = self.model(
+            input_ids,
+            logits_to_keep=1,
+            cache_leftpad=prefill_cache_leftpad,
+        )
+        next_token_probs = F.softmax(next_token_logits, dim=-1)
+        next_token = next_token_logits.argmax(-1)
+
+        torch.cuda.synchronize()
+        prefill_time = time.perf_counter() - start_time - cache_prepare_time
+
+        if prof is not None:
+            prof.step()
+
+        # generate
+        for step in range(n_generate):
+            next_token_logits = self.model(
+                next_token.to(self.device),
+                logits_to_keep=1,
+            )
+            next_token_probs = F.softmax(next_token_logits, dim=-1)
+            next_token = next_token_probs.argmax(-1)
+
+            if prof is not None:
+                prof.step()
+
+        torch.cuda.synchronize()
+        generate_time = time.perf_counter() - start_time - cache_prepare_time - prefill_time
+
+        if prof is not None:
+            prof.__exit__(None, None, None)
+
+        self.free_inference_cache()
+
+        return {
+            "cache_prepare_time": cache_prepare_time,
+            "prefill_time": prefill_time,
+            "generate_time": generate_time,
+        }
 
     @torch.inference_mode()
     def generate_batch(
@@ -592,6 +672,7 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         state_dict_load_opts: Optional[dist_cp_sd.StateDictOptions] = None,
         state_dict_save_opts: Optional[dist_cp_sd.StateDictOptions] = None,
         load_key_mapping: Optional[Dict[str, str]] = None,
+        **kwargs,
     ):
         super().__init__(
             model=model,
@@ -605,7 +686,8 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
             load_key_mapping=load_key_mapping,
         )
         self.tokenizer = tokenizer
-        self.blt_config = blt_config
+        filtered_kwargs = {k: v for k, v in kwargs.items() if hasattr(blt_config, k)}
+        self.blt_config = blt_config.replace(**filtered_kwargs)
 
     def prepare_inference_cache(self, batch_size: int, max_seq_len: int):
         blocks = [
@@ -683,6 +765,17 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
             while len(patch_lens[example_idx]) < pad_to:
                 patch_lens[example_idx].append(0)
 
+        expand_input_ids = self.model.local_encoder.add_expanded_embeddings  # type: ignore
+
+        if expand_input_ids:
+            expanded_input_ids = []
+            for example_idx in range(input_ids.shape[0]):
+                expanded_input_ids.append(torch.tensor(self.tokenizer.expand_byte_ids(input_ids[example_idx].tolist()), dtype=torch.long))
+            expanded_input_ids = blt_utils.pad_right(expanded_input_ids, value=self.tokenizer.pad_token_id, multiple_of=1)
+            expanded_input_ids = move_to_device(expanded_input_ids, self.device)
+        else:
+            expanded_input_ids = None
+
         patch_lens = torch.tensor(patch_lens, dtype=torch.long, device=input_ids.device)
         input_ids = move_to_device(input_ids, self.device)
         patch_lens = move_to_device(patch_lens, self.device)
@@ -693,14 +786,121 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
             input_ids,
             labels=labels,
             patch_lens=patch_lens,
+            expanded_input_ids=expanded_input_ids,
             blt_config=self.blt_config,
             **kwargs
         )[0].logits[:, :original_length, :]
 
-    def _get_last_non_boundary_token(self, input_ids: torch.Tensor):
-        input_ids = input_ids.flip(1)
-        first_non_boundary_idx = (input_ids != self.model.end_of_subword_token_blt).float().argmax(dim=1)  # type: ignore
-        return torch.take_along_dim(input_ids, first_non_boundary_idx.unsqueeze(1), 1)
+    @torch.inference_mode()
+    def benchmark(
+        self,
+        batch_size: int,
+        n_prefill: int,
+        n_generate: int,
+        avg_bytes_per_token: float = 4.3,
+        profile: bool = False,
+        vocab_size: int = 256,
+    ):
+        self._set_model_mode("eval")
+
+        n_prefill_bytes = int(n_prefill * avg_bytes_per_token)
+        n_generate_bytes = int(n_generate * avg_bytes_per_token)
+
+        input_ids = torch.randint(
+            low=0,
+            high=vocab_size,
+            size=(batch_size, n_prefill_bytes),
+        )
+        token_attention_mask = torch.ones((batch_size, n_prefill), dtype=torch.bool)
+        patch_end_indices = 1 + torch.randperm(n_prefill_bytes - 1)[:n_prefill]
+        patch_end_indices = F.pad(
+            torch.sort(patch_end_indices).values,
+            (1, 0),
+            value=0,
+        )
+        patch_lens = (patch_end_indices[1:] - patch_end_indices[:-1]).unsqueeze(0).expand(batch_size, -1)
+
+        generate_boundary_mask = torch.zeros(n_generate_bytes, dtype=torch.bool)
+        generate_boundary_mask[torch.randperm(n_generate_bytes)[:n_generate]] = True
+        generate_boundary_mask = generate_boundary_mask.tolist()
+
+        if profile:
+            prof = torch.profiler.profile(
+                activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
+                record_shapes=True,
+                with_stack=True,
+                profile_memory=True,
+                with_flops=True,
+                schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=2),
+                on_trace_ready=torch.profiler.tensorboard_trace_handler('/tmp/profiles/transformer_generation_module'),
+            )
+            prof.__enter__()
+        else:
+            prof = None
+
+        start_time = time.perf_counter()
+
+        self.prepare_inference_cache(batch_size, n_prefill + n_generate)
+        prefill_cache_leftpad = attention_mask_to_cache_leftpad(token_attention_mask).to(self.device)
+
+        zero_boundary_state = blt_utils.MaskState(torch.zeros(batch_size, dtype=torch.bool, device=self.device))
+        one_boundary_state = blt_utils.MaskState(torch.ones(batch_size, dtype=torch.bool, device=self.device))
+
+        torch.cuda.synchronize()
+        cache_prepare_time = time.perf_counter() - start_time
+
+        # prefill
+        boundary_mask, cached_encoder_outputs = self.model.prefill_boundary_prediction_forward(  # type: ignore
+            input_ids,
+            patch_lens=patch_lens,
+            blt_config=self.blt_config,
+        )
+        next_token_logits = self.model.inference_forward(  # type: ignore
+            input_ids,
+            logits_to_keep=1,
+            cached_encoder_outputs=cached_encoder_outputs,
+            cache_leftpad=prefill_cache_leftpad,
+            boundary_state=zero_boundary_state,
+            blt_config=self.blt_config,
+        )
+        next_token_probs = F.softmax(next_token_logits, dim=-1)
+        next_token = next_token_logits.argmax(-1)
+
+        torch.cuda.synchronize()
+        prefill_time = time.perf_counter() - start_time - cache_prepare_time
+
+        if prof is not None:
+            prof.step()
+
+        # generate
+        for step in range(n_generate_bytes):
+            boundary_state = one_boundary_state if generate_boundary_mask[step] else zero_boundary_state
+
+            next_token_logits = self.model.inference_forward(  # type: ignore
+                next_token.to(self.device),
+                logits_to_keep=1,
+                boundary_state=boundary_state,
+                blt_config=self.blt_config,
+            )
+            next_token_probs = F.softmax(next_token_logits, dim=-1)
+            next_token = next_token_probs.argmax(-1)
+
+            if prof is not None:
+                prof.step()
+
+        torch.cuda.synchronize()
+        generate_time = time.perf_counter() - start_time - cache_prepare_time - prefill_time
+
+        if prof is not None:
+            prof.__exit__(None, None, None)
+
+        self.free_inference_cache()
+
+        return {
+            "cache_prepare_time": cache_prepare_time,
+            "prefill_time": prefill_time,
+            "generate_time": generate_time,
+        }
 
     @torch.inference_mode()
     def generate_batch(
@@ -717,6 +917,7 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         verify: bool = False,
         force_boundary_every: Optional[int] = None,
         max_patch_length_decode: Optional[int] = 128, # 128 is longest dolma2 tokenizer token
+        stop_on_exceed_patch_length: bool = True, # chances are slim to produce something useful
         profile: bool = False,
         **generation_kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
@@ -742,11 +943,14 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         start_time = time.perf_counter()
 
         expand_input_ids = self.model.local_encoder.add_expanded_embeddings  # type: ignore
+        fuse_boundaries = self.model.local_decoder.fuse_boundaries # type: ignore
 
         # convert to byte ids and compute patch lengths
         byte_input_ids = []
         expanded_input_ids = []
         patch_lens = []
+
+        forced_decoding_ids: list[int | None] = [None] * input_ids.shape[0]
 
         for example_idx in range(input_ids.shape[0]):
             current_byte_input_ids, current_patch_lens = self.tokenizer.get_tokens_and_patch_lengths(
@@ -754,6 +958,15 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                 add_bos=True,
                 strip_pad=True
             )
+
+            if fuse_boundaries:
+                # need to roll one byte back and force decoding to detect whether the last byte is a boundary
+                forced_decoding_ids[example_idx] = current_byte_input_ids[-1]
+                current_byte_input_ids = current_byte_input_ids[:-1]
+                current_patch_lens[-1] -= 1
+                if current_patch_lens[-1] == 0:
+                    current_patch_lens = current_patch_lens[:-1]
+
             byte_input_ids.append(torch.tensor(current_byte_input_ids, dtype=torch.long))
             if expand_input_ids:
                 expanded_input_ids.append(torch.tensor(self.tokenizer.expand_byte_ids(current_byte_input_ids), dtype=torch.long))
@@ -777,6 +990,7 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
 
         # Replace generation config with any overrides.
         generation_config = self._generation_config.replace(**generation_kwargs)
+        boundary_offset = self.tokenizer.offset + 256
         eos = self.tokenizer.eos_token_id
         pad = self.tokenizer.pad_token_id
 
@@ -809,6 +1023,8 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
 
         # Output containers
         generated = byte_input_ids
+        all_logits: Optional[List[torch.Tensor]] = [] if return_logits else None
+        all_logprobs: Optional[List[torch.Tensor]] = [] if return_logprobs else None
 
         # Timing stats
         time_to_first_token = None
@@ -833,15 +1049,12 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
 
         if generation_config.until is not None:
             stop_token_sequences += [
-                torch.tensor(self.tokenizer.encode(x), device=self.model.device, dtype=torch.long)
+                self.tokenizer.encode(x)
                 for x in generation_config.until
             ]
 
         if generation_config.stop_token_ids is not None:
-            stop_token_sequences += [
-                torch.tensor([x], device=self.model.device, dtype=torch.long)
-                for x in generation_config.stop_token_ids
-            ]
+            stop_token_sequences += [[x] for x in generation_config.stop_token_ids]
 
         pbar = tqdm(
             desc="Generating tokens",
@@ -853,10 +1066,11 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         )
         forward_start_time = None
         boundary_state = blt_utils.MaskState(torch.zeros(batch_size, dtype=torch.bool, device=self.device))
+        pad_state = blt_utils.MaskState(torch.zeros(batch_size, dtype=torch.bool, device=self.device))
         next_tokens = torch.full((input_ids.shape[0],), self.model.end_of_subword_token_blt, device=self.device, dtype=torch.long)  # type: ignore
-        non_boundary_next_tokens = byte_input_ids[:, -1:].clone()
+        non_boundary_generated_tokens = [[byte_input_ids[example_idx, -1].item()] for example_idx in range(byte_input_ids.shape[0])]
 
-        bytes_generated_at_last_boundary = torch.zeros(batch_size, dtype=torch.long, device=self.device)
+        bytes_since_boundary = (boundary_mask.flip(1).cumsum(-1) == 0).sum(-1)
         is_first_forward = True
 
         if profile:
@@ -877,8 +1091,12 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
             input_ids_for_model = (
                 generated
                 if (is_first_forward or not generation_config.use_cache)
-                else non_boundary_next_tokens
+                else torch.tensor([x[-1] for x in non_boundary_generated_tokens], device=generated.device, dtype=generated.dtype).unsqueeze(1)
             )
+            assert not (
+                (input_ids_for_model == self.model.end_of_subword_token_blt) |
+                (input_ids_for_model >= boundary_offset)
+            ).any().item()  # type: ignore
             if expand_input_ids:
                 expanded_input_ids_for_model = torch.zeros_like(input_ids_for_model)
                 for i in range(input_ids_for_model.shape[0]):
@@ -898,15 +1116,80 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                 expanded_input_ids=expanded_input_ids_for_model,
                 cached_encoder_outputs=cached_encoder_outputs if is_first_forward else None,
                 boundary_state=boundary_state,
+                pad_state=pad_state,
                 sequence_start_indices=sequence_start_indices,
                 logits_to_keep=1,
                 blt_config=self.blt_config,
                 cache_leftpad=cache_leftpad if generation_config.use_cache else None,
             )
+
+            if boundary_state.all():
+                # new token, must not be boundary (never two consecutive boundaries)
+                if not fuse_boundaries:
+                    next_token_logits[..., self.model.end_of_subword_token_blt] = -100_000
+                bytes_since_boundary[:] = 0
+            else:
+                boundary_state.selective_add(1, bytes_since_boundary, inv=True)
+
+            temperature = generation_config.temperature
+
+            if isinstance(self.blt_config.inference_sampling_strategies, str):
+                inference_sampling_strategies = self.blt_config.inference_sampling_strategies.split(",")
+            else:
+                inference_sampling_strategies = []
+
+            if any(x is not None for x in forced_decoding_ids):
+                # only supported for the first token atm, so len(next_token_logits) == batch_size
+                assert len(next_token_logits) == batch_size and is_first_forward
+                for example_idx in range(batch_size):
+                    forced_decoding_id = forced_decoding_ids[example_idx]
+
+                    if forced_decoding_id is not None:
+                        no_boundary_logit = next_token_logits[example_idx, 0, forced_decoding_id].item()
+                        boundary_logit = next_token_logits[example_idx, 0, forced_decoding_id + boundary_offset].item()
+
+                        next_token_logits[example_idx, 0, :] = -100_000
+                        next_token_logits[example_idx, 0, forced_decoding_id] = no_boundary_logit
+                        next_token_logits[example_idx, 0, forced_decoding_id + boundary_offset] = boundary_logit
+
+                        forced_decoding_ids[example_idx] = None  # only force once
+
+            for strategy in inference_sampling_strategies:
+                if strategy.startswith("gen_eos_bias"):
+                    eos_bias = float(strategy.split(":")[-1])
+                    next_token_logits[..., eos] += eos_bias
+                    next_token_logits[..., eos + boundary_offset] += eos_bias
+                elif strategy.startswith("gen_boundary_bias"):
+                    boundary_bias = float(strategy.split(":")[-1])
+                    next_token_logits[..., self.model.end_of_subword_token_blt] += boundary_bias
+                    next_token_logits[..., boundary_offset:] += boundary_bias
+                elif strategy == "greedy_boundary":
+                    # force boundary if argmax
+                    # otherwise force no boundary
+                    if fuse_boundaries:
+                        raise NotImplementedError("greedy_boundary not implemented with fuse_boundaries=True")
+
+                    next_token_logits[..., self.model.end_of_subword_token_blt] = torch.where(
+                        next_token_logits.argmax(-1) == self.model.end_of_subword_token_blt,  # type: ignore
+                        torch.tensor(100_000, device=next_token_logits.device, dtype=next_token_logits.dtype),
+                        torch.tensor(-100_000, device=next_token_logits.device, dtype=next_token_logits.dtype),
+                    )
+                elif strategy.startswith("temperature_patch_decay"):
+                    decay_alpha = float(strategy.split(":")[-1])
+
+                    if boundary_state.all():
+                        decay_factor = decay_alpha ** bytes_since_boundary.float()
+                    else:
+                        decay_factor = decay_alpha ** bytes_since_boundary[boundary_state.inv_mask].float()
+                    temperature = (temperature * decay_factor).unsqueeze(-1)
+
+            if all_logits is not None:
+                all_logits.append(next_token_logits)
+
             new_next_tokens = select_next_token(
                 next_token_logits.squeeze(1),
                 do_sample=generation_config.do_sample,
-                temperature=generation_config.temperature,
+                temperature=temperature,
                 top_k=generation_config.top_k,
                 top_p=generation_config.top_p,
             )
@@ -918,16 +1201,43 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                 tokens_generated_plus_prefilled += 1
 
                 next_tokens = new_next_tokens
-                non_boundary_next_tokens = next_tokens.unsqueeze(1).clone() # clone necessary?
+                next_tokens_cpu = next_tokens.cpu()
+                for example_idx in range(batch_size):
+                    next_token_cpu = next_tokens_cpu[example_idx].item()
+
+                    if fuse_boundaries:
+                        if next_token_cpu >= boundary_offset:
+                            next_token_cpu -= boundary_offset
+
+                    non_boundary_generated_tokens[example_idx].append(next_token_cpu)
             else:
                 next_tokens[:] = self.model.end_of_subword_token_blt # type: ignore
                 boundary_state.selective_put(new_next_tokens, next_tokens, inv=True)
-                boundary_state.selective_put(new_next_tokens, non_boundary_next_tokens[:, -1], inv=True)
+                next_tokens_cpu = next_tokens.cpu()
+
+                if fuse_boundaries:
+                    for example_idx in range(batch_size):
+                        next_token_cpu = next_tokens_cpu[example_idx].item()
+
+                        if not boundary_state.cpu_mask[example_idx].item():
+                            if next_token_cpu >= boundary_offset:
+                                next_token_cpu -= boundary_offset
+
+                            non_boundary_generated_tokens[example_idx].append(next_token_cpu)
+                else:
+                    for example_idx in range(batch_size):
+                        next_token_cpu = next_tokens_cpu[example_idx].item()
+
+                        if next_token_cpu != self.model.end_of_subword_token_blt: # type: ignore
+                            non_boundary_generated_tokens[example_idx].append(next_token_cpu)
 
             is_first_forward = False
 
             # for debugging
             if force_boundary_every is not None:
+                if fuse_boundaries:
+                    raise NotImplementedError("force_boundary_every not implemented with fuse_boundaries=True")
+
                 if (bytes_generated + 1) % force_boundary_every == 0:
                     next_tokens[:] = self.model.end_of_subword_token_blt # type: ignore
                 else:
@@ -935,14 +1245,35 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                     next_tokens[:] = 36
 
             if max_patch_length_decode is not None:
-                stop_mask = bytes_generated - bytes_generated_at_last_boundary >= max_patch_length_decode
-                next_tokens[stop_mask] = self.model.end_of_subword_token_blt # type: ignore
+                stop_mask = bytes_since_boundary >= max_patch_length_decode
+
+                if fuse_boundaries:
+                    next_tokens = torch.where(
+                        (next_tokens < boundary_offset) & stop_mask,
+                        next_tokens + boundary_offset,
+                        next_tokens,
+                    )
+                else:
+                    next_tokens[stop_mask] = self.model.end_of_subword_token_blt  # type: ignore
+
+                if stop_on_exceed_patch_length:
+                    finished |= stop_mask
 
                 if stop_mask.any().item():  # type: ignore
                     log.warning(f"Forcing boundary since patch exceeds length {max_patch_length_decode}.")
 
-            boundary_state = blt_utils.MaskState(next_tokens == self.model.end_of_subword_token_blt)  # type: ignore
-            boundary_state.selective_put(bytes_generated, bytes_generated_at_last_boundary)
+            boundary_state = blt_utils.MaskState(
+                (next_tokens == self.model.end_of_subword_token_blt) |
+                (next_tokens >= boundary_offset) |
+                finished
+            )  # type: ignore
+            if fuse_boundaries:
+                pad_state = blt_utils.MaskState(
+                    (next_tokens == self.model.end_of_subword_token_blt) |
+                    finished
+                )
+            else:
+                pad_state = boundary_state
 
             # Force EOS for (previously) finished sequences
             next_tokens = torch.where(finished, torch.full_like(next_tokens, eos), next_tokens)
@@ -951,11 +1282,22 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
             generated = torch.cat([generated, next_tokens.unsqueeze(-1)], dim=1)
 
             # Handle finished sequences
-            stop_hit = next_tokens.eq(eos)
+            stop_hit = next_tokens.eq(eos) | next_tokens.eq(eos + boundary_offset)
 
             # Also check for stop tokens if provided
-            for stop_sequence in stop_token_sequences:
-                stop_hit |= (generated[:, -len(stop_sequence):] == stop_sequence).all(dim=1)
+            # TODO(benjaminm): this is very annoying due to the boundaries
+            # make better
+            if len(stop_token_sequences) > 0:
+                for example_idx in range(input_ids.shape[0]):
+                    if finished[example_idx] or len(non_boundary_generated_tokens[example_idx]) <= 1:
+                        continue
+
+                    for stop_sequence in stop_token_sequences:
+                        if all(x == y for x, y in zip(
+                            non_boundary_generated_tokens[example_idx][-len(stop_sequence):], stop_sequence
+                        )):
+                            stop_hit[example_idx] = True
+                            break
 
             finished |= stop_hit
 
@@ -985,6 +1327,10 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         pbar.close()
         if prof is not None:
             prof.__exit__(None, None, None)
+
+        # logits = logprobs = None
+        # if return_logits and all_logits:
+        #     logits = torch.cat(all_logits, dim=1)
 
         if stream:
             RED = "\033[0;31m"
@@ -1065,7 +1411,8 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         generated_subword_ids = []
 
         for example_idx in range(generated.shape[0]):
-            completion_text = self.tokenizer.decode(generated[example_idx, prompt_len:].tolist())
+            # +1 if fuse boundaries since we rolled one byte back
+            completion_text = self.tokenizer.decode(generated[example_idx, prompt_len + int(fuse_boundaries):].tolist())  # type: ignore
             completion_subword_tokens = self.tokenizer.hf_tokenizer.encode(completion_text)
 
             if completions_only:
@@ -1192,7 +1539,6 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
 
         log_or_print(log, f"{transformer_config}")
         log_or_print(log, f"{generation_config}")
-        log_or_print(log, f"{blt_config}")
         model = transformer_config.build()
 
         # DEBUG flash attention needs bf16
@@ -1206,6 +1552,9 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
             generation_config,
             **kwargs
         )
+
+        # log later since **kwargs might overwrite
+        log_or_print(log, f"{generation_module.blt_config}")
 
         # Load checkpoint
         generation_module.load_checkpoint(

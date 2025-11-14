@@ -367,6 +367,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             loss_weights=loss_weights,
             skip_blocks=False,
             skip_teacher=False,
+            use_student_patch_reps_for_teacher=False,
             use_oracle_patch_reps=True,
         ),
         dp_config=TransformerDataParallelConfig(

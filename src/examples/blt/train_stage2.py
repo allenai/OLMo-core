@@ -20,8 +20,7 @@ from torch.distributed.fsdp import register_fsdp_forward_method
 from olmo_core.config import Config, DType
 from olmo_core.data import (
     NumpyDataLoaderConfig,
-    NumpyDatasetConfig,
-    NumpyDatasetType,
+    NumpyByteFSLDatasetConfig,
     NumpyByteFSLDataset,
     ByteTokenizerConfig,
     TokenizerConfig,
@@ -69,20 +68,23 @@ from olmo_core.train.train_module import (
 )
 from olmo_core.utils import seed_all
 
-NUM_WORKERS = 16
+NUM_WORKERS = int(os.environ.get("NUM_WORKERS", 16))
 SEQUENCE_LENGTH = int(os.environ.get("SEQUENCE_LENGTH", 1024))
-QUICK_DEBUG = False
+QUICK_DEBUG = os.environ.get("QUICK_DEBUG", "false").lower() in {"1", "true", "yes"}
 GLOBAL_BATCH_SIZE = 64
 LOCAL_BATCH_SIZE = 64
 EVAL_BATCH_SIZE = 16
 TEACHER_MODE = os.environ.get("TEACHER_MODE", None)
 GLOBAL_MODEL_LEARNING_RATE = os.environ.get("GLOBAL_MODEL_LEARNING_RATE", "")
-LOCAL_MODEL_STYLE = os.environ.get("LOCAL_MODEL_STYLE", "hnet")
+LOCAL_MODEL_STYLE = os.environ.get("LOCAL_MODEL_STYLE", "hnet:xlstm")
 DATA_SOURCE = os.environ.get("DATA_SOURCE", "dclm")
 LR_SCHEDULE = os.environ.get("LR_SCHEDULE", "linear_with_warmup")
-ADD_HASH_EMBEDDINGS = os.environ.get("ADD_HASH_EMBEDDINGS", "true").lower() in {"1", "true", "yes"}
-ADD_EXPANDED_EMBEDDINGS = os.environ.get("ADD_EXPANDED_EMBEDDINGS", "false").lower() in {"1", "true", "yes"}
+ADD_HASH_EMBEDDINGS = os.environ.get("ADD_HASH_EMBEDDINGS", "false").lower() in {"1", "true", "yes"}
+ADD_EXPANDED_EMBEDDINGS = os.environ.get("ADD_EXPANDED_EMBEDDINGS", "true").lower() in {"1", "true", "yes"}
 OLMO_ARCH = os.environ.get("OLMO_ARCH", "olmo2_1B_v2")
+ENTROPY_PATH_ROOT = "/weka/oe-training-default/benjaminm/entropies/entropy/"
+CROSS_ENTROPY_PATH_ROOT = "/weka/oe-training-default/benjaminm/entropies/cross_entropy/"
+ENTROPY_PATH_SUB = "/weka/oe-training-default/"
 
 if DATA_SOURCE == "dclm":
     _DATA_SOURCES = open(Path(__file__).parent / "data_sources.txt").read().strip().splitlines()
@@ -90,18 +92,26 @@ elif DATA_SOURCE == "dolmino":
     _DATA_SOURCES = open(Path(__file__).parent / "data_sources_dolmino.txt").read().strip().splitlines()
 elif DATA_SOURCE == "dolma2_code_string":
     _DATA_SOURCES = open(Path(__file__).parent / "data_sources_dolma2_code_string.txt").read().strip().splitlines()
+elif DATA_SOURCE == "dolma2_150b_code_string":
+    _DATA_SOURCES = open(Path(__file__).parent / "data_sources_dolma2_150b_code_string.txt").read().strip().splitlines()
 elif DATA_SOURCE == "dolmino_code_string":
     _DATA_SOURCES = open(Path(__file__).parent / "data_sources_dolmino_code_string.txt").read().strip().splitlines()
+elif DATA_SOURCE == "tulu3":
+    _DATA_SOURCES = open(Path(__file__).parent / "data_sources_tulu3.txt").read().strip().splitlines()
 else:
     raise ValueError(f"Unknown DATA_SOURCE: {DATA_SOURCE}. Must be one of 'dclm', 'dolmino', 'dolma2_code_string', 'dolmino_code_string'.")
 
 OLMO_CKPT_PATH = os.environ.get("OLMO_CKPT_PATH", "") # for baseline
 STAGE1_CKPT_PATH = os.environ.get("STAGE1_CKPT_PATH", "")
+ENTROPY_CKPT_PATH = os.environ.get("ENTROPY_CKPT_PATH", "/weka/oe-training-default/ai2-llm/checkpoints/dirkg/ladder/checkpoints/baseline-titan-190M-5xC/step36308/model_and_optim")
 DATA_PATHS = ["/weka/oe-training-default/" + x for x in _DATA_SOURCES]
 
 if not os.environ.get("HAS_WEKA"):
-    STAGE1_CKPT_PATH = STAGE1_CKPT_PATH.replace("/weka/oe-training-default/", "gs://ai2-llm/")
-    OLMO_CKPT_PATH = OLMO_CKPT_PATH.replace("/weka/oe-training-default/", "gs://ai2-llm/")
+    ENTROPY_PATH_ROOT = ENTROPY_PATH_ROOT.replace("/weka/oe-training-default/ai2-llm/", "gs://ai2-llm/").replace("/weka/oe-training-default/", "gs://ai2-llm/")
+    CROSS_ENTROPY_PATH_ROOT = CROSS_ENTROPY_PATH_ROOT.replace("/weka/oe-training-default/ai2-llm/", "gs://ai2-llm/").replace("/weka/oe-training-default/", "gs://ai2-llm/")
+    ENTROPY_PATH_SUB = ENTROPY_PATH_SUB.replace("/weka/oe-training-default/ai2-llm/", "gs://ai2-llm/").replace("/weka/oe-training-default/", "gs://ai2-llm/")
+    STAGE1_CKPT_PATH = STAGE1_CKPT_PATH.replace("/weka/oe-training-default/ai2-llm/", "gs://ai2-llm/").replace("/weka/oe-training-default/", "gs://ai2-llm/")
+    OLMO_CKPT_PATH = OLMO_CKPT_PATH.replace("/weka/oe-training-default/ai2-llm/", "gs://ai2-llm/").replace("/weka/oe-training-default/", "gs://ai2-llm/")
     DATA_PATHS = [x.replace("/weka/oe-training-default/", "gs://") for x in DATA_PATHS] # slight inconsistency
 
 log = logging.getLogger(__name__)
@@ -109,7 +119,7 @@ log = logging.getLogger(__name__)
 @dataclass
 class ExperimentConfig(Config):
     model: TransformerConfig
-    dataset: NumpyDatasetConfig
+    dataset: NumpyByteFSLDatasetConfig
     data_loader: NumpyDataLoaderConfig
     train_module: TransformerTrainModuleConfig
     trainer: TrainerConfig
@@ -143,11 +153,13 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
 
     if LOCAL_MODEL_STYLE == "blt":
         if OLMO_ARCH == "olmo2_1B_v2":
-            local_d_model = 1024
-        elif OLMO_ARCH == "olmo2_7B":
             local_d_model = 2048
+        elif OLMO_ARCH == "olmo2_7B":
+            local_d_model = 4096
+        elif OLMO_ARCH == "olmo3_7B":
+            local_d_model = 4096
         else:
-            raise ValueError(f"Unknown OLMO_ARCH: {OLMO_ARCH}. Must be one of 'olmo2_1B_v2', 'olmo2_7B'.")
+            raise ValueError(f"Unknown OLMO_ARCH: {OLMO_ARCH}. Must be one of 'olmo2_1B_v2', 'olmo2_7B', 'olmo3_7B'.")
 
         local_encoder_n_layers = 1
         local_decoder_n_layers = 9
@@ -184,8 +196,10 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             local_d_model = 2048
         elif OLMO_ARCH == "olmo2_7B":
             local_d_model = 4096
+        elif OLMO_ARCH == "olmo3_7B":
+            local_d_model = 4096
         else:
-            raise ValueError(f"Unknown OLMO_ARCH: {OLMO_ARCH}. Must be one of 'olmo2_1B_v2', 'olmo2_7B'.")
+            raise ValueError(f"Unknown OLMO_ARCH: {OLMO_ARCH}. Must be one of 'olmo2_1B_v2', 'olmo2_7B', 'olmo3_7B'.")
 
         local_encoder_n_layers = 4
         local_decoder_n_layers = 4
@@ -282,18 +296,18 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         local_decoder=local_decoder,
         teacher_config=teacher_model_config,
         share_blocks_between_teacher_and_student=False,
-        use_teacher_embs_with_vocab_size=subword_tokenizer_config.padded_vocab_size() if TEACHER_MODE == "stage1" else None,
+        # use for stage1 teacher, or to take init from if no stage1 ckpt
+        use_teacher_embs_with_vocab_size=subword_tokenizer_config.padded_vocab_size() if TEACHER_MODE == "stage1" or not STAGE1_CKPT_PATH else None,
         freeze_params=[
             "boundary_predictor.*", # temporary
             "teacher_embeddings.*",
         ]
     )
 
-    dataset_config = NumpyDatasetConfig(
+    dataset_config = NumpyByteFSLDatasetConfig(
         paths=DATA_PATHS,
-        name=NumpyDatasetType.byte_fsl,
         sequence_length=SEQUENCE_LENGTH, # subword sequence length
-        max_sequence_length=SEQUENCE_LENGTH * BYTE_EXPANSION_FACTOR, # max. length of the byte sequence
+        byte_sequence_length=SEQUENCE_LENGTH * BYTE_EXPANSION_FACTOR,
         tokenizer=byte_tokenizer_config,
         work_dir=os.path.join(SAVE_FOLDER, "data"),
     )
@@ -327,6 +341,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         global_batch_size=GLOBAL_BATCH_SIZE * SEQUENCE_LENGTH * BYTE_EXPANSION_FACTOR,
         seed=0,
         num_workers=NUM_WORKERS if not QUICK_DEBUG else 0,
+        num_threads=None if not QUICK_DEBUG else 0,
     )
 
     if LR_SCHEDULE == "linear_with_warmup":
@@ -337,7 +352,8 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             decay_fraction=0.2,
             decay_kind="inv_sqrt",
             cosine_decay_alpha=10,
-            decay_min_lr=1e-4, # probably best around 10% of peak LR
+            decay_min_lr=None,
+            decay_min_lr_ratio=0.1,
         )
     elif LR_SCHEDULE == "constant":
         scheduler = ConstantScheduler()
@@ -346,7 +362,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
 
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=LOCAL_BATCH_SIZE * SEQUENCE_LENGTH * BYTE_EXPANSION_FACTOR,
-        max_sequence_length=dataset_config.effective_sequence_length,
+        max_sequence_length=dataset_config.byte_sequence_length,
         optim=optim,
         compile_model=True,
         float8_config=Float8Config(enabled=False),
@@ -462,8 +478,18 @@ def main(run_name: str, overrides: List[str]):
     dataset = config.dataset.build()
 
     if train_module.blt_config.gradual_boundary_compression_kind == "bpe":  # type: ignore
-        dataset.enable_compute_bpe_merges()  # type: ignore
-    
+        dataset.enable_compute_merges("bpe")  # type: ignore
+    elif train_module.blt_config.gradual_boundary_compression_kind in {"entropy", "cross_entropy"}:  # type: ignore
+        entropy_path_replace = (
+            ENTROPY_PATH_SUB,
+            CROSS_ENTROPY_PATH_ROOT if train_module.blt_config.gradual_boundary_compression_kind == "cross_entropy" else ENTROPY_PATH_ROOT  # type: ignore
+        )
+
+        dataset.enable_compute_merges(  # type: ignore
+            train_module.blt_config.gradual_boundary_compression_kind, # type: ignore
+            entropy_path_replace=entropy_path_replace,
+        )
+
     data_loader = config.data_loader.build(
         dataset,
         collator=ByteDataCollator(pad_token_id=dataset.pad_token_id) if isinstance(dataset, NumpyByteFSLDataset) else None,
@@ -528,21 +554,33 @@ def main(run_name: str, overrides: List[str]):
         prefixes_to_duplicate = ["blocks"]
         extend_key_mapping = {}
 
-        for prefix in prefixes_to_duplicate:
-            extend_key_mapping.update({
-                key: key.replace(f"{prefix}", f"teacher.{prefix}")
-                for key in model.state_dict().keys() if key.startswith(prefix)
-            })
+        if model.teacher is not None:
+            for prefix in prefixes_to_duplicate:
+                extend_key_mapping.update({
+                    key: key.replace(f"{prefix}", f"teacher.{prefix}")
+                    for key in model.state_dict().keys() if key.startswith(prefix)
+                })
 
         key_mapping = {
             key: None for key in model.state_dict().keys() if any(key.startswith(x) for x in random_init_keys)
-        } | {
-            f"teacher.{key}": key for key in model.teacher.state_dict().keys() if not key.startswith("blocks")  # type: ignore
-        } # set non-block keys (embeddings, lm head)
+        }
+        if model.teacher is not None:
+            key_mapping.update({
+                f"teacher.{key}": key for key in model.teacher.state_dict().keys() if not key.startswith("blocks")  # type: ignore
+            }) # set non-block keys (embeddings, lm head)
+        else:
+            no_teacher_random_init_keys = ["embeddings", "lm_head"]
+            key_mapping.update({
+                key: None for key in model.state_dict().keys() if any(key.startswith(x) for x in no_teacher_random_init_keys)
+            })
+
+        if config.model.use_teacher_embs_with_vocab_size is not None:
+            key_mapping["teacher_embeddings.weight"] = "embeddings.weight"  # type: ignore
+
         incompatible_keys = load_model_and_optim_state(
             OLMO_CKPT_PATH,
             model,
-            key_mapping=key_mapping,
+            key_mapping=key_mapping,  # type: ignore
             extend_key_mapping=extend_key_mapping,
             strict=False,  # allow missing keys for local encoder/decoder and student lm head
         )
@@ -554,7 +592,7 @@ def main(run_name: str, overrides: List[str]):
             log.info(f"Key {missing_key} was not found in checkpoint, is randomly initialized (this is expected for local encoder/decoder and student lm head).")
 
         # do not support path for heuristic embeddings for now, just rescale encoder out
-        model.fix_init()  # type: ignore
+        model.fix_init(trainer.train_module.blt_config, None)  # type: ignore
 
     # TODO(benjaminm): this is not a nice place?
     register_fsdp_forward_method(model, "student_forward")

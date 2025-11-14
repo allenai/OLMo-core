@@ -1,6 +1,7 @@
 import math
 from dataclasses import dataclass
 from typing import Optional
+from functools import partial
 
 import torch
 import torch.nn as nn
@@ -98,6 +99,8 @@ class FeedForwardConfig(Config):
                 f"invalid options for '{self.name}' {self.__class__.__name__}, {e}"
             ) from e
 
+def _ffn_act_fn(gate, y, fn):
+    return fn(gate) * y
 
 class FeedForward(nn.Module):
     """
@@ -122,7 +125,7 @@ class FeedForward(nn.Module):
             self.act_fn = swiglu
         else:
             fn = getattr(F, act_name)
-            self.act_fn = lambda gate, y: fn(gate) * y
+            self.act_fn = partial(_ffn_act_fn, fn=fn)
         self.w1 = nn.Linear(d_model, hidden_size, bias=bias, dtype=dtype, device=init_device)
         self.w2 = nn.Linear(hidden_size, d_model, bias=bias, dtype=dtype, device=init_device)
         self.w3 = nn.Linear(d_model, hidden_size, bias=bias, dtype=dtype, device=init_device)

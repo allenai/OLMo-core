@@ -201,7 +201,8 @@ class ByteTokenizerConfig(TokenizerConfig):
         ]
 
         return cls(
-            vocab_size=len(special_tokens) + 256,
+            # *2 to accomodate fused boundary token if fuse_boundaries=True
+            vocab_size=(len(special_tokens) + 256),
             special_tokens=special_tokens,
             bos_token_id=special_tokens.index("<bos>"),
             pad_token_id=special_tokens.index("<pad>"),
@@ -307,6 +308,10 @@ class ByteTokenizer:
                     # skip bpe token end markers, needed for generation
                     continue
 
+                if byte >= self.offset + 256:
+                    # ignore fused boundary
+                    byte -= self.offset + 256
+
                 try:
                     current_dict = current_dict[byte]
                     if ByteTokenizer.TOKEN_ID_KEY in current_dict:
@@ -330,7 +335,14 @@ class ByteTokenizer:
         return self.decode_to_bytes(tokens).decode("utf-8", errors="replace")
 
     def decode_to_bytes(self, tokens: list[int]) -> bytes:
-        utf8_bytes = [min(tokens - self.offset, 255) for tokens in tokens if tokens >= self.offset]
+        tokens_without_boundary = []
+        for token in tokens:
+            if token >= (self.offset + 256):
+                token -= self.offset + 256
+
+            tokens_without_boundary.append(token)
+
+        utf8_bytes = [min(token - self.offset, 255) for token in tokens_without_boundary if token >= self.offset]
         return bytes(utf8_bytes)
 
     def get_tokens_and_patch_lengths(self, original_input_ids: list[int], add_bos=False, strip_pad=False, skip_last=False):

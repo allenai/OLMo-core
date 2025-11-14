@@ -16,8 +16,8 @@ class BLTConfig(Config):
     binarization_temp: float = 1.0
     temperature: float = 1.0
     div_fn: str = "tvd_temp_limit"
+    boundary_mode: str = "end" # "end", "start"
     merge_boundary_loss: bool = False
-    boundary_mode: str = "patch_end"  # "patch_start" or "patch_end"
     use_output_boundary_jsd: bool = False
     eval_add_boundary_logp: bool = False
     do_alm_debiasing: bool = False
@@ -34,13 +34,19 @@ class BLTConfig(Config):
     skip_blocks: bool = False
     skip_teacher_blocks: bool = False
     skip_teacher: bool = False
+    compute_teacher_ce: bool = False
+    use_student_patch_reps_for_teacher: bool = False
     use_oracle_patch_reps: bool = False
+    teacher_blocks_no_grad: bool = True
+    student_blocks_no_grad: bool = False
     decoder_backprop_through_encoder: bool = True
     decoder_backprop_through_boundary_predictor: bool = True
     boundary_predictor_backprop_through_encoder: bool = True
     teacher_force_boundaries: bool = True
     boundary_threshold: str = "sample:0" # sample:<temperature> or topk:<value>
+    inference_sampling_strategies: str | None = None
     xlstm_igate_bias_init: float = -10.0
+    skip_boundary_before_eos: bool = True
 
 
 @dataclass
@@ -118,6 +124,8 @@ class LocalDecoderConfig(Config):
     hnet_modulate: bool = True
     blt_k: Optional[int] = None  # used in blt
     blt_compat: bool = False # for compat with BLT checkpoints
+    fuse_boundaries: bool = True
+    no_boundaries: bool = False
     dtype: DType = DType.float32
 
     def build(self, vocab_size: int, d_global_model: int) -> nn.Module:
@@ -141,5 +149,7 @@ class LocalDecoderConfig(Config):
             hnet_modulate=self.hnet_modulate,
             blt_k=self.blt_k,
             blt_compat=self.blt_compat,
+            #fuse_boundaries=self.fuse_boundaries,
+            #no_boundaries=self.no_boundaries,
             dtype=self.dtype.as_pt(),
         )

@@ -26,7 +26,13 @@ from ..exceptions import OLMoConfigurationError
 from ..io import is_url, normalize_path
 from ..utils import get_default_device, roundrobin, threaded_generator
 from .collator import DataCollator
-from .numpy_dataset import NumpyDatasetBase, NumpyFSLDatasetBase, NumpyVSLDataset, NumpyByteFSLDataset
+from .numpy_dataset import (
+    NumpyDatasetBase,
+    NumpyByteFSLDataset,
+    NumpyBytePaddedFSLDataset,
+    NumpyFSLDatasetBase,
+    NumpyVSLDataset,
+)
 from .utils import get_rng, iter_batched, load_array_slice, memmap_to_write
 
 __all__ = [
@@ -40,6 +46,8 @@ __all__ = [
 
 log = logging.getLogger(__name__)
 
+def _worker_init_fn(worker_id):
+    torch.set_num_threads(4)
 
 class DataLoaderBase(ABC):
     """
@@ -549,8 +557,11 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
                 [splits, self.dataset.max_sequence_length - splits], dim=1
             )
             out["max_doc_lens"] = torch.max(out["doc_lens"], dim=-1).values.tolist()
-        if isinstance(self.dataset, NumpyByteFSLDataset):
+        if isinstance(self.dataset, NumpyByteFSLDataset) or isinstance(self.dataset, NumpyBytePaddedFSLDataset):
             byte_to_patch_ratio = self.dataset.sequence_length // self.dataset.patch_sequence_length
+
+            # fused upper half reserved for boundaries
+            input_ids //= 2
 
             # random lengths for debugging,
             patch_lengths = torch.randint(
@@ -596,6 +607,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
                     prefetch_factor=self.prefetch_factor,
                     persistent_workers=False,
                     timeout=0,
+                    worker_init_fn=_worker_init_fn,
                 ),
             )
 

@@ -18,11 +18,8 @@ from olmo_core.config import Config, DType
 from olmo_core.data import (
     NumpyDataLoaderConfig,
     NumpyDatasetConfig,
-    NumpyDatasetType,
-    NumpyByteFSLDataset,
-    ByteTokenizerConfig,
+    NumpyFSLDatasetConfig,
     TokenizerConfig,
-    ByteDataCollator,
 )
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.checkpoint import load_model_and_optim_state
@@ -45,7 +42,6 @@ from olmo_core.train.callbacks import (
     WandBCallback,
 )
 from olmo_core.train.common import LoadStrategy
-from olmo_core.nn.blt.config import BLTConfig
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerTrainModuleConfig,
@@ -62,16 +58,19 @@ DATA_SOURCE = os.environ.get("DATA_SOURCE", "dclm")
 OLMO_ARCH = os.environ.get("OLMO_ARCH", "olmo2_1B_v2")
 
 if DATA_SOURCE == "dclm":
-    _DATA_SOURCES = open(
-        Path(__file__).parent / "data_sources.txt").read().strip().splitlines()
+    _DATA_SOURCES = open(Path(__file__).parent / "data_sources.txt").read().strip().splitlines()
 elif DATA_SOURCE == "dolmino":
     _DATA_SOURCES = open(Path(__file__).parent / "data_sources_dolmino.txt").read().strip().splitlines()
-elif DATA_SOURCE == "dolma2_string":
-    _DATA_SOURCES = open(Path(__file__).parent / "data_sources_dolma2_string.txt").read().strip().splitlines()
+elif DATA_SOURCE == "dolma2_code_string":
+    _DATA_SOURCES = open(Path(__file__).parent / "data_sources_dolma2_code_string.txt").read().strip().splitlines()
+elif DATA_SOURCE == "dolma2_150b_code_string":
+    _DATA_SOURCES = open(Path(__file__).parent / "data_sources_dolma2_150b_code_string.txt").read().strip().splitlines()
 elif DATA_SOURCE == "dolmino_code_string":
     _DATA_SOURCES = open(Path(__file__).parent / "data_sources_dolmino_code_string.txt").read().strip().splitlines()
+elif DATA_SOURCE == "tulu3":
+    _DATA_SOURCES = open(Path(__file__).parent / "data_sources_tulu3.txt").read().strip().splitlines()
 else:
-    raise ValueError(f"Unknown DATA_SOURCE: {DATA_SOURCE}. Must be one of 'dclm', 'dolmino'.")
+    raise ValueError(f"Unknown DATA_SOURCE: {DATA_SOURCE}. Must be one of 'dclm', 'dolmino', 'dolma2_code_string', 'dolmino_code_string'.")
 
 OLMO_ARCH = os.environ.get("OLMO_ARCH", "olmo2_1B_v2")
 
@@ -82,7 +81,7 @@ OLMO_CKPT_PATH = os.environ.get(
 DATA_PATHS = ["/weka/oe-training-default/" + x for x in _DATA_SOURCES]
 
 if not os.environ.get("HAS_WEKA"):
-    OLMO_CKPT_PATH = OLMO_CKPT_PATH.replace("/weka/oe-training-default/", "gs://ai2-llm/")
+    OLMO_CKPT_PATH = OLMO_CKPT_PATH.replace("/weka/oe-training-default/ai2-llm/", "gs://ai2-llm/").replace("/weka/oe-training-default/", "gs://ai2-llm/")
     DATA_PATHS = [x.replace("/weka/oe-training-default/", "gs://") for x in DATA_PATHS] # slight inconsistency
 
 log = logging.getLogger(__name__)
@@ -115,9 +114,8 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         vocab_size=tokenizer_config.padded_vocab_size(),
     )
 
-    dataset_config = NumpyDatasetConfig(
+    dataset_config = NumpyFSLDatasetConfig(
         paths=DATA_PATHS,
-        name=NumpyDatasetType.fsl,
         sequence_length=SEQUENCE_LENGTH, # subword sequence length
         tokenizer=tokenizer_config,
         work_dir=os.path.join(SAVE_FOLDER, "data"),
@@ -141,14 +139,14 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
 
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=LOCAL_BATCH_SIZE * SEQUENCE_LENGTH,
-        max_sequence_length=dataset_config.effective_sequence_length,
+        max_sequence_length=dataset_config.sequence_length,
         optim=optim,
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
         ),
         max_grad_norm=1.0,
-        scheduler=LinearWithWarmup(warmup=10000, alpha_f=0.0),
+        scheduler=LinearWithWarmup(warmup_fraction=0.1, alpha_f=0.0),
     )
 
     if QUICK_DEBUG:
@@ -247,7 +245,6 @@ def main(run_name: str, overrides: List[str]):
     dataset = config.dataset.build()
     data_loader = config.data_loader.build(
         dataset,
-        collator=ByteDataCollator(pad_token_id=dataset.pad_token_id) if isinstance(dataset, NumpyByteFSLDataset) else None,
         dp_process_group=train_module.dp_process_group
     )
     trainer = config.trainer.build(train_module, data_loader)

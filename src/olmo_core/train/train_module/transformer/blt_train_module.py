@@ -1,6 +1,5 @@
 import time
 from typing import Any, Dict, Optional, Tuple, List
-import copy
 import random
 import torch
 import torch.distributed as dist
@@ -38,7 +37,7 @@ class TransformerBLTTrainModule(TransformerTrainModule):
         # this has had the byte collator + ByteFSLDataset applied, no need to patch
         if "patch_lens" in batch:
             # apply gradual boundary compression - only during training
-            if self.blt_config.gradual_boundary_compression_kind == "bpe":
+            if self.blt_config.gradual_boundary_compression_kind in {"bpe", "entropy", "cross_entropy"}:
                 if "bpe_merges" not in batch:
                     raise ValueError("To use bpe gradual boundary compression, bpe_merges must be computed and included in the batch.")
 
@@ -348,7 +347,12 @@ class TransformerBLTTrainModule(TransformerTrainModule):
                 "please disable in-loop evals"
             )
 
-        orig_batch = copy.deepcopy(batch)
+        orig_ctx, orig_cont, orig_ctx_len, orig_cont_len = (
+            batch["ctx"],
+            batch["continuation"],
+            batch["ctx_len"],
+            batch["cont_len"],
+        )
         input_ids, labels, model_kwargs = self._prepare_batch(batch, labels)
 
         self.model.eval()
@@ -369,10 +373,23 @@ class TransformerBLTTrainModule(TransformerTrainModule):
                 # subword_forward gives us logits over the original (Dolma2) tokens.
                 # so we need to change the batch tokens / token info back to subword token space from byte space.
                 batch["input_ids"] = batch["original_input_ids"]
-                batch["ctx"] = orig_batch["ctx"]
-                batch["continuation"] = orig_batch["continuation"]
-                batch["ctx_len"] = orig_batch["ctx_len"]
-                batch["cont_len"] = orig_batch["cont_len"]
+                batch["ctx"] = orig_ctx
+                batch["continuation"] = orig_cont
+                batch["ctx_len"] = orig_ctx_len
+                batch["cont_len"] = orig_cont_len
+            elif eval_mode == "teacher":
+                with self._model_forward_context():
+                    out, _ = self.model.teacher_forward(  # type: ignore
+                        batch["original_input_ids"],
+                    )
+
+                # teacher_forward gives us logits over the original (Dolma2) tokens.
+                # so we need to change the batch tokens / token info back to subword token space from byte space.
+                batch["input_ids"] = batch["original_input_ids"]
+                batch["ctx"] = orig_ctx
+                batch["continuation"] = orig_cont
+                batch["ctx_len"] = orig_ctx_len
+                batch["cont_len"] = orig_cont_len
             elif eval_mode is not None:
                 raise ValueError(f"Unknown eval_mode: {eval_mode}")
             else:
@@ -386,4 +403,4 @@ class TransformerBLTTrainModule(TransformerTrainModule):
                         **model_kwargs,
                     )
 
-            return out
+        return out

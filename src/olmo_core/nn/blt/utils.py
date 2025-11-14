@@ -397,6 +397,23 @@ class MaskState:
                 return
             else:
                 out[self.mask] = x
+    
+    def selective_add(self, x, out, inv=False):
+        # try to avoid sync through nonzero on index
+        if inv:
+            if self.all():
+                return
+            elif not self.any():
+                out.add_(x)
+            else:
+                out[self.inv_mask] += x
+        else:
+            if self.all():
+                out.add_(x)
+            elif not self.any():
+                return
+            else:
+                out[self.mask] += x
 
 def compute_bpe_merges(input_ids: list[int], max_compression_ratio: float) -> list[int]:
     if not input_ids or len(input_ids) == 1:

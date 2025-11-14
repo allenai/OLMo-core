@@ -1903,16 +1903,16 @@ class BLTDistillTransformer(BLTTransformer):
             torch.zeros_like(patch_end_indices), # effectively mask out, index 0 is always start
         )
 
-        if blt_config.boundary_mode == "patch_start":
+        if blt_config.boundary_mode == "start":
             boundary_labels = torch.zeros_like(byte_mask, dtype=torch.float32)
             boundary_labels.scatter_(1, patch_start_indices, 1.0)
             boundary_labels[:, 0] = 1.0 # bos
-        elif blt_config.boundary_mode == "patch_end":
+        elif blt_config.boundary_mode == "end":
             boundary_labels = torch.zeros_like(byte_mask, dtype=torch.float32)
             boundary_labels.scatter_(1, patch_end_indices, 1.0)
             boundary_labels[:, 0] = 1.0 # bos
         else:
-            raise ValueError(f"Unknown boundary mode: {blt_config.boundary_mode} (must be patch_start or patch_end)")
+            raise ValueError(f"Unknown boundary mode: {blt_config.boundary_mode} (must be start or end)")
 
         h_byte, h_patch, boundary_logprobs, boundary_mask = self.local_encoder(
             input_ids,
@@ -1983,7 +1983,7 @@ class BLTDistillTransformer(BLTTransformer):
                     hidden_states_to_return=list(range(blt_config.encoder_loss_lookahead)),
                     **kwargs,
                 )
-                if blt_config.boundary_mode == "patch_start":
+                if blt_config.boundary_mode == "start":
                     if teacher_last_hidden_state is not None:
                         # in this case, the teacher bos embedding corresponds to two student embeddings
                         # once for bos, and once for the first patch start, so we duplicate the first position
