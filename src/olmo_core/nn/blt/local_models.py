@@ -514,18 +514,24 @@ class LocalEncoder(nn.Module):
         
         Also inits HNetBoundaryPredictor q and k to weights to identity following HNet.
 
-        """            
-        if embedding_init_path is not None:
-            # load embedding inits (computed via compute_hash_embedding_init.py)
-            if isinstance(self.embedding.weight.data, DTensor):
-                self.embedding.weight.data[:] = distribute_tensor(
-                    torch.load(resource_path(embedding_init_path, "embedding_init.pth", local_cache=cache_dir)),
+        """
+        def maybe_distribute(tensor: torch.Tensor) -> DTensor | torch.Tensor:
+            if isinstance(tensor, DTensor):
+                return tensor.redistribute(
+                    device_mesh=self.embedding.weight.data.device_mesh,  # type: ignore
+                    placements=self.embedding.weight.data.placements,  # type: ignore
+                )
+            elif isinstance(self.embedding.weight.data, DTensor):
+                return distribute_tensor(
+                    tensor,
                     device_mesh=self.embedding.weight.data.device_mesh,
-                    placements=self.embedding.weight.data.placements,
                 )
             else:
-                self.embedding.weight.data[:] = torch.load(Path(embedding_init_path) / "embedding_init.pth")
+                return tensor
 
+        target_embeddings = maybe_distribute(target_embeddings)
+
+        if embedding_init_path is not None:
             if self.hash_embeddings is not None:
                 for i, hash_embedding in enumerate(self.hash_embeddings):
                     if isinstance(hash_embedding.weight.data, DTensor):
@@ -554,15 +560,6 @@ class LocalEncoder(nn.Module):
             patch_lens=patch_lens,
             patch_ids=patch_ids,
         )
-
-        def maybe_distribute(tensor: torch.Tensor) -> DTensor | torch.Tensor:
-            if isinstance(self.embedding.weight.data, DTensor):
-                return distribute_tensor(
-                    tensor,
-                    device_mesh=self.embedding.weight.data.device_mesh,
-                )
-            else:
-                return tensor
 
         h_patch_mean = h_patch[0].mean(0)
         h_patch_std = h_patch[0].var(0).sqrt()
