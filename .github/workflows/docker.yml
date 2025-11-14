@@ -7,15 +7,15 @@ concurrency:
 on:
   workflow_dispatch:
   # TODO: disabled for now because it takes too long in CI
-  # pull_request:
-  #   branches:
-  #     - main
-  #   paths:
-  #     - 'Makefile'
-  #     - 'pyproject.toml'
-  #     - 'src/olmo_core/version.py'
-  #     - 'src/Dockerfile'
-  #     - '.github/workflows/docker.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'Makefile'
+      - 'pyproject.toml'
+      - 'src/olmo_core/version.py'
+      - 'src/Dockerfile'
+      - '.github/workflows/docker.yml'
   push:
     # branches:
     #   - main
@@ -24,7 +24,7 @@ on:
 
 jobs:
   docker:
-    name: CUDA ${{ matrix.cuda }} ${{ matrix.target }}
+    name: CUDA ${{ matrix.cuda }} Torch ${{ matrix.torch }}
     runs-on: ubuntu-latest-m
     timeout-minutes: 60
     env:
@@ -38,8 +38,8 @@ jobs:
         torch:
           - version: 2.7.1
             channel: whl/test
-          - version: 2.9.0
-            channel: whl/test
+          # - version: 2.9.0
+          #   channel: whl/test
     steps:
       - uses: actions/checkout@v4
 
@@ -70,7 +70,8 @@ jobs:
           make docker-image \
             CUDA_VERSION=${{ matrix.cuda }} \
             TORCH_VERSION=${{ matrix.torch.version }} \
-            INSTALL_CHANNEL=${{ matrix.torch.channel }}
+            INSTALL_CHANNEL=${{ matrix.torch.channel }} \
+            FA3_MAX_JOBS=1
 
       - name: Push to GHCR
         if: startsWith(github.ref, 'refs/tags/')
@@ -79,7 +80,8 @@ jobs:
           make ghcr-image \
             CUDA_VERSION=${{ matrix.cuda }} \
             TORCH_VERSION=${{ matrix.torch.version }} \
-            INSTALL_CHANNEL=${{ matrix.torch.channel }}
+            INSTALL_CHANNEL=${{ matrix.torch.channel }} \
+            FA3_MAX_JOBS=1
 
       - name: Push to Beaker
         if: env.BEAKER_TOKEN != '' && startsWith(github.ref, 'refs/tags/')
@@ -87,4 +89,5 @@ jobs:
           make beaker-image \
             CUDA_VERSION=${{ matrix.cuda }} \
             TORCH_VERSION=${{ matrix.torch.version }} \
-            INSTALL_CHANNEL=${{ matrix.torch.channel }}
+            INSTALL_CHANNEL=${{ matrix.torch.channel }} \
+            FA3_MAX_JOBS=1
