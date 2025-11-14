@@ -62,14 +62,14 @@ ARG FLASH_ATTN_VERSION=2.8.2
 RUN pip install --no-build-isolation --no-cache-dir flash-attn==${FLASH_ATTN_VERSION}
 
 # Install flash-attn 3
-ARG FLASH_ATTN_3_SHA="1ceaa984b2f348caea18b39a98458d33b4ea7a09"
+ARG FLASH_ATTN_3_SHA="fbf24f67cf7f6442c5cfb2c1057f4bfc57e72d89"
 RUN git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com/Dao-AILab/flash-attention.git && \
     cd flash-attention && \
     git fetch --depth 1 origin ${FLASH_ATTN_3_SHA} && \
     git checkout ${FLASH_ATTN_3_SHA} && \
     git submodule update --init --depth 1 && \
     cd hopper && \
-    FLASH_ATTENTION_DISABLE_FP16=TRUE MAX_JOBS=8 python setup.py install && \
+    FLASH_ATTENTION_DISABLE_FP16=TRUE MAX_JOBS=4 python setup.py install && \
     cd /app/build && \
     rm -rf flash-attention
 
