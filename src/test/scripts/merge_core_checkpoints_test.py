@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 from typing import List, Optional
 
+import pytest
 import torch
 from click.testing import CliRunner
 
@@ -456,6 +457,35 @@ def test_skip_optimizer_flag(tmp_path):
 
 
 # ==================== Edge Cases & Validation Tests ====================
+
+
+def test_incompatible_model_shapes(tmp_path):
+    """Test that merging checkpoints with incompatible shapes fails."""
+    # Create two checkpoints with different vocab sizes
+    model_config1 = TransformerConfig.llama_like(
+        vocab_size=1000,
+        d_model=128,
+        n_layers=2,
+        n_heads=4,
+    )
+    model_config2 = TransformerConfig.llama_like(
+        vocab_size=2000,  # Different vocab size
+        d_model=128,
+        n_layers=2,
+        n_heads=4,
+    )
+
+    ckpt1 = tmp_path / "checkpoint1"
+    ckpt2 = tmp_path / "checkpoint2"
+    output = tmp_path / "merged"
+
+    create_test_checkpoint_with_seed(ckpt1, model_config1, seed=42, include_optimizer=False)
+    create_test_checkpoint_with_seed(ckpt2, model_config2, seed=123, include_optimizer=False)
+
+    # Run merge - should fail due to incompatible shapes
+    # The exception will be raised during tensor shape mismatch
+    with pytest.raises(BaseException):
+        run_merge_cli([str(ckpt1), str(ckpt2)], str(output), skip_optimizer=True)
 
 
 def test_path_validation_model_and_optim():
