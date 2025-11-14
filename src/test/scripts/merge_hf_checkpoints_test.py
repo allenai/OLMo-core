@@ -4,10 +4,8 @@ Tests for the merge_hf_checkpoints.py script.
 import gc
 import importlib.util
 import json
-import shutil
-import tempfile
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import pytest
 import torch
@@ -25,6 +23,7 @@ spec.loader.exec_module(merge_module)
 
 
 # ==================== Helper Functions ====================
+
 
 def create_hf_checkpoint_with_seed(
     checkpoint_dir: Path,
@@ -104,15 +103,47 @@ def create_hf_checkpoint_with_seed(
         json.dump(tokenizer_config, f, indent=2)
 
     # Create a minimal tokenizer.json for PreTrainedTokenizerFast
-    tokenizer_json = {
+    tokenizer_json: Dict[str, Any] = {
         "version": "1.0",
         "truncation": None,
         "padding": None,
         "added_tokens": [
-            {"id": 0, "content": "<s>", "single_word": False, "lstrip": False, "rstrip": False, "normalized": False, "special": True},
-            {"id": 1, "content": "</s>", "single_word": False, "lstrip": False, "rstrip": False, "normalized": False, "special": True},
-            {"id": 2, "content": "<unk>", "single_word": False, "lstrip": False, "rstrip": False, "normalized": False, "special": True},
-            {"id": 3, "content": "<pad>", "single_word": False, "lstrip": False, "rstrip": False, "normalized": False, "special": True},
+            {
+                "id": 0,
+                "content": "<s>",
+                "single_word": False,
+                "lstrip": False,
+                "rstrip": False,
+                "normalized": False,
+                "special": True,
+            },
+            {
+                "id": 1,
+                "content": "</s>",
+                "single_word": False,
+                "lstrip": False,
+                "rstrip": False,
+                "normalized": False,
+                "special": True,
+            },
+            {
+                "id": 2,
+                "content": "<unk>",
+                "single_word": False,
+                "lstrip": False,
+                "rstrip": False,
+                "normalized": False,
+                "special": True,
+            },
+            {
+                "id": 3,
+                "content": "<pad>",
+                "single_word": False,
+                "lstrip": False,
+                "rstrip": False,
+                "normalized": False,
+                "special": True,
+            },
         ],
         "normalizer": None,
         "pre_tokenizer": {"type": "Whitespace"},
@@ -130,10 +161,10 @@ def create_hf_checkpoint_with_seed(
                 "</s>": 1,
                 "<unk>": 2,
                 "<pad>": 3,
-                **{f"token_{i}": i+4 for i in range(min(vocab_size-4, 96))}
+                **{f"token_{i}": i + 4 for i in range(min(vocab_size - 4, 96))},
             },
-            "merges": []
-        }
+            "merges": [],
+        },
     }
 
     tokenizer_path = checkpoint_dir / "tokenizer.json"
@@ -255,6 +286,7 @@ def verify_averaged_weights_hf(
 
 # ==================== Core Functionality Tests ====================
 
+
 def test_merge_two_checkpoints(tmp_path):
     """Test basic 2-checkpoint merge."""
     # Create two checkpoints with different seeds
@@ -313,7 +345,9 @@ def test_single_checkpoint(tmp_path):
     original_model, _, _ = load_hf_checkpoint(ckpt)
     merged_model, _, _ = load_hf_checkpoint(output)
 
-    for (n1, p1), (n2, p2) in zip(original_model.named_parameters(), merged_model.named_parameters()):
+    for (n1, p1), (n2, p2) in zip(
+        original_model.named_parameters(), merged_model.named_parameters()
+    ):
         assert n1 == n2
         torch.testing.assert_close(p1, p2)
 
@@ -355,7 +389,9 @@ def test_dtype_preservation(tmp_path):
     original_model = AutoModelForCausalLM.from_pretrained(ckpt1)
     merged_model = AutoModelForCausalLM.from_pretrained(output)
 
-    for (n1, p1), (n2, p2) in zip(original_model.named_parameters(), merged_model.named_parameters()):
+    for (n1, p1), (n2, p2) in zip(
+        original_model.named_parameters(), merged_model.named_parameters()
+    ):
         assert p1.dtype == p2.dtype, f"Dtype mismatch for {n1}: {p1.dtype} vs {p2.dtype}"
 
 
@@ -445,6 +481,7 @@ def test_device_parameter(tmp_path):
 
 # ==================== CLI Interface Tests ====================
 
+
 def test_revision_handling_single(tmp_path):
     """Test single revision applied to all models."""
     # This would need actual HF Hub models to test properly
@@ -457,11 +494,7 @@ def test_revision_handling_single(tmp_path):
     create_hf_checkpoint_with_seed(ckpt2, seed=123)
 
     # Run with single revision (ignored for local paths)
-    result = run_merge_hf_cli(
-        [str(ckpt1), str(ckpt2)],
-        str(output),
-        revisions=["main"]
-    )
+    result = run_merge_hf_cli([str(ckpt1), str(ckpt2)], str(output), revisions=["main"])
     assert result.exit_code == 0
 
 
@@ -477,9 +510,7 @@ def test_revision_count_mismatch(tmp_path):
     # Run with mismatched revision count (2 models, 3 revisions)
     with pytest.raises((Exception, SystemExit)) as exc_info:
         result = run_merge_hf_cli(
-            [str(ckpt1), str(ckpt2)],
-            str(output),
-            revisions=["rev1", "rev2", "rev3"]
+            [str(ckpt1), str(ckpt2)], str(output), revisions=["rev1", "rev2", "rev3"]
         )
         if result.exception:
             raise result.exception
@@ -502,11 +533,16 @@ def test_multiple_model_flags(tmp_path):
     result = runner.invoke(
         merge_module.main,
         [
-            "-m", str(ckpts[0]),
-            "-m", str(ckpts[1]),
-            "-m", str(ckpts[2]),
-            "-m", str(ckpts[3]),
-            "-o", str(output),
+            "-m",
+            str(ckpts[0]),
+            "-m",
+            str(ckpts[1]),
+            "-m",
+            str(ckpts[2]),
+            "-m",
+            str(ckpts[3]),
+            "-o",
+            str(output),
         ],
     )
     assert result.exit_code == 0
@@ -548,6 +584,7 @@ def test_output_directory_creation(tmp_path):
 
 
 # ==================== Compatibility & Error Tests ====================
+
 
 def test_incompatible_vocab_sizes(tmp_path):
     """Test that merging checkpoints with different vocab sizes fails."""
@@ -614,8 +651,10 @@ def test_invalid_model_path():
     result = runner.invoke(
         merge_module.main,
         [
-            "--model", "/nonexistent/path",
-            "--output", "/tmp/output",
+            "--model",
+            "/nonexistent/path",
+            "--output",
+            "/tmp/output",
         ],
     )
     assert result.exit_code != 0
@@ -646,6 +685,7 @@ def test_output_overwrites_existing(tmp_path):
 
 
 # ==================== Integration Tests ====================
+
 
 def test_merged_model_inference(tmp_path):
     """Test that merged model can perform basic inference."""
