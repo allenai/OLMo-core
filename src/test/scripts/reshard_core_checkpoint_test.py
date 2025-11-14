@@ -1,6 +1,8 @@
 """
 Tests for the reshard_core_checkpoint.py script.
 """
+import gc
+
 # Import the script module using importlib to access its main function
 import importlib.util
 import json
@@ -50,6 +52,7 @@ def create_test_checkpoint(
         world_size: Number of processes used to save the checkpoint
         include_optimizer: Whether to include optimizer state
     """
+    gc.collect()
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     # Set default optimizer config if not provided
@@ -137,6 +140,7 @@ def create_test_checkpoint(
 
 def load_config_from_checkpoint(checkpoint_dir: Path) -> dict:
     """Load config.json from a checkpoint directory."""
+    gc.collect()
     config_path = checkpoint_dir / "config.json"
     with open(config_path, "r") as f:
         return json.load(f)
@@ -174,6 +178,7 @@ def run_reshard_cli(
 
     result = runner.invoke(reshard_module.main, args)
     assert result.exit_code == 0, f"Resharding failed: {result.output}"
+    gc.collect()
 
 
 # ==================== Integration Tests ====================
