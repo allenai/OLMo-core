@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added official OLMo3-7B pretraining scripts and data mix.
 - Added official OLMo3-7B midtraining script and data mix.
 - Added a `NoOpOptimizer` that does nothing, uses no memory, and can be used for debugging.
+- Added official config for Olmo 3 32B.
 
 ### Fixed
 

@@ -665,6 +665,26 @@ class TransformerConfig(Config):
         return config
 
     @classmethod
+    def olmo3_32B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 32B OLMo3 model config.
+        """
+        config = cls.olmo2_32B(
+            vocab_size=vocab_size,
+            sliding_window=kwargs.pop(
+                "sliding_window",
+                SlidingWindowAttentionConfig(
+                    force_full_attention_on_first_layer=False,
+                    force_full_attention_on_last_layer=True,
+                    pattern=[4096, 4096, 4096, -1],
+                ),
+            ),
+            attn_backend=kwargs.pop("attn_backend", AttentionBackendName.flash_2),
+            **kwargs,
+        )
+        return config
+
+    @classmethod
     def smallmoe(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         d_model = kwargs.pop("d_model", 768)
         return cls.llama_like(
