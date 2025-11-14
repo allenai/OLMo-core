@@ -1131,8 +1131,12 @@ class Trainer:
         target = join_path(self.save_folder, name)
         if source != target:
             copy_dir(source, target, save_overwrite=self.save_overwrite)
+        elif not Path(source).exists():
+            raise FileNotFoundError(f"Source '{source}' does not exist")
+        elif not Path(source).is_dir():
+            raise FileNotFoundError(f"Source '{source}' exists but is not a directory")
         elif dir_is_empty(source):
-            raise FileNotFoundError(source)
+            raise FileNotFoundError(f"Source directory '{source}' is empty")
         return target
 
     def add_callback(self, name: str, callback: Callback):
