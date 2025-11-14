@@ -20,6 +20,7 @@ import requests
 import torch
 from cached_path import cached_path
 from cached_path.schemes import S3Client, SchemeClient, add_scheme_client
+from requests.adapters import HTTPAdapter
 from rich.progress import track
 
 from .aliases import PathOrStr
@@ -571,9 +572,24 @@ def retriable(
 ######################
 
 
+@cache
+def _get_http_session() -> requests.Session:
+    """
+    Get a shared HTTP session with connection pooling.
+    This prevents resource exhaustion when making many HTTP requests.
+    """
+    session = requests.Session()
+    # Configure connection pooling to reuse connections
+    adapter = HTTPAdapter(pool_maxsize=50)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    return session
+
+
 @retriable()
 def _http_file_size(url: str) -> int:
-    response = requests.head(url, allow_redirects=True)
+    session = _get_http_session()
+    response = session.head(url, allow_redirects=True)
     content_length = response.headers.get("content-length")
     assert (
         content_length is not None
@@ -589,7 +605,8 @@ def _http_file_size(url: str) -> int:
     ),
 )
 def _http_get_bytes_range(url: str, bytes_start: int, num_bytes: int) -> bytes:
-    response = requests.get(
+    session = _get_http_session()
+    response = session.get(
         url, headers={"Range": f"bytes={bytes_start}-{bytes_start + num_bytes - 1}"}
     )
 
@@ -607,7 +624,8 @@ def _http_get_bytes_range(url: str, bytes_start: int, num_bytes: int) -> bytes:
 
 @retriable()
 def _http_file_exists(url: str) -> bool:
-    response = requests.head(url)
+    session = _get_http_session()
+    response = session.head(url)
     if response.status_code == 404:
         return False
 
