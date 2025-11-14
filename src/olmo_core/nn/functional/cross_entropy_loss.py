@@ -78,9 +78,12 @@ def fused_linear_cross_entropy_loss(
     ce_weight: Optional[torch.Tensor] = None,
     label_smoothing: float = 0.0,
     softcap: Optional[float] = None,
+    accum_dtype: Optional[torch.dtype] = None,
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
     """
-    Cross entropy loss fused with the linear layer that computes the logits.
+    Cross entropy loss fused with the linear layer that computes the logits, which avoids materialization
+    of the large logits tensor. Additionally, this function computes gradients during the forward pass,
+    (valid when CrossEntropyLoss comes last), so _input and labels do not need to be stored for the backwards pass.
 
     :param _input: The inputs to pass through the linear layer to produce the logits ``(N, D)``.
     :param weight: The weight of the linear layer.
@@ -92,6 +95,9 @@ def fused_linear_cross_entropy_loss(
         Can be "none", "mean", or "sum".
     :param compute_z_loss: Compute the softmax auxiliary loss as well.
     :param z_loss_multiplier: The multiplier to apply to the z-loss.
+    :param accum_dtype: The dtype of intermediate result buffers for weight and bias gradient
+        accumulations. Recommended to set `accum_dtype` to higher precision, e.g. `torch.float32`,
+        if the training is unstable with original dtype. Default to performing accumulations in original dtype.
 
     :returns: The cross entropy loss and optionally the z-loss.
     """
@@ -109,6 +115,7 @@ def fused_linear_cross_entropy_loss(
         reduction,
         softcap,
         compute_z_loss,
+        accum_dtype,
     )
     if compute_z_loss:
         return ce_loss, z_loss

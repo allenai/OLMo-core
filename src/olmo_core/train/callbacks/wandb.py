@@ -105,10 +105,10 @@ class WandBCallback(Callback):
 
     def pre_train(self):
         if self.enabled and get_rank() == 0:
-            self.wandb
             if WANDB_API_KEY_ENV_VAR not in os.environ:
                 raise OLMoEnvironmentError(f"missing env var '{WANDB_API_KEY_ENV_VAR}'")
 
+            self.wandb
             wandb_dir = self.trainer.work_dir / "wandb"
             wandb_dir.mkdir(parents=True, exist_ok=True)
             self.wandb.init(

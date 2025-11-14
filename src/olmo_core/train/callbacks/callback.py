@@ -144,6 +144,12 @@ class Callback(Stateful):
         """
         del exc
 
+    def close(self):
+        """
+        Always called right before `Trainer.fit()` exits, even on an error.
+        """
+        pass
+
 
 @dataclass
 class CallbackConfig(Callback, Config):

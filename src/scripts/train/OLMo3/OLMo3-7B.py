@@ -1,20 +1,16 @@
 from datetime import datetime
+from functools import partial
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
-from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
+from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
-from olmo_core.internal.experiment import CommonComponents, main
-from olmo_core.nn.attention import SlidingWindowAttentionConfig
+from olmo_core.internal.experiment import CommonComponents, build_config, main
+from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import Duration, TrainerConfig
-from olmo_core.train.callbacks import (
-    BatchSizeSchedulerCallback,
-    CheckpointerCallback,
-    CometCallback,
-    WandBCallback,
-)
+from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
@@ -22,28 +18,22 @@ from olmo_core.train.train_module import (
 )
 
 SEQUENCE_LENGTH = 8 * 1024
-GLOBAL_BATCH_SIZE = 4 * 1024 * 1024
+GLOBAL_BATCH_SIZE = 4 * 1024 * 1024  # ~4M tokens
+
+# When training Olmo3-7B, we specified the dataset mix from the command line using a command like this:
+# python src/scripts/train/OLMo3/OLMo3-7B.py launch OLMo3-7B ai2/augusta-google-1 --dataset.mix=OLMo-mix-0625 --launch.num_nodes=128 --data_loader.num_workers=8
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
-    config = TransformerConfig.olmo2_7B(
+    config = TransformerConfig.olmo3_7B(
         vocab_size=common.tokenizer.padded_vocab_size(),
-        n_kv_heads=8,
-        hidden_size_multiplier=1.2,
-        hidden_size_multiple_of=1024,
+        attn_backend=AttentionBackendName.flash_2,
     )
-    config.block.attention.sliding_window = SlidingWindowAttentionConfig(
-        force_full_attention_on_first_layer=False,
-        force_full_attention_on_last_layer=True,
-        pattern=[4096, 4096, 4096, -1],
-    )
-    config.block.attention.use_flash = True
-    config.block.attention.use_head_qk_norm = True
     return config
 
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
-    rank_microbatch_size = SEQUENCE_LENGTH * 2
+    rank_microbatch_size = common.max_sequence_length
     if common.launch is not None:
         gpus = {CLUSTER_TO_GPU_TYPE.get(c, "unknown") for c in common.launch.clusters}
         if all("B200" in g for g in gpus):
@@ -51,7 +41,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
 
     return TransformerTrainModuleConfig(
         rank_microbatch_size=rank_microbatch_size,
-        max_sequence_length=common.dataset.effective_sequence_length,
+        max_sequence_length=common.max_sequence_length,
         optim=SkipStepAdamWConfig(
             lr=3e-4,
             weight_decay=0.1,
@@ -66,16 +56,8 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
-            shard_degree=32,
         ),
-        float8_config=Float8Config(
-            enabled=True,
-            ao=AOFloat8LinearConfig(
-                enable_fsdp_float8_all_gather=True,
-                force_recompute_fp8_weight_in_bwd=True,
-                round_scales_to_power_of_2=True,
-            ),
-        ),
+        float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
         scheduler=CosWithWarmup(warmup_steps=2000),
@@ -91,11 +73,11 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
     run_name = f"{common.run_name}-{datetime.now().astimezone().strftime('%Y%m%dT%H%M%S%z')}"
 
-    config = (
+    return (
         TrainerConfig(
             save_folder=f"gs://ai2-llm/checkpoints/{common.run_name}/",
             save_overwrite=True,
-            metrics_collect_interval=10,
+            metrics_collect_interval=50,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(int(5e12)),
             hard_stop=Duration.tokens(int(4e12)),
@@ -104,7 +86,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "checkpointer",
             CheckpointerCallback(
                 save_interval=1000,
-                ephemeral_save_interval=250,
+                ephemeral_save_interval=None,
                 save_async=False,
             ),
         )
@@ -132,30 +114,16 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         .with_recommended_evals(common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast")
     )
 
-    # batch size warmup
-    config.callbacks["batchwup"] = BatchSizeSchedulerCallback(
-        batch_sizes=[
-            GLOBAL_BATCH_SIZE,
-            GLOBAL_BATCH_SIZE * 2,
-            GLOBAL_BATCH_SIZE * 4,
-        ],
-        schedule=[
-            Duration.tokens(0),
-            Duration.tokens(167_772_160_000),
-            Duration.tokens(503_316_480_000),
-        ],
-    )
-
-    return config
-
 
 if __name__ == "__main__":
-    main(
+    config_builder = partial(
+        build_config,
         global_batch_size=GLOBAL_BATCH_SIZE,
-        sequence_length=SEQUENCE_LENGTH,
+        max_sequence_length=SEQUENCE_LENGTH,
         model_config_builder=build_model_config,
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
-        include_instance_filter=False,  # We use SkipStepOptimizer for this problem.
         include_default_evals=False,
+        include_instance_filter=False,  # We use SkipStepOptimizer for this problem.
     )
+    main(config_builder=config_builder)

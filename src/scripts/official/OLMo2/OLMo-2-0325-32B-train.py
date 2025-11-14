@@ -1,17 +1,16 @@
 """
-Official training script for OLMo-2-0325-32B, meant to be launched with torchrun.
+Official pre-training script for OLMo-2-0325-32B.
 """
 
-import sys
-from dataclasses import dataclass
-from typing import List, cast
+import argparse
+from typing import List
 
-from olmo_core.config import Config, DType
+from olmo_core.config import DType
 from olmo_core.data import (
     DataMix,
     NumpyDataLoaderConfig,
-    NumpyDatasetConfig,
-    NumpyDatasetType,
+    NumpyFSLDatasetConfig,
+    NumpyPaddedFSLDatasetConfig,
     TokenizerConfig,
 )
 from olmo_core.distributed.parallel import DataParallelType
@@ -21,12 +20,8 @@ from olmo_core.nn.transformer import (
     TransformerConfig,
 )
 from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
-from olmo_core.train import (
-    Duration,
-    TrainerConfig,
-    prepare_training_environment,
-    teardown_training_environment,
-)
+from olmo_core.script_utils import ExperimentConfig, main
+from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
     CheckpointerCallback,
     CometCallback,
@@ -41,52 +36,36 @@ from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerTrainModuleConfig,
 )
-from olmo_core.utils import seed_all
 
-SEQUENCE_LENGTH = 4096
-
-# This will read stream data from the public endpoints by default, but that might be a lot slower
-# than reading data locally.
-DATA_ROOT = "http://olmo-data.org"
-WORK_DIR = "/tmp/olmo-core/dataset-cache"
-SAVE_ROOT = "/tmp/olmo-core/runs"  # NOTE: change this to what you want
+DEFAULT_SEQUENCE_LENGTH = 4096
 
 
-@dataclass
-class ExperimentConfig(Config):
-    model: TransformerConfig
-    dataset: NumpyDatasetConfig
-    data_loader: NumpyDataLoaderConfig
-    train_module: TransformerTrainModuleConfig
-    trainer: TrainerConfig
-    init_seed: int = 12536
-
-
-def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
+def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentConfig:
+    sequence_length = opts.sequence_length or DEFAULT_SEQUENCE_LENGTH
     tokenizer_config = TokenizerConfig.dolma2()
 
     model_config = TransformerConfig.olmo2_32B(
         vocab_size=tokenizer_config.padded_vocab_size(),  # a little bigger than actual vocab size to make it a multiple of 128
     )
 
-    dataset_config = NumpyDatasetConfig.from_data_mix(
+    dataset_config = NumpyFSLDatasetConfig.from_data_mix(
         DataMix.OLMoE_mix_0824,
         tokenizer=tokenizer_config,
-        mix_base_dir=DATA_ROOT,
-        sequence_length=SEQUENCE_LENGTH,
-        max_target_sequence_length=max(8192, SEQUENCE_LENGTH),
-        work_dir=WORK_DIR,
+        mix_base_dir=opts.data_root,
+        sequence_length=sequence_length,
+        max_target_sequence_length=max(8192, sequence_length),
+        work_dir=opts.work_dir,
     )
 
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=2048 * SEQUENCE_LENGTH,
+        global_batch_size=2048 * 4096,
         seed=34521,
         num_workers=4,
     )
 
     train_module_config = TransformerTrainModuleConfig(
-        rank_microbatch_size=4 * SEQUENCE_LENGTH,
-        max_sequence_length=dataset_config.effective_sequence_length,
+        rank_microbatch_size=4 * 4096,
+        max_sequence_length=sequence_length,
         optim=SkipStepAdamWConfig(
             lr=6e-4,
             weight_decay=0.1,
@@ -95,6 +74,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
             ],
             compile=True,
+            foreach=False,
         ),
         scheduler=CosWithWarmup(warmup_steps=2000),
         compile_model=True,
@@ -121,7 +101,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
 
     trainer_config = (
         TrainerConfig(
-            save_folder=f"{SAVE_ROOT}/{run_name}",
+            save_folder=opts.save_folder,
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=10,
@@ -139,7 +119,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         .with_callback(
             "comet",
             CometCallback(
-                name=run_name,
+                name=opts.name,
                 cancel_check_interval=10,
                 enabled=False,  # NOTE: change to true to enable
             ),
@@ -147,7 +127,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         .with_callback(
             "wandb",
             WandBCallback(
-                name=run_name,
+                name=opts.name,
                 cancel_check_interval=10,
                 enabled=False,  # NOTE: change to true to enable
             ),
@@ -156,13 +136,12 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         .with_callback(
             "lm_evaluator",
             LMEvaluatorCallbackConfig(
-                eval_dataset=NumpyDatasetConfig.from_data_mix(
+                eval_dataset=NumpyPaddedFSLDatasetConfig.from_data_mix(
                     DataMix.v3_small_ppl_validation,
-                    name=NumpyDatasetType.padded_fsl,
-                    mix_base_dir=DATA_ROOT,
-                    sequence_length=dataset_config.effective_sequence_length,
+                    mix_base_dir=opts.data_root,
+                    sequence_length=sequence_length,
                     tokenizer=tokenizer_config,
-                    work_dir=WORK_DIR,
+                    work_dir=opts.work_dir,
                 ),
                 eval_interval=1000,
             ),
@@ -256,36 +235,5 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     ).merge(overrides)
 
 
-def main(run_name: str, overrides: List[str]):
-    config = build_config(run_name, overrides)
-
-    # Set RNG states on all devices.
-    seed_all(config.init_seed)
-
-    # Build components.
-    model = config.model.build(init_device="meta")
-    train_module = config.train_module.build(model)
-    dataset = config.dataset.build()
-    data_loader = config.data_loader.build(dataset, dp_process_group=train_module.dp_process_group)
-    trainer = config.trainer.build(train_module, data_loader)
-
-    # Save config to W&B and each checkpoint dir.
-    config_dict = config.as_config_dict()
-    cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
-
-    # Train.
-    trainer.fit()
-
-
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print(f"Usage: torchrun [OPTS..] {sys.argv[0]} run_name [OVERRIDES...]")
-        sys.exit(1)
-
-    run_name, *overrides = sys.argv[1:]
-
-    prepare_training_environment()
-    try:
-        main(run_name, overrides=overrides)
-    finally:
-        teardown_training_environment()
+    main(build_config)

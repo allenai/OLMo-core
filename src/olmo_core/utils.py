@@ -18,6 +18,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, TypeVar, Union
 
 import rich
 import torch
+import torch.distributed as dist
 from rich.console import Console, ConsoleRenderable
 from rich.highlighter import NullHighlighter
 from rich.text import Text
@@ -100,7 +101,7 @@ def move_to_device(o: T, device: torch.device, non_blocking: Optional[bool] = No
     :param device: The device to move to.
     """
     if non_blocking is None:
-        non_blocking = device.type != "cpu"
+        non_blocking = device.type not in ("cpu", "mps")
     if isinstance(o, torch.Tensor):
         return o.to(device, non_blocking=non_blocking)  # type: ignore[return-value]
     elif isinstance(o, dict):
@@ -127,7 +128,22 @@ def get_default_device() -> torch.device:
     """
     Get the default device.
     """
-    if torch.cuda.is_available() and torch.cuda.is_initialized():
+
+    from .distributed.utils import (
+        backend_supports_cpu,
+        backend_supports_cuda,
+        is_distributed,
+    )
+
+    if is_distributed():
+        backend = dist.get_backend()
+        if backend_supports_cuda(backend):
+            return torch.device("cuda")
+        elif backend_supports_cpu(backend):
+            return torch.device("cpu")
+        else:
+            raise NotImplementedError(backend)
+    elif torch.cuda.is_available():
         return torch.device("cuda")
     elif torch.mps.is_available():
         return torch.device("mps")
@@ -187,9 +203,16 @@ def has_flash_attn() -> bool:
 def set_env_var(name: str, value: str, override: bool = False, secret: bool = False):
     value_str = "****" if secret else value
     if name in os.environ:
-        if override and os.environ[name] != value:
-            log_or_print(log, f"Overriding env var '{name}' to '{value_str}'", logging.WARNING)
-            os.environ[name] = value
+        if os.environ[name] != value:
+            if override:
+                log_or_print(log, f"Overriding env var '{name}' to '{value_str}'", logging.WARNING)
+                os.environ[name] = value
+            else:
+                log_or_print(
+                    log,
+                    f"Will skip setting env var '{name}' since it's already set to '{value_str}'",
+                    logging.WARNING,
+                )
         else:
             log_or_print(log, f"Env var '{name}' already set to '{value_str}'")
     else:
@@ -719,10 +742,10 @@ def min_value_of_dtype(dtype: torch.dtype):
     return info_value_of_dtype(dtype).min
 
 
-_CUDA_STREAMS: Dict[int, torch.cuda.Stream] = {}
+_CUDA_STREAMS: Dict[str, torch.cuda.Stream] = {}
 
 
-def get_or_init_stream(id: int = 0, priority: int = 0) -> torch.cuda.Stream:
+def get_or_init_stream(id: str, priority: int = 0) -> torch.cuda.Stream:
     global _CUDA_STREAMS
     if id in _CUDA_STREAMS:
         return _CUDA_STREAMS[id]

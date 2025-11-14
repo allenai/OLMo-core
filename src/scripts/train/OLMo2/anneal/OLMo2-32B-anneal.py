@@ -1,5 +1,6 @@
 """
-Official training script for OLMo-2-0325-32B-anneal, meant to be launched with torchrun.
+This script can be used to launch an annealing run for the 32B model on Beaker.
+Run the script without any arguments to see usage info.
 """
 
 import json
@@ -8,21 +9,31 @@ import sys
 from dataclasses import dataclass
 from typing import List, Tuple, cast
 
+import rich
 import torch
+from rich import print
 
 from olmo_core.config import Config, DType
 from olmo_core.data import (
     DataMixBase,
     NumpyDataLoaderConfig,
     NumpyDatasetConfig,
+    NumpyFSLDatasetConfig,
     TokenizerConfig,
     TokenizerName,
 )
 from olmo_core.distributed.parallel import DataParallelType
-from olmo_core.distributed.utils import get_world_size
+from olmo_core.distributed.utils import get_local_rank
+from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
 from olmo_core.io import resource_path
+from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.optim import LinearWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
+from olmo_core.optim import (
+    CosWithWarmup,
+    LinearWithWarmup,
+    OptimGroupOverride,
+    SkipStepAdamWConfig,
+)
 from olmo_core.train import (
     Duration,
     LoadStrategy,
@@ -37,7 +48,6 @@ from olmo_core.train.callbacks import (
     DownstreamEvaluatorCallbackConfig,
     GarbageCollectorCallback,
     GPUMemoryMonitorCallback,
-    WandBCallback,
 )
 from olmo_core.train.checkpoint import CheckpointerConfig
 from olmo_core.train.train_module import (
@@ -46,17 +56,11 @@ from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerTrainModuleConfig,
 )
-from olmo_core.utils import seed_all
+from olmo_core.utils import prepare_cli_environment, seed_all
 
 log = logging.getLogger(__name__)
 
 SEQUENCE_LENGTH = 4096
-
-# This will read stream data from the public endpoints by default, but that might be a lot slower
-# than reading data locally.
-DATA_ROOT = "http://olmo-data.org"
-WORK_DIR = "/tmp/olmo-core/dataset-cache"
-SAVE_ROOT = "/tmp/olmo-core/runs"  # NOTE: change this to what you want
 
 
 class AnnealingDataMix(DataMixBase):
@@ -99,6 +103,7 @@ class AnnealingConfig(Config):
     """
 
     run_name: str
+    launch: BeakerLaunchConfig
     model: TransformerConfig
     dataset: NumpyDatasetConfig
     data_loader: NumpyDataLoaderConfig
@@ -110,10 +115,15 @@ class AnnealingConfig(Config):
     def build(
         cls,
         *,
+        script: str,
+        cmd: str,
         run_name: str,
         checkpoint: str,
+        cluster: str,
         overrides: List[str],
     ) -> "AnnealingConfig":
+        root_dir = get_root_dir(cluster)
+
         tokenizer_config = TokenizerConfig.dolma2()
 
         # Get step number and max steps to infer where the learning rate left off.
@@ -131,32 +141,36 @@ class AnnealingConfig(Config):
             config = json.load(f)
         base_lr = config["optim"]["lr"]
         scheduler_config = config["trainer"]["callbacks"]["lr_scheduler"]["scheduler"]
-        # assert scheduler_config.pop("_CLASS_") == LinearWithWarmup.__name__
-        assert scheduler_config.pop("_CLASS_").endswith(LinearWithWarmup.__name__)
-        scheduler = LinearWithWarmup(**scheduler_config)
+        assert scheduler_config.pop("_CLASS_") == CosWithWarmup.__name__
+        scheduler = CosWithWarmup(**scheduler_config)
         starting_lr = float(scheduler.get_lr(base_lr, last_pretrain_step, max_pretrain_steps))
 
         run_name = f"peteish32-from{last_pretrain_step}-{run_name}"
 
         config = AnnealingConfig(
-            run_name=f"olmo2-anneal-{run_name}",
+            run_name=run_name,
+            launch=build_launch_config(
+                name=run_name,
+                root_dir=root_dir,
+                cmd=[script, cmd, run_name, checkpoint, cluster, *overrides],
+                cluster=cluster,
+                nccl_debug=False,
+            ),
             model=TransformerConfig.olmo2_32B(vocab_size=tokenizer_config.padded_vocab_size()),
-            dataset=NumpyDatasetConfig.from_data_mix(
+            dataset=NumpyFSLDatasetConfig.from_data_mix(
                 AnnealingDataMix.dolmino100,
                 tokenizer=tokenizer_config,
-                mix_base_dir=DATA_ROOT,
+                mix_base_dir=root_dir,
                 sequence_length=SEQUENCE_LENGTH,
-                work_dir=WORK_DIR,
+                work_dir=get_work_dir(root_dir),
             ),
             data_loader=NumpyDataLoaderConfig(
-                global_batch_size=2048
-                * SEQUENCE_LENGTH,  # NOTE: this is specified in TOKENS, not instances.
+                global_batch_size=2048 * 4096,  # NOTE: this is specified in TOKENS, not instances.
                 seed=34521,  # NOTE: can update this to change data order.
                 num_workers=4,
             ),
             train_module=TransformerTrainModuleConfig(
-                rank_microbatch_size=2
-                * SEQUENCE_LENGTH,  # NOTE: again this is specified in tokens.
+                rank_microbatch_size=2 * 4096,  # NOTE: this is specified in TOKENS, not instances.
                 max_sequence_length=SEQUENCE_LENGTH,
                 z_loss_multiplier=1e-5,
                 compile_model=True,
@@ -171,16 +185,24 @@ class AnnealingConfig(Config):
                     ],
                     compile=True,
                 ),
+                # dp_config=TransformerDataParallelConfig(
+                #     name=DataParallelType.fsdp,
+                #     param_dtype=DType.bfloat16,
+                #     reduce_dtype=DType.float32,
+                # ),
                 dp_config=TransformerDataParallelConfig(
-                    name=DataParallelType.fsdp,
+                    name=DataParallelType.hsdp,
                     param_dtype=DType.bfloat16,
                     reduce_dtype=DType.float32,
-                    num_replicas=get_world_size() // 64,  # NOTE: tune this,
+                    num_replicas=128 // 32,  # common.launch.num_nodes // 2,
                 ),
                 ac_config=TransformerActivationCheckpointingConfig(
                     mode=TransformerActivationCheckpointingMode.selected_modules,
                     modules=["blocks.*.feed_forward"],
                 ),
+                # ac_config=TransformerActivationCheckpointingConfig(
+                #    mode=TransformerActivationCheckpointingMode.full
+                # ),
                 scheduler=LinearWithWarmup(
                     warmup_steps=0,
                     alpha_f=0.0,
@@ -188,17 +210,16 @@ class AnnealingConfig(Config):
                 max_grad_norm=1.0,
             ),
             trainer=TrainerConfig(
-                save_folder=f"{SAVE_ROOT}/{run_name}",
+                save_folder=f"gs://ai2-llm/checkpoints/peteish32-anneal/{run_name}",
                 load_strategy=LoadStrategy.always,
                 checkpointer=CheckpointerConfig(
-                    save_thread_count=1, load_thread_count=8, throttle_uploads=True
+                    save_thread_count=1, load_thread_count=32, throttle_uploads=True
                 ),
                 save_overwrite=True,
                 metrics_collect_interval=10,
                 cancel_check_interval=10,
                 max_duration=Duration.tokens(int(100e9)),
             )
-            .with_callback("gpu_monitor", GPUMemoryMonitorCallback())
             .with_callback(
                 "checkpointer",
                 CheckpointerCallback(
@@ -211,17 +232,15 @@ class AnnealingConfig(Config):
                 "comet",
                 CometCallback(
                     name=run_name,
-                    enabled=False,  # NOTE: change to true to enable
+                    workspace="ai2",
+                    project="peteish32",
+                    enabled=True,
                     cancel_check_interval=10,
                 ),
             )
             .with_callback(
-                "wandb",
-                WandBCallback(
-                    name=run_name,
-                    enabled=False,  # NOTE: change to true to enable
-                    cancel_check_interval=10,
-                ),
+                "gpu_monitor",
+                GPUMemoryMonitorCallback(),
             )
             .with_callback("config_saver", ConfigSaverCallback())
             .with_callback("garbage_collector", GarbageCollectorCallback())
@@ -301,6 +320,7 @@ class AnnealingConfig(Config):
                     ],
                     tokenizer=tokenizer_config,
                     eval_interval=1000,
+                    enabled=False,
                 ),
             ),
         ).merge(overrides)
@@ -323,6 +343,7 @@ def train(checkpoint: str, config: AnnealingConfig):
 
     # Record the config to W&B/Comet and each checkpoint dir.
     config_dict = config.as_config_dict()
+    cast(CometCallback, trainer.callbacks["comet"]).config = config_dict
     cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
 
     # Try loading a checkpoint from the save folder, otherwise start from the pretraining checkpoint.
@@ -333,23 +354,57 @@ def train(checkpoint: str, config: AnnealingConfig):
     trainer.fit()
 
 
-def main():
-    if len(sys.argv) < 3:
-        print(f"Usage: torchrun [OPTS..] {sys.argv[0]} run_name checkpoint [OVERRIDES...]")
+if __name__ == "__main__":
+    USAGE = f"""
+Anneal the 32B model.
+
+[yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]launch|train|dry_run[/] [i b]RUN_NAME PRETRAIN_CHECKPOINT CLUSTER[/] [i][OVERRIDES...][/]
+
+[b]Subcommands[/]
+[b magenta]launch:[/]      Launch the script on Beaker with the [b magenta]train[/] subcommand.
+[b magenta]train:[/]       Run the trainer. You usually shouldn't invoke the script with this subcommand directly.
+             Instead use the [b magenta]launch[/] cmd to submit it to Beaker or run it via torchrun if you know what you're doing.
+[b magenta]dry_run:[/]     Print the config for debugging.
+
+[b]Examples[/]
+$ [i]python {sys.argv[0]} launch run01 gs://ai2-llm/checkpoints/peteish32/step419000 ai2/jupiter --launch.num_nodes=2[/]
+""".strip()
+
+    # Parse command line arguments.
+    if len(sys.argv) < 5 or sys.argv[1] not in ("launch", "train", "dry_run"):
+        rich.get_console().print(USAGE, highlight=False)
         sys.exit(1)
 
-    run_name, checkpoint, *overrides = sys.argv[1:]
-    prepare_training_environment()
-    try:
-        config = AnnealingConfig.build(
-            run_name=run_name,
-            checkpoint=checkpoint,
-            overrides=overrides,
-        )
+    script, cmd, run_name, checkpoint, cluster, *overrides = sys.argv
+
+    # Prepare the environment for the given command.
+    if cmd in ("launch", "dry_run"):
+        prepare_cli_environment()
+    elif cmd == "train":
+        prepare_training_environment()
+    else:
+        raise NotImplementedError(cmd)
+
+    # Build the config, applying any overrides.
+    config = AnnealingConfig.build(
+        script=script,
+        cmd="train",
+        run_name=run_name,
+        checkpoint=checkpoint,
+        cluster=cluster,
+        overrides=overrides,
+    )
+
+    # Print the config for debugging and then execute the command.
+    if get_local_rank() == 0:
+        print(config)
+
+    if cmd == "dry_run":
+        pass
+    elif cmd == "launch":
+        config.launch.launch(follow=True)
+    elif cmd == "train":
         train(checkpoint, config)
-    finally:
         teardown_training_environment()
-
-
-if __name__ == "__main__":
-    main()
+    else:
+        raise NotImplementedError(cmd)
