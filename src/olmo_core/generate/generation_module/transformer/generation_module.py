@@ -843,8 +843,8 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         self.prepare_inference_cache(batch_size, n_prefill + n_generate)
         prefill_cache_leftpad = attention_mask_to_cache_leftpad(token_attention_mask).to(self.device)
 
-        zero_boundary_state = blt_utils.MaskState(torch.zeros(batch_size, dtype=torch.bool, device=self.device))
-        one_boundary_state = blt_utils.MaskState(torch.ones(batch_size, dtype=torch.bool, device=self.device))
+        zero_mask_state = blt_utils.MaskState(torch.zeros(batch_size, dtype=torch.bool, device=self.device))
+        one_mask_state = blt_utils.MaskState(torch.ones(batch_size, dtype=torch.bool, device=self.device))
 
         torch.cuda.synchronize()
         cache_prepare_time = time.perf_counter() - start_time
@@ -860,7 +860,8 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
             logits_to_keep=1,
             cached_encoder_outputs=cached_encoder_outputs,
             cache_leftpad=prefill_cache_leftpad,
-            boundary_state=zero_boundary_state,
+            boundary_state=zero_mask_state,
+            pad_state=zero_mask_state,
             blt_config=self.blt_config,
         )
         next_token_probs = F.softmax(next_token_logits, dim=-1)
@@ -874,12 +875,13 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
 
         # generate
         for step in range(n_generate_bytes):
-            boundary_state = one_boundary_state if generate_boundary_mask[step] else zero_boundary_state
+            boundary_state = one_mask_state if generate_boundary_mask[step] else zero_mask_state
 
             next_token_logits = self.model.inference_forward(  # type: ignore
                 next_token.to(self.device),
                 logits_to_keep=1,
                 boundary_state=boundary_state,
+                pad_state=zero_mask_state,
                 blt_config=self.blt_config,
             )
             next_token_probs = F.softmax(next_token_logits, dim=-1)
