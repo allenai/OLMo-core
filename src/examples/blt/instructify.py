@@ -85,6 +85,7 @@ def _load_our_model(checkpoint_dir, device, max_sequence_length: int, teacher_co
     else:
         transformer_config = None
         tokenizer_config = None
+        config_dict = None
 
     transformer_config, tokenizer_config, config_dict = scatter_object((transformer_config, tokenizer_config, config_dict))
 
