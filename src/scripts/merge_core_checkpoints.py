@@ -132,15 +132,12 @@ def merge_checkpoints(
     OPTIM_PREFIX = "optim."
     for key, value in merged_state_dict.items():
         if key.startswith(MODEL_PREFIX):
-            model_state_dict[key[len(MODEL_PREFIX):]] = value
+            model_state_dict[key[len(MODEL_PREFIX) :]] = value
         elif key.startswith(OPTIM_PREFIX):
-            optim_state_dict[key[len(OPTIM_PREFIX):]] = value
+            optim_state_dict[key[len(OPTIM_PREFIX) :]] = value
         else:
             raise ValueError(f"Unexpected key in state dict: {key}")
-    merged_state_dict = {
-        "model": model_state_dict,
-        "optim": optim_state_dict
-    }
+    merged_state_dict = {"model": model_state_dict, "optim": optim_state_dict}
 
     # create the output dir
     log.info(f"Saving merged checkpoint to {output_path}...")

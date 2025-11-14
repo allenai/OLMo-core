@@ -3,18 +3,15 @@ Tests for the merge_core_checkpoints.py script.
 """
 import importlib.util
 import json
-import shutil
 import tempfile
 from pathlib import Path
 from typing import List, Optional
 
-import pytest
 import torch
 from click.testing import CliRunner
 
 from olmo_core.distributed.checkpoint import (
     get_checkpoint_metadata,
-    load_model_and_optim_state,
     save_model_and_optim_state,
     unshard_checkpoint,
 )
@@ -89,11 +86,7 @@ def create_test_checkpoint_with_seed(
     # Save checkpoint
     model_and_optim_dir = checkpoint_dir / "model_and_optim"
     save_model_and_optim_state(
-        str(model_and_optim_dir),
-        model,
-        optim,
-        save_overwrite=True,
-        flatten_optimizer_state=False
+        str(model_and_optim_dir), model, optim, save_overwrite=True, flatten_optimizer_state=False
     )
 
 
@@ -295,11 +288,6 @@ def test_merge_two_checkpoints_skip_optimizer(tmp_path):
     assert not checkpoint_has_optimizer_state(output), "Optimizer state should be skipped"
 
 
-#@pytest.mark.skip(
-#    reason="Merged checkpoint saved by save_state_dict() requires distributed setup to load, "
-#    "unlike checkpoints saved with save_model_and_optim_state(). Would need distributed "
-#    "test setup or unshard/reload approach which adds complexity."
-#)
 def test_weights_are_averaged_correctly(tmp_path):
     """Load merged checkpoint and verify weights equal mean of input weights."""
     model_config = TransformerConfig.llama_like(
@@ -350,14 +338,8 @@ def test_single_checkpoint(tmp_path):
 
 def test_config_copied_from_first_checkpoint(tmp_path):
     """Verify config.json is copied from the first checkpoint."""
-    model_config1 = TransformerConfig.llama_like(
+    model_config = TransformerConfig.llama_like(
         vocab_size=1000,
-        d_model=128,
-        n_layers=2,
-        n_heads=4,
-    )
-    model_config2 = TransformerConfig.llama_like(
-        vocab_size=2000,  # Different vocab size
         d_model=128,
         n_layers=2,
         n_heads=4,
@@ -367,9 +349,9 @@ def test_config_copied_from_first_checkpoint(tmp_path):
     ckpt2 = tmp_path / "checkpoint2"
     output = tmp_path / "merged"
 
-    create_test_checkpoint_with_seed(ckpt1, model_config1, seed=42, include_optimizer=False)
+    create_test_checkpoint_with_seed(ckpt1, model_config, seed=42, include_optimizer=False)
     # Use same model architecture for ckpt2 but different config on disk
-    create_test_checkpoint_with_seed(ckpt2, model_config1, seed=123, include_optimizer=False)
+    create_test_checkpoint_with_seed(ckpt2, model_config, seed=123, include_optimizer=False)
 
     # Manually override ckpt2's config to have different vocab
     with (ckpt2 / "config.json").open("r") as f:
