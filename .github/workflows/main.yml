@@ -42,6 +42,7 @@ jobs:
                 --ignore-glob='src/test/distributed/checkpoint*' \
                 --ignore-glob='src/test/train/checkpoint*' \
                 --ignore-glob='src/test/nn/*' \
+                --ignore-glob='src/test/scripts/*' \
                 src/test/
 
           - name: Test checkpoint
@@ -54,6 +55,11 @@ jobs:
             run: |
               pytest -v --color=yes --durations=3 \
                 src/test/nn/
+
+          - name: Test scripts
+            run: |
+              pytest -v --color=yes --durations=3 \
+                src/test/scripts/
 
           - name: Type check
             run: make type-check
