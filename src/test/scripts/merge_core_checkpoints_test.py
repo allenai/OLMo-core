@@ -353,10 +353,10 @@ def test_config_copied_from_first_checkpoint(tmp_path):
     # Use same model architecture for ckpt2 but different config on disk
     create_test_checkpoint_with_seed(ckpt2, model_config, seed=123, include_optimizer=False)
 
-    # Manually override ckpt2's config to have different vocab
+    # Manually override ckpt2's config to have different layer_norm epsilon
     with (ckpt2 / "config.json").open("r") as f:
         config2 = json.load(f)
-    config2["model"]["vocab_size"] = 2000
+    config2["model"]["block"]["layer_norm"]["eps"] = 1e-6  # Different from default 1e-5
     with (ckpt2 / "config.json").open("w") as f:
         json.dump(config2, f)
 
@@ -364,14 +364,18 @@ def test_config_copied_from_first_checkpoint(tmp_path):
     result = run_merge_cli([str(ckpt1), str(ckpt2)], str(output), skip_optimizer=True)
     assert result.exit_code == 0
 
-    # Verify output config matches first checkpoint
+    # Verify output config matches first checkpoint (eps should be 1e-5)
     with (output / "config.json").open("r") as f:
         output_config = json.load(f)
 
     with (ckpt1 / "config.json").open("r") as f:
         ckpt1_config = json.load(f)
 
-    assert output_config["model"]["vocab_size"] == ckpt1_config["model"]["vocab_size"] == 1000
+    assert (
+        output_config["model"]["block"]["layer_norm"]["eps"]
+        == ckpt1_config["model"]["block"]["layer_norm"]["eps"]
+        == 1e-5
+    )
 
 
 # ==================== Optimizer State Tests ====================
