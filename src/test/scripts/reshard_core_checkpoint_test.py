@@ -183,10 +183,10 @@ def test_reshard_single_process(tmp_path):
     """Test resharding with a single process (n=1)."""
     # Create a small transformer config
     model_config = TransformerConfig.llama_like(
-        d_model=128,
+        d_model=64,
         n_heads=4,
         n_layers=2,
-        vocab_size=1000,
+        vocab_size=100,
     )
 
     # Create source checkpoint with optimizer
@@ -228,10 +228,10 @@ def test_reshard_single_process_skip_optimizer(tmp_path):
     """Test single process resharding without optimizer state."""
     # Create a small transformer config
     model_config = TransformerConfig.llama_like(
-        d_model=128,
+        d_model=64,
         n_heads=4,
         n_layers=2,
-        vocab_size=1000,
+        vocab_size=100,
     )
 
     # Create source checkpoint with optimizer
@@ -271,10 +271,10 @@ def run_multi_process_reshard_test(source_ws, target_ws, skip_optimizer=False):
 
         # Create a small transformer config
         model_config = TransformerConfig.llama_like(
-            d_model=128,
+            d_model=64,
             n_heads=4,
             n_layers=2,
-            vocab_size=1000,
+            vocab_size=100,
         )
 
         # Create source checkpoint
@@ -314,10 +314,10 @@ def test_reshard_multi_process_various_workers(tmp_path, world_size):
 def test_reshard_1_to_2_processes(tmp_path):
     """Test expanding a single-process checkpoint to 2 processes."""
     model_config = TransformerConfig.llama_like(
-        d_model=128,
+        d_model=64,
         n_heads=4,
         n_layers=2,
-        vocab_size=1000,
+        vocab_size=100,
     )
 
     # Create single-process checkpoint
@@ -348,10 +348,10 @@ def test_reshard_1_to_2_processes(tmp_path):
 def test_reshard_2_to_1_processes(tmp_path):
     """Test consolidating a 2-process checkpoint to single process."""
     model_config = TransformerConfig.llama_like(
-        d_model=128,
+        d_model=64,
         n_heads=4,
         n_layers=2,
-        vocab_size=1000,
+        vocab_size=100,
     )
 
     # Create 2-process checkpoint
@@ -382,10 +382,10 @@ def test_reshard_2_to_1_processes(tmp_path):
 def test_reshard_2_to_4_processes(tmp_path):
     """Test resharding between different distributed topologies (2 to 4 processes)."""
     model_config = TransformerConfig.llama_like(
-        d_model=128,
+        d_model=64,
         n_heads=4,
         n_layers=2,
-        vocab_size=1000,
+        vocab_size=100,
     )
 
     # Create 2-process checkpoint
@@ -414,7 +414,7 @@ def test_reshard_preserves_model_state(tmp_path):
         d_model=64,
         n_heads=2,
         n_layers=2,
-        vocab_size=500,
+        vocab_size=100,
     )
 
     # Create source checkpoint
@@ -475,7 +475,7 @@ def test_reshard_preserves_optimizer_state(tmp_path):
         d_model=64,
         n_heads=2,
         n_layers=2,
-        vocab_size=500,
+        vocab_size=100,
     )
     optim_config = AdamWConfig(lr=1e-3)
 
