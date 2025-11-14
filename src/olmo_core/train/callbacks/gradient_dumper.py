@@ -5,8 +5,7 @@ from typing import Optional
 from safetensors.torch import save_file
 
 from olmo_core.distributed.checkpoint import save_state_dict
-from olmo_core.distributed.utils import get_full_tensor, get_rank, is_distributed
-from olmo_core.io import copy_dir, join_path
+from olmo_core.distributed.utils import get_full_tensor, get_rank
 from olmo_core.utils import gc_cuda
 
 from .callback import Callback
@@ -100,18 +99,13 @@ class GradientDumperCallback(Callback):
                 del full_grad
 
             if get_rank() == 0:
-                log.info(f"Saved sampled gradients for step {self.step} to '{sampled_gradients_dir}'")
-
-        # Persist directory to save_folder if different from work_dir
-        # In distributed mode, only rank 0 uploads to avoid conflicts
-        rel_step_dir = step_dir.relative_to(self.trainer.work_dir)
-        target_dir = join_path(self.trainer.save_folder, rel_step_dir)
-        if str(step_dir) != str(target_dir):
-            if get_rank() == 0:
-                log.info(f"Uploading gradients for step {self.step} to '{target_dir}'...")
-                copy_dir(
-                    step_dir, target_dir, save_overwrite=self.trainer.save_overwrite, quiet=True
+                log.info(
+                    f"Saved sampled gradients for step {self.step} to '{sampled_gradients_dir}'"
                 )
-                log.info(f"Gradients for step {self.step} uploaded to '{target_dir}'")
+
+        if get_rank() == 0:
+            rel_step_dir = step_dir.relative_to(self.trainer.work_dir)
+            target_dir = self.trainer.persist_working_subdir(rel_step_dir)
+            log.info(f"Gradients for step {self.step} uploaded to '{target_dir}'")
 
         gc_cuda()
