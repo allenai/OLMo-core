@@ -7,13 +7,13 @@ from typing import List
 
 from olmo_core.config import DType
 from olmo_core.data import (
+    DataMix,
     NumpyDataLoaderConfig,
     NumpyPackedFSLDatasetConfig,
     TokenizerConfig,
 )
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
-from olmo_core.io import join_path
 from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.rope import YaRNRoPEScalingConfig
 from olmo_core.nn.transformer import TransformerConfig
@@ -50,14 +50,10 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         YaRNRoPEScalingConfig(factor=8, beta_fast=32, beta_slow=1, old_context_len=8192)
     )
 
-    dataset_config = NumpyPackedFSLDatasetConfig.glob(
-        str(
-            join_path(
-                opts.data_root,
-                "preprocessed/tylerr/lc-reshard-final/v0.6/allenai/dolma2-tokenizer/*.npy",
-            )
-        ),
+    dataset_config = NumpyPackedFSLDatasetConfig.from_data_mix(
+        DataMix.OLMo_longcontext_mix_1025,
         tokenizer=tokenizer_config,
+        mix_base_dir=opts.data_root,
         work_dir=opts.work_dir,
         sequence_length=sequence_length,
         generate_doc_lengths=True,  # enables intra-document masking
