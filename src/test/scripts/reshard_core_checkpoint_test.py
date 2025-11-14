@@ -170,7 +170,9 @@ def run_reshard_cli(
         args.append("--skip-optimizer-state")
 
     result = subprocess.run(args, capture_output=True, text=True)
-    assert result.returncode == 0, f"Resharding failed with exit code {result.returncode}:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+    assert (
+        result.returncode == 0
+    ), f"Resharding failed with exit code {result.returncode}:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
     gc.collect()
 
 
