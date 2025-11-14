@@ -2063,7 +2063,7 @@ class BLTDistillTransformer(BLTTransformer):
                 boundary_logprobs=boundary_logprobs_for_decoder,
                 boundary_mask=boundary_mask,
                 **local_decoder_kwargs,
-            )
+            )[-1]
 
             logits = self.lm_head(h_out, **lm_head_kwargs)
             logprobs = F.log_softmax(logits.float() / blt_config.temperature, dim=-1)
