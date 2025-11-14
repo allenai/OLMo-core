@@ -530,6 +530,10 @@ class LocalEncoder(nn.Module):
                 return tensor
 
         target_embeddings = maybe_distribute(target_embeddings)
+        te_mean = target_embeddings.mean(0)
+        # .std not supported for DTensor
+        te_std = target_embeddings.var(0).sqrt()
+        device = target_embeddings.device
 
         if embedding_init_path is not None:
             if self.hash_embeddings is not None:
@@ -543,13 +547,14 @@ class LocalEncoder(nn.Module):
                     else:
                         hash_embedding.weight.data[:] = torch.load(resource_path(embedding_init_path, f"hash_embedding_init_{i}.pth", local_cache=cache_dir))  # type: ignore
 
+        # initialize main byte embeddings with mean and stddev of target embeddings
+        byte_embedding_init = torch.randn_like(self.embedding.weight.data)
+        byte_embedding_init = byte_embedding_init * te_std + te_mean
+        self.embedding.weight.data[:] = byte_embedding_init
+
         if self.expanded_embeddings is not None:
             self.expanded_embeddings.weight.data[:] = target_embeddings[:self.expanded_embeddings.weight.shape[0]]
 
-        te_mean = target_embeddings.mean(0)
-        # .std not supported for DTensor
-        te_std = target_embeddings.var(0).sqrt()
-        device = target_embeddings.device
         dummy_input = torch.randint(0, self.embedding.weight.shape[0], (n_estimate,), device=device).unsqueeze(0)
         patch_lens = torch.ones((1, n_estimate), dtype=torch.long, device=dummy_input.device)
         patch_ids = torch.arange(n_estimate, device=dummy_input.device).unsqueeze(0)
