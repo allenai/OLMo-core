@@ -326,9 +326,15 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
         return get_bytes_range(full_path, offset, length)
 
     def _get_content_for_read(self, read_item: ReadItem) -> Tuple[ReadItem, bytes]:
-        sinfo = self.storage_data[read_item.storage_index]
-        content = self._get_bytes(sinfo.relative_path, sinfo.offset, sinfo.length)
-        return (read_item, content)
+        try:
+            sinfo = self.storage_data[read_item.storage_index]
+            content = self._get_bytes(sinfo.relative_path, sinfo.offset, sinfo.length)
+            return read_item, content
+        except BaseException:
+            # NOTE: we might get an error here that can't be pickled, which causes a different failure
+            # later when PyTorch tries to reduce that error across ranks. So here we just make
+            # sure we're raising a simple error type that can be pickled.
+            raise OLMoCheckpointError(f"Original error:\n{traceback.format_exc()}")
 
     def reset(self, checkpoint_id: Optional[PathOrStr] = None) -> None:
         self.storage_data = dict()
