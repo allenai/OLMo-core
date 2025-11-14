@@ -483,9 +483,15 @@ def test_incompatible_model_shapes(tmp_path):
     create_test_checkpoint_with_seed(ckpt2, model_config2, seed=123, include_optimizer=False)
 
     # Run merge - should fail due to incompatible shapes
-    # The exception will be raised during tensor shape mismatch
-    with pytest.raises(BaseException):
-        run_merge_cli([str(ckpt1), str(ckpt2)], str(output), skip_optimizer=True)
+    # The CheckpointException from PyTorch is not caught by Click, so we need to catch it here
+    with pytest.raises((Exception, BaseException)) as exc_info:
+        result = run_merge_cli([str(ckpt1), str(ckpt2)], str(output), skip_optimizer=True)
+        # If it doesn't raise, check if it failed
+        if result.exception:
+            raise result.exception
+
+    # Verify the error is about size mismatch
+    assert "Size mismatch" in str(exc_info.value) or "CheckpointException" in str(exc_info.value)
 
 
 def test_incompatible_model_layers(tmp_path):
@@ -513,8 +519,14 @@ def test_incompatible_model_layers(tmp_path):
 
     # Run merge - should fail due to mismatched architectures
     # One checkpoint has keys that don't exist in the other
-    with pytest.raises(BaseException):
-        run_merge_cli([str(ckpt1), str(ckpt2)], str(output), skip_optimizer=True)
+    with pytest.raises((Exception, BaseException)) as exc_info:
+        result = run_merge_cli([str(ckpt1), str(ckpt2)], str(output), skip_optimizer=True)
+        # If it doesn't raise, check if it failed
+        if result.exception:
+            raise result.exception
+
+    # Verify the error is about different keys
+    assert "different keys" in str(exc_info.value)
 
 
 def test_path_validation_model_and_optim():

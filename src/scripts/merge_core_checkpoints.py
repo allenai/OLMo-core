@@ -35,6 +35,28 @@ def merge_checkpoints(
     # merge checkpoints
     checkpoint_paths = [join_path(p, "model_and_optim") for p in model_paths]
     checkpoint_metadata = [get_checkpoint_metadata(path) for path in checkpoint_paths]
+
+    # Validate that all checkpoints have identical keys
+    if len(checkpoint_metadata) > 1:
+        first_keys = set(checkpoint_metadata[0].state_dict_metadata.keys())
+        if skip_optimizer_state:
+            first_keys = {k for k in first_keys if not k.startswith("optim.")}
+
+        for i, metadata in enumerate(checkpoint_metadata[1:], start=1):
+            current_keys = set(metadata.state_dict_metadata.keys())
+            if skip_optimizer_state:
+                current_keys = {k for k in current_keys if not k.startswith("optim.")}
+
+            if first_keys != current_keys:
+                missing_in_current = first_keys - current_keys
+                extra_in_current = current_keys - first_keys
+                error_msg = f"Checkpoint {i} has different keys than checkpoint 0:\n"
+                if missing_in_current:
+                    error_msg += f"  Missing keys: {sorted(list(missing_in_current))[:5]}...\n"
+                if extra_in_current:
+                    error_msg += f"  Extra keys: {sorted(list(extra_in_current))[:5]}...\n"
+                raise ValueError(error_msg)
+
     merged_state_dict: Dict[str, Any] = {}
     for i, (path, metadata) in enumerate(zip(checkpoint_paths, checkpoint_metadata)):
         # Separate non-tensor and tensor keys upfront
