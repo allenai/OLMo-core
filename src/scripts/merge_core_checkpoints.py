@@ -106,6 +106,42 @@ def merge_checkpoints(
 
         gc.collect()
 
+    # Our state dicts are saved with this format:
+    #
+    # state_dict = {
+    #   "model": {
+    #       "embeddings.weight": ...,
+    #       "some.other.param.weight": ...,
+    #   },
+    #   "optim": { ... }
+    # }
+    #
+    # Unfortunately when you load a checkpoint in the way we do here, it pretends like the format is this:
+    #
+    # state_dict = {
+    #   "model.embeddings.weight": ...,
+    #   "model.some.other.param.weight": ...,
+    #   "optim.something.else": ...,
+    # }
+    #
+    # Both formats can be loaded just fine, so it doesn't matter, except the unsharder breaks on the second format,
+    # because it looks specifically for "model" and "optim" keys. So here we have to fix it.
+    model_state_dict = {}
+    optim_state_dict = {}
+    MODEL_PREFIX = "model."
+    OPTIM_PREFIX = "optim."
+    for key, value in merged_state_dict.items():
+        if key.startswith(MODEL_PREFIX):
+            model_state_dict[key[len(MODEL_PREFIX):]] = value
+        elif key.startswith(OPTIM_PREFIX):
+            optim_state_dict[key[len(OPTIM_PREFIX):]] = value
+        else:
+            raise ValueError(f"Unexpected key in state dict: {key}")
+    merged_state_dict = {
+        "model": model_state_dict,
+        "optim": optim_state_dict
+    }
+
     # create the output dir
     log.info(f"Saving merged checkpoint to {output_path}...")
     if os.path.exists(output_path):
