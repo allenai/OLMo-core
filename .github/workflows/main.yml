@@ -58,7 +58,7 @@ jobs:
 
           - name: Test scripts
             run: |
-              pytest -v --color=yes --log-cli-level=DEBUG \
+              pytest -v --color=yes -s --log-cli-level=DEBUG \
                 src/test/scripts/
 
           - name: Type check
