@@ -632,7 +632,7 @@ def test_from_checkpoints_can_generate(tmp_path: Path):
 
     # Merge both checkpoints
     merged_model = TransformerGenerationModule.from_checkpoints(
-        [checkpoint_dir1, checkpoint_dir2], device="cuda"
+        [checkpoint_dir1, checkpoint_dir2], device=torch.device("cuda")
     )
 
     # Verify the merged model can generate text
