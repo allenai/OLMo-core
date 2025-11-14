@@ -21,8 +21,9 @@ from olmo_core.config import Config, DType
 from olmo_core.data import (
     NumpyDataLoaderConfig,
     NumpyDatasetConfig,
-    NumpyDatasetType,
     NumpyByteFSLDataset,
+    NumpyByteFSLDatasetConfig,
+    NumpyBytePaddedFSLDataset,
     ByteTokenizerConfig,
     TokenizerConfig,
     ByteDataCollator,
@@ -69,19 +70,19 @@ from olmo_core.train.train_module import (
 )
 from olmo_core.utils import seed_all
 
-NUM_WORKERS = 32
-SEQUENCE_LENGTH = int(os.environ.get("SEQUENCE_LENGTH", 1024))
-QUICK_DEBUG = False
+NUM_WORKERS = int(os.environ.get("NUM_WORKERS", 16))
+SEQUENCE_LENGTH = int(os.environ.get("SEQUENCE_LENGTH", 4096))
+QUICK_DEBUG = os.environ.get("QUICK_DEBUG", "false").lower() in {"1", "true", "yes"}
 GLOBAL_BATCH_SIZE = 64
 LOCAL_BATCH_SIZE = 64
 EVAL_BATCH_SIZE = 16
-LOCAL_MODEL_STYLE = os.environ.get("LOCAL_MODEL_STYLE", "hnet")
-TRAIN_MODE = os.environ.get("TRAIN_MODE", "full_stage_1")
+LOCAL_MODEL_STYLE = os.environ.get("LOCAL_MODEL_STYLE", "hnet:xlstm")
+TRAIN_MODE = os.environ.get("TRAIN_MODE", "stage_1")
 DATA_SOURCE = os.environ.get("DATA_SOURCE", "dclm")
 DTYPE = os.environ.get("DTYPE", "float32")
 LR_SCHEDULE = os.environ.get("LR_SCHEDULE", "linear_with_warmup")
-ADD_HASH_EMBEDDINGS = os.environ.get("ADD_HASH_EMBEDDINGS", "true").lower() in {"1", "true", "yes"}
-ADD_EXPANDED_EMBEDDINGS = os.environ.get("ADD_EXPANDED_EMBEDDINGS", "false").lower() in {"1", "true", "yes"}
+ADD_HASH_EMBEDDINGS = os.environ.get("ADD_HASH_EMBEDDINGS", "false").lower() in {"1", "true", "yes"}
+ADD_EXPANDED_EMBEDDINGS = os.environ.get("ADD_EXPANDED_EMBEDDINGS", "true").lower() in {"1", "true", "yes"}
 OLMO_ARCH = os.environ.get("OLMO_ARCH", "olmo2_1B_v2")
 
 if DATA_SOURCE == "dclm":
@@ -90,15 +91,18 @@ elif DATA_SOURCE == "dolmino":
     _DATA_SOURCES = open(Path(__file__).parent / "data_sources_dolmino.txt").read().strip().splitlines()
 elif DATA_SOURCE == "dolma2_code_string":
     _DATA_SOURCES = open(Path(__file__).parent / "data_sources_dolma2_code_string.txt").read().strip().splitlines()
+elif DATA_SOURCE == "dolma2_150b_code_string":
+    _DATA_SOURCES = open(Path(__file__).parent / "data_sources_dolma2_150b_code_string.txt").read().strip().splitlines()
 elif DATA_SOURCE == "dolmino_code_string":
     _DATA_SOURCES = open(Path(__file__).parent / "data_sources_dolmino_code_string.txt").read().strip().splitlines()
+elif DATA_SOURCE == "tulu3":
+    _DATA_SOURCES = open(Path(__file__).parent / "data_sources_tulu3.txt").read().strip().splitlines()
 else:
     raise ValueError(f"Unknown DATA_SOURCE: {DATA_SOURCE}. Must be one of 'dclm', 'dolmino', 'dolma2_code_string', 'dolmino_code_string'.")
 
-OLMO_CKPT_PATH = os.environ.get(
-    "OLMO_CKPT_PATH",
-    "/weka/oe-training-default/benjaminm/checkpoints/olmo2_1b/model_and_optim",
-)
+OLMO_CKPT_PATH = os.environ.get("OLMO_CKPT_PATH", "")
+STAGE1_CKPT_PATH = os.environ.get("STAGE1_CKPT_PATH", "")
+ENTROPY_CKPT_PATH = os.environ.get("ENTROPY_CKPT_PATH", "/weka/oe-training-default/ai2-llm/checkpoints/dirkg/ladder/checkpoints/baseline-titan-190M-5xC/step36308/model_and_optim")
 DATA_PATHS = ["/weka/oe-training-default/" + x for x in _DATA_SOURCES]
 EMBEDDING_INIT_PATH = os.environ.get(
     "EMBEDDING_INIT_PATH",
@@ -106,9 +110,10 @@ EMBEDDING_INIT_PATH = os.environ.get(
 )
 
 if not os.environ.get("HAS_WEKA"):
-    OLMO_CKPT_PATH = OLMO_CKPT_PATH.replace("/weka/oe-training-default/", "gs://ai2-llm/")
+    OLMO_CKPT_PATH = OLMO_CKPT_PATH.replace("/weka/oe-training-default/ai2-llm/", "gs://ai2-llm/").replace("/weka/oe-training-default/", "gs://ai2-llm/")
+    STAGE1_CKPT_PATH = STAGE1_CKPT_PATH.replace("/weka/oe-training-default/ai2-llm/", "gs://ai2-llm/").replace("/weka/oe-training-default/", "gs://ai2-llm/")
     DATA_PATHS = [x.replace("/weka/oe-training-default/", "gs://") for x in DATA_PATHS] # slight inconsistency
-    EMBEDDING_INIT_PATH = EMBEDDING_INIT_PATH.replace("/weka/oe-training-default/", "gs://ai2-llm/")
+    EMBEDDING_INIT_PATH = EMBEDDING_INIT_PATH.replace("/weka/oe-training-default/ai2-llm/", "gs://ai2-llm/").replace("/weka/oe-training-default/", "gs://ai2-llm/")
 
 log = logging.getLogger(__name__)
 
@@ -123,7 +128,7 @@ class ExperimentConfig(Config):
 
 
 def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
-    global NUM_WORKERS, GLOBAL_BATCH_SIZE, LOCAL_BATCH_SIZE
+    global NUM_WORKERS, GLOBAL_BATCH_SIZE, LOCAL_BATCH_SIZE, EVAL_BATCH_SIZE
 
     BYTE_EXPANSION_FACTOR = int(os.environ.get("BYTE_EXPANSION_FACTOR", "6"))  # default (max) expansion factor
     SAVE_FOLDER = os.environ.get("SAVE_FOLDER", f"/tmp/{run_name}")
@@ -136,8 +141,9 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
 
     if QUICK_DEBUG:
         NUM_WORKERS = 0
-        GLOBAL_BATCH_SIZE = 4
-        LOCAL_BATCH_SIZE = 4
+        GLOBAL_BATCH_SIZE = 2
+        LOCAL_BATCH_SIZE = 2
+        EVAL_BATCH_SIZE = 4
 
     model_style_tags = LOCAL_MODEL_STYLE.split(":")[1:]
     teacher_model_config = getattr(TransformerConfig, OLMO_ARCH)(
@@ -148,11 +154,13 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
 
     if LOCAL_MODEL_STYLE == "blt":
         if OLMO_ARCH == "olmo2_1B_v2":
-            local_d_model = 1024
-        elif OLMO_ARCH == "olmo2_7B":
             local_d_model = 2048
+        elif OLMO_ARCH == "olmo2_7B":
+            local_d_model = 4096
+        elif OLMO_ARCH == "olmo3_7B":
+            local_d_model = 4096
         else:
-            raise ValueError(f"Unknown OLMO_ARCH: {OLMO_ARCH}. Must be one of 'olmo2_1B_v2', 'olmo2_7B'.")
+            raise ValueError(f"Unknown OLMO_ARCH: {OLMO_ARCH}. Must be one of 'olmo2_1B_v2', 'olmo2_7B', 'olmo3_7B'.")
 
         local_encoder_n_layers = 1
         local_decoder_n_layers = 9
@@ -191,8 +199,10 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             local_d_model = 2048
         elif OLMO_ARCH == "olmo2_7B":
             local_d_model = 4096
+        elif OLMO_ARCH == "olmo3_7B":
+            local_d_model = 4096
         else:
-            raise ValueError(f"Unknown OLMO_ARCH: {OLMO_ARCH}. Must be one of 'olmo2_1B_v2', 'olmo2_7B'.")
+            raise ValueError(f"Unknown OLMO_ARCH: {OLMO_ARCH}. Must be one of 'olmo2_1B_v2', 'olmo2_7B', 'olmo3_7B'.")
 
         local_encoder_n_layers = 4
         local_decoder_n_layers = 4
@@ -290,11 +300,10 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         ]
     )
 
-    dataset_config = NumpyDatasetConfig(
+    dataset_config = NumpyByteFSLDatasetConfig(
         paths=DATA_PATHS,
-        name=NumpyDatasetType.byte_fsl,
         sequence_length=SEQUENCE_LENGTH, # subword sequence length
-        max_sequence_length=SEQUENCE_LENGTH * BYTE_EXPANSION_FACTOR, # max. length of the byte sequence
+        byte_sequence_length=SEQUENCE_LENGTH * BYTE_EXPANSION_FACTOR, # max. length of the byte sequence
         tokenizer=byte_tokenizer_config,
         work_dir=os.path.join(SAVE_FOLDER, "data"),
     )
@@ -321,17 +330,14 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         num_threads=None if not QUICK_DEBUG else 0,
     )
 
-    if TRAIN_MODE == "local_encoder_only":
-        losses = ["local_encoder"]
-        loss_weights = [1.0]
-    elif TRAIN_MODE == "local_decoder_only":
-        losses = ["local_decoder","boundary"]
-        loss_weights = [1.0]
-    elif TRAIN_MODE == "full_stage_1":
+    if TRAIN_MODE == "stage_1":
         losses = ["local_encoder", "local_decoder", "boundary"]
         loss_weights = [1.0, 1.0, 1.0]
+    elif TRAIN_MODE == "reverse_stage_1":
+        losses = ["local_decoder", "local_encoder", "teacher_ce"]
+        loss_weights = [1.0, 1.0, 1.0]
     else:
-        raise ValueError(f"Unknown TRAIN_MODE: {TRAIN_MODE}. Must be one of 'local_encoder_only', 'local_decoder_only', 'full_stage_1'.")
+        raise ValueError(f"Unknown TRAIN_MODE: {TRAIN_MODE}. Must be one of 'stage_1', 'reverse_stage_1'.")
 
     if LR_SCHEDULE == "linear_with_warmup":
         scheduler = LinearWithWarmup(warmup_fraction=0.1, alpha_f=0.0)
@@ -341,7 +347,8 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             decay_fraction=0.2,
             decay_kind="inv_sqrt",
             cosine_decay_alpha=10,
-            decay_min_lr=1e-4, # probably best around 10% of peak LR
+            decay_min_lr=None,
+            decay_min_lr_ratio=0.1,
         )
     elif LR_SCHEDULE == "constant":
         scheduler = ConstantScheduler()
@@ -350,7 +357,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
 
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=LOCAL_BATCH_SIZE * SEQUENCE_LENGTH * BYTE_EXPANSION_FACTOR,
-        max_sequence_length=dataset_config.effective_sequence_length,
+        max_sequence_length=dataset_config.byte_sequence_length,
         optim=optim,
         compile_model=True,
         float8_config=Float8Config(enabled=False),
@@ -358,9 +365,9 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             tokenizer=byte_tokenizer_config,
             losses=losses,
             loss_weights=loss_weights,
-            skip_blocks=TRAIN_MODE == "local_encoder_only",
+            skip_blocks=False,
             skip_teacher=False,
-            use_oracle_patch_reps=TRAIN_MODE in {"local_decoder_only", "full_stage_1"},
+            use_oracle_patch_reps=True,
         ),
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
@@ -393,15 +400,14 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             "basic_skills_arithmetic_rc_5shot",
         ]
 
-    all_eval_tasks = []
-    all_eval_names = []
-    all_eval_batch_kwargs = []
+    all_eval_tasks = eval_tasks
+    all_eval_names = [f"downstream" for _ in eval_tasks]
 
-    if TRAIN_MODE == "full_stage_1":
-        all_eval_tasks += eval_tasks
-        all_eval_names += [f"downstream" for _ in eval_tasks]
-        all_eval_batch_kwargs += [{} for _ in eval_tasks]
-        # all_eval_batch_kwargs += [{"eval_mode": "subword"} for _ in eval_tasks]
+    if TRAIN_MODE == "reverse_stage_1":
+        all_eval_batch_kwargs = [{"eval_mode": "teacher"} for _ in eval_tasks]
+    else:
+        all_eval_batch_kwargs = [{} for _ in eval_tasks]
+    # all_eval_batch_kwargs = [{"eval_mode": "subword"} for _ in eval_tasks]
 
     trainer_config = (
         TrainerConfig(
@@ -471,11 +477,23 @@ def main(run_name: str, overrides: List[str]):
     dataset = config.dataset.build()
 
     if train_module.blt_config.gradual_boundary_compression_kind == "bpe":  # type: ignore
-        dataset.enable_compute_bpe_merges()  # type: ignore
+        dataset.enable_compute_merges("bpe")  # type: ignore
+    elif train_module.blt_config.gradual_boundary_compression_kind in {"entropy", "cross_entropy"}:  # type: ignore
+        entropy_model_config = TransformerConfig.olmo2_190M(vocab_size=TokenizerConfig.dolma2().padded_vocab_size(), dtype=DType.bfloat16)
+        entropy_model = entropy_model_config.build(init_device="cpu")
+        load_model_and_optim_state(
+            ENTROPY_CKPT_PATH,
+            entropy_model,
+        )
+        dataset.enable_compute_merges(  # type: ignore
+            train_module.blt_config.gradual_boundary_compression_kind, # type: ignore
+            entropy_model=entropy_model
+        )
 
+    use_byte_collator = isinstance(dataset, NumpyByteFSLDataset) or isinstance(dataset, NumpyBytePaddedFSLDataset)
     data_loader = config.data_loader.build(
         dataset,
-        collator=ByteDataCollator(pad_token_id=dataset.pad_token_id) if isinstance(dataset, NumpyByteFSLDataset) else None,
+        collator=ByteDataCollator(pad_token_id=dataset.pad_token_id) if use_byte_collator else None,
         dp_process_group=train_module.dp_process_group
     )
     trainer = config.trainer.build(train_module, data_loader)
@@ -484,30 +502,44 @@ def main(run_name: str, overrides: List[str]):
     config_dict = config.as_config_dict()
     cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
 
-    # Load OLMo 1B checkpoint.
-    random_init_keys = {"local_encoder", "boundary_predictor", "local_decoder"}
+    if OLMO_CKPT_PATH and not STAGE1_CKPT_PATH:
+        # Load OLMo 1B checkpoint.
+        random_init_keys = {"local_encoder", "boundary_predictor", "local_decoder"}
 
-    key_mapping = {
-        key: None for key in model.state_dict().keys() if any(key.startswith(x) for x in random_init_keys)
-    } | {
-        f"teacher.{key}": key for key in model.teacher.state_dict().keys()  # type: ignore
-    }
+        key_mapping = {
+            key: None for key in model.state_dict().keys() if any(key.startswith(x) for x in random_init_keys)
+        } | {
+            f"teacher.{key}": key for key in model.teacher.state_dict().keys()  # type: ignore
+        }
 
-    incompatible_keys = load_model_and_optim_state(
-        OLMO_CKPT_PATH,
-        model,
-        key_mapping=key_mapping,
-        strict=False
-    )
+        incompatible_keys = load_model_and_optim_state(
+            OLMO_CKPT_PATH,
+            model,
+            key_mapping=key_mapping,
+            strict=False
+        )
 
-    if len(incompatible_keys.unexpected_keys) > 0:
-        raise ValueError(f"Unexpected keys when loading checkpoint: {incompatible_keys.unexpected_keys} (assume we use all teacher weights)")
+        if len(incompatible_keys.unexpected_keys) > 0:
+            raise ValueError(f"Unexpected keys when loading checkpoint: {incompatible_keys.unexpected_keys} (assume we use all teacher weights)")
 
-    for missing_key in incompatible_keys.missing_keys:
-        log.info(f"Key {missing_key} was not found in checkpoint, is randomly initialized (this is expected for local encoder/decoder and student lm head).")
+        for missing_key in incompatible_keys.missing_keys:
+            log.info(f"Key {missing_key} was not found in checkpoint, is randomly initialized (this is expected for local encoder/decoder and student lm head).")
 
-    # init embeddings + scale appropriately
-    model.fix_init(trainer.train_module.blt_config, EMBEDDING_INIT_PATH)  # type: ignore
+        # init embeddings + scale appropriately
+        model.fix_init(trainer.train_module.blt_config, EMBEDDING_INIT_PATH or None)  # type: ignore
+    else:
+        if not OLMO_CKPT_PATH:
+            # Load BOLMo checkpoint. all keys must match.
+            incompatible_keys = load_model_and_optim_state(STAGE1_CKPT_PATH, model)
+        else:
+            key_mapping = {
+                f"teacher.{key}": None for key in model.teacher.state_dict().keys()  # type: ignore
+            } # will be loaded in second call
+            # Load BOLMo checkpoint into student and OLMO checkpoint into teacher.
+            incompatible_keys = load_model_and_optim_state(STAGE1_CKPT_PATH, model, key_mapping=key_mapping, strict=False)  # type: ignore
+            incompatible_keys = load_model_and_optim_state(OLMO_CKPT_PATH, model.teacher, strict=False)  # type: ignore
+
+        log.info(f"{incompatible_keys}")
 
     # TODO(benjaminm): this is not a nice place?
     register_fsdp_forward_method(model, "student_forward")

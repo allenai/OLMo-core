@@ -34,6 +34,7 @@ from olmo_core.float8 import Float8Config
 from olmo_core.utils import get_default_device, mark_dynamic, move_to_device
 from olmo_core.nn.blt.config import BLTConfig
 from olmo_core.nn.functional.cross_entropy_loss import cross_entropy_loss
+from olmo_core.nn.attention import FlashAttention2Backend
 
 from ..attention import (
     Attention,
@@ -1536,7 +1537,7 @@ class BLTDistillTransformer(BLTTransformer):
 
             # Run each block.
             dtype = h_emb.dtype
-            global_dtype = torch.bfloat16 if self.blocks["0"].attention.use_flash else dtype  # type: ignore
+            global_dtype = torch.bfloat16 if isinstance(self.blocks["0"].attention.backend, FlashAttention2Backend) else dtype  # type: ignore
 
             h = h_emb.to(global_dtype)
 
@@ -2031,7 +2032,7 @@ class BLTDistillTransformer(BLTTransformer):
                 )
             else:
                 dtype = h_patch.dtype
-                global_dtype = torch.bfloat16 if self.blocks["0"].attention.use_flash else dtype  # type: ignore
+                global_dtype = torch.bfloat16 if isinstance(self.blocks["0"].attention.backend, FlashAttention2Backend) else dtype  # type: ignore
 
                 h_patch_after_global, student_hidden_states = self._block_forward(
                     h_patch.to(global_dtype),
@@ -2281,7 +2282,7 @@ class BLTDistillTransformer(BLTTransformer):
         )
 
         dtype = h_patch.dtype
-        global_dtype = torch.bfloat16 if self.blocks["0"].attention.use_flash else dtype  # type: ignore
+        global_dtype = torch.bfloat16 if isinstance(self.blocks["0"].attention.backend, FlashAttention2Backend) else dtype  # type: ignore
 
         h_patch_after_global, _ = self._block_forward(h_patch.to(global_dtype), **block_kwargs)
         h_patch_after_global = h_patch_after_global.to(dtype)
@@ -2405,7 +2406,7 @@ class BLTDistillTransformer(BLTTransformer):
         )
 
         dtype = h_patch.dtype
-        global_dtype = torch.bfloat16 if self.blocks["0"].attention.use_flash else dtype  # type: ignore
+        global_dtype = torch.bfloat16 if isinstance(self.blocks["0"].attention.backend, FlashAttention2Backend) else dtype  # type: ignore
 
         h_patch_after_global, _ = self._block_forward(h_patch.to(global_dtype), **block_kwargs)
         h_patch_after_global = h_patch_after_global.to(dtype)
