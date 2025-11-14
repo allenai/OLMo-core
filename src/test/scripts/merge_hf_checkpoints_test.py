@@ -34,7 +34,7 @@ def create_hf_checkpoint_with_seed(
     num_attention_heads: int = 2,
     seed: int = 42,
     dtype: torch.dtype = torch.float32,
-    model_type: str = "gpt2",
+    model_type: str = "olmo3",
 ) -> None:
     """
     Create a minimal HuggingFace checkpoint with a specific random seed for distinct weights.
@@ -62,9 +62,6 @@ def create_hf_checkpoint_with_seed(
         "hidden_size": hidden_size,
         "num_hidden_layers": num_hidden_layers,
         "num_attention_heads": num_attention_heads,
-        "n_embd": hidden_size,  # GPT2 specific
-        "n_layer": num_hidden_layers,  # GPT2 specific
-        "n_head": num_attention_heads,  # GPT2 specific
         "activation_function": "gelu",
         "resid_pdrop": 0.0,
         "embd_pdrop": 0.0,
@@ -421,9 +418,9 @@ def test_config_copied_from_first(tmp_path):
     with open(output / "config.json") as f:
         merged_config = json.load(f)
 
-    # Architecture fields should match (GPT2 uses n_embd instead of hidden_size)
-    assert config1["n_embd"] == merged_config["n_embd"]
-    assert config1["n_layer"] == merged_config["n_layer"]
+    # Architecture fields should match
+    assert config1["hidden_size"] == merged_config["hidden_size"]
+    assert config1["num_hidden_layers"] == merged_config["num_hidden_layers"]
     # Non-architecture field should match first checkpoint
     assert merged_config["initializer_range"] == 0.02  # From first checkpoint
 
