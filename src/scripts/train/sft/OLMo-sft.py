@@ -266,7 +266,7 @@ class SFTConfig(Config):
         workspace: str,
         budget: str,
         model_name: str,
-        init_seed: int = 33333,
+        init_seed: int = 543210,
         dataset_path: Optional[str],
     ) -> "SFTConfig":
         root_dir = get_root_dir(cluster)
