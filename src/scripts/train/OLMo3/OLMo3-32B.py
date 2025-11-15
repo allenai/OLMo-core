@@ -1,13 +1,20 @@
 from datetime import datetime
+from functools import partial
 
 from olmo_core.config import DType
-from olmo_core.data import DataMix
+from olmo_core.data import (
+    DataMix,
+    InstanceFilterConfig,
+    NumpyDataLoaderConfig,
+    NumpyFSLDatasetConfig,
+)
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
 from olmo_core.internal.experiment import (
     CommonComponents,
-    build_common_components,
+    DataComponents,
+    build_config,
     main,
 )
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
@@ -81,6 +88,33 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
     )
 
 
+def build_data_components(
+    common: CommonComponents,
+    intra_document_masking: bool = False,
+    include_instance_filter: bool = True,
+) -> DataComponents:
+    dataset_config = NumpyFSLDatasetConfig.from_data_mix(
+        DataMix.OLMo_mix_0925,
+        tokenizer=common.tokenizer,
+        mix_base_dir=common.root_dir,
+        work_dir=common.work_dir,
+        sequence_length=common.max_sequence_length,
+        max_target_sequence_length=max(common.max_sequence_length, 8192),
+        generate_doc_lengths=intra_document_masking,
+        instance_filter_config=None
+        if not include_instance_filter
+        else InstanceFilterConfig(
+            repetition_max_period=13, repetition_min_period=1, repetition_max_count=32
+        ),
+    )
+
+    data_loader_config = NumpyDataLoaderConfig(
+        global_batch_size=common.global_batch_size, seed=34521, num_workers=8
+    )
+
+    return DataComponents(dataset=dataset_config, data_loader=data_loader_config)
+
+
 def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     cancel_check_interval = 10
 
@@ -140,28 +174,18 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     )
 
 
-def build_common_config(*args, **kwargs):
-    components = build_common_components(*args, **kwargs)
-    components.data_loader.num_workers = 8
-
-    # components.dataset.max_target_sequence_length = 32 * 1024
-    # This setting would be tempting, so that we can seamlessly extend the
-    # context length at the end, but it decreases diversity in the batch.
-
-    components.dataset.mix = DataMix.OLMo_mix_0925
-    return components
-
-
 if __name__ == "__main__":
-    main(
+    config_builder = partial(
+        build_config,
         global_batch_size=GLOBAL_BATCH_SIZE,
-        sequence_length=SEQUENCE_LENGTH,
-        common_config_builder=build_common_config,
+        max_sequence_length=SEQUENCE_LENGTH,
+        data_config_builder=build_data_components,
         model_config_builder=build_model_config,
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
         beaker_image="petew/olmo-core-tch270cu128-2025-05-16",
         include_instance_filter=True,
-        include_default_evals=False,
         flight_recorder=True,
+        include_default_evals=False,
     )
+    main(config_builder=config_builder)
