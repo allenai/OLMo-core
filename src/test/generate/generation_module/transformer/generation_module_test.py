@@ -464,3 +464,189 @@ def test_generation_module_distributed_fsdp(
             attention_mask,
         ),
     )
+
+
+def create_test_checkpoint_for_merging(
+    checkpoint_dir: Path, seed: int, transformer_config: TransformerConfig
+) -> None:
+    """Helper function to create a test checkpoint with a specific seed."""
+    seed_all(seed)
+    model = transformer_config.build()
+    generation_config = GenerationConfig(max_new_tokens=10, pad_token_id=0, eos_token_id=1)
+    generation_module = TransformerGenerationModule(
+        model=model, generation_config=generation_config, device="cpu"
+    )
+    save_model_and_optim_state(checkpoint_dir, generation_module.model)
+
+    # Save config.json so from_checkpoint can load the config
+    import json
+
+    config_path = checkpoint_dir / "config.json"
+    with open(config_path, "w") as f:
+        # from_checkpoint expects the config to be nested under "model" key
+        # and also needs a "dataset" with "tokenizer" config
+        config_dict = {
+            "model": transformer_config.as_dict(),
+            "dataset": {
+                "tokenizer": {
+                    "identifier": "dummy",
+                    "vocab_size": transformer_config.vocab_size,
+                    "eos_token_id": 1,
+                    "pad_token_id": 0,
+                }
+            },
+        }
+        json.dump(config_dict, f)
+
+
+def test_from_checkpoints_single_checkpoint(tmp_path: Path):
+    """Test that from_checkpoints with a single checkpoint behaves like from_checkpoint."""
+    config = small_transformer_config(n_layers=2)
+    checkpoint_dir = tmp_path / "checkpoint"
+    create_test_checkpoint_for_merging(checkpoint_dir, seed=42, transformer_config=config)
+
+    # Load using from_checkpoints with single checkpoint
+    model_merged = TransformerGenerationModule.from_checkpoints([checkpoint_dir], device="cpu")
+
+    # Load using from_checkpoint directly
+    model_direct = TransformerGenerationModule.from_checkpoint(checkpoint_dir, device="cpu")
+
+    # Verify state dicts are identical
+    merged_state = model_merged.model.state_dict()
+    direct_state = model_direct.model.state_dict()
+
+    assert set(merged_state.keys()) == set(direct_state.keys())
+    for key in merged_state.keys():
+        torch.testing.assert_close(merged_state[key], direct_state[key])
+
+
+def test_from_checkpoints_weight_averaging(tmp_path: Path):
+    """Test that weights are correctly averaged across all tensors with proper shape and dtype preservation."""
+    config = small_transformer_config(n_layers=2)
+
+    # Create three checkpoints with different seeds to test averaging
+    checkpoint_dirs = []
+    for i, seed in enumerate([42, 43, 44]):
+        checkpoint_dir = tmp_path / f"checkpoint{i}"
+        create_test_checkpoint_for_merging(checkpoint_dir, seed=seed, transformer_config=config)
+        checkpoint_dirs.append(checkpoint_dir)
+
+    # Load individual models
+    models = [
+        TransformerGenerationModule.from_checkpoint(checkpoint_dir, device="cpu")
+        for checkpoint_dir in checkpoint_dirs
+    ]
+
+    # Merge the checkpoints (without specifying dtype, should default to float32)
+    merged_model = TransformerGenerationModule.from_checkpoints(checkpoint_dirs, device="cpu")
+
+    # Get state dicts
+    state_dicts = [model.model.state_dict() for model in models]
+    merged_state = merged_model.model.state_dict()
+
+    # Verify all keys are present and shapes match
+    assert set(merged_state.keys()) == set(state_dicts[0].keys())
+
+    # Check that all tensors are correctly averaged with proper shapes and dtypes
+    for key in merged_state.keys():
+        # Verify shapes match across all checkpoints and merged model
+        for state_dict in state_dicts:
+            assert state_dict[key].shape == merged_state[key].shape, f"Shape mismatch for {key}"
+
+        # Verify dtype is float32 (default) for floating point tensors
+        if merged_state[key].is_floating_point():
+            assert (
+                merged_state[key].dtype == torch.float32
+            ), f"Expected float32 for {key}, got {merged_state[key].dtype}"
+
+        # Calculate expected average
+        tensors = [state_dict[key].float() for state_dict in state_dicts]
+        expected_avg = torch.stack(tensors).mean(dim=0)
+
+        # Verify the merged weights match the expected average
+        torch.testing.assert_close(
+            merged_state[key].float(),
+            expected_avg,
+            rtol=1e-5,
+            atol=1e-5,
+            msg=f"Weight averaging failed for tensor {key}",
+        )
+
+
+def test_from_checkpoints_with_bfloat16(tmp_path: Path):
+    """Test merging with bfloat16 dtype conversion."""
+    config = small_transformer_config(n_layers=2)
+
+    # Create two checkpoints
+    checkpoint_dir1 = tmp_path / "checkpoint1"
+    checkpoint_dir2 = tmp_path / "checkpoint2"
+    create_test_checkpoint_for_merging(checkpoint_dir1, seed=42, transformer_config=config)
+    create_test_checkpoint_for_merging(checkpoint_dir2, seed=43, transformer_config=config)
+
+    # Merge with bfloat16 dtype
+    merged_model = TransformerGenerationModule.from_checkpoints(
+        [checkpoint_dir1, checkpoint_dir2], dtype=DType.bfloat16, device="cpu"
+    )
+
+    # Check that parameters are bfloat16
+    for param in merged_model.model.parameters():
+        if param.is_floating_point():
+            assert param.dtype == torch.bfloat16
+
+
+def test_from_checkpoints_produces_valid_model(tmp_path: Path):
+    """Test that the merged model produces valid output."""
+    config = small_transformer_config(n_layers=2)
+
+    # Create two checkpoints with different seeds
+    checkpoint_dir1 = tmp_path / "checkpoint1"
+    checkpoint_dir2 = tmp_path / "checkpoint2"
+    create_test_checkpoint_for_merging(checkpoint_dir1, seed=42, transformer_config=config)
+    create_test_checkpoint_for_merging(checkpoint_dir2, seed=43, transformer_config=config)
+
+    # Merge both checkpoints
+    merged_model = TransformerGenerationModule.from_checkpoints(
+        [checkpoint_dir1, checkpoint_dir2], device="cpu"
+    )
+
+    # Verify the merged model can do a forward pass without errors
+    input_ids = torch.randint(0, config.vocab_size, (2, 10), device="cpu")
+    with torch.no_grad():
+        output = merged_model.model(input_ids)
+
+    # Verify output shape and validity
+    assert output.shape == (2, 10, config.vocab_size)
+    assert torch.isfinite(output).all()  # No NaN or Inf values
+
+
+@requires_gpu
+def test_from_checkpoints_can_generate(tmp_path: Path):
+    """Test that the merged model can generate text."""
+    config = small_transformer_config(n_layers=2)
+
+    # Create two checkpoints with different seeds
+    checkpoint_dir1 = tmp_path / "checkpoint1"
+    checkpoint_dir2 = tmp_path / "checkpoint2"
+    create_test_checkpoint_for_merging(checkpoint_dir1, seed=42, transformer_config=config)
+    create_test_checkpoint_for_merging(checkpoint_dir2, seed=43, transformer_config=config)
+
+    # Merge both checkpoints
+    merged_model = TransformerGenerationModule.from_checkpoints(
+        [checkpoint_dir1, checkpoint_dir2], device=torch.device("cuda")
+    )
+
+    # Verify the merged model can generate text
+    input_ids = torch.randint(0, config.vocab_size, (2, 10), device="cuda")
+    gen_output, _, _ = merged_model.generate_batch(input_ids, max_length=15, use_cache=False)
+
+    # Verify generation output
+    assert gen_output.shape[0] == 2  # batch size
+    assert gen_output.shape[1] >= 10  # at least as long as input
+    assert gen_output.shape[1] <= 15  # input length (10) + 5 new tokens
+    assert torch.isfinite(gen_output.float()).all()  # No NaN or Inf
+
+
+def test_from_checkpoints_empty_list_error(tmp_path: Path):
+    """Test that passing an empty checkpoint list raises an error."""
+    with pytest.raises((ValueError, AssertionError, IndexError)):
+        TransformerGenerationModule.from_checkpoints([], device="cpu")
