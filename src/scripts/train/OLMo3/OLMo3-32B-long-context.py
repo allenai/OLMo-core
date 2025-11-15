@@ -98,21 +98,16 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
             ],
         ),
-        compile_model=True,
+        compile_model=False,
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
-            shard_degree=8,
+            shard_degree=1,
         ),
-        ac_config=TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.budget, activation_memory_budget=0.3
-        ),
-        cp_config=TransformerContextParallelConfig.llama3(
-            degree=8,  # 64k tokens per instance -> 8k tokens per device
-            head_stride=4,
-        ),
+        ac_config=None,
+        cp_config=None,
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
@@ -129,11 +124,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             # load_path="gs://ai2-llm/checkpoints/stego32-highlr-filter3/step679000+678000+677000+676000/model_and_optim/",  # TODO: update to actual checkpoint
             # load_path="gs://ai2-llm/checkpoints/stego32-midtraining-run-2-20251105T225302+0000/step23842",  # < best not soup
             # load_path="gs://ai2-llm/checkpoints/stego32-midtraining-run-4/step23842",
-            load_path="gs://ai2-llm/checkpoints/stego32-midtraining-runs-merged-step23842-resharded16",
-            load_strategy=LoadStrategy.always,
             load_trainer_state=False,
-            load_optim_state=True,  # worked when false for soup
-            save_folder=f"gs://ai2-llm/checkpoints/{common.run_name}/",
+            load_optim_state=False,  # worked when false for soup
+            save_folder=f"/weka/oe-training-default/ai2-llm/checkpoints/{common.run_name}/",
             save_overwrite=True,
             metrics_collect_interval=50,
             cancel_check_interval=cancel_check_interval,
@@ -179,7 +172,7 @@ def build_data_components(
     configuration with default settings.
     """
     dataset_config = NumpyPackedFSLDatasetConfig.glob(
-        "gs://ai2-llm/preprocessed/tylerr/lc-reshard-final-cleaned/v0.1/allenai/dolma2-tokenizer/*.npy",
+        "s3://ai2-llm/preprocessed/tylerr/lc-reshard-final-cleaned/v0.1/allenai/dolma2-tokenizer/*.npy",
         tokenizer=common.tokenizer,
         work_dir=common.work_dir,
         sequence_length=common.max_sequence_length,
@@ -221,7 +214,7 @@ if __name__ == "__main__":
         global_batch_size=GLOBAL_BATCH_SIZE,
         max_sequence_length=SEQUENCE_LENGTH,
         data_config_builder=build_data_components,
-        model_config_builder=build_model_config,
+        model_config_builder=None,
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
         beaker_image="petew/olmo-core-tch270cu128-2025-05-16",
