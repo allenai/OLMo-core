@@ -1,4 +1,5 @@
 import logging
+import os
 import sys
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, cast
@@ -36,6 +37,7 @@ from olmo_core.train.callbacks import (
     ProfilerCallback,
     SlackNotifierCallback,
 )
+from olmo_core.train.callbacks.slack_notifier import SLACK_WEBHOOK_URL_ENV_VAR
 from olmo_core.train.train_module import TransformerTrainModuleConfig
 from olmo_core.utils import prepare_cli_environment, seed_all
 
