@@ -49,15 +49,15 @@ build :
 # NOTE: See https://hub.docker.com/r/nvidia/cuda/tags?name=devel-ubuntu22.04 for available CUDA versions.
 CUDA_VERSION = 12.8.1
 CUDA_VERSION_PATH=cu$(shell echo $(CUDA_VERSION) | cut -d"." -f1-2 | tr -d .)
-PYTHON_VERSION = 3.11
-TORCH_VERSION = 2.8.0
+PYTHON_VERSION = 3.12
+TORCH_VERSION = 2.9.0
 TORCH_VERSION_SHORT = $(shell echo $(TORCH_VERSION) | tr -d .)
 INSTALL_CHANNEL = whl
 GROUPED_GEMM_VERSION = "grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@main"
 FLASH_ATTN_VERSION = 2.8.2
 FLASH_ATTN_3_SHA = "fbf24f67cf7f6442c5cfb2c1057f4bfc57e72d89"
 FA3_MAX_JOBS = 32
-TE_VERSION = 2.6.0.post1
+TE_VERSION = 2.9
 RING_FLASH_ATTN_VERSION = 0.1.8
 LIGER_KERNEL_VERSION = 0.6.2
 
