@@ -89,30 +89,31 @@ class OLMoCoreBeakerImage(StrEnum):
     """
     Built with the latest compatible stable version of PyTorch.
     """
-
     stable_cu126 = f"olmo-core-tch{_DEFAULT_TORCH}cu126-2025-09-15"
     """
     The stable image with CUDA pinned to 12.6.
     """
-
     stable_cu128 = f"olmo-core-tch{_DEFAULT_TORCH}cu128-2025-09-15"
     """
     The stable image with CUDA pinned to 12.8.
     """
 
-    tch280_cu128 = "olmo-core-tch280cu128-2025-09-19"
-    """
-    Built with torch 2.8.0 and CUDA 12.8.
-    """
-
+    # Sorted roughly from newest versions to oldest versions
     tch280_cu129 = "olmo-core-tch280cu129-2025-09-23"
     """
     Built with torch 2.8.0 and CUDA 12.9.
     """
-
-    flash_attn_3 = "tylerr/olmo-core-tch270cu128-2025-09-24"
+    tch280_cu128 = "olmo-core-tch280cu128-2025-09-19"
     """
-    Built flash-attn 3 (beta release) with torch 2.7.0 and CUDA 12.8.
+    Built with torch 2.8.0 and CUDA 12.8.
+    """
+    tch270_cu128 = "olmo-core-tch270cu128-2025-05-16"
+    """
+    Built with torch 2.7.0 and CUDA 12.8.
+    """
+    tch270_cu128_fa3 = "tylerr/olmo-core-tch270cu128-2025-09-24"
+    """
+    Built with torch 2.7.0 and CUDA 12.8 and flash-attn 3 (beta release)
     """
 
 

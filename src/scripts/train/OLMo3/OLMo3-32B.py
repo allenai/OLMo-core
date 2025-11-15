@@ -17,6 +17,7 @@ from olmo_core.internal.experiment import (
     build_config,
     main,
 )
+from olmo_core.launch.beaker import OLMoCoreBeakerImage
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.transformer import (
     TransformerActivationCheckpointingMode,
@@ -183,7 +184,7 @@ if __name__ == "__main__":
         model_config_builder=build_model_config,
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
-        beaker_image="petew/olmo-core-tch270cu128-2025-05-16",
+        beaker_image=OLMoCoreBeakerImage.tch270_cu128,
         include_instance_filter=True,
         flight_recorder=True,
         include_default_evals=False,
