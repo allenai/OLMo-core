@@ -155,7 +155,8 @@ def checkpoint_has_optimizer_state(checkpoint_dir: Path) -> bool:
 def run_reshard_cli(
     input_path: str, output_path: str, num_processes: int = 1, skip_optimizer: bool = False
 ) -> None:
-    """Run the reshard script as a subprocess to avoid fork() issues in pytest."""
+    """Run the reshard script as a subprocess. The reshard script forks itself to create a process group.
+    This interferes with PyTorch global stuff if you call it normally."""
     args = [
         sys.executable,
         str(RESHARD_SCRIPT),
