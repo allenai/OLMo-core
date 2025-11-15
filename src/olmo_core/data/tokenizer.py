@@ -92,6 +92,18 @@ class TokenizerConfig(Config):
         )
 
     @classmethod
+    def typhoon(cls) -> "TokenizerConfig":
+        """
+        Get a :data:`~TokenizerName.typhoon` tokenizer config.
+        """
+        return cls(
+            vocab_size=35219,
+            eos_token_id=2,
+            pad_token_id=0,
+            identifier="scb10x/typhoon-7b",
+        )
+
+    @classmethod
     def dolma2_sigdig(cls) -> "TokenizerConfig":
         """
         Get a :data:`~TokenizerName.dolma2_sigdig` tokenizer config.

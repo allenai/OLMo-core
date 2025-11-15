@@ -37,6 +37,8 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
         "SAVE_FOLDER",
         "BYTE_EXPANSION_FACTOR",
         "LOCAL_MODEL_STYLE",
+        "MODEL_STYLE",
+        "LOCAL_MODEL_BLOCKS",
         "LR_SCHEDULE",
         "TOKEN_NOISE_STR",
         "ADD_HASH_EMBEDDINGS",
@@ -44,6 +46,9 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
         "TEACHER_MODE",
         "GLOBAL_MODEL_LEARNING_RATE",
         "NUM_WORKERS",
+        "PREFILL_LENGTH",
+        "GENERATE_LENGTH",
+        "N_BATCHES",
     ]:
         if transparent_env_var in os.environ:
             env_vars.append(BeakerEnvVar(name=transparent_env_var, value=os.environ[transparent_env_var]))
@@ -97,8 +102,10 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
         launch_script = "src/examples/blt/train_baseline.py"
     elif stage == "compute_entropies":
         launch_script = "src/examples/blt/compute_entropies.py"
+    elif stage == "benchmark_generation":
+        launch_script = "src/examples/blt/benchmark_generation.py"
     else:
-        raise ValueError(f"Unknown stage: {stage}. Must be 'stage1', 'stage2', 'baseline' or 'compute_entropies'.")
+        raise ValueError(f"Unknown stage: {stage}. Must be 'stage1', 'stage2', 'baseline', 'compute_entropies' or 'benchmark_generation'.")
 
     beaker_username = get_beaker_username()
 

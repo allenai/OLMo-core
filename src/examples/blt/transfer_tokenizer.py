@@ -36,7 +36,7 @@ from olmo_core.distributed.utils import (
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.io import copy_file, join_path, normalize_path
 from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.utils import seed_all, get_default_device
+from olmo_core.utils import seed_all
 from deepfocus import FOCUS
 
 
@@ -73,8 +73,8 @@ def parse_args():
     )
     parser.add_argument(
         "--device",
-        type=str,
-        default="cpu",
+        type=torch.device,
+        default=torch.device("cpu"),
         help="Device to use for transfer (cpu/cuda)",
     )
     parser.add_argument(
@@ -113,7 +113,7 @@ def _load_state_dict(checkpoint_dir, model):
     return incompatible_keys
 
 
-def _load_model(checkpoint_dir, **kwargs):
+def _load_model(checkpoint_dir, device, **kwargs):
     if get_rank() == 0:
         transformer_config, tokenizer_config, config_dict = _load_config(checkpoint_dir)
     else:
@@ -135,7 +135,7 @@ def _load_model(checkpoint_dir, **kwargs):
     model = parallelize_model(
         model,
         world_mesh=world_mesh,
-        device=get_default_device(),
+        device=device,
         rank_microbatch_size=1,
         compile_model=True,
         **kwargs,
@@ -145,7 +145,7 @@ def _load_model(checkpoint_dir, **kwargs):
 
     return transformer_config, tokenizer_config, config_dict, model
 
-def _load_target_model(source_transformer_config, target_tokenizer_config, **kwargs):
+def _load_target_model(source_transformer_config, target_tokenizer_config, device, **kwargs):
     """Build target model with new vocabulary size."""
     target_transformer_config = source_transformer_config.replace(
         vocab_size=target_tokenizer_config.padded_vocab_size()
@@ -160,7 +160,7 @@ def _load_target_model(source_transformer_config, target_tokenizer_config, **kwa
     target_model = parallelize_model(
         target_model,
         world_mesh=world_mesh,
-        device=get_default_device(),
+        device=device,
         rank_microbatch_size=1,
         compile_model=False,
         **kwargs,
@@ -173,13 +173,12 @@ def main():
     seed_all(0)
     args = parse_args()
 
-    device = torch.device(args.device)
     checkpoint_dir = normalize_path(args.checkpoint_dir)
     output = normalize_path(args.output)
 
     log.info(f"Loading source model from {checkpoint_dir}")
 
-    transformer_config, tokenizer_config, config_dict, source_model = _load_model(checkpoint_dir, max_sequence_length=args.max_sequence_length)
+    transformer_config, tokenizer_config, config_dict, source_model = _load_model(checkpoint_dir, args.device, max_sequence_length=args.max_sequence_length)
 
     # Load source and target tokenizers
     log.info(f"Loading source tokenizer: {tokenizer_config.identifier}")
@@ -204,7 +203,7 @@ def main():
         target_tokenizer=target_tokenizer,
         auxiliary_embedding_mode="fasttext-wordlevel",
         language_identifier=args.target_language_code,
-        device=source_input_embeddings.device,
+        device=args.device,
     )
     target_output_embeddings = FOCUS(
         source_embeddings=source_output_embeddings,
@@ -220,6 +219,7 @@ def main():
     target_transformer_config, target_model = _load_target_model(
         transformer_config,
         target_tokenizer_config,
+        args.device,
         max_sequence_length=args.max_sequence_length,
     )
 

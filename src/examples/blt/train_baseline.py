@@ -56,6 +56,7 @@ LOCAL_BATCH_SIZE = 64
 EVAL_BATCH_SIZE = 16
 DATA_SOURCE = os.environ.get("DATA_SOURCE", "dclm")
 OLMO_ARCH = os.environ.get("OLMO_ARCH", "olmo2_1B_v2")
+TOKENIZER = os.environ.get("TOKENIZER", "dolma2")
 
 if DATA_SOURCE == "dclm":
     _DATA_SOURCES = open(Path(__file__).parent / "data_sources.txt").read().strip().splitlines()
@@ -69,6 +70,10 @@ elif DATA_SOURCE == "dolmino_code_string":
     _DATA_SOURCES = open(Path(__file__).parent / "data_sources_dolmino_code_string.txt").read().strip().splitlines()
 elif DATA_SOURCE == "tulu3":
     _DATA_SOURCES = open(Path(__file__).parent / "data_sources_tulu3.txt").read().strip().splitlines()
+elif DATA_SOURCE == "fineweb2_thai_sample":
+    _DATA_SOURCES = open(Path(__file__).parent / "data_sources_fineweb2_thai_sample.txt").read().strip().splitlines()
+elif DATA_SOURCE == "fineweb2_thai_sample_typhoon_tokenized":
+    _DATA_SOURCES = open(Path(__file__).parent / "data_sources_fineweb2_thai_sample_typhoon_tokenized.txt").read().strip().splitlines()
 else:
     raise ValueError(f"Unknown DATA_SOURCE: {DATA_SOURCE}. Must be one of 'dclm', 'dolmino', 'dolma2_code_string', 'dolmino_code_string'.")
 
@@ -109,7 +114,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         GLOBAL_BATCH_SIZE = 4
         LOCAL_BATCH_SIZE = 4
 
-    tokenizer_config = TokenizerConfig.dolma2()
+    tokenizer_config = getattr(TokenizerConfig, TOKENIZER)()
     model_config = getattr(TransformerConfig, OLMO_ARCH)(
         vocab_size=tokenizer_config.padded_vocab_size(),
     )
