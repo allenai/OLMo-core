@@ -1,7 +1,7 @@
 """
 Utilities for converting models between OLMo Core and Hugging Face formats. To configure the
 mappings between OLMo Core and Hugging Face, you may change the variables in
-:mod:`olmo_core.nn.hf.convert` (e.g. :data:`olmo_core.nn.hf.convert.HF_TO_OLMO_CORE_MAPPINGS`).
+:mod:`olmo_core.nn.hf.convert` (e.g. :data:`olmo_core.nn.hf.convert.HF_TO_OLMO_CORE_WEIGHT_MAPPINGS`).
 """
 
 from .checkpoint import load_hf_model, save_hf_model

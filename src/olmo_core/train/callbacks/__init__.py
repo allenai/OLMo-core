@@ -14,8 +14,11 @@ from .evaluator_callback import (
     EvaluatorCallback,
     LMEvaluatorCallbackConfig,
 )
+from .gap_monitor import GAPMonitorCallback
 from .garbage_collector import GarbageCollectorCallback
 from .gpu_memory_monitor import GPUMemoryMonitorCallback
+from .list_checkpointer import ListCheckpointerCallback
+from .monkey_patcher import MonkeyPatcherCallback
 from .profiler import ProfilerCallback
 from .sequence_length_scheduler import SequenceLengthSchedulerCallback
 from .slack_notifier import SlackNotificationSetting, SlackNotifierCallback
@@ -34,6 +37,7 @@ __all__ = [
     "EvaluatorCallback",
     "LMEvaluatorCallbackConfig",
     "DownstreamEvaluatorCallbackConfig",
+    "GAPMonitorCallback",
     "GarbageCollectorCallback",
     "GPUMemoryMonitorCallback",
     "ProfilerCallback",
@@ -44,6 +48,8 @@ __all__ = [
     "WandBCallback",
     "BeakerCallback",
     "BatchSizeSchedulerCallback",
+    "MonkeyPatcherCallback",
+    "ListCheckpointerCallback",
 ]
 
 __doc__ += "\n"

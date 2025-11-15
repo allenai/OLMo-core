@@ -284,7 +284,7 @@ def main():
     parser.add_argument(
         "--cluster",
         type=str,
-        default="ai2/augusta-google-1",
+        default="ai2/augusta",
         help="The beaker cluster. This defaults to and is assumed to be Augusta for now.",
     )
 

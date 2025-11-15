@@ -4,13 +4,13 @@ ARG CUDA_VERSION=12.8.1
 ARG CUDA_VERSION_PATH=cu128
 ARG PYTHON_VERSION=3.11
 ARG BASE_IMAGE=ubuntu:${UBUNTU_VERSION}
-ARG DEVEL_BASE_IMAGE=nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION}
+ARG DEVEL_BASE_IMAGE=nvidia/cuda:${CUDA_VERSION}-cudnn-devel-ubuntu${UBUNTU_VERSION}
 
 #########################################################################
 # Build image
 #########################################################################
 
-FROM ${DEVEL_BASE_IMAGE} as build
+FROM ${DEVEL_BASE_IMAGE} AS build
 
 WORKDIR /app/build
 
@@ -31,7 +31,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 # Install miniconda, Python, and Python build dependencies.
 ARG TARGET_PLATFORM
 ARG PYTHON_VERSION
-ENV PATH /opt/conda/bin:$PATH
+ENV PATH=/opt/conda/bin:$PATH
 RUN curl -fsSL -v -o ~/miniconda.sh -O  "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-${TARGET_PLATFORM}.sh"
 # NOTE: Manually invoke bash on miniconda script per https://github.com/conda/conda/issues/10431
 RUN chmod +x ~/miniconda.sh && \
@@ -43,12 +43,12 @@ RUN chmod +x ~/miniconda.sh && \
 
 # Install PyTorch core ecosystem.
 ARG CUDA_VERSION_PATH
-ARG TORCH_VERSION=2.7.1
+ARG TORCH_VERSION=2.8.0
 ARG INSTALL_CHANNEL=whl
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/${INSTALL_CHANNEL}/${CUDA_VERSION_PATH}/ \
     torch==${TORCH_VERSION} torchao torchvision torchaudio
 
-ENV TORCH_CUDA_ARCH_LIST="8.0 9.0"
+ENV TORCH_CUDA_ARCH_LIST="8.0 9.0 10.0"
 
 # Install grouped-gemm.
 # NOTE: right now we need to build with CUTLASS so we can pass batch sizes on GPU.
@@ -57,12 +57,28 @@ ENV GROUPED_GEMM_CUTLASS="1"
 ARG GROUPED_GEMM_VERSION="grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@main"
 RUN pip install --no-build-isolation --no-cache-dir "${GROUPED_GEMM_VERSION}"
 
-# Install flash-attn.
-ARG FLASH_ATTN_VERSION=2.7.4.post1
+# Install flash-attn 2
+ARG FLASH_ATTN_VERSION=2.8.2
 RUN pip install --no-build-isolation --no-cache-dir flash-attn==${FLASH_ATTN_VERSION}
 
+# Install flash-attn 3
+ARG FLASH_ATTN_3_SHA="1ceaa984b2f348caea18b39a98458d33b4ea7a09"
+RUN git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com/Dao-AILab/flash-attention.git && \
+    cd flash-attention && \
+    git fetch --depth 1 origin ${FLASH_ATTN_3_SHA} && \
+    git checkout ${FLASH_ATTN_3_SHA} && \
+    git submodule update --init --depth 1 && \
+    cd hopper && \
+    FLASH_ATTENTION_DISABLE_FP16=TRUE python setup.py install && \
+    cd /app/build && \
+    rm -rf flash-attention
+
+# Install transformer-engine.
+ARG TE_VERSION=2.6.0.post1
+RUN pip install --no-build-isolation --no-cache-dir transformer-engine[pytorch]==${TE_VERSION}
+
 # Install ring-flash-attn.
-ARG RING_FLASH_ATTN_VERSION=0.1.5
+ARG RING_FLASH_ATTN_VERSION=0.1.8
 RUN pip install --no-build-isolation --no-cache-dir ring-flash-attn==${RING_FLASH_ATTN_VERSION}
 
 # Install liger-kernel.
@@ -81,7 +97,7 @@ RUN pip install --no-cache-dir '.[all]' && \
 # Release image
 #########################################################################
 
-FROM ${BASE_IMAGE} as release
+FROM ${BASE_IMAGE} AS release
 
 # Install system dependencies.
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -111,11 +127,11 @@ RUN wget --quiet https://content.mellanox.com/ofed/MLNX_OFED-${MOFED_VER}/MLNX_O
 # Copy conda environment.
 COPY --from=build /opt/conda /opt/conda
 
-ENV PATH /opt/conda/bin:$PATH
-ENV NVIDIA_VISIBLE_DEVICES all
-ENV NVIDIA_DRIVER_CAPABILITIES compute,utility
-ENV LD_LIBRARY_PATH /usr/local/nvidia/lib:/usr/local/nvidia/lib64
-ENV PATH /usr/local/nvidia/bin:/usr/local/cuda/bin:$PATH
+ENV PATH=/opt/conda/bin:$PATH
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
+ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
+ENV PATH=/usr/local/nvidia/bin:/usr/local/cuda/bin:$PATH
 
-LABEL org.opencontainers.image.source https://github.com/allenai/OLMo-core
+LABEL org.opencontainers.image.source=https://github.com/allenai/OLMo-core
 WORKDIR /app/olmo-core

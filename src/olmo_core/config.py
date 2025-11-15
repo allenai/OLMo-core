@@ -16,6 +16,7 @@ from typing import (
 )
 
 import torch
+import yaml
 from cached_path import cached_path
 from omegaconf import OmegaConf as om
 from omegaconf.errors import OmegaConfBaseException
@@ -272,8 +273,24 @@ class Config:
 
     @classmethod
     def from_file(cls: Type[C], path: PathOrStr, overrides: Optional[List[str]] = None) -> C:
+        path_str = str(path)
+        if path_str.endswith((".yml", ".yaml")):
+            return cls.from_yaml(path, overrides=overrides)
+        elif path_str.endswith(".json"):
+            return cls.from_json(path, overrides=overrides)
+        else:
+            raise OLMoConfigurationError(f"Unsupported config file type: {path}")
+
+    @classmethod
+    def from_json(cls: Type[C], path: PathOrStr, overrides: Optional[List[str]] = None) -> C:
         with cached_path(path).open() as f:
             config_dict = json.load(f)
+        return cls.from_dict(config_dict, overrides=overrides)
+
+    @classmethod
+    def from_yaml(cls: Type[C], path: PathOrStr, overrides: Optional[List[str]] = None) -> C:
+        with cached_path(path).open() as f:
+            config_dict = yaml.safe_load(f)
         return cls.from_dict(config_dict, overrides=overrides)
 
 

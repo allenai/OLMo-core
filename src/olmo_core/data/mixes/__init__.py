@@ -38,8 +38,31 @@ class DataMix(DataMixBase):
     OLMoE_mix_0824 = "OLMoE-mix-0824"
     dolma17 = "dolma17"
     v3_small_ppl_validation = "v3-small-ppl-validation"
+    OLMo_mix_0625_150Bsample = "OLMo-mix-0625-150Bsample"
+    OLMo_mix_0625_700Bsample = "OLMo-mix-0625-700Bsample"
     OLMo_mix_0625 = "OLMo-mix-0625"
+    OLMo_mix_0625_official = "OLMo-mix-0625-official"
     OLMo_mix_0925 = "OLMo-mix-0925"
+    OLMo_midtraining_mix_1025_100B = "OLMo-midtraining-mix-1025-100B"
+
+    @classmethod
+    def _missing_(cls, value: object) -> "DataMix | None":
+        """Handle alias lookups."""
+        # Aliases mapping
+        aliases = {
+            "dolma3-0625-6T-mix": "OLMo-mix-0625",
+            "dolma3-0925-6T-mix": "OLMo-mix-0925",
+            "dolma3-0925-150B-mix": "OLMo-mix-0625-150Bsample",
+        }
+
+        # Check if the value is an alias
+        if isinstance(value, str) and value in aliases:
+            # Look up the real value and return the corresponding enum member
+            real_value = aliases[value]
+            for member in cls:
+                if member.value == real_value:
+                    return member
+        return None
 
     def build(self, base_dir: str, tokenizer: str) -> Tuple[List[str], List[str]]:
         if not base_dir.endswith("/"):
@@ -54,6 +77,9 @@ class DataMix(DataMixBase):
         elif self == DataMix.OLMo_mix_0625:
             if tokenizer == TokenizerName.dolma2_sigdig:
                 tokenizer_id = "dolma2-tokenizer-sigdig"
+        elif self in [DataMix.OLMo_mix_0625_official, DataMix.OLMo_midtraining_mix_1025_100B]:
+            if tokenizer == TokenizerName.dolma2:
+                tokenizer_id = "allenai/dolma3-tokenizer"
         elif tokenizer == TokenizerName.gpt_neox_olmo_dolma_v1_5:
             tokenizer_id = "gpt-neox-olmo-dolma-v1_5"
 
@@ -67,7 +93,7 @@ class DataMix(DataMixBase):
                         continue
                     label, path = line.split(",")
                     if "{TOKENIZER}" not in path:
-                        raise ValueError(f"line {line_num+1} in data mix '{self}' is invalid")
+                        raise ValueError(f"line {line_num + 1} in data mix '{self}' is invalid")
                     path = path.replace("{TOKENIZER}", tokenizer_id)
                     paths.append(f"{base_dir}{path}")
                     labels.append(label)

@@ -40,7 +40,7 @@ class GarbageCollectorCallback(Callback):
                 log.info("Running garbage collection")
             gc.collect(1)
 
-    def post_train(self):
+    def close(self):
         if not self.enabled:
             return
         if self._start_state:

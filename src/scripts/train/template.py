@@ -9,12 +9,8 @@ from dataclasses import dataclass
 from typing import List, Optional, cast
 
 from olmo_core.config import Config, DType
-from olmo_core.data import (
-    NumpyDataLoaderConfig,
-    NumpyDatasetConfig,
-    NumpyDatasetType,
-    TokenizerConfig,
-)
+from olmo_core.data import NumpyDataLoaderConfig, NumpyFSLDatasetConfig, TokenizerConfig
+from olmo_core.data.numpy_dataset import NumpyDatasetConfig
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.internal.common import (
     build_launch_config,
@@ -71,7 +67,7 @@ MODEL_CONFIG = TransformerConfig.olmo2_1B(vocab_size=TOKENIZER_CONFIG.padded_voc
 LEARNING_RATE = 4e-4
 
 # Beaker.
-BEAKER_CLUSTER = "ai2/jupiter-cirrascale-2"
+BEAKER_CLUSTER = "ai2/jupiter"
 NUM_NODES = 1
 BEAKER_WORKSPACE = "ai2/OLMo-core"
 BEAKER_BUDGET = "ai2/oe-base"
@@ -104,9 +100,8 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
     beaker_user = get_beaker_username()
     assert beaker_user is not None
 
-    dataset_config = NumpyDatasetConfig(
+    dataset_config = NumpyFSLDatasetConfig(
         paths=DATA_PATHS,
-        name=NumpyDatasetType.fsl,
         sequence_length=SEQUENCE_LENGTH,
         tokenizer=TOKENIZER_CONFIG,
         work_dir=work_dir,
@@ -121,7 +116,7 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
 
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=16 * SEQUENCE_LENGTH,
-        max_sequence_length=dataset_config.effective_sequence_length,
+        max_sequence_length=SEQUENCE_LENGTH,
         optim=AdamWConfig(
             lr=LEARNING_RATE,
             weight_decay=0.1,
@@ -265,10 +260,8 @@ Launch the training run locally (e.g. in a Beaker interactive session):
     log.info(config)
 
     if cmd == "train":
-        try:
-            train(config)
-        finally:
-            teardown_training_environment()
+        train(config)
+        teardown_training_environment()
     elif cmd == "launch":
         launch(config)
     elif cmd == "dry_run":

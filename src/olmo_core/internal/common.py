@@ -21,6 +21,10 @@ from olmo_core.utils import generate_uuid
 
 log = logging.getLogger(__name__)
 
+GOOGLE_CLUSTERS = [
+    "ai2/augusta",
+]
+
 
 @lru_cache()
 def get_beaker_client() -> Optional[Beaker]:
@@ -70,7 +74,6 @@ def _to_beaker_env_secret(
 
 
 def get_root_dir(cluster: str) -> str:
-    root_dir: str = "weka://oe-training-default/ai2-llm"
     if cluster in [
         "ai2/test-h100",
         "ai2/jupiter",
@@ -81,12 +84,12 @@ def get_root_dir(cluster: str) -> str:
         "ai2/rhea",
         "ai2/phobos",
     ]:
-        root_dir = "/weka/oe-training-default/ai2-llm"
-    elif cluster == "ai2/augusta":
-        root_dir = "gs://ai2-llm"
+        return "/weka/oe-training-default/ai2-llm"
+    elif cluster in GOOGLE_CLUSTERS:
+        return "gs://ai2-llm"
     elif "local" in cluster:
-        root_dir = "gs://ai2-llm"
-    return root_dir
+        return "gs://ai2-llm"
+    raise OLMoConfigurationError(f"Unknown cluster: {cluster}")
 
 
 def get_work_dir(root_dir: str) -> str:
@@ -101,9 +104,9 @@ def get_work_dir(root_dir: str) -> str:
 def build_launch_config(
     *,
     name: str,
-    root_dir: str,
     cmd: List[str],
     cluster: str,
+    root_dir: Optional[str] = None,
     task_name: str = "train",
     workspace: str = "ai2/OLMo-core",
     budget: str = "ai2/oe-base",
@@ -115,6 +118,15 @@ def build_launch_config(
     num_execution_units: Optional[int] = None,
 ) -> BeakerLaunchConfig:
     weka_buckets: List[BeakerWekaBucket] = []
+
+    default_root_dir = get_root_dir(cluster)
+    if root_dir is None:
+        root_dir = default_root_dir
+    elif root_dir != default_root_dir:
+        log.warning(
+            f"Overriding default root_dir for {cluster=} to {root_dir} ({default_root_dir=})."
+        )
+
     if root_dir.startswith("/weka/"):
         weka_buckets.append(BeakerWekaBucket("oe-training-default", "/weka/oe-training-default"))
 
@@ -131,7 +143,7 @@ def build_launch_config(
             required=False,
             workspace=workspace,
         )
-        if "google" not in cluster
+        if cluster not in GOOGLE_CLUSTERS
         else None
     )
     env_secrets = [
@@ -241,11 +253,10 @@ def build_launch_config(
 
 
 CLUSTER_TO_GPU_TYPE = {
-    "ai2/jupiter-cirrascale-2": "NVIDIA H100 80GB HBM3",
-    "ai2/test-h100": "NVIDIA H100 80GB HBM3",
-    "ai2/pluto-cirrascale": "NVIDIA H100",
-    "ai2/augusta-google-1": "NVIDIA H100",
-    "ai2/titan-cirrascale": "NVIDIA B200",
+    "ai2/jupiter": "NVIDIA H100 80GB HBM3",
+    "ai2/augusta": "NVIDIA H100 80GB HBM3",
+    "ai2/ceres": "NVIDIA H100 80GB HBM3",
+    "ai2/titan": "NVIDIA B200",
 }
 
 
