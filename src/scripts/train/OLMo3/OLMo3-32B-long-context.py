@@ -65,7 +65,7 @@ LR = 0.0002071235285  # same as midtraining
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
-    config = TransformerConfig.olmo2_32B(vocab_size=common.tokenizer.padded_vocab_size())
+    config = TransformerConfig.olmo2_1B(vocab_size=common.tokenizer.padded_vocab_size())
     config.block.attention.sliding_window = SlidingWindowAttentionConfig(
         force_full_attention_on_first_layer=False,
         force_full_attention_on_last_layer=True,
@@ -214,7 +214,7 @@ if __name__ == "__main__":
         global_batch_size=GLOBAL_BATCH_SIZE,
         max_sequence_length=SEQUENCE_LENGTH,
         data_config_builder=build_data_components,
-        model_config_builder=None,
+        model_config_builder=build_model_config,
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
         beaker_image="petew/olmo-core-tch270cu128-2025-05-16",
