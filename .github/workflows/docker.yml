@@ -76,7 +76,7 @@ jobs:
             CUDA_VERSION=${{ matrix.cuda }} \
             TORCH_VERSION=${{ matrix.torch.version }} \
             INSTALL_CHANNEL=${{ matrix.torch.channel }} \
-            FA3_MAX_JOBS=2
+            FA3_MAX_JOBS=4
 
       - name: Push to GHCR
         if: startsWith(github.ref, 'refs/tags/')
@@ -86,7 +86,7 @@ jobs:
             CUDA_VERSION=${{ matrix.cuda }} \
             TORCH_VERSION=${{ matrix.torch.version }} \
             INSTALL_CHANNEL=${{ matrix.torch.channel }} \
-            FA3_MAX_JOBS=2
+            FA3_MAX_JOBS=4
 
       - name: Push to Beaker
         if: env.BEAKER_TOKEN != '' && startsWith(github.ref, 'refs/tags/')
@@ -95,4 +95,4 @@ jobs:
             CUDA_VERSION=${{ matrix.cuda }} \
             TORCH_VERSION=${{ matrix.torch.version }} \
             INSTALL_CHANNEL=${{ matrix.torch.channel }} \
-            FA3_MAX_JOBS=2
+            FA3_MAX_JOBS=4
