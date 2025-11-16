@@ -53,12 +53,18 @@ elif DATA_SOURCE == "dolmino":
     _DATA_SOURCES = open(Path(__file__).parent / "data_sources_dolmino.txt").read().strip().splitlines()
 elif DATA_SOURCE == "dolma2_code_string":
     _DATA_SOURCES = open(Path(__file__).parent / "data_sources_dolma2_code_string.txt").read().strip().splitlines()
+elif DATA_SOURCE == "dolma2_150b_code_string":
+    _DATA_SOURCES = open(Path(__file__).parent / "data_sources_dolma2_150b_code_string.txt").read().strip().splitlines()
 elif DATA_SOURCE == "dolmino_code_string":
     _DATA_SOURCES = open(Path(__file__).parent / "data_sources_dolmino_code_string.txt").read().strip().splitlines()
 elif DATA_SOURCE == "tulu3":
     _DATA_SOURCES = open(Path(__file__).parent / "data_sources_tulu3.txt").read().strip().splitlines()
+elif DATA_SOURCE == "fineweb2_thai_sample":
+    _DATA_SOURCES = open(Path(__file__).parent / "data_sources_fineweb2_thai_sample.txt").read().strip().splitlines()
+elif DATA_SOURCE == "fineweb2_thai_sample_typhoon_tokenized":
+    _DATA_SOURCES = open(Path(__file__).parent / "data_sources_fineweb2_thai_sample_typhoon_tokenized.txt").read().strip().splitlines()
 else:
-    raise ValueError(f"Unknown DATA_SOURCE: {DATA_SOURCE}. Must be one of 'dclm', 'dolmino', 'dolma2_code_string', 'dolmino_code_string', 'tulu3'.")
+    raise ValueError(f"Unknown DATA_SOURCE: {DATA_SOURCE}. Must be one of 'dclm', 'dolmino', 'dolma2_code_string', 'dolmino_code_string'.")
 
 DATA_PATHS = ["/weka/oe-training-default/" + x for x in _DATA_SOURCES]
 
