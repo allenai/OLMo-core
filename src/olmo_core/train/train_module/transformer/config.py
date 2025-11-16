@@ -27,7 +27,6 @@ from olmo_core.nn.transformer import (
     TransformerActivationCheckpointingMode,
     TransformerDataParallelWrappingStrategy,
 )
-from .train_module import TransformerTrainModule
 from olmo_core.optim import OptimConfig, SkipStepOptimizer
 from olmo_core.optim.scheduler import Scheduler
 from olmo_core.train.common import ReduceType
@@ -35,9 +34,9 @@ from olmo_core.utils import move_to_device
 
 from torch.distributed.tensor import DTensor, distribute_tensor
 
-if TYPE_CHECKING:
+if TYPE_CHECKING or True:
     from .pipeline_train_module import TransformerPipelineTrainModule
-    # from .train_module import TransformerTrainModule
+    from .train_module import TransformerTrainModule
 
 log = logging.getLogger(__name__)
 
