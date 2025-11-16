@@ -34,9 +34,9 @@ from olmo_core.utils import move_to_device
 
 from torch.distributed.tensor import DTensor, distribute_tensor
 
-if TYPE_CHECKING or True:
+from .train_module import TransformerTrainModule
+if TYPE_CHECKING:
     from .pipeline_train_module import TransformerPipelineTrainModule
-    from .train_module import TransformerTrainModule
 
 log = logging.getLogger(__name__)
 
