@@ -31,6 +31,10 @@ from olmo_core.nn.moe.router import (
     _uniform_expert_assignment,
 )
 
+from olmo_core.nn.moe.router import (
+    MoELinearRouter,
+)
+
 if TYPE_CHECKING:
     from .block import TransformerBlockBase
     from .model import Transformer
