@@ -37,7 +37,7 @@ from olmo_core.utils import get_default_device
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 log = logging.getLogger(__name__)
 
-OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", "benchmark_outputs"))
+SAVE_FOLDER = Path(os.environ.get("SAVE_FOLDER", "/tmp/benchmark_outputs"))
 MODEL_STYLE = os.environ.get("MODEL_STYLE", "hnet") # or baseline
 LOCAL_MODEL_BLOCKS = os.environ.get("LOCAL_MODEL_BLOCKS", "xlstm") # or mamba2 or xlstm_no_ffn
 DTYPE = os.environ.get("DTYPE", "bfloat16")
@@ -210,8 +210,11 @@ def main(run_name: str, overrides: list[str]):
         )
         all_timings.append(timings)
 
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    with open(OUTPUT_DIR / f"{run_name}_generation_benchmark.json", "w") as f:
+    # does not support gcp/augusta for now
+    save_folder = Path(SAVE_FOLDER)
+
+    save_folder.mkdir(parents=True, exist_ok=True)
+    with open(save_folder / f"{run_name}_generation_benchmark.json", "w") as f:
         json.dump(all_timings, f, indent=4)
 
 if __name__ == "__main__":
