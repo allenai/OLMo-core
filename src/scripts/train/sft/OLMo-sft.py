@@ -66,7 +66,7 @@ from olmo_core.train.train_module.transformer.config import (
     FreezeTransformerTrainModuleConfig,
     TransformerContextParallelConfig,
 )
-from olmo_core.train.train_module.transformer.train_module import FreezeTransformerTrainModule
+# from olmo_core.train.train_module.transformer.train_module import FreezeTransformerTrainModule
 
 from olmo_core.utils import prepare_cli_environment, seed_all
 
