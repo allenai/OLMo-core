@@ -454,7 +454,7 @@ class SFTConfig(Config):
                     param_dtype=DType.bfloat16,
                     reduce_dtype=DType.float32,
                     wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
-                    num_replicas=16,  # TODO: set this to number of GPUs / num_experts, 32 when using 8 nodes
+                    num_replicas=bs_config.world_size / 2  # try to keep communication w/in a node
                 ),
                 # NOTE: expert parallelism requires either HSDP or tensor parallelism.
                 ep_config=TransformerExpertParallelConfig(degree=2),
