@@ -25,6 +25,7 @@ from olmo_core.data.types import LongDocStrategy
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_local_rank
 from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
 from olmo_core.internal.common import (
     CLUSTER_TO_GPU_TYPE,
     build_launch_config,
@@ -58,11 +59,15 @@ from olmo_core.train.train_module import (
     TransformerActivationCheckpointingMode,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
+    TransformerExpertParallelConfig,
     TransformerTrainModuleConfig,
 )
 from olmo_core.train.train_module.transformer.config import (
+    FreezeTransformerTrainModule,
+    FreezeTransformerTrainModuleConfig,
     TransformerContextParallelConfig,
 )
+
 from olmo_core.utils import prepare_cli_environment, seed_all
 
 log = logging.getLogger(__name__)
@@ -387,6 +392,66 @@ class SFTConfig(Config):
                 reduce_dtype=DType.float32,
                 wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
                 shard_degree=8,  # 64
+            )
+        elif model_name == "flexolmo-2x7b":
+            model = TransformerConfig.olmoe_nx7b(  # type: ignore
+                vocab_size=tokenizer_config.padded_vocab_size(),
+                num_experts=2,
+                lb_loss_weight=0,
+                z_loss_weight=0.001,
+                freeze_params=[
+                    "embeddings.*",
+                    "blocks.*.attention*",
+                    "blocks.*.feed_forward_norm.*",
+                    "lm_head.*",
+                    # "blocks.*.feed_forward_moe.experts*", # TODO: uncomment if you only want to train the router.
+                ],
+            )
+
+            train_config = FreezeTransformerTrainModuleConfig(
+                rank_microbatch_size=bs_config.rank_microbatch_size_tokens, # pretrain was 2 * 4096
+                max_sequence_length=bs_config.sequence_length,
+                freeze_experts="first_half",
+                optim=SkipStepAdamWConfig(
+                    lr=8e-05,
+                    weight_decay=0.0,  # NOTE: different from pretraining
+                    betas=(0.9, 0.95),
+                    compile=False,
+                ),
+                # optim=AdamWConfig(
+                #     lr=0.0008236541623533814,  # the base model stopped training at this lr, TODO: set as needed
+                #     weight_decay=0,  # 0
+                #     betas=(0.9, 0.95),
+                #     fused=True,
+                #     #  group_overrides=[
+                #     #      OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
+                #     #  ], # swj check
+                # ),
+                compile_model=True,
+                dp_config=TransformerDataParallelConfig(
+                    name=DataParallelType.hsdp,
+                    param_dtype=DType.bfloat16,
+                    reduce_dtype=DType.float32,
+                    wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
+                    num_replicas=16,  # TODO: set this to number of GPUs / num_experts, 32 when using 8 nodes
+                ),
+                # NOTE: expert parallelism requires either HSDP or tensor parallelism.
+                ep_config=TransformerExpertParallelConfig(degree=2),
+                # tp_config=TransformerTensorParallelConfig(degree=-1),
+                float8_config=Float8Config(
+                    ao=AOFloat8LinearConfig(
+                        enable_fsdp_float8_all_gather=True,
+                        force_recompute_fp8_weight_in_bwd=True,
+                        round_scales_to_power_of_2=True,
+                    ),
+                    enabled=False,
+                ),
+                z_loss_multiplier=1e-5,  # swj check
+                max_grad_norm=1.0,
+                scheduler=LinearWithWarmup(
+                    warmup_fraction=0.03,
+                    alpha_f=0.0,  # lr drops all the way to 0.0 at the end
+                ),                
             )
         else:
             raise OLMoConfigurationError(f"Must set a valid model_name: {model_name}")
