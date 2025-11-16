@@ -362,7 +362,6 @@ class FreezeTransformerTrainModuleConfig(TransformerTrainModuleConfig):
         super().__init__(*args, **kwargs)
 
 
-    from .train_module import FreezeTransformerTrainModule
     def build(
         self,
         model: Transformer,
@@ -376,6 +375,9 @@ class FreezeTransformerTrainModuleConfig(TransformerTrainModuleConfig):
             kwargs["state_dict_save_opts"] = dist_cp_sd.StateDictOptions(**state_dict_save_opts)
         if (state_dict_load_opts := kwargs.pop("state_dict_load_opts", None)) is not None:
             kwargs["state_dict_load_opts"] = dist_cp_sd.StateDictOptions(**state_dict_load_opts)
+
+        from .train_module import FreezeTransformerTrainModule
+
         return FreezeTransformerTrainModule(
             model=model,
             device=device,
