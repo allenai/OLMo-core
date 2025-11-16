@@ -55,7 +55,6 @@ from olmo_core.train.callbacks import (
 from olmo_core.train.callbacks.wandb import WandBCallback
 from olmo_core.train.checkpoint import CheckpointerConfig
 from olmo_core.train.train_module import (
-    FreezeTransformerTrainModule,
     TransformerActivationCheckpointingConfig,
     TransformerActivationCheckpointingMode,
     TransformerDataParallelConfig,
@@ -67,6 +66,7 @@ from olmo_core.train.train_module.transformer.config import (
     FreezeTransformerTrainModuleConfig,
     TransformerContextParallelConfig,
 )
+from olmo_core.train.train_module.transformer.train_module import FreezeTransformerTrainModule
 
 from olmo_core.utils import prepare_cli_environment, seed_all
 
