@@ -55,6 +55,7 @@ from olmo_core.train.callbacks import (
 from olmo_core.train.callbacks.wandb import WandBCallback
 from olmo_core.train.checkpoint import CheckpointerConfig
 from olmo_core.train.train_module import (
+    FreezeTransformerTrainModule,
     TransformerActivationCheckpointingConfig,
     TransformerActivationCheckpointingMode,
     TransformerDataParallelConfig,
@@ -63,7 +64,6 @@ from olmo_core.train.train_module import (
     TransformerTrainModuleConfig,
 )
 from olmo_core.train.train_module.transformer.config import (
-    FreezeTransformerTrainModule,
     FreezeTransformerTrainModuleConfig,
     TransformerContextParallelConfig,
 )
@@ -323,6 +323,27 @@ class SFTConfig(Config):
             // (bs_config.cp_degree or 1),
         )
 
+        train_module_config = TransformerTrainModuleConfig(
+                rank_microbatch_size=bs_config.rank_microbatch_size_tokens,
+                max_sequence_length=bs_config.sequence_length,
+                z_loss_multiplier=None,
+                compile_model=True,
+                optim=SkipStepAdamWConfig(
+                    lr=8e-05,
+                    weight_decay=0.0,  # NOTE: different from pretraining
+                    betas=(0.9, 0.95),
+                    compile=False,
+                ),
+                dp_config=dp_config,
+                cp_config=cp_config,
+                ac_config=ac_config,
+                scheduler=LinearWithWarmup(
+                    warmup_fraction=0.03,
+                    alpha_f=0.0,  # lr drops all the way to 0.0 at the end
+                ),
+                max_grad_norm=1.0,
+            )
+
         if model_name == "olmo2-7b":
             model = TransformerConfig.olmo2_7B(  # Based on https://github.com/allenai/OLMo-core/blob/dustins/anneal-repro/src/scripts/train/lc_cont_train/OLMo2-7B-lc_anneal_tp4.py
                 vocab_size=tokenizer_config.padded_vocab_size(),
@@ -408,7 +429,7 @@ class SFTConfig(Config):
                 ],
             )
 
-            train_config = FreezeTransformerTrainModuleConfig(
+            train_module_config = FreezeTransformerTrainModuleConfig(
                 rank_microbatch_size=bs_config.rank_microbatch_size_tokens, # pretrain was 2 * 4096
                 max_sequence_length=bs_config.sequence_length,
                 freeze_experts="first_half",
@@ -489,26 +510,7 @@ class SFTConfig(Config):
             data_loader=NumpyDataLoaderConfig(
                 global_batch_size=bs_config.global_batch_size_tokens, seed=34521, num_workers=4
             ),
-            train_module=TransformerTrainModuleConfig(
-                rank_microbatch_size=bs_config.rank_microbatch_size_tokens,
-                max_sequence_length=bs_config.sequence_length,
-                z_loss_multiplier=None,
-                compile_model=True,
-                optim=SkipStepAdamWConfig(
-                    lr=8e-05,
-                    weight_decay=0.0,  # NOTE: different from pretraining
-                    betas=(0.9, 0.95),
-                    compile=False,
-                ),
-                dp_config=dp_config,
-                cp_config=cp_config,
-                ac_config=ac_config,
-                scheduler=LinearWithWarmup(
-                    warmup_fraction=0.03,
-                    alpha_f=0.0,  # lr drops all the way to 0.0 at the end
-                ),
-                max_grad_norm=1.0,
-            ),
+            train_module=train_module_config,
             trainer=TrainerConfig(
                 save_folder=f"{root_dir}/checkpoints/{user_name}/olmo2-7B-sft/{run_name}",
                 load_strategy=LoadStrategy.never,  # we manually load the checkpoint below
