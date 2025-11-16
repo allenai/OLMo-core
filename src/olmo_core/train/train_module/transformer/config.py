@@ -27,6 +27,9 @@ from olmo_core.nn.transformer import (
     TransformerActivationCheckpointingMode,
     TransformerDataParallelWrappingStrategy,
 )
+from olmo_core.train.train_module.transformer import (
+    TransformerTrainModule,
+)
 from olmo_core.optim import OptimConfig, SkipStepOptimizer
 from olmo_core.optim.scheduler import Scheduler
 from olmo_core.train.common import ReduceType
