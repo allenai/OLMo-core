@@ -31,6 +31,7 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
         "EMBEDDING_INIT_PATH",
         "OLMO_CKPT_PATH",
         "OLMO_ARCH",
+        "TOKENIZER",
         "TRAIN_MODE",
         "DATA_SOURCE",
         "DTYPE",

@@ -24,7 +24,8 @@ from olmo_core.data import (
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.checkpoint import load_model_and_optim_state
 from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.optim import AdamWConfig, LinearWithWarmup, OptimGroupOverride
+from olmo_core.optim import AdamWConfig, OptimGroupOverride
+from olmo_core.optim.scheduler import WSD, LinearWithWarmup, ConstantScheduler
 from olmo_core.train import (
     Duration,
     TrainerConfig,
@@ -55,6 +56,7 @@ GLOBAL_BATCH_SIZE = 64
 LOCAL_BATCH_SIZE = 64
 EVAL_BATCH_SIZE = 16
 DATA_SOURCE = os.environ.get("DATA_SOURCE", "dclm")
+LR_SCHEDULE = os.environ.get("LR_SCHEDULE", "linear_with_warmup")
 OLMO_ARCH = os.environ.get("OLMO_ARCH", "olmo2_1B_v2")
 TOKENIZER = os.environ.get("TOKENIZER", "dolma2")
 
@@ -142,6 +144,22 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         num_workers=NUM_WORKERS,
     )
 
+    if LR_SCHEDULE == "linear_with_warmup":
+        scheduler = LinearWithWarmup(warmup_fraction=0.1, alpha_f=0.0)
+    elif LR_SCHEDULE == "wsd":
+        scheduler = WSD(
+            warmup_fraction=0.1,
+            decay_fraction=0.2,
+            decay_kind="inv_sqrt",
+            cosine_decay_alpha=10,
+            decay_min_lr=None,
+            decay_min_lr_ratio=0.1,
+        )
+    elif LR_SCHEDULE == "constant":
+        scheduler = ConstantScheduler()
+    else:
+        raise ValueError(f"Unknown LR_SCHEDULE: {LR_SCHEDULE}. Must be one of 'linear_with_warmup', 'wsd', 'constant'.")
+
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=LOCAL_BATCH_SIZE * SEQUENCE_LENGTH,
         max_sequence_length=dataset_config.sequence_length,
@@ -151,7 +169,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
             name=DataParallelType.fsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
         ),
         max_grad_norm=1.0,
-        scheduler=LinearWithWarmup(warmup_fraction=0.1, alpha_f=0.0),
+        scheduler=scheduler,
     )
 
     if QUICK_DEBUG:
