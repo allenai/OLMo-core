@@ -35,16 +35,24 @@ class DataMix(DataMixBase):
     An enumeration of data mix names.
     """
 
+    # Pretraining mixes
     OLMoE_mix_0824 = "OLMoE-mix-0824"
     dolma17 = "dolma17"
-    v3_small_ppl_validation = "v3-small-ppl-validation"
+    OLMo_mix_0625 = "OLMo-mix-0625"
     OLMo_mix_0625_150Bsample = "OLMo-mix-0625-150Bsample"
     OLMo_mix_0625_700Bsample = "OLMo-mix-0625-700Bsample"
-    OLMo_mix_0625 = "OLMo-mix-0625"
     OLMo_mix_0625_official = "OLMo-mix-0625-official"
     OLMo_mix_0925 = "OLMo-mix-0925"
+
+    # Midtraining mixes
     OLMo_midtraining_mix_1025_100B = "OLMo-midtraining-mix-1025-100B"
-    OLMo_longcontext_mix_1025 = "OLMo-longcontext-mix-1025"
+
+    # Long-context extension mixes
+    OLMo_longmino_mix_0625 = "OLMo-longmino-mix-0625"
+    OLMo_longmino_mix_0925 = "OLMo-longmino-mix-0925"
+
+    # Validation mixes
+    v3_small_ppl_validation = "v3-small-ppl-validation"
 
     @classmethod
     def _missing_(cls, value: object) -> "DataMix | None":
@@ -81,7 +89,8 @@ class DataMix(DataMixBase):
         elif self in [
             DataMix.OLMo_mix_0625_official,
             DataMix.OLMo_midtraining_mix_1025_100B,
-            DataMix.OLMo_longcontext_mix_1025,
+            DataMix.OLMo_longmino_mix_0625,
+            DataMix.OLMo_longmino_mix_0925,
         ]:
             if tokenizer == TokenizerName.dolma2:
                 tokenizer_id = "allenai/dolma3-tokenizer"

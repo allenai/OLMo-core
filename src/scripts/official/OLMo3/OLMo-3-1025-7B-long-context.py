@@ -51,9 +51,9 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
     )
 
     dataset_config = NumpyPackedFSLDatasetConfig.from_data_mix(
-        DataMix.OLMo_longcontext_mix_1025,
-        tokenizer=tokenizer_config,
+        DataMix.OLMo_longmino_mix_0625,
         mix_base_dir=opts.data_root,
+        tokenizer=tokenizer_config,
         work_dir=opts.work_dir,
         sequence_length=sequence_length,
         generate_doc_lengths=True,  # enables intra-document masking
