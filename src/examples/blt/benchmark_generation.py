@@ -31,6 +31,7 @@ from olmo_core.generate.generation_module.config import GenerationConfig
 from olmo_core.nn.mamba import MambaConfig
 from olmo_core.nn.transformer.config import TransformerBlockConfig, TransformerBlockType, TransformerConfig, TransformerType
 from olmo_core.nn.xlstm import XLSTMConfig
+from olmo_core.nn.fla import FLAConfig
 from olmo_core.train.train_module.transformer.common import parallelize_model
 from olmo_core.utils import get_default_device
 
@@ -82,6 +83,31 @@ def main(run_name: str, overrides: list[str]):
                 attention=AttentionConfig(), # not used
                 xlstm=XLSTMConfig(
                     num_heads=16,
+                    dtype=model_config.dtype,
+                ),
+                feed_forward=None,
+                layer_norm=model_config.block.layer_norm,
+            )
+        elif LOCAL_MODEL_BLOCKS == "gdn":
+            local_block = TransformerBlockConfig(
+                name=TransformerBlockType.fla,
+                attention=AttentionConfig(), # not used
+                fla=FLAConfig(
+                    name="GatedDeltaNet",
+                    dtype=model_config.dtype,
+                ),
+                feed_forward=model_config.block.feed_forward.replace(
+                    hidden_size=int(local_d_model * 1.5),
+                    bias=False,
+                ),
+                layer_norm=model_config.block.layer_norm,
+            )
+        elif LOCAL_MODEL_BLOCKS == "gdn_no_ffn":
+            local_block = TransformerBlockConfig(
+                name=TransformerBlockType.fla,
+                attention=AttentionConfig(), # not used
+                fla=FLAConfig(
+                    name="GatedDeltaNet",
                     dtype=model_config.dtype,
                 ),
                 feed_forward=None,

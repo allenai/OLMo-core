@@ -42,6 +42,7 @@ from olmo_core.nn.blt import utils as blt_utils
 import olmo_core.nn.blt.utils as blt_utils
 from olmo_core.nn.mamba import Mamba
 from olmo_core.nn.xlstm import XLSTM
+from olmo_core.nn.fla import FLA
 from olmo_core.nn.transformer import Transformer, TransformerConfig, TransformerType
 from olmo_core.train.train_module.transformer.common import parallelize_model
 from olmo_core.train.train_module.transformer.config import (
@@ -709,6 +710,13 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                     mamba.init_mamba_cache_manager(batch_size)
                 else:
                     mamba.mamba_cache_manager.reset(batch_size)
+            elif hasattr(block, "fla"):
+                assert isinstance(block.fla, FLA)
+                fla = cast(FLA, block.fla)
+                if fla.kv_cache_manager is None:
+                    fla.init_kv_cache_manager(batch_size)
+                else:
+                    fla.kv_cache_manager.reset(batch_size)
             elif hasattr(block, "xlstm") and isinstance(block.xlstm, XLSTM):
                 xlstm = block.xlstm
                 if xlstm.xlstm_cache_manager is None:
@@ -731,6 +739,10 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                 block.attention.kv_cache_manager = None
             elif hasattr(block, "mamba") and isinstance(block.mamba, Mamba):
                 block.mamba.mamba_cache_manager = None
+            elif hasattr(block, "fla") and isinstance(block.fla, FLA):
+                block.fla.kv_cache_manager = None
+            elif hasattr(block, "xlstm") and isinstance(block.xlstm, XLSTM):
+                block.xlstm.xlstm_cache_manager = None
 
         self.model.local_encoder.free_inference_cache()  # type: ignore
         self.model.local_decoder.free_inference_cache()  # type: ignore
