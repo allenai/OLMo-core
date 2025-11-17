@@ -190,6 +190,53 @@ class BatchSizeConfig:
         )
 
 
+def _separate_prefix_and_glob(prefix: str) -> Tuple[str, str]:
+    if any(char in prefix for char in ["*", "?", "[", "]"]):
+        parts = prefix.split("/")
+        base_parts = []
+        for part in parts:
+            if any(char in part for char in ["*", "?", "[", "]"]):
+                break
+            base_parts.append(part)
+    else:
+        base_parts = prefix.split("/")
+    if not base_parts:
+        return ".", prefix
+
+    new_prefix = "/".join(base_parts)
+    glob_str = prefix[len(new_prefix) :]
+
+    return new_prefix, glob_str.lstrip("/")
+
+
+def glob_remote_dataset(prefix: str) -> List[str]:
+    parsed_path = urlparse(prefix)
+    scheme, bucket, parsed_prefix = (
+        parsed_path.scheme,
+        parsed_path.netloc,
+        parsed_path.path.lstrip("/"),
+    )
+    parsed_prefix_pre_glob, glob_str = _separate_prefix_and_glob(parsed_prefix)
+    base_prefix_without_scheme = Path(f"{bucket}/{parsed_prefix_pre_glob}")
+
+    paths: List[str] = []
+
+    for path in list_directory(f"{scheme}://{base_prefix_without_scheme}"):
+        parsed_path = urlparse(path)
+        path_without_scheme = Path(parsed_path.netloc) / parsed_path.path.lstrip("/")
+        relative_to_base_prefix = path_without_scheme.relative_to(base_prefix_without_scheme)
+
+        if glob_str and not fnmatch.fnmatch(str(relative_to_base_prefix), glob_str):
+            # must match the glob if a glob was provided
+            continue
+
+        # path was valid!
+        paths.append(path)
+
+    return paths
+
+
+
 def build_sft_dataset(
     root_dir: str,
     tokenizer_config: TokenizerConfig,
@@ -235,7 +282,7 @@ class SFTRouterConfig(Config):
 
     launch: BeakerLaunchConfig
     model: TransformerConfig
-    dataset: Optional[NumpyDatasetConfig]
+    dataset: Optional[NumpyPackedFSLDatasetConfig]
     data_loader: NumpyDataLoaderConfig
     train_module: TransformerTrainModuleConfig
     trainer: TrainerConfig
