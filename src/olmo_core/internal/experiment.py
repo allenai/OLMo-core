@@ -93,7 +93,7 @@ class ExperimentConfig(Config):
     model: TransformerConfig
     dataset: NumpyDatasetConfig
     data_loader: NumpyDataLoaderConfig
-    train_module: TransformerTrainModuleConfig
+    train_module: TransformerTrainModuleConfig  # TODO: allow TrainModuleConfig to work here
     trainer: TrainerConfig
     init_seed: int = 12536
     backend: Optional[str] = "cpu:gloo,cuda:nccl"
