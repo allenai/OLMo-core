@@ -95,6 +95,7 @@ def main(run_name: str, overrides: list[str]):
                 fla=FLAConfig(
                     name="GatedDeltaNet",
                     dtype=model_config.dtype,
+                    fla_layer_kwargs={"num_heads": 16},
                 ),
                 feed_forward=model_config.block.feed_forward.replace(
                     hidden_size=int(local_d_model * 1.5),
