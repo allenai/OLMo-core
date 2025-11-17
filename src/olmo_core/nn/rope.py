@@ -1,7 +1,7 @@
 import math
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import ClassVar, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -243,7 +243,7 @@ class YaRNRoPEScalingConfig(RoPEScalingConfig):
     old_context_len: int = 8192
     """Maximum sequence length that the *base* model was originally trained with."""
 
-    _IGNORE_FIELDS = ("attention_rescale_factor",)
+    _IGNORE_FIELDS: ClassVar[Tuple[str, ...]] = ("attention_rescale_factor",)
 
     def compute_scaled_inv_freq(
         self, theta: int, dim: int, device: torch.device

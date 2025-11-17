@@ -5,6 +5,7 @@ from enum import Enum
 from typing import (
     Any,
     Callable,
+    ClassVar,
     Dict,
     Generator,
     List,
@@ -66,7 +67,7 @@ class Config:
     :meth:`as_config_dict()`.
     """
 
-    _IGNORE_FIELDS = ()
+    _IGNORE_FIELDS: ClassVar[Tuple[str, ...]] = ()
     """
     Fields to ignore when loading from config (for backwards compatibility).
     """
