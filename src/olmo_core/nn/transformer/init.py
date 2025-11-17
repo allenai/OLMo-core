@@ -7,7 +7,12 @@ from torch.distributed.tensor import DTensor
 from olmo_core.config import StrEnum
 from olmo_core.distributed.utils import distribute_like, get_local_tensor
 
-from ..attention import Attention, AttentionBase, FusedAttention, MultiheadLatentAttention
+from ..attention import (
+    Attention,
+    AttentionBase,
+    FusedAttention,
+    MultiheadLatentAttention,
+)
 from ..feed_forward import FeedForward
 from ..moe import DroplessMoEMLP, MoEBase, MoELinearRouter, MoEMLP, MoEOrthogonalRouter
 

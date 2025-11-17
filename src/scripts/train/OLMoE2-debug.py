@@ -3,6 +3,7 @@ Train a medium OLMoE model. Run this script without any arguments to see usage i
 """
 
 import logging
+import math
 from dataclasses import replace
 
 from olmo_core.config import DType
@@ -10,22 +11,31 @@ from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
 from olmo_core.internal.experiment import CommonComponents, ExperimentConfig, main
 from olmo_core.launch.beaker import OLMoCoreBeakerImage
-from olmo_core.nn.transformer import TransformerBlockType, TransformerConfig, TransformerBlockConfig
+from olmo_core.nn.transformer import (
+    TransformerBlockConfig,
+    TransformerBlockType,
+    TransformerConfig,
+)
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
-from olmo_core.train import TrainerConfig, Duration
-from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback, ProfilerCallback, NvidiaProfilerCallback
+from olmo_core.train import Duration, TrainerConfig
+from olmo_core.train.callbacks import (
+    CheckpointerCallback,
+    CometCallback,
+    NvidiaProfilerCallback,
+    ProfilerCallback,
+    WandBCallback,
+)
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
-import math
 
 log = logging.getLogger(__name__)
 
 NUM_EXPERTS = 32
 TOP_K = 8
-NUM_LAYERS=6
+NUM_LAYERS = 6
 
 MAIN_LR = 2e-3
 # reduce the learning rate for expert parallel training
@@ -36,26 +46,30 @@ EXPERT_LR = MAIN_LR * math.sqrt(TOP_K / NUM_EXPERTS)
 USE_MOE = True
 USE_MLA = False
 
+
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     d_model = 4096
 
-    from olmo_core.nn.lm_head import LMHeadConfig
-    from olmo_core.nn.attention import AttentionConfig, AttentionType, MultiheadLatentAttentionConfig
-    from olmo_core.nn.feed_forward import FeedForwardConfig, FeedForwardType
-    from olmo_core.nn.rope import RoPEConfig, RoPEType
-    from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
+    from olmo_core.nn.attention import (
+        AttentionConfig,
+        AttentionType,
+        MultiheadLatentAttentionConfig,
+    )
     from olmo_core.nn.buffer_cache import BufferCache
+    from olmo_core.nn.feed_forward import FeedForwardConfig, FeedForwardType
+    from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
+    from olmo_core.nn.lm_head import LMHeadConfig
     from olmo_core.nn.moe import MoEConfig, MoERouterConfig, MoEType
+    from olmo_core.nn.rope import RoPEConfig, RoPEType
 
-    
-    dtype = 'float32'
+    dtype = "float32"
     layer_norm = LayerNormConfig(
         name=LayerNormType.rms,
         eps=1e-6,
         bias=False,
         dtype=dtype,
     )
-    
+
     if USE_MLA:
         attn_config = MultiheadLatentAttentionConfig(
             n_heads=24,
@@ -63,7 +77,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
             dropout=0.0,
             dtype=dtype,
             q_lora_rank=1024,
-            kv_lora_rank=512, 
+            kv_lora_rank=512,
             qk_nope_head_dim=192,
             # qk_nope_head_dim=128,
             qk_rope_head_dim=64,
@@ -84,13 +98,12 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
             use_flash=False,
             dtype=dtype,
         )
-    
-    
+
     if USE_MOE:
         block_name = TransformerBlockType.moe_reordered_norm
-        
+
         config = TransformerConfig(
-            name='moe',
+            name="moe",
             d_model=d_model,
             vocab_size=common.tokenizer.padded_vocab_size(),
             n_layers=NUM_LAYERS,
@@ -107,7 +120,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                     hidden_size=int(0.5 * d_model),
                     capacity_factor=1.25,
                     router=MoERouterConfig(top_k=TOP_K),
-                    shared_mlp= FeedForwardConfig(hidden_size=int(d_model*2), bias=False),
+                    shared_mlp=FeedForwardConfig(hidden_size=int(d_model * 2), bias=False),
                     lb_loss_weight=0.01,
                     z_loss_weight=0.001,
                 ),
@@ -119,7 +132,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     else:
         block_name = TransformerBlockType.default
         config = TransformerConfig(
-            name='default',
+            name="default",
             d_model=d_model,
             vocab_size=common.tokenizer.padded_vocab_size(),
             n_layers=NUM_LAYERS,
@@ -127,7 +140,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                 name=block_name,
                 attention=attn_config,
                 # dense
-                feed_forward=FeedForwardConfig(hidden_size=(d_model*2), bias=False, dtype=dtype),
+                feed_forward=FeedForwardConfig(hidden_size=(d_model * 2), bias=False, dtype=dtype),
                 # moe
                 layer_norm=layer_norm,
             ),
@@ -140,15 +153,17 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
 def finalize_config(config: ExperimentConfig):
     # add active & total params to the wandb name
-    total_params_in_B = config.model.num_params/1000/1000/1000
-    active_params_in_B = config.model.num_active_params/1000/1000/1000
-    config.trainer.callbacks['wandb'].name += f"_{active_params_in_B:.2f}@{total_params_in_B:.2f}B"  # print to 2 decimal places
-    config.trainer.callbacks['wandb'].name += f"_{TOP_K}K{NUM_EXPERTS}N"  # print to 2 decimal places
-    
+    total_params_in_B = config.model.num_params / 1000 / 1000 / 1000
+    active_params_in_B = config.model.num_active_params / 1000 / 1000 / 1000
+    config.trainer.callbacks[
+        "wandb"
+    ].name += f"_{active_params_in_B:.2f}@{total_params_in_B:.2f}B"  # print to 2 decimal places
+    config.trainer.callbacks[
+        "wandb"
+    ].name += f"_{TOP_K}K{NUM_EXPERTS}N"  # print to 2 decimal places
 
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
-
     config = TransformerTrainModuleConfig(
         rank_microbatch_size=4 * 4096,
         max_sequence_length=common.dataset.effective_sequence_length,
@@ -158,7 +173,9 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             betas=(0.9, 0.95),
             group_overrides=[
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0)),
-                OptimGroupOverride(params=["blocks.*.feed_forward_moe.experts.mlp.*"], opts=dict(lr=EXPERT_LR))
+                OptimGroupOverride(
+                    params=["blocks.*.feed_forward_moe.experts.mlp.*"], opts=dict(lr=EXPERT_LR)
+                ),
             ],
             fused=True,
         ),
@@ -190,11 +207,11 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
 def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     config = (
         TrainerConfig(
-            save_folder=f'/workspace/tmp/{common.run_name}',
+            save_folder=f"/workspace/tmp/{common.run_name}",
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=1,
-            max_duration=Duration.tokens(100_000_000_000) # 100 Billion tokens
+            max_duration=Duration.tokens(100_000_000_000),  # 100 Billion tokens
         )
         .with_callback(
             "checkpointer",
@@ -224,15 +241,17 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 enabled=True,
                 cancel_check_interval=10,
             ),
-        ).
-        with_callback(
-            "profiler", 
-            NvidiaProfilerCallback(enabled=False,
-                                   profile_ranks=[0],
-            )
+        )
+        .with_callback(
+            "profiler",
+            NvidiaProfilerCallback(
+                enabled=False,
+                profile_ranks=[0],
+            ),
         )
     )
     return config
+
 
 if __name__ == "__main__":
     main(

@@ -2,36 +2,32 @@ import math
 from abc import abstractmethod
 from typing import TYPE_CHECKING, Dict, Optional, Tuple, Union, cast
 
+import nvtx
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 from torch.distributed import DeviceMesh
 from torch.distributed.fsdp import FSDPModule, fully_shard
 from torch.distributed.tensor import Placement, Shard
 from torch.distributed.tensor.parallel import PrepareModuleInput, parallelize_module
+from torch.utils.checkpoint import CheckpointFunction, checkpoint
 
 from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
-from olmo_core.distributed.utils import get_local_tensor
+from olmo_core.distributed.utils import get_local_rank, get_local_tensor, get_rank
 from olmo_core.doc_utils import beta_feature
 from olmo_core.ops import attach_auxiliary_loss
+from olmo_core.ops import moe as ops
 from olmo_core.utils import get_or_init_stream
+
 from ..attention import AttentionConfig, RingAttentionLoadBalancerType
 from ..buffer_cache import BufferCache
 from ..feed_forward import FeedForward, FeedForwardConfig
 from ..functional import l2_normalize
 from ..layer_norm import LayerNormConfig
 from ..moe import MoEConfig, MoERouter
-from ..moe.parallel_mlp import ParallelMLPBase, ParallelDroplessMLP
-from .config import TransformerDataParallelWrappingStrategy
-from torch.utils.checkpoint import checkpoint, CheckpointFunction
+from ..moe.parallel_mlp import ParallelDroplessMLP, ParallelMLPBase
 from ..moe.utils import async_copy_to_cpu, wait_stream_no_compile
-
-import nvtx
-import torch.distributed as dist
-from olmo_core.distributed.utils import get_local_rank, get_rank
-
-from olmo_core.ops import moe as ops
-
-
+from .config import TransformerDataParallelWrappingStrategy
 
 if TYPE_CHECKING:
     from olmo_core.train.common import ReduceType
@@ -133,12 +129,12 @@ class TransformerBlock(TransformerBlockBase):
         if attention_norm is not None:
             self.attention_norm = attention_norm.build(d_model, init_device=init_device)
         else:
-            self.attention_norm = lambda x: x # identity
+            self.attention_norm = lambda x: x  # identity
         self.feed_forward = feed_forward.build(d_model=d_model, init_device=init_device)
         if feed_forward_norm is not None:
             self.feed_forward_norm = feed_forward_norm.build(d_model, init_device=init_device)
         else:
-            self.feed_forward_norm = lambda x: x # identity
+            self.feed_forward_norm = lambda x: x  # identity
         self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
 
     def forward(
@@ -287,7 +283,7 @@ class ReorderedNormTransformerBlock(TransformerBlock):
         return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
         # DENSE_LAYER_USE_RECOMPUTE = True # BUG;HACK;NOTE: change this later
         # if DENSE_LAYER_USE_RECOMPUTE:
-        
+
         #     return checkpoint(
         #         self.custom_forward, x, use_reentrant=False, loss_div_factor=loss_div_factor, **kwargs
         #     )
@@ -302,10 +298,11 @@ class ReorderedNormTransformerBlock(TransformerBlock):
         *,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         **kwargs,
-    ):  
+    ):
         del loss_div_factor
         h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
         return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
+
 
 @beta_feature
 class NormalizedTransformerBlock(TransformerBlockBase):
@@ -464,14 +461,14 @@ class MoETransformerBlock(TransformerBlockBase):
         if attention_norm is not None:
             self.attention_norm = attention_norm.build(d_model, init_device=init_device)
         else:
-            self.attention_norm = lambda x: x # identity
+            self.attention_norm = lambda x: x  # identity
         self.feed_forward_moe = feed_forward_moe.build(
             d_model=d_model, n_layers=n_layers, init_device=init_device, cache=cache
         )
         if feed_forward_norm is not None:
             self.feed_forward_norm = feed_forward_norm.build(d_model, init_device=init_device)
         else:
-            self.feed_forward_norm = lambda x: x # identity
+            self.feed_forward_norm = lambda x: x  # identity
         self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
         self._ep_enabled = False
         self._tp_enabled = False
@@ -607,6 +604,7 @@ class MoEReorderedNormTransformerBlock(MoETransformerBlock):
     of attention instead of the input, and likewise the feed-forward norm is applied on the
     output of the feed-forward MoE instead of the input.
     """
+
     # @torch.compile
     def forward(
         self,
@@ -712,7 +710,6 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
         **kwargs,
     ) -> torch.Tensor:
         raise NotImplementedError
-    
 
     def forward(
         self,
@@ -723,7 +720,6 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
     ) -> torch.Tensor:
         # HACK: note tested
         if not self.use_combined_forward:
-        
             return self.sparse_forward(x, loss_div_factor=loss_div_factor) + self.dense_forward(
                 x, **kwargs
             )
@@ -737,10 +733,10 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
             #     h_dense = self._fwd_dense(x, **kwargs)
             # torch.cuda.default_stream().wait_stream(stream)
             # return h_sparse + h_dense
-            
-            
-            return cast(MoEHybridReorderedNormTransformerBlock, self).combined_forward(x, loss_div_factor=loss_div_factor, **kwargs)
 
+            return cast(MoEHybridReorderedNormTransformerBlock, self).combined_forward(
+                x, loss_div_factor=loss_div_factor, **kwargs
+            )
 
     def apply_tp(
         self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
@@ -929,10 +925,11 @@ class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
 
         return h + self.dropout(x_moe)
 
+
 @beta_feature
 class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
-
-    def __init__(self,
+    def __init__(
+        self,
         *,
         d_model: int,
         n_layers: int,
@@ -941,7 +938,7 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         feed_forward: FeedForwardConfig,
         init_device: str = "cpu",
         **kwargs,
-        ):
+    ):
         super().__init__(
             d_model=d_model,
             n_layers=n_layers,
@@ -963,16 +960,22 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         **kwargs,
     ) -> torch.Tensor:
-        MOE_LAYER_USE_RECOMPUTE = False 
+        MOE_LAYER_USE_RECOMPUTE = False
         if MOE_LAYER_USE_RECOMPUTE:
             # NOTE: this is the same as the MoEHybridTransformerBlock, but with recompute
             # on the dense forward pass.
             return checkpoint(
-                self.combined_forward, x, use_reentrant=False, loss_div_factor=loss_div_factor, **kwargs
+                self.combined_forward,
+                x,
+                use_reentrant=False,
+                loss_div_factor=loss_div_factor,
+                **kwargs,
             )
         else:
-            # always use combined forward    
-            return cast(MoEHybridReorderedNormTransformerBlock, self).combined_forward(x, loss_div_factor=loss_div_factor, **kwargs)
+            # always use combined forward
+            return cast(MoEHybridReorderedNormTransformerBlock, self).combined_forward(
+                x, loss_div_factor=loss_div_factor, **kwargs
+            )
 
     # @torch.compile
     def dense_forward_rc(
@@ -981,19 +984,16 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         **kwargs,
     ) -> torch.Tensor:
         h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
-        return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))   
-    
+        return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
+
     # @torch.compile
     def router_forward(
         self,
         local_x: torch.Tensor,
         loss_div_factor: torch.Tensor,
     ):
-        return self.router(
-            local_x, 
-            loss_div_factor=loss_div_factor # scalar
-        )
-    
+        return self.router(local_x, loss_div_factor=loss_div_factor)  # scalar
+
     # @torch.compile
     def combined_forward(
         self,
@@ -1002,45 +1002,38 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         **kwargs,
     ) -> torch.Tensor:
-
         B, S, D = x.shape
-        
-        
-        
+
         # dense_out = self.overlap_callback(
         #     x, **kwargs
         # )
-        
+
         local_x = get_local_tensor(x)
-    
-            
+
         (
-            local_x_global_expert_weights, # (B, S, top_k)
-            local_x_global_expert_indices, # (B, S, top_k)
-            local_batch_size_per_global_expert, # (num_experts, )
-            router_aux_loss # scalar
+            local_x_global_expert_weights,  # (B, S, top_k)
+            local_x_global_expert_indices,  # (B, S, top_k)
+            local_batch_size_per_global_expert,  # (num_experts, )
+            router_aux_loss,  # scalar
         ) = self.router_forward(
-            local_x, 
-            loss_div_factor=loss_div_factor # scalar
+            local_x, loss_div_factor=loss_div_factor  # scalar
         )
-        
-        
+
         ##### DENSE: submit the dense forward pass to a separate stream #####
         # NOTE: launch dense after the router, so it's more likely to overlap permute and all-to-all,
         # but it only depends on the x (before router), so the wait_stream() can be called here
         # priority sparse forward > dense forward, because the sparse one is going to take longer
-        
+
         wait_stream_no_compile(
             this_stream=self.get_dense_stream(),  # type: ignore
-            other_stream=torch.cuda.current_stream() # type: ignore
-        ) # ignore
-        
+            other_stream=torch.cuda.current_stream(),  # type: ignore
+        )  # ignore
+
         # only when grad enabled
         if torch.is_grad_enabled():
             with nvtx.annotate("attach_auxiliary_loss", color="blue"):
                 if router_aux_loss is not None:
                     local_x = attach_auxiliary_loss(local_x, router_aux_loss)
-
 
         # shape: (batch_size * seq_len, d_model)
         local_x = local_x.view(-1, D)
@@ -1049,18 +1042,17 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         # shape: (batch_size * seq_len * top_k,)
         local_x_global_expert_indices = get_local_tensor(local_x_global_expert_indices).flatten()
 
-
         assert self.shared_mlp is None
-        
-        
+
         ######################################################################
         ################# Call global_permute_mlp_unpermute() ##############
         ############################### START ################################
 
-
         with nvtx.annotate("permute_mlp_unpermute", color="blue"):
             if self.ep_enabled:
-                x_moe, dense_out = cast(ParallelDroplessMLP, self.experts).global_permute_mlp_unpermute(
+                x_moe, dense_out = cast(
+                    ParallelDroplessMLP, self.experts
+                ).global_permute_mlp_unpermute(
                     local_x,
                     local_x_global_expert_weights,
                     local_x_global_expert_indices,
@@ -1069,32 +1061,30 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
                     # overlap_callback=None,
                     overlap_callback_x=x,
                     **kwargs,
-                ) # type: ignore
+                )  # type: ignore
             else:
-                x_moe, dense_out = cast(ParallelDroplessMLP, self.experts).global_permute_mlp_unpermute_no_ep(
+                x_moe, dense_out = cast(
+                    ParallelDroplessMLP, self.experts
+                ).global_permute_mlp_unpermute_no_ep(
                     local_x,
                     local_x_global_expert_weights,
-                    local_x_global_expert_indices, 
+                    local_x_global_expert_indices,
                     local_batch_size_per_global_expert=local_batch_size_per_global_expert,
                     overlap_callback=self.overlap_callback,
                     # overlap_callback=None,
                     overlap_callback_x=x,
                     **kwargs,
-                ) # type: ignore
+                )  # type: ignore
         ######################################################################
         ################# Call global_permute_mlp_unpermute() ##############
         ############################### END ##################################
 
-        
-        x_moe = x_moe.view(B, -1, D) # (B, S * top_k, d_model)
+        x_moe = x_moe.view(B, -1, D)  # (B, S * top_k, d_model)
 
-        
-
-        
         ####################### # NOTE: fuse the add, but it takes more memory. Why?
         # wait_stream_no_compile(torch.cuda.current_stream(), self.get_dense_stream()) # type: ignore
         # # need to use dense_out
-        
+
         # SPARSE_DROP_NORM_RECOMPUTE = True
         # if SPARSE_DROP_NORM_RECOMPUTE:
         #     final_out = checkpoint(
@@ -1104,25 +1094,20 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         #     final_out = self.sparse_add_drop_norm_forward(
         #         x_moe, dense_out
         #     )
-            
+
         #######################
         SPARSE_DROP_NORM_RECOMPUTE = True
         if SPARSE_DROP_NORM_RECOMPUTE:
-            final_out = checkpoint(
-                self.sparse_drop_norm_forward, x_moe, use_reentrant=False
-            )
+            final_out = checkpoint(self.sparse_drop_norm_forward, x_moe, use_reentrant=False)
         else:
-            final_out = self.sparse_drop_norm_forward(
-                x_moe
-            )
-        
-        wait_stream_no_compile(torch.cuda.current_stream(), self.get_dense_stream()) # type: ignore
-        
+            final_out = self.sparse_drop_norm_forward(x_moe)
+
+        wait_stream_no_compile(torch.cuda.current_stream(), self.get_dense_stream())  # type: ignore
+
         final_out = dense_out + final_out
 
         #######################
 
-        
         return final_out
 
     # @torch.compile
@@ -1132,15 +1117,14 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         dense_out: torch.Tensor,
     ) -> torch.Tensor:
         return self.dropout(self.feed_forward_moe_norm(x_moe)) + dense_out
-    
+
     # @torch.compile
     def sparse_drop_norm_forward(
         self,
         x_moe: torch.Tensor,
     ) -> torch.Tensor:
         return self.dropout(self.feed_forward_moe_norm(x_moe))
-    
-    
+
     def overlap_callback(self, x, **kwargs):
         # NOTE: this is called in the middle of the global_permute_mlp_unpermute() function
         # to overlap the dense forward pass with the all-to-all communication.
@@ -1150,14 +1134,7 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
             # if self.block_idx % 2 == 0:
             # x = self.attention(x, **kwargs)
             if True:
-                xx = checkpoint(
-                    self.dense_forward_rc, x, use_reentrant=False, **kwargs
-                )
+                xx = checkpoint(self.dense_forward_rc, x, use_reentrant=False, **kwargs)
             else:
-                xx = self.dense_forward_rc(
-                    x, **kwargs
-                )
+                xx = self.dense_forward_rc(x, **kwargs)
             return xx
-        
-        
-        

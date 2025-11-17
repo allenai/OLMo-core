@@ -2,10 +2,10 @@
 
 from typing import Optional
 
+import nvtx
 import torch
 import triton  # type: ignore
 import triton.language as tl  # type: ignore
-import nvtx
 
 
 def assert_is_tensor(x, ndim):
@@ -100,6 +100,7 @@ def _padded_copy(
         tl.store(optr + offsets, x.to(optr.dtype.element_ty), mask=mask)
 
         offsets += BLOCK_X
+
 
 @nvtx.annotate("gather", color="blue")
 def gather(

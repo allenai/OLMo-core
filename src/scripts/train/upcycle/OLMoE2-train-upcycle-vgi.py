@@ -3,36 +3,51 @@ Train a medium OLMoE model. Run this script without any arguments to see usage i
 """
 
 import logging
+import math
 from dataclasses import replace
+from functools import partial
+from typing import Optional
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
 from olmo_core.internal.experiment import CommonComponents, ExperimentConfig, main
 from olmo_core.launch.beaker import OLMoCoreBeakerImage
-from olmo_core.nn.transformer import TransformerBlockType, TransformerConfig, TransformerBlockConfig
-from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride, CosWithWarmupAndLinearDecay
-from olmo_core.train import TrainerConfig, Duration
-from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback, ProfilerCallback, NvidiaProfilerCallback, UpcycleCheckpointerCallback
+from olmo_core.nn.transformer import (
+    TransformerBlockConfig,
+    TransformerBlockType,
+    TransformerConfig,
+)
+from olmo_core.optim import (
+    AdamWConfig,
+    CosWithWarmup,
+    CosWithWarmupAndLinearDecay,
+    OptimGroupOverride,
+)
+from olmo_core.train import Duration, TrainerConfig
+from olmo_core.train.callbacks import (
+    CheckpointerCallback,
+    CometCallback,
+    NvidiaProfilerCallback,
+    ProfilerCallback,
+    UpcycleCheckpointerCallback,
+    WandBCallback,
+)
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
-from typing import Optional
 
-import math
-from functools import partial
 log = logging.getLogger(__name__)
 import sys
 
 _, _, run_name, _, *overrides = sys.argv
 
 
-
 global_args = dict()
 
-NUM_LAYERS=16
+NUM_LAYERS = 16
 MAIN_LR = 1e-4
 EXPERT_LR = MAIN_LR
 USE_MOE = True
@@ -41,27 +56,32 @@ USE_MLA = False
 
 
 def build_model_config(
-        common: Optional[CommonComponents],
-        routed_expert_norm,
-        shared_expert_norm,
-        feed_forward_norm,
-    ) -> TransformerConfig:
+    common: Optional[CommonComponents],
+    routed_expert_norm,
+    shared_expert_norm,
+    feed_forward_norm,
+) -> TransformerConfig:
     d_model = 2048
-    
-    NUM_EXPERTS = global_args['NUM_EXPERTS']
-    TOP_K = global_args['TOP_K']
-    MOE_EXPANSION_FACTOR = global_args['MOE_EXPANSION_FACTOR']
-    SHARED_EXPERT_EXPANSION_FACTOR = global_args['SHARED_EXPERT_EXPANSION_FACTOR']
-    
-    from olmo_core.nn.lm_head import LMHeadConfig
-    from olmo_core.nn.attention import AttentionConfig, AttentionType, MultiheadLatentAttentionConfig
-    from olmo_core.nn.feed_forward import FeedForwardConfig, FeedForwardType
-    from olmo_core.nn.rope import RoPEConfig, RoPEType
-    from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
-    from olmo_core.nn.buffer_cache import BufferCache
-    from olmo_core.nn.moe import MoEConfig, MoERouterConfig, MoEType
+
+    NUM_EXPERTS = global_args["NUM_EXPERTS"]
+    TOP_K = global_args["TOP_K"]
+    MOE_EXPANSION_FACTOR = global_args["MOE_EXPANSION_FACTOR"]
+    SHARED_EXPERT_EXPANSION_FACTOR = global_args["SHARED_EXPERT_EXPANSION_FACTOR"]
+
     from olmo_core.data import TokenizerConfig
+    from olmo_core.nn.attention import (
+        AttentionConfig,
+        AttentionType,
+        MultiheadLatentAttentionConfig,
+    )
+    from olmo_core.nn.buffer_cache import BufferCache
+    from olmo_core.nn.feed_forward import FeedForwardConfig, FeedForwardType
+    from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
+    from olmo_core.nn.lm_head import LMHeadConfig
+    from olmo_core.nn.moe import MoEConfig, MoERouterConfig, MoEType
+    from olmo_core.nn.rope import RoPEConfig, RoPEType
     from olmo_core.nn.transformer.config import TransformerType
+
     dtype = DType.float32
     layer_norm = LayerNormConfig(
         name=LayerNormType.rms,
@@ -69,7 +89,7 @@ def build_model_config(
         bias=False,
         dtype=dtype,
     )
-    
+
     if USE_MLA:
         attn_config = MultiheadLatentAttentionConfig(
             n_heads=24,
@@ -77,7 +97,7 @@ def build_model_config(
             dropout=0.0,
             dtype=dtype,
             q_lora_rank=1024,
-            kv_lora_rank=512, 
+            kv_lora_rank=512,
             qk_nope_head_dim=192,
             # qk_nope_head_dim=128,
             qk_rope_head_dim=64,
@@ -98,11 +118,10 @@ def build_model_config(
             use_flash=False,
             dtype=dtype,
         )
-    
-    
+
     if USE_MOE:
         block_name = TransformerBlockType.moe_reordered_norm
-        
+
         config = TransformerConfig(
             name=TransformerType.moe,
             d_model=d_model,
@@ -120,7 +139,7 @@ def build_model_config(
                     num_experts=NUM_EXPERTS,
                     hidden_size=int(MOE_EXPANSION_FACTOR * d_model),
                     capacity_factor=1.25,
-                    router=MoERouterConfig(top_k=TOP_K, normalize_expert_weights=1.0), # L1 norm
+                    router=MoERouterConfig(top_k=TOP_K, normalize_expert_weights=1.0),  # L1 norm
                     # shared_mlp=FeedForwardConfig(hidden_size=int(d_model*SHARED_EXPERT_EXPANSION_FACTOR), bias=False),
                     shared_mlp=None,
                     lb_loss_weight=0.01,
@@ -158,19 +177,21 @@ def build_model_config(
 
 
 def finalize_config(config: ExperimentConfig):
-    NUM_EXPERTS = global_args['NUM_EXPERTS']
-    TOP_K = global_args['TOP_K']
-    
+    NUM_EXPERTS = global_args["NUM_EXPERTS"]
+    TOP_K = global_args["TOP_K"]
+
     # add active & total params to the wandb name
-    total_params_in_B = config.model.num_params/1000/1000/1000
-    active_params_in_B = config.model.num_active_params/1000/1000/1000
-    config.trainer.callbacks['wandb'].name += f"_{active_params_in_B:.2f}@{total_params_in_B:.2f}B"  # print to 2 decimal places #
-    config.trainer.callbacks['wandb'].name += f"_{TOP_K}K{NUM_EXPERTS}N"  # print to 2 decimal places
-    
+    total_params_in_B = config.model.num_params / 1000 / 1000 / 1000
+    active_params_in_B = config.model.num_active_params / 1000 / 1000 / 1000
+    config.trainer.callbacks[
+        "wandb"
+    ].name += f"_{active_params_in_B:.2f}@{total_params_in_B:.2f}B"  # print to 2 decimal places #
+    config.trainer.callbacks[
+        "wandb"
+    ].name += f"_{TOP_K}K{NUM_EXPERTS}N"  # print to 2 decimal places
 
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
-
     config = TransformerTrainModuleConfig(
         rank_microbatch_size=2 * 4096,
         max_sequence_length=common.dataset.effective_sequence_length,
@@ -180,7 +201,9 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             betas=(0.9, 0.95),
             group_overrides=[
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0)),
-                OptimGroupOverride(params=["blocks.*.feed_forward_moe.experts.mlp.*"], opts=dict(lr=EXPERT_LR))
+                OptimGroupOverride(
+                    params=["blocks.*.feed_forward_moe.experts.mlp.*"], opts=dict(lr=EXPERT_LR)
+                ),
             ],
             fused=True,
         ),
@@ -205,10 +228,12 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
         # scheduler=CosWithWarmup(warmup_steps=1000,),
-        
-        scheduler=CosWithWarmupAndLinearDecay(warmup_steps=1000, decay_fraction=None, decay=1600, 
-                                            #   t_max=23842+1600
-                                              ),
+        scheduler=CosWithWarmupAndLinearDecay(
+            warmup_steps=1000,
+            decay_fraction=None,
+            decay=1600,
+            #   t_max=23842+1600
+        ),
     )
     return config
 
@@ -216,19 +241,20 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
 def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     config = (
         TrainerConfig(
-            save_folder=f'/workspace/tmp/{common.run_name}',
+            save_folder=f"/workspace/tmp/{common.run_name}",
             save_overwrite=True,
             metrics_collect_interval=10,
             cancel_check_interval=1,
             # max_duration=Duration.tokens(100_000_000_000) # 100 Billion tokens
-            max_duration=Duration.tokens(106_711_482_368) # 106 Billion tokens
-            
+            max_duration=Duration.tokens(106_711_482_368),  # 106 Billion tokens
         )
         .with_callback(
             "upcycleCheckpointer",
             UpcycleCheckpointerCallback(
-                enabled=global_args['USE_UPCYCLE'],
-                upcycled_model_path=global_args['UPCYCLE_PATH'] if global_args['UPCYCLE_PATH'] else f'/workspace/tmp/upcycled-OLMo-2-0425-1B/{common.run_name}',
+                enabled=global_args["USE_UPCYCLE"],
+                upcycled_model_path=global_args["UPCYCLE_PATH"]
+                if global_args["UPCYCLE_PATH"]
+                else f"/workspace/tmp/upcycled-OLMo-2-0425-1B/{common.run_name}",
             ),
         )
         .with_callback(
@@ -259,70 +285,77 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 enabled=True,
                 cancel_check_interval=10,
             ),
-        ).
-        with_callback(
-            "profiler", 
-            NvidiaProfilerCallback(enabled=False,
-                                   profile_ranks=[0],
-            )
+        )
+        .with_callback(
+            "profiler",
+            NvidiaProfilerCallback(
+                enabled=False,
+                profile_ranks=[0],
+            ),
         )
     )
     return config
 
+
 if __name__ == "__main__":
-    global_args['USE_UPCYCLE'] = True
+    global_args["USE_UPCYCLE"] = True
 
     if run_name == "virtual-group-1e-4":
-        global_args['NUM_EXPERTS'] = 32
-        global_args['TOP_K'] = 8
-        global_args['MOE_EXPANSION_FACTOR'] = 1
-        global_args['SHARED_EXPERT_EXPANSION_FACTOR'] = 4
+        global_args["NUM_EXPERTS"] = 32
+        global_args["TOP_K"] = 8
+        global_args["MOE_EXPANSION_FACTOR"] = 1
+        global_args["SHARED_EXPERT_EXPANSION_FACTOR"] = 4
         build_model_config_partial = partial(
             build_model_config,
             routed_expert_norm=False,
             shared_expert_norm=False,
             feed_forward_norm=True,
         )
-        global_args['UPCYCLE_PATH'] = '/workspace/tmp/upcycled-OLMo-2-0425-1B/virtual-group-init'    
+        global_args["UPCYCLE_PATH"] = "/workspace/tmp/upcycled-OLMo-2-0425-1B/virtual-group-init"
     elif run_name == "virtual-group-init-E8G4T4-1e-4":
-        global_args['NUM_EXPERTS'] = 32
-        global_args['TOP_K'] = 4
-        global_args['MOE_EXPANSION_FACTOR'] = 1
-        global_args['SHARED_EXPERT_EXPANSION_FACTOR'] = None
+        global_args["NUM_EXPERTS"] = 32
+        global_args["TOP_K"] = 4
+        global_args["MOE_EXPANSION_FACTOR"] = 1
+        global_args["SHARED_EXPERT_EXPANSION_FACTOR"] = None
         build_model_config_partial = partial(
             build_model_config,
             routed_expert_norm=False,
             shared_expert_norm=False,
             feed_forward_norm=True,
         )
-        global_args['UPCYCLE_PATH'] = '/workspace/tmp/upcycled-OLMo-2-0425-1B/virtual-group-init-exact'        
+        global_args[
+            "UPCYCLE_PATH"
+        ] = "/workspace/tmp/upcycled-OLMo-2-0425-1B/virtual-group-init-exact"
     elif run_name == "virtual-group-init-E8G4T4-fix-1e-4":
-        global_args['NUM_EXPERTS'] = 32
-        global_args['TOP_K'] = 4
-        global_args['MOE_EXPANSION_FACTOR'] = 1
-        global_args['SHARED_EXPERT_EXPANSION_FACTOR'] = None
+        global_args["NUM_EXPERTS"] = 32
+        global_args["TOP_K"] = 4
+        global_args["MOE_EXPANSION_FACTOR"] = 1
+        global_args["SHARED_EXPERT_EXPANSION_FACTOR"] = None
         build_model_config_partial = partial(
             build_model_config,
             routed_expert_norm=False,
             shared_expert_norm=False,
             feed_forward_norm=True,
         )
-        global_args['UPCYCLE_PATH'] = '/workspace/tmp/upcycled-OLMo-2-0425-1B/virtual-group-init-E8G4T4'   
+        global_args[
+            "UPCYCLE_PATH"
+        ] = "/workspace/tmp/upcycled-OLMo-2-0425-1B/virtual-group-init-E8G4T4"
     elif run_name == "virtual-group-init-E8G4T8-1e-4":
-        global_args['NUM_EXPERTS'] = 32
-        global_args['TOP_K'] = 8
-        global_args['MOE_EXPANSION_FACTOR'] = 1
-        global_args['SHARED_EXPERT_EXPANSION_FACTOR'] = None
+        global_args["NUM_EXPERTS"] = 32
+        global_args["TOP_K"] = 8
+        global_args["MOE_EXPANSION_FACTOR"] = 1
+        global_args["SHARED_EXPERT_EXPANSION_FACTOR"] = None
         build_model_config_partial = partial(
             build_model_config,
             routed_expert_norm=False,
             shared_expert_norm=False,
             feed_forward_norm=True,
         )
-        global_args['UPCYCLE_PATH'] = '/workspace/tmp/upcycled-OLMo-2-0425-1B/virtual-group-init-E8G4T8'  
+        global_args[
+            "UPCYCLE_PATH"
+        ] = "/workspace/tmp/upcycled-OLMo-2-0425-1B/virtual-group-init-E8G4T8"
     else:
         raise ValueError(f"Unknown run name: {run_name}")
-
 
     main(
         global_batch_size=1024 * 4096,

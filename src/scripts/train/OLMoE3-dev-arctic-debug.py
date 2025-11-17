@@ -4,11 +4,12 @@ Train an OLMoE model. Run this script without any arguments to see usage info.
 
 import logging
 import math
+from dataclasses import replace
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
-from olmo_core.internal.experiment import CommonComponents, main, ExperimentConfig
+from olmo_core.internal.experiment import CommonComponents, ExperimentConfig, main
 from olmo_core.nn.feed_forward import FeedForwardConfig
 from olmo_core.nn.moe import (
     MoEConfig,
@@ -35,7 +36,6 @@ from olmo_core.train.train_module import (
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
-from dataclasses import replace
 
 log = logging.getLogger(__name__)
 
@@ -209,6 +209,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
 def finalize_config(config: ExperimentConfig):
     from typing import cast
+
     # add active & total params to the wandb name
     total_params_in_B = config.model.num_params/1000/1000/1000
     active_params_in_B = config.model.num_active_params/1000/1000/1000

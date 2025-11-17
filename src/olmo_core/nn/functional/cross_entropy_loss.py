@@ -64,6 +64,7 @@ _fused_linear_cross_entropy_loss: Optional[Callable] = None
 #     log.exception("Error importing liger-kernel")
 
 from .custom_fused_linear_cross_entropy import LigerFusedLinearCrossEntropyFunction
+
 _fused_linear_cross_entropy_loss = LigerFusedLinearCrossEntropyFunction.apply
 
 

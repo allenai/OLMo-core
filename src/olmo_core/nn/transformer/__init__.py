@@ -11,11 +11,11 @@ from .block import (
     TransformerBlockBase,
 )
 from .config import (
+    MoEFusedV2TransformerConfig,
     TransformerActivationCheckpointingMode,
     TransformerBlockConfig,
     TransformerBlockType,
     TransformerConfig,
-    MoEFusedV2TransformerConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerType,
 )

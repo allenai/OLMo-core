@@ -1,6 +1,7 @@
 import logging
 from contextlib import ExitStack
 from dataclasses import dataclass
+
 import torch
 
 from olmo_core.distributed.parallel import (
@@ -195,7 +196,7 @@ class NvidiaProfilerCallback(Callback):
     Enables the NVIDIA profiler for PyTorch training.
     It only needs to be called at `pre_load_batch` and `post_train_batch`.
     """
-    
+
     start: int = 10
     """
     The step at which to start profiling.
@@ -212,11 +213,11 @@ class NvidiaProfilerCallback(Callback):
     """
     The ranks to profile.
     """
-    
+
     def pre_load_batch(self):
         if self.enabled and get_rank() in self.profile_ranks:
             if self.step == self.start:
-                print(f'Starting NVIDIA profiler at rank={get_rank()} step={self.step}...')
+                print(f"Starting NVIDIA profiler at rank={get_rank()} step={self.step}...")
                 torch.cuda.cudart().cudaProfilerStart()
                 torch.autograd.profiler.emit_nvtx(record_shapes=True).__enter__()
 
@@ -224,5 +225,4 @@ class NvidiaProfilerCallback(Callback):
         if self.enabled and get_rank() in self.profile_ranks:
             if self.step == self.end:
                 torch.cuda.cudart().cudaProfilerStop()
-                print(f'Stopping NVIDIA profiler at rank={get_rank()} step={self.step}...')
-                
+                print(f"Stopping NVIDIA profiler at rank={get_rank()} step={self.step}...")

@@ -55,9 +55,9 @@ class _UniformExpertAssignment(torch.autograd.Function):
         return out.view(x.shape)
 
 
-_uniform_expert_assignment: Callable[[torch.Tensor, int], torch.Tensor] = (
-    _UniformExpertAssignment.apply
-)  # type: ignore
+_uniform_expert_assignment: Callable[
+    [torch.Tensor, int], torch.Tensor
+] = _UniformExpertAssignment.apply  # type: ignore
 
 
 class MoERouterType(StrEnum):

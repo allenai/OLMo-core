@@ -117,9 +117,7 @@ class TrainerConfig(Config):
         return self.with_callback(
             "downstream_evaluator",
             DownstreamEvaluatorCallbackConfig(
-                tasks=tasks,
-                tokenizer=tokenizer,
-                eval_interval=eval_interval,
+                tasks=tasks, tokenizer=tokenizer, eval_interval=eval_interval
             ),
         ).with_callback(
             "lm_evaluator",
