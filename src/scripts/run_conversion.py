@@ -1,4 +1,28 @@
 #!/usr/bin/env python
+
+"""
+Example usage:
+
+for STEP in step1000 step2000 step3000; do
+  JOBNAME="olmo-convert-${STEP}"
+  gantry run \
+    --allow-dirty \
+    --workspace ai2/oe-data \
+    --priority high \
+    --cluster ai2/augusta \
+    --gpus 1 \
+    --env-secret HF_TOKEN \
+    --env STEP="$STEP" \
+    --name "$JOBNAME" \
+    -- bash -lc '
+      pip install -U "huggingface_hub>=0.25.1" hf-transfer && \
+      python -u src/scripts/run_conversion.py
+    ' &
+done
+wait
+"""
+
+
 import os
 import subprocess
 from huggingface_hub import HfApi, upload_folder
