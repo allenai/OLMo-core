@@ -585,7 +585,14 @@ def _get_http_session() -> requests.Session:
     return session
 
 
-@retriable()
+@retriable(
+    retriable_errors=(
+        requests.exceptions.ConnectionError,
+        requests.exceptions.Timeout,
+        requests.exceptions.ChunkedEncodingError,
+        OLMoNetworkError,
+    )
+)
 def _http_file_size(url: str) -> int:
     session = _get_http_session()
     response = session.head(url, allow_redirects=True, headers={"Accept-Encoding": "identity"})
