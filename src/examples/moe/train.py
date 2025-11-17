@@ -12,12 +12,8 @@ from dataclasses import dataclass
 from typing import List, cast
 
 from olmo_core.config import Config, DType
-from olmo_core.data import (
-    NumpyDataLoaderConfig,
-    NumpyDatasetConfig,
-    NumpyDatasetType,
-    TokenizerConfig,
-)
+from olmo_core.data import NumpyDataLoaderConfig, NumpyFSLDatasetConfig, TokenizerConfig
+from olmo_core.data.numpy_dataset import NumpyDatasetConfig
 from olmo_core.distributed.parallel import DataParallelType, PipelineScheduleType
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import (
@@ -46,8 +42,6 @@ from olmo_core.train.train_module import (
 )
 from olmo_core.utils import seed_all
 
-SEQUENCE_LENGTH = 1024
-
 # This will read stream data from the public endpoints by default, but that might be a lot slower
 # than reading data locally.
 DATA_ROOT = os.environ.get("OLMO_DATA_ROOT", "http://olmo-data.org/examples/c4-en/gpt2").rstrip("/")
@@ -64,6 +58,8 @@ DATA_PATHS = [
     f"{DATA_ROOT}/c4-train.00900-00999.npy",
     f"{DATA_ROOT}/c4-train.01000-01023.npy",
 ]
+
+SEQUENCE_LENGTH = 1024
 
 
 @dataclass
@@ -90,9 +86,8 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         vocab_size=tokenizer_config.padded_vocab_size(),  # a little bigger than actual vocab size to make it a multiple of 128
     )
 
-    dataset_config = NumpyDatasetConfig(
+    dataset_config = NumpyFSLDatasetConfig(
         paths=DATA_PATHS,
-        name=NumpyDatasetType.fsl,
         sequence_length=SEQUENCE_LENGTH,
         max_target_sequence_length=8192,
         tokenizer=tokenizer_config,
@@ -107,7 +102,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
 
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=16 * SEQUENCE_LENGTH,
-        max_sequence_length=dataset_config.effective_sequence_length,
+        max_sequence_length=SEQUENCE_LENGTH,
         optim=AdamWConfig(
             lr=1e-3,
             group_overrides=[
@@ -209,7 +204,5 @@ if __name__ == "__main__":
     run_name, *overrides = sys.argv[1:]
 
     prepare_training_environment()
-    try:
-        main(run_name, overrides=overrides)
-    finally:
-        teardown_training_environment()
+    main(run_name, overrides=overrides)
+    teardown_training_environment()

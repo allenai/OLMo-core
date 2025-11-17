@@ -204,3 +204,41 @@ def test_lm_head_tp(
             grad=inputs.grad.detach().cpu(),
         ),
     )
+
+
+@requires_gpu
+@pytest.mark.parametrize("head_type", [LMHeadType.default, LMHeadType.normalized])
+def test_lm_head_logits_to_keep(head_type):
+    seed_all(42)
+    device = torch.device("cuda")
+    d_model, vocab_size = 256, 1024
+    B, S = 2, 32
+
+    config = LMHeadConfig(name=head_type, loss_implementation=LMLossImplementation.default)
+    lm_head = config.build(d_model=d_model, vocab_size=vocab_size, init_device="cuda")
+
+    inputs = torch.randn(B, S, d_model, device=device)
+    labels = torch.randint(0, vocab_size, (B, S), device=device)
+
+    # Test integer logits_to_keep (keep last N positions)
+    logits_to_keep = 8
+    output = lm_head(inputs, labels=labels, logits_to_keep=logits_to_keep, return_logits=True)
+    assert output.logits.shape == (B, logits_to_keep, vocab_size)
+    output_ref = lm_head(
+        inputs[:, -logits_to_keep:], labels=labels[:, -logits_to_keep:], return_logits=True
+    )
+    assert torch.allclose(output.logits, output_ref.logits) if "output_ref" in locals() else True
+    assert torch.allclose(output.loss, output_ref.loss) if "output_ref" in locals() else True
+
+    # Test tensor logits_to_keep (keep specific positions)
+    positions = torch.tensor([[5, 10, 15, 20], [8, 12, 16, 24]], device=device)
+    output = lm_head(inputs, labels=labels, logits_to_keep=positions, return_logits=True)
+    assert output.logits.shape == (B, 4, vocab_size)
+
+    # Test logits_to_keep=0 (keep all)
+    output = lm_head(inputs, labels=labels, logits_to_keep=0, return_logits=True)
+    assert output.logits.shape == (B, S, vocab_size)
+
+    # Test inference mode
+    logits = lm_head(inputs, logits_to_keep=logits_to_keep)
+    assert logits.shape == (B, logits_to_keep, vocab_size)

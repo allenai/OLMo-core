@@ -5,7 +5,11 @@ Trainer :class:`Callback` implementations.
 from .batch_size_scheduler import BatchSizeSchedulerCallback
 from .beaker import BeakerCallback
 from .callback import Callback, CallbackConfig
-from .checkpointer import CheckpointerCallback, CheckpointRemovalStrategy, UpcycleCheckpointerCallback
+from .checkpointer import (
+    CheckpointerCallback,
+    CheckpointRemovalStrategy,
+    UpcycleCheckpointerCallback,
+)
 from .comet import CometCallback, CometNotificationSetting
 from .config_saver import ConfigSaverCallback
 from .console_logger import ConsoleLoggerCallback
@@ -14,9 +18,12 @@ from .evaluator_callback import (
     EvaluatorCallback,
     LMEvaluatorCallbackConfig,
 )
+from .gap_monitor import GAPMonitorCallback
 from .garbage_collector import GarbageCollectorCallback
 from .gpu_memory_monitor import GPUMemoryMonitorCallback
-from .profiler import ProfilerCallback, NvidiaProfilerCallback
+from .list_checkpointer import ListCheckpointerCallback
+from .monkey_patcher import MonkeyPatcherCallback
+from .profiler import NvidiaProfilerCallback, ProfilerCallback
 from .sequence_length_scheduler import SequenceLengthSchedulerCallback
 from .slack_notifier import SlackNotificationSetting, SlackNotifierCallback
 from .speed_monitor import SpeedMonitorCallback
@@ -26,7 +33,7 @@ __all__ = [
     "Callback",
     "CallbackConfig",
     "CheckpointerCallback",
-    "UpcycleCheckpointerCallback"
+    "UpcycleCheckpointerCallback",
     "CheckpointRemovalStrategy",
     "CometCallback",
     "CometNotificationSetting",
@@ -35,10 +42,11 @@ __all__ = [
     "EvaluatorCallback",
     "LMEvaluatorCallbackConfig",
     "DownstreamEvaluatorCallbackConfig",
+    "GAPMonitorCallback",
     "GarbageCollectorCallback",
     "GPUMemoryMonitorCallback",
     "ProfilerCallback",
-    "NvidiaProfilerCallback"
+    "NvidiaProfilerCallback",
     "SlackNotifierCallback",
     "SlackNotificationSetting",
     "SequenceLengthSchedulerCallback",
@@ -46,9 +54,11 @@ __all__ = [
     "WandBCallback",
     "BeakerCallback",
     "BatchSizeSchedulerCallback",
+    "MonkeyPatcherCallback",
+    "ListCheckpointerCallback",
 ]
 
-__doc__ += "\n"
+__doc__ += "\n"  # pyright: ignore[reportOperatorIssue]
 for name in __all__[2:]:
     if name.endswith("Callback"):
         __doc__ += f"- :class:`{name}`\n"

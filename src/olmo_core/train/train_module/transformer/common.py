@@ -36,8 +36,8 @@ def parallelize_model(
     *,
     world_mesh: Optional[DeviceMesh],
     device: torch.device,
-    max_sequence_length: int,
-    rank_microbatch_size: int,
+    max_sequence_length: Optional[int] = None,
+    rank_microbatch_size: Optional[int] = None,
     compile_model: bool = False,
     float8_config: Optional[Float8Config] = None,
     dp_config: Optional[TransformerDataParallelConfig] = None,
@@ -67,7 +67,9 @@ def parallelize_model(
         assert world_mesh is not None
         cp_mesh = get_cp_mesh(world_mesh)
         for m in model_parts:
-            m.apply_cp(cp_mesh, load_balancer=cp_config.load_balancer)
+            m.apply_cp(
+                cp_mesh, load_balancer=cp_config.load_balancer, head_stride=cp_config.head_stride
+            )
         log.info(f"Applied context parallelism to the model with {get_device_mesh_info(cp_mesh)}")
 
     # Maybe apply tensor.

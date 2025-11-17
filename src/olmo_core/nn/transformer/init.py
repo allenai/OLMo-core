@@ -15,6 +15,7 @@ from ..moe import DroplessMoEMLP, MoEBase, MoELinearRouter, MoEMLP, MoEOrthogona
 def _apply_init(init_fun, x: torch.Tensor, *args, **kwargs):
     if not isinstance(x, DTensor):
         init_fun(x, *args, **kwargs)
+        return
 
     # Initialize full version of x locally, then apply init to that.
     full_x = torch.zeros(x.shape, dtype=x.dtype, device=x.device)
@@ -127,7 +128,7 @@ class InitMethod(StrEnum):
             else:
                 self._init_linear(m.wq_a, std=std, generator=generator)
                 self._init_linear(m.wq_b, std=std, generator=generator)
-                
+
             self._init_linear(m.wkv_a, std=std, generator=generator)
             self._init_linear(m.wkv_b, std=std, generator=generator)
         else:
@@ -214,6 +215,7 @@ class InitMethod(StrEnum):
             )
             # x = cast(MoEOrthogonalRouter, m.router).weight.full_tensor()
             # pass
+
         _apply_init(
             nn.init.trunc_normal_,
             cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp).w1,
@@ -241,6 +243,7 @@ class InitMethod(StrEnum):
             b=3 * std,
             generator=generator,
         )
+
     def init_moe_v2(
         self,
         b,
@@ -253,6 +256,7 @@ class InitMethod(StrEnum):
         ep_generator: Optional[torch.Generator] = None,
     ):
         from ..moe.v2.block import MoEFusedV2TransformerBlock
+
         b = cast(MoEFusedV2TransformerBlock, b)
         if self == InitMethod.llama:
             std = std / (2 * num_blocks) ** 0.5
@@ -295,7 +299,7 @@ class InitMethod(StrEnum):
                 std=std,
                 a=-3 * std,
                 b=3 * std,
-                generator=ep_generator, # might be sharded, use ep_generator
+                generator=ep_generator,  # might be sharded, use ep_generator
             )
             _apply_init(
                 nn.init.trunc_normal_,
@@ -304,7 +308,7 @@ class InitMethod(StrEnum):
                 std=std,
                 a=-3 * std,
                 b=3 * std,
-                generator=ep_generator, # might be sharded, use ep_generator
+                generator=ep_generator,  # might be sharded, use ep_generator
             )
         # shared experts
         if b.shared_experts:
@@ -326,4 +330,3 @@ class InitMethod(StrEnum):
                 b=3 * std,
                 generator=generator,
             )
-            

@@ -109,9 +109,12 @@ class Checkpointer:
                 train_module_dir,
                 train_module.state_dict_to_save(),
                 process_group=self.process_group,
-                save_overwrite=self.save_overwrite,
                 thread_count=self.save_thread_count,
                 throttle_uploads=self.throttle_uploads,
+                enable_plan_caching=True,
+                # NOTE: we've already checked and cleared the directory at this point so we can skip
+                # the extra synchronization.
+                _skip_prepare=True,
             )
 
         self._save_metadata(dir, CheckpointMetadata())
@@ -139,9 +142,12 @@ class Checkpointer:
             train_module_dir,
             train_module.state_dict_to_save(),
             process_group=self.process_group,
-            save_overwrite=self.save_overwrite,
             thread_count=self.save_thread_count,
             throttle_uploads=self.throttle_uploads,
+            enable_plan_caching=True,
+            # NOTE: we've already checked and cleared the directory at this point so we can skip
+            # the extra synchronization.
+            _skip_prepare=True,
         )
 
         def done_callback(fut: Future):
@@ -159,6 +165,7 @@ class Checkpointer:
         train_module: TrainModule,
         *,
         load_trainer_state: Optional[bool] = None,
+        load_optim_state: Optional[bool] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Load model, optim, and other training state from a local or remote checkpoint directory
@@ -202,6 +209,7 @@ class Checkpointer:
 
         state_dict = train_module.state_dict_to_load(metadata)
         import copy
+
         old_sd = copy.deepcopy(state_dict)
         load_state_dict(
             train_module_dir,
@@ -343,13 +351,22 @@ class Checkpointer:
     def _prepare_dir(self, dir: PathOrStr, ensure_exists: bool = True) -> str:
         dir = normalize_path(dir)
 
-        # Make sure checkpoint directory doesn't exist unless it's okay to overwrite it.
-        if not dir_is_empty(dir):
-            if self.save_overwrite:
-                if get_fs_local_rank() == 0:
-                    clear_directory(dir)
-            else:
-                raise FileExistsError(dir)
+        # Make sure checkpoint directory is empty.
+        if self.save_overwrite:
+            if get_fs_local_rank() == 0:
+                clear_directory(dir)
+        elif not dir_is_empty(dir):
+            raise FileExistsError(dir)
+
+        # NOTE: We need a barrier here in both cases.
+        # 1. If 'self.save_overwrite' then we clear the directory, and anytime we clear a directory in
+        # preparation to use it we should have a barrier right after, otherwise one rank might get
+        # ahead and write something to the directory prematurely, which then gets removed by the call
+        # to `clear_directory()`.
+        # 2. And otherwise we are checking if the directory is empty and raising an error if it's not,
+        # so we need to make sure all ranks are synchronized on that check before they can proceed
+        # to write to the directory.
+        barrier()
 
         if ensure_exists and not is_url(dir):
             if get_fs_local_rank() == 0:
@@ -358,7 +375,6 @@ class Checkpointer:
             # saving to an NFS drive or something like that.
             wait_for(Path(dir).exists, description=f"Waiting on '{dir}' to be created...")
 
-        barrier()
         return dir
 
     def _get_tmp_dir(self, dir: PathOrStr) -> Path:
@@ -371,17 +387,25 @@ class Checkpointer:
             if get_fs_local_rank() == 0:
                 clear_directory(tmp_dir)
                 tmp_dir.mkdir(exist_ok=True, parents=True)
+            # NOTE: anytime we clear a directory in preparation to use it we should have a barrier
+            # right after, otherwise one rank might get ahead and write something to the directory
+            # prematurely, which then gets removed by the call to `clear_directory()`.
+            barrier()
 
-        # In the cases where we're using a shared NFS drive between ranks to save checkpoints,
-        # creating the temp directory from rank 0 might not be immediately
-        # realized in the file systems of the other ranks.
-        # So we wait here across all ranks until that tmp checkpoint directory is visible.
-        wait_for(lambda: tmp_dir.exists(), "Waiting for checkpoint directory", timeout=10.0)
-        barrier()
+            # In the cases where we're using a shared NFS drive between ranks to save checkpoints,
+            # creating the temp directory from rank 0 might not be immediately
+            # realized in the file systems of the other ranks.
+            # So we wait here across all ranks until that tmp checkpoint directory is visible.
+            wait_for(lambda: tmp_dir.exists(), "Waiting for checkpoint directory", timeout=10.0)
+
         return tmp_dir
 
     def _teardown_tmp_dir(self, dir: PathOrStr, tmp_dir: Path):
         if not is_url(dir):
+            # NOTE: When dir is not a URL, tmp dir is shared among ranks so we need a barrier before
+            # we tear it down to avoid overwriting the work of other ranks.
+            barrier()
+
             # Replace the temporary directory with the actual checkpoint directory.
             if get_fs_local_rank() == 0:
                 # Replace temp directory with target checkpoint directory.
@@ -400,7 +424,9 @@ class Checkpointer:
             # So we wait here across all ranks until that final checkpoint directory is visible.
             wait_for(lambda: Path(dir).exists(), "Waiting for checkpoint directory", timeout=10.0)
         else:
-            # NOTE: each rank will have its own tmp dir
+            # NOTE: When dir is a URL, each rank will have its own tmp dir so synchronizing with a
+            # barrier isn't necessary.
+
             # Upload files to final location.
             for path in tmp_dir.glob("**/*"):
                 if not path.is_file():
@@ -414,8 +440,6 @@ class Checkpointer:
             # Then remove the temp dir.
             clear_directory(tmp_dir)
 
-        barrier()
-
     @contextmanager
     def _temporary_wd(self, dir: PathOrStr) -> Generator[Path, None, None]:
         # No need to mkdir here since we'll directly replace the temporary directory with
@@ -426,15 +450,14 @@ class Checkpointer:
 
         yield tmp_dir
 
-        barrier()
-
         self._teardown_tmp_dir(dir, tmp_dir)
-        
+
+
 class UpcycleCheckpointer(Checkpointer):
     """
     Checkpointer that is used for MoE upcycling.
     It overrides the save() and load() methods to skip saving and loading extra state other than the model.
-    
+
     The save() method should be called by a standalone script that performs upcycling, not by the trainer.
     The load() method should be called by the trainer (from a CheckpointerCallback).
     """
@@ -445,7 +468,6 @@ class UpcycleCheckpointer(Checkpointer):
         """
         dir = normalize_path(dir)
         with self._temporary_wd(dir) as wd:
-
             # Save model and optim state.
             train_module_dir = f"{dir}/upcycling" if is_url(dir) else wd / "upcycling"
             save_state_dict(
@@ -491,7 +513,7 @@ class UpcycleCheckpointer(Checkpointer):
         if metadata is None:
             metadata = get_checkpoint_metadata(model_module_dir)
 
-        model_module=train_module.model
+        model_module = train_module.model
 
         # model_state_dict = train_module.state_dict_to_load(metadata, optim=False)
         model_state_dict = model_module.state_dict()
@@ -503,13 +525,12 @@ class UpcycleCheckpointer(Checkpointer):
             work_dir=self.work_dir,
             thread_count=self.load_thread_count,
         )
-        model_module.load_state_dict(model_state_dict) # don't need this line?
+        model_module.load_state_dict(model_state_dict)  # don't need this line?
 
         return trainer_state
 
 
 class CompactablityCheckpointer(Checkpointer):
-    
     def load(
         self,
         dir: PathOrStr,

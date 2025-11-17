@@ -2,23 +2,34 @@ import logging
 
 import pytest
 import torch
-import torch.distributed as dist
-
-from olmo_core.distributed.utils import is_distributed
 
 log = logging.getLogger(__name__)
 
 has_cuda = torch.cuda.is_available()
 has_multiple_gpus = has_cuda and torch.cuda.device_count() > 1
-has_flash_attn = False
+has_mps = torch.mps.is_available()
+compute_capability = torch.cuda.get_device_capability()[0] if has_cuda else None
+has_flash_attn_2 = False
+has_flash_attn_3 = False
 has_torchao = False
 has_grouped_gemm = False
+has_te = False
 
 try:
     import flash_attn  # type: ignore
 
-    has_flash_attn = True
+    has_flash_attn_2 = True
     del flash_attn
+except ModuleNotFoundError:
+    pass
+
+try:
+    import flash_attn_interface  # type: ignore
+
+    if compute_capability is not None:
+        is_supported = 9 <= compute_capability < 10  # H100 / H800
+        has_flash_attn_3 = is_supported
+    del flash_attn_interface
 except ModuleNotFoundError:
     pass
 
@@ -36,6 +47,14 @@ try:
     has_grouped_gemm = True
     del grouped_gemm
 except ModuleNotFoundError:
+    pass
+
+try:
+    import transformer_engine.pytorch  # type: ignore
+
+    has_te = True
+    del transformer_engine
+except ImportError:
     pass
 
 
@@ -60,14 +79,36 @@ def requires_multi_gpu(func):
     return func
 
 
-FLASH_MARKS = (
+def requires_compute_capability(min_cc: int):
+    def decorator(func):
+        return pytest.mark.skipif(
+            compute_capability is None or compute_capability < min_cc,
+            reason=f"Requires compute capability >={min_cc}, device has {compute_capability=}",
+        )(func)
+
+    return decorator
+
+
+FLASH_2_MARKS = (
     pytest.mark.gpu,
-    pytest.mark.skipif(not has_flash_attn, reason="Requires flash-attn"),
+    pytest.mark.skipif(not has_flash_attn_2, reason="Requires flash-attn 2"),
 )
 
 
-def requires_flash_attn(func):
-    for mark in FLASH_MARKS:
+def requires_flash_attn_2(func):
+    for mark in FLASH_2_MARKS:
+        func = mark(func)
+    return func
+
+
+FLASH_3_MARKS = (
+    pytest.mark.gpu,
+    pytest.mark.skipif(not has_flash_attn_3, reason="Requires flash-attn 3"),
+)
+
+
+def requires_flash_attn_3(func):
+    for mark in FLASH_3_MARKS:
         func = mark(func)
     return func
 
@@ -84,9 +125,31 @@ def requires_grouped_gemm(func):
     return func
 
 
+TE_MARKS = (
+    pytest.mark.gpu,
+    pytest.mark.skipif(not has_te, reason="Requires Transformer Engine"),
+)
+
+
+def requires_te(func):
+    for mark in TE_MARKS:
+        func = mark(func)
+    return func
+
+
+MPS_MARKS = (pytest.mark.skipif(not has_mps, reason="Requires MPS"),)
+
+
+def requires_mps(func):
+    for mark in MPS_MARKS:
+        func = mark(func)
+    return func
+
+
 INIT_DEVICES = [
     pytest.param(torch.device("meta"), id="device=meta"),
     pytest.param(torch.device("cpu"), id="device=CPU"),
+    pytest.param(torch.device("mps"), id="device=MPS", marks=MPS_MARKS),
     pytest.param(
         torch.device("cuda"),
         id="device=CUDA",
@@ -96,6 +159,7 @@ INIT_DEVICES = [
 
 DEVICES = [
     pytest.param(torch.device("cpu"), id="device=CPU"),
+    pytest.param(torch.device("mps"), id="device=MPS", marks=MPS_MARKS),
     pytest.param(
         torch.device("cuda"),
         id="device=CUDA",
@@ -121,18 +185,3 @@ LOW_PRECISION_DTYPES = [
         marks=GPU_MARKS,
     ),
 ]
-
-
-def get_default_device():
-    if is_distributed():
-        backend = dist.get_backend()
-        if dist.Backend.NCCL in backend:
-            return torch.device("cuda")
-        elif backend == dist.Backend.GLOO:
-            return torch.device("cpu")
-        else:
-            raise NotImplementedError(backend)
-    elif torch.cuda.is_available():
-        return torch.device("cuda")
-    else:
-        return torch.device("cpu")

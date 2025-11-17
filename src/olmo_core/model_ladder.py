@@ -13,7 +13,8 @@ from .data import (
     DataMix,
     NumpyDataLoaderConfig,
     NumpyDatasetConfig,
-    NumpyDatasetType,
+    NumpyFSLDatasetConfig,
+    NumpyPaddedFSLDatasetConfig,
     TokenizerConfig,
 )
 from .doc_utils import beta_feature
@@ -237,7 +238,7 @@ class ModelLadder(Config, metaclass=ABCMeta):
 
         :param kwargs: Extra kwargs to pass to the dataset config constructor.
         """
-        return NumpyDatasetConfig.from_data_mix(
+        return NumpyFSLDatasetConfig.from_data_mix(
             self.data_mix,
             tokenizer=self.tokenizer,
             mix_base_dir=self.mix_base_dir,
@@ -291,14 +292,6 @@ class ModelLadder(Config, metaclass=ABCMeta):
         global_batch_size *= self.max_dp_world_size
 
         return self.sequence_length * global_batch_size
-
-    def get_duration(self, run_duration: RunDuration = RunDuration.Cx2) -> Duration:
-        """
-        Get the duration to train for given the model size. Defaults to 2 x Chinchilla optimal.
-
-        :param size: The target model size.
-        """
-        return Duration.tokens(int(run_duration.multiplier * 20) * self.model_size)
 
     def get_train_module_config(
         self,
@@ -393,7 +386,10 @@ class ModelLadder(Config, metaclass=ABCMeta):
             save_folder=self.get_save_folder(size, run_duration),
             metrics_collect_interval=10,
             cancel_check_interval=10,
-            max_duration=self.get_duration(run_duration),
+            max_duration=Duration.chinchilla_tokens(
+                multiple=run_duration.multiplier,
+                model_params=self.model_size,
+            ),
         )
         if gpu_type not in ("cpu", "mps"):
             config = config.with_callback("gpu_monitor", GPUMemoryMonitorCallback())
@@ -402,9 +398,8 @@ class ModelLadder(Config, metaclass=ABCMeta):
         config = config.with_callback(
             "lm_evaluator",
             LMEvaluatorCallbackConfig(
-                eval_dataset=NumpyDatasetConfig.from_data_mix(
+                eval_dataset=NumpyPaddedFSLDatasetConfig.from_data_mix(
                     DataMix.v3_small_ppl_validation,
-                    name=NumpyDatasetType.padded_fsl,
                     mix_base_dir=self.mix_base_dir,
                     sequence_length=self.sequence_length,
                     tokenizer=self.tokenizer,

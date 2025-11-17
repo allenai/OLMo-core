@@ -105,10 +105,10 @@ class WandBCallback(Callback):
 
     def pre_train(self):
         if self.enabled and get_rank() == 0:
-            self.wandb
             if WANDB_API_KEY_ENV_VAR not in os.environ:
                 raise OLMoEnvironmentError(f"missing env var '{WANDB_API_KEY_ENV_VAR}'")
 
+            self.wandb
             wandb_dir = self.trainer.work_dir / "wandb"
             wandb_dir.mkdir(parents=True, exist_ok=True)
             self.wandb.init(
@@ -130,7 +130,11 @@ class WandBCallback(Callback):
     def post_step(self):
         cancel_check_interval = self.cancel_check_interval or self.trainer.cancel_check_interval
         if self.enabled and get_rank() == 0 and self.step % cancel_check_interval == 0:
-            self.trainer.run_bookkeeping_op(self.check_if_canceled, cancel_in_progress=True)
+            self.trainer.run_bookkeeping_op(
+                self.check_if_canceled,
+                allow_multiple=False,
+                distributed=False,
+            )
 
     def post_train(self):
         if self.enabled and get_rank() == 0 and self.run is not None:

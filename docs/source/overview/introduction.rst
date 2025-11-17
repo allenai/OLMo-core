@@ -18,7 +18,7 @@ Most users will likely follow a workflow that looks like this:
 
      model_config = TransformerConfig.llama2_7B(...)
      train_module_config = TransformerTrainModuleConfig(...)
-     data_config = NumpyDatasetConfig(...)
+     data_config = NumpyFSLDatasetConfig(...)
      data_loader_config = NumpyDataLoaderConfig(...)
      trainer_config = TrainerConfig(...)
 
@@ -35,10 +35,8 @@ Most users will likely follow a workflow that looks like this:
 
      if __name__ == "__main__":
          prepare_training_environment(seed=SEED)
-         try:
-             main()
-         finally:
-             teardown_training_environment()
+         main()
+         teardown_training_environment()
 
 3. Launch their training script with a :mod:`~olmo_core.launch` config, like the :class:`~olmo_core.launch.beaker.BeakerLaunchConfig`.
    For example::
@@ -50,4 +48,5 @@ Most users will likely follow a workflow that looks like this:
 
      torchrun --nproc-per-node=8 train_script.py ...
 
-You can find a complete example of this workflow in the `Train a Llama model <../examples/llama.html>`_ example.
+You can find a complete example of this workflow in the `Train an LLM <../examples/llm.html>`_ example.
+And for a more comprehensive overview, see the `All-in-one for researchers <../guides/all_in_one_for_researchers.html>`_.

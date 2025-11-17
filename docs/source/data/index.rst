@@ -8,8 +8,10 @@
    :caption: Submodules
 
    numpy_dataset
+   source_mixture
    collator
    mixes
    tokenizer
    data_loader
+   types
    utils

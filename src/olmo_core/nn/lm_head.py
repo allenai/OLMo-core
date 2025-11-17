@@ -208,15 +208,37 @@ class LMHead(nn.Module):
         z_loss_multiplier: Optional[float] = None,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         return_logits: Optional[bool] = None,
+        logits_to_keep: Union[int, torch.Tensor] = 0,
     ) -> Union[torch.Tensor, LMOutputWithLoss]:
         """
-        Apply the LM head to the hidden state ``x`` with shape ``(B, S, D)``..
+        Applies the language modeling (LM) head to the input hidden states.
 
-        :returns: The logits if ``labels`` is ``None`` or a named tuple which will include the loss(es).
+        :param x: The input hidden states of shape ``(batch_size, seq_len, d_model)``.
+        :param labels: (Optional) Target token IDs of shape ``(batch_size, seq_len)``. If provided, the method computes and returns the loss.
+        :param ignore_index: Specifies a target value that is ignored and does not contribute to the loss.
+        :param loss_reduction: Specifies the reduction to apply to the output loss: "mean", "sum", or "none".
+        :param z_loss_multiplier: (Optional) Multiplier for the z-loss regularization term.
+        :param loss_div_factor: (Optional) Divisor for the loss, can be a scalar or tensor.
+        :param return_logits: If True, returns logits along with the loss when labels are provided.
+        :param logits_to_keep: If nonzero, restricts computation to the last N positions (if int) or to specific positions (if tensor).
+
+        :returns: If ``labels`` is ``None``, returns the logits tensor of shape ``(batch_size, seq_len, vocab_size)``.
+                  If ``labels`` is provided, returns an ``LMOutputWithLoss`` named tuple containing the loss and optionally the logits.
         """
         B = x.shape[0]
 
         h = self.norm(x) if self.norm is not None else x
+
+        if isinstance(logits_to_keep, int):
+            if logits_to_keep != 0:
+                # Keep only the last logits_to_keep positions
+                h = h[:, -logits_to_keep:, :]
+                if labels is not None:
+                    labels = labels[:, -logits_to_keep:]
+        else:  # logits_to_keep is a tensor specifying positions to keep
+            h = h.gather(1, logits_to_keep.unsqueeze(-1).expand(-1, -1, h.size(-1)))
+            if labels is not None:
+                labels = labels.gather(1, logits_to_keep)
 
         if labels is None:
             if return_logits is False:
@@ -232,7 +254,7 @@ class LMHead(nn.Module):
             assert logits is not None
             ce_loss, z_loss = cross_entropy_loss(
                 get_local_tensor(logits).view(-1, self.vocab_size),
-                get_local_tensor(labels).view(-1),
+                get_local_tensor(labels).contiguous().view(-1),
                 ignore_index=ignore_index,
                 reduction=loss_reduction,
                 compute_z_loss=z_loss_multiplier is not None,
@@ -245,14 +267,15 @@ class LMHead(nn.Module):
         elif self.loss_implementation == LMLossImplementation.fused_linear:
             logits = None
             loss, z_loss = fused_linear_cross_entropy_loss(
-                get_local_tensor(h).view(-1, self.d_model),
-                get_local_tensor(self.w_out.weight),
-                get_local_tensor(labels).view(-1),
+                get_local_tensor(h).contiguous().view(-1, self.d_model),
+                weight=get_local_tensor(self.w_out.weight),
+                labels=get_local_tensor(labels).contiguous().view(-1),
                 bias=get_local_tensor(self.w_out.bias) if self.w_out.bias is not None else None,
                 ignore_index=ignore_index,
                 reduction=loss_reduction,
                 compute_z_loss=z_loss_multiplier is not None,
                 z_loss_multiplier=z_loss_multiplier or 1e-4,
+                accum_dtype=torch.float32,  # https://github.com/linkedin/Liger-Kernel/issues/512
             )
             if z_loss is not None:
                 ce_loss = loss - z_loss
@@ -384,7 +407,11 @@ class LMHead(nn.Module):
             parallelize_module(
                 module=self.w_out,
                 device_mesh=tp_mesh,
-                parallelize_plan=ColwiseParallel(output_layouts=Shard(1), use_local_output=False),
+                parallelize_plan=ColwiseParallel(
+                    input_layouts=Shard(1) if self.norm is not None else Replicate(),
+                    output_layouts=Shard(1),
+                    use_local_output=False,
+                ),
             )
 
         self._tp_mesh = tp_mesh
@@ -441,8 +468,20 @@ class NormalizedLMHead(LMHead):
         z_loss_multiplier: Optional[float] = None,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         return_logits: Optional[bool] = None,
+        logits_to_keep: Union[int, torch.Tensor] = 0,
     ) -> Union[torch.Tensor, LMOutputWithLoss]:
         B = x.shape[0]
+
+        if isinstance(logits_to_keep, int):
+            if logits_to_keep != 0:
+                # Keep only the last logits_to_keep positions
+                x = x[:, -logits_to_keep:, :]
+                if labels is not None:
+                    labels = labels[:, -logits_to_keep:]
+        else:  # logits_to_keep is a tensor specifying positions to keep
+            x = x.gather(1, logits_to_keep.unsqueeze(-1).expand(-1, -1, x.size(-1)))
+            if labels is not None:
+                labels = labels.gather(1, logits_to_keep)
 
         sz = self.sz * (self.sz_init_value / self.sz_init_scaling)
         logits = sz * self.w_out(x)
@@ -457,7 +496,7 @@ class NormalizedLMHead(LMHead):
         if self.loss_implementation == LMLossImplementation.default:
             ce_loss, z_loss = cross_entropy_loss(
                 get_local_tensor(logits).view(-1, self.vocab_size),
-                get_local_tensor(labels).view(-1),
+                get_local_tensor(labels).contiguous().view(-1),
                 ignore_index=ignore_index,
                 reduction=loss_reduction,
                 compute_z_loss=z_loss_multiplier is not None,

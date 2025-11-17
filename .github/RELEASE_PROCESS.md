@@ -3,8 +3,7 @@
 ## Steps
 
 1. Update the version in `src/olmo_core/version.py`.
-
-3. Run the release script:
+2. Run the release script:
 
     ```bash
     ./src/scripts/release/release.sh

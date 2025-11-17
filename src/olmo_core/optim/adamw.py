@@ -1,24 +1,21 @@
+import logging
 from dataclasses import dataclass
 from typing import Optional, Tuple, Type, Union
 
 import torch
-import torch.nn as nn
 import torch.optim.optimizer
 
 from ..config import DType
+from ..distributed.utils import get_local_tensor
 from .config import OptimConfig
 from .skip_step_optimizer import SkipStepOptimizer
-import logging
-from torch.distributed.optim import ZeroRedundancyOptimizer
-from torch.distributed.algorithms.ddp_comm_hooks.ddp_zero_hook import (
-    hook_with_zero_step,
-    hook_with_zero_step_interleaved,
-)
 
 log = logging.getLogger(__name__)
 
+
 def adamw_step(
-    p: nn.Parameter,
+    p: torch.Tensor,
+    grad: torch.Tensor,
     *,
     lr: float,
     betas: Tuple[float, float],
@@ -30,18 +27,15 @@ def adamw_step(
     step_factor: torch.Tensor,
     step_increment_bugfix: bool = True,
 ):
-    if p.grad is None:
-        return
-
     beta1, beta2 = betas
 
     # Perform step weight decay.
     p.mul_(1 - step_factor * (lr * weight_decay))
 
     # Decay the first and second moment running average coefficient.
-    exp_avg.lerp_(p.grad.type_as(exp_avg), (step_factor * (1 - beta1)).type_as(exp_avg))
+    exp_avg.lerp_(grad.type_as(exp_avg), (step_factor * (1 - beta1)).type_as(exp_avg))
     exp_avg_sq.mul_(1 - step_factor * (1 - beta2))
-    exp_avg_sq.add_(step_factor * p.grad * p.grad, alpha=1 - beta2)
+    exp_avg_sq.add_(step_factor * grad * grad, alpha=1 - beta2)
 
     bias_correction1 = 1 - beta1 ** (step + 1)
     bias_correction2 = 1 - beta2 ** (step + 1)
@@ -74,7 +68,8 @@ def foreach_adamw_step(
     """Perform a single AdamW update with multi-tensor (*foreach*) kernels."""
     if not params:
         return  # nothing to do
-    dbg_mem_step0 = torch.cuda.memory_allocated()/1024**3
+
+    # dbg_mem_step0 = torch.cuda.memory_allocated() / 1024**3
 
     beta1, beta2 = betas
 
@@ -89,7 +84,6 @@ def foreach_adamw_step(
     w1 = step_factor * (1 - beta1)
     torch._foreach_mul_(exp_avgs, 1.0 - w1)
     torch._foreach_add_(exp_avgs, torch._foreach_mul(grads, w1))
-
 
     w2 = step_factor * (1 - beta2)
     torch._foreach_mul_(exp_avg_sqs, 1.0 - w2)
@@ -131,7 +125,7 @@ class SkipStepAdamW(SkipStepOptimizer):
         foreach: bool = False,
         step_increment_bugfix: bool = True,
     ) -> None:
-        assert lr > 0.0
+        assert lr >= 0.0
         assert all([0.0 <= beta <= 1.0 for beta in betas])
         defaults = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
         super().__init__(
@@ -183,13 +177,14 @@ class SkipStepAdamW(SkipStepOptimizer):
                     state["exp_avg_sq"] = torch.zeros_like(p, dtype=self.dtype)
 
                 adamw_step(
-                    p,
+                    get_local_tensor(p),
+                    get_local_tensor(p.grad),
                     lr=group["lr"],
                     betas=group["betas"],
                     eps=group["eps"],
                     weight_decay=group["weight_decay"],
-                    exp_avg=state["exp_avg"],
-                    exp_avg_sq=state["exp_avg_sq"],
+                    exp_avg=get_local_tensor(state["exp_avg"]),
+                    exp_avg_sq=get_local_tensor(state["exp_avg_sq"]),
                     step=state["step"],
                     step_factor=step_factor,
                     step_increment_bugfix=self.stepfix,
@@ -245,6 +240,7 @@ class SkipStepAdamW(SkipStepOptimizer):
             # exp_avgs_size = sum([ea.numel() * ea.element_size() for ea in exp_avgs])/1024**3
             # exp_avg_sqs_size = sum([eas.numel() * eas.element_size() for eas in exp_avg_sqs])/1024**3
 
+
 @dataclass
 class AdamWConfig(OptimConfig):  # NOTE: omagaconf doesn't like "OptimConfig[torch.optim.AdamW]"
     """
@@ -274,6 +270,30 @@ class SkipStepAdamWConfig(OptimConfig):
     eps: float = 1e-8
     weight_decay: float = 1e-2
     dtype: Optional[DType] = None
+    foreach: bool = True
+    """
+    Whether to use multi-tensor (*foreach*) kernels for the AdamW update.
+    Faster than the non-foreach version.
+    """
+
+    step_increment_bugfix: bool = True
+    """
+    Whether or not to fix the step-incrementing bug discovered in SkipStepAdamW.
+
+    If this flag is set to False, the step will not be incremented, which
+    gives the optimizer an effective lr that is 2.2x higher than the specified lr,
+    and no bias correction is applied.
+    """
+
+    rolling_interval_length: int = 128
+    """
+    The length of the rolling interval to use for computing the mean and standard deviation of the loss.
+    """
+
+    sigma_factor: int = 6
+    """
+    The number of standard deviations above the mean loss to skip a step.
+    """
 
     foreach: bool = True
     """
@@ -303,4 +323,3 @@ class SkipStepAdamWConfig(OptimConfig):
     @classmethod
     def optimizer(cls) -> Type[SkipStepAdamW]:
         return SkipStepAdamW
-

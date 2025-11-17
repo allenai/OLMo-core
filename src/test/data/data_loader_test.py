@@ -292,6 +292,85 @@ def test_numpy_data_loader_while_changing_batch_size(
     assert data_loader.batches_processed == 16
 
 
+def test_fingerprint_override(tmp_path: Path):
+    # Test that ignore_fingerprint_mismatch allows loading state from a dataset with different fingerprint.
+    sequence_length = 4
+    batch_size = 8
+
+    # First dataset
+    mmap1 = np.memmap(tmp_path / "tokens1.npy", dtype=np.uint16, mode="w+", shape=(100,))
+    mmap1[:] = list(range(100))
+    mmap1.flush()
+
+    dataset1 = NumpyFSLDataset(
+        tmp_path / "tokens1.npy",
+        sequence_length=sequence_length,
+        pad_token_id=-1,
+        eos_token_id=-1,
+        vocab_size=32_000,
+    )
+
+    # Create data loader and process some batches
+    data_loader1 = NumpyFSLDataLoader(
+        dataset1,
+        global_batch_size=batch_size,
+        collator=DataCollator(pad_token_id=-1),
+        shuffle=False,
+        num_threads=0,
+        work_dir=tmp_path,
+    )
+    data_loader1.reshuffle(epoch=1)
+    next(iter(data_loader1))
+    state_dict = data_loader1.state_dict()
+
+    # Create a different dataset with different fingerprint
+    mmap2 = np.memmap(tmp_path / "tokens2.npy", dtype=np.uint16, mode="w+", shape=(100,))
+    mmap2[:] = list(range(100, 200))
+    mmap2.flush()
+
+    dataset2 = NumpyFSLDataset(
+        tmp_path / "tokens2.npy",
+        sequence_length=sequence_length,
+        pad_token_id=-1,
+        eos_token_id=-1,
+        vocab_size=32_000,
+    )
+
+    # Verify datasets have different fingerprints
+    assert dataset1.fingerprint != dataset2.fingerprint
+
+    # Test 1: Loading state without ignore_fingerprint_mismatch should raise error
+    data_loader2_no_override = NumpyFSLDataLoader(
+        dataset2,
+        global_batch_size=batch_size,
+        collator=DataCollator(pad_token_id=-1),
+        shuffle=False,
+        num_threads=0,
+        work_dir=tmp_path,
+    )
+
+    with pytest.raises(RuntimeError, match="Dataset fingerprint does not match"):
+        data_loader2_no_override.load_state_dict(state_dict)
+
+    # Test 2: Loading state with ignore_fingerprint_mismatch=True should succeed
+    data_loader2_with_override = NumpyFSLDataLoader(
+        dataset2,
+        global_batch_size=batch_size,
+        collator=DataCollator(pad_token_id=-1),
+        shuffle=False,
+        num_threads=0,
+        work_dir=tmp_path,
+        ignore_fingerprint_mismatch=True,
+    )
+
+    # This should succeed and log a warning
+    data_loader2_with_override.load_state_dict(state_dict)
+
+    # Verify state was loaded correctly
+    assert data_loader2_with_override.batches_processed == 1
+    assert data_loader2_with_override.tokens_processed == batch_size
+
+
 @pytest.mark.parametrize(
     "shuffle, curriculum",
     [
