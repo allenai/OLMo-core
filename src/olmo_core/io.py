@@ -11,6 +11,8 @@ from functools import wraps
 from pathlib import Path
 from typing import Any, Callable, Generator, Optional, Tuple, Type, Union
 
+from olmo_core.utils import get_default_thread_count
+
 try:
     from functools import cache
 except ImportError:
@@ -512,7 +514,7 @@ def deserialize_from_tensor(data: torch.Tensor) -> Any:
 
 
 def _wait_before_retry(attempt: int):
-    time.sleep(min(0.5 * 2**attempt, 3.0))
+    time.sleep(min(0.5 * 2**attempt, 10.0))
 
 
 def _format_bytes(num: Union[int, float], suffix="B") -> str:
@@ -579,19 +581,15 @@ def _get_http_session() -> requests.Session:
     """
     session = requests.Session()
     # Configure connection pooling to reuse connections
-    adapter = HTTPAdapter(pool_maxsize=50)
+    adapter = HTTPAdapter(pool_maxsize=get_default_thread_count())
     session.mount("http://", adapter)
     session.mount("https://", adapter)
     return session
 
 
 @retriable(
-    retriable_errors=(
-        requests.exceptions.ConnectionError,
-        requests.exceptions.Timeout,
-        requests.exceptions.ChunkedEncodingError,
-        OLMoNetworkError,
-    )
+    max_attempts=5,
+    retry_condition=lambda exc: isinstance(exc, OLMoNetworkError),
 )
 def _http_file_size(url: str) -> int:
     session = _get_http_session()
@@ -599,7 +597,6 @@ def _http_file_size(url: str) -> int:
     content_length = response.headers.get("content-length")
 
     if content_length is None:
-        # Check if content is compressed - this explains why Content-Length might be missing
         content_encoding = response.headers.get("content-encoding", "").lower()
         if content_encoding:
             raise OLMoNetworkError(
