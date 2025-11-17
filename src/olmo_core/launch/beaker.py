@@ -902,7 +902,7 @@ def _parse_args():
     parser.add_argument(
         "--beaker-image",
         type=str,
-        default=OLMoCoreBeakerImage.flash_attn_3,
+        default=OLMoCoreBeakerImage.stable,
         help="""The Beaker image to use.""",
     )
     parser.add_argument(
