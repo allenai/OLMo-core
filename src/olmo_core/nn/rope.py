@@ -281,8 +281,8 @@ class YaRNRoPEScalingConfig(RoPEScalingConfig):
             "rope_type": "yarn",
             "factor": self.factor,
             "original_max_position_embeddings": self.old_context_len,
-            "beta_fast": self.beta_fast,
-            "beta_slow": self.beta_slow,
+            "beta_fast": float(self.beta_fast),
+            "beta_slow": float(self.beta_slow),
             "attention_factor": self.get_attention_rescale_factor(),
         }
 
