@@ -1,12 +1,16 @@
+import logging
 from dataclasses import dataclass
 from typing import Optional, Tuple, Type, Union
 
 import torch
+import torch.optim.optimizer
 
 from ..config import DType
 from ..distributed.utils import get_local_tensor
 from .config import OptimConfig
 from .skip_step_optimizer import SkipStepOptimizer
+
+log = logging.getLogger(__name__)
 
 
 def adamw_step(
@@ -65,6 +69,8 @@ def foreach_adamw_step(
     if not params:
         return  # nothing to do
 
+    # dbg_mem_step0 = torch.cuda.memory_allocated() / 1024**3
+
     beta1, beta2 = betas
 
     # Perform step weight decay.
@@ -79,11 +85,9 @@ def foreach_adamw_step(
     torch._foreach_mul_(exp_avgs, 1.0 - w1)
     torch._foreach_add_(exp_avgs, torch._foreach_mul(grads, w1))
 
-    grad_squares = torch._foreach_mul(grads, grads)
-
     w2 = step_factor * (1 - beta2)
     torch._foreach_mul_(exp_avg_sqs, 1.0 - w2)
-    torch._foreach_add_(exp_avg_sqs, torch._foreach_mul(grad_squares, w2))
+    torch._foreach_add_(exp_avg_sqs, torch._foreach_mul(torch._foreach_mul(grads, grads), w2))
 
     steps_t = torch.stack(steps)
     bias_corrections1 = 1 - torch.pow(beta1, steps_t + 1)
@@ -96,6 +100,7 @@ def foreach_adamw_step(
     torch._foreach_add_(denoms, eps)
 
     updates = torch._foreach_div(exp_avgs, denoms)
+    del denoms
     torch._foreach_mul_(updates, (-step_factor * step_sizes).unbind())
     torch._foreach_add_(params, updates)
     if step_increment_bugfix:
@@ -160,7 +165,10 @@ class SkipStepAdamW(SkipStepOptimizer):
         for group in self.param_groups:
             for p in group["params"]:
                 if p.grad is None:
-                    continue
+                    raise RuntimeError(
+                        f"DEBUG: Parameter {p} has no gradient, skipping optimization step for this parameter."
+                    )
+                    # continue
 
                 state = self.state[p]
                 if len(state) == 0:
@@ -206,10 +214,10 @@ class SkipStepAdamW(SkipStepOptimizer):
                     state["exp_avg"] = torch.zeros_like(p, dtype=self.dtype)
                     state["exp_avg_sq"] = torch.zeros_like(p, dtype=self.dtype)
 
-                params_with_grad.append(get_local_tensor(p))
-                grads.append(get_local_tensor(p.grad))
-                exp_avgs.append(get_local_tensor(state["exp_avg"]))
-                exp_avg_sqs.append(get_local_tensor(state["exp_avg_sq"]))
+                params_with_grad.append(p)
+                grads.append(p.grad)
+                exp_avgs.append(state["exp_avg"])
+                exp_avg_sqs.append(state["exp_avg_sq"])
                 steps_list.append(state["step"])
 
             if not params_with_grad:
@@ -228,6 +236,9 @@ class SkipStepAdamW(SkipStepOptimizer):
                 step_factor=step_factor,
                 step_increment_bugfix=self.stepfix,
             )
+            # grads_size = sum([g.numel() * g.element_size() for g in grads])/1024**3
+            # exp_avgs_size = sum([ea.numel() * ea.element_size() for ea in exp_avgs])/1024**3
+            # exp_avg_sqs_size = sum([eas.numel() * eas.element_size() for eas in exp_avg_sqs])/1024**3
 
 
 @dataclass
@@ -259,6 +270,31 @@ class SkipStepAdamWConfig(OptimConfig):
     eps: float = 1e-8
     weight_decay: float = 1e-2
     dtype: Optional[DType] = None
+    foreach: bool = True
+    """
+    Whether to use multi-tensor (*foreach*) kernels for the AdamW update.
+    Faster than the non-foreach version.
+    """
+
+    step_increment_bugfix: bool = True
+    """
+    Whether or not to fix the step-incrementing bug discovered in SkipStepAdamW.
+
+    If this flag is set to False, the step will not be incremented, which
+    gives the optimizer an effective lr that is 2.2x higher than the specified lr,
+    and no bias correction is applied.
+    """
+
+    rolling_interval_length: int = 128
+    """
+    The length of the rolling interval to use for computing the mean and standard deviation of the loss.
+    """
+
+    sigma_factor: int = 6
+    """
+    The number of standard deviations above the mean loss to skip a step.
+    """
+
     foreach: bool = True
     """
     Whether to use multi-tensor (*foreach*) kernels for the AdamW update.

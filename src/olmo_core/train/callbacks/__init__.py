@@ -5,7 +5,11 @@ Trainer :class:`Callback` implementations.
 from .batch_size_scheduler import BatchSizeSchedulerCallback
 from .beaker import BeakerCallback
 from .callback import Callback, CallbackConfig
-from .checkpointer import CheckpointerCallback, CheckpointRemovalStrategy
+from .checkpointer import (
+    CheckpointerCallback,
+    CheckpointRemovalStrategy,
+    UpcycleCheckpointerCallback,
+)
 from .comet import CometCallback, CometNotificationSetting
 from .config_saver import ConfigSaverCallback
 from .console_logger import ConsoleLoggerCallback
@@ -19,7 +23,7 @@ from .garbage_collector import GarbageCollectorCallback
 from .gpu_memory_monitor import GPUMemoryMonitorCallback
 from .list_checkpointer import ListCheckpointerCallback
 from .monkey_patcher import MonkeyPatcherCallback
-from .profiler import ProfilerCallback
+from .profiler import NvidiaProfilerCallback, ProfilerCallback
 from .sequence_length_scheduler import SequenceLengthSchedulerCallback
 from .slack_notifier import SlackNotificationSetting, SlackNotifierCallback
 from .speed_monitor import SpeedMonitorCallback
@@ -29,6 +33,7 @@ __all__ = [
     "Callback",
     "CallbackConfig",
     "CheckpointerCallback",
+    "UpcycleCheckpointerCallback",
     "CheckpointRemovalStrategy",
     "CometCallback",
     "CometNotificationSetting",
@@ -41,6 +46,7 @@ __all__ = [
     "GarbageCollectorCallback",
     "GPUMemoryMonitorCallback",
     "ProfilerCallback",
+    "NvidiaProfilerCallback",
     "SlackNotifierCallback",
     "SlackNotificationSetting",
     "SequenceLengthSchedulerCallback",
@@ -52,7 +58,7 @@ __all__ = [
     "ListCheckpointerCallback",
 ]
 
-__doc__ += "\n"
+__doc__ += "\n"  # pyright: ignore[reportOperatorIssue]
 for name in __all__[2:]:
     if name.endswith("Callback"):
         __doc__ += f"- :class:`{name}`\n"

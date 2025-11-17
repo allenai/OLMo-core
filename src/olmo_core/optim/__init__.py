@@ -2,6 +2,7 @@ from .adam import AdamConfig
 from .adamw import AdamWConfig, SkipStepAdamW, SkipStepAdamWConfig
 from .config import INITIAL_LR_FIELD, LR_FIELD, OptimConfig, OptimGroupOverride
 from .lion import Lion, LionConfig, SkipStepLion, SkipStepLionConfig
+from .moe_optimizer import MoEFusedV2Optimizer, MoEFusedV2OptimizerConfig
 from .noop import NoOpConfig, NoOpOptimizer
 from .scheduler import (
     WSD,
@@ -9,9 +10,11 @@ from .scheduler import (
     ConstantScheduler,
     ConstantWithWarmup,
     CosWithWarmup,
+    CosWithWarmupAndLinearDecay,
     HalfCosWithWarmup,
     InvSqrtWithWarmup,
     LinearWithWarmup,
+    PowerLR,
     Scheduler,
     SchedulerUnits,
     SequentialScheduler,
@@ -26,6 +29,7 @@ __all__ = [
     "SkipStepAdamWConfig",
     "SkipStepAdamW",
     "AdamConfig",
+    # "ZeroAdamWConfig"
     "LionConfig",
     "Lion",
     "SkipStepLionConfig",
@@ -37,12 +41,16 @@ __all__ = [
     "ConstantScheduler",
     "ConstantWithWarmup",
     "CosWithWarmup",
+    "CosWithWarmupAndLinearDecay",
     "HalfCosWithWarmup",
     "InvSqrtWithWarmup",
     "LinearWithWarmup",
     "SequentialScheduler",
     "WSD",
+    "PowerLR",
     "WSDS",
     "LR_FIELD",
     "INITIAL_LR_FIELD",
+    "MoEFusedV2Optimizer",
+    "MoEFusedV2OptimizerConfig",
 ]

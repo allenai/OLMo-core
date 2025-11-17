@@ -5,6 +5,7 @@ from abc import abstractmethod
 from dataclasses import dataclass
 from typing import List, Optional, Tuple, Union
 
+import nvtx
 import torch
 import torch.nn as nn
 from torch.distributed import DeviceMesh
@@ -61,6 +62,8 @@ __all__ = [
     "RingAttentionLoadBalancer",
     "RingAttentionZigZagLoadBalancer",
     "RingAttentionLlama3LoadBalancer",
+    "MultiheadLatentAttentionConfig",
+    "MultiheadLatentAttention",
 ]
 
 log = logging.getLogger(__name__)
@@ -140,6 +143,10 @@ class AttentionType(StrEnum):
     normalized = "normalized"
     """
     ➡️ :class:`NormalizedAttention`
+    """
+    mla = "mla"
+    """
+    ➡️ :class:`MultiheadLatentAttention`
     """
 
 
@@ -457,6 +464,7 @@ class Attention(AttentionBase):
             self.kv_cache_manager.update_seqlen(q.shape[1])
         return att
 
+    @nvtx.annotate("Attention.forward", color="red")
     def forward(
         self,
         x: torch.Tensor,

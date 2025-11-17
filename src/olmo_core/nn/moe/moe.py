@@ -24,6 +24,7 @@ from olmo_core.ops import attach_auxiliary_loss
 
 from ..buffer_cache import BufferCache
 from ..feed_forward import FeedForwardConfig
+from ..layer_norm import LayerNormConfig, LayerNormType
 from .loss import MoELoadBalancingLossGranularity
 from .mlp import DroplessMoEMLP, MoEMLP
 from .parallel_mlp import ParallelDroplessMLP, ParallelMLP, ParallelMLPBase
@@ -70,8 +71,11 @@ class MoEConfig(Config):
         MoELoadBalancingLossGranularity.local_batch
     )
     z_loss_weight: Optional[float] = None
+    orth_loss_weight: Optional[float] = None
     scale_loss_by_num_layers: bool = True
     dtype: DType = DType.float32
+    shared_expert_norm: Optional[LayerNormConfig] = None
+    routed_expert_norm: Optional[LayerNormConfig] = None
 
     def num_params(self, d_model: int) -> int:
         num_params = 0
@@ -136,10 +140,13 @@ class MoEBase(nn.Module):
         lb_loss_weight: Optional[float] = None,
         lb_loss_granularity: MoELoadBalancingLossGranularity = MoELoadBalancingLossGranularity.local_batch,
         z_loss_weight: Optional[float] = None,
+        orth_loss_weight: Optional[float] = None,
         n_layers: int = 1,
         scale_loss_by_num_layers: bool = True,
         dtype: torch.dtype = torch.float32,
         cache: Optional[BufferCache] = None,
+        shared_expert_norm: Optional[LayerNormConfig] = None,
+        routed_expert_norm: Optional[LayerNormConfig] = None,
         **kwargs,
     ):
         super().__init__()
@@ -148,6 +155,8 @@ class MoEBase(nn.Module):
                 lb_loss_weight = lb_loss_weight / n_layers
             if z_loss_weight is not None:
                 z_loss_weight = z_loss_weight / n_layers
+            if orth_loss_weight is not None:
+                orth_loss_weight = orth_loss_weight / n_layers
 
         self.router = router.build(
             d_model,
@@ -155,6 +164,7 @@ class MoEBase(nn.Module):
             lb_loss_weight=lb_loss_weight,
             lb_loss_granularity=lb_loss_granularity,
             z_loss_weight=z_loss_weight,
+            orth_loss_weight=orth_loss_weight,
             dtype=dtype,
             init_device=init_device,
         )
@@ -173,6 +183,21 @@ class MoEBase(nn.Module):
             else shared_mlp.build(d_model, dtype=dtype, init_device=init_device)
         )
         self._ep_enabled = False
+
+        if shared_expert_norm is not None:
+            self.shared_expert_norm = shared_expert_norm.build(
+                size=d_model,
+                init_device=init_device,
+            )
+        else:
+            self.shared_expert_norm = None
+        if routed_expert_norm is not None:
+            self.routed_expert_norm = routed_expert_norm.build(
+                size=d_model,
+                init_device=init_device,
+            )
+        else:
+            self.routed_expert_norm = None
 
     @property
     def num_experts(self) -> int:
@@ -237,11 +262,17 @@ class MoEBase(nn.Module):
         if router_aux_loss is not None:
             x = attach_auxiliary_loss(x, router_aux_loss)
 
+        # shared experts
         shared_out: Optional[torch.Tensor] = None
         if self.shared_mlp is not None:
             shared_out = self.shared_mlp(x)
+            if self.shared_expert_norm is not None:
+                shared_out = self.shared_expert_norm(shared_out)
 
+        # routed experts
         out = self.experts(x, expert_weights, expert_indices, batch_size_per_expert)
+        if self.routed_expert_norm is not None:
+            out = self.routed_expert_norm(out)
 
         if shared_out is not None:
             shared_out = shared_out / (self.top_k + 1)
@@ -342,10 +373,13 @@ class MoE(MoEBase):
         lb_loss_weight: Optional[float] = None,
         lb_loss_granularity: MoELoadBalancingLossGranularity = MoELoadBalancingLossGranularity.local_batch,
         z_loss_weight: Optional[float] = None,
+        orth_loss_weight: Optional[float] = None,
         scale_loss_by_num_layers: bool = True,
         n_layers: int = 1,
         dtype: torch.dtype = torch.float32,
         cache: Optional[BufferCache] = None,
+        shared_expert_norm: Optional[LayerNormConfig] = None,
+        routed_expert_norm: Optional[LayerNormConfig] = None,
     ):
         super().__init__(
             d_model=d_model,
@@ -357,11 +391,14 @@ class MoE(MoEBase):
             lb_loss_weight=lb_loss_weight,
             lb_loss_granularity=lb_loss_granularity,
             z_loss_weight=z_loss_weight,
+            orth_loss_weight=orth_loss_weight,
             scale_loss_by_num_layers=scale_loss_by_num_layers,
             n_layers=n_layers,
             dtype=dtype,
             capacity_factor=capacity_factor,
             cache=cache,
+            shared_expert_norm=shared_expert_norm,
+            routed_expert_norm=routed_expert_norm,
         )
 
     def _init_parallel_mlp(  # type: ignore[override]

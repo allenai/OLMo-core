@@ -620,10 +620,7 @@ class Trainer:
         Asynchronously check if the run is canceled. Use :data:`is_canceled` to see the result.
         This needs to be called by all ranks at the same point in the training loop.
         """
-        # NOTE: Do not set `allow_multiple` to `False` here!
-        # That could result in a situation where this op is canceled on one rank while it's running
-        # on another rank, leading to a deadlock.
-        self.run_bookkeeping_op(self._check_if_canceled)
+        self.run_bookkeeping_op(self._check_if_canceled, cancel_in_progress=True)
 
     def fit(self):
         """
@@ -705,8 +702,9 @@ class Trainer:
             while not self.training_complete:
                 self._fit_epoch()
         except BaseException as exc:
-            self._error = exc
-            log.error(f"Training failed due to:\n{type(exc).__name__}: {exc}")
+            log.error(f"Training failed due to:\n{exc}")
+            orig = exc.__cause__
+            log.error(f"Cause:\n{type(orig)} = {orig}")
             for callback in self._iter_callbacks():
                 callback.on_error(exc)
             for callback in self._iter_callbacks():
@@ -1310,7 +1308,13 @@ class Trainer:
             return  # for backwards compatibility
 
         log.info("Starting forward/backward dry-run batch...")
+
+        # dbg_mem_before_dry_run = torch.cuda.memory_allocated() / 1024**3  # model param + main param
         self.train_module.train_batch(batch, dry_run=True)
+        # dbg_mem_after_dry_run = (
+        #    torch.cuda.memory_allocated() / 1024**3
+        # )  # model param 2x + main param 4x + model grad 2x
+
         log.info("Dry-run complete")
 
     def _fit_epoch(self):
@@ -1325,6 +1329,9 @@ class Trainer:
 
         first_batch = True
         for batch in self._iter_batches():
+            if first_batch:
+                log.info("First batch loaded")
+
             # Bookkeeping.
             self.global_step += 1
             if (

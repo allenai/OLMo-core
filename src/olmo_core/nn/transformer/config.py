@@ -16,11 +16,15 @@ from ..attention import (
     SlidingWindowAttentionConfig,
 )
 from ..buffer_cache import BufferCache
-from ..feed_forward import FeedForwardConfig, FeedForwardType
+from ..feed_forward import DenseMoEFeedForwardConfig, FeedForwardConfig, FeedForwardType
 from ..layer_norm import LayerNormConfig, LayerNormType
 from ..lm_head import LMHeadConfig, LMHeadType
 from ..moe import MoEConfig, MoERouterConfig, MoEType
 from ..rope import RoPEConfig, RoPEScalingConfig, RoPEType
+from .flops import (
+    num_floating_point_operations_for_logits,
+    num_floating_point_operations_for_single_layer,
+)
 from .init import InitMethod
 
 if TYPE_CHECKING:
@@ -89,6 +93,8 @@ class TransformerType(StrEnum):
     ➡️ :class:`MoETransformer`
     """
 
+    moe_fused_v2 = "moe_fused_v2"
+
 
 class TransformerBlockType(StrEnum):
     """
@@ -130,6 +136,8 @@ class TransformerBlockType(StrEnum):
     ➡️ :class:`MoEHybridReorderedNormTransformerBlock`
     """
 
+    moe_fused_v2 = "moe_fused_v2"
+
     default_scaled = "default_scaled"
     """
     ➡️ :class:`LayerNormScaledTransformerBlock` (applies LayerNorm Scaling)
@@ -146,9 +154,13 @@ class TransformerBlockConfig(Config):
     """
     The attention config.
     """
-    layer_norm: Optional[LayerNormConfig] = None
+    attention_norm: Optional[LayerNormConfig] = None
     """
-    The layer norm config.
+    The attention layer norm config.
+    """
+    feed_forward_norm: Optional[LayerNormConfig] = None
+    """
+    The feed forward layer norm config.
     """
     feed_forward: Optional[FeedForwardConfig] = None
     """
@@ -214,6 +226,10 @@ class TransformerBlockConfig(Config):
                 return MoEHybridTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.moe_hybrid_reordered_norm:
                 return MoEHybridReorderedNormTransformerBlock(**kwargs)
+            elif self.name == TransformerBlockType.moe_fused_v2:
+                from ..moe.v2.block import MoEFusedV2TransformerBlock
+
+                return MoEFusedV2TransformerBlock(**kwargs)
             else:
                 raise NotImplementedError(self.name)
         except TypeError as e:
@@ -230,18 +246,18 @@ class TransformerBlockConfig(Config):
 
         # Block attention params.
         block_params += self.attention.num_params(d_model)
-        if self.layer_norm is not None:
-            block_params += self.layer_norm.num_params(d_model)
+        if self.attention_norm is not None:
+            block_params += self.attention_norm.num_params(d_model)
 
         # Block feed forward (dense and/or sparse).
         if self.feed_forward is not None:
             block_params += self.feed_forward.num_params(d_model)
-            if self.layer_norm is not None:
-                block_params += self.layer_norm.num_params(d_model)
+            if self.feed_forward_norm is not None:
+                block_params += self.feed_forward_norm.num_params(d_model)
         if self.feed_forward_moe is not None:
             block_params += self.feed_forward_moe.num_params(d_model)
-            if self.layer_norm is not None:
-                block_params += self.layer_norm.num_params(d_model)
+            if self.feed_forward_norm is not None:
+                block_params += self.feed_forward_norm.num_params(d_model)
 
         return block_params
 
@@ -254,6 +270,82 @@ class TransformerBlockConfig(Config):
             d_model
         ) - self.feed_forward_moe.num_active_params(d_model)
         return num_params - num_inactive_params
+
+    def flops_per_seq(self, d_model: int, seqlen: int) -> int:
+        import argparse
+
+        args = argparse.Namespace()
+
+        # MTP parameters (not supported)
+        args.mtp_num_layers = None  # set to None for non-MTP models
+        from olmo_core.nn.attention import MultiheadLatentAttentionConfig
+
+        # MLA parameters
+        if isinstance(self.attention, MultiheadLatentAttentionConfig):
+            args.multi_latent_attention = True
+
+            raise NotImplementedError("MLA flops not supported")
+        else:
+            args.multi_latent_attention = False
+            args.q_lora_rank = None  # set to None for non-MLA models
+            args.kv_lora_rank = None
+            args.qk_pos_emb_head_dim = None
+            args.qk_head_dim = None
+            args.v_head_dim = None
+
+        # regular mlp
+        if self.feed_forward is not None:
+            args.ffn_hidden_size = self.feed_forward.hidden_size
+            if isinstance(self.feed_forward, DenseMoEFeedForwardConfig):
+                args.dense_moe_mlp = True
+            else:
+                args.dense_moe_mlp = False
+        else:
+            args.ffn_hidden_size = None
+            args.dense_moe_mlp = False
+
+        # MoE parameters
+        if self.feed_forward_moe is not None:
+            # routed experts
+            args.moe_ffn_hidden_size = self.feed_forward_moe.hidden_size
+            args.moe_router_topk = self.feed_forward_moe.router.top_k
+            args.num_experts = self.feed_forward_moe.num_experts
+            # shared MLP
+            if self.feed_forward_moe.shared_mlp is not None:
+                args.moe_shared_expert_intermediate_size = (
+                    self.feed_forward_moe.shared_mlp.hidden_size
+                )
+                args.shared_expert_count = 1
+            else:
+                args.moe_shared_expert_intermediate_size = None
+                args.shared_expert_count = 0
+
+        else:
+            args.moe_ffn_hidden_size = None
+            args.moe_router_topk = None
+            args.num_experts = None
+            args.moe_shared_expert_intermediate_size = None
+            args.shared_expert_count = 0
+
+        args.swiglu = True
+
+        args.seq_length = seqlen
+        args.d_model = d_model
+        args.num_attention_heads = self.attention.n_heads
+        args.num_query_groups = (
+            self.attention.n_kv_heads
+            if self.attention.n_kv_heads is not None
+            else args.num_attention_heads
+        )  # default to n_heads if n_kv_heads is not set
+
+        per_seq_flops = num_floating_point_operations_for_single_layer(
+            args, 1
+        )  # flops for a batch size of 1
+
+        return per_seq_flops
+
+    def flops_per_token(self, d_model, seq_len: int) -> int:
+        return self.flops_per_seq(d_model, seq_len) // seq_len
 
 
 @dataclass
@@ -339,6 +431,8 @@ class TransformerConfig(Config):
                 init_std=self.init_std,
                 block_overrides=self.block_overrides,
             )
+        elif self.name == TransformerType.moe_fused_v2:
+            raise RuntimeError("Use MoEFusedV2TransformerConfig")
         else:
             raise NotImplementedError(self.name)
 
@@ -359,7 +453,7 @@ class TransformerConfig(Config):
             f"- {model.num_non_embedding_params:,d} non-embedding params\n"
             f"- {model.num_trainable_params:,d} trainable params"
         )
-
+        model.config = self
         return model
 
     @property
@@ -428,7 +522,7 @@ class TransformerConfig(Config):
         """
         return self.num_active_params - self.d_model * self.vocab_size
 
-    def num_flops_per_token(self, seq_len: int) -> int:
+    def num_flops_per_token_old(self, seq_len: int) -> int:
         """
         Get the approximate number of flops per token.
         """
@@ -447,6 +541,21 @@ class TransformerConfig(Config):
         flop_per_token = 6 * self.num_non_embedding_params + 12 * n * h * q * t
 
         return flop_per_token
+
+    def num_flops_per_token(self, seq_len: int) -> int:
+        flops = []
+
+        # calculate flops for each block (each block might have different config)
+        for block_idx in range(self.n_layers):
+            block_config = self.block
+            if self.block_overrides is not None and block_idx in self.block_overrides:
+                block_config = self.block_overrides[block_idx]
+
+            flops.append(block_config.flops_per_token(self.d_model, seq_len))
+
+        flops.append(num_floating_point_operations_for_logits(self, seq_len) / seq_len)
+
+        return sum(flops)
 
     @classmethod
     def olmo2_30M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
@@ -1022,7 +1131,8 @@ class TransformerConfig(Config):
             ),
             feed_forward=feed_forward,
             feed_forward_moe=feed_forward_moe,
-            layer_norm=layer_norm,
+            feed_forward_norm=layer_norm,
+            attention_norm=layer_norm,
         )
 
         if block_mods and kwargs.get("block_overrides"):
@@ -1190,3 +1300,75 @@ class TransformerConfig(Config):
 
         new_config.block_overrides = overrides or None
         return new_config
+
+
+@dataclass
+class MoEFusedV2TransformerConfig(TransformerConfig):
+    # Two-batch-overlap to overlap the compute and all2all communication when EP is enabled. Micro batch size needs to be a multiple of 2.
+    two_batch_overlap: bool = False
+
+    # Recompute all blocks in one chunk (not per layer). This is useful when PP is enabled to reduce activation memory that's held in early PP stages. It should not be used when PP is disabled as it increases recomputation overhead for nothing.
+    recompute_all_blocks_by_chunk: bool = False
+
+    # Recompute each block individually. This reduces the activation memory to just one block at a time, but increases recomputation overhead. Works with or without PP. It does not work with TBO
+    recompute_each_block: bool = False
+
+    def build(
+        self,
+        *,
+        init_device: str = "cpu",
+    ) -> "Transformer":
+        """
+        Build the model corresponding to this config.
+
+        :param init_device: The device to put the parameters on during initialization. In a
+            distributed setting it usually makes sense to set this to "meta".
+        """
+        from .model import Transformer
+
+        log.info(
+            f"Building transformer with {self.num_params:,d} total params, "
+            f"{self.num_non_embedding_params:,d} non-embedding params"
+        )
+        model: Transformer
+        if self.name == TransformerType.moe_fused_v2:
+            from ..moe.v2.model import MoEFusedV2Transformer
+
+            model = MoEFusedV2Transformer(
+                d_model=self.d_model,
+                vocab_size=self.vocab_size,
+                n_layers=self.n_layers,
+                block=self.block,
+                lm_head=self.lm_head,
+                dtype=self.dtype.as_pt(),
+                init_method=self.init_method,
+                init_device=init_device,
+                init_seed=self.init_seed,
+                init_std=self.init_std,
+                block_overrides=self.block_overrides,
+                two_batch_overlap=self.two_batch_overlap,
+                recompute_all_blocks_by_chunk=self.recompute_all_blocks_by_chunk,
+                recompute_each_block=self.recompute_each_block,
+            )
+        else:
+            raise NotImplementedError(self.name)
+
+        if self.freeze_params:
+            for name, param in model.named_parameters():
+                for pattern in self.freeze_params:
+                    if fnmatch(name, pattern):
+                        param.requires_grad = False
+                        log.info(f"Param '{name}' will be frozen")
+                        break
+                else:
+                    log.info(f"Param '{name}' will be trainable")
+
+        log.info("%s", model)
+        log.info(
+            f"Built model with:\n"
+            f"- {model.num_params:,d} total params\n"
+            f"- {model.num_non_embedding_params:,d} non-embedding params\n"
+            f"- {model.num_trainable_params:,d} trainable params"
+        )
+        model.config = self
+        return model
