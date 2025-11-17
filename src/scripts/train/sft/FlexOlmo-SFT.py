@@ -6,19 +6,28 @@ Run the script without any arguments to see usage info. See the README for more 
 """
 
 import argparse
+import fnmatch
 import logging
+import shutil
 import sys
 from dataclasses import dataclass, field
-from typing import List, Optional, cast
+from pathlib import Path
+from typing import List, Optional, Tuple, cast
+from urllib.parse import urlparse
 
 from rich import print
 
 from olmo_core.config import Config, DType
-from olmo_core.data import NumpyDataLoaderConfig, NumpyDatasetConfig, TokenizerConfig
-from olmo_core.data.types import LongDocStrategy, NumpyDatasetType
+from olmo_core.data import (
+    NumpyDataLoaderConfig,
+    NumpyPackedFSLDatasetConfig,
+    TokenizerConfig,
+)
+from olmo_core.data.types import LongDocStrategy
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_local_rank
 from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
 from olmo_core.internal.common import (
     CLUSTER_TO_GPU_TYPE,
     build_launch_config,
@@ -29,7 +38,8 @@ from olmo_core.internal.common import (
 from olmo_core.io import list_directory
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
-from olmo_core.nn.transformer import TransformerConfig, TransformerBlockType
+from olmo_core.nn.rope import YaRNRoPEScalingConfig
+from olmo_core.nn.transformer import TransformerBlockConfig, TransformerConfig
 from olmo_core.optim import LinearWithWarmup, SkipStepAdamWConfig
 from olmo_core.train import (
     Duration,
@@ -50,14 +60,18 @@ from olmo_core.train.train_module import (
     TransformerActivationCheckpointingConfig,
     TransformerActivationCheckpointingMode,
     TransformerDataParallelConfig,
+    TransformerDataParallelWrappingStrategy,
+    TransformerExpertParallelConfig,
     TransformerTrainModuleConfig,
 )
 from olmo_core.train.train_module.transformer.config import (
+    FreezeTransformerTrainModuleConfig,
     TransformerContextParallelConfig,
 )
+# from olmo_core.train.train_module.transformer.train_module import FreezeTransformerTrainModule
+
 from olmo_core.utils import prepare_cli_environment, seed_all
-from pathlib import Path
-import shutil
+
 
 log = logging.getLogger(__name__)
 
@@ -181,43 +195,29 @@ def build_sft_dataset(
     tokenizer_config: TokenizerConfig,
     sequence_length: int,
     dataset_path: Optional[str],
-) -> NumpyDatasetConfig:
-    if dataset_path is None:
-        raise OLMoConfigurationError("dataset_path cannot be None")
-    
+) -> NumpyPackedFSLDatasetConfig:
     clean_path = dataset_path.rstrip("/")
-    if dataset_path.startswith("gs://"):
-        contents = list_directory(dataset_path)
-        # TODO: This does not work yet! GCS support is an active work in progress, nearly complete
-        print("GCS support not working yet!")
-        token_id_paths = []
-        label_mask_paths = []
-        for elem in contents:
-            if "token_ids_part" in elem and elem.endswith(".npy"):
-                token_id_paths.append(elem)
-            if "labels_mask" in elem and elem.endswith(".npy"):
-                label_mask_paths.append(elem)
+    if dataset_path.startswith("gs://") or dataset_path.startswith("s3://"):
+        token_id_paths = glob_remote_dataset(f"{clean_path}/token_ids_part_*.npy")
+        label_mask_paths = glob_remote_dataset(f"{clean_path}/token_ids_part_*.npy")
         expand_glob = False
     else:
         token_id_paths = [f"{clean_path}/token_ids_part_*.npy"]
         label_mask_paths = [f"{clean_path}/labels_mask_*.npy"]
         expand_glob = True
 
-    dataset = NumpyDatasetConfig(
+    dataset = NumpyPackedFSLDatasetConfig(
         # general config
         tokenizer=tokenizer_config,
-        mix_base_dir=root_dir,
         work_dir=get_work_dir(root_dir),
         paths=token_id_paths,
         expand_glob=expand_glob,
         label_mask_paths=label_mask_paths,
-        # name=NumpyDatasetType.padded_fsl,  # concatenated short docs into a single sequence... (see also "padded_fsl")
-        # generate_doc_lengths=False,  # ...and mask attention so that they don't attend to each other
-        name=NumpyDatasetType.packed_fsl,  # concatenated short docs into a single sequence... (see also "padded_fsl")
         generate_doc_lengths=True,  # ...and mask attention so that they don't attend to each other
         long_doc_strategy=LongDocStrategy.truncate,  # truncate docs...
         sequence_length=sequence_length,  # ...that are over this length
     )
+
     return dataset
 
 
