@@ -99,7 +99,8 @@ class Checkpointer:
         """
         Save model, optim, and other training state to a local or remote directory.
         """
-        torch.cuda.synchronize()
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
         dir = normalize_path(dir)
         with self._temporary_wd(dir) as wd:
             # Save trainer state.
@@ -132,7 +133,8 @@ class Checkpointer:
                 "a checkpointer process group is required for async checkpointing!"
             )
 
-        torch.cuda.synchronize()
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
         dir = normalize_path(dir)
 
         with self._temporary_wd(dir) as wd:
