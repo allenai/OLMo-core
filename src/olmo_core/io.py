@@ -11,8 +11,6 @@ from functools import wraps
 from pathlib import Path
 from typing import Any, Callable, Generator, Optional, Tuple, Type, Union
 
-from olmo_core.utils import get_default_thread_count
-
 try:
     from functools import cache
 except ImportError:
@@ -93,7 +91,6 @@ def get_file_size(path: PathOrStr) -> int:
 
     :param path: Path/URL to the file.
     """
-    log.info(f"Getting file size of {path}")
     path = normalize_path(path)
 
     if is_url(path):
@@ -436,7 +433,9 @@ def list_directory(
                 include_dirs=include_dirs,
             )
         else:
-            raise NotImplementedError(f"list_directory not implemented for '{parsed.scheme}' URLs")
+            raise NotImplementedError(
+                f"list_directory size not implemented for '{parsed.scheme}' URLs"
+            )
 
 
 def glob_directory(pattern: str) -> Generator[str, None, None]:
@@ -514,7 +513,7 @@ def deserialize_from_tensor(data: torch.Tensor) -> Any:
 
 
 def _wait_before_retry(attempt: int):
-    time.sleep(min(0.5 * 2**attempt, 10.0))
+    time.sleep(min(0.5 * 2**attempt, 3.0))
 
 
 def _format_bytes(num: Union[int, float], suffix="B") -> str:
@@ -581,34 +580,20 @@ def _get_http_session() -> requests.Session:
     """
     session = requests.Session()
     # Configure connection pooling to reuse connections
-    adapter = HTTPAdapter(pool_maxsize=get_default_thread_count())
+    adapter = HTTPAdapter(pool_maxsize=50)
     session.mount("http://", adapter)
     session.mount("https://", adapter)
     return session
 
 
-@retriable(
-    max_attempts=5,
-    retry_condition=lambda exc: isinstance(exc, OLMoNetworkError),
-)
+@retriable()
 def _http_file_size(url: str) -> int:
     session = _get_http_session()
-    response = session.head(url, allow_redirects=True, headers={"Accept-Encoding": "identity"})
+    response = session.head(url, allow_redirects=True)
     content_length = response.headers.get("content-length")
-
-    if content_length is None:
-        content_encoding = response.headers.get("content-encoding", "").lower()
-        if content_encoding:
-            raise OLMoNetworkError(
-                f"No content-length header found for {url}. "
-                f"The server uses '{content_encoding}' compression and may not provide Content-Length. "
-                f"Headers: {dict(response.headers)}"
-            )
-        else:
-            raise OLMoNetworkError(
-                f"No content-length header found for {url}. Headers: {dict(response.headers)}"
-            )
-
+    assert (
+        content_length is not None
+    ), f"No content-length header found for {url}. Headers: {dict(response.headers)}"
     return int(content_length)
 
 
@@ -622,11 +607,7 @@ def _http_file_size(url: str) -> int:
 def _http_get_bytes_range(url: str, bytes_start: int, num_bytes: int) -> bytes:
     session = _get_http_session()
     response = session.get(
-        url,
-        headers={
-            "Range": f"bytes={bytes_start}-{bytes_start + num_bytes - 1}",
-            "Accept-Encoding": "identity",
-        },
+        url, headers={"Range": f"bytes={bytes_start}-{bytes_start + num_bytes - 1}"}
     )
 
     if response.status_code == 404:
