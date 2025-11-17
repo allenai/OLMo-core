@@ -48,10 +48,11 @@ MAX_DURATION = int(500e9)  # int(6e12), don't forget to adjust the LR when you i
 EVAL_INTERVAL = 1000
 NUM_EXPERTS = 128
 TOP_K = 8
-NUM_LAYERS=16
+NUM_LAYERS = 16
 MOE_HIDDEN_SIZE = 1024
 USE_SHARED_MLP = True  # Use shared MLP in MoE blocks
 SHARED_MLP_HIDDEN_SIZE = 4096  # Hidden size for shared MLP in MoE blocks
+
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     d_model = 2048
@@ -86,11 +87,12 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     # First block will be a regular transformer block (no MoE component).
     config.block_overrides = {
         0: replace(
-            config.block, 
-            name=TransformerBlockType.reordered_norm, 
+            config.block,
+            name=TransformerBlockType.reordered_norm,
             feed_forward_moe=None,
-            feed_forward=FeedForwardConfig(hidden_size=(SHARED_MLP_HIDDEN_SIZE + TOP_K * MOE_HIDDEN_SIZE), bias=False),
-            
+            feed_forward=FeedForwardConfig(
+                hidden_size=(SHARED_MLP_HIDDEN_SIZE + TOP_K * MOE_HIDDEN_SIZE), bias=False
+            ),
             # feed_forward=FeedForwardConfig(hidden_size=2560, bias=False),
         ),
     }
@@ -150,10 +152,10 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     # assert common.launch is not None
     # assert len(common.launch.clusters) == 1
     # cluster = common.launch.clusters[0]
-    cluster = 'ai2/jupiter-cirrascale-2'
+    cluster = "ai2/jupiter-cirrascale-2"
     return (
         TrainerConfig(
-            save_folder=f'/workspace/tmp/{common.run_name}',
+            save_folder=f"/workspace/tmp/{common.run_name}",
             save_overwrite=True,
             metrics_collect_interval=5,
             cancel_check_interval=cancel_check_interval,
@@ -165,7 +167,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 save_interval=1000,
                 ephemeral_save_interval=250,
                 save_async=True,
-                pre_train_checkpoint=False # don't save at step 0
+                pre_train_checkpoint=False,  # don't save at step 0
             ),
         )
         .with_callback(
@@ -200,7 +202,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 ],
             ),
         )
-        TODO: might not be able to run in-loop evals depending on parallel strategies
+        # TODO: might not be able to run in-loop evals depending on parallel strategies
         .with_recommended_evals(
             common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
         )
@@ -211,11 +213,16 @@ def finalize_config(config: ExperimentConfig):
     from typing import cast
 
     # add active & total params to the wandb name
-    total_params_in_B = config.model.num_params/1000/1000/1000
-    active_params_in_B = config.model.num_active_params/1000/1000/1000
-    cast(WandBCallback, config.trainer.callbacks['wandb']).name += f"_{active_params_in_B:.2f}@{total_params_in_B:.2f}B"  # print to 2 decimal places
-    cast(WandBCallback, config.trainer.callbacks['wandb']).name += f"_{TOP_K}K{NUM_EXPERTS}N"  # print to 2 decimal places
-    
+    total_params_in_B = config.model.num_params / 1000 / 1000 / 1000
+    active_params_in_B = config.model.num_active_params / 1000 / 1000 / 1000
+    cast(
+        WandBCallback, config.trainer.callbacks["wandb"]
+    ).name += f"_{active_params_in_B:.2f}@{total_params_in_B:.2f}B"  # print to 2 decimal places
+    cast(
+        WandBCallback, config.trainer.callbacks["wandb"]
+    ).name += f"_{TOP_K}K{NUM_EXPERTS}N"  # print to 2 decimal places
+
+
 if __name__ == "__main__":
     main(
         global_batch_size=GLOBAL_BATCH_SIZE,
@@ -226,5 +233,4 @@ if __name__ == "__main__":
         include_instance_filter=False,  # We use SkipStepOptimizer for this problem.
         include_default_evals=False,
         finalize_config=finalize_config,
-        
     )
