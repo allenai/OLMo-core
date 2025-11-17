@@ -243,6 +243,9 @@ class YaRNRoPEScalingConfig(RoPEScalingConfig):
     old_context_len: int = 8192
     """Maximum sequence length that the *base* model was originally trained with."""
 
+    # Fields to ignore when loading from config (for backwards compatibility)
+    _IGNORE_FIELDS = ("attention_rescale_factor",)
+
     def compute_scaled_inv_freq(
         self, theta: int, dim: int, device: torch.device
     ) -> tuple["torch.Tensor", float]:
