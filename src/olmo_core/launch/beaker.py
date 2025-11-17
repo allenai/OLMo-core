@@ -331,13 +331,16 @@ class BeakerLaunchConfig(Config):
     for details.
     """
 
-    nsys_output: Optional[str] = None
+    nsys_profile_output: Optional[str] = None
     """
     Output path for nsys profile traces. If ``None``, defaults to ``nsys_profile_rank{RANK}``.
     This will be set per-rank automatically. Only used when ``nsys_profile=True``.
+
+    Note: If you want traces to be automatically persisted via ``NvidiaProfilerCallback.persist_nsys_traces``,
+    ensure the output path is relative (not absolute) so traces are saved in the work directory.
     """
 
-    nsys_options: List[str] = field(
+    nsys_profile_options: List[str] = field(
         default_factory=lambda: [
             "-w=true",
             "-t=cuda,nvtx,osrt,cudnn,cublas",
@@ -351,7 +354,7 @@ class BeakerLaunchConfig(Config):
     )
     """
     Additional options to pass to ``nsys profile``. Defaults to profiling from cudaProfilerStart/Stop
-    and tracing CUDA and NVTX events. Only used when ``nsys_profile=True``.
+    and tracing CUDA, NVTX, OSRT, CUDNN, and CUBLAS events. Only used when ``nsys_profile=True``.
     """
 
     # NOTE: don't assign a type here because omegaconf can't validate arbitrary classes
@@ -432,13 +435,13 @@ class BeakerLaunchConfig(Config):
         nsys_cmd = ["nsys", "profile"]
 
         # Add nsys options
-        nsys_cmd.extend(self.nsys_options)
+        nsys_cmd.extend(self.nsys_profile_options)
 
         # Set output path
         # For multi-node: include node rank in path; nsys will append local rank automatically
         # For single-node: nsys will append local rank automatically
-        if self.nsys_output:
-            output_path = self.nsys_output
+        if self.nsys_profile_output:
+            output_path = self.nsys_profile_output
         else:
             # Default output path - nsys will append rank-specific suffixes automatically
             # For multi-node, we can use environment variable to include node rank
@@ -1014,19 +1017,19 @@ def _parse_args():
         https://docs.nvidia.com/nsight-systems/UserGuide/index.html#torchrun-pytorch for details.""",
     )
     parser.add_argument(
-        "--nsys-output",
+        "--nsys-profile-output",
         type=str,
         default=None,
         help="""Output path prefix for nsys profile traces. If not specified, defaults to 'nsys_profile_rank{RANK}'.
         nsys will automatically append rank-specific suffixes. Only used when --nsys-profile is set.""",
     )
     parser.add_argument(
-        "--nsys-options",
+        "--nsys-profile-options",
         type=str,
         nargs="*",
         default=None,
-        help="""Additional options to pass to nsys profile. Defaults to '--profile-from-start=off --trace=cuda,nvtx'.
-        Only used when --nsys-profile is set. Example: --nsys-options '--trace=cuda,nvtx,cudnn' '--force-overwrite=true'""",
+        help="""Additional options to pass to nsys profile. Defaults to comprehensive profiling options.
+        Only used when --nsys-profile is set. Example: --nsys-profile-options '--trace=cuda,nvtx,cudnn' '--force-overwrite=true'""",
     )
     parser.add_argument(
         "--debug",
@@ -1103,8 +1106,6 @@ def _build_config(opts: argparse.Namespace, command: List[str]) -> BeakerLaunchC
             BeakerWekaBucket(bucket=bucket, mount=f"/weka/{bucket}") for bucket in (opts.weka or [])
         ],
         nsys_profile=opts.nsys_profile,
-        nsys_output=opts.nsys_output,
-        nsys_options=nsys_options,
     )
 
 

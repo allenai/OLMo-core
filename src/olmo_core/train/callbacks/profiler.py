@@ -183,6 +183,12 @@ class NvidiaProfilerCallback(Callback):
       - ``"ep"``: Profile one rank (local rank 0) in each expert parallel group
       - ``"all"``: Profile all ranks
     """
+    persist_nsys_traces: bool = True
+    """
+    If ``True``, automatically find and persist any nsys trace files (``*.nsys-rep``) from the
+    work directory to the save folder after training completes. This is useful when using
+    ``nsys profile`` with torchrun via ``BeakerLaunchConfig.nsys_profile``.
+    """
 
     _nvtx_context = None
     """
@@ -214,6 +220,35 @@ class NvidiaProfilerCallback(Callback):
         if self._nvtx_context is not None:
             self._nvtx_context.__exit__(None, None, None)  # ensures the context is properly exited
             self._nvtx_context = None
+
+    def post_train(self):
+        """Persist nsys trace files after training completes."""
+        if not self.persist_nsys_traces:
+            return
+
+        from pathlib import Path
+
+        # Find all nsys trace files in work_dir
+        work_dir = Path(self.trainer.work_dir)
+        nsys_files = list(work_dir.glob("**/*.nsys-rep"))
+
+        if not nsys_files:
+            return
+
+        # Only persist from rank 0 to avoid duplicate uploads
+        if get_rank() != 0:
+            return
+
+        log.info(f"Found {len(nsys_files)} nsys trace file(s), persisting to save folder...")
+
+        for trace_file in nsys_files:
+            try:
+                # Make path relative to work_dir for persist_working_file
+                relative_path = trace_file.relative_to(work_dir)
+                final_path = self.trainer.persist_working_file(relative_path)
+                log.info(f"Persisted nsys trace: '{trace_file.name}' -> '{final_path}'")
+            except Exception as e:
+                log.warning(f"Failed to persist nsys trace '{trace_file}': {e}")
 
 
 @cache
