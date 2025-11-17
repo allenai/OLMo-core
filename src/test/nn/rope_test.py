@@ -466,3 +466,17 @@ def test_rope_tensor_start_pos(device, head_first):
 
         torch.testing.assert_close(q2, q_expected)
         torch.testing.assert_close(k2, k_expected)
+
+
+def test_yarn_to_hf_config():
+    """Test that YaRN RoPE scaling produces HF config with float beta fields."""
+    config = YaRNRoPEScalingConfig(
+        factor=8.0, beta_fast=32, beta_slow=1, old_context_len=8192
+    )
+    hf_config = config.to_hf_config()
+
+    # Verify beta_fast and beta_slow are floats (not ints)
+    assert isinstance(hf_config["beta_fast"], float)
+    assert isinstance(hf_config["beta_slow"], float)
+    assert hf_config["beta_fast"] == 32.0
+    assert hf_config["beta_slow"] == 1.0
