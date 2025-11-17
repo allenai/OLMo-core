@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - No longer overrides `random`'s RNG seed when building `SourceMixtureDatasetConfig`.
 - Fix handling URLs in `olmo_core.nn.hf.checkpoint.save_hf_model` and in `examples/huggingface`.
 - Fix potential NaN loss that can occur when using instance masking.
+- Stability improvements developed while training Olmo3 32B.
 
 ### Changed
 
