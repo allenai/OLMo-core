@@ -93,7 +93,6 @@ def get_file_size(path: PathOrStr) -> int:
     """
     log.info(f"Getting file size of {path}")
     path = normalize_path(path)
-    log.info(f"Normalized path: {path}")
 
     if is_url(path):
         from urllib.parse import urlparse
@@ -589,11 +588,23 @@ def _get_http_session() -> requests.Session:
 @retriable()
 def _http_file_size(url: str) -> int:
     session = _get_http_session()
-    response = session.head(url, allow_redirects=True)
+    response = session.head(url, allow_redirects=True, headers={"Accept-Encoding": "identity"})
     content_length = response.headers.get("content-length")
-    assert content_length is not None, (
-        f"No content-length header found for {url}. Headers: {dict(response.headers)}"
-    )
+
+    if content_length is None:
+        # Check if content is compressed - this explains why Content-Length might be missing
+        content_encoding = response.headers.get("content-encoding", "").lower()
+        if content_encoding:
+            raise OLMoNetworkError(
+                f"No content-length header found for {url}. "
+                f"The server uses '{content_encoding}' compression and may not provide Content-Length. "
+                f"Headers: {dict(response.headers)}"
+            )
+        else:
+            raise OLMoNetworkError(
+                f"No content-length header found for {url}. Headers: {dict(response.headers)}"
+            )
+
     return int(content_length)
 
 
@@ -607,7 +618,11 @@ def _http_file_size(url: str) -> int:
 def _http_get_bytes_range(url: str, bytes_start: int, num_bytes: int) -> bytes:
     session = _get_http_session()
     response = session.get(
-        url, headers={"Range": f"bytes={bytes_start}-{bytes_start + num_bytes - 1}"}
+        url,
+        headers={
+            "Range": f"bytes={bytes_start}-{bytes_start + num_bytes - 1}",
+            "Accept-Encoding": "identity",
+        },
     )
 
     if response.status_code == 404:
