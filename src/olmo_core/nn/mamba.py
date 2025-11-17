@@ -14,9 +14,10 @@ class Mamba(nn.Module):
 
         super().__init__()
         self.inner = Mamba2(*args, **kwargs, layer_idx=0)
+        self.dtype = self.inner.conv1d.weight.dtype
 
         # not cast to dtype in _Mamba2.__init__
-        self.inner.D = nn.Parameter(self.inner.D.to(self.inner.conv1d.weight.dtype))
+        self.inner.D = nn.Parameter(self.inner.D.to(self.dtype))
 
         self.mamba_cache_manager = None
 
@@ -24,10 +25,13 @@ class Mamba(nn.Module):
         self.mamba_cache_manager = MambaCacheManager(
             self,
             batch_size,
-            dtype=self.inner.conv1d.weight.dtype,
+            dtype=self.dtype,
         )
 
     def forward(self, x: torch.Tensor):  # type: ignore
+        original_dtype = x.dtype
+        x = x.to(self.dtype)
+
         if self.mamba_cache_manager is not None and self.mamba_cache_manager.current_position() == 0:
             from mamba_ssm.utils.generation import InferenceParams
 
@@ -41,11 +45,13 @@ class Mamba(nn.Module):
             )
             out = self.inner.forward(x, inference_params=inference_params)
             self.mamba_cache_manager.update_seqlen(x.shape[1])
-            return out
         elif self.mamba_cache_manager is not None:
-            return self.step(x, (self.mamba_cache_manager.conv_state, self.mamba_cache_manager.ssm_state))
+            out = self.step(x, (self.mamba_cache_manager.conv_state, self.mamba_cache_manager.ssm_state))
         else:
-            return self.inner.forward(x)
+            out = self.inner.forward(x)
+
+        out = out.to(original_dtype)
+        return out
 
     def step(self, hidden_states, inference_params):  # type: ignore
         assert self.mamba_cache_manager is not None

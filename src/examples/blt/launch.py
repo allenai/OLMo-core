@@ -50,6 +50,7 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
         "PREFILL_LENGTH",
         "GENERATE_LENGTH",
         "N_BATCHES",
+        "BATCH_SIZE",
     ]:
         if transparent_env_var in os.environ:
             env_vars.append(BeakerEnvVar(name=transparent_env_var, value=os.environ[transparent_env_var]))
