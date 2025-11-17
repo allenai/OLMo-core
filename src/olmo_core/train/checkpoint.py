@@ -3,7 +3,6 @@ import logging
 import os
 import re
 import tempfile
-import time
 from concurrent.futures import Future
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -368,9 +367,6 @@ class Checkpointer:
         # 2. And otherwise we are checking if the directory is empty and raising an error if it's not,
         # so we need to make sure all ranks are synchronized on that check before they can proceed
         # to write to the directory.
-        # HACK: Code to work around a suspected FasTrak bug
-        log.warning("Temporary debug check: _prepare_dir barrier reached")
-        time.sleep(1)
         barrier()
 
         if ensure_exists and not is_url(dir):
