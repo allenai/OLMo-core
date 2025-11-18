@@ -43,6 +43,7 @@ class DataMix(DataMixBase):
     OLMo_mix_0625_700Bsample = "OLMo-mix-0625-700Bsample"
     OLMo_mix_0625_official = "OLMo-mix-0625-official"
     OLMo_mix_0925 = "OLMo-mix-0925"
+    OLMo_mix_0925_official = "OLMo-mix-0925-official"
 
     # Midtraining mixes
     OLMo_midtraining_mix_1025_100B = "OLMo-midtraining-mix-1025-100B"
@@ -91,6 +92,7 @@ class DataMix(DataMixBase):
             DataMix.OLMo_midtraining_mix_1025_100B,
             DataMix.OLMo_longmino_mix_0625,
             DataMix.OLMo_longmino_mix_0925,
+            DataMix.OLMo_mix_0925_official,
         ]:
             if tokenizer == TokenizerName.dolma2:
                 tokenizer_id = "allenai/dolma3-tokenizer"
