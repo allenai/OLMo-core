@@ -36,7 +36,7 @@ from olmo_core.train.train_module import (
 DEFAULT_SEQUENCE_LENGTH = 8192
 GLOBAL_BATCH_SIZE = 4 * 1024 * 1024  # ~4M tokens
 MAX_TOKENS = 100_000_000_000  # 100B
-LR = 0.000414247057
+LR = 0.0002071235285
 
 
 def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentConfig:
@@ -137,7 +137,6 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         data_loader=data_loader_config,
         train_module=train_module_config,
         trainer=trainer_config,
-        init_seed=1337,
     ).merge(overrides)
 
 
