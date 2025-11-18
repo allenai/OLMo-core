@@ -1,7 +1,5 @@
 """
-Official pre-training script for OLMo-3-1025-7B.
-
-Part 1 of 2. See OLMo-3-1025-7B-pretrain-2.py for part 2.
+Official pre-training script for OLMo-3-1025-32B.
 """
 
 import argparse
@@ -19,7 +17,7 @@ from olmo_core.data import (
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
 from olmo_core.nn.attention import AttentionBackendName
-from olmo_core.nn.transformer import TransformerConfig
+from olmo_core.nn.transformer import TransformerActivationCheckpointingMode, TransformerConfig
 from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.script_utils import ExperimentConfig, main
 from olmo_core.train import Duration, TrainerConfig
@@ -32,6 +30,7 @@ from olmo_core.train.callbacks import (
     WandBCallback,
 )
 from olmo_core.train.train_module import (
+    TransformerActivationCheckpointingConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
@@ -87,6 +86,10 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
             shard_degree=64,
         ),
+        ac_config=TransformerActivationCheckpointingConfig(
+            mode=TransformerActivationCheckpointingMode.budget,
+            activation_memory_budget=0.5,
+        ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
@@ -99,7 +102,9 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
             metrics_collect_interval=50,
             cancel_check_interval=10,
             max_duration=Duration.epochs(1),
+            work_dir=opts.work_dir,
         )
+        .with_callback("config_saver", ConfigSaverCallback())
         .with_callback(
             "checkpointer",
             CheckpointerCallback(
@@ -112,19 +117,18 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
             "comet",
             CometCallback(
                 name=opts.name,
-                enabled=False,  # NOTE: change to true to enable
                 cancel_check_interval=10,
+                enabled=False,  # NOTE: change to true to enable
             ),
         )
         .with_callback(
             "wandb",
             WandBCallback(
                 name=opts.name,
-                enabled=False,  # NOTE: change to true to enable
                 cancel_check_interval=10,
+                enabled=False,  # NOTE: change to true to enable
             ),
         )
-        .with_callback("config_saver", ConfigSaverCallback())
         .with_callback(
             "lm_evaluator",
             LMEvaluatorCallbackConfig(
