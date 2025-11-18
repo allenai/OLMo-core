@@ -1041,11 +1041,9 @@ class MambaBlock(TransformerBlockBase):
         if self.feed_forward is not None:
             self.feed_forward.compile(fullgraph=False, dynamic=False)
         
-        if self.feed_forward_norm is not None:
-            self.feed_forward_norm.compile(fullgraph=False, dynamic=False)
-        
         self.mamba.inner.compile(fullgraph=False, dynamic=False)
         self.mamba_norm.compile(fullgraph=False, dynamic=False)
+        self.feed_forward_norm.compile(fullgraph=False, dynamic=False)
 
     def apply_fsdp(
         self,
