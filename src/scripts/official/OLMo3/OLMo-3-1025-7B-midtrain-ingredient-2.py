@@ -1,5 +1,7 @@
 """
-Official mid-training script for OLMo-3-1025-7B.
+Official mid-training script for OLMo-3-1025-7B (ingredient 2).
+
+We performed two mid-training runs (ingredient 1 and 2) and combined the final checkpoints together into a souped model.
 """
 
 import argparse
@@ -41,7 +43,7 @@ DEFAULT_SEQUENCE_LENGTH = 8192
 GLOBAL_BATCH_SIZE = 2**21  # ~2M tokens
 MAX_TOKENS = 100_000_000_000  # 100B
 LR = 0.00020712352850360292
-SEED = 1337
+SEED = 42069
 
 
 def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentConfig:
@@ -54,7 +56,7 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
     )
 
     dataset_config = NumpyFSLDatasetConfig.from_data_mix(
-        mix=DataMix.OLMo_midtraining_mix_1025_100B,
+        mix=DataMix.OLMo_midtraining_mix_1025_100B,  # TODO: ingredient 2
         tokenizer=tokenizer_config,
         mix_base_dir=opts.data_root,
         sequence_length=sequence_length,
@@ -139,7 +141,6 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         data_loader=data_loader_config,
         train_module=train_module_config,
         trainer=trainer_config,
-        init_seed=SEED,
     ).merge(overrides)
 
 
