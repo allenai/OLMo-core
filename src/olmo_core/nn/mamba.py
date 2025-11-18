@@ -18,6 +18,7 @@ class Mamba(nn.Module):
 
         # not cast to dtype in _Mamba2.__init__
         self.inner.D = nn.Parameter(self.inner.D.to(self.dtype))
+        self.inner.dt_bias = nn.Parameter(self.inner.dt_bias.to(self.dtype))
 
         self.mamba_cache_manager = None
 
