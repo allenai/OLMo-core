@@ -33,12 +33,12 @@ if not step:
     raise SystemExit("❌ Environment variable STEP not set!")
 
 # Paths
-src = f"gs://ai2-llm/checkpoints/stego32-midtraining-run-2-20251105T225302+0000/{step}"
+src = f"gs://ai2-llm/checkpoints/stego32-midtraining-run-4/{step}"
 out_root = os.environ.get("OUT_ROOT", "/data")   # defaults to ephemeral /data
 out = f"{out_root}/{step}-hf"
 
 repo_id = "allenai/Olmo-3-1125-32B"
-branch = f"stage2-ingredient1-{step}"
+branch = f"stage2-ingredient2-{step}"
 
 print(f"=== Converting {step} ===")
 subprocess.run([
