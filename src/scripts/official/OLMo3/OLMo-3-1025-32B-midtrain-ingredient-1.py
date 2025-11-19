@@ -1,5 +1,7 @@
 """
-Official pre-training script for OLMo-3-1025-32B.
+Official mid-training script for OLMo-3-1025-32B. (ingredient 1).
+
+We performed two mid-training runs (ingredient 1 and 2) and combined the final checkpoints together into a souped model.
 """
 
 import argparse
@@ -11,7 +13,6 @@ from olmo_core.data import (
     InstanceFilterConfig,
     NumpyDataLoaderConfig,
     NumpyFSLDatasetConfig,
-    NumpyPaddedFSLDatasetConfig,
     TokenizerConfig,
 )
 from olmo_core.distributed.parallel import DataParallelType
@@ -21,15 +22,13 @@ from olmo_core.nn.transformer import (
     TransformerActivationCheckpointingMode,
     TransformerConfig,
 )
-from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
+from olmo_core.optim import LinearWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.script_utils import ExperimentConfig, main
-from olmo_core.train import Duration, TrainerConfig
+from olmo_core.train import Duration, LoadStrategy, TrainerConfig
 from olmo_core.train.callbacks import (
     CheckpointerCallback,
     CometCallback,
     ConfigSaverCallback,
-    DownstreamEvaluatorCallbackConfig,
-    LMEvaluatorCallbackConfig,
     WandBCallback,
 )
 from olmo_core.train.train_module import (
@@ -40,8 +39,10 @@ from olmo_core.train.train_module import (
 )
 
 DEFAULT_SEQUENCE_LENGTH = 8192
-GLOBAL_BATCH_SIZE = 8 * 1024 * 1024  # ~8M tokens
-LR = 6e-4
+GLOBAL_BATCH_SIZE = 4 * 1024 * 1024  # ~4M tokens
+MAX_TOKENS = 100_000_000_000
+LR = 0.0002071235285
+SEED = 42069
 
 
 def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentConfig:
@@ -54,7 +55,7 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
     )
 
     dataset_config = NumpyFSLDatasetConfig.from_data_mix(
-        DataMix.OLMo_mix_0925_official,
+        DataMix.OLMo_midtraining_mix_1025_ingredient1_100B,
         tokenizer=tokenizer_config,
         mix_base_dir=opts.data_root,
         work_dir=opts.work_dir,
@@ -66,7 +67,7 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
     )
 
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=GLOBAL_BATCH_SIZE, seed=34521, num_workers=8
+        global_batch_size=GLOBAL_BATCH_SIZE, seed=SEED, num_workers=4
     )
 
     train_module_config = TransformerTrainModuleConfig(
@@ -80,7 +81,7 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
             ],
         ),
-        scheduler=CosWithWarmup(warmup_steps=2000),
+        scheduler=LinearWithWarmup(warmup=0, alpha_f=0.0),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.hsdp,
@@ -102,9 +103,11 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         TrainerConfig(
             save_folder=opts.save_folder,
             save_overwrite=True,
-            metrics_collect_interval=50,
-            cancel_check_interval=10,
-            max_duration=Duration.epochs(1),
+            load_path="https://olmo-checkpoints.org/ai2-llm/stego32-highlr-filter3/step656000/",
+            load_strategy=LoadStrategy.always,
+            load_trainer_state=False,
+            load_optim_state=True,
+            max_duration=Duration.tokens(MAX_TOKENS),
             work_dir=opts.work_dir,
         )
         .with_callback("config_saver", ConfigSaverCallback())
@@ -130,60 +133,6 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
                 name=opts.name,
                 cancel_check_interval=10,
                 enabled=False,  # NOTE: change to true to enable
-            ),
-        )
-        .with_callback(
-            "lm_evaluator",
-            LMEvaluatorCallbackConfig(
-                eval_dataset=NumpyPaddedFSLDatasetConfig.from_data_mix(
-                    DataMix.v3_small_ppl_validation,
-                    mix_base_dir=opts.data_root,
-                    sequence_length=sequence_length,
-                    tokenizer=tokenizer_config,
-                    work_dir=opts.work_dir,
-                ),
-                eval_interval=1000,
-            ),
-        )
-        .with_callback(
-            "downstream_evaluator",
-            DownstreamEvaluatorCallbackConfig(
-                tasks=sorted(
-                    [  # "fast" task set
-                        # Subset of OLMES
-                        "arc_challenge_test_bpb_5shot",
-                        "arc_challenge_test_mc_5shot_fast",
-                        "arc_easy_test_bpb_5shot",
-                        "arc_easy_test_mc_5shot_fast",
-                        "hellaswag_bpb_5shot",
-                        "mmlu_humanities_test_bpb_5shot",
-                        "mmlu_humanities_test_mc_5shot_fast",
-                        "mmlu_other_test_bpb_5shot",
-                        "mmlu_other_test_mc_5shot_fast",
-                        "mmlu_social_sciences_test_bpb_5shot",
-                        "mmlu_social_sciences_test_mc_5shot_fast",
-                        "mmlu_stem_test_bpb_5shot",
-                        "mmlu_stem_test_mc_5shot_fast",
-                        # Basic Skills
-                        "basic_skills_arithmetic_rc_5shot",
-                        "basic_skills_coding_rc_5shot",
-                        "basic_skills_common_knowledge_rc_5shot",
-                        "basic_skills_logical_reasoning_rc_5shot",
-                        "basic_skills_pattern_rc_5shot",
-                        "basic_skills_string_operations_rc_5shot",
-                        # Gen tasks BPB
-                        "codex_humaneval_gold_bpb_3shot",
-                        "codex_mbpp_gold_bpb_3shot",
-                        "minerva_math_500_gold_bpb_0shot",
-                        "mt_mbpp_cpp_gold_bpb_3shot",
-                        "mt_mbpp_java_gold_bpb_3shot",
-                        "mt_mbpp_rust_gold_bpb_3shot",
-                        # Sanity check for MCQA ability
-                        "copycolors_10way_fast",
-                    ]
-                ),
-                tokenizer=tokenizer_config,
-                eval_interval=1000,
             ),
         )
     )
