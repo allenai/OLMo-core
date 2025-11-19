@@ -592,6 +592,7 @@ class NumpyFSLDataset(NumpyFSLDatasetBase):
         if self._include_instance_metadata:
             metadata = self._metadata[array_index]
             out["metadata"] = deepcopy(metadata)
+            out["index"] = index
 
         if self._generate_doc_lengths:
             out["doc_lens"] = get_document_lengths(
@@ -1158,6 +1159,7 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
         if self._include_instance_metadata:
             metadata = self._metadata[array_index]
             out["metadata"] = deepcopy(metadata)
+            out["index"] = index
         if self._generate_doc_lengths:
             out["doc_lens"] = get_document_lengths(
                 input_ids, self.eos_token_id, bos_token_id=self.bos_token_id
@@ -1763,6 +1765,7 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
                         f"Trying to interleave documents when dataset docs have different metadata: {metadata}, {doc_metadata}."
                     )
             item["metadata"] = metadata
+            item["index"] = index
 
         if "doc_lens" in docs[0]:
             raise RuntimeError("Document lengths unexpectedly found.")
@@ -2238,6 +2241,7 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         if self._include_instance_metadata:
             metadata = self._metadata[array_index]
             out["metadata"] = deepcopy(metadata)
+            out["index"] = index
 
         return out
 
