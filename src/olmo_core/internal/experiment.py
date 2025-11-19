@@ -179,6 +179,7 @@ def build_common_components(
     beaker_workspace: str = "ai2/OLMo-core",
     use_hostname_constraints: bool = False,
     num_execution_units: Optional[int] = None,
+    flight_recorder: bool = False,
 ) -> CommonComponents:
     root_dir = get_root_dir(cli_context.cluster)
     beaker_user = get_beaker_username()
@@ -192,6 +193,7 @@ def build_common_components(
             cmd=cli_context.remote_cmd,
             cluster=cli_context.cluster,
             nccl_debug=True,
+            flight_recorder=flight_recorder,
             beaker_image=beaker_image,
             num_nodes=num_nodes,
             workspace=beaker_workspace,
@@ -330,6 +332,7 @@ def build_config(
     num_nodes: int = 1,
     beaker_workspace: str = "ai2/OLMo-core",
     use_hostname_constraints: bool = False,
+    flight_recorder: bool = False,
     num_execution_units: Optional[int] = None,
     include_default_evals: bool = False,
     **data_kwargs,
@@ -375,6 +378,7 @@ def build_config(
         num_nodes=num_nodes,
         beaker_workspace=beaker_workspace,
         use_hostname_constraints=use_hostname_constraints,
+        flight_recorder=flight_recorder,
         num_execution_units=num_execution_units,
     )
 
@@ -428,6 +432,7 @@ def launch(config: ExperimentConfig):
     config.launch.launch(
         follow=True,
         slack_notifications=slack_enabled,
+        launch_timeout=5 * 60,
         #  step_timeout=30 * 60,  # hard timeout kills the job
         step_soft_timeout=10 * 60,  # soft timeout only sends slack warning
     )
