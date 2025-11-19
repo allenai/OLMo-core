@@ -1,5 +1,7 @@
 """
-Official mid-training script for OLMo-3-1025-7B.
+Official mid-training script for OLMo-3-1025-32B. (ingredient 2).
+
+We performed two mid-training runs (ingredient 1 and 2) and combined the final checkpoints together into a souped model.
 """
 
 import argparse
@@ -8,6 +10,7 @@ from typing import List
 from olmo_core.config import DType
 from olmo_core.data import (
     DataMix,
+    InstanceFilterConfig,
     NumpyDataLoaderConfig,
     NumpyFSLDatasetConfig,
     TokenizerConfig,
@@ -15,51 +18,52 @@ from olmo_core.data import (
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
 from olmo_core.nn.attention import AttentionBackendName
-from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.nn.transformer.config import TransformerActivationCheckpointingMode
+from olmo_core.nn.transformer import (
+    TransformerActivationCheckpointingMode,
+    TransformerConfig,
+)
 from olmo_core.optim import LinearWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.script_utils import ExperimentConfig, main
-from olmo_core.train import Duration, TrainerConfig
+from olmo_core.train import Duration, LoadStrategy, TrainerConfig
 from olmo_core.train.callbacks import (
     CheckpointerCallback,
     CometCallback,
     ConfigSaverCallback,
-    MonkeyPatcherCallback,
     WandBCallback,
 )
-from olmo_core.train.common import LoadStrategy
 from olmo_core.train.train_module import (
+    TransformerActivationCheckpointingConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
-from olmo_core.train.train_module.transformer.config import (
-    TransformerActivationCheckpointingConfig,
-)
 
 DEFAULT_SEQUENCE_LENGTH = 8192
-GLOBAL_BATCH_SIZE = 2**21  # ~2M tokens
+GLOBAL_BATCH_SIZE = 4 * 1024 * 1024  # ~4M tokens
 MAX_TOKENS = 100_000_000_000  # 100B
-LR = 0.00020712352850360292
-SEED = 1337
+LR = 0.0002071235285
+SEED = 42069
 
 
 def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentConfig:
     sequence_length = opts.sequence_length or DEFAULT_SEQUENCE_LENGTH
     tokenizer_config = TokenizerConfig.dolma2()
 
-    model_config = TransformerConfig.olmo3_7B(
+    model_config = TransformerConfig.olmo3_32B(
         vocab_size=tokenizer_config.padded_vocab_size(),  # pad to a multiple of 128
         attn_backend=AttentionBackendName.flash_2,
     )
 
     dataset_config = NumpyFSLDatasetConfig.from_data_mix(
-        mix=DataMix.OLMo_midtraining_mix_0725_100B,
+        DataMix.OLMo_midtraining_mix_1025_ingredient2_100B,
         tokenizer=tokenizer_config,
         mix_base_dir=opts.data_root,
+        work_dir=opts.work_dir,
         sequence_length=sequence_length,
         max_target_sequence_length=max(8192, sequence_length),
-        work_dir=opts.work_dir,
+        instance_filter_config=InstanceFilterConfig(
+            repetition_max_period=13, repetition_min_period=1, repetition_max_count=32
+        ),
     )
 
     data_loader_config = NumpyDataLoaderConfig(
@@ -67,7 +71,7 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
     )
 
     train_module_config = TransformerTrainModuleConfig(
-        rank_microbatch_size=2 * 8192,
+        rank_microbatch_size=sequence_length,
         max_sequence_length=sequence_length,
         optim=SkipStepAdamWConfig(
             lr=LR,
@@ -83,11 +87,12 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
             name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
-            wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
+            wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
+            shard_degree=64,
         ),
         ac_config=TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.selected_modules,
-            modules=["blocks.*.feed_forward"],
+            mode=TransformerActivationCheckpointingMode.budget,
+            activation_memory_budget=0.5,
         ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
@@ -98,7 +103,7 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         TrainerConfig(
             save_folder=opts.save_folder,
             save_overwrite=True,
-            load_path="https://olmo-checkpoints.org/ai2-llm/Olmo-3-1025-7B/stage1/step1413814/",
+            load_path="https://olmo-checkpoints.org/ai2-llm/stego32-highlr-filter3/step656000/",
             load_strategy=LoadStrategy.always,
             load_trainer_state=False,
             load_optim_state=True,
@@ -106,12 +111,11 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
             work_dir=opts.work_dir,
         )
         .with_callback("config_saver", ConfigSaverCallback())
-        .with_callback("monkey_patcher", MonkeyPatcherCallback())
         .with_callback(
             "checkpointer",
             CheckpointerCallback(
                 save_interval=1000,
-                ephemeral_save_interval=100,
+                ephemeral_save_interval=None,
                 save_async=False,
             ),
         )
@@ -139,7 +143,6 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         data_loader=data_loader_config,
         train_module=train_module_config,
         trainer=trainer_config,
-        init_seed=SEED,
     ).merge(overrides)
 
 
