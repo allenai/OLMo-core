@@ -306,6 +306,12 @@ class Transformer(nn.Module):
         return_logits: Optional[bool] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any], Dict[str, Any]]:
+        # PRESERVE fields needed for supervised router training BEFORE any kwargs.pop() calls
+        preserved_fields = {}
+        for field in ['metadata', 'index', 'expert_labels']:
+            if field in kwargs:
+                preserved_fields[field] = kwargs.pop(field)
+        
         # NOTE: with pipeline parallelism input_ids might actually be an intermediate output,
         # so we have to be careful here.
         B, S = input_ids.shape[:2]
@@ -402,6 +408,10 @@ class Transformer(nn.Module):
             labels = move_to_device(labels, self.device)
             block_kwargs["max_doc_len"] = max_doc_len
             block_kwargs["cu_doc_lens"] = move_to_device(cu_doc_lens, self.device)
+
+        # Restore preserved fields to block_kwargs so they're available throughout forward pass
+        if preserved_fields:
+            block_kwargs.update(preserved_fields)
 
         return (
             input_ids,
