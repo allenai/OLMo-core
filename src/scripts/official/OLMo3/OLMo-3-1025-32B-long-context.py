@@ -1,5 +1,5 @@
 """
-Official long-context extension training script for OLMo-3-1025-7B.
+Official long-context extension training script for OLMo-3-1025-32B.
 """
 
 import argparse
@@ -8,42 +8,47 @@ from typing import List
 from olmo_core.config import DType
 from olmo_core.data import (
     DataMix,
+    InstanceFilterConfig,
     NumpyDataLoaderConfig,
     NumpyPackedFSLDatasetConfig,
     TokenizerConfig,
 )
 from olmo_core.distributed.parallel import DataParallelType
-from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
+from olmo_core.float8 import Float8Config
 from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.rope import YaRNRoPEScalingConfig
-from olmo_core.nn.transformer import TransformerConfig
+from olmo_core.nn.transformer import (
+    TransformerActivationCheckpointingMode,
+    TransformerConfig,
+)
 from olmo_core.optim import LinearWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.script_utils import ExperimentConfig, main
-from olmo_core.train import Duration, TrainerConfig
+from olmo_core.train import Duration, LoadStrategy, TrainerConfig
 from olmo_core.train.callbacks import (
     CheckpointerCallback,
     CometCallback,
     ConfigSaverCallback,
-    MonkeyPatcherCallback,
     WandBCallback,
 )
-from olmo_core.train.common import LoadStrategy
 from olmo_core.train.train_module import (
+    TransformerActivationCheckpointingConfig,
     TransformerContextParallelConfig,
     TransformerDataParallelConfig,
+    TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
 
 DEFAULT_SEQUENCE_LENGTH = 65536
-GLOBAL_BATCH_SIZE = 65536 * 64  # ~4M tokens
-LR = 0.00020712352850360292
+GLOBAL_BATCH_SIZE = 8 * 1024 * 1024  # ~8M tokens
+MAX_TOKENS = 100_000_000_000  # 100B
+LR = 0.0002071235285
 
 
 def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentConfig:
     sequence_length = opts.sequence_length or DEFAULT_SEQUENCE_LENGTH
     tokenizer_config = TokenizerConfig.dolma2()
 
-    model_config = TransformerConfig.olmo3_7B(
+    model_config = TransformerConfig.olmo3_32B(
         vocab_size=tokenizer_config.padded_vocab_size(),  # pad to a multiple of 128
         attn_backend=AttentionBackendName.flash_2,
     ).with_rope_scaling(
@@ -51,7 +56,7 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
     )
 
     dataset_config = NumpyPackedFSLDatasetConfig.from_data_mix(
-        DataMix.OLMo_longmino_mix_0625,
+        DataMix.OLMo_longmino_mix_0925,
         mix_base_dir=opts.data_root,
         work_dir=opts.work_dir,
         tokenizer=tokenizer_config,
@@ -59,16 +64,17 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         generate_doc_lengths=True,  # enables intra-document masking
         source_group_size=8,
         source_permutation_seed=123,
+        instance_filter_config=InstanceFilterConfig(
+            repetition_max_period=13, repetition_min_period=1, repetition_max_count=32
+        ),
     )
 
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=GLOBAL_BATCH_SIZE,
-        seed=34521,
-        num_workers=4,
+        global_batch_size=GLOBAL_BATCH_SIZE, seed=34521, num_workers=8
     )
 
     train_module_config = TransformerTrainModuleConfig(
-        rank_microbatch_size=sequence_length,  # for CP we want only 1 instance per rank
+        rank_microbatch_size=sequence_length,
         max_sequence_length=sequence_length,
         optim=SkipStepAdamWConfig(
             lr=LR,
@@ -84,18 +90,18 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
             name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
-            shard_degree=1,
+            wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
+            shard_degree=8,
         ),
-        cp_config=TransformerContextParallelConfig.llama3(degree=8, head_stride=4),
-        ac_config=None,
-        float8_config=Float8Config(
-            enabled=True,
-            ao=AOFloat8LinearConfig(
-                enable_fsdp_float8_all_gather=True,
-                force_recompute_fp8_weight_in_bwd=True,
-                round_scales_to_power_of_2=True,
-            ),
+        cp_config=TransformerContextParallelConfig.llama3(
+            degree=8,  # 64k tokens per instance -> 8k tokens per device
+            head_stride=4,
         ),
+        ac_config=TransformerActivationCheckpointingConfig(
+            mode=TransformerActivationCheckpointingMode.budget,
+            activation_memory_budget=0.3,
+        ),
+        float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
     )
@@ -104,18 +110,17 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         TrainerConfig(
             save_folder=opts.save_folder,
             save_overwrite=True,
-            load_path="https://olmo-checkpoints.org/ai2-llm/Olmo-3-1025-7B/stage2/step47684/",
+            load_path="https://olmo-checkpoints.org/ai2-llm/stego32-highlr-filter3/step656000/",
+            # "gs://ai2-llm/checkpoints/stego32-midtraining-runs-merged-step23842-resharded16",
             load_strategy=LoadStrategy.always,
             load_trainer_state=False,
             load_optim_state=True,
-            metrics_collect_interval=10,
+            metrics_collect_interval=50,
             cancel_check_interval=10,
-            max_duration=Duration.tokens(int(5e12)),  # Originally scheduled for 5T
-            hard_stop=Duration.steps(  # But at this step we decided to extend schedule to 7T. See OLMo3-7B-second-half.py
-                int(597046)
-            ),
+            max_duration=Duration.tokens(MAX_TOKENS),
+            work_dir=opts.work_dir,
         )
-        .with_callback("monkey_patcher", MonkeyPatcherCallback())
+        .with_callback("config_saver", ConfigSaverCallback())
         .with_callback(
             "checkpointer",
             CheckpointerCallback(
@@ -140,7 +145,6 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
                 enabled=False,  # NOTE: change to true to enable
             ),
         )
-        .with_callback("config_saver", ConfigSaverCallback())
     )
 
     return ExperimentConfig(
