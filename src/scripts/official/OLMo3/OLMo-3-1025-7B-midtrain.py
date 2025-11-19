@@ -1,5 +1,5 @@
 """
-Official midtraining-training script for OLMo-3-1025-7B.
+Official mid-training script for OLMo-3-1025-7B.
 """
 
 import argparse
@@ -109,7 +109,11 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
         .with_callback("monkey_patcher", MonkeyPatcherCallback())
         .with_callback(
             "checkpointer",
-            CheckpointerCallback(save_interval=1000, ephemeral_save_interval=100, save_async=False),
+            CheckpointerCallback(
+                save_interval=1000,
+                ephemeral_save_interval=100,
+                save_async=False,
+            ),
         )
         .with_callback(
             "comet",

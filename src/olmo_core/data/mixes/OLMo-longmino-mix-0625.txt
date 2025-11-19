@@ -998,5 +998,3 @@ longmino,preprocessed/dolma3_longmino_0625/{TOKENIZER}/000994.npy
 longmino,preprocessed/dolma3_longmino_0625/{TOKENIZER}/000995.npy
 longmino,preprocessed/dolma3_longmino_0625/{TOKENIZER}/000996.npy
 longmino,preprocessed/dolma3_longmino_0625/{TOKENIZER}/000997.npy
-# longmino,preprocessed/dolma3_longmino_0625/{TOKENIZER}/000998.npy
-# longmino,preprocessed/dolma3_longmino_0625/{TOKENIZER}/000999.npy
