@@ -26,6 +26,7 @@ from beaker import (
     DatasetConflict,
     DatasetNotFound,
     Experiment,
+    ExperimentConflict,
     ExperimentSpec,
     ImageNotFound,
     Job,
@@ -88,30 +89,31 @@ class OLMoCoreBeakerImage(StrEnum):
     """
     Built with the latest compatible stable version of PyTorch.
     """
-
     stable_cu126 = f"olmo-core-tch{_DEFAULT_TORCH}cu126-2025-09-15"
     """
     The stable image with CUDA pinned to 12.6.
     """
-
     stable_cu128 = f"olmo-core-tch{_DEFAULT_TORCH}cu128-2025-09-15"
     """
     The stable image with CUDA pinned to 12.8.
     """
 
-    tch280_cu128 = "olmo-core-tch280cu128-2025-09-19"
-    """
-    Built with torch 2.8.0 and CUDA 12.8.
-    """
-
+    # Sorted roughly from newest versions to oldest versions
     tch280_cu129 = "olmo-core-tch280cu129-2025-09-23"
     """
     Built with torch 2.8.0 and CUDA 12.9.
     """
-
-    flash_attn_3 = "tylerr/olmo-core-tch270cu128-2025-09-24"
+    tch280_cu128 = "olmo-core-tch280cu128-2025-09-19"
     """
-    Built flash-attn 3 (beta release) with torch 2.7.0 and CUDA 12.8.
+    Built with torch 2.8.0 and CUDA 12.8.
+    """
+    tch270_cu128 = "olmo-core-tch270cu128-2025-05-16"
+    """
+    Built with torch 2.7.0 and CUDA 12.8.
+    """
+    tch270_cu128_fa3 = "tylerr/olmo-core-tch270cu128-2025-09-24"
+    """
+    Built with torch 2.7.0 and CUDA 12.8 and flash-attn 3 (beta release)
     """
 
 
@@ -299,6 +301,11 @@ class BeakerLaunchConfig(Config):
 
     This is NOT recommended to be used with lower priority preemptible jobs, since hostname constraints are not
     updated on preemption.
+    """
+
+    hostnames: Optional[List[str]] = None
+    """
+    Manual hostname constraints. Takes priority over :data:`clusters` and :data:`use_hostname_constraints`.
     """
 
     num_execution_units: Optional[int] = None
@@ -490,7 +497,9 @@ class BeakerLaunchConfig(Config):
 
         entrypoint_dataset = self._create_script_dataset("entrypoint.sh", entrypoint_script)
 
-        if (
+        if self.hostnames:
+            constraints_kwargs = {"hostname": self.hostnames}
+        elif (
             self.use_hostname_constraints
             and len(self.clusters) == 1
             and "augusta" in self.clusters[0]
@@ -595,7 +604,8 @@ class BeakerLaunchConfig(Config):
             Defaults to 'python'.
         :param slack_notifications: If ``follow=True``, send Slack notifications when the run launches,
             fails, or succeeds. This requires the env var ``SLACK_WEBHOOK_URL``.
-        :param launch_timeout: Overrides :data:`launch_timeout`.
+        :param launch_timeout: A timeout in seconds to wait for the job to start after submitting it.
+            If the job doesn't start in time a timeout error will be raised.
 
         :returns: The Beaker experiment.
         """
@@ -644,8 +654,14 @@ class BeakerLaunchConfig(Config):
         except KeyboardInterrupt:
             log.warning("Caught keyboard interrupt...")
             if Confirm.ask("Would you like to cancel the experiment?"):
-                self.beaker.experiment.stop(experiment)
-                log.warning(f"Experiment stopped: {self.beaker.experiment.url(experiment)}")
+                try:
+                    self.beaker.experiment.stop(experiment)
+                except ExperimentConflict:
+                    log.warning(
+                        f"Experiment already stopped: {self.beaker.experiment.url(experiment)}"
+                    )
+                else:
+                    log.warning(f"Experiment stopped: {self.beaker.experiment.url(experiment)}")
             else:
                 log.info(
                     "You can follow the experiment on the Beaker UI: "
@@ -676,7 +692,10 @@ def follow_experiment(
         log.info("Waiting for job to be created...")
         while job is None:
             if launch_timeout is not None and (time.monotonic() - start_time) > launch_timeout:
-                beaker.experiment.stop(experiment)
+                try:
+                    beaker.experiment.stop(experiment)
+                except ExperimentConflict:
+                    pass
                 raise TimeoutError(
                     f"Job failed to be created within {launch_timeout} seconds. "
                     f"Experiment has been stopped: {beaker.experiment.url(experiment)}"
@@ -699,7 +718,10 @@ def follow_experiment(
         if job.is_finalized or job.is_running:
             break
         elif launch_timeout is not None and (time.monotonic() - start_time) > launch_timeout:
-            beaker.experiment.stop(experiment)
+            try:
+                beaker.experiment.stop(experiment)
+            except ExperimentConflict:
+                pass
             raise TimeoutError(
                 f"Job failed to start within {launch_timeout} seconds. "
                 f"Experiment has been stopped: {beaker.experiment.url(experiment)}"
@@ -740,6 +762,7 @@ def follow_experiment(
     start_time = time.monotonic()
     last_step_time = 0.0
     last_inactivity_warning = 0.0
+    last_status_check = start_time
     while True:
         try:
             result = queue.get(timeout=1.0)
@@ -780,11 +803,21 @@ def follow_experiment(
                 and (first_step_detected or (cur_time - start_time) > max(step_timeout, 3600))
                 and (cur_time - last_step_time) > step_timeout
             ):
-                beaker.experiment.stop(experiment)
+                try:
+                    beaker.experiment.stop(experiment)
+                except ExperimentConflict:
+                    pass
                 raise TimeoutError(
                     f"No training steps detected within {step_timeout} seconds. "
                     f"Experiment has been stopped: {beaker.experiment.url(experiment)}"
                 )
+
+            # Periodically check if the job is finalized in case the log streaming thread gets stuck.
+            if (cur_time - last_status_check) > 5 * 60:
+                job = beaker.job.get(job.id)
+                last_status_check = cur_time
+                if job.status.finalized is not None:
+                    break
 
     print()
     log.info("End logs")
