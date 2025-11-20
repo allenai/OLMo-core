@@ -34,13 +34,13 @@ from ..distributed.utils import (
     all_reduce_value,
     backend_supports_cpu,
     barrier,
+    broadcast_object,
     get_fs_local_rank,
     get_global_rank,
     get_local_tensor,
     get_rank,
     get_world_size,
     is_distributed,
-    scatter_object,
 )
 from ..exceptions import OLMoConfigurationError
 from ..io import copy_file, file_exists, is_url, join_path, normalize_path
@@ -838,7 +838,7 @@ class Trainer:
         if get_rank() == 0 and not self.checkpointer.dir_is_checkpoint(dir):
             # Try to find the latest checkpoint in the directory.
             dir = self.checkpointer.latest_checkpoint(dir)
-        dir = scatter_object(dir)
+        dir = broadcast_object(dir)
 
         log.info(f"Loading checkpoint from '{dir}'...")
         trainer_state = self.checkpointer.load(
@@ -876,7 +876,7 @@ class Trainer:
         should_load: bool = True
         if get_rank() == 0:
             should_load = self.checkpointer.contains_checkpoint(dir)
-        should_load = scatter_object(should_load)
+        should_load = broadcast_object(should_load)
         if should_load:
             self.load_checkpoint(
                 dir,
@@ -1232,7 +1232,7 @@ class Trainer:
                 group=self.bookkeeping_pg,
             )
             if canceling_rank >= 0:
-                cancel_reason = scatter_object(
+                cancel_reason = broadcast_object(
                     self._cancel_reason,
                     src=get_global_rank(canceling_rank, group=self.bookkeeping_pg),
                     group=self.bookkeeping_pg,
