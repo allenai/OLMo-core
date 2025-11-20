@@ -47,6 +47,7 @@ pip install ai2-olmo-core
 ```
 
 There are a number of optional dependencies that must be installed to use certain functionality as well, including:
+
 - [flash-attn](https://github.com/Dao-AILab/flash-attention), [ring-flash-attn](https://github.com/zhuzilin/ring-flash-attention), and [TransformerEngine](https://github.com/NVIDIA/TransformerEngine) for the corresponding attention backends.
 - [Liger-Kernel](https://github.com/linkedin/Liger-Kernel) for a low-memory "fused-linear" loss implementation.
 - [torchao](https://github.com/pytorch/ao) for float8 training.
@@ -54,6 +55,7 @@ There are a number of optional dependencies that must be installed to use certai
 
 The published [Docker images](https://github.com/orgs/allenai/packages?repo_name=OLMo-core) contain all core and optional dependencies, and are regularly tested on our in-house H100 clusters.
 But there are several things to keep in mind if you intend to use these images:
+
 - They do not come with the OLMo-core package installed, only its dependencies, to accommodate for regular code changes.
 - They may not work on your own cluster if you have different hardware or driver/CUDA versions.
 
@@ -88,21 +90,32 @@ torchrun --nproc-per-node=8 src/scripts/official/OLMo2/OLMo-2-0325-32B-anneal.py
   --checkpoint=https://olmo-checkpoints.org/ai2-llm/peteish32/step721901
 ```
 
+### Available Training Scripts
 
+| Model Family | Directory | Description |
+|--------------|-----------|-------------|
+| **OLMo-2** | [`src/scripts/official/OLMo2/`](https://github.com/allenai/OLMo-core/tree/main/src/scripts/official/OLMo2) | Training scripts and model card for OLMo-2 32B models |
+| **OLMo-3** | [`src/scripts/official/OLMo3/`](https://github.com/allenai/OLMo-core/tree/main/src/scripts/official/OLMo3) | Training scripts and model cards for OLMo-3 7B and 32B models |
 
 ## Inference
 
-You can use our Hugging Face integration to run inference on the OLMo transformers checkpoints:
+### With Hugging Face Transformers
+
+You can use our Hugging Face [transformers](https://github.com/huggingface/transformers) integration to run inference on the OLMo checkpoints:
+
+```bash
+pip install transformers>=4.57.0
+```
 
 ```python
 from transformers import AutoModelForCausalLM, AutoTokenizer
-olmo = AutoModelForCausalLM.from_pretrained("allenai/OLMo-2-0325-32B")
-tokenizer = AutoTokenizer.from_pretrained("allenai/OLMo-2-0325-32B")
+olmo = AutoModelForCausalLM.from_pretrained("allenai/Olmo-3-1125-32B")
+tokenizer = AutoTokenizer.from_pretrained("allenai/Olmo-3-1125-32B")
 message = ["Language modeling is "]
 inputs = tokenizer(message, return_tensors='pt', return_token_type_ids=False)
 # inputs = {k: v.to('cuda') for k,v in inputs.items()} # optional verifying cuda
 # olmo = olmo.to('cuda')
-response = olmo.generate(**inputs, max_new_tokens=100, do_sample=True, top_k=50, top_p=0.95)
+response = olmo.generate(**inputs, max_new_tokens=100, do_sample=True, temperature=1.0, top_p=0.7)
 print(tokenizer.batch_decode(response, skip_special_tokens=True)[0])
 ```
 
@@ -110,13 +123,38 @@ Alternatively, with the Hugging Face pipeline abstraction:
 
 ```python
 from transformers import pipeline
-olmo_pipe = pipeline("text-generation", model="allenai/OLMo-2-0325-32B")
+olmo_pipe = pipeline("text-generation", model="allenai/Olmo-3-1125-32B")
 print(olmo_pipe("Language modeling is"))
 ```
-### Quantization
+
+### With vLLM
+
+[vLLM](https://docs.vllm.ai/en/latest/) provides high-throughput inference for OLMo models. You can use it for offline batched inference:
+
+```bash
+pip install vllm>=0.11.0
+```
 
 ```python
-olmo = AutoModelForCausalLM.from_pretrained("allenai/OLMo-2-0325-32B", torch_dtype=torch.float16, load_in_8bit=True)  # requires bitsandbytes
+from vllm import LLM, SamplingParams
+llm = LLM(model="allenai/Olmo-3-1125-32B")
+sampling_params = SamplingParams(temperature=1.0, top_p=0.7)
+prompts = ["Language modeling is"]
+outputs = llm.generate(prompts, sampling_params)
+for output in outputs:
+    prompt = output.prompt
+    generated_text = output.outputs[0].text
+    print(f"Prompt: {prompt!r}, Generated text: {generated_text!r}")
+```
+
+For more details, see the [vLLM documentation](https://docs.vllm.ai/en/latest/getting_started/quickstart/#offline-batched-inference).
+
+### With Olmo-core (beta)
+
+Autoregressive generation is supported directly in Olmo-core. Using this capability, we provide a chat-loop demo that can be used to interact with models in an interactive chat session:
+
+```bash
+python -m olmo_core.generate.chat https://olmo-checkpoints.org/ai2-llm/Olmo-3-1025-7B/stage3/step11921/ --max-new-tokens 512
 ```
 
 ## Evaluation
@@ -128,6 +166,7 @@ Additional tools for evaluating OLMo models are available at the [OLMo Eval](htt
 The Python library source code is located in `src/olmo_core`. The corresponding tests are located in `src/test`. The library docs are located in `docs`. You can build the docs locally with `make docs`.
 
 Code checks:
+
 - We use `pytest` to run tests. You can run all tests with `pytest -v src/test`. You can also point `pytest` at a specific test file to run it individually.
 - We use `isort` and `black` for code formatting. Ideally you should integrate these into your editor, but you can also run them manually or configure them with a pre-commit hook. To validate that all files are formatted correctly, run `make style-check`.
 - We use `ruff` as our primary linter. You can run it with `make lint-check`.
