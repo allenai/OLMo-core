@@ -69,6 +69,12 @@ class DataCollator:
                 log.info(f"  First item has 'index': {'index' in items[0]}")
                 log.info(f"  First item has 'metadata': {'metadata' in items[0]}")
                 log.info(f"  First item has 'expert_labels': {'expert_labels' in items[0]}")
+                if 'metadata' not in items[0]:
+                    log.error(f"❌ CRITICAL: Items don't have 'metadata'! Dataset must have include_instance_metadata=True and metadata configured.")
+                elif isinstance(items[0].get('metadata'), dict):
+                    log.info(f"  First item metadata: {items[0]['metadata']}")
+                else:
+                    log.warning(f"⚠️  First item metadata is not a dict: {type(items[0].get('metadata'))}")
         max_len = max((len(x["input_ids"] if isinstance(x, dict) else x) for x in items))
         all_input_ids = []
         all_attention_mask = []
@@ -173,6 +179,19 @@ class DataCollator:
             metadata = x.get("metadata") if isinstance(x, dict) else None
             if metadata is not None:
                 all_metadata.append(metadata)
+            
+            # Log metadata status on first item if debug not already logged
+            if not hasattr(self, '_metadata_debug_logged'):
+                self._metadata_debug_logged = True
+                import logging
+                log = logging.getLogger(__name__)
+                log.info(f"🔍 Collator metadata check:")
+                log.info(f"  Item has metadata: {metadata is not None}")
+                if metadata is not None:
+                    log.info(f"  Metadata type: {type(metadata)}")
+                    if isinstance(metadata, dict):
+                        log.info(f"  Metadata keys: {list(metadata.keys())}")
+                        log.info(f"  Metadata source_name: {metadata.get('source_name', 'NOT FOUND')}")
 
             # Expert labels (for supervised router training).
             expert_labels = x.get("expert_labels") if isinstance(x, dict) else None
@@ -181,6 +200,11 @@ class DataCollator:
                 source_name = metadata.get("source_name") if isinstance(metadata, dict) else None
                 if source_name:
                     expert_labels = _source_name_to_expert_label(source_name)
+                    if not hasattr(self, '_expert_label_injected_logged'):
+                        self._expert_label_injected_logged = True
+                        import logging
+                        log = logging.getLogger(__name__)
+                        log.info(f"✅ Injected expert_labels from source_name='{source_name}'")
             
             if expert_labels is not None:
                 if not isinstance(expert_labels, torch.Tensor):
@@ -211,5 +235,15 @@ class DataCollator:
             out["metadata"] = all_metadata
         if all_expert_labels:
             out["expert_labels"] = torch.stack(all_expert_labels)
+            if not hasattr(self, '_expert_labels_added_logged'):
+                self._expert_labels_added_logged = True
+                import logging
+                log = logging.getLogger(__name__)
+                log.info(f"✅ Added expert_labels to batch: shape={out['expert_labels'].shape}, count={len(all_expert_labels)}")
+        elif not hasattr(self, '_no_expert_labels_warned'):
+            self._no_expert_labels_warned = True
+            import logging
+            log = logging.getLogger(__name__)
+            log.warning(f"⚠️  No expert_labels created! Items had metadata: {len(all_metadata)}/{len(items)}, all_metadata={all_metadata[:3] if all_metadata else 'None'}")
 
         return out
