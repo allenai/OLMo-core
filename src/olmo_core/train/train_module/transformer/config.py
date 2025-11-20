@@ -162,6 +162,7 @@ class TransformerDataParallelConfig(DataParallelConfig):
     """
 
     prefetch_factor: int = 0
+    reshard_after_forward: Optional[bool] = None
 
 
 @dataclass
