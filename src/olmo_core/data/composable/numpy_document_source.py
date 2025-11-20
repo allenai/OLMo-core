@@ -212,7 +212,7 @@ class NumpyDocumentSourceConfig(NumpyDocumentSourceConfigBase):
             results = path_map(cls._expand_glob, patterns)
         else:
             results = []
-        results = dist_utils.scatter_object(results)
+        results = dist_utils.broadcast_object(results)
 
         expanded: List[str] = []
         pattern_to_expanded: Dict[PathOrStr, List[str]] = {}
@@ -341,7 +341,7 @@ class NumpyDocumentSource(DocumentSource):
                 )
             else:
                 source_sizes = []
-            source_sizes = dist_utils.scatter_object(source_sizes)
+            source_sizes = dist_utils.broadcast_object(source_sizes)
         assert len(source_sizes) == len(self.source_paths)
         self._source_sizes = tuple(source_sizes)
 
@@ -358,7 +358,7 @@ class NumpyDocumentSource(DocumentSource):
                     )
                 else:
                     label_mask_sizes = []
-                label_mask_sizes = dist_utils.scatter_object(label_mask_sizes)
+                label_mask_sizes = dist_utils.broadcast_object(label_mask_sizes)
 
             assert len(label_mask_sizes) == len(self.label_mask_paths)
             self._label_mask_sizes = tuple(label_mask_sizes)
