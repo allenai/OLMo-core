@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [v2.4.0](https://github.com/allenai/OLMo-core/releases/tag/v2.4.0) - 2025-11-20
+
 ### Added
 
 - Added option to skip ranges of steps in the trainer.
@@ -17,8 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `GAPMonitorCallback` for monitoring gradients, activations, and parameters (GAP).
 - Added `PeriNormTransformerBlock`.
 - Added official Olmo 3 7B and 32B pretraining scripts and data mix.
-- Added official Olmo 3 7B and 32B midtraining script and data mix.
-- Added official Olmo 3 7B and 32B long-context script and data mix.
+- Added official Olmo 3 7B and 32B midtraining scripts and data mix.
+- Added official Olmo 3 7B and 32B long-context scripts and data mix.
 - Added a `NoOpOptimizer` that does nothing, uses no memory, and can be used for debugging.
 - Added official config for Olmo 3 32B.
 - Olmo 3 model card and checkpoint manifests.
