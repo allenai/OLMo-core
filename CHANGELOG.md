@@ -15,11 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added helpful error messages when OLMo-mix-0625 files are not found, directing users to use OLMo-mix-0925 and the fingerprint override flag.
 - Added `olmo_core.generate.chat` module to allow interacting with OlmoCore models without conversion to other formats.
 - Added `GAPMonitorCallback` for monitoring gradients, activations, and parameters (GAP).
-- Added official OLMo3-7B and -32B pretraining scripts and data mix.
-- Added official OLMo3-7B and -32B midtraining script and data mix.
-- Added official OLMo3-7B and -32B long-context script and data mix.
+- Added official Olmo 3 7B and 32B pretraining scripts and data mix.
+- Added official Olmo 3 7B and 32B midtraining script and data mix.
+- Added official Olmo 3 7B and 32B long-context script and data mix.
 - Added a `NoOpOptimizer` that does nothing, uses no memory, and can be used for debugging.
 - Added official config for Olmo 3 32B.
+- Olmo 3 model card and checkpoint manifests.
 
 ### Fixed
 
@@ -28,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - No longer overrides `random`'s RNG seed when building `SourceMixtureDatasetConfig`.
 - Fix handling URLs in `olmo_core.nn.hf.checkpoint.save_hf_model` and in `examples/huggingface`.
 - Fix potential NaN loss that can occur when using instance masking.
+- Stability improvements developed while training Olmo3 32B.
 
 ### Changed
 

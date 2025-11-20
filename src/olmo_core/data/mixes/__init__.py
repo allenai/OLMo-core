@@ -46,9 +46,9 @@ class DataMix(DataMixBase):
     OLMo_mix_0925_official = "OLMo-mix-0925-official"
 
     # Midtraining mixes
-    OLMo_midtraining_mix_0725_100B = "OLMo-midtraining-mix-0725-100B"
-    OLMo_midtraining_mix_1025_ingredient1_100B = "OLMo-midtraining-mix-1025-ingredient1-100B"
-    OLMo_midtraining_mix_1025_ingredient2_100B = "OLMo-midtraining-mix-1025-ingredient2-100B"
+    OLMo_midtraining_mix_0625_100B = "OLMo-midtraining-mix-0725-100B"
+    OLMo_midtraining_mix_0925_ingredient1_100B = "OLMo-midtraining-mix-0925-ingredient1-100B"
+    OLMo_midtraining_mix_0925_ingredient2_100B = "OLMo-midtraining-mix-0925-ingredient2-100B"
 
     # Long-context extension mixes
     OLMo_longmino_mix_0625 = "OLMo-longmino-mix-0625"
@@ -94,9 +94,9 @@ class DataMix(DataMixBase):
             # which is exactly the same as "dolma2-tokenizer" but with a different name.
             DataMix.OLMo_mix_0625_official,
             DataMix.OLMo_mix_0925_official,
-            DataMix.OLMo_midtraining_mix_0725_100B,
-            DataMix.OLMo_midtraining_mix_1025_ingredient1_100B,
-            DataMix.OLMo_midtraining_mix_1025_ingredient2_100B,
+            DataMix.OLMo_midtraining_mix_0625_100B,
+            DataMix.OLMo_midtraining_mix_0925_ingredient1_100B,
+            DataMix.OLMo_midtraining_mix_0925_ingredient2_100B,
             DataMix.OLMo_longmino_mix_0625,
             DataMix.OLMo_longmino_mix_0925,
         ]:
