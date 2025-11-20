@@ -27,7 +27,7 @@ And in the third stage, we train on high-quality data consisting of a portion of
 
 For further details please refer to the [dolma3](https://github.com/allenai/dolma3) repo.
 
-Versions of these datasets that have been pre-tokenized with [allenai/dolma3-tokenizer](https://huggingface.co/allenai/dolma2-tokenizer) (same as `allenai/dolma2-tokenizer`) are available from https://olmo-data.org/preprocessed, with manifests defined in the mixes below:
+Versions of these datasets that have been pre-tokenized with [allenai/dolma3-tokenizer](https://huggingface.co/allenai/dolma2-tokenizer) (same as `allenai/dolma2-tokenizer`) are available from https://olmo-data.org/, with manifests defined in the mixes below:
 
 | Model | Stage | Data Mix |
 |-------|-------|-----|
@@ -39,6 +39,12 @@ Versions of these datasets that have been pre-tokenized with [allenai/dolma3-tok
 | Olmo 3 32B | stage 3 (long-context) | dolma3-longmino -> [OLMo-longmino-mix-0925.txt](https://github.com/allenai/OLMo-core/blob/main/src/olmo_core/data/mixes/OLMo-longmino-mix-0925.txt) |
 
 In general, we recommend the mixes defined for Olmo 3 32B as they are slightly more refined.
+
+For example, a numpy file containing tokenized data could be retrieved with:
+
+```bash
+wget https://olmo-data.org/preprocessed/dolma3-0625/v0.1-official/allenai/dolma3-tokenizer/olmocr_science_pdfs/science_math_and_technology/000000.npy
+```
 
 ## Olmo 3 7B Model Training
 
