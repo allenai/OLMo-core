@@ -24,10 +24,10 @@ from ..distributed.checkpoint import (
 )
 from ..distributed.utils import (
     barrier,
+    broadcast_object,
     get_fs_local_rank,
     get_rank,
     is_distributed,
-    scatter_object,
 )
 from ..exceptions import OLMoConfigurationError
 from ..io import (
@@ -207,7 +207,7 @@ class Checkpointer:
                 else:
                     raise
 
-        train_module_dir = scatter_object(train_module_dir)
+        train_module_dir = broadcast_object(train_module_dir)
         if metadata is None:
             metadata = get_checkpoint_metadata(train_module_dir)
 
