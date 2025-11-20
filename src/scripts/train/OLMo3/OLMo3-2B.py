@@ -39,7 +39,7 @@ from olmo_core.train.train_module import (
 )
 
 SEQUENCE_LENGTH = 8 * 1024
-GLOBAL_BATCH_SIZE = 8 * 1024 * 1024
+GLOBAL_BATCH_SIZE = 4 * 1024 * 1024
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
