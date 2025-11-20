@@ -25,6 +25,11 @@ class SlicedTokenSource(TokenSource):
             raise OLMoConfigurationError(
                 f"'{self.__class__.__name__}' does not support slices with a step other than 1."
             )
+        if source_slice.start is not None and source_slice.start < -source.num_tokens:
+            raise OLMoConfigurationError(
+                f"Slice start {source_slice.start} is out of bounds for source with "
+                f"{source.num_tokens} tokens."
+            )
 
         super().__init__(work_dir=work_dir, label=label)
         self._source = source
@@ -43,6 +48,7 @@ class SlicedTokenSource(TokenSource):
         if self.source_slice.start is None:
             return 0
         elif self.source_slice.start < 0:
+            assert self.source_slice.start >= -self.source.num_tokens
             return self.source.num_tokens + self.source_slice.start
         else:
             return self.source_slice.start
