@@ -53,7 +53,7 @@ Official training scripts, checkpoints, and monitoring logs for the Olmo 3 7B pr
 | Stage | Tokens  | GPUs | Script | Monitoring |
 |-------|-----------|------|--------|------------|
 | stage 1 (pretraining) | 5.93 Trillion | 512 H100s | [OLMo-3-1025-7B-pretrain-1.py](https://github.com/allenai/OLMo-core/blob/main/src/scripts/official/OLMo3/OLMo-3-1025-7B-pretrain-1.py) <br> [OLMo-3-1025-7B-pretrain-2.py](https://github.com/allenai/OLMo-core/blob/main/src/scripts/official/OLMo3/OLMo-3-1025-7B-pretrain-2.py) | [wandb.ai/Olmo3-7B](https://wandb.ai/ai2-llm/Olmo-3-1025-7B/reports/Olmo-3-7B-October-2025--VmlldzoxNDcwOTM0NA) |
-| stage 2 (midtraining) | 100 Billion | 128 H100s | [OLMo-3-1025-7B-midtrain.py](https://github.com/allenai/OLMo-core/blob/main/src/scripts/official/OLMo3/OLMo-3-1025-7B-pretrain-2.py) | [wandb.ai/Olmo3-7B](https://wandb.ai/ai2-llm/Olmo-3-1025-7B/reports/Olmo-3-7B-October-2025--VmlldzoxNDcwOTM0NA) |
+| stage 2 (midtraining) | 100 Billion | 128 H100s | [OLMo-3-1025-7B-midtrain.py](https://github.com/allenai/OLMo-core/blob/main/src/scripts/official/OLMo3/OLMo-3-1025-7B-midtrain.py) | [wandb.ai/Olmo3-7B](https://wandb.ai/ai2-llm/Olmo-3-1025-7B/reports/Olmo-3-7B-October-2025--VmlldzoxNDcwOTM0NA) |
 | stage 3 (long-context) | 50 Billion | 256 H100s | [OLMo-3-1025-7B-long-context.py](https://github.com/allenai/OLMo-core/blob/main/src/scripts/official/OLMo3/OLMo-3-1025-7B-long-context.py) | [wandb.ai/Olmo3-7B](https://wandb.ai/ai2-llm/Olmo-3-1025-7B/reports/Olmo-3-7B-October-2025--VmlldzoxNDcwOTM0NA) |
 
 A full list of Olmo-core format checkpoints for Olmo 3 7B can be found in [OLMo-3-1025-7B.csv](https://github.com/allenai/OLMo-core/blob/main/src/scripts/official/OLMo3/OLMo-3-1025-7B.csv).
