@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+- Added `PeriNormTransformerBlock`.
+
 ## [v2.4.0](https://github.com/allenai/OLMo-core/releases/tag/v2.4.0) - 2025-11-20
 
 ### Added
@@ -17,7 +21,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added helpful error messages when OLMo-mix-0625 files are not found, directing users to use OLMo-mix-0925 and the fingerprint override flag.
 - Added `olmo_core.generate.chat` module to allow interacting with OlmoCore models without conversion to other formats.
 - Added `GAPMonitorCallback` for monitoring gradients, activations, and parameters (GAP).
-- Added `PeriNormTransformerBlock`.
 - Added official Olmo 3 7B and 32B pretraining scripts and data mix.
 - Added official Olmo 3 7B and 32B midtraining scripts and data mix.
 - Added official Olmo 3 7B and 32B long-context scripts and data mix.
