@@ -1,4 +1,4 @@
-# Olmo 3 Model Card
+# Olmo 3 Model Training
 
 We introduce Olmo 3, a new family of 7B and 32B models. This suite includes Base, Instruct, and Think variants. The base models were trained using a staged training approach.
 
