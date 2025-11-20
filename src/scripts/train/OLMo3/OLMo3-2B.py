@@ -29,7 +29,7 @@ from olmo_core.train.callbacks import (
     CheckpointerCallback,
     CometCallback,
     SlackNotifierCallback,
-    WandBCallback,
+    WandBCallback, BatchSizeSchedulerCallback,
 )
 from olmo_core.train.train_module import (
     TransformerActivationCheckpointingConfig,
@@ -157,6 +157,17 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 name=run_name,
                 enabled=True,
             ),
+        ).
+        with_callback(
+            "batchwup",
+            BatchSizeSchedulerCallback(
+                batch_sizes=[GLOBAL_BATCH_SIZE, GLOBAL_BATCH_SIZE * 2, GLOBAL_BATCH_SIZE * 4],
+                schedule=[
+                    Duration.tokens(0),
+                    Duration.tokens(167_772_160_000),
+                    Duration.tokens(503_316_480_000),
+                ]
+            )
         )
         .with_recommended_evals(
             common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=1000
