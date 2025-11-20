@@ -97,6 +97,10 @@ class TokenSource(SourceABC):
             start_idx = self.num_tokens + start_idx
         if end_idx < 0:
             end_idx = self.num_tokens + end_idx
+        if end_idx == start_idx:
+            raise ValueError(
+                f"Invalid token range {start_idx=} → {end_idx=}, ranges cannot be empty."
+            )
         if end_idx <= start_idx:
             raise ValueError(f"Invalid token range {start_idx=} → {end_idx=}.")
         if start_idx >= self.num_tokens or end_idx > self.num_tokens:
