@@ -659,10 +659,15 @@ class TransformerConfig(Config):
         )
 
         factor = 1.55
-        config.d_model = ensure_multiple_of(config.d_model / factor, 128)
-        config.n_layers = ensure_multiple_of(config.n_layers / factor, 2)
-        config.block.feed_forward.hidden_size = ensure_multiple_of(config.block.feed_forward.hidden_size / factor, 128)
-        config.block.attention.n_heads = ensure_multiple_of(config.block.attention.n_heads / factor, 4)
+        config.d_model = ensure_multiple_of(math.ceil(config.d_model / factor), 128)
+        config.n_layers = ensure_multiple_of(math.ceil(config.n_layers / factor), 2)
+        assert config.block.feed_forward is not None
+        config.block.feed_forward.hidden_size = ensure_multiple_of(
+            math.ceil(config.block.feed_forward.hidden_size / factor), 128
+        )
+        config.block.attention.n_heads = ensure_multiple_of(
+            math.ceil(config.block.attention.n_heads / factor), 4
+        )
         config.block.attention.n_kv_heads = config.block.attention.n_heads // 2
 
         # This is Xavier init for a d_model x d_model weight matrix. Not perfect, since they aren't all like that,
