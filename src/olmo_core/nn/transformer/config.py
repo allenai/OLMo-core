@@ -1,4 +1,5 @@
 import logging
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from fnmatch import fnmatch
@@ -663,6 +664,12 @@ class TransformerConfig(Config):
         config.block.feed_forward.hidden_size = ensure_multiple_of(config.block.feed_forward.hidden_size / factor, 128)
         config.block.attention.n_heads = ensure_multiple_of(config.block.attention.n_heads / factor, 4)
         config.block.attention.n_kv_heads = config.block.attention.n_heads // 2
+
+        # This is Xavier init for a d_model x d_model weight matrix. Not perfect, since they aren't all like that,
+        # and Xavier isn't always the right choice, but we don't want to invent a whole new init method for this
+        # one-off run.
+        config.init_std = math.sqrt(2 / (config.d_model + config.d_model))
+        config.init_method = InitMethod.normal_emb1
 
         return config
 

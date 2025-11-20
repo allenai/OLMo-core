@@ -33,6 +33,11 @@ class InitMethod(StrEnum):
     with standard deviation 0.02.
     """
 
+    normal_emb1 = "normalized_emb1"
+    """
+    Like :data:`normal`, but embeddings are initialized with stddev 1.
+    """
+
     normalized = "normalized"
     """
     Follow the nGPT initialization scheme.
@@ -77,6 +82,16 @@ class InitMethod(StrEnum):
             _apply_init(nn.init.normal_, m.weight, generator=generator)
         elif self == InitMethod.normalized:
             _apply_init(nn.init.normal_, m.weight, generator=generator, std=d_model**-0.5)
+        elif self == InitMethod.normal_emb1:
+            _apply_init(
+                nn.init.trunc_normal_,
+                m.weight,
+                mean=0.0,
+                std=1,
+                a=-3,
+                b=3,
+                generator=generator,
+            )
         else:
             _apply_init(
                 nn.init.trunc_normal_,
