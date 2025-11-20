@@ -565,7 +565,7 @@ class ComposableDataLoader(TextDataLoaderBase):
 
     def _build_global_indices(self) -> np.ndarray:
         dtype = np.uint32
-        if self.shuffle_strategy == ShuffleStrategy.inter_source:
+        if not self.shuffle or self.shuffle_strategy == ShuffleStrategy.inter_source:
             return build_global_indices(
                 self.total_instances,
                 sequence_length=self.sequence_length,
@@ -581,7 +581,7 @@ class ComposableDataLoader(TextDataLoaderBase):
                     len(source),
                     sequence_length=self.sequence_length,
                     max_sequence_length=self.max_sequence_length,
-                    seed=(self.seed + self.epoch + i) if self.shuffle else None,
+                    seed=self.seed + self.epoch + i,
                     dtype=dtype,
                 )
                 indices_per_source.append(indices + offset)
@@ -597,14 +597,16 @@ class ComposableDataLoader(TextDataLoaderBase):
                     source_size,
                     sequence_length=self.sequence_length,
                     max_sequence_length=self.max_sequence_length,
-                    seed=(self.seed + self.epoch + i) if self.shuffle else None,
+                    seed=self.seed + self.epoch + i,
                     dtype=dtype,
                 )
                 interleaved_indices[i::num_sources] = indices + offset
                 offset += len(source)
             return interleaved_indices
-        else:
+        elif self.shuffle_strategy is None:
             raise NotImplementedError(f"Unknown shuffle strategy: {self.shuffle_strategy}")
+        else:
+            raise RuntimeError("shouldn't get here")
 
 
 class _IterableDataLoaderWrapper(torch.utils.data.IterableDataset[Dict[str, Any]]):
