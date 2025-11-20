@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added official OLMo3-7B and -32B long-context script and data mix.
 - Added a `NoOpOptimizer` that does nothing, uses no memory, and can be used for debugging.
 - Added official config for Olmo 3 32B.
+- Olmo3 model card and checkpoint manifests.
 
 ### Fixed
 
