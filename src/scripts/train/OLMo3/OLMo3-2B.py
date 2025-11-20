@@ -18,11 +18,7 @@ from olmo_core.internal.experiment import (
     main,
 )
 from olmo_core.launch.beaker import OLMoCoreBeakerImage
-from olmo_core.nn.attention import SlidingWindowAttentionConfig
-from olmo_core.nn.transformer import (
-    TransformerActivationCheckpointingMode,
-    TransformerConfig,
-)
+from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
@@ -32,7 +28,6 @@ from olmo_core.train.callbacks import (
     WandBCallback,
 )
 from olmo_core.train.train_module import (
-    TransformerActivationCheckpointingConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
@@ -47,7 +42,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
-    rank_microbatch_size = SEQUENCE_LENGTH
+    rank_microbatch_size = 2 * SEQUENCE_LENGTH
     if common.launch is not None:
         gpus = {CLUSTER_TO_GPU_TYPE.get(c, "unknown") for c in common.launch.clusters}
         if all("B200" in g for g in gpus):
