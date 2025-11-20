@@ -30,8 +30,9 @@ class Mamba(nn.Module):
         )
 
     def forward(self, x: torch.Tensor):  # type: ignore
+        dtype = self.inner.conv1d.weight.dtype # need to recompute due to fsdp
         original_dtype = x.dtype
-        x = x.to(self.dtype)
+        x = x.to(dtype)
 
         if self.mamba_cache_manager is not None and self.mamba_cache_manager.current_position() == 0:
             from mamba_ssm.utils.generation import InferenceParams
