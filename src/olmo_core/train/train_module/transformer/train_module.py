@@ -344,22 +344,34 @@ class TransformerTrainModule(TrainModule):
         if "labels" not in batch:
             batch["labels"] = get_labels(batch, label_ignore_index=self.label_ignore_index)
 
-        # Record how many instances are going to be skipped (masked out).
-        if (instance_mask := batch.get("instance_mask")) is not None and not dry_run:
-            self.record_metric(
-                "train/masked instances (%)", (~instance_mask).float().mean(), ReduceType.mean
-            )
-
-        # Calculate and record how many tokens are going to be used in the loss.
+        # Calculate how many tokens will be used in the loss.
         batch_num_tokens = batch["labels"].numel()
+        batch_num_tokens_per_instance = batch["labels"].shape[1]
         batch_num_tokens_for_loss = move_to_device(
             (batch["labels"] != self.label_ignore_index).sum(), self.device
         )
+
+        # Record percentage of masked labels.
         self.record_metric(
-            "train/masked labels (%)",
+            "train/masked labels (%)",  # just a proportion, not a percentage
             (batch_num_tokens - batch_num_tokens_for_loss) / batch_num_tokens,
             ReduceType.mean,
         )
+
+        # Record percentage of masked instances.
+        if (instance_mask := batch.get("instance_mask")) is not None:
+            self.record_metric(
+                "train/masked instances (%)",  # just a proportion, not a percentage
+                (~instance_mask).float().mean(),
+                ReduceType.mean,
+            )
+
+            # WARN: When we mask out instances with the instance filter, we count those tokens
+            # for the loss anyways. They will count as tokens with a zero loss. This means we
+            # get an artificially *low* loss for these batches. But it is really hard (and slow)
+            # to do this properly in a distributed setup. We add back in the full number of tokens
+            # for the loss so that each rank contributes to the loss calculation fairly.
+            batch_num_tokens_for_loss += (~instance_mask).sum() * batch_num_tokens_per_instance
 
         # Batch losses to record.
         ce_batch_loss = move_to_device(torch.tensor(0.0), self.device)

@@ -13,7 +13,7 @@ from olmo_core.aliases import PathOrStr
 from olmo_core.config import DType
 from olmo_core.distributed.utils import barrier, get_fs_local_rank, get_full_tensor
 from olmo_core.doc_utils import beta_feature
-from olmo_core.io import clear_directory, copy_dir, file_exists, is_url, upload
+from olmo_core.io import clear_directory, copy_dir, file_exists, is_url
 from olmo_core.nn.hf.config import get_hf_config
 from olmo_core.nn.hf.convert import convert_state_from_hf, convert_state_to_hf
 from olmo_core.nn.transformer.model import Transformer
@@ -176,7 +176,7 @@ def save_hf_model(
             assert work_dir is not None
             hf_model.save_pretrained(work_dir)
 
-            upload(work_dir, str(save_dir), save_overwrite=save_overwrite)
+            copy_dir(work_dir, save_dir, save_overwrite=save_overwrite)
         else:
             target = Path(save_dir)
             if target.is_dir() and not save_overwrite:
