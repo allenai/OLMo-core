@@ -55,7 +55,7 @@ def build_config(opts: argparse.Namespace, overrides: List[str]) -> ExperimentCo
     )
 
     dataset_config = NumpyFSLDatasetConfig.from_data_mix(
-        DataMix.OLMo_midtraining_mix_1025_ingredient2_100B,
+        DataMix.OLMo_midtraining_mix_0925_ingredient2_100B,
         tokenizer=tokenizer_config,
         mix_base_dir=opts.data_root,
         work_dir=opts.work_dir,
