@@ -66,7 +66,7 @@ Official training scripts, checkpoints, and monitoring logs for the Olmo 3 32B p
 
 | Stage | Tokens  | GPUs | Script | Monitoring |
 |-------|-----------|------|--------|------------|
-| stage 1 (pretraining) | 5.5 Trillion | 1024 H100s | [OLMo-3-1025-32B-pretrain.py](https://github.com/allenai/OLMo-core/blob/main/src/scripts/official/OLMo3/OLMo-3-1025-32B-pretrain.py) | [wandb.ai/Olmo3-32B](https://wandb.ai/ai2-llm/Olmo-3-1125-32B/reports/Olmo-3-32B-November-2025--VmlldzoxNTA4NzAxMw) |
+| stage 1 (pretraining) | 5.50 Trillion | 1024 H100s | [OLMo-3-1025-32B-pretrain.py](https://github.com/allenai/OLMo-core/blob/main/src/scripts/official/OLMo3/OLMo-3-1025-32B-pretrain.py) | [wandb.ai/Olmo3-32B](https://wandb.ai/ai2-llm/Olmo-3-1125-32B/reports/Olmo-3-32B-November-2025--VmlldzoxNTA4NzAxMw) |
 | stage 2 (midtraining) | 100 Billion x2 | 512 H100s | [OLMo-3-1025-32B-midtrain-ingredient-1.py](https://github.com/allenai/OLMo-core/blob/main/src/scripts/official/OLMo3/OLMo-3-1025-32B-midtrain-ingredient-1.py) <br> [OLMo-3-1025-32B-midtrain-ingredient-2.py](https://github.com/allenai/OLMo-core/blob/main/src/scripts/official/OLMo3/OLMo-3-1025-32B-midtrain-ingredient-2.py) | [wandb.ai/Olmo3-32B](https://wandb.ai/ai2-llm/Olmo-3-1125-32B/reports/Olmo-3-32B-November-2025--VmlldzoxNTA4NzAxMw) |
 | stage 3 (long-context) | 100 Billion | 1024 H100s | [OLMo-3-1025-32B-long-context.py](https://github.com/allenai/OLMo-core/blob/main/src/scripts/official/OLMo3/OLMo-3-1025-32B-long-context.py) | [wandb.ai/Olmo3-32B](https://wandb.ai/ai2-llm/Olmo-3-1125-32B/reports/Olmo-3-32B-November-2025--VmlldzoxNTA4NzAxMw) |
 
