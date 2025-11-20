@@ -591,6 +591,7 @@ class ComposableDataLoader(TextDataLoaderBase):
             source_size = min(len(source) for source in self.sources_for_this_epoch)
             num_sources = len(self.sources_for_this_epoch)
             interleaved_indices = np.empty((num_sources * source_size,), dtype=np.uint32)
+            offset = 0
             for i, source in enumerate(self.sources_for_this_epoch):
                 indices = build_global_indices(
                     source_size,
@@ -599,7 +600,8 @@ class ComposableDataLoader(TextDataLoaderBase):
                     seed=(self.seed + self.epoch + i) if self.shuffle else None,
                     dtype=dtype,
                 )
-                interleaved_indices[i::num_sources] = indices
+                interleaved_indices[i::num_sources] = indices + offset
+                offset += len(source)
             return interleaved_indices
         else:
             raise NotImplementedError(f"Unknown shuffle strategy: {self.shuffle_strategy}")
