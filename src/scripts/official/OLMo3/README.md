@@ -20,7 +20,7 @@ The core models released in this batch include the following:
 
 ## Training Data
 
-OLMo-3 7B pretraining follows a three-stage procedure.
+Olmo 3 7B pretraining follows a three-stage procedure.
 In the first stage, we train on large amounts of mostly web-based data: [dolma3](https://huggingface.co/datasets/allenai/dolma3).
 In the second stage, we train on a smaller amount of high-quality, targeted data: [dolma3-dolmino](https://huggingface.co/datasets/allenai/dolma3_dolmino).
 And in the third stage, we train on high-quality data consisting of a portion of longer documents: [dolma3-longmino](https://huggingface.co/datasets/allenai/dolma3_longmino).
