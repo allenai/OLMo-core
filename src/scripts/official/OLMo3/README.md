@@ -4,10 +4,10 @@ We introduce Olmo 3, a new family of 7B and 32B models. This suite includes Base
 
 Olmo is a series of **O**pen **l**anguage **mo**dels designed to enable the science of language models. These models are trained on the Dolma 3 dataset. We are releasing all code, checkpoints, logs (coming soon), and associated training details.
 
-| Size | Training Tokens | Layers | Hidden Size | Attention Heads | Context Length |
-|------|-----------------|--------|-------------|-----------------|----------------|
-| [Olmo 3 7B](https://huggingface.co/allenai/Olmo-3-1025-7B) | 5.93 Trillion | 32 | 4096 | 32 | 65,536 |
-| [Olmo 3 32B](https://huggingface.co/allenai/Olmo-3-1125-32B) | 5.50 Trillion | 64 | 5120 | 40 query, 8 key/value | 65,536 |
+| Size   | Training Tokens | Layers | Hidden Size | Q Heads | KV Heads | Context Length |
+|--------|-----------------|--------|-------------|---------|----------|----------------|
+| [OLMo 3 7B](https://huggingface.co/allenai/Olmo-3-1025-7B) | 5.93 Trillion | 32 | 4096 | 32 | 32 | 65,536 |
+| [OLMo 3 32B](https://huggingface.co/allenai/Olmo-3-1125-32B) | 5.50 Trillion | 64 | 5120 | 40 | 8 | 65,536 |
 
 The core models released in this batch include the following:
 
