@@ -123,7 +123,9 @@ class TransformerBlock(TransformerBlockBase):
         **kwargs,
     ) -> torch.Tensor:
         del loss_div_factor
-        h = x + self.dropout(self.attention(self.attention_norm(x), **kwargs))
+        # Filter out fields that attention doesn't accept (these are only for router training)
+        attention_kwargs = {k: v for k, v in kwargs.items() if k not in ['metadata', 'index', 'expert_labels']}
+        h = x + self.dropout(self.attention(self.attention_norm(x), **attention_kwargs))
         return h + self.dropout(self.feed_forward(self.feed_forward_norm(h)))
 
     def apply_tp(
@@ -199,7 +201,9 @@ class ReorderedNormTransformerBlock(TransformerBlock):
         **kwargs,
     ) -> torch.Tensor:
         del loss_div_factor
-        h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
+        # Filter out fields that attention doesn't accept (these are only for router training)
+        attention_kwargs = {k: v for k, v in kwargs.items() if k not in ['metadata', 'index', 'expert_labels']}
+        h = x + self.dropout(self.attention_norm(self.attention(x, **attention_kwargs)))
         return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
 
 
@@ -255,10 +259,12 @@ class NormalizedTransformerBlock(TransformerBlockBase):
         **kwargs,
     ) -> torch.Tensor:
         del loss_div_factor
+        # Filter out fields that attention doesn't accept (these are only for router training)
+        attention_kwargs = {k: v for k, v in kwargs.items() if k not in ['metadata', 'index', 'expert_labels']}
         h = l2_normalize(
             torch.lerp(
                 x,
-                l2_normalize(self.attention(x, **kwargs)),
+                l2_normalize(self.attention(x, **attention_kwargs)),
                 (
                     self.attn_alpha * (self.attn_alpha_init_value / self.attn_alpha_init_scaling)
                 ).abs(),
@@ -399,7 +405,9 @@ class MoETransformerBlock(TransformerBlockBase):
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         **kwargs,
     ) -> torch.Tensor:
-        h = x + self.dropout(self.attention(self.attention_norm(x), **kwargs))
+        # Filter out fields that attention doesn't accept (these are only for router training)
+        attention_kwargs = {k: v for k, v in kwargs.items() if k not in ['metadata', 'index', 'expert_labels']}
+        h = x + self.dropout(self.attention(self.attention_norm(x), **attention_kwargs))
         return h + self.dropout(
             self.feed_forward_moe(self.feed_forward_norm(h), loss_div_factor=loss_div_factor)
         )
@@ -490,7 +498,9 @@ class MoEReorderedNormTransformerBlock(MoETransformerBlock):
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         **kwargs,
     ) -> torch.Tensor:
-        h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
+        # Filter out fields that attention doesn't accept (these are only for router training)
+        attention_kwargs = {k: v for k, v in kwargs.items() if k not in ['metadata', 'index', 'expert_labels']}
+        h = x + self.dropout(self.attention_norm(self.attention(x, **attention_kwargs)))
         return h + self.dropout(
             self.feed_forward_norm(self.feed_forward_moe(h, loss_div_factor=loss_div_factor))
         )
@@ -670,7 +680,9 @@ class MoEHybridTransformerBlockBase(MoETransformerBlock):
 @beta_feature
 class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
     def dense_forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
-        h = x + self.dropout(self.attention(self.attention_norm(x), **kwargs))
+        # Filter out fields that attention doesn't accept (these are only for router training)
+        attention_kwargs = {k: v for k, v in kwargs.items() if k not in ['metadata', 'index', 'expert_labels']}
+        h = x + self.dropout(self.attention(self.attention_norm(x), **attention_kwargs))
         return h + self.dropout(self.feed_forward(self.feed_forward_norm(h)))
 
     def sparse_forward(
@@ -731,7 +743,9 @@ class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
         )
 
         # Compute attention while all-to-all is in progress.
-        h = x + self.dropout(self.attention(self.attention_norm(x), **kwargs))
+        # Filter out fields that attention doesn't accept (these are only for router training)
+        attention_kwargs = {k: v for k, v in kwargs.items() if k not in ['metadata', 'index', 'expert_labels']}
+        h = x + self.dropout(self.attention(self.attention_norm(x), **attention_kwargs))
 
         # Maybe compute MoE shared out while all-to-all is in progress.
         moe_shared_out: Optional[torch.Tensor] = None
@@ -776,7 +790,9 @@ class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
 @beta_feature
 class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
     def dense_forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
-        h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
+        # Filter out fields that attention doesn't accept (these are only for router training)
+        attention_kwargs = {k: v for k, v in kwargs.items() if k not in ['metadata', 'index', 'expert_labels']}
+        h = x + self.dropout(self.attention_norm(self.attention(x, **attention_kwargs)))
         return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
 
     def sparse_forward(
@@ -837,7 +853,9 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         )
 
         # Compute attention while all-to-all is in progress.
-        h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
+        # Filter out fields that attention doesn't accept (these are only for router training)
+        attention_kwargs = {k: v for k, v in kwargs.items() if k not in ['metadata', 'index', 'expert_labels']}
+        h = x + self.dropout(self.attention_norm(self.attention(x, **attention_kwargs)))
 
         # Maybe compute MoE shared out while all-to-all is in progress.
         moe_shared_out: Optional[torch.Tensor] = None
