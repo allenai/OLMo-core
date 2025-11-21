@@ -18,6 +18,7 @@ from olmo_core.internal.experiment import (
     main,
 )
 from olmo_core.launch.beaker import OLMoCoreBeakerImage
+from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import Duration, TrainerConfig
@@ -38,7 +39,10 @@ GLOBAL_BATCH_SIZE = 4 * 1024 * 1024
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
-    return TransformerConfig.olmo3_2B(vocab_size=common.tokenizer.padded_vocab_size())
+    return TransformerConfig.olmo3_2B(
+        vocab_size=common.tokenizer.padded_vocab_size(),
+        attn_backend=AttentionBackendName.flash_3,
+    )
 
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
@@ -170,7 +174,7 @@ if __name__ == "__main__":
         model_config_builder=build_model_config,
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
-        beaker_image=OLMoCoreBeakerImage.tch270_cu128,
+        beaker_image=OLMoCoreBeakerImage.tch270_cu128_fa3,
         include_instance_filter=True,
         flight_recorder=True,
         include_default_evals=False,
