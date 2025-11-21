@@ -392,50 +392,55 @@ def test_exponential_scheduler_error():
 
 def test_exponential_scheduler_integration(tiny_model):
     """Integration test: ExponentialScheduler with actual optimizer and training steps."""
-    import torch.optim as optim
-    from olmo_core.train import Trainer
-    from olmo_core.train.config import TrainerConfig
     from unittest.mock import Mock
-    
+
+    import torch.optim as optim
+
+    from olmo_core.train import Trainer
+
     # Setup
     lr_min = 1e-5
     lr_max = 1.0
     max_steps = 100
-    
+
     # Create optimizer with max LR
     optimizer = optim.Adam(tiny_model.parameters(), lr=lr_max)
-    
+
     # Create scheduler
     scheduler = ExponentialScheduler(lr_min=lr_min)
-    
+
     # Create a mock trainer with necessary attributes
     mock_trainer = Mock(spec=Trainer)
     mock_trainer.max_steps = max_steps
     mock_trainer.max_tokens = None
-    
+
     # Record LRs at each step
     recorded_lrs = []
-    
+
     for step in range(max_steps + 1):
         mock_trainer.global_step = step
-        
+
         # Apply scheduler to optimizer param group
         for group in optimizer.param_groups:
             new_lr = scheduler.set_lr(group, mock_trainer)
             recorded_lrs.append(new_lr)
-    
+
     # Verify LR progression
     assert recorded_lrs[0] == pytest.approx(lr_min, rel=1e-6), "LR at step 0 should be lr_min"
-    assert recorded_lrs[max_steps] == pytest.approx(lr_max, rel=1e-6), "LR at max_steps should be lr_max"
-    
+    assert recorded_lrs[max_steps] == pytest.approx(
+        lr_max, rel=1e-6
+    ), "LR at max_steps should be lr_max"
+
     # Verify exponential growth (each LR should be larger than the previous)
     for i in range(1, len(recorded_lrs)):
-        assert recorded_lrs[i] > recorded_lrs[i-1], f"LR should increase monotonically at step {i}"
-    
+        assert (
+            recorded_lrs[i] > recorded_lrs[i - 1]
+        ), f"LR should increase monotonically at step {i}"
+
     # Verify the exponential formula at midpoint
     mid_step = max_steps // 2
     expected_mid_lr = lr_min * (lr_max / lr_min) ** (mid_step / max_steps)
     assert recorded_lrs[mid_step] == pytest.approx(expected_mid_lr, rel=1e-5)
-    
+
     # Verify LR is correctly set in optimizer param group
-    assert optimizer.param_groups[0]['lr'] == pytest.approx(lr_max, rel=1e-6)
+    assert optimizer.param_groups[0]["lr"] == pytest.approx(lr_max, rel=1e-6)
