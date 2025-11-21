@@ -281,19 +281,16 @@ class PackingInstanceSource(InstanceSource):
             document_token_ids.append(as_ndarray(token_range["input_ids"]))
             if "label_mask" in token_range:
                 document_label_masks.append(as_ndarray(token_range["label_mask"]))
+            else:
+                document_label_masks.append(np.ones_like(document_token_ids[-1], dtype=np.bool_))
 
         # Combine token IDs and maybe label masks for each document.
         input_ids = np.concatenate(document_token_ids, dtype=np.int_)
-        label_mask = None if not document_label_masks else np.concatenate(document_label_masks)
+        label_mask = np.concatenate(document_label_masks)
 
         # Pad to target sequence length.
         pad_shape = (0, self.sequence_length - input_ids.size)
-        if label_mask is not None:
-            label_mask = np.pad(label_mask, pad_shape, constant_values=False)
-        else:
-            label_mask = np.pad(
-                np.ones_like(input_ids, dtype=np.bool_), pad_shape, constant_values=False
-            )
+        label_mask = np.pad(label_mask, pad_shape, constant_values=False)
         input_ids = np.pad(input_ids, pad_shape, constant_values=self.pad_token_id)
 
         return {
