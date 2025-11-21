@@ -344,7 +344,7 @@ def dispatch_ring_flash_attn(
     elif strategy == RingAttentionLoadBalancerType.llama3:
         if any(x is not None for x in (cu_seqlens, max_seqlen)):
             raise RuntimeError(
-                f"{strategy} load balancing strategy requires seperate QK doc lengths"
+                f"{strategy} load balancing strategy requires separate QK doc lengths"
             )
 
         if (
