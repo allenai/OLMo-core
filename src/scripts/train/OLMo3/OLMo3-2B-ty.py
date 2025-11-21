@@ -19,7 +19,6 @@ from olmo_core.internal.experiment import (
 )
 from olmo_core.launch.beaker import OLMoCoreBeakerImage
 from olmo_core.nn.attention import AttentionBackendName
-from olmo_core.nn.lm_head import LMLossImplementation
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import Duration, TrainerConfig
@@ -42,9 +41,8 @@ GLOBAL_BATCH_SIZE = 4 * 1024 * 1024
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     model_config = TransformerConfig.olmo3_2B(
         vocab_size=common.tokenizer.padded_vocab_size(),
-        attn_backend=AttentionBackendName.flash_3,
+        attn_backend=AttentionBackendName.te,
     )
-    model_config.lm_head.loss_implementation = LMLossImplementation.fused_linear  # liger
     return model_config
 
 
@@ -74,7 +72,6 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
             prefetch_factor=1,
             reshard_after_forward=True,
-            shard_degree=8,
         ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
