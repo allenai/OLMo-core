@@ -7,6 +7,7 @@ from olmo_core.optim import (
     WSDS,
     ConstantWithWarmup,
     CosWithWarmup,
+    ExponentialScheduler,
     InvSqrtWithWarmup,
     LinearWithWarmup,
     SequentialScheduler,
@@ -346,3 +347,100 @@ class TestWSDSScheduler:
         assert scheduler.get_lr(initial_lr, 0, period_length) == 0.0
         assert scheduler.get_lr(initial_lr, period_length // 2, period_length) == initial_lr
         assert scheduler.get_lr(initial_lr, period_length, period_length) == 0.0
+
+
+def test_exponential_scheduler():
+    """Test exponential LR scheduler for LR range testing."""
+    initial_lr = 10.0  # max LR
+    lr_min = 1e-9
+    max_steps = 10_000
+    scheduler = ExponentialScheduler(lr_min=lr_min)
+
+    # At step 0, should be at lr_min
+    assert scheduler.get_lr(initial_lr, 0, max_steps) == pytest.approx(lr_min)
+
+    # At step t_max, should be at initial_lr (max LR)
+    assert scheduler.get_lr(initial_lr, max_steps, max_steps) == pytest.approx(initial_lr)
+
+    # At step t_max/2, should be at geometric mean of lr_min and lr_max
+    # lr(t_max/2) = lr_min * (lr_max/lr_min)^0.5 = sqrt(lr_min * lr_max)
+    expected_mid = math.sqrt(lr_min * initial_lr)
+    assert scheduler.get_lr(initial_lr, max_steps // 2, max_steps) == pytest.approx(expected_mid)
+
+    # Verify exponential growth at various points
+    # lr(t) = lr_min * (lr_max / lr_min)^(t / t_max)
+    for step in [1_000, 5_000, 8_000]:
+        ratio = step / max_steps
+        expected_lr = lr_min * (initial_lr / lr_min) ** ratio
+        assert scheduler.get_lr(initial_lr, step, max_steps) == pytest.approx(expected_lr)
+
+    # Verify LR is monotonically increasing
+    lr_at_1000 = scheduler.get_lr(initial_lr, 1_000, max_steps)
+    lr_at_5000 = scheduler.get_lr(initial_lr, 5_000, max_steps)
+    lr_at_9000 = scheduler.get_lr(initial_lr, 9_000, max_steps)
+    assert lr_min < lr_at_1000 < lr_at_5000 < lr_at_9000 < initial_lr
+
+
+def test_exponential_scheduler_error():
+    """Test that ExponentialScheduler raises error for invalid lr_min."""
+    with pytest.raises(OLMoConfigurationError, match="must be positive"):
+        ExponentialScheduler(lr_min=0.0)
+
+    with pytest.raises(OLMoConfigurationError, match="must be positive"):
+        ExponentialScheduler(lr_min=-1e-9)
+
+
+def test_exponential_scheduler_integration(tiny_model):
+    """Integration test: ExponentialScheduler with actual optimizer and training steps."""
+    from unittest.mock import Mock
+
+    import torch.optim as optim
+
+    from olmo_core.train import Trainer
+
+    # Setup
+    lr_min = 1e-5
+    lr_max = 1.0
+    max_steps = 100
+
+    # Create optimizer with max LR
+    optimizer = optim.Adam(tiny_model.parameters(), lr=lr_max)
+
+    # Create scheduler
+    scheduler = ExponentialScheduler(lr_min=lr_min)
+
+    # Create a mock trainer with necessary attributes
+    mock_trainer = Mock(spec=Trainer)
+    mock_trainer.max_steps = max_steps
+    mock_trainer.max_tokens = None
+
+    # Record LRs at each step
+    recorded_lrs = []
+
+    for step in range(max_steps + 1):
+        mock_trainer.global_step = step
+
+        # Apply scheduler to optimizer param group
+        for group in optimizer.param_groups:
+            new_lr = scheduler.set_lr(group, mock_trainer)
+            recorded_lrs.append(new_lr)
+
+    # Verify LR progression
+    assert recorded_lrs[0] == pytest.approx(lr_min, rel=1e-6), "LR at step 0 should be lr_min"
+    assert recorded_lrs[max_steps] == pytest.approx(
+        lr_max, rel=1e-6
+    ), "LR at max_steps should be lr_max"
+
+    # Verify exponential growth (each LR should be larger than the previous)
+    for i in range(1, len(recorded_lrs)):
+        assert (
+            recorded_lrs[i] > recorded_lrs[i - 1]
+        ), f"LR should increase monotonically at step {i}"
+
+    # Verify the exponential formula at midpoint
+    mid_step = max_steps // 2
+    expected_mid_lr = lr_min * (lr_max / lr_min) ** (mid_step / max_steps)
+    assert recorded_lrs[mid_step] == pytest.approx(expected_mid_lr, rel=1e-5)
+
+    # Verify LR is correctly set in optimizer param group
+    assert optimizer.param_groups[0]["lr"] == pytest.approx(lr_max, rel=1e-6)
