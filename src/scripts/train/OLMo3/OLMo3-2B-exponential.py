@@ -56,7 +56,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         rank_microbatch_size=rank_microbatch_size,
         max_sequence_length=common.max_sequence_length,
         optim=SkipStepAdamWConfig(
-            lr=5e-3,
+            lr=10,
             weight_decay=0.033,  # why lower than 0.1?
             betas=(0.9, 0.95),
             group_overrides=[
@@ -121,8 +121,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             save_overwrite=True,
             metrics_collect_interval=50,
             cancel_check_interval=cancel_check_interval,
-            max_duration=Duration.epochs(1),
-            hard_stop=Duration.steps(20000),
+            max_duration=Duration.steps(20000),
+            # hard_stop=Duration.steps(20000),
         )
         .with_callback(
             "checkpointer",
