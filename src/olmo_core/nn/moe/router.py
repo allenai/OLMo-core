@@ -214,6 +214,7 @@ class MoERouter(nn.Module):
         self._score_bias_batch_size_per_expert: Optional[_HiddenTensor] = None
         self._load_balancing_loss: Optional[_HiddenTensor] = None
         self._z_loss: Optional[_HiddenTensor] = None
+        self._latest_router_logits: Optional[torch.Tensor] = None
 
     def reset_parameters(self):
         self._batch_size_per_expert = hide_from_torch(
@@ -431,6 +432,7 @@ class MoERouter(nn.Module):
 
         # shape: (batch_size, seq_len, num_experts)
         logits = self.get_expert_logits(x).float()
+        self._latest_router_logits = logits
 
         # shape: (batch_size, seq_len, num_experts)
         if self.gating_function == MoERouterGatingFunction.softmax:
@@ -525,6 +527,16 @@ class MoERouter(nn.Module):
 
     def apply_cp(self, cp_mesh: DeviceMesh):
         self.cp_mesh = cp_mesh
+
+    def pop_router_logits(self) -> Optional[torch.Tensor]:
+        """
+        Retrieve the most recent router logits captured during ``forward``.
+
+        Returns ``None`` if no logits are cached (e.g., the router hasn't run yet).
+        """
+        logits = self._latest_router_logits
+        self._latest_router_logits = None
+        return logits
 
 
 class MoELinearRouter(MoERouter):
