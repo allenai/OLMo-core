@@ -77,7 +77,7 @@ T = TypeVar("T")
 class TrainerStateDict(TypedDict):
     global_step: int
     global_train_tokens_seen: int
-    max_steps: int
+    max_steps: Optional[int]
     data_loader: Dict[str, Any]
     epoch: int
     world_size: int
@@ -447,14 +447,14 @@ class Trainer:
             return None
 
     @property
-    def max_steps(self) -> int:
+    def max_steps(self) -> Optional[int]:
         """
         The maximum number of steps to train for, as determined by :data:`max_duration`.
         """
         return self._get_max_steps(self.max_duration)
 
     @property
-    def max_tokens(self) -> int:
+    def max_tokens(self) -> Optional[int]:
         """
         The maximum number of tokens to train for, as determined by :data:`max_duration`.
         """
@@ -476,17 +476,13 @@ class Trainer:
         else:
             raise NotImplementedError(f"Unsupported duration unit: {duration.unit}")
 
-    def _get_max_steps(self, duration: Duration) -> int:
+    def _get_max_steps(self, duration: Duration) -> Optional[int]:
         if duration.unit == DurationUnit.steps:
             return duration.value
         elif duration.unit == DurationUnit.epochs:
             if self.data_loader.total_batches is None:
-                raise RuntimeError(
-                    "the number of steps cannot be determined from an 'epochs' duration since "
-                    "the data loader's number of batches is unknown"
-                )
+                return None
             max_epochs = duration.value
-            complete_epochs_remaining = max(max_epochs - self.epoch, 0)
             # NOTE: need to cover the case where the last epoch has just ended and we've incremented
             # self.epoch.
             steps_remaining_this_epoch = (
@@ -494,10 +490,12 @@ class Trainer:
                 if self.epoch > max_epochs
                 else max(self.data_loader.total_batches - self.data_loader.batches_processed, 0)
             )
-            steps_remaining = (
-                complete_epochs_remaining * self.data_loader.total_batches
-                + steps_remaining_this_epoch
-            )
+            steps_remaining = steps_remaining_this_epoch
+            for e in range(self.epoch + 1, duration.value + 1):
+                if (b := self.data_loader.batches_in_epoch(e)) is not None:
+                    steps_remaining += b
+                else:
+                    return None
             return self.global_step + steps_remaining
         elif duration.unit == DurationUnit.tokens:
             # Need to account for a change in batch size.
@@ -508,11 +506,13 @@ class Trainer:
         else:
             raise NotImplementedError
 
-    def _get_max_tokens(self, duration: Duration) -> int:
+    def _get_max_tokens(self, duration: Duration) -> Optional[int]:
         if duration.unit == DurationUnit.tokens:
             return duration.value
         else:
             max_steps = self._get_max_steps(duration)
+            if max_steps is None:
+                return None
             steps_remaining = max(max_steps - self.global_step, 0)
             tokens_remaining = steps_remaining * self.tokens_per_batch
             return self.global_train_tokens_seen + tokens_remaining
@@ -571,10 +571,11 @@ class Trainer:
     @property
     def training_progress(self) -> TrainingProgress:
         # Calculate total steps.
-        total_steps = max(
-            self._get_max_steps(self.hard_stop) if self.hard_stop is not None else self.max_steps,
-            self.global_step,
+        total_steps = (
+            self._get_max_steps(self.hard_stop) if self.hard_stop is not None else self.max_steps
         )
+        if total_steps is not None:
+            total_steps = max(total_steps, self.global_step)
 
         # Get current speed in batches per second.
         bps: Optional[float] = None
@@ -585,7 +586,11 @@ class Trainer:
 
         # Estimate the remaining time.
         time_remaining: Optional[timedelta] = None
-        if bps is not None and (steps_remaining := (total_steps - self.global_step)) > 0:
+        if (
+            bps is not None
+            and total_steps is not None
+            and (steps_remaining := (total_steps - self.global_step)) > 0
+        ):
             seconds_remaining = steps_remaining / bps
             # Round to nearest minute.
             minutes_remaining = 1 + (seconds_remaining // 60)
@@ -680,7 +685,8 @@ class Trainer:
         for i, callback_name in enumerate(self.callbacks.keys()):
             log.info(f"  - Callback {i + 1}: {callback_name}")
 
-        log.info(f"Training for {self.max_steps:,d} steps")
+        if self.max_steps is not None:
+            log.info(f"Training for {self.max_steps:,d} steps")
 
         # Install SIGTERM + SIGINT handlers.
         og_sigterm_handler = signal.signal(signal.SIGTERM, self._handle_os_signal)
