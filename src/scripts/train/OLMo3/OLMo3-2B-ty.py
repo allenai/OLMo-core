@@ -41,7 +41,7 @@ GLOBAL_BATCH_SIZE = 4 * 1024 * 1024
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     model_config = TransformerConfig.olmo3_2B(
         vocab_size=common.tokenizer.padded_vocab_size(),
-        attn_backend=AttentionBackendName.te,
+        attn_backend=AttentionBackendName.flash_2,
     )
     return model_config
 
