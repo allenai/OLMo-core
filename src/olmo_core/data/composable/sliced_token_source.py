@@ -34,6 +34,11 @@ class SlicedTokenSource(TokenSource):
         super().__init__(work_dir=work_dir, label=label)
         self._source = source
         self._slice = source_slice
+        if self.num_tokens == 0:
+            raise OLMoConfigurationError(
+                f"{self.__class__.__name__} created with an empty slice ({source_slice}) from source "
+                f"with {source.num_tokens:,d} tokens."
+            )
 
     @property
     def source(self) -> TokenSource:

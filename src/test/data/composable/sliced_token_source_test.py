@@ -57,23 +57,20 @@ def test_sliced_token_source_full_slice(tmp_path: Path):
 
 def test_sliced_token_source_empty_slice(tmp_path: Path):
     source = InMemoryTokenSource(list(range(10)), work_dir=tmp_path)
-    sliced = SlicedTokenSource(source, slice(5, 5), work_dir=tmp_path)
-    assert len(sliced) == 0
-    # Empty slice cannot retrieve tokens (raises ValueError)
-    with pytest.raises(ValueError, match="Invalid token range"):
-        _ = sliced[:]
+    with pytest.raises(OLMoConfigurationError, match="empty slice"):
+        SlicedTokenSource(source, slice(5, 5), work_dir=tmp_path)
 
 
 def test_sliced_token_source_start_at_end(tmp_path: Path):
     source = InMemoryTokenSource(list(range(10)), work_dir=tmp_path)
-    sliced = SlicedTokenSource(source, slice(10, None), work_dir=tmp_path)
-    assert len(sliced) == 0
+    with pytest.raises(OLMoConfigurationError, match="empty slice"):
+        SlicedTokenSource(source, slice(10, None), work_dir=tmp_path)
 
 
 def test_sliced_token_source_start_beyond_end(tmp_path: Path):
     source = InMemoryTokenSource(list(range(10)), work_dir=tmp_path)
-    sliced = SlicedTokenSource(source, slice(15, 20), work_dir=tmp_path)
-    assert len(sliced) == 0
+    with pytest.raises(OLMoConfigurationError, match="empty slice"):
+        SlicedTokenSource(source, slice(15, 20), work_dir=tmp_path)
 
 
 def test_sliced_token_source_stop_beyond_end(tmp_path: Path):
