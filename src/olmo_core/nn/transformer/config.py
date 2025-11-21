@@ -100,9 +100,19 @@ class TransformerBlockType(StrEnum):
     ➡️ :class:`TransformerBlock`
     """
 
+    default_scaled = "default_scaled"
+    """
+    ➡️ :class:`LayerNormScaledTransformerBlock` (applies LayerNorm Scaling)
+    """
+
     reordered_norm = "reordered_norm"
     """
     ➡️ :class:`ReorderedNormTransformerBlock`
+    """
+
+    peri_norm = "peri_norm"
+    """
+    ➡️ :class:`PeriNormTransformerBlock`
     """
 
     normalized = "normalized"
@@ -128,11 +138,6 @@ class TransformerBlockType(StrEnum):
     moe_hybrid_reordered_norm = "moe_hybrid_reordered_norm"
     """
     ➡️ :class:`MoEHybridReorderedNormTransformerBlock`
-    """
-
-    default_scaled = "default_scaled"
-    """
-    ➡️ :class:`LayerNormScaledTransformerBlock` (applies LayerNorm Scaling)
     """
 
 
@@ -166,6 +171,14 @@ class TransformerBlockConfig(Config):
     """
     Dropout probability.
     """
+    attention_residual_alpha: Optional[float] = None
+    """
+    A scaling factor applied to the attention output before adding it to the residual stream.
+    """
+    feed_forward_residual_alpha: Optional[float] = None
+    """
+    A scaling factor applied to the feed-forward (MLP) output before adding it to the residual stream.
+    """
 
     def build(
         self,
@@ -183,6 +196,7 @@ class TransformerBlockConfig(Config):
             MoEReorderedNormTransformerBlock,
             MoETransformerBlock,
             NormalizedTransformerBlock,
+            PeriNormTransformerBlock,
             ReorderedNormTransformerBlock,
             TransformerBlock,
         )
@@ -204,6 +218,8 @@ class TransformerBlockConfig(Config):
                 return LayerNormScaledTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.reordered_norm:
                 return ReorderedNormTransformerBlock(**kwargs)
+            elif self.name == TransformerBlockType.peri_norm:
+                return PeriNormTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.normalized:
                 return NormalizedTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.moe:
@@ -242,6 +258,11 @@ class TransformerBlockConfig(Config):
             block_params += self.feed_forward_moe.num_params(d_model)
             if self.layer_norm is not None:
                 block_params += self.layer_norm.num_params(d_model)
+
+        # Two extra norms for Peri-LN block type.
+        if self.name == TransformerBlockType.peri_norm:
+            assert self.layer_norm is not None
+            block_params += 2 * self.layer_norm.num_params(d_model)
 
         return block_params
 

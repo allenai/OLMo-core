@@ -13,6 +13,7 @@ from olmo_core.nn.attention import AttentionConfig, AttentionType
 from olmo_core.nn.feed_forward import FeedForwardConfig
 from olmo_core.nn.layer_norm import LayerNormConfig
 from olmo_core.nn.transformer.block import (
+    PeriNormTransformerBlock,
     ReorderedNormTransformerBlock,
     TransformerBlock,
 )
@@ -82,7 +83,9 @@ def _run_tensor_parallel_block(
         pytest.param(dict(n_heads=8, rope=None, bias=False), id="no-bias"),
     ],
 )
-@pytest.mark.parametrize("block_cls", [TransformerBlock, ReorderedNormTransformerBlock])
+@pytest.mark.parametrize(
+    "block_cls", [TransformerBlock, ReorderedNormTransformerBlock, PeriNormTransformerBlock]
+)
 def test_tensor_parallel_transformer_block(
     backend: str, block_cls: Type[TransformerBlock], attn_kwargs: Dict[str, Any], tmp_path
 ):
