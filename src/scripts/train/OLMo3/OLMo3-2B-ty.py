@@ -19,6 +19,7 @@ from olmo_core.internal.experiment import (
 )
 from olmo_core.launch.beaker import OLMoCoreBeakerImage
 from olmo_core.nn.attention import AttentionBackendName
+from olmo_core.nn.lm_head import LMLossImplementation
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import Duration, TrainerConfig
@@ -43,7 +44,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         vocab_size=common.tokenizer.padded_vocab_size(),
         attn_backend=AttentionBackendName.flash_3,
     )
-    # model_config.lm_head.loss_implementation = LMLossImplementation.fused_linear  # liger
+    model_config.lm_head.loss_implementation = LMLossImplementation.fused_linear  # liger
     return model_config
 
 
