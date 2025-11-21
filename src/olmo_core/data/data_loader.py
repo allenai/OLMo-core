@@ -576,7 +576,12 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
     def _get_dataset_item(self, idx: int) -> Dict[str, Any]:
         item = self.dataset[idx]
         if isinstance(item, dict):
-            return dict(**item, index=idx)
+            # If item already has 'index', use it (from dataset with include_instance_metadata=True)
+            # Otherwise, add index=idx
+            if "index" not in item:
+                return dict(**item, index=idx)
+            else:
+                return item
         else:
             return {"input_ids": item, "index": idx}
 
