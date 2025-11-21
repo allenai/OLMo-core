@@ -732,6 +732,7 @@ class Transformer(nn.Module):
         pp_enabled: bool = False,
         prefetch_factor: int = 0,
         wrapping_strategy: TransformerDataParallelWrappingStrategy = TransformerDataParallelWrappingStrategy.full,
+        reshard_after_forward: Optional[bool] = None,
     ):
         """
         Apply FSDP(2) to the model.
@@ -747,14 +748,16 @@ class Transformer(nn.Module):
         :prefetch_factor: For tuning the prefetch settings. 0 is the default, and higher values result
             in more aggressive prefetching.
         :wrapping_strategy: The wrapping strategy.
+        :reshard_after_forward: Whether to reshard after forward pass. Defaults to ``not pp_enabled``.
         """
         mp_policy = MixedPrecisionPolicy(
             param_dtype=param_dtype or self.dtype, reduce_dtype=reduce_dtype
         )
         fsdp_config = dict(mesh=dp_mesh, mp_policy=mp_policy)
-        # For PP, do not reshard after forward to avoid per-microbatch all-gathers,
-        # which can be expensive and non-overlapped
-        reshard_after_forward = False if pp_enabled else True
+        if reshard_after_forward is None:
+            # For PP, do not reshard after forward to avoid per-microbatch all-gathers,
+            # which can be expensive and non-overlapped
+            reshard_after_forward = False if pp_enabled else True
 
         for block in self.blocks.values():
             block = cast(TransformerBlockBase, block)

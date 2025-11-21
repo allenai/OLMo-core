@@ -1,4 +1,5 @@
 import logging
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from fnmatch import fnmatch
@@ -608,7 +609,7 @@ class TransformerConfig(Config):
         """
         A 32B OLMo2 model config.
         """
-        d_model = 5120
+        d_model = kwargs.pop("d_model", 5120)
         return cls.llama_like(
             vocab_size=vocab_size,
             d_model=d_model,
@@ -642,6 +643,39 @@ class TransformerConfig(Config):
             attn_backend=kwargs.pop("attn_backend", AttentionBackendName.flash_2),
             **kwargs,
         )
+        return config
+
+    @classmethod
+    def olmo3_2B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 3B OLMo3 model config.
+        """
+
+        # Starting from the 7B, divide all the factors
+        config = cls.olmo3_7B(
+            vocab_size=vocab_size,
+            attn_backend=kwargs.pop("attn_backend", AttentionBackendName.flash_2),
+            **kwargs,
+        )
+
+        factor = 1.55
+        config.d_model = ensure_multiple_of(math.ceil(config.d_model / factor), 128)
+        config.n_layers = ensure_multiple_of(math.ceil(config.n_layers / factor), 2)
+        assert config.block.feed_forward is not None
+        config.block.feed_forward.hidden_size = ensure_multiple_of(
+            math.ceil(config.block.feed_forward.hidden_size / factor), 128
+        )
+        config.block.attention.n_heads = ensure_multiple_of(
+            math.ceil(config.block.attention.n_heads / factor), 4
+        )
+        config.block.attention.n_kv_heads = config.block.attention.n_heads // 2
+
+        # This is Xavier init for a d_model x d_model weight matrix. Not perfect, since they aren't all like that,
+        # and Xavier isn't always the right choice, but we don't want to invent a whole new init method for this
+        # one-off run.
+        config.init_std = math.sqrt(2 / (config.d_model + config.d_model))
+        config.init_method = InitMethod.normal_emb1
+
         return config
 
     @classmethod
