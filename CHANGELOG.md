@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added exponential learning rate scheduler to `olmo_core.optim.scheduler`.
+
+### Changed
+
+- Renamed `olmo_core.distributed.utils.scatter_object()` to `broadcast_object()` for correctness.
+
+## [v2.4.0](https://github.com/allenai/OLMo-core/releases/tag/v2.4.0) - 2025-11-20
+
+### Added
+
 - Added option to skip ranges of steps in the trainer.
 - Send a Slack notification when a Beaker job appears to be stuck.
 - Added `ignore_fingerprint_mismatch` parameter to `NumpyDataLoaderConfig` to allow resuming training from a checkpoint with a different dataset mix.
@@ -16,8 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `olmo_core.generate.chat` module to allow interacting with OlmoCore models without conversion to other formats.
 - Added `GAPMonitorCallback` for monitoring gradients, activations, and parameters (GAP).
 - Added official Olmo 3 7B and 32B pretraining scripts and data mix.
-- Added official Olmo 3 7B and 32B midtraining script and data mix.
-- Added official Olmo 3 7B and 32B long-context script and data mix.
+- Added official Olmo 3 7B and 32B midtraining scripts and data mix.
+- Added official Olmo 3 7B and 32B long-context scripts and data mix.
 - Added a `NoOpOptimizer` that does nothing, uses no memory, and can be used for debugging.
 - Added official config for Olmo 3 32B.
 - Olmo 3 model card and checkpoint manifests.
