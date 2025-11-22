@@ -185,5 +185,6 @@ if __name__ == "__main__":
         trainer_config_builder=build_trainer_config,
         include_default_evals=False,
         include_instance_filter=False,  # We use SkipStepOptimizer for this problem.
+        workspace="ai2/linear-rnns",
     )
     main(config_builder=config_builder)
