@@ -33,6 +33,9 @@ from olmo_core.train.train_module import (
 SEQUENCE_LENGTH = 8 * 1024
 GLOBAL_BATCH_SIZE = 4 * 1024 * 1024  # ~4M tokens
 
+# Reduce per-device batch size to save on memory.
+MICROBATCH_DISCOUNT = 1
+
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     config = TransformerConfig.olmo3_7B(
@@ -72,6 +75,9 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         gpus = {CLUSTER_TO_GPU_TYPE.get(c, "unknown") for c in common.launch.clusters}
         if all("B200" in g for g in gpus):
             rank_microbatch_size *= 2
+
+    # Added because FLA models seem to use more memory than transformers.
+    rank_microbatch_size = int(rank_microbatch_size // MICROBATCH_DISCOUNT)
 
     return TransformerTrainModuleConfig(
         rank_microbatch_size=rank_microbatch_size,
