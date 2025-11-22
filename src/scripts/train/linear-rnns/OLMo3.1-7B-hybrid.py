@@ -49,7 +49,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
     # RNN first, 1:3 ratio (1 RNN for every 3 ATTN)
     assert config.model.n_layers % 4 == 0, "Current logic assumes n_layers is multiple of 4"
-    config.block.fla_hybrid_attention_indices = [i for i in range(config.model.n_layers) if i % 4 != 0]
+    config.block.fla_hybrid_attention_indices = [i for i in range(config.model.n_layers) if i % 4 == 3]
 
     # Configure the non-attention part of the block to be a DeltaNet.
     config.block.fla = FLAConfig(
