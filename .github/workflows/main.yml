@@ -12,7 +12,7 @@ on:
     branches:
       - main
     tags:
-      - 'v*.*.*'
+      - "v*.*.*"
 
 env:
   # Change this to invalidate existing cache.
@@ -31,7 +31,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ['3.10']
+        python: ["3.11"]
         task:
           - name: Lint
             run: make lint-check
@@ -40,11 +40,20 @@ jobs:
             run: |
               pytest -v --color=yes --durations=3 \
                 --ignore-glob='src/test/distributed/checkpoint*' \
+                --ignore-glob='src/test/train/checkpoint*' \
+                --ignore-glob='src/test/nn/*' \
                 src/test/
 
           - name: Test checkpoint
             run: |
-              pytest -v --color=yes --durations=3 src/test/distributed/checkpoint*
+              pytest -v --color=yes --durations=3 \
+                src/test/distributed/checkpoint* \
+                src/test/train/checkpoint*
+
+          - name: Test nn
+            run: |
+              pytest -v --color=yes --durations=3 \
+                src/test/nn/
 
           - name: Type check
             run: make type-check
@@ -60,7 +69,7 @@ jobs:
               cd docs && make html SPHINXOPTS="-W --keep-going"
 
         include:
-          - python: '3.9'
+          - python: "3.10"
             task:
               name: Lint (min Python)
               run: make lint-check
@@ -113,13 +122,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      GANTRY_GITHUB_TESTING: 'true'  # force better logging for CI
+      GANTRY_GITHUB_TESTING: "true" # force better logging for CI
     strategy:
       fail-fast: false
       matrix:
         task:
           - name: Test (GPU)
-            image: petew/olmo-core-tch271cu128-2025-09-15
+            image: tylerr/olmo-core-tch270cu128-2025-09-24
             gpus: 2
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
@@ -129,21 +138,21 @@ jobs:
                 src/test/
 
           - name: Test checkpoint (GPU)
-            image: petew/olmo-core-tch271cu128-2025-09-15
+            image: tylerr/olmo-core-tch270cu128-2025-09-24
             gpus: 2
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
                 src/test/distributed/checkpoint*
 
           - name: Test transformer (GPU)
-            image: petew/olmo-core-tch271cu128-2025-09-15
+            image: tylerr/olmo-core-tch270cu128-2025-09-24
             gpus: 2
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
                 src/test/nn/transformer*
 
           - name: Test MoE (GPU)
-            image: petew/olmo-core-tch271cu128-2025-09-15
+            image: tylerr/olmo-core-tch270cu128-2025-09-24
             gpus: 2
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
@@ -151,11 +160,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ github.event.pull_request.head.sha }}  # check out PR head commit instead of merge commit
+          ref: ${{ github.event.pull_request.head.sha }} # check out PR head commit instead of merge commit
 
       - uses: astral-sh/setup-uv@v6
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
       - name: Install Gantry
         run:
@@ -220,7 +229,7 @@ jobs:
       - name: Setup Python environment
         uses: ./.github/actions/setup-venv
         with:
-          python-version: '3.10'
+          python-version: "3.11"
           cache-prefix: ${{ env.CACHE_PREFIX }}
 
       - name: Prepare environment

@@ -7,8 +7,8 @@ import pytest
 
 from olmo_core.data import (
     LongDocStrategy,
-    NumpyDatasetConfig,
     NumpyFSLDataset,
+    NumpyFSLDatasetConfig,
     NumpyPackedFSLDataset,
     NumpyPaddedFSLDataset,
     NumpyVSLDataset,
@@ -18,6 +18,7 @@ from olmo_core.data.numpy_dataset import NumpyInterleavedFSLDataset
 from olmo_core.data.source_mixture import (
     SourceMixtureConfig,
     SourceMixtureDatasetConfig,
+    SourceMixtureList,
 )
 from olmo_core.data.types import NumpyDatasetDType
 from olmo_core.data.utils import get_document_indices, write_document_indices
@@ -433,30 +434,30 @@ def test_numpy_fsl_mixture_dataset(tmp_path: Path):
 
     mixture_config = SourceMixtureDatasetConfig(
         render_tables=False,
-        max_tokens=max_tokens,
-        sequence_length=sequence_length,
-        source_configs=[
-            SourceMixtureConfig(
-                source_name="mmap1",
-                paths=[str(i[0]) for i in mmap1],
-                target_ratio=0.8,
-            ),
-            SourceMixtureConfig(
-                source_name="mmap2",
-                paths=[str(i[0]) for i in mmap2],
-                target_ratio=0.2,
-            ),
-        ],
-        dtype=NumpyDatasetDType.uint16,
-        processes=1,
+        requested_tokens=max_tokens,
+        source_list=SourceMixtureList(
+            [
+                SourceMixtureConfig(
+                    source_name="mmap1",
+                    paths=[str(i[0]) for i in mmap1],
+                    target_ratio=0.8,
+                ),
+                SourceMixtureConfig(
+                    source_name="mmap2",
+                    paths=[str(i[0]) for i in mmap2],
+                    target_ratio=0.2,
+                ),
+            ]
+        ),
         seed=seed,
         global_batch_size=sequence_length * bsz,
     )
 
-    ds = NumpyDatasetConfig(
+    ds = NumpyFSLDatasetConfig(
         source_mixture_config=mixture_config,
         sequence_length=sequence_length,
         tokenizer=tokenizer,
+        dtype=NumpyDatasetDType.uint16,
         include_instance_metadata=False,
     ).build()
     ds.prepare()
@@ -477,7 +478,16 @@ def test_numpy_fsl_mixture_dataset(tmp_path: Path):
     assert len(ds) / bsz >= math.ceil(max_tokens / (sequence_length * bsz))
 
 
-def test_numpy_fsl_mixture_dataset_with_repetition(tmp_path: Path):
+@pytest.mark.parametrize(
+    "mmap1_size, mmap2_size, expected_fingerprint",
+    [
+        (10 * 1000 + 7, 20 * 1000 + 1, "feabd0"),
+        (10 * 1000, 20 * 1000, "9dc4c8"),
+    ],
+)
+def test_numpy_fsl_mixture_dataset_with_repetition(
+    tmp_path: Path, mmap1_size: int, mmap2_size: int, expected_fingerprint: str
+):
     # NOTE: At small token counts the take_ratio can be finicky so we test at small but real world-ish scale
     npdtype = np.uint16
     seed = 42
@@ -486,7 +496,7 @@ def test_numpy_fsl_mixture_dataset_with_repetition(tmp_path: Path):
         tmp_path=tmp_path,
         prefix="mmap1",
         num_files=1,
-        size=10 * 1000,
+        size=mmap1_size,
         dtype=npdtype,
         eos=0,
         seed=72,
@@ -495,7 +505,7 @@ def test_numpy_fsl_mixture_dataset_with_repetition(tmp_path: Path):
         tmp_path=tmp_path,
         prefix="mmap2",
         num_files=1,
-        size=20 * 1000,
+        size=mmap2_size,
         dtype=npdtype,
         eos=0,
         seed=27,
@@ -515,43 +525,44 @@ def test_numpy_fsl_mixture_dataset_with_repetition(tmp_path: Path):
 
     mixture_config = SourceMixtureDatasetConfig(
         render_tables=False,
-        max_tokens=max_tokens,
-        sequence_length=sequence_length,
-        source_configs=[
-            SourceMixtureConfig(
-                source_name="mmap1", paths=source1_paths, target_ratio=0.8, max_repetition_ratio=2.0
-            ),
-            SourceMixtureConfig(
-                source_name="mmap2",
-                paths=[str(i[0]) for i in mmap2],
-                target_ratio=0.2,
-            ),
-        ],
-        dtype=NumpyDatasetDType.uint16,
-        processes=1,
+        requested_tokens=max_tokens,
+        source_list=SourceMixtureList(
+            [
+                SourceMixtureConfig(
+                    source_name="mmap1",
+                    paths=source1_paths,
+                    target_ratio=0.8,
+                    max_repetition_ratio=2.0,
+                ),
+                SourceMixtureConfig(
+                    source_name="mmap2",
+                    paths=[str(i[0]) for i in mmap2],
+                    target_ratio=0.2,
+                ),
+            ]
+        ),
         seed=seed,
         global_batch_size=sequence_length * bsz,  # 10k sequences of length 4
     )
 
-    ds = NumpyDatasetConfig(
+    ds = NumpyFSLDatasetConfig(
         source_mixture_config=mixture_config,
         sequence_length=sequence_length,
         tokenizer=tokenizer,
+        dtype=NumpyDatasetDType.uint16,
         include_instance_metadata=False,
     ).build()
     ds.prepare()
 
-    expected_fingerprint = "c8f8fc"
-    first_ds_item = ds[0]["input_ids"].tolist()
+    assert ds.fingerprint.endswith(
+        expected_fingerprint
+    ), f"Fingerprint mismatch, expected {expected_fingerprint}, got {ds.fingerprint[-6:]}...Do you need to update expected fingerprint?"
 
+    first_ds_item = ds[0]["input_ids"].tolist()
     # NOTE: This is commented out until we fix behavior of the source mixture dataset
     # first_src_sequence = mmap1[0][1][:sequence_length].tolist()
     # Note that changing the seed here could result in the inclusion of the first sequence from the mock data.
     # assert not np.array_equal(first_src_sequence, first_ds_item)
-
-    assert ds.fingerprint.endswith(
-        expected_fingerprint
-    ), f"Fingerprint mismatch, expected {expected_fingerprint}, got {ds.fingerprint[-6:]}...Do you need to update expected fingerprint?"
     assert first_ds_item == [
         12761,
         6996,
@@ -560,6 +571,13 @@ def test_numpy_fsl_mixture_dataset_with_repetition(tmp_path: Path):
     ]  # stable because we pass a seed
     assert ds.num_tokens == 40_064  # oversamples to handle rounding error
     assert len(ds) / bsz == math.ceil(max_tokens / (sequence_length * bsz))
+
+    # Iterate through dataset to verify all instances have correct length
+    for idx in range(len(ds)):
+        instance = ds[idx]
+        assert (
+            len(instance["input_ids"]) == sequence_length
+        ), f"Instance {idx} has incorrect length: {len(instance['input_ids'])} != {sequence_length}"
 
 
 def write_data_file(data: List[int], path: Path, dtype, eos_token_id: int):
@@ -919,8 +937,10 @@ def test_numpy_interleaved_fsl_dataset_with_interleaving_exempt_paths(tmp_path: 
 
 
 def test_guess_dtype():
-    config = NumpyDatasetConfig(paths=[], sequence_length=1024, tokenizer=TokenizerConfig.gpt2())
+    config = NumpyFSLDatasetConfig(paths=[], sequence_length=1024, tokenizer=TokenizerConfig.gpt2())
     assert config.get_dtype() == np.uint16
 
-    config = NumpyDatasetConfig(paths=[], sequence_length=1024, tokenizer=TokenizerConfig.dolma2())
+    config = NumpyFSLDatasetConfig(
+        paths=[], sequence_length=1024, tokenizer=TokenizerConfig.dolma2()
+    )
     assert config.get_dtype() == np.uint32

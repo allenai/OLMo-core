@@ -9,8 +9,6 @@ Launch this with torchrun:
     torchrun --nproc-per-node=4 src/examples/llama_lns/train.py run_name [OVERRIDES...]
 """
 
-# ... existing code ...
-
 import os
 import sys
 from dataclasses import dataclass
@@ -19,10 +17,11 @@ from typing import List, cast
 from olmo_core.config import Config, DType
 from olmo_core.data import (
     NumpyDataLoaderConfig,
-    NumpyDatasetConfig,
-    NumpyDatasetType,
+    NumpyFSLDatasetConfig,
+    NumpyPaddedFSLDatasetConfig,
     TokenizerConfig,
 )
+from olmo_core.data.numpy_dataset import NumpyDatasetConfig
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.nn.transformer import TransformerBlockType, TransformerConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
@@ -90,9 +89,8 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     # Select the LayerNorm-Scaled transformer block implementation.
     model_config.block.name = TransformerBlockType.default_scaled
 
-    dataset_config = NumpyDatasetConfig(
+    dataset_config = NumpyFSLDatasetConfig(
         paths=DATA_PATHS,
-        name=NumpyDatasetType.fsl,
         sequence_length=SEQUENCE_LENGTH,
         max_target_sequence_length=8192,
         tokenizer=tokenizer_config,
@@ -107,7 +105,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
 
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=16 * SEQUENCE_LENGTH,
-        max_sequence_length=dataset_config.effective_sequence_length,
+        max_sequence_length=SEQUENCE_LENGTH,
         optim=AdamWConfig(
             lr=1e-3,
             group_overrides=[
@@ -159,10 +157,9 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         .with_callback(
             "lm_evaluator",
             LMEvaluatorCallbackConfig(
-                eval_dataset=NumpyDatasetConfig(
+                eval_dataset=NumpyPaddedFSLDatasetConfig(
                     paths=EVAL_DATA_PATHS,
                     metadata=[{"label": "c4-validation"}],
-                    name=NumpyDatasetType.padded_fsl,
                     sequence_length=SEQUENCE_LENGTH,
                     tokenizer=tokenizer_config,
                     work_dir=DATA_WORK_DIR,
@@ -219,7 +216,5 @@ if __name__ == "__main__":
     run_name, *overrides = sys.argv[1:]
 
     prepare_training_environment()
-    try:
-        main(run_name, overrides=overrides)
-    finally:
-        teardown_training_environment()
+    main(run_name, overrides=overrides)
+    teardown_training_environment()

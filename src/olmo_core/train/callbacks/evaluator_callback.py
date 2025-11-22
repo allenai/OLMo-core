@@ -10,6 +10,7 @@ from torch.utils.data import DataLoader, DistributedSampler
 from olmo_core.data import (
     NumpyDatasetConfig,
     NumpyPaddedFSLDataset,
+    NumpyVSLDatasetConfig,
     TextDataLoaderBase,
     TokenizerConfig,
 )
@@ -62,7 +63,7 @@ class EvaluatorCallback(Callback):
 
     cancel_after_first_eval: bool = False
     """
-    If ``True``, cancel the run after running evals for the first time. 
+    If ``True``, cancel the run after running evals for the first time.
     This combined with ``eval_on_startup=True`` is useful if you just want to run in-loop evals
     without training any longer.
     """
@@ -80,7 +81,7 @@ class EvaluatorCallback(Callback):
     def post_attach(self):
         if not isinstance(self.trainer.train_module, TransformerTrainModule):
             raise OLMoConfigurationError(
-                f"'{self.__class__.__name__}' only suports the '{TransformerTrainModule.__name__}' train module"
+                f"'{self.__class__.__name__}' only supports the '{TransformerTrainModule.__name__}' train module"
             )
 
     def pre_train(self):
@@ -204,13 +205,19 @@ class LMEvaluatorCallbackConfig(CallbackConfig):
         if not self.enabled:
             return None
 
+        if isinstance(self.eval_dataset, NumpyVSLDatasetConfig):
+            dataset_max_sequence_length = self.eval_dataset.max_sequence_length
+        else:
+            assert hasattr(self.eval_dataset, "sequence_length")
+            dataset_max_sequence_length = self.eval_dataset.sequence_length
+
         batch_spec = trainer.train_module.eval_batch_spec
         if (
             batch_spec.max_sequence_length is not None
-            and self.eval_dataset.effective_sequence_length > batch_spec.max_sequence_length
+            and dataset_max_sequence_length > batch_spec.max_sequence_length
         ):
             raise OLMoConfigurationError(
-                f"The maximum sequence length for the LM eval dataset ({self.eval_dataset.effective_sequence_length:,d} tokens) "
+                f"The maximum sequence length for the LM eval dataset ({dataset_max_sequence_length:,d} tokens) "
                 f"is too long for the train module's maximum eval sequence length ({batch_spec.max_sequence_length:,d} tokens)"
             )
 
@@ -222,7 +229,7 @@ class LMEvaluatorCallbackConfig(CallbackConfig):
         elif batch_spec.batch_size_unit == EvalBatchSizeUnit.instances:
             global_eval_batch_size = (
                 batch_spec.rank_batch_size
-                * self.eval_dataset.effective_sequence_length
+                * dataset_max_sequence_length
                 * get_world_size(trainer.dp_process_group)
             )
         else:

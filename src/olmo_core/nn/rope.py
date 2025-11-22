@@ -1,7 +1,7 @@
 import math
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import ClassVar, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -14,6 +14,10 @@ __all__ = [
     "RoPEType",
     "RoPEConfig",
     "RoPEScalingConfig",
+    "ABFRoPEScalingConfig",
+    "PIRoPEScalingConfig",
+    "StepwiseRoPEScalingConfig",
+    "YaRNRoPEScalingConfig",
     "RotaryEmbeddingBase",
     "RotaryEmbedding",
     "FusedRotaryEmbedding",
@@ -51,12 +55,6 @@ class RoPEScalingConfig(Config):
     Base class for RoPE scaling configs. Defines a strategy for scaling RoPE to longer sequences.
     """
 
-    attention_rescale_factor: float = 1.0
-    """
-    Factor to rescale attention scores by when using scaled RoPE. Can be used to compensate for
-    the larger effective context. 1.0 means no rescaling.
-    """
-
     @abstractmethod
     def compute_scaled_inv_freq(
         self, theta: int, dim: int, device: torch.device
@@ -64,10 +62,21 @@ class RoPEScalingConfig(Config):
         """Compute the scaled inverse frequencies for RoPE, and the attention rescaling factor."""
         raise NotImplementedError
 
+    @abstractmethod
+    def to_hf_config(self) -> dict:
+        """Convert to HuggingFace rope_scaling format."""
+        raise NotImplementedError
+
 
 @dataclass
 class ABFRoPEScalingConfig(RoPEScalingConfig):
     """Absolute base frequency scaling (ABF). Simply uses a new base frequency parameter."""
+
+    attention_rescale_factor: float = 1.0
+    """
+    Factor to rescale attention scores by when using scaled RoPE. Can be used to compensate for
+    the larger effective context. 1.0 means no rescaling.
+    """
 
     new_theta: int = 8_000_000
 
@@ -78,6 +87,10 @@ class ABFRoPEScalingConfig(RoPEScalingConfig):
         inv_freq = compute_inv_freqs(self.new_theta, dim, device)
         return inv_freq, self.attention_rescale_factor
 
+    def to_hf_config(self) -> dict:
+        """ABF scaling doesn't have a direct HF equivalent (just modify the config's base frequency)."""
+        raise NotImplementedError
+
 
 @dataclass
 class PIRoPEScalingConfig(RoPEScalingConfig):
@@ -87,6 +100,12 @@ class PIRoPEScalingConfig(RoPEScalingConfig):
     Interpolate the rotary angles instead of extrapolating them when the context window at
     inference time exceeds the window used during training. In practice, this amounts to linearly
     *compressing* the original position indices by a constant factor ``factor``.
+    """
+
+    attention_rescale_factor: float = 1.0
+    """
+    Factor to rescale attention scores by when using scaled RoPE. Can be used to compensate for
+    the larger effective context. 1.0 means no rescaling.
     """
 
     factor: float = 2.0
@@ -104,15 +123,19 @@ class PIRoPEScalingConfig(RoPEScalingConfig):
 
         return inv_freq, self.attention_rescale_factor
 
+    def to_hf_config(self) -> dict:
+        """PI scaling corresponds to HF's linear scaling."""
+        return {"rope_type": "linear", "factor": self.factor}
+
 
 @dataclass
 class StepwiseRoPEScalingConfig(RoPEScalingConfig):
-    """
-    Step-wise RoPE scaling (aka "Per-frequency" scaling or Llama-3.1 scaling).
+    """Step-wise RoPE scaling (aka "Per-frequency" scaling or Llama-3.1 scaling).
 
-    Reference: https://huggingface.co/meta-llama/Llama-3.1-8B/blob/refs%2Fpr%2F3/README.md
+    Reference: `Llama-3.1-8B README <https://huggingface.co/meta-llama/Llama-3.1-8B/blob/refs%2Fpr%2F3/README.md>`_
 
     Scales RoPE to longer sequence lengths by interpolating between high- and low-frequency components.
+
     1. **High-frequency band** (short wavelengths) – keeps the original frequencies unchanged.
         These correspond to the very first dimensions of the rotary embedding and already encode
         short-range ordering well.
@@ -121,6 +144,12 @@ class StepwiseRoPEScalingConfig(RoPEScalingConfig):
         spreading the very low frequencies across a longer context window (similar to PI scaling).
     3. **Medium-frequency band** – linearly interpolates (in inverse-frequency space) between the
         unscaled and the fully-scaled value so that the full spectrum changes smoothly.
+    """
+
+    attention_rescale_factor: float = 1.0
+    """
+    Factor to rescale attention scores by when using scaled RoPE. Can be used to compensate for
+    the larger effective context. 1.0 means no rescaling.
     """
 
     factor: float = 32.0
@@ -168,6 +197,16 @@ class StepwiseRoPEScalingConfig(RoPEScalingConfig):
 
         return torch.where(is_mid_band, smoothed_inv_freq, inv_freq), self.attention_rescale_factor
 
+    def to_hf_config(self) -> dict:
+        """Stepwise scaling corresponds to HF's llama3 scaling."""
+        return {
+            "rope_type": "llama3",
+            "factor": self.factor,
+            "original_max_position_embeddings": self.old_context_len,
+            "low_freq_factor": 1.0 / (1 - self.low_freq_proportion),
+            "high_freq_factor": 1.0 / self.high_freq_proportion,
+        }
+
 
 @dataclass
 class YaRNRoPEScalingConfig(RoPEScalingConfig):
@@ -175,7 +214,7 @@ class YaRNRoPEScalingConfig(RoPEScalingConfig):
 
     Reference: https://arxiv.org/abs/2309.00071
 
-    Eextends a model’s context window by *blending* two sets of inverse frequencies:
+    Extends a model’s context window by *blending* two sets of inverse frequencies:
 
     1. **Interpolation frequencies** – the original RoPE frequencies divided
        by ``factor``.  These allow the model to *compress* positions and hence
@@ -204,6 +243,8 @@ class YaRNRoPEScalingConfig(RoPEScalingConfig):
     old_context_len: int = 8192
     """Maximum sequence length that the *base* model was originally trained with."""
 
+    _IGNORE_FIELDS: ClassVar[Tuple[str, ...]] = ("attention_rescale_factor",)
+
     def compute_scaled_inv_freq(
         self, theta: int, dim: int, device: torch.device
     ) -> tuple["torch.Tensor", float]:
@@ -230,10 +271,22 @@ class YaRNRoPEScalingConfig(RoPEScalingConfig):
         # 3. Blend the two spectra according to the ramp weights
         inv_freq = inv_freq_interpolation * ramp + inv_freq_extrapolation * (1.0 - ramp)
 
-        # Attention rescale factor (section 3.4)
-        attention_rescale_factor = 0.1 * math.log(self.factor) + 1.0
+        return inv_freq, self.get_attention_rescale_factor()
 
-        return inv_freq, attention_rescale_factor
+    def get_attention_rescale_factor(self) -> float:
+        """Compute the attention rescale factor based on section 3.4 of the YaRN paper"""
+        return 0.1 * math.log(self.factor) + 1.0
+
+    def to_hf_config(self) -> dict:
+        """YaRN scaling corresponds to HF's yarn scaling."""
+        return {
+            "rope_type": "yarn",
+            "factor": self.factor,
+            "original_max_position_embeddings": self.old_context_len,
+            "beta_fast": self.beta_fast,
+            "beta_slow": self.beta_slow,
+            "attention_factor": self.get_attention_rescale_factor(),
+        }
 
 
 @dataclass
@@ -555,7 +608,7 @@ class FusedRotaryEmbedding(RotaryEmbeddingBase):
                 )
             seq = torch.arange(seq_len, device=device, dtype=torch.float)
             freqs = torch.einsum("i , j -> i j", seq, inv_freq)  # (seq_len, head_size // 2)
-            # Note: no concat here, unlike the default implementation
+            # Note: no concat here, unlike the non-fused implementation
             pos_sin, pos_cos = freqs.sin(), freqs.cos()  # 2x (seq_len, head_size // 2)
 
         pos_sin = pos_sin * attention_rescale_factor

@@ -4,9 +4,10 @@ import pytest
 import torch
 import torch.distributed as dist
 
-from olmo_core.testing import BACKENDS, get_default_device, run_distributed_test
+from olmo_core.testing import BACKENDS, run_distributed_test
 from olmo_core.train import ReduceType
 from olmo_core.train.utils import reduce_metrics
+from olmo_core.utils import get_default_device
 
 
 def run_reduce_metrics():

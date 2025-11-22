@@ -22,6 +22,7 @@ from ..functional import l2_normalize
 from ..layer_norm import LayerNormConfig
 from ..moe import MoEConfig, MoERouter
 from ..moe.parallel_mlp import ParallelMLPBase
+from ..residual_stream import ResidualStream
 from .config import TransformerDataParallelWrappingStrategy
 
 if TYPE_CHECKING:
@@ -111,6 +112,8 @@ class TransformerBlock(TransformerBlockBase):
         feed_forward: FeedForwardConfig,
         layer_norm: LayerNormConfig,
         dropout: float = 0.0,
+        attention_residual_alpha: float = 1.0,
+        feed_forward_residual_alpha: float = 1.0,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
     ):
@@ -121,9 +124,14 @@ class TransformerBlock(TransformerBlockBase):
             d_model, layer_idx=block_idx, n_layers=n_layers, init_device=init_device, cache=cache
         )
         self.attention_norm = layer_norm.build(d_model, init_device=init_device)
+        self.attention_residual_stream = ResidualStream(
+            alpha=attention_residual_alpha, dropout=dropout
+        )
         self.feed_forward = feed_forward.build(d_model=d_model, init_device=init_device)
         self.feed_forward_norm = layer_norm.build(d_model, init_device=init_device)
-        self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
+        self.feed_forward_residual_stream = ResidualStream(
+            alpha=feed_forward_residual_alpha, dropout=dropout
+        )
 
     def forward(
         self,
@@ -133,8 +141,8 @@ class TransformerBlock(TransformerBlockBase):
         **kwargs,
     ) -> torch.Tensor:
         del loss_div_factor
-        h = x + self.dropout(self.attention(self.attention_norm(x), **kwargs))
-        return h + self.dropout(self.feed_forward(self.feed_forward_norm(h)))
+        h = self.attention_residual_stream(x, self.attention(self.attention_norm(x), **kwargs))
+        return self.feed_forward_residual_stream(h, self.feed_forward(self.feed_forward_norm(h)))
 
     def apply_tp(
         self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
@@ -151,6 +159,11 @@ class TransformerBlock(TransformerBlockBase):
         parallelize_module(
             self.attention_norm, device_mesh=tp_mesh, parallelize_plan=SequenceParallel()
         )
+        parallelize_module(
+            self.attention_residual_stream.dropout,
+            device_mesh=tp_mesh,
+            parallelize_plan=SequenceParallel(),
+        )
 
         self.attention.apply_tp(
             tp_mesh,
@@ -163,15 +176,19 @@ class TransformerBlock(TransformerBlockBase):
         parallelize_module(
             self.feed_forward_norm, device_mesh=tp_mesh, parallelize_plan=SequenceParallel()
         )
+        parallelize_module(
+            self.feed_forward_residual_stream.dropout,
+            device_mesh=tp_mesh,
+            parallelize_plan=SequenceParallel(),
+        )
 
         self.feed_forward.apply_tp(
             tp_mesh,
+            input_layout=Shard(1),
             output_layout=Shard(1),
             use_local_output=False,
             float8_enabled=float8_enabled,
         )
-
-        parallelize_module(self.dropout, device_mesh=tp_mesh, parallelize_plan=SequenceParallel())
 
     def apply_cp(
         self,
@@ -201,7 +218,8 @@ class TransformerBlock(TransformerBlockBase):
 
 class LayerNormScaledTransformerBlock(TransformerBlock):
     """
-    A variant of ``TransformerBlock`` that applies LayerNorm Scaling (LNS).
+    A variant of ``TransformerBlock`` that applies
+    `LayerNorm Scaling (LNS) <https://github.com/lmsdss/LayerNorm-Scaling>`_.
 
     Each LayerNorm output is multiplied by ``1 / sqrt(layer_id)`` where ``layer_id`` is the
     1-based position of the block inside the transformer. Keeping this logic in a dedicated
@@ -219,6 +237,8 @@ class LayerNormScaledTransformerBlock(TransformerBlock):
         feed_forward: FeedForwardConfig,
         layer_norm: LayerNormConfig,
         dropout: float = 0.0,
+        attention_residual_alpha: float = 1.0,
+        feed_forward_residual_alpha: float = 1.0,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
     ):
@@ -230,6 +250,8 @@ class LayerNormScaledTransformerBlock(TransformerBlock):
             feed_forward=feed_forward,
             layer_norm=layer_norm,
             dropout=dropout,
+            attention_residual_alpha=attention_residual_alpha,
+            feed_forward_residual_alpha=feed_forward_residual_alpha,
             init_device=init_device,
             cache=cache,
         )
@@ -247,8 +269,12 @@ class LayerNormScaledTransformerBlock(TransformerBlock):
     ) -> torch.Tensor:
         del loss_div_factor
         scale = self.ln_scale.to(dtype=x.dtype, device=x.device)
-        h = x + self.dropout(self.attention(self.attention_norm(x) * scale, **kwargs))
-        return h + self.dropout(self.feed_forward(self.feed_forward_norm(h) * scale))
+        h = self.attention_residual_stream(
+            x, self.attention(self.attention_norm(x) * scale, **kwargs)
+        )
+        return self.feed_forward_residual_stream(
+            h, self.feed_forward(self.feed_forward_norm(h) * scale)
+        )
 
 
 class ReorderedNormTransformerBlock(TransformerBlock):
@@ -266,8 +292,71 @@ class ReorderedNormTransformerBlock(TransformerBlock):
         **kwargs,
     ) -> torch.Tensor:
         del loss_div_factor
-        h = x + self.dropout(self.attention_norm(self.attention(x, **kwargs)))
-        return h + self.dropout(self.feed_forward_norm(self.feed_forward(h)))
+        h = self.attention_residual_stream(x, self.attention_norm(self.attention(x, **kwargs)))
+        return self.feed_forward_residual_stream(h, self.feed_forward_norm(self.feed_forward(h)))
+
+
+class PeriNormTransformerBlock(TransformerBlock):
+    """
+    A transformer block in the style of `Peri-LN <https://arxiv.org/pdf/2502.02732>`_.
+    """
+
+    def __init__(
+        self,
+        *,
+        d_model: int,
+        block_idx: int,
+        n_layers: int,
+        attention: AttentionConfig,
+        feed_forward: FeedForwardConfig,
+        layer_norm: LayerNormConfig,
+        dropout: float = 0.0,
+        attention_residual_alpha: float = 1.0,
+        feed_forward_residual_alpha: float = 1.0,
+        init_device: str = "cpu",
+        cache: Optional[BufferCache] = None,
+    ):
+        super().__init__(
+            d_model=d_model,
+            block_idx=block_idx,
+            n_layers=n_layers,
+            attention=attention,
+            feed_forward=feed_forward,
+            layer_norm=layer_norm,
+            dropout=dropout,
+            attention_residual_alpha=attention_residual_alpha,
+            feed_forward_residual_alpha=feed_forward_residual_alpha,
+            init_device=init_device,
+            cache=cache,
+        )
+        self.post_attention_norm = layer_norm.build(d_model, init_device=init_device)
+        self.post_feed_forward_norm = layer_norm.build(d_model, init_device=init_device)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        del loss_div_factor
+        h = self.attention_residual_stream(
+            x, self.post_attention_norm(self.attention(self.attention_norm(x), **kwargs))
+        )
+        return self.feed_forward_residual_stream(
+            h, self.post_feed_forward_norm(self.feed_forward(self.feed_forward_norm(h)))
+        )
+
+    def apply_tp(
+        self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
+    ):
+        super().apply_tp(tp_mesh, input_layout=input_layout, float8_enabled=float8_enabled)
+        parallelize_module(
+            self.post_feed_forward_norm, device_mesh=tp_mesh, parallelize_plan=SequenceParallel()
+        )
+        parallelize_module(
+            self.post_attention_norm, device_mesh=tp_mesh, parallelize_plan=SequenceParallel()
+        )
 
 
 @beta_feature

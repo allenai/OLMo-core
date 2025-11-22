@@ -27,7 +27,12 @@ BEAKER_HOSTNAME_ENV_VAR = "BEAKER_NODE_HOSTNAME"
 log = logging.getLogger(__name__)
 
 
-def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minutes=30), **kwargs):
+def init_distributed(
+    backend: str = "nccl",
+    timeout: timedelta = timedelta(minutes=30),
+    shared_filesytem: Optional[bool] = True,
+    **kwargs,
+):
     """
     Initialize the distributed process group with the given backend(s) and check/set the
     relevant environment variables.
@@ -39,6 +44,9 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
 
     # Force processes to synchronize at init process group.
     set_env_var("TORCH_DIST_INIT_BARRIER", "1")
+
+    if shared_filesytem:
+        set_env_var(OLMO_SHARED_FS_ENV_VAR, "1")
 
     # Set host-specific env var defaults.
     if _running_in_beaker():
@@ -58,12 +66,13 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
             # NOTE: For single-node training we still need all of these settings and we also
             # need host networking enabled so that the ethernet interface names don't change.
             set_env_var("NCCL_CROSS_NIC", "0")
-            set_env_var("NCCL_ALGO", "Ring,Tree")
+            #  set_env_var("NCCL_ALGO", "Ring,Tree")
             set_env_var("NCCL_PROTO", "Simple,LL128")
             set_env_var("NCCL_MIN_NCHANNELS", "4")
             set_env_var("NCCL_P2P_NET_CHUNKSIZE", "524288")
             set_env_var("NCCL_P2P_PCI_CHUNKSIZE", "524288")
             set_env_var("NCCL_P2P_NVL_CHUNKSIZE", "1048576")
+            set_env_var("NCCL_NVLSTREE_MAX_CHUNKSIZE", "131072")
             set_env_var("NCCL_FASTRAK_NUM_FLOWS", "2")
             set_env_var("NCCL_FASTRAK_ENABLE_CONTROL_CHANNEL", "0")
             set_env_var("NCCL_BUFFSIZE", "8388608")
@@ -74,7 +83,7 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
             set_env_var(
                 "NCCL_FASTRAK_PLUGIN_ACCEPT_TIMEOUT_MS", str(int(timeout.total_seconds() * 1000))
             )
-            set_env_var("NCCL_NVLS_ENABLE", "0")
+            #  set_env_var("NCCL_NVLS_ENABLE", "0")
             set_env_var("NCCL_USE_SNAP", "1")
             set_env_var("NCCL_FASTRAK_USE_LLCM", "1")
             set_env_var("NCCL_FASTRAK_LLCM_DEVICE_DIRECTORY", "/dev/aperture_devices")
@@ -98,7 +107,9 @@ def init_distributed(backend: str = "nccl", timeout: timedelta = timedelta(minut
                 "enp6s0,enp7s0,enp13s0,enp14s0,enp134s0,enp135s0,enp141s0,enp142s0",
             )
             set_env_var("NCCL_SOCKET_IFNAME", "enp0s12")
-            set_env_var("NCCL_DEBUG_SUBSYS", "INIT,NET")
+            set_env_var(  # Add COLL here to log all collective operations. Extremely verbose, don't use for production.
+                "NCCL_DEBUG_SUBSYS", "INIT,NET"
+            )
 
     if backend_supports_cuda(backend):
         # Set CUDA device.
@@ -335,17 +346,16 @@ def all_reduce_value(
 T = TypeVar("T")
 
 
-def scatter_object(obj: T, src: int = 0, group: Optional[dist.ProcessGroup] = None) -> T:
+def broadcast_object(obj: T, src: int = 0, group: Optional[dist.ProcessGroup] = None) -> T:
     """
-    Scatter an object using pickle to all ranks in the process group.
+    Broadcast an object using pickle to all ranks in the process group.
     """
     if not is_distributed():
         return obj
 
-    output_list: List[T] = [obj]
-    input_list = [obj] * get_world_size(group) if get_rank(group) == src else None
-    dist.scatter_object_list(output_list, input_list, src=src, group=group)
-    return output_list[0]
+    object_list = [obj]
+    dist.broadcast_object_list(object_list, src=src, group=group)
+    return object_list[0]
 
 
 def all_gather(

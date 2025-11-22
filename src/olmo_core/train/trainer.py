@@ -15,6 +15,7 @@ from typing import (
     Dict,
     Generator,
     Iterable,
+    List,
     Optional,
     Tuple,
     Type,
@@ -33,13 +34,13 @@ from ..distributed.utils import (
     all_reduce_value,
     backend_supports_cpu,
     barrier,
+    broadcast_object,
     get_fs_local_rank,
     get_global_rank,
     get_local_tensor,
     get_rank,
     get_world_size,
     is_distributed,
-    scatter_object,
 )
 from ..exceptions import OLMoConfigurationError
 from ..io import copy_file, file_exists, is_url, join_path, normalize_path
@@ -61,6 +62,7 @@ from .common import (
     LoadStrategy,
     MetricMergeStrategy,
     ReduceType,
+    StepSkipRange,
     TrainingProgress,
 )
 from .train_module import TrainModule
@@ -172,6 +174,18 @@ class Trainer:
     The strategy for loading a checkpoint prior to training.
     """
 
+    load_trainer_state: Optional[bool] = None
+    """
+    Whether to load the trainer state (including dataloader state). If ``None``, this will attempt
+    to load the trainer state if it exists in the checkpoint, but will will not error if it doesn't.
+    """
+
+    load_optim_state: Optional[bool] = None
+    """
+    Whether to load the optimizer state. If ``None``, this will attempt to load the optimizer state
+    if it exists in the checkpoint, but will not error if it doesn't.
+    """
+
     metrics_collect_interval: int = 5
     """
     How often (in steps) to collect, reduce, and pass on metrics to the
@@ -254,6 +268,11 @@ class Trainer:
     This is useful for benchmarking.
     """
 
+    steps_to_skip: Optional[List[StepSkipRange]] = None
+    """
+    Ranges of steps to completely skip training on.
+    """
+
     # Internal bookkeeping
 
     _metrics: Dict[int, Dict[str, torch.Tensor]] = field(default_factory=OrderedDict)
@@ -286,8 +305,12 @@ class Trainer:
                 "or set 'FS_LOCAL_RANK' to the global rank for each process."
             )
 
-        # Configure working directory.
-        self.work_dir = Path(self.work_dir)
+        # Validate working directory.
+        if is_url(self.work_dir):
+            raise OLMoConfigurationError(
+                f"Trainer working directory must be a local path, got a URL instead ('{self.work_dir}')."
+            )
+        self.work_dir = Path(normalize_path(self.work_dir))
 
         # Ensure save folder and working directory exist.
         if get_fs_local_rank() == 0:
@@ -617,8 +640,12 @@ class Trainer:
             and not self.checkpoint_loaded
             and self.load_strategy != LoadStrategy.never
         ):
-            # Try loading from the save folder first.
-            self.maybe_load_checkpoint(self.save_folder)
+            # Try loading from the save folder first. The save folder is used for continuing
+            # existing runs that failed or were preempted, so we always load trainer state and
+            # optimizer state.
+            self.maybe_load_checkpoint(
+                self.save_folder, load_trainer_state=True, load_optim_state=True
+            )
 
             # Then fallback to the load path, if provided.
             if self.load_path is not None:
@@ -651,35 +678,39 @@ class Trainer:
 
         log.info("Callback order:")
         for i, callback_name in enumerate(self.callbacks.keys()):
-            log.info(f"  - Callback {i+1}: {callback_name}")
+            log.info(f"  - Callback {i + 1}: {callback_name}")
 
         log.info(f"Training for {self.max_steps:,d} steps")
-
-        for callback in self._iter_callbacks():
-            callback.pre_train()
-        self.train_module.pre_train()
-
-        barrier()
-
-        # Quick check if the run has already been canceled.
-        if self.is_canceled:
-            self._shutdown()
-            return
 
         # Install SIGTERM + SIGINT handlers.
         og_sigterm_handler = signal.signal(signal.SIGTERM, self._handle_os_signal)
         og_sigint_handler = signal.signal(signal.SIGINT, self._handle_os_signal)
 
-        # Do a dry-run for compiling and catch OOMs.
-        self._dry_run_batch()
-
         try:
+            for callback in self._iter_callbacks():
+                callback.pre_train()
+            self.train_module.pre_train()
+
+            # Quick check if the run has already been canceled.
+            if self.is_canceled:
+                for callback in self._iter_callbacks():
+                    callback.post_train()
+                self._shutdown()
+                return
+
+            # Do a dry-run for compiling and catch OOMs.
+            self._dry_run_batch()
+
+            # Iterate over epochs until done.
             while not self.training_complete:
                 self._fit_epoch()
         except BaseException as exc:
-            log.error(f"Training failed due to:\n{exc}")
+            self._error = exc
+            log.error(f"Training failed due to:\n{type(exc).__name__}: {exc}")
             for callback in self._iter_callbacks():
                 callback.on_error(exc)
+            for callback in self._iter_callbacks():
+                callback.close()
             raise
         finally:
             # Restore original signal handlers.
@@ -695,6 +726,8 @@ class Trainer:
 
     def _shutdown(self):
         self._log_metrics()
+        for callback in self._iter_callbacks():
+            callback.close()
         if self._multi_thread_pool is not None:
             self._multi_thread_pool.shutdown(wait=True, cancel_futures=False)
             self._multi_thread_pool = None
@@ -782,6 +815,22 @@ class Trainer:
         :param load_trainer_state: Load trainer state (data loader state, RNG states, and other bookkeeping).
         :param load_optim_state: Load optimizer state in the train module.
         """
+        load_trainer_state = (
+            self.load_trainer_state if load_trainer_state is None else load_trainer_state
+        )
+        load_optim_state = self.load_optim_state if load_optim_state is None else load_optim_state
+        if dir == self.save_folder:
+            if load_trainer_state is False:
+                log.warning(
+                    "Loading from save_folder with 'load_trainer_state=False' is not recommended, "
+                    "since the save_folder is meant for continuing existing runs."
+                )
+            if load_optim_state is False:
+                log.warning(
+                    "Loading from save_folder with 'load_optim_state=False' is not recommended, "
+                    "since the save_folder is meant for continuing existing runs."
+                )
+
         dir = normalize_path(dir)
 
         # NOTE: to avoid making a ton of client requests (S3 or otherwise) we only make those
@@ -789,7 +838,7 @@ class Trainer:
         if get_rank() == 0 and not self.checkpointer.dir_is_checkpoint(dir):
             # Try to find the latest checkpoint in the directory.
             dir = self.checkpointer.latest_checkpoint(dir)
-        dir = scatter_object(dir)
+        dir = broadcast_object(dir)
 
         log.info(f"Loading checkpoint from '{dir}'...")
         trainer_state = self.checkpointer.load(
@@ -809,7 +858,7 @@ class Trainer:
 
     def maybe_load_checkpoint(
         self,
-        dir: PathOrStr,
+        dir: Optional[PathOrStr] = None,
         *,
         load_trainer_state: Optional[bool] = None,
         load_optim_state: Optional[bool] = None,
@@ -822,10 +871,12 @@ class Trainer:
 
         :returns: If a checkpoint was loaded.
         """
+        if dir is None:
+            dir = self.save_folder
         should_load: bool = True
         if get_rank() == 0:
             should_load = self.checkpointer.contains_checkpoint(dir)
-        should_load = scatter_object(should_load)
+        should_load = broadcast_object(should_load)
         if should_load:
             self.load_checkpoint(
                 dir,
@@ -840,6 +891,7 @@ class Trainer:
     def save_checkpoint(self) -> PathOrStr:
         """
         Save a checkpoint for the current step to the :data:`save_folder`.
+
 
         :returns: The path/URL to the checkpoint.
         """
@@ -1005,6 +1057,9 @@ class Trainer:
         return target
 
     def add_callback(self, name: str, callback: Callback):
+        """
+        Add a callback to the trainer.
+        """
         if name in self.callbacks:
             raise OLMoConfigurationError(f"A callback with name '{name}' already exists!")
         callback.trainer = self
@@ -1177,7 +1232,7 @@ class Trainer:
                 group=self.bookkeeping_pg,
             )
             if canceling_rank >= 0:
-                cancel_reason = scatter_object(
+                cancel_reason = broadcast_object(
                     self._cancel_reason,
                     src=get_global_rank(canceling_rank, group=self.bookkeeping_pg),
                     group=self.bookkeeping_pg,
@@ -1277,16 +1332,26 @@ class Trainer:
             ) is not None:
                 self.global_train_tokens_seen += global_num_tokens
 
+            should_skip = False
+            if self.steps_to_skip:
+                for step_range in self.steps_to_skip:
+                    if step_range.start <= self.global_step < step_range.stop:
+                        should_skip = True
+                        break
+
             for callback in self._iter_callbacks():
                 callback.pre_step(batch)
 
-            self.train_module.train_batch(batch)
+            if should_skip:
+                log.warning(f"Skipping training on step {self.global_step:,d} intentionally...")
+            else:
+                self.train_module.train_batch(batch)
 
-            for callback in self._iter_callbacks():
-                callback.pre_optim_step()
+                for callback in self._iter_callbacks():
+                    callback.pre_optim_step()
 
-            self.train_module.optim_step()
-            self.train_module.zero_grads()
+                self.train_module.optim_step()
+                self.train_module.zero_grads()
 
             for callback in self._iter_callbacks():
                 callback.post_train_batch()
