@@ -59,14 +59,14 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     config.block.name = TransformerBlockType.fla
     config.block.attention = AttentionConfig()  # not used
     # 6d^2 for GatedDeltaNet vs. 3d^2 for attention
-    config.block.d_model = 2048
-    config.block.n_heads = 16
+    config.d_model = 2048
+    config.block.attention.n_heads = 16
     config.block.fla = FLAConfig(
         name="GatedDeltaNet",
         dtype=config.dtype,
         fla_layer_kwargs={
             # FLA repo says num_heads * head_dim = 0.75 * hidden_size
-            "head_dim": int(0.75 * config.block.d_model / config.block.n_heads),
+            "head_dim": int(0.75 * config.d_model / config.block.attention.n_heads),
             "use_gate": True,
             "allow_neg_eigval": False,
         },

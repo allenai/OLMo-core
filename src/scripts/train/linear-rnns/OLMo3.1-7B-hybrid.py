@@ -47,8 +47,8 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
     # Update the config to use an FLA block.
     config.block.name = TransformerBlockType.fla_hybrid
-    assert config.block.n_layers % 4 == 0, "Current logic assumes n_layers is multiple of 4"
-    config.block.fla_hybrid_attention_indices = [i for i in range(config.block.n_layers) if i % 4 == 3]
+    assert config.n_layers % 4 == 0, "Current logic assumes n_layers is multiple of 4"
+    config.block.fla_hybrid_attention_indices = [i for i in range(config.n_layers) if i % 4 == 3]
 
     # Configure the non-attention part of the block to be a DeltaNet.
     config.block.fla = FLAConfig(
@@ -56,7 +56,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         dtype=config.dtype,
         fla_layer_kwargs={
             # FLA repo says num_heads * head_dim = 0.75 * hidden_size
-            "head_dim": int(0.75 * config.block.d_model / config.block.n_heads),
+            "head_dim": int(0.75 * config.d_model / config.block.attention.n_heads),
             "use_gate": True,
             "allow_neg_eigval": True,
         },
