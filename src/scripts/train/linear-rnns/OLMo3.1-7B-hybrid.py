@@ -139,11 +139,14 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     assert len(common.launch.clusters) == 1
     cluster = common.launch.clusters[0]
 
+    root_dir = "/weka/oe-training-default/ai2-llm"
     run_name = f"{common.run_name}-{datetime.now().astimezone().strftime('%Y%m%dT%H%M%S%z')}"
 
     return (
         TrainerConfig(
-            save_folder=f"gs://ai2-llm/checkpoints/{common.run_name}/",
+            # willm: Adapted this from 1B linear RNN runs.
+            # save_folder=f"gs://ai2-llm/checkpoints/{common.run_name}/",
+            save_folder=f"{root_dir}/checkpoints/willm/linear-rnns/{common.run_name}/",
             save_overwrite=True,
             metrics_collect_interval=50,
             cancel_check_interval=cancel_check_interval,
@@ -156,18 +159,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "checkpointer",
             CheckpointerCallback(
                 save_interval=1000,
-                ephemeral_save_interval=None,
-                save_async=False,
-            ),
-        )
-        .with_callback(
-            "comet",
-            CometCallback(
-                name=run_name,
-                workspace="ai2",
-                project="olmo3",
-                enabled=False,
-                cancel_check_interval=cancel_check_interval,
+                ephemeral_save_interval=100,
+                save_async=True,
             ),
         )
         .with_callback(
@@ -176,7 +169,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 name=run_name,
                 group=common.run_name,
                 entity="ai2-llm",
-                project="olmo3",
+                project="linear-rnns",
                 enabled=True,
                 cancel_check_interval=cancel_check_interval,
             ),
