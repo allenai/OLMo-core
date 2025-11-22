@@ -12,3 +12,9 @@ python src/scripts/train/linear-rnns/1b/deltanet++.py launch deltanet-neg ai2/ju
 # Hybrid model alternating layers.
 python src/scripts/train/linear-rnns/1b/hybrid_gated_deltanet++.py launch hybrid-gated-deltanet-neg ai2/jupiter
 ```
+
+To launch the big OLMo 3.1 7B run:
+
+```shell
+python src/scripts/train/linear-rnns/OLMo3.1-7B-hybrid.py launch OLMo3.1-7B-hybrid ai2/jupiter --launch.num_nodes=4
+```
