@@ -609,10 +609,11 @@ def train(checkpoint: str, config: SFTRouterConfig, save_tokenizer: bool):
 
     # Build components.
     model = config.model.build(init_device="meta")
-    train_module = config.train_module.build(model)
-    
+
     # Freeze all non-router weights (tweaked to match flexolmo pretrain)
     freeze_non_router_weights(model)
+
+    train_module = config.train_module.build(model)
     
     if config.dataset is None:
         raise OLMoConfigurationError("Dataset configuration is None")
