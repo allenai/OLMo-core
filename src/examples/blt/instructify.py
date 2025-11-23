@@ -50,6 +50,8 @@ def parse_args():
                         help="Device to use for instructifying.")
     parser.add_argument("--max-sequence-length", type=int, default=4096,
                         help="Max sequence length")
+    parser.add_argument("--instructify-embeddings", default=False, action="store_true",
+                        help="Instructify embeddings as well.")
     return parser.parse_args()
 
 def _load_state_dict(checkpoint_dir, model):
@@ -167,6 +169,14 @@ def main():
                 log.warning(f"Key {key} has different shape across models: {diff.shape} vs {value.shape} (this is okay for embeddings).")
         else:
             log.warning(f"Key {key} not found in instruct model state dict, skipping (this is okay for local enc/dec and boundary predictor).")
+
+    if args.instructify_embeddings:
+        # transfer the expanded embedding params
+        instruct_input_embed_key = "embeddings.weight"
+        our_input_embed_key = "local_encoder.expanded_embeddings.weight"
+        embed_diff = instruct_model.state_dict()[instruct_input_embed_key] - base_model.state_dict()[instruct_input_embed_key]
+
+        model.state_dict()[our_input_embed_key][:] += args.alpha * embed_diff[:len(model.state_dict()[our_input_embed_key])]
 
     model_and_optim_dir = join_path(output, "model_and_optim")
     log.info(f"Saving OLMo core checkpoint to '{model_and_optim_dir}'")

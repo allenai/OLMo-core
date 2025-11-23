@@ -92,6 +92,30 @@ class TokenizerConfig(Config):
         )
 
     @classmethod
+    def dolma2_superbpe_200k(cls) -> "TokenizerConfig":
+        """
+        Get a :data:`~TokenizerName.dolma2_superbpe_200k` tokenizer config.
+        """
+        return cls(
+            vocab_size=200001,
+            eos_token_id=200000,
+            pad_token_id=200000,
+            identifier="benjamin/dolma2-tokenizer_superbpe_olmo2_p99_truncate_10G__extend_200K",
+        )
+
+    @classmethod
+    def dolma2_superbpe_400k(cls) -> "TokenizerConfig":
+        """
+        Get a :data:`~TokenizerName.dolma2_superbpe_200k` tokenizer config.
+        """
+        return cls(
+            vocab_size=400001,
+            eos_token_id=400000,
+            pad_token_id=400000,
+            identifier="benjamin/dolma2-tokenizer_superbpe_olmo2_p99_truncate_10G__extend_400K",
+        )
+
+    @classmethod
     def typhoon(cls) -> "TokenizerConfig":
         """
         Get a :data:`~TokenizerName.typhoon` tokenizer config.

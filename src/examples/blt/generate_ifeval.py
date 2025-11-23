@@ -204,33 +204,38 @@ def main():
     ]
     log.info(f"Loaded {len(texts)} prompts from IFEval dataset")
 
-    all_output_texts = []
-
-    # Generate for each prompt
-    for i in tqdm(range(0, len(texts), args.batch_size)):
-        batch_prompts = texts[i:i + args.batch_size]
-        log.info(f"Generating for prompts {i} to {i + len(batch_prompts) - 1}")
-        batch_outputs = generate_text(
-            generation_module,
-            batch_prompts,
-            tokenizer,
-            device,
-            batch_size=len(batch_prompts),
-            stream=False,
-        )
-        if (i // args.batch_size) % args.log_interval == 0:
-            for j, output in enumerate(batch_outputs):
-                log.info(f"Prompt {i + j} completion: {output}")
-
-        all_output_texts.extend(batch_outputs)
-
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    pd.DataFrame(all_output_texts, columns=["generated_text"]).to_json(output_dir / "raw_generations.jsonl", lines=True, orient="records")
+    all_output_texts = []
+
+    if not (output_dir / "raw_generations.jsonl").exists():
+        # Generate for each prompt
+        for i in tqdm(range(0, len(texts), args.batch_size)):
+            batch_prompts = texts[i:i + args.batch_size]
+            log.info(f"Generating for prompts {i} to {i + len(batch_prompts) - 1}")
+            batch_outputs = generate_text(
+                generation_module,
+                batch_prompts,
+                tokenizer,
+                device,
+                batch_size=len(batch_prompts),
+                stream=False,
+            )
+            if (i // args.batch_size) % args.log_interval == 0:
+                for j, output in enumerate(batch_outputs):
+                    log.info(f"Prompt {i + j} completion: {output}")
+
+            all_output_texts.extend(batch_outputs)
+
+        pd.DataFrame(all_output_texts, columns=["generated_text"]).to_json(output_dir / "raw_generations.jsonl", lines=True, orient="records")
+    else:
+        log.info("Loading existing raw generations")
+        df = pd.read_json(output_dir / "raw_generations.jsonl", lines=True)
+        all_output_texts = df["generated_text"].tolist()
 
     answers = []
-    stop_seqs = ["\n\n", "|_end>", "|_end|>", "|_start>", "|_start|>"]
+    stop_seqs = ["\n\n", "<|end|>", "|_end>", "|_end|>", "|_end|", "|_end", "<|end", "|end>", "|im_end|", "<|im_end|>", "|_start>", "|_start|>", "<|endoftext|>"]
 
     for row, input_text, output_text in zip(dset, texts, all_output_texts):
         continuation = output_text[len(input_text):]
