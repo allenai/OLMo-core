@@ -404,7 +404,7 @@ class SFTRouterConfig(Config):
                 global_batch_size=bs_config.global_batch_size_tokens, seed=34521, num_workers=4
             ),
             train_module=TransformerTrainModuleConfig(
-                rank_microbatch_size=bs_config.rank_microbatch_size_tokens,
+                rank_microbatch_size=2 * 4096,
                 max_sequence_length=bs_config.sequence_length,
                 z_loss_multiplier=None,
                 compile_model=True,
