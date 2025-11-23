@@ -456,8 +456,9 @@ class SFTRouterConfig(Config):
                     else None
                 ),
                 ac_config=TransformerActivationCheckpointingConfig(
-                    mode=TransformerActivationCheckpointingMode.full,
+                    mode=TransformerActivationCheckpointingMode.selected_modules,
                     # modules=["blocks.*.feed_forward"],
+                    modules=["blocks.*.attention"], 
                 ),
                 scheduler=LinearWithWarmup(
                     warmup_fraction=0.03,
