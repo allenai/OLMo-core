@@ -104,10 +104,12 @@ def olmoe_nx7b(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
 TransformerConfig.olmoe_nx7b = classmethod(olmoe_nx7b)  # type: ignore
 
 
-DEFAULT_SEQUENCE_LENGTH = 16_384
+# DEFAULT_SEQUENCE_LENGTH = 16_384
+DEFAULT_SEQUENCE_LENGTH = 4_096
 DEFAULT_NUM_NODES = 1
 GPUS_PER_NODE = 8
-MAX_RANK_MICROBATCH_SIZE_TOKENS = 16_384  # max tokens this config can handle on an H100
+# MAX_RANK_MICROBATCH_SIZE_TOKENS = 16_384  # max tokens this config can handle on an H100
+MAX_RANK_MICROBATCH_SIZE_TOKENS = 4_096
 
 
 @dataclass
@@ -543,8 +545,8 @@ def freeze_non_router_weights(model):
         "blocks.*.attention*", 
         "blocks.*.feed_forward_norm.*",
         "lm_head.*",
-        "blocks.*.feed_forward_moe.experts.*",  # Expert weights
-        "blocks.*.feed_forward._checkpoint_wrapped_module.*"  # Expert weights (fallback)
+        # "blocks.*.feed_forward_moe.experts.*",  # Expert weights
+        # "blocks.*.feed_forward._checkpoint_wrapped_module.*"  # Expert weights (fallback)
     ]
     
     # Look for router parameters - the expected naming pattern
