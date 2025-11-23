@@ -543,8 +543,8 @@ def freeze_non_router_weights(model):
         "blocks.*.attention*", 
         "blocks.*.feed_forward_norm.*",
         "lm_head.*",
-        # "blocks.*.feed_forward_moe.experts.*",  # Expert weights
-        # "blocks.*.feed_forward._checkpoint_wrapped_module.*"  # Expert weights (fallback)
+        "blocks.*.feed_forward_moe.experts.*",  # Expert weights
+        "blocks.*.feed_forward._checkpoint_wrapped_module.*"  # Expert weights (fallback)
     ]
     
     # Look for router parameters - the expected naming pattern

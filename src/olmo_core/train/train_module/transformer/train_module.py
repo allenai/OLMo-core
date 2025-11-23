@@ -452,8 +452,6 @@ class TransformerTrainModule(TrainModule):
             #             get_full_tensor(param.grad).shape[0] // 2 :
             #         ] = 0
 
-        del batch  # In case this helps with memory utilization.
-
 
         if dry_run:
             self.model.reset_auxiliary_metrics()
