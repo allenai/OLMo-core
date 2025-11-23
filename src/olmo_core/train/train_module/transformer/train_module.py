@@ -729,7 +729,7 @@ class FreezeTransformerTrainModule(TransformerTrainModule):
                 input_ids, labels, model_kwargs = self._prepare_batch(micro_batch)
 
                 # Run forward pass, get losses.
-                _, ce_loss, z_loss = self.model_forward(
+                _, loss, ce_loss, z_loss = self.model_forward(
                     input_ids,
                     labels=labels,
                     ignore_index=self.label_ignore_index,
