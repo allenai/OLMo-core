@@ -357,7 +357,13 @@ class SFTRouterConfig(Config):
                 top_k=2,  # Override default of 1
                 lb_loss_weight=0.0,
                 z_loss_weight=0.001,
-                freeze_params=[],  # Don't freeze anything initially - we'll do it manually
+                # freeze_params=[],  # Don't freeze anything initially - we'll do it manually
+                freeze_params=[
+                    "embeddings.*",
+                    "blocks.*.attention*",
+                    "blocks.*.feed_forward_norm.*",
+                    "lm_head.*",
+                ],
             )
         elif model_name == "olmoe-4x7b":
             # MoE model configuration for router SFT
@@ -405,11 +411,15 @@ class SFTRouterConfig(Config):
             data_loader=NumpyDataLoaderConfig(
                 global_batch_size=bs_config.global_batch_size_tokens, seed=34521, num_workers=4
             ),
-            train_module=TransformerTrainModuleConfig(
-                rank_microbatch_size=2 * 4096,
+            # train_module=TransformerTrainModuleConfig(
+            #     rank_microbatch_size=2 * 4096,
+            #     max_sequence_length=bs_config.sequence_length,
+            #     z_loss_multiplier=None,
+            #     compile_model=True,
+            train_module=FreezeTransformerTrainModuleConfig(  # Changed class name
+                rank_microbatch_size=4096,  # Keep your fix from before
                 max_sequence_length=bs_config.sequence_length,
-                z_loss_multiplier=None,
-                compile_model=True,
+                freeze_experts="first_half",
                 # optim=SkipStepAdamWConfig(
                 #     lr=8e-05,
                 #     weight_decay=0.0,  # NOTE: different from pretraining
@@ -611,7 +621,7 @@ def train(checkpoint: str, config: SFTRouterConfig, save_tokenizer: bool):
     model = config.model.build(init_device="meta")
 
     # Freeze all non-router weights (tweaked to match flexolmo pretrain)
-    freeze_non_router_weights(model)
+    # freeze_non_router_weights(model)
 
     train_module = config.train_module.build(model)
     
