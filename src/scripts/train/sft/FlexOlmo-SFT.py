@@ -40,7 +40,7 @@ from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.rope import YaRNRoPEScalingConfig
 from olmo_core.nn.transformer import TransformerBlockConfig, TransformerConfig
-from olmo_core.optim import LinearWithWarmup, SkipStepAdamWConfig
+from olmo_core.optim import LinearWithWarmup, SkipStepAdamWConfig, AdamWConfig
 from olmo_core.train import (
     Duration,
     LoadStrategy,
@@ -408,11 +408,21 @@ class SFTRouterConfig(Config):
                 max_sequence_length=bs_config.sequence_length,
                 z_loss_multiplier=None,
                 compile_model=True,
-                optim=SkipStepAdamWConfig(
-                    lr=8e-05,
-                    weight_decay=0.0,  # NOTE: different from pretraining
+                # optim=SkipStepAdamWConfig(
+                #     lr=8e-05,
+                #     weight_decay=0.0,  # NOTE: different from pretraining
+                #     betas=(0.9, 0.95),
+                #     fused=True,  # ADD THIS - more memory efficient
+                #     compile=False,
+                # ),
+                optim=AdamWConfig(
+                    lr=8e-5, 
+                    weight_decay=0,  # 0
                     betas=(0.9, 0.95),
-                    compile=False,
+                    fused=True,
+                    #  group_overrides=[
+                    #      OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
+                    #  ], # swj check
                 ),
                 ep_config=TransformerExpertParallelConfig(
                     degree=2,  # Split experts across 2 GPUs
@@ -421,6 +431,7 @@ class SFTRouterConfig(Config):
                     name=DataParallelType.hsdp,
                     param_dtype=DType.bfloat16,
                     reduce_dtype=DType.float32,
+                    wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,  # ADD THIS!
                     num_replicas=8, # num_gpus / num_experts
                     # shard_degree=GPUS_PER_NODE  # try to keep communication w/in a node
                     # // (bs_config.cp_degree or 1) // 2, # 2 is ep degree
