@@ -427,6 +427,14 @@ class SFTRouterConfig(Config):
                 ep_config=TransformerExpertParallelConfig(
                     degree=2,  # Split experts across 2 GPUs
                 ),
+                float8_config=Float8Config(
+                    ao=AOFloat8LinearConfig(
+                        enable_fsdp_float8_all_gather=True,
+                        force_recompute_fp8_weight_in_bwd=True,
+                        round_scales_to_power_of_2=True,
+                    ),
+                    enabled=False,
+                ),
                 dp_config=TransformerDataParallelConfig(
                     name=DataParallelType.hsdp,
                     param_dtype=DType.bfloat16,
