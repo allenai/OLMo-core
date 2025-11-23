@@ -445,7 +445,7 @@ class SFTRouterConfig(Config):
                 max_grad_norm=1.0,
             ),
             trainer=TrainerConfig(
-                save_folder=f"{root_dir}/checkpoints/{user_name}/olmo2-7B-sft-router/{run_name}",
+                save_folder=f"{root_dir}/checkpoints/{user_name}/flex2-7B-sft/{run_name}",
                 load_strategy=LoadStrategy.never,  # we manually load the checkpoint below
                 checkpointer=CheckpointerConfig(
                     save_thread_count=1, load_thread_count=32, throttle_uploads=True
@@ -469,7 +469,7 @@ class SFTRouterConfig(Config):
                 WandBCallback(
                     name=run_name,
                     entity="ai2-llm",
-                    project=f"{user_name}-7B-sft-router",
+                    project=f"{user_name}-7B-flex2-sft",
                     enabled=False,
                     cancel_check_interval=10,
                 ),
