@@ -414,12 +414,15 @@ class SFTRouterConfig(Config):
                     betas=(0.9, 0.95),
                     compile=False,
                 ),
+                ep_config=TransformerExpertParallelConfig(
+                    degree=2,  # Split experts across 2 GPUs
+                ),
                 dp_config=TransformerDataParallelConfig(
                     name=DataParallelType.hsdp,
                     param_dtype=DType.bfloat16,
                     reduce_dtype=DType.float32,
                     shard_degree=GPUS_PER_NODE  # try to keep communication w/in a node
-                    // (bs_config.cp_degree or 1),
+                    // (bs_config.cp_degree or 1) // 2, # 2 is ep degree
                 ),
                 cp_config=(
                     (
