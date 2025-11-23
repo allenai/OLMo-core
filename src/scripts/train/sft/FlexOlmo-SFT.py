@@ -421,8 +421,9 @@ class SFTRouterConfig(Config):
                     name=DataParallelType.hsdp,
                     param_dtype=DType.bfloat16,
                     reduce_dtype=DType.float32,
-                    shard_degree=GPUS_PER_NODE  # try to keep communication w/in a node
-                    // (bs_config.cp_degree or 1) // 2, # 2 is ep degree
+                    num_replicas=8, # num_gpus / num_experts
+                    # shard_degree=GPUS_PER_NODE  # try to keep communication w/in a node
+                    # // (bs_config.cp_degree or 1) // 2, # 2 is ep degree
                 ),
                 cp_config=(
                     (
