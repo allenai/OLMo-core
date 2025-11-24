@@ -22,8 +22,8 @@ dependencies = [
     "omegaconf",
     "safetensors",
     "importlib_resources",
-    "bettermap"
-    "flash-attn",
+    "bettermap",
+    "flash-attn"
 ]
 
 [project.urls]
