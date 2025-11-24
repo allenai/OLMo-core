@@ -78,6 +78,9 @@ where = ["src"]
 include = ["olmo_core*"]
 exclude = []
 
+[tool.uv.extra-build-dependencies]
+flash-attn = ["torch"]
+
 [tool.black]
 line-length = 100
 include = '\.pyi?$'
