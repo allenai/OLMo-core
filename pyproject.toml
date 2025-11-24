@@ -23,6 +23,7 @@ dependencies = [
     "safetensors",
     "importlib_resources",
     "bettermap"
+    "flash-attn",
 ]
 
 [project.urls]
