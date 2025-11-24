@@ -495,7 +495,7 @@ class SFTRouterConfig(Config):
             .with_callback(
                 "checkpointer",
                 CheckpointerCallback(
-                    save_interval=1000, ephemeral_save_interval=500, save_async=True
+                    save_interval=1000, ephemeral_save_interval=100, save_async=True
                 ),
             )
             .with_callback(
