@@ -528,7 +528,6 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/neptune --launch.num_nodes=2
     cli_context = CliContext(script, cmd, run_name, cluster, overrides)
 
     config: ExperimentConfig = config_builder(cli_context)
-    breakpoint()
 
     cmd.prepare_environment(config)
     cmd.run(config)
