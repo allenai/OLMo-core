@@ -22,8 +22,7 @@ dependencies = [
     "omegaconf",
     "safetensors",
     "importlib_resources",
-    "bettermap",
-    "flash-attn"
+    "bettermap"
 ]
 
 [project.urls]
@@ -77,9 +76,6 @@ version = { attr = "olmo_core.version.VERSION" }
 where = ["src"]
 include = ["olmo_core*"]
 exclude = []
-
-[tool.uv.extra-build-dependencies]
-flash-attn = ["torch"]
 
 [tool.black]
 line-length = 100
