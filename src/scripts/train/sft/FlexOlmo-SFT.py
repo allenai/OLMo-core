@@ -104,12 +104,11 @@ def olmoe_nx7b(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
 TransformerConfig.olmoe_nx7b = classmethod(olmoe_nx7b)  # type: ignore
 
 
-# DEFAULT_SEQUENCE_LENGTH = 16_384
-DEFAULT_SEQUENCE_LENGTH = 4_096
+DEFAULT_SEQUENCE_LENGTH = 16_384
 DEFAULT_NUM_NODES = 1
 GPUS_PER_NODE = 8
-# MAX_RANK_MICROBATCH_SIZE_TOKENS = 16_384  # max tokens this config can handle on an H100
-MAX_RANK_MICROBATCH_SIZE_TOKENS = 4_096
+MAX_RANK_MICROBATCH_SIZE_TOKENS = 16_384  # max tokens this config can handle on an H100
+# MAX_RANK_MICROBATCH_SIZE_TOKENS = 4_096
 
 
 @dataclass
@@ -357,7 +356,6 @@ class SFTRouterConfig(Config):
                 top_k=2,  # Override default of 1
                 lb_loss_weight=0.0,
                 z_loss_weight=0.001,
-                use_flash=True,
                 # freeze_params=[],  # Don't freeze anything initially - we'll do it manually
                 freeze_params=[
                     "embeddings.*",
@@ -496,7 +494,7 @@ class SFTRouterConfig(Config):
             .with_callback(
                 "checkpointer",
                 CheckpointerCallback(
-                    save_interval=1000, ephemeral_save_interval=500, save_async=True
+                    save_interval=1000, ephemeral_save_interval=50, save_async=True
                 ),
             )
             .with_callback(
