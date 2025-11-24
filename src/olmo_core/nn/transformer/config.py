@@ -1200,7 +1200,6 @@ class TransformerConfig(Config):
             name=TransformerType.moe,
             block_name=block_name,
             qk_norm=kwargs.pop("qk_norm", reordered_norm),
-            attn_backend=AttentionBackendName.flash_2,
             feed_forward_moe=MoEConfig(
                 name=MoEType.default if not dropless else MoEType.dropless,
                 num_experts=num_experts,

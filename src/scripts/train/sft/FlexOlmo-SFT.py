@@ -357,6 +357,7 @@ class SFTRouterConfig(Config):
                 top_k=2,  # Override default of 1
                 lb_loss_weight=0.0,
                 z_loss_weight=0.001,
+                use_flash=True,
                 # freeze_params=[],  # Don't freeze anything initially - we'll do it manually
                 freeze_params=[
                     "embeddings.*",
