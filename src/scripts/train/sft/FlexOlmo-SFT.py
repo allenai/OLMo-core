@@ -381,6 +381,8 @@ class SFTRouterConfig(Config):
         print("overrides here:")
         print(overrides)
 
+        ep_degree=2
+
         config = SFTRouterConfig(
             run_name=run_name,
             launch=build_launch_config(
@@ -437,7 +439,7 @@ class SFTRouterConfig(Config):
                     #  ], # swj check
                 ),
                 ep_config=TransformerExpertParallelConfig(
-                    degree=2,  # Split experts across 2 GPUs
+                    degree=ep_degree,  # Split experts across 2 GPUs
                 ),
                 float8_config=Float8Config(
                     ao=AOFloat8LinearConfig(
@@ -452,7 +454,7 @@ class SFTRouterConfig(Config):
                     param_dtype=DType.bfloat16,
                     reduce_dtype=DType.float32,
                     wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,  # ADD THIS!
-                    num_replicas=8, # num_gpus / num_experts
+                    num_replicas=num_nodes * GPUS_PER_NODE // ep_degree, # num_gpus / num_experts
                     # shard_degree=GPUS_PER_NODE  # try to keep communication w/in a node
                     # // (bs_config.cp_degree or 1) // 2, # 2 is ep degree
                 ),
