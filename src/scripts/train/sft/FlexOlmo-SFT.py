@@ -363,6 +363,7 @@ class SFTRouterConfig(Config):
                     "blocks.*.attention*",
                     "blocks.*.feed_forward_norm.*",
                     "lm_head.*",
+                    "blocks.*.feed_forward_moe.experts*", # Uncomment to only train the router
                 ],
             )
         elif model_name == "olmoe-4x7b":
