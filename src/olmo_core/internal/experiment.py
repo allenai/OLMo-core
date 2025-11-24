@@ -187,6 +187,7 @@ def build_common_components(
     launch_config: Optional[BeakerLaunchConfig] = None
     if beaker_user is not None:
         cmd_to_launch = cli_context.cmd.post_launch_subcmd()
+        breakpoint()
         launch_config = build_launch_config(
             name=f"{cli_context.run_name}-{cmd_to_launch}",
             root_dir=root_dir,
