@@ -14,20 +14,23 @@ __all__ = ["DataCollator"]
 def _source_name_to_expert_label(source_name: str) -> torch.Tensor:
     """Convert source_name to expert label tensor (one-hot, shape: 4).
     
-    Mapping matches flexolmo.data.expert_label_utils.get_expert_label_tensor():
+    Mapping for 3-expert setup (Expert 3 is masked/duplicate of Expert 1):
     - Expert 0 (Math): [1, 0, 0, 0] - mj_finemath4plus, mj_finemath
-    - Expert 1 (General): [0, 1, 0, 0] - default/fallback
+    - Expert 1 (General): [0, 1, 0, 0] - everything else (academic, technical, web content)
     - Expert 2 (Code): [0, 0, 1, 0] - starcoder, code
-    - Expert 3 (Academic): [0, 0, 0, 1] - academic_writing, technical_writing, etc.
+    - Expert 3: Unused/masked (duplicate of Expert 1)
     """
     source_lower = source_name.lower().strip()
     
-    if source_lower.startswith("starcoder") or "code" in source_lower:
-        return torch.tensor([0.0, 0.0, 1.0, 0.0], dtype=torch.float32)
+    # Math expert (expert 0)
     if source_lower.startswith("mj_finemath4plus") or source_lower.startswith("mj_finemath"):
         return torch.tensor([1.0, 0.0, 0.0, 0.0], dtype=torch.float32)
-    if any(kw in source_lower for kw in ["academic", "technical_writing", "knowledge_article", "tutorial", "nonfiction", "faq"]):
-        return torch.tensor([0.0, 0.0, 0.0, 1.0], dtype=torch.float32)
+    
+    # Code expert (expert 2)
+    if source_lower.startswith("starcoder") or "code" in source_lower:
+        return torch.tensor([0.0, 0.0, 1.0, 0.0], dtype=torch.float32)
+    
+    # General expert (expert 1) - everything else including academic/technical
     return torch.tensor([0.0, 1.0, 0.0, 0.0], dtype=torch.float32)
 
 
