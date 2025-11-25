@@ -111,6 +111,10 @@ class OLMoCoreBeakerImage(StrEnum):
     Built with torch 2.7.0 and CUDA 12.8.
     Battle tested when training Olmo3 7B and 32B. No TransformerEngine or flash-attention-3.
     """
+    tch271_cu126 = "olmo-core-tch271cu126-2025-09-15"
+    """
+    Built with torch 2.7.1 and CUDA 12.6. No TransformerEngine or flash-attention-3.
+    """
 
 
 @dataclass
