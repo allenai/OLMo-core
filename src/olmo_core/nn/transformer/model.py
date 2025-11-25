@@ -108,12 +108,17 @@ class Transformer(nn.Module):
         self.n_attn_heads = block.attention.n_heads
         self.dtype = dtype
 
+        # Store block configs for FLOPS calculation (needed for SWA and GQA)
+        self._block_configs: Dict[int, TransformerBlockConfig] = {}
+        self._base_block_config = block
+
         self.embeddings = nn.Embedding(vocab_size, d_model, dtype=dtype, device=init_device)
         self.blocks = nn.ModuleDict()
         for block_idx in range(n_layers):
             block_config = block
             if block_overrides is not None and block_idx in block_overrides:
                 block_config = block_overrides[block_idx]
+            self._block_configs[block_idx] = block_config
             self.blocks[str(block_idx)] = self._validate_block(
                 block_config.build(
                     d_model=d_model,
@@ -848,21 +853,44 @@ class Transformer(nn.Module):
     def num_flops_per_token(self, seq_len: int) -> int:
         """
         Get the approximate number of flops per token.
-        """
-        n, h, q, t = (
-            self.n_layers,
-            self.n_attn_heads,
-            self.d_model // self.n_attn_heads,
-            seq_len,
-        )
 
-        # Reasoning behind the factor of 12 for the self-attention part of the formula:
-        # 1. each self-attention has 2 matmul in the forward and 4 in the backward (6)
-        # 2. the flash attention does 1 more matmul recomputation in the backward
-        #    but recomputation should not be counted in calculating MFU           (+0)
-        # 3. each matmul performs 1 multiplication and 1 addition                 (*2)
-        # 4. we follow the convention and do not account for sparsity in causal attention
-        flop_per_token = 6 * self.num_non_embedding_params + 12 * n * h * q * t
+        Accounts for sliding window attention (SWA) and grouped-query attention (GQA).
+        For SWA, uses the window size for each layer instead of the full sequence length.
+        For GQA, uses n_kv_heads instead of n_heads for the attention computation.
+        """
+        # Base FLOPS from non-attention operations (FFN, layer norms, etc.)
+        base_flops = 6 * self.num_non_embedding_params
+
+        # Attention FLOPS per layer
+        # The original formula: 12 * n * h * q * t
+        # We need to sum over layers because SWA can have different window sizes per layer
+        attention_flops = 0
+        q = self.d_model // self.n_attn_heads
+
+        for layer_idx in range(self.n_layers):
+            # Get block config for this layer (may be overridden)
+            block_config = self._block_configs.get(layer_idx, self._base_block_config)
+
+            n_heads = block_config.attention.n_heads
+            n_kv_heads = block_config.attention.n_kv_heads or n_heads
+
+            # Determine effective sequence length for this layer
+            # If SWA is used, use window size; otherwise use full sequence length
+            effective_seq_len = seq_len
+            if block_config.attention.sliding_window is not None:
+                sliding_window_cfg = block_config.attention.sliding_window
+                if sliding_window_cfg.should_use_swa(layer_idx, self.n_layers):
+                    window_size = sliding_window_cfg.get_window_size(layer_idx, self.n_layers)
+                    effective_seq_len = window_size
+
+            # The original formula uses n_heads, but with GQA the attention computation
+            # is limited by n_kv_heads (since K/V have fewer heads).
+            # We use n_kv_heads to account for the reduced FLOPS in GQA.
+            # The factor 12 accounts for: 2 matmuls (QK^T, attn@V) * 2 (forward+backward) * 2 (mult+add) * 1.5 (approximate)
+            layer_attention_flops = 12 * n_kv_heads * q * effective_seq_len
+            attention_flops += layer_attention_flops
+
+        flop_per_token = base_flops + attention_flops
 
         return flop_per_token
 
