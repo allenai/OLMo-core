@@ -128,7 +128,7 @@ jobs:
       matrix:
         task:
           - name: Test (GPU)
-            image: &gpu_test_image tylerr/olmo-core-tch271cu128-2025-11-25
+            image: &gpu_test_image tylerr/olmo-core-tch291cu128-2025-11-25
             gpus: 2
             run: |
               pytest -v --color=yes --durations=3 -m gpu \

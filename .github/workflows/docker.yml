@@ -6,21 +6,24 @@ concurrency:
 
 on:
   workflow_dispatch:
-  # TODO: disabled for now because it takes too long in CI
-  pull_request:
-    branches:
-      - main
-    paths:
-      - 'Makefile'
-      - 'pyproject.toml'
-      - 'src/olmo_core/version.py'
-      - 'src/Dockerfile'
-      - '.github/workflows/docker.yml'
-  push:
-    # branches:
-    #   - main
-    tags:
-      - 'v*.*.*'
+  # TODO: disabled for now because it OOMs GHA runners in CI. Can re-enable by
+  # migrating to Beaker when it has the capability to build docker images from
+  # within batch jobs (currently Beaker only supports building images inside of
+  # interactive sessions).
+  # pull_request:
+  #   branches:
+  #     - main
+  #   paths:
+  #     - 'Makefile'
+  #     - 'pyproject.toml'
+  #     - 'src/olmo_core/version.py'
+  #     - 'src/Dockerfile'
+  #     - '.github/workflows/docker.yml'
+  # push:
+  #   # branches:
+  #   #   - main
+  #   tags:
+  #     - 'v*.*.*'
 
 jobs:
   docker:
