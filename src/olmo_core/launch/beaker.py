@@ -70,7 +70,7 @@ __all__ = [
 
 BeakerPriority = Priority
 
-_DEFAULT_TORCH = "2.7.1".replace(".", "")
+_DEFAULT_TORCH = "2.9.1".replace(".", "")
 _DEFAULT_CUDA = "12.8".replace(".", "")
 
 
@@ -84,36 +84,36 @@ class OLMoCoreBeakerImage(StrEnum):
     """
 
     # NOTE: when updating default images here, should also update images used in tests at .github/workflows/main.yml
-
-    stable = f"olmo-core-tch{_DEFAULT_TORCH}cu{_DEFAULT_CUDA}-2025-09-15"
+    stable = f"tylerr/olmo-core-tch{_DEFAULT_TORCH}cu{_DEFAULT_CUDA}-2025-11-25"
     """
     Built with the latest compatible stable version of PyTorch.
     """
-    stable_cu126 = f"olmo-core-tch{_DEFAULT_TORCH}cu126-2025-09-15"
+    stable_cu130 = f"tylerr/olmo-core-tch{_DEFAULT_TORCH}cu130-2025-11-25"
     """
-    The stable image with CUDA pinned to 12.6.
+    The stable image with CUDA pinned to 13.0.
     """
-    stable_cu128 = f"olmo-core-tch{_DEFAULT_TORCH}cu128-2025-09-15"
+    stable_cu128 = f"tylerr/olmo-core-tch{_DEFAULT_TORCH}cu128-2025-11-25"
     """
     The stable image with CUDA pinned to 12.8.
     """
 
     # Sorted roughly from newest versions to oldest versions
-    tch280_cu129 = "olmo-core-tch280cu129-2025-09-23"
-    """
-    Built with torch 2.8.0 and CUDA 12.9.
-    """
-    tch280_cu128 = "olmo-core-tch280cu128-2025-09-19"
+    tch280_cu128 = "tylerr/olmo-core-tch280cu128-2025-11-25"
     """
     Built with torch 2.8.0 and CUDA 12.8.
+    """
+    tch271_cu128 = "tylerr/olmo-core-tch271cu128-2025-11-25"
+    """
+    Built with torch 2.7.1 and CUDA 12.8.
     """
     tch270_cu128 = "olmo-core-tch270cu128-2025-05-16"
     """
     Built with torch 2.7.0 and CUDA 12.8.
+    Battle tested when training Olmo3 7B and 32B. No TransformerEngine or flash-attention-3.
     """
-    tch270_cu128_fa3 = "tylerr/olmo-core-tch270cu128-2025-09-24"
+    tch271_cu126 = "olmo-core-tch271cu126-2025-09-15"
     """
-    Built with torch 2.7.0 and CUDA 12.8 and flash-attn 3 (beta release)
+    Built with torch 2.7.1 and CUDA 12.6. No TransformerEngine or flash-attention-3.
     """
 
 
