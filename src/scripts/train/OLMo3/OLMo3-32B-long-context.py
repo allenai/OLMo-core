@@ -2,10 +2,7 @@ from datetime import datetime
 from functools import partial
 
 from olmo_core.config import DType
-from olmo_core.data import (
-    NumpyDataLoaderConfig,
-    NumpyPackedFSLDatasetConfig,
-)
+from olmo_core.data import NumpyDataLoaderConfig, NumpyPackedFSLDatasetConfig
 from olmo_core.data.numpy_dataset import InstanceFilterConfig
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
@@ -42,20 +39,6 @@ from olmo_core.train.train_module import (
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
-
-"""
-python src/scripts/train/OLMo3/OLMo3-32B-long-context.py launch \
-    stego32-longcontext-smoketest-1 \
-    ai2/augusta \
-    --launch.priority=urgent \
-    --launch.use_hostname_constraints=true \
-    --launch.preemptible=false \
-    --launch.num_nodes=8 \
-    --launch.workspace=ai2/OLMo_3 \
-    --trainer.callbacks.slack_notifier.enabled=False \
-    --trainer.callbacks.wandb.enabled=False \
-    --trainer.hard_stop='{value: 25, unit: steps}'
-"""
 
 SEQUENCE_LENGTH = 65536
 GLOBAL_BATCH_SIZE = 8 * 1024 * 1024  # ~8M tokens, 2**23
