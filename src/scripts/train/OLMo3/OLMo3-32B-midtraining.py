@@ -128,10 +128,10 @@ if __name__ == "__main__":
 
     Examples:
         To render the config and exit:
-            python src/scripts/train/OLMo3/OLMo3-7B-midtraining.py dry_run debug_run ai2/augusta
+            python src/scripts/train/OLMo3/OLMo3-32B-midtraining.py dry_run debug_run ai2/augusta
 
         To launch a training run on Augusta w/ 8 nodes:
-        python src/scripts/train/OLMo3/OLMo3-7B-midtraining.py launch my_run ai2/augusta \
+        python src/scripts/train/OLMo3/OLMo3-32B-midtraining.py launch my_run ai2/augusta \
             --launch.num_nodes=8 \
             --launch.priority=high
     """

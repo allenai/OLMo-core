@@ -57,10 +57,8 @@ python src/scripts/train/OLMo3/OLMo3-32B-long-context.py launch \
     --trainer.hard_stop='{value: 25, unit: steps}'
 """
 
-SEQUENCE_LENGTH = 64 * 1024  # 64k seq len # 65536
-GLOBAL_BATCH_SIZE = 8 * 1024 * 1024  # ~8M tokens  # 2**23
-# 128 sequences per global batch
-
+SEQUENCE_LENGTH = 65536
+GLOBAL_BATCH_SIZE = 8 * 1024 * 1024  # ~8M tokens, 2**23
 MAX_TOKENS = 100_000_000_000  # 100B
 LR = 0.0002071235285  # same as midtraining
 
@@ -127,22 +125,16 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
     return (
         TrainerConfig(
-            # load_path="gs://ai2-llm/checkpoints/stego32-highlr-filter3/step679000+678000+677000+676000/model_and_optim/",  # TODO: update to actual checkpoint
-            # load_path="gs://ai2-llm/checkpoints/stego32-midtraining-run-2-20251105T225302+0000/step23842",  # < best not soup
-            # load_path="gs://ai2-llm/checkpoints/stego32-midtraining-run-4/step23842",
             load_path="gs://ai2-llm/checkpoints/stego32-midtraining-runs-merged-step23842-resharded16",
             load_strategy=LoadStrategy.always,
             load_trainer_state=False,
-            load_optim_state=True,  # worked when false for soup
+            load_optim_state=True,
             save_folder=f"gs://ai2-llm/checkpoints/{common.run_name}/",
             save_overwrite=True,
             metrics_collect_interval=50,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(MAX_TOKENS),
             hard_stop=None,
-            # checkpointer=CheckpointerConfig(
-            #     pre_download=True,
-            # ),
         )
         .with_callback(
             "checkpointer",
@@ -184,7 +176,7 @@ def build_data_components(
         tokenizer=common.tokenizer,
         work_dir=common.work_dir,
         sequence_length=common.max_sequence_length,
-        generate_doc_lengths=intra_document_masking,  # enables intra-document masking  # True
+        generate_doc_lengths=intra_document_masking,  # enables intra-document masking
         source_group_size=8,
         source_permutation_seed=123,
         instance_filter_config=None
