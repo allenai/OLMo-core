@@ -481,12 +481,13 @@ class TransformerConfig(Config):
 
             # Determine effective sequence length for this layer
             # If SWA is used, use window size; otherwise use full sequence length
+            # Cap window size at sequence length to avoid overestimating FLOPS for short sequences
             effective_seq_len = seq_len
             if block_config.attention.sliding_window is not None:
                 sliding_window_cfg = block_config.attention.sliding_window
                 if sliding_window_cfg.should_use_swa(layer_idx, self.n_layers):
                     window_size = sliding_window_cfg.get_window_size(layer_idx, self.n_layers)
-                    effective_seq_len = window_size
+                    effective_seq_len = min(window_size, seq_len)
 
             # The original formula uses n_heads, but with GQA the attention computation
             # is limited by n_kv_heads (since K/V have fewer heads).
