@@ -801,10 +801,44 @@ def test_attention_leftpad_shift_equivalence(use_rope):
         AttentionConfig(
             name=AttentionType.default, n_heads=8, bias=False, qk_norm=LayerNormConfig()
         ),
+        # GQA with QK norm - regression test for k_norm size calculation
+        pytest.param(
+            AttentionConfig(
+                name=AttentionType.default,
+                n_heads=8,
+                n_kv_heads=2,
+                bias=False,
+                qk_norm=LayerNormConfig(),
+            ),
+            id="GQA-qk-norm",
+        ),
+        # MQA with QK norm - regression test for k_norm size calculation
+        pytest.param(
+            AttentionConfig(
+                name=AttentionType.default,
+                n_heads=8,
+                n_kv_heads=1,
+                bias=False,
+                qk_norm=LayerNormConfig(),
+            ),
+            id="MQA-qk-norm",
+        ),
+        # OLMo 3 32B-like config (scaled down) - regression test for k_norm size calculation
+        pytest.param(
+            AttentionConfig(
+                name=AttentionType.default,
+                n_heads=40,
+                n_kv_heads=8,
+                bias=False,
+                qk_norm=LayerNormConfig(),
+            ),
+            id="OLMo3-32B-like-qk-norm",
+        ),
     ],
 )
 def test_attention_builder_config(attn_config: AttentionConfig):
-    d_model = 64
+    # Use d_model that's divisible by max n_heads in our test configs (40)
+    d_model = 160
 
     attn = attn_config.build(d_model, layer_idx=0, n_layers=1)
 
