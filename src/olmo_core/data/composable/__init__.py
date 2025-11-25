@@ -79,7 +79,7 @@ Split the source into train and test sets::
    └─ ConcatAndChunkInstanceSource(ee7a76d): 100 tokens
       └─ InMemoryTokenSource(73b91ee): 100 tokens
  
-   SlicedInstanceSource(a5a511f): 10 tokens
+   SlicedInstanceSource(a5a511f): 20 tokens
    └─ ConcatAndChunkInstanceSource(ee7a76d): 100 tokens
       └─ InMemoryTokenSource(73b91ee): 100 tokens
 
