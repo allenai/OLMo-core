@@ -457,3 +457,193 @@ def test_build_with_block_overrides():
     assert isinstance(model.blocks["1"], MoEHybridTransformerBlockBase)
 
     assert config.num_params == model.num_params
+
+
+def test_num_flops_per_token_with_gqa():
+    """Test that num_flops_per_token accounts for GQA (n_kv_heads < n_heads)."""
+    seq_len = 2048
+    d_model = 512
+    n_heads = 8
+    n_kv_heads = 2  # GQA with 4:1 ratio
+
+    # Config without GQA
+    config_no_gqa = TransformerConfig.llama_like(
+        vocab_size=16_000,
+        d_model=d_model,
+        n_layers=4,
+        n_heads=n_heads,
+        n_kv_heads=None,  # Same as n_heads
+    )
+
+    # Config with GQA
+    config_gqa = TransformerConfig.llama_like(
+        vocab_size=16_000,
+        d_model=d_model,
+        n_layers=4,
+        n_heads=n_heads,
+        n_kv_heads=n_kv_heads,
+    )
+
+    flops_no_gqa = config_no_gqa.num_flops_per_token(seq_len)
+    flops_gqa = config_gqa.num_flops_per_token(seq_len)
+
+    # With GQA, FLOPS should be lower because K/V have fewer heads
+    # Base FLOPS (non-attention) should be the same, only attention FLOPS change
+    base_flops = 6 * config_no_gqa.num_non_embedding_params
+    attention_flops_no_gqa = flops_no_gqa - base_flops
+    attention_flops_gqa = flops_gqa - base_flops
+
+    # The attention FLOPS should be reduced with GQA
+    # The reduction is complex because Q projection still uses n_heads, but K/V use n_kv_heads
+    # and the attention computation itself is affected
+    actual_ratio = attention_flops_gqa / attention_flops_no_gqa
+    # GQA should reduce FLOPS (ratio < 1.0)
+    assert actual_ratio < 1.0, f"GQA should reduce FLOPS, got ratio {actual_ratio}"
+    # The reduction should be significant (at least 10% reduction for 4:1 ratio)
+    assert actual_ratio < 0.9, f"GQA should significantly reduce FLOPS, got ratio {actual_ratio}"
+
+    # Also test on built model
+    model_no_gqa = config_no_gqa.build(init_device="cpu")
+    model_gqa = config_gqa.build(init_device="cpu")
+
+    assert model_no_gqa.num_flops_per_token(seq_len) == flops_no_gqa
+    assert model_gqa.num_flops_per_token(seq_len) == flops_gqa
+
+
+def test_num_flops_per_token_with_swa():
+    """Test that num_flops_per_token accounts for SWA (sliding window attention)."""
+    seq_len = 2048
+    window_size = 1024
+    d_model = 512
+    n_heads = 8
+
+    # Config without SWA
+    config_no_swa = TransformerConfig.llama_like(
+        vocab_size=16_000,
+        d_model=d_model,
+        n_layers=4,
+        n_heads=n_heads,
+    )
+
+    # Config with SWA (all layers use window)
+    sliding_window = SlidingWindowAttentionConfig(
+        pattern=[window_size],
+        force_full_attention_on_first_layer=False,
+        force_full_attention_on_last_layer=False,
+    )
+    config_swa = TransformerConfig.llama_like(
+        vocab_size=16_000,
+        d_model=d_model,
+        n_layers=4,
+        n_heads=n_heads,
+        sliding_window=sliding_window,
+    )
+
+    flops_no_swa = config_no_swa.num_flops_per_token(seq_len)
+    flops_swa = config_swa.num_flops_per_token(seq_len)
+
+    # With SWA, FLOPS should be lower because attention window is smaller
+    # The reduction should be approximately proportional to window_size / seq_len
+    expected_ratio = window_size / seq_len
+    # Base FLOPS (non-attention) should be the same, only attention FLOPS change
+    base_flops = 6 * config_no_swa.num_non_embedding_params
+    attention_flops_no_swa = flops_no_swa - base_flops
+    attention_flops_swa = flops_swa - base_flops
+
+    # The attention FLOPS should scale approximately with window_size
+    actual_ratio = attention_flops_swa / attention_flops_no_swa
+    # Allow some tolerance due to rounding
+    assert actual_ratio < 1.0, "SWA should reduce FLOPS"
+    assert (
+        abs(actual_ratio - expected_ratio) < 0.1
+    ), f"Expected ratio ~{expected_ratio}, got {actual_ratio}"
+
+    # Also test on built model
+    model_no_swa = config_no_swa.build(init_device="cpu")
+    model_swa = config_swa.build(init_device="cpu")
+
+    assert model_no_swa.num_flops_per_token(seq_len) == flops_no_swa
+    assert model_swa.num_flops_per_token(seq_len) == flops_swa
+
+
+def test_num_flops_per_token_with_swa_and_gqa():
+    """Test that num_flops_per_token accounts for both SWA and GQA together."""
+    seq_len = 2048
+    window_size = 1024
+    d_model = 512
+    n_heads = 8
+    n_kv_heads = 2
+
+    # Config with both SWA and GQA
+    sliding_window = SlidingWindowAttentionConfig(
+        pattern=[window_size],
+        force_full_attention_on_first_layer=False,
+        force_full_attention_on_last_layer=False,
+    )
+    config_combined = TransformerConfig.llama_like(
+        vocab_size=16_000,
+        d_model=d_model,
+        n_layers=4,
+        n_heads=n_heads,
+        n_kv_heads=n_kv_heads,
+        sliding_window=sliding_window,
+    )
+
+    # Config without SWA or GQA
+    config_baseline = TransformerConfig.llama_like(
+        vocab_size=16_000,
+        d_model=d_model,
+        n_layers=4,
+        n_heads=n_heads,
+    )
+
+    flops_baseline = config_baseline.num_flops_per_token(seq_len)
+    flops_combined = config_combined.num_flops_per_token(seq_len)
+
+    # Combined should have even lower FLOPS
+    assert flops_combined < flops_baseline, "SWA + GQA should reduce FLOPS"
+
+    # Also test on built model
+    model_combined = config_combined.build(init_device="cpu")
+    assert model_combined.num_flops_per_token(seq_len) == flops_combined
+
+
+def test_num_flops_per_token_with_swa_pattern():
+    """Test that num_flops_per_token handles SWA patterns correctly (different windows per layer)."""
+    seq_len = 2048
+    window_size_1 = 1024
+    window_size_2 = 512
+    d_model = 512
+    n_heads = 8
+
+    # Config with SWA pattern: alternating window sizes
+    sliding_window = SlidingWindowAttentionConfig(
+        pattern=[window_size_1, window_size_2],
+        force_full_attention_on_first_layer=False,
+        force_full_attention_on_last_layer=False,
+    )
+    config_swa_pattern = TransformerConfig.llama_like(
+        vocab_size=16_000,
+        d_model=d_model,
+        n_layers=4,
+        n_heads=n_heads,
+        sliding_window=sliding_window,
+    )
+
+    # Config without SWA
+    config_no_swa = TransformerConfig.llama_like(
+        vocab_size=16_000,
+        d_model=d_model,
+        n_layers=4,
+        n_heads=n_heads,
+    )
+
+    flops_no_swa = config_no_swa.num_flops_per_token(seq_len)
+    flops_swa_pattern = config_swa_pattern.num_flops_per_token(seq_len)
+
+    # With SWA pattern, FLOPS should be lower
+    assert flops_swa_pattern < flops_no_swa, "SWA pattern should reduce FLOPS"
+
+    # Also test on built model
+    model_swa_pattern = config_swa_pattern.build(init_device="cpu")
+    assert model_swa_pattern.num_flops_per_token(seq_len) == flops_swa_pattern
