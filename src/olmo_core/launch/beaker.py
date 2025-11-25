@@ -643,6 +643,8 @@ class BeakerLaunchConfig(Config):
             return experiment
 
         try:
+            print("try follow_experiment")
+            breakpoint()
             follow_experiment(
                 self.beaker,
                 experiment,
