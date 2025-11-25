@@ -711,3 +711,47 @@ def test_num_flops_per_token_with_block_overrides_different_n_heads():
     # Also test on built model
     model_with_override = config_with_override.build(init_device="cpu")
     assert model_with_override.num_flops_per_token(seq_len) == flops_with_override
+
+
+def test_num_flops_per_token_with_swa_window_larger_than_seq():
+    """Test that num_flops_per_token caps window size at sequence length."""
+    seq_len = 512  # Short sequence
+    window_size = 2048  # Window larger than sequence
+    d_model = 512
+    n_heads = 8
+
+    # Config with SWA window larger than sequence length
+    sliding_window = SlidingWindowAttentionConfig(
+        pattern=[window_size],
+        force_full_attention_on_first_layer=False,
+        force_full_attention_on_last_layer=False,
+    )
+    config_swa_large_window = TransformerConfig.llama_like(
+        vocab_size=16_000,
+        d_model=d_model,
+        n_layers=4,
+        n_heads=n_heads,
+        sliding_window=sliding_window,
+    )
+
+    # Config without SWA (baseline)
+    config_no_swa = TransformerConfig.llama_like(
+        vocab_size=16_000,
+        d_model=d_model,
+        n_layers=4,
+        n_heads=n_heads,
+    )
+
+    flops_no_swa = config_no_swa.num_flops_per_token(seq_len)
+    flops_swa_large_window = config_swa_large_window.num_flops_per_token(seq_len)
+
+    # When window size > sequence length, effective window should be capped at seq_len
+    # So FLOPS should be the same as without SWA (since we're using full attention anyway)
+    assert flops_swa_large_window == flops_no_swa, (
+        "When window size exceeds sequence length, FLOPS should equal full attention "
+        "(window should be capped at sequence length)"
+    )
+
+    # Also test on built model
+    model_swa_large_window = config_swa_large_window.build(init_device="cpu")
+    assert model_swa_large_window.num_flops_per_token(seq_len) == flops_swa_large_window
