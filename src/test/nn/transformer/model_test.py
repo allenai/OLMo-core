@@ -554,7 +554,9 @@ def test_num_flops_per_token_with_swa():
     actual_ratio = attention_flops_swa / attention_flops_no_swa
     # Allow some tolerance due to rounding
     assert actual_ratio < 1.0, "SWA should reduce FLOPS"
-    assert abs(actual_ratio - expected_ratio) < 0.1, f"Expected ratio ~{expected_ratio}, got {actual_ratio}"
+    assert (
+        abs(actual_ratio - expected_ratio) < 0.1
+    ), f"Expected ratio ~{expected_ratio}, got {actual_ratio}"
 
     # Also test on built model
     model_no_swa = config_no_swa.build(init_device="cpu")
