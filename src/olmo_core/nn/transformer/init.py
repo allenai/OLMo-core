@@ -1,5 +1,5 @@
 from typing import Optional, Union, cast
-
+import math
 import torch
 import torch.nn as nn
 from torch.distributed.tensor import DTensor
@@ -15,6 +15,7 @@ from ..moe import DroplessMoEMLP, MoEBase, MoELinearRouter, MoEMLP, MoEOrthogona
 def _apply_init(init_fun, x: torch.Tensor, *args, **kwargs):
     if not isinstance(x, DTensor):
         init_fun(x, *args, **kwargs)
+        return
 
     # Initialize full version of x locally, then apply init to that.
     full_x = torch.zeros(x.shape, dtype=x.dtype, device=x.device)
@@ -23,6 +24,22 @@ def _apply_init(init_fun, x: torch.Tensor, *args, **kwargs):
 
     # Now copy over the corresponding shard of `full_x` into `x`.
     get_local_tensor(x).copy_(get_local_tensor(full_x))
+
+def kaiming_fan_in_uniform_(
+    tensor: torch.Tensor,
+    in_features: int,
+    generator: Optional[torch.Generator] = None,
+) -> torch.Tensor:
+    # Kaiming uniform with a=sqrt(5)
+    # same as uniform(-1/sqrt(in_features), 1/sqrt(in_features))
+
+    nn.init.uniform_(
+        tensor,
+        a=-1.0 / math.sqrt(in_features),
+        b=1.0 / math.sqrt(in_features),
+        generator=generator,
+    )
+    return tensor
 
 
 class InitMethod(StrEnum):
@@ -297,6 +314,12 @@ class InitMethod(StrEnum):
                 b=3 * std,
                 generator=ep_generator, # might be sharded, use ep_generator
             )
+            # _apply_init(
+            #     kaiming_fan_in_uniform_,
+            #     b.routed_experts.w_up_gate,
+            #     in_features=b.routed_experts.d_model, # fan_in = d_model
+            #     generator=generator,
+            # )
             _apply_init(
                 nn.init.trunc_normal_,
                 b.routed_experts.w_down,
@@ -306,6 +329,14 @@ class InitMethod(StrEnum):
                 b=3 * std,
                 generator=ep_generator, # might be sharded, use ep_generator
             )
+            # assert b.routed_experts_router is not None
+            # _apply_init(
+            #     kaiming_fan_in_uniform_,
+            #     b.routed_experts.w_down,
+            #     in_features=b.routed_experts.hidden_size * b.routed_experts_router.top_k, # fan_in = moe hidden size
+            #     generator=generator,
+            # )
+
         # shared experts
         if b.shared_experts:
             _apply_init(
@@ -317,6 +348,12 @@ class InitMethod(StrEnum):
                 b=3 * std,
                 generator=generator,
             )
+            # _apply_init(
+            #     kaiming_fan_in_uniform_,
+            #     b.shared_experts.w_up_gate,
+            #     in_features=b.shared_experts.d_model, 
+            #     generator=generator,
+            # )
             _apply_init(
                 nn.init.trunc_normal_,
                 b.shared_experts.w_down,
@@ -326,4 +363,9 @@ class InitMethod(StrEnum):
                 b=3 * std,
                 generator=generator,
             )
-            
+            # _apply_init(
+            #     kaiming_fan_in_uniform_,
+            #     b.shared_experts.w_down,
+            #     in_features=b.shared_experts.hidden_size, 
+            #     generator=generator,
+            # )

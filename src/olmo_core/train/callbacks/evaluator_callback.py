@@ -27,7 +27,7 @@ from olmo_core.utils import (
 )
 
 from ..common import Duration, MetricMergeStrategy
-from ..train_module import EvalBatchSizeUnit, EvalBatchSpec, TransformerTrainModule
+from ..train_module import EvalBatchSizeUnit, EvalBatchSpec, TransformerTrainModule, MoEV2TransformerTrainModule
 from .callback import Callback, CallbackConfig
 
 if TYPE_CHECKING:
@@ -78,9 +78,9 @@ class EvaluatorCallback(Callback):
     """
 
     def post_attach(self):
-        if not isinstance(self.trainer.train_module, TransformerTrainModule):
+        if not (isinstance(self.trainer.train_module, TransformerTrainModule) or isinstance(self.trainer.train_module, MoEV2TransformerTrainModule)):
             raise OLMoConfigurationError(
-                f"'{self.__class__.__name__}' only suports the '{TransformerTrainModule.__name__}' train module"
+                f"'{self.__class__.__name__}' only suports the '{TransformerTrainModule.__name__}' or '{MoEV2TransformerTrainModule.__name__}' train module"
             )
 
     def pre_train(self):
@@ -92,6 +92,7 @@ class EvaluatorCallback(Callback):
             return
 
         self._perform_eval()
+
 
     def _perform_eval(self):
         # Put model in eval train mode.
@@ -115,12 +116,21 @@ class EvaluatorCallback(Callback):
                 eval_tokens += batch["input_ids"].numel() * dp_world_size
 
                 batch = move_to_device(batch, get_default_device())
+
+                evaluator.maybe_add_debug_info(batch)
+
                 with torch.no_grad():
                     # Run forward pass, get logits and un-reduced CE loss.
                     labels = get_labels(batch)
-                    output = self.trainer.train_module.eval_batch(batch, labels=labels)
-                    assert isinstance(output, LMOutputWithLoss)
-                    logits, _, ce_loss, _ = output
+
+                    # output is None if using PP and does not have last stage on this rank
+                    # TODO: sometimes we don't need the loss, optimize this later
+                    output: Optional[LMOutputWithLoss] = self.trainer.train_module.eval_batch(batch, labels=labels)
+                    if output is None:
+                        logits = None 
+                        ce_loss = None
+                    else:
+                        logits, _, ce_loss, _ = output
 
                     # NOTE: might have host-device syncs here but that's okay.
                     with cuda_sync_debug_mode(0):
@@ -302,6 +312,7 @@ class DownstreamEvaluator(Evaluator):
 
         self.label = task
         self.task = task_dataset
+        self.tokenizer = tokenizer # for debug print
         self.metric = ICLMetric(metric_type=self.task.metric_type).to(
             device or get_default_device()
         )
@@ -362,6 +373,9 @@ class DownstreamEvaluator(Evaluator):
 
         super().__init__(name=name, batches=data_loader, device=device)
 
+    def __repr__(self) -> str:
+        return f"DownstreamEvaluator({self.label})"
+
     def update_metrics(
         self, batch: Dict[str, Any], ce_loss: Optional[torch.Tensor], logits: Optional[torch.Tensor]
     ) -> None:
@@ -379,6 +393,10 @@ class DownstreamEvaluator(Evaluator):
     def reset_metrics(self) -> None:
         self.metric.reset()
 
+    def maybe_add_debug_info(self, batch):
+        for key in ['input_ids', 'continuation']:
+            val = batch[key]
+            batch[f'{key}_str'] = self.tokenizer.decode_batch(val.cpu().tolist())
 
 @dataclass
 class DownstreamEvaluatorCallbackConfig(CallbackConfig):

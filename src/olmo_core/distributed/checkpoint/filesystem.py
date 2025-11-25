@@ -113,9 +113,18 @@ def _write_items(
                 else:
                     assert isinstance(data, torch.Tensor)
                     data = data.cpu()  # should already be on CPU, but just in case
+                    data = data.clone() # if the data is using shared storage, clone it to avoid saving more than needed
+
                     torch.save(data, tmp_file)
 
                 length = tmp_file.tell() - offset
+
+                if isinstance(data, torch.Tensor) and (length - data.nbytes) > 1024 * 1024: # 1KB tolerance for metadata
+                    raise OLMoCheckpointError(
+                        f"Written byte size mismatch for index {write_item.index}: "
+                        f"expected {data.nbytes}, got {length}"
+                        f"The data might be a view or sharing underlying storage with something else."
+                    )
 
                 results.append(
                     WriteResult(

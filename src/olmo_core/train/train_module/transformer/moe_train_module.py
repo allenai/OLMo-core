@@ -10,6 +10,7 @@ import torch.distributed as dist
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 import torch.nn as nn
 from torch.distributed.device_mesh import DeviceMesh
+from torch.distributed.tensor import distribute_tensor
 from torch.distributed.checkpoint.metadata import Metadata
 from torch.distributed.fsdp import FSDPModule
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
@@ -22,6 +23,10 @@ from torch.distributed.tensor import Placement, Replicate, Shard
 from torch.distributed.pipelining import PipelineStage
 from ...common import MetricMergeStrategy, ReduceType
 import math
+from olmo_core.aliases import PathOrStr
+import torch.distributed.checkpoint as dist_cp
+from torch.distributed.checkpoint.default_planner import DefaultSavePlanner, DefaultLoadPlanner
+from olmo_core.distributed.checkpoint import _prepare_env_for_save, RemoteFileSystemWriter, RemoteFileSystemReader
 from torch.distributed import ProcessGroup
 from olmo_core.data.utils import get_labels, split_batch
 from olmo_core.distributed.checkpoint import (
@@ -78,6 +83,54 @@ import nvtx
 log = logging.getLogger(__name__)
 
 M = TypeVar("M", bound=List[MoEFusedV2Transformer])
+
+def cpu_mesh_like(gpu_mesh: DeviceMesh) -> DeviceMesh:
+    # gpu_mesh.mesh is a CPU int tensor of ranks with the mesh's shape
+    ranks = gpu_mesh.mesh.clone()          # e.g., tensor([[0,1],[2,3]]) or nested shape
+    return DeviceMesh(
+        "cpu",
+        # "cuda",
+        ranks,                             # keep the exact shape
+        mesh_dim_names=gpu_mesh.mesh_dim_names,
+    )
+
+
+class FlatSavePlanner(DefaultSavePlanner):
+    pass
+
+from torch.distributed.checkpoint.planner import (
+    LoadPlan,
+    LoadPlanner,
+    ReadItem,
+    SavePlan,
+    SavePlanner,
+    WriteItem,
+    WriteItemType,
+)
+from torch.distributed.checkpoint.default_planner import (
+    create_default_global_load_plan,
+    create_default_local_load_plan,
+    create_default_global_save_plan,
+    create_default_local_save_plan,
+)
+from torch.distributed.checkpoint.metadata import (
+    BytesStorageMetadata,
+    ChunkStorageMetadata,
+    Metadata,
+    MetadataIndex,
+    STATE_DICT_TYPE,
+    STORAGE_TYPES,
+    StorageMeta,
+    TensorStorageMetadata,
+)
+from torch.distributed.checkpoint.planner_helpers import (
+    _create_default_metadata_only_plan,
+    _create_read_items,
+    _create_write_items,
+    _init_state_dict,
+)
+
+
 
 class MoEV2TransformerTrainModule(TrainModule):
     def __init__(
@@ -194,6 +247,9 @@ class MoEV2TransformerTrainModule(TrainModule):
 
         import torch._dynamo.config as dynamo_cfg
         dynamo_cfg.recompile_limit = 64  # or any higher number you want
+
+        for part in self.model_parts:
+            part.attach_fp32_accum()
 
 
         if compile_model:
@@ -440,7 +496,9 @@ class MoEV2TransformerTrainModule(TrainModule):
 
         self.world_mesh = {
             "dense": self.dense_mesh,
-            "moe": self.moe_mesh
+            "moe": self.moe_mesh,
+            "dense_cpu": cpu_mesh_like(self.dense_mesh),
+            "moe_cpu": None if self.moe_mesh is None else cpu_mesh_like(self.moe_mesh),
         }
 
     @property
@@ -518,128 +576,189 @@ class MoEV2TransformerTrainModule(TrainModule):
                 stages=self._pp_stages,
                 pp_mesh=pp_mesh,
                 schedule_name=self._pp_config.schedule,
-                loss_fn=self.loss_fn,
+
                 num_microbatches=num_microbatches,
             )
 
-    def loss_fn(self, output: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-        # NOTE: the output is the loss.
-        del labels
-        return output
+    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
+        raise NotImplementedError("Use load_state_dict_direct instead")
     
     def state_dict(self, *, optim: bool = True) -> Dict[str, Any]:
         return self._get_state_dict(self.state_dict_save_opts, optim=optim)
 
     def state_dict_to_load(self, metadata: Metadata, *, optim: bool = True) -> Dict[str, Any]:
         load_opts = self.state_dict_load_opts
-
-        if "optim.param_groups.0.params" in metadata.state_dict_metadata:
-            # unflattened optimizer state
-            if load_opts.flatten_optimizer_state_dict:
-                log.warning(
-                    "Loading checkpoint with an unflattened optimizer state even though "
-                    "'flatten_optimizer_state_dict=True' in train module's 'state_dict_load_opts', "
-                    "automatically switching to 'flatten_optimizer_state_dict=False'."
-                )
-                load_opts = replace(load_opts, flatten_optimizer_state_dict=False)
-        else:
-            # flattened optimizer state
-            if not load_opts.flatten_optimizer_state_dict:
-                log.warning(
-                    "Loading checkpoint with a flattened optimizer state even though "
-                    "'flatten_optimizer_state_dict=False' in train module's 'state_dict_load_opts', "
-                    "automatically switching to 'flatten_optimizer_state_dict=True'."
-                )
-                load_opts = replace(load_opts, flatten_optimizer_state_dict=True)
-
-        has_optim_state: bool = False
-        for key in metadata.state_dict_metadata.keys():
-            if key.startswith("optim."):
-                has_optim_state = True
-                break
-
-        if optim and not has_optim_state:
-            log.warning("No optimizer state found in checkpoint")
-            optim = False
-
         state_dict = self._get_state_dict(load_opts, optim=optim)
-        if self.load_key_mapping is not None:
-            swap_param_keys(state_dict, self.load_key_mapping, metadata=metadata)
-
-        if not load_opts.strict:
-            # Remove any keys in the 'state_dict' that are not present in the checkpoint.
-            pruned_keys = prune_state_dict(state_dict, set(metadata.state_dict_metadata.keys()))
-            if pruned_keys:
-                log.warning(f"Checkpoint is missing the following keys: {pruned_keys}")
-
         return state_dict
 
-    def state_dict_to_save(self, *, optim: bool = True) -> Dict[str, Any]:
-        return self._get_state_dict(self.state_dict_save_opts, optim=optim)
+    def save_state_dict_direct(
+        self,
+        dir: PathOrStr,
+        *,
+        process_group: Optional[dist.ProcessGroup] = None,
+        save_overwrite: bool = False,
+        thread_count: Optional[int] = None,
+        throttle_uploads: bool = False,
+    ):
+        state_dict = self.optim.state_dict()
 
-    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
-        load_optim = "optim" in state_dict
+        # this is count the param size of the global dtensor, not the local shard
+        main_param_sz = 0 
+        for key, value in state_dict.items():
+            if key.endswith('.main'):
+                main_param_sz += value.numel()
 
-        if self.load_key_mapping is not None:
-            swap_param_keys(state_dict, self.load_key_mapping, reverse=True, quiet=True)
+        # this is the theretical model param size calculated from config before PP split
+        # model_param_sz = self.model_parts[0].num_params
 
-        # NOTE: `dist_cp_sd.set_(model|optimizer)_state_dict()` doesn't respect `strict=False`
-        # option with missing keys, so we have to handle that on our own.
-        if not self.state_dict_load_opts.strict:
-            flatten_optimizer_state_dict = (
-                False if not load_optim else ("state" not in state_dict["optim"])
-            )
-            load_opts = replace(
-                self.state_dict_load_opts, flatten_optimizer_state_dict=flatten_optimizer_state_dict
-            )
-            full_state_dict = self._get_state_dict(load_opts, optim=load_optim)
-            merge_state_dicts(state_dict, full_state_dict)
+        # assert main_param_sz == model_param_sz, f"Main param size {main_param_sz} != model param size {model_param_sz}"
 
-        plain_model_state_dict = OrderedDict()
-        for key, value in state_dict["model"].items():
-            if isinstance(value, DTensor):
-                plain_model_state_dict[key] = value.to_local()
-            else:
-                plain_model_state_dict[key] = value
-
-        dist_cp_sd.set_model_state_dict(
-            self.model,
-            plain_model_state_dict,
-            options=self.state_dict_load_opts,
+        dir = _prepare_env_for_save(dir, process_group=process_group, save_overwrite=save_overwrite)
+        planner = FlatSavePlanner(dedup_save_to_lowest_rank=True)
+        dist_cp.state_dict_saver.save(
+            state_dict,
+            storage_writer=RemoteFileSystemWriter(
+                dir,
+                thread_count=thread_count,
+                process_group=process_group,
+                throttle_uploads=throttle_uploads,
+            ),
+            process_group=process_group,
+            planner=planner,
         )
-        gc_cuda()
-        if load_optim:
-            self.optim.load_state_dict(state_dict["optim"])
 
-            # debug_model1 = torch.load(f'tmp.model.{dist.get_rank()}.pt')
-            # debug_model2 = self.model.state_dict()
+        return
 
-            # # compare
-            # for key in debug_model1.keys():
-            #     if not torch.equal(debug_model1[key], debug_model2[key]):
-            #         print(f"Difference found in key: {key}")
+    def load_state_dict_direct(
+        self,
+        dir: PathOrStr,
+        *,
+        process_group: Optional[dist.ProcessGroup] = None,
+        pre_download: bool = False,
+        work_dir: Optional[PathOrStr] = None,
+        thread_count: Optional[int] = None,
+    ):
+        from olmo_core.io import normalize_path
 
-            # debug_optim1 = torch.load(f'tmp.optim.{dist.get_rank()}.pt')
+        sd_to_load = self.optim.state_dict()
 
-            # debug_optim2 = torch.optim.Optimizer.state_dict(self.optim)
-            # debug_optim2['_flat_main_dp'] = self.optim._flat_main_dp
-            # debug_optim2['_flat_main_ep_dp '] = self.optim._flat_main_ep_dp 
-            # debug_optim2['_flat_exp_avg_dp '] = self.optim._flat_exp_avg_dp 
-            # debug_optim2['_flat_exp_avg_ep_dp'] = self.optim._flat_exp_avg_ep_dp
-            # debug_optim2['_flat_exp_avg_sq_dp '] = self.optim._flat_exp_avg_sq_dp 
-            # debug_optim2['_flat_exp_avg_sq_ep_dp  '] = self.optim._flat_exp_avg_sq_ep_dp 
-            # # compare
-            # for key in debug_optim1.keys():
-            #     if key.startswith('_') and not torch.equal(debug_optim1[key], debug_optim2[key]):
-            #         print(f"Difference found in key: {key}")
+        dir = normalize_path(dir)
+        reader = RemoteFileSystemReader(
+            dir, 
+            thread_count=thread_count, 
+            pre_download=pre_download, work_dir=work_dir
+        )
 
-            gc_cuda()
+        ######## HACK load FSDP ckpt ########
+        HACK=False
+        if HACK:
+            metadata = reader.read_metadata()
+            fsdp_model_sd_meta = {k: v for k, v in metadata.state_dict_metadata.items() if k.startswith('model')}
+            fsdp_sd_to_load = {}
+            for k in fsdp_model_sd_meta.keys():
+                fsdp_sd_to_load[k] = torch.empty(fsdp_model_sd_meta[k].size, dtype=torch.float32)
+        
+            dist_cp.state_dict_loader.load(
+                fsdp_sd_to_load,
+                checkpoint_id=dir,
+                storage_reader=reader,
+                process_group=process_group,
+                # planner=FlatLoadPlanner(),
+            )
+
+            # convert
+            model_sd = {k: v for k, v in sd_to_load.items() if k.endswith('.main')}
+
+            # for k, v in fsdp_sd_to_load.items():
+            #     print(k, v.size(), v.mean().item(), v.std().item())
+            pass
+            assert False, "HACK not finished"
+
+
+            # mapping = {} # src -> dst (fsdp key -> moe v2 key)
+            # mapping['embeddings.weight']
+
+        ###################
+        else:
+            dist_cp.state_dict_loader.load(
+                sd_to_load,
+                checkpoint_id=dir,
+                storage_reader=reader,
+                process_group=process_group,
+                # planner=FlatLoadPlanner(),
+            )
+
+        # since the sd_to_load is returned by optim.state_dict(),
+        # the optim's state should automatically updated.
+        self.optim.load_state_dict(sd_to_load)
+
+        # load into model params
+        self.optim._copy_main_params_to_model_params()
+
+        return
+
+
+    def _distribute_ep(self, tensor: torch.Tensor) -> DTensor:
+        """Distribute a tensor across EP dimensions."""
+        assert self.ep_enabled
+        assert self.world_mesh is not None
+        assert self.world_mesh['moe'] is not None
+        dt_tensor = distribute_tensor(
+            tensor,
+            device_mesh=self.world_mesh['moe']['ep_dp', 'ep_mp'],
+            placements=(Replicate(), Shard(0)), # shard over EP_MP
+            src_data_rank=None
+        )
+        return dt_tensor
+    
+    def _install_model_params_from_cpu_dtensor(self, main_params_sd):
+        # collect model param from all stages
+        plain_model_sd = OrderedDict()
+        for model_part in self.model_parts:
+            part_sd = model_part.state_dict()
+            for k, v in part_sd.items():
+                plain_model_sd[k] = v
+
+        assert len(plain_model_sd) == len(main_params_sd), \
+            f"Model param count ({len(plain_model_sd)}) does not match main param count ({len(main_params_sd)})"
+
+        # get full tensor for each param from cpu dtensor
+        for k, v in main_params_sd.items():
+            main_param_full_tensor = v.full_tensor()
+            
+            model_k = k[:-len('.main')] # remove .main suffix
+            model_local_tensor = plain_model_sd[model_k]
+
+            # wrap main param tensor to dtensor based on the model parallelism we have
+            # and extract the local part
+            # then assign to the model param
+            if self.ep_enabled and "routed_experts." in model_k:
+                assert self.world_mesh is not None
+                assert self.world_mesh['moe'] is not None
+                model_global_shape = model_local_tensor.size()  # the EP sharded shape
+                model_global_shape[0] = model_global_shape[0] * self.world_mesh['moe']['ep_mp'].size() # global shape
+
+                # dt_v = distribute_tensor(
+                #     main_param_full_tensor.reshape(model_global_shape), 
+                #     device_mesh=self.world_mesh['moe']['ep_dp', 'ep_mp'], placements=(Replicate(), Shard(0)), src_data_rank=None
+                # ) # DTensor sharded over EP_MP
+                dt_v = self._distribute_ep(main_param_full_tensor.reshape(model_global_shape))
+                main_local_tensor = dt_v.to_local() # extract local shard for this rank
+            else:
+                # dense param
+                main_local_tensor = main_param_full_tensor.reshape(model_local_tensor.shape)
+                main_local_tensor = main_local_tensor.to(model_local_tensor.device) # copy to gpu
+            
+            # assign to model param
+            model_local_tensor.copy_(main_local_tensor)
+
+        return
+
 
     def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
         # Set model to train mode if it isn't already.
         for m in self.model_parts:
             m.train()
-
 
         # Generate labels.
         if "labels" not in batch:
@@ -733,7 +852,7 @@ class MoEV2TransformerTrainModule(TrainModule):
             # Run pipeline schedule.
             input_ids, labels, model_kwargs = self._prepare_batch(batch, batch['labels'])
             assert labels is not None
-            ce_batch_loss, z_batch_loss = self.run_pipeline(
+            pp_outputs = self.run_pipeline(
                 input_ids,
                 labels,
                 batch_num_tokens_for_loss,
@@ -743,6 +862,25 @@ class MoEV2TransformerTrainModule(TrainModule):
                 return_logits=False,
                 **model_kwargs,
             )   
+            # Collect losses from all micro-batches and all stages.
+            ce_batch_loss = None
+            z_batch_loss = None
+            for stage_outputs in pp_outputs:
+                for mb_output in stage_outputs:
+                    if mb_output is None: # non-last stage
+                        continue
+                    else:
+                        assert isinstance(mb_output, LMOutputWithLoss)
+                        _, loss, ce_loss, z_loss = mb_output
+
+                        # ce_loss should always be not None
+                        ce_batch_loss = (ce_batch_loss + ce_loss.detach()) if ce_batch_loss is not None else ce_loss.detach()
+
+                        # z loss is optional
+                        if z_loss is not None: 
+                            z_batch_loss = (z_batch_loss + z_loss.detach()) if z_batch_loss is not None else z_loss.detach()
+
+            
         #############################
         # debug_norm = [torch.nn.utils.get_total_norm([p.grad for p in model_part.parameters()]) for model_part in self.model_parts]
 
@@ -757,25 +895,20 @@ class MoEV2TransformerTrainModule(TrainModule):
         # Record loss metrics.
         from olmo_core.optim.moe_optimizer import MoEFusedV2Optimizer
         if self.pp_enabled:
-            if isinstance(self.optim, MoEFusedV2Optimizer):
-                ce_batch_loss = self.reduce_send_recv(ce_batch_loss)
-                self.record_ce_loss(ce_batch_loss)
-                self.optim.latest_loss = ce_batch_loss
-            elif ce_batch_loss is not None:
-                self.record_ce_loss(ce_batch_loss, ReduceType.mean)
+            ce_batch_loss = self.reduce_send_recv(ce_batch_loss)
+            self.record_ce_loss(ce_batch_loss)
+            self.optim.latest_loss = ce_batch_loss
         else:
             assert ce_batch_loss is not None, "CE loss should not be None"
-            if isinstance(self.optim, MoEFusedV2Optimizer):
-                # Need to reduce the loss right away for the SkipStepOptimizer.
-                if is_distributed():
-                    ce_batch_loss.div_(self._reduce_divide_factor)
-                    dist.all_reduce(ce_batch_loss)
-                    ce_batch_loss.div_(self.world_size)
-                    ce_batch_loss.mul_(self._reduce_divide_factor)
-                self.record_ce_loss(ce_batch_loss)
-                self.optim.latest_loss = ce_batch_loss
-            else:
-                self.record_ce_loss(ce_batch_loss, ReduceType.mean)
+            # Need to reduce the loss right away for the SkipStepOptimizer. NOTE: WHY?
+            if is_distributed():
+                ce_batch_loss.div_(self._reduce_divide_factor)
+                dist.all_reduce(ce_batch_loss)
+                ce_batch_loss.div_(self.world_size)
+                ce_batch_loss.mul_(self._reduce_divide_factor)
+            self.record_ce_loss(ce_batch_loss)
+            self.optim.latest_loss = ce_batch_loss
+
   
         if z_batch_loss is not None:
             assert self.z_loss_multiplier is not None
@@ -812,9 +945,7 @@ class MoEV2TransformerTrainModule(TrainModule):
 
     def eval_batch(
         self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
-    ) -> Union[torch.Tensor, LMOutputWithLoss]:
-        if self.pp_enabled:
-            raise NotImplementedError("Pipeline parallelism is not implemented")
+    ) -> Union[torch.Tensor, Optional[LMOutputWithLoss]]:
 
         # TODO: (epwalsh) Currently all of our evaluators require the full logits locally,
         # but when we're using CP/TP we usually can't materialize the full logits locally (due to OOMs).
@@ -837,14 +968,123 @@ class MoEV2TransformerTrainModule(TrainModule):
             m.eval()
 
         with self._eval_batch_context():
-            return self.model_forward_no_pipeline(
-                input_ids,
-                labels=labels,
-                ignore_index=self.label_ignore_index,
-                loss_reduction="none",
-                **model_kwargs,
+            if not self.pp_enabled:
+                lm_output = self.model_forward_no_pipeline(
+                    input_ids,
+                    labels=labels,
+                    ignore_index=self.label_ignore_index,
+                    loss_reduction="none",
+                    **model_kwargs,
+                )
+                assert isinstance(lm_output, LMOutputWithLoss), "Expected LMOutputWithLoss"
+                return lm_output
+
+            else:
+                assert labels is not None
+                lm_output = self.run_pipeline_eval(
+                    input_ids,
+                    labels,
+                    batch_num_tokens_for_loss=None,
+                    ignore_index=self.label_ignore_index,
+                    loss_reduction="none",
+                    **model_kwargs,
+                ) 
+                # merge lm_output from all stages and all micro-batches
+                # List[List[Optional[LMOutputWithLoss]]] --> Optional[LMOutputWithLoss]
+                final_lm_output: Optional[LMOutputWithLoss] = None
+                logits_list = []
+                loss_list = []
+                ce_loss_list = []
+                z_loss_list = []
+
+                # NOTE: here we combine the multiple stages assuming they are different stages
+                # with the same DP rank (e.g., stage 0 and stage 1 in X-stage PP, working on the same batch data).
+                # so at max one of the stage_outputs will have non-None output.
+                # TODO: this assumption might not hold in dualpipe and other schedules.
+                for stage_outputs in lm_output:
+                    for mb_output in stage_outputs:
+                        if mb_output is None:
+                            continue
+                        else:
+                            assert isinstance(mb_output, LMOutputWithLoss)
+                            (
+                                logits, # [mb, seq_len, vocab_size]
+                                loss,  # [mb, seq_len] because loss_reduction="none"
+                                ce_loss, # [mb, seq_len]
+                                z_loss,  # ??
+                             ) = mb_output
+                            
+                            # always not None
+                            loss_list.append(loss)
+                            ce_loss_list.append(ce_loss)
+
+                            # optional
+                            if logits is not None:
+                                logits_list.append(logits)
+                            if z_loss is not None:
+                                z_loss_list.append(z_loss)
+
+                # Concatenate all logits and losses
+                merged_logits = torch.cat(logits_list, dim=0) if len(logits_list) > 0 else None
+                merged_loss = torch.cat(loss_list, dim=0) if len(loss_list) > 0 else None
+                merged_ce_loss = torch.cat(ce_loss_list, dim=0) if len(ce_loss_list) > 0 else None
+                merged_z_loss = torch.cat(z_loss_list, dim=0) if len(z_loss_list) > 0 else None
+
+                if merged_loss is not None:
+                    # has last stage output
+                    assert merged_ce_loss is not None
+                    final_lm_output = LMOutputWithLoss(
+                        merged_logits,
+                        merged_loss,
+                        merged_ce_loss,
+                        merged_z_loss,
+                    )
+                else:
+                    # no last stage output
+                    final_lm_output = None
+
+                return final_lm_output
+
+    def run_pipeline_eval(
+        self,
+        input_ids: torch.Tensor,
+        labels: torch.Tensor,
+        **kwargs,
+    ) -> List[List[Optional[LMOutputWithLoss]]]:
+
+        # the micro-batch size should be a multiple of pp degree
+        def pad_dim_0_to_multiple_of(tensor: torch.Tensor, multiple: int) -> torch.Tensor:
+            bsz = tensor.size(0)
+            if bsz % multiple == 0:
+                return tensor
+            pad_size = multiple - (bsz % multiple)
+            padding_tensor = tensor[-1].unsqueeze(0).expand(pad_size, *tensor.size()[1:]) # repeat last element
+            padded_tensor = torch.cat([tensor, padding_tensor], dim=0).contiguous()
+            return padded_tensor
+
+        original_batch_size = input_ids.size(0)
+        padded_input_ids = pad_dim_0_to_multiple_of(input_ids, self.train_pp_schedule.pp_mesh.size())
+        padded_labels = pad_dim_0_to_multiple_of(labels, self.train_pp_schedule.pp_mesh.size())
+        for k, v in kwargs.items():
+            if isinstance(v, torch.Tensor) and v.size(0) == original_batch_size:
+                kwargs[k] = pad_dim_0_to_multiple_of(v, self.train_pp_schedule.pp_mesh.size())
+
+        with self._model_forward_context():
+            schedule_outputs = self.train_pp_schedule.step(
+                padded_input_ids,
+                target=padded_labels,
+                forward_only=True, # <<<--- eval mode
+                # kwargs from now ---
+                # loss_div_factor=batch_num_tokens_for_loss,
+                labels=padded_labels,
+                **kwargs,
             )
 
+        # remove padding results from outputs
+        for stage_idx in range(len(schedule_outputs)):
+            schedule_outputs[stage_idx] = schedule_outputs[stage_idx][: original_batch_size]
+
+        return schedule_outputs
     
     def run_pipeline(
         self,
@@ -852,143 +1092,37 @@ class MoEV2TransformerTrainModule(TrainModule):
         labels: torch.Tensor,
         batch_num_tokens_for_loss: Union[int, float],
         **kwargs,
-    ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
+    ) -> List[List[Optional[LMOutputWithLoss]]]:
         """
         Run the pipeline, returning the losses captured.
+        Returns:
+            ce_batch_loss: Cross-entropy loss for the batch.
+            z_batch_loss: Z loss for the batch (if applicable).
         """
-
-        ce_batch_loss: Optional[torch.Tensor] = None
-        z_batch_loss: Optional[torch.Tensor] = None
-
-        # self.optim.offload_optimizer_states()
-
-        def capture_losses(
-            model: Transformer, args: Tuple[torch.Tensor, ...], output: Any
-        ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
-            del args
-            nonlocal ce_batch_loss
-            nonlocal z_batch_loss
-
-            if model.lm_head is not None:
-                assert isinstance(output, LMOutputWithLoss)
-                _, loss, ce_loss, z_loss = output
-                if ce_batch_loss is None:
-                    ce_batch_loss = get_local_tensor(ce_loss.detach())
-                else:
-                    ce_batch_loss += get_local_tensor(ce_loss.detach())
-
-                if self.z_loss_multiplier is not None:
-                    assert z_loss is not None
-                    if z_batch_loss is None:
-                        z_batch_loss = get_local_tensor(z_loss.detach())
-                    else:
-                        z_batch_loss += get_local_tensor(z_loss.detach())
-
-                return loss.unsqueeze(0)
-            else:
-                assert isinstance(output, torch.Tensor)
-                return output
-
-        handles = []
-        for model in self.model_parts:
-            handles.append(model.register_forward_hook(capture_losses))
-
         with self._model_forward_context():
-            self.train_pp_schedule.step(
+            schedule_outputs = self.train_pp_schedule.step(
                 input_ids,
                 target=labels,
                 loss_div_factor=batch_num_tokens_for_loss,
                 labels=labels,
                 **kwargs,
             )
+        return schedule_outputs
 
-        for handle in handles:
-            handle.remove()
-
-        # self.optim.reload_optimizer_states_to_device()
-
-        return ce_batch_loss, z_batch_loss
 
 
     def optim_step(self):
         from olmo_core.optim.moe_optimizer import MoEFusedV2Optimizer
+
+        # rename model's p._main_grad_fp32 to be p.grad so that optim can find the grad
+        # for model in self.model_parts:
+        #     model.prepare_main_grads_for_optim()
+
         if self.reduce_scatter_grads:
             pass
         else:
-            # TODO: disable this branch  
-            assert self.pp_enabled == False, "Pipeline parallelism with all-reduce grad is not supported"
-            model = self.model_parts[0]
-            # Maybe clip gradients.
-            if self.max_grad_norm is not None:
-                grad_norm = self._clip_grad_norm(self.max_grad_norm)
-                # NOTE: grad norm is already reduced over ranks, so we set `reduce_type` to `None`.
-                self.trainer.record_metric(
-                    "total grad norm", grad_norm, reduce_type=None, namespace="optim"
-                )
-                if isinstance(self.optim, MoEFusedV2Optimizer):
-                    self.optim.latest_grad_norm = grad_norm
-
-            # calculate per layer grad norm
-            per_layer_norms = []
-            for layer_idx, layer in enumerate(model.blocks.values()):
-                layer_grads = [p.grad for p in layer.parameters() if p.grad is not None]
-                if layer_grads:
-                    per_layer_norm = nn.utils.get_total_norm(
-                        layer_grads, norm_type=2.0, error_if_nonfinite=False, foreach=None
-                    )
-                    if isinstance(per_layer_norm, DTensor):
-                        # If per_layer_norm is a DTensor, we need to reduce it to get the correct value.
-                        per_layer_norm = per_layer_norm.full_tensor()
-                    per_layer_norms.append(per_layer_norm)
-                else:
-                    per_layer_norms.append(torch.tensor(0.0, device=self.device)) 
-                    
-                self.trainer.record_metric(
-                    f"clipped grad norm (layer {layer_idx})", per_layer_norms[layer_idx], reduce_type=None, namespace="optim"
-                )
-                
-                del layer_grads
-                
-            del per_layer_norms
-
-            # embedding layer grad norm
-            embedding_grads = [p.grad for p in model.embeddings.parameters() if p.grad is not None]
-            if embedding_grads:
-                embedding_grad_norm = nn.utils.get_total_norm(
-                    embedding_grads, norm_type=2.0, error_if_nonfinite=False, foreach=None
-                )
-                if isinstance(embedding_grad_norm, DTensor):
-                    # If embedding_grad_norm is a DTensor, we need to reduce it to get the correct value.
-                    embedding_grad_norm = embedding_grad_norm.full_tensor()
-            else:
-                embedding_grad_norm = torch.tensor(0.0, device=self.device) 
-            self.trainer.record_metric(
-                "clipped grad norm (embedding)",
-                embedding_grad_norm,
-                reduce_type=None,
-                namespace="optim",
-            )  
+            raise RuntimeError("Deprecated code path, only reduce-scatter grads is supported now")
             
-            del embedding_grads
-            
-            # lm head grad norm
-            lm_head_grads = [p.grad for p in model.lm_head.parameters() if p.grad is not None]
-            if lm_head_grads:
-                lm_head_grad_norm = nn.utils.get_total_norm(
-                    lm_head_grads, norm_type=2.0, error_if_nonfinite=False, foreach=None
-                )
-                if isinstance(lm_head_grad_norm, DTensor):
-                    # If lm_head_grad_norm is a DTensor, we need to reduce it to get the correct value.
-                    lm_head_grad_norm = lm_head_grad_norm.full_tensor()
-            else:
-                lm_head_grad_norm = torch.tensor(0.0, device=self.device)
-            self.trainer.record_metric(
-                "clipped grad norm (lm head)",
-                lm_head_grad_norm,
-                reduce_type=None,
-                namespace="optim",
-            )       
-            del lm_head_grads
         
 
         # Maybe adjust learning rate.
@@ -1015,6 +1149,7 @@ class MoEV2TransformerTrainModule(TrainModule):
         self.optim.zero_grad(set_to_none=True) # clear main grad
         for m in self.model_parts:
             m.zero_grad(set_to_none=True) # clear model grad
+            m.set_main_grads_to_none()  # clear main grad
 
     def model_forward_no_pipeline(
         self, input_ids: torch.Tensor, labels: Optional[torch.Tensor] = None, **kwargs
@@ -1089,22 +1224,25 @@ class MoEV2TransformerTrainModule(TrainModule):
             # NOTE: autocast_precision is deleted
             yield
 
-    def _get_state_dict(
-        self, sd_options: dist_cp_sd.StateDictOptions, optim: bool = True
-    ) -> Dict[str, Any]:
-        plain_model_sd = self.model.state_dict() # bf16 version
-        
-        # debug
-        # torch.save(plain_model_sd, f'tmp.model.{dist.get_rank()}.pt')
-        # og_optim_sd = torch.optim.Optimizer.state_dict(self.optim)
-        # og_optim_sd['_flat_main_dp'] = self.optim._flat_main_dp
-        # og_optim_sd['_flat_main_ep_dp '] = self.optim._flat_main_ep_dp 
-        # og_optim_sd['_flat_exp_avg_dp '] = self.optim._flat_exp_avg_dp 
-        # og_optim_sd['_flat_exp_avg_ep_dp'] = self.optim._flat_exp_avg_ep_dp
-        # og_optim_sd['_flat_exp_avg_sq_dp '] = self.optim._flat_exp_avg_sq_dp 
-        # og_optim_sd['_flat_exp_avg_sq_ep_dp  '] = self.optim._flat_exp_avg_sq_ep_dp  
-        # torch.save(og_optim_sd, f'tmp.optim.{dist.get_rank()}.pt')
 
+    def _get_model_param_state_dicts_dtensor(self) -> OrderedDict[str, DTensor]:
+        plain_model_part_sds = []
+        for model_part in self.model_parts:
+            plain_model_part_sds.append(model_part.state_dict()) # bf16 version
+
+        # merge model parts' state dict
+        plain_model_sd = None
+        for part_sd in plain_model_part_sds:
+            if plain_model_sd is None:
+                plain_model_sd = part_sd
+            else:
+                plain_model_sd._metadata.update(part_sd._metadata)
+                for k, v in part_sd.items():
+                    if k in plain_model_sd:
+                        raise KeyError(f"Duplicate key {k} found when merging model parts' state dicts")
+                    plain_model_sd[k] = v
+        assert plain_model_sd is not None
+        del plain_model_part_sds
 
         # wrap it in dtensor so that it works with checkpointer
         wrapped_model_sd = OrderedDict()
@@ -1120,42 +1258,99 @@ class MoEV2TransformerTrainModule(TrainModule):
             else:
                 wrapped_model_sd[k] = v
 
-        state_dict: Dict[str, Any] = {
-            "model": wrapped_model_sd,
-        }
+        return wrapped_model_sd
 
-        if optim:
-            optim_sd = self.optim.state_dict()
-            state_dict["optim"] = optim_sd
+    def _shard_optim_per_tensor_inplace(self, optim_sd, wrapped_model_sd):
+         # wrap optim state in dtensor so that it works with checkpointer
+        for param_key, param_v in wrapped_model_sd.items():
+            for buf_name in ('main', 'exp_avg', 'exp_avg_sq'):
+                optim_buf_key = f"{param_key}.{buf_name}"
+                optim_buf_v = optim_sd[optim_buf_key]
+                # optim_buf_v = optim_buf_v.reshape(param_v.shape) # flat to original shape
+                optim_buf_v = optim_buf_v.contiguous().clone() # NOTE: important! 
+                if self.ep_enabled and isinstance(optim_buf_v, torch.Tensor) and "routed_experts." in param_key:
+                    assert self.world_mesh['moe'] is not None
+                    optim_buf_v = distribute_tensor(optim_buf_v, 
+                                                    device_mesh=self.world_mesh['moe']['ep_dp', 'ep_mp'], 
+                                                    placements=(Replicate(), Shard(0)),
+                                                    src_data_rank=None
+                                                    )
+                else:
+                    assert self.world_mesh['dense_cpu'] is not None
+                    dp_rank = self.world_mesh['dense_cpu']['dp'].get_rank()
+                    dp_size = self.world_mesh['dense_cpu']['dp'].size(0)
+                    if optim_buf_v.size(0) > 256 and optim_buf_v.size(0) % dp_size == 0: 
+                        # shard only when the first dim is large enough and divisible by dp size
+                        # so that saving/loading can use less memory and be faster
+                        optim_buf_v = distribute_tensor(optim_buf_v, 
+                                                        device_mesh=self.world_mesh['dense_cpu']['dp'], 
+                                                        placements=(Shard(0),),
+                                                        src_data_rank=None  # If passing None explicitly, distribute_tensor() simply uses its local data instead of trying to preserve the single-device semantic via scatter/broadcast
+                                                )
+                    else:
+                        # for small tensors, replicate instead of sharding
+                        optim_buf_v = distribute_tensor(optim_buf_v, 
+                                                        device_mesh=self.world_mesh['dense_cpu']['dp'], 
+                                                        placements=(Replicate(),),
+                                                        src_data_rank=None  # If passing None explicitly, distribute_tensor() simply uses its local data instead of trying to preserve the single-device semantic via scatter/broadcast
+                                                )
+                        
+                # optim_buf_v = optim_buf_v.reshape(param_v.shape) # reshape after sharding
 
+                optim_sd[optim_buf_key] = optim_buf_v # save the dtensor back
+
+
+    def _get_state_dict(
+        self, sd_options: dist_cp_sd.StateDictOptions, optim: bool = True
+    ) -> Dict[str, Any]:
+        raise NotImplementedError("Deprecated")
+        assert optim, "Optimizer always needed"
+
+        wrapped_model_sd = self._get_model_param_state_dicts_dtensor()
+
+        # don't need to store bf16 model params, just use the fp32 params in optimizer state
+        state_dict: Dict[str, Any] = {}
+        # state_dict: Dict[str, Any] = {
+        #     "model": wrapped_model_sd,
+        # }
+
+
+        # TODO: combine the unshard and shard to reduce memory usage
+        optim_sd = self.optim.unsharded_state_dict() # unshard for DP, still sharded over PP, EP_MP
+
+        # unshard over EP_MP
+        wrapped_optim_sd = OrderedDict()
+        for k, v in optim_sd.items():
+            if self.ep_enabled and isinstance(v, torch.Tensor) and "routed_experts." in k:
+                assert self.world_mesh is not None
+                assert self.world_mesh['moe_cpu'] is not None
+                wrapped_optim_sd[k] = DTensor.from_local(v, device_mesh=self.world_mesh['moe_cpu']['ep_dp', 'ep_mp'] , placements=(Replicate(), Shard(0)))
+            elif isinstance(v, torch.Tensor):
+                assert self.world_mesh is not None
+                assert self.world_mesh['dense_cpu'] is not None
+                wrapped_optim_sd[k] = DTensor.from_local(v, device_mesh=self.world_mesh['dense_cpu']['dp'], placements=(Replicate(),))
+            else:
+                wrapped_optim_sd[k] = v
+
+        self._shard_optim_per_tensor_inplace(optim_sd, wrapped_model_sd)
+
+        assert len(optim_sd) == 3 * len(wrapped_model_sd)
+        
+        state_dict["optim"] = optim_sd
+
+        debug_sz = [v.nbytes for v in optim_sd.values()]
+
+        total_sz = sum(debug_sz)/1024**3
+        print("expect ckpt sz (GB): ", total_sz)
+        debug = optim_sd['blocks.1.routed_experts.w_down.main']
         return state_dict
 
 
     def _clip_grad_norm(
         self, max_grad_norm: float, norm_type: float = 2.0, foreach: Optional[bool] = None
     ) -> torch.Tensor:
-        assert self.pp_enabled == False, "Pipeline parallelism with grad clipping inside train module is not supported yet. Use optimizer's grad clipping instead."
-        parameters = [p for p in self.model_parts[0].parameters()]
-        grads = [p.grad for p in parameters if p.grad is not None]
+        raise RuntimeError("Deprecated. Use optimizer's grad clipping instead.")
 
-        total_norm = nn.utils.get_total_norm(
-            grads, norm_type=norm_type, error_if_nonfinite=False, foreach=foreach
-        )
-
-        # If total_norm is a DTensor, the placements must be `torch.distributed._tensor.ops.math_ops._NormPartial`.
-        # We can simply reduce the DTensor to get the total norm in this tensor's process group
-        # and then convert it to a local tensor.
-        # NOTE: It has two purposes:
-        #       1. to make sure the total norm is computed correctly when PP is used (see below)
-        #       2. to return a reduced total_norm tensor whose .item() would return the correct value
-        if isinstance(total_norm, DTensor):
-            raise NotImplementedError("WHY?")
-            # Will reach here if any non-PP parallelism is used.
-            # If only using PP, total_norm will be a local tensor.
-            total_norm = total_norm.full_tensor()
-
-        torch.nn.utils.clip_grads_with_norm_(parameters, max_grad_norm, total_norm, foreach=foreach)
-        return total_norm
 
     def _prepare_batch(
         self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
@@ -1313,6 +1508,10 @@ class MoEV2TransformerTrainModule(TrainModule):
                 world_mesh=self.world_mesh, # only PP mesh is used, should be fine
                 model_part_idx=model_part_idx
             )
+            # for n, p in m.named_parameters():
+            #     print(f'{n} {p.shape}: mean={p.data.mean().item()}, std={p.data.std().item()}')
+
+        return
 
     def compile_model(self):
         if torch.cuda.is_available():

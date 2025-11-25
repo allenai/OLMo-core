@@ -11,6 +11,8 @@ from torch.fx.node import Argument
 from torch.distributed._composable import replicate as _rep # type: ignore[attr-defined]
 from torch.nn.parallel import DistributedDataParallel
 from torch.distributed.fsdp import FSDPModule, fully_shard
+from olmo_core.nn.lm_head import LMOutputWithLoss
+
 # from torch.distributed.pipelining._backward import stage_backward, stage_backward_input
 from .helpers import stage_backward
 import re
@@ -132,7 +134,7 @@ class CustomPipelineStage:
 
         # Initialize has_backward to false; this will be set to true if loss
         # function is passed to pipeline schedule
-        self.has_backward = False
+        # self.has_backward = False
 
         # To be populated later by the Schedule
         # self.chunks: Optional[int] = None
@@ -150,8 +152,11 @@ class CustomPipelineStage:
         # these are the buffers used in backwards send/recv, they are allocated later
         # self.outputs_grad: list[torch.Tensor] = []
 
-        
-        # self.output_chunks: dict = {} 
+        # store outputs of this stage for logging purposes, the outer schedule can access this to return
+        # information to the train module
+        # the outputs should be detached losses
+        # None if not last stage
+        self.stage_outputs: dict[int, Optional[LMOutputWithLoss]] = {}  # mb_idx -> output
 
         # runtime per step info (can change in each step())
         self._step_global_batch_size: Optional[int] = None
@@ -159,18 +164,12 @@ class CustomPipelineStage:
         self._step_seqlen: Optional[int] = None
 
 
-    @property
-    def has_backward(self) -> bool:
+    def get_stage_outputs_as_list(self) -> List[Optional[LMOutputWithLoss]]:
         """
-        Returns true if this stage has a backward pass.
+        Get the stage outputs as a list, ordered by microbatch id.
         """
-        return self._has_backward
-
-
-
-    @has_backward.setter
-    def has_backward(self, has_backward: bool):
-        self._has_backward = has_backward
+        num_chunks = len(self.stage_outputs)
+        return [self.stage_outputs[i] for i in range(num_chunks)]
 
     @property
     def is_first(self):
@@ -222,19 +221,32 @@ class CustomPipelineStage:
 
         # Compute forward
         # print(f'{self.stage_index}_{fwd_chunk_id}-F-Start')
-        output = self.forward_maybe_with_nosync(*composite_args, **composite_kwargs)
+        output: Union[torch.Tensor, LMOutputWithLoss] = self.forward_maybe_with_nosync(*composite_args, **composite_kwargs)
         # print(f'{self.stage_index}_{fwd_chunk_id}-F-End')
 
+        if self.is_last:
+            assert isinstance(output, LMOutputWithLoss), "Last stage output must be LMOutputWithLoss"
+            logits, loss, ce_loss, z_loss = output # logits, loss, ce_loss, z_loss
+            stage_output_with_graph = loss.unsqueeze(0) # this is the final loss to do backward on, it has the autograd graph attached, need to change shape from () to (1, ) for backward
+            detached_lm_output = LMOutputWithLoss(
+                logits=logits, # NOTE;WARN: logits are too large to keep. If using fused lm head, logits is None
+                loss=loss.detach(),
+                ce_loss=ce_loss.detach(),
+                z_loss=z_loss.detach() if z_loss is not None else None,
+            )
+            self.stage_outputs[fwd_chunk_id] = detached_lm_output
+        else:
+            assert isinstance(output, torch.Tensor), "Non-last stage output must be torch.Tensor"
+            stage_output_with_graph = output # this is the activation to send to next stage, it has the autograd graph attached
+            self.stage_outputs[fwd_chunk_id] = None  # non-last stage has no output to return
+
         # Save activations and inputs for backward
-        # flat_args = flatten_args(composite_args)
-        # flat_kwargs = flatten_args(composite_kwargs)
-        # flatten_input_tensors = flat_args + flat_kwargs
         self.fwd_cache[fwd_chunk_id] = (
             composite_args[0],  # input_values
-            output,  # stage_output
+            stage_output_with_graph,  # stage_output
         )
         # print(f"{self.stage_index}.forward_one_chunk({fwd_chunk_id}) ret")
-        return output
+        
     
 
     def backward_one_chunk(
@@ -374,7 +386,7 @@ class CustomPipelineStage:
     # ------------------- bwd ---------------------
 
     def get_bwd_send_ops(self, bwd_chunk_id: int) -> list[dist.P2POp]:
-        if not self.has_backward or self.is_first:
+        if self.is_first:
             return []
         
         dest_stage_index = self.stage_index - 1
@@ -394,7 +406,7 @@ class CustomPipelineStage:
     def get_bwd_recv_ops(self, bwd_chunk_id: int) -> List[dist.P2POp]:
         
         # don't need to recv in backward if last stage or no backward
-        if not self.has_backward or self.is_last:
+        if self.is_last:
             return []
 
         source_stage_index = self.stage_index + 1
@@ -452,11 +464,7 @@ class CustomPipelineStage:
             # (mbsz, seqlen, hidden)
             self.outputs_meta = example_p2p_tensor.clone()
 
-    
-    def clear_step_info(self):
-        self._step_global_batch_size = None
-        self._step_micro_batch_size = None
-        self._step_seqlen = None
+
 
     def prepare_step(self, global_batch_size: int, micro_batch_size: int, seqlen: int):
         self._step_global_batch_size = global_batch_size
@@ -527,21 +535,27 @@ class CustomPipelineStage:
                 with self.submod.no_sync():  # type: ignore[operator]
                     result = perform_backward(backward_type)()
         elif self.is_rddp: # composable.replicate
-            if last_backward:
-                state = _rep.state(self.submod)            # grab _ReplicateState
-                ddp_impl = state._ddp                      # the hidden real DDP
-                ddp_impl.reducer.prepare_for_backward(  # type: ignore[union-attr, operator]
-                    list(
-                        torch.nn.parallel.distributed._find_tensors(  # type: ignore[attr-defined]
-                            bwd_kwargs["stage_output"]
-                        )
-                    )
-                )
-                result = perform_backward(backward_type)()
-            else:
-                self.submod.set_requires_gradient_sync(False) # type: ignore
-                result = perform_backward(backward_type)()
-                self.submod.set_requires_gradient_sync(True) # type: ignore
+            # The optimizer handles gradient synchronization for us, so always backward with no sync
+            self.submod.set_requires_gradient_sync(False) # type: ignore
+            result = perform_backward(backward_type)()
+            self.submod.set_requires_gradient_sync(True) # type: ignore
+
+            # if last_backward:
+            #     state = _rep.state(self.submod)            # grab _ReplicateState
+            #     ddp_impl = state._ddp                      # the hidden real DDP
+            #     ddp_impl.reducer.prepare_for_backward(  # type: ignore[union-attr, operator]
+            #         list(
+            #             torch.nn.parallel.distributed._find_tensors(  # type: ignore[attr-defined]
+            #                 bwd_kwargs["stage_output"]
+            #             )
+            #         )
+            #     )
+            #     result = perform_backward(backward_type)()
+            #     pass
+            # else:
+            #     self.submod.set_requires_gradient_sync(False) # type: ignore
+            #     result = perform_backward(backward_type)()
+            #     self.submod.set_requires_gradient_sync(True) # type: ignore
         
         # If submod is a FSDP module
         elif isinstance(self.submod, FSDPModule):
@@ -572,19 +586,10 @@ class CustomPipelineStage:
         pass
         # TODO: anything to clear?
 
-    def scale_grads(self, grad_scale_factor: int) -> None:
-        """Scale gradients model gradients by `grad_scale_factor`, which should be specified in coordination with the
-        loss function used with pipelining.  For loss functions which perform 'mean' loss reduction, `grad_scale_factor`
-        should be set to num_microbatches.  For loss functions that use `sum` reduction, `grad_scale_factor` should
-        be set to 1.
+    
+    def clear_step_info(self):
+        self._step_global_batch_size = None
+        self._step_micro_batch_size = None
+        self._step_seqlen = None
 
-        Should only be called once per pipeline schedule step, after all backwards passes have completed.
-        """
-
-        # PP scales only for its own contribution (microbatches), but relies on DP to scale further
-        # for DP degree.
-        if grad_scale_factor != 1:
-            for p in self.submod.parameters():
-                if p.grad is not None:
-                    p.grad.div_(grad_scale_factor)
-
+        self.stage_outputs = {}

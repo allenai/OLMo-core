@@ -105,14 +105,26 @@ class Checkpointer:
 
             # Save model and optim state.
             train_module_dir = f"{dir}/model_and_optim" if is_url(dir) else wd / "model_and_optim"
-            save_state_dict(
-                train_module_dir,
-                train_module.state_dict_to_save(),
-                process_group=self.process_group,
-                save_overwrite=self.save_overwrite,
-                thread_count=self.save_thread_count,
-                throttle_uploads=self.throttle_uploads,
-            )
+            # if the train module has implemented state_dict_to_save, use it
+            if hasattr(train_module, "save_state_dict_direct"):
+                # it should be the case for moe train module
+                train_module.save_state_dict_direct( # type: ignore
+                    train_module_dir,
+                    process_group=self.process_group,
+                    save_overwrite=self.save_overwrite,
+                    thread_count=self.save_thread_count,
+                    throttle_uploads=self.throttle_uploads,
+                )
+            else:
+                train_module_sd = train_module.state_dict()
+                save_state_dict(
+                    train_module_dir,
+                    train_module_sd,
+                    process_group=self.process_group,
+                    save_overwrite=self.save_overwrite,
+                    thread_count=self.save_thread_count,
+                    throttle_uploads=self.throttle_uploads,
+                )
 
         self._save_metadata(dir, CheckpointMetadata())
 
@@ -200,18 +212,28 @@ class Checkpointer:
         if metadata is None:
             metadata = get_checkpoint_metadata(train_module_dir)
 
-        state_dict = train_module.state_dict_to_load(metadata)
-        import copy
-        old_sd = copy.deepcopy(state_dict)
-        load_state_dict(
-            train_module_dir,
-            state_dict,
-            process_group=self.process_group,
-            pre_download=is_url(dir) and self.pre_download,
-            work_dir=self.work_dir,
-            thread_count=self.load_thread_count,
-        )
-        train_module.load_state_dict(state_dict)
+        # if the train module has implemented load_state_dict_direct, use it
+        if hasattr(train_module, "load_state_dict_direct"):
+            # it should be the case for moe train module
+            train_module.load_state_dict_direct(  # type: ignore
+                train_module_dir,
+                process_group=self.process_group,
+                pre_download=is_url(dir) and self.pre_download,
+                work_dir=self.work_dir,
+                thread_count=self.load_thread_count,
+            )
+        else:
+            state_dict = train_module.state_dict_to_load(metadata)
+
+            load_state_dict(
+                train_module_dir,
+                state_dict,
+                process_group=self.process_group,
+                pre_download=is_url(dir) and self.pre_download,
+                work_dir=self.work_dir,
+                thread_count=self.load_thread_count,
+            )
+            train_module.load_state_dict(state_dict)
 
         return trainer_state
 

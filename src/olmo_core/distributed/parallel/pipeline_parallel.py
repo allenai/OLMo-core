@@ -10,6 +10,8 @@ from torch.distributed.pipelining import PipelineStage
 
 from olmo_core.config import Config, StrEnum
 from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.nn.lm_head import LMOutputWithLoss
+
 import logging
 logger = logging.getLogger(__name__)
 
@@ -299,7 +301,7 @@ def draw_pipeline_timeline(pp_order: Dict[int, List[Any]],
 
 def debug_save_pp_schedule(
     schedule,
-    filename: str = "pp_schedule_debug",
+    filename: str = "tmp/pp_schedule_debug.png",
 ) -> None:
 
     pp_order = schedule.pipeline_order
@@ -313,6 +315,10 @@ def debug_save_pp_schedule(
     }
     '''
     import matplotlib.pyplot as plt
+
+    # make sure the output directory exists
+    os.makedirs(os.path.dirname(filename) or ".", exist_ok=True)
+
     fig, ax = draw_pipeline_timeline(
         pp_order,
         title="Interleaved 1F1B (timeline)",
@@ -320,8 +326,11 @@ def debug_save_pp_schedule(
     )
     plt.close(fig)
 
+
 class PipelineSchedule:
     """
+    TODO: Do not need this class anymore. Consider move everything to base_schedule directly.
+
     A thin wrapper around PyTorch pipeline schedule classes.
 
     :param n_microbatches: How many microbatches to split the global training batch into.
@@ -336,13 +345,13 @@ class PipelineSchedule:
         stages: List[PipelineStage],
         pp_mesh: DeviceMesh,
         schedule_name: PipelineScheduleType,
-        loss_fn: Optional[Callable[[Any, torch.Tensor], torch.Tensor]] = None,
+        # loss_fn: Optional[Callable[[Any, torch.Tensor], torch.Tensor]] = None,
         num_microbatches: Optional[int] = None,
     ):
         self.model_parts = model_parts
         self.stages = stages
         self.pp_mesh = pp_mesh
-        self.loss_fn = loss_fn
+        # self.loss_fn = loss_fn
 
 
 
@@ -367,21 +376,21 @@ class PipelineSchedule:
             num_microbatches = pp_mesh.size()
 
 
-        schedule = schedule_class(
+        schedule_impl = schedule_class(
             stages,  # type: ignore[arg-type]
             n_microbatches=num_microbatches,
-            loss_fn=self.loss_fn,
+            # loss_fn=self.loss_fn,
         )
         
 
         # torch.save(schedule.pipeline_order, 'tmp.pt')
         if torch.distributed.get_rank() == 0:
-            debug_save_pp_schedule(schedule=schedule)
+            debug_save_pp_schedule(schedule=schedule_impl)
         
         print(f'[PipelineSchedule] Using {schedule_name} with {num_microbatches} microbatches')
 
 
-        self.base_schedule = schedule
+        self.schedule_impl = schedule_impl
         self.num_microbatches = num_microbatches
 
     @cached_property
@@ -402,15 +411,18 @@ class PipelineSchedule:
         self,
         input_ids: torch.Tensor,
         target: Optional[torch.Tensor] = None,
+        forward_only: bool = False,
         **kwargs,
-    ) -> Tuple[Any, Optional[torch.Tensor]]:
+    ) -> List[List[Optional[LMOutputWithLoss]]]:
         """
         :param args: Only passed to first stage.
         :param kwargs: Passed to all stages.
+
+        :return: A list with length of num stages. Each element of the list is an inner list with length of num microbatches. Each element in the inner list is either (1) the output of the corresponding microbatch if that stage is the last stage, or (2) None if that stage is not the last stage.
         """
-        losses: Optional[List[torch.Tensor]] = None
-        if self.has_last_stage and self.loss_fn is not None:
-            losses = []
+
+        if self.has_last_stage:
+            pass # keep target as is
         else:
             target = None
 
@@ -419,12 +431,23 @@ class PipelineSchedule:
         else:
             args = (input_ids,)
 
-        self.base_schedule.prepare_step(
+        # in inference mode, change to one seq per microbatch
+        old_num_microbatches = None
+        if forward_only:
+            old_num_microbatches = self.schedule_impl._n_microbatches
+            self.schedule_impl.reset_n_microbatches(input_ids.size(0) // 1) # one seq per microbatch
+
+        self.schedule_impl.prepare_step(
             global_batch_size=input_ids.size(0),
             seqlen=input_ids.size(1),
         )
-        output = self.base_schedule.step(*args, target=target, losses=losses, **kwargs)
+        step_output = self.schedule_impl.step(*args, target=target, forward_only=forward_only, **kwargs)
 
-        self.base_schedule.clear_step_info()
+        self.schedule_impl.clear_step_info()
 
-        return output, None if losses is None else torch.stack(losses)
+        # reset
+        if forward_only:
+            assert old_num_microbatches is not None
+            self.schedule_impl.reset_n_microbatches(old_num_microbatches)
+
+        return step_output

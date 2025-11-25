@@ -57,6 +57,7 @@ class MoERouterConfigV2(Config):
     z_loss_weight: Optional[float] = None
     orth_loss_weight: Optional[float] = None
     record_routing_batch_size: bool = False
+    restore_weight_scale: bool = False # if True, multiply the router weights by topK so that the scores have similar scale as dense models.
     
     def num_params(self) -> int:
         """
@@ -121,6 +122,7 @@ class MoERouterV2(nn.Module):
         orth_loss_weight: Optional[float] = None,
         init_device: str = "cpu",
         record_routing_batch_size: bool = False,
+        restore_weight_scale: bool = False,
         dtype: torch.dtype = torch.float32,
     ):
         super().__init__()
@@ -141,7 +143,7 @@ class MoERouterV2(nn.Module):
         self.cp_mesh: Optional[DeviceMesh] = None
         self.tp_mesh: Optional[DeviceMesh] = None
         self.record_routing_batch_size = record_routing_batch_size
-
+        self.restore_weight_scale = restore_weight_scale
 
 
         if self.bias_gamma is not None:
@@ -454,6 +456,11 @@ class MoERouterV2(nn.Module):
                     keepdim=True,
                 )
             )
+        
+        # if used together normalize_expert_weights=True, 
+        # then the weights for each token sum to TOP_K instead of 1.0
+        if self.restore_weight_scale:
+            expert_weights = expert_weights * self.top_k
 
         with torch.no_grad():
             # Histogram the expert ids to identify the number of items/tokens routed to each expert.

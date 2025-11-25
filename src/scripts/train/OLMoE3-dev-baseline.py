@@ -48,7 +48,7 @@ log = logging.getLogger(__name__)
 
 
 SEQUENCE_LENGTH = 8192
-GLOBAL_BATCH_SIZE_SEQ=512
+GLOBAL_BATCH_SIZE_SEQ=256
 GLOBAL_BATCH_SIZE = (
     (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
 )  
@@ -57,20 +57,20 @@ EVAL_INTERVAL = 1000
 LR= 1e-4
 
 NUM_EXPERTS = 16
-TOP_K = 4
-D_MODEL=1024
+TOP_K = 6
+D_MODEL=2048
 MOE_HIDDEN_SIZE = 1024
-SHARED_MLP_HIDDEN_SIZE = 1024  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
+SHARED_MLP_HIDDEN_SIZE = 2048  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 HEAD_DIM=64
 NUM_HEAD = D_MODEL // HEAD_DIM
-MICRO_BSZ = 8
+MICRO_BSZ = 4
 NUM_LAYERS=8
 DP_DIM=8
 EP_DIM=1
 PP_DIM=1
 SPLIT_POINTS = None
             
-TAG=f'fsdp-old-dbg'
+TAG=f'U-fsdp-old-dbg'
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     d_model = D_MODEL
@@ -206,7 +206,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 save_interval=1000,
                 ephemeral_save_interval=200,
                 save_async=True,
-                pre_train_checkpoint=False,
+                pre_train_checkpoint=True,
             ),
         )
         .with_callback(
@@ -234,7 +234,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         )
         .with_callback(
             "profiler", 
-            NvidiaProfilerCallback(enabled=False, # NOTE: change this
+            NvidiaProfilerCallback(enabled=True, # NOTE: change this
                                    profile_ranks=[0, 8, 16, 24],
                                    start=30,
                                    end=33

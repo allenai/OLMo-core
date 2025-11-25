@@ -646,15 +646,19 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
 
         if self.shared_experts is not None:
             assert mixed_shared_out is not None
-            # weighted sum of the shared experts and routed experts
-            shared_out_factor = self.shared_experts.num_experts / (self.routed_experts_router.top_k + self.shared_experts.num_experts)
-            routed_out_factor = self.routed_experts_router.top_k / (self.routed_experts_router.top_k + self.shared_experts.num_experts)
-            mlp_out = self.merge_shared_and_routed_out(
-                shared_out=mixed_shared_out,
-                shared_factor=shared_out_factor,
-                routed_out=x_moe,
-                routed_factor=routed_out_factor
-            )
+            # # weighted sum of the shared experts and routed experts
+            # shared_width = self.shared_experts.num_experts * self.shared_experts.hidden_size
+            # routed_active_width = self.routed_experts_router.top_k * self.routed_experts.hidden_size
+            # total_width = shared_width + routed_active_width
+            # shared_out_factor = shared_width / total_width
+            # routed_out_factor = routed_active_width / total_width
+            # mlp_out = self.merge_shared_and_routed_out(
+            #     shared_out=mixed_shared_out,
+            #     shared_factor=shared_out_factor,
+            #     routed_out=x_moe,
+            #     routed_factor=routed_out_factor
+            # )
+            mlp_out = x_moe + mixed_shared_out
         else:
             mlp_out = x_moe # only routed experts
 
@@ -1068,14 +1072,19 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         # weighted sum of the shared experts and routed experts
         if self.shared_experts is not None:
             assert mixed_shared_out is not None
-            shared_out_factor = self.shared_experts.num_experts / (self.routed_experts_router.top_k + self.shared_experts.num_experts)
-            routed_out_factor = self.routed_experts_router.top_k / (self.routed_experts_router.top_k + self.shared_experts.num_experts)
-            mlp_out = self.merge_shared_and_routed_out(
-                shared_out= mixed_shared_out,
-                shared_factor=shared_out_factor,
-                routed_out=local_x,
-                routed_factor=routed_out_factor
-            )
+            # assert self.routed_experts is not None
+            # shared_width = self.shared_experts.num_experts * self.shared_experts.hidden_size
+            # routed_active_width = self.routed_experts_router.top_k * self.routed_experts.hidden_size
+            # total_width = shared_width + routed_active_width
+            # shared_out_factor = shared_width / total_width
+            # routed_out_factor = routed_active_width / total_width
+            # mlp_out = self.merge_shared_and_routed_out(
+            #     shared_out= mixed_shared_out,
+            #     shared_factor=shared_out_factor,
+            #     routed_out=local_x,
+            #     routed_factor=routed_out_factor
+            # )
+            mlp_out = local_x + mixed_shared_out
         else:
             mlp_out = local_x
 
@@ -1470,14 +1479,23 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 # weighted sum of the shared experts and routed experts
                 if last_block.shared_experts is not None:
                     assert mixed_shared_out1 is not None
-                    shared_out_factor1 = last_block.shared_experts.num_experts / (last_block.routed_experts_router.top_k + last_block.shared_experts.num_experts)
-                    routed_out_factor1 = last_block.routed_experts_router.top_k / (last_block.routed_experts_router.top_k + last_block.shared_experts.num_experts)
-                    mlp_out1 = last_block.merge_shared_and_routed_out(
-                        shared_out= mixed_shared_out1,
-                        shared_factor=shared_out_factor1,
-                        routed_out=local_x1,
-                        routed_factor=routed_out_factor1
-                    )
+                    assert last_block.routed_experts is not None
+                    # shared_out_factor1 = last_block.shared_experts.num_experts / (last_block.routed_experts_router.top_k + last_block.shared_experts.num_experts)
+                    # routed_out_factor1 = last_block.routed_experts_router.top_k / (last_block.routed_experts_router.top_k + last_block.shared_experts.num_experts)
+
+                    # shared_width1 = last_block.shared_experts.num_experts * last_block.shared_experts.hidden_size
+                    # routed_active_width1 = last_block.routed_experts_router.top_k * last_block.routed_experts.hidden_size
+                    # total_width1 = shared_width1 + routed_active_width1
+                    # shared_out_factor1 = shared_width1 / total_width1
+                    # routed_out_factor1 = routed_active_width1 / total_width1
+
+                    # mlp_out1 = last_block.merge_shared_and_routed_out(
+                    #     shared_out= mixed_shared_out1,
+                    #     shared_factor=shared_out_factor1,
+                    #     routed_out=local_x1,
+                    #     routed_factor=routed_out_factor1
+                    # )
+                    mlp_out1 = local_x1 + mixed_shared_out1
                 else:
                     mlp_out1 = local_x1
 
@@ -1729,14 +1747,22 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             # weighted sum of the shared experts and routed experts
             if self.shared_experts is not None:
                 assert mixed_shared_out is not None
-                shared_out_factor = self.shared_experts.num_experts / (self.routed_experts_router.top_k + self.shared_experts.num_experts)
-                routed_out_factor = self.routed_experts_router.top_k / (self.routed_experts_router.top_k + self.shared_experts.num_experts)
-                mlp_out = self.merge_shared_and_routed_out(
-                    shared_out= mixed_shared_out,
-                    shared_factor=shared_out_factor,
-                    routed_out=local_x,
-                    routed_factor=routed_out_factor
-                )
+                # shared_out_factor = self.shared_experts.num_experts / (self.routed_experts_router.top_k + self.shared_experts.num_experts)
+                # routed_out_factor = self.routed_experts_router.top_k / (self.routed_experts_router.top_k + self.shared_experts.num_experts)
+    
+                # shared_width = self.shared_experts.num_experts * self.shared_experts.hidden_size
+                # routed_active_width = self.routed_experts_router.top_k * self.routed_experts.hidden_size
+                # total_width = shared_width + routed_active_width
+                # shared_out_factor = shared_width / total_width
+                # routed_out_factor = routed_active_width / total_width
+                
+                # mlp_out = self.merge_shared_and_routed_out(
+                #     shared_out= mixed_shared_out,
+                #     shared_factor=shared_out_factor,
+                #     routed_out=local_x,
+                #     routed_factor=routed_out_factor
+                # )
+                mlp_out = local_x + mixed_shared_out
             else:
                 mlp_out = local_x
 

@@ -424,8 +424,54 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             self.init_method.init_final_w_out(
                 self.lm_head.w_out, d_model=self.d_model, std=self.init_std, generator=generator
             )
-
+        # get one next int from the generator
+        # if everything goes right, all ranks should have the same next int
+        valid_test = torch.randint(0, 1000000, (1,), generator=generator, device=device).cpu().item() # attach debugger to check
         return generator
+
+    def attach_fp32_accum(self):
+        for p in self.parameters():
+            if not p.requires_grad:
+                continue
+            # persistent FP32 master grad on the same device
+            p._main_grad_fp32 = None # type: ignore[attr-defined]
+
+            def _post_hook(param: torch.Tensor, *, _p=p):
+                g = _p.grad
+                if g is None:
+                    return
+                # upcast and accumulate in-place (no graph)
+
+                if _p._main_grad_fp32 is None: # type: ignore[attr-defined]
+                    # first time init
+                    _p._main_grad_fp32 = g.to(torch.float32) # type: ignore[attr-defined]
+                else:
+                    # _p._main_grad_fp32.add_(g.to(torch.float32)) # type: ignore[attr-defined]
+                    _p._main_grad_fp32.add_(g) # type: ignore[attr-defined]
+                # drop BF16 .grad to avoid double-accum & save memory
+                _p.grad = None
+
+            p.register_post_accumulate_grad_hook(_post_hook)
+
+    def set_main_grads_to_none(self):
+        for p in self.parameters():
+            if not p.requires_grad:
+                continue
+            if hasattr(p, '_main_grad_fp32'):
+                p._main_grad_fp32 = None # type: ignore[attr-defined]
+
+
+    # def prepare_main_grads_for_optim(self):
+    #     for p in self.parameters():
+    #         if not p.requires_grad:
+    #             continue
+    #         if not hasattr(p, '_main_grad_fp32'):
+    #             raise RuntimeError("FP32 master grad not found")
+    #         if p.grad is not None:
+    #             raise RuntimeError("Expected .grad to be None when using FP32 master grad")
+            
+    #         p.grad = p._main_grad_fp32  # type: ignore[attr-defined]
+    #         p._main_grad_fp32 = None # type: ignore[attr-defined]
 
     def forward_tbo(
             self,
@@ -646,7 +692,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             if self.compile_enabled:
                 mark_dynamic(h, (0, 1), strict=False)
             with nvtx.annotate(f"fwd_block_{block_idx}", color="blue"):
-                if self.recompute_each_block or block_key == '0':
+                if self.recompute_each_block:
                     h = checkpoint(self._forwrad_one_block, h, block_key, block_kwargs, use_reentrant=False)
                     h = cast(torch.Tensor, h)
                 else:

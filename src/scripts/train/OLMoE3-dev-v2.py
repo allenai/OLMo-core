@@ -58,31 +58,31 @@ log = logging.getLogger(__name__)
 
 
 SEQUENCE_LENGTH = 8192
-GLOBAL_BATCH_SIZE_SEQ=32
+GLOBAL_BATCH_SIZE_SEQ=512
 GLOBAL_BATCH_SIZE = (
     (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
 )  
 MAX_DURATION = int(1000e9)  # int(6e12), don't forget to adjust the LR when you increase this
-EVAL_INTERVAL = 1000
+EVAL_INTERVAL = 500
 LR= 1e-4
 
-NUM_EXPERTS = 32
-TOP_K = 2
-D_MODEL=2048 + 512
+NUM_EXPERTS = 16
+TOP_K = 6
+D_MODEL=2048
 HEAD_DIM=64
 NUM_HEAD = D_MODEL // HEAD_DIM
 NUM_KV_HEAD=4
-MOE_HIDDEN_SIZE = 4096
-NUM_SHARED_EXPERTS = 0  # Number of shared experts in the shared MLP
+MOE_HIDDEN_SIZE = 1024
+NUM_SHARED_EXPERTS = 1  # Number of shared experts in the shared MLP
 SHARED_MLP_HIDDEN_SIZE = 2048  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
 EFFECTIVE_MLP = (MOE_HIDDEN_SIZE * TOP_K + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 MLP_RATIO = EFFECTIVE_MLP / D_MODEL
 
-MICRO_BSZ = 2
+MICRO_BSZ = 4
 # DP_DIM=2
 EP_DIM=1
-PP_DIM=2
+PP_DIM=1
 
 
 def _get_split_points(original_num_layers: int, num_stages: int, minus_last_stage: int):
@@ -100,10 +100,10 @@ def _get_split_points(original_num_layers: int, num_stages: int, minus_last_stag
         
 
 
-NUM_LAYERS= 16
+NUM_LAYERS= 8
 
 if PP_DIM > 1:
-    MINUS_LAST_STAGE=1
+    MINUS_LAST_STAGE=0
     NUM_LAYERS, SPLIT_POINTS = _get_split_points(NUM_LAYERS, PP_DIM * 2, minus_last_stage=MINUS_LAST_STAGE)
 else:
     SPLIT_POINTS = None
@@ -116,7 +116,9 @@ USE_COMPILE=True
 USE_AC=False
 USE_TBO=False
 
-TAG=f'dev-ep{EP_DIM}-uni-rs-step1b-pp'
+SEED = 2026
+
+TAG=f'R-dev-S{SEED}-fp32acc-kminit2-evalfast'
 from olmo_core.nn.lm_head import LMHeadConfig, LMHeadType
 from olmo_core.nn.rope import RoPEConfig, RoPEScalingConfig, RoPEType
 from olmo_core.nn.attention import AttentionConfig, AttentionType
@@ -141,6 +143,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         dtype=dtype,
     )
     config = MoEFusedV2TransformerConfig(
+        init_seed=SEED,
         d_model=d_model,
         two_batch_overlap=USE_TBO,
         vocab_size=common.tokenizer.padded_vocab_size(),
@@ -171,11 +174,13 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                 num_experts=NUM_EXPERTS,
                 top_k=TOP_K,
                 gating_function=MoERouterGatingFunction.sigmoid,
-                uniform_expert_assignment=True,
+                uniform_expert_assignment=False,
                 lb_loss_weight=0.005,
                 z_loss_weight=None,
                 lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
                 dtype=dtype,
+                normalize_expert_weights=1.0,
+                restore_weight_scale=True,
             ),
             shared_experts=SharedExpertsConfig(
                 d_model=d_model,
@@ -194,6 +199,8 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                 z_loss_weight=None,
                 lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
                 dtype=dtype,
+                normalize_expert_weights=1.0,
+                restore_weight_scale=True,
             ) if NUM_SHARED_EXPERTS > 1 else None, # only need router if > 1 expert
             feed_forward_norm=layer_norm,
         ),
@@ -230,7 +237,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                     dtype=dtype,
                 ),
                 feed_forward_moe=None,
-                feed_forward=FeedForwardConfig(hidden_size=( TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS), bias=False), # dense mlp is twice as fast as moe mlp
+                feed_forward=FeedForwardConfig(hidden_size=( TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS) * 2, bias=False), # dense mlp is twice as fast as moe mlp
                 attention_norm=layer_norm,
                 feed_forward_norm=layer_norm,
             ) 
@@ -306,11 +313,13 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     cancel_check_interval = 10
     
     # cluster = 'ai2/augusta-google-1'
+    cluster = 'cirrascale'
 
     return (
         TrainerConfig(
             # save_folder=f'{common.save_folder}/{common.run_name}_{D_MODEL}d_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K_{TAG}',
-            save_folder=f'{WORK_DIR}/{common.run_name}_{D_MODEL}d_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K{NUM_SHARED_EXPERTS}S_{TAG}',
+            # load_path='/weka/oe-training-default/tianhua/ws-megatron/tmp/OLMoE3-dev-baseline_2048d_8L1024M2048S_16E6K_U-fsdp-old-dbg/step0',
+            save_folder=f'{WORK_DIR}/tmp/{common.run_name}_{D_MODEL}d_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K{NUM_SHARED_EXPERTS}S_{TAG}',
             save_overwrite=True,
             metrics_collect_interval=5,
             cancel_check_interval=cancel_check_interval,
@@ -319,8 +328,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         .with_callback(
             "checkpointer",
             CheckpointerCallback(
-                save_interval=2000,
-                ephemeral_save_interval=1000,
+                save_interval=1000,
+                ephemeral_save_interval=200,
                 save_async=False,
                 pre_train_checkpoint=False,
             ),
@@ -352,16 +361,17 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         )
         .with_callback(
             "profiler", 
-            NvidiaProfilerCallback(enabled=True, # NOTE: change this
+            NvidiaProfilerCallback(enabled=False, # NOTE: change this
                                    profile_ranks=[0, 8, 16, 24],
                                    start=10,
                                    end=13
             )
         )
         # TODO: might not be able to run in-loop evals depending on parallel strategies
-        # .with_recommended_evals(
-        #     common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
-        # )
+        .with_recommended_evals(
+            # common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
+            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
+        )
     )
 
 
@@ -398,9 +408,9 @@ def finalize_config(config: ExperimentConfig):
     )
 
     config.dataset = dataset_config
-    config.dataset.mix = "OLMoE-mix-0824-dev"
+    # config.dataset.mix = "OLMoE-mix-0824-dev"
 
-    config.data_loader.num_workers = 1
+    config.data_loader.num_workers = 8
 
 
     # add active & total params to the wandb name
@@ -411,7 +421,7 @@ def finalize_config(config: ExperimentConfig):
     wandb_cb = cast(WandBCallback, config.trainer.callbacks['wandb'])
     assert isinstance(wandb_cb.name, str), "WandB callback name must be initialized"
     wandb_cb.name += f"_{active_params_in_B:.2f}@{total_params_in_B:.2f}B"
-    wandb_cb.name += f"_{TOP_K}K{NUM_EXPERTS}N{NUM_SHARED_EXPERTS}S_{TAG}"
+    wandb_cb.name += f"_{TOP_K}K{NUM_EXPERTS}N{NUM_SHARED_EXPERTS}S_{EP_DIM}EP{PP_DIM}PP_{TAG}"
 
 if __name__ == "__main__":
     main(

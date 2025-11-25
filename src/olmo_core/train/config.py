@@ -217,6 +217,19 @@ class TrainerConfig(Config):
                 # Sanity check for MCQA ability
                 "copycolors_10way_fast",
             ]
+        elif task_set == "debug":
+            # Subset for quick debugging
+            tasks = [
+                # Subset of OLMES
+                "hellaswag_bpb_5shot",
+                "mmlu_stem_test_mc_5shot_fast",
+                # Basic Skills
+                "basic_skills_common_knowledge_rc_5shot",
+                # Gen tasks BPB
+                "mt_mbpp_java_gold_bpb_3shot",
+                # Sanity check for MCQA ability
+                "copycolors_10way_fast",
+            ]
         else:
             raise ValueError(f"Task set not recognized: {task_set}")
 
