@@ -864,8 +864,8 @@ class Transformer(nn.Module):
         # Attention FLOPS per layer
         # The original formula: 12 * n * h * q * t
         # We need to sum over layers because SWA can have different window sizes per layer
+        # and block overrides can have different n_heads per layer
         attention_flops = 0
-        q = self.d_model // self.n_attn_heads
 
         for layer_idx in range(self.n_layers):
             # Get block config for this layer (may be overridden)
@@ -873,6 +873,8 @@ class Transformer(nn.Module):
 
             n_heads = block_config.attention.n_heads
             n_kv_heads = block_config.attention.n_kv_heads or n_heads
+            # Calculate head dimension for this layer (may differ if block overrides change n_heads)
+            q = self.d_model // n_heads
 
             # Determine effective sequence length for this layer
             # If SWA is used, use window size; otherwise use full sequence length
