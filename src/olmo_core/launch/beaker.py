@@ -84,15 +84,15 @@ class OLMoCoreBeakerImage(StrEnum):
     """
 
     # NOTE: when updating default images here, should also update images used in tests at .github/workflows/main.yml
-    stable = f"olmo-core-tch{_DEFAULT_TORCH}cu{_DEFAULT_CUDA}-2025-11-25"
+    stable = f"tylerr/olmo-core-tch{_DEFAULT_TORCH}cu{_DEFAULT_CUDA}-2025-11-25"
     """
     Built with the latest compatible stable version of PyTorch.
     """
-    stable_cu130 = f"olmo-core-tch{_DEFAULT_TORCH}cu130-2025-11-25"
+    stable_cu130 = f"tylerr/olmo-core-tch{_DEFAULT_TORCH}cu130-2025-11-25"
     """
     The stable image with CUDA pinned to 13.0.
     """
-    stable_cu128 = f"olmo-core-tch{_DEFAULT_TORCH}cu128-2025-11-25"
+    stable_cu128 = f"tylerr/olmo-core-tch{_DEFAULT_TORCH}cu128-2025-11-25"
     """
     The stable image with CUDA pinned to 12.8.
     """
