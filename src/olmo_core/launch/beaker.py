@@ -84,36 +84,32 @@ class OLMoCoreBeakerImage(StrEnum):
     """
 
     # NOTE: when updating default images here, should also update images used in tests at .github/workflows/main.yml
-
-    stable = f"olmo-core-tch{_DEFAULT_TORCH}cu{_DEFAULT_CUDA}-2025-09-15"
+    stable = f"olmo-core-tch{_DEFAULT_TORCH}cu{_DEFAULT_CUDA}-2025-11-25"
     """
     Built with the latest compatible stable version of PyTorch.
     """
-    stable_cu126 = f"olmo-core-tch{_DEFAULT_TORCH}cu126-2025-09-15"
-    """
-    The stable image with CUDA pinned to 12.6.
-    """
-    stable_cu128 = f"olmo-core-tch{_DEFAULT_TORCH}cu128-2025-09-15"
+    stable_cu128 = f"olmo-core-tch{_DEFAULT_TORCH}cu128-2025-11-25"
     """
     The stable image with CUDA pinned to 12.8.
     """
 
     # Sorted roughly from newest versions to oldest versions
-    tch280_cu129 = "olmo-core-tch280cu129-2025-09-23"
+    tch291_cu130 = "tylerr/olmo-core-tch291cu130-2025-11-25"
     """
-    Built with torch 2.8.0 and CUDA 12.9.
+    Built with torch 2.9.1 and CUDA 13.0.
     """
-    tch280_cu128 = "olmo-core-tch280cu128-2025-09-19"
+    tch291_cu128 = "tylerr/olmo-core-tch291cu128-2025-11-25"
+    """
+    Built with torch 2.9.1 and CUDA 12.8.
+    """
+    tch280_cu128 = "tylerr/olmo-core-tch280cu128-2025-11-25"
     """
     Built with torch 2.8.0 and CUDA 12.8.
     """
     tch270_cu128 = "olmo-core-tch270cu128-2025-05-16"
     """
     Built with torch 2.7.0 and CUDA 12.8.
-    """
-    tch270_cu128_fa3 = "tylerr/olmo-core-tch270cu128-2025-09-24"
-    """
-    Built with torch 2.7.0 and CUDA 12.8 and flash-attn 3 (beta release)
+    Battle tested when training Olmo3 7B and 32B. No TransformerEngine or flash-attention 3.
     """
 
 

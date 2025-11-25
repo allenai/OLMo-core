@@ -50,13 +50,13 @@ build :
 CUDA_VERSION = 12.8.1
 CUDA_VERSION_PATH=cu$(shell echo $(CUDA_VERSION) | cut -d"." -f1-2 | tr -d .)
 PYTHON_VERSION = 3.12
-TORCH_VERSION = 2.9.0
+TORCH_VERSION = 2.9.1
 TORCH_VERSION_SHORT = $(shell echo $(TORCH_VERSION) | tr -d .)
 INSTALL_CHANNEL = whl
 GROUPED_GEMM_VERSION = "grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@main"
 FLASH_ATTN_VERSION = 2.8.2
 FLASH_ATTN_3_SHA = "92ca9da8d66f7b34ff50dc080ec0fef9661260d6"
-FA3_MAX_JOBS = 16
+FA3_MAX_JOBS = 64
 TE_VERSION = 2.9
 RING_FLASH_ATTN_VERSION = 0.1.8
 LIGER_KERNEL_VERSION = 0.6.4
