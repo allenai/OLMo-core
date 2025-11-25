@@ -16,6 +16,7 @@ from olmo_core.internal.experiment import (
     build_config,
     main,
 )
+from olmo_core.launch.beaker import OLMoCoreBeakerImage
 from olmo_core.nn.attention import AttentionBackendName, SlidingWindowAttentionConfig
 from olmo_core.nn.rope import YaRNRoPEScalingConfig
 from olmo_core.nn.transformer import (
@@ -197,21 +198,6 @@ def build_data_components(
         global_batch_size=common.global_batch_size, seed=34521, num_workers=8
     )
 
-    # dataset_config = NumpyFSLDatasetConfig.glob(
-    #     "gs://ai2-llm/preprocessed/tylerr/lc-reshard-final-cleaned/v0.1/allenai/dolma2-tokenizer/*.npy",
-    #     tokenizer=common.tokenizer,
-    #     work_dir=common.work_dir,
-    #     sequence_length=common.max_sequence_length,
-    #     generate_doc_lengths=intra_document_masking,  # enables intra-document masking  # True
-    #     # source_group_size=8,
-    #     # source_permutation_seed=123,
-    #     instance_filter_config=None
-    #     if not include_instance_filter
-    #     else InstanceFilterConfig(
-    #         repetition_max_period=13, repetition_min_period=1, repetition_max_count=32
-    #     ),
-    # )
-
     return DataComponents(dataset=dataset_config, data_loader=data_loader_config)
 
 
@@ -224,7 +210,7 @@ if __name__ == "__main__":
         model_config_builder=build_model_config,
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
-        beaker_image="petew/olmo-core-tch270cu128-2025-05-16",
+        beaker_image=OLMoCoreBeakerImage.tch270_cu128,
         include_instance_filter=True,
         intra_document_masking=True,
         include_default_evals=False,

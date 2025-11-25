@@ -11,7 +11,7 @@ from olmo_core.data.source_mixture import SourceMixtureDatasetConfig, SourceMixt
 from olmo_core.internal import cookbook
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
-from olmo_core.launch.beaker import BeakerLaunchConfig
+from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim.scheduler import LinearWithWarmup, SchedulerUnits
@@ -47,6 +47,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         workspace="ai2/OLMo_3",
         num_nodes=64,
         nccl_debug=False,
+        beaker_image=OLMoCoreBeakerImage.tch270_cu128,
         # override priority from the CLI eg `--launch.priority=high`
     )
 
