@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Renamed `olmo_core.distributed.utils.scatter_object()` to `broadcast_object()` for correctness.
 
+### Fixed
+
+- Fixed MFU calculation to account for sliding window attention (SWA) and grouped-query attention (GQA). The `num_flops_per_token()` method in `TransformerConfig` and `Transformer` now correctly computes FLOPS per layer, using window sizes for SWA and `n_kv_heads` for GQA instead of assuming full attention and equal query/key-value heads.
+
 ## [v2.4.0](https://github.com/allenai/OLMo-core/releases/tag/v2.4.0) - 2025-11-20
 
 ### Added
