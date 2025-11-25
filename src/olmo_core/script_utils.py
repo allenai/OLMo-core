@@ -49,15 +49,16 @@ def get_cli_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--sequence-length",
         type=int,
-        default=4096,
-        help="""The sequence length to train and eval on.""",
+        default=None,
+        help="""The sequence length to train and eval on. Different scripts have different default
+        sequence-length values. If a value is not specified here, the default value is used.""",
     )
     parser.add_argument(
         "--data-root",
         type=str,
-        default="http://olmo-data.org",
+        default="https://olmo-data.org",
         help="""The root directory/URL of the data source files.
-        The default 'http://olmo-data.org' is public, but potentially very slow.
+        The default 'https://olmo-data.org' is public, but potentially very slow.
         Ai2 employees should prefer '/weka/oe-training-default/ai2-llm' when using a cluster with weka access,
         otherwise 'gs://ai2-llm' or 's3://ai2-llm'.""",
     )

@@ -2,10 +2,21 @@ from datetime import datetime
 from functools import partial
 
 from olmo_core.config import DType
+from olmo_core.data import (
+    DataMix,
+    InstanceFilterConfig,
+    NumpyDataLoaderConfig,
+    NumpyFSLDatasetConfig,
+)
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
-from olmo_core.internal.experiment import CommonComponents, build_config, main
+from olmo_core.internal.experiment import (
+    CommonComponents,
+    DataComponents,
+    build_config,
+    main,
+)
 from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
@@ -18,7 +29,7 @@ from olmo_core.train.train_module import (
 )
 
 SEQUENCE_LENGTH = 8 * 1024
-GLOBAL_BATCH_SIZE = 4 * 1024 * 1024
+GLOBAL_BATCH_SIZE = 4 * 1024 * 1024  # ~4M tokens
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
@@ -61,6 +72,34 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
     )
 
 
+def build_data_components(
+    common: CommonComponents,
+    intra_document_masking: bool = False,
+    include_instance_filter: bool = False,
+) -> DataComponents:
+    dataset_config = NumpyFSLDatasetConfig.from_data_mix(
+        DataMix.OLMo_mix_0625,
+        tokenizer=common.tokenizer,
+        mix_base_dir=common.root_dir,
+        work_dir=common.work_dir,
+        sequence_length=common.max_sequence_length,
+        # max target sequence length doesn't affect how the data is loaded, just how it's cached behind the scenes
+        max_target_sequence_length=max(common.max_sequence_length, 8192),
+        generate_doc_lengths=intra_document_masking,
+        instance_filter_config=None
+        if not include_instance_filter
+        else InstanceFilterConfig(
+            repetition_max_period=13, repetition_min_period=1, repetition_max_count=32
+        ),
+    )
+
+    data_loader_config = NumpyDataLoaderConfig(
+        global_batch_size=common.global_batch_size, seed=34521, num_workers=8
+    )
+
+    return DataComponents(dataset=dataset_config, data_loader=data_loader_config)
+
+
 def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     cancel_check_interval = 10
 
@@ -74,7 +113,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         TrainerConfig(
             save_folder=f"gs://ai2-llm/checkpoints/{common.run_name}/",
             save_overwrite=True,
-            metrics_collect_interval=10,
+            metrics_collect_interval=50,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(int(5e12)),
             hard_stop=Duration.tokens(int(4e12)),
@@ -117,6 +156,7 @@ if __name__ == "__main__":
         build_config,
         global_batch_size=GLOBAL_BATCH_SIZE,
         max_sequence_length=SEQUENCE_LENGTH,
+        data_config_builder=build_data_components,
         model_config_builder=build_model_config,
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,

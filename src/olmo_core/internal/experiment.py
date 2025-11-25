@@ -30,6 +30,7 @@ from olmo_core.train.callbacks import (
     Callback,
     ConfigSaverCallback,
     DownstreamEvaluatorCallbackConfig,
+    GAPMonitorCallback,
     GarbageCollectorCallback,
     GPUMemoryMonitorCallback,
     LMEvaluatorCallbackConfig,
@@ -178,6 +179,7 @@ def build_common_components(
     beaker_workspace: str = "ai2/OLMo-core",
     use_hostname_constraints: bool = False,
     num_execution_units: Optional[int] = None,
+    flight_recorder: bool = False,
 ) -> CommonComponents:
     root_dir = get_root_dir(cli_context.cluster)
     beaker_user = get_beaker_username()
@@ -191,12 +193,14 @@ def build_common_components(
             cmd=cli_context.remote_cmd,
             cluster=cli_context.cluster,
             nccl_debug=True,
+            flight_recorder=flight_recorder,
             beaker_image=beaker_image,
             num_nodes=num_nodes,
             workspace=beaker_workspace,
             use_hostname_constraints=use_hostname_constraints,
             num_execution_units=num_execution_units,
         )
+        launch_config.launch_timeout = 5 * 60
 
     if beaker_user is not None:
         save_folder = f"{root_dir}/checkpoints/{beaker_user.lower()}/{cli_context.run_name}"
@@ -253,6 +257,7 @@ def _build_required_callbacks(common: CommonComponents) -> Dict[str, Callback]:
         "profiler": ProfilerCallback(enabled=False),
         "garbage_collector": GarbageCollectorCallback(),
         "slack_notifier": SlackNotifierCallback(name=common.run_name, enabled=False),
+        "gap_monitor": GAPMonitorCallback(enabled=False),
     }
     if common.launch is not None:
         callbacks["beaker"] = BeakerCallback()
@@ -327,6 +332,7 @@ def build_config(
     num_nodes: int = 1,
     beaker_workspace: str = "ai2/OLMo-core",
     use_hostname_constraints: bool = False,
+    flight_recorder: bool = False,
     num_execution_units: Optional[int] = None,
     include_default_evals: bool = False,
     **data_kwargs,
@@ -372,6 +378,7 @@ def build_config(
         num_nodes=num_nodes,
         beaker_workspace=beaker_workspace,
         use_hostname_constraints=use_hostname_constraints,
+        flight_recorder=flight_recorder,
         num_execution_units=num_execution_units,
     )
 

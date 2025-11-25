@@ -7,18 +7,18 @@ import olmo_core.distributed.utils as dist_utils
 from olmo_core.testing import BACKENDS, run_distributed_test
 
 
-def scatter_object():
+def broadcast_object():
     if dist.get_rank() == 0:
         x = ("abc", "def")
     else:
         x = ("abc", "abc")
-    x = dist_utils.scatter_object(x)
+    x = dist_utils.broadcast_object(x)
     assert x == ("abc", "def")
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
-def test_scatter_object(backend: str):
-    run_distributed_test(scatter_object, backend=backend)
+def test_broadcast_object(backend: str):
+    run_distributed_test(broadcast_object, backend=backend)
 
 
 @pytest.mark.parametrize("n, world_size", [(2, 1), (8, 64)])

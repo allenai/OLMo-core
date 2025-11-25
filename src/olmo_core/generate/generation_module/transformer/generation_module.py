@@ -20,11 +20,11 @@ from olmo_core.data.utils import attention_mask_to_cache_leftpad
 from olmo_core.distributed.checkpoint import get_checkpoint_metadata, load_state_dict
 from olmo_core.distributed.parallel import build_world_mesh, get_dp_process_group
 from olmo_core.distributed.utils import (
+    broadcast_object,
     get_fs_local_rank,
     get_rank,
     get_world_size,
     is_distributed,
-    scatter_object,
 )
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
@@ -32,7 +32,7 @@ from olmo_core.generate.generation_module import GenerationConfig, GenerationMod
 from olmo_core.generate.sampling import select_next_token
 from olmo_core.generate.utils import selective_log_softmax
 from olmo_core.io import is_url, join_path, normalize_path
-from olmo_core.nn.attention import Attention
+from olmo_core.nn.attention import Attention, AttentionBackendName
 from olmo_core.nn.transformer import Transformer, TransformerConfig
 from olmo_core.train.train_module.transformer.common import parallelize_model
 from olmo_core.train.train_module.transformer.config import (
@@ -61,16 +61,6 @@ class TransformerGenerationModule(GenerationModule):
         super().__init__()
 
         self.device = device or get_default_device()
-        if self.device.type != "cuda":
-            raise AssertionError(f"Expected CUDA device, got {self.device.type}")
-
-        device_name = torch.cuda.get_device_name(self.device)
-        if "H100" not in device_name:
-            log_or_print(
-                log,
-                "Flash attention w/ kv caching is not verified to work on non-Hopper GPUs.",
-                level=logging.WARNING,
-            )
 
         self.world_mesh: Optional[DeviceMesh] = None
         if is_distributed():
@@ -381,7 +371,7 @@ class TransformerGenerationModule(GenerationModule):
                 metadata = get_checkpoint_metadata(checkpoint_dir)
                 train_module_dir = checkpoint_dir
 
-        train_module_dir = scatter_object(train_module_dir)
+        train_module_dir = broadcast_object(train_module_dir)
         if metadata is None:
             metadata = get_checkpoint_metadata(train_module_dir)
 
@@ -408,6 +398,7 @@ class TransformerGenerationModule(GenerationModule):
         pre_download: bool = True,
         load_thread_count: Optional[int] = None,
         dtype: Optional[DType] = None,
+        attention_backend: Optional[AttentionBackendName] = None,
         **kwargs,
     ) -> "TransformerGenerationModule":
         """
@@ -425,6 +416,7 @@ class TransformerGenerationModule(GenerationModule):
             pre_download: Whether to pre-download remote checkpoints.
             load_thread_count: Number of threads to use for loading checkpoint.
             dtype: If provided, build the model with this dtype.
+            attention_backend: If provided, override the config to use this attention backend.
             **kwargs: Additional keyword arguments passed to the TransformerGenerationModule
                 constructor.
 
@@ -460,7 +452,7 @@ class TransformerGenerationModule(GenerationModule):
         )
 
         # Broadcast config and work_dir to all ranks
-        transformer_config, work_dir, tokenizer_config = scatter_object(
+        transformer_config, work_dir, tokenizer_config = broadcast_object(
             (transformer_config, work_dir, tokenizer_config)
         )
 
@@ -491,6 +483,18 @@ class TransformerGenerationModule(GenerationModule):
             transformer_config.apply(
                 lambda c: setattr(c, "dtype", dtype) if hasattr(c, "dtype") else None
             )
+
+        if attention_backend is not None:
+            attention_backend.assert_supported()
+
+            def set_attention_backend(c):
+                if hasattr(c, "attention"):
+                    attention = getattr(c, "attention")
+                    if hasattr(attention, "backend"):
+                        setattr(attention, "backend", attention_backend)
+                        setattr(attention, "use_flash", None)  # strip out deprecated option
+
+            transformer_config.apply(set_attention_backend)
 
         log_or_print(log, f"{transformer_config}")
         log_or_print(log, f"{generation_config}")

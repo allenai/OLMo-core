@@ -5,6 +5,7 @@ from enum import Enum
 from typing import (
     Any,
     Callable,
+    ClassVar,
     Dict,
     Generator,
     List,
@@ -64,6 +65,11 @@ class Config:
     """
     The name of the class name field inject into the dictionary from :meth:`as_dict()` or
     :meth:`as_config_dict()`.
+    """
+
+    _IGNORE_FIELDS: ClassVar[Tuple[str, ...]] = ()
+    """
+    Fields to ignore when loading from config (for backwards compatibility).
     """
 
     def as_dict(
@@ -243,6 +249,11 @@ class Config:
                 if (cls_name := d.get(cls.CLASS_NAME_FIELD)) is not None and (
                     cls_o := resolve_cls(cls_name)
                 ) is not None:
+                    # Remove ignored fields if the class defines any
+                    if cls_o._IGNORE_FIELDS:
+                        new_dict = {
+                            k: v for k, v in new_dict.items() if k not in cls_o._IGNORE_FIELDS
+                        }
                     schema = om.structured(cls_o)
                     try:
                         return om.to_object(om.merge(schema, new_dict))
