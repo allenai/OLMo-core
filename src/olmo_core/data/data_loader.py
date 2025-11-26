@@ -1072,6 +1072,12 @@ class NumpyDataLoaderConfig(Config):
     num_workers: int = 0
     prefetch_factor: Optional[int] = None
     target_device_type: Optional[str] = None
+    expert_labels_file: Optional[str] = None
+    """
+    Optional path to a JSON file containing pre-computed optimal expert labels.
+    Used for supervised router training. If provided, the collator will look up
+    labels by sequence index, falling back to domain-based labeling for missing indices.
+    """
 
     def build(
         self,
@@ -1098,10 +1104,17 @@ class NumpyDataLoaderConfig(Config):
 
         dataset.prepare()
 
+        # Create collator with expert_labels_file if provided
+        if collator is None:
+            collator = DataCollator(
+                pad_token_id=dataset.pad_token_id,
+                expert_labels_file=self.expert_labels_file,
+            )
+
         data_loader = NumpyDataLoaderBase.wrap_numpy_dataset(
             dataset,
             global_batch_size=self.global_batch_size,
-            collator=collator or DataCollator(pad_token_id=dataset.pad_token_id),
+            collator=collator,
             work_dir=self.work_dir or dataset.work_dir,
             dp_world_size=get_world_size(dp_process_group),
             dp_rank=get_rank(dp_process_group),

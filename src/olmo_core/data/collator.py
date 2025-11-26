@@ -1,7 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Dict, Sequence, Union
+import json
+import logging
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Dict, Optional, Sequence, Union
 
 import torch
 import torch.nn.functional as F
@@ -10,35 +13,32 @@ from ..config import StrEnum
 
 __all__ = ["DataCollator"]
 
+log = logging.getLogger(__name__)
 
-def _source_name_to_expert_label(source_name: str) -> torch.Tensor:
-    """Convert source_name to expert label tensor (one-hot, shape: 4).
+
+def _domain_to_expert_label(source_name: str) -> torch.Tensor:
+    """
+    Default domain-based expert label mapping.
     
     Mapping for 3-expert setup (Expert 3 is masked/duplicate of Expert 1):
-    - Expert 0 (Math): [1, 0, 0, 0] - mj_finemath4plus, mj_finemath
-    - Expert 1 (General): [0, 1, 0, 0] - everything else (academic, technical, web content)
-    - Expert 2 (Code): [0, 0, 1, 0] - starcoder, code
-    - Expert 3: Unused/masked (duplicate of Expert 1)
+    - Expert 0 (Math): mj_finemath4plus, mj_finemath
+    - Expert 1 (General): everything else (academic, technical, web content)
+    - Expert 2 (Code): starcoder, code
+    - Expert 3: Unused/masked
     """
     source_lower = source_name.lower().strip()
     
-    # Math expert (expert 0)
     if source_lower.startswith("mj_finemath4plus") or source_lower.startswith("mj_finemath"):
         return torch.tensor([1.0, 0.0, 0.0, 0.0], dtype=torch.float32)
     
-    # Code expert (expert 2)
     if source_lower.startswith("starcoder") or "code" in source_lower:
         return torch.tensor([0.0, 0.0, 1.0, 0.0], dtype=torch.float32)
     
-    # General expert (expert 1) - everything else including academic/technical
     return torch.tensor([0.0, 1.0, 0.0, 0.0], dtype=torch.float32)
 
 
 class PaddingDirection(StrEnum):
-    """
-    Specifies the direction to pad instances when needed.
-    """
-
+    """Specifies the direction to pad instances when needed."""
     left = "left"
     right = "right"
 
@@ -47,37 +47,87 @@ class PaddingDirection(StrEnum):
 class DataCollator:
     """
     The default data collator used by :class:`~olmo_core.data.data_loader.TextDataLoaderBase` subclasses.
+    
+    Args:
+        pad_token_id: Token ID used for padding.
+        pad_direction: Direction to pad sequences ("left" or "right").
+        expert_labels_file: Optional path to a JSON file containing pre-computed optimal expert labels.
+            If provided, labels are looked up by sequence index. Falls back to domain-based labeling
+            for sequences not in the file.
     """
 
     pad_token_id: int
     pad_direction: PaddingDirection = PaddingDirection.right
+    expert_labels_file: Optional[str] = None
+    
+    # Internal state (not part of dataclass fields for serialization)
+    _expert_labels_cache: Optional[Dict[str, Any]] = field(default=None, repr=False, compare=False)
+    _logged_flags: Dict[str, bool] = field(default_factory=dict, repr=False, compare=False)
+
+    def _load_expert_labels(self) -> Optional[Dict[str, Any]]:
+        """Load expert labels from file on first use."""
+        if self._expert_labels_cache is not None:
+            return self._expert_labels_cache
+        
+        if self.expert_labels_file is None:
+            return None
+        
+        labels_path = Path(self.expert_labels_file)
+        if not labels_path.exists():
+            log.warning(f"Expert labels file not found: {labels_path}, using domain-based labels")
+            self._expert_labels_cache = {}
+            return self._expert_labels_cache
+        
+        log.info(f"Loading expert labels from {labels_path}")
+        with open(labels_path, "r") as f:
+            data = json.load(f)
+        
+        self._expert_labels_cache = data.get("labels", {})
+        
+        # Log statistics
+        metadata = data.get("metadata", {})
+        stats = metadata.get("statistics", {})
+        num_labels = len(self._expert_labels_cache) if self._expert_labels_cache else 0
+        log.info(f"  Loaded {num_labels} labels")
+        if stats:
+            log.info(f"  Expert distribution: {stats.get('expert_distribution', 'N/A')}")
+        
+        return self._expert_labels_cache
+
+    def _get_expert_label(self, source_name: str, sequence_index: int) -> torch.Tensor:
+        """
+        Get expert label for a sequence.
+        
+        Uses pre-computed optimal labels if available, otherwise falls back to domain-based labeling.
+        """
+        labels = self._load_expert_labels()
+        
+        # Try optimal label lookup
+        if labels and sequence_index >= 0:
+            str_index = str(sequence_index)
+            if str_index in labels:
+                expert_id = labels[str_index].get("expert_id", 1)
+                one_hot = torch.zeros(4, dtype=torch.float32)
+                one_hot[expert_id] = 1.0
+                return one_hot
+        
+        # Fall back to domain-based labeling
+        return _domain_to_expert_label(source_name)
 
     def __call__(
         self, items: Union[Sequence[Dict[str, Any]], Sequence[torch.Tensor]]
     ) -> Dict[str, Any]:
-        """
-        Create a batch from a sequence of instances.
-        """
+        """Create a batch from a sequence of instances."""
         assert items
         
-        # Debug logging on first call
-        if not hasattr(self, '_debug_logged'):
-            self._debug_logged = True
-            import logging
-            log = logging.getLogger(__name__)
-            log.info(f"🔍 DataCollator receiving {len(items)} items")
-            log.info(f"  First item type: {type(items[0])}")
+        # One-time logging
+        if not self._logged_flags.get('first_call'):
+            self._logged_flags['first_call'] = True
             if isinstance(items[0], dict):
-                log.info(f"  First item keys: {list(items[0].keys())}")
-                log.info(f"  First item has 'index': {'index' in items[0]}")
-                log.info(f"  First item has 'metadata': {'metadata' in items[0]}")
-                log.info(f"  First item has 'expert_labels': {'expert_labels' in items[0]}")
-                if 'metadata' not in items[0]:
-                    log.error(f"❌ CRITICAL: Items don't have 'metadata'! Dataset must have include_instance_metadata=True and metadata configured.")
-                elif isinstance(items[0].get('metadata'), dict):
-                    log.info(f"  First item metadata: {items[0]['metadata']}")
-                else:
-                    log.warning(f"⚠️  First item metadata is not a dict: {type(items[0].get('metadata'))}")
+                log.info(f"DataCollator: {len(items)} items, keys={list(items[0].keys())}")
+                if self.expert_labels_file:
+                    log.info(f"  Using optimal labels from: {self.expert_labels_file}")
+        
         max_len = max((len(x["input_ids"] if isinstance(x, dict) else x) for x in items))
         all_input_ids = []
         all_attention_mask = []
@@ -104,116 +154,77 @@ class DataCollator:
                 else (0, max_len - len(input_ids))
             )
 
-            # Pad input IDs.
+            # Pad input IDs
             all_input_ids.append(
-                F.pad(
-                    input_ids.to(dtype=torch.long),
-                    pad_shape,
-                    value=self.pad_token_id,
-                )
+                F.pad(input_ids.to(dtype=torch.long), pad_shape, value=self.pad_token_id)
             )
 
-            # Pad attention mask.
+            # Pad attention mask
             attention_mask = x.get("attention_mask") if isinstance(x, dict) else None
             if attention_mask is not None:
                 if not isinstance(attention_mask, torch.Tensor):
                     attention_mask = torch.tensor(attention_mask)
                 all_attention_mask.append(
-                    F.pad(
-                        attention_mask.to(dtype=torch.float),
-                        pad_shape,
-                        value=0.0,
-                    )
+                    F.pad(attention_mask.to(dtype=torch.float), pad_shape, value=0.0)
                 )
 
-            # Pad attention bias.
+            # Pad attention bias
             attention_bias = x.get("attention_bias") if isinstance(x, dict) else None
             if attention_bias is not None:
                 if not isinstance(attention_bias, torch.Tensor):
                     attention_bias = torch.tensor(attention_bias)
-                # Reshape to `(1, seq_len, seq_len)`
                 while len(attention_bias.shape) < 3:
                     attention_bias = attention_bias.unsqueeze(0)
                 pad_value = False if attention_bias.dtype == torch.bool else float("-inf")
                 all_attention_bias.append(
-                    F.pad(
-                        attention_bias,
-                        pad_shape + pad_shape,
-                        value=pad_value,
-                    )
+                    F.pad(attention_bias, pad_shape + pad_shape, value=pad_value)
                 )
 
-            # Pad label mask.
+            # Pad label mask
             label_mask = x.get("label_mask") if isinstance(x, dict) else None
             if label_mask is not None:
                 if not isinstance(label_mask, torch.Tensor):
                     label_mask = torch.tensor(label_mask)
                 all_label_mask.append(
-                    F.pad(
-                        label_mask.to(dtype=torch.bool),
-                        pad_shape,
-                        value=False,
-                    )
+                    F.pad(label_mask.to(dtype=torch.bool), pad_shape, value=False)
                 )
 
-            # Indices.
+            # Indices
             index = x.get("index") if isinstance(x, dict) else None
             if index is not None:
                 all_indices.append(torch.tensor(index))
-            elif isinstance(x, dict) and not hasattr(self, '_warned_no_index'):
-                self._warned_no_index = True
-                import logging
-                log = logging.getLogger(__name__)
-                log.warning(f"⚠️  Item is dict but has no 'index' field! Keys: {list(x.keys())}")
 
-            # Instance mask.
+            # Instance mask
             instance_mask = x.get("instance_mask") if isinstance(x, dict) else None
             if instance_mask is not None:
                 all_instance_mask.append(torch.tensor(instance_mask))
 
-            # Document lengths.
+            # Document lengths
             doc_lens = x.get("doc_lens") if isinstance(x, dict) else None
             if doc_lens is not None:
                 doc_pad_shape = (0, max_docs - len(doc_lens))
                 all_doc_lens.append(F.pad(doc_lens, doc_pad_shape, value=0))
                 all_max_doc_lens.append(int(doc_lens.max()))
 
-            # Metadata.
+            # Metadata
             metadata = x.get("metadata") if isinstance(x, dict) else None
             if metadata is not None:
                 all_metadata.append(metadata)
-            
-            # Log metadata status on first item if debug not already logged
-            if not hasattr(self, '_metadata_debug_logged'):
-                self._metadata_debug_logged = True
-                import logging
-                log = logging.getLogger(__name__)
-                log.info(f"🔍 Collator metadata check:")
-                log.info(f"  Item has metadata: {metadata is not None}")
-                if metadata is not None:
-                    log.info(f"  Metadata type: {type(metadata)}")
-                    if isinstance(metadata, dict):
-                        log.info(f"  Metadata keys: {list(metadata.keys())}")
-                        log.info(f"  Metadata source_name: {metadata.get('source_name', 'NOT FOUND')}")
 
-            # Expert labels (for supervised router training).
+            # Expert labels (for supervised router training)
             expert_labels = x.get("expert_labels") if isinstance(x, dict) else None
             if expert_labels is None and metadata is not None:
-                # Inject expert_labels from metadata.source_name if not already present
                 source_name = metadata.get("source_name") if isinstance(metadata, dict) else None
+                sequence_index = index.item() if index is not None else -1
                 if source_name:
-                    expert_labels = _source_name_to_expert_label(source_name)
-                    if not hasattr(self, '_expert_label_injected_logged'):
-                        self._expert_label_injected_logged = True
-                        import logging
-                        log = logging.getLogger(__name__)
-                        log.info(f"✅ Injected expert_labels from source_name='{source_name}'")
+                    expert_labels = self._get_expert_label(source_name, sequence_index)
             
             if expert_labels is not None:
                 if not isinstance(expert_labels, torch.Tensor):
                     expert_labels = torch.tensor(expert_labels)
                 all_expert_labels.append(expert_labels)
 
+        # Build output dict
         out: Dict[str, Any] = {"input_ids": torch.stack(all_input_ids)}
         if all_attention_mask:
             out["attention_mask"] = torch.stack(all_attention_mask)
@@ -223,11 +234,6 @@ class DataCollator:
             out["label_mask"] = torch.stack(all_label_mask)
         if all_indices:
             out["index"] = torch.stack(all_indices)
-        elif not hasattr(self, '_warned_no_indices'):
-            self._warned_no_indices = True
-            import logging
-            log = logging.getLogger(__name__)
-            log.warning(f"⚠️  all_indices is empty! No items had 'index' field. Processed {len(items)} items.")
         if all_instance_mask:
             out["instance_mask"] = torch.stack(all_instance_mask)
         if all_doc_lens:
@@ -238,15 +244,5 @@ class DataCollator:
             out["metadata"] = all_metadata
         if all_expert_labels:
             out["expert_labels"] = torch.stack(all_expert_labels)
-            if not hasattr(self, '_expert_labels_added_logged'):
-                self._expert_labels_added_logged = True
-                import logging
-                log = logging.getLogger(__name__)
-                log.info(f"✅ Added expert_labels to batch: shape={out['expert_labels'].shape}, count={len(all_expert_labels)}")
-        elif not hasattr(self, '_no_expert_labels_warned'):
-            self._no_expert_labels_warned = True
-            import logging
-            log = logging.getLogger(__name__)
-            log.warning(f"⚠️  No expert_labels created! Items had metadata: {len(all_metadata)}/{len(items)}, all_metadata={all_metadata[:3] if all_metadata else 'None'}")
 
         return out
