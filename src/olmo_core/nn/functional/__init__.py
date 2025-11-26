@@ -5,11 +5,13 @@ Common ``nn`` function implementations.
 import torch
 
 from .cross_entropy_loss import *
+from .cross_entropy_loss import cce_loss
 
 __all__ = [
     "cross_entropy_loss",
     "fused_linear_cross_entropy_loss",
     "l2_normalize",
+    "cce_loss",
 ]
 
 

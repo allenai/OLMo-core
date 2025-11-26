@@ -4,6 +4,7 @@ import sys
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, cast
 
+from olmo_core.train.train_module.train_module import TrainModuleConfig
 import torch
 from rich import print
 

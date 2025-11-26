@@ -6,6 +6,8 @@ import logging
 import math
 import torch
 import transformer_engine
+from functools import partial
+
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.parallel.pipeline_parallel import PipelineScheduleType
@@ -26,6 +28,18 @@ from typing import cast
 from olmo_core.train.callbacks import WandBCallback
 
 
+from olmo_core.internal.experiment import (
+    CommonComponents,
+    DataComponents,
+    build_config,
+    main,
+)
+from olmo_core.data import (
+    DataMix,
+    InstanceFilterConfig,
+    NumpyDataLoaderConfig,
+    NumpyFSLDatasetConfig,
+)
 from olmo_core.nn.transformer import (
     TransformerBlockType,
     TransformerConfig,
@@ -72,7 +86,7 @@ def _get_split_points(original_num_layers: int, num_stages: int, minus_last_stag
 
 SEQUENCE_LENGTH = 8192
 
-GLOBAL_BATCH_SIZE_SEQ=1024
+GLOBAL_BATCH_SIZE_SEQ=32
 GLOBAL_BATCH_SIZE = (
     (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
 )  
@@ -108,7 +122,7 @@ EP_DIM=8
 PP_DIM=1
 
 
-NUM_LAYERS= 16
+NUM_LAYERS= 4
 
 if PP_DIM > 1:
     MINUS_LAST_STAGE=0
@@ -226,7 +240,8 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     )
     
     config.lm_head.loss_implementation = LMLossImplementation.fused_linear
-    WINDOW_SIZE=4095
+    # config.lm_head.loss_implementation = LMLossImplementation.cut_cross_entropy
+    WINDOW_SIZE=4096
     config.block.attention.sliding_window = SlidingWindowAttentionConfig(
         force_full_attention_on_first_layer=False,
         force_full_attention_on_last_layer=True,
@@ -234,7 +249,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     )
     # config.block.attention.use_flash = True
     # config.block.attention.use_head_qk_norm = True
-    
+    from olmo_core.nn.attention.backend import AttentionBackendName
     # First block will be a regular transformer block (no MoE component).
     config.block_overrides = {
         0: TransformerBlockConfig(
@@ -246,7 +261,8 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                     bias=False,
                     rope=RoPEConfig(name=RoPEType.default, theta=500_000, scaling=None, full_precision=True),
                     qk_norm=layer_norm ,
-                    use_flash=True,
+                    # use_flash=True,
+                    backend=AttentionBackendName.flash_3,
                     use_head_qk_norm=True,
                     dtype=dtype,
                     d_attn=D_ATTN,
@@ -266,7 +282,7 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
     from olmo_core.optim.moe_optimizer import MoEFusedV2OptimizerConfig
     return MoEV2TransformerTrainModuleConfig(
         rank_microbatch_size=MICRO_BSZ * SEQUENCE_LENGTH,
-        max_sequence_length=common.dataset.effective_sequence_length,
+        max_sequence_length=common.max_sequence_length,
         optim=MoEFusedV2OptimizerConfig(
             lr=LR,
             weight_decay=0.1,
@@ -328,7 +344,7 @@ WORK_DIR = "/weka/oe-training-default/tianhua/ws-megatron"
 def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     cancel_check_interval = 10
     
-    # cluster = 'ai2/augusta-google-1'
+    # cluster = 'ai2/augusta'
     cluster = 'cirrascale'
 
     return (
@@ -392,38 +408,6 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
 
 def finalize_config(config: ExperimentConfig):
-
-
-    DATA_ROOT = "/weka/oe-training-default/ai2-llm"
-    
-    DATA_WORK_DIR = "/tmp/dataset-cache"
-
-
-    from olmo_core.data import (
-        DataMix,
-        NumpyDataLoaderConfig,
-        NumpyDatasetConfig,
-        NumpyDatasetType,
-        TokenizerConfig,
-    )
-        
-    dataset_config = NumpyDatasetConfig.from_data_mix(
-        DataMix.OLMoE_mix_0824,
-        # DataMix.OLMo_mix_0625,
-        tokenizer=TokenizerConfig.dolma2(),
-        mix_base_dir=DATA_ROOT,
-        sequence_length=SEQUENCE_LENGTH,
-        # max_target_sequence_length=max(8192, SEQUENCE_LENGTH),
-        max_target_sequence_length=SEQUENCE_LENGTH,
-        work_dir=f"{WORK_DIR}/{DATA_WORK_DIR}",
-    )
-
-    config.dataset = dataset_config
-
-
-    config.data_loader.num_workers = 8
-
-
     # add active & total params to the wandb name
     total_params_in_B = config.model.num_params/1000/1000/1000
     active_params_in_B = config.model.num_active_params/1000/1000/1000
@@ -434,15 +418,54 @@ def finalize_config(config: ExperimentConfig):
     wandb_cb.name += f"_{active_params_in_B:.2f}@{total_params_in_B:.2f}B"
     wandb_cb.name += f"_{TOP_K}K{NUM_EXPERTS}N{NUM_SHARED_EXPERTS}S_{EP_DIM}EP{PP_DIM}PP_{TAG}"
 
+
+
+def build_data_components(
+    common: CommonComponents,
+    intra_document_masking: bool = False,
+    include_instance_filter: bool = True,
+) -> DataComponents:
+    # DATA_ROOT = "/weka/oe-training-default/ai2-llm"
+    # DATA_WORK_DIR = "/tmp/dataset-cache"
+
+    dataset_config = NumpyFSLDatasetConfig.from_data_mix(
+        # DataMix.OLMo_mix_0925,
+        DataMix.OLMoE_mix_0824_dev,
+        tokenizer=common.tokenizer,
+        mix_base_dir=common.root_dir,
+        work_dir=common.work_dir,
+        sequence_length=common.max_sequence_length,
+        max_target_sequence_length=max(common.max_sequence_length, 8192),
+        generate_doc_lengths=intra_document_masking,
+        instance_filter_config=None
+        if not include_instance_filter
+        else InstanceFilterConfig(
+            repetition_max_period=13, repetition_min_period=1, repetition_max_count=32
+        ),
+    )
+
+    data_loader_config = NumpyDataLoaderConfig(
+        global_batch_size=common.global_batch_size, seed=34521, num_workers=8
+    )
+
+    return DataComponents(dataset=dataset_config, data_loader=data_loader_config)
+
+
 if __name__ == "__main__":
-    main(
+    config_builder = partial(
+        build_config,
         global_batch_size=GLOBAL_BATCH_SIZE,
-        sequence_length=SEQUENCE_LENGTH,
+        max_sequence_length=SEQUENCE_LENGTH,
+        data_config_builder=build_data_components,
         model_config_builder=build_model_config,
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
-        include_instance_filter=False,  # We use SkipStepOptimizer for this problem.
+        flight_recorder=True,
+        include_instance_filter=True,  # We use SkipStepOptimizer for this problem.
         include_default_evals=False,
-        # intra_document_masking=True,
         finalize_config=finalize_config,
+    )
+        
+    main(
+        config_builder=config_builder,
     )

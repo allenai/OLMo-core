@@ -688,22 +688,23 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             h0 = x
         return h0
 
-    def _forward_blocks(self, h, block_kwargs: Dict[str, Any]) -> torch.Tensor:
+    def _forward_blocks(self, h, all_block_kwargs: Dict[str, Any], per_block_kwargs: Dict[str, Any]) -> torch.Tensor:
         # Run each block.
         for block_idx, (block_key, block) in enumerate(self.blocks.items()):
             # Mark sizes as dynamic for torch.compile().
             if self.compile_enabled:
                 mark_dynamic(h, (0, 1), strict=False)
-            with nvtx.annotate(f"fwd_block_{block_idx}", color="blue"):
+            with nvtx.annotate(f"fwd_block_{block_key}", color="blue"):
+                block_kwargs = per_block_kwargs.get(block_key, {})
                 if self.recompute_each_block:
-                    h = checkpoint(self._forwrad_one_block, h, block_key, block_kwargs, use_reentrant=False)
+                    h = checkpoint(self._forwrad_one_block, h, block_key, **all_block_kwargs, **block_kwargs, use_reentrant=False)
                     h = cast(torch.Tensor, h)
                 else:
-                    h = self._forwrad_one_block(h, block_key, block_kwargs)
+                    h = self._forwrad_one_block(h, block_key, **all_block_kwargs, **block_kwargs)
                 
         return h
 
-    def _forwrad_one_block(self, h, block_key: str, block_kwargs: Dict[str, Any]) -> torch.Tensor:
+    def _forwrad_one_block(self, h, block_key: str, **block_kwargs: Dict[str, Any]) -> torch.Tensor:
         debug_mem_block_start = torch.cuda.memory_allocated()/1024**3
         block = self.blocks[block_key]
         h = block(h, **block_kwargs)
@@ -758,7 +759,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         #         **kwargs,
         #     )
 
-        input_ids, labels, block_kwargs, lm_head_kwargs = self._prepare_inputs(
+        input_ids, labels, all_block_kwargs, per_block_kwargs, lm_head_kwargs = self._prepare_inputs(
             input_ids,
             labels,
             ignore_index=ignore_index,
@@ -782,10 +783,10 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         #         h = block(h, **block_kwargs)
 
         if self.recompute_all_blocks_by_chunk:
-            h = checkpoint(self._forward_blocks, h, block_kwargs, use_reentrant=False)
+            h = checkpoint(self._forward_blocks, h, all_block_kwargs, per_block_kwargs, use_reentrant=False)
             h = cast(torch.Tensor, h)
         else:
-            h = self._forward_blocks(h, block_kwargs)
+            h = self._forward_blocks(h, all_block_kwargs, per_block_kwargs)
 
         # Get final logits but again pass-through in case of pipeline parallelism.
         if self.lm_head is not None:

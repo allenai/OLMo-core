@@ -282,7 +282,12 @@ class Trainer:
     _canceling_rank: Optional[int] = None
     _error: Optional[BaseException] = None
     _rank_batch_size: Optional[int] = None
-    _thread_pool: Optional[ThreadPoolExecutor] = None
+    _multi_thread_pool: Optional[ThreadPoolExecutor] = None
+    _single_thread_pool: Optional[ThreadPoolExecutor] = None
+    # maps bookkeeping operation name to an ordereddict of operation ID to operation Future
+    _bookkeeping_queue: Dict[str, Dict[str, Future]] = field(
+        default_factory=lambda: defaultdict(OrderedDict)
+    )
     _bookkeeping_pg: Optional[dist.ProcessGroup] = None
     _checkpoint_loaded: bool = False
     _metrics_consistent: Optional[bool] = None
@@ -1343,7 +1348,10 @@ class Trainer:
             for callback in self._iter_callbacks():
                 callback.pre_step(batch)
 
-            self.train_module.train_batch(batch)
+            if should_skip:
+                log.warning(f"Skipping training on step {self.global_step:,d} intentionally...")
+            else:
+                self.train_module.train_batch(batch)
 
                 for callback in self._iter_callbacks():
                     callback.pre_optim_step()

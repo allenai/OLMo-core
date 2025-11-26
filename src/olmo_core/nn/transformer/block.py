@@ -120,8 +120,8 @@ class TransformerBlock(TransformerBlockBase):
         n_layers: int,
         attention: AttentionConfig,
         feed_forward: FeedForwardConfig,
-        attention_norm: Optional[LayerNormConfig],
-        feed_forward_norm: Optional[LayerNormConfig],
+        attention_norm: LayerNormConfig,
+        feed_forward_norm: LayerNormConfig,
         dropout: float = 0.0,
         attention_residual_alpha: float = 1.0,
         feed_forward_residual_alpha: float = 1.0,
@@ -134,12 +134,14 @@ class TransformerBlock(TransformerBlockBase):
         self.attention = attention.build(
             d_model, layer_idx=block_idx, n_layers=n_layers, init_device=init_device, cache=cache
         )
-        self.attention_norm = layer_norm.build(d_model, init_device=init_device)
+
+        self.attention_norm = attention_norm.build(d_model, init_device=init_device)
         self.attention_residual_stream = ResidualStream(
             alpha=attention_residual_alpha, dropout=dropout
         )
         self.feed_forward = feed_forward.build(d_model=d_model, init_device=init_device)
-        self.feed_forward_norm = layer_norm.build(d_model, init_device=init_device)
+
+        self.feed_forward_norm = feed_forward_norm.build(d_model, init_device=init_device)
         self.feed_forward_residual_stream = ResidualStream(
             alpha=feed_forward_residual_alpha, dropout=dropout
         )

@@ -174,6 +174,7 @@ class AttentionConfig(Config):
     backend: Optional[AttentionBackendName] = None
     dtype: DType = DType.float32
     sliding_window: Optional[SlidingWindowAttentionConfig] = None
+    use_head_qk_norm: Optional[bool] = None
     d_attn: Optional[int] = None
 
     def num_params(self, d_model: int) -> int:
@@ -207,7 +208,11 @@ class AttentionConfig(Config):
 
         # Block attention QK norm.
         if self.qk_norm is not None:
-            params += 2 * self.qk_norm.num_params(d_model)
+            if self.use_head_qk_norm:
+                params += 2 * self.qk_norm.num_params(head_dim)
+            else:
+                params += self.qk_norm.num_params(d_model)  # q_norm
+                params += self.qk_norm.num_params(n_kv_heads * head_dim)  # k_norm
 
         # Block attention out.
         params += d_attn * d_model # input = d_attn, output = d_model
@@ -417,15 +422,19 @@ class Attention(AttentionBase):
         )
         self.w_out = nn.Linear(d_attn, d_model, bias=bias, dtype=dtype, device=init_device)
         self.clip_qkv = clip_qkv
-        self.dropout_p = dropout
+        self.use_head_qk_norm = use_head_qk_norm
 
         self.q_norm: Optional[LayerNorm] = None
         self.k_norm: Optional[LayerNorm] = None
         if qk_norm is not None:
-            self.q_norm = qk_norm.build(size=d_model, init_device=init_device)
-            self.k_norm = qk_norm.build(
-                size=self.n_kv_heads * self.head_dim, init_device=init_device
-            )
+            if use_head_qk_norm:
+                self.q_norm = qk_norm.build(size=self.head_dim, init_device=init_device)
+                self.k_norm = qk_norm.build(size=self.head_dim, init_device=init_device)
+            else:
+                self.q_norm = qk_norm.build(size=d_model, init_device=init_device)
+                self.k_norm = qk_norm.build(
+                    size=self.n_kv_heads * self.head_dim, init_device=init_device
+                )
 
         self.rope: Optional[Union[RotaryEmbedding, ComplexRotaryEmbedding]] = None
         if rope is not None:

@@ -179,6 +179,11 @@ class MoEV2TransformerTrainModule(TrainModule):
         self.ep_dp_group = None
         self.ep_mp_group = None
 
+        # compatibility
+        if autocast_precision is not None:
+            assert False, "Autocast precision is not supported in MoEV2TransformerTrainModule"
+        self.autocast_precision = None
+
         # PP related state.
         self._train_pp_schedule: Optional[PipelineSchedule] = None
         self._pp_stages: Optional[List[PipelineStage]] = None

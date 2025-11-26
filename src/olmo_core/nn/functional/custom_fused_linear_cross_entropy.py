@@ -145,8 +145,8 @@ def fused_linear_cross_entropy_forward(
 
             # or transposed layout:
             grad_weight.addmm_(
-                _input_chunk.t().contiguous(), # (D, BT)
-                grad_logits_chunk.contiguous(), # (BT, V)
+                _input_chunk.t().to(grad_weight.dtype).contiguous(), # (D, BT)
+                grad_logits_chunk.to(grad_weight.dtype).contiguous(), # (BT, V)
                 beta=1.0,
                 alpha=1.0,
             )

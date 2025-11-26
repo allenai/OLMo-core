@@ -19,7 +19,7 @@ from .garbage_collector import GarbageCollectorCallback
 from .gpu_memory_monitor import GPUMemoryMonitorCallback
 from .list_checkpointer import ListCheckpointerCallback
 from .monkey_patcher import MonkeyPatcherCallback
-from .profiler import ProfilerCallback
+from .profiler import ProfilerCallback, NvidiaProfilerCallback
 from .sequence_length_scheduler import SequenceLengthSchedulerCallback
 from .slack_notifier import SlackNotificationSetting, SlackNotifierCallback
 from .speed_monitor import SpeedMonitorCallback
@@ -52,6 +52,7 @@ __all__ = [
     "BatchSizeSchedulerCallback",
     "MonkeyPatcherCallback",
     "ListCheckpointerCallback",
+    "NvidiaProfilerCallback",
 ]
 
 __doc__ += "\n"
