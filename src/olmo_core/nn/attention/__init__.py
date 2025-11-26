@@ -161,6 +161,7 @@ class AttentionConfig(Config):
     dtype: DType = DType.float32
     sliding_window: Optional[SlidingWindowAttentionConfig] = None
     use_head_qk_norm: Optional[bool] = None
+    d_attn: Optional[int] = None  # equal to n_hads * head_dim, if not set, defaults to d_model
 
     def num_params(self, d_model: int) -> int:
         """
@@ -168,19 +169,25 @@ class AttentionConfig(Config):
 
         :param d_model: The model dimensionality.
         """
+
+        if self.d_attn is None:
+            d_attn = d_model
+        else:
+            d_attn = self.d_attn
+
         n_heads = self.n_heads
         n_kv_heads = self.n_kv_heads or n_heads
-        head_dim = d_model // n_heads
+        head_dim = d_attn // n_heads # not assuming d_model here
         bias = self.bias if self.bias is not None else self.name != AttentionType.normalized
 
         params = 0
 
-        # Block attention Q projection.
-        params += d_model * d_model
+        # Block attention Q projection. (input = d_model, output = d_attn)
+        params += d_model * d_attn
         if bias:
-            params += d_model
+            params += d_attn
 
-        # Block attention KV projections.
+        # Block attention KV projections. (input = d_model, output = n_kv_heads * head_dim)
         params += 2 * d_model * n_kv_heads * head_dim
         if bias:
             params += 2 * n_kv_heads * head_dim
@@ -190,16 +197,16 @@ class AttentionConfig(Config):
             if self.use_head_qk_norm:
                 params += 2 * self.qk_norm.num_params(head_dim)
             else:
-                params += 2 * self.qk_norm.num_params(d_model)
+                params += 2 * self.qk_norm.num_params(d_attn)
 
         # Block attention out.
-        params += d_model * d_model
+        params += d_attn * d_model # input = d_attn, output = d_model
         if bias:
             params += d_model
 
         # Block QK scaling factors.
         if self.name == AttentionType.normalized:
-            head_dim = d_model // n_heads
+            head_dim = d_attn // n_heads
             params += n_heads * head_dim
             params += n_kv_heads * head_dim
 
@@ -260,6 +267,53 @@ class AttentionConfig(Config):
             raise OLMoConfigurationError(
                 f"invalid options for '{self.name}' {self.__class__.__name__}, {e}"
             ) from e
+
+    def flops_per_seq(self, d_model: int, seq_length: int) -> int:
+        """
+        Estimate the number of FLOPs for a single forward + backward pass through attention
+        for a sequence of the given length.
+
+        :param d_model: The model dimensionality.
+        :param seq_length: The sequence length.
+        """
+        n_heads = self.n_heads
+        n_kv_heads = self.n_kv_heads or n_heads
+        d_attn = self.d_attn if self.d_attn is not None else d_model
+
+        head_dim = d_attn // n_heads
+
+        # 2x: A GEMM of a m*n tensor with a n*k tensor requires 2mnk floating-point operations.
+        # - 3x: Each GEMM in the model needs to be performed 3 times (forward pass,
+        #       backward wgrad [weight gradient], backward dgrad [data gradient]).
+        flops_factor = 2 * 3
+
+        flops = 0
+
+        # Q projection (seq_length, d_model) x (d_model, d_attn)
+        flops += flops_factor * (d_model * d_attn * seq_length)
+
+        # K, V projections (seq_length, d_model) x (d_model, n_kv_heads * head_dim) x 2
+        flops += flops_factor * (d_model * n_kv_heads * head_dim * seq_length) * 2
+
+
+        # QK^T scores:
+        # Treat as n_heads independent GEMMs:
+        # (seq_length, head_dim) x (head_dim, seq_length) for each head.
+        # mnk = seq_length * seq_length * head_dim, repeated n_heads times.
+        flops += flops_factor * (n_heads * seq_length * seq_length * head_dim) / 2 # divide by 2 for causal attention
+
+        # Attention @ V:
+        # Again n_heads independent GEMMs:
+        # (seq_length, seq_length) x (seq_length, head_dim) for each head.
+        flops += flops_factor * (n_heads * seq_length * seq_length * head_dim) / 2 # divide by 2 for causal attention
+
+        # Output projection (seq_length, d_attn) x (d_attn, d_model)
+        flops += flops_factor * (d_attn * d_model * seq_length)
+
+        # NOTE: We ignore non-matmul ops (softmax, masking, RoPE, qk_norm, dropout, etc.)
+        # since they are relatively small compared to the GEMMs above.
+
+        return flops
 
 
 class AttentionBase(nn.Module):
@@ -326,21 +380,25 @@ class Attention(AttentionBase):
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
         use_head_qk_norm: bool = False,
+        d_attn: Optional[int] = None,
     ):
         super().__init__()
+
+        if d_attn is None:
+            d_attn = d_model
 
         self.n_heads = n_heads
         self.n_kv_heads = n_kv_heads or n_heads
         self.n_rep = self.n_heads // self.n_kv_heads
-        self.head_dim = d_model // n_heads
-        self.w_q = nn.Linear(d_model, d_model, bias=bias, dtype=dtype, device=init_device)
+        self.head_dim = d_attn // n_heads
+        self.w_q = nn.Linear(d_model, d_attn, bias=bias, dtype=dtype, device=init_device)
         self.w_k = nn.Linear(
             d_model, self.n_kv_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device
         )
         self.w_v = nn.Linear(
             d_model, self.n_kv_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device
         )
-        self.w_out = nn.Linear(d_model, d_model, bias=bias, dtype=dtype, device=init_device)
+        self.w_out = nn.Linear(d_attn, d_model, bias=bias, dtype=dtype, device=init_device)
         self.clip_qkv = clip_qkv
         self.dropout_p = dropout
         self.use_head_qk_norm = use_head_qk_norm
@@ -352,7 +410,7 @@ class Attention(AttentionBase):
                 self.q_norm = qk_norm.build(size=self.head_dim, init_device=init_device)
                 self.k_norm = qk_norm.build(size=self.head_dim, init_device=init_device)
             else:
-                self.q_norm = qk_norm.build(size=d_model, init_device=init_device)
+                self.q_norm = qk_norm.build(size=d_attn, init_device=init_device)
                 self.k_norm = qk_norm.build(
                     size=self.n_kv_heads * self.head_dim, init_device=init_device
                 )
@@ -569,7 +627,7 @@ class Attention(AttentionBase):
             local_k_slice=local_k_slice,
         )
 
-        # shape: (batch_size, seq_len, d_model)
+        # shape: (batch_size, seq_len, d_attn)
         att = att.view(B, T, -1)
 
         # shape: (batch_size, seq_len, d_model)

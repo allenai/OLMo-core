@@ -46,6 +46,7 @@ from .config import OptimGroupOverride, INITIAL_LR_FIELD, LR_FIELD
 from ..exceptions import OLMoConfigurationError
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import Placement, Replicate, Shard, DTensor, distribute_tensor
+import nvtx
 
 log = logging.getLogger(__name__)
 
@@ -252,12 +253,20 @@ class MoEFusedV2OptimizerConfig(Config):
         # Concatenate, ensuring the "default" groups remain first in each partition (already ensured by build_groups()).
         all_groups: List[Dict[str, Any]] = list(dp_groups) + list(ep_groups) # type: ignore
 
+        has_grad_accum_fp32_buffer = [part.has_grad_accum_fp32_buffer for part in model_parts]
+        # shuold all have the same value
+        if not all(x == has_grad_accum_fp32_buffer[0] for x in has_grad_accum_fp32_buffer):
+            raise ValueError("Inconsistent `has_grad_accum_fp32_buffer` among model parts")
+        
+        has_grad_accum_fp32_buffer = has_grad_accum_fp32_buffer[0]
+
         optim = self.optimizer()(
             all_groups,
             dp_group=getattr(train_module, "dp_group", None),
             ep_dp_group=getattr(train_module, "ep_dp_group", None),
             world_mesh=train_module.world_mesh,
             device=train_module.device,
+            model_has_grad_accum_fp32_buffer=has_grad_accum_fp32_buffer,
             **kwargs,
         )
 
@@ -331,6 +340,7 @@ class MoEFusedV2Optimizer:
         max_grad_norm: float = 1.0,
         dtype: Optional[Union[torch.dtype, DType]] = None,
         device: Optional[torch.device] = None,
+        model_has_grad_accum_fp32_buffer: bool = False, # whether the optimizer should expect the model to have fp32 grad accum buffers
         # foreach: bool = False,
         # --- new args for sharding across multiple PGs ---
         dp_group: Optional[ProcessGroup] = None,
@@ -341,6 +351,9 @@ class MoEFusedV2Optimizer:
         assert lr > 0.0
         assert all([0.0 <= beta <= 1.0 for beta in betas])
         defaults = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
+
+        self.model_has_grad_accum_fp32_buffer = model_has_grad_accum_fp32_buffer
+
 
         def _add_defaults_to_param_group(pg: Dict[str, Any]) -> Dict[str, Any]:
             for k, v in defaults.items():
@@ -504,7 +517,15 @@ class MoEFusedV2Optimizer:
         total_local_optim_gb = (main_stat[1] + exp_avg_stat[1] + exp_avg_sq_stat[1]) * 4 / 1024**3
         total_model_gb = self._model_param_sz / 1024**3
         print_str += f'[MoEFusedV2Optimizer] Total optimizer states size: {total_global_optim_gb:.4f} GB global, {total_local_optim_gb:.4f} GB local\n'
-        print_str += f'[MoEFusedV2Optimizer] Model params size (GB): {total_model_gb:.4f} GB\n'
+         
+        if self.model_has_grad_accum_fp32_buffer:
+            total_model_grad_gb = 2 * total_model_gb # extra fp32 grad buffer
+        else:
+            total_model_grad_gb = total_model_gb # bf16 grad only
+        print_str += f'[MoEFusedV2Optimizer] Model params size (GB): {total_model_gb:.4f} GB, model grads size (GB): {total_model_grad_gb:.4f} GB\n'
+        total_static = total_local_optim_gb + total_model_gb + total_model_grad_gb
+
+        print_str += f'[MoEFusedV2Optimizer] Total estimated static memory (GB): {total_static:.4f} GB\n'
 
         print(print_str)
 
@@ -682,6 +703,7 @@ class MoEFusedV2Optimizer:
         return total_grad_norm
 
     @torch.no_grad()
+    @nvtx.annotate("MoEFusedV2Optimizer.step")
     def step(self, closure: Optional[Callable[[], float]] = None) -> Optional[float]:
         
         dbg_mem_before_cp1 = torch.cuda.memory_allocated()/1024**3
@@ -728,36 +750,34 @@ class MoEFusedV2Optimizer:
         else:
             raise RuntimeError(f"Unknown pg tag: {tag}")
 
-    # def _pg_and_order_for_tag(self, tag: str):
-    #     if tag == "dp":
-    #         return self._dp_group, self._param_order_dp
-    #     elif tag == "ep_dp":
-    #         return self._ep_dp_group, self._param_order_ep
-    #     else:
-    #         raise RuntimeError(f"Unknown pg tag: {tag}")
 
     def _world_and_rank(self, pg: Optional[ProcessGroup]) -> Tuple[int, int]:
         if pg is None:
             return 1, 0
         return dist.get_world_size(pg), dist.get_rank(pg)
 
-    
+    @nvtx.annotate("MoEFusedV2Optimizer._reduce_scatter_model_grads")
     def _reduce_scatter_model_grads(self) -> None:
         
         for param_group in self.param_groups:
             for name, param in param_group['named_params'].items():
-                if param.grad is not None:
-                    raise RuntimeError("Expected model param grad to be None. Use _main_grad_fp32 to store the grad.")
-                if param._main_grad_fp32 is None:
-                    continue
+                if self.model_has_grad_accum_fp32_buffer:
+                    # the model already has a fp32 grad buffer, so the grad is already in fp32
+                    # and model's bf16 grad should be None
+                    if param.grad is not None:
+                        raise RuntimeError("Expected model param grad to be None. Use _main_grad_fp32 to store the grad.")
 
-                # get model grad
-                model_grad_fp32 = param._main_grad_fp32.detach().view(-1) # unsharded local shape, FP32
+                    if param._main_grad_fp32 is None:
+                        continue
 
-                # if name == 'blocks.7.routed_experts.w_down':
-                #     torch.save(model_grad_fp32.cpu(), f"grad2.{torch.distributed.get_rank()}")
-                #     pass
-                
+                    model_grad_fp32 = param._main_grad_fp32.detach().view(-1) # unsharded local shape, FP32
+                else:
+                    if param.grad is None:
+                        continue
+
+                    # model's grad is in bf16, need to convert to fp32 for reduce-scatter
+                    model_grad_fp32 = param.grad.detach().view(-1).float() # unsharded local shape, FP32
+
                 # prepare main param grad view
                 main_param = self.states[f'{name}.main'] # DTensor, full shape unsharded
                 # depending on whether the tensor is sharded or replicated, use reduce_scatter or all-reduce
@@ -790,14 +810,11 @@ class MoEFusedV2Optimizer:
                 # the full DP world size.
                 main_grad_local.div_(dp_world_size) 
 
-                # if name == 'blocks.7.routed_experts.w_down':
-                #     # torch.save(model_grad_fp32.cpu(), f"grad2.{torch.distributed.get_rank()}")
-                #     pass
-
-                # print(f'model local {torch.distributed.get_rank()}: {model_grad_fp32.cpu()[:3].tolist()}')
-                # print(f'main local {torch.distributed.get_rank()}: {main_grad_local.cpu()[:3].tolist()}')
                 # release model grad to save memory
-                param._main_grad_fp32 = None
+                if self.model_has_grad_accum_fp32_buffer:
+                    param._main_grad_fp32 = None
+                else:
+                    param.grad = None
 
                 # save main param grad
                 self.main_grad[name] = DTensor.from_local(main_grad_local, device_mesh=main_param.device_mesh, placements=main_param.placements)
@@ -808,7 +825,7 @@ class MoEFusedV2Optimizer:
         raise NotImplementedError()
 
 
-
+    @nvtx.annotate("MoEFusedV2Optimizer._copy_main_params_to_model_params")
     def _copy_main_params_to_model_params(self):
         for param_group in self.param_groups:
             for name, param in param_group['named_params'].items():
@@ -847,7 +864,7 @@ class MoEFusedV2Optimizer:
 
         return step_factor.float()
 
-
+    @nvtx.annotate("MoEFusedV2Optimizer._step_foreach")
     def _step_foreach(self, closure=None) -> None:
         """Performs adamw step using foreach impl, limiting chunk size to reduce memory usage."""
 
@@ -919,14 +936,19 @@ class MoEFusedV2Optimizer:
     def zero_grad(self, set_to_none=True):
         for group in self.param_groups:
             for n, p in group["named_params"].items():
+                # clear bf16 grad
                 if p.grad is not None:
                     if set_to_none:
                         p.grad = None
-                        p._main_grad_fp32 = None
+
                     else:
                         p.grad.detach_()
                         p.grad.zero_()
-                        p._main_grad_fp32 = None
+                        
+                # clear fp32 grad buffer if exists
+                if self.model_has_grad_accum_fp32_buffer:
+                    if getattr(p, "_main_grad_fp32", None) is not None:
+                        p._main_grad_fp32  = None
 
     
     def unsharded_state_dict(self) -> dict:

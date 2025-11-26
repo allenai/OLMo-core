@@ -257,70 +257,21 @@ class TransformerBlockConfig(Config):
         return num_params - num_inactive_params
     
     def flops_per_seq(self, d_model: int, seqlen: int) -> int:
-        import argparse
-        args = argparse.Namespace()
         
-        # MTP parameters (not supported)
-        args.mtp_num_layers = None # set to None for non-MTP models
-        from olmo_core.nn.attention import MultiheadLatentAttentionConfig, AttentionConfig
-        
-        # MLA parameters 
-        if isinstance(self.attention, MultiheadLatentAttentionConfig):
-            args.multi_latent_attention = True
-            
-            raise NotImplementedError("MLA flops not supported")
-        else:
-            args.multi_latent_attention = False
-            args.q_lora_rank = None # set to None for non-MLA models
-            args.kv_lora_rank = None
-            args.qk_pos_emb_head_dim = None
-            args.qk_head_dim = None
-            args.v_head_dim = None
-        
-        # regular mlp
+        flops = 0
+
+        # attention
+        flops += self.attention.flops_per_seq(d_model, seqlen)
+
+        # feed forward  
         if self.feed_forward is not None:
-           args.ffn_hidden_size = self.feed_forward.hidden_size
-           if isinstance(self.feed_forward, DenseMoEFeedForwardConfig):
-               args.dense_moe_mlp = True
-           else:
-                args.dense_moe_mlp = False
-        else:
-            args.ffn_hidden_size = None
-            args.dense_moe_mlp = False
-       
-        # MoE parameters
-        if self.feed_forward_moe is not None:
-            # routed experts
-            args.moe_ffn_hidden_size = self.feed_forward_moe.hidden_size
-            args.moe_router_topk = self.feed_forward_moe.router.top_k
-            args.num_experts = self.feed_forward_moe.num_experts
-            # shared MLP
-            if self.feed_forward_moe.shared_mlp is not None:
-                args.moe_shared_expert_intermediate_size = self.feed_forward_moe.shared_mlp.hidden_size
-                args.shared_expert_count = 1
-            else:
-                args.moe_shared_expert_intermediate_size = None
-                args.shared_expert_count = 0
-                
-        else:
-            args.moe_ffn_hidden_size = None
-            args.moe_router_topk = None
-            args.num_experts = None
-            args.moe_shared_expert_intermediate_size = None
-            args.shared_expert_count = 0
-            
+            # (seq_len, d_model) * (d_model, ffn_hidden_size))
+            # x3 for swiglu (up, down, gate)
+            # x3 for fwd+bwd
+            # x2 for GEMM (matmul + add)
+            flops += (3 * 3 * 2) * seqlen * d_model * self.feed_forward.hidden_size
 
-        args.swiglu = True
-        
-        args.seq_length = seqlen
-        args.d_model = d_model
-        args.num_attention_heads = self.attention.n_heads
-        args.num_query_groups = self.attention.n_kv_heads if self.attention.n_kv_heads is not None else args.num_attention_heads # default to n_heads if n_kv_heads is not set
-        
-
-        per_seq_flops = num_floating_point_operations_for_single_layer(args, 1) # flops for a batch size of 1
-        
-        return per_seq_flops
+        return flops
         
     def flops_per_token(self, d_model, seq_len: int) -> int:
         return self.flops_per_seq(d_model, seq_len) // seq_len

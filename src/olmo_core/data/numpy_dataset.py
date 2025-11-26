@@ -498,7 +498,7 @@ class NumpyFSLDataset(NumpyFSLDatasetBase):
             or max_target_sequence_length % sequence_length != 0
         ):
             raise OLMoConfigurationError(
-                "'max_target_sequence_length' should be a multiple of 'sequence_length'"
+                f"'max_target_sequence_length'({max_target_sequence_length}) should be a multiple of 'sequence_length'({sequence_length})"
             )
 
         self._max_target_sequence_length = max_target_sequence_length
@@ -693,7 +693,7 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
             or max_target_sequence_length % sequence_length != 0
         ):
             raise OLMoConfigurationError(
-                "'max_target_sequence_length' should be a multiple of 'sequence_length'"
+                f"'max_target_sequence_length'({max_target_sequence_length}) should be a multiple of 'sequence_length'({sequence_length})"
             )
 
         if include_instance_metadata is None and metadata:

@@ -378,6 +378,9 @@ class MoEV2TransformerTrainModuleConfig(TrainModuleConfig):
     max_grad_norm: Optional[float] = None
     scheduler: Optional[Scheduler] = None
 
+    # DP settings.
+    grad_accum_in_fp32: bool = True
+
     # Model settings.
 
     compile_model: bool = False

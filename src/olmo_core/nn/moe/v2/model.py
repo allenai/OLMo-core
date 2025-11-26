@@ -59,6 +59,8 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         self.recompute_all_blocks_by_chunk = kwargs.pop('recompute_all_blocks_by_chunk')
         self.recompute_each_block = kwargs.pop('recompute_each_block')
 
+        self.has_grad_accum_fp32_buffer = False # whether the model has grad accum buffer for fp32 master grad, will be set in `attach_fp32_accum`
+
         super().__init__(*args, **kwargs)
         self.ep_enabled = False # default
 
@@ -430,6 +432,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         return generator
 
     def attach_fp32_accum(self):
+        self.has_grad_accum_fp32_buffer = True
         for p in self.parameters():
             if not p.requires_grad:
                 continue

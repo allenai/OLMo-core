@@ -1,10 +1,11 @@
 
 def num_floating_point_operations_for_single_layer(args, batch_size):
-
+    raise RuntimeError("This function is deprecated.")
     """Calculate FLOPs for a standard Transformer model."""
     # Attention projection size.
     # general
     assert hasattr(args, 'd_model')
+    assert hasattr(args, 'd_attn')
     assert hasattr(args, 'swiglu')
     assert hasattr(args, 'seq_length')
     # attn
@@ -99,13 +100,13 @@ def num_floating_point_operations_for_single_layer(args, batch_size):
         self_attn_term = (
             expansion_factor
             * args.d_model
-            * args.d_model
+            * args.d_attn
             * (
                 (
                     1
                     + (args.num_query_groups / args.num_attention_heads)
                     # Only half of the attention matrix is non-zero and needs to be multiplied with V.
-                    + (args.seq_length / args.d_model / 2)
+                    + (args.seq_length / args.d_attn / 2)
                 ) 
             )
         )
@@ -139,7 +140,7 @@ def num_floating_point_operations_for_single_layer(args, batch_size):
 def num_floating_point_operations_for_logits(config, seq_len): 
     # for one sequence
     total_floating_point_operations = 1 * seq_len * (
-        3*2
+        3 * 2 # x3 for fwd+bwd, x2 for GEMM FMA
         * config.d_model
         * config.vocab_size 
         * 1

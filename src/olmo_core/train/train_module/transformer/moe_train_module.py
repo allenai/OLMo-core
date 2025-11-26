@@ -156,7 +156,8 @@ class MoEV2TransformerTrainModule(TrainModule):
         state_dict_load_opts: Optional[dist_cp_sd.StateDictOptions] = None,
         load_key_mapping: Optional[Dict[str, str]] = None,
         label_ignore_index: int = -100,
-        reduce_scatter_grads: bool = True
+        reduce_scatter_grads: bool = True,
+        grad_accum_in_fp32: bool = True,
     ):
         super().__init__()
         from olmo_core.nn.moe.v2.model import MoEFusedV2Transformer
@@ -248,8 +249,10 @@ class MoEV2TransformerTrainModule(TrainModule):
         import torch._dynamo.config as dynamo_cfg
         dynamo_cfg.recompile_limit = 64  # or any higher number you want
 
-        for part in self.model_parts:
-            part.attach_fp32_accum()
+        self.grad_accum_in_fp32 = grad_accum_in_fp32
+        if self.grad_accum_in_fp32:
+            for part in self.model_parts:
+                part.attach_fp32_accum()
 
 
         if compile_model:
@@ -754,7 +757,7 @@ class MoEV2TransformerTrainModule(TrainModule):
 
         return
 
-
+    @nvtx.annotate("train_batch")
     def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
         # Set model to train mode if it isn't already.
         for m in self.model_parts:
@@ -894,54 +897,55 @@ class MoEV2TransformerTrainModule(TrainModule):
 
         # Record loss metrics.
         from olmo_core.optim.moe_optimizer import MoEFusedV2Optimizer
-        if self.pp_enabled:
-            ce_batch_loss = self.reduce_send_recv(ce_batch_loss)
-            self.record_ce_loss(ce_batch_loss)
-            self.optim.latest_loss = ce_batch_loss
-        else:
-            assert ce_batch_loss is not None, "CE loss should not be None"
-            # Need to reduce the loss right away for the SkipStepOptimizer. NOTE: WHY?
-            if is_distributed():
-                ce_batch_loss.div_(self._reduce_divide_factor)
-                dist.all_reduce(ce_batch_loss)
-                ce_batch_loss.div_(self.world_size)
-                ce_batch_loss.mul_(self._reduce_divide_factor)
-            self.record_ce_loss(ce_batch_loss)
-            self.optim.latest_loss = ce_batch_loss
+        with nvtx.annotate("record_metrics"):
+            if self.pp_enabled:
+                ce_batch_loss = self.reduce_send_recv(ce_batch_loss)
+                self.record_ce_loss(ce_batch_loss)
+                self.optim.latest_loss = ce_batch_loss
+            else:
+                assert ce_batch_loss is not None, "CE loss should not be None"
+                # Need to reduce the loss right away for the SkipStepOptimizer. NOTE: WHY?
+                if is_distributed():
+                    ce_batch_loss.div_(self._reduce_divide_factor)
+                    dist.all_reduce(ce_batch_loss)
+                    ce_batch_loss.div_(self.world_size)
+                    ce_batch_loss.mul_(self._reduce_divide_factor)
+                self.record_ce_loss(ce_batch_loss)
+                self.optim.latest_loss = ce_batch_loss
 
-  
-        if z_batch_loss is not None:
-            assert self.z_loss_multiplier is not None
-            self.record_metric(
-                "Z loss",
-                z_batch_loss,
-                ReduceType.mean,
-                namespace="train",
-            )
-            self.record_metric(
-                "Z loss unscaled",
-                z_batch_loss / self.z_loss_multiplier,
-                ReduceType.mean,
-                namespace="train",
-            )
-
-        # And additional metrics.
-        for m in self.model_parts:
-            for metric_name, (metric_val, reduction) in m.compute_auxiliary_metrics(
-                reset=True
-            ).items():
-                merge_strategy = MetricMergeStrategy.warn
-                if reduction in (ReduceType.sum, ReduceType.mean):
-                    merge_strategy = MetricMergeStrategy.sum
-                elif reduction == ReduceType.max:
-                    merge_strategy = MetricMergeStrategy.max
+    
+            if z_batch_loss is not None:
+                assert self.z_loss_multiplier is not None
                 self.record_metric(
-                    metric_name,
-                    metric_val,
-                    reduction,
+                    "Z loss",
+                    z_batch_loss,
+                    ReduceType.mean,
                     namespace="train",
-                    merge_strategy=merge_strategy,
                 )
+                self.record_metric(
+                    "Z loss unscaled",
+                    z_batch_loss / self.z_loss_multiplier,
+                    ReduceType.mean,
+                    namespace="train",
+                )
+
+            # And additional metrics.
+            for m in self.model_parts:
+                for metric_name, (metric_val, reduction) in m.compute_auxiliary_metrics(
+                    reset=True
+                ).items():
+                    merge_strategy = MetricMergeStrategy.warn
+                    if reduction in (ReduceType.sum, ReduceType.mean):
+                        merge_strategy = MetricMergeStrategy.sum
+                    elif reduction == ReduceType.max:
+                        merge_strategy = MetricMergeStrategy.max
+                    self.record_metric(
+                        metric_name,
+                        metric_val,
+                        reduction,
+                        namespace="train",
+                        merge_strategy=merge_strategy,
+                    )
 
     def eval_batch(
         self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
@@ -1113,10 +1117,6 @@ class MoEV2TransformerTrainModule(TrainModule):
 
     def optim_step(self):
         from olmo_core.optim.moe_optimizer import MoEFusedV2Optimizer
-
-        # rename model's p._main_grad_fp32 to be p.grad so that optim can find the grad
-        # for model in self.model_parts:
-        #     model.prepare_main_grads_for_optim()
 
         if self.reduce_scatter_grads:
             pass

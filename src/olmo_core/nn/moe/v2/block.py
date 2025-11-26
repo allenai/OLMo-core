@@ -40,7 +40,7 @@ from olmo_core.config import Config, DType, StrEnum
 from typing import Callable
 from .router import MoERouterConfigV2
 from .shared_experts import SharedExpertsConfig
-from .routed_experts import RoutedExperts, RoutedExpertsConfig
+from .routed_experts import RoutedExperts, RoutedExpertsConfig, gmm_no_compile
     
 
 from ..utils import (
@@ -138,78 +138,37 @@ class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
         return block_params
 
     def flops_per_seq(self, d_model: int, seqlen: int) -> int:
-        import argparse
-        from olmo_core.nn.transformer.flops import num_floating_point_operations_for_single_layer
-        args = argparse.Namespace()
         
-        # MTP parameters (not supported)
-        args.mtp_num_layers = None # set to None for non-MTP models
-        from olmo_core.nn.attention import MultiheadLatentAttentionConfig, AttentionConfig
-        
-        # MLA parameters 
-        if isinstance(self.attention, MultiheadLatentAttentionConfig):
-            args.multi_latent_attention = True
-            
-            raise NotImplementedError("MLA flops not supported")
-        else:
-            args.multi_latent_attention = False
-            args.q_lora_rank = None # set to None for non-MLA models
-            args.kv_lora_rank = None
-            args.qk_pos_emb_head_dim = None
-            args.qk_head_dim = None
-            args.v_head_dim = None
-        
-        # # regular mlp
-        # if self.feed_forward is not None:
-        #    args.ffn_hidden_size = self.feed_forward.hidden_size
-        #    if isinstance(self.feed_forward, DenseMoEFeedForwardConfig):
-        #        args.dense_moe_mlp = True
-        #    else:
-        #         args.dense_moe_mlp = False
-        # else:
-        #     args.ffn_hidden_size = None
-        #     args.dense_moe_mlp = False
+        flops = 0
 
-        args.ffn_hidden_size = None
-        args.dense_moe_mlp = False
+        # attention
+        flops += self.attention.flops_per_seq(d_model, seqlen)
+
+
+        # router 
+        # (seq_len * d_model) * (d_model * num_total_experts)
+        flops += 6 * seqlen * d_model * (
+            (self.routed_experts_router.num_experts if self.routed_experts_router is not None else 0)
+            + (self.shared_experts_router.num_experts if self.shared_experts_router is not None else 0)
+        )
 
         # routed experts
+        # (seq_len, d_model) * (d_model, expert_hidden_size) * top_k 
+        # x3 for swiglu (up, down, gate)
+        # x3 for fwd+bwd
+        # x2 for GEMM
         if self.routed_experts is not None:
-            assert self.routed_experts_router is not None
-            # routed experts
-            args.moe_ffn_hidden_size = self.routed_experts.hidden_size
-            args.moe_router_topk = self.routed_experts_router.top_k
-            args.num_experts = self.routed_experts.num_experts
-            # shared MLP
-        else:
-            args.moe_ffn_hidden_size = None
-            args.moe_router_topk = None
-            args.num_experts = None
-            # args.moe_shared_expert_intermediate_size = None
-            # args.shared_expert_count = 0
+            flops += (3 * 3 * 2) * seqlen * d_model * self.routed_experts.hidden_size *  self.routed_experts_router.top_k
 
         # shared experts
+        # (seq_len, d_model) * (d_model, expert_hidden_size) * num_experts
+        # x3 for swiglu (up, down, gate)
+        # x3 for fwd+bwd
+        # x2 for GEMM
         if self.shared_experts is not None:
-            args.moe_shared_expert_intermediate_size = self.shared_experts.hidden_size
-            args.shared_expert_count = self.shared_experts.num_experts
-        else:
-            args.moe_shared_expert_intermediate_size = None
-            args.shared_expert_count = 0
-                
-        
-            
+            flops += (3 * 3 * 2) * seqlen * d_model * self.shared_experts.hidden_size * self.shared_experts.num_experts
 
-        args.swiglu = True
-        
-        args.seq_length = seqlen
-        args.d_model = d_model
-        args.num_attention_heads = self.attention.n_heads
-        args.num_query_groups = self.attention.n_kv_heads if self.attention.n_kv_heads is not None else args.num_attention_heads # default to n_heads if n_kv_heads is not set
-        
-
-        per_seq_flops = num_floating_point_operations_for_single_layer(args, 1) # flops for a batch size of 1
-        
-        return per_seq_flops
+        return flops
         
 
 if TYPE_CHECKING:
@@ -320,7 +279,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
 
 
         self.checkpoint_attn = False
-        self.checkpoint_permute_moe_unpermute = False
+        self.checkpoint_permute_moe_unpermute = True
         self.checkpoint_combined_ep_tbo = False
 
         # self.type_id = None
@@ -910,94 +869,101 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         # del permutated_local_x
         ############################################ end
     
-        ###########  5. Permute the global tokens to be ready for MLP computation ###########
-        with nvtx.annotate("Permute global tokens for MLP", color='green'):
-            # option 1: use moe_sort_chunks_by_index (by TE <- trition)
-            # input_chunk_idxs = torch.arange(
-            #     self.num_experts, device=local_x.device
-            # )
-            # [num_local_routed_experts, tp_size * ep_size]. Sort the input chunks by local experts.
-            # sort_input_by_local_experts = input_chunk_idxs.reshape(
-            #     -1, self.num_local_routed_experts
-            # ).T.ravel() 
-            # split into 32 chunks (32 experts)
-            # e.g., [ 
-            # 0,  4,  8, 12, 16, 20, 24, 28,    --> these 8 chunks come from all 8 EP ranks, go to local expert 0
-            # 1,  5,  9, 13, 17, 21, 25, 29,    --> these 8 chunks come from all 8 EP ranks, go to local expert 1
-            # 2,  6, 10, 14, 18, 22, 26, 30,    --> these 8 chunks come from all 8 EP ranks, go to local expert 2
-            # 3,  7, 11, 15, 19, 23, 27, 31     --> these 8 chunks come from all 8 EP ranks, go to local expert 3
-            # ].  (1D tensor)
+        global_x = self._checkpointed_permute_routed_experts_unpermute(
+            global_x=global_x,
+            global_x_local_expert_indices=global_x_local_expert_indices,
+            parallel_batch_size_per_local_expert_cpu=parallel_batch_size_per_local_expert_cpu
+        )
+######################## AC START ###############################    
+
+        # ###########  5. Permute the global tokens to be ready for MLP computation ###########
+        # with nvtx.annotate("Permute global tokens for MLP", color='green'):
+        #     # option 1: use moe_sort_chunks_by_index (by TE <- trition)
+        #     # input_chunk_idxs = torch.arange(
+        #     #     self.num_experts, device=local_x.device
+        #     # )
+        #     # [num_local_routed_experts, tp_size * ep_size]. Sort the input chunks by local experts.
+        #     # sort_input_by_local_experts = input_chunk_idxs.reshape(
+        #     #     -1, self.num_local_routed_experts
+        #     # ).T.ravel() 
+        #     # split into 32 chunks (32 experts)
+        #     # e.g., [ 
+        #     # 0,  4,  8, 12, 16, 20, 24, 28,    --> these 8 chunks come from all 8 EP ranks, go to local expert 0
+        #     # 1,  5,  9, 13, 17, 21, 25, 29,    --> these 8 chunks come from all 8 EP ranks, go to local expert 1
+        #     # 2,  6, 10, 14, 18, 22, 26, 30,    --> these 8 chunks come from all 8 EP ranks, go to local expert 2
+        #     # 3,  7, 11, 15, 19, 23, 27, 31     --> these 8 chunks come from all 8 EP ranks, go to local expert 3
+        #     # ].  (1D tensor)
 
             
-            ## chunk size is specified by `global_batch_size_per_local_expert`
+        #     ## chunk size is specified by `global_batch_size_per_local_expert`
             
             
-            # e.g., global_batch_size_per_local_expert
-            # local experts 0     1     2     3
-            # ep0       [[3108, 5307, 5798, 4067],
-            # ep1        [4642, 3836, 3488, 3477],
-            # ep2        [5129, 3964, 2472, 4194],
-            # ep3        [4266, 3191, 4511, 3841],
-            # ep4        [5059, 5758, 4838, 3201],
-            # ep5        [5388, 3531, 3419, 2860],
-            # ep6        [3862, 3605, 2945, 3840],
-            # ep7        [3960, 4624, 3414, 4406]]
+        #     # e.g., global_batch_size_per_local_expert
+        #     # local experts 0     1     2     3
+        #     # ep0       [[3108, 5307, 5798, 4067],
+        #     # ep1        [4642, 3836, 3488, 3477],
+        #     # ep2        [5129, 3964, 2472, 4194],
+        #     # ep3        [4266, 3191, 4511, 3841],
+        #     # ep4        [5059, 5758, 4838, 3201],
+        #     # ep5        [5388, 3531, 3419, 2860],
+        #     # ep6        [3862, 3605, 2945, 3840],
+        #     # ep7        [3960, 4624, 3414, 4406]]
             
-            # so we want to put (3108+4642+5129+4266+5059+5388+3862+3960) tokens to local expert 0,
-            # and so on
+        #     # so we want to put (3108+4642+5129+4266+5059+5388+3862+3960) tokens to local expert 0,
+        #     # and so on
             
-            # global_x = moe_sort_chunks_by_index_no_compile(
-            #     inp=global_x,
-            #     split_sizes=global_batch_size_per_local_expert.ravel(),
-            #     sorted_index=sort_input_by_local_experts
-            # ) # type: ignore
+        #     # global_x = moe_sort_chunks_by_index_no_compile(
+        #     #     inp=global_x,
+        #     #     split_sizes=global_batch_size_per_local_expert.ravel(),
+        #     #     sorted_index=sort_input_by_local_experts
+        #     # ) # type: ignore
 
-            # option 2: use moe_permute (by TE), and pretend topk is 1
-            routing_map2 = global_x_local_expert_indices.view(-1, 1).int()
-            num_out_tokens2 = routing_map2.size(0) * 1 # dropless
-            hidden_shape_before_permute2 = global_x.shape
-            global_x, reversed_global_x_permutation_mapping = moe_permute_no_compile(
-                inp=global_x, 
-                routing_map=routing_map2, 
-                num_out_tokens=num_out_tokens2, 
-                map_type='index'
-            )
+        #     # option 2: use moe_permute (by TE), and pretend topk is 1
+        #     routing_map2 = global_x_local_expert_indices.view(-1, 1).int()
+        #     num_out_tokens2 = routing_map2.size(0) * 1 # dropless
+        #     hidden_shape_before_permute2 = global_x.shape
+        #     global_x, reversed_global_x_permutation_mapping = moe_permute_no_compile(
+        #         inp=global_x, 
+        #         routing_map=routing_map2, 
+        #         num_out_tokens=num_out_tokens2, 
+        #         map_type='index'
+        #     )
                 
                 
-        ############################################ end
+        # ############################################ end
 
         
-        ########## 6. MLP forwrad ###########
+        # ########## 6. MLP forwrad ###########
 
-        # global_x = self.routed_experts(global_x, parallel_batch_size_per_local_expert_cpu.tolist())
-        # global_x = self.routed_experts(global_x, parallel_batch_size_per_local_expert_cpu)
-        global_x = self.fwd_routed_experts(global_x, parallel_batch_size_per_local_expert_cpu)
+        # # global_x = self.routed_experts(global_x, parallel_batch_size_per_local_expert_cpu.tolist())
+        # # global_x = self.routed_experts(global_x, parallel_batch_size_per_local_expert_cpu)
+        # global_x = self.fwd_routed_experts(global_x, parallel_batch_size_per_local_expert_cpu)
 
-        ############################################ end
+        # ############################################ end
         
         
-        ############ 7. Unpermute the output tokens to be ready for all-to-all communication ##########
-        with nvtx.annotate("Unpermute global tokens", color='green'):
-            # option 1: use moe_sort_chunks_by_index (by TE <- trition)
-            # restore_output_by_local_experts = input_chunk_idxs.reshape(
-            #     self.num_local_routed_experts, -1
-            # ).T.ravel() # [ 0,  8, 16, 24,  1,  9, 17, 25,  2, 10, 18, 26,  3, 11, 19, 27,  4, 12, 20, 28,  5, 13, 21, 29,  6, 14, 22, 30,  7, 15, 23, 31]
-            # global_x = moe_sort_chunks_by_index_no_compile(
-            #     global_x, 
-            #     split_sizes=global_batch_size_per_local_expert.T.ravel(),
-            #     sorted_index=restore_output_by_local_experts
-            # )
+        # ############ 7. Unpermute the output tokens to be ready for all-to-all communication ##########
+        # with nvtx.annotate("Unpermute global tokens", color='green'):
+        #     # option 1: use moe_sort_chunks_by_index (by TE <- trition)
+        #     # restore_output_by_local_experts = input_chunk_idxs.reshape(
+        #     #     self.num_local_routed_experts, -1
+        #     # ).T.ravel() # [ 0,  8, 16, 24,  1,  9, 17, 25,  2, 10, 18, 26,  3, 11, 19, 27,  4, 12, 20, 28,  5, 13, 21, 29,  6, 14, 22, 30,  7, 15, 23, 31]
+        #     # global_x = moe_sort_chunks_by_index_no_compile(
+        #     #     global_x, 
+        #     #     split_sizes=global_batch_size_per_local_expert.T.ravel(),
+        #     #     sorted_index=restore_output_by_local_experts
+        #     # )
             
-            # option 2: use moe_unpermute (by TE)
-            global_x = moe_unpermute_no_compile(
-                inp=global_x,
-                row_id_map=reversed_global_x_permutation_mapping,
-                merging_probs=None,
-                restore_shape=hidden_shape_before_permute2,
-                map_type='index',
-            ) 
-        ############################################ end
-    
+        #     # option 2: use moe_unpermute (by TE)
+        #     global_x = moe_unpermute_no_compile(
+        #         inp=global_x,
+        #         row_id_map=reversed_global_x_permutation_mapping,
+        #         merging_probs=None,
+        #         restore_shape=hidden_shape_before_permute2,
+        #         map_type='index',
+        #     ) 
+        # ############################################ end
+######################## AC END ###############################    
             
     
         ########## 8. reverse_all_to_all ###########
@@ -1119,10 +1085,58 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 
         
         ## 6. MLP forwrad ##
-        # global_x = self.routed_experts(global_x, parallel_batch_size_per_local_expert_cpu.tolist())
+        # global_x = self.routed_experts(global_x, parallel_batch_size_per_local_expert_cpu)
 
-        global_x = self.routed_experts(global_x, parallel_batch_size_per_local_expert_cpu)
+        ###################################
+        # assert isinstance(batch_size_per_expert, List), "only accept List for batch_size_per_expert"
+        assert isinstance(parallel_batch_size_per_local_expert_cpu, torch.Tensor), "only accept Tensor for batch_size_per_expert"
+
+        assert parallel_batch_size_per_local_expert_cpu.device.type == 'cpu', "batch_size_per_expert must be on cpu"
+        batch_size_per_expert_tensor = parallel_batch_size_per_local_expert_cpu.to(dtype=torch.int64)  # NOTE: int64 required for grouped_gemm
+
+        if global_x.numel() == 0:
+            return global_x
         
+        w_up_gate = self.routed_experts.w_up_gate # (E, H, 2D)
+        w_down = self.routed_experts.w_down # (E, H, D)
+        up_gate = gmm_no_compile(global_x, w_up_gate, batch_size_per_expert_tensor, trans_b=True) # -> (BS, 2H)
+        up_gate = cast(torch.Tensor, up_gate)  # ensure type is Tensor
+
+### START AC ###
+        h = self.routed_experts.chunk_and_activate(up_gate) # -> (BS, H)
+        
+        global_x = gmm_no_compile(h, w_down, batch_size_per_expert_tensor, trans_b=False) # -> (BS, H)
+        
+        ###################################
+        
+        ## 7. Unpermute the output tokens to be ready for all-to-all communication ##
+        with nvtx.annotate("Unpermute global tokens", color='green'):
+            global_x = moe_unpermute_no_compile(
+                inp=global_x,
+                row_id_map=reversed_global_x_permutation_mapping,
+                merging_probs=None,
+                restore_shape=hidden_shape_before_permute2,
+                map_type='index',
+            ) 
+### END AC ###
+        # global_x = checkpoint(
+        #     self._act_down_unpermute,
+        #     up_gate,
+        #     batch_size_per_expert_tensor,
+        #     reversed_global_x_permutation_mapping,
+        #     hidden_shape_before_permute2,
+        #     use_reentrant=False,
+        # )
+### REPLACE ###
+
+        return global_x
+    
+    def _act_down_unpermute(self, up_gate, batch_size_per_expert_tensor, reversed_global_x_permutation_mapping, hidden_shape_before_permute2):
+        h = self.routed_experts.chunk_and_activate(up_gate) # -> (BS, H)
+        
+        global_x = gmm_no_compile(h, self.routed_experts.w_down, batch_size_per_expert_tensor, trans_b=False) # -> (BS, H)
+        
+        ###################################
         
         ## 7. Unpermute the output tokens to be ready for all-to-all communication ##
         with nvtx.annotate("Unpermute global tokens", color='green'):
@@ -1135,7 +1149,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             ) 
 
         return global_x
-    
+
     def _checkpointed_permute_routed_experts_unpermute(
         self,
         global_x,

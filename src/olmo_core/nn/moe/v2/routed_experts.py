@@ -15,6 +15,7 @@ from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import Placement, Replicate, Shard, distribute_tensor
 from olmo_core.distributed.utils import get_local_tensor
 import transformer_engine
+from torch.utils.checkpoint import checkpoint
 
 @torch.compiler.disable
 def gmm_no_compile(a, b, batch_sizes, trans_b=False):
@@ -130,6 +131,8 @@ class RoutedExperts(nn.Module):
 
         # self.type_id = None
 
+        self.checkpoint_act_and_down = False
+
     @nvtx.annotate("RoutedExperts.forward", color="blue")
     @torch.compiler.disable(recursive=False) 
     def forward(self, x: torch.Tensor, batch_size_per_expert: torch.Tensor) -> torch.Tensor:
@@ -155,11 +158,29 @@ class RoutedExperts(nn.Module):
         up_gate = gmm_no_compile(x, w_up_gate, batch_size_per_expert_tensor, trans_b=True) # -> (BS, 2H)
         up_gate = cast(torch.Tensor, up_gate)  # ensure type is Tensor
 
+        # h = self.chunk_and_activate(up_gate) # -> (BS, H)
+        
+        # down = gmm_no_compile(h, w_down, batch_size_per_expert_tensor, trans_b=False) # -> (BS, H)
+
+        if self.checkpoint_act_and_down:
+            down = checkpoint(
+                self.act_and_down, 
+                up_gate,
+                batch_size_per_expert_tensor,
+                use_reentrant=False, 
+            )
+        else:
+            down = self.act_and_down(up_gate, batch_size_per_expert_tensor)
+
+        return cast(torch.Tensor, down)  # ensure type is Tensor
+
+    def act_and_down(self, up_gate: torch.Tensor, batch_size_per_expert_tensor: torch.Tensor) -> torch.Tensor:
+        # swiglu + down projection
+        # so that it apply activation checkpointing if needed
         h = self.chunk_and_activate(up_gate) # -> (BS, H)
         
-        down = gmm_no_compile(h, w_down, batch_size_per_expert_tensor, trans_b=False) # -> (BS, H)
-            
-        return cast(torch.Tensor, down)  # ensure type is Tensor
+        down = gmm_no_compile(h, self.w_down, batch_size_per_expert_tensor, trans_b=False) # -> (BS, H)
+        return down
 
     @torch.compile
     def chunk_and_activate(self, up_gate: torch.Tensor) -> torch.Tensor:
