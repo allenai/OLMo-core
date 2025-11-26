@@ -87,6 +87,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
     config = (
         TrainerConfig(
+            load_path="gs://ai2-llm/checkpoints/amandab/LlamaClone-8B/step0",
+            load_strategy=LoadStrategy.always,
             save_folder=f"gs://ai2-llm/checkpoints/amandab/{common.run_name}/",
             save_overwrite=True,
             metrics_collect_interval=10,
