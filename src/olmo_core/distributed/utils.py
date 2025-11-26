@@ -118,6 +118,7 @@ def init_distributed(
         device = torch.device(f"cuda:{int(os.environ[OLMO_LOCAL_RANK_ENV_VAR])}")
         torch.cuda.set_device(device)
 
+    log_or_print(log, f"Initializing process group with {timeout=}...")
     dist.init_process_group(backend, timeout=timeout, **kwargs)
 
     validate_env_vars()

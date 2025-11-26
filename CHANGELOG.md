@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added `PeriNormTransformerBlock`.
 - Added exponential learning rate scheduler to `olmo_core.optim.scheduler`.
+- Added internal Olmo3 32B midtraining and long context configs.
 
 ### Fixed
 
@@ -19,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Renamed `olmo_core.distributed.utils.scatter_object()` to `broadcast_object()` for correctness.
+- Updated stable torch version to 2.9.1, updated versions of underlying libraries in Beaker Images.
 
 ### Fixed
 
