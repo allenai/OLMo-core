@@ -36,6 +36,16 @@ GLOBAL_BATCH_SIZE = 4 * 1024 * 1024  # ~4M tokens
 # Reduce per-device batch size to save on memory.
 MICROBATCH_DISCOUNT = 1
 
+### OLMo 3 7B Settings
+DATA_MIX = DataMix.OLMo_mix_0625
+MAX_DURATION = Duration.tokens(int(5e12))
+HARD_STOP = Duration.tokens(int(4e12))
+
+### OLMo "3.1" 7B Settings (from OLMo 3 32B)
+# DATA_MIX = DataMix.OLMo_mix_0925
+# MAX_DURATION = Duration.epochs(1)
+# HARD_STOP = None
+
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     config = TransformerConfig.olmo3_7B(
@@ -106,7 +116,7 @@ def build_data_components(
     include_instance_filter: bool = False,
 ) -> DataComponents:
     dataset_config = NumpyFSLDatasetConfig.from_data_mix(
-        DataMix.OLMo_mix_0925,  # willm: Adapted from OLMO 3 32B
+        DATA_MIX,
         tokenizer=common.tokenizer,
         mix_base_dir=common.root_dir,
         work_dir=common.work_dir,
@@ -150,10 +160,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             save_overwrite=True,
             metrics_collect_interval=50,
             cancel_check_interval=cancel_check_interval,
-            # willm: Adapted this from OLMo 3 32B.py
-            max_duration=Duration.epochs(1),
-            # max_duration=Duration.tokens(int(5e12)),
-            # hard_stop=Duration.tokens(int(4e12)),
+            max_duration=MAX_DURATION,
+            hard_stop=HARD_STOP,
         )
         .with_callback(
             "checkpointer",
