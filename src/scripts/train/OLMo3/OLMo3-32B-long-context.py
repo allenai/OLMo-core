@@ -161,10 +161,12 @@ def build_data_components(
         generate_doc_lengths=intra_document_masking,  # enables intra-document masking
         source_group_size=8,
         source_permutation_seed=123,
-        instance_filter_config=None
-        if not include_instance_filter
-        else InstanceFilterConfig(
-            repetition_max_period=13, repetition_min_period=1, repetition_max_count=32
+        instance_filter_config=(
+            None
+            if not include_instance_filter
+            else InstanceFilterConfig(
+                repetition_max_period=13, repetition_min_period=1, repetition_max_count=32
+            )
         ),
     )
 

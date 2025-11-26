@@ -346,9 +346,11 @@ def run_moe_hybrid_combined_forward(
         vocab_size=16_000,
         n_layers=2,
         block=TransformerBlockConfig(
-            name=TransformerBlockType.moe_hybrid_reordered_norm
-            if reordered_norm
-            else TransformerBlockType.moe_hybrid,
+            name=(
+                TransformerBlockType.moe_hybrid_reordered_norm
+                if reordered_norm
+                else TransformerBlockType.moe_hybrid
+            ),
             attention=AttentionConfig(n_heads=8, rope=RoPEConfig(), qk_norm=layer_norm),
             layer_norm=layer_norm,
             feed_forward=FeedForwardConfig(hidden_size=1024, bias=False),
@@ -356,9 +358,9 @@ def run_moe_hybrid_combined_forward(
                 name=MoEType.dropless if dropless else MoEType.default,
                 num_experts=4,
                 hidden_size=256,
-                shared_mlp=FeedForwardConfig(hidden_size=512, bias=False)
-                if shared_experts
-                else None,
+                shared_mlp=(
+                    FeedForwardConfig(hidden_size=512, bias=False) if shared_experts else None
+                ),
                 router=MoERouterConfig(uniform_expert_assignment=True),
             ),
         ),
@@ -693,12 +695,12 @@ def test_num_flops_per_token_with_block_overrides_different_n_heads():
     # Verify that the calculation accounts for the different head dimensions
     base_flops = 6 * config_no_override.num_non_embedding_params
     override_base_flops = 6 * config_with_override.num_non_embedding_params
-    
+
     # The non-embedding params might differ slightly, but the attention FLOPS should differ
     # due to different head dimensions in the override layer
     attention_flops_no_override = flops_no_override - base_flops
     attention_flops_with_override = flops_with_override - override_base_flops
-    
+
     # The override should produce different attention FLOPS because:
     # - Layer 0: uses override_n_heads=4, so q=128, n_kv_heads=2
     # - Other layers: use base_n_heads=8, so q=64, n_kv_heads=4 (from config_no_override)
