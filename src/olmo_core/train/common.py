@@ -64,6 +64,32 @@ class Duration:
         """
         return cls(value=tokens, unit=DurationUnit.tokens)
 
+    @classmethod
+    def chinchilla_tokens(
+        cls, multiple: float, *, model_params: int, _tok_per_param: int = 20
+    ) -> "Duration":
+        """
+        Define a duration based on a multiple of the Chinchilla-optimal number of tokens.
+
+        The rule of thumb for Chinchilla compute optimality is 20 tokens-per-parameter
+        for decoder-only natural language models trained with AdamW on dataset mixtures
+        similar to the Pile.
+
+        Chinchilla optimality refers to training-time compute only, and does not account for
+        inference-time compute. In practice, models are often trained with more tokens than
+        the Chinchilla optimal value ("overtrained") to improve inference-time performance.
+
+        Chinchilla: https://arxiv.org/abs/2203.15556
+        Chinchilla replication: https://arxiv.org/abs/2404.10102
+
+        :param multiple: The Chinchilla multiplier. 1.0 is the Chinchilla optimal value.
+            Values less than 1.0 will undertrain relative to Chinchilla, and values greater
+            than 1.0 will overtrain relative to Chinchilla.
+        :param model_params: The number of *active, non-embedding* parameters in the target model.
+        """
+        tokens = int(_tok_per_param * model_params * multiple)
+        return Duration.tokens(tokens)
+
     def due(self, *, step: int, tokens: int, epoch: int) -> bool:
         """
         Check if the duration is due.
@@ -210,3 +236,13 @@ class TrainingProgress:
         if self.time_remaining is not None:
             progress_str += f", eta {format_timedelta(self.time_remaining)}"
         return progress_str
+
+
+@dataclass
+class StepSkipRange:
+    """Defines a range of steps to skip during training."""
+
+    start: int
+    """The first step to skip (steps start at 1, not 0)."""
+    stop: int
+    """The endpoint of the range (exclusive)."""

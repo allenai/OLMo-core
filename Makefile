@@ -18,6 +18,13 @@ type-check :
 	@echo "======== running mypy... ========="
 	@mypy src/
 
+.PHONY : style
+style:
+	@echo "======== formatting with isort... ========"
+	@isort .
+	@echo "======== formatting with black... ========"
+	@black .
+
 .PHONY : docs
 docs :
 	rm -rf docs/build/
@@ -42,14 +49,14 @@ build :
 # NOTE: See https://hub.docker.com/r/nvidia/cuda/tags?name=devel-ubuntu22.04 for available CUDA versions.
 CUDA_VERSION = 12.8.1
 CUDA_VERSION_PATH=cu$(shell echo $(CUDA_VERSION) | cut -d"." -f1-2 | tr -d .)
-PYTHON_VERSION = 3.11
-TORCH_VERSION = 2.7.1
+PYTHON_VERSION = 3.12
+TORCH_VERSION = 2.9.1
 TORCH_VERSION_SHORT = $(shell echo $(TORCH_VERSION) | tr -d .)
 INSTALL_CHANNEL = whl
 GROUPED_GEMM_VERSION = "grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@main"
 FLASH_ATTN_VERSION = 2.7.4.post1
-RING_FLASH_ATTN_VERSION = 0.1.5
-LIGER_KERNEL_VERSION = 0.5.10
+RING_FLASH_ATTN_VERSION = 0.1.4
+LIGER_KERNEL_VERSION = 0.5.4
 
 #--------------#
 # Build naming #
@@ -71,6 +78,9 @@ docker-image :
 		--build-arg INSTALL_CHANNEL=$(INSTALL_CHANNEL) \
 		--build-arg GROUPED_GEMM_VERSION=$(GROUPED_GEMM_VERSION) \
 		--build-arg FLASH_ATTN_VERSION=$(FLASH_ATTN_VERSION) \
+		--build-arg FLASH_ATTN_3_SHA=$(FLASH_ATTN_3_SHA) \
+		--build-arg FA3_MAX_JOBS=$(FA3_MAX_JOBS) \
+		--build-arg TE_VERSION=$(TE_VERSION) \
 		--build-arg RING_FLASH_ATTN_VERSION=$(RING_FLASH_ATTN_VERSION) \
 		--build-arg LIGER_KERNEL_VERSION=$(LIGER_KERNEL_VERSION) \
 		--target release \
@@ -97,4 +107,4 @@ get-beaker-workspace :
 
 .PHONY : get-full-beaker-image-name
 get-full-beaker-image-name :
-	@./src/scripts/beaker/get_full_image_name.sh $(IMAGE_NAME) $(BEAKER_WORKSPACE)
+	@./src/scripts/beaker/get_full_image_name.sh $(IMAGE_TAG) $(BEAKER_WORKSPACE)

@@ -1,9 +1,11 @@
+import copy
 import json
 from dataclasses import dataclass, fields, is_dataclass, replace
 from enum import Enum
 from typing import (
     Any,
     Callable,
+    ClassVar,
     Dict,
     Generator,
     List,
@@ -15,6 +17,7 @@ from typing import (
 )
 
 import torch
+import yaml
 from cached_path import cached_path
 from omegaconf import OmegaConf as om
 from omegaconf.errors import OmegaConfBaseException
@@ -62,6 +65,11 @@ class Config:
     """
     The name of the class name field inject into the dictionary from :meth:`as_dict()` or
     :meth:`as_config_dict()`.
+    """
+
+    _IGNORE_FIELDS: ClassVar[Tuple[str, ...]] = ()
+    """
+    Fields to ignore when loading from config (for backwards compatibility).
     """
 
     def as_dict(
@@ -202,6 +210,12 @@ class Config:
         """
         return replace(self, **changes)
 
+    def copy(self, deep: bool = True) -> Self:
+        """
+        Creates a new object of the same type, with the same values.
+        """
+        return copy.deepcopy(self) if deep else copy.copy(self)
+
     @classmethod
     def from_dict(cls: Type[C], data: Dict[str, Any], overrides: Optional[List[str]] = None) -> C:
         """
@@ -223,6 +237,10 @@ class Config:
 
         def clean_data(d: Any, prefix: str) -> Any:
             if isinstance(d, dict):
+                # HACK: Try to convert string keys to int if they look like integers. Handles cases
+                # where integer keys were serialized as strings (eg "block_overrides")
+                d = {(int(k) if isinstance(k, str) and k.isdigit() else k): v for k, v in d.items()}
+
                 new_dict = {
                     k: clean_data(v, f"{prefix}.{k}" if prefix else k)
                     for k, v in d.items()
@@ -231,6 +249,11 @@ class Config:
                 if (cls_name := d.get(cls.CLASS_NAME_FIELD)) is not None and (
                     cls_o := resolve_cls(cls_name)
                 ) is not None:
+                    # Remove ignored fields if the class defines any
+                    if cls_o._IGNORE_FIELDS:
+                        new_dict = {
+                            k: v for k, v in new_dict.items() if k not in cls_o._IGNORE_FIELDS
+                        }
                     schema = om.structured(cls_o)
                     try:
                         return om.to_object(om.merge(schema, new_dict))
@@ -261,8 +284,24 @@ class Config:
 
     @classmethod
     def from_file(cls: Type[C], path: PathOrStr, overrides: Optional[List[str]] = None) -> C:
+        path_str = str(path)
+        if path_str.endswith((".yml", ".yaml")):
+            return cls.from_yaml(path, overrides=overrides)
+        elif path_str.endswith(".json"):
+            return cls.from_json(path, overrides=overrides)
+        else:
+            raise OLMoConfigurationError(f"Unsupported config file type: {path}")
+
+    @classmethod
+    def from_json(cls: Type[C], path: PathOrStr, overrides: Optional[List[str]] = None) -> C:
         with cached_path(path).open() as f:
             config_dict = json.load(f)
+        return cls.from_dict(config_dict, overrides=overrides)
+
+    @classmethod
+    def from_yaml(cls: Type[C], path: PathOrStr, overrides: Optional[List[str]] = None) -> C:
+        with cached_path(path).open() as f:
+            config_dict = yaml.safe_load(f)
         return cls.from_dict(config_dict, overrides=overrides)
 
 

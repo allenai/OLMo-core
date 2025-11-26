@@ -9,13 +9,13 @@ import torch.distributed as dist
 from olmo_core.config import StrEnum
 from olmo_core.distributed.utils import (
     backend_supports_cpu,
+    broadcast_object,
     get_fs_local_rank,
     get_rank,
     is_distributed,
-    scatter_object,
 )
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.io import clear_directory, is_url
+from olmo_core.io import clear_directory, is_url, join_path, remove_file
 from olmo_core.utils import wait_for
 
 from ..checkpoint import Checkpointer, UpcycleCheckpointer
@@ -153,11 +153,27 @@ class CheckpointerCallback(Callback):
 
     def _remove_checkpoint(self, path: str):
         log.info(f"Removing old checkpoint at '{path}'...")
+
+        # Remove metadata file first to invalidate the checkpoint.
+        if get_rank() == 0:
+            try:
+                remove_file(join_path(path, self.trainer.checkpointer.METADATA_FNAME))
+            except FileNotFoundError:
+                pass
+
         if is_url(path):
             if get_rank() == 0:
-                self.trainer.run_bookkeeping_op(clear_directory, path)
+                self.trainer.run_bookkeeping_op(
+                    clear_directory,
+                    path,
+                    op_name=f"clear_directory {path}",
+                    distributed=False,
+                    soft_timeout=180,  # this can take a while on GCS, for example
+                )
         elif get_fs_local_rank() == 0:
-            self.trainer.run_bookkeeping_op(clear_directory, path)
+            self.trainer.run_bookkeeping_op(
+                clear_directory, path, op_name=f"clear_directory {path}", distributed=False
+            )
 
     def _schedule_for_removal(self, path: str):
         self._checkpoints_to_remove.append(path)
@@ -214,7 +230,7 @@ class CheckpointerCallback(Callback):
                 except FileNotFoundError:
                     pass
 
-            ephemeral_checkpoints = scatter_object(ephemeral_checkpoints)
+            ephemeral_checkpoints = broadcast_object(ephemeral_checkpoints)
 
             # TODO: handle this if we ever restore callback state.
             assert not self._ephemeral_checkpoints

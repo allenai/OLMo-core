@@ -42,6 +42,20 @@ def kaiming_fan_in_uniform_(
     return tensor
 
 
+def _apply_init(init_fun, x: torch.Tensor, *args, **kwargs):
+    if not isinstance(x, DTensor):
+        init_fun(x, *args, **kwargs)
+        return
+
+    # Initialize full version of x locally, then apply init to that.
+    full_x = torch.zeros(x.shape, dtype=x.dtype, device=x.device)
+    init_fun(full_x, *args, **kwargs)
+    full_x = distribute_like(x, full_x)
+
+    # Now copy over the corresponding shard of `full_x` into `x`.
+    get_local_tensor(x).copy_(get_local_tensor(full_x))
+
+
 class InitMethod(StrEnum):
     normal = "normal"
     """
@@ -203,34 +217,15 @@ class InitMethod(StrEnum):
         elif self == InitMethod.llama_depth:
             std = std / (2 * (block_idx + 1)) ** 0.5
 
-        if isinstance(m.router, MoELinearRouter):
-            _apply_init(
-                nn.init.trunc_normal_,
-                cast(MoELinearRouter, m.router).weight,
-                mean=0.0,
-                std=std,
-                a=-3 * std,
-                b=3 * std,
-                generator=generator,
-            )
-        elif isinstance(m.router, MoEOrthogonalRouter):
-            # _apply_init(
-            #     nn.init.trunc_normal_,
-            #     cast(MoEOrthogonalRouter, m.router).weight,
-            #     mean=0.0,
-            #     std=std,
-            #     a=-3 * std,
-            #     b=3 * std,
-            #     generator=generator,
-            # )
-            _apply_init(
-                nn.init.orthogonal_,
-                cast(MoEOrthogonalRouter, m.router).weight,
-                gain=1,
-                generator=generator,
-            )
-            # x = cast(MoEOrthogonalRouter, m.router).weight.full_tensor()
-            # pass
+        _apply_init(
+            nn.init.trunc_normal_,
+            cast(MoELinearRouter, m.router).weight,
+            mean=0.0,
+            std=std,
+            a=-3 * std,
+            b=3 * std,
+            generator=generator,
+        )
         _apply_init(
             nn.init.trunc_normal_,
             cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp).w1,

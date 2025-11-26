@@ -22,16 +22,17 @@ For example::
 
     if __name__ == "__main__":
         prepare_training_environment()
-        try:
-            # Build train module and data loader...
 
-            # Build trainer.
-            trainer = trainer_config.build(train_module, data_loader)
+        # Build train module and data loader...
 
-            # Run the trainer.
-            trainer.fit()
-        finally:
-            teardown_training_environment()
+        # Build trainer.
+        trainer = trainer_config.build(train_module, data_loader)
+
+        # Run the trainer.
+        trainer.fit()
+
+        # Clean up.
+        teardown_training_environment()
 
 See the `train a language model <examples/train.html>`_ example for a complete, run-able demonstration.
 
@@ -57,6 +58,7 @@ from .common import (
     LoadStrategy,
     MetricMergeStrategy,
     ReduceType,
+    StepSkipRange,
 )
 from .config import TrainerConfig
 from .trainer import Trainer
@@ -73,6 +75,7 @@ __all__ = [
     "DurationUnit",
     "ReduceType",
     "MetricMergeStrategy",
+    "StepSkipRange",
 ]
 
 
@@ -83,8 +86,9 @@ def prepare_training_environment(
     *,
     seed: Optional[int] = None,
     backend: Optional[str] = "cpu:gloo,cuda:nccl",
-    timeout: timedelta = timedelta(minutes=30),
+    timeout: timedelta = timedelta(minutes=15),
     log_filter_type: Optional[LogFilterType] = None,
+    shared_filesystem: Optional[bool] = None,
 ):
     """
     Prepare the environment for training, including setting up the distributed process group
@@ -115,6 +119,8 @@ def prepare_training_environment(
 
         .. note::
             All ranks will always emit messages at the ``WARNING`` level or higher.
+    :param shared_filesystem: Should be set to ``True`` if the checkpoint and working directories
+        are in a local filesystem shared by all ranks, e.g. on an NFS drive.
     """
     # Setting the mp start method to "spawn" avoids some data loader segfaults on LUMI.
     try:
@@ -124,7 +130,7 @@ def prepare_training_environment(
 
     # Initialize process group.
     if backend is not None:
-        init_distributed(backend=backend, timeout=timeout)
+        init_distributed(backend=backend, timeout=timeout, shared_filesytem=shared_filesystem)
     else:
         torch.set_default_device(get_default_device())
 

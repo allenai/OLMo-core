@@ -20,7 +20,7 @@ commits_since_last_release=$(git log "${last_tag}..${current_tag}" --format=form
 
 echo "Commits/PRs since last release:"
 for commit in $commits_since_last_release; do
-    pr_number=$(gh pr list --search "$commit" --state merged --json number --jq '.[].number')
+    pr_number=$(gh pr list --search "$commit" --state merged --json number --jq '.[-1].number')
     if [ -z "$pr_number" ]; then
         echo "$commit"
     else

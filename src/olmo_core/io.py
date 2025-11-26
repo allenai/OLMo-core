@@ -20,10 +20,16 @@ import requests
 import torch
 from cached_path import cached_path
 from cached_path.schemes import S3Client, SchemeClient, add_scheme_client
+from requests.adapters import HTTPAdapter
 from rich.progress import track
 
 from .aliases import PathOrStr
-from .exceptions import OLMoEnvironmentError, OLMoNetworkError
+from .exceptions import (
+    OLMoEnvironmentError,
+    OLMoInvalidRangeRequestError,
+    OLMoNetworkError,
+    OLMoUploadError,
+)
 
 log = logging.getLogger(__name__)
 
@@ -155,6 +161,7 @@ def upload(source: PathOrStr, target: str, save_overwrite: bool = False, quiet: 
     if not quiet:
         log.info(f"Uploading {_format_bytes(num_bytes)} from '{source}' to '{target}'...")
     parsed = urlparse(target)
+
     if parsed.scheme == "gs":
         _gcs_upload(source, parsed.netloc, parsed.path.strip("/"), save_overwrite=save_overwrite)
     elif parsed.scheme in ("s3", "r2", "weka"):
@@ -167,6 +174,7 @@ def upload(source: PathOrStr, target: str, save_overwrite: bool = False, quiet: 
         )
     else:
         raise NotImplementedError(f"Upload not implemented for '{parsed.scheme}' scheme")
+
     if not quiet:
         log.info(f"Uploaded {_format_bytes(num_bytes)} to '{target}'")
 
@@ -215,7 +223,7 @@ def copy_dir(
     """
     Copy a directory from ``source`` to ``target``.
 
-    :param source: The path/URL to the source file.
+    :param source: The path/URL to the source directory.
     :param target: The path/URL to the target location.
     :param save_overwrite: Overwrite any existing files.
     :param num_threads: The number of threads to use.
@@ -306,6 +314,30 @@ def file_exists(path: PathOrStr) -> bool:
             raise NotImplementedError(f"file_exists not implemented for '{parsed.scheme}' files")
     else:
         return Path(path).exists()
+
+
+def remove_file(path: PathOrStr):
+    """
+    Remove a local or remote file.
+
+    :param path: The path or URL to the file.
+
+    :raises FileNotFoundError: If the file doesn't exist.
+    """
+    path = normalize_path(path)
+
+    if is_url(path):
+        from urllib.parse import urlparse
+
+        parsed = urlparse(str(path))
+        if parsed.scheme == "gs":
+            return _gcs_remove_file(parsed.netloc, parsed.path.strip("/"))
+        elif parsed.scheme in ("s3", "r2", "weka"):
+            return _s3_remove_file(parsed.scheme, parsed.netloc, parsed.path.strip("/"))
+        else:
+            raise NotImplementedError(f"remove_file not implemented for '{parsed.scheme}' files")
+    else:
+        Path(path).unlink()
 
 
 def clear_directory(dir: PathOrStr, force: bool = False):
@@ -406,6 +438,37 @@ def list_directory(
             )
 
 
+def glob_directory(pattern: str) -> Generator[str, None, None]:
+    """
+    Similar to ``glob.glob()`` from the standard library, but works with remote directories as well.
+
+    .. warning::
+        Only a subset of glob patterns are supported. Specifically, ``*`` and ``**`` wildcards,
+        which the follow the semantics defined here https://docs.python.org/3/library/pathlib.html#pattern-language.
+    """
+    # Pull out base directory from pattern by finding the first part before any wildcard.
+    # Split by '/' and take path components until we hit one with a wildcard.
+    parts = pattern.split("/")
+    base_parts = []
+    for part in parts:
+        if "*" in part:
+            break
+        base_parts.append(part)
+    dir = "/".join(base_parts) if base_parts else "."
+
+    # Translate the glob pattern into a regex.
+    # For example, "src/examples/**/*.py" --> "^src/examples/.*[^/]*\\.py$".
+    pattern_regex = re.compile(
+        "^"
+        + re.escape(pattern).replace(r"\*\*/", ".*").replace(r"\*\*", ".*").replace(r"\*", "[^/]*")
+        + "$"
+    )
+
+    for path in list_directory(dir, recurse="**" in pattern):
+        if pattern_regex.match(path):
+            yield path
+
+
 def init_client(remote_path: str):
     """
     Initialize the right client for the given remote resource. This is helpful to avoid threading issues
@@ -466,6 +529,7 @@ def retriable(
     retriable_errors: Tuple[Type[Exception], ...] = (
         requests.exceptions.ConnectionError,
         requests.exceptions.Timeout,
+        requests.exceptions.ChunkedEncodingError,
     ),
     retry_condition: Optional[Callable[[Exception], bool]] = None,
 ):
@@ -508,19 +572,47 @@ def retriable(
 ######################
 
 
+@cache
+def _get_http_session() -> requests.Session:
+    """
+    Get a shared HTTP session with connection pooling.
+    This prevents resource exhaustion when making many HTTP requests.
+    """
+    session = requests.Session()
+    # Configure connection pooling to reuse connections
+    adapter = HTTPAdapter(pool_maxsize=50)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    return session
+
+
 @retriable()
 def _http_file_size(url: str) -> int:
-    response = requests.head(url, allow_redirects=True)
+    session = _get_http_session()
+    response = session.head(url, allow_redirects=True)
     content_length = response.headers.get("content-length")
-    assert content_length
+    if content_length is None:
+        raise OLMoNetworkError(
+            f"No content-length header found for {url}. "
+            f"This can happen when the server is rate-limiting requests or when DDoS protection flags this request. "
+            f"Headers: {dict(response.headers)}"
+        )
     return int(content_length)
 
 
-@retriable()
+@retriable(
+    retry_condition=lambda exc: (
+        isinstance(exc, requests.exceptions.HTTPError)
+        and exc.response is not None
+        and exc.response.status_code == 502
+    ),
+)
 def _http_get_bytes_range(url: str, bytes_start: int, num_bytes: int) -> bytes:
-    response = requests.get(
-        url, headers={"Range": f"bytes={bytes_start}-{bytes_start+num_bytes-1}"}
+    session = _get_http_session()
+    response = session.get(
+        url, headers={"Range": f"bytes={bytes_start}-{bytes_start + num_bytes - 1}"}
     )
+
     if response.status_code == 404:
         raise FileNotFoundError(url)
 
@@ -535,7 +627,8 @@ def _http_get_bytes_range(url: str, bytes_start: int, num_bytes: int) -> bytes:
 
 @retriable()
 def _http_file_exists(url: str) -> bool:
-    response = requests.head(url)
+    session = _get_http_session()
+    response = session.head(url)
     if response.status_code == 404:
         return False
 
@@ -556,13 +649,18 @@ def _get_gcs_client():
 
 
 def _gcs_is_retriable(exc: Exception) -> bool:
-    from google.api_core.exceptions import BadRequest
+    from google.api_core.exceptions import BadRequest, GatewayTimeout
     from google.api_core.retry import if_transient_error
+    from google.auth.exceptions import RefreshError
 
-    return (
-        if_transient_error(exc)
-        or isinstance(exc, requests.exceptions.Timeout)
-        or isinstance(exc, BadRequest)  # Weird choice, but Google throws this transiently
+    return if_transient_error(exc) or isinstance(
+        exc,
+        (
+            requests.exceptions.Timeout,
+            BadRequest,  # Weird choice, but Google throws this transiently
+            GatewayTimeout,
+            RefreshError,
+        ),
     )
 
 
@@ -578,15 +676,6 @@ def _get_gcs_retry():
     )
 
 
-def _get_gcs_conditional_retry():
-    from google.cloud.storage.retry import (
-        ConditionalRetryPolicy,
-        is_generation_specified,
-    )
-
-    return ConditionalRetryPolicy(_get_gcs_retry(), is_generation_specified, ["query_params"])
-
-
 @retriable(retry_condition=_gcs_is_retriable)
 def _gcs_file_size(bucket_name: str, key: str) -> int:
     from google.api_core.exceptions import NotFound
@@ -600,6 +689,20 @@ def _gcs_file_size(bucket_name: str, key: str) -> int:
         raise FileNotFoundError(f"gs://{bucket_name}/{key}")
     assert blob.size is not None
     return blob.size
+
+
+@retriable(retry_condition=_gcs_is_retriable)
+def _gcs_remove_file(bucket_name: str, key: str):
+    from google.api_core.exceptions import NotFound
+
+    storage_client = _get_gcs_client()
+    bucket = storage_client.bucket(bucket_name)
+    blob = bucket.blob(key)
+    try:
+        blob.reload(retry=_get_gcs_retry())
+        bucket.delete_blob(blob.name)
+    except NotFound:
+        raise FileNotFoundError(f"gs://{bucket_name}/{key}")
 
 
 @retriable(retry_condition=_gcs_is_retriable)
@@ -627,23 +730,22 @@ def _gcs_upload(source: Path, bucket_name: str, key: str, save_overwrite: bool =
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(key)
 
-    generation: int = 0
-    if blob.exists(retry=_get_gcs_retry()):
-        if not save_overwrite:
-            raise FileExistsError(
-                f"gs://{bucket_name}/{key} already exists. Use save_overwrite to overwrite it."
-            )
+    if blob.exists(retry=_get_gcs_retry()) and not save_overwrite:
+        raise FileExistsError(
+            f"gs://{bucket_name}/{key} already exists. Use save_overwrite to overwrite it."
+        )
 
-        blob.reload(retry=_get_gcs_retry())
-        assert blob.generation is not None
-        generation = blob.generation
-
-    blob.upload_from_filename(
-        source,
-        if_generation_match=generation,
-        retry=_get_gcs_conditional_retry(),
-        checksum=None,
-    )
+    try:
+        blob.upload_from_filename(
+            source,
+            # NOTE: mypy and language servers may complain about the type here, but it does
+            # not in fact need to be a ConditionalRetry, a plain old Retry is fine.
+            retry=_get_gcs_retry(),  # type: ignore
+        )
+    except Exception as e:
+        raise OLMoUploadError(
+            f"Failed to upload '{source}' to '{key}' in GCS bucket '{bucket_name}'"
+        ) from e
 
 
 @retriable(retry_condition=_gcs_is_retriable)
@@ -695,8 +797,10 @@ def _gcs_list_directory(
         except NotFound:
             raise FileNotFoundError(f"gs://{bucket_name}/{prefix}")
 
-        if include_files:
-            for blob in blobs:
+        # NOTE: need to iterate over these blobs even if not yielding files, otherwise 'blobs.prefixes'
+        # won't be populated.
+        for blob in blobs:
+            if include_files:
                 yield f"gs://{bucket_name}/{blob.name}"
 
         for folder in blobs.prefixes:
@@ -801,7 +905,20 @@ def _s3_file_size(scheme: str, bucket_name: str, key: str) -> int:
         return _get_s3_client(scheme).head_object(Bucket=bucket_name, Key=key)["ContentLength"]
     except ClientError as e:
         if e.response["ResponseMetadata"]["HTTPStatusCode"] == 404:
-            raise FileNotFoundError(f"s3://{bucket_name}/{key}") from e
+            raise FileNotFoundError(f"{scheme}://{bucket_name}/{key}") from e
+        else:
+            raise
+
+
+@retriable(retry_condition=_s3_retry_condition)
+def _s3_remove_file(scheme: str, bucket_name: str, key: str):
+    from botocore.exceptions import ClientError
+
+    try:
+        return _get_s3_client(scheme).delete_object(Bucket=bucket_name, Key=key)
+    except ClientError as e:
+        if e.response["ResponseMetadata"]["HTTPStatusCode"] == 404:
+            raise FileNotFoundError(f"{scheme}://{bucket_name}/{key}") from e
         else:
             raise
 
@@ -824,7 +941,11 @@ def _s3_get_bytes_range(
         )
     except ClientError as e:
         if e.response["ResponseMetadata"]["HTTPStatusCode"] == 404:
-            raise FileNotFoundError(f"s3://{bucket_name}/{key}") from e
+            raise FileNotFoundError(f"{scheme}://{bucket_name}/{key}") from e
+        elif e.response["Error"]["Code"] == "InvalidRange":
+            raise OLMoInvalidRangeRequestError(
+                f"Invalid range request to '{scheme}://{bucket_name}/{key}' ({bytes_start=}, {num_bytes=})"
+            )
         else:
             raise
 
@@ -968,6 +1089,6 @@ class _WekaClient(SchemeClient):
 
     def get_bytes_range(self, index: int, length: int) -> bytes:
         response = self.s3.get_object(
-            Bucket=self.bucket_name, Key=self.path, Range=f"bytes={index}-{index+length-1}"
+            Bucket=self.bucket_name, Key=self.path, Range=f"bytes={index}-{index + length - 1}"
         )
         return response["Body"].read()

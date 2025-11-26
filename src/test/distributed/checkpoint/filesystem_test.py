@@ -9,7 +9,8 @@ from olmo_core.distributed.checkpoint.filesystem import (
     RemoteFileSystemWriter,
 )
 from olmo_core.io import dir_is_empty
-from olmo_core.testing import BACKENDS, get_default_device, run_distributed_test
+from olmo_core.testing import BACKENDS, run_distributed_test
+from olmo_core.utils import get_default_device
 
 
 def run_save_and_load_with_dtensors(dir, throttle: bool = False):

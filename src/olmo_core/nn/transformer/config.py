@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from fnmatch import fnmatch
 from typing import TYPE_CHECKING, Dict, List, Optional
@@ -8,7 +9,12 @@ from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import ensure_multiple_of
 
-from ..attention import AttentionConfig, AttentionType
+from ..attention import (
+    AttentionBackendName,
+    AttentionConfig,
+    AttentionType,
+    SlidingWindowAttentionConfig,
+)
 from ..buffer_cache import BufferCache
 from ..feed_forward import FeedForwardConfig, FeedForwardType, DenseMoEFeedForwardConfig
 from ..layer_norm import LayerNormConfig, LayerNormType
@@ -99,9 +105,19 @@ class TransformerBlockType(StrEnum):
     ➡️ :class:`TransformerBlock`
     """
 
+    default_scaled = "default_scaled"
+    """
+    ➡️ :class:`LayerNormScaledTransformerBlock` (applies LayerNorm Scaling)
+    """
+
     reordered_norm = "reordered_norm"
     """
     ➡️ :class:`ReorderedNormTransformerBlock`
+    """
+
+    peri_norm = "peri_norm"
+    """
+    ➡️ :class:`PeriNormTransformerBlock`
     """
 
     normalized = "normalized"
@@ -167,6 +183,14 @@ class TransformerBlockConfig(Config):
     """
     Dropout probability.
     """
+    attention_residual_alpha: Optional[float] = None
+    """
+    A scaling factor applied to the attention output before adding it to the residual stream.
+    """
+    feed_forward_residual_alpha: Optional[float] = None
+    """
+    A scaling factor applied to the feed-forward (MLP) output before adding it to the residual stream.
+    """
 
     def build(
         self,
@@ -178,11 +202,13 @@ class TransformerBlockConfig(Config):
         cache: Optional[BufferCache] = None,
     ) -> "TransformerBlockBase":
         from .block import (
+            LayerNormScaledTransformerBlock,
             MoEHybridReorderedNormTransformerBlock,
             MoEHybridTransformerBlock,
             MoEReorderedNormTransformerBlock,
             MoETransformerBlock,
             NormalizedTransformerBlock,
+            PeriNormTransformerBlock,
             ReorderedNormTransformerBlock,
             TransformerBlock,
         )
@@ -200,8 +226,12 @@ class TransformerBlockConfig(Config):
         try:
             if self.name == TransformerBlockType.default:
                 return TransformerBlock(**kwargs)
+            elif self.name == TransformerBlockType.default_scaled:
+                return LayerNormScaledTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.reordered_norm:
                 return ReorderedNormTransformerBlock(**kwargs)
+            elif self.name == TransformerBlockType.peri_norm:
+                return PeriNormTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.normalized:
                 return NormalizedTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.moe:
@@ -243,6 +273,16 @@ class TransformerBlockConfig(Config):
             block_params += self.feed_forward_moe.num_params(d_model)
             if self.feed_forward_norm is not None:
                 block_params += self.feed_forward_norm.num_params(d_model)
+
+        # Two extra norms for Peri-LN block type.
+        if self.name == TransformerBlockType.peri_norm:
+            assert self.feed_forward_norm is not None
+            block_params += 2 * self.feed_forward_norm.num_params(d_model)
+
+        # Two extra norms for Peri-LN block type.
+        if self.name == TransformerBlockType.peri_norm:
+            assert self.feed_forward_norm is not None
+            block_params += 2 * self.feed_forward_norm.num_params(d_model)
 
         return block_params
 
@@ -488,6 +528,20 @@ class TransformerConfig(Config):
         return sum(flops)
 
     @classmethod
+    def olmo2_30M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        return cls.llama_like(
+            d_model=256,
+            n_layers=kwargs.pop("n_layers", 4),
+            n_heads=kwargs.pop("n_heads", 8),
+            vocab_size=vocab_size,
+            block_name=kwargs.pop("block_name", TransformerBlockType.reordered_norm),
+            qk_norm=kwargs.pop("qk_norm", True),
+            rope_theta=kwargs.pop("rope_theta", 500_000),
+            layer_norm_eps=1e-6,
+            **kwargs,
+        )
+
+    @classmethod
     def olmo2_190M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         return cls.llama_like(
             d_model=768,
@@ -550,7 +604,7 @@ class TransformerConfig(Config):
     @classmethod
     def olmo2_1B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
-        A 1B OLMo model config.
+        A 1B OLMo2 model config.
 
         This is different from the OLMo 1B from the old OLMo trainer.
         """
@@ -567,7 +621,7 @@ class TransformerConfig(Config):
     @classmethod
     def olmo2_1B_v2(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
-        A 1B OLMo model config.
+        A 1B OLMo2 model config.
 
         This matches the OLMo 1B from the old OLMo trainer.
         """
@@ -584,6 +638,9 @@ class TransformerConfig(Config):
 
     @classmethod
     def olmo2_3B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 3B OLMo2 model config.
+        """
         return cls.llama_like(
             d_model=3328,
             hidden_size_multiplier=1.5,
@@ -600,7 +657,7 @@ class TransformerConfig(Config):
     @classmethod
     def olmo2_7B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
-        A 7B OLMo model config.
+        A 7B OLMo2 model config.
         """
         return cls.llama2_7B(
             vocab_size,
@@ -614,7 +671,7 @@ class TransformerConfig(Config):
     @classmethod
     def olmo2_13B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
-        A 13B OLMo model config.
+        A 13B OLMo2 model config.
         """
         return cls.llama2_13B(
             vocab_size,
@@ -628,7 +685,7 @@ class TransformerConfig(Config):
     @classmethod
     def olmo2_32B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
-        A 32B OLMo model config.
+        A 32B OLMo2 model config.
         """
         d_model = 5120
         return cls.llama_like(
@@ -645,6 +702,66 @@ class TransformerConfig(Config):
             layer_norm_eps=1e-6,
             **kwargs,
         )
+
+    @classmethod
+    def olmo3_190M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 190M OLMo3 model config.
+        """
+        config = cls.olmo2_190M(
+            vocab_size=vocab_size,
+            sliding_window=kwargs.pop(
+                "sliding_window",
+                SlidingWindowAttentionConfig(
+                    force_full_attention_on_first_layer=False,
+                    force_full_attention_on_last_layer=True,
+                    pattern=[4096, 4096, 4096, -1],
+                ),
+            ),
+            attn_backend=kwargs.pop("attn_backend", AttentionBackendName.flash_2),
+            **kwargs,
+        )
+        return config
+
+    @classmethod
+    def olmo3_7B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 7B OLMo3 model config.
+        """
+        config = cls.olmo2_7B(
+            vocab_size=vocab_size,
+            sliding_window=kwargs.pop(
+                "sliding_window",
+                SlidingWindowAttentionConfig(
+                    force_full_attention_on_first_layer=False,
+                    force_full_attention_on_last_layer=True,
+                    pattern=[4096, 4096, 4096, -1],
+                ),
+            ),
+            attn_backend=kwargs.pop("attn_backend", AttentionBackendName.flash_2),
+            **kwargs,
+        )
+        return config
+
+    @classmethod
+    def olmo3_32B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 32B OLMo3 model config.
+        """
+        config = cls.olmo2_32B(
+            vocab_size=vocab_size,
+            sliding_window=kwargs.pop(
+                "sliding_window",
+                SlidingWindowAttentionConfig(
+                    force_full_attention_on_first_layer=False,
+                    force_full_attention_on_last_layer=True,
+                    pattern=[4096, 4096, 4096, -1],
+                ),
+            ),
+            attn_backend=kwargs.pop("attn_backend", AttentionBackendName.flash_2),
+            **kwargs,
+        )
+        return config
 
     @classmethod
     def smallmoe(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
@@ -919,8 +1036,13 @@ class TransformerConfig(Config):
         hidden_size_multiple_of: int = 256,
         hidden_size_multiplier: Optional[float] = None,
         fused_ops: bool = False,
-        use_flash: bool = False,
+        use_flash: Optional[bool] = None,
+        attn_backend: Optional[AttentionBackendName] = None,
+        sliding_window: Optional[SlidingWindowAttentionConfig] = None,
         block_name: TransformerBlockType = TransformerBlockType.default,
+        block_mods: Optional[
+            Dict[int, Callable[[TransformerBlockConfig], TransformerBlockConfig]]
+        ] = None,
         dtype: DType = DType.float32,
         rope_scaling: Optional[RoPEScalingConfig] = None,
         feed_forward: Optional[FeedForwardConfig] = None,
@@ -933,7 +1055,7 @@ class TransformerConfig(Config):
         :param hidden_size_multiple_of: Ensure the FFN hidden size is a multiple of this value.
         :param hidden_size_multiplier: Custom multiplier for the FFN hidden size.
         :param fused_ops: Use fused operations where possible.
-        :param use_flash: Use flash-attn.
+        :param block_mods: A dictionary of block indices to functions that take the base block config and return a modified block config.
         :param dtype: The default data type to use for all parameters.
         """
         # Resolve hidden size of FFN in blocks.
@@ -973,6 +1095,8 @@ class TransformerConfig(Config):
                 rope=RoPEConfig(name=rope_type, theta=rope_theta, scaling=rope_scaling),
                 qk_norm=layer_norm if qk_norm else None,
                 use_flash=use_flash,
+                backend=attn_backend,
+                sliding_window=sliding_window,
                 dtype=dtype,
             ),
             feed_forward=feed_forward,
@@ -981,6 +1105,16 @@ class TransformerConfig(Config):
             attention_norm=layer_norm,
         )
 
+        if block_mods and kwargs.get("block_overrides"):
+            raise OLMoConfigurationError(
+                "`block_mods` and `block_overrides` cannot be used together."
+            )
+        block_overrides = None
+        if block_mods:
+            block_overrides = {i: block_mods[i](block.copy()) for i in block_mods}
+        elif kwargs.get("block_overrides"):
+            block_overrides = kwargs.get("block_overrides")
+
         return cls(
             d_model=d_model,
             vocab_size=vocab_size,
@@ -988,6 +1122,7 @@ class TransformerConfig(Config):
             block=block,
             lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype),
             dtype=dtype,
+            block_overrides=block_overrides,
             **kwargs,
         )
 
@@ -1097,6 +1232,44 @@ class TransformerConfig(Config):
             init_method=InitMethod.normalized,
             **kwargs,
         )
+
+    def with_rope_scaling(
+        self, rope_scaling: RoPEScalingConfig, full_attn_layers_only: bool = True
+    ) -> "TransformerConfig":
+        """
+        Return a copy of this config with the given RoPE scaling scheme applied.
+        """
+        new_config = self.copy()
+        if new_config.block.attention.rope is None:
+            raise ValueError("Cannot apply RoPE scaling to a model without RoPE.")
+        if new_config.block_overrides:
+            raise ValueError("Cannot apply RoPE scaling when block_overrides are already set.")
+
+        def apply_scaling(block_config: TransformerBlockConfig) -> None:
+            rope_config = block_config.attention.rope
+            if rope_config is None:
+                raise ValueError("Cannot apply RoPE scaling to a layer without RoPE.")
+            rope_config = rope_config.copy()
+            rope_config.scaling = rope_scaling
+            block_config.attention.rope = rope_config
+
+        if not full_attn_layers_only:
+            apply_scaling(new_config.block)
+            return new_config
+
+        # Add rope scaling only to layers that do not use sliding window attention
+        # We supply "block_overrides" for the layers we want to scale.
+        overrides: Dict[int, TransformerBlockConfig] = {}
+        for i in range(new_config.n_layers):
+            sliding_window_cfg = new_config.block.attention.sliding_window
+            if sliding_window_cfg and sliding_window_cfg.should_use_swa(i, new_config.n_layers):
+                continue
+            block_copy = new_config.block.copy()
+            apply_scaling(block_copy)
+            overrides[i] = block_copy
+
+        new_config.block_overrides = overrides or None
+        return new_config
 
 
 @dataclass

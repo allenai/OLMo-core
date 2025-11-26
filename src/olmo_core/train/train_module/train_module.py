@@ -135,8 +135,14 @@ class TrainModule(Stateful, metaclass=ABCMeta):
         Runs as soon as the :class:`~olmo_core.train.Trainer` has been attached.
         """
 
+    def pre_train(self):
+        """
+        Runs before the training loop starts and right after ``pre_train()`` has been called on all
+        callbacks.
+        """
+
     @abstractmethod
-    def state_dict(self, *, optim: bool = True) -> Dict[str, Any]:
+    def state_dict(self, *, optim: Optional[bool] = None) -> Dict[str, Any]:
         """
         Get the state dict to save or load.
 
@@ -144,7 +150,7 @@ class TrainModule(Stateful, metaclass=ABCMeta):
         """
         raise NotImplementedError
 
-    def state_dict_to_save(self, *, optim: bool = True) -> Dict[str, Any]:
+    def state_dict_to_save(self, *, optim: Optional[bool] = None) -> Dict[str, Any]:
         """
         Can be overridden if the state dict to save should be different from the state dict to load.
         By default just returns :func:`state_dict()`.
@@ -153,7 +159,9 @@ class TrainModule(Stateful, metaclass=ABCMeta):
         """
         return self.state_dict(optim=optim)
 
-    def state_dict_to_load(self, metadata: Metadata, *, optim: bool = True) -> Dict[str, Any]:
+    def state_dict_to_load(
+        self, metadata: Metadata, *, optim: Optional[bool] = None
+    ) -> Dict[str, Any]:
         """
         Can be overridden if the state dict to load should be different from the state dict to save.
         By default just returns :func:`state_dict()`.
@@ -278,12 +286,12 @@ class BasicTrainModule(TrainModule):
                 f"micro-batch size ({self.rank_microbatch_size:,d}) x DP world size ({ws})"
             )
 
-    def state_dict(self, *, optim: bool = True) -> Dict[str, Any]:
+    def state_dict(self, *, optim: Optional[bool] = None) -> Dict[str, Any]:
         sd_options = dist_cp_sd.StateDictOptions(full_state_dict=False, cpu_offload=True)
         state_dict: Dict[str, Any] = {
             "model": dist_cp_sd.get_model_state_dict(self.model, options=sd_options),
         }
-        if optim:
+        if optim is not False:
             state_dict["optim"] = dist_cp_sd.get_optimizer_state_dict(
                 self.model, self.optim, options=sd_options
             )
@@ -293,12 +301,13 @@ class BasicTrainModule(TrainModule):
         dist_cp_sd.set_model_state_dict(
             self.model, state_dict["model"], options=dist_cp_sd.StateDictOptions(strict=True)
         )
-        dist_cp_sd.set_optimizer_state_dict(
-            self.model,
-            self.optim,
-            state_dict["optim"],
-            options=dist_cp_sd.StateDictOptions(strict=True),
-        )
+        if "optim" in state_dict:
+            dist_cp_sd.set_optimizer_state_dict(
+                self.model,
+                self.optim,
+                state_dict["optim"],
+                options=dist_cp_sd.StateDictOptions(strict=True),
+            )
 
     def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
         self.model.train()
