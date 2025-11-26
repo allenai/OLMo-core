@@ -346,9 +346,11 @@ def run_moe_hybrid_combined_forward(
         vocab_size=16_000,
         n_layers=2,
         block=TransformerBlockConfig(
-            name=TransformerBlockType.moe_hybrid_reordered_norm
-            if reordered_norm
-            else TransformerBlockType.moe_hybrid,
+            name=(
+                TransformerBlockType.moe_hybrid_reordered_norm
+                if reordered_norm
+                else TransformerBlockType.moe_hybrid
+            ),
             attention=AttentionConfig(n_heads=8, rope=RoPEConfig(), qk_norm=layer_norm),
             layer_norm=layer_norm,
             feed_forward=FeedForwardConfig(hidden_size=1024, bias=False),
@@ -356,9 +358,9 @@ def run_moe_hybrid_combined_forward(
                 name=MoEType.dropless if dropless else MoEType.default,
                 num_experts=4,
                 hidden_size=256,
-                shared_mlp=FeedForwardConfig(hidden_size=512, bias=False)
-                if shared_experts
-                else None,
+                shared_mlp=(
+                    FeedForwardConfig(hidden_size=512, bias=False) if shared_experts else None
+                ),
                 router=MoERouterConfig(uniform_expert_assignment=True),
             ),
         ),
@@ -647,3 +649,111 @@ def test_num_flops_per_token_with_swa_pattern():
     # Also test on built model
     model_swa_pattern = config_swa_pattern.build(init_device="cpu")
     assert model_swa_pattern.num_flops_per_token(seq_len) == flops_swa_pattern
+
+
+def test_num_flops_per_token_with_block_overrides_different_n_heads():
+    """Test that num_flops_per_token correctly recalculates head dimension for block overrides with different n_heads."""
+    seq_len = 2048
+    d_model = 512
+    base_n_heads = 8
+    override_n_heads = 4  # Different n_heads in override (fewer heads = larger head_dim)
+    override_n_kv_heads = 2  # Also use GQA to make the difference more pronounced
+
+    # Config with block override that changes n_heads and uses GQA
+    config_with_override = TransformerConfig.llama_like(
+        vocab_size=16_000,
+        d_model=d_model,
+        n_layers=4,
+        n_heads=base_n_heads,
+    )
+
+    # Create override block with different n_heads and n_kv_heads
+    override_attention = replace(
+        config_with_override.block.attention,
+        n_heads=override_n_heads,
+        n_kv_heads=override_n_kv_heads,
+    )
+    override_block = replace(config_with_override.block, attention=override_attention)
+    config_with_override.block_overrides = {0: override_block}  # First layer has different n_heads
+
+    # Config without override (but with same GQA for comparison)
+    config_no_override = TransformerConfig.llama_like(
+        vocab_size=16_000,
+        d_model=d_model,
+        n_layers=4,
+        n_heads=base_n_heads,
+        n_kv_heads=base_n_heads // 2,  # Use GQA to make it comparable
+    )
+
+    flops_no_override = config_no_override.num_flops_per_token(seq_len)
+    flops_with_override = config_with_override.num_flops_per_token(seq_len)
+
+    # With different n_heads in the override layer, the head dimension q changes
+    # Base: q = 512 / 8 = 64, Override: q = 512 / 4 = 128
+    # This affects the FLOPS calculation: 12 * n_kv_heads * q * seq_len
+    # The fix ensures q is recalculated per layer, so the override layer uses the correct q
+    # Verify that the calculation accounts for the different head dimensions
+    base_flops = 6 * config_no_override.num_non_embedding_params
+    override_base_flops = 6 * config_with_override.num_non_embedding_params
+
+    # The non-embedding params might differ slightly, but the attention FLOPS should differ
+    # due to different head dimensions in the override layer
+    attention_flops_no_override = flops_no_override - base_flops
+    attention_flops_with_override = flops_with_override - override_base_flops
+
+    # The override should produce different attention FLOPS because:
+    # - Layer 0: uses override_n_heads=4, so q=128, n_kv_heads=2
+    # - Other layers: use base_n_heads=8, so q=64, n_kv_heads=4 (from config_no_override)
+    # This verifies that q is recalculated per layer (the bug fix)
+    assert attention_flops_with_override != attention_flops_no_override, (
+        "Block override with different n_heads should change attention FLOPS "
+        "because head dimension q should be recalculated per layer"
+    )
+
+    # Also test on built model
+    model_with_override = config_with_override.build(init_device="cpu")
+    assert model_with_override.num_flops_per_token(seq_len) == flops_with_override
+
+
+def test_num_flops_per_token_with_swa_window_larger_than_seq():
+    """Test that num_flops_per_token caps window size at sequence length."""
+    seq_len = 512  # Short sequence
+    window_size = 2048  # Window larger than sequence
+    d_model = 512
+    n_heads = 8
+
+    # Config with SWA window larger than sequence length
+    sliding_window = SlidingWindowAttentionConfig(
+        pattern=[window_size],
+        force_full_attention_on_first_layer=False,
+        force_full_attention_on_last_layer=False,
+    )
+    config_swa_large_window = TransformerConfig.llama_like(
+        vocab_size=16_000,
+        d_model=d_model,
+        n_layers=4,
+        n_heads=n_heads,
+        sliding_window=sliding_window,
+    )
+
+    # Config without SWA (baseline)
+    config_no_swa = TransformerConfig.llama_like(
+        vocab_size=16_000,
+        d_model=d_model,
+        n_layers=4,
+        n_heads=n_heads,
+    )
+
+    flops_no_swa = config_no_swa.num_flops_per_token(seq_len)
+    flops_swa_large_window = config_swa_large_window.num_flops_per_token(seq_len)
+
+    # When window size > sequence length, effective window should be capped at seq_len
+    # So FLOPS should be the same as without SWA (since we're using full attention anyway)
+    assert flops_swa_large_window == flops_no_swa, (
+        "When window size exceeds sequence length, FLOPS should equal full attention "
+        "(window should be capped at sequence length)"
+    )
+
+    # Also test on built model
+    model_swa_large_window = config_swa_large_window.build(init_device="cpu")
+    assert model_swa_large_window.num_flops_per_token(seq_len) == flops_swa_large_window

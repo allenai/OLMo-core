@@ -465,8 +465,8 @@ class TransformerConfig(Config):
         # The original formula: 12 * n * h * q * t
         # Where: n = layers, h = heads, q = head_dim, t = seq_len
         # We need to sum over layers because SWA can have different window sizes per layer
+        # and block overrides can have different n_heads per layer
         attention_flops = 0
-        q = self.d_model // self.block.attention.n_heads
 
         for layer_idx in range(self.n_layers):
             # Get block config for this layer (may be overridden)
@@ -476,15 +476,18 @@ class TransformerConfig(Config):
 
             n_heads = block_config.attention.n_heads
             n_kv_heads = block_config.attention.n_kv_heads or n_heads
+            # Calculate head dimension for this layer (may differ if block overrides change n_heads)
+            q = self.d_model // n_heads
 
             # Determine effective sequence length for this layer
             # If SWA is used, use window size; otherwise use full sequence length
+            # Cap window size at sequence length to avoid overestimating FLOPS for short sequences
             effective_seq_len = seq_len
             if block_config.attention.sliding_window is not None:
                 sliding_window_cfg = block_config.attention.sliding_window
                 if sliding_window_cfg.should_use_swa(layer_idx, self.n_layers):
                     window_size = sliding_window_cfg.get_window_size(layer_idx, self.n_layers)
-                    effective_seq_len = window_size
+                    effective_seq_len = min(window_size, seq_len)
 
             # The original formula uses n_heads, but with GQA the attention computation
             # is limited by n_kv_heads (since K/V have fewer heads).
@@ -1138,9 +1141,11 @@ class TransformerConfig(Config):
                 hidden_size=expert_hidden_size,
                 capacity_factor=capacity_factor,
                 router=MoERouterConfig(top_k=top_k),
-                shared_mlp=None
-                if shared_expert_hidden_size is None
-                else FeedForwardConfig(hidden_size=shared_expert_hidden_size, bias=False),
+                shared_mlp=(
+                    None
+                    if shared_expert_hidden_size is None
+                    else FeedForwardConfig(hidden_size=shared_expert_hidden_size, bias=False)
+                ),
                 lb_loss_weight=lb_loss_weight,
                 z_loss_weight=z_loss_weight,
             ),

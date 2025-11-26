@@ -160,9 +160,11 @@ def get_hf_config(model: Transformer) -> PretrainedConfig:
         olmo3_specific_args = {
             "sliding_window": common_window_size_value + 1,
             "layer_types": [
-                "sliding_attention"
-                if block.attention.backend.window_size != (-1, -1)
-                else "full_attention"
+                (
+                    "sliding_attention"
+                    if block.attention.backend.window_size != (-1, -1)
+                    else "full_attention"
+                )
                 for block in blocks
             ],
         }
