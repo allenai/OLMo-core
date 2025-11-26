@@ -455,7 +455,7 @@ class TransformerConfig(Config):
 
         Accounts for sliding window attention (SWA) and grouped-query attention (GQA).
         For SWA, uses the window size for each layer instead of the full sequence length.
-        For GQA, uses n_kv_heads instead of n_heads for the attention computation.
+        For GQA, uses per-layer configuration but treats FLOPS as dense attention (same as n_heads).
         """
         # Base FLOPS from non-attention operations (FFN, layer norms, etc.)
         # This is 6 * params because: forward (1x) + backward (2x) = 3x, and each op has mult+add = 2x
@@ -475,7 +475,7 @@ class TransformerConfig(Config):
                 block_config = self.block_overrides[layer_idx]
 
             n_heads = block_config.attention.n_heads
-            n_kv_heads = block_config.attention.n_kv_heads or n_heads
+            # n_kv_heads affects KV memory/cache, but FLOPS remain proportional to n_heads.
             # Calculate head dimension for this layer (may differ if block overrides change n_heads)
             q = self.d_model // n_heads
 
@@ -489,11 +489,9 @@ class TransformerConfig(Config):
                     window_size = sliding_window_cfg.get_window_size(layer_idx, self.n_layers)
                     effective_seq_len = min(window_size, seq_len)
 
-            # The original formula uses n_heads, but with GQA the attention computation
-            # is limited by n_kv_heads (since K/V have fewer heads).
-            # We use n_kv_heads to account for the reduced FLOPS in GQA.
             # The factor 12 accounts for: 2 matmuls (QK^T, attn@V) * 2 (forward+backward) * 2 (mult+add) * 1.5 (approximate)
-            layer_attention_flops = 12 * n_kv_heads * q * effective_seq_len
+            # For GQA, FLOPS are effectively the same as dense attention (n_heads), so we keep n_heads here.
+            layer_attention_flops = 12 * n_heads * q * effective_seq_len
             attention_flops += layer_attention_flops
 
         flop_per_token = base_flops + attention_flops
