@@ -57,7 +57,6 @@ class DataMix(DataMixBase):
 
     # Validation mixes
     v3_small_ppl_validation = "v3-small-ppl-validation"
-    OLMo_mix_0625 = "OLMo-mix-0625"
 
     @classmethod
     def _missing_(cls, value: object) -> "DataMix | None":

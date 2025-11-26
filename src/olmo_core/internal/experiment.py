@@ -4,6 +4,7 @@ import sys
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, cast
 
+from olmo_core.train.train_module.train_module import TrainModuleConfig
 import torch
 from rich import print
 
@@ -184,7 +185,7 @@ def build_common_components(
 ) -> CommonComponents:
     root_dir = get_root_dir(cli_context.cluster)
     beaker_user = get_beaker_username()
-
+    beaker_user = None # HACK: Disable Beaker secrets for local runs
     launch_config: Optional[BeakerLaunchConfig] = None
     if beaker_user is not None:
         cmd_to_launch = cli_context.cmd.post_launch_subcmd()

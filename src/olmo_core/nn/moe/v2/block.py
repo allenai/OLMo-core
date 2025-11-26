@@ -190,6 +190,8 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         routed_experts: Optional[RoutedExpertsConfig],
         feed_forward_norm: LayerNormConfig,
         dropout: float = 0.0,
+        attention_residual_alpha: Optional[float] = None,
+        feed_forward_residual_alpha: Optional[float] = None,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
     ):
@@ -198,6 +200,11 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         self.d_model = d_model
         self.block_idx = block_idx
         
+        if attention_residual_alpha is not None:
+            raise OLMoConfigurationError("MoEFusedV2TransformerBlock does not support attention_residual_alpha")
+        if feed_forward_residual_alpha is not None:
+            raise OLMoConfigurationError("MoEFusedV2TransformerBlock does not support feed_forward_residual_alpha")
+
         from .routed_experts import RoutedExperts
         from.shared_experts import SharedExperts
 
