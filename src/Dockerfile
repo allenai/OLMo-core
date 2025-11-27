@@ -86,6 +86,9 @@ RUN pip install --no-build-isolation --no-cache-dir ring-flash-attn==${RING_FLAS
 ARG LIGER_KERNEL_VERSION=0.6.4
 RUN pip install --no-build-isolation --no-cache-dir liger-kernel==${LIGER_KERNEL_VERSION}
 
+# Install cut-cross-entropy.
+RUN pip install --no-cache-dir "cut-cross-entropy @ git+https://github.com/apple/ml-cross-entropy.git"
+
 # Install direct dependencies, but not source code.
 COPY pyproject.toml .
 COPY src/olmo_core/__init__.py src/olmo_core/__init__.py
