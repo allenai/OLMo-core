@@ -35,6 +35,7 @@ GLOBAL_BATCH_SIZE = 4 * 1024 * 1024  # ~4M tokens
 
 # Reduce per-device batch size to save on memory.
 MICROBATCH_DISCOUNT = 1
+D_MODEL_DISCOUNT = 2 / 3  # 6d_model^2 vs. 4d_model^2
 
 ### OLMo 3 7B Settings
 DATA_MIX = DataMix.OLMo_mix_0625
@@ -59,6 +60,8 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     config.block.name = TransformerBlockType.fla_hybrid
     assert config.n_layers % 4 == 0, "Current logic assumes n_layers is multiple of 4"
     config.block.fla_hybrid_attention_indices = [i for i in range(config.n_layers) if i % 4 == 3]
+
+    config.d_model = int(config.d_model * D_MODEL_DISCOUNT)
 
     # Configure the non-attention part of the block to be a DeltaNet.
     config.block.fla = FLAConfig(
