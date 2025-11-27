@@ -1282,7 +1282,7 @@ class MoEFusedV2TransformerConfig(TransformerConfig):
     recompute_all_blocks_by_chunk: bool = False
 
     # Recompute each block individually. This reduces the activation memory to just one block at a time, but increases recomputation overhead. Works with or without PP. It does not work with TBO
-    recompute_each_block: bool = False
+    recompute_each_block: bool = True
 
 
     def build(

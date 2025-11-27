@@ -631,6 +631,13 @@ def capped_powers_of_2(x: int, cap: int) -> List[int]:
 def format_float(value: float) -> str:
     if value == 0.0:
         return "0.0"
+    if value == float("inf"):
+        return "inf"
+    if value == float("-inf"):
+        return "-inf"
+    # nan
+    if value != value:
+        return "nan"
     elif value < 0.0001:
         return f"{value:.2E}"
     elif value > 1000:
