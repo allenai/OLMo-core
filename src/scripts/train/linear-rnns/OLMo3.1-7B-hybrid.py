@@ -35,7 +35,6 @@ GLOBAL_BATCH_SIZE = 4 * 1024 * 1024  # ~4M tokens
 
 # Reduce per-device batch size to save on memory.
 MICROBATCH_DISCOUNT = 1
-MIXER_SIZE_DISCOUNT = 2 / 3 * .75 + 1 * .25  # 6d_model^2 vs. 4d_model^2 in 75% of layers
 
 ### OLMo 3 7B Settings
 DATA_MIX = DataMix.OLMo_mix_0625
@@ -49,17 +48,10 @@ HARD_STOP = Duration.tokens(int(4e12))
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
-    # Reduce number of heads and adjust d_model to be appropriately divisible.
-    n_heads = int(32 * MIXER_SIZE_DISCOUNT)
-    divisible_by = 4 * n_heads
-    d_model = (4096 // divisible_by) * divisible_by
-
-
     config = TransformerConfig.olmo3_7B(
         vocab_size=common.tokenizer.padded_vocab_size(),
         attn_backend=AttentionBackendName.flash_2,
-        d_model=d_model,
-        n_heads=n_heads,
+        n_layers=24,  # 32 * (2/3 * 3/4 + 1 * 1/4), correcting for 50% more params in FLA layers.
     )
 
     ### Copied below from hybrid/gated_deltanet_0_25_rnn_first.py ###
