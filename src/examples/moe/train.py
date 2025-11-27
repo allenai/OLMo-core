@@ -103,20 +103,22 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=16 * SEQUENCE_LENGTH,
         max_sequence_length=SEQUENCE_LENGTH,
-        optim=AdamWConfig(
-            lr=1e-3,
-            group_overrides=[
-                OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
-            ],
-            fused=True,
-        )
-        if not skip_step_optim
-        else SkipStepAdamWConfig(
-            lr=1e-3,
-            group_overrides=[
-                OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
-            ],
-            compile=True,
+        optim=(
+            AdamWConfig(
+                lr=1e-3,
+                group_overrides=[
+                    OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
+                ],
+                fused=True,
+            )
+            if not skip_step_optim
+            else SkipStepAdamWConfig(
+                lr=1e-3,
+                group_overrides=[
+                    OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
+                ],
+                compile=True,
+            )
         ),
         compile_model=True,
         pp_config=TransformerPipelineParallelConfig(

@@ -56,9 +56,11 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
         ),
-        cp_config=TransformerContextParallelConfig.llama3(degree=8)
-        if INTRA_DOCUMENT_MASKING
-        else TransformerContextParallelConfig.zig_zag(degree=8),
+        cp_config=(
+            TransformerContextParallelConfig.llama3(degree=8)
+            if INTRA_DOCUMENT_MASKING
+            else TransformerContextParallelConfig.zig_zag(degree=8)
+        ),
         float8_config=Float8Config(enabled=False),
         max_grad_norm=1.0,
         scheduler=CosWithWarmup(warmup_steps=2000),

@@ -80,12 +80,14 @@ def configure_train_module(
             if cp_degree
             else None
         ),
-        ac_config=TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.budget,
-            activation_memory_budget=activation_memory_budget,
-        )
-        if activation_memory_budget < 1.0
-        else None,
+        ac_config=(
+            TransformerActivationCheckpointingConfig(
+                mode=TransformerActivationCheckpointingMode.budget,
+                activation_memory_budget=activation_memory_budget,
+            )
+            if activation_memory_budget < 1.0
+            else None
+        ),
         float8_config=Float8Config(
             enabled=float8_enabled,
             ao=AOFloat8LinearConfig(
