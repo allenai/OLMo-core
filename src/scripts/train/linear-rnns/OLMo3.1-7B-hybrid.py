@@ -1,4 +1,3 @@
-from math import sqrt
 from datetime import datetime
 from functools import partial
 
@@ -36,7 +35,7 @@ GLOBAL_BATCH_SIZE = 4 * 1024 * 1024  # ~4M tokens
 
 # Reduce per-device batch size to save on memory.
 MICROBATCH_DISCOUNT = 1
-MIXER_SIZE_DISCOUNT = sqrt(2 / 3) * .75 + 1 * .25  # 6d_model^2 vs. 4d_model^2 in 75% of layers
+MIXER_SIZE_DISCOUNT = 2 / 3 * .75 + 1 * .25  # 6d_model^2 vs. 4d_model^2 in 75% of layers
 
 ### OLMo 3 7B Settings
 DATA_MIX = DataMix.OLMo_mix_0625
@@ -50,9 +49,17 @@ HARD_STOP = Duration.tokens(int(4e12))
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
+    # Reduce number of heads and adjust d_model to be appropriately divisible.
+    n_heads = int(32 * MIXER_SIZE_DISCOUNT)
+    divisible_by = 4 * n_heads
+    d_model = (4096 // divisible_by) * divisible_by
+
+
     config = TransformerConfig.olmo3_7B(
         vocab_size=common.tokenizer.padded_vocab_size(),
         attn_backend=AttentionBackendName.flash_2,
+        d_model=d_model,
+        n_heads=n_heads,
     )
 
     ### Copied below from hybrid/gated_deltanet_0_25_rnn_first.py ###
@@ -61,13 +68,6 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     config.block.name = TransformerBlockType.fla_hybrid
     assert config.n_layers % 4 == 0, "Current logic assumes n_layers is multiple of 4"
     config.block.fla_hybrid_attention_indices = [i for i in range(config.n_layers) if i % 4 == 3]
-
-    # Reduce the size of the 
-    config.block.attention.n_heads = int(config.block.attention.n_heads * MIXER_SIZE_DISCOUNT)
-
-    # Adjust d_model slightly to match the new number of heads.
-    divisible_by = 4 * config.block.attention.n_heads
-    config.d_model = (config.d_model // divisible_by) * divisible_by
 
     # Configure the non-attention part of the block to be a DeltaNet.
     config.block.fla = FLAConfig(
