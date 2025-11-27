@@ -62,9 +62,10 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     assert config.n_layers % 4 == 0, "Current logic assumes n_layers is multiple of 4"
     config.block.fla_hybrid_attention_indices = [i for i in range(config.n_layers) if i % 4 == 3]
 
-    # Pick d_model to roughly match on params and be divisable by n_heads.
+    # Pick d_model to roughly match on params and be divisable by 4 * n_heads.
     config.d_model = int(config.d_model * D_MODEL_DISCOUNT)
-    config.d_model = (config.d_model // config.block.attention.n_heads) * config.block.attention.n_heads
+    divisible_by = 4 * config.block.attention.n_heads
+    config.d_model = (config.d_model // divisible_by) * divisible_by
 
     # Configure the non-attention part of the block to be a DeltaNet.
     config.block.fla = FLAConfig(
