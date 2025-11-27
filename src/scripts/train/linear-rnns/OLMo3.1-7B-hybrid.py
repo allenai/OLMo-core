@@ -1,3 +1,4 @@
+from cmath import sqrt
 from datetime import datetime
 from functools import partial
 
@@ -35,7 +36,7 @@ GLOBAL_BATCH_SIZE = 4 * 1024 * 1024  # ~4M tokens
 
 # Reduce per-device batch size to save on memory.
 MICROBATCH_DISCOUNT = 1
-D_MODEL_DISCOUNT = 2 / 3  # 6d_model^2 vs. 4d_model^2
+D_MODEL_DISCOUNT = sqrt(2 / 3)  # 6d_model^2 vs. 4d_model^2
 
 ### OLMo 3 7B Settings
 DATA_MIX = DataMix.OLMo_mix_0625
@@ -61,8 +62,9 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     assert config.n_layers % 4 == 0, "Current logic assumes n_layers is multiple of 4"
     config.block.fla_hybrid_attention_indices = [i for i in range(config.n_layers) if i % 4 == 3]
 
+    # Pick d_model to roughly match on params and be divisable by n_heads.
     config.d_model = int(config.d_model * D_MODEL_DISCOUNT)
-    assert config.d_model % config.block.attention.n_heads == 0, "d_model must be divisible by n_heads"
+    config.d_model = (config.d_model // config.block.attention.n_heads) * config.block.attention.n_heads
 
     # Configure the non-attention part of the block to be a DeltaNet.
     config.block.fla = FLAConfig(
