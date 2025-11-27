@@ -86,7 +86,7 @@ def _get_split_points(original_num_layers: int, num_stages: int, minus_last_stag
 
 SEQUENCE_LENGTH = 8192
 
-GLOBAL_BATCH_SIZE_SEQ=32
+GLOBAL_BATCH_SIZE_SEQ=64
 GLOBAL_BATCH_SIZE = (
     (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
 )  
@@ -122,7 +122,7 @@ EP_DIM=8
 PP_DIM=1
 
 
-NUM_LAYERS= 32
+NUM_LAYERS= 12
 
 if PP_DIM > 1:
     MINUS_LAST_STAGE=0
@@ -349,9 +349,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
     return (
         TrainerConfig(
-            # save_folder=f'{common.save_folder}/{common.run_name}_{D_MODEL}d_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K_{TAG}',
             # load_path='/weka/oe-training-default/tianhua/ws-megatron/tmp/OLMoE3-dev-baseline_2048d_8L1024M2048S_16E6K_U-fsdp-old-dbg/step0',
-            save_folder=f'{WORK_DIR}/tmp/{common.run_name}_{D_MODEL}d{D_ATTN}a_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K{NUM_SHARED_EXPERTS}S_{TAG}',
+            # save_folder=f'{WORK_DIR}/tmp/{common.run_name}_{D_MODEL}d{D_ATTN}a_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K{NUM_SHARED_EXPERTS}S_{TAG}',
+            save_folder=f'{common.save_folder}/{common.run_name}_{D_MODEL}d{D_ATTN}a_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K{NUM_SHARED_EXPERTS}S_{TAG}',
             save_overwrite=True,
             metrics_collect_interval=5,
             cancel_check_interval=cancel_check_interval,

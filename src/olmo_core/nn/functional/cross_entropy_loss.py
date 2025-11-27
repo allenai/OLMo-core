@@ -156,11 +156,11 @@ def cce_loss(
     )
 
     z_loss = lse.pow(2)
-    if reduction is "mean":
+    if reduction == "mean":
         z_loss = z_loss.mean()
-    elif reduction is "sum":
+    elif reduction == "sum":
         z_loss = z_loss.sum()
-    elif reduction is "none":
+    elif reduction == "none":
         pass
     return ce_loss, z_loss * z_loss_multiplier if compute_z_loss else None
 
