@@ -1126,7 +1126,8 @@ class MoEV2TransformerTrainModule(TrainModule):
         if self.reduce_scatter_grads:
             pass
         else:
-            raise RuntimeError("Deprecated code path, only reduce-scatter grads is supported now")
+            pass
+            # raise RuntimeError("Deprecated code path, only reduce-scatter grads is supported now")
             
         
 
@@ -1144,6 +1145,9 @@ class MoEV2TransformerTrainModule(TrainModule):
                 self.trainer.record_metric(
                         "total grad norm", total_grad_norm, reduce_type=None, namespace="optim"
                     )
+        else:
+            pass
+            #   TODO
         if isinstance(self.optim, MoEFusedV2Optimizer):
             self.record_metric("step skipped", self.optim.step_skipped, namespace="optim")
 
