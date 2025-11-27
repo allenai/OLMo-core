@@ -62,6 +62,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     config.block.fla_hybrid_attention_indices = [i for i in range(config.n_layers) if i % 4 == 3]
 
     config.d_model = int(config.d_model * D_MODEL_DISCOUNT)
+    assert config.d_model % config.block.attention.n_heads == 0, "d_model must be divisible by n_heads"
 
     # Configure the non-attention part of the block to be a DeltaNet.
     config.block.fla = FLAConfig(
