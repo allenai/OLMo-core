@@ -2735,7 +2735,7 @@ class BLTDistillTransformer(BLTTransformer):
         boundary_labels = torch.zeros_like(byte_mask, dtype=torch.float32)
         boundary_labels.scatter_(1, patch_end_indices, 1.0)
 
-        h_byte, h_patch, boundary_logprobs, boundary_mask = self.local_encoder.inference_forward(  # type: ignore
+        _, _, _, boundary_mask = self.local_encoder.inference_forward(  # type: ignore
             input_ids,
             teacher_force_boundaries=blt_config.teacher_force_boundaries,
             boundary_threshold=blt_config.boundary_threshold,
@@ -2746,7 +2746,7 @@ class BLTDistillTransformer(BLTTransformer):
             **local_encoder_kwargs
         )
 
-        return boundary_mask, (h_byte, h_patch, boundary_logprobs, boundary_mask)
+        return boundary_mask
 
     def inference_forward(
         self,
@@ -2755,7 +2755,7 @@ class BLTDistillTransformer(BLTTransformer):
         boundary_state: torch.Tensor,
         pad_state: torch.Tensor,
         sequence_start_indices: Optional[torch.Tensor] = None,
-        cached_encoder_outputs: Optional[Any] = None,
+        boundary_mask: Optional[torch.Tensor] = None,
         **kwargs,
     ):
         input_ids, labels, all_block_kwargs, per_block_kwargs, lm_head_kwargs, local_encoder_kwargs, local_decoder_kwargs, extra_kwargs = self._prepare_inputs(
@@ -2764,17 +2764,17 @@ class BLTDistillTransformer(BLTTransformer):
             **kwargs,
         )
 
-        if cached_encoder_outputs is not None:
-            h_byte, h_patch, boundary_logprobs, boundary_mask = cached_encoder_outputs
-        else:
-            h_byte, h_patch, _, _ = self.local_encoder.inference_forward(  # type: ignore
-                input_ids,
-                boundary_state=boundary_state,
-                pad_state=pad_state,
-                sequence_start_indices=sequence_start_indices,
-                **local_encoder_kwargs
-            )
-            boundary_logprobs = boundary_mask = None
+        if boundary_mask is not None:
+            local_encoder_kwargs["teacher_force_boundaries"] = True
+            local_encoder_kwargs["true_boundary_mask"] = boundary_mask
+
+        h_byte, h_patch, _, _ = self.local_encoder.inference_forward(  # type: ignore
+            input_ids,
+            boundary_state=boundary_state,
+            pad_state=pad_state,
+            sequence_start_indices=sequence_start_indices,
+            **local_encoder_kwargs
+        )
 
         if h_patch.numel() > 0:
             # we need to convert from right-pad to left-pad and back for prefill
@@ -2806,7 +2806,7 @@ class BLTDistillTransformer(BLTTransformer):
             embeds=h_byte,
             patch_embeds=h_patch_after_global,
             patch_residuals=h_patch,
-            boundary_logprobs=boundary_logprobs,
+            boundary_logprobs=None,
             boundary_mask=boundary_mask,
             boundary_state=boundary_state,
             sequence_start_indices=sequence_start_indices,
