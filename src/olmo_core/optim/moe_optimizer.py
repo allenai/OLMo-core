@@ -253,12 +253,17 @@ class MoEFusedV2OptimizerConfig(Config):
         # Concatenate, ensuring the "default" groups remain first in each partition (already ensured by build_groups()).
         all_groups: List[Dict[str, Any]] = list(dp_groups) + list(ep_groups) # type: ignore
 
-        has_grad_accum_fp32_buffer = [part.has_grad_accum_fp32_buffer for part in model_parts]
-        # shuold all have the same value
-        if not all(x == has_grad_accum_fp32_buffer[0] for x in has_grad_accum_fp32_buffer):
-            raise ValueError("Inconsistent `has_grad_accum_fp32_buffer` among model parts")
-        
-        has_grad_accum_fp32_buffer = has_grad_accum_fp32_buffer[0]
+        from olmo_core.nn.parallel.distributed import MultiGroupDistributedDataParallel
+        if isinstance(model_parts[0], MultiGroupDistributedDataParallel):
+            has_grad_accum_fp32_buffer = model_parts[0]._accumulate_grads_in_fp32
+
+        else:
+            has_grad_accum_fp32_buffer = [part.has_grad_accum_fp32_buffer for part in model_parts]
+            # shuold all have the same value
+            if not all(x == has_grad_accum_fp32_buffer[0] for x in has_grad_accum_fp32_buffer):
+                raise ValueError("Inconsistent `has_grad_accum_fp32_buffer` among model parts")
+            
+            has_grad_accum_fp32_buffer = has_grad_accum_fp32_buffer[0]
 
         optim = self.optimizer()(
             all_groups,
@@ -346,14 +351,16 @@ class MoEFusedV2Optimizer:
         dp_group: Optional[ProcessGroup] = None,
         ep_dp_group: Optional[ProcessGroup] = None,
         broadcast_bucket_mb: int = 32,
-        do_not_shard_tensor_smaller_than: int = 1024,
+        do_not_shard_tensor_smaller_than: int = 8192,
+        use_distributed: bool = True,
+        check_nan_inf_grad: bool = False,
     ) -> None:
         assert lr > 0.0
         assert all([0.0 <= beta <= 1.0 for beta in betas])
         defaults = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
 
         self.model_has_grad_accum_fp32_buffer = model_has_grad_accum_fp32_buffer
-
+        self.use_distributed = use_distributed
 
         def _add_defaults_to_param_group(pg: Dict[str, Any]) -> Dict[str, Any]:
             for k, v in defaults.items():
@@ -371,7 +378,7 @@ class MoEFusedV2Optimizer:
         self._dp_group: Optional[ProcessGroup] = dp_group
         self._ep_dp_group: Optional[ProcessGroup] = ep_dp_group
 
-        self._broadcast_bucket_bytes: int = int(broadcast_bucket_mb * 1024 * 1024)
+        # self._broadcast_bucket_bytes: int = int(broadcast_bucket_mb * 1024 * 1024)
 
         assert world_mesh['dense'] is not None, "DP mesh must be provided"
 
@@ -391,14 +398,20 @@ class MoEFusedV2Optimizer:
         if isinstance(dtype, DType):
             dtype = dtype.as_pt()
         self.dtype = dtype
+        self.check_nan_inf_grad = check_nan_inf_grad
+        self.states_dtype = torch.float32
+        self.main_grad_dtype = torch.float32
+
         # self.foreach = foreach
         self._step_skipped: Optional[torch.Tensor] = None
         self.do_not_shard_tensor_smaller_than = do_not_shard_tensor_smaller_than
         self._use_reduce_scatter_grads = True
-        self.main_grad: Dict[str, DTensor] = {} # trasient storage for main grads in step()
+        self.main_grad: Dict[str, torch.Tensor] = {}
 
         # check
         device = None
+        has_bf16_param = False
+        has_fp32_param = False
         for param_group in param_groups:
             for i, (name, param) in enumerate(param_group['named_params'].items()):
                 if not param.requires_grad:
@@ -408,9 +421,21 @@ class MoEFusedV2Optimizer:
                 else:
                     assert device == param.device, "Inconsistent device found"
                 # float16 params:
-                assert param.type() in ['torch.cuda.HalfTensor', 'torch.cuda.BFloat16Tensor'], 'Only support 16 bit params. Received {}'.format(param.type())
+                if param.type() in ['torch.cuda.HalfTensor', 'torch.cuda.BFloat16Tensor']:
+                    has_bf16_param = True
+                elif param.type() in ['torch.cuda.FloatTensor']:
+                    has_fp32_param = True
 
-
+        if has_bf16_param and has_fp32_param:
+            raise ValueError("Mixed bf16 and fp32 parameters are not supported in MoEFusedV2Optimizer")
+        
+        if has_bf16_param:
+            # The model only has bf16 params
+            # The optimizer has to decide whether to maintain fp32 main params
+            self.should_maintain_fp32_main_param = True
+        else:
+            # The model has its own copy of fp32 main params
+            self.should_maintain_fp32_main_param = False
 
 
         self.states: Dict[str, DTensor] = OrderedDict()
@@ -428,17 +453,22 @@ class MoEFusedV2Optimizer:
                 num_elements = param.numel()
 
                 # main param
-                main_param = torch.zeros(num_elements, dtype=torch.float32, device=device) 
-                main_param = self._distribute_tensor(main_param, device_mesh)
-                self.states[f'{name}.main'] = main_param
+                if self.should_maintain_fp32_main_param:
+                    main_param = torch.zeros(num_elements, dtype=torch.float32, device=device) 
+                    main_param = self._distribute_tensor(main_param, device_mesh)
+                    self.states[f'{name}.main'] = main_param
+                else:
+                    assert param.dtype == torch.float32, "Expect fp32 param when should_maintain_fp32_main_param is False"
+                    # wrap in DTensor so it works with rest of the code
+                    self.states[f'{name}.main'] = DTensor.from_local(param.data.view(-1), device_mesh=device_mesh, placements=[Replicate()])
 
                 # exp avg
-                exp_avg = torch.zeros(num_elements, dtype=torch.float32, device=device)
+                exp_avg = torch.zeros(num_elements, dtype=self.states_dtype, device=device)
                 exp_avg = self._distribute_tensor(exp_avg, device_mesh)
                 self.states[f'{name}.exp_avg'] = exp_avg
 
                 # exp avg sq
-                exp_avg_sq = torch.zeros(num_elements, dtype=torch.float32, device=device)
+                exp_avg_sq = torch.zeros(num_elements, dtype=self.states_dtype, device=device)
                 exp_avg_sq = self._distribute_tensor(exp_avg_sq, device_mesh)
                 self.states[f'{name}.exp_avg_sq'] = exp_avg_sq
 
@@ -452,15 +482,17 @@ class MoEFusedV2Optimizer:
                 self.states[f'{name}.step'] = step_tensor
 
         # copy model params to main params
-        for param_group in param_groups:
-            for name, param in param_group['named_params'].items():
-                main_param = self.states[f'{name}.main']
-                
-                assign_full_tensor_to_dtensor(dst=main_param, src=param.data.float().reshape(-1))
+        if self.should_maintain_fp32_main_param:
+            for param_group in param_groups:
+                for name, param in param_group['named_params'].items():
+                    main_param = self.states[f'{name}.main']
+                    
+                    assign_full_tensor_to_dtensor(dst=main_param, src=param.data.float().reshape(-1))
 
         self.param_groups = param_groups
 
-        self._check_model_param_main_param_the_same()
+        if self.should_maintain_fp32_main_param:
+            self._check_model_param_main_param_the_same()
 
         self.print_memory_summary()
 
@@ -513,9 +545,15 @@ class MoEFusedV2Optimizer:
         print_str += info_str('Exp avg', exp_avg_stat)
         print_str += info_str('Exp avg sq', exp_avg_sq_stat)
 
-        total_global_optim_gb = (main_stat[0] + exp_avg_stat[0] + exp_avg_sq_stat[0]) * 4 / 1024**3
-        total_local_optim_gb = (main_stat[1] + exp_avg_stat[1] + exp_avg_sq_stat[1]) * 4 / 1024**3
-        total_model_gb = self._model_param_sz / 1024**3
+        BYTES_IN_GB = 1024**3
+
+        total_global_optim_gb = main_stat[0] * self.main_grad_dtype.itemsize / BYTES_IN_GB
+        total_global_optim_gb += (exp_avg_stat[0] + exp_avg_sq_stat[0]) * self.states_dtype.itemsize / BYTES_IN_GB # bf16 or fp32
+
+        total_local_optim_gb = main_stat[1] * self.main_grad_dtype.itemsize / BYTES_IN_GB
+        total_local_optim_gb += (exp_avg_stat[1] + exp_avg_sq_stat[1]) * self.states_dtype.itemsize / BYTES_IN_GB # bf16 or fp32
+
+        total_model_gb = self._model_param_sz / BYTES_IN_GB
         print_str += f'[MoEFusedV2Optimizer] Total optimizer states size: {total_global_optim_gb:.4f} GB global, {total_local_optim_gb:.4f} GB local\n'
          
         if self.model_has_grad_accum_fp32_buffer:
@@ -540,22 +578,28 @@ class MoEFusedV2Optimizer:
                     raise ValueError(f"{name}: Model param {param} and main param {main_param} are not close")
 
 
-    def _distribute_tensor(self, tensor, device_mesh):
+    def _distribute_tensor(self, tensor, device_mesh, force_shard: bool = False) -> DTensor:
         num_elements = tensor.numel()
-        if num_elements >= self.do_not_shard_tensor_smaller_than and num_elements % device_mesh.size(0) == 0:
-            # this is distributed optimizer, so each rank holds one shard of the data
-            tensor_dt = distribute_tensor(
-                tensor,
-                device_mesh=device_mesh,
-                placements=[Shard(0)],
-            )
+        if force_shard:
+            # always shard, useful for saving checkpoint
+            placements=[Shard(0)]
+        elif self.use_distributed:
+            if num_elements >= self.do_not_shard_tensor_smaller_than and num_elements % device_mesh.size(0) == 0:
+                # this is distributed optimizer, so each rank holds one shard of the data
+                placements=[Shard(0)]
+            else:
+                # small tensor, do not shard
+                placements=[Replicate()]
         else:
-            # small tensor, do not shard
-            tensor_dt = distribute_tensor(
-                tensor,
-                device_mesh=device_mesh,
-                placements=[Replicate()],
-            )
+            # always no shard
+            placements=[Replicate()]
+
+        tensor_dt = distribute_tensor(
+            tensor,
+            device_mesh=device_mesh,
+            placements=placements,
+        )
+
         return tensor_dt
 
     def offload_optimizer_states(self):
@@ -641,52 +685,84 @@ class MoEFusedV2Optimizer:
         """
 
         # separate DP and EP_DP grads
-        dp_grads = []
-        ep_dp_grads = []
+        dp_grads_replicated = []
+        dp_grads_sharded = []
+        ep_dp_grads_replicated = []
+        ep_dp_grads_sharded = []
 
         # debug_grads = {}
         for param_group in self.param_groups:
             for name, param in param_group['named_params'].items():
                 if not param.requires_grad:
                     continue
+                placements = self.states[f'{name}.main'].placements
+                assert len(placements) == 1, "Expect only one placement per tensor"
                 main_grad = self.main_grad[name]
                 
                 if param_group['pg'] == 'dp':
-                    dp_grads.append(main_grad)
-                    # debug_grads[name] = main_grad.full_tensor()
+                    if placements[0].is_shard():
+                        dp_grads_sharded.append(main_grad)
+                    else:
+                        dp_grads_replicated.append(main_grad)
                 elif param_group['pg'] == 'ep_dp':
-                    ep_dp_grads.append(main_grad)
-                    # debug_ep_g = main_grad.full_tensor()
-                    # debug_ep_g = DTensor.from_local(debug_ep_g, device_mesh=self.ep_mp_mesh, placements=[Shard(0)])
-                    # debug_grads[name] = debug_ep_g.full_tensor()
+                   if placements[0].is_shard():
+                        ep_dp_grads_sharded.append(main_grad)
+                   else:
+                        ep_dp_grads_replicated.append(main_grad)
 
-        # ref_total_norm = nn.utils.get_total_norm(list(debug_grads.values()), norm_type=2.0, error_if_nonfinite=False)
+        dp_grads_norm_sharded = nn.utils.get_total_norm(dp_grads_sharded, norm_type=2.0, error_if_nonfinite=False)
+        dp_grads_norm_replicated = nn.utils.get_total_norm(dp_grads_replicated, norm_type=2.0, error_if_nonfinite=False)
 
-        dp_grad_norm = nn.utils.get_total_norm(dp_grads, norm_type=2.0, error_if_nonfinite=False)
-        dp_grad_norm = cast(DTensor, dp_grad_norm).full_tensor()
+
+        dp_grads_norm_sharded_reduced = self._reduce_norm(dp_grads_norm_sharded, self.dp_mesh.get_group()) # reduce across DP
+        dp_grad_norm = self._combine_norm(dp_grads_norm_replicated, dp_grads_norm_sharded_reduced)
+
 
         if self.moe_mesh is not None:
-            ep_dp_grad_norm = nn.utils.get_total_norm(ep_dp_grads, norm_type=2.0, error_if_nonfinite=False)
-            ep_dp_grad_norm = cast(DTensor, ep_dp_grad_norm).full_tensor()
+            ep_dp_grads_norm_sharded = nn.utils.get_total_norm(ep_dp_grads_sharded, norm_type=2.0, error_if_nonfinite=False)
+            ep_dp_grads_norm_replicated = nn.utils.get_total_norm(ep_dp_grads_replicated, norm_type=2.0, error_if_nonfinite=False)
 
-            # reduce EP_MP
-            assert self.ep_mp_mesh is not None
-            ep_dp_grad_norm = ep_dp_grad_norm.square()
-            dist.all_reduce(ep_dp_grad_norm, op=dist.ReduceOp.SUM, group=self.ep_mp_mesh.get_group())
-            ep_dp_grad_norm = ep_dp_grad_norm.sqrt()
+            ep_dp_grads_norm_sharded_reduced = self._reduce_norm(ep_dp_grads_norm_sharded, self.ep_dp_mesh.get_group()) # reduce across EP_DP
+            ep_dp_grad_norm = self._combine_norm(ep_dp_grads_norm_replicated, ep_dp_grads_norm_sharded_reduced)
 
-            # combine DP and EP_DP grad norms
-            total_grad_norm = torch.sqrt(dp_grad_norm.square() + ep_dp_grad_norm.square())
+            ep_grad_norm = self._reduce_norm(ep_dp_grad_norm, self.ep_mp_mesh.get_group()) # reduce across EP_MP
+
+            total_grad_norm = self._combine_norm(dp_grad_norm, ep_grad_norm)
         else:
-            assert len(ep_dp_grads) == 0, "No EP_DP grads should exist if no MOE mesh"
             total_grad_norm = dp_grad_norm
+
+
+
+
+        ################
+
+        # dp_grad_norm = nn.utils.get_total_norm(dp_grads, norm_type=2.0, error_if_nonfinite=False)
+        # dp_grad_norm = cast(DTensor, dp_grad_norm).full_tensor()
+
+
+        # if self.moe_mesh is not None:
+        #     ep_dp_grad_norm = nn.utils.get_total_norm(ep_dp_grads, norm_type=2.0, error_if_nonfinite=False)
+        #     ep_dp_grad_norm = cast(DTensor, ep_dp_grad_norm).full_tensor()
+
+        #     # reduce EP_MP
+        #     assert self.ep_mp_mesh is not None
+        #     ep_dp_grad_norm = ep_dp_grad_norm.square()
+        #     dist.all_reduce(ep_dp_grad_norm, op=dist.ReduceOp.SUM, group=self.ep_mp_mesh.get_group())
+        #     ep_dp_grad_norm = ep_dp_grad_norm.sqrt()
+
+        #     # combine DP and EP_DP grad norms
+        #     total_grad_norm = torch.sqrt(dp_grad_norm.square() + ep_dp_grad_norm.square())
+        # else:
+        #     assert len(ep_dp_grads) == 0, "No EP_DP grads should exist if no MOE mesh"
+        #     total_grad_norm = dp_grad_norm
 
         # reduce PP
         assert self.dense_mesh.mesh_dim_names is not None
         if 'pp' in self.dense_mesh.mesh_dim_names:
-            total_grad_norm = total_grad_norm.square()
-            dist.all_reduce(total_grad_norm, op=dist.ReduceOp.SUM, group=self.dense_mesh['pp'].get_group())
-            total_grad_norm = total_grad_norm.sqrt()
+            total_grad_norm = self._combine_norm(total_grad_norm, self.dense_mesh['pp'].get_group())
+            # total_grad_norm = total_grad_norm.square()
+            # dist.all_reduce(total_grad_norm, op=dist.ReduceOp.SUM, group=self.dense_mesh['pp'].get_group())
+            # total_grad_norm = total_grad_norm.sqrt()
 
 
         clip_coef = self.max_grad_norm / (total_grad_norm + 1e-6)
@@ -695,40 +771,52 @@ class MoEFusedV2Optimizer:
         # when the gradients do not reside in CPU memory.
         clip_coef_clamped = torch.clamp(clip_coef, max=1.0).to(total_grad_norm.device)
 
-        torch._foreach_mul_(dp_grads, clip_coef_clamped)
-        if len(ep_dp_grads) > 0:
-            torch._foreach_mul_(ep_dp_grads, clip_coef_clamped)
+        all_grads = list(self.main_grad.values())
+        torch._foreach_mul_(all_grads, clip_coef_clamped)
+
+        # torch._foreach_mul_(dp_grads, clip_coef_clamped)
+        # if len(ep_dp_grads) > 0:
+        #     torch._foreach_mul_(ep_dp_grads, clip_coef_clamped)
 
 
         return total_grad_norm
 
+    def _combine_norm(self, n1, n2) -> torch.Tensor:
+        return torch.sqrt(n1.square() + n2.square())
+    
+    def _reduce_norm(self, norm: torch.Tensor, pg: ProcessGroup) -> torch.Tensor:
+        norm = norm.square()
+        dist.all_reduce(norm, op=dist.ReduceOp.SUM, group=pg)
+        norm = norm.sqrt()
+        return norm
+
     @torch.no_grad()
     @nvtx.annotate("MoEFusedV2Optimizer.step")
     def step(self, closure: Optional[Callable[[], float]] = None) -> Optional[float]:
-        
+
         dbg_mem_before_cp1 = torch.cuda.memory_allocated()/1024**3
         if getattr(self, "_use_reduce_scatter_grads", True):
             # Precondition: DDP model did not all-reduce grads, grads on dp ranks different now
             # the optimizer has sharded main param + states in fp32
             # now call reduce scatter to collect averaged grads from dp ranks
             # directly into the owned main param views
-            dbg_mem_before_rs = torch.cuda.memory_allocated()/1024**3
-            dbg_mem_peak_before_rs = torch.cuda.max_memory_allocated()/1024**3
             self._reduce_scatter_model_grads()
-            dbg_mem_after_rs = torch.cuda.memory_allocated()/1024**3
-            dbg_mem_peak_after_rs = torch.cuda.max_memory_allocated()/1024**3
-
         else:
             # Precondition: DDP model called all-reduce grads, bf16 model grads on dp ranks are the same
             self._copy_model_grads_to_main_grads()
 
+        self._release_model_grads()
+
         total_grad_norm = self._clip_grad()
+
+        if self.check_nan_inf_grad and (total_grad_norm.isnan() or total_grad_norm.isinf()):
+            assert False, (f"[Error] rank={dist.get_rank()} grad norm is {total_grad_norm}, skipping step")
+
         self.latest_grad_norm = total_grad_norm
-        dbg_mem_before_step = torch.cuda.memory_allocated()/1024**3
+
         self._step_foreach(closure)
-        dbg_mem_after_step = torch.cuda.memory_allocated()/1024**3
+
         self._dealloc_main_grad()
-        dbg_mem_before_cp2 = torch.cuda.memory_allocated()/1024**3
 
         self._copy_main_params_to_model_params()
 
@@ -768,12 +856,16 @@ class MoEFusedV2Optimizer:
                         raise RuntimeError("Expected model param grad to be None. Use _main_grad_fp32 to store the grad.")
 
                     if param._main_grad_fp32 is None:
-                        continue
+                        print(f"Warning: model param {name} has None for _main_grad_fp32")
+                        param._main_grad_fp32 = torch.zeros_like(param.data, dtype=torch.float32)
+                        # continue
 
                     model_grad_fp32 = param._main_grad_fp32.detach().view(-1) # unsharded local shape, FP32
                 else:
                     if param.grad is None:
-                        continue
+                        print(f"Warning: model param {name} has None for grad")
+                        param.grad = torch.zeros_like(param.data)
+                        # continue
 
                     # model's grad is in bf16, need to convert to fp32 for reduce-scatter
                     model_grad_fp32 = param.grad.detach().view(-1).float() # unsharded local shape, FP32
@@ -821,18 +913,140 @@ class MoEFusedV2Optimizer:
 
         return
 
+    def _release_model_grads(self):
+        for param_group in self.param_groups:
+            for name, param in param_group['named_params'].items():
+                if self.model_has_grad_accum_fp32_buffer:
+                    param._main_grad_fp32 = None
+                    param.grad = None
+                else:
+                    param.grad = None
+
+    @nvtx.annotate("MoEFusedV2Optimizer._copy_model_grads_to_main_grads")
     def _copy_model_grads_to_main_grads(self):
-        raise NotImplementedError()
+        for param_group in self.param_groups:
+            for name, param in param_group['named_params'].items():
+                if self.model_has_grad_accum_fp32_buffer:
+                    # the model already has a fp32 grad buffer, so the grad is already in fp32
+                    # and model's bf16 grad should be None
+                    if param.grad is not None:
+                        raise RuntimeError("Expected model param grad to be None. Use _main_grad_fp32 to store the grad.")
+
+                    if param._main_grad_fp32 is None:
+                        print(f"Warning: model param {name} has None for _main_grad_fp32")
+                        param._main_grad_fp32 = torch.zeros_like(param.data, dtype=torch.float32)
+                        # continue
+
+                    model_grad_fp32 = param._main_grad_fp32.detach().view(-1) # unsharded local shape, FP32
+                else:
+                    if param.grad is None:
+                        print(f"Warning: model param {name} has None for grad")
+                        param.grad = torch.zeros_like(param.data)
+                        # continue
+
+                    # model's grad is in bf16, need to convert to fp32 for reduce-scatter
+                    # model_grad_fp32 = param.grad.detach().view(-1).float() # unsharded local shape, FP32
+                    model_grad_fp32 = param.grad.detach().view(-1) # unsharded local shape, BF16. It should be a view of the reducer bucket
+
+
+                # prepare main param grad view
+                main_param = self.states[f'{name}.main'] # DTensor, full shape unsharded
+
+                # self.main_grad[name] = distribute_tensor(model_grad_fp32, device_mesh=main_param.device_mesh, placements=main_param.placements, src_data_rank=None)
+
+                # it turns out distribute_tensor is too slow on cpu
+                # here is a more direct way
+                self.main_grad[name] = self.narrow_tensor(model_grad_fp32, main_param.device_mesh, main_param.placements)
+            
+
+
+                del model_grad_fp32
+                
+                # further divide by ep_mp world size if it's ep_mp sharded
+                if self.moe_mesh is not None and param_group['pg'] == 'ep_dp':
+                    ep_mp_world_process_group = self.ep_mp_mesh.get_group()
+                    ep_mp_world_size = dist.get_world_size(ep_mp_world_process_group)
+                    self.main_grad[name].div_(ep_mp_world_size)
+
+    def narrow_tensor(self, orignal: torch.Tensor, device_mesh: DeviceMesh, placements: List[Placement]):
+        assert len(placements) == 1, "Only support 1D sharding"
+        assert device_mesh.ndim == 1, "Only support 1D device mesh"
+        assert orignal.dim() == 1, "Only support 1D tensor"
+        placement = placements[0]
+
+        if placement.is_replicate():
+            return orignal
+            # return DTensor.from_local(orignal, device_mesh=device_mesh, placements=placements)
+        
+        assert placement.is_shard(), "Only support shard or replicate placements"
+        coord = device_mesh.get_coordinate()[0]
+        ws = device_mesh.size(0)
+        shard_size = orignal.numel() // ws
+        start = coord * shard_size
+        local_shard = orignal.narrow(0, start, shard_size)
+
+        return local_shard
+        # return DTensor.from_local(local_shard, device_mesh=device_mesh, placements=placements)
+
 
 
     @nvtx.annotate("MoEFusedV2Optimizer._copy_main_params_to_model_params")
     def _copy_main_params_to_model_params(self):
+        LAUNCH_AG_THRESHOLD = 500_000_000  # X elements
         for param_group in self.param_groups:
+
+            # initialize for coalesced all_gather
+            input_dtensors = []
+            output_params = []
+            input_numel = 0
+
+            def flush_all_gather():
+                nonlocal input_dtensors, output_params, input_numel
+                # ref_out = []
+                # for t in input_dtensors:
+                #     ref_out.append(t.full_tensor())
+                if len(input_dtensors) == 0:
+                    return
+                pg = input_dtensors[0].device_mesh.get_group()
+                input_locals = [ t.to_local() for t in input_dtensors]
+                gathered = coalesced_all_gather(input_locals, pg)
+
+                for gatherd_tensor, out_param in zip(gathered, output_params):
+                    out_param.data.copy_(gatherd_tensor.reshape(out_param.data.shape))
+
+                gathered.clear()
+                output_params.clear()
+                input_dtensors.clear()
+                input_numel = 0
+
             for name, param in param_group['named_params'].items():
+                
+
                 main_param = self.states[f'{name}.main']
-                # get global tensor from DTensor
-                main_param_full = main_param.full_tensor().reshape(param.data.shape) # NOTE: collective ops
-                param.data.copy_(main_param_full.to(param.data.dtype))
+                if not any(isinstance(p, Shard) for p in main_param.placements):
+                    # replicated tensor, directly get full tensor
+                    main_param_full = main_param.full_tensor().reshape(param.data.shape)
+                    param.data.copy_(main_param_full.to(param.data.dtype))
+                    continue
+
+                # check for process group
+                if len(input_dtensors) > 0:
+                    main_param.device_mesh == input_dtensors[0].device_mesh
+
+                input_dtensors.append(main_param)
+                output_params.append(param)
+                input_numel += main_param.numel()
+
+                if input_numel >= LAUNCH_AG_THRESHOLD:
+                    flush_all_gather()
+
+            # final gather
+            if len(input_dtensors) > 0:
+                flush_all_gather()
+
+        return
+
+
 
     def _dealloc_main_grad(self):
         self.main_grad.clear()
@@ -877,15 +1091,20 @@ class MoEFusedV2Optimizer:
         step_factor = cast(torch.Tensor, step_factor)
         self._step_skipped = 1 - step_factor
 
-        # Allow overriding via attribute; default to 500M elements.
-        CHUNK_ELEMS = getattr(self, "_foreach_chunk_threshold", 500_000_000)
+        # Allow overriding via attribute; default to X elements.
+        CHUNK_ELEMS = getattr(self, "_foreach_chunk_threshold", 600_000_000)
 
         for group in self.param_groups:
             # Per-chunk accumulators
             main_params: list[torch.Tensor] = []
             grads: list[torch.Tensor] = []
-            exp_avgs: list[torch.Tensor] = []
-            exp_avg_sqs: list[torch.Tensor] = []
+
+            exp_avgs: list[torch.Tensor] = [] # always fp32
+            exp_avg_sqs: list[torch.Tensor] = [] # always fp32
+
+            exp_avgs_original: list[torch.Tensor] = [] # if states_dtype is bf16, we need to keep a reference to the original bf16 tensors
+            exp_avg_sqs_original: list[torch.Tensor] = []
+
             steps_list: list[torch.Tensor] = []
             running_elems: int = 0
 
@@ -906,32 +1125,62 @@ class MoEFusedV2Optimizer:
                     step_factor=step_factor,
                     step_increment_bugfix=True,
                 )
+
+
+            def reset_chunk_buffers():
+                nonlocal main_params, grads, exp_avgs, exp_avg_sqs, steps_list, running_elems, exp_avgs_original, exp_avg_sqs_original
                 # reset for next chunk
                 main_params = []
                 grads = []
                 exp_avgs = []
                 exp_avg_sqs = []
+                exp_avgs_original = []
+                exp_avg_sqs_original = []
                 steps_list = []
                 running_elems = 0
+
+            def maybe_copy_back_16bit_states():
+                # foreach_adamw_step makes in place updates to exp_avgs and exp_avg_sqs which are in fp32
+                # so if the fp32 states are copies of bf16 states, we need to copy them back
+                # otherwies, they are the original fp32 states, no need to copy back
+                nonlocal exp_avgs_original, exp_avg_sqs_original, exp_avgs, exp_avg_sqs
+                if self.states_dtype == torch.bfloat16:
+                    for i in range(len(exp_avgs)):
+                        # copy back fp32 to original bf16 tensors
+                        exp_avgs_original[i].copy_(exp_avgs[i].to(torch.bfloat16))
+                        exp_avg_sqs_original[i].copy_(exp_avg_sqs[i].to(torch.bfloat16))
 
             for name, model_p in group["named_params"].items():
                 if not model_p.requires_grad:
                     continue
-
+                
+                # in adam step(), make everything local and fp32 
                 main_params.append(self.states[f"{name}.main"].to_local())
-                grads.append(self.main_grad[name].to_local())
-                exp_avgs.append(self.states[f"{name}.exp_avg"].to_local())
-                exp_avg_sqs.append(self.states[f"{name}.exp_avg_sq"].to_local())
+                grads.append(self.main_grad[name].float()) # main grad is not DTensor
+                if self.states_dtype == torch.bfloat16:
+                    # new fp32 copy
+                    exp_avgs.append(self.states[f"{name}.exp_avg"].to_local().to(torch.float32))
+                    exp_avg_sqs.append(self.states[f"{name}.exp_avg_sq"].to_local().to(torch.float32))
+
+                    exp_avgs_original.append(self.states[f"{name}.exp_avg"].to_local())
+                    exp_avg_sqs_original.append(self.states[f"{name}.exp_avg_sq"].to_local())
+                else:
+                    # original fp32
+                    exp_avgs.append(self.states[f"{name}.exp_avg"].to_local())
+                    exp_avg_sqs.append(self.states[f"{name}.exp_avg_sq"].to_local())
                 steps_list.append(self.states[f"{name}.step"].to_local())
 
                 running_elems += self.states[f"{name}.main"].to_local().numel()
                 # Flush when we reach/exceed the threshold. It's OK to overshoot with the last add.
                 if running_elems >= CHUNK_ELEMS:
                     flush_chunk()
+                    maybe_copy_back_16bit_states()
+                    reset_chunk_buffers()
 
             # Flush any tail chunk
             flush_chunk()
-
+            maybe_copy_back_16bit_states()
+            reset_chunk_buffers()
 
     def zero_grad(self, set_to_none=True):
         for group in self.param_groups:
@@ -977,10 +1226,12 @@ class MoEFusedV2Optimizer:
                             state_dt = DTensor.from_local(
                                 state_local.unsqueeze(0), # (N,) -> (1, N)
                                 device_mesh=self.moe_mesh['ep_dp','ep_mp'],
-                                placements=[Shard(1), Shard(0)], # first dim sharded by mp, second dim sharded by dp
+                                placements=[Shard(1) if self.use_distributed else Replicate(), Shard(0)], # first dim sharded by mp, second dim sharded by dp
                             )
+                            # collect the full tensor and force shard over dp becaues it's too big
                             state_dt = state_dt.full_tensor().reshape(-1) # NOTE: additional memory usage
-                            state_dt = self._distribute_tensor(state_dt, self.dp_mesh)
+                            state_dt = self._distribute_tensor(state_dt, self.dp_mesh, force_shard=True) 
+
                             sd[f'{name}.{suffix}'] = state_dt
                         else: # "step"
                             sd[f'{name}.{suffix}'] = state_dt
@@ -1050,3 +1301,70 @@ class MoEFusedV2Optimizer:
         raise NotImplementedError()
 
 
+from typing import List, Optional
+import torch
+import torch.distributed as dist
+
+
+def coalesced_all_gather(
+    input_tensors: List[torch.Tensor],
+    process_group: dist.ProcessGroup,
+) -> List[torch.Tensor]:
+    """
+    Coalesced all_gather for a list of 1-D tensors.
+
+    Args:
+        input_tensors: List of 1-D tensors. For a given index i, all ranks must
+            have input_tensors[i] with the same numel, dtype, and device.
+        process_group: The process group to use for all_gather (default: world group).
+
+    Returns:
+        A list of tensors, one per input tensor.
+        For input_tensors[i] of shape [N_i], the output[i] has shape [world_size, N_i],
+        where output[i][r] is the data from rank r.
+    """
+    if not input_tensors:
+        return []
+
+    # Basic sanity checks
+    device = input_tensors[0].device
+    dtype = input_tensors[0].dtype
+    for t in input_tensors:
+        assert t.dim() == 1, "All input_tensors must be 1-D"
+        assert t.device == device, "All input_tensors must be on the same device"
+        assert t.dtype == dtype, "All input_tensors must have the same dtype"
+
+    world_size = dist.get_world_size(process_group)
+
+    # 1) Build flat local buffer
+    sizes = [t.numel() for t in input_tensors]
+    offsets = []
+    running = 0
+    for s in sizes:
+        offsets.append(running)
+        running += s
+    total_elems = running
+
+    flat_local = torch.empty(total_elems, device=device, dtype=dtype)
+    for t, off in zip(input_tensors, offsets):
+        flat_local[off : off + t.numel()] = t.view(-1)
+
+    # 2) Single all_gather on flat buffer
+    # Shape: [world_size, total_elems], but we expose it as a list to all_gather
+    flat_global = torch.empty(world_size, total_elems, device=device, dtype=dtype)
+    output_slices = list(flat_global.unbind(0))  # list of [total_elems] views
+
+    dist.all_gather(
+        output_slices,
+        flat_local,
+        group=process_group,
+    )
+
+    # 3) Unpack into per-tensor gathered outputs
+    gathered_outputs: List[torch.Tensor] = []
+    for size, off in zip(sizes, offsets):
+        # [world_size, size]
+        gathered = flat_global[:, off : off + size].contiguous()
+        gathered_outputs.append(gathered)
+
+    return gathered_outputs

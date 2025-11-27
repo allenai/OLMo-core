@@ -401,9 +401,10 @@ class DownstreamEvaluator(Evaluator):
         self.metric.reset()
 
     def maybe_add_debug_info(self, batch):
-        for key in ['input_ids', 'continuation']:
-            val = batch[key]
-            batch[f'{key}_str'] = self.tokenizer.decode_batch(val.cpu().tolist())
+        pass
+        # for key in ['input_ids', 'continuation']:
+        #     val = batch[key]
+        #     batch[f'{key}_str'] = self.tokenizer.decode_batch(val.cpu().tolist())
 
 @dataclass
 class DownstreamEvaluatorCallbackConfig(CallbackConfig):

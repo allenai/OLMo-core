@@ -87,30 +87,24 @@ def _get_split_points(original_num_layers: int, num_stages: int, minus_last_stag
 
 SEQUENCE_LENGTH = 8192
 
-# GLOBAL_BATCH_SIZE_SEQ=1024 + 512
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (1)
-GLOBAL_BATCH_SIZE = (
-    (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
-)  
 
-GLOBAL_BATCH_TOKENS_IN_M = SEQUENCE_LENGTH * GLOBAL_BATCH_SIZE_SEQ // 1024 // 1024
 
 MAX_DURATION = int(7000e9)  # int(6e12), don't forget to adjust the LR when you increase this
-EVAL_INTERVAL = 2000
-LR= 3e-4 * math.sqrt(2)
+EVAL_INTERVAL = 500
+SAVE_INTERVAL=100
 
-NUM_EXPERTS = 32
-TOP_K = 2
-# D_MODEL=3072
-# D_ATTN=3072
-D_MODEL=1024
+NUM_EXPERTS = 64
+TOP_K = 4
+D_MODEL=3072
 D_ATTN=D_MODEL
+# D_MODEL=2560
+# D_ATTN=D_MODEL
 HEAD_DIM=128
 NUM_HEAD = D_ATTN // HEAD_DIM
 NUM_KV_HEAD=4
-MOE_HIDDEN_SIZE = 512
+MOE_HIDDEN_SIZE = 2560
 NUM_SHARED_EXPERTS = 1  # Number of shared experts in the shared MLP
-SHARED_MLP_HIDDEN_SIZE = 512  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
+SHARED_MLP_HIDDEN_SIZE = 2560  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
 EFFECTIVE_MLP = (MOE_HIDDEN_SIZE * TOP_K + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 MLP_RATIO = EFFECTIVE_MLP / D_MODEL
@@ -118,12 +112,22 @@ MLP_RATIO = EFFECTIVE_MLP / D_MODEL
 # the first dense layer MLP
 DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS) * 3 // 2
 
-MICRO_BSZ = 2
+MICRO_BSZ = 1
 # DP_DIM=2
-EP_DIM=4
+EP_DIM=8
 PP_DIM=1
 
+# ref
+REF_NUM_NODES=32
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (8)
+GLOBAL_BATCH_SIZE = (
+    (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
+)  
+NUM_MICRO_BATCHES = GLOBAL_BATCH_SIZE_SEQ // (REF_NUM_NODES * 8) // MICRO_BSZ
+GLOBAL_BATCH_TOKENS_IN_M = SEQUENCE_LENGTH * GLOBAL_BATCH_SIZE_SEQ // 1024 // 1024
 
+LR= 3e-4 # target lr for 64M tokens
+LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (64 * 1024 * 1024))
 NUM_LAYERS=32
 
 if PP_DIM > 1:
@@ -136,14 +140,14 @@ else:
 
 
 # SPLIT_POINTS = None
-USE_COMPILE=False
+USE_COMPILE=True
 USE_AC=False
 USE_TBO=False
 GRAD_ACC_IN_FP32=False
 UNIFORM_ASSIGN=False
 RANDOM_ASSIGN=False
 
-SEED = 1000
+SEED = 2026
 
 TAG=f'dev-S{SEED}'
 
@@ -224,8 +228,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                 uniform_expert_assignment=UNIFORM_ASSIGN,
                 random_expert_assignment=RANDOM_ASSIGN,
                 # lb_loss_weight=0.1,
-                # lb_loss_weight=0.005,
-                lb_loss_weight=0.001,
+                lb_loss_weight=0.005,
                 z_loss_weight=None,
                 lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
                 dtype=dtype,
@@ -357,7 +360,7 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
         #     decay=(int(50e9 / GLOBAL_BATCH_SIZE)),
         #     decay_fraction=None,
         # ),
-        scheduler=CosWithWarmup(warmup_steps=2000),
+        scheduler=CosWithWarmup(warmup_steps=2500),
     )
 
 # WORK_DIR = "/jfs/tianhua-tao/ws-olmoe"
@@ -382,7 +385,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         .with_callback(
             "checkpointer",
             CheckpointerCallback(
-                save_interval=50,
+                save_interval=SAVE_INTERVAL,
                 ephemeral_save_interval=None,
                 save_async=False,
                 pre_train_checkpoint=False,
@@ -423,7 +426,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         )
         .with_callback(
             "torch_mem_history",
-            TorchMemoryHistoryCallback(enabled=True, # NOTE: change this
+            TorchMemoryHistoryCallback(enabled=False, # NOTE: change this
                                    profile_ranks=list(range(0, 8*128, 8)),
                                    start=101,
                                    end=104,

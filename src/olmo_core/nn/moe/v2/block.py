@@ -67,6 +67,10 @@ class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
     
     routed_experts_router: Optional[MoERouterConfigV2] = None
 
+    checkpoint_attn: bool = False
+    checkpoint_permute_moe_unpermute: bool = False
+    checkpoint_combined_ep_tbo: bool = False
+    checkpoint_second_unpermute: bool = False
         
     def build(
         self,
@@ -192,6 +196,10 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         dropout: float = 0.0,
         attention_residual_alpha: Optional[float] = None,
         feed_forward_residual_alpha: Optional[float] = None,
+        checkpoint_attn = False,
+        checkpoint_permute_moe_unpermute = False,
+        checkpoint_combined_ep_tbo = False,
+        checkpoint_second_unpermute=False,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
     ):
@@ -285,9 +293,10 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         self.num_local_routed_experts: Optional[int] = self.routed_experts.num_experts if self.routed_experts else None
 
 
-        self.checkpoint_attn = False
-        self.checkpoint_permute_moe_unpermute = True
-        self.checkpoint_combined_ep_tbo = False
+        self.checkpoint_attn = checkpoint_attn
+        self.checkpoint_permute_moe_unpermute = checkpoint_permute_moe_unpermute
+        self.checkpoint_combined_ep_tbo = checkpoint_combined_ep_tbo
+        self.checkpoint_second_unpermute = checkpoint_second_unpermute
 
         # self.type_id = None
 
@@ -494,7 +503,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             local_x_global_routed_expert_weights, # (B, S, top_k)
             local_x_global_routed_expert_indices, # (B, S, top_k)
             local_batch_size_per_global_routed_expert, # (num_experts, )
-            routed_expert_router_aux_loss # scalar
+            routed_expert_router_aux_loss # scalar # TODO: update code
         ) = self.router_forward(
             router=self.routed_experts_router,
             local_x=attn_res_out, 
@@ -528,9 +537,9 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         # only when grad enabled
         if torch.is_grad_enabled():
             with nvtx.annotate("attach_auxiliary_loss", color="blue"):
-                if routed_expert_router_aux_loss is not None:
+                if routed_expert_router_aux_loss is not None: # TODO: update code
                     # TODO: should attach to router input or output?
-                    attn_res_out = attach_auxiliary_loss(attn_res_out, routed_expert_router_aux_loss)
+                    attn_res_out = attach_auxiliary_loss(attn_res_out, routed_expert_router_aux_loss) # TODO: update code
         
         moe_inp = attn_res_out
 
@@ -678,7 +687,9 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         # attention 
         # + attention norm
         # + residual connection
-        attn_res_out = block_inp + self.attention_norm(self.attention(block_inp, **kwargs))
+        # attn_res_out = block_inp + self.attention_norm(self.attention(block_inp, **kwargs))
+        attn_res_out = self._checkpointed_res_norm_attn(block_inp, **kwargs)
+
         # remove attention kwargs
         kwargs.pop("max_doc_len", None)
         kwargs.pop("cu_doc_lens", None)
@@ -689,7 +700,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             local_x_global_routed_expert_weights, # (B, S, top_k)
             local_x_global_routed_expert_indices, # (B, S, top_k)
             local_batch_size_per_global_routed_expert, # (num_experts, )
-            routed_expert_router_aux_loss # scalar
+            routed_expert_router_aux_loss_info # tuple
         ) = self.router_forward(
             router=self.routed_experts_router,
             local_x=attn_res_out, 
@@ -697,11 +708,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             loss_div_factor=loss_div_factor # scalar
         )
         
-        # attach aux loss
-        if torch.is_grad_enabled(): # only when grad enabled
-            with nvtx.annotate("attach_auxiliary_loss", color="blue"):
-                if routed_expert_router_aux_loss is not None:
-                    attn_res_out = attach_auxiliary_loss(attn_res_out, routed_expert_router_aux_loss)
+
 
         # the shared experts (executed on the dense stream) need to wait for `attn_res_out` and `local_x_global_shared_expert_weights` (on the main stream) to be complete
         wait_stream_no_compile(
@@ -784,6 +791,8 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 # send_counts = local_batch_size_per_global_routed_expert.sum(dim=-1).to(torch.device("cpu"), non_blocking=True) # WARNING: tensor to CPU
                 # recv_counts = global_batch_size_per_local_expert.sum(dim=-1).to(torch.device("cpu"), non_blocking=True) # WARNING: tensor to CPU
                 # parallel_batch_size_per_local_expert_cpu = parallel_batch_size_per_local_expert.to(torch.device("cpu"), non_blocking=True) # WARNING: tensor to CPU
+                # torch.save(local_batch_size_per_global_routed_expert, f"/workspace/tmp/local_bs_rank{get_rank(self.ep_pg)}_block{self.block_idx}.pt")
+                # torch.save(global_batch_size_per_local_expert, f"/workspace/tmp/global_bs_rank{get_rank(self.ep_pg)}_block{self.block_idx}.pt")
 
                 send_counts_gpu = local_batch_size_per_global_routed_expert.sum(dim=-1)
                 recv_counts_gpu = global_batch_size_per_local_expert.sum(dim=-1)
@@ -839,6 +848,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 # NOTE: the shared_experts forward is queued, but will not start to run until the DtoH is done
         else:
              shared_out_up, shared_out_gate = None, None
+
         with torch.no_grad():
             # torch.cuda.current_stream().synchronize() # wait for the copy to CPU to finish
             assert dtoh_event_send
@@ -849,20 +859,38 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             dtoh_event.synchronize()
             send_counts = send_counts_cpu.tolist() # tensor to list
             recv_counts = recv_counts_cpu.tolist() # tensor to list
+            # if 0 in send_counts:
+            #     print(f"[Warning] block {self.block_idx} EP rank {get_rank(self.ep_pg)} has 0 send counts: {send_counts}")
+            # if 0 in recv_counts:
+            #     print(f"[Warning] block {self.block_idx} EP rank {get_rank(self.ep_pg)} has 0 recv counts: {recv_counts}")
             tokens_received = sum(recv_counts)
+
+        if tokens_received == 0:
+            print(f"[Warning] (grad={torch.is_grad_enabled()}) block {self.block_idx} EP rank {get_rank(self.ep_pg)} has 0 tokens received in all2all: send_counts={send_counts} recv_counts={recv_counts}")
+
+            # if self.block_idx == 29:
+            #     print(f"[Debug] block {self.block_idx} EP rank {get_rank(self.ep_pg)} send_counts: {send_counts}, recv_counts: {recv_counts}, tokens_received: {tokens_received}")
 
         
         ###########  4. Start the all-to-all communication asynchronously ###########
 
         with nvtx.annotate("all2all", color='green'):
 
-            global_x, global_x_handle = ops.all_to_all(
+            # global_x, global_x_handle = ops.all_to_all(
+            #     permutated_local_x,
+            #     recv_counts,
+            #     send_counts,
+            #     group=self.ep_pg,
+            #     async_op=True,
+            # )
+
+            permutated_local_x, global_x, global_x_handle = ops.all_to_all_async(
                 permutated_local_x,
                 recv_counts,
                 send_counts,
                 group=self.ep_pg,
-                async_op=True,
             )
+            
 
         with torch.no_grad():
             # this specifiyes for the received global tokens, which local expert they belong to
@@ -872,9 +900,14 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 output_size=tokens_received,
             ) # e.g. [0, ...,  0, ... , 3, ..., 3, 0, ...] for 4 local experts
         
-        global_x_handle.wait()
+        # global_x_handle.wait()
+        global_x = ops.all_to_all_wait(permutated_local_x, global_x, global_x_handle)
+        # if dist.get_rank() == 0:
+        #     print(f"[Debug] block {self.block_idx} all2all done")
         # del permutated_local_x
         ############################################ end
+        # if tokens_received == 0:
+        #     print(f"[Warning] (grad={torch.is_grad_enabled()}) block {self.block_idx} EP rank {get_rank(self.ep_pg)} all2all done")
     
         global_x = self._checkpointed_permute_routed_experts_unpermute(
             global_x=global_x,
@@ -979,12 +1012,18 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         ) 
         with nvtx.annotate("reverse_all_to_all", color='green'):
             global_x = cast(torch.Tensor, global_x)
-            local_x, local_x_handle = ops.all_to_all(
+            # local_x, local_x_handle = ops.all_to_all(
+            #     global_x,
+            #     send_counts,
+            #     recv_counts,
+            #     group=self.ep_pg,
+            #     async_op=True,
+            # )
+            global_x, local_x, local_x_handle = ops.all_to_all_async(
                 global_x,
                 send_counts,
                 recv_counts,
                 group=self.ep_pg,
-                async_op=True,
             )
 
         if self.shared_experts is not None:
@@ -1014,21 +1053,34 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         else:
             mixed_shared_out = None
 
-        local_x_handle.wait()
-        
+        # local_x_handle.wait()
+        local_x = ops.all_to_all_wait(global_x, local_x, local_x_handle)
+        # if tokens_received == 0:
+        #     print(f"[Warning] (grad={torch.is_grad_enabled()}) block {self.block_idx} EP rank {get_rank(self.ep_pg)} reverse-all2all done")
         # del global_x # done with global tokens
         ############################################ end
         
         
         ############ 9. Unpermute the (local) tokens returned by all-to-all communication ##########
         with nvtx.annotate("Unpermute-Merge local tokens", color='green'):
-            local_x = moe_unpermute_no_compile(
-                inp=local_x,
-                row_id_map=reversed_local_x_permutation_mapping,
-                merging_probs=local_x_global_routed_expert_weights.view(-1, self.routed_experts_router.top_k),
-                restore_shape=hidden_shape_before_permute,
-                map_type='index',
-            )
+            if self.checkpoint_second_unpermute:
+                local_x = checkpoint(
+                    moe_unpermute_no_compile,
+                    inp=local_x,
+                    row_id_map=reversed_local_x_permutation_mapping,
+                    merging_probs=local_x_global_routed_expert_weights.view(-1, self.routed_experts_router.top_k),
+                    restore_shape=hidden_shape_before_permute,
+                    map_type='index',
+                    use_reentrant=False
+                )
+            else:
+                local_x = moe_unpermute_no_compile(
+                    inp=local_x,
+                    row_id_map=reversed_local_x_permutation_mapping,
+                    merging_probs=local_x_global_routed_expert_weights.view(-1, self.routed_experts_router.top_k),
+                    restore_shape=hidden_shape_before_permute,
+                    map_type='index',
+                )
         ############################################ end
     
         
@@ -1065,6 +1117,17 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
 
         #######################
 
+        # attach aux loss
+        # if torch.is_grad_enabled(): # only when grad enabled
+        # with nvtx.annotate("attach_auxiliary_loss", color="blue"):
+        if routed_expert_router_aux_loss_info is not None:
+            # NOTE: this part cpu runtime > gpu runtime, so it's moved from directly after router_forward to here
+            # because we need to avoid stalling the gpu stream
+            # gpu stream is generally more ahead of cpu thread at the end of the block, hence less harmful to put it here
+            routed_expert_router_aux_loss = self.routed_experts_router.compute_aux_loss(*routed_expert_router_aux_loss_info)
+
+            # NOTE: the attach only writes 1.0 to the aux loss grad slot, so it should not matter where to attach
+            final_out = attach_auxiliary_loss(final_out, routed_expert_router_aux_loss)
         
         return final_out
     
@@ -1074,57 +1137,49 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         self,
         global_x,
         global_x_local_expert_indices,
-        parallel_batch_size_per_local_expert_cpu
+        parallel_batch_size_per_local_expert_cpu,
+        hidden_shape_before_permute2,
+        reversed_global_x_permutation_mapping,
     ):
         assert self.routed_experts is not None
         
-        ##  5. Permute the global tokens to be ready for MLP computation ##
-        with nvtx.annotate("Permute global tokens for MLP", color='green'):
-            routing_map2 = global_x_local_expert_indices.view(-1, 1).int()
-            num_out_tokens2 = routing_map2.size(0) * 1 # dropless
-            hidden_shape_before_permute2 = global_x.shape
-            global_x, reversed_global_x_permutation_mapping = moe_permute_no_compile(
-                inp=global_x, 
-                routing_map=routing_map2, 
-                num_out_tokens=num_out_tokens2, 
-                map_type='index'
-            )
-                
-        
+
         ## 6. MLP forwrad ##
-        # global_x = self.routed_experts(global_x, parallel_batch_size_per_local_expert_cpu)
+        global_x = self.routed_experts(global_x, parallel_batch_size_per_local_expert_cpu)
 
         ###################################
-        # assert isinstance(batch_size_per_expert, List), "only accept List for batch_size_per_expert"
-        assert isinstance(parallel_batch_size_per_local_expert_cpu, torch.Tensor), "only accept Tensor for batch_size_per_expert"
+#         assert isinstance(parallel_batch_size_per_local_expert_cpu, torch.Tensor), "only accept Tensor for batch_size_per_expert"
 
-        assert parallel_batch_size_per_local_expert_cpu.device.type == 'cpu', "batch_size_per_expert must be on cpu"
-        batch_size_per_expert_tensor = parallel_batch_size_per_local_expert_cpu.to(dtype=torch.int64)  # NOTE: int64 required for grouped_gemm
+#         assert parallel_batch_size_per_local_expert_cpu.device.type == 'cpu', "batch_size_per_expert must be on cpu"
+#         batch_size_per_expert_tensor = parallel_batch_size_per_local_expert_cpu.to(dtype=torch.int64)  # NOTE: int64 required for grouped_gemm
 
-        if global_x.numel() == 0:
-            return global_x
+#         if global_x.numel() == 0:
+#             return global_x
         
-        w_up_gate = self.routed_experts.w_up_gate # (E, H, 2D)
-        w_down = self.routed_experts.w_down # (E, H, D)
-        up_gate = gmm_no_compile(global_x, w_up_gate, batch_size_per_expert_tensor, trans_b=True) # -> (BS, 2H)
-        up_gate = cast(torch.Tensor, up_gate)  # ensure type is Tensor
+#         w_up_gate = self.routed_experts.w_up_gate # (E, H, 2D)
+#         w_down = self.routed_experts.w_down # (E, H, D)
+#         up_gate = gmm_no_compile(global_x, w_up_gate, batch_size_per_expert_tensor, trans_b=True) # -> (BS, 2H)
+#         up_gate = cast(torch.Tensor, up_gate)  # ensure type is Tensor
 
-### START AC ###
-        h = self.routed_experts.chunk_and_activate(up_gate) # -> (BS, H)
+# ### START AC ###
+#         h = self.routed_experts.chunk_and_activate(up_gate) # -> (BS, H)
         
-        global_x = gmm_no_compile(h, w_down, batch_size_per_expert_tensor, trans_b=False) # -> (BS, H)
+#         global_x = gmm_no_compile(h, w_down, batch_size_per_expert_tensor, trans_b=False) # -> (BS, H)
         
         ###################################
         
         ## 7. Unpermute the output tokens to be ready for all-to-all communication ##
         with nvtx.annotate("Unpermute global tokens", color='green'):
-            global_x = moe_unpermute_no_compile(
-                inp=global_x,
-                row_id_map=reversed_global_x_permutation_mapping,
-                merging_probs=None,
-                restore_shape=hidden_shape_before_permute2,
-                map_type='index',
-            ) 
+            if self.routed_experts.num_local_experts == 1:
+                pass  # skip unpermute if only one local expert
+            else:
+                global_x = moe_unpermute_no_compile(
+                    inp=global_x,
+                    row_id_map=reversed_global_x_permutation_mapping,
+                    merging_probs=None,
+                    restore_shape=hidden_shape_before_permute2,
+                    map_type='index',
+                ) 
 ### END AC ###
         # global_x = checkpoint(
         #     self._act_down_unpermute,
@@ -1147,13 +1202,16 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         
         ## 7. Unpermute the output tokens to be ready for all-to-all communication ##
         with nvtx.annotate("Unpermute global tokens", color='green'):
-            global_x = moe_unpermute_no_compile(
-                inp=global_x,
-                row_id_map=reversed_global_x_permutation_mapping,
-                merging_probs=None,
-                restore_shape=hidden_shape_before_permute2,
-                map_type='index',
-            ) 
+            if self.routed_experts.num_local_experts == 1:
+                pass  # skip unpermute if only one local expert
+            else:
+                global_x = moe_unpermute_no_compile(
+                    inp=global_x,
+                    row_id_map=reversed_global_x_permutation_mapping,
+                    merging_probs=None,
+                    restore_shape=hidden_shape_before_permute2,
+                    map_type='index',
+                ) 
 
         return global_x
 
@@ -1163,12 +1221,31 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         global_x_local_expert_indices,
         parallel_batch_size_per_local_expert_cpu
     ) -> torch.Tensor:
+        # don't need to checkpoint the permute step because it does not save input for backward
+
+        ##  5. Permute the global tokens to be ready for MLP computation ##
+        with nvtx.annotate("Permute global tokens for MLP", color='green'):
+            routing_map2 = global_x_local_expert_indices.view(-1, 1).int()
+            num_out_tokens2 = routing_map2.size(0) * 1 # dropless
+            hidden_shape_before_permute2 = global_x.shape
+            if self.routed_experts.num_local_experts == 1:
+                reversed_global_x_permutation_mapping = None
+            else:
+                global_x, reversed_global_x_permutation_mapping = moe_permute_no_compile(
+                    inp=global_x, 
+                    routing_map=routing_map2, 
+                    num_out_tokens=num_out_tokens2, 
+                    map_type='index'
+                )
+
         if self.checkpoint_permute_moe_unpermute:
             out = checkpoint(
                 self._permute_routed_experts_unpermute, 
                 global_x,
                 global_x_local_expert_indices,
                 parallel_batch_size_per_local_expert_cpu, 
+                hidden_shape_before_permute2,
+                reversed_global_x_permutation_mapping,
                 use_reentrant=False, 
             )
             return cast(torch.Tensor, out)
@@ -1177,6 +1254,8 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 global_x,
                 global_x_local_expert_indices,
                 parallel_batch_size_per_local_expert_cpu, 
+                hidden_shape_before_permute2,
+                reversed_global_x_permutation_mapping
             )
 
     
@@ -1283,7 +1362,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 # finish reverse all2all and other ops for x1
                 with nvtx.annotate("reverse_all_to_all", color='green'):
                     global_x1 = cast(torch.Tensor, global_x1)
-                    local_x1, local_x_handle1 = ops.all_to_all_async(
+                    global_x1, local_x1, local_x_handle1 = ops.all_to_all_async(
                     # local_x1, local_x_handle1 = ops.all_to_all(
                         global_x1,
                         send_counts1,
@@ -1306,7 +1385,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 local_x_global_routed_expert_weights, # (B, S, top_k)
                 local_x_global_routed_expert_indices, # (B, S, top_k)
                 local_batch_size_per_global_routed_expert, # (num_experts, )
-                routed_expert_router_aux_loss # scalar
+                routed_expert_router_aux_loss # scalar # TODO: update code
             ) = self.router_forward(
                 router=self.routed_experts_router,
                 local_x=attn_res_out, 
@@ -1318,7 +1397,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             if torch.is_grad_enabled(): # only when grad enabled
                 with nvtx.annotate("attach_auxiliary_loss", color="blue"):
                     if routed_expert_router_aux_loss is not None:
-                        attn_res_out = attach_auxiliary_loss(attn_res_out, routed_expert_router_aux_loss)
+                        attn_res_out = attach_auxiliary_loss(attn_res_out, routed_expert_router_aux_loss) # TODO: update code
 
 
             ########### 1. Communicate the number of tokens that will be sent to each device ###########
@@ -1444,7 +1523,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 tokens_received = sum(recv_counts)
 
             with nvtx.annotate("all2all", color='green'):
-                global_x, global_x_handle = ops.all_to_all_async(
+                permutated_local_x, global_x, global_x_handle = ops.all_to_all_async(
                 # global_x, global_x_handle = ops.all_to_all(
                     permutated_local_x,
                     recv_counts,
@@ -1481,7 +1560,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 assert last_block.routed_experts_router is not None
                 
                 # local_x_handle1.wait()
-                local_x1 = ops.all_to_all_wait(local_x1, local_x_handle1)
+                local_x1 = ops.all_to_all_wait(global_x1, local_x1, local_x_handle1)
 
                 ## 9. Unpermute the (local) tokens returned by all-to-all communication ##
                 with nvtx.annotate("Unpermute-Merge local tokens", color='green'):
@@ -1535,7 +1614,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 local_x_global_routed_expert_weights1, # (B, S, top_k)
                 local_x_global_routed_expert_indices1, # (B, S, top_k)
                 local_batch_size_per_global_routed_expert1, # (num_experts, )
-                routed_expert_router_aux_loss1 # scalar
+                routed_expert_router_aux_loss1 # scalar # TODO: update code
             ) = self.router_forward(
                 router=self.routed_experts_router,
                 local_x=attn_res_out1, 
@@ -1546,7 +1625,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             # attach aux loss
             if torch.is_grad_enabled(): # only when grad enabled
                 with nvtx.annotate("attach_auxiliary_loss", color="blue"):
-                    if routed_expert_router_aux_loss1 is not None:
+                    if routed_expert_router_aux_loss1 is not None: # TODO: update code
                         attn_res_out1 = attach_auxiliary_loss(attn_res_out1, routed_expert_router_aux_loss1)
             
 
@@ -1674,14 +1753,14 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
 
         with nvtx.annotate("TBO-0", color='purple'):
             # global_x_handle.wait()
-            global_x = ops.all_to_all_wait(global_x, global_x_handle)
+            global_x = ops.all_to_all_wait(permutated_local_x, global_x, global_x_handle)
 
 
         ############################ TBO 1 ############################
         with nvtx.annotate("TBO-1", color='orange'):
             with nvtx.annotate("all2all", color='green'):
                 # global_x1, global_x_handle1 = ops.all_to_all(
-                global_x1, global_x_handle1 = ops.all_to_all_async(
+                permutated_local_x1, global_x1, global_x_handle1 = ops.all_to_all_async(
                     permutated_local_x1,
                     recv_counts1,
                     send_counts1,
@@ -1712,7 +1791,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         ############################ TBO 1 ############################
         with nvtx.annotate("TBO-1", color='orange'):
             # global_x_handle1.wait()
-            global_x1 = ops.all_to_all_wait(global_x1, global_x_handle1)
+            global_x1 = ops.all_to_all_wait(permutated_local_x1, global_x1, global_x_handle1)
 
         ############################ END: TBO 1 ########################
     
@@ -1722,7 +1801,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
 
             with nvtx.annotate("reverse_all_to_all", color='green'):
                 global_x = cast(torch.Tensor, global_x)
-                local_x, local_x_handle = ops.all_to_all_async(
+                global_x, local_x, local_x_handle = ops.all_to_all_async(
                 # local_x, local_x_handle = ops.all_to_all(
                     global_x,
                     send_counts,
@@ -1744,7 +1823,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
 
         with nvtx.annotate("TBO-0", color='purple'):
             # local_x_handle.wait()
-            local_x = ops.all_to_all_wait(local_x, local_x_handle)
+            local_x = ops.all_to_all_wait(global_x, local_x, local_x_handle)
 
             # del global_x # done with global tokens
             ############################################ end

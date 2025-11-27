@@ -53,8 +53,7 @@ from olmo_core.train.callbacks import (
     CheckpointerCallback,
     CometCallback,
     WandBCallback,
-    NvidiaProfilerCallback,
-    TorchMemoryHistoryCallback
+    NvidiaProfilerCallback
 )
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
@@ -87,47 +86,46 @@ def _get_split_points(original_num_layers: int, num_stages: int, minus_last_stag
 
 SEQUENCE_LENGTH = 8192
 
-# GLOBAL_BATCH_SIZE_SEQ=1024 + 512
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (1)
+GLOBAL_BATCH_SIZE_SEQ=1024 + 512
 GLOBAL_BATCH_SIZE = (
     (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
 )  
 
 GLOBAL_BATCH_TOKENS_IN_M = SEQUENCE_LENGTH * GLOBAL_BATCH_SIZE_SEQ // 1024 // 1024
 
-MAX_DURATION = int(7000e9)  # int(6e12), don't forget to adjust the LR when you increase this
-EVAL_INTERVAL = 2000
-LR= 3e-4 * math.sqrt(2)
+MAX_DURATION = int(1000e9)  # int(6e12), don't forget to adjust the LR when you increase this
+EVAL_INTERVAL = 50
+LR= 3e-4
 
-NUM_EXPERTS = 32
-TOP_K = 2
+NUM_EXPERTS = 64
+TOP_K = 4
 # D_MODEL=3072
 # D_ATTN=3072
-D_MODEL=1024
-D_ATTN=D_MODEL
+D_MODEL=2560
+D_ATTN=2560
 HEAD_DIM=128
 NUM_HEAD = D_ATTN // HEAD_DIM
 NUM_KV_HEAD=4
-MOE_HIDDEN_SIZE = 512
+MOE_HIDDEN_SIZE = 2560
 NUM_SHARED_EXPERTS = 1  # Number of shared experts in the shared MLP
-SHARED_MLP_HIDDEN_SIZE = 512  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
+SHARED_MLP_HIDDEN_SIZE = 2560  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
 EFFECTIVE_MLP = (MOE_HIDDEN_SIZE * TOP_K + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS)
 MLP_RATIO = EFFECTIVE_MLP / D_MODEL
 
 # the first dense layer MLP
-DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS) * 3 // 2
+DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS) * 1
 
-MICRO_BSZ = 2
+MICRO_BSZ = 1
 # DP_DIM=2
-EP_DIM=4
+EP_DIM=8
 PP_DIM=1
 
 
-NUM_LAYERS=32
+NUM_LAYERS= 32
 
 if PP_DIM > 1:
-    MINUS_LAST_STAGE=1
+    MINUS_LAST_STAGE=0
     NUM_LAYERS, SPLIT_POINTS = _get_split_points(NUM_LAYERS, PP_DIM * 2, minus_last_stage=MINUS_LAST_STAGE)
 else:
     SPLIT_POINTS = None
@@ -136,25 +134,21 @@ else:
 
 
 # SPLIT_POINTS = None
-USE_COMPILE=False
+USE_COMPILE=True
 USE_AC=False
 USE_TBO=False
 GRAD_ACC_IN_FP32=False
 UNIFORM_ASSIGN=False
-RANDOM_ASSIGN=False
-
-SEED = 1000
+SEED = 2026
 
 TAG=f'dev-S{SEED}'
 
-# if UNIFORM_ASSIGN:
-#     TAG = 'U-' + TAG
-# elif RANDOM_ASSIGN:
-#     TAG = 'RA-' + TAG
-# else:
-#     TAG = 'R-' + TAG
-# if GRAD_ACC_IN_FP32:
-#     TAG += '-fp32acc'
+if UNIFORM_ASSIGN:
+    TAG = 'U-' + TAG
+else:
+    TAG = 'R-' + TAG
+if GRAD_ACC_IN_FP32:
+    TAG += '-fp32acc'
 
 
 
@@ -171,7 +165,6 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     )
     from olmo_core.nn.moe.v2.shared_experts import SharedExpertsConfig
     from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
-    from olmo_core.nn.attention.backend import AttentionBackendName
     
     d_model = D_MODEL
     dtype = DType.float32
@@ -186,15 +179,10 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         init_seed=SEED,
         d_model=d_model,
         two_batch_overlap=USE_TBO,
-        recompute_each_block=True,
-        recompute_all_blocks_by_chunk=False,
         vocab_size=common.tokenizer.padded_vocab_size(),
         n_layers=NUM_LAYERS,
         block=MoEFusedV2TransformerBlockConfig(
             name=TransformerBlockType.moe_fused_v2,
-            checkpoint_permute_moe_unpermute=False,
-            checkpoint_attn=False,
-            checkpoint_second_unpermute=False,
             attention=AttentionConfig(
                 name=AttentionType.default,
                 n_heads=NUM_HEAD,
@@ -202,8 +190,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                 bias=False,
                 rope=RoPEConfig(name=RoPEType.default, theta=500_000, scaling=None, full_precision=True),
                 qk_norm=layer_norm ,
-                # use_flash=True,
-                backend=AttentionBackendName.flash_3,
+                use_flash=True,
                 use_head_qk_norm=True,
                 dtype=dtype,
                 d_attn=D_ATTN,
@@ -222,10 +209,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                 top_k=TOP_K,
                 gating_function=MoERouterGatingFunction.sigmoid,
                 uniform_expert_assignment=UNIFORM_ASSIGN,
-                random_expert_assignment=RANDOM_ASSIGN,
-                # lb_loss_weight=0.1,
-                # lb_loss_weight=0.005,
-                lb_loss_weight=0.001,
+                lb_loss_weight=0.005,
                 z_loss_weight=None,
                 lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
                 dtype=dtype,
@@ -262,7 +246,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     )
     
     # config.lm_head.loss_implementation = LMLossImplementation.fused_linear
-    config.lm_head.loss_implementation = LMLossImplementation.default
+    config.lm_head.loss_implementation = LMLossImplementation.cut_cross_entropy
     WINDOW_SIZE=4096
     config.block.attention.sliding_window = SlidingWindowAttentionConfig(
         force_full_attention_on_first_layer=False,
@@ -271,6 +255,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     )
     # config.block.attention.use_flash = True
     # config.block.attention.use_head_qk_norm = True
+    from olmo_core.nn.attention.backend import AttentionBackendName
     # First block will be a regular transformer block (no MoE component).
     config.block_overrides = {
         0: TransformerBlockConfig(
@@ -361,7 +346,7 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
     )
 
 # WORK_DIR = "/jfs/tianhua-tao/ws-olmoe"
-# WORK_DIR = "/weka/oe-training-default/tianhua/ws-megatron"
+WORK_DIR = "/weka/oe-training-default/tianhua/ws-megatron"
 
 def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     cancel_check_interval = 10
@@ -382,8 +367,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         .with_callback(
             "checkpointer",
             CheckpointerCallback(
-                save_interval=50,
-                ephemeral_save_interval=None,
+                save_interval=1000,
+                ephemeral_save_interval=200,
                 save_async=False,
                 pre_train_checkpoint=False,
             ),
@@ -415,25 +400,17 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         # )
         .with_callback(
             "profiler", 
-            NvidiaProfilerCallback(enabled=False, # NOTE: change this
-                                   profile_ranks=list(range(0, 8*128, 8)),
-                                   start=1561,
-                                   end=1564
-            )
-        )
-        .with_callback(
-            "torch_mem_history",
-            TorchMemoryHistoryCallback(enabled=True, # NOTE: change this
-                                   profile_ranks=list(range(0, 8*128, 8)),
-                                   start=101,
-                                   end=104,
-                                   output_dir='/workspace/tmp'
+            NvidiaProfilerCallback(enabled=True, # NOTE: change this
+                                   profile_ranks=[0, 8, 16, 24],
+                                   start=10,
+                                   end=13
             )
         )
         # TODO: might not be able to run in-loop evals depending on parallel strategies
-        # .with_recommended_evals(
-        #     common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
-        # )
+        .with_recommended_evals(
+            # common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
+            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
+        )
     )
 
 
@@ -460,8 +437,7 @@ def build_data_components(
     # DATA_WORK_DIR = "/tmp/dataset-cache"
 
     dataset_config = NumpyFSLDatasetConfig.from_data_mix(
-        # DataMix.OLMo_mix_0925,
-        DataMix.OLMo_mix_0625,
+        DataMix.OLMo_mix_0925,
         # DataMix.OLMoE_mix_0824_dev,
         tokenizer=common.tokenizer,
         mix_base_dir=common.root_dir,
@@ -477,7 +453,7 @@ def build_data_components(
     )
 
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=common.global_batch_size, seed=34521, num_workers=2
+        global_batch_size=common.global_batch_size, seed=34521, num_workers=8
     )
 
     return DataComponents(dataset=dataset_config, data_loader=data_loader_config)

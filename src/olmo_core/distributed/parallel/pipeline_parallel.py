@@ -384,7 +384,7 @@ class PipelineSchedule:
         
 
         # torch.save(schedule.pipeline_order, 'tmp.pt')
-        if torch.distributed.get_rank() == 0:
+        if torch.distributed.get_rank() % 8 == 0:
             debug_save_pp_schedule(schedule=schedule_impl)
         
         print(f'[PipelineSchedule] Using {schedule_name} with {num_microbatches} microbatches')
