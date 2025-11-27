@@ -36,7 +36,7 @@ GLOBAL_BATCH_SIZE = 4 * 1024 * 1024  # ~4M tokens
 
 # Reduce per-device batch size to save on memory.
 MICROBATCH_DISCOUNT = 1
-D_MODEL_DISCOUNT = sqrt(2 / 3)  # 6d_model^2 vs. 4d_model^2
+MIXER_SIZE_DISCOUNT = sqrt(2 / 3) * .75 + 1 * .25  # 6d_model^2 vs. 4d_model^2 in 75% of layers
 
 ### OLMo 3 7B Settings
 DATA_MIX = DataMix.OLMo_mix_0625
@@ -62,8 +62,10 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     assert config.n_layers % 4 == 0, "Current logic assumes n_layers is multiple of 4"
     config.block.fla_hybrid_attention_indices = [i for i in range(config.n_layers) if i % 4 == 3]
 
-    # Pick d_model to roughly match on params and be divisable by 4 * n_heads.
-    config.d_model = int(config.d_model * D_MODEL_DISCOUNT)
+    # Reduce the size of the 
+    config.block.attention.n_heads = int(config.block.attention.n_heads * MIXER_SIZE_DISCOUNT)
+
+    # Adjust d_model slightly to match the new number of heads.
     divisible_by = 4 * config.block.attention.n_heads
     config.d_model = (config.d_model // divisible_by) * divisible_by
 
