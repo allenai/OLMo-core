@@ -86,8 +86,7 @@ def _get_split_points(original_num_layers: int, num_stages: int, minus_last_stag
 
 SEQUENCE_LENGTH = 8192
 
-# GLOBAL_BATCH_SIZE_SEQ=1024 + 512
-GLOBAL_BATCH_SIZE_SEQ=512
+GLOBAL_BATCH_SIZE_SEQ=1024 + 512
 GLOBAL_BATCH_SIZE = (
     (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
 )  
@@ -117,10 +116,10 @@ MLP_RATIO = EFFECTIVE_MLP / D_MODEL
 # the first dense layer MLP
 DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS) * 1
 
-MICRO_BSZ = 2
+MICRO_BSZ = 1
 # DP_DIM=2
-EP_DIM=64
-PP_DIM=2
+EP_DIM=8
+PP_DIM=1
 
 
 NUM_LAYERS= 32
@@ -137,9 +136,9 @@ else:
 # SPLIT_POINTS = None
 USE_COMPILE=True
 USE_AC=False
-USE_TBO=True
+USE_TBO=False
 GRAD_ACC_IN_FP32=False
-UNIFORM_ASSIGN=True
+UNIFORM_ASSIGN=False
 SEED = 2026
 
 TAG=f'dev-S{SEED}'
@@ -408,10 +407,10 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             )
         )
         # TODO: might not be able to run in-loop evals depending on parallel strategies
-        # .with_recommended_evals(
-        #     # common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
-        #     common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
-        # )
+        .with_recommended_evals(
+            # common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
+            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
+        )
     )
 
 
@@ -454,7 +453,7 @@ def build_data_components(
     )
 
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=common.global_batch_size, seed=34521, num_workers=2
+        global_batch_size=common.global_batch_size, seed=34521, num_workers=8
     )
 
     return DataComponents(dataset=dataset_config, data_loader=data_loader_config)

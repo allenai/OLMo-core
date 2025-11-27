@@ -156,7 +156,7 @@ class MoEV2TransformerTrainModule(TrainModule):
         state_dict_load_opts: Optional[dist_cp_sd.StateDictOptions] = None,
         load_key_mapping: Optional[Dict[str, str]] = None,
         label_ignore_index: int = -100,
-        reduce_scatter_grads: bool = True,
+        reduce_scatter_grads: bool = False,
         grad_accum_in_fp32: bool = True,
     ):
         super().__init__()
@@ -1140,14 +1140,12 @@ class MoEV2TransformerTrainModule(TrainModule):
         # Step optimizer.
         self.optim.step()
         total_grad_norm = self.optim.latest_grad_norm
-        if self.reduce_scatter_grads:
-             if total_grad_norm is not None:
-                self.trainer.record_metric(
-                        "total grad norm", total_grad_norm, reduce_type=None, namespace="optim"
-                    )
-        else:
-            pass
-            #   TODO
+
+        if total_grad_norm is not None:
+            self.trainer.record_metric(
+                "total grad norm", total_grad_norm, reduce_type=None, namespace="optim"
+            )
+
         if isinstance(self.optim, MoEFusedV2Optimizer):
             self.record_metric("step skipped", self.optim.step_skipped, namespace="optim")
 

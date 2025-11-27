@@ -347,13 +347,14 @@ class MoEFusedV2Optimizer:
         ep_dp_group: Optional[ProcessGroup] = None,
         broadcast_bucket_mb: int = 32,
         do_not_shard_tensor_smaller_than: int = 1024,
+        use_distributed: bool = False,
     ) -> None:
         assert lr > 0.0
         assert all([0.0 <= beta <= 1.0 for beta in betas])
         defaults = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
 
         self.model_has_grad_accum_fp32_buffer = model_has_grad_accum_fp32_buffer
-
+        self.use_distributed = use_distributed
 
         def _add_defaults_to_param_group(pg: Dict[str, Any]) -> Dict[str, Any]:
             for k, v in defaults.items():
@@ -542,20 +543,23 @@ class MoEFusedV2Optimizer:
 
     def _distribute_tensor(self, tensor, device_mesh):
         num_elements = tensor.numel()
-        if num_elements >= self.do_not_shard_tensor_smaller_than and num_elements % device_mesh.size(0) == 0:
-            # this is distributed optimizer, so each rank holds one shard of the data
-            tensor_dt = distribute_tensor(
-                tensor,
-                device_mesh=device_mesh,
-                placements=[Shard(0)],
-            )
+        if self.use_distributed:
+            if num_elements >= self.do_not_shard_tensor_smaller_than and num_elements % device_mesh.size(0) == 0:
+                # this is distributed optimizer, so each rank holds one shard of the data
+                placements=[Shard(0)]
+            else:
+                # small tensor, do not shard
+                placements=[Replicate()]
         else:
-            # small tensor, do not shard
-            tensor_dt = distribute_tensor(
-                tensor,
-                device_mesh=device_mesh,
-                placements=[Replicate()],
-            )
+            # always no shard
+            placements=[Replicate()]
+
+        tensor_dt = distribute_tensor(
+            tensor,
+            device_mesh=device_mesh,
+            placements=placements,
+        )
+
         return tensor_dt
 
     def offload_optimizer_states(self):
@@ -712,12 +716,7 @@ class MoEFusedV2Optimizer:
             # the optimizer has sharded main param + states in fp32
             # now call reduce scatter to collect averaged grads from dp ranks
             # directly into the owned main param views
-            dbg_mem_before_rs = torch.cuda.memory_allocated()/1024**3
-            dbg_mem_peak_before_rs = torch.cuda.max_memory_allocated()/1024**3
             self._reduce_scatter_model_grads()
-            dbg_mem_after_rs = torch.cuda.memory_allocated()/1024**3
-            dbg_mem_peak_after_rs = torch.cuda.max_memory_allocated()/1024**3
-
         else:
             # Precondition: DDP model called all-reduce grads, bf16 model grads on dp ranks are the same
             self._copy_model_grads_to_main_grads()
@@ -768,12 +767,16 @@ class MoEFusedV2Optimizer:
                         raise RuntimeError("Expected model param grad to be None. Use _main_grad_fp32 to store the grad.")
 
                     if param._main_grad_fp32 is None:
-                        continue
+                        print(f"Warning: model param {name} has None for _main_grad_fp32")
+                        param._main_grad_fp32 = torch.zeros_like(param.data, dtype=torch.float32)
+                        # continue
 
                     model_grad_fp32 = param._main_grad_fp32.detach().view(-1) # unsharded local shape, FP32
                 else:
                     if param.grad is None:
-                        continue
+                        print(f"Warning: model param {name} has None for grad")
+                        param.grad = torch.zeros_like(param.data)
+                        # continue
 
                     # model's grad is in bf16, need to convert to fp32 for reduce-scatter
                     model_grad_fp32 = param.grad.detach().view(-1).float() # unsharded local shape, FP32
@@ -821,11 +824,53 @@ class MoEFusedV2Optimizer:
 
         return
 
+    @nvtx.annotate("MoEFusedV2Optimizer._copy_model_grads_to_main_grads")
     def _copy_model_grads_to_main_grads(self):
-        raise NotImplementedError()
+        for param_group in self.param_groups:
+            for name, param in param_group['named_params'].items():
+                if self.model_has_grad_accum_fp32_buffer:
+                    # the model already has a fp32 grad buffer, so the grad is already in fp32
+                    # and model's bf16 grad should be None
+                    if param.grad is not None:
+                        raise RuntimeError("Expected model param grad to be None. Use _main_grad_fp32 to store the grad.")
+
+                    if param._main_grad_fp32 is None:
+                        print(f"Warning: model param {name} has None for _main_grad_fp32")
+                        param._main_grad_fp32 = torch.zeros_like(param.data, dtype=torch.float32)
+                        # continue
+
+                    model_grad_fp32 = param._main_grad_fp32.detach().view(-1) # unsharded local shape, FP32
+                else:
+                    if param.grad is None:
+                        print(f"Warning: model param {name} has None for grad")
+                        param.grad = torch.zeros_like(param.data)
+                        # continue
+
+                    # model's grad is in bf16, need to convert to fp32 for reduce-scatter
+                    model_grad_fp32 = param.grad.detach().view(-1).float() # unsharded local shape, FP32
+
+                # release model grad to save memory
+                if self.model_has_grad_accum_fp32_buffer:
+                    param._main_grad_fp32 = None
+                    param.grad = None
+                else:
+                    param.grad = None
+
+                # prepare main param grad view
+                main_param = self.states[f'{name}.main'] # DTensor, full shape unsharded
+
+                self.main_grad[name] = distribute_tensor(model_grad_fp32, device_mesh=main_param.device_mesh, placements=main_param.placements, src_data_rank=None)
+                del model_grad_fp32
+                
+                # further divide by ep_mp world size if it's ep_mp sharded
+                if self.moe_mesh is not None and param_group['pg'] == 'ep_dp':
+                    ep_mp_world_process_group = self.ep_mp_mesh.get_group()
+                    ep_mp_world_size = dist.get_world_size(ep_mp_world_process_group)
+                    self.main_grad[name].div_(ep_mp_world_size)
 
 
-    @nvtx.annotate("MoEFusedV2Optimizer._copy_main_params_to_model_params")
+
+    @nvtx.annotate("MoEFusedV2Optimizer._copy_main_params_to_model_param`s")
     def _copy_main_params_to_model_params(self):
         for param_group in self.param_groups:
             for name, param in param_group['named_params'].items():

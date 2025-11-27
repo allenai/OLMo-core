@@ -490,7 +490,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
     ) -> Union[torch.Tensor, LMOutputWithLoss]:
         assert self.ep_enabled, "TBO requires EP to be enabled."
             
-        input_ids, labels, block_kwargs, lm_head_kwargs = self._prepare_inputs(
+        input_ids, labels, all_block_kwargs, per_block_kwargs, lm_head_kwargs = self._prepare_inputs(
             input_ids,
             labels,
             ignore_index=ignore_index,
@@ -512,7 +512,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         first_moe_idx = self._check_tbo_requirements() 
 
         # forward dense blocks
-        for block_idx, block in enumerate(self.blocks.values()):
+        for block_idx, (block_key, block) in enumerate(self.blocks.items()):
             if block.is_moe: 
                 assert first_moe_idx == block_idx, f"first_moe_idx {first_moe_idx}, block_idx {block_idx}, block.block_idx {block.block_idx}"
                 break
@@ -521,14 +521,15 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
                 mark_dynamic(h, (0, 1), strict=False)
             with nvtx.annotate(f"fwd_block_{block_idx}", color="blue"):
                 # with self.offload_context:
-                h = block(h, **block_kwargs)
-                # h = checkpoint(
-                #     block,
-                #     h,
-                #     use_reentrant=False,
-                #     **block_kwargs,
-                # )
-                # h = cast(torch.Tensor, h)
+                one_block_kwargs = per_block_kwargs.get(block_key, {})
+                # h = block(h, **all_block_kwargs, **one_block_kwargs)
+                h = checkpoint(
+                    block,
+                    h,
+                    use_reentrant=False,
+                    **one_block_kwargs,
+                )
+                h = cast(torch.Tensor, h)
                 self._log_debug_mem(f'{block_idx}')
 
 
@@ -561,7 +562,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
                 block = cast(MoEFusedV2TransformerBlock, block)
                 # with self.offload_context:
                 # x0, x1_ctx = block.checkpointed_combined_forward_ep_tbo(x0, x1_ctx, x1_is_fresh, **block_kwargs)
-                x0, x1_ctx = block.combined_forward_ep_tbo(x0, x1_ctx, x1_is_fresh, **block_kwargs)
+                x0, x1_ctx = block.combined_forward_ep_tbo(x0, x1_ctx, x1_is_fresh, **all_block_kwargs)
                 x1_is_fresh = False # after the first TBO block, x1 is no longer fresh
                 self._log_debug_mem(f'{block_idx}')
 
@@ -604,7 +605,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             # finish reverse all2all and other ops for x1
             with nvtx.annotate("reverse_all_to_all", color='green'):
                 global_x1 = cast(torch.Tensor, global_x1)
-                local_x1, local_x_handle1 = ops.all_to_all_async(
+                global_x1, local_x1, local_x_handle1 = ops.all_to_all_async(
                 # local_x1, local_x_handle1 = ops.all_to_all(
                     global_x1,
                     send_counts1,
@@ -630,7 +631,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
 
         with nvtx.annotate("TBO-1", color='orange'):
             # local_x_handle1.wait()
-            local_x1 = ops.all_to_all_wait(local_x1, local_x_handle1)
+            local_x1 = ops.all_to_all_wait(global_x1, local_x1, local_x_handle1)
 
 
             ## 9. Unpermute the (local) tokens returned by all-to-all communication ##
@@ -650,14 +651,15 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             # weighted sum of the shared experts and routed experts
             if last_block.shared_experts is not None:
                 assert mixed_shared_out1 is not None
-                shared_out_factor1 = last_block.shared_experts.num_experts / (last_block.routed_experts_router.top_k + last_block.shared_experts.num_experts)
-                routed_out_factor1 = last_block.routed_experts_router.top_k / (last_block.routed_experts_router.top_k + last_block.shared_experts.num_experts)
-                mlp_out1 = last_block.merge_shared_and_routed_out(
-                    shared_out= mixed_shared_out1,
-                    shared_factor=shared_out_factor1,
-                    routed_out=local_x1,
-                    routed_factor=routed_out_factor1
-                )
+                # shared_out_factor1 = last_block.shared_experts.num_experts / (last_block.routed_experts_router.top_k + last_block.shared_experts.num_experts)
+                # routed_out_factor1 = last_block.routed_experts_router.top_k / (last_block.routed_experts_router.top_k + last_block.shared_experts.num_experts)
+                # mlp_out1 = last_block.merge_shared_and_routed_out(
+                #     shared_out= mixed_shared_out1,
+                #     shared_factor=shared_out_factor1,
+                #     routed_out=local_x1,
+                #     routed_factor=routed_out_factor1
+                # )
+                mlp_out1 = mixed_shared_out1 + local_x1
             else:
                 mlp_out1 = local_x1
 
