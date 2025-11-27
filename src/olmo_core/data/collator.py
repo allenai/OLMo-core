@@ -215,7 +215,7 @@ class DataCollator:
             expert_labels = x.get("expert_labels") if isinstance(x, dict) else None
             if expert_labels is None and metadata is not None:
                 source_name = metadata.get("source_name") if isinstance(metadata, dict) else None
-                sequence_index = index.item() if index is not None else -1
+                sequence_index = int(index) if index is not None else -1
                 if source_name:
                     expert_labels = self._get_expert_label(source_name, sequence_index)
             
