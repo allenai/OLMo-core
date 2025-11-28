@@ -478,12 +478,13 @@ class MoERouterV2(nn.Module):
             batch_size_per_expert = batched_batch_size_per_expert.sum(dim=0)
 
         
-        aux_loss_info = (logits, batch_size_per_expert, batched_batch_size_per_expert, loss_div_factor)
+        aux_loss_info = (scores, logits, batch_size_per_expert, batched_batch_size_per_expert, loss_div_factor)
         return expert_weights, expert_indices, batch_size_per_expert, aux_loss_info
 
     @nvtx.annotate("MoERouter.compute_aux_loss")
     def compute_aux_loss(
         self,
+        scores,
         logits,
         batch_size_per_expert,
         batched_batch_size_per_expert,
