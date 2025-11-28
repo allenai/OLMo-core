@@ -477,76 +477,88 @@ class MoERouterV2(nn.Module):
             # shape: (num_experts,)
             batch_size_per_expert = batched_batch_size_per_expert.sum(dim=0)
 
+        
+        aux_loss_info = (logits, batch_size_per_expert, batched_batch_size_per_expert, loss_div_factor)
+        return expert_weights, expert_indices, batch_size_per_expert, aux_loss_info
+
+    @nvtx.annotate("MoERouter.compute_aux_loss")
+    def compute_aux_loss(
+        self,
+        logits,
+        batch_size_per_expert,
+        batched_batch_size_per_expert,
+        loss_div_factor
+    ) -> torch.Tensor:
         # Maybe compute auxiliary losses and accumulate metrics.
         aux_loss: Optional[torch.Tensor] = None
         if self.training and torch.is_grad_enabled():
-            with torch.autocast(enabled=False, device_type=x.device.type):
-                if self.lb_loss_weight is not None:
-                    assert self.load_balancing_loss is not None
 
-                    # Make sure scores are normalized, otherwise load balancing loss doesn't work well.
-                    if self.gating_function == MoERouterGatingFunction.sigmoid:
-                        scores = scores / scores.sum(dim=-1, keepdim=True)
+            if self.lb_loss_weight is not None:
+                assert self.load_balancing_loss is not None
 
-                    lb_loss = load_balancing_loss(
-                        num_experts=self.num_experts,
-                        top_k=self.top_k,
-                        expert_scores=scores,
-                        batch_size_per_expert=batch_size_per_expert,
-                        batched_batch_size_per_expert=batched_batch_size_per_expert,
-                        granularity=self.lb_loss_granularity,
-                        loss_div_factor=loss_div_factor,
-                        tp_mesh=self.tp_mesh,
-                        cp_mesh=self.cp_mesh,
+                # Make sure scores are normalized, otherwise load balancing loss doesn't work well.
+                if self.gating_function == MoERouterGatingFunction.sigmoid:
+                    scores = scores / scores.sum(dim=-1, keepdim=True)
+
+                lb_loss = load_balancing_loss(
+                    num_experts=self.num_experts,
+                    top_k=self.top_k,
+                    expert_scores=scores,
+                    batch_size_per_expert=batch_size_per_expert,
+                    batched_batch_size_per_expert=batched_batch_size_per_expert,
+                    granularity=self.lb_loss_granularity,
+                    loss_div_factor=loss_div_factor,
+                    tp_mesh=self.tp_mesh,
+                    cp_mesh=self.cp_mesh,
+                )
+                self.load_balancing_loss += lb_loss.detach()
+
+                scaled_lb_loss = self.lb_loss_weight * lb_loss
+                aux_loss = scaled_lb_loss
+
+            if self.z_loss_weight is not None:
+                assert self.z_loss is not None
+
+                z_loss = router_z_loss(
+                    expert_logits=logits,
+                    loss_div_factor=loss_div_factor,
+                    tp_mesh=self.tp_mesh,
+                    cp_mesh=self.cp_mesh,
+                )
+                self.z_loss += z_loss.detach()
+
+                scaled_z_loss = self.z_loss_weight * z_loss
+                aux_loss = scaled_z_loss if aux_loss is None else aux_loss + scaled_z_loss
+
+            if self.orth_loss_weight is not None:
+                # TODO: should only compute orthogonal loss on the last micro batch because the loss is only computed on the router weights.
+                assert self.orth_loss is not None
+                
+                # NOTE: loss_div_factor is the total number of tokens in the global batch.
+                # orth_loss_div_factor  is approximately the number of micro batches in the global batch.
+                # since the orthogonal loss is computed `num_micro_batches` times (should have the same loss each time since it does not chagne wrt data), we need to scale it down.
+                if loss_div_factor is None: 
+                    raise NotImplementedError(
+                        "Orthogonal loss requires a loss_div_factor to be set."
                     )
-                    self.load_balancing_loss += lb_loss.detach()
+                # orth_loss_factor = (logits.size(0) * logits.size(1)) / loss_div_factor  # --> divide by num_micro_batches
+                # or 
+                orth_loss_factor = 1 / loss_div_factor  # --> divide by num_tokens in micro batch
+                
+                orth_loss = self.compute_orthogonal_loss() * orth_loss_factor
+                
+                self.orth_loss += orth_loss.detach()
 
-                    scaled_lb_loss = self.lb_loss_weight * lb_loss
-                    aux_loss = scaled_lb_loss
-
-                if self.z_loss_weight is not None:
-                    assert self.z_loss is not None
-
-                    z_loss = router_z_loss(
-                        expert_logits=logits,
-                        loss_div_factor=loss_div_factor,
-                        tp_mesh=self.tp_mesh,
-                        cp_mesh=self.cp_mesh,
-                    )
-                    self.z_loss += z_loss.detach()
-
-                    scaled_z_loss = self.z_loss_weight * z_loss
-                    aux_loss = scaled_z_loss if aux_loss is None else aux_loss + scaled_z_loss
-
-                if self.orth_loss_weight is not None:
-                    # TODO: should only compute orthogonal loss on the last micro batch because the loss is only computed on the router weights.
-                    assert self.orth_loss is not None
-                    
-                    # NOTE: loss_div_factor is the total number of tokens in the global batch.
-                    # orth_loss_div_factor  is approximately the number of micro batches in the global batch.
-                    # since the orthogonal loss is computed `num_micro_batches` times (should have the same loss each time since it does not chagne wrt data), we need to scale it down.
-                    if loss_div_factor is None: 
-                        raise NotImplementedError(
-                            "Orthogonal loss requires a loss_div_factor to be set."
-                        )
-                    # orth_loss_factor = (logits.size(0) * logits.size(1)) / loss_div_factor  # --> divide by num_micro_batches
-                    # or 
-                    orth_loss_factor = 1 / loss_div_factor  # --> divide by num_tokens in micro batch
-                    
-                    orth_loss = self.compute_orthogonal_loss() * orth_loss_factor
-                    
-                    self.orth_loss += orth_loss.detach()
-
-                    scaled_orth_loss = self.orth_loss_weight * orth_loss
-                    aux_loss = (
-                        scaled_orth_loss if aux_loss is None else aux_loss + scaled_orth_loss
-                    )
+                scaled_orth_loss = self.orth_loss_weight * orth_loss
+                aux_loss = (
+                    scaled_orth_loss if aux_loss is None else aux_loss + scaled_orth_loss
+                )
             self.batch_size_per_expert += batch_size_per_expert
             if self.bias_gamma is not None:
                 assert self.score_bias_batch_size_per_expert is not None
                 self.score_bias_batch_size_per_expert += batch_size_per_expert
 
-        return expert_weights, expert_indices, batch_size_per_expert, aux_loss
+        return aux_loss
 
     def compute_orthogonal_loss(self) -> torch.Tensor:
         """

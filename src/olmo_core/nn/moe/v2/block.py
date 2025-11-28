@@ -700,7 +700,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             local_x_global_routed_expert_weights, # (B, S, top_k)
             local_x_global_routed_expert_indices, # (B, S, top_k)
             local_batch_size_per_global_routed_expert, # (num_experts, )
-            routed_expert_router_aux_loss # scalar
+            routed_expert_router_aux_loss_info # tuple
         ) = self.router_forward(
             router=self.routed_experts_router,
             local_x=attn_res_out, 
@@ -708,11 +708,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             loss_div_factor=loss_div_factor # scalar
         )
         
-        # attach aux loss
-        if torch.is_grad_enabled(): # only when grad enabled
-            with nvtx.annotate("attach_auxiliary_loss", color="blue"):
-                if routed_expert_router_aux_loss is not None:
-                    attn_res_out = attach_auxiliary_loss(attn_res_out, routed_expert_router_aux_loss)
+
 
         # the shared experts (executed on the dense stream) need to wait for `attn_res_out` and `local_x_global_shared_expert_weights` (on the main stream) to be complete
         wait_stream_no_compile(
@@ -1103,6 +1099,17 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
 
         #######################
 
+        # attach aux loss
+        if torch.is_grad_enabled(): # only when grad enabled
+            with nvtx.annotate("attach_auxiliary_loss", color="blue"):
+                if routed_expert_router_aux_loss_info is not None:
+                    # NOTE: this part cpu runtime > gpu runtime, so it's moved from directly after router_forward to here
+                    # because we need to avoid stalling the gpu stream
+                    # gpu stream is generally more ahead of cpu thread at the end of the block, hence less harmful to put it here
+                    routed_expert_router_aux_loss = self.routed_experts_router.compute_aux_loss(*routed_expert_router_aux_loss_info)
+
+                    # NOTE: the attach only writes 1.0 to the aux loss grad slot, so it should not matter where to attach
+                    final_out = attach_auxiliary_loss(final_out, routed_expert_router_aux_loss)
         
         return final_out
     
