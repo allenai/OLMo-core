@@ -692,7 +692,7 @@ def prepare_byte_example(
     pad_token_id,
     compute_merge_kind=None,
     fim_middle_id=None,
-    max_compression_ratio=0.99,
+    max_compression_ratio=0.01,
     **kwargs,
 ):
     if fim_middle_id is not None and fim_middle_id in item["input_ids"]:
