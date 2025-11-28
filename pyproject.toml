@@ -57,7 +57,7 @@ dev = [
 beaker = ["beaker-py>=1.37.0,<2.0", "GitPython>=3.0,<4.0", "google-cloud-compute"]
 comet = ["comet_ml"]
 eval = ["ai2-olmo-eval==0.8.5"]
-torchao = ["torchao"]
+torchao = ["torchao==0.11.0"]
 transformers = ["transformers"]
 wandb = ["wandb"]
 all = ["ai2-olmo-core[dev,beaker,comet,eval,torchao,transformers,wandb]"]
