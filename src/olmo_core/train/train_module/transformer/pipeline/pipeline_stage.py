@@ -553,9 +553,22 @@ class CustomPipelineStage:
                 result = perform_backward(backward_type)()
                 pass
             else:
+                # TODO: change this to context manager & to work with non-MoE
+                # turn off
                 self.submod.set_requires_gradient_sync(False) # type: ignore
+                # EP managed modules
+                ep_modules = [m for m in self.submod.modules() if getattr(m, '_ep_sharded', False) ]
+                for m in ep_modules:
+                    m.set_requires_gradient_sync(False) # type: ignore
+
                 result = perform_backward(backward_type)()
+
+                # turn back on
                 self.submod.set_requires_gradient_sync(True) # type: ignore
+                # EP managed modules
+                ep_modules = [m for m in self.submod.modules() if getattr(m, '_ep_sharded', False) ]
+                for m in ep_modules:
+                    m.set_requires_gradient_sync(True) # type: ignore
         
         # If submod is a FSDP module
         elif isinstance(self.submod, FSDPModule):
