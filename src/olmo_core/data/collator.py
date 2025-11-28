@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional, Sequence, Union
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 
@@ -51,14 +52,16 @@ class DataCollator:
     Args:
         pad_token_id: Token ID used for padding.
         pad_direction: Direction to pad sequences ("left" or "right").
-        expert_labels_file: Optional path to a JSON file containing pre-computed optimal expert labels.
-            If provided, labels are looked up by sequence index. Falls back to domain-based labeling
-            for sequences not in the file.
+        expert_labels_file: Optional path to a JSON file containing pre-computed optimal expert labels
+            (per-sequence). If provided, labels are looked up by sequence index.
+        expert_labels_dir: Optional path to a directory containing per-token expert labels
+            (one .npz file per sequence). Takes precedence over expert_labels_file if both provided.
     """
 
     pad_token_id: int
     pad_direction: PaddingDirection = PaddingDirection.right
     expert_labels_file: Optional[str] = None
+    expert_labels_dir: Optional[str] = None
     
     # Internal state (not part of dataclass fields for serialization)
     _expert_labels_cache: Optional[Dict[str, Any]] = field(default=None, repr=False, compare=False)
@@ -94,9 +97,35 @@ class DataCollator:
         
         return self._expert_labels_cache
 
+    def _get_per_token_labels(self, sequence_index: int) -> Optional[torch.Tensor]:
+        """
+        Load per-token expert labels from directory.
+        
+        Returns:
+            Tensor of shape (seq_len-1,) with expert IDs, or None if not found.
+        """
+        if self.expert_labels_dir is None:
+            return None
+        
+        labels_dir = Path(self.expert_labels_dir)
+        label_path = labels_dir / f"seq_{sequence_index:08d}.npz"
+        
+        if not label_path.exists():
+            return None
+        
+        try:
+            data = np.load(label_path)
+            labels = torch.from_numpy(data["labels"].astype(np.int64))
+            return labels
+        except Exception as e:
+            if not self._logged_flags.get('per_token_load_error'):
+                self._logged_flags['per_token_load_error'] = True
+                log.warning(f"Error loading per-token labels from {label_path}: {e}")
+            return None
+
     def _get_expert_label(self, source_name: str, sequence_index: int) -> torch.Tensor:
         """
-        Get expert label for a sequence.
+        Get expert label for a sequence (per-sequence, one-hot encoded).
         
         Uses pre-computed optimal labels if available, otherwise falls back to domain-based labeling.
         """
@@ -212,12 +241,22 @@ class DataCollator:
                 all_metadata.append(metadata)
 
             # Expert labels (for supervised router training)
+            # Priority: 1) per-token from dir, 2) per-sequence from file, 3) domain-based
             expert_labels = x.get("expert_labels") if isinstance(x, dict) else None
-            if expert_labels is None and metadata is not None:
-                source_name = metadata.get("source_name") if isinstance(metadata, dict) else None
-                sequence_index = int(index) if index is not None else -1
-                if source_name:
-                    expert_labels = self._get_expert_label(source_name, sequence_index)
+            sequence_index = int(index) if index is not None else -1
+            
+            if expert_labels is None:
+                # Try per-token labels first (from directory)
+                if self.expert_labels_dir is not None and sequence_index >= 0:
+                    per_token_labels = self._get_per_token_labels(sequence_index)
+                    if per_token_labels is not None:
+                        expert_labels = per_token_labels  # Shape: (seq_len-1,)
+                
+                # Fall back to per-sequence labels
+                if expert_labels is None and metadata is not None:
+                    source_name = metadata.get("source_name") if isinstance(metadata, dict) else None
+                    if source_name:
+                        expert_labels = self._get_expert_label(source_name, sequence_index)
             
             if expert_labels is not None:
                 if not isinstance(expert_labels, torch.Tensor):

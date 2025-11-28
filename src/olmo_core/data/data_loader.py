@@ -1074,9 +1074,16 @@ class NumpyDataLoaderConfig(Config):
     target_device_type: Optional[str] = None
     expert_labels_file: Optional[str] = None
     """
-    Optional path to a JSON file containing pre-computed optimal expert labels.
+    Optional path to a JSON file containing pre-computed optimal expert labels (per-sequence).
     Used for supervised router training. If provided, the collator will look up
     labels by sequence index, falling back to domain-based labeling for missing indices.
+    """
+    
+    expert_labels_dir: Optional[str] = None
+    """
+    Optional path to a directory containing per-token expert labels (one .npz file per sequence).
+    Takes precedence over expert_labels_file if both are provided.
+    Each file should be named seq_XXXXXXXX.npz and contain a 'labels' array of shape (seq_len-1,).
     """
 
     def build(
@@ -1104,11 +1111,12 @@ class NumpyDataLoaderConfig(Config):
 
         dataset.prepare()
 
-        # Create collator with expert_labels_file if provided
+        # Create collator with expert labels config if provided
         if collator is None:
             collator = DataCollator(
                 pad_token_id=dataset.pad_token_id,
                 expert_labels_file=self.expert_labels_file,
+                expert_labels_dir=self.expert_labels_dir,
             )
 
         data_loader = NumpyDataLoaderBase.wrap_numpy_dataset(
