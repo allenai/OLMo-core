@@ -58,7 +58,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         self.tbo = kwargs.pop('two_batch_overlap')
         self.recompute_all_blocks_by_chunk = kwargs.pop('recompute_all_blocks_by_chunk')
         self.recompute_each_block = kwargs.pop('recompute_each_block')
-
+        self.checkpoint_tbo_dense_layers = False
         self.has_grad_accum_fp32_buffer = False # whether the model has grad accum buffer for fp32 master grad, will be set in `attach_fp32_accum`
 
         super().__init__(*args, **kwargs)
@@ -522,14 +522,17 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             with nvtx.annotate(f"fwd_block_{block_idx}", color="blue"):
                 # with self.offload_context:
                 one_block_kwargs = per_block_kwargs.get(block_key, {})
-                # h = block(h, **all_block_kwargs, **one_block_kwargs)
-                h = checkpoint(
-                    block,
-                    h,
-                    use_reentrant=False,
-                    **one_block_kwargs,
-                )
-                h = cast(torch.Tensor, h)
+                if self.checkpoint_tbo_dense_layers:
+                    h = checkpoint(
+                        block,
+                        h,
+                        use_reentrant=False,
+                        **one_block_kwargs,
+                    )
+                    h = cast(torch.Tensor, h)
+                else:
+                    h = block(h, **all_block_kwargs, **one_block_kwargs)
+
                 self._log_debug_mem(f'{block_idx}')
 
 

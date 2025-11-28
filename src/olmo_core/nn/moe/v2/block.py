@@ -285,8 +285,8 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         self.num_local_routed_experts: Optional[int] = self.routed_experts.num_experts if self.routed_experts else None
 
 
-        self.checkpoint_attn = True
-        self.checkpoint_permute_moe_unpermute = True
+        self.checkpoint_attn = False
+        self.checkpoint_permute_moe_unpermute = False
         self.checkpoint_combined_ep_tbo = False
 
         # self.type_id = None
