@@ -50,32 +50,34 @@ log = logging.getLogger(__name__)
 
 import functools
 import torch
-from torch.utils.checkpoint import checkpoint, create_selective_checkpoint_contexts, CheckpointPolicy
+from torch.utils.checkpoint import checkpoint, create_selective_checkpoint_contexts, CheckpointPolicy, noop_context_fn
 
 
-aten = torch.ops.aten
+# aten = torch.ops.aten
+# c10d = torch.ops.c10d
 
-compute_intensive_ops = [
-    aten.mm.default,
-    aten.bmm.default,
-    aten.addmm.default,
-    # e.g. add attention kernels if you want to keep them:
-    # aten._scaled_dot_product_flash_attention.default,
+should_save_ops = [
+    torch.ops.aten.mm.default,
+    torch.ops.aten.bmm.default,
+    torch.ops.aten.addmm.default,
+    torch.ops.aten.rand_like.default,
+    # torch.ops.c10d.alltoall_base_.default,
+    torch.ops.flash_attn._flash_attn_forward.default,
+    torch.ops.flash_attn_3.fwd.default,
 ]
 from torch.utils.checkpoint import SelectiveCheckpointContext
 def policy_fn(ctx: SelectiveCheckpointContext, op, *args, **kwargs):
-    # print(f'ctx: {ctx}, op: {op}, {args}, {kwargs}')
-    print(f'ctx: {ctx}, op: {op}')
-    if 'flash' in op._name:
-        return CheckpointPolicy.MUST_SAVE
-    if op in compute_intensive_ops:
+
+    # print(f'ctx: {ctx}, op: {op}')
+    if op in should_save_ops:
         # save outputs of these ops; don't recompute them
         return CheckpointPolicy.MUST_SAVE
     else:
         # everything else can be recomputed
         return CheckpointPolicy.PREFER_RECOMPUTE
 
-recompute_context_fn = functools.partial(create_selective_checkpoint_contexts, policy_fn)
+# recompute_context_fn = functools.partial(create_selective_checkpoint_contexts, policy_fn)
+recompute_context_fn = noop_context_fn # don't use selective checkpointing for now
 
 # from olmo_core.nn.utils import selective_checkpointing_context_fn
 # recompute_context_fn = selective_checkpointing_context_fn
@@ -736,7 +738,14 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             with nvtx.annotate(f"fwd_block_{block_key}", color="blue"):
                 block_kwargs = per_block_kwargs.get(block_key, {})
                 if self.recompute_each_block:
-                    h = checkpoint(self._forwrad_one_block, h, block_key, **all_block_kwargs, **block_kwargs, use_reentrant=False, context_fn=recompute_context_fn)
+                    h = checkpoint(
+                        self._forwrad_one_block, 
+                        h, block_key, 
+                        **all_block_kwargs, 
+                        **block_kwargs, 
+                        use_reentrant=False, 
+                        context_fn=recompute_context_fn
+                    )
                     h = cast(torch.Tensor, h)
                 else:
                     h = self._forwrad_one_block(h, block_key, **all_block_kwargs, **block_kwargs)

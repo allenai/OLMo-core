@@ -87,7 +87,7 @@ def _get_split_points(original_num_layers: int, num_stages: int, minus_last_stag
 SEQUENCE_LENGTH = 8192
 
 # GLOBAL_BATCH_SIZE_SEQ=1024 + 512
-GLOBAL_BATCH_SIZE_SEQ=512
+GLOBAL_BATCH_SIZE_SEQ=32
 GLOBAL_BATCH_SIZE = (
     (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
 )  
@@ -98,7 +98,7 @@ MAX_DURATION = int(1000e9)  # int(6e12), don't forget to adjust the LR when you 
 EVAL_INTERVAL = 50
 LR= 3e-4
 
-NUM_EXPERTS = 16
+NUM_EXPERTS = 64
 TOP_K = 4
 # D_MODEL=3072
 # D_ATTN=3072
@@ -115,11 +115,11 @@ EFFECTIVE_MLP = (MOE_HIDDEN_SIZE * TOP_K + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_E
 MLP_RATIO = EFFECTIVE_MLP / D_MODEL
 
 # the first dense layer MLP
-DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS) * 1
+DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED_EXPERTS) * 2
 
 MICRO_BSZ = 1
 # DP_DIM=2
-EP_DIM=2
+EP_DIM=8
 PP_DIM=4
 
 
@@ -135,7 +135,7 @@ else:
 
 
 # SPLIT_POINTS = None
-USE_COMPILE=False
+USE_COMPILE=True
 USE_AC=False
 USE_TBO=False
 GRAD_ACC_IN_FP32=False
@@ -170,6 +170,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     )
     from olmo_core.nn.moe.v2.shared_experts import SharedExpertsConfig
     from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
+    from olmo_core.nn.attention.backend import AttentionBackendName
     
     d_model = D_MODEL
     dtype = DType.float32
@@ -200,7 +201,8 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                 bias=False,
                 rope=RoPEConfig(name=RoPEType.default, theta=500_000, scaling=None, full_precision=True),
                 qk_norm=layer_norm ,
-                use_flash=True,
+                # use_flash=True,
+                backend=AttentionBackendName.flash_3,
                 use_head_qk_norm=True,
                 dtype=dtype,
                 d_attn=D_ATTN,
@@ -266,7 +268,6 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     )
     # config.block.attention.use_flash = True
     # config.block.attention.use_head_qk_norm = True
-    from olmo_core.nn.attention.backend import AttentionBackendName
     # First block will be a regular transformer block (no MoE component).
     config.block_overrides = {
         0: TransformerBlockConfig(
