@@ -48,7 +48,7 @@ PREFILL_LENGTH = int(os.environ.get("PREFILL_LENGTH", 1024))
 PROFILE = os.environ.get("PROFILE", "0") == "1"
 BATCH_SIZE = int(os.environ.get("BATCH_SIZE", 1))
 N_BATCHES = int(os.environ.get("N_BATCHES", 1))
-AVG_BYTES_PER_TOKEN = int(os.environ.get("AVG_BYTES_PER_TOKEN", 4.3))
+AVG_BYTES_PER_TOKEN = float(os.environ.get("AVG_BYTES_PER_TOKEN", 4.3))
 
 def main(run_name: str, overrides: list[str]):
     if MODEL_STYLE == "hnet":
