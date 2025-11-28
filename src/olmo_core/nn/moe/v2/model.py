@@ -48,6 +48,38 @@ if TYPE_CHECKING:
     from olmo_core.train.common import ReduceType
 log = logging.getLogger(__name__)
 
+import functools
+import torch
+from torch.utils.checkpoint import checkpoint, create_selective_checkpoint_contexts, CheckpointPolicy
+
+
+aten = torch.ops.aten
+
+compute_intensive_ops = [
+    aten.mm.default,
+    aten.bmm.default,
+    aten.addmm.default,
+    # e.g. add attention kernels if you want to keep them:
+    # aten._scaled_dot_product_flash_attention.default,
+]
+from torch.utils.checkpoint import SelectiveCheckpointContext
+def policy_fn(ctx: SelectiveCheckpointContext, op, *args, **kwargs):
+    # print(f'ctx: {ctx}, op: {op}, {args}, {kwargs}')
+    print(f'ctx: {ctx}, op: {op}')
+    if 'flash' in op._name:
+        return CheckpointPolicy.MUST_SAVE
+    if op in compute_intensive_ops:
+        # save outputs of these ops; don't recompute them
+        return CheckpointPolicy.MUST_SAVE
+    else:
+        # everything else can be recomputed
+        return CheckpointPolicy.PREFER_RECOMPUTE
+
+recompute_context_fn = functools.partial(create_selective_checkpoint_contexts, policy_fn)
+
+# from olmo_core.nn.utils import selective_checkpointing_context_fn
+# recompute_context_fn = selective_checkpointing_context_fn
+
 class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
     """
     An MoE transformer implementation, to be used with one of the
@@ -693,6 +725,8 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             h0 = x
         return h0
 
+
+
     def _forward_blocks(self, h, all_block_kwargs: Dict[str, Any], per_block_kwargs: Dict[str, Any]) -> torch.Tensor:
         # Run each block.
         for block_idx, (block_key, block) in enumerate(self.blocks.items()):
@@ -702,7 +736,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             with nvtx.annotate(f"fwd_block_{block_key}", color="blue"):
                 block_kwargs = per_block_kwargs.get(block_key, {})
                 if self.recompute_each_block:
-                    h = checkpoint(self._forwrad_one_block, h, block_key, **all_block_kwargs, **block_kwargs, use_reentrant=False)
+                    h = checkpoint(self._forwrad_one_block, h, block_key, **all_block_kwargs, **block_kwargs, use_reentrant=False, context_fn=recompute_context_fn)
                     h = cast(torch.Tensor, h)
                 else:
                     h = self._forwrad_one_block(h, block_key, **all_block_kwargs, **block_kwargs)
