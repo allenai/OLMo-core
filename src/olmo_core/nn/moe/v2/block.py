@@ -503,7 +503,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             local_x_global_routed_expert_weights, # (B, S, top_k)
             local_x_global_routed_expert_indices, # (B, S, top_k)
             local_batch_size_per_global_routed_expert, # (num_experts, )
-            routed_expert_router_aux_loss # scalar
+            routed_expert_router_aux_loss # scalar # TODO: update code
         ) = self.router_forward(
             router=self.routed_experts_router,
             local_x=attn_res_out, 
@@ -537,9 +537,9 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         # only when grad enabled
         if torch.is_grad_enabled():
             with nvtx.annotate("attach_auxiliary_loss", color="blue"):
-                if routed_expert_router_aux_loss is not None:
+                if routed_expert_router_aux_loss is not None: # TODO: update code
                     # TODO: should attach to router input or output?
-                    attn_res_out = attach_auxiliary_loss(attn_res_out, routed_expert_router_aux_loss)
+                    attn_res_out = attach_auxiliary_loss(attn_res_out, routed_expert_router_aux_loss) # TODO: update code
         
         moe_inp = attn_res_out
 
@@ -1367,7 +1367,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 local_x_global_routed_expert_weights, # (B, S, top_k)
                 local_x_global_routed_expert_indices, # (B, S, top_k)
                 local_batch_size_per_global_routed_expert, # (num_experts, )
-                routed_expert_router_aux_loss # scalar
+                routed_expert_router_aux_loss # scalar # TODO: update code
             ) = self.router_forward(
                 router=self.routed_experts_router,
                 local_x=attn_res_out, 
@@ -1379,7 +1379,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             if torch.is_grad_enabled(): # only when grad enabled
                 with nvtx.annotate("attach_auxiliary_loss", color="blue"):
                     if routed_expert_router_aux_loss is not None:
-                        attn_res_out = attach_auxiliary_loss(attn_res_out, routed_expert_router_aux_loss)
+                        attn_res_out = attach_auxiliary_loss(attn_res_out, routed_expert_router_aux_loss) # TODO: update code
 
 
             ########### 1. Communicate the number of tokens that will be sent to each device ###########
@@ -1596,7 +1596,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 local_x_global_routed_expert_weights1, # (B, S, top_k)
                 local_x_global_routed_expert_indices1, # (B, S, top_k)
                 local_batch_size_per_global_routed_expert1, # (num_experts, )
-                routed_expert_router_aux_loss1 # scalar
+                routed_expert_router_aux_loss1 # scalar # TODO: update code
             ) = self.router_forward(
                 router=self.routed_experts_router,
                 local_x=attn_res_out1, 
@@ -1607,7 +1607,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             # attach aux loss
             if torch.is_grad_enabled(): # only when grad enabled
                 with nvtx.annotate("attach_auxiliary_loss", color="blue"):
-                    if routed_expert_router_aux_loss1 is not None:
+                    if routed_expert_router_aux_loss1 is not None: # TODO: update code
                         attn_res_out1 = attach_auxiliary_loss(attn_res_out1, routed_expert_router_aux_loss1)
             
 
