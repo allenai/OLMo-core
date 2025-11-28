@@ -139,7 +139,7 @@ USE_COMPILE=True
 USE_AC=False
 USE_TBO=False
 GRAD_ACC_IN_FP32=False
-UNIFORM_ASSIGN=True
+UNIFORM_ASSIGN=False
 SEED = 2026
 
 TAG=f'dev-S{SEED}'
@@ -369,7 +369,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "checkpointer",
             CheckpointerCallback(
                 save_interval=1000,
-                ephemeral_save_interval=20,
+                ephemeral_save_interval=200,
                 save_async=False,
                 pre_train_checkpoint=False,
             ),
