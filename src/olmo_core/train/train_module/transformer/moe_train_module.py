@@ -1532,67 +1532,67 @@ class MoEV2TransformerTrainModule(TrainModule):
 
 
     def reduce_send_recv(self, x: Optional[torch.Tensor] = None) -> torch.Tensor:
-        assert self.pp_enabled and self._pp_config is not None
+        # assert self.pp_enabled and self._pp_config is not None
 
+        # if self.pp_group_rank == self.pp_final_stage_rank:
+        #     assert x is not None
+        #     # DP reduce (mean)
+        #     x = x / self._reduce_divide_factor
+        #     dist.all_reduce(x, group=self.dp_process_group)
+        #     x = x / self.dp_world_size * self._reduce_divide_factor
+        # else:
+        #     assert x is None
+        #     x = torch.empty([], device=self.device, dtype=torch.float32)
+
+        # # Broadcast from final stage to all PP ranks.
+        # handle = dist.broadcast(x, src=get_global_rank(self.pp_final_stage_rank, group=self.pp_group), group=self.pp_group, async_op=True)
+        # handle.wait()
+        # # print(f'{get_rank()} (pp group rank {self.pp_group_rank}) got {x.item()}')
+        # return x
+
+
+        assert self.pp_enabled and self._pp_config is not None, "reduce_send_recv is only valid when PP is enabled"
         if self.pp_group_rank == self.pp_final_stage_rank:
             assert x is not None
-            # DP reduce (mean)
-            x = x / self._reduce_divide_factor
+            # Reduce across DP process group.
             dist.all_reduce(x, group=self.dp_process_group)
-            x = x / self.dp_world_size * self._reduce_divide_factor
+            x.div_(self.dp_world_size)
         else:
             assert x is None
-            x = torch.empty([], device=self.device, dtype=torch.float32)
+            x = move_to_device(torch.empty([]), self.device)
 
-        # Broadcast from final stage to all PP ranks.
-        dist.broadcast(x, src=get_global_rank(self.pp_final_stage_rank, group=self.pp_group), group=self.pp_group)
+        # Asynchronously send to previous stage rank in the PP group.
+        ordered_ranks = list(self._pp_config.rank_completion_order())
+        local_index = ordered_ranks.index(self.pp_group_rank)
+        src_rank = None if local_index == 0 else ordered_ranks[local_index - 1]
+        dst_rank = (
+            None if local_index == (len(ordered_ranks) - 1) else ordered_ranks[local_index + 1]
+        )
+
+        send_ops: List[dist.P2POp] = []
+        recv_ops: List[dist.P2POp] = []
+        if src_rank is not None:
+            # print(
+            #     f"Rank {get_rank()} (pp group rank {self.pp_group_rank}) receiving from rank "
+            #     f"{get_global_rank(src_rank, group=self.pp_group)} (pp group rank {src_rank})"
+            # )
+            recv_ops.append(dist.P2POp(dist.irecv, x, group=self.pp_group, group_peer=src_rank))
+        if dst_rank is not None:
+            # print(
+            #     f"Rank {get_rank()} (pp group rank {self.pp_group_rank}) sending to rank "
+            #     f"{get_global_rank(dst_rank, group=self.pp_group)} (pp group rank {dst_rank})"
+            # )
+            send_ops.append(dist.P2POp(dist.isend, x, group=self.pp_group, group_peer=dst_rank))
+        
+        if len(recv_ops) > 0:
+            recv_reqs = dist.batch_isend_irecv(recv_ops)
+            for req in recv_reqs:
+                req.wait()
+
+        if len(send_ops) > 0:
+            send_reqs = dist.batch_isend_irecv(send_ops)
+            for req in send_reqs:
+                req.wait()
 
         # print(f'{get_rank()} (pp group rank {self.pp_group_rank}) got {x.item()}')
         return x
-
-
-        # assert self.pp_enabled and self._pp_config is not None, "reduce_send_recv is only valid when PP is enabled"
-        # if self.pp_group_rank == self.pp_final_stage_rank:
-        #     assert x is not None
-        #     # Reduce across DP process group.
-        #     dist.all_reduce(x, group=self.dp_process_group)
-        #     x.div_(self.dp_world_size)
-        # else:
-        #     assert x is None
-        #     x = move_to_device(torch.empty([]), self.device)
-
-        # # Asynchronously send to previous stage rank in the PP group.
-        # ordered_ranks = list(self._pp_config.rank_completion_order())
-        # local_index = ordered_ranks.index(self.pp_group_rank)
-        # src_rank = None if local_index == 0 else ordered_ranks[local_index - 1]
-        # dst_rank = (
-        #     None if local_index == (len(ordered_ranks) - 1) else ordered_ranks[local_index + 1]
-        # )
-
-        # send_ops: List[dist.P2POp] = []
-        # recv_ops: List[dist.P2POp] = []
-        # if src_rank is not None:
-        #     # print(
-        #     #     f"Rank {get_rank()} (pp group rank {self.pp_group_rank}) receiving from rank "
-        #     #     f"{get_global_rank(src_rank, group=self.pp_group)} (pp group rank {src_rank})"
-        #     # )
-        #     recv_ops.append(dist.P2POp(dist.irecv, x, group=self.pp_group, group_peer=src_rank))
-        # if dst_rank is not None:
-        #     # print(
-        #     #     f"Rank {get_rank()} (pp group rank {self.pp_group_rank}) sending to rank "
-        #     #     f"{get_global_rank(dst_rank, group=self.pp_group)} (pp group rank {dst_rank})"
-        #     # )
-        #     send_ops.append(dist.P2POp(dist.isend, x, group=self.pp_group, group_peer=dst_rank))
-        
-        # if len(recv_ops) > 0:
-        #     recv_reqs = dist.batch_isend_irecv(recv_ops)
-        #     for req in recv_reqs:
-        #         req.wait()
-
-        # if len(send_ops) > 0:
-        #     send_reqs = dist.batch_isend_irecv(send_ops)
-        #     for req in send_reqs:
-        #         req.wait()
-
-        # print(f'{get_rank()} (pp group rank {self.pp_group_rank}) got {x.item()}')
-        # return x
