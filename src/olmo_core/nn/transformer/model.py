@@ -1999,11 +1999,48 @@ class BLTDistillTransformer(BLTTransformer):
         )
         boundary_byte_mask = byte_mask.clone()
         boundary_byte_mask[:, byte_mask.shape[1]-self.local_encoder.boundary_predictor_lookahead:] = False  # type: ignore
-        boundary_loss = (elementwise_boundary_loss * boundary_byte_mask).mean()
-        elementwise_boundary_acc = (torch.exp(boundary_logprobs) > 0.5) == (boundary_labels > 0)
+
+        # Optionally balance the loss between positive and negative classes
+        if blt_config.balance_boundary_loss:
+            pos_mask = (boundary_labels > 0) & boundary_byte_mask
+            neg_mask = (boundary_labels == 0) & boundary_byte_mask
+
+            pos_count = pos_mask.float().sum()
+            neg_count = neg_mask.float().sum()
+
+            # Compute positive and negative losses separately
+            pos_loss = (elementwise_boundary_loss * pos_mask).sum() / (pos_count + blt_config.epsilon)
+            neg_loss = (elementwise_boundary_loss * neg_mask).sum() / (neg_count + blt_config.epsilon)
+
+            # Balance the contributions equally (50% each)
+            boundary_loss = 0.5 * pos_loss + 0.5 * neg_loss
+
+            metrics["blt/boundary_pos_loss"] = pos_loss
+            metrics["blt/boundary_neg_loss"] = neg_loss
+            metrics["blt/boundary_pos_count"] = pos_count / boundary_byte_mask.float().sum()
+            metrics["blt/boundary_neg_count"] = neg_count / boundary_byte_mask.float().sum()
+        else:
+            boundary_loss = (elementwise_boundary_loss * boundary_byte_mask).mean()
+
+        # Compute accuracy, precision, and recall
+        boundary_preds = torch.exp(boundary_logprobs) > 0.5
+        boundary_targets = boundary_labels > 0
+
+        elementwise_boundary_acc = boundary_preds == boundary_targets
         boundary_acc = (elementwise_boundary_acc * boundary_byte_mask).float().mean()
+
+        # Precision and recall
+        true_boundary_positives = (boundary_preds & boundary_targets & boundary_byte_mask).float().sum()
+        false_boundary_positives = (boundary_preds & ~boundary_targets & boundary_byte_mask).float().sum()
+        false_boundary_negatives = (~boundary_preds & boundary_targets & boundary_byte_mask).float().sum()
+
+        boundary_precision = true_boundary_positives / (true_boundary_positives + false_boundary_positives + blt_config.epsilon)
+        boundary_recall = true_boundary_positives / (true_boundary_positives + false_boundary_negatives + blt_config.epsilon)
+
         metrics["blt/boundary_loss"] = boundary_loss / boundary_byte_mask.float().mean()
         metrics["blt/boundary_acc"] = boundary_acc / boundary_byte_mask.float().mean()
+        metrics["blt/boundary_precision"] = boundary_precision
+        metrics["blt/boundary_recall"] = boundary_recall
         metrics["blt/boundary_mean"] = (boundary_mask * boundary_byte_mask).float().mean() / boundary_byte_mask.float().mean()
         metrics["blt/boundary_label_mean"] = (boundary_labels * boundary_byte_mask).float().mean() / boundary_byte_mask.float().mean()
 

@@ -47,6 +47,7 @@ class BLTConfig(Config):
     inference_sampling_strategies: str | None = None
     xlstm_igate_bias_init: float = -10.0
     skip_boundary_before_eos: bool = True
+    balance_boundary_loss: bool = False
 
 
 @dataclass
