@@ -67,9 +67,9 @@ class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
     
     routed_experts_router: Optional[MoERouterConfigV2] = None
 
-    checkpoint_attn = False
-    checkpoint_permute_moe_unpermute = False
-    checkpoint_combined_ep_tbo = False
+    checkpoint_attn: bool = False
+    checkpoint_permute_moe_unpermute: bool = False
+    checkpoint_combined_ep_tbo: bool = False
         
     def build(
         self,
