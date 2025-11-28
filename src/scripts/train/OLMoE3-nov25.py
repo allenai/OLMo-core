@@ -103,7 +103,7 @@ TOP_K = 4
 # D_MODEL=3072
 # D_ATTN=3072
 D_MODEL=3072
-D_ATTN=3072
+D_ATTN=D_MODEL
 HEAD_DIM=128
 NUM_HEAD = D_ATTN // HEAD_DIM
 NUM_KV_HEAD=4
@@ -184,6 +184,8 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         init_seed=SEED,
         d_model=d_model,
         two_batch_overlap=USE_TBO,
+        recompute_each_block=False,
+        recompute_all_blocks_by_chunk=False,
         vocab_size=common.tokenizer.padded_vocab_size(),
         n_layers=NUM_LAYERS,
         block=MoEFusedV2TransformerBlockConfig(

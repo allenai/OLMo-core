@@ -285,8 +285,8 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         self.num_local_routed_experts: Optional[int] = self.routed_experts.num_experts if self.routed_experts else None
 
 
-        self.checkpoint_attn = False
-        self.checkpoint_permute_moe_unpermute = False
+        self.checkpoint_attn = True
+        self.checkpoint_permute_moe_unpermute = True
         self.checkpoint_combined_ep_tbo = False
 
         # self.type_id = None
@@ -678,7 +678,9 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         # attention 
         # + attention norm
         # + residual connection
-        attn_res_out = block_inp + self.attention_norm(self.attention(block_inp, **kwargs))
+        # attn_res_out = block_inp + self.attention_norm(self.attention(block_inp, **kwargs))
+        attn_res_out = self._checkpointed_res_norm_attn(block_inp, **kwargs)
+
         # remove attention kwargs
         kwargs.pop("max_doc_len", None)
         kwargs.pop("cu_doc_lens", None)
