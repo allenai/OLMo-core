@@ -1473,8 +1473,6 @@ class MoEFusedV2Optimizer(Optimizer):
                         ov.exp_avg_sq_view.copy_(exp_avg_sq[param_start_offset:param_start_offset+owned_length])
 
 
-
-
         return
         
 
