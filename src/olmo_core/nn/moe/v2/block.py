@@ -195,6 +195,9 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         dropout: float = 0.0,
         attention_residual_alpha: Optional[float] = None,
         feed_forward_residual_alpha: Optional[float] = None,
+        checkpoint_attn = False,
+        checkpoint_permute_moe_unpermute = False,
+        checkpoint_combined_ep_tbo = False,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
     ):
@@ -288,9 +291,9 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         self.num_local_routed_experts: Optional[int] = self.routed_experts.num_experts if self.routed_experts else None
 
 
-        self.checkpoint_attn = True
-        self.checkpoint_permute_moe_unpermute = True
-        self.checkpoint_combined_ep_tbo = False
+        self.checkpoint_attn = checkpoint_attn
+        self.checkpoint_permute_moe_unpermute = checkpoint_permute_moe_unpermute
+        self.checkpoint_combined_ep_tbo = checkpoint_combined_ep_tbo
 
         # self.type_id = None
 
