@@ -123,10 +123,10 @@ EP_DIM=8
 PP_DIM=4
 
 
-NUM_LAYERS= 16
+NUM_LAYERS= 32
 
 if PP_DIM > 1:
-    MINUS_LAST_STAGE=0
+    MINUS_LAST_STAGE=1
     NUM_LAYERS, SPLIT_POINTS = _get_split_points(NUM_LAYERS, PP_DIM * 2, minus_last_stage=MINUS_LAST_STAGE)
 else:
     SPLIT_POINTS = None
@@ -402,7 +402,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         .with_callback(
             "profiler", 
             NvidiaProfilerCallback(enabled=True, # NOTE: change this
-                                   profile_ranks=[0, 8, 16, 24],
+                                   profile_ranks=[0, 8, 16, 24, 32, 40, 48, 56],
                                    start=10,
                                    end=13
             )
