@@ -692,7 +692,7 @@ def prepare_byte_example(
     pad_token_id,
     compute_merge_kind=None,
     fim_middle_id=None,
-    max_compression_ratio=0.5,
+    max_compression_ratio=0.99,
     **kwargs,
 ):
     if fim_middle_id is not None and fim_middle_id in item["input_ids"]:
@@ -780,7 +780,6 @@ def prepare_byte_example(
     item["space_patch_lens"] = space_patch_lengths
 
     if compute_merge_kind == "bpe":
-        # hardcode max compression to 0.5 for now
         item["bpe_merges"] = blt_utils.compute_bpe_merges(
             original_input_ids.tolist(),
             max_compression_ratio=max_compression_ratio,
