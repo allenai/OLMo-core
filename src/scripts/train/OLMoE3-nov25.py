@@ -192,6 +192,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
             name=TransformerBlockType.moe_fused_v2,
             checkpoint_permute_moe_unpermute=True,
             checkpoint_attn=True,
+            checkpoint_second_unpermute=True,
             attention=AttentionConfig(
                 name=AttentionType.default,
                 n_heads=NUM_HEAD,

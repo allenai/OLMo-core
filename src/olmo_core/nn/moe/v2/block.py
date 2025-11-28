@@ -70,6 +70,7 @@ class MoEFusedV2TransformerBlockConfig(TransformerBlockConfig):
     checkpoint_attn: bool = False
     checkpoint_permute_moe_unpermute: bool = False
     checkpoint_combined_ep_tbo: bool = False
+    checkpoint_second_unpermute: bool = False
         
     def build(
         self,
@@ -198,6 +199,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         checkpoint_attn = False,
         checkpoint_permute_moe_unpermute = False,
         checkpoint_combined_ep_tbo = False,
+        checkpoint_second_unpermute=False,
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
     ):
@@ -294,6 +296,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         self.checkpoint_attn = checkpoint_attn
         self.checkpoint_permute_moe_unpermute = checkpoint_permute_moe_unpermute
         self.checkpoint_combined_ep_tbo = checkpoint_combined_ep_tbo
+        self.checkpoint_second_unpermute = checkpoint_second_unpermute
 
         # self.type_id = None
 
@@ -1046,13 +1049,24 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         
         ############ 9. Unpermute the (local) tokens returned by all-to-all communication ##########
         with nvtx.annotate("Unpermute-Merge local tokens", color='green'):
-            local_x = moe_unpermute_no_compile(
-                inp=local_x,
-                row_id_map=reversed_local_x_permutation_mapping,
-                merging_probs=local_x_global_routed_expert_weights.view(-1, self.routed_experts_router.top_k),
-                restore_shape=hidden_shape_before_permute,
-                map_type='index',
-            )
+            if self.checkpoint_second_unpermute:
+                local_x = checkpoint(
+                    moe_unpermute_no_compile,
+                    inp=local_x,
+                    row_id_map=reversed_local_x_permutation_mapping,
+                    merging_probs=local_x_global_routed_expert_weights.view(-1, self.routed_experts_router.top_k),
+                    restore_shape=hidden_shape_before_permute,
+                    map_type='index',
+                    use_reentrant=False
+                )
+            else:
+                local_x = moe_unpermute_no_compile(
+                    inp=local_x,
+                    row_id_map=reversed_local_x_permutation_mapping,
+                    merging_probs=local_x_global_routed_expert_weights.view(-1, self.routed_experts_router.top_k),
+                    restore_shape=hidden_shape_before_permute,
+                    map_type='index',
+                )
         ############################################ end
     
         
