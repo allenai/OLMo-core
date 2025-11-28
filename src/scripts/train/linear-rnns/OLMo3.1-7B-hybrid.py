@@ -54,7 +54,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         # Correct for 50% more params in FLA layers.
         # Ignoring FF, we would have: 21 = 32 / (3/2 * 3/4 + 1 * 1/4)
         # Then did manual binary search to find a better value.
-        n_layers=28,
+        # n_layers=28,
     )
 
     ### Copied below from hybrid/gated_deltanet_0_25_rnn_first.py ###
