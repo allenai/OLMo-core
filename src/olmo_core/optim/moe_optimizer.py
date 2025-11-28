@@ -541,9 +541,12 @@ class MoEFusedV2Optimizer:
                     raise ValueError(f"{name}: Model param {param} and main param {main_param} are not close")
 
 
-    def _distribute_tensor(self, tensor, device_mesh):
+    def _distribute_tensor(self, tensor, device_mesh, force_shard: bool = False) -> DTensor:
         num_elements = tensor.numel()
-        if self.use_distributed:
+        if force_shard:
+            # always shard, useful for saving checkpoint
+            placements=[Shard(0)]
+        elif self.use_distributed:
             if num_elements >= self.do_not_shard_tensor_smaller_than and num_elements % device_mesh.size(0) == 0:
                 # this is distributed optimizer, so each rank holds one shard of the data
                 placements=[Shard(0)]
@@ -1022,10 +1025,12 @@ class MoEFusedV2Optimizer:
                             state_dt = DTensor.from_local(
                                 state_local.unsqueeze(0), # (N,) -> (1, N)
                                 device_mesh=self.moe_mesh['ep_dp','ep_mp'],
-                                placements=[Shard(1), Shard(0)], # first dim sharded by mp, second dim sharded by dp
+                                placements=[Shard(1) if self.use_distributed else Replicate(), Shard(0)], # first dim sharded by mp, second dim sharded by dp
                             )
+                            # collect the full tensor and force shard over dp becaues it's too big
                             state_dt = state_dt.full_tensor().reshape(-1) # NOTE: additional memory usage
-                            state_dt = self._distribute_tensor(state_dt, self.dp_mesh)
+                            state_dt = self._distribute_tensor(state_dt, self.dp_mesh, force_shard=True) 
+
                             sd[f'{name}.{suffix}'] = state_dt
                         else: # "step"
                             sd[f'{name}.{suffix}'] = state_dt
