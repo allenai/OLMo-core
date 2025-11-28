@@ -1279,10 +1279,10 @@ class MoEFusedV2TransformerConfig(TransformerConfig):
     two_batch_overlap: bool = False
 
     # Recompute all blocks in one chunk (not per layer). This is useful when PP is enabled to reduce activation memory that's held in early PP stages. It should not be used when PP is disabled as it increases recomputation overhead for nothing.
-    recompute_all_blocks_by_chunk: bool = True
+    recompute_all_blocks_by_chunk: bool = False
 
     # Recompute each block individually. This reduces the activation memory to just one block at a time, but increases recomputation overhead. Works with or without PP. It does not work with TBO
-    recompute_each_block: bool = False
+    recompute_each_block: bool = True
 
 
     def build(
