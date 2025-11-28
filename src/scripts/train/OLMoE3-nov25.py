@@ -184,14 +184,14 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         init_seed=SEED,
         d_model=d_model,
         two_batch_overlap=USE_TBO,
-        recompute_each_block=False,
+        recompute_each_block=True,
         recompute_all_blocks_by_chunk=False,
         vocab_size=common.tokenizer.padded_vocab_size(),
         n_layers=NUM_LAYERS,
         block=MoEFusedV2TransformerBlockConfig(
             name=TransformerBlockType.moe_fused_v2,
-            checkpoint_permute_moe_unpermute=True,
-            checkpoint_attn=True,
+            checkpoint_permute_moe_unpermute=False,
+            checkpoint_attn=False,
             checkpoint_second_unpermute=False,
             attention=AttentionConfig(
                 name=AttentionType.default,
