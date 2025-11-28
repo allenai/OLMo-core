@@ -60,7 +60,11 @@ class RecvInfo:
     def __repr__(self):
         return f"RecvInfo(input={self.input_name}, source={self.source}, shape={self.buffer.size()})"
 
-
+def flip_requires_sync(submod: torch.nn.Module, require_sync: bool):
+    submod.set_requires_gradient_sync(require_sync) 
+    ep_modules = [m for m in submod.modules() if getattr(m, '_ep_sharded', False) ]
+    for m in ep_modules:
+        m.set_requires_gradient_sync(require_sync) # type: ignore
 
 class CustomPipelineStage:
     """
@@ -202,6 +206,7 @@ class CustomPipelineStage:
         fwd_chunk_id: int,
         args: Tuple[Any, ...],
         kwargs: Optional[Dict[str, Any]] = None,
+        last_forward: bool = False,
     ):
         # print(f"{self.stage_index}.forward_one_chunk({fwd_chunk_id})")
 
@@ -221,7 +226,7 @@ class CustomPipelineStage:
 
         # Compute forward
         # print(f'{self.stage_index}_{fwd_chunk_id}-F-Start')
-        output: Union[torch.Tensor, LMOutputWithLoss] = self.forward_maybe_with_nosync(*composite_args, **composite_kwargs)
+        output: Union[torch.Tensor, LMOutputWithLoss] = self.forward_maybe_with_nosync(last_forward, *composite_args, **composite_kwargs)
         # print(f'{self.stage_index}_{fwd_chunk_id}-F-End')
 
         if self.is_last:
@@ -473,21 +478,26 @@ class CustomPipelineStage:
     
 
 
-    def forward_maybe_with_nosync(self, *args, **kwargs):
+    def forward_maybe_with_nosync(self, last_forward: bool = False, *args, **kwargs):
         # If submod is wrapped with DDP, we use the `no_sync` context manager to
         # avoid gradient all-reduce per microbatch
-        if isinstance(self.submod, DistributedDataParallel):
-            with self.submod.no_sync():  # type: ignore[operator]
-                out_val = self.submod(*args, **kwargs)
-        elif self.is_rddp: # composable.replicate
-            assert getattr(self.submod, 'set_requires_gradient_sync', None) is not None, "submod must have set_requires_gradient_sync method"
-            assert isinstance(self.submod.set_requires_gradient_sync, Callable)
-
-            self.submod.set_requires_gradient_sync(False) 
-            out_val = self.submod(*args, **kwargs)
-            self.submod.set_requires_gradient_sync(True) 
+        # TODO: use last_forward 
+        if False:
+            out_val = self.submod(*args, **kwargs) # use whatever sync setting
         else:
-            out_val = self.submod(*args, **kwargs)
+            # disable gradient sync for non-last forward
+            if isinstance(self.submod, DistributedDataParallel):
+                with self.submod.no_sync():  # type: ignore[operator]
+                    out_val = self.submod(*args, **kwargs)
+            elif self.is_rddp: # composable.replicate
+                assert getattr(self.submod, 'set_requires_gradient_sync', None) is not None, "submod must have set_requires_gradient_sync method"
+                assert isinstance(self.submod.set_requires_gradient_sync, Callable)
+
+                flip_requires_sync(self.submod, False)
+                out_val = self.submod(*args, **kwargs)
+                flip_requires_sync(self.submod, True)
+            else:
+                out_val = self.submod(*args, **kwargs)
         return out_val
 
     def backward_maybe_with_nosync(
@@ -555,20 +565,12 @@ class CustomPipelineStage:
             else:
                 # TODO: change this to context manager & to work with non-MoE
                 # turn off
-                self.submod.set_requires_gradient_sync(False) # type: ignore
-                # EP managed modules
-                ep_modules = [m for m in self.submod.modules() if getattr(m, '_ep_sharded', False) ]
-                for m in ep_modules:
-                    m.set_requires_gradient_sync(False) # type: ignore
+                flip_requires_sync(self.submod, False)
 
                 result = perform_backward(backward_type)()
 
                 # turn back on
-                self.submod.set_requires_gradient_sync(True) # type: ignore
-                # EP managed modules
-                ep_modules = [m for m in self.submod.modules() if getattr(m, '_ep_sharded', False) ]
-                for m in ep_modules:
-                    m.set_requires_gradient_sync(True) # type: ignore
+                flip_requires_sync(self.submod, True)
         
         # If submod is a FSDP module
         elif isinstance(self.submod, FSDPModule):

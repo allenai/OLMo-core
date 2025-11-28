@@ -905,8 +905,8 @@ class MoEV2TransformerTrainModule(TrainModule):
         with nvtx.annotate("record_metrics"):
             if self.pp_enabled:
                 ce_batch_loss = self.reduce_send_recv(ce_batch_loss)
-                if ce_batch_loss > 20 or ce_batch_loss < 0.05:
-                    log.warning(f"Irregular CE loss detected: {ce_batch_loss.item()}")
+                # if ce_batch_loss > 20 or ce_batch_loss < 0.05:
+                #     log.warning(f"Irregular CE loss detected: {ce_batch_loss.item()}")
                 self.record_ce_loss(ce_batch_loss)
                 self.optim.latest_loss = ce_batch_loss
             else:

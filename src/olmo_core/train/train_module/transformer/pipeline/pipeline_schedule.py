@@ -356,6 +356,7 @@ class CustomScheduleInterleaved1F1B():
 
         # count either full_backward or backward_weight together, to determine when to sync DP grads
         backward_counter: Counter[int] = Counter()
+        forward_counter: Counter[int] = Counter()
         handles = []
         past_first_backward = False
         # reload_event: Optional[torch.cuda.Event] = None
@@ -381,6 +382,10 @@ class CustomScheduleInterleaved1F1B():
                     # perform forward computation
                     stage = stage_index_to_stage[stage_index]
                     offload_group = f"{action.stage_index}F{mb_index}"
+                    forward_counter[stage_index] += 1
+                    last_forward = (
+                        forward_counter[stage_index] == self._n_microbatches
+                    )
                     with nvtx.annotate(f"{action.stage_index}F{mb_index}", color='green'):
                         # use this context manager to capture all saved tensors in this block, it does not transfer anything at this point
                         with self.gpu_activation_offloader.get_offload_context(
@@ -388,7 +393,7 @@ class CustomScheduleInterleaved1F1B():
                             enable=action.need_offload and self.use_gpu_activation_offload
                         ):
                             stage.forward_one_chunk(
-                                mb_index, arg_mbs[mb_index], kwarg_mbs[mb_index]
+                                mb_index, arg_mbs[mb_index], kwarg_mbs[mb_index], last_forward=last_forward
                             )
                         # start D2D transfer
                         if self.use_gpu_activation_offload:
