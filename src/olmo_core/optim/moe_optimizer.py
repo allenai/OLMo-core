@@ -925,8 +925,8 @@ class MoEFusedV2Optimizer:
         step_factor = cast(torch.Tensor, step_factor)
         self._step_skipped = 1 - step_factor
 
-        # Allow overriding via attribute; default to 500M elements.
-        CHUNK_ELEMS = getattr(self, "_foreach_chunk_threshold", 500_000_000)
+        # Allow overriding via attribute; default to X elements.
+        CHUNK_ELEMS = getattr(self, "_foreach_chunk_threshold", 1_200_000_000)
 
         for group in self.param_groups:
             # Per-chunk accumulators

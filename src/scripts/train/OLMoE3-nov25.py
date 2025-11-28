@@ -102,7 +102,7 @@ NUM_EXPERTS = 64
 TOP_K = 4
 # D_MODEL=3072
 # D_ATTN=3072
-D_MODEL=4096
+D_MODEL=3072
 D_ATTN=D_MODEL
 HEAD_DIM=128
 NUM_HEAD = D_ATTN // HEAD_DIM
@@ -413,7 +413,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         .with_callback(
             "profiler", 
             NvidiaProfilerCallback(enabled=True, # NOTE: change this
-                                   profile_ranks=[0, 8, 16, 24, 32, 40, 48, 56],
+                                   profile_ranks=list(range(0, 8*128, 8)),
                                    start=21,
                                    end=24
             )
