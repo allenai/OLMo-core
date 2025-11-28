@@ -87,7 +87,7 @@ def _get_split_points(original_num_layers: int, num_stages: int, minus_last_stag
 SEQUENCE_LENGTH = 8192
 
 # GLOBAL_BATCH_SIZE_SEQ=1024 + 512
-GLOBAL_BATCH_SIZE_SEQ=512
+GLOBAL_BATCH_SIZE_SEQ=32
 GLOBAL_BATCH_SIZE = (
     (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
 )  
@@ -98,7 +98,7 @@ MAX_DURATION = int(1000e9)  # int(6e12), don't forget to adjust the LR when you 
 EVAL_INTERVAL = 50
 LR= 3e-4
 
-NUM_EXPERTS = 64
+NUM_EXPERTS = 32
 TOP_K = 4
 # D_MODEL=3072
 # D_ATTN=3072
@@ -119,7 +119,7 @@ DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED
 
 MICRO_BSZ = 1
 # DP_DIM=2
-EP_DIM=8
+EP_DIM=4
 PP_DIM=4
 
 
@@ -140,12 +140,16 @@ USE_AC=False
 USE_TBO=False
 GRAD_ACC_IN_FP32=False
 UNIFORM_ASSIGN=False
+RANDOM_ASSIGN=True
+
 SEED = 2026
 
 TAG=f'dev-S{SEED}'
 
 if UNIFORM_ASSIGN:
     TAG = 'U-' + TAG
+elif RANDOM_ASSIGN:
+    TAG = 'RA-' + TAG
 else:
     TAG = 'R-' + TAG
 if GRAD_ACC_IN_FP32:
@@ -210,6 +214,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                 top_k=TOP_K,
                 gating_function=MoERouterGatingFunction.sigmoid,
                 uniform_expert_assignment=UNIFORM_ASSIGN,
+                random_expert_assignment=RANDOM_ASSIGN,
                 lb_loss_weight=0.005,
                 z_loss_weight=None,
                 lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
@@ -403,8 +408,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "profiler", 
             NvidiaProfilerCallback(enabled=True, # NOTE: change this
                                    profile_ranks=[0, 8, 16, 24, 32, 40, 48, 56],
-                                   start=10,
-                                   end=13
+                                   start=11,
+                                   end=14
             )
         )
         # TODO: might not be able to run in-loop evals depending on parallel strategies

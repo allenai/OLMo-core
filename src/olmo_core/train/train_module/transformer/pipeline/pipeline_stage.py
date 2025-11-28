@@ -535,27 +535,27 @@ class CustomPipelineStage:
                 with self.submod.no_sync():  # type: ignore[operator]
                     result = perform_backward(backward_type)()
         elif self.is_rddp: # composable.replicate
-            # The optimizer handles gradient synchronization for us, so always backward with no sync
-            self.submod.set_requires_gradient_sync(False) # type: ignore
-            result = perform_backward(backward_type)()
-            self.submod.set_requires_gradient_sync(True) # type: ignore
+            # # The optimizer handles gradient synchronization for us, so always backward with no sync
+            # self.submod.set_requires_gradient_sync(False) # type: ignore
+            # result = perform_backward(backward_type)()
+            # self.submod.set_requires_gradient_sync(True) # type: ignore
 
-            # if last_backward:
-            #     state = _rep.state(self.submod)            # grab _ReplicateState
-            #     ddp_impl = state._ddp                      # the hidden real DDP
-            #     ddp_impl.reducer.prepare_for_backward(  # type: ignore[union-attr, operator]
-            #         list(
-            #             torch.nn.parallel.distributed._find_tensors(  # type: ignore[attr-defined]
-            #                 bwd_kwargs["stage_output"]
-            #             )
-            #         )
-            #     )
-            #     result = perform_backward(backward_type)()
-            #     pass
-            # else:
-            #     self.submod.set_requires_gradient_sync(False) # type: ignore
-            #     result = perform_backward(backward_type)()
-            #     self.submod.set_requires_gradient_sync(True) # type: ignore
+            if last_backward:
+                state = _rep.state(self.submod)            # grab _ReplicateState
+                ddp_impl = state._ddp                      # the hidden real DDP
+                ddp_impl.reducer.prepare_for_backward(  # type: ignore[union-attr, operator]
+                    list(
+                        torch.nn.parallel.distributed._find_tensors(  # type: ignore[attr-defined]
+                            bwd_kwargs["stage_output"]
+                        )
+                    )
+                )
+                result = perform_backward(backward_type)()
+                pass
+            else:
+                self.submod.set_requires_gradient_sync(False) # type: ignore
+                result = perform_backward(backward_type)()
+                self.submod.set_requires_gradient_sync(True) # type: ignore
         
         # If submod is a FSDP module
         elif isinstance(self.submod, FSDPModule):

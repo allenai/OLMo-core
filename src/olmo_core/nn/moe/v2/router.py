@@ -48,6 +48,7 @@ class MoERouterConfigV2(Config):
     jitter_eps: Optional[float] = None
     normalize_expert_weights: Optional[float] = None
     uniform_expert_assignment: bool = False
+    random_expert_assignment: bool = False
     bias_gamma: Optional[float] = None
     gating_function: MoERouterGatingFunction = MoERouterGatingFunction.softmax
     dtype: Optional[DType] = None
@@ -114,6 +115,7 @@ class MoERouterV2(nn.Module):
         jitter_eps: Optional[float] = None,
         normalize_expert_weights: Optional[float] = None,
         uniform_expert_assignment: bool = False,
+        random_expert_assignment: bool = False,
         bias_gamma: Optional[float] = None,
         gating_function: MoERouterGatingFunction = MoERouterGatingFunction.softmax,
         lb_loss_weight: Optional[float] = None,
@@ -133,6 +135,7 @@ class MoERouterV2(nn.Module):
         self.jitter_eps = jitter_eps
         self.normalize_expert_weights = normalize_expert_weights
         self.uniform_expert_assignment = uniform_expert_assignment
+        self.random_expert_assignment = random_expert_assignment
         self.bias_gamma = bias_gamma
         self.gating_function = gating_function
         self.lb_loss_weight = lb_loss_weight
@@ -430,6 +433,9 @@ class MoERouterV2(nn.Module):
             scores = scores + 1e-7  
         else:
             raise NotImplementedError(self.gating_function)
+
+        if self.random_expert_assignment:
+            scores = scores * 0 + torch.rand_like(scores) # random, but keep the autograd graph
 
         if scores_only:
             if self.normalize_expert_weights is not None:
