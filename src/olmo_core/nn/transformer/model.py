@@ -855,7 +855,8 @@ class Transformer(nn.Module):
         Get the approximate number of flops per token.
 
         Accounts for sliding window attention (SWA) and grouped-query attention (GQA).
-        For SWA, uses the window size for each layer instead of the full sequence length.
+        For SWA, uses t * t_sw (seq_len * window_size) to account for the quadratic nature
+        of attention where each of t tokens attends to t_sw tokens in the window.
         For GQA, uses per-layer configuration but treats FLOPS as dense attention (same as n_heads).
         """
         # Base FLOPS from non-attention operations (FFN, layer norms, etc.)
@@ -876,19 +877,31 @@ class Transformer(nn.Module):
             # Calculate head dimension for this layer (may differ if block overrides change n_heads)
             q = self.d_model // n_heads
 
-            # Determine effective sequence length for this layer
-            # If SWA is used, use window size; otherwise use full sequence length
-            # Cap window size at sequence length to avoid overestimating FLOPS for short sequences
-            effective_seq_len = seq_len
+            # Determine attention FLOPS for this layer
+            # The PaLM formula uses a linear approximation: 12 * n_heads * q * t
+            # For SWA, we account for the quadratic nature: each of t tokens attends to t_sw tokens
+            # As suggested by the maintainer, we use t * t_sw for SWA
             if block_config.attention.sliding_window is not None:
                 sliding_window_cfg = block_config.attention.sliding_window
                 if sliding_window_cfg.should_use_swa(layer_idx, self.n_layers):
                     window_size = sliding_window_cfg.get_window_size(layer_idx, self.n_layers)
-                    effective_seq_len = min(window_size, seq_len)
+                    # For SWA: use t * t_sw (seq_len * window_size) to account for quadratic nature
+                    # Each of t tokens attends to t_sw tokens in the window
+                    # If window_size > seq_len, cap at seq_len^2 (equivalent to dense attention)
+                    if window_size >= seq_len:
+                        attention_seq_factor = seq_len * seq_len
+                    else:
+                        attention_seq_factor = seq_len * window_size
+                else:
+                    # Dense attention: use linear approximation (PaLM heuristic)
+                    attention_seq_factor = seq_len
+            else:
+                # Dense attention: use linear approximation (PaLM heuristic)
+                attention_seq_factor = seq_len
 
             # The factor 12 accounts for: 2 matmuls (QK^T, attn@V) * 2 (forward+backward) * 2 (mult+add) * 1.5 (approximate)
             # For GQA, FLOPS are effectively the same as dense attention (n_heads), so we keep n_heads here.
-            layer_attention_flops = 12 * n_heads * q * effective_seq_len
+            layer_attention_flops = 12 * n_heads * q * attention_seq_factor
             attention_flops += layer_attention_flops
 
         flop_per_token = base_flops + attention_flops
