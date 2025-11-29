@@ -651,7 +651,7 @@ def test_num_flops_per_token_with_swa_pattern():
     base_flops = 6 * config_no_swa.num_non_embedding_params
     attention_flops_no_swa = flops_no_swa - base_flops
     attention_flops_swa_pattern = flops_swa_pattern - base_flops
-    
+
     # With 4 layers and alternating windows, the average window is (window_size_1 + window_size_2) / 2
     # So the ratio should be approximately the average window size
     avg_window = (window_size_1 + window_size_2) / 2
@@ -752,7 +752,7 @@ def test_num_flops_per_token_with_swa_window_larger_than_seq():
     base_flops = 6 * config_no_swa.num_non_embedding_params
     attention_flops_no_swa = flops_no_swa - base_flops
     attention_flops_swa_large_window = flops_swa_large_window - base_flops
-    
+
     # The ratio should be seq_len (since SWA uses seq_len^2 and dense uses seq_len)
     expected_ratio = seq_len
     actual_ratio = attention_flops_swa_large_window / attention_flops_no_swa
