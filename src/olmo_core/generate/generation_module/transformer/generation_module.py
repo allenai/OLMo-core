@@ -247,7 +247,7 @@ class TransformerGenerationModule(GenerationModule):
             )
 
             # Optional debug: print logits shape
-            if getattr(self._generation_config, "print_shape", False):
+            if getattr(generation_config, "print_shape", False):
                 print(f"[logits-shape] {next_token_logits.shape}")
 
             next_tokens = select_next_token(
