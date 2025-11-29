@@ -40,7 +40,7 @@ from olmo_core.io import join_path, copy_file
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 log = logging.getLogger(__name__)
 
-SAVE_FOLDER = Path(os.environ.get("SAVE_FOLDER", "/tmp/benchmark_outputs"))
+SAVE_FOLDER = os.environ.get("SAVE_FOLDER", "/tmp/benchmark_outputs")
 MODEL_STYLE = os.environ.get("MODEL_STYLE", "hnet") # or baseline
 LOCAL_MODEL_BLOCKS = os.environ.get("LOCAL_MODEL_BLOCKS", "xlstm") # or mamba2 or xlstm_no_ffn
 DTYPE = os.environ.get("DTYPE", "bfloat16")
