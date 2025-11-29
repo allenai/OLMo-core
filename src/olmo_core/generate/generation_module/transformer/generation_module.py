@@ -246,6 +246,10 @@ class TransformerGenerationModule(GenerationModule):
                 cache_leftpad=cache_leftpad if generation_config.use_cache else None,
             )
 
+            # Optional debug: print logits shape
+            if getattr(self._generation_config, "print_shape", False):
+                print(f"[logits-shape] {next_token_logits.shape}")
+
             next_tokens = select_next_token(
                 next_token_logits.squeeze(1),
                 do_sample=generation_config.do_sample,
