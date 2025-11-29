@@ -26,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Fixed MFU calculation to account for sliding window attention (SWA) and grouped-query attention (GQA). The `num_flops_per_token()` method in `TransformerConfig` and `Transformer` now correctly computes FLOPS per layer, using window sizes for SWA (capped at the actual sequence length) and per-layer GQA configuration while treating FLOPS as dense attention (proportional to `n_heads`). Head dimensions are recalculated per layer so block overrides with custom `n_heads` values are handled correctly.
+- Fixed MFU calculation to account for sliding window attention (SWA) and grouped-query attention (GQA). The `num_flops_per_token()` method in `TransformerConfig` and `Transformer` now correctly computes FLOPS per layer, using `t * t_sw` (seq_len * window_size) for SWA to account for the quadratic nature of attention where each of t tokens attends to t_sw tokens in the window. When window_size >= seq_len, it uses seq_len^2 (equivalent to dense attention if it were quadratic). The method also uses per-layer GQA configuration while treating FLOPS as dense attention (proportional to `n_heads`). Head dimensions are recalculated per layer so block overrides with custom `n_heads` values are handled correctly.
 
 ## [v2.4.0](https://github.com/allenai/OLMo-core/releases/tag/v2.4.0) - 2025-11-20
 
