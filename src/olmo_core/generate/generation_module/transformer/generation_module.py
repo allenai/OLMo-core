@@ -859,12 +859,15 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         one_mask_state = blt_utils.MaskState(torch.ones(batch_size, dtype=torch.bool, device=self.device))
 
         # prefill
-        boundary_mask = self.model.prefill_boundary_prediction_forward(  # type: ignore
-            input_ids,
-            patch_lens=patch_lens,
-            blt_config=self.blt_config,
+        byte_mask = torch.ones_like(input_ids, dtype=torch.bool, device=self.device)
+        patch_end_indices = torch.cumsum(patch_lens, dim=1) - 1
+        patch_end_indices = torch.where(
+            patch_end_indices < byte_mask.shape[1],
+            patch_end_indices,
+            torch.zeros_like(patch_end_indices), # effectively mask out, index 0 is always start
         )
-        self.prepare_inference_cache(batch_size, n_prefill + n_generate)
+        boundary_mask = torch.zeros_like(byte_mask, dtype=torch.bool)
+        boundary_mask.scatter_(1, patch_end_indices, 1.0)
 
         torch.cuda.synchronize()
         # do not count boundary mask computation since it could easily be folded into inference_forward instead of rerunning
