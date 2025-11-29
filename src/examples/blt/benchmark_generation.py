@@ -245,7 +245,7 @@ def main(run_name: str, overrides: list[str]):
         json.dump(all_timings, temp_file, indent=4)
         temp_file.flush()  # make sure data is written to disk, json.dump doesn't flush.
         copy_file(temp_file.name, save_path, save_overwrite=True)
-        log.info(f"Successfully wrote timings to '{save_path}'")
+        print(f"Successfully wrote timings to '{save_path}'")
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
