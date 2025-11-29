@@ -224,10 +224,10 @@ def main(run_name: str, overrides: list[str]):
 
     all_timings = []
 
-    log.info(f"Benchmarking {N_BATCHES} batches of size {BATCH_SIZE} with prefill length {PREFILL_LENGTH} and generate length {GENERATE_LENGTH}")
+    print(f"Benchmarking {N_BATCHES} batches of size {BATCH_SIZE} with prefill length {PREFILL_LENGTH} and generate length {GENERATE_LENGTH}")
 
     for batch_idx in range(N_BATCHES):
-        log.info(f"Running batch {batch_idx+1}/{N_BATCHES}")
+        print(f"Running batch {batch_idx+1}/{N_BATCHES}")
         timings = generation_module.benchmark(  # type: ignore
             batch_size=BATCH_SIZE,
             n_prefill=PREFILL_LENGTH,

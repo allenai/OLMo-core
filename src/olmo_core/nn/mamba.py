@@ -16,10 +16,6 @@ class Mamba(nn.Module):
         self.inner = Mamba2(*args, **kwargs, layer_idx=0)
         self.dtype = self.inner.conv1d.weight.dtype
 
-        # not cast to dtype in _Mamba2.__init__
-        self.inner.D = nn.Parameter(self.inner.D.to(self.dtype))
-        self.inner.dt_bias = nn.Parameter(self.inner.dt_bias.to(self.dtype))
-
         self.mamba_cache_manager = None
 
     def init_mamba_cache_manager(self, batch_size: int):
