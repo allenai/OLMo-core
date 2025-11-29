@@ -16,6 +16,7 @@ from pathlib import Path
 from dataclasses import dataclass
 import os
 import math
+import tempfile
 import json
 
 import torch
@@ -34,6 +35,7 @@ from olmo_core.nn.xlstm import XLSTMConfig
 from olmo_core.nn.fla import FLAConfig
 from olmo_core.train.train_module.transformer.common import parallelize_model
 from olmo_core.utils import get_default_device
+from olmo_core.io import join_path, copy_file
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 log = logging.getLogger(__name__)
@@ -237,12 +239,13 @@ def main(run_name: str, overrides: list[str]):
         )
         all_timings.append(timings)
 
-    # does not support gcp/augusta for now
-    save_folder = Path(SAVE_FOLDER)
+    save_path = join_path(SAVE_FOLDER, f"{run_name}_generation_benchmark.json")
 
-    save_folder.mkdir(parents=True, exist_ok=True)
-    with open(save_folder / f"{run_name}_generation_benchmark.json", "w") as f:
-        json.dump(all_timings, f, indent=4)
+    with tempfile.NamedTemporaryFile(mode="w") as temp_file:
+        json.dump(all_timings, temp_file, indent=4)
+        temp_file.flush()  # make sure data is written to disk, json.dump doesn't flush.
+        copy_file(temp_file.name, save_path, save_overwrite=True)
+        log.info(f"Successfully wrote timings to '{save_path}'")
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
