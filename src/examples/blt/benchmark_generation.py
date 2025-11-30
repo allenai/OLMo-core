@@ -230,13 +230,17 @@ def main(run_name: str, overrides: list[str]):
 
     for batch_idx in range(N_BATCHES):
         print(f"Running batch {batch_idx+1}/{N_BATCHES}")
-        timings = generation_module.benchmark(  # type: ignore
-            batch_size=BATCH_SIZE,
-            n_prefill=PREFILL_LENGTH,
-            n_generate=GENERATE_LENGTH,
-            profile=PROFILE,
-            **generate_kwargs,
-        )
+        try:
+            timings = generation_module.benchmark(  # type: ignore
+                batch_size=BATCH_SIZE,
+                n_prefill=PREFILL_LENGTH,
+                n_generate=GENERATE_LENGTH,
+                profile=PROFILE,
+                **generate_kwargs,
+            )
+        except Exception as e:
+            print(f"Error during benchmarking: {type(e).__name__}")
+            sys.exit(1)
         all_timings.append(timings)
 
     save_path = join_path(SAVE_FOLDER, f"{run_name}_generation_benchmark.json")
