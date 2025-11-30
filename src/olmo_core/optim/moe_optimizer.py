@@ -926,7 +926,7 @@ class MoEFusedV2Optimizer:
         self._step_skipped = 1 - step_factor
 
         # Allow overriding via attribute; default to X elements.
-        CHUNK_ELEMS = getattr(self, "_foreach_chunk_threshold", 300_000_000)
+        CHUNK_ELEMS = getattr(self, "_foreach_chunk_threshold", 100_000_000)
 
         for group in self.param_groups:
             # Per-chunk accumulators
