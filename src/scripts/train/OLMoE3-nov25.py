@@ -145,7 +145,7 @@ RANDOM_ASSIGN=True
 
 SEED = 2026
 
-TAG=f'dev-S{SEED}'
+TAG=f'dev-S{SEED}-bf16s'
 
 if UNIFORM_ASSIGN:
     TAG = 'U-' + TAG

@@ -392,6 +392,10 @@ class MoEFusedV2Optimizer:
         if isinstance(dtype, DType):
             dtype = dtype.as_pt()
         self.dtype = dtype
+
+        self.states_dtype = torch.bfloat16
+        self.main_grad_dtype = torch.float32
+
         # self.foreach = foreach
         self._step_skipped: Optional[torch.Tensor] = None
         self.do_not_shard_tensor_smaller_than = do_not_shard_tensor_smaller_than
@@ -434,12 +438,12 @@ class MoEFusedV2Optimizer:
                 self.states[f'{name}.main'] = main_param
 
                 # exp avg
-                exp_avg = torch.zeros(num_elements, dtype=torch.float32, device=device)
+                exp_avg = torch.zeros(num_elements, dtype=self.states_dtype, device=device)
                 exp_avg = self._distribute_tensor(exp_avg, device_mesh)
                 self.states[f'{name}.exp_avg'] = exp_avg
 
                 # exp avg sq
-                exp_avg_sq = torch.zeros(num_elements, dtype=torch.float32, device=device)
+                exp_avg_sq = torch.zeros(num_elements, dtype=self.states_dtype, device=device)
                 exp_avg_sq = self._distribute_tensor(exp_avg_sq, device_mesh)
                 self.states[f'{name}.exp_avg_sq'] = exp_avg_sq
 
@@ -514,9 +518,15 @@ class MoEFusedV2Optimizer:
         print_str += info_str('Exp avg', exp_avg_stat)
         print_str += info_str('Exp avg sq', exp_avg_sq_stat)
 
-        total_global_optim_gb = (main_stat[0] + exp_avg_stat[0] + exp_avg_sq_stat[0]) * 4 / 1024**3
-        total_local_optim_gb = (main_stat[1] + exp_avg_stat[1] + exp_avg_sq_stat[1]) * 4 / 1024**3
-        total_model_gb = self._model_param_sz / 1024**3
+        BYTES_IN_GB = 1024**3
+
+        total_global_optim_gb = main_stat[0] * self.main_grad_dtype.itemsize / BYTES_IN_GB
+        total_global_optim_gb += (exp_avg_stat[0] + exp_avg_sq_stat[0]) * self.states_dtype.itemsize / BYTES_IN_GB # bf16 or fp32
+
+        total_local_optim_gb = main_stat[1] * self.main_grad_dtype.itemsize / BYTES_IN_GB
+        total_local_optim_gb += (exp_avg_stat[1] + exp_avg_sq_stat[1]) * self.states_dtype.itemsize / BYTES_IN_GB # bf16 or fp32
+        
+        total_model_gb = self._model_param_sz / BYTES_IN_GB
         print_str += f'[MoEFusedV2Optimizer] Total optimizer states size: {total_global_optim_gb:.4f} GB global, {total_local_optim_gb:.4f} GB local\n'
          
         if self.model_has_grad_accum_fp32_buffer:
@@ -932,8 +942,13 @@ class MoEFusedV2Optimizer:
             # Per-chunk accumulators
             main_params: list[torch.Tensor] = []
             grads: list[torch.Tensor] = []
-            exp_avgs: list[torch.Tensor] = []
-            exp_avg_sqs: list[torch.Tensor] = []
+
+            exp_avgs: list[torch.Tensor] = [] # always fp32
+            exp_avg_sqs: list[torch.Tensor] = [] # always fp32
+
+            exp_avgs_original: list[torch.Tensor] = [] # if states_dtype is bf16, we need to keep a reference to the original bf16 tensors
+            exp_avg_sqs_original: list[torch.Tensor] = []
+
             steps_list: list[torch.Tensor] = []
             running_elems: int = 0
 
@@ -954,13 +969,30 @@ class MoEFusedV2Optimizer:
                     step_factor=step_factor,
                     step_increment_bugfix=True,
                 )
+
+
+            def reset_chunk_buffers():
+                nonlocal main_params, grads, exp_avgs, exp_avg_sqs, steps_list, running_elems, exp_avgs_original, exp_avg_sqs_original
                 # reset for next chunk
                 main_params = []
                 grads = []
                 exp_avgs = []
                 exp_avg_sqs = []
+                exp_avgs_original = []
+                exp_avg_sqs_original = []
                 steps_list = []
                 running_elems = 0
+
+            def maybe_copy_back_16bit_states():
+                # foreach_adamw_step makes in place updates to exp_avgs and exp_avg_sqs which are in fp32
+                # so if the fp32 states are copies of bf16 states, we need to copy them back
+                # otherwies, they are the original fp32 states, no need to copy back
+                nonlocal exp_avgs_original, exp_avg_sqs_original, exp_avgs, exp_avg_sqs
+                if self.states_dtype == torch.bfloat16:
+                    for i in range(len(exp_avgs)):
+                        # copy back fp32 to original bf16 tensors
+                        exp_avgs_original[i].copy_(exp_avgs[i].to(torch.bfloat16))
+                        exp_avg_sqs_original[i].copy_(exp_avg_sqs[i].to(torch.bfloat16))
 
             for name, model_p in group["named_params"].items():
                 if not model_p.requires_grad:
@@ -968,18 +1000,30 @@ class MoEFusedV2Optimizer:
 
                 main_params.append(self.states[f"{name}.main"].to_local())
                 grads.append(self.main_grad[name].to_local())
-                exp_avgs.append(self.states[f"{name}.exp_avg"].to_local())
-                exp_avg_sqs.append(self.states[f"{name}.exp_avg_sq"].to_local())
+                if self.states_dtype == torch.bfloat16:
+                    # new fp32 copy
+                    exp_avgs.append(self.states[f"{name}.exp_avg"].to_local().to(torch.float32))
+                    exp_avg_sqs.append(self.states[f"{name}.exp_avg_sq"].to_local().to(torch.float32))
+
+                    exp_avgs_original.append(self.states[f"{name}.exp_avg"].to_local())
+                    exp_avg_sqs_original.append(self.states[f"{name}.exp_avg_sq"].to_local())
+                else:
+                    # original fp32
+                    exp_avgs.append(self.states[f"{name}.exp_avg"].to_local())
+                    exp_avg_sqs.append(self.states[f"{name}.exp_avg_sq"].to_local())
                 steps_list.append(self.states[f"{name}.step"].to_local())
 
                 running_elems += self.states[f"{name}.main"].to_local().numel()
                 # Flush when we reach/exceed the threshold. It's OK to overshoot with the last add.
                 if running_elems >= CHUNK_ELEMS:
                     flush_chunk()
+                    maybe_copy_back_16bit_states()
+                    reset_chunk_buffers()
 
             # Flush any tail chunk
             flush_chunk()
-
+            maybe_copy_back_16bit_states()
+            reset_chunk_buffers()
 
     def zero_grad(self, set_to_none=True):
         for group in self.param_groups:
