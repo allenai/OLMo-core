@@ -252,7 +252,7 @@ class TorchMemoryHistoryCallback(Callback):
     The ranks to profile.
     """
 
-    max_entries: int = 100000
+    max_entries: int = 500000
 
     output_dir: str = "."
     
@@ -262,7 +262,7 @@ class TorchMemoryHistoryCallback(Callback):
                 print(f'Starting memory profiler at rank={get_rank()} step={self.step}...')
                 torch.cuda.memory._record_memory_history(
                     max_entries=self.max_entries
-                    )
+                )
 
     def post_train_batch(self):
         if self.enabled and get_rank() in self.profile_ranks:
