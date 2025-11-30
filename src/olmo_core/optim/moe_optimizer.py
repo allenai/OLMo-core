@@ -347,7 +347,7 @@ class MoEFusedV2Optimizer:
         ep_dp_group: Optional[ProcessGroup] = None,
         broadcast_bucket_mb: int = 32,
         do_not_shard_tensor_smaller_than: int = 1024,
-        use_distributed: bool = False,
+        use_distributed: bool = True,
     ) -> None:
         assert lr > 0.0
         assert all([0.0 <= beta <= 1.0 for beta in betas])
@@ -525,7 +525,7 @@ class MoEFusedV2Optimizer:
 
         total_local_optim_gb = main_stat[1] * self.main_grad_dtype.itemsize / BYTES_IN_GB
         total_local_optim_gb += (exp_avg_stat[1] + exp_avg_sq_stat[1]) * self.states_dtype.itemsize / BYTES_IN_GB # bf16 or fp32
-        
+
         total_model_gb = self._model_param_sz / BYTES_IN_GB
         print_str += f'[MoEFusedV2Optimizer] Total optimizer states size: {total_global_optim_gb:.4f} GB global, {total_local_optim_gb:.4f} GB local\n'
          
