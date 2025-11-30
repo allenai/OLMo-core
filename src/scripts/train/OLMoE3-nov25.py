@@ -88,7 +88,7 @@ def _get_split_points(original_num_layers: int, num_stages: int, minus_last_stag
 SEQUENCE_LENGTH = 8192
 
 # GLOBAL_BATCH_SIZE_SEQ=1024 + 512
-GLOBAL_BATCH_SIZE_SEQ=32 * 64
+GLOBAL_BATCH_SIZE_SEQ=32 * 128
 GLOBAL_BATCH_SIZE = (
     (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
 )  
@@ -145,7 +145,7 @@ RANDOM_ASSIGN=True
 
 SEED = 2026
 
-TAG=f'dev-S{SEED}-bf16s'
+TAG=f'dev-S{SEED}'
 
 if UNIFORM_ASSIGN:
     TAG = 'U-' + TAG
