@@ -99,7 +99,7 @@ MAX_DURATION = int(1000e9)  # int(6e12), don't forget to adjust the LR when you 
 EVAL_INTERVAL = 50
 LR= 3e-4
 
-NUM_EXPERTS = 64
+NUM_EXPERTS = 64+8
 TOP_K = 4
 # D_MODEL=3072
 # D_ATTN=3072
@@ -124,7 +124,7 @@ EP_DIM=8
 PP_DIM=2
 
 
-NUM_LAYERS=48
+NUM_LAYERS=40
 
 if PP_DIM > 1:
     MINUS_LAST_STAGE=1
