@@ -252,7 +252,7 @@ class MoEV2TransformerTrainModule(TrainModule):
         self._cast_to_fwd_bwd_precision(self.model_parts)
 
         import torch._dynamo.config as dynamo_cfg
-        dynamo_cfg.recompile_limit = 32  # or any higher number you want
+        dynamo_cfg.recompile_limit = 64  # or any higher number you want
 
         self.grad_accum_in_fp32 = grad_accum_in_fp32
         if self.grad_accum_in_fp32:
