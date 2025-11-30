@@ -88,7 +88,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             metrics_collect_interval=10,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(int(5e12)),
-            hard_stop=Duration.tokens(int(2e10)) # stop at 2T tokens for this run 
+            hard_stop=Duration.tokens(int(2e12)) # stop at 2T tokens for this run 
         )
         .with_callback(
             "checkpointer",
