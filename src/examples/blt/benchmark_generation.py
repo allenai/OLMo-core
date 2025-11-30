@@ -35,7 +35,7 @@ from olmo_core.nn.xlstm import XLSTMConfig
 from olmo_core.nn.fla import FLAConfig
 from olmo_core.train.train_module.transformer.common import parallelize_model
 from olmo_core.utils import get_default_device
-from olmo_core.io import join_path, copy_file
+from olmo_core.io import join_path, copy_file, file_exists
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 log = logging.getLogger(__name__)
@@ -53,6 +53,12 @@ N_BATCHES = int(os.environ.get("N_BATCHES", 1))
 AVG_BYTES_PER_TOKEN = float(os.environ.get("AVG_BYTES_PER_TOKEN", 4.3))
 
 def main(run_name: str, overrides: list[str]):
+    save_path = join_path(SAVE_FOLDER, f"{run_name}_generation_benchmark.json")
+
+    if file_exists(save_path):
+        log.info(f"Benchmark output file '{save_path}' already exists, skipping benchmark.")
+        return
+
     if MODEL_STYLE == "hnet":
         tokenizer_config = ByteTokenizerConfig.blt()
         tokenizer = tokenizer_config.build()
@@ -242,8 +248,6 @@ def main(run_name: str, overrides: list[str]):
             print(f"Error during benchmarking: {type(e).__name__}")
             sys.exit(1)
         all_timings.append(timings)
-
-    save_path = join_path(SAVE_FOLDER, f"{run_name}_generation_benchmark.json")
 
     with tempfile.NamedTemporaryFile(mode="w") as temp_file:
         json.dump(all_timings, temp_file, indent=4)
