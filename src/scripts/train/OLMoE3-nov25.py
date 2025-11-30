@@ -108,7 +108,7 @@ D_ATTN=D_MODEL
 HEAD_DIM=128
 NUM_HEAD = D_ATTN // HEAD_DIM
 NUM_KV_HEAD=4
-MOE_HIDDEN_SIZE = 2560
+MOE_HIDDEN_SIZE = 2048
 NUM_SHARED_EXPERTS = 1  # Number of shared experts in the shared MLP
 SHARED_MLP_HIDDEN_SIZE = 2560  # Hidden size for shared MLP (or dense branch MLP in arctic) in MoE blocks
 
