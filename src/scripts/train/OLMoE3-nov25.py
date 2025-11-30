@@ -53,7 +53,8 @@ from olmo_core.train.callbacks import (
     CheckpointerCallback,
     CometCallback,
     WandBCallback,
-    NvidiaProfilerCallback
+    NvidiaProfilerCallback,
+    TorchMemoryHistoryCallback
 )
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
@@ -412,12 +413,20 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         # )
         .with_callback(
             "profiler", 
-            NvidiaProfilerCallback(enabled=True, # NOTE: change this
+            NvidiaProfilerCallback(enabled=False, # NOTE: change this
                                    profile_ranks=list(range(0, 8*128, 8)),
                                    start=21,
                                    end=24
             )
         )
+        .with_callback(
+            "torch_mem_history",
+            TorchMemoryHistoryCallback(enabled=True, # NOTE: change this
+                                   profile_ranks=list(range(0, 8*128, 8)),
+                                   start=6,
+                                   end=8,
+                                   output_dir='/workspace/tmp'
+            )
         # TODO: might not be able to run in-loop evals depending on parallel strategies
         # .with_recommended_evals(
         #     # common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
