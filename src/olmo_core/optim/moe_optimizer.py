@@ -393,7 +393,7 @@ class MoEFusedV2Optimizer:
             dtype = dtype.as_pt()
         self.dtype = dtype
 
-        self.states_dtype = torch.bfloat16
+        self.states_dtype = torch.float32
         self.main_grad_dtype = torch.float32
 
         # self.foreach = foreach
