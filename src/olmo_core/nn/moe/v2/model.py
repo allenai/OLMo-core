@@ -762,6 +762,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
         mem_diff = debug_mem_block_end - debug_mem_block_start
         # if block.block_idx == 1:
         #     print(f'block mem: {mem_diff:.3f} GB')
+        print(f'block {block_key} mem: {mem_diff:.3f} GB')
         return h
 
     def forward(
