@@ -423,8 +423,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "torch_mem_history",
             TorchMemoryHistoryCallback(enabled=True, # NOTE: change this
                                    profile_ranks=list(range(0, 8*128, 8)),
-                                   start=6,
-                                   end=8,
+                                   start=11,
+                                   end=14,
                                    output_dir='/workspace/tmp'
             )
         )

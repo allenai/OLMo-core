@@ -273,3 +273,5 @@ class TorchMemoryHistoryCallback(Callback):
                
                 print(f'Stopping memory profiler at rank={get_rank()} step={self.step}...')
                 torch.cuda.memory._record_memory_history(enabled=None)
+
+                print(f'Memory profiler stopped at rank={get_rank()} step={self.step}.')
