@@ -1442,8 +1442,7 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         generated_subword_ids = []
 
         for example_idx in range(generated.shape[0]):
-            # +1 if fuse boundaries since we rolled one byte back
-            completion_text = self.tokenizer.decode(generated[example_idx, prompt_len + int(fuse_boundaries):].tolist())  # type: ignore
+            completion_text = self.tokenizer.decode(generated[example_idx, prompt_len:].tolist())  # type: ignore
             completion_subword_tokens = self.tokenizer.hf_tokenizer.encode(completion_text)
 
             if completions_only:
