@@ -4,12 +4,13 @@ Train an OLMoE model. Run this script without any arguments to see usage info.
 
 import logging
 import math
+from dataclasses import replace
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.parallel.pipeline_parallel import PipelineScheduleType
 from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
-from olmo_core.internal.experiment import CommonComponents, main, ExperimentConfig
+from olmo_core.internal.experiment import CommonComponents, ExperimentConfig, main
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.feed_forward import FeedForwardConfig
 from olmo_core.nn.lm_head import LMLossImplementation
@@ -25,49 +26,56 @@ from olmo_core.nn.transformer import (
     TransformerConfig,
     TransformerType,
 )
-from olmo_core.optim import WSD, OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig, AdamWConfig, ZeroAdamWConfig
+from olmo_core.optim import (
+    WSD,
+    AdamWConfig,
+    OptimGroupOverride,
+    SchedulerUnits,
+    SkipStepAdamWConfig,
+    ZeroAdamWConfig,
+)
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
     BatchSizeSchedulerCallback,
     CheckpointerCallback,
     CometCallback,
+    NvidiaProfilerCallback,
     WandBCallback,
-    NvidiaProfilerCallback
 )
 from olmo_core.train.train_module import (
-    TransformerDataParallelConfig,
-    TransformerDataParallelWrappingStrategy,
-    TransformerTrainModuleConfig,
     TransformerActivationCheckpointingConfig,
     TransformerActivationCheckpointingMode,
-    TransformerExpertParallelConfig
+    TransformerDataParallelConfig,
+    TransformerDataParallelWrappingStrategy,
+    TransformerExpertParallelConfig,
+    TransformerTrainModuleConfig,
 )
 from olmo_core.train.train_module.transformer import TransformerPipelineParallelConfig
-from dataclasses import replace
+
 log = logging.getLogger(__name__)
 
 
 SEQUENCE_LENGTH = 8192
-GLOBAL_BATCH_SIZE_SEQ=512
+GLOBAL_BATCH_SIZE_SEQ = 512
 GLOBAL_BATCH_SIZE = (
-    (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
-)  # batch size at step 0, let's keep this independent of the sequence length in case we change it.
+    GLOBAL_BATCH_SIZE_SEQ
+) * SEQUENCE_LENGTH  # batch size at step 0, let's keep this independent of the sequence length in case we change it.
 MAX_DURATION = int(700e9)  # int(6e12), don't forget to adjust the LR when you increase this
 EVAL_INTERVAL = 1000
-LR= 4e-5
+LR = 4e-5
 
 NUM_EXPERTS = 64
 TOP_K = 4
-D_MODEL=2048
+D_MODEL = 2048
 MOE_HIDDEN_SIZE = 1024 + 1024
 
 SHARED_MLP_HIDDEN_SIZE = 4096  # Hidden size for shared MLP in MoE blocks
 MICRO_BSZ = 4
 
-NUM_LAYERS=48
-DP_DIM=32
-EP_DIM=1
-PP_DIM=1
+NUM_LAYERS = 48
+DP_DIM = 32
+EP_DIM = 1
+PP_DIM = 1
 SPLIT_POINTS = None
 # SPLIT_POINTS = [ 24, ]
 # SPLIT_POINTS = [4, 8, 12, ]
@@ -83,8 +91,9 @@ SPLIT_POINTS = None
 # 30 31 32 33 34 35
 # 36 37 38 39 40 41
 # 42 43 44 45 46 + loss
-            
-TAG=f'debug'
+
+TAG = f"debug"
+
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     d_model = D_MODEL
@@ -118,63 +127,69 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
             num_experts=NUM_EXPERTS,
             hidden_size=MOE_HIDDEN_SIZE,
             # capacity_factor=1.0,
-            router=MoERouterConfig(top_k=TOP_K, gating_function=MoERouterGatingFunction.sigmoid, uniform_expert_assignment=False),
+            router=MoERouterConfig(
+                top_k=TOP_K,
+                gating_function=MoERouterGatingFunction.sigmoid,
+                uniform_expert_assignment=False,
+            ),
             # shared_mlp=FeedForwardConfig(hidden_size=SHARED_MLP_HIDDEN_SIZE, bias=False) if USE_SHARED_MLP else None,
             lb_loss_weight=0.05,
             z_loss_weight=None,
             lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
             scale_loss_by_num_layers=False,
         ),
-         feed_forward=FeedForwardConfig(hidden_size=SHARED_MLP_HIDDEN_SIZE, bias=False),
+        feed_forward=FeedForwardConfig(hidden_size=SHARED_MLP_HIDDEN_SIZE, bias=False),
         init_std=0.01,
     )
-    
+
     config.lm_head.loss_implementation = LMLossImplementation.fused_linear
-    WINDOW_SIZE=4095
+    WINDOW_SIZE = 4095
     config.block.attention.sliding_window = SlidingWindowAttentionConfig(
         force_full_attention_on_first_layer=False,
         force_full_attention_on_last_layer=True,
-        pattern=[WINDOW_SIZE, WINDOW_SIZE, WINDOW_SIZE, -1]
+        pattern=[WINDOW_SIZE, WINDOW_SIZE, WINDOW_SIZE, -1],
     )
     config.block.attention.use_flash = True
     config.block.attention.use_head_qk_norm = True
-    
+
     # First block will be a regular transformer block (no MoE component).
     # every 8 layer
     config.block_overrides = {
         0: replace(
-            config.block, 
-            name=TransformerBlockType.reordered_norm, 
+            config.block,
+            name=TransformerBlockType.reordered_norm,
             feed_forward_moe=None,
-            feed_forward=FeedForwardConfig(hidden_size=( TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE), bias=False),
+            feed_forward=FeedForwardConfig(
+                hidden_size=(TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE), bias=False
+            ),
         ),
         # 8: replace(
-        #     config.block, 
-        #     name=TransformerBlockType.reordered_norm, 
+        #     config.block,
+        #     name=TransformerBlockType.reordered_norm,
         #     feed_forward_moe=None,
         #     feed_forward=FeedForwardConfig(hidden_size=(  TOP_K * MOE_HIDDEN_SIZE), bias=False),
         # ),
         # 16: replace(
-        #     config.block, 
-        #     name=TransformerBlockType.reordered_norm, 
+        #     config.block,
+        #     name=TransformerBlockType.reordered_norm,
         #     feed_forward_moe=None,
         #     feed_forward=FeedForwardConfig(hidden_size=( TOP_K * MOE_HIDDEN_SIZE), bias=False),
         # ),
         # 24: replace(
-        #     config.block, 
-        #     name=TransformerBlockType.reordered_norm, 
+        #     config.block,
+        #     name=TransformerBlockType.reordered_norm,
         #     feed_forward_moe=None,
         #     feed_forward=FeedForwardConfig(hidden_size=(  TOP_K * MOE_HIDDEN_SIZE), bias=False),
         # ),
         # 32: replace(
-        #     config.block, 
-        #     name=TransformerBlockType.reordered_norm, 
+        #     config.block,
+        #     name=TransformerBlockType.reordered_norm,
         #     feed_forward_moe=None,
         #     feed_forward=FeedForwardConfig(hidden_size=( TOP_K * MOE_HIDDEN_SIZE), bias=False),
         # ),
         # 40: replace(
-        #     config.block, 
-        #     name=TransformerBlockType.reordered_norm, 
+        #     config.block,
+        #     name=TransformerBlockType.reordered_norm,
         #     feed_forward_moe=None,
         #     feed_forward=FeedForwardConfig(hidden_size=(  TOP_K * MOE_HIDDEN_SIZE), bias=False),
         # ),
@@ -188,8 +203,8 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         rank_microbatch_size=MICRO_BSZ * SEQUENCE_LENGTH,
         max_sequence_length=common.dataset.effective_sequence_length,
         optim=SkipStepAdamWConfig(
-        # optim=ZeroAdamWConfig(
-        # optim=AdamWConfig(
+            # optim=ZeroAdamWConfig(
+            # optim=AdamWConfig(
             lr=LR,
             weight_decay=0.1,
             betas=(0.9, 0.95),
@@ -198,10 +213,9 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             ],
             # fused=True,
             compile=False,
-            foreach=True
+            foreach=True,
         ),
         compile_model=False,
-        
         # FSDP
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.hsdp,
@@ -212,7 +226,6 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             prefetch_factor=1,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
         ),
-
         # DDP
         # dp_config=TransformerDataParallelConfig(
         #     name=DataParallelType.ddp,
@@ -225,9 +238,9 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         #     only_allreduce_last_microbatch=True, # True -> only all-reduce gradients at last microbatch backward, otherwise False -> all-reduce gradients at every microbatch backward
         # ),
         # autocast_precision=DType.bfloat16, # set for fwd/bwd
-        
-        
-         ep_config=TransformerExpertParallelConfig(degree=EP_DIM) if EP_DIM != 1 else None, # EP=1 means no expert parallel
+        ep_config=TransformerExpertParallelConfig(degree=EP_DIM)
+        if EP_DIM != 1
+        else None,  # EP=1 means no expert parallel
         pp_config=TransformerPipelineParallelConfig(
             degree=PP_DIM,
             # schedule=PipelineScheduleType.interleaved_1F1B,
@@ -238,9 +251,10 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             # schedule=PipelineScheduleType.looped_bfs,
             # schedule=PipelineScheduleType.interleaved_zero_bubble,
             # schedule=PipelineScheduleType.zbv_zero_bubble,
-            split_points=SPLIT_POINTS
-            
-        ) if PP_DIM > 1 else None,
+            split_points=SPLIT_POINTS,
+        )
+        if PP_DIM > 1
+        else None,
         # ac_config=TransformerActivationCheckpointingConfig(
         #     mode=TransformerActivationCheckpointingMode.full,
         #     # mode=TransformerActivationCheckpointingMode.selected_modules,
@@ -268,13 +282,13 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
 
 def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     cancel_check_interval = 10
-    
+
     # cluster = 'ai2/jupiter-cirrascale-2'
-    cluster = 'ai2/augusta-google-1'
+    cluster = "ai2/augusta-google-1"
 
     return (
         TrainerConfig(
-            save_folder=f'{common.save_folder}/{common.run_name}_{D_MODEL}d_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K_{DP_DIM}DP{EP_DIM}EP{PP_DIM}PP_{GLOBAL_BATCH_SIZE_SEQ}GBS_{TAG}',
+            save_folder=f"{common.save_folder}/{common.run_name}_{D_MODEL}d_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K_{DP_DIM}DP{EP_DIM}EP{PP_DIM}PP_{GLOBAL_BATCH_SIZE_SEQ}GBS_{TAG}",
             # save_folder=f'/workspace/tmp/{common.run_name}_{D_MODEL}d_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K_{DP_DIM}DP{EP_DIM}EP{PP_DIM}PP_{MICRO_BSZ}MB_{TAG}',
             save_overwrite=True,
             metrics_collect_interval=5,
@@ -323,12 +337,10 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             ),
         )
         .with_callback(
-            "profiler", 
-            NvidiaProfilerCallback(enabled=False, # NOTE: change this
-                                   profile_ranks=[0, 8, 16, 24],
-                                   start=30,
-                                   end=33
-            )
+            "profiler",
+            NvidiaProfilerCallback(
+                enabled=False, profile_ranks=[0, 8, 16, 24], start=30, end=33  # NOTE: change this
+            ),
         )
         # TODO: might not be able to run in-loop evals depending on parallel strategies
         # .with_recommended_evals(
@@ -338,15 +350,20 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
 
 def finalize_config(config: ExperimentConfig):
-    config.dataset.mix = 'OLMo-mix-0625' # new dataset mix
-    config.dataset.mix_base_dir = "gs://ai2-llm" # only avail on Google Cloud
-    
+    config.dataset.mix = "OLMo-mix-0625"  # new dataset mix
+    config.dataset.mix_base_dir = "gs://ai2-llm"  # only avail on Google Cloud
+
     # add active & total params to the wandb name
-    total_params_in_B = config.model.num_params/1000/1000/1000
-    active_params_in_B = config.model.num_active_params/1000/1000/1000
-    config.trainer.callbacks['wandb'].name += f"_{active_params_in_B:.2f}@{total_params_in_B:.2f}B"  # print to 2 decimal places
-    config.trainer.callbacks['wandb'].name += f"_{TOP_K}K{NUM_EXPERTS}N"  # print to 2 decimal places
-    
+    total_params_in_B = config.model.num_params / 1000 / 1000 / 1000
+    active_params_in_B = config.model.num_active_params / 1000 / 1000 / 1000
+    config.trainer.callbacks[
+        "wandb"
+    ].name += f"_{active_params_in_B:.2f}@{total_params_in_B:.2f}B"  # print to 2 decimal places
+    config.trainer.callbacks[
+        "wandb"
+    ].name += f"_{TOP_K}K{NUM_EXPERTS}N"  # print to 2 decimal places
+
+
 if __name__ == "__main__":
     main(
         global_batch_size=GLOBAL_BATCH_SIZE,

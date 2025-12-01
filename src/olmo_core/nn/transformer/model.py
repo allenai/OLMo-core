@@ -14,6 +14,7 @@ from typing import (
     cast,
 )
 
+import nvtx
 import torch
 import torch.nn as nn
 from torch.distributed import DeviceMesh
@@ -55,7 +56,7 @@ from .config import (
 )
 from .flops import num_floating_point_operations_for_logits
 from .init import InitMethod
-import nvtx
+
 if TYPE_CHECKING:
     from olmo_core.train.common import ReduceType
 
@@ -237,14 +238,16 @@ class Transformer(nn.Module):
         self.to_empty(device=device)
 
         for name, module in self.named_modules():
-            if hasattr(module, "reset_parameters"): # TODO: what's the point of this
+            if hasattr(module, "reset_parameters"):  # TODO: what's the point of this
                 module.reset_parameters()  # type: ignore
                 log.info(f"'{name}' called reset_parameters()")
 
         seed = self.init_seed
         if world_mesh is not None and self.pp_enabled:
-            seed += get_pp_mesh(world_mesh).get_local_rank() # BUG: the same seed for all model parts on the same rank?
-            seed += model_part_idx * 997 # random prime
+            seed += get_pp_mesh(
+                world_mesh
+            ).get_local_rank()  # BUG: the same seed for all model parts on the same rank?
+            seed += model_part_idx * 997  # random prime
         generator = torch.Generator(device).manual_seed(seed)
 
         if self.embeddings is not None:
@@ -260,6 +263,7 @@ class Transformer(nn.Module):
             #  assert isinstance(block, TransformerBlock)
             block = cast(TransformerBlock, block)
             from ..moe.v2.block import MoEFusedV2TransformerBlock
+
             if isinstance(block, MoEFusedV2TransformerBlock):
                 block = cast(MoEFusedV2TransformerBlock, block)
                 # v2 MoE blocks.
@@ -283,7 +287,6 @@ class Transformer(nn.Module):
                     std=self.init_std,
                     generator=generator,
                 )
-
 
             else:
                 att = cast(Union[Attention, FusedAttention], block.attention)
@@ -866,9 +869,9 @@ class Transformer(nn.Module):
                 torch._dynamo.config.optimize_ddp = "python_reducer_without_compiled_forward"  # type: ignore
             else:
                 torch._dynamo.config.optimize_ddp = "ddp_optimizer"  # type: ignore
-                
-        self.to(torch.bfloat16) # HACK, need fix
-        
+
+        self.to(torch.bfloat16)  # HACK, need fix
+
         replicate(self, device_mesh=dp_mesh, bucket_cap_mb=100)
         # Some inputs need to be on CPU initially, but DDP will move everything to model's
         # device if we don't hide it.

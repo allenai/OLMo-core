@@ -18,11 +18,11 @@ from olmo_core.nn.attention import (
     AttentionConfig,
     AttentionType,
     FusedAttention,
+    MultiheadLatentAttention,
+    MultiheadLatentAttentionConfig,
     NormalizedAttention,
     RingAttentionLoadBalancerType,
     RingAttentionZigZagLoadBalancer,
-    MultiheadLatentAttentionConfig,
-    MultiheadLatentAttention,
     SlidingWindowAttentionConfig,
 )
 from olmo_core.nn.layer_norm import LayerNormConfig
@@ -848,6 +848,7 @@ def test_attention_builder_config(attn_config: AttentionConfig):
     n_params = sum(p.numel() for p in attn.parameters())
     assert attn_config.num_params(d_model) == n_params
 
+
 @pytest.mark.parametrize(
     "attn_config",
     [
@@ -855,7 +856,7 @@ def test_attention_builder_config(attn_config: AttentionConfig):
             n_heads=8,
             bias=None,
             q_lora_rank=128,
-            kv_lora_rank=64, 
+            kv_lora_rank=64,
             qk_nope_head_dim=16,
             qk_rope_head_dim=8,
             v_head_dim=24,
@@ -873,6 +874,7 @@ def test_mla_attention_buidler_config(attn_config: MultiheadLatentAttentionConfi
     # Make sure the estimated number of params matches the actual number of params.
     n_params = sum(p.numel() for p in attn.parameters())
     assert attn_config.num_params(d_model) == n_params
+
 
 @pytest.mark.parametrize(
     "attn_config",
@@ -893,25 +895,28 @@ def test_mla_attention_buidler_config(attn_config: MultiheadLatentAttentionConfi
 )
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("dtype", [pytest.param(torch.float32, id="fp32")])
-def test_mla_attention(attn_config: MultiheadLatentAttentionConfig, dtype: torch.dtype, device: torch.device):
+def test_mla_attention(
+    attn_config: MultiheadLatentAttentionConfig, dtype: torch.dtype, device: torch.device
+):
     torch.random.manual_seed(0)
-    
+
     d_model = 128
     seq_len = 32
-    
+
     attn = attn_config.build(d_model, init_device=device.type)
-    
+
     x1 = torch.randn(1, seq_len, d_model, dtype=dtype, device=device)
     x2 = torch.randn(1, seq_len, d_model, dtype=dtype, device=device)
     x = torch.cat([x1, x2])
-    
+
     with torch.no_grad():
         y1 = attn(x1)
         y2 = attn(x2)
         y = attn(x)
-    
+
     torch.testing.assert_close(y[0:1, :, :], y1)
     torch.testing.assert_close(y[1:, :, :], y2)
+
 
 def _get_lb(rank: int, world_size: int) -> RingAttentionZigZagLoadBalancer:
     return RingAttentionZigZagLoadBalancer(cp_rank=rank, cp_world_size=world_size)

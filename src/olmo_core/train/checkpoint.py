@@ -110,7 +110,7 @@ class Checkpointer:
             # if the train module has implemented state_dict_to_save, use it
             if hasattr(train_module, "save_state_dict_direct"):
                 # it should be the case for moe train module
-                train_module.save_state_dict_direct( # type: ignore
+                train_module.save_state_dict_direct(  # type: ignore
                     train_module_dir,
                     process_group=self.process_group,
                     save_overwrite=self.save_overwrite,
@@ -129,7 +129,7 @@ class Checkpointer:
                     # NOTE: we've already checked and cleared the directory at this point so we can skip
                     # the extra synchronization.
                     _skip_prepare=True,
-            )
+                )
 
         self._save_metadata(dir, CheckpointMetadata())
 
@@ -476,12 +476,13 @@ class Checkpointer:
         yield tmp_dir
 
         self._teardown_tmp_dir(dir, tmp_dir)
-        
+
+
 class UpcycleCheckpointer(Checkpointer):
     """
     Checkpointer that is used for MoE upcycling.
     It overrides the save() and load() methods to skip saving and loading extra state other than the model.
-    
+
     The save() method should be called by a standalone script that performs upcycling, not by the trainer.
     The load() method should be called by the trainer (from a CheckpointerCallback).
     """
@@ -492,7 +493,6 @@ class UpcycleCheckpointer(Checkpointer):
         """
         dir = normalize_path(dir)
         with self._temporary_wd(dir) as wd:
-
             # Save model and optim state.
             train_module_dir = f"{dir}/upcycling" if is_url(dir) else wd / "upcycling"
             save_state_dict(
@@ -538,7 +538,7 @@ class UpcycleCheckpointer(Checkpointer):
         if metadata is None:
             metadata = get_checkpoint_metadata(model_module_dir)
 
-        model_module=train_module.model
+        model_module = train_module.model
 
         # model_state_dict = train_module.state_dict_to_load(metadata, optim=False)
         model_state_dict = model_module.state_dict()
@@ -550,13 +550,12 @@ class UpcycleCheckpointer(Checkpointer):
             work_dir=self.work_dir,
             thread_count=self.load_thread_count,
         )
-        model_module.load_state_dict(model_state_dict) # don't need this line?
+        model_module.load_state_dict(model_state_dict)  # don't need this line?
 
         return trainer_state
 
 
 class CompactablityCheckpointer(Checkpointer):
-    
     def load(
         self,
         dir: PathOrStr,

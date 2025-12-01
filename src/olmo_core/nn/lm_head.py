@@ -22,9 +22,9 @@ from olmo_core.exceptions import OLMoConfigurationError
 
 from .attention import RingAttentionLoadBalancerType
 from .functional import (
+    cce_loss,
     cross_entropy_loss,
     fused_linear_cross_entropy_loss,
-    cce_loss,
     l2_normalize,
 )
 from .layer_norm import LayerNormConfig
@@ -78,7 +78,6 @@ class LMLossImplementation(StrEnum):
     """
     https://arxiv.org/abs/2411.09009
     """
-
 
 
 @dataclass
@@ -257,7 +256,7 @@ class LMHead(nn.Module):
         ce_loss: torch.Tensor
         z_loss: Optional[torch.Tensor]
         if (
-            self.loss_implementation == LMLossImplementation.default 
+            self.loss_implementation == LMLossImplementation.default
             or not torch.is_grad_enabled()  # eval mode
         ):
             logits = self.w_out(h)

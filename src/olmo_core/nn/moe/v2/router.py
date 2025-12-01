@@ -1,9 +1,9 @@
-  
 import logging
 from abc import abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple, Union, cast
 
+import nvtx
 import torch
 import torch.distributed as dist
 import torch.nn as nn
@@ -28,11 +28,9 @@ from olmo_core.utils import get_default_device
 from ..loss import MoELoadBalancingLossGranularity, load_balancing_loss, router_z_loss
 from ..router import MoERouterGatingFunction, _uniform_expert_assignment
 
-import nvtx
 if TYPE_CHECKING:
     from olmo_core.train.common import ReduceType
-    
-    
+
 
 @dataclass
 class MoERouterConfigV2(Config):
@@ -41,7 +39,7 @@ class MoERouterConfigV2(Config):
     """
 
     d_model: int
-    
+
     num_experts: int
 
     top_k: int
@@ -54,12 +52,14 @@ class MoERouterConfigV2(Config):
     dtype: Optional[DType] = None
     record_routing_batch_size: bool = False
     lb_loss_weight: Optional[float] = None
-    lb_loss_granularity: MoELoadBalancingLossGranularity = MoELoadBalancingLossGranularity.local_batch
+    lb_loss_granularity: MoELoadBalancingLossGranularity = (
+        MoELoadBalancingLossGranularity.local_batch
+    )
     z_loss_weight: Optional[float] = None
     orth_loss_weight: Optional[float] = None
     record_routing_batch_size: bool = False
-    restore_weight_scale: bool = False # if True, multiply the router weights by topK so that the scores have similar scale as dense models.
-    
+    restore_weight_scale: bool = False  # if True, multiply the router weights by topK so that the scores have similar scale as dense models.
+
     def num_params(self) -> int:
         """
         The number of params that the module will have once built.
@@ -89,7 +89,8 @@ class MoERouterConfigV2(Config):
             kwargs["dtype"] = self.dtype.as_pt()
 
         return MoERouterV2(**kwargs, init_device=init_device)
-        
+
+
 class MoERouterV2(nn.Module):
     """
     A base class for MoE router modules.
@@ -148,7 +149,6 @@ class MoERouterV2(nn.Module):
         self.record_routing_batch_size = record_routing_batch_size
         self.restore_weight_scale = restore_weight_scale
 
-
         if self.bias_gamma is not None:
             assert self.bias_gamma > 0
             self.register_buffer("score_bias", torch.zeros(self.num_experts, device=init_device))
@@ -165,7 +165,7 @@ class MoERouterV2(nn.Module):
         self._load_balancing_loss: Optional[_HiddenTensor] = None
         self._z_loss: Optional[_HiddenTensor] = None
         self._orth_loss: Optional[_HiddenTensor] = None
-        
+
         self.weight = nn.Parameter(
             torch.empty(self.num_experts * self.d_model, device=init_device, dtype=dtype)
         )
@@ -189,10 +189,10 @@ class MoERouterV2(nn.Module):
 
         if self.z_loss_weight is not None:
             self._z_loss = hide_from_torch(torch.zeros([], device=self.device))
-            
+
         if self.orth_loss_weight is not None:
             self._orth_loss = hide_from_torch(torch.zeros([], device=self.device))
-            
+
         nn.init.trunc_normal_(self.weight, std=0.02, a=-3 * 0.02, b=3 * 0.02)
 
     @property
@@ -271,11 +271,11 @@ class MoERouterV2(nn.Module):
             elif self._orth_loss.device != self.device:
                 self._orth_loss = self._orth_loss.to(self.device)
         return None if self._orth_loss is None else unhide_from_torch(self._orth_loss)
-    
+
     @orth_loss.setter
     def orth_loss(self, value: torch.Tensor):
         self._orth_loss = hide_from_torch(value)
-        
+
     @torch.no_grad()
     def post_batch(self, dry_run: bool = False):
         if self.bias_gamma is None or not self.training:
@@ -312,7 +312,7 @@ class MoERouterV2(nn.Module):
             noise = torch.rand_like(x)
             return x * (low + noise * (high - low))
 
-    @nvtx.annotate("MoERouter.get_top_k", color='blue')
+    @nvtx.annotate("MoERouter.get_top_k", color="blue")
     def get_top_k(self, scores: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         expert_weights: torch.Tensor
         expert_indices: torch.Tensor
@@ -354,7 +354,7 @@ class MoERouterV2(nn.Module):
             batch_size_per_expert.max() / batch_size_per_expert.mean(dtype=torch.float),
             ReduceType.max,
         )
-        
+
         # record the number of tokens routed to each routed expert.
         if self.record_routing_batch_size:
             for i in range(self.num_experts):
@@ -383,7 +383,10 @@ class MoERouterV2(nn.Module):
 
         if self.orth_loss_weight is not None:
             assert self.orth_loss is not None
-            out["router orthogonal loss"] = (self.orth_loss_weight * self.orth_loss, ReduceType.mean)
+            out["router orthogonal loss"] = (
+                self.orth_loss_weight * self.orth_loss,
+                ReduceType.mean,
+            )
             out["router orthogonal loss unscaled"] = (self.orth_loss.clone(), ReduceType.mean)
 
         if reset:
@@ -401,14 +404,16 @@ class MoERouterV2(nn.Module):
         if (orth_loss := self.orth_loss) is not None:
             orth_loss.zero_()
 
-    @nvtx.annotate("MoERouter.forward", color='blue')
+    @nvtx.annotate("MoERouter.forward", color="blue")
     def forward(
         self,
         x: torch.Tensor,
         scores_only: bool,
         *,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
-    ) -> Tuple[torch.Tensor,  Optional[torch.Tensor],  Optional[torch.Tensor], Optional[torch.Tensor]]:
+    ) -> Tuple[
+        torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor], Optional[torch.Tensor]
+    ]:
         """
         Given the input ``x`` of shape ``(B, S, d_model)``, compute the experts assignment.
 
@@ -430,12 +435,12 @@ class MoERouterV2(nn.Module):
             scores = F.sigmoid(logits)
             # to avoid NaNs in the load balancing loss
             # if all logits of a token are very negative for all experts, sigmoid gives 0 for all experts, causing NaNs when we div by the sum.
-            scores = scores + 1e-7  
+            scores = scores + 1e-7
         else:
             raise NotImplementedError(self.gating_function)
 
         if self.random_expert_assignment:
-            scores = scores * 0 + torch.rand_like(scores) # random, but keep the autograd graph
+            scores = scores * 0 + torch.rand_like(scores)  # random, but keep the autograd graph
 
         if scores_only:
             if self.normalize_expert_weights is not None:
@@ -462,8 +467,8 @@ class MoERouterV2(nn.Module):
                     keepdim=True,
                 )
             )
-        
-        # if used together normalize_expert_weights=True, 
+
+        # if used together normalize_expert_weights=True,
         # then the weights for each token sum to TOP_K instead of 1.0
         if self.restore_weight_scale:
             expert_weights = expert_weights * self.top_k
@@ -477,23 +482,22 @@ class MoERouterV2(nn.Module):
             # shape: (num_experts,)
             batch_size_per_expert = batched_batch_size_per_expert.sum(dim=0)
 
-        
-        aux_loss_info = (scores, logits, batch_size_per_expert, batched_batch_size_per_expert, loss_div_factor)
+        aux_loss_info = (
+            scores,
+            logits,
+            batch_size_per_expert,
+            batched_batch_size_per_expert,
+            loss_div_factor,
+        )
         return expert_weights, expert_indices, batch_size_per_expert, aux_loss_info
 
     @nvtx.annotate("MoERouter.compute_aux_loss")
     def compute_aux_loss(
-        self,
-        scores,
-        logits,
-        batch_size_per_expert,
-        batched_batch_size_per_expert,
-        loss_div_factor
+        self, scores, logits, batch_size_per_expert, batched_batch_size_per_expert, loss_div_factor
     ) -> torch.Tensor:
         # Maybe compute auxiliary losses and accumulate metrics.
         aux_loss: Optional[torch.Tensor] = None
         if self.training and torch.is_grad_enabled():
-
             if self.lb_loss_weight is not None:
                 assert self.load_balancing_loss is not None
 
@@ -534,26 +538,24 @@ class MoERouterV2(nn.Module):
             if self.orth_loss_weight is not None:
                 # TODO: should only compute orthogonal loss on the last micro batch because the loss is only computed on the router weights.
                 assert self.orth_loss is not None
-                
+
                 # NOTE: loss_div_factor is the total number of tokens in the global batch.
                 # orth_loss_div_factor  is approximately the number of micro batches in the global batch.
                 # since the orthogonal loss is computed `num_micro_batches` times (should have the same loss each time since it does not chagne wrt data), we need to scale it down.
-                if loss_div_factor is None: 
+                if loss_div_factor is None:
                     raise NotImplementedError(
                         "Orthogonal loss requires a loss_div_factor to be set."
                     )
                 # orth_loss_factor = (logits.size(0) * logits.size(1)) / loss_div_factor  # --> divide by num_micro_batches
-                # or 
+                # or
                 orth_loss_factor = 1 / loss_div_factor  # --> divide by num_tokens in micro batch
-                
+
                 orth_loss = self.compute_orthogonal_loss() * orth_loss_factor
-                
+
                 self.orth_loss += orth_loss.detach()
 
                 scaled_orth_loss = self.orth_loss_weight * orth_loss
-                aux_loss = (
-                    scaled_orth_loss if aux_loss is None else aux_loss + scaled_orth_loss
-                )
+                aux_loss = scaled_orth_loss if aux_loss is None else aux_loss + scaled_orth_loss
             self.batch_size_per_expert += batch_size_per_expert
             if self.bias_gamma is not None:
                 assert self.score_bias_batch_size_per_expert is not None
@@ -586,4 +588,3 @@ class MoERouterV2(nn.Module):
 
     def apply_cp(self, cp_mesh: DeviceMesh):
         self.cp_mesh = cp_mesh
-

@@ -9,8 +9,7 @@ from olmo_core.config import DType
 from olmo_core.distributed.utils import get_world_size
 
 from ..common import ReduceType
-from ..train_module import TransformerTrainModule
-from ..train_module import TransformerPipelineTrainModule
+from ..train_module import TransformerPipelineTrainModule, TransformerTrainModule
 from .callback import Callback
 
 log = logging.getLogger(__name__)
@@ -56,7 +55,7 @@ class SpeedMonitorCallback(Callback):
             return self.num_flops_per_token
         elif isinstance(self.trainer.train_module, TransformerTrainModule):
             return self.trainer.train_module.num_flops_per_token(seq_len)
-        else: # pipeline module
+        else:  # pipeline module
             return self.trainer.train_module.num_flops_per_token(seq_len)
 
     def pre_train(self):
@@ -66,7 +65,10 @@ class SpeedMonitorCallback(Callback):
             self._parallel_degree = get_world_size() // get_world_size(
                 self.trainer.dp_process_group
             )
-        from olmo_core.train.train_module.transformer.moe_train_module import MoEV2TransformerTrainModule
+        from olmo_core.train.train_module.transformer.moe_train_module import (
+            MoEV2TransformerTrainModule,
+        )
+
         if (
             self.device_peak_flops is None
             and self.trainer.device.type == "cuda"
@@ -176,5 +178,6 @@ class SpeedMonitorCallback(Callback):
             self.trainer.record_metric("throughput/device/MFU (actual avg)", mfu_avg)
             self.trainer.record_metric("throughput/device/TFLOPs_per_GPU", tflops_per_gpu)
             self.trainer.record_metric(
-                "throughput/total flops", self.trainer.global_train_tokens_seen * num_flops_per_token
+                "throughput/total flops",
+                self.trainer.global_train_tokens_seen * num_flops_per_token,
             )

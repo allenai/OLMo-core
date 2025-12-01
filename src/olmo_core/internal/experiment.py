@@ -4,7 +4,6 @@ import sys
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, cast
 
-from olmo_core.train.train_module.train_module import TrainModuleConfig
 import torch
 from rich import print
 
@@ -40,6 +39,7 @@ from olmo_core.train.callbacks import (
 )
 from olmo_core.train.callbacks.slack_notifier import SLACK_WEBHOOK_URL_ENV_VAR
 from olmo_core.train.train_module import TransformerTrainModuleConfig
+from olmo_core.train.train_module.train_module import TrainModuleConfig
 from olmo_core.utils import prepare_cli_environment, seed_all
 
 from .common import build_launch_config, get_beaker_username, get_root_dir, get_work_dir
@@ -185,7 +185,7 @@ def build_common_components(
 ) -> CommonComponents:
     root_dir = get_root_dir(cli_context.cluster)
     beaker_user = get_beaker_username()
-    beaker_user = None # HACK: Disable Beaker secrets for local runs
+    beaker_user = None  # HACK: Disable Beaker secrets for local runs
     launch_config: Optional[BeakerLaunchConfig] = None
     if beaker_user is not None:
         cmd_to_launch = cli_context.cmd.post_launch_subcmd()

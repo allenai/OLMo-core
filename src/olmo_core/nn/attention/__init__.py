@@ -5,6 +5,7 @@ from abc import abstractmethod
 from dataclasses import dataclass
 from typing import List, Optional, Tuple, Union
 
+import nvtx
 import torch
 import torch.nn as nn
 from torch.distributed import DeviceMesh
@@ -42,8 +43,6 @@ from .ring import (
     RingAttentionLoadBalancerType,
     RingAttentionZigZagLoadBalancer,
 )
-import nvtx
-
 
 __all__ = [
     "SlidingWindowAttentionConfig",
@@ -191,7 +190,7 @@ class AttentionConfig(Config):
 
         n_heads = self.n_heads
         n_kv_heads = self.n_kv_heads or n_heads
-        head_dim = d_attn // n_heads # not assuming d_model here
+        head_dim = d_attn // n_heads  # not assuming d_model here
         bias = self.bias if self.bias is not None else self.name != AttentionType.normalized
 
         params = 0
@@ -215,7 +214,7 @@ class AttentionConfig(Config):
                 params += self.qk_norm.num_params(n_kv_heads * head_dim)  # k_norm
 
         # Block attention out.
-        params += d_attn * d_model # input = d_attn, output = d_model
+        params += d_attn * d_model  # input = d_attn, output = d_model
         if bias:
             params += d_model
 
@@ -310,17 +309,20 @@ class AttentionConfig(Config):
         # K, V projections (seq_length, d_model) x (d_model, n_kv_heads * head_dim) x 2
         flops += flops_factor * (d_model * n_kv_heads * head_dim * seq_length) * 2
 
-
         # QK^T scores:
         # Treat as n_heads independent GEMMs:
         # (seq_length, head_dim) x (head_dim, seq_length) for each head.
         # mnk = seq_length * seq_length * head_dim, repeated n_heads times.
-        flops += flops_factor * (n_heads * seq_length * seq_length * head_dim) / 2 # divide by 2 for causal attention
+        flops += (
+            flops_factor * (n_heads * seq_length * seq_length * head_dim) / 2
+        )  # divide by 2 for causal attention
 
         # Attention @ V:
         # Again n_heads independent GEMMs:
         # (seq_length, seq_length) x (seq_length, head_dim) for each head.
-        flops += flops_factor * (n_heads * seq_length * seq_length * head_dim) / 2 # divide by 2 for causal attention
+        flops += (
+            flops_factor * (n_heads * seq_length * seq_length * head_dim) / 2
+        )  # divide by 2 for causal attention
 
         # Output projection (seq_length, d_attn) x (d_attn, d_model)
         flops += flops_factor * (d_attn * d_model * seq_length)
@@ -525,7 +527,7 @@ class Attention(AttentionBase):
             self.kv_cache_manager.update_seqlen(q.shape[1])
         return att
 
-    @nvtx.annotate("Attention.forward", color='red')
+    @nvtx.annotate("Attention.forward", color="red")
     def forward(
         self,
         x: torch.Tensor,
@@ -1023,7 +1025,6 @@ class FusedAttention(AttentionBase):
         self.backend.apply_cp(cp_mesh, load_balancer, head_stride=head_stride)
 
 
-
 @dataclass
 class MultiheadLatentAttentionConfig(AttentionConfig):
     """
@@ -1032,6 +1033,7 @@ class MultiheadLatentAttentionConfig(AttentionConfig):
     This attention mechanism uses low-rank projections for queries and key/values,
     splitting the queries into non-positional and rotary components.
     """
+
     name: str = "mla"
     # n_heads: int = 16
     # bias: Optional[bool] = None
@@ -1070,7 +1072,9 @@ class MultiheadLatentAttentionConfig(AttentionConfig):
             if self.qkv_norm is not None:
                 params += self.qkv_norm.num_params(self.q_lora_rank)
             # Up-projection wq_b
-            params += self.q_lora_rank * self.n_heads * (self.qk_nope_head_dim + self.qk_rope_head_dim)
+            params += (
+                self.q_lora_rank * self.n_heads * (self.qk_nope_head_dim + self.qk_rope_head_dim)
+            )
             if has_bias:
                 params += self.n_heads * (self.qk_nope_head_dim + self.qk_rope_head_dim)
 
@@ -1078,7 +1082,7 @@ class MultiheadLatentAttentionConfig(AttentionConfig):
         # Down-projection wkv_a
         params += d_model * (self.kv_lora_rank + self.qk_rope_head_dim)
         if has_bias:
-            params += (self.kv_lora_rank + self.qk_rope_head_dim)
+            params += self.kv_lora_rank + self.qk_rope_head_dim
         # LayerNorm on latent key/value
         if self.qkv_norm is not None:
             params += self.qkv_norm.num_params(self.kv_lora_rank)
@@ -1115,14 +1119,15 @@ class MultiheadLatentAttentionConfig(AttentionConfig):
 
 
 class MultiheadLatentAttention(AttentionBase):
-    """ 
+    """
     Multi-head Latent Attention (MLA) implementation.
 
     This attention mechanism uses low-rank projections for queries and key/values,
     splitting the queries into non-positional and rotary components.
-    
+
     #TODO: Update docstring to include all parameters
     """
+
     def __init__(
         self,
         *,
@@ -1143,47 +1148,71 @@ class MultiheadLatentAttention(AttentionBase):
         v_head_dim: int = 128,
     ):
         super().__init__()
-        assert qkv_norm is not None, "qkv_norm need be provided for MLA" # TODO: support MLA without norm at latent Q and KV
-        
-        self.n_rep = 1 # no GQA support for MLA
+        assert (
+            qkv_norm is not None
+        ), "qkv_norm need be provided for MLA"  # TODO: support MLA without norm at latent Q and KV
+
+        self.n_rep = 1  # no GQA support for MLA
         self.n_heads = n_heads
         self.dropout_p = dropout
         self.q_lora_rank = q_lora_rank
         self.kv_lora_rank = kv_lora_rank
         self.d_model = d_model
         self.bias = bias
-        self.qk_nope_head_dim = qk_nope_head_dim # non-positional query/key dim
-        self.qk_rope_head_dim = qk_rope_head_dim # rotary query/key dim
-        
-        self.v_head_dim = v_head_dim # value head dim
-        
+        self.qk_nope_head_dim = qk_nope_head_dim  # non-positional query/key dim
+        self.qk_rope_head_dim = qk_rope_head_dim  # rotary query/key dim
+
+        self.v_head_dim = v_head_dim  # value head dim
+
         self.softmax_scale = (qk_nope_head_dim + qk_rope_head_dim) ** -0.5
 
-        if q_lora_rank == 0: # no low-rank projection for queries
-            self.wq = nn.Linear(d_model, n_heads * (qk_nope_head_dim + qk_rope_head_dim), bias=bias, dtype=dtype, device=init_device)
+        if q_lora_rank == 0:  # no low-rank projection for queries
+            self.wq = nn.Linear(
+                d_model,
+                n_heads * (qk_nope_head_dim + qk_rope_head_dim),
+                bias=bias,
+                dtype=dtype,
+                device=init_device,
+            )
         else:
             # the low rank down-projection
             self.wq_a = nn.Linear(d_model, q_lora_rank, bias=bias, dtype=dtype, device=init_device)
-            
+
             # the layer norm applied to the latent query
             self.q_norm = qkv_norm.build(size=q_lora_rank, init_device=init_device)
-            
+
             # the low rank up-projection, including the non-positional and positional parts. We merge two weight matrices into one to improve performance.
-            self.wq_b = nn.Linear(q_lora_rank, n_heads * (qk_nope_head_dim + qk_rope_head_dim), bias=bias, dtype=dtype, device=init_device)
+            self.wq_b = nn.Linear(
+                q_lora_rank,
+                n_heads * (qk_nope_head_dim + qk_rope_head_dim),
+                bias=bias,
+                dtype=dtype,
+                device=init_device,
+            )
 
         # the low rank down-projection for key/value + rotary key
-        # Note that the rotary key is not low-rank, 
+        # Note that the rotary key is not low-rank,
         # and for this part it does not have a concept of head (it will be expanded to the number of heads later)
         # we merge the two weight matrices into one to improve performance.
-        self.wkv_a = nn.Linear(d_model, kv_lora_rank + qk_rope_head_dim, bias=bias, dtype=dtype, device=init_device)
-        
+        self.wkv_a = nn.Linear(
+            d_model, kv_lora_rank + qk_rope_head_dim, bias=bias, dtype=dtype, device=init_device
+        )
+
         # the layer norm applied to the latent key/value
         self.kv_norm = qkv_norm.build(size=kv_lora_rank, init_device=init_device)
-        
+
         # the low rank up-projection, including the non-positional key and value parts.
-        self.wkv_b = nn.Linear(kv_lora_rank, n_heads * (qk_nope_head_dim + v_head_dim), bias=bias, dtype=dtype, device=init_device)
-        
-        self.w_out = nn.Linear(n_heads * v_head_dim, d_model, bias=bias, dtype=dtype, device=init_device) # output projection
+        self.wkv_b = nn.Linear(
+            kv_lora_rank,
+            n_heads * (qk_nope_head_dim + v_head_dim),
+            bias=bias,
+            dtype=dtype,
+            device=init_device,
+        )
+
+        self.w_out = nn.Linear(
+            n_heads * v_head_dim, d_model, bias=bias, dtype=dtype, device=init_device
+        )  # output projection
 
         self.rope: Optional[Union[RotaryEmbedding, ComplexRotaryEmbedding]] = None
         if rope is not None:
@@ -1194,7 +1223,7 @@ class MultiheadLatentAttention(AttentionBase):
             rope_class = rope.build(self.qk_rope_head_dim, cache=cache)
             assert isinstance(rope_class, (RotaryEmbedding, ComplexRotaryEmbedding))
             self.rope = rope_class
-            
+
         self.use_flash = use_flash
         self._cp_pg: Optional[dist.ProcessGroup] = None
         self._cp_enabled = False
@@ -1236,11 +1265,11 @@ class MultiheadLatentAttention(AttentionBase):
             q = self.wq_b(self.q_norm(self.wq_a(x)))
         q = q.view(B, T, self.n_heads, self.qk_nope_head_dim + self.qk_rope_head_dim)
         q_nope, q_pe = torch.split(q, [self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1)
-        
+
         # Compute key and value projections
         kv_out = self.wkv_a(x)
         kv_latent, k_pe = torch.split(kv_out, [self.kv_lora_rank, self.qk_rope_head_dim], dim=-1)
-        
+
         # rotary part of the key and query
         if self.rope is not None:
             if self.cp_enabled and pos_sin is None and pos_cos is None and freqs_cis is None:
@@ -1250,33 +1279,53 @@ class MultiheadLatentAttention(AttentionBase):
                 )
 
             q_pe, k_pe = self.rope(
-                q_pe, 
+                q_pe,
                 k_pe.unsqueeze(2),  # shape: (B, T, 1, qk_rope_head_dim)
-                head_first=False, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis
+                head_first=False,
+                pos_sin=pos_sin,
+                pos_cos=pos_cos,
+                freqs_cis=freqs_cis,
             )
         else:
             raise RuntimeError("RoPE is required for MLA")
-        
+
         # shape: (B, T, 1, qk_rope_head_dim) -> (B, T, n_heads, qk_rope_head_dim)
         k_pe_expanded = k_pe.expand(-1, -1, self.n_heads, -1)
-        
-        k_nope_and_v = self.wkv_b(self.kv_norm(kv_latent)) # the up-projection of the latent key (nope part) and value
-        k_nope_and_v = k_nope_and_v.view(B, T, self.n_heads, self.qk_nope_head_dim + self.v_head_dim)
+
+        k_nope_and_v = self.wkv_b(
+            self.kv_norm(kv_latent)
+        )  # the up-projection of the latent key (nope part) and value
+        k_nope_and_v = k_nope_and_v.view(
+            B, T, self.n_heads, self.qk_nope_head_dim + self.v_head_dim
+        )
         k_nope, v = torch.split(k_nope_and_v, [self.qk_nope_head_dim, self.v_head_dim], dim=-1)
-        
+
         # Combine key parts
-        k_combined = torch.cat([k_nope, k_pe_expanded], dim=-1)  # shape: (B, T, n_heads, qk_nope_head_dim + qk_rope_head_dim)
-        
+        k_combined = torch.cat(
+            [k_nope, k_pe_expanded], dim=-1
+        )  # shape: (B, T, n_heads, qk_nope_head_dim + qk_rope_head_dim)
+
         # Combine query parts
-        q_combined = torch.cat([q_nope, q_pe], dim=-1) # shape: (B, T, n_heads, qk_nope_head_dim + qk_rope_head_dim)
-        
+        q_combined = torch.cat(
+            [q_nope, q_pe], dim=-1
+        )  # shape: (B, T, n_heads, qk_nope_head_dim + qk_rope_head_dim)
+
         # Q and K are now of shape (B, T, n_heads, qk_nope_head_dim + qk_rope_head_dim)
         # V is of shape (B, T, n_heads, v_head_dim)
-        assert q_combined.shape == (B, T, self.n_heads, self.qk_nope_head_dim + self.qk_rope_head_dim)
-        assert k_combined.shape == (B, T, self.n_heads, self.qk_nope_head_dim + self.qk_rope_head_dim)
+        assert q_combined.shape == (
+            B,
+            T,
+            self.n_heads,
+            self.qk_nope_head_dim + self.qk_rope_head_dim,
+        )
+        assert k_combined.shape == (
+            B,
+            T,
+            self.n_heads,
+            self.qk_nope_head_dim + self.qk_rope_head_dim,
+        )
         assert v.shape == (B, T, self.n_heads, self.v_head_dim)
-        
-        
+
         # Compute attention scores
         attn = self.sdpa(
             q_combined,
@@ -1291,10 +1340,10 @@ class MultiheadLatentAttention(AttentionBase):
             local_k_slice=local_k_slice,
             scale=self.softmax_scale,
         )
-        
+
         # shape: (B, T, n_heads, v_head_dim)
         attn = attn.view(B, T, -1)
-        
+
         # shape: (B, T, d_model)
         return self.w_out(attn)
 
@@ -1306,7 +1355,9 @@ class MultiheadLatentAttention(AttentionBase):
         use_local_output: bool = True,
         float8_enabled: bool = False,
     ):
-        rowwise_parallel, colwise_parallel, prepare_module_input = get_tp_wrappers(float8_enabled=float8_enabled)
+        rowwise_parallel, colwise_parallel, prepare_module_input = get_tp_wrappers(
+            float8_enabled=float8_enabled
+        )
         parallelize_module(
             self,
             device_mesh=tp_mesh,
@@ -1318,7 +1369,9 @@ class MultiheadLatentAttention(AttentionBase):
         plan = {
             "wq" if hasattr(self, "wq") else "wq_b": colwise_parallel(),
             "wkv_b": colwise_parallel(),
-            "w_out": rowwise_parallel(output_layout=output_layout, use_local_output=use_local_output),
+            "w_out": rowwise_parallel(
+                output_layout=output_layout, use_local_output=use_local_output
+            ),
         }
         if hasattr(self, "wq_a"):
             plan["wq_a"] = colwise_parallel()
@@ -1339,7 +1392,7 @@ class MultiheadLatentAttention(AttentionBase):
     @property
     def cp_enabled(self) -> bool:
         return self._cp_enabled
-    
+
     def sdpa(
         self,
         q: torch.Tensor,
@@ -1357,7 +1410,7 @@ class MultiheadLatentAttention(AttentionBase):
         """
         Apply scaled dot-product attention. Copies the Attention sdpa.
         """
-        
+
         att: torch.Tensor
         if self.cp_enabled:
             assert self._cp_pg is not None and self._cp_load_balancer is not None

@@ -275,6 +275,7 @@ class CheckpointerCallback(Callback):
 
 from pathlib import Path
 
+
 @dataclass
 class UpcycleCheckpointerCallback(Callback):
     """
@@ -282,12 +283,12 @@ class UpcycleCheckpointerCallback(Callback):
     Make sure it's run before the main checkpointer callback because the main checkpointer
     will usally save the step 0 checkpoint.
     """
+
     priority: ClassVar[int] = 2
 
     enabled: bool = True
-    
-    upcycled_model_path: str = ""
 
+    upcycled_model_path: str = ""
 
     def pre_train(self):
         if not self.enabled:
@@ -298,16 +299,14 @@ class UpcycleCheckpointerCallback(Callback):
         if self.step != 0 or self.trainer.checkpoint_loaded:
             return
 
+        self.checkpointer = UpcycleCheckpointer(work_dir=Path("."))
 
-        self.checkpointer = UpcycleCheckpointer(
-            work_dir=Path('.')
+        log.info(
+            f"UpcycleCheckpointerCallback: Loading Upcycled checkpoint from '{self.upcycled_model_path}'..."
         )
-        
-        log.info(f"UpcycleCheckpointerCallback: Loading Upcycled checkpoint from '{self.upcycled_model_path}'...")
 
         self.checkpointer.load_upcycled_model(
-            dir=self.upcycled_model_path,\
-            train_module=self.trainer.train_module, \
+            dir=self.upcycled_model_path,
+            train_module=self.trainer.train_module,
         )
         log.info(f"UpcycleCheckpointerCallback: Done")
-        

@@ -1,70 +1,67 @@
+import logging
+from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Optional, Tuple, Type, Union
-
-import torch
-import torch.nn as nn
-
+from fnmatch import fnmatch
 from typing import (
     Any,
+    Callable,
     Dict,
     Generic,
     Iterable,
     List,
+    NamedTuple,
     Optional,
     Set,
     Tuple,
     Type,
     TypeVar,
     Union,
-    Callable,
-    overload,
     cast,
+    overload,
 )
-from ..config import DType
-from .config import OptimConfig
-from .skip_step_optimizer import SkipStepOptimizer
-import logging
+
+import torch
 import torch.distributed as dist
+import torch.nn as nn
 from torch.distributed import ProcessGroup
-from typing import NamedTuple
-from torch.distributed.optim import ZeroRedundancyOptimizer
 from torch.distributed.algorithms.ddp_comm_hooks.ddp_zero_hook import (
     hook_with_zero_step,
     hook_with_zero_step_interleaved,
 )
-from ..train.train_module import TrainModule
-from olmo_core.utils import get_default_device, move_to_device
-from collections import OrderedDict
-from fnmatch import fnmatch
-
-from .adamw import foreach_adamw_step, adamw_step
-from typing import Any, Dict, Iterable, List, Optional, Union
-from torch.optim.optimizer import Optimizer
-from typing import cast
-from ..config import Config
-from .config import OptimGroupOverride, INITIAL_LR_FIELD, LR_FIELD
-from ..exceptions import OLMoConfigurationError
-from torch.distributed.tensor import DTensor, Shard
 from torch.distributed.device_mesh import DeviceMesh
+from torch.distributed.optim import ZeroRedundancyOptimizer
+from torch.distributed.tensor import DTensor, Shard
+from torch.optim.optimizer import Optimizer
+
+from olmo_core.utils import get_default_device, move_to_device
+
+from ..config import Config, DType
+from ..exceptions import OLMoConfigurationError
+from ..train.train_module import TrainModule
+from .adamw import adamw_step, foreach_adamw_step
+from .config import INITIAL_LR_FIELD, LR_FIELD, OptimConfig, OptimGroupOverride
+from .skip_step_optimizer import SkipStepOptimizer
+
 log = logging.getLogger(__name__)
 
 # Opt = TypeVar("Opt", bound=torch.optim.Optimizer)
 
+
 ### DEBUG PRINT ###
 def _str_paramt(paramt):
-    rets = ''
+    rets = ""
     total_numel = 0
     for i, pgrp in enumerate(paramt):
         rets += f'{i}: {pgrp["__pg_tag__"]}\n'
         rets += f'    num params: {len(pgrp["params"])}\n'
         rets += f'    num ele: {sum(p.numel() for p in pgrp["params"]):,}\n'
         total_numel += sum(p.numel() for p in pgrp["params"])
-    rets += f'Total num ele: {total_numel:,}\n'
+    rets += f"Total num ele: {total_numel:,}\n"
     return rets
 
-@dataclass
-class MoEFusedV2OptimizerConfig(Config): 
 
+@dataclass
+class MoEFusedV2OptimizerConfig(Config):
     group_overrides: Optional[List[OptimGroupOverride]] = None
     """
     Use this to pull out groups parameters into a separate param groups with their own options.
@@ -86,7 +83,6 @@ class MoEFusedV2OptimizerConfig(Config):
     These are fields that should not be overridden by the value in a checkpoint after
     loading optimizer state.
     """
-
 
     lr: float = 1e-3
     betas: Tuple[float, float] = (0.9, 0.999)
@@ -163,7 +159,7 @@ class MoEFusedV2OptimizerConfig(Config):
         for part in model_parts:
             for n, p in part.named_parameters():
                 if p.requires_grad:
-                    if param_filter is None: # No filter applied
+                    if param_filter is None:  # No filter applied
                         all_params[n] = p
                     else:
                         # Apply the parameter filter
@@ -184,7 +180,7 @@ class MoEFusedV2OptimizerConfig(Config):
             [name for name in all_params.keys() if name not in overriden_param_names], {}
         )
         # group_overrides.append(default_override)
-        group_overrides.insert(0, default_override) # to ensure default is first
+        group_overrides.insert(0, default_override)  # to ensure default is first
 
         return [
             {"params": [all_params[param_name] for param_name in go.params], **go.opts}
@@ -192,11 +188,9 @@ class MoEFusedV2OptimizerConfig(Config):
             if len(go.params) > 0
         ]
 
-
     @classmethod
     def optimizer(cls):
         return MoEFusedV2Optimizer
-
 
     def _collect_ep_param_ids(self, model_parts: List[nn.Module]) -> Set[int]:
         """
@@ -211,15 +205,20 @@ class MoEFusedV2OptimizerConfig(Config):
                         ep_param_ids.add(id(p))
         return ep_param_ids
 
-    def build(self, model_parts: List, train_module: TrainModule, strict: bool = True, param_filter=None) -> "MoEFusedV2Optimizer":
+    def build(
+        self, model_parts: List, train_module: TrainModule, strict: bool = True, param_filter=None
+    ) -> "MoEFusedV2Optimizer":
         """
         Build the optimizer.
 
         :param strict: If ``True`` an error is raised if a pattern in ``group_overrides`` doesn't
             match any parameter.
         """
-        from ..train.train_module.transformer.moe_train_module import MoEV2TransformerTrainModule
         from ..nn.moe.v2.model import MoEFusedV2Transformer
+        from ..train.train_module.transformer.moe_train_module import (
+            MoEV2TransformerTrainModule,
+        )
+
         model_parts = cast(List[MoEFusedV2Transformer], model_parts)
         train_module = cast(MoEV2TransformerTrainModule, train_module)
 
@@ -243,16 +242,20 @@ class MoEFusedV2OptimizerConfig(Config):
                     dp_param_order[name] = p
 
         # Build param groups for the two PGs by filtering.
-        dp_groups = self.build_groups(model_parts, strict=strict, param_filter=lambda p: id(p) not in ep_param_ids)
+        dp_groups = self.build_groups(
+            model_parts, strict=strict, param_filter=lambda p: id(p) not in ep_param_ids
+        )
         for g in dp_groups:
-            g["__pg_tag__"] = "dp" # type: ignore
+            g["__pg_tag__"] = "dp"  # type: ignore
 
-        ep_groups = self.build_groups(model_parts, strict=strict, param_filter=lambda p: id(p) in ep_param_ids)
+        ep_groups = self.build_groups(
+            model_parts, strict=strict, param_filter=lambda p: id(p) in ep_param_ids
+        )
         for g in ep_groups:
-            g["__pg_tag__"] = "ep_dp" # type: ignore
+            g["__pg_tag__"] = "ep_dp"  # type: ignore
 
         # Concatenate, ensuring the "default" groups remain first in each partition (already ensured by build_groups()).
-        all_groups: List[Dict[str, Any]] = list(dp_groups) + list(ep_groups) # type: ignore
+        all_groups: List[Dict[str, Any]] = list(dp_groups) + list(ep_groups)  # type: ignore
 
         optim: torch.optim.Optimizer = self.optimizer()(
             all_groups,
@@ -314,7 +317,6 @@ class MoEFusedV2OptimizerConfig(Config):
 
 
 class MoEFusedV2Optimizer(Optimizer):
-
     def __init__(
         self,
         params,
@@ -344,24 +346,23 @@ class MoEFusedV2Optimizer(Optimizer):
         # for print info
         self._model_param_sz = 0
         for param_group in params:
-            self._model_param_sz += sum(p.numel() * p.element_size() for p in param_group['params'])
+            self._model_param_sz += sum(p.numel() * p.element_size() for p in param_group["params"])
 
         # ---- Sharding context (DP and EP-DP) ----
         self._dp_group: Optional[ProcessGroup] = dp_group
         self._ep_dp_group: Optional[ProcessGroup] = ep_dp_group
         assert param_order_dp is not None, "param_order_dp must be provided"
         assert param_order_ep is not None, "param_order_ep must be provided"
-        self._param_order_dp: OrderedDict[str, torch.nn.Parameter] = param_order_dp 
-        self._param_order_ep: OrderedDict[str, torch.nn.Parameter] = param_order_ep 
+        self._param_order_dp: OrderedDict[str, torch.nn.Parameter] = param_order_dp
+        self._param_order_ep: OrderedDict[str, torch.nn.Parameter] = param_order_ep
         self._broadcast_bucket_bytes: int = int(broadcast_bucket_mb * 1024 * 1024)
         self._enable_sharding: bool = (
-            (self._dp_group is not None and len(self._param_order_dp) > 0)
-            or (self._ep_dp_group is not None and len(self._param_order_ep) > 0)
-        )
-        assert world_mesh['dense'] is not None, "DP mesh must be provided"
-        self.dp_mesh: DeviceMesh = world_mesh['dense'] # ('pp', 'dp')
-        self.moe_mesh = world_mesh['moe'] # ('pp', 'ep_dp', 'ep_mp')
-        self.ep_dp_mesh = self.moe_mesh['ep_dp'] if self.moe_mesh else None
+            self._dp_group is not None and len(self._param_order_dp) > 0
+        ) or (self._ep_dp_group is not None and len(self._param_order_ep) > 0)
+        assert world_mesh["dense"] is not None, "DP mesh must be provided"
+        self.dp_mesh: DeviceMesh = world_mesh["dense"]  # ('pp', 'dp')
+        self.moe_mesh = world_mesh["moe"]  # ('pp', 'ep_dp', 'ep_mp')
+        self.ep_dp_mesh = self.moe_mesh["ep_dp"] if self.moe_mesh else None
         # Tag each param_group with its PG tag if present (default to 'dp' for backwards compat).
         for g in self.param_groups:
             tag = g.get("__pg_tag__")
@@ -380,13 +381,11 @@ class MoEFusedV2Optimizer(Optimizer):
         # self.foreach = foreach
         self._step_skipped: Optional[torch.Tensor] = None
 
-
-
         params = cast(Iterable[Dict[str, Any]], params)
 
         device = None
         for param_group in params:
-            for i, param in enumerate(param_group['params']):
+            for i, param in enumerate(param_group["params"]):
                 if not param.requires_grad:
                     continue
                 if device is None:
@@ -394,16 +393,17 @@ class MoEFusedV2Optimizer(Optimizer):
                 else:
                     assert device == param.device, "Inconsistent device found"
                 # float16 params:
-                assert param.type() in ['torch.cuda.HalfTensor', 'torch.cuda.BFloat16Tensor'], 'Only support 16 bit params. Received {}'.format(param.type())
-
+                assert param.type() in [
+                    "torch.cuda.HalfTensor",
+                    "torch.cuda.BFloat16Tensor",
+                ], "Only support 16 bit params. Received {}".format(param.type())
 
         self._owned_views: List[MoEFusedV2Optimizer._OwnedView] = []
 
-        
         self._segments_by_rank: Dict[str, List[List[Tuple[str, torch.nn.Parameter, int, int]]]] = {}
 
         # A mapping from PG tag to param ranges (start, end) in global concatenation
-        # eg, 
+        # eg,
         # self.param_ranges_by_tag = {
         #   'dp': OrderedDict{param_name1: (start, end), param_name2: (start, end)},
         #   'ep_dp': OrderedDict{param_name3: (start, end), param_name4: (start, end)},
@@ -436,24 +436,28 @@ class MoEFusedV2Optimizer(Optimizer):
 
             # Create 1-D views per segment
             offset = 0
-            for (model_param_name, model_param, seg_start, seg_len) in my_segs:
+            for model_param_name, model_param, seg_start, seg_len in my_segs:
                 main_param_view = flat_main.narrow(0, offset, seg_len)
                 exp_avg_view = flat_exp_avg.narrow(0, offset, seg_len)
                 exp_avg_sq_view = flat_exp_avg_sq.narrow(0, offset, seg_len)
 
                 # Initialize main from model param slice
-                main_param_view.data.copy_(model_param.data.view(-1)[seg_start:seg_start + seg_len].float())
+                main_param_view.data.copy_(
+                    model_param.data.view(-1)[seg_start : seg_start + seg_len].float()
+                )
 
-                self._owned_views.append(MoEFusedV2Optimizer._OwnedView(
-                    model_param_name=model_param_name,
-                    model_param=model_param,
-                    param_start=seg_start,
-                    length=seg_len,
-                    main_param_view=main_param_view,
-                    exp_avg_view=exp_avg_view,
-                    exp_avg_sq_view=exp_avg_sq_view,
-                    pg_tag=tag,
-                ))
+                self._owned_views.append(
+                    MoEFusedV2Optimizer._OwnedView(
+                        model_param_name=model_param_name,
+                        model_param=model_param,
+                        param_start=seg_start,
+                        length=seg_len,
+                        main_param_view=main_param_view,
+                        exp_avg_view=exp_avg_view,
+                        exp_avg_sq_view=exp_avg_sq_view,
+                        pg_tag=tag,
+                    )
+                )
                 offset += seg_len
 
             # Hold references by tag for broadcasts
@@ -461,7 +465,6 @@ class MoEFusedV2Optimizer(Optimizer):
             setattr(self, f"_flat_exp_avg_{tag}", flat_exp_avg)
             setattr(self, f"_flat_exp_avg_sq_{tag}", flat_exp_avg_sq)
             self._flat_main_grad_buf[tag] = None
-
 
         def _param_in_list(param, lst):
             return id(param) in (id(p) for p in lst)
@@ -475,7 +478,9 @@ class MoEFusedV2Optimizer(Optimizer):
             return rst
 
         for old_param_group in self.param_groups:
-            owned_params = _filter_owned_main_views_whose_model_params_are_in(old_param_group["params"])
+            owned_params = _filter_owned_main_views_whose_model_params_are_in(
+                old_param_group["params"]
+            )
             new_param_group = {
                 "params": owned_params,
                 "__pg_tag__": old_param_group["__pg_tag__"],
@@ -487,12 +492,11 @@ class MoEFusedV2Optimizer(Optimizer):
             if owned_params:
                 new_param_groups.append(new_param_group)
 
-        log_str = '\n'
-        log_str += f'Old param group:\n'
+        log_str = "\n"
+        log_str += f"Old param group:\n"
         log_str += _str_paramt(self.param_groups)
 
-
-        log_str += f'New param group:\n'
+        log_str += f"New param group:\n"
         log_str += _str_paramt(new_param_groups)
 
         print(log_str)
@@ -500,7 +504,6 @@ class MoEFusedV2Optimizer(Optimizer):
 
         # update param groups with only OWNED ones
         self.param_groups = new_param_groups
-
 
         # init optimizer per-parameter states
         # the states are a view into the flat buffers
@@ -532,15 +535,16 @@ class MoEFusedV2Optimizer(Optimizer):
             flat_main = getattr(self, f"_flat_main_{tag}")
             flat_exp_avg = getattr(self, f"_flat_exp_avg_{tag}")
             flat_exp_avg_sq = getattr(self, f"_flat_exp_avg_sq_{tag}")
-            flat_main.data = flat_main.data.to('cpu')
-            flat_exp_avg.data = flat_exp_avg.data.to('cpu')
-            flat_exp_avg_sq.data = flat_exp_avg_sq.data.to('cpu')
-        
+            flat_main.data = flat_main.data.to("cpu")
+            flat_exp_avg.data = flat_exp_avg.data.to("cpu")
+            flat_exp_avg_sq.data = flat_exp_avg_sq.data.to("cpu")
+
         dbg_mem2 = torch.cuda.memory_allocated() / (1024**3)
         pass
-        
 
-    def reload_optimizer_states_to_device(self,):
+    def reload_optimizer_states_to_device(
+        self,
+    ):
         raise NotImplementedError()
         # Reload optimizer states to the given device
         for ov in self._owned_views:
@@ -549,7 +553,7 @@ class MoEFusedV2Optimizer(Optimizer):
             ov.main_param_view.data = ov.main_param_view.data.to(self.device)
 
     def print_memory_summary(self):
-        main_param_bytes = 0 
+        main_param_bytes = 0
         states_bytes = 0
         for tag in ("dp", "ep_dp"):
             pg, order = self._pg_and_order_for_tag(tag)
@@ -565,15 +569,17 @@ class MoEFusedV2Optimizer(Optimizer):
             states_bytes += flat_exp_avg_sq.numel() * flat_exp_avg_sq.element_size()
 
         main_grad_bytes = main_param_bytes
-        print(f'Model param memory usage: {self._model_param_sz / 1024**3:.2f} GB - 1/(EP)')
-        print(f'Model grad memory usage: {self._model_param_sz / 1024**3:.2f} GB - 1/(EP)')
-        print(f'Main param memory usage: {main_param_bytes / 1024**3:.2f} GB - 1/(DP)')
-        print(f'Main grad memory usage: {main_grad_bytes / 1024**3:.2f} GB - 1/(DP)')
-        print(f'States memory usage: {states_bytes / 1024**3:.2f} GB - 1/(DP)')
+        print(f"Model param memory usage: {self._model_param_sz / 1024**3:.2f} GB - 1/(EP)")
+        print(f"Model grad memory usage: {self._model_param_sz / 1024**3:.2f} GB - 1/(EP)")
+        print(f"Main param memory usage: {main_param_bytes / 1024**3:.2f} GB - 1/(DP)")
+        print(f"Main grad memory usage: {main_grad_bytes / 1024**3:.2f} GB - 1/(DP)")
+        print(f"States memory usage: {states_bytes / 1024**3:.2f} GB - 1/(DP)")
 
         total_mem = self._model_param_sz + self._model_param_sz + main_param_bytes + states_bytes
         peak_mem = total_mem + main_grad_bytes
-        print(f'----\nTotal estimated static memory usage: {total_mem / 1024**3:.2f} GB (peak {peak_mem / 1024**3:.2f} GB)')
+        print(
+            f"----\nTotal estimated static memory usage: {total_mem / 1024**3:.2f} GB (peak {peak_mem / 1024**3:.2f} GB)"
+        )
 
     @property
     def device(self) -> torch.device:
@@ -586,7 +592,7 @@ class MoEFusedV2Optimizer(Optimizer):
             if self._device is None:
                 self._device = get_default_device()
         return self._device
-    
+
     @property
     def latest_loss(self) -> Optional[torch.Tensor]:
         if not self._losses:
@@ -620,11 +626,11 @@ class MoEFusedV2Optimizer(Optimizer):
         else:
             return torch.tensor(0.0)
 
-    @overload # make pylance happy
+    @overload  # make pylance happy
     def step(self, closure: None = ...) -> None:
         ...
 
-    @overload # make pylance happy
+    @overload  # make pylance happy
     def step(self, closure: Callable[[], float]) -> float:
         ...
 
@@ -632,25 +638,24 @@ class MoEFusedV2Optimizer(Optimizer):
         self._use_reduce_scatter_grads = enabled
 
     def _clip_grad(self) -> torch.Tensor:
-
         global_grads = []
 
         # dp grad
-        flat_main_grad_buf_dp = self._flat_main_grad_buf['dp']
+        flat_main_grad_buf_dp = self._flat_main_grad_buf["dp"]
         if flat_main_grad_buf_dp is not None:
             mesh_shape = self.dp_mesh.shape
             norm_dp = flat_main_grad_buf_dp.norm(p=2.0).unsqueeze(0)
             flat_main_grad_buf_dp_dt = DTensor.from_local(
                 # flat_main_grad_buf_dp,
                 norm_dp,
-                device_mesh=self.dp_mesh['dp'],
+                device_mesh=self.dp_mesh["dp"],
                 placements=[Shard(0)],
             )
             global_grads.append(flat_main_grad_buf_dp_dt)
 
         flat_main_grad_buf_ep_dp = None
         if self.moe_mesh is not None:
-            flat_main_grad_buf_ep_dp = self._flat_main_grad_buf['ep_dp']
+            flat_main_grad_buf_ep_dp = self._flat_main_grad_buf["ep_dp"]
             if flat_main_grad_buf_ep_dp is not None:
                 mesh_shape = self.dp_mesh.shape
                 norm_ep_dp = flat_main_grad_buf_ep_dp.norm(p=2.0).unsqueeze(0)
@@ -659,23 +664,25 @@ class MoEFusedV2Optimizer(Optimizer):
                     norm_ep_dp,
                     # device_mesh=self.moe_mesh['ep_dp', 'ep_mp'],
                     # placements=[Shard(1), Shard(0)],
-                    device_mesh=self.dp_mesh['dp'], # NOTE: EP_DP+EP_MP = DP, let's just reuse
+                    device_mesh=self.dp_mesh["dp"],  # NOTE: EP_DP+EP_MP = DP, let's just reuse
                     placements=[Shard(0)],
                 )
                 global_grads.append(flat_main_grad_buf_ep_dp_dt)
 
         # NOTE: aten._foreach_norm.Scalar: DTensor does not support cross-mesh operation yet!
         # TODO: early PP stages have large grad norm, need to investigate
-        total_grad_norm = nn.utils.get_total_norm(global_grads, norm_type=2.0, error_if_nonfinite=False)
+        total_grad_norm = nn.utils.get_total_norm(
+            global_grads, norm_type=2.0, error_if_nonfinite=False
+        )
         total_grad_norm = cast(DTensor, total_grad_norm).full_tensor()
         # alternative
         # n0 = torch.norm(global_grads[0], p=2.0)
-        # n0 = cast(DTensor, n0).full_tensor() 
+        # n0 = cast(DTensor, n0).full_tensor()
         # n1 = torch.norm(global_grads[1], p=2.0)
-        # n1 = cast(DTensor, n1).full_tensor() 
+        # n1 = cast(DTensor, n1).full_tensor()
         # total_grad_norm = (n0.square() + n1.square()).sqrt()
 
-        ### 
+        ###
         # global_grads = []
         # flat_main_grad_buf_dp = self._flat_main_grad_buf['dp']
         # flat_main_grad_buf_ep_dp = self._flat_main_grad_buf['ep_dp']
@@ -694,9 +701,7 @@ class MoEFusedV2Optimizer(Optimizer):
         # )
         # global_grads.append(flat_main_grad_buf_ep_dp_dt)
         # total_grad_norm2 = nn.utils.get_total_norm(global_grads, norm_type=2.0, error_if_nonfinite=False)
-        ### 
-
-
+        ###
 
         # dbg0 = global_grads[0].full_tensor()
         # dbg1 = global_grads[1].full_tensor()
@@ -704,11 +709,12 @@ class MoEFusedV2Optimizer(Optimizer):
 
         # If pipeline parallelism
         assert self.dp_mesh.mesh_dim_names is not None
-        if 'pp' in self.dp_mesh.mesh_dim_names:
+        if "pp" in self.dp_mesh.mesh_dim_names:
             total_grad_norm = total_grad_norm.square()
-            dist.all_reduce(total_grad_norm, op=dist.ReduceOp.SUM, group=self.dp_mesh['pp'].get_group())
+            dist.all_reduce(
+                total_grad_norm, op=dist.ReduceOp.SUM, group=self.dp_mesh["pp"].get_group()
+            )
             total_grad_norm = total_grad_norm.sqrt()
-
 
         clip_coef = self.max_grad_norm / (total_grad_norm + 1e-6)
         # Note: multiplying by the clamped coef is redundant when the coef is clamped to 1, but doing so
@@ -725,17 +731,17 @@ class MoEFusedV2Optimizer(Optimizer):
 
     @torch.no_grad()
     def step(self, closure: Optional[Callable[[], float]] = None) -> Optional[float]:
-        dbg_mem_before_cp1 = torch.cuda.memory_allocated()/1024**3
+        dbg_mem_before_cp1 = torch.cuda.memory_allocated() / 1024**3
         if getattr(self, "_use_reduce_scatter_grads", True):
             # Precondition: DDP model did not all-reduce grads, grads on dp ranks different now
             # the optimizer has sharded main param + states in fp32
             # now call reduce scatter to collect averaged grads from dp ranks
             # directly into the owned main param views
-            dbg_mem_before_rs = torch.cuda.memory_allocated()/1024**3
-            dbg_mem_peak_before_rs = torch.cuda.max_memory_allocated()/1024**3
+            dbg_mem_before_rs = torch.cuda.memory_allocated() / 1024**3
+            dbg_mem_peak_before_rs = torch.cuda.max_memory_allocated() / 1024**3
             self._reduce_scatter_model_grads_chunked()
-            dbg_mem_after_rs = torch.cuda.memory_allocated()/1024**3
-            dbg_mem_peak_after_rs = torch.cuda.max_memory_allocated()/1024**3
+            dbg_mem_after_rs = torch.cuda.memory_allocated() / 1024**3
+            dbg_mem_peak_after_rs = torch.cuda.max_memory_allocated() / 1024**3
 
         else:
             # Precondition: DDP model called all-reduce grads, bf16 model grads on dp ranks are the same
@@ -744,11 +750,11 @@ class MoEFusedV2Optimizer(Optimizer):
 
         total_grad_norm = self._clip_grad()
         self.latest_grad_norm = total_grad_norm
-        dbg_mem_before_step = torch.cuda.memory_allocated()/1024**3
+        dbg_mem_before_step = torch.cuda.memory_allocated() / 1024**3
         self._step_foreach(closure)
-        dbg_mem_after_step = torch.cuda.memory_allocated()/1024**3
+        dbg_mem_after_step = torch.cuda.memory_allocated() / 1024**3
         self._dealloc_main_grad()
-        dbg_mem_before_cp2 = torch.cuda.memory_allocated()/1024**3
+        dbg_mem_before_cp2 = torch.cuda.memory_allocated() / 1024**3
 
         # 1) owners write back to local model params
         self._copy_owned_main_to_model_bf16()
@@ -762,19 +768,21 @@ class MoEFusedV2Optimizer(Optimizer):
     class _OwnedView(NamedTuple):
         # A contiguous slice (in flattened space) of a model parameter owned by this rank.
         model_param_name: str
-        model_param: torch.nn.Parameter        # replicated bf16/fp16 param
-        param_start: int                       # start index into model_param.view(-1)
-        length: int                            # number of elements in this slice
-        main_param_view: torch.Tensor          # 1-D fp32 view into our flat main shard
-        exp_avg_view: torch.Tensor             # 1-D fp32 view into our flat exp_avg shard
-        exp_avg_sq_view: torch.Tensor          # 1-D fp32 view into our flat exp_avg_sq shard
-        pg_tag: str                            # "dp" or "ep_dp"
+        model_param: torch.nn.Parameter  # replicated bf16/fp16 param
+        param_start: int  # start index into model_param.view(-1)
+        length: int  # number of elements in this slice
+        main_param_view: torch.Tensor  # 1-D fp32 view into our flat main shard
+        exp_avg_view: torch.Tensor  # 1-D fp32 view into our flat exp_avg shard
+        exp_avg_sq_view: torch.Tensor  # 1-D fp32 view into our flat exp_avg_sq shard
+        pg_tag: str  # "dp" or "ep_dp"
 
         def __repr__(self) -> str:
-            return (f"_OwnedView(pg_tag={self.pg_tag}, model_param={self.model_param.shape}, param_start={self.param_start}, "
-                    f"length={self.length}, main_param_view={self.main_param_view.shape}, "
-                    f"exp_avg_view={self.exp_avg_view.shape}, exp_avg_sq_view={self.exp_avg_sq_view.shape})")
-        
+            return (
+                f"_OwnedView(pg_tag={self.pg_tag}, model_param={self.model_param.shape}, param_start={self.param_start}, "
+                f"length={self.length}, main_param_view={self.main_param_view.shape}, "
+                f"exp_avg_view={self.exp_avg_view.shape}, exp_avg_sq_view={self.exp_avg_sq_view.shape})"
+            )
+
     def _pg_and_order_for_tag(self, tag: str):
         if tag == "dp":
             return self._dp_group, self._param_order_dp
@@ -840,7 +848,8 @@ class MoEFusedV2Optimizer(Optimizer):
         return [(r * shard, (r + 1) * shard) for r in range(ws)]
 
     def _intersect(self, a: Tuple[int, int], b: Tuple[int, int]) -> Tuple[int, int]:
-        s = max(a[0], b[0]); e = min(a[1], b[1])
+        s = max(a[0], b[0])
+        e = min(a[1], b[1])
         return (s, e) if e > s else (0, 0)
 
     def _build_segments_by_rank(self, tag: str):
@@ -865,14 +874,19 @@ class MoEFusedV2Optimizer(Optimizer):
         # Param ranges in global (concatenated) coordinates.
         param_ranges: List[Tuple[int, int]] = []
         for i, (n, p) in enumerate(order.items()):
-            start = offsets[i]; end = start + int(p.numel())
+            start = offsets[i]
+            end = start + int(p.numel())
             param_ranges.append((start, end))
         self.param_ranges_by_tag[tag] = OrderedDict(zip(order.keys(), param_ranges))
 
-        segments_by_rank: List[List[Tuple[str, torch.nn.Parameter, int, int]]] = [[] for _ in range(ws)]
+        segments_by_rank: List[List[Tuple[str, torch.nn.Parameter, int, int]]] = [
+            [] for _ in range(ws)
+        ]
         # segments_by_rank[rank]     = List of (param_name, param, start_in_param, length)
         for rank in range(ws):
-            s_start, s_end = shard_ranges[rank] # marks the start/end of this rank's shard in global coords
+            s_start, s_end = shard_ranges[
+                rank
+            ]  # marks the start/end of this rank's shard in global coords
             for i, (n, p) in enumerate(order.items()):
                 p_start, p_end = param_ranges[i]
                 inter = self._intersect((s_start, s_end), (p_start, p_end))
@@ -883,7 +897,7 @@ class MoEFusedV2Optimizer(Optimizer):
                 if seg_len > 0:
                     segments_by_rank[rank].append((n, p, seg_start_in_param, seg_len))
         return segments_by_rank
-    
+
     def _reduce_scatter_model_grads(self) -> None:
         """
         Pack bf16/fp16 model grads in the stable concat order per PG, pad to ws multiple,
@@ -905,7 +919,7 @@ class MoEFusedV2Optimizer(Optimizer):
                 continue
             device = next(iter(order.values())).device
 
-            grad_dtype = torch.float32          # force fp32 RS
+            grad_dtype = torch.float32  # force fp32 RS
 
             padded_total = self._ceil_to_multiple(total, ws)
             shard = padded_total // ws
@@ -918,7 +932,7 @@ class MoEFusedV2Optimizer(Optimizer):
 
                 dst = send_buf.narrow(0, offsets[i], p.numel())
                 src = p.grad.detach().view(-1)
-                dst.copy_(src) # may auto-cast on some builds
+                dst.copy_(src)  # may auto-cast on some builds
                 # dst.copy_(src.to(dst.dtype)) # fallback: small, per-param temp only
 
                 p.grad = None  # free bf16/fp16 model grad
@@ -926,11 +940,15 @@ class MoEFusedV2Optimizer(Optimizer):
             # Reduce-scatter -> local shard
             # TODO: this send buf is huge, consider using a few small buckets
             flat_main_grad_buf = torch.empty(shard, dtype=grad_dtype, device=device)
-            self._flat_main_grad_buf[tag] = flat_main_grad_buf # record for grad clip
+            self._flat_main_grad_buf[tag] = flat_main_grad_buf  # record for grad clip
             if ws == 1:
-                dist.reduce_scatter_tensor(flat_main_grad_buf, send_buf, group=pg, op=dist.ReduceOp.AVG)
+                dist.reduce_scatter_tensor(
+                    flat_main_grad_buf, send_buf, group=pg, op=dist.ReduceOp.AVG
+                )
             else:
-                dist.reduce_scatter_tensor(flat_main_grad_buf, send_buf, group=pg, op=dist.ReduceOp.AVG)
+                dist.reduce_scatter_tensor(
+                    flat_main_grad_buf, send_buf, group=pg, op=dist.ReduceOp.AVG
+                )
 
             # Point owned fp32 main.grad as views into the buffer
             off = 0
@@ -938,7 +956,7 @@ class MoEFusedV2Optimizer(Optimizer):
                 if ov.pg_tag != tag:
                     continue
                 n = ov.length
-                main_param_grad = flat_main_grad_buf.narrow(0, off, n) 
+                main_param_grad = flat_main_grad_buf.narrow(0, off, n)
 
                 ov.main_param_view.grad = main_param_grad
 
@@ -981,8 +999,8 @@ class MoEFusedV2Optimizer(Optimizer):
             #     self._segments_by_rank[tag] = segs_by_rank
 
             # Cursors over the per-rank segment lists
-            cursor_idx = [0 for _ in range(ws)]   # which segment tuple we are on
-            cursor_off = [0 for _ in range(ws)]   # how much consumed inside that segment
+            cursor_idx = [0 for _ in range(ws)]  # which segment tuple we are on
+            cursor_off = [0 for _ in range(ws)]  # how much consumed inside that segment
 
             # Helper: copy up to `need` elems destined for rank r into dst at dst_off
             def _fill_rank_piece(r: int, need: int, dst: torch.Tensor, dst_off: int) -> None:
@@ -1001,7 +1019,9 @@ class MoEFusedV2Optimizer(Optimizer):
                     pos = cursor_off[r]
                     take = min(seg_len - pos, need - wrote)
                     if take > 0:
-                        assert p.grad is not None, f"Param grad is None for param {p} on rank {my_rank} for tag {tag}"
+                        assert (
+                            p.grad is not None
+                        ), f"Param grad is None for param {p} on rank {my_rank} for tag {tag}"
                         src = p.grad.detach().view(-1).narrow(0, s0 + pos, take)
                         dst.narrow(0, dst_off + wrote, take).copy_(src)
                         wrote += take
@@ -1016,7 +1036,9 @@ class MoEFusedV2Optimizer(Optimizer):
             # Choose chunk capacity (multiple of ws) and buffers
             chunk_budget_bytes = getattr(self, "_rs_chunk_bytes", 1 << 30)  # ~1 GiB by default
             elem_bytes = torch.tensor([], dtype=grad_dtype).element_size()
-            chunk_capacity = max(ws, (chunk_budget_bytes // elem_bytes) // ws * ws)  # divisible by ws
+            chunk_capacity = max(
+                ws, (chunk_budget_bytes // elem_bytes) // ws * ws
+            )  # divisible by ws
             per_rank_cap = chunk_capacity // ws
             send_chunk = torch.empty(chunk_capacity, dtype=grad_dtype, device=device)
 
@@ -1031,10 +1053,12 @@ class MoEFusedV2Optimizer(Optimizer):
 
                 # reduce_scatter on the packed chunk
                 out_view = flat_main_grad_buf.narrow(0, shard_cursor, out_elems)
-                dist.reduce_scatter_tensor(out_view,
-                                        send_chunk.narrow(0, 0, out_elems * ws),
-                                        group=pg,
-                                        op=dist.ReduceOp.AVG)
+                dist.reduce_scatter_tensor(
+                    out_view,
+                    send_chunk.narrow(0, 0, out_elems * ws),
+                    group=pg,
+                    op=dist.ReduceOp.AVG,
+                )
                 shard_cursor += out_elems
 
             # Now it's safe to clear the low-precision model grads
@@ -1050,7 +1074,6 @@ class MoEFusedV2Optimizer(Optimizer):
                 ov.main_param_view.grad = flat_main_grad_buf.narrow(0, off, n)
                 off += n
             assert off == flat_main_grad_buf.numel(), "Size mismatch: part of the buffer not used"
-
 
     def _copy_owned_model_grads_to_main_grads(self):
         """
@@ -1109,7 +1132,7 @@ class MoEFusedV2Optimizer(Optimizer):
             # Pack my shard
             local_shard = torch.empty(shard, dtype=dtype, device=device)
             off = 0
-            for (mp_name, mp, start, length) in my_segs:
+            for mp_name, mp, start, length in my_segs:
                 view = mp.data.view(-1).narrow(0, start, length)
                 local_shard.narrow(0, off, length).copy_(view)
                 off += length
@@ -1117,12 +1140,11 @@ class MoEFusedV2Optimizer(Optimizer):
                 local_shard.narrow(0, off, shard - off).zero_()
 
             # All-gather all shards
-            full_buf = torch.empty(ws * shard, dtype=dtype, device=device) # TODO: big buffer
+            full_buf = torch.empty(ws * shard, dtype=dtype, device=device)  # TODO: big buffer
             if ws == 1:
                 dist.all_gather_into_tensor(full_buf, local_shard, group=pg)
             else:
                 dist.all_gather_into_tensor(full_buf, local_shard, group=pg)
-
 
             # Unpack into live params for each rank's shard
             for src in range(ws):
@@ -1131,11 +1153,11 @@ class MoEFusedV2Optimizer(Optimizer):
                     continue
                 chunk = full_buf.narrow(0, src * shard, shard)
                 off = 0
-                for (mp_name, mp, start, length) in segs:
+                for mp_name, mp, start, length in segs:
                     dst = mp.data.view(-1).narrow(0, start, length)
                     dst.copy_(chunk.narrow(0, off, length))
                     off += length
-    
+
     def _broadcast_updated_model_params(self):
         """
         After owners update local bf16/fp16 model params from main shard views,
@@ -1166,7 +1188,7 @@ class MoEFusedV2Optimizer(Optimizer):
                 current: List[Tuple[str, torch.nn.Parameter, int, int]] = []
                 current_bytes = 0
                 buckets: List[List[Tuple[str, torch.nn.Parameter, int, int]]] = []
-                for (mp_name, mp, start, length) in segs:
+                for mp_name, mp, start, length in segs:
                     nbytes = length * mp.element_size()
                     if current and current_bytes + nbytes > self._broadcast_bucket_bytes:
                         buckets.append(current)
@@ -1187,7 +1209,7 @@ class MoEFusedV2Optimizer(Optimizer):
                         # Pack from our local model params (already updated)
                         send_buf = torch.empty(numel, dtype=dtype, device=device)
                         off = 0
-                        for (mp_name, mp, start, length) in bucket:
+                        for mp_name, mp, start, length in bucket:
                             view = mp.data.view(-1).narrow(0, start, length)
                             send_buf.narrow(0, off, length).copy_(view)
                             off += length
@@ -1200,12 +1222,11 @@ class MoEFusedV2Optimizer(Optimizer):
                         dist.broadcast(recv_buf, src=src_global, group=pg)
                         # Unpack into our model params
                         off = 0
-                        for (mp_name, mp, start, length) in bucket:
+                        for mp_name, mp, start, length in bucket:
                             dst = mp.data.view(-1).narrow(0, start, length)
                             dst.copy_(recv_buf.narrow(0, off, length))
                             off += length
                         del recv_buf
-
 
     def _dealloc_main_grad(self):
         for main_param_group in self.param_groups:
@@ -1214,7 +1235,6 @@ class MoEFusedV2Optimizer(Optimizer):
 
         for tag in self._flat_main_grad_buf:
             self._flat_main_grad_buf[tag] = None
-
 
     @torch._dynamo.disable()
     def get_step_factor(self) -> torch.Tensor:
@@ -1241,7 +1261,6 @@ class MoEFusedV2Optimizer(Optimizer):
             step_factor = (self.latest_loss - loss_mean) <= self.sigma_factor * loss_std
 
         return step_factor.float()
-
 
     def _step_foreach(self, closure=None) -> None:
         """Performs adamw step using foreach impl, limiting chunk size to reduce memory usage."""
@@ -1315,7 +1334,6 @@ class MoEFusedV2Optimizer(Optimizer):
             # Flush any tail chunk
             flush_chunk()
 
-
     # def _step_foreach(self, closure=None) -> None:
     #     if closure is not None:
     #         with torch.enable_grad():
@@ -1382,13 +1400,13 @@ class MoEFusedV2Optimizer(Optimizer):
         for ov in self._owned_views:
             param_start_offset = ov.param_start
             param_end_offset = param_start_offset + ov.length
-            model_param = ov.model_param.data.view(-1)[param_start_offset:param_end_offset] # bf16
-            main_param_bf16 = ov.main_param_view.bfloat16() # fp32 -> bf16
+            model_param = ov.model_param.data.view(-1)[param_start_offset:param_end_offset]  # bf16
+            main_param_bf16 = ov.main_param_view.bfloat16()  # fp32 -> bf16
             if not torch.allclose(model_param, main_param_bf16, atol=1e-5):
-                raise ValueError(f"Model param {ov.model_param} and main param {ov.main_param_view} are not close")
+                raise ValueError(
+                    f"Model param {ov.model_param} and main param {ov.main_param_view} are not close"
+                )
 
-
-    
     def unsharded_state_dict(self) -> dict:
         # xxx.main_param, xxx.exp_avg, xxx.exp_avg_sq
         # all in fp32, unsharded
@@ -1398,58 +1416,73 @@ class MoEFusedV2Optimizer(Optimizer):
             if pg is None or not order:
                 continue
             N = self._global_numel(tag)
-            ws , r = self._world_and_rank(pg)
-            for buf_name in ("main", 
-                             "exp_avg", 
-                             "exp_avg_sq"
-                             ):
-                sharded_buf = getattr(self, f"_flat_{buf_name}_{tag}") # Sharded over DP or EP_DP
+            ws, r = self._world_and_rank(pg)
+            for buf_name in ("main", "exp_avg", "exp_avg_sq"):
+                sharded_buf = getattr(self, f"_flat_{buf_name}_{tag}")  # Sharded over DP or EP_DP
                 all_global_bufs_cpu = []
-                global_buf = torch.empty_like(sharded_buf) # 1 rank's local shard size, receive other ranks' shards
+                global_buf = torch.empty_like(
+                    sharded_buf
+                )  # 1 rank's local shard size, receive other ranks' shards
                 for src_rank in range(ws):
-                    print(f"Broadcasting/Receiving {buf_name} shard for tag {tag} from src_rank {src_rank} (total {ws})")
+                    print(
+                        f"Broadcasting/Receiving {buf_name} shard for tag {tag} from src_rank {src_rank} (total {ws})"
+                    )
                     # all ranks gather the buffer owned by src_rank, and use it to construct state dict
                     if r == src_rank:
                         # this rank owns the shard, send its local shard
                         global_buf.copy_(sharded_buf)
-                        dist.broadcast(global_buf, src=dist.get_global_rank(pg, src_rank), group=pg) # send
+                        dist.broadcast(
+                            global_buf, src=dist.get_global_rank(pg, src_rank), group=pg
+                        )  # send
                     else:
-                        dist.broadcast(global_buf, src=dist.get_global_rank(pg, src_rank), group=pg) # recv
-                
-                    all_global_bufs_cpu.append(global_buf.cpu()) # put each rank's shard to cpu, and later concat them
+                        dist.broadcast(
+                            global_buf, src=dist.get_global_rank(pg, src_rank), group=pg
+                        )  # recv
 
-                unsharded_buf_cpu = torch.cat(all_global_bufs_cpu, dim=0) # a unsharded buffer on cpu, all ranks in the pg have the same copy
-                assert unsharded_buf_cpu.numel() == N, f"Unsharded buffer size {unsharded_buf_cpu.numel()}, expected {N}"
-                del all_global_bufs_cpu # release cpu memory
-                del global_buf # release gpu memory
-                for param_name, param in order.items(): # for each param in this tag
-                    p_start, p_end = self.param_ranges_by_tag[tag][param_name] # get start/end in the global unsharded buffer
+                    all_global_bufs_cpu.append(
+                        global_buf.cpu()
+                    )  # put each rank's shard to cpu, and later concat them
+
+                unsharded_buf_cpu = torch.cat(
+                    all_global_bufs_cpu, dim=0
+                )  # a unsharded buffer on cpu, all ranks in the pg have the same copy
+                assert (
+                    unsharded_buf_cpu.numel() == N
+                ), f"Unsharded buffer size {unsharded_buf_cpu.numel()}, expected {N}"
+                del all_global_bufs_cpu  # release cpu memory
+                del global_buf  # release gpu memory
+                for param_name, param in order.items():  # for each param in this tag
+                    p_start, p_end = self.param_ranges_by_tag[tag][
+                        param_name
+                    ]  # get start/end in the global unsharded buffer
                     per_param_buf = unsharded_buf_cpu[p_start:p_end]
-                    unsharded_state_dict[f"{param_name}.{buf_name}"] = per_param_buf.reshape(param.shape)
+                    unsharded_state_dict[f"{param_name}.{buf_name}"] = per_param_buf.reshape(
+                        param.shape
+                    )
 
         print("Finished building unsharded optimizer state dict")
         return unsharded_state_dict
-        
+
     def _install_optim_from_cpu_dtensor(self, main_sd, state1_sd, state2_sd, distribute_ep_func):
         for tag in ("dp", "ep_dp"):
             pg, order = self._pg_and_order_for_tag(tag)
             if pg is None or not order:
                 continue
 
-            for param_name, param in order.items(): # for each param in this tag
+            for param_name, param in order.items():  # for each param in this tag
                 # p_start, p_end = self.param_ranges_by_tag[tag][param_name] # get start/end in the global unsharded buffer, but sharded over pp and ep_mp
 
                 # first get the full unsharded tensor on CPU
-                main = main_sd[param_name+'.main'].full_tensor()
-                exp_avg = state1_sd[param_name+'.exp_avg'].full_tensor()
-                exp_avg_sq = state2_sd[param_name+'.exp_avg_sq'].full_tensor()
-                
+                main = main_sd[param_name + ".main"].full_tensor()
+                exp_avg = state1_sd[param_name + ".exp_avg"].full_tensor()
+                exp_avg_sq = state2_sd[param_name + ".exp_avg_sq"].full_tensor()
+
                 if self.ep_dp_mesh is not None and "routed_experts." in param_name:
                     # then shard them to each rank based on EP_MP
                     main = distribute_ep_func(main)
                     exp_avg = distribute_ep_func(exp_avg)
                     exp_avg_sq = distribute_ep_func(exp_avg_sq)
-                    
+
                     # get local shard for this rank
                     main = main.to_local()
                     exp_avg = exp_avg.to_local()
@@ -1468,13 +1501,17 @@ class MoEFusedV2Optimizer(Optimizer):
                         owned_length = ov.length
                         param_start_offset = ov.param_start
                         # copy to the live flat buffers
-                        ov.main_param_view.copy_(main[param_start_offset:param_start_offset+owned_length])
-                        ov.exp_avg_view.copy_(exp_avg[param_start_offset:param_start_offset+owned_length])
-                        ov.exp_avg_sq_view.copy_(exp_avg_sq[param_start_offset:param_start_offset+owned_length])
-
+                        ov.main_param_view.copy_(
+                            main[param_start_offset : param_start_offset + owned_length]
+                        )
+                        ov.exp_avg_view.copy_(
+                            exp_avg[param_start_offset : param_start_offset + owned_length]
+                        )
+                        ov.exp_avg_sq_view.copy_(
+                            exp_avg_sq[param_start_offset : param_start_offset + owned_length]
+                        )
 
         return
-        
 
     def state_dict(self) -> dict:
         # ori_sd = super().state_dict()  # validate unsharded state
@@ -1484,22 +1521,20 @@ class MoEFusedV2Optimizer(Optimizer):
             if pg is None or not order:
                 continue
             N = self._global_numel(tag)
-            exp_avg     = getattr(self, f"_flat_exp_avg_{tag}")
-            exp_avg_sq  = getattr(self, f"_flat_exp_avg_sq_{tag}")
-            main_param  = getattr(self, f"_flat_main_{tag}")
+            exp_avg = getattr(self, f"_flat_exp_avg_{tag}")
+            exp_avg_sq = getattr(self, f"_flat_exp_avg_sq_{tag}")
+            main_param = getattr(self, f"_flat_main_{tag}")
             # Wrap local shards as DTensors with the *global* size
             sd[tag] = {
-                "exp_avg":    self._as_dtensor(exp_avg, tag, N),
+                "exp_avg": self._as_dtensor(exp_avg, tag, N),
                 "exp_avg_sq": self._as_dtensor(exp_avg_sq, tag, N),
-                "main_param": self._as_dtensor(main_param, tag, N)
+                "main_param": self._as_dtensor(main_param, tag, N),
             }
             # sd["meta"][f"order_{tag}_names"] = [n for n, _ in self._iter_named_params_for_tag(tag)]
         # Single global step (identical across ranks)
         tmp_state = list(self.state.values())[0]
-        sd["step"] = tmp_state['step'].clone()
-        return sd             
-    
-
+        sd["step"] = tmp_state["step"].clone()
+        return sd
 
     def load_state_dict(self, state_dict: Dict[str, Any], strict: bool = True) -> None:
         """
@@ -1547,7 +1582,7 @@ class MoEFusedV2Optimizer(Optimizer):
             flat_exp_avg = getattr(self, f"_flat_exp_avg_{tag}")
             flat_exp_avg_sq = getattr(self, f"_flat_exp_avg_sq_{tag}")
             flat_main_param = getattr(self, f"_flat_main_{tag}")
-            
+
             # flat_exp_avg.copy_(exp_avg_src)
             # flat_exp_avg_sq.copy_(exp_avg_sq_src)
             # flat_main_param.copy_(main_param)
@@ -1560,19 +1595,27 @@ class MoEFusedV2Optimizer(Optimizer):
             state["step"].fill_(loaded_step)
 
         self._check_model_param_main_param_the_same()
-        
+
         return None
 
     def _as_dtensor(self, local: torch.Tensor, tag: str, global_numel: int) -> DTensor:
-        if tag == 'dp':
+        if tag == "dp":
             # optimizer is sharded over dp ranks
-            return DTensor.from_local(local, self.dp_mesh['dp'], placements=[Shard(0)], )
-        elif tag == 'ep_dp':
+            return DTensor.from_local(
+                local,
+                self.dp_mesh["dp"],
+                placements=[Shard(0)],
+            )
+        elif tag == "ep_dp":
             # optimizer is sharded over ep_dp ranks, which is previously already sharded over ep_mp ranks
-            #(N, ) -> (1, N)
+            # (N, ) -> (1, N)
             assert self.moe_mesh is not None
             local = local.unsqueeze(0)
-            return DTensor.from_local(local, self.moe_mesh['ep_dp','ep_mp'], placements=[Shard(1), Shard(0)], ) # mp shards first dimension (0)
+            return DTensor.from_local(
+                local,
+                self.moe_mesh["ep_dp", "ep_mp"],
+                placements=[Shard(1), Shard(0)],
+            )  # mp shards first dimension (0)
         else:
             raise ValueError(f"Unknown tag: {tag}")
 

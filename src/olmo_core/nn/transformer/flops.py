@@ -1,37 +1,32 @@
-
 def num_floating_point_operations_for_single_layer(args, batch_size):
     raise RuntimeError("This function is deprecated.")
     """Calculate FLOPs for a standard Transformer model."""
     # Attention projection size.
     # general
-    assert hasattr(args, 'd_model')
-    assert hasattr(args, 'd_attn')
-    assert hasattr(args, 'swiglu')
-    assert hasattr(args, 'seq_length')
+    assert hasattr(args, "d_model")
+    assert hasattr(args, "d_attn")
+    assert hasattr(args, "swiglu")
+    assert hasattr(args, "seq_length")
     # attn
-    assert hasattr(args, 'multi_latent_attention')
-    assert hasattr(args, 'num_query_groups')
-    
-    # dense mlp
-    assert hasattr(args, 'ffn_hidden_size')
-    assert hasattr(args, 'dense_moe_mlp')
-    if args.ffn_hidden_size is None: # no dense mlp
-        args.ffn_hidden_size = 0
-    
-    # routed mlp
-    assert hasattr(args, 'num_experts')
-    assert hasattr(args, 'moe_router_topk')
-    assert hasattr(args, 'moe_ffn_hidden_size')
-    
-    # shared mlp
-    assert hasattr(args, 'moe_shared_expert_intermediate_size')
-    assert hasattr(args, 'shared_expert_count')
-    
+    assert hasattr(args, "multi_latent_attention")
+    assert hasattr(args, "num_query_groups")
 
-    num_experts_routed_to = (
-        args.moe_router_topk if args.moe_router_topk is not None 
-        else 0
-        )
+    # dense mlp
+    assert hasattr(args, "ffn_hidden_size")
+    assert hasattr(args, "dense_moe_mlp")
+    if args.ffn_hidden_size is None:  # no dense mlp
+        args.ffn_hidden_size = 0
+
+    # routed mlp
+    assert hasattr(args, "num_experts")
+    assert hasattr(args, "moe_router_topk")
+    assert hasattr(args, "moe_ffn_hidden_size")
+
+    # shared mlp
+    assert hasattr(args, "moe_shared_expert_intermediate_size")
+    assert hasattr(args, "shared_expert_count")
+
+    num_experts_routed_to = args.moe_router_topk if args.moe_router_topk is not None else 0
 
     moe_ffn_hidden_size = args.moe_ffn_hidden_size if args.moe_ffn_hidden_size is not None else 0
     shared_expert_ffn_hidden_size = (
@@ -57,7 +52,7 @@ def num_floating_point_operations_for_single_layer(args, batch_size):
 
     if args.multi_latent_attention:
         assert not args.group_query_attention
-        '''
+        """
         Basic arithmetic
         let B is batch size, s is seq_len, h is embedding dim,
         for one self_attnetion block (prenorm is not included)
@@ -69,28 +64,40 @@ def num_floating_point_operations_for_single_layer(args, batch_size):
         references
         https://arxiv.org/abs/2305.10403
         https://arxiv.org/abs/2205.05198
-        '''
+        """
         ## MLA
         if args.q_lora_rank is None:
-            q_term = args.hidden_size * args.num_attention_heads * (args.qk_head_dim + args.qk_pos_emb_head_dim)
+            q_term = (
+                args.hidden_size
+                * args.num_attention_heads
+                * (args.qk_head_dim + args.qk_pos_emb_head_dim)
+            )
         else:
-            q_term = args.q_lora_rank * (args.hidden_size + args.num_attention_heads * (args.qk_head_dim + args.qk_pos_emb_head_dim) + 1) 
+            q_term = args.q_lora_rank * (
+                args.hidden_size
+                + args.num_attention_heads * (args.qk_head_dim + args.qk_pos_emb_head_dim)
+                + 1
+            )
         self_attn_term = (
-            3*2 # fwd(1) + bwd(2) *FMA 
+            3
+            * 2  # fwd(1) + bwd(2) *FMA
             * (
                 ## q lora + rope + q norm
                 q_term
-
                 ## kv lora + rope + kv norm
                 + args.kv_lora_rank
-                * (args.hidden_size + args.num_attention_heads * (args.qk_head_dim + args.v_head_dim) + 1)
+                * (
+                    args.hidden_size
+                    + args.num_attention_heads * (args.qk_head_dim + args.v_head_dim)
+                    + 1
+                )
                 + args.hidden_size * args.qk_pos_emb_head_dim
-
                 ## o proj
                 + (args.num_attention_heads * args.v_head_dim) * args.hidden_size
-
                 ## core attn
-                + args.seq_length * (args.num_attention_heads * (args.qk_head_dim + args.qk_pos_emb_head_dim)) / 2
+                + args.seq_length
+                * (args.num_attention_heads * (args.qk_head_dim + args.qk_pos_emb_head_dim))
+                / 2
                 + args.seq_length * args.num_attention_heads * args.v_head_dim / 2
             )
         )
@@ -107,42 +114,38 @@ def num_floating_point_operations_for_single_layer(args, batch_size):
                     + (args.num_query_groups / args.num_attention_heads)
                     # Only half of the attention matrix is non-zero and needs to be multiplied with V.
                     + (args.seq_length / args.d_attn / 2)
-                ) 
+                )
             )
         )
-    attn_flops = batch_size * args.seq_length * ( self_attn_term )
-    mlp_flops = batch_size * args.seq_length * (
-        expansion_factor
-        * 1 # num_layers
-        * args.d_model
+    attn_flops = batch_size * args.seq_length * (self_attn_term)
+    mlp_flops = (
+        batch_size
+        * args.seq_length
         * (
-            # dense mlp
-            (
-                args.ffn_hidden_size
-                * gated_linear_multiplier * dense_mlp_multiplier
+            expansion_factor
+            * 1  # num_layers
+            * args.d_model
+            * (
+                # dense mlp
+                (args.ffn_hidden_size * gated_linear_multiplier * dense_mlp_multiplier)
+                # routed experts
+                + (moe_ffn_hidden_size * gated_linear_multiplier) * num_experts_routed_to
+                # Shared Experts.
+                + (shared_expert_ffn_hidden_size * gated_linear_multiplier)
+                * args.shared_expert_count
             )
-            # routed experts
-            + (
-                moe_ffn_hidden_size
-                * gated_linear_multiplier
-            ) * num_experts_routed_to
-            # Shared Experts.
-            + (
-                shared_expert_ffn_hidden_size 
-                * gated_linear_multiplier
-            ) * args.shared_expert_count
         )
     )
-        # Se
+    # Se
     total_floating_point_operations = attn_flops + mlp_flops
     return total_floating_point_operations
 
-def num_floating_point_operations_for_logits(config, seq_len): 
+
+def num_floating_point_operations_for_logits(config, seq_len):
     # for one sequence
-    total_floating_point_operations = 1 * seq_len * (
-        3 * 2 # x3 for fwd+bwd, x2 for GEMM FMA
-        * config.d_model
-        * config.vocab_size 
-        * 1
+    total_floating_point_operations = (
+        1
+        * seq_len
+        * (3 * 2 * config.d_model * config.vocab_size * 1)  # x3 for fwd+bwd, x2 for GEMM FMA
     )
     return total_floating_point_operations

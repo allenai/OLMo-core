@@ -24,11 +24,11 @@ from olmo_core.ops import attach_auxiliary_loss
 
 from ..buffer_cache import BufferCache
 from ..feed_forward import FeedForwardConfig
+from ..layer_norm import LayerNormConfig, LayerNormType
 from .loss import MoELoadBalancingLossGranularity
 from .mlp import DroplessMoEMLP, MoEMLP
 from .parallel_mlp import ParallelDroplessMLP, ParallelMLP, ParallelMLPBase
 from .router import MoERouterConfig
-from ..layer_norm import LayerNormConfig, LayerNormType
 
 if TYPE_CHECKING:
     from olmo_core.train.common import ReduceType
@@ -76,8 +76,7 @@ class MoEConfig(Config):
     dtype: DType = DType.float32
     shared_expert_norm: Optional[LayerNormConfig] = None
     routed_expert_norm: Optional[LayerNormConfig] = None
-    
-    
+
     def num_params(self, d_model: int) -> int:
         num_params = 0
         num_params += self.router.num_params(d_model, self.num_experts)
@@ -184,7 +183,7 @@ class MoEBase(nn.Module):
             else shared_mlp.build(d_model, dtype=dtype, init_device=init_device)
         )
         self._ep_enabled = False
-        
+
         if shared_expert_norm is not None:
             self.shared_expert_norm = shared_expert_norm.build(
                 size=d_model,
@@ -269,12 +268,12 @@ class MoEBase(nn.Module):
             shared_out = self.shared_mlp(x)
             if self.shared_expert_norm is not None:
                 shared_out = self.shared_expert_norm(shared_out)
-        
+
         # routed experts
         out = self.experts(x, expert_weights, expert_indices, batch_size_per_expert)
         if self.routed_expert_norm is not None:
             out = self.routed_expert_norm(out)
-            
+
         if shared_out is not None:
             shared_out = shared_out / (self.top_k + 1)
             out = shared_out.add(out, alpha=self.top_k / (self.top_k + 1))

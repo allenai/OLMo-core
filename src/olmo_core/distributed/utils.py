@@ -44,7 +44,6 @@ def init_distributed(
 
     # Force processes to synchronize at init process group.
     set_env_var("TORCH_DIST_INIT_BARRIER", "1")
-    print(f"get_node_hostname(): {get_node_hostname()}", )
 
     if shared_filesytem:
         set_env_var(OLMO_SHARED_FS_ENV_VAR, "1")

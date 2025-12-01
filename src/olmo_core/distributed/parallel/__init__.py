@@ -97,8 +97,9 @@ class MeshDimName(StrEnum):
     dp_cp = "dp_cp"
 
     # For MoEV2TransformerTrainModule
-    ep_mp = "ep_mp" # EP for model parallelism (for sharding model experts)
-    ep_dp = "ep_dp" # EP for data parallelism (for grad reduce)
+    ep_mp = "ep_mp"  # EP for model parallelism (for sharding model experts)
+    ep_dp = "ep_dp"  # EP for data parallelism (for grad reduce)
+
 
 _WORLD_MESH: Optional[DeviceMesh] = None
 

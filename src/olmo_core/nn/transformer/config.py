@@ -16,14 +16,16 @@ from ..attention import (
     SlidingWindowAttentionConfig,
 )
 from ..buffer_cache import BufferCache
-from ..feed_forward import FeedForwardConfig, FeedForwardType, DenseMoEFeedForwardConfig
+from ..feed_forward import DenseMoEFeedForwardConfig, FeedForwardConfig, FeedForwardType
 from ..layer_norm import LayerNormConfig, LayerNormType
 from ..lm_head import LMHeadConfig, LMHeadType
 from ..moe import MoEConfig, MoERouterConfig, MoEType
 from ..rope import RoPEConfig, RoPEScalingConfig, RoPEType
+from .flops import (
+    num_floating_point_operations_for_logits,
+    num_floating_point_operations_for_single_layer,
+)
 from .init import InitMethod
-from .flops import num_floating_point_operations_for_single_layer, num_floating_point_operations_for_logits
-
 
 if TYPE_CHECKING:
     from .block import TransformerBlockBase
@@ -94,7 +96,6 @@ class TransformerType(StrEnum):
     moe_fused_v2 = "moe_fused_v2"
 
 
-
 class TransformerBlockType(StrEnum):
     """
     An enumeration of the different transformer block implementations.
@@ -144,11 +145,10 @@ class TransformerBlockType(StrEnum):
     """
     ➡️ :class:`MoEHybridReorderedNormTransformerBlock`
     """
-    
+
     moe_fused_v2 = "moe_fused_v2"
 
 
-    
 @dataclass
 class TransformerBlockConfig(Config):
     """
@@ -244,6 +244,7 @@ class TransformerBlockConfig(Config):
                 return MoEHybridReorderedNormTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.moe_fused_v2:
                 from ..moe.v2.block import MoEFusedV2TransformerBlock
+
                 return MoEFusedV2TransformerBlock(**kwargs)
             else:
                 raise NotImplementedError(self.name)
@@ -295,15 +296,14 @@ class TransformerBlockConfig(Config):
             d_model
         ) - self.feed_forward_moe.num_active_params(d_model)
         return num_params - num_inactive_params
-    
+
     def flops_per_seq(self, d_model: int, seqlen: int) -> int:
-        
         flops = 0
 
         # attention
         flops += self.attention.flops_per_seq(d_model, seqlen)
 
-        # feed forward  
+        # feed forward
         if self.feed_forward is not None:
             # (seq_len, d_model) * (d_model, ffn_hidden_size))
             # x3 for swiglu (up, down, gate)
@@ -312,7 +312,7 @@ class TransformerBlockConfig(Config):
             flops += (3 * 3 * 2) * seqlen * d_model * self.feed_forward.hidden_size
 
         return flops
-        
+
     def flops_per_token(self, d_model, seq_len: int) -> int:
         return self.flops_per_seq(d_model, seq_len) // seq_len
 
@@ -510,9 +510,8 @@ class TransformerConfig(Config):
         flop_per_token = 6 * self.num_non_embedding_params + 12 * n * h * q * t
 
         return flop_per_token
-    
-    def num_flops_per_token(self, seq_len: int) -> int:
 
+    def num_flops_per_token(self, seq_len: int) -> int:
         flops = []
 
         # calculate flops for each block (each block might have different config)
@@ -1274,7 +1273,6 @@ class TransformerConfig(Config):
 
 @dataclass
 class MoEFusedV2TransformerConfig(TransformerConfig):
-
     # Two-batch-overlap to overlap the compute and all2all communication when EP is enabled. Micro batch size needs to be a multiple of 2.
     two_batch_overlap: bool = False
 
@@ -1283,7 +1281,6 @@ class MoEFusedV2TransformerConfig(TransformerConfig):
 
     # Recompute each block individually. This reduces the activation memory to just one block at a time, but increases recomputation overhead. Works with or without PP. It does not work with TBO
     recompute_each_block: bool = True
-
 
     def build(
         self,
@@ -1305,6 +1302,7 @@ class MoEFusedV2TransformerConfig(TransformerConfig):
         model: Transformer
         if self.name == TransformerType.moe_fused_v2:
             from ..moe.v2.model import MoEFusedV2Transformer
+
             model = MoEFusedV2Transformer(
                 d_model=self.d_model,
                 vocab_size=self.vocab_size,
