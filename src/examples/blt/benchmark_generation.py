@@ -50,6 +50,7 @@ PREFILL_LENGTH = int(os.environ.get("PREFILL_LENGTH", 1024))
 PROFILE = os.environ.get("PROFILE", "0") == "1"
 BATCH_SIZE = int(os.environ.get("BATCH_SIZE", 1))
 N_BATCHES = int(os.environ.get("N_BATCHES", 1))
+PREFILL_ONLY = os.environ.get("PREFILL_ONLY", "0") == "1"
 AVG_BYTES_PER_TOKEN = float(os.environ.get("AVG_BYTES_PER_TOKEN", 4.3))
 
 def main(run_name: str, overrides: list[str]):
@@ -242,6 +243,7 @@ def main(run_name: str, overrides: list[str]):
                 n_prefill=PREFILL_LENGTH,
                 n_generate=GENERATE_LENGTH,
                 profile=PROFILE,
+                prefill_only=PREFILL_ONLY,
                 **generate_kwargs,
             )
         except Exception as e:

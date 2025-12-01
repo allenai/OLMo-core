@@ -155,6 +155,7 @@ class TransformerGenerationModule(GenerationModule):
         n_prefill: int,
         n_generate: int,
         profile: bool = False,
+        prefill_only: bool = False,
         vocab_size: int = 10_000,
     ):
         input_ids = torch.randint(
@@ -199,6 +200,18 @@ class TransformerGenerationModule(GenerationModule):
 
         torch.cuda.synchronize()
         prefill_time = time.perf_counter() - start_time - cache_prepare_time
+
+        if prefill_only:
+            if prof is not None:
+                prof.__exit__(None, None, None)
+
+            self.free_inference_cache()
+
+            return {
+                "cache_prepare_time": cache_prepare_time,
+                "prefill_time": prefill_time,
+                "generate_time": 0.0,
+            }
 
         if prof is not None:
             prof.step()
@@ -813,6 +826,7 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         n_generate: int,
         avg_bytes_per_token: float = 4.3,
         profile: bool = False,
+        prefill_only: bool = False,
         vocab_size: int = 256,
     ):
         self._set_model_mode("eval")
@@ -889,6 +903,18 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
 
         torch.cuda.synchronize()
         prefill_time = time.perf_counter() - start_time - cache_prepare_time
+
+        if prefill_only:
+            if prof is not None:
+                prof.__exit__(None, None, None)
+
+            self.free_inference_cache()
+
+            return {
+                "cache_prepare_time": cache_prepare_time,
+                "prefill_time": prefill_time,
+                "generate_time": 0.0,
+            }
 
         if prof is not None:
             prof.step()
