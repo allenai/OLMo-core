@@ -14,6 +14,7 @@ from typing import Dict, List, Optional, Sequence, Tuple, cast
 import torch
 import torch.distributed as dist
 import torch.distributed.checkpoint as dist_cp
+from bettermap import ordered_map_per_thread
 from torch.distributed.checkpoint.filesystem import WriteResult
 from torch.distributed.checkpoint.metadata import Metadata, MetadataIndex, StorageMeta
 from torch.distributed.checkpoint.planner import (
@@ -325,9 +326,15 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
         return get_bytes_range(full_path, offset, length)
 
     def _get_content_for_read(self, read_item: ReadItem) -> Tuple[ReadItem, bytes]:
-        sinfo = self.storage_data[read_item.storage_index]
-        content = self._get_bytes(sinfo.relative_path, sinfo.offset, sinfo.length)
-        return (read_item, content)
+        try:
+            sinfo = self.storage_data[read_item.storage_index]
+            content = self._get_bytes(sinfo.relative_path, sinfo.offset, sinfo.length)
+            return read_item, content
+        except BaseException:
+            # NOTE: we might get an error here that can't be pickled, which causes a different failure
+            # later when PyTorch tries to reduce that error across ranks. So here we just make
+            # sure we're raising a simple error type that can be pickled.
+            raise OLMoCheckpointError(f"Original error:\n{traceback.format_exc()}")
 
     def reset(self, checkpoint_id: Optional[PathOrStr] = None) -> None:
         self.storage_data = dict()
@@ -340,47 +347,41 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
         if isinstance(self.path, str):
             init_client(self.path)
 
-        with ThreadPoolExecutor(max_workers=self.thread_count) as executor:
-            read_item_content_futures = []
-            for read_item in plan.items:
-                read_item_content_futures.append(
-                    executor.submit(self._get_content_for_read, read_item)
+        if self.thread_count > 0:
+            contents = ordered_map_per_thread(
+                self._get_content_for_read, plan.items, parallelism=self.thread_count
+            )
+        else:
+            contents = (self._get_content_for_read(item) for item in plan.items)
+
+        # Modified from `FileSystemReader.read_data()`
+        for read_item, content in contents:
+            bytes = io.BytesIO(content)
+            bytes.seek(0)
+            if read_item.type == LoadItemType.BYTE_IO:
+                planner.load_bytes(read_item, bytes)
+            else:
+                # NOTE: 'weights_only=False' needed to load torchao's float8 linear layer checkpoints
+                tensor = cast(
+                    torch.Tensor, torch.load(bytes, map_location="cpu", weights_only=False)
                 )
+                tensor = _narrow_tensor_by_index(
+                    tensor, read_item.storage_offsets, read_item.lengths
+                )
+                target_tensor = planner.resolve_tensor(read_item).detach()
 
-            for f in as_completed(read_item_content_futures):
-                try:
-                    read_item, content = f.result()
-                except BaseException:
-                    # NOTE: we might get an error here that can't be pickled, which causes a different failure
-                    # later when PyTorch tries to reduce that error across ranks. So here we just make
-                    # sure we're raising a simple error type that can be pickled.
-                    raise OLMoCheckpointError(f"Original error:\n{traceback.format_exc()}")
-
-                # Modified from `FileSystemReader.read_data()`
-                bytes_io = io.BytesIO(content)
-                bytes_io.seek(0)
-                if read_item.type == LoadItemType.BYTE_IO:
-                    planner.load_bytes(read_item, bytes_io)
-                else:
-                    # NOTE: 'weights_only=False' needed to load torchao's float8 linear layer checkpoints
-                    tensor = cast(
-                        torch.Tensor, torch.load(bytes_io, map_location="cpu", weights_only=False)
-                    )
-                    log.debug(
-                        "Loaded tensor with shape %s from read item: %s", tensor.shape, read_item
-                    )
-                    tensor = _narrow_tensor_by_index(
-                        tensor, read_item.storage_offsets, read_item.lengths
-                    )
-                    target_tensor = planner.resolve_tensor(read_item).detach()
-
-                    assert (
-                        target_tensor.size() == tensor.size()
-                    ), f"req {read_item.storage_index} mismatch sizes {target_tensor.size()} vs {tensor.size()}"
-                    target_tensor.copy_(tensor)
-                    planner.commit_tensor(read_item, target_tensor)
-                    del tensor
-                del bytes_io, content
+                assert (
+                    target_tensor.size() == tensor.size()
+                ), f"req {read_item.storage_index} mismatch sizes {target_tensor.size()} vs {tensor.size()}"
+                target_tensor.copy_(tensor)
+                planner.commit_tensor(read_item, target_tensor)
+                del tensor
+            del read_item
+            del bytes
+            del content
+            # It might be tempting to do a GS here, but that tanks performance during checkpoint loading,
+            # and most of the time it's not necessary. If you run out of CPU memory while loading checkpoints,
+            # and you're desperate, try throwing a gc.collect() in here.
 
         fut: Future = Future()
         fut.set_result(None)
