@@ -237,18 +237,14 @@ def main(run_name: str, overrides: list[str]):
 
     for batch_idx in range(N_BATCHES):
         print(f"Running batch {batch_idx+1}/{N_BATCHES}")
-        try:
-            timings = generation_module.benchmark(  # type: ignore
-                batch_size=BATCH_SIZE,
-                n_prefill=PREFILL_LENGTH,
-                n_generate=GENERATE_LENGTH,
-                profile=PROFILE,
-                prefill_only=PREFILL_ONLY,
-                **generate_kwargs,
-            )
-        except Exception as e:
-            print(f"Error during benchmarking: {type(e).__name__}")
-            sys.exit(1)
+        timings = generation_module.benchmark(  # type: ignore
+            batch_size=BATCH_SIZE,
+            n_prefill=PREFILL_LENGTH,
+            n_generate=GENERATE_LENGTH,
+            profile=PROFILE,
+            prefill_only=PREFILL_ONLY,
+            **generate_kwargs,
+        )
         all_timings.append(timings)
 
     with tempfile.NamedTemporaryFile(mode="w") as temp_file:
