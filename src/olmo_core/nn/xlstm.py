@@ -164,6 +164,7 @@ class XLSTMConfig(Config):
                 mode="train",
                 return_last_states=True,
                 autocast_kernel_dtype="float32",
+                chunk_size=128,
             )
         )).to(device=init_device, dtype=self.dtype.as_pt())
 
