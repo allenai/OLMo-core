@@ -347,6 +347,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
         dp_world_size: int = 1,
         dp_rank: int = 0,
         fs_local_rank: int = 0,
+        labeled_indices_file: Optional[str] = None,
     ):
         super().__init__(
             collator=collator,
@@ -364,6 +365,13 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
         self.prefetch_factor = prefetch_factor
         self.target_device_type = target_device_type
         self._global_indices: Optional[np.ndarray] = None
+        self.labeled_indices_file = labeled_indices_file
+        self._labeled_indices: Optional[np.ndarray] = None
+        
+        # Load labeled indices if provided
+        if self.labeled_indices_file is not None:
+            self._labeled_indices = np.load(self.labeled_indices_file)
+            log.info(f"Loaded {len(self._labeled_indices)} labeled indices from {self.labeled_indices_file}")
 
     @classmethod
     def wrap_numpy_dataset(
@@ -382,6 +390,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
         prefetch_factor: Optional[int] = None,
         target_device_type: str = "cpu",
         shuffle: bool = True,
+        labeled_indices_file: Optional[str] = None,
     ) -> "NumpyDataLoaderBase":
         """
         Construct the corresponding :class:`NumpyDataLoaderBase` instance for the given :class:`NumpyDatasetBase`.
@@ -401,6 +410,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
             prefetch_factor=prefetch_factor,
             target_device_type=target_device_type,
             shuffle=shuffle,
+            labeled_indices_file=labeled_indices_file,
         )
         data_loader: DataLoaderBase
         if isinstance(dataset, NumpyFSLDatasetBase):
@@ -623,7 +633,9 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
         """
         assert isinstance(self.dataset, NumpyFSLDatasetBase)
         instances_per_batch = self.global_batch_size // self.dataset.sequence_length
-        return instances_per_batch * (len(self.dataset) // instances_per_batch)
+        # Use labeled indices count if filtering is enabled
+        dataset_size = len(self._labeled_indices) if self._labeled_indices is not None else len(self.dataset)
+        return instances_per_batch * (dataset_size // instances_per_batch)
 
     @property
     def total_batches(self) -> int:
@@ -632,12 +644,15 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
 
     @property
     def _global_indices_file(self) -> Path:
+        # Use labeled indices count if filtering is enabled
+        dataset_size = len(self._labeled_indices) if self._labeled_indices is not None else len(self.dataset)
         global_indices_fname = self._format_fname_from_fields(
             "global_indices",
             seed=self.seed if self.shuffle else None,
             epoch=self.epoch if self.shuffle else None,
-            dataset_size=len(self.dataset),
+            dataset_size=dataset_size,
             chunk=self.chunk_size if self.chunk_size > 1 else None,
+            labeled="yes" if self._labeled_indices is not None else None,
             v=1,  # tick if logic changes
         )
         return Path(self.work_dir) / f"{global_indices_fname}.npy"
@@ -651,7 +666,15 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
             rng = get_rng(self.seed + self.epoch)
 
         indices: np.ndarray
-        if self.chunk_size == 1:
+        
+        # If labeled_indices_file is provided, only use those indices
+        if self._labeled_indices is not None:
+            # Use only the labeled indices
+            indices = self._labeled_indices.astype(np.uint32)
+            log.info(f"Using {len(indices)} labeled indices (filtered from {len(self.dataset)} total)")
+            if rng is not None:
+                rng.shuffle(indices)
+        elif self.chunk_size == 1:
             indices = np.arange(len(self.dataset), dtype=np.uint32)
             if rng is not None:
                 rng.shuffle(indices)
@@ -1085,6 +1108,14 @@ class NumpyDataLoaderConfig(Config):
     Takes precedence over expert_labels_file if both are provided.
     Each file should be named seq_XXXXXXXX.npz and contain a 'labels' array of shape (seq_len-1,).
     """
+    
+    labeled_indices_file: Optional[str] = None
+    """
+    Optional path to a numpy file (.npy) containing the indices of sequences that have labels.
+    If provided, the data loader will only sample from these indices during training.
+    This is useful when labels were generated for a subset of sequences using source_mixture_config.
+    The file should contain a 1D array of int64 indices.
+    """
 
     def build(
         self,
@@ -1132,5 +1163,6 @@ class NumpyDataLoaderConfig(Config):
             num_workers=self.num_workers,
             prefetch_factor=self.prefetch_factor,
             target_device_type=self.target_device_type or get_default_device().type,
+            labeled_indices_file=self.labeled_indices_file,
         )
         return data_loader
