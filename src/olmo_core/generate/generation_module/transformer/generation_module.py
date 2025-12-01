@@ -20,11 +20,11 @@ from olmo_core.data.utils import attention_mask_to_cache_leftpad
 from olmo_core.distributed.checkpoint import get_checkpoint_metadata, load_state_dict
 from olmo_core.distributed.parallel import build_world_mesh, get_dp_process_group
 from olmo_core.distributed.utils import (
+    broadcast_object,
     get_fs_local_rank,
     get_rank,
     get_world_size,
     is_distributed,
-    scatter_object,
 )
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
@@ -371,7 +371,7 @@ class TransformerGenerationModule(GenerationModule):
                 metadata = get_checkpoint_metadata(checkpoint_dir)
                 train_module_dir = checkpoint_dir
 
-        train_module_dir = scatter_object(train_module_dir)
+        train_module_dir = broadcast_object(train_module_dir)
         if metadata is None:
             metadata = get_checkpoint_metadata(train_module_dir)
 
@@ -452,7 +452,7 @@ class TransformerGenerationModule(GenerationModule):
         )
 
         # Broadcast config and work_dir to all ranks
-        transformer_config, work_dir, tokenizer_config = scatter_object(
+        transformer_config, work_dir, tokenizer_config = broadcast_object(
             (transformer_config, work_dir, tokenizer_config)
         )
 

@@ -9,10 +9,10 @@ import torch.distributed as dist
 from olmo_core.config import StrEnum
 from olmo_core.distributed.utils import (
     backend_supports_cpu,
+    broadcast_object,
     get_fs_local_rank,
     get_rank,
     is_distributed,
-    scatter_object,
 )
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.io import clear_directory, is_url, join_path, remove_file
@@ -230,7 +230,7 @@ class CheckpointerCallback(Callback):
                 except FileNotFoundError:
                     pass
 
-            ephemeral_checkpoints = scatter_object(ephemeral_checkpoints)
+            ephemeral_checkpoints = broadcast_object(ephemeral_checkpoints)
 
             # TODO: handle this if we ever restore callback state.
             assert not self._ephemeral_checkpoints

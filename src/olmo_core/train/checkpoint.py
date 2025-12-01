@@ -24,10 +24,10 @@ from ..distributed.checkpoint import (
 )
 from ..distributed.utils import (
     barrier,
+    broadcast_object,
     get_fs_local_rank,
     get_rank,
     is_distributed,
-    scatter_object,
 )
 from ..exceptions import OLMoConfigurationError
 from ..io import (
@@ -98,6 +98,8 @@ class Checkpointer:
         """
         Save model, optim, and other training state to a local or remote directory.
         """
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
         dir = normalize_path(dir)
         with self._temporary_wd(dir) as wd:
             # Save trainer state.
@@ -130,6 +132,8 @@ class Checkpointer:
                 "a checkpointer process group is required for async checkpointing!"
             )
 
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
         dir = normalize_path(dir)
 
         with self._temporary_wd(dir) as wd:
@@ -203,7 +207,7 @@ class Checkpointer:
                 else:
                     raise
 
-        train_module_dir = scatter_object(train_module_dir)
+        train_module_dir = broadcast_object(train_module_dir)
         if metadata is None:
             metadata = get_checkpoint_metadata(train_module_dir)
 

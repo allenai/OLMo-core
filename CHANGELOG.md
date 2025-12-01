@@ -9,15 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added `PeriNormTransformerBlock`.
+- Added exponential learning rate scheduler to `olmo_core.optim.scheduler`.
+- Added internal Olmo3 32B midtraining and long context configs.
+
+### Fixed
+
+- Fixed `AttentionConfig.num_params()` overcounting QK norm parameters when using GQA/MQA with `use_head_qk_norm=False`.
+- Fixed the peak learning rate in `src/scripts/train/OLMo3/OLMo3-32B-midtraining.py` to the correct one.
+
+
+### Changed
+
+- Renamed `olmo_core.distributed.utils.scatter_object()` to `broadcast_object()` for correctness.
+- Updated stable torch version to 2.9.1, updated versions of underlying libraries in Beaker Images.
+
+## [v2.4.0](https://github.com/allenai/OLMo-core/releases/tag/v2.4.0) - 2025-11-20
+
+### Added
+
 - Added option to skip ranges of steps in the trainer.
 - Send a Slack notification when a Beaker job appears to be stuck.
 - Added `ignore_fingerprint_mismatch` parameter to `NumpyDataLoaderConfig` to allow resuming training from a checkpoint with a different dataset mix.
 - Added helpful error messages when OLMo-mix-0625 files are not found, directing users to use OLMo-mix-0925 and the fingerprint override flag.
 - Added `olmo_core.generate.chat` module to allow interacting with OlmoCore models without conversion to other formats.
 - Added `GAPMonitorCallback` for monitoring gradients, activations, and parameters (GAP).
-- Added official OLMo3-7B pretraining scripts and data mix.
+- Added official Olmo 3 7B and 32B pretraining scripts and data mix.
+- Added official Olmo 3 7B and 32B midtraining scripts and data mix.
+- Added official Olmo 3 7B and 32B long-context scripts and data mix.
 - Added a `NoOpOptimizer` that does nothing, uses no memory, and can be used for debugging.
 - Added official config for Olmo 3 32B.
+- Olmo 3 model card and checkpoint manifests.
 
 ### Fixed
 
@@ -26,6 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - No longer overrides `random`'s RNG seed when building `SourceMixtureDatasetConfig`.
 - Fix handling URLs in `olmo_core.nn.hf.checkpoint.save_hf_model` and in `examples/huggingface`.
 - Fix potential NaN loss that can occur when using instance masking.
+- Stability improvements developed while training Olmo3 32B.
 
 ### Changed
 

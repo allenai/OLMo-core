@@ -196,7 +196,8 @@ class AttentionConfig(Config):
             if self.use_head_qk_norm:
                 params += 2 * self.qk_norm.num_params(head_dim)
             else:
-                params += 2 * self.qk_norm.num_params(d_model)
+                params += self.qk_norm.num_params(d_model)  # q_norm
+                params += self.qk_norm.num_params(n_kv_heads * head_dim)  # k_norm
 
         # Block attention out.
         params += d_model * d_model
