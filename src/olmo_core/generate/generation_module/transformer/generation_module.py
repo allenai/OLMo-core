@@ -187,13 +187,15 @@ class TransformerGenerationModule(GenerationModule):
         cache_prepare_time = time.perf_counter() - start_time
 
         # prefill
-        next_token_logits = self.model(
-            input_ids,
-            logits_to_keep=1,
-            cache_leftpad=prefill_cache_leftpad,
-        )
-        next_token_probs = F.softmax(next_token_logits, dim=-1)
-        next_token = next_token_logits.argmax(-1)
+        # should be no grad in any case, ensure
+        with torch.no_grad():
+            next_token_logits = self.model(
+                input_ids,
+                logits_to_keep=1,
+                cache_leftpad=prefill_cache_leftpad,
+            )
+            next_token_probs = F.softmax(next_token_logits, dim=-1)
+            next_token = next_token_logits.argmax(-1)
 
         torch.cuda.synchronize()
         prefill_time = time.perf_counter() - start_time - cache_prepare_time
