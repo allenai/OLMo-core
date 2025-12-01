@@ -23,7 +23,7 @@ INITIAL_GLOBAL_BATCH_SIZE = 4 * 1024 * 1024
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
-    config = TransformerConfig.llama3_8B(
+    config = TransformerConfig.llama3_8B_no_gqa(
         vocab_size=common.tokenizer.padded_vocab_size(),
     )
     config.block.attention.use_flash = True
