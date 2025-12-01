@@ -158,7 +158,7 @@ class XLSTMConfig(Config):
             embedding_dim=d_model,
             num_heads=self.num_heads,
             mlstm_backend=mLSTMBackendConfig(
-                chunkwise_kernel="chunkwise--triton_limit_chunk",
+                chunkwise_kernel="chunkwise--triton_xl_chunk",
                 sequence_kernel="native_sequence__triton",
                 step_kernel="triton",
                 mode="train",
