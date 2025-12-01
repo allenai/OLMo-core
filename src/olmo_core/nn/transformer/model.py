@@ -804,6 +804,7 @@ class Transformer(nn.Module):
         self,
         dp_mesh: Optional[DeviceMesh] = None,
         param_dtype: Optional[torch.dtype] = None,
+        reduce_dtype: torch.dtype = torch.float32,
         compile_enabled: bool = False,
         autograd_compile_enabled: bool = False,
     ):
@@ -811,11 +812,12 @@ class Transformer(nn.Module):
         Apply DDP to the model.
         """
         from torch.distributed._composable.replicate import replicate
+        from torch.nn.parallel.distributed import _MixedPrecision
 
         # Cast model explicitly to the specified dtype before applying DDP
-        target_dtype = param_dtype or self.dtype
-        if target_dtype != self.dtype:
-            self.to(dtype=target_dtype)
+        # target_dtype = param_dtype or self.dtype
+        # if target_dtype != self.dtype:
+        #     self.to(dtype=target_dtype)
 
         # Adapted from
         # https://github.com/pytorch/torchtitan/blob/90c889e972b56b9faadebbb78fc985dedc537ed9/torchtitan/parallelisms/parallelize_llama.py#L328
@@ -825,7 +827,12 @@ class Transformer(nn.Module):
             else:
                 torch._dynamo.config.optimize_ddp = "ddp_optimizer"  # type: ignore
 
-        replicate(self, device_mesh=dp_mesh, bucket_cap_mb=100)
+        replicate(
+            self,
+            device_mesh=dp_mesh,
+            bucket_cap_mb=100,
+            mixed_precision=_MixedPrecision(param_dtype=param_dtype, reduce_dtype=reduce_dtype),
+        )
         # Some inputs need to be on CPU initially, but DDP will move everything to model's
         # device if we don't hide it.
         self.register_forward_pre_hook(_hide_cpu_inputs_from_torch, prepend=True, with_kwargs=True)
