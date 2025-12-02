@@ -38,7 +38,7 @@ GLOBAL_BATCH_SIZE //= 4  # This line is to simulate TPS at 64 nodes with 16 node
 MICROBATCH_DISCOUNT = 1
 
 # Remove heads to match params/TPS of transformer.
-REMOVE_HEADS = 1
+REMOVE_HEADS = 0
 
 ### OLMo "3.1" 7B Settings (from OLMo 3 32B)
 DATA_MIX = DataMix.OLMo_mix_0925
@@ -53,7 +53,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         attn_backend=AttentionBackendName.flash_2,
     )
 
-    # Remove two heads (and scale down d_model) to compensate for more params per layer.
+    # Remove heads (and scale down d_model) to compensate for extra params.
     config.d_model -= REMOVE_HEADS * 128
     config.block.attention.n_heads -= REMOVE_HEADS
     assert config.d_model / config.block.attention.n_heads == 128
@@ -61,21 +61,21 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     ### Copied below from hybrid/gated_deltanet_0_25_rnn_first.py ###
 
     # Update the config to use an FLA block.
-    config.block.name = TransformerBlockType.fla_hybrid
-    assert config.n_layers % 4 == 0, "Current logic assumes n_layers is multiple of 4"
-    config.block.fla_hybrid_attention_indices = [i for i in range(config.n_layers) if i % 4 == 3]
+    # config.block.name = TransformerBlockType.fla_hybrid
+    # assert config.n_layers % 4 == 0, "Current logic assumes n_layers is multiple of 4"
+    # config.block.fla_hybrid_attention_indices = [i for i in range(config.n_layers) if i % 4 == 3]
 
-    # Configure the non-attention part of the block to be a DeltaNet.
-    config.block.fla = FLAConfig(
-        name="GatedDeltaNet",
-        dtype=config.dtype,
-        fla_layer_kwargs={
-            # FLA repo says num_heads * head_dim = 0.75 * hidden_size
-            "head_dim": int(0.75 * config.d_model / config.block.attention.n_heads),
-            "use_gate": True,
-            "allow_neg_eigval": True,
-        },
-    )
+    # # Configure the non-attention part of the block to be a DeltaNet.
+    # config.block.fla = FLAConfig(
+    #     name="GatedDeltaNet",
+    #     dtype=config.dtype,
+    #     fla_layer_kwargs={
+    #         # FLA repo says num_heads * head_dim = 0.75 * hidden_size
+    #         "head_dim": int(0.75 * config.d_model / config.block.attention.n_heads),
+    #         "use_gate": True,
+    #         "allow_neg_eigval": True,
+    #     },
+    # )
 
     return config
 
