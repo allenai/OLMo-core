@@ -173,6 +173,7 @@ def iter_document_indices(
     local_cache: Optional[PathOrStr] = None,
     use_array_if_local: Optional[bool] = None,
     eos_token_id: Optional[int] = None,
+    bos_token_id: Optional[int] = None,
     dtype=None,
 ) -> Generator[Tuple[int, int], None, None]:
     """
@@ -199,9 +200,15 @@ def iter_document_indices(
                 "'eos_token_id' and 'dtype' are required to use the local array for finding document indices"
             )
         mmap = np.memmap(data_path, mode="r", dtype=dtype)
-        doc_boundaries = (mmap == eos_token_id).nonzero()[0]
+        if bos_token_id is None:
+            doc_boundaries = (mmap == eos_token_id).nonzero()[0]
+        else:
+            doc_boundaries = np.logical_and(
+                mmap[:-1] == eos_token_id, mmap[1:] == bos_token_id
+            ).nonzero()[0]
+            if mmap[-1] == eos_token_id:
+                doc_boundaries = np.append(doc_boundaries, mmap.shape[0] - 1)
         start_idx = 0
-        end_idx = 0
         for idx in doc_boundaries:
             end_idx = idx + 1
             yield start_idx, end_idx
@@ -250,6 +257,7 @@ def iter_document_indices_with_max_sequence_length(
     local_cache: Optional[PathOrStr] = None,
     use_array_if_local: Optional[bool] = None,
     eos_token_id: Optional[int] = None,
+    bos_token_id: Optional[int] = None,
     dtype=None,
     long_doc_strategy: LongDocStrategy = LongDocStrategy.truncate,
 ) -> Generator[Tuple[int, int], None, None]:
@@ -262,6 +270,7 @@ def iter_document_indices_with_max_sequence_length(
         local_cache=local_cache,
         use_array_if_local=use_array_if_local,
         eos_token_id=eos_token_id,
+        bos_token_id=bos_token_id,
         dtype=dtype,
     ):
         if end_idx - start_idx > max_sequence_length:
@@ -328,7 +337,9 @@ def load_array_slice_into_tensor(
 
 
 def get_document_lengths(
-    input_ids: torch.Tensor, eos_token_id: int, bos_token_id: Optional[int] = None
+    input_ids: Union[torch.Tensor, np.ndarray],
+    eos_token_id: int,
+    bos_token_id: Optional[int] = None,
 ) -> torch.Tensor:
     """
     Get the length of documents.
@@ -338,6 +349,8 @@ def get_document_lengths(
     :param bos_token_id: The ID of the BOS token (use to denote document boundaries). When provided,
         every document must start with a BOS token.
     """
+    if not isinstance(input_ids, torch.Tensor):
+        input_ids = torch.tensor(input_ids.astype(np.int_), dtype=torch.long)
 
     if bos_token_id is None:
         doc_boundaries = torch.cat(
@@ -519,6 +532,7 @@ def segment_documents_into_instances(
     indices_dtype: Union[
         Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]
     ] = np.uint32,
+    bos_token_id: Optional[int] = None,
     sample: Optional[Tuple[int, int]] = None,
 ) -> Tuple[int, int]:
     """
@@ -533,7 +547,7 @@ def segment_documents_into_instances(
     idx_gen = (
         idx
         for start_idx, end_idx in iter_document_indices(
-            path, eos_token_id=eos_token_id, dtype=dtype
+            path, eos_token_id=eos_token_id, bos_token_id=bos_token_id, dtype=dtype
         )
         for idx in (start_idx, start_idx + min(end_idx - start_idx, max_sequence_length))
     )
@@ -863,6 +877,7 @@ def pack_documents_into_instances(
     max_sequence_length: int,
     eos_token_id: int,
     dtype: Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]],
+    bos_token_id: Optional[int] = None,
     indices_dtype: Union[
         Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]
     ] = np.uint64,
@@ -876,6 +891,8 @@ def pack_documents_into_instances(
         be treated as if they've been concatenated together into a single source file.
     :param max_sequence_length: The maximum sequence length of each *instance*.
     :param eos_token_id: The EOS token ID, used to find document boundaries.
+    :param bos_token_id: The BOS token ID, used to find document boundaries in conjunction with the EOS
+        token ID.
     :param dtype: The numpy datatype of the source file.
     :param indices_dtype: The numpy datatype to use for document indices.
     :param long_doc_strategy: Specifies how to handle document that are longer than ``max_sequence_length``.
@@ -898,6 +915,7 @@ def pack_documents_into_instances(
                 path,
                 max_sequence_length,
                 eos_token_id=eos_token_id,
+                bos_token_id=bos_token_id,
                 dtype=dtype,
                 long_doc_strategy=long_doc_strategy,
             ):
