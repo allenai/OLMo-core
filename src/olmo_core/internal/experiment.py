@@ -38,7 +38,7 @@ from olmo_core.train.callbacks import (
     SlackNotifierCallback,
 )
 from olmo_core.train.callbacks.slack_notifier import SLACK_WEBHOOK_URL_ENV_VAR
-from olmo_core.train.train_module import TransformerTrainModuleConfig
+from olmo_core.train.train_module import TrainModuleConfig, TransformerTrainModuleConfig
 from olmo_core.utils import prepare_cli_environment, seed_all
 
 from .common import build_launch_config, get_beaker_username, get_root_dir, get_work_dir
@@ -93,7 +93,7 @@ class ExperimentConfig(Config):
     model: TransformerConfig
     dataset: NumpyDatasetConfig
     data_loader: NumpyDataLoaderConfig
-    train_module: TransformerTrainModuleConfig
+    train_module: TrainModuleConfig
     trainer: TrainerConfig
     init_seed: int = 12536
     backend: Optional[str] = "cpu:gloo,cuda:nccl"
@@ -140,18 +140,18 @@ class SubCmd(StrEnum):
             train(config)
             teardown_training_environment()
         elif self == SubCmd.train_single:
-            if config.train_module.dp_config is not None:
+            if (dp_config := getattr(config.train_module, "dp_config", None)) is not None:
                 log.warning(
                     "'dp_config' is set to %s, but you can't use data parallelism when running on a single node. Disabling.",
-                    config.train_module.dp_config,
+                    dp_config,
                 )
-                config.train_module.dp_config = None
-            if config.train_module.tp_config is not None:
+                config.train_module.dp_config = None  # type: ignore
+            if (tp_config := getattr(config.train_module, "tp_config", None)) is not None:
                 log.warning(
                     "'tp_config' is set to %s, but you can't use tensor parallelism when running on a single node. Disabling.",
-                    config.train_module.dp_config,
+                    tp_config,
                 )
-                config.train_module.tp_config = None
+                config.train_module.tp_config = None  # type: ignore
             train(config)
             teardown_training_environment()
         elif self == SubCmd.prep:
@@ -296,7 +296,7 @@ def _set_beaker_execution_units(config: ExperimentConfig):
         config.launch
         and config.launch.use_hostname_constraints
         and any("augusta" in cluster for cluster in config.launch.clusters)
-        and (dp_config := config.train_module.dp_config) is not None
+        and (dp_config := getattr(config.train_module, "dp_config", None)) is not None
     ):
         if dp_config.num_replicas is not None:
             num_model_replicas = dp_config.num_replicas
