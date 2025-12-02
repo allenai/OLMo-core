@@ -37,6 +37,9 @@ GLOBAL_BATCH_SIZE //= 4  # This line is to simulate TPS at 64 nodes with 16 node
 # Reduce per-device batch size to save on memory.
 MICROBATCH_DISCOUNT = 1
 
+# Remove heads to match params/TPS of transformer.
+REMOVE_HEADS = 1
+
 ### OLMo "3.1" 7B Settings (from OLMo 3 32B)
 DATA_MIX = DataMix.OLMo_mix_0925
 MAX_DURATION = Duration.epochs(1)
@@ -51,8 +54,8 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     )
 
     # Remove two heads (and scale down d_model) to compensate for more params per layer.
-    config.d_model = 3840
-    config.block.attention.n_heads = 30
+    config.d_model -= REMOVE_HEADS * 128
+    config.block.attention.n_heads -= REMOVE_HEADS
     assert config.d_model / config.block.attention.n_heads == 128
 
     ### Copied below from hybrid/gated_deltanet_0_25_rnn_first.py ###
