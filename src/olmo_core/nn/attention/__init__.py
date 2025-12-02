@@ -297,6 +297,16 @@ class AttentionBase(nn.Module):
     """
 
     @abstractmethod
+    def num_flops_per_token(self, seq_len: int) -> int:
+        """
+        Approximate the attention FLOPs per token for this module.
+
+        Implementations should mirror the heuristic used by their corresponding
+        :class:`AttentionConfig` so that config-level and module-level FLOPs
+        estimates stay in sync.
+        """
+
+    @abstractmethod
     def apply_tp(
         self,
         tp_mesh: DeviceMesh,
@@ -669,6 +679,19 @@ class Attention(AttentionBase):
             head_dim=self.head_dim,
             device=self.w_k.weight.device,
         )
+
+    def num_flops_per_token(self, seq_len: int) -> int:
+        """
+        Approximate the attention FLOPs per token for this module.
+
+        This mirrors :meth:`AttentionConfig.num_flops_per_token`, using the
+        PaLM-style heuristic based on the number of heads, head dimension, and
+        effective sequence length.
+        """
+        # The factor 12 matches the existing heuristic:
+        # 2 matmuls (QK^T, attn @ V) * 2 (forward + backward) * 2 (mult + add)
+        # * ~1.5 overhead.
+        return 12 * self.n_heads * self.head_dim * seq_len
 
 
 @beta_feature
