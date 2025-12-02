@@ -16,9 +16,9 @@ python src/scripts/train/linear-rnns/1b/hybrid_gated_deltanet++.py launch hybrid
 To launch the big OLMo 3.1 7B run:
 
 ```shell
-# Script to launch normal OLMo3-7B.
 python src/scripts/train/OLMo3/OLMo3-7B.py launch OLMo3-7B ai2/jupiter --launch.num_nodes=2
 
-# Script to launch the modified one.
-python src/scripts/train/linear-rnns/OLMo3.1-7B-hybrid.py launch OLMo3.1-7B-hybrid ai2/jupiter --launch.num_nodes=2
+python src/scripts/train/linear-rnns/OLMo3-7B-hybrid.py launch OLMo3-7B-hybrid ai2/augusta --launch.num_nodes=2
+
+python src/scripts/train/linear-rnns/OLMo3.1-7B-hybrid.py launch OLMo3.1-7B-hybrid-6T ai2/augusta --launch.num_nodes=16
 ```

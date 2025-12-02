@@ -40,6 +40,7 @@ MICROBATCH_DISCOUNT = 1
 DATA_MIX = DataMix.OLMo_mix_0925
 MAX_DURATION = Duration.epochs(1)
 HARD_STOP = None
+# We also turn on the instance filter below
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
@@ -196,7 +197,7 @@ if __name__ == "__main__":
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
         include_default_evals=False,
-        include_instance_filter=False,  # We use SkipStepOptimizer for this problem.
+        include_instance_filter=True,
         beaker_workspace="ai2/linear-rnns",
     )
     main(config_builder=config_builder)
