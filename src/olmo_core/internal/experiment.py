@@ -38,7 +38,7 @@ from olmo_core.train.callbacks import (
     SlackNotifierCallback,
 )
 from olmo_core.train.callbacks.slack_notifier import SLACK_WEBHOOK_URL_ENV_VAR
-from olmo_core.train.train_module import TransformerTrainModuleConfig
+from olmo_core.train.train_module import TrainModuleConfig, TransformerTrainModuleConfig
 from olmo_core.utils import prepare_cli_environment, seed_all
 
 from .common import build_launch_config, get_beaker_username, get_root_dir, get_work_dir
@@ -93,7 +93,7 @@ class ExperimentConfig(Config):
     model: TransformerConfig
     dataset: NumpyDatasetConfig
     data_loader: NumpyDataLoaderConfig
-    train_module: TransformerTrainModuleConfig
+    train_module: TrainModuleConfig
     trainer: TrainerConfig
     init_seed: int = 12536
     backend: Optional[str] = "cpu:gloo,cuda:nccl"
