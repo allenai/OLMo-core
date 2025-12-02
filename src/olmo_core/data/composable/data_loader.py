@@ -413,6 +413,7 @@ class ComposableDataLoader(TextDataLoaderBase):
         # If we're already at the end of epoch we can skip creating the iterator.
         if self.total_batches is not None and self.batches_processed >= self.total_batches:
             yield from ()
+            return
 
         def _build_batch_iterator():
             return iter(
