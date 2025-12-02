@@ -48,8 +48,10 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         attn_backend=AttentionBackendName.flash_2,
     )
 
-    # config.d_model = 4096
-    # config.block.attention.n_heads = 16
+    # Slightly scale down the model to compensate for more params per layer.
+    config.d_model = 3840
+    config.block.attention.n_heads = 30
+    assert config.d_model / config.block.attention.n_heads == 128, "head_dim should be 128"
 
     ### Copied below from hybrid/gated_deltanet_0_25_rnn_first.py ###
 
