@@ -41,7 +41,7 @@ MICROBATCH_DISCOUNT = 1
 DATA_MIX = DataMix.OLMo_mix_0925
 MAX_DURATION = Duration.epochs(1)
 HARD_STOP = None
-# We also turn on the instance filter below
+INSTANCE_FILTER = True
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
@@ -50,10 +50,10 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         attn_backend=AttentionBackendName.flash_2,
     )
 
-    # Slightly scale down the model to compensate for more params per layer.
+    # Remove two heads (and scale down d_model) to compensate for more params per layer.
     config.d_model = 3840
     config.block.attention.n_heads = 30
-    assert config.d_model / config.block.attention.n_heads == 128, "head_dim should be 128"
+    assert config.d_model / config.block.attention.n_heads == 128
 
     ### Copied below from hybrid/gated_deltanet_0_25_rnn_first.py ###
 
@@ -198,7 +198,7 @@ if __name__ == "__main__":
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
         include_default_evals=False,
-        include_instance_filter=True,
+        include_instance_filter=INSTANCE_FILTER,
         beaker_workspace="ai2/linear-rnns",
     )
     main(config_builder=config_builder)
