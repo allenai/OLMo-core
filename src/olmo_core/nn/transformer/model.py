@@ -862,19 +862,13 @@ class Transformer(nn.Module):
         base_flops = 6 * self.num_non_embedding_params
 
         # Attention FLOPS per layer
-        # The original formula: 12 * n * h * q * t
         # We need to sum over layers because SWA can have different window sizes per layer
-        # and block overrides can have different n_heads per layer
+        # and block overrides can have different n_heads per layer.
         attention_flops = 0
 
         for layer_idx in range(self.n_layers):
             # Get block config for this layer (may be overridden)
             block_config = self._block_configs.get(layer_idx, self._base_block_config)
-
-            n_heads = block_config.attention.n_heads
-            # n_kv_heads affects KV memory/cache, but FLOPS remain proportional to n_heads.
-            # Calculate head dimension for this layer (may differ if block overrides change n_heads)
-            q = self.d_model // n_heads
 
             # Determine effective sequence length for this layer
             # If SWA is used, use window size; otherwise use full sequence length
@@ -886,9 +880,13 @@ class Transformer(nn.Module):
                     window_size = sliding_window_cfg.get_window_size(layer_idx, self.n_layers)
                     effective_seq_len = min(window_size, seq_len)
 
-            # The factor 12 accounts for: 2 matmuls (QK^T, attn@V) * 2 (forward+backward) * 2 (mult+add) * 1.5 (approximate)
-            # For GQA, FLOPS are effectively the same as dense attention (n_heads), so we keep n_heads here.
-            layer_attention_flops = 12 * n_heads * q * effective_seq_len
+            # Delegate the per-token attention FLOPs calculation to the attention config.
+            # For GQA, FLOPS are effectively the same as dense attention (n_heads), so the
+            # attention config still uses n_heads for the heuristic.
+            layer_attention_flops = block_config.attention.num_flops_per_token(
+                d_model=self.d_model,
+                seq_len=effective_seq_len,
+            )
             attention_flops += layer_attention_flops
 
         flop_per_token = base_flops + attention_flops
