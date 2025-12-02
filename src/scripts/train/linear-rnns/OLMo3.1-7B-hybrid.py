@@ -32,6 +32,7 @@ from olmo_core.train.train_module import (
 
 SEQUENCE_LENGTH = 8 * 1024
 GLOBAL_BATCH_SIZE = 4 * 1024 * 1024  # ~4M tokens
+GLOBAL_BATCH_SIZE //= 4  # This line is to simulate TPS at 64 nodes with 16 nodes.
 
 # Reduce per-device batch size to save on memory.
 MICROBATCH_DISCOUNT = 1
