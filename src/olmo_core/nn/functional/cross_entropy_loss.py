@@ -52,16 +52,20 @@ def cross_entropy_loss(
 
 _fused_linear_cross_entropy_loss: Optional[Callable] = None
 
-try:
-    from liger_kernel.ops.fused_linear_cross_entropy import (  # type: ignore
-        LigerFusedLinearCrossEntropyFunction,
-    )
+# try:
+#     from liger_kernel.ops.fused_linear_cross_entropy import (  # type: ignore
+#         LigerFusedLinearCrossEntropyFunction,
+#     )
 
-    _fused_linear_cross_entropy_loss = LigerFusedLinearCrossEntropyFunction.apply
-except ImportError:
-    pass
-except Exception:
-    log.exception("Error importing liger-kernel")
+#     _fused_linear_cross_entropy_loss = LigerFusedLinearCrossEntropyFunction.apply
+# except ImportError:
+#     pass
+# except Exception:
+#     log.exception("Error importing liger-kernel")
+
+from .custom_fused_linear_cross_entropy import LigerFusedLinearCrossEntropyFunction
+
+_fused_linear_cross_entropy_loss = LigerFusedLinearCrossEntropyFunction.apply
 
 
 @torch._dynamo.disable()
@@ -103,7 +107,7 @@ def fused_linear_cross_entropy_loss(
     """
     if _fused_linear_cross_entropy_loss is None:
         raise RuntimeError("'fused_linear_cross_entropy_loss' requires liger-kernel")
-    ce_loss, z_loss, per_token_acc = _fused_linear_cross_entropy_loss(
+    ce_loss, z_loss = _fused_linear_cross_entropy_loss(
         _input,
         weight,
         labels,
@@ -117,8 +121,45 @@ def fused_linear_cross_entropy_loss(
         compute_z_loss,
         accum_dtype,
     )
-    del per_token_acc
     if compute_z_loss:
         return ce_loss, z_loss
     else:
         return ce_loss, None
+
+
+from cut_cross_entropy import linear_cross_entropy
+from cut_cross_entropy.utils import compute_z_loss as cce_compute_z_loss
+
+
+@torch._dynamo.disable()
+def cce_loss(
+    _input: torch.Tensor,
+    weight: torch.Tensor,
+    labels: torch.Tensor,
+    *,
+    bias: Optional[torch.Tensor] = None,
+    ignore_index: int = -100,
+    reduction: Literal["mean", "sum", "none"] = "mean",
+    compute_z_loss: bool = False,
+    z_loss_multiplier: float = 1e-4,
+    softcap: Optional[float] = None,
+) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    ce_loss, lse = linear_cross_entropy(
+        e=_input,
+        c=weight,
+        targets=labels,
+        bias=bias,
+        return_lse=True,
+        softcap=softcap,
+        reduction=reduction,
+        ignore_index=ignore_index,
+    )
+
+    z_loss = lse.pow(2)
+    if reduction == "mean":
+        z_loss = z_loss.mean()
+    elif reduction == "sum":
+        z_loss = z_loss.sum()
+    elif reduction == "none":
+        pass
+    return ce_loss, z_loss * z_loss_multiplier if compute_z_loss else None

@@ -5,7 +5,11 @@ Trainer :class:`Callback` implementations.
 from .batch_size_scheduler import BatchSizeSchedulerCallback
 from .beaker import BeakerCallback
 from .callback import Callback, CallbackConfig
-from .checkpointer import CheckpointerCallback, CheckpointRemovalStrategy
+from .checkpointer import (
+    CheckpointerCallback,
+    CheckpointRemovalStrategy,
+    UpcycleCheckpointerCallback,
+)
 from .comet import CometCallback, CometNotificationSetting
 from .config_saver import ConfigSaverCallback
 from .console_logger import ConsoleLoggerCallback
@@ -19,7 +23,11 @@ from .garbage_collector import GarbageCollectorCallback
 from .gpu_memory_monitor import GPUMemoryMonitorCallback
 from .list_checkpointer import ListCheckpointerCallback
 from .monkey_patcher import MonkeyPatcherCallback
-from .profiler import ProfilerCallback
+from .profiler import (
+    NvidiaProfilerCallback,
+    ProfilerCallback,
+    TorchMemoryHistoryCallback,
+)
 from .sequence_length_scheduler import SequenceLengthSchedulerCallback
 from .slack_notifier import SlackNotificationSetting, SlackNotifierCallback
 from .speed_monitor import SpeedMonitorCallback
@@ -29,7 +37,7 @@ __all__ = [
     "Callback",
     "CallbackConfig",
     "CheckpointerCallback",
-    "CheckpointRemovalStrategy",
+    "UpcycleCheckpointerCallback" "CheckpointRemovalStrategy",
     "CometCallback",
     "CometNotificationSetting",
     "ConfigSaverCallback",
@@ -41,7 +49,7 @@ __all__ = [
     "GarbageCollectorCallback",
     "GPUMemoryMonitorCallback",
     "ProfilerCallback",
-    "SlackNotifierCallback",
+    "NvidiaProfilerCallback" "SlackNotifierCallback",
     "SlackNotificationSetting",
     "SequenceLengthSchedulerCallback",
     "SpeedMonitorCallback",
@@ -50,6 +58,8 @@ __all__ = [
     "BatchSizeSchedulerCallback",
     "MonkeyPatcherCallback",
     "ListCheckpointerCallback",
+    "NvidiaProfilerCallback",
+    "TorchMemoryHistoryCallback",
 ]
 
 __doc__ += "\n"

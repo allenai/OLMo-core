@@ -20,6 +20,13 @@ from olmo_core.eval import Evaluator
 from olmo_core.eval.lm_evaluator import LMEvaluator
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.lm_head import LMOutputWithLoss
+from olmo_core.train.common import Duration, MetricMergeStrategy
+from olmo_core.train.train_module import (
+    EvalBatchSizeUnit,
+    EvalBatchSpec,
+    MoEV2TransformerTrainModule,
+    TransformerTrainModule,
+)
 from olmo_core.utils import (
     cuda_sync_debug_mode,
     format_float,
@@ -27,14 +34,12 @@ from olmo_core.utils import (
     move_to_device,
 )
 
-from ..common import Duration, MetricMergeStrategy
-from ..train_module import EvalBatchSizeUnit, EvalBatchSpec, TransformerTrainModule
 from .callback import Callback, CallbackConfig
 
 if TYPE_CHECKING:
     from olmo_eval import HFTokenizer
 
-    from ..trainer import Trainer
+    from olmo_core.train.trainer import Trainer
 
 log = logging.getLogger(__name__)
 
@@ -79,9 +84,11 @@ class EvaluatorCallback(Callback):
     """
 
     def post_attach(self):
-        if not isinstance(self.trainer.train_module, TransformerTrainModule):
+        supported_modules = (TransformerTrainModule, MoEV2TransformerTrainModule)
+        if not isinstance(self.trainer.train_module, supported_modules):
+            supported_names = " or ".join(f"'{m.__name__}'" for m in supported_modules)
             raise OLMoConfigurationError(
-                f"'{self.__class__.__name__}' only supports the '{TransformerTrainModule.__name__}' train module"
+                f"'{self.__class__.__name__}' only supports {supported_names} train module"
             )
 
     def pre_train(self):
@@ -116,12 +123,18 @@ class EvaluatorCallback(Callback):
                 eval_tokens += batch["input_ids"].numel() * dp_world_size
 
                 batch = move_to_device(batch, get_default_device())
+
                 with torch.no_grad():
                     # Run forward pass, get logits and un-reduced CE loss.
                     labels = get_labels(batch)
-                    output = self.trainer.train_module.eval_batch(batch, labels=labels)
-                    assert isinstance(output, LMOutputWithLoss)
-                    logits, _, ce_loss, _ = output
+
+                    # output is None if using PP and does not have last stage on this rank
+                    logits, ce_loss = None, None
+                    output: Optional[LMOutputWithLoss] = self.trainer.train_module.eval_batch(
+                        batch, labels=labels
+                    )
+                    if output is not None:
+                        logits, ce_loss, _, _ = output
 
                     # NOTE: might have host-device syncs here but that's okay.
                     with cuda_sync_debug_mode(0):
@@ -368,6 +381,9 @@ class DownstreamEvaluator(Evaluator):
         )
 
         super().__init__(name=name, batches=data_loader, device=device)
+
+    def __repr__(self) -> str:
+        return f"DownstreamEvaluator({self.label})"
 
     def update_metrics(
         self, batch: Dict[str, Any], ce_loss: Optional[torch.Tensor], logits: Optional[torch.Tensor]

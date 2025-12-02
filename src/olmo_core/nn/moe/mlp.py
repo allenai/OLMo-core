@@ -3,6 +3,7 @@ import math
 import warnings
 from typing import List, Optional
 
+import nvtx
 import torch
 import torch.distributed as dist
 import torch.nn as nn
@@ -10,6 +11,7 @@ import torch.nn.functional as F
 from torch.distributed import DeviceMesh
 from torch.distributed.fsdp import fully_shard
 from torch.distributed.tensor import Placement, Shard, distribute_tensor
+from torch.utils.checkpoint import CheckpointFunction, checkpoint
 
 from olmo_core.distributed.parallel import get_device_mesh_info
 from olmo_core.distributed.utils import get_local_tensor
@@ -253,7 +255,7 @@ class DroplessMoEMLP(MoEMLPBase):
         for w in (self.w1, self.w2, self.w3):
             nn.init.kaiming_uniform_(w, a=math.sqrt(5))
 
-    @torch._dynamo.disable()
+    @torch._dynamo.disable
     def gmm(
         self, x: torch.Tensor, w: torch.Tensor, batch_sizes: torch.Tensor, trans_b: bool = False
     ) -> torch.Tensor:
@@ -261,6 +263,10 @@ class DroplessMoEMLP(MoEMLPBase):
             # grouped-gemm only accepts BF16
             return self._gmm(x.to(torch.bfloat16), w.to(torch.bfloat16), batch_sizes, trans_b=trans_b)  # type: ignore
         else:
+            raise RuntimeError(
+                "Grouped GEMM is not available, so the MoE will be substantially slower. "
+                "Please install with 'pip install git+https://github.com/fanshiqing/grouped_gemm@v1.1.4' if possible.\n"
+            )
             out = []
             start = 0
             for i, size in enumerate(batch_sizes.cpu().numpy()):
@@ -269,7 +275,8 @@ class DroplessMoEMLP(MoEMLPBase):
                 start += size
             return torch.cat(out)
 
-    def forward(self, x: torch.Tensor, batch_size_per_expert: torch.Tensor) -> torch.Tensor:
+    @nvtx.annotate("DroplessMoEMLP.forward", color="blue")
+    def forward(self, x: torch.Tensor, batch_size_per_expert: List) -> torch.Tensor:
         """
         Compute the expert outputs.
 
@@ -284,9 +291,28 @@ class DroplessMoEMLP(MoEMLPBase):
             get_local_tensor(self.w2.view(self.num_experts, self.hidden_size, self.d_model)),
             get_local_tensor(self.w3.view(self.num_experts, self.hidden_size, self.d_model)),
         )
+        # assert batch_size_per_expert.device == torch.device("cpu"), "batch_size_per_expert must be on CPU for grouped_gemm"
+        # batch_size_per_expert = batch_size_per_expert.cpu() # NOTE: even though it's on CPU, this line is still needed, otherwise it will cause "not batch_size.is_cpu()" error in gmm() backward recompute, if we use activation checkpointing. No idea why.
 
+        assert isinstance(batch_size_per_expert, List), "only accept List for batch_size_per_expert"
+        batch_size_per_expert_tensor = torch.tensor(
+            batch_size_per_expert,
+            device="cpu",
+            dtype=torch.int64,  # NOTE: int64 required for grouped_gemm
+        )
+        # batch_size_per_expert = batch_size_per_expert.cpu()
         # Compute the MLP.
-        x1 = self.gmm(x, w1, batch_size_per_expert, trans_b=True)
-        x2 = self.gmm(x, w3, batch_size_per_expert, trans_b=True)
+
+        # print(f"before MLP rank {dist.get_rank()} x shape {x.shape}")
+
+        if x.numel() == 0:
+            return x
+
+        x1 = self.gmm(x, w1, batch_size_per_expert_tensor, trans_b=True)
+        x2 = self.gmm(x, w3, batch_size_per_expert_tensor, trans_b=True)
         x1 = F.silu(x1) * x2
-        return self.gmm(x1, w2, batch_size_per_expert)
+
+        out = self.gmm(x1, w2, batch_size_per_expert_tensor)
+
+        # print(f"after MLP rank {dist.get_rank()} out shape {out.shape}")
+        return out

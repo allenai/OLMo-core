@@ -14,6 +14,7 @@ from typing import (
     cast,
 )
 
+import nvtx
 import torch
 import torch.nn as nn
 from torch.distributed import DeviceMesh
@@ -50,8 +51,10 @@ from .block import (
 from .config import (
     TransformerActivationCheckpointingMode,
     TransformerBlockConfig,
+    TransformerConfig,
     TransformerDataParallelWrappingStrategy,
 )
+from .flops import num_floating_point_operations_for_logits
 from .init import InitMethod
 
 if TYPE_CHECKING:
@@ -149,6 +152,8 @@ class Transformer(nn.Module):
         self.num_params
         self.num_non_embedding_params
 
+        self.config: Optional[TransformerConfig] = None
+
     def _validate_block(self, block: TransformerBlockBase) -> TransformerBlockBase:
         return block
 
@@ -218,6 +223,7 @@ class Transformer(nn.Module):
         max_local_microbatch_size: Optional[int] = None,
         device: Optional[torch.device] = None,
         world_mesh: Optional[DeviceMesh] = None,
+        model_part_idx: int = 0,
     ) -> torch.Generator:
         """
         Initialize the model weights.
@@ -231,14 +237,17 @@ class Transformer(nn.Module):
         device = device or self.device
         self.to_empty(device=device)
 
-        for module in self.modules():
-            if hasattr(module, "reset_parameters"):
+        for name, module in self.named_modules():
+            if hasattr(module, "reset_parameters"):  # TODO: what's the point of this
                 module.reset_parameters()  # type: ignore
+                log.info(f"'{name}' called reset_parameters()")
 
         seed = self.init_seed
         if world_mesh is not None and self.pp_enabled:
-            seed += get_pp_mesh(world_mesh).get_local_rank()
-
+            seed += get_pp_mesh(
+                world_mesh
+            ).get_local_rank()  # BUG: the same seed for all model parts on the same rank?
+            seed += model_part_idx * 997  # random prime
         generator = torch.Generator(device).manual_seed(seed)
 
         if self.embeddings is not None:
@@ -253,22 +262,25 @@ class Transformer(nn.Module):
             # This might fail if it's wrapped.
             #  assert isinstance(block, TransformerBlock)
             block = cast(TransformerBlock, block)
-            att = cast(Union[Attention, FusedAttention], block.attention)
+            from ..moe.v2.block import MoEFusedV2TransformerBlock
 
-            # Attention weights.
-            self.init_method.init_attention(
-                att,
-                d_model=self.d_model,
-                block_idx=block.block_idx,
-                num_blocks=self.n_layers,
-                std=self.init_std,
-                generator=generator,
-            )
+            if isinstance(block, MoEFusedV2TransformerBlock):
+                block = cast(MoEFusedV2TransformerBlock, block)
+                # v2 MoE blocks.
+                att = cast(Union[Attention, FusedAttention], block.attention)
 
-            # Feed-forward weights.
-            if hasattr(block, "feed_forward"):
-                self.init_method.init_feed_forward(
-                    block.feed_forward,
+                # Attention weights.
+                self.init_method.init_attention(
+                    att,
+                    d_model=self.d_model,
+                    block_idx=block.block_idx,
+                    num_blocks=self.n_layers,
+                    std=self.init_std,
+                    generator=generator,
+                )
+                # MoE weights.
+                self.init_method.init_moe_v2(
+                    block,
                     d_model=self.d_model,
                     block_idx=block.block_idx,
                     num_blocks=self.n_layers,
@@ -276,19 +288,43 @@ class Transformer(nn.Module):
                     generator=generator,
                 )
 
-            # MoE weights.
-            if hasattr(block, "feed_forward_moe"):
-                block = cast(MoETransformerBlock, block)
-                if max_local_microbatch_size is not None:
-                    block.feed_forward_moe.warmup_cache(max_local_microbatch_size)
-                self.init_method.init_feed_forward_moe(
-                    block.feed_forward_moe,
+            else:
+                att = cast(Union[Attention, FusedAttention], block.attention)
+
+                # Attention weights.
+                self.init_method.init_attention(
+                    att,
                     d_model=self.d_model,
                     block_idx=block.block_idx,
                     num_blocks=self.n_layers,
                     std=self.init_std,
                     generator=generator,
                 )
+
+                # Feed-forward weights.
+                if hasattr(block, "feed_forward"):
+                    self.init_method.init_feed_forward(
+                        block.feed_forward,
+                        d_model=self.d_model,
+                        block_idx=block.block_idx,
+                        num_blocks=self.n_layers,
+                        std=self.init_std,
+                        generator=generator,
+                    )
+
+                # MoE weights.
+                if hasattr(block, "feed_forward_moe"):
+                    block = cast(MoETransformerBlock, block)
+                    if max_local_microbatch_size is not None:
+                        block.feed_forward_moe.warmup_cache(max_local_microbatch_size)
+                    self.init_method.init_feed_forward_moe(
+                        block.feed_forward_moe,
+                        d_model=self.d_model,
+                        block_idx=block.block_idx,
+                        num_blocks=self.n_layers,
+                        std=self.init_std,
+                        generator=generator,
+                    )
 
             # Warm up attention backend cache.
             if max_seq_len is not None and att.backend is not None:
@@ -306,6 +342,8 @@ class Transformer(nn.Module):
                 generator=generator,
             )
 
+        # xx = self.lm_head.w_out.weight
+        # xxy = self.blocks['2'].routed_experts.w_up_gate.to_local()
         return generator
 
     def _prepare_inputs(
@@ -508,7 +546,8 @@ class Transformer(nn.Module):
             # Mark sizes as dynamic for torch.compile().
             if self.compile_enabled:
                 mark_dynamic(h, (0, 1), strict=False)
-            h = block(h, **all_block_kwargs, **block_kwargs)
+            with nvtx.annotate(f"fwd_block_{block_idx}", color="blue"):
+                h = block(h, **all_block_kwargs, **block_kwargs)
 
         # Get final logits but again pass-through in case of pipeline parallelism.
         if self.lm_head is not None:
@@ -682,21 +721,23 @@ class Transformer(nn.Module):
                 log.info(f"Wrapped '{name}' for activation checkpointing")
                 wrapped_modules.add(name)
         else:
-            for block_idx, block in enumerate(self.blocks.values()):
+            for local_block_idx, (block_idx, block) in enumerate(self.blocks.items()):
                 if mode == TransformerActivationCheckpointingMode.selected_blocks:
                     assert block_interval is not None
-                    if block_idx % block_interval == 0:
+                    if local_block_idx % block_interval == 0:
                         if isinstance(block, MoETransformerBlock):
                             raise OLMoConfigurationError(
                                 "Wrapping MoE blocks for activation checkpointing is not supported."
                             )
                         block = ptd_checkpoint_wrapper(block, preserve_rng_state=preserve_rng_state)
                 elif mode == TransformerActivationCheckpointingMode.full:
-                    if isinstance(block, MoETransformerBlock):
-                        raise OLMoConfigurationError(
-                            "Wrapping MoE blocks for activation checkpointing is not supported."
-                        )
+                    # if isinstance(block, MoETransformerBlock):
+                    #     raise OLMoConfigurationError(
+                    #         "Wrapping MoE blocks for activation checkpointing is not supported."
+                    #     )
                     block = ptd_checkpoint_wrapper(block, preserve_rng_state=preserve_rng_state)
+                    # BUG: when using full AC + fsdp, should not wrap the whole block with checkpoint_wrapper as it will cause error inside _assert_all_fsdp_modules
+                    # should use apply_activation_checkpointing ?
                 elif mode == TransformerActivationCheckpointingMode.selected_ops:
                     block = ptd_checkpoint_wrapper(
                         block,
@@ -704,7 +745,7 @@ class Transformer(nn.Module):
                         preserve_rng_state=preserve_rng_state,
                     )
 
-                self.blocks.register_module(str(block_idx), block)
+                self.blocks.register_module(block_idx, block)
 
     def apply_compile(self):
         """
@@ -756,7 +797,11 @@ class Transformer(nn.Module):
         # which can be expensive and non-overlapped
         reshard_after_forward = False if pp_enabled else True
 
-        for block in self.blocks.values():
+        for block_idx, block in enumerate(self.blocks.values()):
+            # if block_idx % 2 == 0:
+            #     reshard_after_forward = True
+            # else:
+            #     reshard_after_forward = False
             block = cast(TransformerBlockBase, block)
             block.apply_fsdp(
                 dp_mesh=dp_mesh,
@@ -825,6 +870,8 @@ class Transformer(nn.Module):
             else:
                 torch._dynamo.config.optimize_ddp = "ddp_optimizer"  # type: ignore
 
+        self.to(torch.bfloat16)  # HACK, need fix
+
         replicate(self, device_mesh=dp_mesh, bucket_cap_mb=100)
         # Some inputs need to be on CPU initially, but DDP will move everything to model's
         # device if we don't hide it.
@@ -846,25 +893,19 @@ class Transformer(nn.Module):
         return self.num_params - self.embeddings.weight.numel()
 
     def num_flops_per_token(self, seq_len: int) -> int:
-        """
-        Get the approximate number of flops per token.
-        """
-        n, h, q, t = (
-            self.n_layers,
-            self.n_attn_heads,
-            self.d_model // self.n_attn_heads,
-            seq_len,
-        )
+        flops = []
 
-        # Reasoning behind the factor of 12 for the self-attention part of the formula:
-        # 1. each self-attention has 2 matmul in the forward and 4 in the backward (6)
-        # 2. the flash attention does 1 more matmul recomputation in the backward
-        #    but recomputation should not be counted in calculating MFU           (+0)
-        # 3. each matmul performs 1 multiplication and 1 addition                 (*2)
-        # 4. we follow the convention and do not account for sparsity in causal attention
-        flop_per_token = 6 * self.num_non_embedding_params + 12 * n * h * q * t
+        # calculate flops for each block (each block might have different config)
+        for block_idx in range(self.n_layers):
+            block_config = self.config.block
+            if self.config.block_overrides is not None and block_idx in self.config.block_overrides:
+                block_config = self.config.block_overrides[block_idx]
 
-        return flop_per_token
+            flops.append(block_config.flops_per_token(self.d_model, seq_len))
+
+        flops.append(num_floating_point_operations_for_logits(self.config, seq_len) / seq_len)
+
+        return sum(flops)
 
     def post_batch(self, dry_run: bool = False):
         """

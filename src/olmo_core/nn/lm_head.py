@@ -22,6 +22,7 @@ from olmo_core.exceptions import OLMoConfigurationError
 
 from .attention import RingAttentionLoadBalancerType
 from .functional import (
+    cce_loss,
     cross_entropy_loss,
     fused_linear_cross_entropy_loss,
     l2_normalize,
@@ -71,6 +72,11 @@ class LMLossImplementation(StrEnum):
     """
     A low-memory triton implementation from Liger-Kernel that fused the linear logits projection
     with the loss computation.
+    """
+
+    cut_cross_entropy = "cut_cross_entropy"
+    """
+    https://arxiv.org/abs/2411.09009
     """
 
 
@@ -249,7 +255,10 @@ class LMHead(nn.Module):
         loss: torch.Tensor
         ce_loss: torch.Tensor
         z_loss: Optional[torch.Tensor]
-        if self.loss_implementation == LMLossImplementation.default:
+        if (
+            self.loss_implementation == LMLossImplementation.default
+            or not torch.is_grad_enabled()  # eval mode
+        ):
             logits = self.w_out(h)
             assert logits is not None
             ce_loss, z_loss = cross_entropy_loss(
@@ -281,6 +290,20 @@ class LMHead(nn.Module):
                 ce_loss = loss - z_loss
             else:
                 ce_loss = loss
+
+        elif self.loss_implementation == LMLossImplementation.cut_cross_entropy:
+            logits = None
+            ce_loss, z_loss = cce_loss(
+                get_local_tensor(h).contiguous().view(-1, self.d_model),
+                weight=get_local_tensor(self.w_out.weight),
+                labels=get_local_tensor(labels).contiguous().view(-1),
+                bias=get_local_tensor(self.w_out.bias) if self.w_out.bias is not None else None,
+                ignore_index=ignore_index,
+                reduction=loss_reduction,
+                compute_z_loss=z_loss_multiplier is not None,
+                z_loss_multiplier=z_loss_multiplier or 1e-4,
+            )
+            loss = ce_loss + (z_loss if z_loss is not None else 0.0)
         else:
             raise NotImplementedError(
                 f"'{self.loss_implementation}' loss implementation is not supported by {self.__class__.__name__}"

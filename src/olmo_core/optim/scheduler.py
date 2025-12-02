@@ -217,6 +217,112 @@ class WSD(Scheduler):
 
 
 @dataclass
+class PowerLR(Scheduler):
+    """
+    Power learning‑rate schedule with
+
+    1. **Linear warm‑up** to a reference peak LR (`initial_lr`) during the first
+       `warmup` steps/tokens.
+    2. **Power phase** where the LR decays following a power‑law
+       `lr = initial_lr * (current / warmup) ** b`.
+       This makes the LR independent of the eventual training horizon.
+    3. **Optional linear decay tail** during the last `decay` steps/tokens to
+       smoothly anneal to `decay_min_lr`.
+
+    Notes
+    -----
+    * `b` should be *negative* (e.g. ‑0.51); magnitude controls how quickly the
+      LR decays in the power phase.
+    * If both `warmup` and `warmup_fraction` (or both `decay` and
+      `decay_fraction`) are specified, an `OLMoConfigurationError` is raised to
+      mirror the behaviour of other schedulers in this file.
+    """
+
+    b: float = -0.51  # power‑law exponent (negative)
+    warmup: Optional[int] = None
+    warmup_steps: Optional[int] = None  # deprecated alias
+    warmup_fraction: Optional[float] = None
+    warmup_min_lr: float = 0.0
+
+    decay: Optional[int] = None
+    decay_steps: Optional[int] = None  # deprecated alias
+    decay_fraction: Optional[float] = 0.1
+    decay_min_lr: float = 0.0
+
+    def __post_init__(self):
+        # --- handle deprecated aliases -------------------------------------------------
+        if self.warmup is None and self.warmup_steps is not None:
+            self.warmup = self.warmup_steps
+            self.warmup_steps = None
+            warnings.warn(
+                f"'{self.__class__.__name__}.warmup_steps' is deprecated, please use '.warmup' instead.",
+                DeprecationWarning,
+            )
+        if self.decay is None and self.decay_steps is not None:
+            self.decay = self.decay_steps
+            self.decay_steps = None
+            warnings.warn(
+                f"'{self.__class__.__name__}.decay_steps' is deprecated, please use '.decay' instead.",
+                DeprecationWarning,
+            )
+
+        # --- sanity checks -------------------------------------------------------------
+        if (self.warmup_fraction is None) == (self.warmup is None):
+            raise OLMoConfigurationError("Either 'warmup_fraction' or 'warmup' must be specified.")
+
+        if self.warmup_fraction is not None and not (0 <= self.warmup_fraction <= 1):
+            raise OLMoConfigurationError("'warmup_fraction' must be between 0 and 1.")
+
+        if (self.decay_fraction is None) == (self.decay is None):
+            raise OLMoConfigurationError(
+                "Either 'decay_fraction' or 'decay' must be specified. Never both."
+            )
+
+        if self.decay_fraction is not None and not (0 <= self.decay_fraction <= 1):
+            raise OLMoConfigurationError("'decay_fraction' must be between 0 and 1.")
+
+        if self.b >= 0:
+            raise OLMoConfigurationError("'b' must be negative for a decaying power‑law.")
+
+    # -------------------------------------------------------------------------
+    # Core scheduling logic
+    # -------------------------------------------------------------------------
+    def get_lr(
+        self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
+    ) -> Union[float, torch.Tensor]:
+        """
+        Compute the learning rate for the given *current* step/token count.
+
+        *Linear warm‑up*:
+            lr = warmup_min_lr + (initial_lr - warmup_min_lr) * current / warmup
+
+        *Power phase*:
+            lr = initial_lr * (current / warmup) ** b
+
+        *Linear decay tail* (last ``decay`` steps/tokens):
+            lr is linearly annealed from the power‑phase value at the start of
+            the tail to ``decay_min_lr``.
+        """
+        # --- warm‑up and decay extents ------------------------------------------------
+        warmup = self.warmup if self.warmup is not None else round(t_max * self.warmup_fraction)
+        decay = self.decay if self.decay is not None else round(t_max * self.decay_fraction)
+
+        # --- phase 1: warm‑up ---------------------------------------------------------
+        if current <= warmup:
+            return _linear_warmup(initial_lr, current, warmup, self.warmup_min_lr)
+
+        # --- phase 3: linear decay tail ----------------------------------------------
+        if current >= t_max - decay:
+            # lr at the beginning of decay‑tail
+            lr_start_tail = initial_lr * ((t_max - decay) / warmup) ** self.b
+            return _linear_decay(lr_start_tail, t_max - current, decay, self.decay_min_lr)
+
+        # --- phase 2: power‑law region -----------------------------------------------
+        lr = initial_lr * (current / warmup) ** self.b
+        return lr
+
+
+@dataclass
 class LinearWithWarmup(Scheduler):
     """
     Linear learning rate schedule with a warmup.
@@ -449,6 +555,8 @@ class CosWithWarmupAndLinearDecay(CosWithWarmup):
         if self.decay_fraction is not None and (self.decay_fraction < 0 or self.decay_fraction > 1):
             raise OLMoConfigurationError("'decay_fraction' must be between 0 and 1.")
 
+        super().__post_init__()
+
     def get_lr(
         self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
     ) -> Union[float, torch.Tensor]:
@@ -458,11 +566,14 @@ class CosWithWarmupAndLinearDecay(CosWithWarmup):
         else:
             decay = self.decay
 
+        # linear decay starts after the cosine schedule is *COMPLETE*
         if current >= t_max - decay:
-            final_cosine_lr = super().get_lr(initial_lr, t_max - decay, t_max)
+            # final_cosine_lr = super().get_lr(initial_lr, t_max - decay, t_max)
+            final_cosine_lr = initial_lr * self.alpha_f
             return _linear_decay(final_cosine_lr, t_max - current, decay, self.decay_min_lr)
 
-        return super().get_lr(initial_lr, current, t_max)
+        # return super().get_lr(initial_lr, current, t_max)
+        return super().get_lr(initial_lr, current, t_max - decay)
 
 
 def _linear_warmup(

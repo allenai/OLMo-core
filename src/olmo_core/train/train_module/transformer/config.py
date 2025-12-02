@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union, cast
 
 import torch
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
-from torch.distributed import DeviceMesh
+from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.pipelining import PipelineStage
 
 from olmo_core.config import Config, DType
@@ -28,7 +28,11 @@ from olmo_core.nn.transformer import (
 from olmo_core.optim import OptimConfig
 from olmo_core.optim.scheduler import Scheduler
 
+from .. import TrainModuleConfig
+from .pipeline.pipeline_schedule import CustomPipelineStage
+
 if TYPE_CHECKING:
+    from .moe_train_module import MoEV2TransformerTrainModule
     from .pipeline_train_module import TransformerPipelineTrainModule
     from .train_module import TransformerTrainModule
 
@@ -40,6 +44,12 @@ log = logging.getLogger(__name__)
 class TransformerPipelineParallelConfig(PipelineParallelConfig):
     """
     Transformer-specific pipeline parallel config.
+    """
+
+    use_custom_stage_implementation: bool = False
+    """
+    False -> use pytorch's PipelineStage implementation.
+    True -> use a custom implementation that re-uses receive buffers across micro-batches.
     """
 
     split_points: Optional[List[int]] = None
@@ -85,7 +95,12 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
         return splits
 
     def split_model(
-        self, model: Transformer, *, pp_mesh: DeviceMesh, device: torch.device
+        self,
+        model: Transformer,
+        *,
+        pp_mesh: DeviceMesh,
+        device: torch.device,
+        use_ddp: bool = False,
     ) -> Tuple[List[PipelineStage], List[Transformer]]:
         split_points = self.get_split_points(model.n_layers)
         pp_rank = pp_mesh.get_local_rank()
@@ -114,13 +129,24 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
             if not is_last:
                 model_chunk.lm_head = None  # type: ignore
 
-            stage = PipelineStage(
-                model_chunk,
-                stage_idx,
-                num_stages,
-                device,
-                group=pp_mesh.get_group("pp"),
-            )
+            if self.use_custom_stage_implementation:
+                # Use custom stage implementation that re-uses receive buffers across micro-batches
+                stage = CustomPipelineStage(
+                    model_chunk,
+                    stage_idx,
+                    num_stages,
+                    device,
+                    is_rddp=use_ddp,
+                    group=pp_mesh.get_group("pp"),
+                )
+            else:
+                stage = PipelineStage(
+                    model_chunk,
+                    stage_idx,
+                    num_stages,
+                    device,
+                    group=pp_mesh.get_group("pp"),
+                )
             return stage, model_chunk
 
         num_stages = len(split_points) + 1
@@ -162,6 +188,8 @@ class TransformerDataParallelConfig(DataParallelConfig):
     """
 
     prefetch_factor: int = 0
+
+    only_allreduce_last_microbatch: bool = True
 
 
 @dataclass
@@ -262,7 +290,7 @@ class TransformerActivationCheckpointingConfig(Config):
 
 
 @dataclass
-class TransformerTrainModuleConfig(Config):
+class TransformerTrainModuleConfig(TrainModuleConfig):
     """
     A configuration class for building :class:`TransformerTrainModule` or
     :class:`TransformerPipelineTrainModule` instances.
@@ -353,3 +381,74 @@ class TransformerPipelineTrainModuleConfig(TransformerTrainModuleConfig):
     def __post_init__(self):
         if self.pp_config is None:
             raise OLMoConfigurationError("'pp_config' is required")
+
+
+from olmo_core.optim.moe_optimizer import MoEFusedV2OptimizerConfig
+
+
+@dataclass
+class MoEV2TransformerTrainModuleConfig(TrainModuleConfig):
+    rank_microbatch_size: int
+    max_sequence_length: int
+
+    # Optimizer settings.
+
+    optim: MoEFusedV2OptimizerConfig
+    max_grad_norm: Optional[float] = None
+    scheduler: Optional[Scheduler] = None
+
+    # DP settings.
+    grad_accum_in_fp32: bool = True
+
+    # Model settings.
+
+    compile_model: bool = False
+    float8_config: Optional[Float8Config] = None
+    pp_config: Optional[TransformerPipelineParallelConfig] = None
+    dp_config: Optional[TransformerDataParallelConfig] = None
+    tp_config: Optional[TransformerTensorParallelConfig] = None
+    cp_config: Optional[TransformerContextParallelConfig] = None
+    ep_config: Optional[TransformerExpertParallelConfig] = None
+    ac_config: Optional[TransformerActivationCheckpointingConfig] = None
+
+    # Loss function settings.
+
+    z_loss_multiplier: Optional[float] = None
+
+    # Checkpoint settings.
+
+    state_dict_save_opts: Optional[Dict[str, Any]] = None
+    state_dict_load_opts: Optional[Dict[str, Any]] = None
+    load_key_mapping: Optional[Dict[str, str]] = None
+
+    # Other train settings.
+
+    label_ignore_index: int = -100
+
+    def build(
+        self,
+        model: Transformer,
+        device: Optional[torch.device] = None,
+    ) -> Union[
+        "TransformerTrainModule", "TransformerPipelineTrainModule", "MoEV2TransformerTrainModule"
+    ]:
+        """
+        Build the corresponding :class:`TransformerTrainModule` or :class:`TransformerPipelineTrainModule.
+
+        :param model: The :class:`~olmo_core.nn.transformer.Transformer` model to train.
+        :param device: The device to train on.
+        """
+        from .moe_train_module import MoEV2TransformerTrainModule
+
+        kwargs = self.as_dict(exclude_none=True, recurse=False)
+
+        if (state_dict_save_opts := kwargs.pop("state_dict_save_opts", None)) is not None:
+            kwargs["state_dict_save_opts"] = dist_cp_sd.StateDictOptions(**state_dict_save_opts)
+        if (state_dict_load_opts := kwargs.pop("state_dict_load_opts", None)) is not None:
+            kwargs["state_dict_load_opts"] = dist_cp_sd.StateDictOptions(**state_dict_load_opts)
+
+        return MoEV2TransformerTrainModule(
+            model=model,
+            device=device,
+            **kwargs,
+        )

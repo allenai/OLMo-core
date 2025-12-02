@@ -7,7 +7,7 @@ import torch
 from olmo_core.utils import move_to_device
 
 
-class BufferCache(MutableMapping[str, torch.Tensor]):
+class BufferCache(MutableMapping[str, Optional[torch.Tensor]]):
     """
     Cache for buffers such as attention biases that would normally be registered as module buffers.
 
@@ -26,8 +26,8 @@ class BufferCache(MutableMapping[str, torch.Tensor]):
         self._data: Dict[str, Dict[str, torch.Tensor]] = defaultdict(dict)
         self._namespace = namespace
 
-    def __getitem__(self, key: str) -> torch.Tensor:
-        return self._data[self._namespace][key]
+    def __getitem__(self, key: str) -> Optional[torch.Tensor]:
+        return self._data[self._namespace].get(key)
 
     def __setitem__(self, key: str, value: torch.Tensor) -> None:
         self._data[self._namespace][key] = value

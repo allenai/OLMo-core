@@ -1,12 +1,20 @@
+import logging
 from dataclasses import dataclass
 from typing import Optional, Tuple, Type, Union
 
 import torch
+from torch.distributed.algorithms.ddp_comm_hooks.ddp_zero_hook import (
+    hook_with_zero_step,
+    hook_with_zero_step_interleaved,
+)
+from torch.distributed.optim import ZeroRedundancyOptimizer
 
 from ..config import DType
 from ..distributed.utils import get_local_tensor
 from .config import OptimConfig
 from .skip_step_optimizer import SkipStepOptimizer
+
+log = logging.getLogger(__name__)
 
 
 def adamw_step(
@@ -96,6 +104,7 @@ def foreach_adamw_step(
     torch._foreach_add_(denoms, eps)
 
     updates = torch._foreach_div(exp_avgs, denoms)
+    del denoms
     torch._foreach_mul_(updates, (-step_factor * step_sizes).unbind())
     torch._foreach_add_(params, updates)
     if step_increment_bugfix:
@@ -160,7 +169,10 @@ class SkipStepAdamW(SkipStepOptimizer):
         for group in self.param_groups:
             for p in group["params"]:
                 if p.grad is None:
-                    continue
+                    raise RuntimeError(
+                        f"DEBUG: Parameter {p} has no gradient, skipping optimization step for this parameter."
+                    )
+                    # continue
 
                 state = self.state[p]
                 if len(state) == 0:
@@ -259,6 +271,31 @@ class SkipStepAdamWConfig(OptimConfig):
     eps: float = 1e-8
     weight_decay: float = 1e-2
     dtype: Optional[DType] = None
+    foreach: bool = True
+    """
+    Whether to use multi-tensor (*foreach*) kernels for the AdamW update.
+    Faster than the non-foreach version.
+    """
+
+    step_increment_bugfix: bool = True
+    """
+    Whether or not to fix the step-incrementing bug discovered in SkipStepAdamW.
+
+    If this flag is set to False, the step will not be incremented, which
+    gives the optimizer an effective lr that is 2.2x higher than the specified lr,
+    and no bias correction is applied.
+    """
+
+    rolling_interval_length: int = 128
+    """
+    The length of the rolling interval to use for computing the mean and standard deviation of the loss.
+    """
+
+    sigma_factor: int = 6
+    """
+    The number of standard deviations above the mean loss to skip a step.
+    """
+
     foreach: bool = True
     """
     Whether to use multi-tensor (*foreach*) kernels for the AdamW update.

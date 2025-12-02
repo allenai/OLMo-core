@@ -3,8 +3,11 @@ from .train_module import (
     EvalBatchSizeUnit,
     EvalBatchSpec,
     TrainModule,
+    TrainModuleConfig,
 )
 from .transformer import (
+    MoEV2TransformerTrainModule,
+    MoEV2TransformerTrainModuleConfig,
     TransformerActivationCheckpointingConfig,
     TransformerActivationCheckpointingMode,
     TransformerContextParallelConfig,
@@ -21,6 +24,7 @@ from .transformer import (
 
 __all__ = [
     "TrainModule",
+    "TrainModuleConfig",
     "EvalBatchSpec",
     "EvalBatchSizeUnit",
     "BasicTrainModule",
@@ -36,4 +40,6 @@ __all__ = [
     "TransformerTensorParallelConfig",
     "TransformerContextParallelConfig",
     "TransformerPipelineParallelConfig",
+    "MoEV2TransformerTrainModule",
+    "MoEV2TransformerTrainModuleConfig",
 ]

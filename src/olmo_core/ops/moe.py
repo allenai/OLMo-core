@@ -237,7 +237,7 @@ class AllToAllOp(torch.autograd.Function):
         ctx.group = group
         handle = dist.all_to_all_single(
             out,
-            x,
+            x.contiguous(),
             output_split_sizes=output_split_sizes,
             input_split_sizes=input_split_sizes,
             group=group,
@@ -255,7 +255,7 @@ class AllToAllOp(torch.autograd.Function):
             )
             dist.all_to_all_single(
                 out,
-                grad,
+                grad.contiguous(),
                 output_split_sizes=ctx.input_split_sizes,
                 input_split_sizes=ctx.output_split_sizes,
                 group=ctx.group,
@@ -278,6 +278,118 @@ def all_to_all(
         group,
         async_op,
     )
+
+
+class AllToAllAsyncOp(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x, output_split_sizes, input_split_sizes, group):
+        if output_split_sizes is not None:
+            y = torch.empty(
+                (sum(output_split_sizes),) + x.shape[1:], device=x.device, dtype=x.dtype
+            )
+        else:
+            y = torch.empty_like(x)
+
+        # ctx.input_shape = x.shape
+        ctx.output_split_sizes = output_split_sizes
+        ctx.input_split_sizes = input_split_sizes
+        ctx.group = group
+        y_handle = dist.all_to_all_single(
+            y,
+            x.contiguous(),
+            output_split_sizes=output_split_sizes,
+            input_split_sizes=input_split_sizes,
+            group=group,
+            async_op=True,
+        )
+        # Set the attributes on the output tensor, which will be carried to AllToAllWaitOp
+        setattr(y, "_a2a_input_shape", x.shape)
+        setattr(y, "_a2a_output_split_sizes", output_split_sizes)
+        setattr(y, "_a2a_input_split_sizes", input_split_sizes)
+        setattr(y, "_a2a_group", group)
+
+        return x, y, y_handle
+
+    @staticmethod
+    def backward(ctx, *grad_outputs):
+        x_grad, y_grad = grad_outputs[0], grad_outputs[1]
+        x_grad_handle = x_grad._a2a_handle
+        x_grad_handle.wait()
+        del x_grad._a2a_handle
+        return x_grad, None, None, None, None
+
+
+class AllToAllWaitOp(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x, y, y_handle):
+        ctx.input_shape = (
+            y._a2a_input_shape
+        )  # y is the output tensor from AllToAllAsyncOp, so should not use y.shape
+        ctx.output_split_sizes = y._a2a_output_split_sizes
+        ctx.input_split_sizes = y._a2a_input_split_sizes
+        ctx.group = y._a2a_group
+        # remove attributes
+        del y._a2a_output_split_sizes
+        del y._a2a_input_split_sizes
+        del y._a2a_group
+        del y._a2a_input_shape
+
+        y_handle.wait()
+        return y
+
+    @staticmethod
+    def backward(ctx, *grad_outputs):
+        y_grad = grad_outputs[0]
+        x_grad = torch.empty(
+            ctx.input_shape,
+            device=y_grad.device,
+            dtype=y_grad.dtype,
+        )
+        x_grad_handle = dist.all_to_all_single(
+            x_grad,
+            y_grad.contiguous(),
+            output_split_sizes=ctx.input_split_sizes,
+            input_split_sizes=ctx.output_split_sizes,
+            group=ctx.group,
+            async_op=True,
+        )
+        setattr(x_grad, "_a2a_handle", x_grad_handle)
+        return x_grad, y_grad, None
+
+
+def all_to_all_async(
+    x: torch.Tensor,
+    output_split_sizes: Optional[List[int]] = None,
+    input_split_sizes: Optional[List[int]] = None,
+    group: Optional[dist.ProcessGroup] = None,
+) -> Tuple[torch.Tensor, torch.Tensor, dist.Work]:
+    return AllToAllAsyncOp.apply(  # type: ignore
+        x,
+        output_split_sizes,
+        input_split_sizes,
+        group,
+    )
+
+
+def all_to_all_wait(x: torch.Tensor, y: torch.Tensor, y_handle: dist.Work) -> torch.Tensor:
+    return AllToAllWaitOp.apply(x, y, y_handle)  # type: ignore
+
+
+def _example():
+    x = torch.randn(8, 16).cuda()
+    x.requires_grad = True
+
+    y0, y_handle = all_to_all_async(x)
+    z = x * 2  # some random compute
+    y = all_to_all_wait(y0, y_handle)
+    out = y + z
+
+    # backward order:
+    # backward(out)
+    # launch backward(all_to_all_async)
+    # backward(compute)
+    # wait all2all
+    # backward(x)
 
 
 def sum_tensor(x: torch.Tensor, dim: int = 0) -> torch.Tensor:

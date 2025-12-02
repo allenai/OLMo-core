@@ -10,7 +10,7 @@ from torch.distributed.checkpoint.metadata import Metadata
 from torch.distributed.checkpoint.stateful import Stateful
 from torch.optim import Optimizer
 
-from olmo_core.config import StrEnum
+from olmo_core.config import Config, StrEnum
 from olmo_core.data.utils import get_labels, split_batch
 from olmo_core.distributed.utils import get_local_tensor, get_world_size
 from olmo_core.exceptions import OLMoConfigurationError
@@ -67,6 +67,13 @@ class EvalBatchSpec:
             raise OLMoConfigurationError(
                 "'max_sequence_length' must be specified when 'fixed_sequence_length=True'"
             )
+
+
+@dataclass
+class TrainModuleConfig(Config):
+    @abstractmethod
+    def build(self, *args, **kargs) -> "TrainModule":
+        raise NotImplementedError
 
 
 class TrainModule(Stateful, metaclass=ABCMeta):

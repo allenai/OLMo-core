@@ -18,7 +18,7 @@ from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.io import clear_directory, is_url, join_path, remove_file
 from olmo_core.utils import wait_for
 
-from ..checkpoint import Checkpointer
+from ..checkpoint import Checkpointer, UpcycleCheckpointer
 from .callback import Callback
 
 log = logging.getLogger(__name__)
@@ -271,3 +271,42 @@ class CheckpointerCallback(Callback):
             self._checkpoints.append(self._save_checkpoint(save_async=False))
 
         self._await_last_checkpoint()
+
+
+from pathlib import Path
+
+
+@dataclass
+class UpcycleCheckpointerCallback(Callback):
+    """
+    A checkpointer callback loads the pre-saved upcycled MoE checkpoint.
+    Make sure it's run before the main checkpointer callback because the main checkpointer
+    will usally save the step 0 checkpoint.
+    """
+
+    priority: ClassVar[int] = 2
+
+    enabled: bool = True
+
+    upcycled_model_path: str = ""
+
+    def pre_train(self):
+        if not self.enabled:
+            return
+
+        # only load upcycled checkpoint if we are not resuming from a checkpoint
+        # and we are not in the middle of training
+        if self.step != 0 or self.trainer.checkpoint_loaded:
+            return
+
+        self.checkpointer = UpcycleCheckpointer(work_dir=Path("."))
+
+        log.info(
+            f"UpcycleCheckpointerCallback: Loading Upcycled checkpoint from '{self.upcycled_model_path}'..."
+        )
+
+        self.checkpointer.load_upcycled_model(
+            dir=self.upcycled_model_path,
+            train_module=self.trainer.train_module,
+        )
+        log.info(f"UpcycleCheckpointerCallback: Done")

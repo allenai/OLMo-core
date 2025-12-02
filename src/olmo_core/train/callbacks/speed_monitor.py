@@ -9,7 +9,7 @@ from olmo_core.config import DType
 from olmo_core.distributed.utils import get_world_size
 
 from ..common import ReduceType
-from ..train_module import TransformerTrainModule
+from ..train_module import TransformerPipelineTrainModule, TransformerTrainModule
 from .callback import Callback
 
 log = logging.getLogger(__name__)
@@ -55,8 +55,8 @@ class SpeedMonitorCallback(Callback):
             return self.num_flops_per_token
         elif isinstance(self.trainer.train_module, TransformerTrainModule):
             return self.trainer.train_module.num_flops_per_token(seq_len)
-        else:
-            return None
+        else:  # pipeline module
+            return self.trainer.train_module.num_flops_per_token(seq_len)
 
     def pre_train(self):
         self._first_step = True
@@ -65,11 +65,18 @@ class SpeedMonitorCallback(Callback):
             self._parallel_degree = get_world_size() // get_world_size(
                 self.trainer.dp_process_group
             )
+        from olmo_core.train.train_module.transformer.moe_train_module import (
+            MoEV2TransformerTrainModule,
+        )
 
         if (
             self.device_peak_flops is None
             and self.trainer.device.type == "cuda"
-            and isinstance(self.trainer.train_module, TransformerTrainModule)
+            and (
+                isinstance(self.trainer.train_module, TransformerTrainModule)
+                or isinstance(self.trainer.train_module, TransformerPipelineTrainModule)
+                or isinstance(self.trainer.train_module, MoEV2TransformerTrainModule)
+            )
         ):
             device_name = torch.cuda.get_device_name(self.trainer.device)
 
@@ -166,5 +173,11 @@ class SpeedMonitorCallback(Callback):
             # https://arxiv.org/abs/2204.02311
             mfu = 100 * num_flops_per_token * tps / self.device_peak_flops
             mfu_avg = 100 * num_flops_per_token * tps_avg / self.device_peak_flops
+            tflops_per_gpu = num_flops_per_token * tps / 1e12
             self.trainer.record_metric("throughput/device/MFU", mfu)
             self.trainer.record_metric("throughput/device/MFU (actual avg)", mfu_avg)
+            self.trainer.record_metric("throughput/device/TFLOPs_per_GPU", tflops_per_gpu)
+            self.trainer.record_metric(
+                "throughput/total flops",
+                self.trainer.global_train_tokens_seen * num_flops_per_token,
+            )

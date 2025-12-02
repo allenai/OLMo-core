@@ -39,6 +39,7 @@ from olmo_core.train.callbacks import (
 )
 from olmo_core.train.callbacks.slack_notifier import SLACK_WEBHOOK_URL_ENV_VAR
 from olmo_core.train.train_module import TransformerTrainModuleConfig
+from olmo_core.train.train_module.train_module import TrainModuleConfig
 from olmo_core.utils import prepare_cli_environment, seed_all
 
 from .common import build_launch_config, get_beaker_username, get_root_dir, get_work_dir
@@ -93,7 +94,7 @@ class ExperimentConfig(Config):
     model: TransformerConfig
     dataset: NumpyDatasetConfig
     data_loader: NumpyDataLoaderConfig
-    train_module: TransformerTrainModuleConfig
+    train_module: TrainModuleConfig
     trainer: TrainerConfig
     init_seed: int = 12536
     backend: Optional[str] = "cpu:gloo,cuda:nccl"
@@ -106,6 +107,7 @@ class SubCmd(StrEnum):
     prep = "prep"
     launch_prep = "launch_prep"
     dry_run = "dry_run"
+    utils = "utils"
 
     def post_launch_subcmd(self) -> "SubCmd":
         if self in (SubCmd.launch_prep, SubCmd.prep):
@@ -183,7 +185,7 @@ def build_common_components(
 ) -> CommonComponents:
     root_dir = get_root_dir(cli_context.cluster)
     beaker_user = get_beaker_username()
-
+    beaker_user = None  # HACK: Disable Beaker secrets for local runs
     launch_config: Optional[BeakerLaunchConfig] = None
     if beaker_user is not None:
         cmd_to_launch = cli_context.cmd.post_launch_subcmd()
