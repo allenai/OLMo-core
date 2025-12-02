@@ -880,13 +880,19 @@ class Transformer(nn.Module):
                     window_size = sliding_window_cfg.get_window_size(layer_idx, self.n_layers)
                     effective_seq_len = min(window_size, seq_len)
 
-            # Delegate the per-token attention FLOPs calculation to the attention config.
+            # Delegate the per-token attention FLOPs calculation to the attention module
+            # when possible, falling back to the config-based heuristic otherwise.
             # For GQA, FLOPS are effectively the same as dense attention (n_heads), so the
-            # attention config still uses n_heads for the heuristic.
-            layer_attention_flops = block_config.attention.num_flops_per_token(
-                d_model=self.d_model,
-                seq_len=effective_seq_len,
-            )
+            # underlying heuristic remains unchanged.
+            block = self.blocks[str(layer_idx)]
+            attention_module = getattr(block, "attention", None)
+            if attention_module is not None and hasattr(attention_module, "num_flops_per_token"):
+                layer_attention_flops = attention_module.num_flops_per_token(effective_seq_len)  # type: ignore[call-arg]
+            else:
+                layer_attention_flops = block_config.attention.num_flops_per_token(
+                    d_model=self.d_model,
+                    seq_len=effective_seq_len,
+                )
             attention_flops += layer_attention_flops
 
         flop_per_token = base_flops + attention_flops
