@@ -12,10 +12,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `olmo_core.data.composable` module.
 - Added `PeriNormTransformerBlock`.
 - Added exponential learning rate scheduler to `olmo_core.optim.scheduler`.
+- Added internal Olmo3 32B midtraining and long context configs.
+
+### Fixed
+
+- Fixed `AttentionConfig.num_params()` overcounting QK norm parameters when using GQA/MQA with `use_head_qk_norm=False`.
+- Fixed the peak learning rate in `src/scripts/train/OLMo3/OLMo3-32B-midtraining.py` to the correct one.
+- Fixed type annotation issue in `NumpyInterleavedFSLDataset` where `_num_interleaving_exempt_instances` and `_num_interleavable_instances` were missing `Optional[int]` type hints, causing mypy type errors.
+
 
 ### Changed
 
 - Renamed `olmo_core.distributed.utils.scatter_object()` to `broadcast_object()` for correctness.
+- Updated stable torch version to 2.9.1, updated versions of underlying libraries in Beaker Images.
 
 ## [v2.4.0](https://github.com/allenai/OLMo-core/releases/tag/v2.4.0) - 2025-11-20
 
@@ -110,6 +119,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `olmo3_7B` model config.
 - Added additional internal configuration tools.
 - Added a new named data mix that we used for the 32B run
+- Added the ability for `GenerationModule` to load multiple checkpoints at once and average them.
+- Added internal OLMo3 7B midtraining config.
 - Added internal OLMo3 7B midtraining and long-context configs.
 - Added ability to convert OLMo3 models to/from HF format with support for rope scaling configs.
 - Added the `WSDS` (Warmup-Stable-Decay-Simplified) learning rate scheduler.

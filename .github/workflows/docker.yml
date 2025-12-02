@@ -6,7 +6,10 @@ concurrency:
 
 on:
   workflow_dispatch:
-  # TODO: disabled for now because it takes too long in CI
+  # TODO: disabled for now because it OOMs GHA runners in CI. Can re-enable by
+  # migrating to Beaker when it has the capability to build docker images from
+  # within batch jobs (currently Beaker only supports building images inside of
+  # interactive sessions).
   # pull_request:
   #   branches:
   #     - main
@@ -16,16 +19,16 @@ on:
   #     - 'src/olmo_core/version.py'
   #     - 'src/Dockerfile'
   #     - '.github/workflows/docker.yml'
-  push:
-    # branches:
-    #   - main
-    tags:
-      - 'v*.*.*'
+  # push:
+  #   # branches:
+  #   #   - main
+  #   tags:
+  #     - 'v*.*.*'
 
 jobs:
   docker:
-    name: CUDA ${{ matrix.cuda }} ${{ matrix.target }}
-    runs-on: ubuntu-latest-m
+    name: CUDA ${{ matrix.cuda }} Torch ${{ matrix.torch.version }}
+    runs-on: 8-Core-XL-Runner-Ubuntu-Latest  # 8 cores, 32GB memory
     timeout-minutes: 60
     env:
       BEAKER_TOKEN: ${{ secrets.BEAKER_TOKEN }}
@@ -34,17 +37,24 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        cuda: ["12.6.3", "12.8.1"]  # NOTE: check tags for options: https://hub.docker.com/r/nvidia/cuda/tags
+        cuda: ["12.8.1", "12.9.1"]  # NOTE: check tags for options: https://hub.docker.com/r/nvidia/cuda/tags
         torch:
-          - version: 2.7.0
+          - version: 2.7.1
             channel: whl/test
+          - version: 2.9.0
+            channel: whl/test
+        exclude:
+          - cuda: "12.9.1"
+            torch:
+              version: 2.7.1
+              channel: whl/test
     steps:
       - uses: actions/checkout@v4
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
 
       - name: Set env vars
         run: |
@@ -68,7 +78,8 @@ jobs:
           make docker-image \
             CUDA_VERSION=${{ matrix.cuda }} \
             TORCH_VERSION=${{ matrix.torch.version }} \
-            INSTALL_CHANNEL=${{ matrix.torch.channel }}
+            INSTALL_CHANNEL=${{ matrix.torch.channel }} \
+            FA3_MAX_JOBS=4
 
       - name: Push to GHCR
         if: startsWith(github.ref, 'refs/tags/')
@@ -77,7 +88,8 @@ jobs:
           make ghcr-image \
             CUDA_VERSION=${{ matrix.cuda }} \
             TORCH_VERSION=${{ matrix.torch.version }} \
-            INSTALL_CHANNEL=${{ matrix.torch.channel }}
+            INSTALL_CHANNEL=${{ matrix.torch.channel }} \
+            FA3_MAX_JOBS=4
 
       - name: Push to Beaker
         if: env.BEAKER_TOKEN != '' && startsWith(github.ref, 'refs/tags/')
@@ -85,4 +97,5 @@ jobs:
           make beaker-image \
             CUDA_VERSION=${{ matrix.cuda }} \
             TORCH_VERSION=${{ matrix.torch.version }} \
-            INSTALL_CHANNEL=${{ matrix.torch.channel }}
+            INSTALL_CHANNEL=${{ matrix.torch.channel }} \
+            FA3_MAX_JOBS=4

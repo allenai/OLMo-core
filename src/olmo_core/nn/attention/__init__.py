@@ -196,7 +196,8 @@ class AttentionConfig(Config):
             if self.use_head_qk_norm:
                 params += 2 * self.qk_norm.num_params(head_dim)
             else:
-                params += 2 * self.qk_norm.num_params(d_model)
+                params += self.qk_norm.num_params(d_model)  # q_norm
+                params += self.qk_norm.num_params(n_kv_heads * head_dim)  # k_norm
 
         # Block attention out.
         params += d_model * d_model
@@ -406,6 +407,12 @@ class Attention(AttentionBase):
             window_size_tuple = (window_size - 1, 0)
 
         if backend is None:
+            backend = AttentionBackendName.torch
+
+        if not torch.cuda.is_available() and backend != AttentionBackendName.torch:
+            warnings.warn(
+                f"Backend is set to {backend}, but GPUs are not available. Defaulting to torch."
+            )
             backend = AttentionBackendName.torch
 
         backend.assert_supported()

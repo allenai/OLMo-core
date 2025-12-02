@@ -128,7 +128,7 @@ jobs:
       matrix:
         task:
           - name: Test (GPU)
-            image: tylerr/olmo-core-tch270cu128-2025-09-24
+            image: &gpu_test_image tylerr/olmo-core-tch291cu128-2025-11-25
             gpus: 2
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
@@ -138,21 +138,21 @@ jobs:
                 src/test/
 
           - name: Test checkpoint (GPU)
-            image: tylerr/olmo-core-tch270cu128-2025-09-24
+            image: *gpu_test_image
             gpus: 2
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
                 src/test/distributed/checkpoint*
 
           - name: Test transformer (GPU)
-            image: tylerr/olmo-core-tch270cu128-2025-09-24
+            image: *gpu_test_image
             gpus: 2
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
                 src/test/nn/transformer*
 
           - name: Test MoE (GPU)
-            image: tylerr/olmo-core-tch270cu128-2025-09-24
+            image: *gpu_test_image
             gpus: 2
             run: |
               pytest -v --color=yes --durations=3 -m gpu \

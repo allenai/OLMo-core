@@ -1381,8 +1381,8 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
         self._chunks_per_doc = chunks_per_doc
         self._seed = seed
         self._interleaving_exempt_paths = interleaving_exempt_paths
-        self._num_interleaving_exempt_instances = None
-        self._num_interleavable_instances = None
+        self._num_interleaving_exempt_instances: Optional[int] = None
+        self._num_interleavable_instances: Optional[int] = None
 
     @property
     def fingerprint_fields(self) -> Tuple[str, ...]:
