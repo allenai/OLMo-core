@@ -38,7 +38,7 @@ GLOBAL_BATCH_SIZE //= 4  # This line is to simulate TPS at 64 nodes with 16 node
 MICROBATCH_DISCOUNT = 1
 
 # Remove heads to match params/TPS of transformer.
-REMOVE_HEADS = 0
+REMOVE_HEADS = 1
 
 ### OLMo "3.1" 7B Settings (from OLMo 3 32B)
 DATA_MIX = DataMix.OLMo_mix_0925
@@ -53,14 +53,14 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         attn_backend=AttentionBackendName.flash_2,
     )
 
-    # Remove heads (and scale down d_model) to compensate for extra params.
-    config.d_model -= REMOVE_HEADS * 128
-    config.block.attention.n_heads -= REMOVE_HEADS
-    assert config.d_model / config.block.attention.n_heads == 128
+    # # Remove heads (and scale down d_model) to compensate for extra params.
+    # config.d_model -= REMOVE_HEADS * 128
+    # config.block.attention.n_heads -= REMOVE_HEADS
+    # assert config.d_model / config.block.attention.n_heads == 128
 
-    ### Copied below from hybrid/gated_deltanet_0_25_rnn_first.py ###
+    # ### Copied below from hybrid/gated_deltanet_0_25_rnn_first.py ###
 
-    # Update the config to use an FLA block.
+    # # Update the config to use an FLA block.
     # config.block.name = TransformerBlockType.fla_hybrid
     # assert config.n_layers % 4 == 0, "Current logic assumes n_layers is multiple of 4"
     # config.block.fla_hybrid_attention_indices = [i for i in range(config.n_layers) if i % 4 == 3]
