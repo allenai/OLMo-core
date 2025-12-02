@@ -212,6 +212,28 @@ class AttentionConfig(Config):
 
         return params
 
+    def num_flops_per_token(self, d_model: int, seq_len: int) -> int:
+        """
+        Approximate the attention FLOPs per token for this configuration.
+
+        This mirrors the existing PaLM-style heuristic used in
+        :meth:`olmo_core.nn.transformer.config.TransformerConfig.num_flops_per_token`
+        and :meth:`olmo_core.nn.transformer.model.Transformer.num_flops_per_token`:
+
+        - FLOPs scale linearly with the number of heads ``n_heads``.
+        - FLOPs scale linearly with the head dimension ``q = d_model // n_heads``.
+        - FLOPs scale linearly with the effective sequence length ``seq_len``.
+
+        Sliding-window patterns (SWA) and other per-layer details are handled by the
+        caller (e.g. :class:`TransformerConfig`), which selects an appropriate
+        effective ``seq_len`` for each layer before calling this method.
+        """
+        n_heads = self.n_heads
+        q = d_model // n_heads
+        # The factor 12 matches the existing heuristic:
+        # 2 matmuls (QK^T, attn @ V) * 2 (forward + backward) * 2 (mult + add) * ~1.5 overhead.
+        return 12 * n_heads * q * seq_len
+
     def build(
         self,
         d_model: int,
