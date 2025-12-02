@@ -876,6 +876,44 @@ class TransformerConfig(Config):
     )
 
     @classmethod
+    def llama3_8B_gqa_4(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        An 8B Llama3-like model config.
+        """
+        kwargs.pop('n_kv_heads', None)  # ignore n_kv_heads arg
+        return cls.llama_like(
+            d_model=4096,
+            vocab_size=vocab_size,
+            n_layers=kwargs.pop("n_layers", 32),
+            n_heads=kwargs.pop("n_heads", 32),
+            n_kv_heads=4, #kwargs.pop("n_kv_heads", 32),
+            rope_theta=kwargs.pop("rope_theta", 500_000),
+            hidden_size_multiplier=1.3125,
+            hidden_size_multiple_of=1024,
+            **kwargs,
+    )
+
+
+    @classmethod
+    def llama3_8B_gqa_16(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        An 8B Llama3-like model config.
+        """
+        kwargs.pop('n_kv_heads', None)  # ignore n_kv_heads arg
+        return cls.llama_like(
+            d_model=4096,
+            vocab_size=vocab_size,
+            n_layers=kwargs.pop("n_layers", 32),
+            n_heads=kwargs.pop("n_heads", 32),
+            n_kv_heads=16, #kwargs.pop("n_kv_heads", 32),
+            rope_theta=kwargs.pop("rope_theta", 500_000),
+            hidden_size_multiplier=1.21875,
+            hidden_size_multiple_of=1024,
+            **kwargs,
+    )
+
+
+    @classmethod
     def llama3_8B_qknorm_reordered(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
         An 8B Llama3-like model config.
