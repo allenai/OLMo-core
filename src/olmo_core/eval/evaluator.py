@@ -52,10 +52,6 @@ class Evaluator(metaclass=ABCMeta):
         except TypeError:
             return None
 
-    def maybe_add_debug_info(self, batch):
-        # implement in subclass if needed
-        pass
-
     @abstractmethod
     def update_metrics(
         self, batch: Dict[str, Any], ce_loss: Optional[torch.Tensor], logits: Optional[torch.Tensor]

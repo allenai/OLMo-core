@@ -20,6 +20,13 @@ from olmo_core.eval import Evaluator
 from olmo_core.eval.lm_evaluator import LMEvaluator
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.lm_head import LMOutputWithLoss
+from olmo_core.train.common import Duration, MetricMergeStrategy
+from olmo_core.train.train_module import (
+    EvalBatchSizeUnit,
+    EvalBatchSpec,
+    MoEV2TransformerTrainModule,
+    TransformerTrainModule,
+)
 from olmo_core.utils import (
     cuda_sync_debug_mode,
     format_float,
@@ -27,19 +34,12 @@ from olmo_core.utils import (
     move_to_device,
 )
 
-from ..common import Duration, MetricMergeStrategy
-from ..train_module import (
-    EvalBatchSizeUnit,
-    EvalBatchSpec,
-    MoEV2TransformerTrainModule,
-    TransformerTrainModule,
-)
 from .callback import Callback, CallbackConfig
 
 if TYPE_CHECKING:
     from olmo_eval import HFTokenizer
 
-    from ..trainer import Trainer
+    from olmo_core.train.trainer import Trainer
 
 log = logging.getLogger(__name__)
 
@@ -84,12 +84,11 @@ class EvaluatorCallback(Callback):
     """
 
     def post_attach(self):
-        if not (
-            isinstance(self.trainer.train_module, TransformerTrainModule)
-            or isinstance(self.trainer.train_module, MoEV2TransformerTrainModule)
-        ):
+        supported_modules = (TransformerTrainModule, MoEV2TransformerTrainModule)
+        if not isinstance(self.trainer.train_module, supported_modules):
+            supported_names = " or ".join(f"'{m.__name__}'" for m in supported_modules)
             raise OLMoConfigurationError(
-                f"'{self.__class__.__name__}' only suports the '{TransformerTrainModule.__name__}' or '{MoEV2TransformerTrainModule.__name__}' train module"
+                f"'{self.__class__.__name__}' only supports {supported_names} train module"
             )
 
     def pre_train(self):
@@ -125,22 +124,17 @@ class EvaluatorCallback(Callback):
 
                 batch = move_to_device(batch, get_default_device())
 
-                evaluator.maybe_add_debug_info(batch)
-
                 with torch.no_grad():
                     # Run forward pass, get logits and un-reduced CE loss.
                     labels = get_labels(batch)
 
                     # output is None if using PP and does not have last stage on this rank
-                    # TODO: sometimes we don't need the loss, optimize this later
+                    logits, ce_loss = None, None
                     output: Optional[LMOutputWithLoss] = self.trainer.train_module.eval_batch(
                         batch, labels=labels
                     )
-                    if output is None:
-                        logits = None
-                        ce_loss = None
-                    else:
-                        logits, _, ce_loss, _ = output
+                    if output is not None:
+                        logits, ce_loss, _, _ = output
 
                     # NOTE: might have host-device syncs here but that's okay.
                     with cuda_sync_debug_mode(0):
@@ -328,7 +322,6 @@ class DownstreamEvaluator(Evaluator):
 
         self.label = task
         self.task = task_dataset
-        self.tokenizer = tokenizer  # for debug print
         self.metric = ICLMetric(metric_type=self.task.metric_type).to(
             device or get_default_device()
         )
@@ -408,11 +401,6 @@ class DownstreamEvaluator(Evaluator):
 
     def reset_metrics(self) -> None:
         self.metric.reset()
-
-    def maybe_add_debug_info(self, batch):
-        for key in ["input_ids", "continuation"]:
-            val = batch[key]
-            batch[f"{key}_str"] = self.tokenizer.decode_batch(val.cpu().tolist())
 
 
 @dataclass

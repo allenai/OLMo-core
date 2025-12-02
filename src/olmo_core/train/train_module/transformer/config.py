@@ -1,6 +1,5 @@
 import copy
 import logging
-from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union, cast
 
@@ -29,6 +28,7 @@ from olmo_core.nn.transformer import (
 from olmo_core.optim import OptimConfig
 from olmo_core.optim.scheduler import Scheduler
 
+from .. import TrainModuleConfig
 from .pipeline.pipeline_schedule import CustomPipelineStage
 
 if TYPE_CHECKING:
@@ -47,7 +47,7 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
     """
 
     use_custom_stage_implementation: bool = False
-    """ 
+    """
     False -> use pytorch's PipelineStage implementation.
     True -> use a custom implementation that re-uses receive buffers across micro-batches.
     """
@@ -287,9 +287,6 @@ class TransformerActivationCheckpointingConfig(Config):
             raise OLMoConfigurationError(
                 "'modules' is required for 'selected_modules' activation checkpointing"
             )
-
-
-from .. import TrainModuleConfig
 
 
 @dataclass
