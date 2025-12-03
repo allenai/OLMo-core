@@ -60,7 +60,11 @@ eval = ["ai2-olmo-eval==0.8.5"]
 torchao = ["torchao"]
 transformers = ["transformers"]
 wandb = ["wandb"]
-all = ["ai2-olmo-core[dev,beaker,comet,eval,torchao,transformers,wandb]"]
+helion = [
+    "helion",
+    "triton>=3.5; sys_platform == 'linux'",
+]
+all = ["ai2-olmo-core[dev,beaker,comet,eval,torchao,transformers,wandb,helion]"]
 
 
 [tool.setuptools]
