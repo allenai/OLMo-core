@@ -7,16 +7,39 @@ from helion._testing import DEVICE, run_example
 
 
 def lce_baseline_fn(_input, weight, labels, ignore_index=-100, reduction="mean"):
-    logits = torch.matmul(_input, weight)
-    return torch.nn.functional.cross_entropy(
-        logits.float(), labels, ignore_index=ignore_index, reduction=reduction
+    logits = torch.matmul(_input, weight).float()
+    lse = logits.logsumexp(dim=-1)
+    loss = torch.nn.functional.cross_entropy(
+        logits, labels, ignore_index=ignore_index, reduction=reduction
     )
+    # Apply the same reduction to lse as to the loss
+    mask = labels != ignore_index
+    if reduction == "mean":
+        lse = (lse * mask).sum() / mask.sum()
+    elif reduction == "sum":
+        lse = (lse * mask).sum()
+    return loss, lse
 
 
 @helion.kernel(
+    config=helion.Config(
+        block_sizes=[1, 32, 64, 32, 64],
+        indexing=["block_ptr", "pointer", "pointer", "pointer", "pointer", "pointer", "pointer"],
+        load_eviction_policies=["", "first", "first", "last", ""],
+        num_stages=6,
+        num_warps=1,
+        pid_type="flat",
+        range_flattens=[None, False, False, True, None],
+        range_multi_buffers=[None, None, False, False, False],
+        range_num_stages=[0, 0, 4, 4, 1],
+        range_unroll_factors=[0, 2, 1, 4, 1],
+        range_warp_specializes=[],
+    ),
     ignore_warnings=[helion.exc.TensorOperationInWrapper],
     autotune_baseline_fn=lce_baseline_fn,
-    autotune_effort="none",
+    autotune_accuracy_check=True,
+    autotune_effort="quick",
+    autotune_ignore_errors=True,
 )
 def olmo_linear_cross_entropy_fwd(
     _input: torch.Tensor,  # [N, D] input to final layer
@@ -59,42 +82,36 @@ def olmo_linear_cross_entropy_fwd(
     for tile_n in hl.tile(n):  # Tile over the batch dimension
         labels_tile = labels[tile_n]  # [tile_size_n]
 
-        # First pass: find max logit for each element in the batch tile
-        # max_logits_acc is used for numerical stability in the second pass
+        # init accumulators
         max_logits_acc = hl.full([tile_n], value=-float("inf"), dtype=torch.float32)
-        for tile_v in hl.tile(v):  # TODO: does it make more sense to transpose weight here?
-            # Compute logits for this batch-vocab tile using tiled matmul
-            acc = hl.zeros([tile_n, tile_v], dtype=torch.float32)  # [bs, vocab_size]
-            for tile_k in hl.tile(d):  # accumulate over hidden dimension
-                acc = torch.addmm(acc, _input[tile_n, tile_k], weight[tile_k, tile_v])
-
-            # Update running max
-            tile_max = torch.amax(acc, dim=-1)  # [bs]
-            max_logits_acc = torch.maximum(max_logits_acc, tile_max)
-
-        # Second pass: compute sum_exp and extract target logits
         sum_exp_acc = hl.zeros([tile_n], dtype=torch.float32)
         logits_at_target_acc = hl.zeros([tile_n], dtype=torch.float32)
 
+        # First pass: find max logit for each element in the batch tile
+        # this runs a tiled matmul and computes the logits for each element in the batch tile
+        # max_logits_acc is used for numerical stability in the second pass
+        for tile_v in hl.tile(v):  # TODO: does it make more sense to transpose weight here?
+            logits_acc = hl.zeros([tile_n, tile_v], dtype=torch.float32)  # [bs, vocab_size]
+            for tile_k in hl.tile(d):
+                logits_acc = torch.addmm(logits_acc, _input[tile_n, tile_k], weight[tile_k, tile_v])
+
+            # Update running max
+            max_logits_acc = torch.maximum(max_logits_acc, logits_acc.amax(dim=-1))  # [bs]
+
+        # Second pass: compute sum_exp and extract target logits
         for tile_v in hl.tile(v):
             # Recompute logits for this batch-vocab tile (TODO: dont double the matmul here?)
-            acc = hl.zeros([tile_n, tile_v], dtype=torch.float32)
+            logits_acc = hl.zeros([tile_n, tile_v], dtype=torch.float32)
             for tile_k in hl.tile(d):
-                acc = torch.addmm(acc, _input[tile_n, tile_k], weight[tile_k, tile_v])
+                logits_acc = torch.addmm(logits_acc, _input[tile_n, tile_k], weight[tile_k, tile_v])
+
+            # Gather logits at target
+            mask = labels_tile.unsqueeze(-1) == tile_v.index.unsqueeze(0)  # [bs, tile_size_v]
+            logits_at_target_acc += (logits_acc * mask).sum(dim=-1)
 
             # Compute exp(logit - max) for numerical stability
-            exp_shifted = torch.exp(acc - max_logits_acc.unsqueeze(-1))  # [bs, vocab_size]
-            sum_exp_acc = sum_exp_acc + exp_shifted.sum(dim=-1)  # accumulate sum
-
-            # Extract target logits if they're in this vocab tile
-            # Create one-hot mask for target positions
-            labels_expanded = labels_tile.unsqueeze(-1)  # [tile_size_n, 1]
-            local_labels = labels_expanded - tile_v.begin  # Shift to local vocab tile indices
-            vocab_range = hl.arange(tile_v.block_size).unsqueeze(0)  # [1, tile_size_v]
-            mask = (vocab_range == local_labels).to(acc.dtype)  # [tile_size_n, tile_size_v]
-
-            # Accumulate target logits (will be zero for tiles not containing the target)
-            logits_at_target_acc = logits_at_target_acc + (acc * mask).sum(dim=-1)
+            exp_shifted = torch.exp(logits_acc - max_logits_acc.unsqueeze(-1))  # [bs, vocab_size]
+            sum_exp_acc += exp_shifted.sum(dim=-1)  # accumulate sum
 
         # Compute log-sum-exp and write to output ONCE
         log_sum_exp = max_logits_acc + torch.log(sum_exp_acc)  # [tile_size_n]
@@ -245,9 +262,13 @@ def main() -> None:
         )
         return loss
 
+    def torch_fn(_input, weight, labels):
+        loss, _ = lce_baseline_fn(_input, weight, labels, ignore_index=-100, reduction="mean")
+        return loss
+
     run_example(
         helion_fn,
-        lce_baseline_fn,
+        torch_fn,
         (_input, weight, labels),
         kernel_name="helion",
         baseline_name="torch",
