@@ -89,7 +89,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             metrics_collect_interval=10,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(int(5e12)),
-            hard_stop=Duration.tokens(int(150e9)) # stop at 10B tokens for this run 
+            hard_stop=Duration.tokens(int(150e9)), # stop at 10B tokens for this run 
+            keys_to_ignore=['w_k.weight', 'w_v.weight', 'w_q.weight'], # reinit just the params that changed when we adjusted n_kv_heads
+
         )
         .with_callback(
             "checkpointer",
