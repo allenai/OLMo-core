@@ -9,8 +9,10 @@ from helion._testing import DEVICE, run_example
 def lce_baseline_fn(_input, weight, labels, ignore_index=-100, reduction="mean"):
     logits = torch.matmul(_input, weight).float()
     lse = logits.logsumexp(dim=-1)
+
+    # Compute per-sample loss (no reduction for baseline comparison)
     loss = torch.nn.functional.cross_entropy(
-        logits, labels, ignore_index=ignore_index, reduction=reduction
+        logits, labels, ignore_index=ignore_index, reduction="none"
     )
     # Apply the same reduction to lse as to the loss
     mask = labels != ignore_index
@@ -22,19 +24,6 @@ def lce_baseline_fn(_input, weight, labels, ignore_index=-100, reduction="mean")
 
 
 @helion.kernel(
-    config=helion.Config(
-        block_sizes=[1, 32, 64, 32, 64],
-        indexing=["block_ptr", "pointer", "pointer", "pointer", "pointer", "pointer", "pointer"],
-        load_eviction_policies=["", "first", "first", "last", ""],
-        num_stages=6,
-        num_warps=1,
-        pid_type="flat",
-        range_flattens=[None, False, False, True, None],
-        range_multi_buffers=[None, None, False, False, False],
-        range_num_stages=[0, 0, 4, 4, 1],
-        range_unroll_factors=[0, 2, 1, 4, 1],
-        range_warp_specializes=[],
-    ),
     ignore_warnings=[helion.exc.TensorOperationInWrapper],
     autotune_baseline_fn=lce_baseline_fn,
     autotune_accuracy_check=True,
@@ -47,14 +36,14 @@ def olmo_linear_cross_entropy_fwd(
     labels: torch.Tensor,  # [N] target labels
     ignore_index: int = -100,
     reduction: Literal["mean", "sum", "none"] = "mean",
-) -> Tuple[torch.Tensor, torch.Tensor]:
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """
-    Computes the fused linear cross entropy loss.
+    Computes the fused linear cross entropy loss with gradients.
 
     This kernel fuses the final linear layer computation (input @ weight) with the
     cross entropy loss computation, avoiding materialization of the full [N, V] logits tensor.
     The function computes logits on-the-fly and calculates the negative log likelihood
-    of the true labels.
+    of the true labels, along with gradients for backward pass.
 
     Args:
         _input: Input tensor of shape [N, D] where N is batch size and D is hidden dimension
@@ -64,11 +53,11 @@ def olmo_linear_cross_entropy_fwd(
         reduction: Specifies the reduction to apply to the output ("mean", "sum", or "none")
 
     Returns:
-        A tuple of (loss, lse) where:
-        - loss: The cross entropy loss, scalar if reduction is "mean" or "sum",
-          tensor of shape [N] if "none"
-        - lse: The log-sum-exp values (can be used to compute z_loss externally),
-          same shape as loss
+        A tuple of (loss, lse, grad_input, grad_weight) where:
+        - loss: The cross entropy loss, tensor of shape [N]
+        - lse: The log-sum-exp values (can be used to compute z_loss externally), shape [N]
+        - grad_input: Gradient w.r.t. input, shape [N, D]
+        - grad_weight: Gradient w.r.t. weight, shape [D, V]
     """
     n, d = _input.shape
     d_check, v = weight.shape
@@ -77,73 +66,85 @@ def olmo_linear_cross_entropy_fwd(
     # Accumulate losses in fp32 for numerical stability, even if inputs are bfloat16
     losses = torch.zeros([n], dtype=torch.float32, device=_input.device)
     lse = torch.zeros([n], dtype=torch.float32, device=_input.device)
+    grad_input = torch.zeros([n, d], dtype=torch.float32, device=_input.device)
+    grad_weight = torch.zeros([d, v], dtype=torch.float32, device=_input.device)
+
+    block_size_n = hl.register_block_size(n)
+    logits_tile = torch.zeros(
+        [block_size_n, v], dtype=torch.float32, device=_input.device
+    )  # [t_n, v]
 
     # --- Device Code (compiles to triton) ---
-    for tile_n in hl.tile(n):  # Tile over the batch dimension
-        labels_tile = labels[tile_n]  # [tile_size_n]
+    for tile_n in hl.tile(n, block_size=block_size_n):  # Tile over the batch dimension
+        labels_tile = labels[tile_n]  # [t_n]
 
-        # init accumulators
-        max_logits_acc = hl.full([tile_n], value=-float("inf"), dtype=torch.float32)
-        sum_exp_acc = hl.zeros([tile_n], dtype=torch.float32)
-        logits_at_target_acc = hl.zeros([tile_n], dtype=torch.float32)
-
-        # First pass: find max logit for each element in the batch tile
-        # this runs a tiled matmul and computes the logits for each element in the batch tile
-        # max_logits_acc is used for numerical stability in the second pass
+        # 1) compute logits for each element in the batch tile
         for tile_v in hl.tile(v):  # TODO: does it make more sense to transpose weight here?
-            logits_acc = hl.zeros([tile_n, tile_v], dtype=torch.float32)  # [bs, vocab_size]
+            acc = hl.zeros([tile_n, tile_v], dtype=torch.float32)
             for tile_k in hl.tile(d):
-                logits_acc = torch.addmm(logits_acc, _input[tile_n, tile_k], weight[tile_k, tile_v])
+                acc = torch.addmm(acc, _input[tile_n, tile_k], weight[tile_k, tile_v])
+            logits_tile[tile_n, tile_v] = acc  #  not allowed ...
 
-            # Update running max
-            max_logits_acc = torch.maximum(max_logits_acc, logits_acc.amax(dim=-1))  # [bs]
+        # 2) Gather logits at target using one-hot mask
+        one_hot_mask = labels_tile.unsqueeze(-1) == hl.arange(helion.next_power_of_2(v)).unsqueeze(
+            0
+        )  # [t_n, v]
+        target_logits_tile = (logits_tile[tile_n, :] * one_hot_mask).sum(
+            dim=-1
+        )  # [t_n, v] -> [t_n]
 
-        # Second pass: compute sum_exp and extract target logits
-        for tile_v in hl.tile(v):
-            # Recompute logits for this batch-vocab tile (TODO: dont double the matmul here?)
-            logits_acc = hl.zeros([tile_n, tile_v], dtype=torch.float32)
-            for tile_k in hl.tile(d):
-                logits_acc = torch.addmm(logits_acc, _input[tile_n, tile_k], weight[tile_k, tile_v])
+        # 3) Compute stable log-sum-exp
+        max_logits = logits_tile[tile_n, :].amax(dim=-1)  # [t_n]
+        shifted_logits = logits_tile[tile_n, :] - max_logits.unsqueeze(-1)  # [t_n, v]
+        exp_shifted = torch.exp(shifted_logits)  # [t_n, v]
+        sum_exp = exp_shifted.sum(dim=-1)  # [t_n]
+        lse[tile_n] = max_logits + torch.log(sum_exp)  # [t_n]
 
-            # Gather logits at target
-            mask = labels_tile.unsqueeze(-1) == tile_v.index.unsqueeze(0)  # [bs, tile_size_v]
-            logits_at_target_acc += (logits_acc * mask).sum(dim=-1)
-
-            # Compute exp(logit - max) for numerical stability
-            exp_shifted = torch.exp(logits_acc - max_logits_acc.unsqueeze(-1))  # [bs, vocab_size]
-            sum_exp_acc += exp_shifted.sum(dim=-1)  # accumulate sum
-
-        # Compute log-sum-exp and write to output ONCE
-        log_sum_exp = max_logits_acc + torch.log(sum_exp_acc)  # [tile_size_n]
-        lse[tile_n] = log_sum_exp
-
-        # Compute cross entropy loss: log_sum_exp - logit_at_target
+        # 4) Compute cross entropy loss: log_sum_exp - logit_at_target
         # This is equivalent to -log(softmax[target]) = -log(exp(logit[target]) / sum(exp(logits)))
         # = log_sum_exp - logit_at_target
-        tile_losses = log_sum_exp - logits_at_target_acc  # [tile_size_n]
+        losses_tile = lse[tile_n] - target_logits_tile  # [t_n]
 
         # Handle ignore_index: set loss to 0 for ignored labels
-        mask = (labels_tile != ignore_index).to(torch.float32)
-        tile_losses = tile_losses * mask
+        valid_mask = labels_tile != ignore_index  # [t_n]
+        losses[tile_n] = losses_tile * valid_mask.to(torch.float32)  # [t_n]
 
-        # Write to output ONCE at the end
-        losses[tile_n] = tile_losses
+        # 5) Compute grad_input = d_logits @ weight.T = [t_n, v] @ [v, d] = [t_n, d]
+        # d_logits = softmax - one_hot(labels), computed per tile_v below
+        # 6) Accumulate grad_weight += _input.T @ d_logits = [d, t_n] @ [t_n, v] = [d, v]
+        for tile_d in hl.tile(d):
+            gi_acc = hl.zeros([tile_n, tile_d], dtype=torch.float32)
+            for tile_v in hl.tile(v):
+                # Recompute d_logits for this tile_v
+                softmax_v = torch.exp(
+                    logits_tile[tile_n, tile_v] - max_logits.unsqueeze(-1)
+                ) / sum_exp.unsqueeze(-1)
+                one_hot_v = labels_tile.unsqueeze(-1) == hl.arange(tile_v.block_size).unsqueeze(0)
+                d_logits_v = (softmax_v - one_hot_v.to(torch.float32)).to(
+                    torch.bfloat16
+                ) * valid_mask.unsqueeze(-1)
+                gi_acc = torch.addmm(gi_acc, d_logits_v, weight[tile_d, tile_v].T)
+                grad_weight[tile_d, tile_v] = torch.addmm(
+                    grad_weight[tile_d, tile_v],
+                    _input[tile_n, tile_d].T,
+                    d_logits_v,
+                )
 
-    mask = (labels != ignore_index).to(torch.float32)
+    return losses, lse, grad_input, grad_weight
 
-    if reduction == "mean":
-        num_valid = mask.sum()
-        if num_valid > 0:
-            reduced_losses = (losses * mask).sum() / num_valid
-            reduced_lse = (lse * mask).sum() / num_valid
-        else:
-            reduced_losses = torch.tensor(0.0, dtype=torch.float32, device=losses.device)
-            reduced_lse = torch.tensor(0.0, dtype=torch.float32, device=lse.device)
-        return reduced_losses, reduced_lse
-    elif reduction == "sum":
-        return (losses * mask).sum(), (lse * mask).sum()
-    else:  # reduction == "none"
-        return losses, lse
+    # mask = (labels != ignore_index).to(torch.float32)
+    # if reduction == "mean":
+    #     num_valid = mask.sum()
+    #     if num_valid > 0:
+    #         reduced_losses = (losses * mask).sum() / num_valid
+    #         reduced_lse = (lse * mask).sum() / num_valid
+    #     else:
+    #         reduced_losses = torch.tensor(0.0, dtype=torch.float32, device=losses.device)
+    #         reduced_lse = torch.tensor(0.0, dtype=torch.float32, device=lse.device)
+    #     return reduced_losses, reduced_lse
+    # elif reduction == "sum":
+    #     return (losses * mask).sum(), (lse * mask).sum()
+    # else:  # reduction == "none"
 
 
 @helion.kernel(
@@ -170,34 +171,33 @@ class OlmoFusedLinearCrossEntropyFunction(torch.autograd.Function):
         target,
         ignore_index=-100,
         reduction="mean",
-        bwd_impl="chunk",
-    ):
-        assert bwd_impl in ["chunk", "cce"]
-        loss, lse = olmo_linear_cross_entropy_fwd(
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        loss, lse, grad_input, grad_weight = olmo_linear_cross_entropy_fwd(
             _input,
             weight,
             target,
             ignore_index,
             reduction,
         )
-        ctx.save_for_backward(_input, lse, weight, target)
-        ctx.ignore_index = ignore_index
+        # Save gradients for backward pass
+        ctx.save_for_backward(grad_input, grad_weight)
         ctx.reduction = reduction
-        ctx.bwd_impl = bwd_impl
-        return loss
+        ctx.num_valid = (target != ignore_index).sum().float()
+        return loss, lse
 
     @staticmethod
-    def backward(ctx, grad_output):
-        _input, lse, weight, target = ctx.saved_tensors
-        grad_input, grad_weight = olmo_linear_cross_entropy_bwd(
-            _input,
-            weight,
-            target,
-            lse,
-            ctx.ignore_index,
-            ctx.reduction,
-        )
-        return grad_input * grad_output, grad_weight * grad_output, None, None, None, None, None
+    def backward(ctx, grad_loss, grad_lse):
+        x, target, lse = ctx.saved_tensors
+        grad_input, grad_weight = ctx.saved_tensors
+        # Scale gradients by upstream gradient
+        # For mean reduction, we need to divide by number of valid samples
+        if ctx.reduction == "mean" and ctx.num_valid > 0:
+            scale = grad_loss / ctx.num_valid
+        elif ctx.reduction == "sum":
+            scale = grad_loss
+        else:
+            scale = grad_loss.unsqueeze(-1)  # [N, 1] for broadcasting
+        return grad_input * scale, grad_weight * scale, None, None, None
 
 
 class TorchLMHeadCE(torch.nn.Module):
@@ -244,8 +244,8 @@ def main() -> None:
     """
     Main entry point that runs the fused linear cross entropy kernel verification.
     """
-    batch_size, seq_len, vocab_size = 32, 64, 16384
-    hidden_size = 128
+    batch_size, seq_len, vocab_size = 1, 8192, 100352
+    hidden_size = 2560
     n = batch_size * seq_len
 
     # Create inputs for fused version
@@ -253,18 +253,17 @@ def main() -> None:
     weight = torch.randn(hidden_size, vocab_size, device=DEVICE, dtype=torch.bfloat16)
     labels = torch.randint(0, vocab_size, (n,), device=DEVICE, dtype=torch.long)
 
-    # Baseline: compute logits first, then cross entropy
-    lce_baseline_fn(_input, weight, labels)
-
     def helion_fn(_input, weight, labels):
-        loss, _ = olmo_linear_cross_entropy_fwd(
-            _input, weight, labels, ignore_index=-100, reduction="mean"
-        )
-        return loss
+        loss, lse = OlmoFusedLinearCrossEntropyFunction.apply(_input, weight, labels, -100, "mean")
+        return loss.sum()  # Return scalar for run_example comparison
 
+    @torch.compile
     def torch_fn(_input, weight, labels):
-        loss, _ = lce_baseline_fn(_input, weight, labels, ignore_index=-100, reduction="mean")
-        return loss
+        loss, lse = lce_baseline_fn(_input, weight, labels, ignore_index=-100, reduction="mean")
+        return loss.sum()  # Return scalar for run_example comparison
+
+    # Baseline: compute logits first, then cross entropy
+    torch_fn(_input, weight, labels)
 
     run_example(
         helion_fn,
