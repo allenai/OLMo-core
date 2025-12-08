@@ -1,0 +1,197 @@
+import math
+import re
+import warnings
+from dataclasses import dataclass
+
+from olmo_core.config import DType, StrEnum
+from olmo_core.data import TokenizerConfig
+from olmo_core.distributed.parallel import DataParallelType
+from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.nn.attention import AttentionBackendName
+from olmo_core.nn.transformer import TransformerConfig
+from olmo_core.optim import OptimConfig, Scheduler
+from olmo_core.train.train_module import (
+    TransformerDataParallelConfig,
+    TransformerDataParallelWrappingStrategy,
+    TransformerTrainModule,
+    TransformerTrainModuleConfig,
+)
+
+from .base import DeviceMeshSpec, ModelConfigurator
+from .utils import format_count
+
+
+class TransformerSize(StrEnum):
+    size_190M = "190M"
+    size_370M = "370M"
+    size_600M = "600M"
+    size_760M = "760M"
+    size_1B = "1B"
+    size_3B = "3B"
+    size_7B = "7B"
+    size_13B = "13B"
+
+    @property
+    def num_params(self) -> int:
+        size = self.replace(" ", "").upper()
+        if (m := re.match(r"^([\d\.]+)([KMBT])$", size)) is not None:
+            value, unit = m.groups()
+            multiplier = {"K": 1e3, "M": 1e6, "B": 1e9, "T": 1e12}[unit]
+            return int(float(value) * multiplier)
+        else:
+            raise ValueError(f"Invalid size descriptor '{self}'")
+
+
+@dataclass(kw_only=True)
+class TransformerModelConfigurator(ModelConfigurator[TransformerConfig]):
+    """
+    Ladder configurator for transformer models.
+    """
+
+    def configure_model(
+        self,
+        *,
+        size_spec: str,
+        sequence_length: int,
+        tokenizer: TokenizerConfig,
+        device_type: str,
+    ) -> TransformerConfig:
+        # TODO: configure context-parallelism if needed.
+        device_type = device_type.lower()
+        assert "h100" in device_type or "b200" in device_type
+        assert sequence_length in {2048, 4096, 8192}
+        size_spec = TransformerSize(size_spec)
+        vocab_size = tokenizer.padded_vocab_size()
+        kwargs = dict(attn_backend=AttentionBackendName.flash_3)
+
+        model: TransformerConfig
+        if size_spec == TransformerSize.size_190M:
+            model = TransformerConfig.olmo3_190M(vocab_size, **kwargs)
+        elif size_spec == TransformerSize.size_370M:
+            model = TransformerConfig.olmo3_370M(vocab_size, **kwargs)
+        elif size_spec == TransformerSize.size_600M:
+            model = TransformerConfig.olmo3_600M(vocab_size, **kwargs)
+        elif size_spec == TransformerSize.size_760M:
+            model = TransformerConfig.olmo3_760M(vocab_size, **kwargs)
+        elif size_spec == TransformerSize.size_1B:
+            model = TransformerConfig.olmo3_1B(vocab_size, **kwargs)
+        elif size_spec == TransformerSize.size_3B:
+            model = TransformerConfig.olmo3_3B(vocab_size, **kwargs)
+        elif size_spec == TransformerSize.size_7B:
+            model = TransformerConfig.olmo3_7B(vocab_size, **kwargs)
+        elif size_spec == TransformerSize.size_13B:
+            model = TransformerConfig.olmo3_13B(vocab_size, **kwargs)
+        else:
+            raise OLMoConfigurationError(f"Unsupported model size '{size_spec}'")
+
+        # Make sure actual number of params is close to target number.
+        if (
+            pct_diff := (
+                math.fabs(model.num_non_embedding_params - size_spec.num_params)
+                / size_spec.num_params
+            )
+        ) > 0.05:
+            warnings.warn(
+                f"Configured model has {format_count(model.num_non_embedding_params)} (non-embedding) parameters, "
+                f"which differs from target of {size_spec} by ~{100 * pct_diff:.1f}%.",
+                UserWarning,
+            )
+        return model
+
+    def configure_device_microbatch_size(
+        self,
+        *,
+        size_spec: str,
+        sequence_length: int,
+        device_type: str,
+    ) -> int:
+        # TODO: configure context-parallelism if needed.
+        device_type = device_type.lower()
+        assert "h100" in device_type or "b200" in device_type
+        assert sequence_length in {2048, 4096, 8192}
+        size_spec = TransformerSize(size_spec)
+
+        num_params = size_spec.num_params
+        mbz: int
+        if num_params <= 190e6:
+            mbz = 16 * 4096
+        elif num_params <= 370e6:
+            mbz = 12 * 4096
+        elif num_params <= 760e6:
+            mbz = 10 * 4096
+        elif num_params <= 1e9:
+            mbz = 8 * 4096
+        elif num_params <= 3e9:
+            mbz = 4 * 4096
+        elif num_params <= 7e9:
+            mbz = 2 * 4096
+        else:
+            mbz = 2 * 4096
+
+        if "b200" in device_type:
+            mbz = mbz * 2
+
+        return mbz
+
+    def configure_minimal_device_mesh_spec(
+        self,
+        *,
+        size_spec: str,
+        sequence_length: int,
+        device_type: str,
+    ) -> DeviceMeshSpec:
+        # TODO: configure context-parallelism if needed.
+        device_type = device_type.lower()
+        assert "h100" in device_type or "b200" in device_type
+        assert sequence_length in {2048, 4096, 8192}
+        size_spec = TransformerSize(size_spec)
+
+        num_params = size_spec.num_params
+        if num_params < 13e9:
+            return DeviceMeshSpec(world_size=8, dp_world_size=None)
+        else:
+            return DeviceMeshSpec(world_size=32, dp_world_size=None)
+
+    def build_train_module(
+        self,
+        *,
+        size_spec: str,
+        sequence_length: int,
+        device_microbatch_size: int,
+        model_config: TransformerConfig,
+        optim_config: OptimConfig,
+        scheduler: Scheduler,
+        device_type: str,
+    ) -> TransformerTrainModule:
+        # TODO: configure context-parallelism if needed.
+        device_type = device_type.lower()
+        assert "h100" in device_type or "b200" in device_type
+        assert sequence_length in {2048, 4096, 8192}
+        size_spec = TransformerSize(size_spec)
+
+        dp_config = TransformerDataParallelConfig(
+            name=DataParallelType.fsdp,
+            param_dtype=DType.bfloat16,
+            reduce_dtype=DType.float32,
+            wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
+        )
+
+        train_module_config = TransformerTrainModuleConfig(
+            rank_microbatch_size=device_microbatch_size,
+            max_sequence_length=sequence_length,
+            optim=optim_config,
+            compile_model=True,
+            dp_config=dp_config,
+            z_loss_multiplier=1e-5,
+            max_grad_norm=1.0,
+            scheduler=scheduler,
+        )
+
+        # Build the model.
+        model = model_config.build(init_device="meta")
+
+        # Build the train module.
+        train_module = train_module_config.build(model)
+        assert isinstance(train_module, TransformerTrainModule)
+
+        return train_module

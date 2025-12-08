@@ -22,7 +22,8 @@ dependencies = [
     "omegaconf",
     "safetensors",
     "importlib_resources",
-    "bettermap"
+    "bettermap",
+    "pandas",
 ]
 
 [project.urls]
@@ -38,6 +39,7 @@ dev = [
     "furo==2024.8.6",
     "google-cloud-storage",
     "isort>=5.12,<5.14",
+    "matplotlib",
     "mypy>=1.0,<1.4",
     "myst-parser>=1.0,<3.0",
     "pytest",
