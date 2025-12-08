@@ -18,6 +18,7 @@ from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention.kv_cache import KVCacheManager
 
 from ..buffer_cache import BufferCache
+from ..config import ModuleConfig
 from ..functional import l2_normalize
 from ..layer_norm import LayerNorm, LayerNormConfig
 from ..rope import (
@@ -144,7 +145,7 @@ class AttentionType(StrEnum):
 
 
 @dataclass
-class AttentionConfig(Config):
+class AttentionConfig(ModuleConfig):
     """
     A configuration class for easily building any of the different attention modules.
 

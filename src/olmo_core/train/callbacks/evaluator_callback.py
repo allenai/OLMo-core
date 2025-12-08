@@ -51,9 +51,14 @@ class EvaluatorCallback(Callback):
     The evaluators to run.
     """
 
-    eval_interval: int = 1000
+    eval_interval: Optional[int] = 1000
     """
     The interval (in steps) with which to run the evaluators.
+    """
+
+    fixed_steps: Optional[List[int]] = None
+    """
+    A list of fixed steps at which to run the evaluators.
     """
 
     eval_on_startup: bool = False
@@ -89,10 +94,13 @@ class EvaluatorCallback(Callback):
             self._perform_eval()
 
     def post_step(self):
-        if self.step <= 1 or self.step % self.eval_interval != 0:
+        if self.step <= 1:
             return
 
-        self._perform_eval()
+        if (self.eval_interval is not None and self.step % self.eval_interval == 0) or (
+            self.fixed_steps is not None and self.step in self.fixed_steps
+        ):
+            self._perform_eval()
 
     def _perform_eval(self):
         # Put model in eval train mode.
@@ -194,7 +202,8 @@ class EvaluatorCallback(Callback):
 @dataclass
 class LMEvaluatorCallbackConfig(CallbackConfig):
     eval_dataset: NumpyDatasetConfig
-    eval_interval: int = 1000
+    eval_interval: Optional[int] = 1000
+    fixed_steps: Optional[List[int]] = None
     eval_on_startup: bool = False
     cancel_after_first_eval: bool = False
     eval_duration: Duration = field(default_factory=lambda: Duration.epochs(1))
@@ -257,6 +266,7 @@ class LMEvaluatorCallbackConfig(CallbackConfig):
         return EvaluatorCallback(
             evaluators=[evaluator],
             eval_interval=self.eval_interval,
+            fixed_steps=self.fixed_steps,
             log_interval=self.log_interval,
             eval_on_startup=self.eval_on_startup,
             cancel_after_first_eval=self.cancel_after_first_eval,
@@ -391,7 +401,8 @@ class DownstreamEvaluator(Evaluator):
 class DownstreamEvaluatorCallbackConfig(CallbackConfig):
     tasks: List[str]
     tokenizer: TokenizerConfig
-    eval_interval: int = 1000
+    eval_interval: Optional[int] = 1000
+    fixed_steps: Optional[List[int]] = None
     eval_duration: Duration = field(default_factory=lambda: Duration.epochs(1))
     eval_on_startup: bool = False
     cancel_after_first_eval: bool = False
@@ -432,6 +443,7 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
         return EvaluatorCallback(
             evaluators=evaluators,
             eval_interval=self.eval_interval,
+            fixed_steps=self.fixed_steps,
             eval_on_startup=self.eval_on_startup,
             cancel_after_first_eval=self.cancel_after_first_eval,
             log_interval=self.log_interval,
