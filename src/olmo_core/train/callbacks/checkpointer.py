@@ -91,7 +91,7 @@ class CheckpointerCallback(Callback):
 
     ephemeral_cooldown: Optional[int] = None
     """
-    The number of steps to wait after saving a checkpoint before another ephemeral one.
+    The number of steps to wait after saving a checkpoint before saving another ephemeral one is allowed.
     """
 
     fixed_steps: Optional[List[int]] = None
