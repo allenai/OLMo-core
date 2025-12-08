@@ -71,8 +71,8 @@ class ComposableDataLoaderConfig(Config):
     A configuration class for building :class:`ComposableDataLoader` data loaders.
     """
 
-    tokenizer: TokenizerConfig
-    global_batch_size: int
+    tokenizer: Optional[TokenizerConfig] = None
+    global_batch_size: Optional[int] = None
     seed: int = dataclasses.field(default_factory=lambda: resolve_seed(SEED_NOT_SET))
     work_dir: Optional[str] = None
     shuffle: bool = True
@@ -101,6 +101,8 @@ class ComposableDataLoaderConfig(Config):
         work_dir: Optional[PathOrStr] = None,
         mesh: Optional[dist.DeviceMesh] = None,
         dp_process_group: Optional[dist.ProcessGroup] = None,
+        tokenizer: Optional[TokenizerConfig] = None,
+        global_batch_size: Optional[int] = None,
     ) -> "ComposableDataLoader":
         """
         Construct the :class:`ComposableDataLoader`.
@@ -123,12 +125,22 @@ class ComposableDataLoaderConfig(Config):
         if work_dir is None:
             raise OLMoConfigurationError("'work_dir' must be specified.")
 
+        tokenizer = tokenizer if tokenizer is not None else self.tokenizer
+        if tokenizer is None:
+            raise OLMoConfigurationError("'tokenizer' must be specified.")
+
+        global_batch_size = (
+            global_batch_size if global_batch_size is not None else self.global_batch_size
+        )
+        if global_batch_size is None:
+            raise OLMoConfigurationError("'global_batch_size' must be specified.")
+
         return ComposableDataLoader(
             *sources,
-            collator=collator or DataCollator(pad_token_id=self.tokenizer.pad_token_id),
-            tokenizer=self.tokenizer,
+            collator=collator or DataCollator(pad_token_id=tokenizer.pad_token_id),
+            tokenizer=tokenizer,
             work_dir=work_dir,
-            global_batch_size=self.global_batch_size,
+            global_batch_size=global_batch_size,
             dp_world_size=dist_utils.get_world_size(dp_process_group),
             dp_rank=dist_utils.get_rank(dp_process_group),
             fs_local_rank=dist_utils.get_fs_local_rank(),

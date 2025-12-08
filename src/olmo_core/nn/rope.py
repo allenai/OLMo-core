@@ -9,6 +9,7 @@ import torch.nn as nn
 from ..config import Config, StrEnum
 from ..exceptions import OLMoConfigurationError
 from .buffer_cache import BufferCache
+from .config import ModuleConfig
 
 __all__ = [
     "RoPEType",
@@ -290,7 +291,7 @@ class YaRNRoPEScalingConfig(RoPEScalingConfig):
 
 
 @dataclass
-class RoPEConfig(Config):
+class RoPEConfig(ModuleConfig):
     """
     A config for conveniently building any of the different RoPE classes.
 

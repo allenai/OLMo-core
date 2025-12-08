@@ -647,6 +647,7 @@ class WSDS(Scheduler):
     def get_lr(
         self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
     ) -> Union[float, torch.Tensor]:
+        del t_max
         if current < self._warmup_steps:
             return _linear_warmup(initial_lr, current, self._warmup_steps, self.warmup_min_lr)
 

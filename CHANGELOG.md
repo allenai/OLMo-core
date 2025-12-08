@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added exponential learning rate scheduler to `olmo_core.optim.scheduler`.
 - Added internal Olmo3 32B midtraining and long context configs.
 - MoE: Added `TrainModuleConfig` ABC
+- Added a `MetricSaverCallback` which just saves metrics at specific intervals to JSON files in the `save_folder`.
+- Added `fixed_steps` option to `Checkpointer` and `Evaluator` callbacks for configuring checkpoints/evals at specific step numbers.
 
 ### Fixed
 
@@ -25,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Renamed `olmo_core.distributed.utils.scatter_object()` to `broadcast_object()` for correctness.
 - Updated stable torch version to 2.9.1, updated versions of underlying libraries in Beaker Images.
+- `olmo_core.io.join_path()` now accepts an arbitrary number of components to join.
+- All `olmo_core.nn` module configs now inherit from a common base class, `ModuleConfig`.
 
 ## [v2.4.0](https://github.com/allenai/OLMo-core/releases/tag/v2.4.0) - 2025-11-20
 

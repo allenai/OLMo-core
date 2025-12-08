@@ -5,8 +5,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ..config import Config, DType, StrEnum
+from ..config import DType, StrEnum
 from ..exceptions import OLMoConfigurationError
+from .config import ModuleConfig
 from .functional import l2_normalize
 
 __all__ = ["LayerNormType", "LayerNormConfig", "LayerNorm", "RMSNorm", "FusedRMSNorm", "L2Norm"]
@@ -36,7 +37,7 @@ class LayerNormType(StrEnum):
 
 
 @dataclass
-class LayerNormConfig(Config):
+class LayerNormConfig(ModuleConfig):
     """
     A config for conveniently building any one of the different layer norm classes.
 

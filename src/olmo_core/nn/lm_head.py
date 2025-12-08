@@ -15,12 +15,13 @@ from torch.distributed.tensor.parallel import (
 )
 from torch.distributed.tensor.placement_types import Placement
 
-from olmo_core.config import Config, DType, StrEnum
+from olmo_core.config import DType, StrEnum
 from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 
 from .attention import RingAttentionLoadBalancerType
+from .config import ModuleConfig
 from .functional import (
     cross_entropy_loss,
     fused_linear_cross_entropy_loss,
@@ -75,7 +76,7 @@ class LMLossImplementation(StrEnum):
 
 
 @dataclass
-class LMHeadConfig(Config):
+class LMHeadConfig(ModuleConfig):
     """
     A configuration class for building any of the :class:`LMHead` implementations.
 

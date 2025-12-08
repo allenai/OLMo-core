@@ -18,6 +18,7 @@ from .gap_monitor import GAPMonitorCallback
 from .garbage_collector import GarbageCollectorCallback
 from .gpu_memory_monitor import GPUMemoryMonitorCallback
 from .list_checkpointer import ListCheckpointerCallback
+from .metric_saver import MetricSaverCallback
 from .monkey_patcher import MonkeyPatcherCallback
 from .profiler import ProfilerCallback
 from .sequence_length_scheduler import SequenceLengthSchedulerCallback
@@ -49,6 +50,7 @@ __all__ = [
     "BeakerCallback",
     "BatchSizeSchedulerCallback",
     "MonkeyPatcherCallback",
+    "MetricSaverCallback",
     "ListCheckpointerCallback",
 ]
 
