@@ -12,6 +12,7 @@ from olmo_core.nn.transformer.model import (
     MoETransformer,
     NormalizedTransformer,
     Transformer,
+    BLTTransformer,
 )
 
 try:
@@ -23,6 +24,8 @@ try:
     from transformers import Olmo3Config  # type: ignore
 except ImportError:
     Olmo3Config = None
+
+from olmo_core.nn.blt.hf.configuration_bolmo import BolmoConfig
 
 
 def _get_flex_olmo_config(model: MoETransformer) -> PretrainedConfig:
@@ -76,6 +79,43 @@ def _get_flex_olmo_config(model: MoETransformer) -> PretrainedConfig:
     )
 
 
+def _get_bolmo_config(model: BLTTransformer) -> BolmoConfig:
+    subword_vocab_size: int = model.local_encoder.expanded_embeddings.weight.shape[0] if model.local_encoder.add_expanded_embeddings else 0  # type: ignore
+    first_global_block = model.blocks["0"]
+    first_local_block = model.local_encoder.blocks["0"]
+
+    sliding_window_blocks = [
+        block for block in model.blocks.values() if block.attention.backend.window_size != (-1, -1)
+    ]
+
+    if len(sliding_window_blocks) > 0:
+        # assume olmo 3 - 3 out of 4 are sliding window. this is the default in the Bolmo config
+        layer_types = None
+    else:
+        # olmo 2 - all full attention
+        layer_types = ["full_attention"] * model.n_layers
+
+    return BolmoConfig(
+        vocab_size=model.vocab_size,
+        hidden_size=model.d_model,
+        intermediate_size=first_global_block.feed_forward.hidden_size,
+        num_hidden_layers=model.n_layers,
+        num_attention_heads=first_global_block.attention.n_heads,
+        num_key_value_heads=first_global_block.attention.n_kv_heads,
+        max_position_embeddings=-1,
+        rms_norm_eps=first_global_block.feed_forward_norm.eps,
+        layer_types=layer_types,
+        add_expanded_embeddings=model.local_encoder.add_expanded_embeddings,
+        boundary_predictor_lookahead=model.local_encoder.boundary_predictor_module.boundary_predictor_lookahead,
+        boundary_threshold="sample:0",
+        num_local_encoder_layers=model.local_encoder.n_layers,
+        num_local_decoder_layers=model.local_decoder.n_layers,
+        num_local_heads=first_local_block.xlstm.config.num_heads,
+        local_intermediate_size=first_local_block.feed_forward.hidden_size,
+        subword_vocab_size=subword_vocab_size,
+    )
+
+
 @beta_feature
 def get_hf_config(model: Transformer) -> PretrainedConfig:
     if isinstance(model, NormalizedTransformer):
@@ -85,6 +125,9 @@ def get_hf_config(model: Transformer) -> PretrainedConfig:
 
     if isinstance(model, MoETransformer):
         return _get_flex_olmo_config(model)
+
+    if isinstance(model, BLTTransformer):
+        return _get_bolmo_config(model)
 
     blocks = list(model.blocks.values())
     first_block = blocks[0]

@@ -12,6 +12,8 @@ from olmo_core.nn.conversion.state_mapping import (
 
 LAYER = TemplatePlaceholder.LAYER
 EXPERT = TemplatePlaceholder.EXPERT
+LOCAL_ENCODER_LAYER = TemplatePlaceholder.LOCAL_ENCODER_LAYER
+LOCAL_DECODER_LAYER = TemplatePlaceholder.LOCAL_DECODER_LAYER
 
 
 #: Map of Hugging Face weight keys to OLMo Core weight keys, that is used to determine how HF state
@@ -288,6 +290,102 @@ MODEL_TYPE_SPECIFIC_OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS: Dict[
             f"model.layers.{LAYER}.mlp.gate.weight",
             unflatten_dim=(0, (TemplatePlaceholder.EXPERT, -1)),
         ),
+    },
+    "bolmo": {
+        # dec MLP
+        f"local_decoder.blocks.{LOCAL_DECODER_LAYER}.feed_forward.w1.weight": StateMappingTemplate(
+            f"local_decoder.blocks.{LOCAL_DECODER_LAYER}.feed_forward.w1.weight",
+            f"model.local_decoder.layers.{LOCAL_DECODER_LAYER}.mlp.gate_proj.weight",
+        ),
+        f"local_decoder.blocks.{LOCAL_DECODER_LAYER}.feed_forward.w2.weight": StateMappingTemplate(
+            f"local_decoder.blocks.{LOCAL_DECODER_LAYER}.feed_forward.w2.weight",
+            f"model.local_decoder.layers.{LOCAL_DECODER_LAYER}.mlp.down_proj.weight",
+        ),
+        f"local_decoder.blocks.{LOCAL_DECODER_LAYER}.feed_forward.w3.weight": StateMappingTemplate(
+            f"local_decoder.blocks.{LOCAL_DECODER_LAYER}.feed_forward.w3.weight",
+            f"model.local_decoder.layers.{LOCAL_DECODER_LAYER}.mlp.up_proj.weight",
+        ),
+        f"local_decoder.blocks.{LOCAL_DECODER_LAYER}.feed_forward_norm.weight": StateMappingTemplate(
+            f"local_decoder.blocks.{LOCAL_DECODER_LAYER}.feed_forward_norm.weight",
+            f"model.local_decoder.layers.{LOCAL_DECODER_LAYER}.post_feedforward_layernorm.weight",
+        ),
+        # dec xLSTM
+        **{f"local_decoder.blocks.{LOCAL_DECODER_LAYER}.xlstm.{key}": StateMappingTemplate(
+            f"local_decoder.blocks.{LOCAL_DECODER_LAYER}.xlstm.{key}",
+            f"model.local_decoder.layers.{LOCAL_DECODER_LAYER}.xlstm.{key}",
+        ) for key in ["fgate_preact.bias", "fgate_preact.weight", "igate_preact.bias", "igate_preact.weight", "k.weight", "multihead_norm.weight", "ogate_preact.weight", "out_proj.weight", "q.weight", "v.weight"]},
+        f"local_decoder.blocks.{LOCAL_DECODER_LAYER}.xlstm_norm.weight": StateMappingTemplate(
+            f"local_decoder.blocks.{LOCAL_DECODER_LAYER}.xlstm_norm.weight",
+            f"model.local_decoder.layers.{LOCAL_DECODER_LAYER}.post_xlstm_layernorm.weight",
+        ),
+        # extra dec
+        "local_decoder.in_projection.bias": StateMappingTemplate(
+            "local_decoder.in_projection.bias",
+            "model.local_decoder.in_projection.bias",
+        ),
+        "local_decoder.in_projection.weight": StateMappingTemplate(
+            "local_decoder.in_projection.weight",
+            "model.local_decoder.in_projection.weight",
+        ),
+        "local_decoder.initial_norm.weight": StateMappingTemplate(
+            "local_decoder.initial_norm.weight",
+            "model.local_decoder.initial_norm.weight",
+        ),
+        # enc MLP, copied from dec MLP
+        f"local_encoder.blocks.{LOCAL_ENCODER_LAYER}.feed_forward.w1.weight": StateMappingTemplate(
+            f"local_encoder.blocks.{LOCAL_ENCODER_LAYER}.feed_forward.w1.weight",
+            f"model.local_encoder.layers.{LOCAL_ENCODER_LAYER}.mlp.gate_proj.weight",
+        ),
+        f"local_encoder.blocks.{LOCAL_ENCODER_LAYER}.feed_forward.w2.weight": StateMappingTemplate(
+            f"local_encoder.blocks.{LOCAL_ENCODER_LAYER}.feed_forward.w2.weight",
+            f"model.local_encoder.layers.{LOCAL_ENCODER_LAYER}.mlp.down_proj.weight",
+        ),
+        f"local_encoder.blocks.{LOCAL_ENCODER_LAYER}.feed_forward.w3.weight": StateMappingTemplate(
+            f"local_encoder.blocks.{LOCAL_ENCODER_LAYER}.feed_forward.w3.weight",
+            f"model.local_encoder.layers.{LOCAL_ENCODER_LAYER}.mlp.up_proj.weight",
+        ),
+        f"local_encoder.blocks.{LOCAL_ENCODER_LAYER}.feed_forward_norm.weight": StateMappingTemplate(
+            f"local_encoder.blocks.{LOCAL_ENCODER_LAYER}.feed_forward_norm.weight",
+            f"model.local_encoder.layers.{LOCAL_ENCODER_LAYER}.post_feedforward_layernorm.weight",
+        ),
+        # enc xLSTM, copied from dec xLSTM
+        **{f"local_encoder.blocks.{LOCAL_ENCODER_LAYER}.xlstm.{key}": StateMappingTemplate(
+            f"local_encoder.blocks.{LOCAL_ENCODER_LAYER}.xlstm.{key}",
+            f"model.local_encoder.layers.{LOCAL_ENCODER_LAYER}.xlstm.{key}",
+        ) for key in ["fgate_preact.bias", "fgate_preact.weight", "igate_preact.bias", "igate_preact.weight", "k.weight", "multihead_norm.weight", "ogate_preact.weight", "out_proj.weight", "q.weight", "v.weight"]},
+        f"local_encoder.blocks.{LOCAL_ENCODER_LAYER}.xlstm_norm.weight": StateMappingTemplate(
+            f"local_encoder.blocks.{LOCAL_ENCODER_LAYER}.xlstm_norm.weight",
+            f"model.local_encoder.layers.{LOCAL_ENCODER_LAYER}.post_xlstm_layernorm.weight",
+        ),
+        # extra enc
+        "local_encoder.out_projection.bias": StateMappingTemplate(
+            "local_encoder.out_projection.bias",
+            "model.local_encoder.out_projection.bias",
+        ),
+        "local_encoder.out_projection.weight": StateMappingTemplate(
+            "local_encoder.out_projection.weight",
+            "model.local_encoder.out_projection.weight",
+        ),
+        "local_encoder.post_last_block_norm.weight": StateMappingTemplate(
+            "local_encoder.post_last_block_norm.weight",
+            "model.local_encoder.post_last_block_norm.weight",
+        ),
+        "local_encoder.boundary_predictor_module.k_proj_layer.weight": StateMappingTemplate(
+            "local_encoder.boundary_predictor_module.k_proj_layer.weight",
+            "model.local_encoder.boundary_predictor_module.k_proj_layer.weight",
+        ),
+        "local_encoder.boundary_predictor_module.q_proj_layer.weight": StateMappingTemplate(
+            "local_encoder.boundary_predictor_module.q_proj_layer.weight",
+            "model.local_encoder.boundary_predictor_module.q_proj_layer.weight",
+        ),
+        "local_encoder.embedding.weight": StateMappingTemplate(
+            "local_encoder.embedding.weight",
+            "model.local_encoder.byte_embedding.weight",
+        ),
+        "local_encoder.expanded_embeddings.weight": StateMappingTemplate(
+            "local_encoder.expanded_embeddings.weight",
+            "model.local_encoder.subword_embedding.weight",
+        ),
     }
 }
 
@@ -346,12 +444,18 @@ def _convert_state(
         raise ValueError(f"Number of hidden layers missing in HF config: {config}")
     n_layers: int = config.num_hidden_layers
     n_experts: int | None = getattr(config, "num_experts", None)
+    n_local_encoder_layers: int | None = getattr(config, "num_local_encoder_layers", None)
+    n_local_decoder_layers: int | None = getattr(config, "num_local_decoder_layers", None)
 
     placeholder_bounds = {
         TemplatePlaceholder.LAYER: n_layers,
     }
     if n_experts:
         placeholder_bounds[TemplatePlaceholder.EXPERT] = n_experts
+    if n_local_encoder_layers:
+        placeholder_bounds[TemplatePlaceholder.LOCAL_ENCODER_LAYER] = n_local_encoder_layers
+    if n_local_decoder_layers:
+        placeholder_bounds[TemplatePlaceholder.LOCAL_DECODER_LAYER] = n_local_decoder_layers
 
     return converter.convert(state, placeholder_bounds)
 

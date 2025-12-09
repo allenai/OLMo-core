@@ -1232,7 +1232,7 @@ class LocalDecoder(nn.Module):
 
                 for block_idx in range(self.n_layers):
                     block = self.blocks[str(block_idx)]
-                    h = block(h)
+                    h = block(h, sequence_start_indices=sequence_start_indices)
 
                 if self.has_cache:
                     self.last_value.copy_(prepool_out[:, -1])
