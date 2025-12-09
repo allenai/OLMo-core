@@ -412,7 +412,7 @@ class ModelLadder(Config):
             dir = io.join_path(save_folder, dirname)
             exists = Checkpointer.dir_is_checkpoint(dir)
             metrics_path: PathOrStr | None = io.join_path(save_folder, f"metrics_step{step}.json")
-            if not io.file_exists(metrics_path):
+            if not io.file_exists(metrics_path):  # type: ignore[arg-type]
                 metrics_path = None
             elif download_metrics:
                 metrics_path = cached_path(metrics_path, quiet=True)
