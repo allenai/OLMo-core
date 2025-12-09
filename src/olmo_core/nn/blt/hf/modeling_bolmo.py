@@ -1,5 +1,5 @@
 import copy
-from typing import Callable, Optional, Union
+from typing import Callable, Optional, Union, cast
 import math
 
 import torch
@@ -24,7 +24,7 @@ from transformers.utils.generic import check_model_inputs
 
 from olmo_core.nn.blt.hf.configuration_bolmo import BolmoConfig
 from olmo_core.nn.blt.hf.tokenization_bolmo import ByteTokenizerConfig
-from olmo_core.nn.blt.hf.utils_bolmo import compute_boundary_mask, pad_right
+from olmo_core.nn.blt.hf.utils_bolmo import compute_boundary_mask, pad_right, pad_left
 from olmo_core.nn.blt.utils import MaskState
 
 from xlstm.xlstm_large.model import mLSTMLayer, mLSTMLayerConfig, mLSTMLayerStateType, soft_cap
@@ -416,6 +416,8 @@ class BolmoXLSTMLayer(mLSTMLayer):
     def forward(  # type: ignore
         self,
         x: torch.Tensor,
+        past_key_values: Optional[dict] = None,
+        use_cache: bool = False,
         sequence_start_indices: Optional[torch.Tensor] = None,
         cache_mask: Optional[MaskState] = None
     ):
@@ -424,10 +426,38 @@ class BolmoXLSTMLayer(mLSTMLayer):
         else:
             self.mlstm_backend.config.mode = "inference"
 
-        # TODO: impl generate
+        if use_cache:
+            assert past_key_values is not None
 
-        h, _ = super().forward(x)
-        return h
+            prev_mode = self.mlstm_backend.config.mode
+            state = past_key_values.get("state", None)
+
+            if cache_mask is not None:
+                state_for_model = cast(mLSTMLayerStateType, tuple(cache_mask.selective_get(x, inv=True) for x in state) if state is not None else None)
+            else:
+                state_for_model = state
+
+            h, new_state = self._original_forward(
+                x,
+                state=state_for_model,
+                sequence_start_indices=sequence_start_indices
+            )
+            assert new_state is not None
+
+            if state is None or cache_mask is None:
+                state = new_state
+            else:
+                if cache_mask is not None:
+                    for i in range(len(state)):
+                        cache_mask.selective_put(new_state[i], state[i], inv=True)
+
+            past_key_values["state"] = state
+            self.mlstm_backend.config.mode = prev_mode
+
+            return h
+        else:
+            h, _ = super().forward(x)
+            return h
 
 class BolmoLocalLayer(nn.Module):
     def __init__(self, config: BolmoConfig):
@@ -449,16 +479,13 @@ class BolmoLocalLayer(nn.Module):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[Cache] = None,
+        sequence_start_indices: Optional[torch.Tensor] = None,
+        past_key_values: Optional[dict] = None,
         use_cache: Optional[bool] = False,
-        cache_position: Optional[torch.LongTensor] = None,
-        position_embeddings: Optional[tuple[torch.Tensor, torch.Tensor]] = None,
-        **kwargs: Unpack[TransformersKwargs],
+        cache_mask: Optional[MaskState] = None,
     ) -> torch.Tensor:
         residual = hidden_states
-        hidden_states = self.xlstm(hidden_states)
+        hidden_states = self.xlstm(hidden_states, sequence_start_indices=sequence_start_indices, past_key_values=past_key_values["xlstm"] if past_key_values is not None else None, use_cache=use_cache, cache_mask=cache_mask)
         hidden_states = self.post_xlstm_layernorm(hidden_states)
         hidden_states = residual + hidden_states
 
@@ -505,6 +532,25 @@ class BolmoLocalEncoder(nn.Module):
 
         self.boundary_predictor_module = BolmoBoundaryPredictor(config)
 
+        self.has_cache = False
+
+    def prepare_inference_cache(self, batch_size: int):
+        device = next(self.parameters()).device
+        self.has_cache = True
+
+        self.cache_seqlens = 0
+        self.last_h = torch.zeros((batch_size, self.hidden_size), dtype=self.out_projection.weight.dtype, device=device)
+        self.layer_states = [{"xlstm": {}} for _ in range(len(self.layers))]
+
+    def free_inference_cache(self):
+        self.has_cache = False
+        if hasattr(self, "cache_seqlens"):
+            del self.cache_seqlens
+        if hasattr(self, "last_h"):
+            del self.last_h
+        if hasattr(self, "layer_states"):
+            del self.layer_states
+
     def _embed(self, tokens, expanded_input_ids: Optional[torch.Tensor] = None):
         embeddings = self.byte_embedding(tokens)
         if self.add_expanded_embeddings:
@@ -520,28 +566,37 @@ class BolmoLocalEncoder(nn.Module):
         n_patches: int,
         boundary_state: Optional[MaskState] = None,
     ):
-        assert boundary_mask is not None
+        if self.has_cache and self.cache_seqlens > 0:
+            assert boundary_state is not None
+            if boundary_state.all():
+                assert h.shape[1] == 1
+                reduced_h = h
+            else:
+                reduced_h = h[[], :, :]
+        else:
+            assert boundary_mask is not None
 
-        L = h.shape[1]
-        token_idx = (
-            torch.arange(L, device=h.device)[None, :] + (~boundary_mask).long() * L  # type: ignore
-        )
-        seq_sorted_indices = torch.argsort(token_idx, dim=1)
-        index = seq_sorted_indices[:, :n_patches, None].expand(
-            -1, -1, h.shape[-1]
-        )
+            L = h.shape[1]
+            token_idx = (
+                torch.arange(L, device=h.device)[None, :] + (~boundary_mask).long() * L  # type: ignore
+            )
+            seq_sorted_indices = torch.argsort(token_idx, dim=1)
+            index = seq_sorted_indices[:, :n_patches, None].expand(
+                -1, -1, h.shape[-1]
+            )
 
-        reduced_h = torch.gather(
-            h,
-            dim=1,
-            index=index,
-        )
+            reduced_h = torch.gather(
+                h,
+                dim=1,
+                index=index,
+            )
 
         return reduced_h
 
     def forward(
         self,
         input_ids,
+        true_boundary_mask: Optional[torch.Tensor] = None,
         boundary_state: Optional[MaskState] = None,
         pad_state: Optional[MaskState] = None,
         expanded_input_ids: Optional[torch.Tensor] = None,
@@ -549,24 +604,71 @@ class BolmoLocalEncoder(nn.Module):
     ):
         embeddings = self._embed(input_ids, expanded_input_ids)
 
-        h = embeddings
-        for block in self.layers:
-            h = block(h, sequence_start_indices=sequence_start_indices)
+        # pass through encoder layers
+        if self.has_cache and self.cache_seqlens > 0:
+            assert pad_state is not None
+
+            # step those batch positions which are not currently idle (i.e. at a boundary position)
+            # if all batch positions are idle, skip the step entirely
+            # all positions being idle only happens if fuse_boundaries=False. In this case, the step where we
+            # obtain a new representation from the global model will have all positions for the local encoder being idle.
+            if not pad_state.all():
+                h = pad_state.selective_get(embeddings, inv=True)
+
+                for i, block in enumerate(self.layers):
+                    h = block(h, past_key_values=self.layer_states[i], use_cache=True, cache_mask=pad_state)
+
+                if self.post_last_block_norm is not None:
+                    h = self.post_last_block_norm(h)
+
+                pad_state.selective_put(h[:, -1, :], self.last_h, inv=True)
+
+            h = self.last_h.unsqueeze(1)
+        else:
+            h = embeddings
+            for i, block in enumerate(self.layers):
+                if self.has_cache:
+                    use_cache = True
+                    past_key_values = self.layer_states[i]
+                else:
+                    use_cache = False
+                    past_key_values = None
+
+                h = block(h, past_key_values=past_key_values, use_cache=use_cache, sequence_start_indices=sequence_start_indices)
+
+            if self.post_last_block_norm is not None:
+                h = self.post_last_block_norm(h)
+
+            if self.has_cache:
+                self.last_h.copy_(h[:, -1, :])
 
         if self.post_last_block_norm is not None:
             h = self.post_last_block_norm(h)
 
-        boundary_logprobs, boundary_mask = self.boundary_predictor_module(
-            h,
-            sequence_start_indices=sequence_start_indices,
-        )
+        if not self.has_cache or self.cache_seqlens == 0: # only used for prefill
+            boundary_logprobs, boundary_mask = self.boundary_predictor_module(
+                h,
+                sequence_start_indices=sequence_start_indices,
+            )
+            if boundary_state is not None:
+                # can't predict through encoder - must be through prev local decoder step
+                boundary_mask[:, -1] = boundary_state.mask
+        else:
+            boundary_logprobs = boundary_mask = None
+
+        # overwrite with true boundaries
+        if true_boundary_mask is not None:
+            boundary_mask = true_boundary_mask
 
         patch_embeddings = self._pool(
             h=h,
             boundary_mask=boundary_mask,
-            n_patches=boundary_mask.sum(-1).max().item() if boundary_mask is not None else 1,
+            n_patches=int(cast(torch.Tensor, boundary_mask).sum(-1).max().item()) if boundary_mask is not None else 1,
             boundary_state=boundary_state,
         )
+
+        if self.has_cache:
+            self.cache_seqlens += input_ids.shape[1]
 
         return h, patch_embeddings, boundary_logprobs, boundary_mask
 
@@ -592,6 +694,25 @@ class BolmoLocalDecoder(nn.Module):
             [BolmoLocalLayer(config) for _ in range(config.num_local_decoder_layers)]
         )
 
+        self.has_cache = False
+
+    def prepare_inference_cache(self, batch_size: int):
+        device = next(self.parameters()).device
+        self.has_cache = True
+
+        self.cache_seqlens = 0
+        self.last_value = torch.zeros((batch_size, self.hidden_size), dtype=self.in_projection.weight.dtype, device=device)
+        self.layer_states = [{"xlstm": {}} for _ in range(len(self.layers))]
+
+    def free_inference_cache(self):
+        self.has_cache = False
+        if hasattr(self, "cache_seqlens"):
+            del self.cache_seqlens
+        if hasattr(self, "last_value"):
+            del self.last_value
+        if hasattr(self, "layer_states"):
+            del self.layer_states
+
     def _depool(
         self,
         embeds: torch.Tensor,
@@ -600,27 +721,63 @@ class BolmoLocalDecoder(nn.Module):
         boundary_state: Optional[MaskState] = None,
         sequence_start_indices: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        assert boundary_mask is not None
+        if self.has_cache and self.cache_seqlens > 0:
+            assert boundary_state is not None
 
-        h_patch = patch_embeds 
-        prepool_out = h_patch
+            if patch_embeds.numel() > 0:
+                # we got a new value from the global model, so must be at boundary position
+                h_patch = patch_embeds[:, -1:, :]
+                h = embeds + h_patch
 
-        # TODO(benjaminm): clipping is problematic if it happens too much; track clip %.
-        plug_back_idx = (torch.cumsum(boundary_mask, dim=1) - 1).clip(min=0, max=prepool_out.shape[1] - 1)
-        depool_out = torch.gather(
-            prepool_out,
-            dim=1,
-            index=plug_back_idx.unsqueeze(-1).expand(-1, -1, self.hidden_size),
-        )
-            
-        depool_out_modulated = depool_out
+                self.last_value.copy_(h_patch[:, -1])
+            else:
+                h = embeds + self.last_value.unsqueeze(1)
 
-        h = depool_out_modulated + embeds
+            # skip pad positions until we get a new value from the global model
+            if patch_embeds.numel() == 0:
+                h = boundary_state.selective_get(h, inv=True)
+            else:
+                boundary_state = None
 
-        for layer in self.layers:
-            h = layer(h, sequence_start_indices=sequence_start_indices)
+            if h.shape[0] > 0:
+                for i, layer in enumerate(self.layers):
+                    h = layer(h, past_key_values=self.layer_states[i], use_cache=True, cache_mask=boundary_state)
 
-        return h
+            self.cache_seqlens += h.shape[1]
+
+            return h
+        else:
+            assert boundary_mask is not None
+
+            h_patch = patch_embeds 
+            prepool_out = h_patch
+
+            # TODO(benjaminm): clipping is problematic if it happens too much; track clip %.
+            plug_back_idx = (torch.cumsum(boundary_mask, dim=1) - 1).clip(min=0, max=prepool_out.shape[1] - 1)
+            depool_out = torch.gather(
+                prepool_out,
+                dim=1,
+                index=plug_back_idx.unsqueeze(-1).expand(-1, -1, self.hidden_size),
+            )
+                
+            depool_out_modulated = depool_out
+            h = depool_out_modulated + embeds
+
+            for i, layer in enumerate(self.layers):
+                if self.has_cache:
+                    use_cache = True
+                    past_key_values = self.layer_states[i]
+                else:
+                    use_cache = False
+                    past_key_values = None
+
+                h = layer(h, past_key_values=past_key_values, use_cache=use_cache, sequence_start_indices=sequence_start_indices)
+
+            if self.has_cache:
+                self.last_value.copy_(prepool_out[:, -1])
+                self.cache_seqlens += h.shape[1]
+
+            return h
 
     def forward(
         self,
@@ -738,8 +895,26 @@ class BolmoModel(BolmoPreTrainedModel):
     def tokenizer(self):
         if self._tokenizer is None:
             self._tokenizer = self.tokenizer_config.build()
-        
+
         return self._tokenizer
+
+    def prefill_boundary_prediction_forward(
+        self,
+        input_ids: torch.Tensor,
+        expanded_input_ids: Optional[torch.LongTensor] = None,
+        sequence_start_indices: Optional[torch.Tensor] = None,
+        last_token_is_boundary: bool = True,
+        **kwargs,
+    ) -> torch.Tensor:
+        _, _, _, boundary_mask = self.local_encoder.forward(  # type: ignore
+            input_ids,
+            expanded_input_ids=expanded_input_ids,
+            boundary_state=MaskState(torch.full((input_ids.shape[0],), fill_value=last_token_is_boundary, device=input_ids.device, dtype=torch.bool)),
+            pad_state=MaskState(torch.zeros((input_ids.shape[0],), device=input_ids.device, dtype=torch.bool)),
+            sequence_start_indices=sequence_start_indices,
+        )
+
+        return cast(torch.Tensor, boundary_mask)
 
     @check_model_inputs()
     @auto_docstring
@@ -753,6 +928,7 @@ class BolmoModel(BolmoPreTrainedModel):
         inputs_embeds: Optional[torch.FloatTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
         use_cache: Optional[bool] = None,
+        boundary_mask: Optional[torch.Tensor] = None,
         boundary_state: Optional[MaskState] = None,
         pad_state: Optional[MaskState] = None,
         sequence_start_indices: Optional[torch.Tensor] = None,
@@ -771,6 +947,9 @@ class BolmoModel(BolmoPreTrainedModel):
         h_byte, h_patch, _, boundary_mask = self.local_encoder(
             input_ids=input_ids,
             expanded_input_ids=expanded_input_ids,
+            true_boundary_mask=boundary_mask,
+            boundary_state=boundary_state,
+            pad_state=pad_state,
         )
 
         if use_cache and past_key_values is None:
@@ -879,14 +1058,18 @@ class BolmoForCausalLM(BolmoPreTrainedModel, GenerationMixin):
     @auto_docstring
     def forward(
         self,
-        input_ids: Optional[torch.LongTensor] = None,
+        input_ids: torch.LongTensor,
+        expanded_input_ids: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Cache] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
-        labels: Optional[torch.LongTensor] = None,
-        use_cache: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        use_cache: Optional[bool] = None,
+        boundary_mask: Optional[torch.Tensor] = None,
+        boundary_state: Optional[MaskState] = None,
+        pad_state: Optional[MaskState] = None,
+        sequence_start_indices: Optional[torch.Tensor] = None,
         logits_to_keep: Union[int, torch.Tensor] = 0,
         **kwargs: Unpack[TransformersKwargs],
     ) -> CausalLMOutputWithPast:
@@ -909,31 +1092,208 @@ class BolmoForCausalLM(BolmoPreTrainedModel, GenerationMixin):
         ```"""
         outputs: BaseModelOutputWithPast = self.model(
             input_ids=input_ids,
+            expanded_input_ids=expanded_input_ids,
             attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_values=past_key_values,
             inputs_embeds=inputs_embeds,
-            use_cache=use_cache,
             cache_position=cache_position,
+            use_cache=use_cache,
+            boundary_mask=boundary_mask,
+            boundary_state=boundary_state,
+            pad_state=pad_state,
+            sequence_start_indices=sequence_start_indices,
             **kwargs,
         )
 
-        hidden_states = outputs.last_hidden_state
+        hidden_states = cast(torch.Tensor, outputs.last_hidden_state)
         # Only compute necessary logits, and do not upcast them to float if we are not computing the loss
         slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
         logits = self.lm_head(hidden_states[:, slice_indices, :])
 
-        loss = None
-        if labels is not None:
-            loss = self.loss_function(logits=logits, labels=labels, vocab_size=self.config.vocab_size, **kwargs)
-
         return CausalLMOutputWithPast(
-            loss=loss,
             logits=logits,
             past_key_values=outputs.past_key_values,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
 
+    def generate(self, input_ids: list[list[int]], max_new_tokens: int = 20):
+        expand_input_ids = self.model.local_encoder.add_expanded_embeddings
+        batch_size = len(input_ids)
+
+        if expand_input_ids:
+            expanded_input_ids = []
+
+            for i in range(len(input_ids)):
+                expanded_input_ids.append(torch.tensor(self.model.tokenizer.expand_byte_ids(input_ids[i]), device=self.device, dtype=torch.long))
+
+            expanded_input_ids = pad_left(expanded_input_ids, value=self.model.tokenizer.pad_token_id, multiple_of=1)  # type: ignore
+        else:
+            expanded_input_ids = None
+
+        byte_input_ids: torch.Tensor = pad_left([torch.tensor(x, device=self.device, dtype=torch.long) for x in input_ids], value=self.model.tokenizer.pad_token_id, multiple_of=1)
+
+        sequence_start_indices = (byte_input_ids == self.model.tokenizer.pad_token_id).sum(-1)
+        batch_size, prompt_len = byte_input_ids.shape
+        finished = torch.zeros(batch_size, dtype=torch.bool, device=self.device)
+
+        boundary_offset = self.model.tokenizer.offset + 256
+        eos = self.model.tokenizer.eos_token_id
+
+        max_length = None
+
+        boundary_mask = self.model.prefill_boundary_prediction_forward(  # type: ignore
+            byte_input_ids,
+            expanded_input_ids=expanded_input_ids,
+            sequence_start_indices=sequence_start_indices,
+        )
+
+        self.model.local_encoder.prepare_inference_cache(batch_size)
+        self.model.local_decoder.prepare_inference_cache(batch_size)
+
+        # roll back by one and force decoding to account for lookahead
+        boundary_mask = boundary_mask[:, :-1]
+        # need to roll one byte back and force decoding to detect whether the last byte is a boundary
+        forced_decoding_ids = byte_input_ids[:, -1].cpu().tolist()
+        byte_input_ids = byte_input_ids[:, :-1]
+        expanded_input_ids = expanded_input_ids[:, :-1] if expanded_input_ids is not None else None
+        # stays the same unless last token is pad.
+        sequence_start_indices = (byte_input_ids == self.model.tokenizer.pad_token_id).sum(-1)
+
+        # output container
+        generated = byte_input_ids
+
+        max_n_prefill_patches = boundary_mask.sum(-1).max().item()
+        tokens_generated_plus_prefilled = max_n_prefill_patches
+        bytes_generated = 0
+
+        # generation state
+        boundary_state = MaskState(boundary_mask[:, -1].clone())
+        pad_state = MaskState(torch.zeros(batch_size, dtype=torch.bool, device=self.device))
+        next_tokens = torch.full((batch_size,), self.model.tokenizer.bpe_token_end_id, device=self.device, dtype=torch.long)  # type: ignore
+        non_boundary_generated_tokens = [[byte_input_ids[example_idx, -1].item()] for example_idx in range(batch_size)]
+        bytes_since_boundary = (boundary_mask.flip(1).cumsum(-1) == 0).sum(-1)
+        is_first_forward = True
+        global_past_key_values = None
+
+        # TODO: impl
+        stop_token_sequences = []
+
+        while not ((max_length is not None and tokens_generated_plus_prefilled >= max_length) or finished.all()):
+            input_ids_for_model = (
+                generated
+                if is_first_forward
+                else torch.tensor([x[-1] for x in non_boundary_generated_tokens], device=generated.device, dtype=generated.dtype).unsqueeze(1)
+            )
+            assert not (
+                (input_ids_for_model == self.model.tokenizer.bpe_token_end_id) |
+                (input_ids_for_model >= boundary_offset)
+            ).any().item()  # type: ignore
+            if expand_input_ids:
+                expanded_input_ids_for_model = torch.zeros_like(input_ids_for_model)
+                for i in range(input_ids_for_model.shape[0]):
+                    expanded_input_ids_for_model[i, :] = torch.tensor(self.model.tokenizer.expand_byte_ids(
+                        generated[i, :].tolist(),
+                        n_last=input_ids_for_model.shape[1],
+                    ), device=expanded_input_ids_for_model.device, dtype=expanded_input_ids_for_model.dtype)
+            else:
+                expanded_input_ids_for_model = None
+
+            out = self.forward(  # type: ignore
+                input_ids_for_model,
+                expanded_input_ids=expanded_input_ids_for_model,
+                boundary_mask=boundary_mask if is_first_forward else None,
+                boundary_state=boundary_state,
+                pad_state=pad_state,
+                sequence_start_indices=sequence_start_indices,
+                logits_to_keep=1,
+                use_cache=True,
+                past_key_values=global_past_key_values,
+            )
+            next_token_logits = cast(torch.Tensor, out.logits)
+            global_past_key_values = out.past_key_values
+
+            if boundary_state.all():
+                # new token, must not be boundary
+                bytes_since_boundary[:] = 0
+            else:
+                boundary_state.selective_add(1, bytes_since_boundary, inv=True)
+
+            if any(x is not None for x in forced_decoding_ids):
+                # only supported for the first token atm, so len(next_token_logits) == batch_size
+                assert len(next_token_logits) == batch_size and is_first_forward
+                for example_idx in range(batch_size):
+                    forced_decoding_id = forced_decoding_ids[example_idx]
+
+                    if forced_decoding_id is not None:
+                        no_boundary_logit = next_token_logits[example_idx, 0, forced_decoding_id].item()
+                        boundary_logit = next_token_logits[example_idx, 0, forced_decoding_id + boundary_offset].item()
+
+                        next_token_logits[example_idx, 0, :] = -100_000
+                        next_token_logits[example_idx, 0, forced_decoding_id] = no_boundary_logit
+                        next_token_logits[example_idx, 0, forced_decoding_id + boundary_offset] = boundary_logit
+
+                        forced_decoding_ids[example_idx] = None  # only force once
+
+            # TODO: impl non-greedy
+            new_next_tokens = next_token_logits.squeeze(1).argmax(dim=-1)
+
+            if boundary_state.all():
+                tokens_generated_plus_prefilled += 1
+
+                next_tokens = new_next_tokens
+                next_tokens_cpu = next_tokens.cpu()
+                for example_idx in range(batch_size):
+                    next_token_cpu = next_tokens_cpu[example_idx].item()
+
+                    if next_token_cpu >= boundary_offset:
+                        next_token_cpu -= boundary_offset
+
+                    non_boundary_generated_tokens[example_idx].append(next_token_cpu)
+            else:
+                next_tokens[:] = self.model.tokenizer.bpe_token_end_id # type: ignore
+                boundary_state.selective_put(new_next_tokens, next_tokens, inv=True)
+                next_tokens_cpu = next_tokens.cpu()
+
+                for example_idx in range(batch_size):
+                    next_token_cpu = next_tokens_cpu[example_idx].item()
+
+                    if not boundary_state.cpu_mask[example_idx].item():
+                        if next_token_cpu >= boundary_offset:
+                            next_token_cpu -= boundary_offset
+
+                        non_boundary_generated_tokens[example_idx].append(next_token_cpu)
+
+            is_first_forward = False
+
+            boundary_state = MaskState(
+                (next_tokens == self.model.tokenizer.bpe_token_end_id) |
+                (next_tokens >= boundary_offset) |
+                finished
+            )  # type: ignore
+            pad_state = MaskState(
+                (next_tokens == self.model.tokenizer.bpe_token_end_id) |
+                finished
+            )
+
+            # Force EOS for (previously) finished sequences
+            next_tokens = torch.where(finished, torch.full_like(next_tokens, eos), next_tokens)
+
+            # Append next tokens
+            generated = torch.cat([generated, next_tokens.unsqueeze(-1)], dim=1)
+
+            # Handle finished sequences
+            stop_hit = next_tokens.eq(eos) | next_tokens.eq(eos + boundary_offset)
+
+            # Also check for stop tokens if provided
+            # TODO(benjaminm): this is very annoying due to the boundaries
+            # make better
+            if len(stop_token_sequences) > 0:
+                # TODO: implement
+                raise NotImplementedError("stop_token_sequences not implemented yet for Bolmo generation.")
+
+            finished |= stop_hit
+            bytes_generated += 1
 
 __all__ = ["BolmoForCausalLM", "BolmoModel", "BolmoPreTrainedModel"]
