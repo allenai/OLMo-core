@@ -245,7 +245,7 @@ class BolmoDecoderLayer(GradientCheckpointingLayer):
         **kwargs: Unpack[TransformersKwargs],
     ) -> torch.Tensor:
         residual = hidden_states
-        hidden_states, _ = self.self_attn(
+        attn_out, _ = self.self_attn(
             hidden_states=hidden_states,
             attention_mask=attention_mask,
             position_ids=position_ids,
@@ -255,14 +255,15 @@ class BolmoDecoderLayer(GradientCheckpointingLayer):
             position_embeddings=position_embeddings,
             **kwargs,
         )
-        hidden_states = self.post_attention_layernorm(hidden_states)
+        hidden_states = self.post_attention_layernorm(attn_out)
         hidden_states = residual + hidden_states
 
         # Fully Connected
         residual = hidden_states
-        hidden_states = self.mlp(hidden_states)
-        hidden_states = self.post_feedforward_layernorm(hidden_states)
+        mlp_out = self.mlp(hidden_states)
+        hidden_states = self.post_feedforward_layernorm(mlp_out)
         hidden_states = residual + hidden_states
+
         return hidden_states
 
 
@@ -473,8 +474,8 @@ class BolmoLocalLayer(nn.Module):
         local_mlp_config.intermediate_size = config.local_intermediate_size
         self.mlp = BolmoMLP(local_mlp_config)
 
-        self.post_xlstm_layernorm = BolmoRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.post_feedforward_layernorm = BolmoRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.pre_xlstm_layernorm = BolmoRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.pre_feedforward_layernorm = BolmoRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
     def forward(
         self,
@@ -485,15 +486,14 @@ class BolmoLocalLayer(nn.Module):
         cache_mask: Optional[MaskState] = None,
     ) -> torch.Tensor:
         residual = hidden_states
-        hidden_states = self.xlstm(hidden_states, sequence_start_indices=sequence_start_indices, past_key_values=past_key_values["xlstm"] if past_key_values is not None else None, use_cache=use_cache, cache_mask=cache_mask)
-        hidden_states = self.post_xlstm_layernorm(hidden_states)
-        hidden_states = residual + hidden_states
+        xlstm_out = self.xlstm(self.pre_xlstm_layernorm(hidden_states), sequence_start_indices=sequence_start_indices, past_key_values=past_key_values["xlstm"] if past_key_values is not None else None, use_cache=use_cache, cache_mask=cache_mask)
+        hidden_states = residual + xlstm_out
 
         # Fully Connected
         residual = hidden_states
-        hidden_states = self.mlp(hidden_states)
-        hidden_states = self.post_feedforward_layernorm(hidden_states)
-        hidden_states = residual + hidden_states
+        ffn_out = self.mlp(self.pre_feedforward_layernorm(hidden_states))
+        hidden_states = residual + ffn_out
+
         return hidden_states
 
 
@@ -522,7 +522,7 @@ class BolmoLocalEncoder(nn.Module):
 
         self.post_last_block_norm = BolmoRMSNorm(
             self.hidden_size,
-            config.rms_norm_eps,
+            config.local_rms_norm_eps,
         )
         self.out_projection = nn.Linear(
             self.hidden_size,
@@ -642,9 +642,6 @@ class BolmoLocalEncoder(nn.Module):
             if self.has_cache:
                 self.last_h.copy_(h[:, -1, :])
 
-        if self.post_last_block_norm is not None:
-            h = self.post_last_block_norm(h)
-
         if not self.has_cache or self.cache_seqlens == 0: # only used for prefill
             boundary_logprobs, boundary_mask = self.boundary_predictor_module(
                 h,
@@ -666,6 +663,7 @@ class BolmoLocalEncoder(nn.Module):
             n_patches=int(cast(torch.Tensor, boundary_mask).sum(-1).max().item()) if boundary_mask is not None else 1,
             boundary_state=boundary_state,
         )
+        patch_embeddings = self.out_projection(patch_embeddings)
 
         if self.has_cache:
             self.cache_seqlens += input_ids.shape[1]
@@ -681,7 +679,7 @@ class BolmoLocalDecoder(nn.Module):
 
         self.initial_norm = BolmoRMSNorm(
             self.hidden_size,
-            eps=config.rms_norm_eps,
+            eps=config.local_rms_norm_eps,
         )
 
         self.in_projection = nn.Linear(
@@ -903,7 +901,7 @@ class BolmoModel(BolmoPreTrainedModel):
         input_ids: torch.Tensor,
         expanded_input_ids: Optional[torch.LongTensor] = None,
         sequence_start_indices: Optional[torch.Tensor] = None,
-        last_token_is_boundary: bool = True,
+        last_token_is_boundary: bool = False,
         **kwargs,
     ) -> torch.Tensor:
         _, _, _, boundary_mask = self.local_encoder.forward(  # type: ignore

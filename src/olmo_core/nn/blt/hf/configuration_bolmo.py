@@ -165,6 +165,7 @@ class BolmoConfig(PretrainedConfig):
         num_local_decoder_layers: int = 4,
         num_local_heads: int = 16,
         local_intermediate_size: int = 5504,
+        local_rms_norm_eps=1e-5,
         subword_vocab_size: int = 100278, # dolma2_tokenizer subword vocab size
         tokenizer_config: ByteTokenizerConfig | dict[str, Any] | None = None,
         **kwargs,
@@ -215,6 +216,7 @@ class BolmoConfig(PretrainedConfig):
         self.num_local_decoder_layers = num_local_decoder_layers
         self.num_local_heads = num_local_heads
         self.local_intermediate_size = local_intermediate_size
+        self.local_rms_norm_eps = local_rms_norm_eps
         self.subword_vocab_size = subword_vocab_size
 
         if tokenizer_config is None:

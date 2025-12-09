@@ -104,6 +104,7 @@ def _get_bolmo_config(model: BLTTransformer) -> BolmoConfig:
         num_key_value_heads=first_global_block.attention.n_kv_heads,
         max_position_embeddings=-1,
         rms_norm_eps=first_global_block.feed_forward_norm.eps,
+        local_rms_norm_eps=model.local_encoder.post_last_block_norm.eps,
         layer_types=layer_types,
         add_expanded_embeddings=model.local_encoder.add_expanded_embeddings,
         boundary_predictor_lookahead=model.local_encoder.boundary_predictor_module.boundary_predictor_lookahead,

@@ -307,7 +307,7 @@ MODEL_TYPE_SPECIFIC_OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS: Dict[
         ),
         f"local_decoder.blocks.{LOCAL_DECODER_LAYER}.feed_forward_norm.weight": StateMappingTemplate(
             f"local_decoder.blocks.{LOCAL_DECODER_LAYER}.feed_forward_norm.weight",
-            f"model.local_decoder.layers.{LOCAL_DECODER_LAYER}.post_feedforward_layernorm.weight",
+            f"model.local_decoder.layers.{LOCAL_DECODER_LAYER}.pre_feedforward_layernorm.weight",
         ),
         # dec xLSTM
         **{f"local_decoder.blocks.{LOCAL_DECODER_LAYER}.xlstm.{key}": StateMappingTemplate(
@@ -316,7 +316,7 @@ MODEL_TYPE_SPECIFIC_OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS: Dict[
         ) for key in ["fgate_preact.bias", "fgate_preact.weight", "igate_preact.bias", "igate_preact.weight", "k.weight", "multihead_norm.weight", "ogate_preact.weight", "out_proj.weight", "q.weight", "v.weight"]},
         f"local_decoder.blocks.{LOCAL_DECODER_LAYER}.xlstm_norm.weight": StateMappingTemplate(
             f"local_decoder.blocks.{LOCAL_DECODER_LAYER}.xlstm_norm.weight",
-            f"model.local_decoder.layers.{LOCAL_DECODER_LAYER}.post_xlstm_layernorm.weight",
+            f"model.local_decoder.layers.{LOCAL_DECODER_LAYER}.pre_xlstm_layernorm.weight",
         ),
         # extra dec
         "local_decoder.in_projection.bias": StateMappingTemplate(
@@ -346,7 +346,7 @@ MODEL_TYPE_SPECIFIC_OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS: Dict[
         ),
         f"local_encoder.blocks.{LOCAL_ENCODER_LAYER}.feed_forward_norm.weight": StateMappingTemplate(
             f"local_encoder.blocks.{LOCAL_ENCODER_LAYER}.feed_forward_norm.weight",
-            f"model.local_encoder.layers.{LOCAL_ENCODER_LAYER}.post_feedforward_layernorm.weight",
+            f"model.local_encoder.layers.{LOCAL_ENCODER_LAYER}.pre_feedforward_layernorm.weight",
         ),
         # enc xLSTM, copied from dec xLSTM
         **{f"local_encoder.blocks.{LOCAL_ENCODER_LAYER}.xlstm.{key}": StateMappingTemplate(
@@ -355,7 +355,7 @@ MODEL_TYPE_SPECIFIC_OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS: Dict[
         ) for key in ["fgate_preact.bias", "fgate_preact.weight", "igate_preact.bias", "igate_preact.weight", "k.weight", "multihead_norm.weight", "ogate_preact.weight", "out_proj.weight", "q.weight", "v.weight"]},
         f"local_encoder.blocks.{LOCAL_ENCODER_LAYER}.xlstm_norm.weight": StateMappingTemplate(
             f"local_encoder.blocks.{LOCAL_ENCODER_LAYER}.xlstm_norm.weight",
-            f"model.local_encoder.layers.{LOCAL_ENCODER_LAYER}.post_xlstm_layernorm.weight",
+            f"model.local_encoder.layers.{LOCAL_ENCODER_LAYER}.pre_xlstm_layernorm.weight",
         ),
         # extra enc
         "local_encoder.out_projection.bias": StateMappingTemplate(
