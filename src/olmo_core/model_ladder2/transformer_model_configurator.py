@@ -1,6 +1,5 @@
 import math
 import re
-import warnings
 from dataclasses import dataclass
 
 from olmo_core.config import DType, StrEnum
@@ -16,6 +15,7 @@ from olmo_core.train.train_module import (
     TransformerTrainModule,
     TransformerTrainModuleConfig,
 )
+from olmo_core.utils import warn_once
 
 from .base import DeviceMeshSpec, ModelConfigurator
 from .utils import format_count
@@ -42,10 +42,10 @@ class TransformerSize(StrEnum):
             raise ValueError(f"Invalid size descriptor '{self}'")
 
 
-@dataclass(kw_only=True)
+@dataclass(kw_only=True, eq=True)
 class TransformerModelConfigurator(ModelConfigurator[TransformerConfig]):
     """
-    Ladder configurator for transformer models.
+    Ladder configurator for transformer models. Use the OLMo 3 architecture by default.
     """
 
     def configure_model(
@@ -91,7 +91,7 @@ class TransformerModelConfigurator(ModelConfigurator[TransformerConfig]):
                 / size_spec.num_params
             )
         ) > 0.05:
-            warnings.warn(
+            warn_once(
                 f"Configured model has {format_count(model.num_non_embedding_params)} (non-embedding) parameters, "
                 f"which differs from target of {size_spec} by ~{100 * pct_diff:.1f}%.",
                 UserWarning,

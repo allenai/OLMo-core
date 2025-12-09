@@ -67,7 +67,7 @@ class RunCheckpointInfo:
     """The training step number of the checkpoint."""
     tokens: int
     """The number of training tokens processed up to this checkpoint."""
-    checkpoint_path: PathOrStr
+    path: PathOrStr
     """A path to the checkpoint directory."""
     metrics_path: PathOrStr | None
     """A path to the metrics JSON file for this checkpoint, if it exists."""
@@ -78,7 +78,7 @@ class RunCheckpointInfo:
         """Get a rich-formatted string representation of the checkpoint info."""
         info = f"Step {self.step:,d} ({format_tokens(self.tokens)}) [b cyan]{self.name}[/]"
         if self.exists:
-            out = f"[b green]✔[/] {info}\n  ↳ checkpoint: [u blue]{self.checkpoint_path}[/]"
+            out = f"[b green]✔[/] {info}\n  ↳ checkpoint: [u blue]{self.path}[/]"
             if self.metrics_path is not None:
                 out += f"\n  ↳ metrics:    [u blue]{self.metrics_path}[/]"
             return out
@@ -403,7 +403,7 @@ class ModelLadder(Config):
         self, size_spec: str, download_metrics: bool = False
     ) -> list[RunCheckpointInfo]:
         """
-        Get the list of checkpoints from the run of the given size spec, at the intervals
+        Get the list of ordered checkpoints from the run for the given size spec, at the intervals
         defined by :meth:`RunConfigurator.configure_checkpoint_intervals()`.
         """
 
@@ -420,7 +420,7 @@ class ModelLadder(Config):
                 name=name,
                 step=step,
                 tokens=step * global_batch_size,
-                checkpoint_path=dir,
+                path=dir,
                 metrics_path=metrics_path,
                 exists=exists,
             )
@@ -451,7 +451,7 @@ class ModelLadder(Config):
 
         return [step_to_checkpoint_info[step] for step in sorted(step_to_checkpoint_info.keys())]
 
-    def get_metrics(self, size_spec: str, prefix: str = "eval/") -> "DataFrame":
+    def get_metrics(self, size_spec: str, prefix: str = "eval/") -> "DataFrame | None":
         """
         Get the metrics from the run of the given size spec, at the intervals
         defined by :meth:`RunConfigurator.configure_checkpoint_intervals()`.
@@ -471,8 +471,11 @@ class ModelLadder(Config):
                     metrics["size"] = size_spec
                     metrics["num_params"] = num_params
                     all_metrics.append(metrics)
-        df = pd.DataFrame(all_metrics)
-        return df
+        if all_metrics:
+            df = pd.DataFrame(all_metrics)
+            return df
+        else:
+            return None
 
     def _get_checkpoint_intervals(self, *, num_params: int, global_batch_size: int) -> list[int]:
         return [

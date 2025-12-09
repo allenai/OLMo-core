@@ -9,6 +9,7 @@ import rich
 import olmo_core.io as io
 from olmo_core.data import DataMix, TokenizerConfig
 from olmo_core.data.composable import *
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.internal.common import build_launch_config, get_gpu_type, get_root_dir
 from olmo_core.launch.beaker import (
     BeakerLaunchConfig,
@@ -263,6 +264,21 @@ def run(args: argparse.Namespace):
 def launch_run(args: argparse.Namespace):
     prepare_cli_environment()
     ladder = configure_ladder(args)
+
+    # Check status of run. Don't do anything if final checkpoint already exist.
+    checkpoints = ladder.get_checkpoints(args.size)
+    if not checkpoints:
+        raise OLMoConfigurationError(
+            f"Run for size {args.size} has no configured checkpoint intervals."
+        )
+    elif checkpoints[-1].exists:
+        rich.get_console().print(
+            f"[b green]✔[/] Run for size [green]{args.size}[/] already complete. "
+            f"Final checkpoint can be found at [u blue]{checkpoints[-1].path}[/]",
+            highlight=False,
+        )
+        return
+
     launcher = configure_launcher(args, ladder, "run")
     log.info(f"Launching ladder run for size {args.size}...")
     log.info(f"Results will be saved to {ladder.get_save_folder(args.size)}")
@@ -306,14 +322,22 @@ def metrics(args: argparse.Namespace):
     prepare_cli_environment()
     ladder = configure_ladder(args)
     df = ladder.get_metrics(args.size)
-    path = io.join_path(args.output_dir, f"metrics_{args.size}.pkl")
-    df.to_pickle(path)
-    log.info(
-        f"Metrics for size {args.size} saved to '{path}'.\n"
-        f"Use pandas to load and analyze the metrics, e.g.:\n\n"
-        f"    import pandas as pd\n"
-        f"    df = pd.read_pickle('{path}')\n"
-    )
+    if df is not None:
+        path = io.join_path(args.output_dir, f"metrics_{args.size}.pkl")
+        df.to_pickle(path)
+        rich.get_console().print(
+            f"[b green]✔[/] Metrics for size [green]{args.size}[/] saved to [u blue]{path}[/]\n"
+            f"Use pandas to load and analyze the metrics, e.g.:\n\n"
+            f"    import pandas as pd\n"
+            f"    df = pd.read_pickle('{path}')\n",
+            highlight=False,
+        )
+    else:
+        rich.get_console().print(
+            f"[b yellow]Run for size {args.size} has no metrics yet.[/]",
+            highlight=False,
+        )
+        sys.exit(1)
 
 
 if __name__ == "__main__":
