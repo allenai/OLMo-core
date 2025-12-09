@@ -1,5 +1,6 @@
 import copy
 from typing import Callable, Optional, Union
+import math
 
 import torch
 import torch.nn as nn
@@ -308,7 +309,7 @@ class BolmoBoundaryPredictor(nn.Module):
             boundary_logprobs[torch.arange(len(boundary_logprobs), device=boundary_logprobs.device), sequence_start_indices] = POSITIVE_LOGPROB
 
         boundary_logprobs = F.pad(boundary_logprobs, (0, self.boundary_predictor_lookahead), "constant", NEGATIVE_LOGPROB)
-        boundary_mask = compute_boundary_mask(boundary_logprobs, boundary_threshold)
+        boundary_mask = compute_boundary_mask(boundary_logprobs, self.boundary_threshold)
 
         return boundary_logprobs, boundary_mask
 
@@ -602,20 +603,6 @@ class BolmoLocalDecoder(nn.Module):
         assert boundary_mask is not None
 
         h_patch = patch_embeds 
-
-        B, L = boundary_mask.shape
-
-        token_idx = (
-            torch.arange(L, device=patch_embeds.device)[None, :]
-            + (~boundary_mask).long() * L
-        )
-        seq_sorted_indices = torch.argsort(token_idx, dim=1)[:, :patch_embeds.shape[1]]
-        last_increasing_index = ((seq_sorted_indices[:, 1:] - seq_sorted_indices[:, :-1]) < 0).max(-1)
-        patch_mask = (
-            (torch.arange(patch_embeds.shape[1], device=patch_embeds.device)[None, :] <= last_increasing_index.indices[:, None]) |
-            (torch.zeros(patch_embeds.shape[:2], dtype=torch.bool, device=patch_embeds.device) == last_increasing_index.values[:, None]) # case where never not increasing (no padding)
-        )
-
         prepool_out = h_patch
 
         # TODO(benjaminm): clipping is problematic if it happens too much; track clip %.
@@ -771,14 +758,20 @@ class BolmoModel(BolmoPreTrainedModel):
         sequence_start_indices: Optional[torch.Tensor] = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> BaseModelOutputWithPast:
-        batch_size = input_ids.shape[0] if input_ids is not None else inputs_embeds.shape[0]  # type: ignore
+        batch_size = input_ids.shape[0]
+        device = input_ids.device
 
         if self.local_encoder.add_expanded_embeddings and expanded_input_ids is None and input_ids is not None:
             # not optimized
             expanded_input_ids_list: list[torch.Tensor] = []
             for example_idx in range(batch_size):
-                expanded_input_ids_list.append(torch.tensor(self.tokenizer.expand_byte_ids(input_ids[example_idx].tolist()), dtype=torch.long))
+                expanded_input_ids_list.append(torch.tensor(self.tokenizer.expand_byte_ids(input_ids[example_idx].tolist()), dtype=torch.long, device=device))
             expanded_input_ids = pad_right(expanded_input_ids_list, value=self.tokenizer.pad_token_id, multiple_of=1)  # type: ignore
+
+        h_byte, h_patch, _, boundary_mask = self.local_encoder(
+            input_ids=input_ids,
+            expanded_input_ids=expanded_input_ids,
+        )
 
         if use_cache and past_key_values is None:
             past_key_values = DynamicCache(config=self.config)
@@ -786,18 +779,18 @@ class BolmoModel(BolmoPreTrainedModel):
         if cache_position is None:
             past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
             cache_position: torch.Tensor = torch.arange(
-                past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
+                past_seen_tokens, past_seen_tokens + h_patch.shape[1], device=device
             )
 
         if position_ids is None:
-            position_ids = cache_position.unsqueeze(0)
+            position_ids = cache_position.unsqueeze(0)  # type: ignore
 
         # It may already have been prepared by e.g. `generate`
         if not isinstance(causal_mask_mapping := attention_mask, dict):
             # Prepare mask arguments
             mask_kwargs = {
                 "config": self.config,
-                "input_embeds": inputs_embeds,
+                "input_embeds": h_patch,
                 "attention_mask": attention_mask,
                 "cache_position": cache_position,
                 "past_key_values": past_key_values,
@@ -808,11 +801,6 @@ class BolmoModel(BolmoPreTrainedModel):
                 "full_attention": create_causal_mask(**mask_kwargs),
                 "sliding_attention": create_sliding_window_causal_mask(**mask_kwargs),
             }
-
-        h_byte, h_patch, _, boundary_mask = self.local_encoder(
-            input_ids=input_ids,
-            expanded_input_ids=expanded_input_ids,
-        )
 
         position_embeddings_mapping = {
             "sliding_attention": self.rotary_embs["sliding_attention"](h_byte, position_ids),
@@ -929,7 +917,6 @@ class BolmoForCausalLM(BolmoPreTrainedModel, GenerationMixin):
             cache_position=cache_position,
             **kwargs,
         )
-        import ipdb; ipdb.set_trace()
 
         hidden_states = outputs.last_hidden_state
         # Only compute necessary logits, and do not upcast them to float if we are not computing the loss
