@@ -22,11 +22,28 @@ def lce_baseline_fn(_input, weight, labels, ignore_index=-100, reduction="sum"):
 
 
 @helion.kernel(
-    ignore_warnings=[helion.exc.TensorOperationInWrapper],
-    # autotune_baseline_fn=lce_baseline_fn,
-    # autotune_accuracy_check=True,
-    autotune_effort="none",
+    config=helion.Config(
+        block_sizes=[64, 512, 32],
+        indexing=[
+            "pointer",
+            "tensor_descriptor",
+            "tensor_descriptor",
+            "pointer",
+            "tensor_descriptor",
+        ],
+        load_eviction_policies=["", "first", ""],
+        num_stages=3,
+        num_warps=8,
+        pid_type="persistent_interleaved",
+        range_flattens=[False, None, False],
+        range_multi_buffers=[False, True, False],
+        range_num_stages=[2, 1, 4],
+        range_unroll_factors=[2, 0, 1],
+        range_warp_specializes=[],
+    ),
+    static_shapes=True,
     autotune_ignore_errors=False,
+    ignore_warnings=[helion.exc.TensorOperationInWrapper],
 )
 def olmo_linear_cross_entropy_fwd(
     _input: torch.Tensor,  # [N, D] input to final layer
@@ -122,39 +139,6 @@ def olmo_linear_cross_entropy_fwd(
         losses[tile_n] = losses_tile * valid_mask.to(torch.float32)  # [t_n]
         lse[tile_n] = lse_tile * valid_mask.to(torch.float32)  # [t_n]
 
-        # # 5) Compute grad_input = d_logits @ weight.T
-        # # 6) Accumulate grad_weight += _input.T @ d_logits
-        # for tile_d in hl.tile(d):
-        #     gi_acc = hl.zeros([tile_n, tile_d], dtype=torch.float32)
-        #     for tile_v in hl.tile(v):
-        #         # Recompute d_logits for this tile_v using stored logits_tile
-        #         softmax_v = torch.exp(
-        #             logits_tile[:, tile_v] - max_logits.unsqueeze(-1)
-        #         ) / sum_exp.unsqueeze(-1)
-
-        #         # d_logits = softmax - 1 at target index, softmax elsewhere
-        #         # Use scatter to subtract 1 at the target positions
-        #         d_logits_v = softmax_v.clone()
-        #         # Scatter -1 at the target label positions within this tile
-        #         hl.inline_triton(
-        #             """
-        #             # Subtract 1 from positions where labels match the current tile indices
-        #             tl.scatter({0}, {1}, tl.full({1}.shape, -1.0, dtype=tl.float32), axis=1)
-        #             """,
-        #             args=(d_logits_v, labels_tile.unsqueeze(1)),
-        #         )
-
-        #         d_logits_v = d_logits_v.to(torch.bfloat16) * valid_mask.unsqueeze(-1)
-
-        #         gi_acc = torch.addmm(gi_acc, d_logits_v, weight[tile_d, tile_v].T)
-        #         grad_weight[tile_d, tile_v] = torch.addmm(
-        #             grad_weight[tile_d, tile_v],
-        #             _input[tile_n, tile_d].T,
-        #             d_logits_v,
-        #         )
-
-        #     grad_input[tile_n, tile_d] = gi_acc
-
     if reduction == "sum":
         losses = losses.sum()  # [N] -> scalar
         lse = lse.sum()  # [N] -> scalar
@@ -162,8 +146,20 @@ def olmo_linear_cross_entropy_fwd(
     return losses, lse, grad_input, grad_weight
 
 
+@helion.kernel(
+    static_shapes=True,
+    autotune_ignore_errors=False,
+    ignore_warnings=[helion.exc.TensorOperationInWrapper],
+)
+def olmo_linear_cross_entropy_bwd_recompute(grad_loss, grad_input, grad_weight):
+    # Note: be wary of in-place operations in torch
+    torch.mul(grad_loss, grad_input, out=grad_input)
+    torch.mul(grad_loss, grad_weight, out=grad_weight)
+    return grad_input, grad_weight
+
+
 @torch.compile
-def olmo_linear_cross_entropy_bwd(grad_loss, grad_input, grad_weight):
+def olmo_linear_cross_entropy_bwd_basic(grad_loss, grad_input, grad_weight):
     # Note: be wary of in-place operations in torch
     torch.mul(grad_loss, grad_input, out=grad_input)
     torch.mul(grad_loss, grad_weight, out=grad_weight)
