@@ -17,7 +17,7 @@ from ...common import ReduceType
 from .train_module import TransformerTrainModule
 
 
-class TransformerBLTTrainModule(TransformerTrainModule):
+class TransformerBolmoTrainModule(TransformerTrainModule):
     def __init__(self, *args, bolmo_config: BolmoConfig, **kwargs):
         super().__init__(*args, **kwargs)
 

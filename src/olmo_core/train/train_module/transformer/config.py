@@ -33,7 +33,7 @@ from olmo_core.optim.scheduler import Scheduler
 if TYPE_CHECKING:
     from .pipeline_train_module import TransformerPipelineTrainModule
     from .train_module import TransformerTrainModule
-    from .blt_train_module import TransformerBLTTrainModule
+    from .bolmo_train_module import TransformerBolmoTrainModule
 
 log = logging.getLogger(__name__)
 
@@ -315,7 +315,7 @@ class TransformerTrainModuleConfig(Config):
         self,
         model: Transformer,
         device: Optional[torch.device] = None,
-    ) -> Union["TransformerTrainModule", "TransformerPipelineTrainModule", "TransformerBLTTrainModule"]:
+    ) -> Union["TransformerTrainModule", "TransformerPipelineTrainModule", "TransformerBolmoTrainModule"]:
         """
         Build the corresponding :class:`TransformerTrainModule` or :class:`TransformerPipelineTrainModule.
 
@@ -324,7 +324,7 @@ class TransformerTrainModuleConfig(Config):
         """
         from .pipeline_train_module import TransformerPipelineTrainModule
         from .train_module import TransformerTrainModule
-        from .blt_train_module import TransformerBLTTrainModule
+        from .bolmo_train_module import TransformerBolmoTrainModule
 
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         if (autocast_precision := kwargs.pop("autocast_precision", None)) is not None:
@@ -339,7 +339,7 @@ class TransformerTrainModuleConfig(Config):
                 raise OLMoConfigurationError(
                     "BLT training/distillation is not supported with pipeline parallelism"
                 )
-            return TransformerBLTTrainModule(
+            return TransformerBolmoTrainModule(
                 model=model,
                 device=device,
                 **kwargs,

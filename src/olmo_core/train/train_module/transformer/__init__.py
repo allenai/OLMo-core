@@ -11,11 +11,11 @@ from .config import (
     TransformerTrainModuleConfig,
 )
 from .pipeline_train_module import TransformerPipelineTrainModule
-from .blt_train_module import TransformerBLTTrainModule
+from .bolmo_train_module import TransformerBolmoTrainModule
 from .train_module import TransformerTrainModule
 
 __all__ = [
-    "TransformerBLTTrainModule",
+    "TransformerBolmoTrainModule",
     "TransformerTrainModule",
     "TransformerTrainModuleConfig",
     "TransformerPipelineTrainModule",
