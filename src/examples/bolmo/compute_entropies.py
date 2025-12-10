@@ -6,7 +6,7 @@ using an entropy model. The computed values are stored as raw binary files
 (compatible with get_bytes_range) that can be loaded alongside the original data.
 
 Usage:
-    python src/examples/blt/compute_entropies.py \
+    python src/examples/bolmo/compute_entropies.py \
         --model-checkpoint /path/to/checkpoint \
         --output-dir /path/to/entropy/output \
         --batch-size 32 \

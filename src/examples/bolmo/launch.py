@@ -98,22 +98,22 @@ def build_config(run_name: str, overrides: List[str]) -> tuple[BeakerLaunchConfi
     setup_steps += ["pip install bettermap==1.3.1"]
 
     if stage == "stage1":
-        launch_script = "src/examples/blt/train_stage1.py"
+        launch_script = "src/examples/bolmo/train_stage1.py"
         torchrun = True
     elif stage == "stage2":
-        launch_script = "src/examples/blt/train_stage2.py"
+        launch_script = "src/examples/bolmo/train_stage2.py"
         torchrun = True
     elif stage == "baseline":
-        launch_script = "src/examples/blt/train_baseline.py"
+        launch_script = "src/examples/bolmo/train_baseline.py"
         torchrun = True
     elif stage == "compute_entropies":
-        launch_script = "src/examples/blt/compute_entropies.py"
+        launch_script = "src/examples/bolmo/compute_entropies.py"
         torchrun = True
     elif stage == "benchmark_generation":
-        launch_script = "src/examples/blt/benchmark_generation.py"
+        launch_script = "src/examples/bolmo/benchmark_generation.py"
         torchrun = False
     elif stage == "generate_ifeval":
-        launch_script = "src/examples/blt/generate_ifeval.py"
+        launch_script = "src/examples/bolmo/generate_ifeval.py"
         torchrun = True
     else:
         raise ValueError(f"Unknown stage: {stage}. Must be 'stage1', 'stage2', 'baseline', 'compute_entropies' or 'benchmark_generation'.")
