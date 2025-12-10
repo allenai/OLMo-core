@@ -292,7 +292,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         raise ValueError(f"Unknown LOCAL_MODEL_STYLE: {LOCAL_MODEL_STYLE}. Must be one of 'blt', 'hnet'.")
 
     model_config = teacher_model_config.replace(
-        name=TransformerType.blt_distill,
+        name=TransformerType.bolmo_distill,
         vocab_size=byte_tokenizer_config.padded_vocab_size(),
         local_encoder=local_encoder,
         local_decoder=local_decoder,

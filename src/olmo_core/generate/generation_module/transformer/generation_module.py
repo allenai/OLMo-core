@@ -570,8 +570,8 @@ class TransformerGenerationModule(GenerationModule):
                 ) from e
 
         # TODO(benjaminm): this does not seem like a good place..
-        if transformer_config.name in {TransformerType.blt, TransformerType.blt_distill}:  # type: ignore
-            if transformer_config.name == TransformerType.blt_distill:  # type: ignore
+        if transformer_config.name in {TransformerType.bolmo, TransformerType.bolmo_distill}:  # type: ignore
+            if transformer_config.name == TransformerType.bolmo_distill:  # type: ignore
                 # don't need teacher
                 transformer_config.teacher_config = None  # type: ignore
 

@@ -93,12 +93,12 @@ class TransformerType(StrEnum):
     ➡️ :class:`MoETransformer`
     """
 
-    blt = "blt"
+    bolmo = "bolmo"
     """
     ➡️ :class:`BolmoTransformer`
     """
 
-    blt_distill = "blt_distill"
+    bolmo_distill = "bolmo_distill"
     """
     ➡️ :class:`BolmoDistillTransformer`
     """
@@ -343,7 +343,7 @@ class TransformerConfig(Config):
         """
         from .model import MoETransformer, NormalizedTransformer, Transformer, BolmoTransformer, BolmoDistillTransformer
 
-        if self.name not in {TransformerType.blt, TransformerType.blt_distill}:
+        if self.name not in {TransformerType.bolmo, TransformerType.bolmo_distill}:
             # not implemented for BolmoTransformer
             log.info(
                 f"Building transformer with {self.num_params:,d} total params, "
@@ -393,7 +393,7 @@ class TransformerConfig(Config):
                 init_std=self.init_std,
                 block_overrides=self.block_overrides,
             )
-        elif self.name == TransformerType.blt:
+        elif self.name == TransformerType.bolmo:
             if self.local_encoder is None or self.local_decoder is None:
                 raise OLMoConfigurationError(
                     f"Both local_encoder and local_decoder must be specified for BolmoTransformer, got {self.local_encoder} and {self.local_decoder}"
@@ -419,7 +419,7 @@ class TransformerConfig(Config):
                 local_encoder=self.local_encoder,
                 local_decoder=self.local_decoder,
             )
-        elif self.name == TransformerType.blt_distill:
+        elif self.name == TransformerType.bolmo_distill:
             if self.local_encoder is None or self.local_decoder is None:
                 raise OLMoConfigurationError(
                     f"Both local_encoder and local_decoder must be specified for BolmoTransformer, got {self.local_encoder} and {self.local_decoder}"
@@ -471,7 +471,7 @@ class TransformerConfig(Config):
         """
         The total number of parameters that a model from this config would have.
         """
-        if self.name in {TransformerType.blt, TransformerType.blt_distill}:
+        if self.name in {TransformerType.bolmo, TransformerType.bolmo_distill}:
             raise NotImplementedError("BolmoTransformer config does not support num_params")
 
         num_params = 0
@@ -500,7 +500,7 @@ class TransformerConfig(Config):
         """
         The total number of active parameters that a model from this config would have.
         """
-        if self.name in {TransformerType.blt, TransformerType.blt_distill}:
+        if self.name in {TransformerType.bolmo, TransformerType.bolmo_distill}:
             raise NotImplementedError("BolmoTransformer config does not support num_active_params")
 
         num_active_params = 0
@@ -529,7 +529,7 @@ class TransformerConfig(Config):
         """
         The number of parameters excluding embedding parameters.
         """
-        if self.name in {TransformerType.blt, TransformerType.blt_distill}:
+        if self.name in {TransformerType.bolmo, TransformerType.bolmo_distill}:
             raise NotImplementedError("BolmoTransformer config does not support num_non_embedding_params")
 
         return self.num_params - self.d_model * self.vocab_size
@@ -539,7 +539,7 @@ class TransformerConfig(Config):
         """
         The number of active parameters excluding embedding parameters.
         """
-        if self.name in {TransformerType.blt, TransformerType.blt_distill}:
+        if self.name in {TransformerType.bolmo, TransformerType.bolmo_distill}:
             raise NotImplementedError("BolmoTransformer config does not support num_active_non_embedding_params")
 
         return self.num_active_params - self.d_model * self.vocab_size
@@ -1333,7 +1333,7 @@ class TransformerConfig(Config):
             )
         else:
             return cls(
-                name=TransformerType.blt,
+                name=TransformerType.bolmo,
                 d_model=d_model,
                 vocab_size=vocab_size,
                 n_layers=n_layers,
@@ -1467,7 +1467,7 @@ class TransformerConfig(Config):
             )
         else:
             return cls(
-                name=TransformerType.blt,
+                name=TransformerType.bolmo,
                 d_model=d_model,
                 vocab_size=vocab_size,
                 n_layers=n_layers,

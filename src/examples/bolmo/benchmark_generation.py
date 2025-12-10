@@ -139,7 +139,7 @@ def main(run_name: str, overrides: list[str]):
         else:
             raise ValueError(f"Unknown LOCAL_MODEL_BLOCKS: {LOCAL_MODEL_BLOCKS}")
         model_config = model_config.replace(
-            name=TransformerType.blt_distill,
+            name=TransformerType.bolmo_distill,
             local_encoder=LocalEncoderConfig(
                 add_hash_embeddings=False,
                 add_expanded_embeddings=False,
