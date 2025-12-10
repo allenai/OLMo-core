@@ -21,6 +21,9 @@ from .utils import format_count, format_tokens
 class WSDSChinchillaRunConfigurator(RunConfigurator):
     """
     A run configurator that uses WSD-S learning rate scheduling and Chinchilla scaling laws.
+
+    .. note::
+        You may need to tune the :data:`tokens_per_param` value to your dataset and optimizer.
     """
 
     chinchilla_multiple: float
@@ -30,6 +33,8 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
     """
     decay_fraction: float = 0.1
     """The duration of each decay as a fraction of the period. Must be at least 10%."""
+    tokens_per_param: int = 20
+    """The number of tokens per parameter to use for Chinchilla calculations."""
 
     def __post_init__(self):
         if self.chinchilla_multiple < 0.5 or not math.log(self.chinchilla_multiple, 2).is_integer():
@@ -42,9 +47,9 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
             )
 
     def configure_duration(self, num_params: int) -> Duration:
-        return Duration.chinchilla_tokens(
+        return self._chinchilla_duration(
+            num_params,
             self.chinchilla_multiple,
-            model_params=num_params,
         )
 
     def configure_target_batch_size(self, num_params: int) -> int:
@@ -87,15 +92,13 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
         warmup, chinchilla_periods = self.configure_chinchilla_periods(num_params)
         period_lengths = []
         for pidx, c in enumerate(chinchilla_periods):
-            period = Duration.chinchilla_tokens(c, model_params=num_params).value
+            period = self._chinchilla_duration(num_params, c).value
             if pidx == 0:
                 period_lengths.append(period)
             else:
                 period_lengths.append(
                     period
-                    - Duration.chinchilla_tokens(
-                        chinchilla_periods[pidx - 1], model_params=num_params
-                    ).value
+                    - self._chinchilla_duration(num_params, chinchilla_periods[pidx - 1]).value
                 )
 
         return WSDS(
@@ -111,16 +114,14 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
         _, chinchilla_periods = self.configure_chinchilla_periods(num_params)
         checkpoints: list[tuple[Duration, str]] = []
         for pidx, c in enumerate(chinchilla_periods):
-            period = Duration.chinchilla_tokens(c, model_params=num_params)
+            period = self._chinchilla_duration(num_params, c)
             period_length: int
             if pidx == 0:
                 period_length = period.value
             else:
                 period_length = (
                     period.value
-                    - Duration.chinchilla_tokens(
-                        chinchilla_periods[pidx - 1], model_params=num_params
-                    ).value
+                    - self._chinchilla_duration(num_params, chinchilla_periods[pidx - 1]).value
                 )
             pre_decay = dataclasses.replace(
                 period, value=period.value - round(period_length * self.decay_fraction)
@@ -166,7 +167,7 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
         plt.grid(True)
 
         for c in chinchilla_periods:
-            period = Duration.chinchilla_tokens(c, model_params=num_params).value
+            period = self._chinchilla_duration(num_params, c).value
             plt.axvline(x=period, color="red", linestyle="--", alpha=0.5)
             plt.text(
                 period,
@@ -213,3 +214,10 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
             plt.show()
 
         return save_path
+
+    def _chinchilla_duration(self, num_params: int, c: float) -> Duration:
+        return Duration.chinchilla_tokens(
+            c,
+            model_params=num_params,
+            _tok_per_param=self.tokens_per_param,
+        )
