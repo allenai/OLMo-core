@@ -10,7 +10,7 @@ description = "Core training module for the Open Language Model (OLMo)"
 authors = [
     { name = "Allen Institute for Artificial Intelligence", email = "olmo@allenai.org" },
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 license = { file = "LICENSE" }
 dependencies = [
     "numpy",
@@ -69,7 +69,6 @@ mamba = [
     "regex",
 ]
 xlstm = [
-    "mlstm_kernels",
     "xlstm",
 ]
 fla = [

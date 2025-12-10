@@ -3,8 +3,7 @@ import logging
 from typing import Optional, cast
 import torch
 from torch import nn
-from xlstm.xlstm_large.model import mLSTMLayer, mLSTMLayerConfig, mLSTMLayerStateType, soft_cap
-from mlstm_kernels.torch.backend_module import mLSTMBackendConfig
+from xlstm.xlstm_large.model import mLSTMLayer, mLSTMLayerConfig, mLSTMLayerStateType, soft_cap, mLSTMBackendConfig
 
 from olmo_core.config import Config, DType
 from olmo_core.nn.blt.utils import MaskState

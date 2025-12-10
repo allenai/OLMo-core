@@ -59,3 +59,69 @@ def pad_left(
     value=0,
 ):
     return _pad(tensors, multiple_of, direction="left", value=value)
+
+class MaskState:
+    def __init__(self, mask):
+        self.cpu_mask = mask.cpu()
+
+        self.mask = mask
+        self.inv_mask = ~mask
+        self._all = self.cpu_mask.all().item()
+        self._any = self.cpu_mask.any().item()
+
+    def any(self):
+        return self._any
+
+    def all(self):
+        return self._all
+
+    def selective_get(self, x, inv=False):
+        # try to avoid sync through nonzero on index
+        if inv:
+            if self.all():
+                return x[[]]
+            elif not self.any():
+                return x
+            else:
+                return x[self.inv_mask]
+        else:
+            if self.all():
+                return x
+            elif not self.any():
+                return x[[]]
+            else:
+                return x[self.mask]
+
+    def selective_put(self, x, out, inv=False):
+        # try to avoid sync through nonzero on index
+        if inv:
+            if self.all():
+                return
+            elif not self.any():
+                out.copy_(x)
+            else:
+                out[self.inv_mask] = x
+        else:
+            if self.all():
+                out.copy_(x)
+            elif not self.any():
+                return
+            else:
+                out[self.mask] = x
+    
+    def selective_add(self, x, out, inv=False):
+        # try to avoid sync through nonzero on index
+        if inv:
+            if self.all():
+                return
+            elif not self.any():
+                out.add_(x)
+            else:
+                out[self.inv_mask] += x
+        else:
+            if self.all():
+                out.add_(x)
+            elif not self.any():
+                return
+            else:
+                out[self.mask] += x

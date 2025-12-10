@@ -24,11 +24,9 @@ from transformers.utils.generic import check_model_inputs
 
 from olmo_core.nn.blt.hf.configuration_bolmo import BolmoConfig
 from olmo_core.nn.blt.hf.tokenization_bolmo import ByteTokenizerConfig
-from olmo_core.nn.blt.hf.utils_bolmo import compute_boundary_mask, pad_right, pad_left
-from olmo_core.nn.blt.utils import MaskState
+from olmo_core.nn.blt.hf.utils_bolmo import compute_boundary_mask, pad_right, pad_left, MaskState
 
-from xlstm.xlstm_large.model import mLSTMLayer, mLSTMLayerConfig, mLSTMLayerStateType, soft_cap
-from mlstm_kernels.torch.backend_module import mLSTMBackendConfig
+from xlstm.xlstm_large.model import mLSTMLayer, mLSTMLayerConfig, mLSTMLayerStateType, soft_cap, mLSTMBackendConfig
 
 
 @use_kernel_forward_from_hub("RMSNorm")
