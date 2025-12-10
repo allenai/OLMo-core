@@ -282,9 +282,9 @@ class ModelLadder(Config):
             f"{global_batch_size // self.sequence_length:,d} instance(s)\n"
             f" ❯ Micro-batch size per device size {device_microbatch_size:,d} tokens, which is "
             f"{device_microbatch_size // self.sequence_length} instance(s)\n"
-            f" ❯ So there will be {num_grad_accum_steps:,d} grad accumulation step(s) per batch\n"
             f" ❯ And the run requires {requested_devices} out of {self.max_devices} devices, "
-            f"with a data-parallel world size of {dp_world_size:,d}.",
+            f"with a data-parallel world size of {dp_world_size:,d}\n"
+            f" ❯ So there will be {num_grad_accum_steps:,d} grad accumulation step(s) per batch",
             highlight=False,
         )
 
