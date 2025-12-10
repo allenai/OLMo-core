@@ -17,7 +17,7 @@ from olmo_core.internal.common import get_beaker_username
 from olmo_core.utils import generate_uuid, prepare_cli_environment
 
 
-def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
+def build_config(run_name: str, overrides: List[str]) -> tuple[BeakerLaunchConfig, bool]:
     cluster = os.environ.get("BEAKER_CLUSTER", "ai2/jupiter-cirrascale-2")
     stage = os.environ.get("BEAKER_STAGE", "stage1")
 
@@ -51,6 +51,7 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
         "GENERATE_LENGTH",
         "N_BATCHES",
         "BATCH_SIZE",
+        "AVG_BYTES_PER_TOKEN",
     ]:
         if transparent_env_var in os.environ:
             env_vars.append(BeakerEnvVar(name=transparent_env_var, value=os.environ[transparent_env_var]))
@@ -89,8 +90,8 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
         # slow setup (need appropriate torch / cuda build)
         setup_steps = list(DEFAULT_SETUP_STEPS)
 
-    setup_steps += ["pip install flash-attn==2.8.0.post2 --no-build-isolation"]
-    setup_steps += ["pip install mlstm_kernels==2.0.1"]
+    setup_steps += ["pip install flash-attn==2.8.3 --no-build-isolation"]
+    setup_steps += ["pip install triton==3.5.1"]
     setup_steps += ["pip install xlstm==2.0.5"]
     setup_steps += ["pip install flash-linear-attention==0.3.1"]
     setup_steps += ["pip install --upgrade huggingface-hub==0.35.3"]
@@ -98,43 +99,54 @@ def build_config(run_name: str, overrides: List[str]) -> BeakerLaunchConfig:
 
     if stage == "stage1":
         launch_script = "src/examples/blt/train_stage1.py"
+        torchrun = True
     elif stage == "stage2":
         launch_script = "src/examples/blt/train_stage2.py"
+        torchrun = True
     elif stage == "baseline":
         launch_script = "src/examples/blt/train_baseline.py"
+        torchrun = True
     elif stage == "compute_entropies":
         launch_script = "src/examples/blt/compute_entropies.py"
+        torchrun = True
     elif stage == "benchmark_generation":
         launch_script = "src/examples/blt/benchmark_generation.py"
+        torchrun = False
+    elif stage == "generate_ifeval":
+        launch_script = "src/examples/blt/generate_ifeval.py"
+        torchrun = True
     else:
         raise ValueError(f"Unknown stage: {stage}. Must be 'stage1', 'stage2', 'baseline', 'compute_entropies' or 'benchmark_generation'.")
 
     beaker_username = get_beaker_username()
 
-    return BeakerLaunchConfig(
-        name=f"blt-distill-{run_name}-{generate_uuid()[:4]}",
-        budget="ai2/oe-base",
-        cmd=[launch_script, run_name, *overrides],
-        task_name="train",
-        workspace=os.environ.get("BEAKER_WORKSPACE", "ai2/benjaminm"),
-        description="Distilling OLMo from and to BLT.",
-        clusters=[cluster],
-        env_vars=env_vars,
-        num_nodes=int(os.environ.get("BEAKER_NUM_NODES", "1")),
-        num_gpus=int(os.environ.get("BEAKER_NUM_GPUS", "1")),
-        priority=cast(Priority, os.environ.get("BEAKER_PRIORITY", "normal")),
-        preemptible=os.environ.get("BEAKER_PREEMPTIBLE", "true").lower() in {"1", "true", "yes"},
-        shared_filesystem=shared_filesystem,
-        allow_dirty=True,
-        beaker_image=image,
-        weka_buckets=weka_buckets,
-        env_secrets=[
-            BeakerEnvSecret(
-                name="WANDB_API_KEY",
-                secret=f"{beaker_username}_WANDB_API_KEY",
-            ),
-        ],
-        setup_steps=setup_steps,  # type: ignore
+    return (
+        BeakerLaunchConfig(
+            name=f"blt-distill-{run_name}-{generate_uuid()[:4]}",
+            budget="ai2/oe-base",
+            cmd=[launch_script, run_name, *overrides],
+            task_name="train",
+            workspace=os.environ.get("BEAKER_WORKSPACE", "ai2/benjaminm"),
+            description="Distilling OLMo from and to BLT.",
+            clusters=[cluster],
+            env_vars=env_vars,
+            num_nodes=int(os.environ.get("BEAKER_NUM_NODES", "1")),
+            num_gpus=int(os.environ.get("BEAKER_NUM_GPUS", "1")),
+            priority=cast(Priority, os.environ.get("BEAKER_PRIORITY", "normal")),
+            preemptible=os.environ.get("BEAKER_PREEMPTIBLE", "true").lower() in {"1", "true", "yes"},
+            shared_filesystem=shared_filesystem,
+            allow_dirty=True,
+            beaker_image=image,
+            weka_buckets=weka_buckets,
+            env_secrets=[
+                BeakerEnvSecret(
+                    name="WANDB_API_KEY",
+                    secret=f"{beaker_username}_WANDB_API_KEY",
+                ),
+            ],
+            setup_steps=setup_steps,  # type: ignore
+        ),
+        torchrun
     )
 
 
@@ -147,4 +159,5 @@ if __name__ == "__main__":
 
     prepare_cli_environment()
 
-    build_config(run_name, overrides).launch(follow=False, torchrun=True)
+    config, torchrun = build_config(run_name, overrides)
+    config.launch(follow=False, torchrun=torchrun)
