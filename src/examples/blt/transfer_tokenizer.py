@@ -83,6 +83,12 @@ def parse_args():
         default=4096,
         help="Max sequence length",
     )
+    parser.add_argument(
+        "--target-tokenizer-config-name",
+        type=str,
+        default=None,
+        help="Manual target tokenizer config name."
+    )
     return parser.parse_args()
 
 
@@ -188,7 +194,10 @@ def main():
     target_tokenizer = AutoTokenizer.from_pretrained(args.target_tokenizer)
 
     # Create target tokenizer config
-    target_tokenizer_config = TokenizerConfig.from_hf(args.target_tokenizer)
+    if args.target_tokenizer_config_name is None:
+        target_tokenizer_config = TokenizerConfig.from_hf(args.target_tokenizer)
+    else:
+        target_tokenizer_config = getattr(TokenizerConfig, args.target_tokenizer_config_name)()
 
     log.info(f"Source vocab size: {tokenizer_config.vocab_size}")
     log.info(f"Target vocab size: {target_tokenizer_config.vocab_size}")
