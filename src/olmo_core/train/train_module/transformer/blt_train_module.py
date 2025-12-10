@@ -9,8 +9,8 @@ from olmo_core.distributed.utils import get_local_tensor, is_distributed
 from olmo_core.data.utils import get_labels, split_batch
 from olmo_core.utils import move_to_device
 from olmo_core.optim import OptimConfig, SkipStepOptimizer
-from olmo_core.nn.blt.config import BolmoConfig
-from olmo_core.nn.blt import utils as bolmo_utils
+from olmo_core.nn.bolmo.config import BolmoConfig
+from olmo_core.nn.bolmo import utils as bolmo_utils
 from olmo_core.nn.lm_head import LMOutputWithLoss
 
 from ...common import ReduceType

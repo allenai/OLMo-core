@@ -26,7 +26,7 @@ from olmo_core.config import Config, DType
 from olmo_core.config import DType
 from olmo_core.data.tokenizer import TokenizerConfig, ByteTokenizerConfig
 from olmo_core.nn.attention import AttentionConfig
-from olmo_core.nn.blt.config import BolmoConfig, LocalEncoderConfig, LocalDecoderConfig
+from olmo_core.nn.bolmo.config import BolmoConfig, LocalEncoderConfig, LocalDecoderConfig
 from olmo_core.generate.generation_module import TransformerGenerationModule, BolmoTransformerGenerationModule
 from olmo_core.generate.generation_module.config import GenerationConfig
 from olmo_core.nn.mamba import MambaConfig

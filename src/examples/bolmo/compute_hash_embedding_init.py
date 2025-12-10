@@ -13,7 +13,7 @@ import torch
 from tqdm.auto import tqdm
 
 from olmo_core.distributed.checkpoint import load_model_and_optim_state
-from olmo_core.nn.blt.embed import byte_group_hash_function
+from olmo_core.nn.bolmo.embed import byte_group_hash_function
 from olmo_core.data import TokenizerConfig, ByteTokenizer, ByteTokenizerConfig, NumpyDatasetConfig, NumpyDatasetType, NumpyDataLoaderConfig, DataCollator
 from olmo_core.utils import prepare_cli_environment
 from olmo_core.nn.transformer import TransformerConfig

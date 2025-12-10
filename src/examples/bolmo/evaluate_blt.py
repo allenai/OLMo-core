@@ -36,7 +36,7 @@ from olmo_core.train import (
     prepare_training_environment,
     teardown_training_environment,
 )
-from olmo_core.nn.blt.config import BolmoConfig
+from olmo_core.nn.bolmo.config import BolmoConfig
 from olmo_core.utils import seed_all
 
 NUM_WORKERS = 16

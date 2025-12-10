@@ -35,7 +35,7 @@ from torch.utils.data import Dataset
 from transformers import AutoTokenizer
 
 from olmo_core.exceptions import OLMoConfigurationError, OLMoEnvironmentError
-import olmo_core.nn.blt.utils as bolmo_utils
+import olmo_core.nn.bolmo.utils as bolmo_utils
 
 from ..aliases import PathOrStr
 from ..config import Config, StrEnum

@@ -40,7 +40,7 @@ from olmo_core.nn.transformer import (
 from olmo_core.nn.attention import AttentionConfig
 from olmo_core.nn.mamba import MambaConfig
 from olmo_core.nn.feed_forward import FeedForwardConfig
-from olmo_core.nn.blt.config import LocalEncoderConfig, LocalDecoderConfig
+from olmo_core.nn.bolmo.config import LocalEncoderConfig, LocalDecoderConfig
 from olmo_core.nn.xlstm import XLSTMConfig
 from olmo_core.optim import AdamWConfig, OptimGroupOverride
 from olmo_core.optim.scheduler import WSD, LinearWithWarmup, ConstantScheduler
@@ -61,7 +61,7 @@ from olmo_core.train.callbacks import (
     WandBCallback,
 )
 from olmo_core.train.common import LoadStrategy
-from olmo_core.nn.blt.config import BolmoConfig
+from olmo_core.nn.bolmo.config import BolmoConfig
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerTrainModuleConfig,

@@ -33,7 +33,7 @@ from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
 from olmo_core.utils import get_default_device, mark_dynamic, move_to_device
-from olmo_core.nn.blt.config import BolmoConfig
+from olmo_core.nn.bolmo.config import BolmoConfig
 from olmo_core.nn.functional.cross_entropy_loss import cross_entropy_loss
 from olmo_core.nn.attention import FlashAttention2Backend
 
@@ -47,8 +47,8 @@ from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
 from ..lm_head import LMHeadConfig, LMOutputWithLoss
 from ..moe import MoEBase
-from ..blt.config import LocalEncoderConfig, LocalDecoderConfig
-from ..blt import utils as bolmo_utils
+from ..bolmo.config import LocalEncoderConfig, LocalDecoderConfig
+from ..bolmo import utils as bolmo_utils
 from ..rope import RoPEBuffers, RotaryEmbeddingBase
 from ..utils import selective_checkpointing_context_fn
 from .block import (

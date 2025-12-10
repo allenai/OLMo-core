@@ -25,7 +25,7 @@ try:
 except ImportError:
     Olmo3Config = None
 
-from olmo_core.nn.blt.hf import configuration_bolmo
+from olmo_core.nn.bolmo.hf import configuration_bolmo
 
 
 def _get_flex_olmo_config(model: MoETransformer) -> PretrainedConfig:

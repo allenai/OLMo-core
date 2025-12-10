@@ -5,7 +5,7 @@ import numpy as np
 from functools import lru_cache
 
 from ..config import Config, StrEnum
-from ..nn.blt import utils as bolmo_utils
+from ..nn.bolmo import utils as bolmo_utils
 
 __all__ = [
     "TokenizerConfig",

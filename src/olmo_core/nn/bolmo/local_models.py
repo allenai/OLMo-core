@@ -16,7 +16,7 @@ from olmo_core.config import Config
 from olmo_core.io import resource_path
 from olmo_core.nn.transformer.config import TransformerDataParallelWrappingStrategy
 from olmo_core.nn.transformer.block import TransformerBlockBase
-import olmo_core.nn.blt.utils as bolmo_utils
+import olmo_core.nn.bolmo.utils as bolmo_utils
 from olmo_core.nn.buffer_cache import BufferCache
 from .embed import add_hash_embeddings
 from .utils import MaskState, log1mexp

@@ -6,7 +6,7 @@ from torch import nn
 from xlstm.xlstm_large.model import mLSTMLayer, mLSTMLayerConfig, mLSTMLayerStateType, soft_cap, mLSTMBackendConfig
 
 from olmo_core.config import Config, DType
-from olmo_core.nn.blt.utils import MaskState
+from olmo_core.nn.bolmo.utils import MaskState
 
 log = logging.getLogger(__name__)
 

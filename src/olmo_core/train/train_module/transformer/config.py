@@ -26,7 +26,7 @@ from olmo_core.nn.transformer import (
     TransformerActivationCheckpointingMode,
     TransformerDataParallelWrappingStrategy,
 )
-from olmo_core.nn.blt.config import BolmoConfig
+from olmo_core.nn.bolmo.config import BolmoConfig
 from olmo_core.optim import OptimConfig
 from olmo_core.optim.scheduler import Scheduler
 

@@ -37,9 +37,9 @@ from olmo_core.generate.sampling import select_next_token
 from olmo_core.generate.utils import selective_log_softmax
 from olmo_core.io import is_url, join_path, normalize_path
 from olmo_core.nn.attention import Attention, AttentionBackendName
-from olmo_core.nn.blt.config import BolmoConfig
-from olmo_core.nn.blt import utils as bolmo_utils
-import olmo_core.nn.blt.utils as bolmo_utils
+from olmo_core.nn.bolmo.config import BolmoConfig
+from olmo_core.nn.bolmo import utils as bolmo_utils
+import olmo_core.nn.bolmo.utils as bolmo_utils
 from olmo_core.nn.mamba import Mamba
 from olmo_core.nn.xlstm import XLSTM
 from olmo_core.nn.fla import FLA

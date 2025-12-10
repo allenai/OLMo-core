@@ -12,7 +12,7 @@ from torch.distributed.tensor.parallel import PrepareModuleInput, parallelize_mo
 from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
 from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.doc_utils import beta_feature
-from olmo_core.nn.blt.utils import MaskState
+from olmo_core.nn.bolmo.utils import MaskState
 from olmo_core.nn.xlstm import XLSTMConfig
 from olmo_core.ops import attach_auxiliary_loss
 
