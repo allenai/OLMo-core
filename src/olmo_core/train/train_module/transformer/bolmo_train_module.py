@@ -24,7 +24,7 @@ class TransformerBolmoTrainModule(TransformerTrainModule):
         self.bolmo_config = bolmo_config
 
         if self.bolmo_config.tokenizer is None:
-            raise ValueError("BLTTrainModule requires a ByteTokenizerConfig in bolmo_config.tokenizer")
+            raise ValueError("BolmoTrainModule requires a ByteTokenizerConfig in bolmo_config.tokenizer")
 
         self.tokenizer = self.bolmo_config.tokenizer.build()
 
@@ -293,7 +293,7 @@ class TransformerBolmoTrainModule(TransformerTrainModule):
 
         # Record loss metrics.
         if isinstance(self.optim, SkipStepOptimizer):
-            raise NotImplementedError("SkipStepOptimizer not implemented for BLTTrainModule")
+            raise NotImplementedError("SkipStepOptimizer not implemented for BolmoTrainModule")
 
         for key, value in batch_metrics.items():
             self.record_metric(

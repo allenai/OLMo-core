@@ -1159,10 +1159,10 @@ class BolmoTransformer(Transformer):
          # TODO(benjaminm): generalize
         self.space_mask_dolma2 = bolmo_utils.get_dolma2_space_mask()
         self.eos_token_dolma2 = 100257
-        self.space_mask_blt = bolmo_utils.get_blt_space_mask()
-        self.end_of_subword_token_blt = 3
-        self.eos_token_blt = 1
-        self.vocab_size_blt = (4 + 256)
+        self.space_mask_bolmo = bolmo_utils.get_bolmo_space_mask()
+        self.end_of_subword_token_bolmo = 3
+        self.eos_token_bolmo = 1
+        self.vocab_size_bolmo = (4 + 256)
 
     def apply_fsdp(
         self,
@@ -1652,7 +1652,7 @@ class BolmoDistillTransformer(BolmoTransformer):
         hnet_embed_loss_mask = byte_mask[:, 1:]
 
         hnet_embed_loss = (elementwise_hnet_embed_loss * hnet_embed_loss_mask.float()).mean()
-        metrics[f"blt/hnet_embed_loss"] = hnet_embed_loss / hnet_embed_loss_mask.float().mean()
+        metrics[f"bolmo/hnet_embed_loss"] = hnet_embed_loss / hnet_embed_loss_mask.float().mean()
         return hnet_embed_loss
 
     def _compute_ratio_loss(
@@ -1670,7 +1670,7 @@ class BolmoDistillTransformer(BolmoTransformer):
             (1 - true_ratio) * (1 - average_prob) +
             (true_ratio) * (average_prob) * (bolmo_config.target_ratio - 1)
         ) * bolmo_config.target_ratio / (bolmo_config.target_ratio - 1)
-        metrics["blt/ratio_loss"] = ratio_loss
+        metrics["bolmo/ratio_loss"] = ratio_loss
         return ratio_loss
 
     def _compute_alm_style_loss(
@@ -1756,8 +1756,8 @@ class BolmoDistillTransformer(BolmoTransformer):
         if bolmo_config.do_alm_debiasing:
             if debiasing_logprobs is None:
                 space_mask_padded_blt = F.pad(
-                    self.space_mask_blt.to(y_hat.device),
-                    (0, logprobs.shape[-1] - len(self.space_mask_blt)),
+                    self.space_mask_bolmo.to(y_hat.device),
+                    (0, logprobs.shape[-1] - len(self.space_mask_bolmo)),
                     value=0
                 )[None, None, :]
                 space_mask_padded_dolma2 = F.pad(
@@ -1777,9 +1777,9 @@ class BolmoDistillTransformer(BolmoTransformer):
                 y_hat = y_hat + debiasing_logprobs
 
         local_decoder_loss_simple = (div_fn(y_true, y_hat) * patch_mask[:, :-1]).mean()
-        metrics["blt/local_decoder_teacher_mean_p_simple"] = (torch.exp(y_true) * patch_mask[:, :-1]).mean() / (patch_mask[:, :-1].float().mean() + bolmo_config.epsilon)
-        metrics["blt/local_decoder_loss_simple"] = local_decoder_loss_simple / (patch_mask[:, :-1].float().mean() + bolmo_config.epsilon)
-        metrics["blt/local_decoder_mae_simple"] = (torch.abs(y_true - y_hat) * patch_mask[:, :-1]).mean() / (patch_mask[:, :-1].float().mean() + bolmo_config.epsilon)
+        metrics["bolmo/local_decoder_teacher_mean_p_simple"] = (torch.exp(y_true) * patch_mask[:, :-1]).mean() / (patch_mask[:, :-1].float().mean() + bolmo_config.epsilon)
+        metrics["bolmo/local_decoder_loss_simple"] = local_decoder_loss_simple / (patch_mask[:, :-1].float().mean() + bolmo_config.epsilon)
+        metrics["bolmo/local_decoder_mae_simple"] = (torch.abs(y_true - y_hat) * patch_mask[:, :-1]).mean() / (patch_mask[:, :-1].float().mean() + bolmo_config.epsilon)
 
         return local_decoder_loss_simple, metrics
 
@@ -1816,8 +1816,8 @@ class BolmoDistillTransformer(BolmoTransformer):
 
         elementwise_local_encoder_loss = rep_compare_fn(h_patch, aligned_teacher_embeds)
         local_encoder_loss = (elementwise_local_encoder_loss * mask.float()).mean()
-        metrics["blt/local_encoder_loss"] = local_encoder_loss / (mask.float().mean() + bolmo_config.epsilon)
-        metrics["blt/local_encoder_cos_sim"] = (F.cosine_similarity(
+        metrics["bolmo/local_encoder_loss"] = local_encoder_loss / (mask.float().mean() + bolmo_config.epsilon)
+        metrics["bolmo/local_encoder_cos_sim"] = (F.cosine_similarity(
             h_patch.float(),
             aligned_teacher_embeds.float(),
             dim=-1,
@@ -1840,8 +1840,8 @@ class BolmoDistillTransformer(BolmoTransformer):
                 current_aligned_teacher_embeds,
             )
             local_encoder_loss_lookahead = (elementwise_local_encoder_loss * mask.float()).mean()
-            metrics[f"blt/local_encoder_loss_lookahead_{lookahead_idx}"] = local_encoder_loss_lookahead / (mask.float().mean() + bolmo_config.epsilon)
-            metrics[f"blt/local_encoder_cos_sim_lookahead_{lookahead_idx}"] = (F.cosine_similarity(
+            metrics[f"bolmo/local_encoder_loss_lookahead_{lookahead_idx}"] = local_encoder_loss_lookahead / (mask.float().mean() + bolmo_config.epsilon)
+            metrics[f"bolmo/local_encoder_cos_sim_lookahead_{lookahead_idx}"] = (F.cosine_similarity(
                 student_hidden_states[lookahead_idx].float(),
                 current_aligned_teacher_embeds.float(),
                 dim=-1,
@@ -1953,7 +1953,7 @@ class BolmoDistillTransformer(BolmoTransformer):
 
         if bolmo_config.boundary_mode == "end" and bolmo_config.skip_boundary_before_eos:
             boundary_labels[:, :-1] = torch.where( # no boundary before eos
-                input_ids[:, 1:] == self.eos_token_blt,
+                input_ids[:, 1:] == self.eos_token_bolmo,
                 0.0,
                 boundary_labels[:, :-1]
             )
@@ -1989,7 +1989,7 @@ class BolmoDistillTransformer(BolmoTransformer):
         )
         if self.local_decoder.fuse_boundaries:
             shift_boundary_mask = (boundary_mask[:, 1:] & byte_mask[:, 1:])
-            label_offsets = shift_boundary_mask * self.vocab_size_blt
+            label_offsets = shift_boundary_mask * self.vocab_size_bolmo
             labels[:, :-1] += label_offsets
 
         # compute the boundary loss
@@ -2015,10 +2015,10 @@ class BolmoDistillTransformer(BolmoTransformer):
             # Balance the contributions equally (50% each)
             boundary_loss = 0.5 * pos_loss + 0.5 * neg_loss
 
-            metrics["blt/boundary_pos_loss"] = pos_loss
-            metrics["blt/boundary_neg_loss"] = neg_loss
-            metrics["blt/boundary_pos_count"] = pos_count / boundary_byte_mask.float().sum()
-            metrics["blt/boundary_neg_count"] = neg_count / boundary_byte_mask.float().sum()
+            metrics["bolmo/boundary_pos_loss"] = pos_loss
+            metrics["bolmo/boundary_neg_loss"] = neg_loss
+            metrics["bolmo/boundary_pos_count"] = pos_count / boundary_byte_mask.float().sum()
+            metrics["bolmo/boundary_neg_count"] = neg_count / boundary_byte_mask.float().sum()
         else:
             boundary_loss = (elementwise_boundary_loss * boundary_byte_mask).mean()
 
@@ -2037,12 +2037,12 @@ class BolmoDistillTransformer(BolmoTransformer):
         boundary_precision = true_boundary_positives / (true_boundary_positives + false_boundary_positives + bolmo_config.epsilon)
         boundary_recall = true_boundary_positives / (true_boundary_positives + false_boundary_negatives + bolmo_config.epsilon)
 
-        metrics["blt/boundary_loss"] = boundary_loss / boundary_byte_mask.float().mean()
-        metrics["blt/boundary_acc"] = boundary_acc / boundary_byte_mask.float().mean()
-        metrics["blt/boundary_precision"] = boundary_precision
-        metrics["blt/boundary_recall"] = boundary_recall
-        metrics["blt/boundary_mean"] = (boundary_mask * boundary_byte_mask).float().mean() / boundary_byte_mask.float().mean()
-        metrics["blt/boundary_label_mean"] = (boundary_labels * boundary_byte_mask).float().mean() / boundary_byte_mask.float().mean()
+        metrics["bolmo/boundary_loss"] = boundary_loss / boundary_byte_mask.float().mean()
+        metrics["bolmo/boundary_acc"] = boundary_acc / boundary_byte_mask.float().mean()
+        metrics["bolmo/boundary_precision"] = boundary_precision
+        metrics["bolmo/boundary_recall"] = boundary_recall
+        metrics["bolmo/boundary_mean"] = (boundary_mask * boundary_byte_mask).float().mean() / boundary_byte_mask.float().mean()
+        metrics["bolmo/boundary_label_mean"] = (boundary_labels * boundary_byte_mask).float().mean() / boundary_byte_mask.float().mean()
 
         # First, run the teacher.
         if not skip_teacher:
@@ -2124,7 +2124,7 @@ class BolmoDistillTransformer(BolmoTransformer):
                             teacher_labels.view(-1),
                             ignore_index=ignore_index,
                         )
-                        metrics["blt/teacher_ce_loss"] = teacher_ce_loss
+                        metrics["bolmo/teacher_ce_loss"] = teacher_ce_loss
                     else:
                         teacher_ce_loss = torch.nan
                 else:
@@ -2237,7 +2237,7 @@ class BolmoDistillTransformer(BolmoTransformer):
             assert labels is not None
 
             ce_loss, _ = cross_entropy_loss(logits.view(-1, logits.shape[-1]), labels[:, :logits.shape[1]].reshape(-1))
-            metrics["blt/ce_loss"] = ce_loss
+            metrics["bolmo/ce_loss"] = ce_loss
 
             if not self.local_decoder.fuse_boundaries and not self.local_decoder.no_boundaries:
                 assert true_boundary_logits is not None
@@ -2248,17 +2248,17 @@ class BolmoDistillTransformer(BolmoTransformer):
                         true_boundary_logits.view(-1, true_boundary_logits.shape[-1]),
                         torch.full(
                             (true_boundary_logits.shape[0] * true_boundary_logits.shape[1],),
-                            fill_value=self.end_of_subword_token_blt,
+                            fill_value=self.end_of_subword_token_bolmo,
                             device=true_boundary_logits.device,
                             dtype=torch.long
                         ),
                     )
-                    metrics["blt/boundary_ce_loss"] = boundary_ce_loss
+                    metrics["bolmo/boundary_ce_loss"] = boundary_ce_loss
 
                     ce_loss = ce_loss + boundary_ce_loss * patch_mask.shape[1] / byte_mask.shape[1]
                     output_boundary_loss = torch.nan
                 else:
-                    all_output_boundary_logprobs = F.log_softmax(all_boundary_logits, dim=-1)[..., self.end_of_subword_token_blt]
+                    all_output_boundary_logprobs = F.log_softmax(all_boundary_logits, dim=-1)[..., self.end_of_subword_token_bolmo]
 
                     if bolmo_config.use_output_boundary_jsd:
                         elementwise_boundary_jsd_loss = bolmo_utils.jsd(
@@ -2266,7 +2266,7 @@ class BolmoDistillTransformer(BolmoTransformer):
                             boundary_logprobs[:, 1:],
                         )
                         output_boundary_loss = (elementwise_boundary_jsd_loss * boundary_byte_mask[:, 1:]).mean()
-                        metrics["blt/output_boundary_loss"] = output_boundary_loss / (boundary_byte_mask[:, 1:].float().mean() + bolmo_config.epsilon)
+                        metrics["bolmo/output_boundary_loss"] = output_boundary_loss / (boundary_byte_mask[:, 1:].float().mean() + bolmo_config.epsilon)
                     else:
                         # shift one
                         elementwise_boundary_ce_loss = bolmo_utils.binary_cross_entropy_with_logprobs(
@@ -2274,21 +2274,21 @@ class BolmoDistillTransformer(BolmoTransformer):
                             boundary_mask[:, 1:],
                         )
                         output_boundary_loss = (elementwise_boundary_ce_loss * boundary_byte_mask[:, 1:]).mean()
-                        metrics["blt/output_boundary_loss"] = output_boundary_loss / (boundary_byte_mask[:, 1:].float().mean() + bolmo_config.epsilon)
+                        metrics["bolmo/output_boundary_loss"] = output_boundary_loss / (boundary_byte_mask[:, 1:].float().mean() + bolmo_config.epsilon)
 
-                    metrics["blt/output_boundary_logmae"] = (
+                    metrics["bolmo/output_boundary_logmae"] = (
                         torch.abs(all_output_boundary_logprobs - boundary_logprobs[:, 1:]) * boundary_byte_mask[:, 1:]
                     ).mean() / (boundary_byte_mask[:, 1:].float().mean() + bolmo_config.epsilon)
 
                 true_boundary_positives = boundary_mask[:, 1:] & boundary_byte_mask[:, 1:]
                 true_boundary_negatives = (~boundary_mask[:, 1:]) & boundary_byte_mask[:, 1:]
 
-                metrics["blt/boundary_true_positives"] = (
-                    ((all_boundary_logits.argmax(-1) == self.end_of_subword_token_blt) & true_boundary_positives).float().mean()
+                metrics["bolmo/boundary_true_positives"] = (
+                    ((all_boundary_logits.argmax(-1) == self.end_of_subword_token_bolmo) & true_boundary_positives).float().mean()
                     / (true_boundary_positives.float().mean() + bolmo_config.epsilon)
                 )
-                metrics["blt/boundary_true_negatives"] = (
-                    ((all_boundary_logits.argmax(-1) != self.end_of_subword_token_blt) & true_boundary_negatives).float().mean()
+                metrics["bolmo/boundary_true_negatives"] = (
+                    ((all_boundary_logits.argmax(-1) != self.end_of_subword_token_bolmo) & true_boundary_negatives).float().mean()
                     / (true_boundary_negatives.float().mean() + bolmo_config.epsilon)
                 )
             else:
@@ -2327,7 +2327,7 @@ class BolmoDistillTransformer(BolmoTransformer):
                 debiasing_logprobs = F.log_softmax(
                     true_boundary_logits.float() / bolmo_config.temperature,
                     dim=-1
-                )[..., self.end_of_subword_token_blt]  # type: ignore
+                )[..., self.end_of_subword_token_bolmo]  # type: ignore
             else:
                 debiasing_logprobs = None
 
@@ -2411,7 +2411,7 @@ class BolmoDistillTransformer(BolmoTransformer):
                 else:
                     raise ValueError(f"Unknown loss schedule '{schedule}'")
 
-                metrics[f"blt/{loss_name}_loss_schedule_multiplier"] = schedule_multiplier
+                metrics[f"bolmo/{loss_name}_loss_schedule_multiplier"] = schedule_multiplier
             else:
                 schedule_multiplier = 1.0
 
@@ -2510,7 +2510,7 @@ class BolmoDistillTransformer(BolmoTransformer):
 
         if bolmo_config.boundary_mode == "end" and bolmo_config.skip_boundary_before_eos:
             boundary_labels[:, :-1] = torch.where( # no boundary before eos
-                input_ids[:, 1:] == self.eos_token_blt,
+                input_ids[:, 1:] == self.eos_token_bolmo,
                 0.0,
                 boundary_labels[:, :-1]
             )
@@ -2536,7 +2536,7 @@ class BolmoDistillTransformer(BolmoTransformer):
         )
         if self.local_decoder.fuse_boundaries:
             shift_boundary_mask = (boundary_mask[:, 1:] & byte_mask[:, 1:])
-            label_offsets = shift_boundary_mask * self.vocab_size_blt
+            label_offsets = shift_boundary_mask * self.vocab_size_bolmo
             labels[:, :-1] += label_offsets
 
         dtype = h_patch.dtype
@@ -2563,9 +2563,9 @@ class BolmoDistillTransformer(BolmoTransformer):
 
             # replace plain (single byte) logits with byte + boundary logits where boundaries occur
             probs = F.softmax(logits.float(), dim=-1)
-            probs[..., :self.vocab_size_blt] += probs[..., self.vocab_size_blt:self.vocab_size_blt*2]
+            probs[..., :self.vocab_size_bolmo] += probs[..., self.vocab_size_bolmo:self.vocab_size_bolmo*2]
             logits = torch.log(probs)
-            logits[..., self.vocab_size_blt:self.vocab_size_blt*2] = -100_000
+            logits[..., self.vocab_size_bolmo:self.vocab_size_bolmo*2] = -100_000
         elif self.local_decoder.no_boundaries:
             ce_loss, _ = cross_entropy_loss(logits.view(-1, logits.shape[-1]), labels.view(-1))  # type: ignore
 
@@ -2582,7 +2582,7 @@ class BolmoDistillTransformer(BolmoTransformer):
                 boundary_logits = self.lm_head(h_out_for_boundaries, **lm_head_kwargs)
 
                 main_path_logprobs = torch.gather(F.log_softmax(logits[:, :-1].float(), dim=-1), -1, input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
-                main_path_boundary_logprobs = F.log_softmax(boundary_logits.float(), dim=-1)[..., self.end_of_subword_token_blt]  # type: ignore
+                main_path_boundary_logprobs = F.log_softmax(boundary_logits.float(), dim=-1)[..., self.end_of_subword_token_bolmo]  # type: ignore
 
                 y_hat = main_path_logprobs.scatter_add(
                     src=torch.where(
@@ -2719,7 +2719,7 @@ class BolmoDistillTransformer(BolmoTransformer):
         )[:, :-1]
 
         if bolmo_config.eval_add_boundary_logp:
-            main_path_boundary_logprobs = F.log_softmax(boundary_logits.float(), dim=-1)[..., self.end_of_subword_token_blt]  # type: ignore
+            main_path_boundary_logprobs = F.log_softmax(boundary_logits.float(), dim=-1)[..., self.end_of_subword_token_bolmo]  # type: ignore
             # ignore last
             main_path_boundary_logprobs[:, :-1] = (main_path_boundary_logprobs[:, :-1] * patch_mask[:, 2:])
             y_hat = y_hat + main_path_boundary_logprobs

@@ -308,7 +308,7 @@ def get_dolma2_space_mask():
 
     return space_mask
 
-def get_blt_space_mask():
+def get_bolmo_space_mask():
     offset = 4
 
     space_mask = torch.zeros(256 + offset, dtype=torch.bool)
