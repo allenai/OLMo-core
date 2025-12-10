@@ -22,9 +22,9 @@ from transformers.utils import auto_docstring, can_return_tuple
 from transformers.utils.deprecation import deprecate_kwarg
 from transformers.utils.generic import check_model_inputs
 
-from olmo_core.nn.blt.hf.configuration_bolmo import BolmoConfig
-from olmo_core.nn.blt.hf.tokenization_bolmo import ByteTokenizerConfig
-from olmo_core.nn.blt.hf.utils_bolmo import compute_boundary_mask, pad_right, pad_left, MaskState
+from .configuration_bolmo import BolmoConfig
+from .tokenization_bolmo import ByteTokenizerConfig
+from .utils_bolmo import compute_boundary_mask, pad_right, pad_left, MaskState
 
 from xlstm.xlstm_large.model import mLSTMLayer, mLSTMLayerConfig, mLSTMLayerStateType, soft_cap, mLSTMBackendConfig
 
@@ -1137,8 +1137,6 @@ class BolmoForCausalLM(BolmoPreTrainedModel, GenerationMixin):
         boundary_offset = self.model.tokenizer.offset + 256
         eos = self.model.tokenizer.eos_token_id
 
-        max_length = None
-
         boundary_mask = self.model.prefill_boundary_prediction_forward(  # type: ignore
             byte_input_ids,
             expanded_input_ids=expanded_input_ids,
@@ -1163,6 +1161,8 @@ class BolmoForCausalLM(BolmoPreTrainedModel, GenerationMixin):
         max_n_prefill_patches = boundary_mask.sum(-1).max().item()
         tokens_generated_plus_prefilled = max_n_prefill_patches
         bytes_generated = 0
+
+        max_length = max_n_prefill_patches + max_new_tokens
 
         # generation state
         boundary_state = MaskState(boundary_mask[:, -1].clone())
@@ -1291,5 +1291,7 @@ class BolmoForCausalLM(BolmoPreTrainedModel, GenerationMixin):
 
             finished |= stop_hit
             bytes_generated += 1
+
+        return generated
 
 __all__ = ["BolmoForCausalLM", "BolmoModel", "BolmoPreTrainedModel"]

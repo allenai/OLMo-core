@@ -3,7 +3,7 @@ from typing import Any
 
 from transformers.configuration_utils import PretrainedConfig, layer_type_validation
 from transformers.modeling_rope_utils import rope_config_validation
-from olmo_core.nn.blt.hf.tokenization_bolmo import ByteTokenizerConfig
+from .tokenization_bolmo import ByteTokenizerConfig
 
 class BolmoConfig(PretrainedConfig):
     r"""

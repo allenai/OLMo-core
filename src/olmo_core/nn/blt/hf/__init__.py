@@ -6,3 +6,6 @@ from olmo_core.nn.blt.hf.modeling_bolmo import BolmoForCausalLM, BolmoModel
 AutoConfig.register("bolmo", BolmoConfig)
 AutoModelForCausalLM.register(BolmoConfig, BolmoForCausalLM)
 AutoModel.register(BolmoConfig, BolmoModel)
+BolmoConfig.register_for_auto_class("AutoConfig")
+BolmoForCausalLM.register_for_auto_class("AutoModelForCausalLM")
+BolmoModel.register_for_auto_class("AutoModel")
