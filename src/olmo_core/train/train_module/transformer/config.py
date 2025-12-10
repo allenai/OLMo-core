@@ -337,7 +337,7 @@ class TransformerTrainModuleConfig(Config):
         if self.bolmo_config is not None:
             if self.pp_config is not None:
                 raise OLMoConfigurationError(
-                    "BLT training/distillation is not supported with pipeline parallelism"
+                    "Bolmo training/distillation is not supported with pipeline parallelism"
                 )
             return TransformerBolmoTrainModule(
                 model=model,

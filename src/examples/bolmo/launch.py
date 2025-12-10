@@ -122,12 +122,12 @@ def build_config(run_name: str, overrides: List[str]) -> tuple[BeakerLaunchConfi
 
     return (
         BeakerLaunchConfig(
-            name=f"blt-distill-{run_name}-{generate_uuid()[:4]}",
+            name=f"bolmo-distill-{run_name}-{generate_uuid()[:4]}",
             budget="ai2/oe-base",
             cmd=[launch_script, run_name, *overrides],
             task_name="train",
             workspace=os.environ.get("BEAKER_WORKSPACE", "ai2/benjaminm"),
-            description="Distilling OLMo from and to BLT.",
+            description="Distilling Olmo from and to Bolmo.",
             clusters=[cluster],
             env_vars=env_vars,
             num_nodes=int(os.environ.get("BEAKER_NUM_NODES", "1")),

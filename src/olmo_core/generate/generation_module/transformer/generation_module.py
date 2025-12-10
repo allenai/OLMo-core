@@ -1075,7 +1075,7 @@ class BolmoTransformerGenerationModule(TransformerGenerationModule):
             attention_mask = attention_mask.flip(1)
             prefill_cache_leftpad = attention_mask_to_cache_leftpad(attention_mask).to(self.device)
 
-        # BLT divergence: allow .until and handle stop token sequences
+        # allow .until and handle stop token sequences
         stop_token_sequences = []
 
         if generation_config.until is not None:
@@ -1098,7 +1098,7 @@ class BolmoTransformerGenerationModule(TransformerGenerationModule):
         forward_start_time = None
         boundary_state = bolmo_utils.MaskState(boundary_mask[:, -1].clone())
         pad_state = bolmo_utils.MaskState(torch.zeros(batch_size, dtype=torch.bool, device=self.device))
-        next_tokens = torch.full((input_ids.shape[0],), self.model.end_of_subword_token_blt, device=self.device, dtype=torch.long)  # type: ignore
+        next_tokens = torch.full((input_ids.shape[0],), self.model.end_of_subword_token_bolmo, device=self.device, dtype=torch.long)  # type: ignore
         non_boundary_generated_tokens = [[byte_input_ids[example_idx, -1].item()] for example_idx in range(byte_input_ids.shape[0])]
 
         bytes_since_boundary = (boundary_mask.flip(1).cumsum(-1) == 0).sum(-1)
@@ -1125,7 +1125,7 @@ class BolmoTransformerGenerationModule(TransformerGenerationModule):
                 else torch.tensor([x[-1] for x in non_boundary_generated_tokens], device=generated.device, dtype=generated.dtype).unsqueeze(1)
             )
             assert not (
-                (input_ids_for_model == self.model.end_of_subword_token_blt) |
+                (input_ids_for_model == self.model.end_of_subword_token_bolmo) |
                 (input_ids_for_model >= boundary_offset)
             ).any().item()  # type: ignore
             if expand_input_ids:
@@ -1157,7 +1157,7 @@ class BolmoTransformerGenerationModule(TransformerGenerationModule):
             if boundary_state.all():
                 # new token, must not be boundary (never two consecutive boundaries)
                 if not fuse_boundaries:
-                    next_token_logits[..., self.model.end_of_subword_token_blt] = -100_000
+                    next_token_logits[..., self.model.end_of_subword_token_bolmo] = -100_000
                 bytes_since_boundary[:] = 0
             else:
                 boundary_state.selective_add(1, bytes_since_boundary, inv=True)
@@ -1192,7 +1192,7 @@ class BolmoTransformerGenerationModule(TransformerGenerationModule):
                     next_token_logits[..., eos + boundary_offset] += eos_bias
                 elif strategy.startswith("gen_boundary_bias"):
                     boundary_bias = float(strategy.split(":")[-1])
-                    next_token_logits[..., self.model.end_of_subword_token_blt] += boundary_bias
+                    next_token_logits[..., self.model.end_of_subword_token_bolmo] += boundary_bias
                     next_token_logits[..., boundary_offset:] += boundary_bias
                 elif strategy == "greedy_boundary":
                     # force boundary if argmax
@@ -1200,8 +1200,8 @@ class BolmoTransformerGenerationModule(TransformerGenerationModule):
                     if fuse_boundaries:
                         raise NotImplementedError("greedy_boundary not implemented with fuse_boundaries=True")
 
-                    next_token_logits[..., self.model.end_of_subword_token_blt] = torch.where(
-                        next_token_logits.argmax(-1) == self.model.end_of_subword_token_blt,  # type: ignore
+                    next_token_logits[..., self.model.end_of_subword_token_bolmo] = torch.where(
+                        next_token_logits.argmax(-1) == self.model.end_of_subword_token_bolmo,  # type: ignore
                         torch.tensor(100_000, device=next_token_logits.device, dtype=next_token_logits.dtype),
                         torch.tensor(-100_000, device=next_token_logits.device, dtype=next_token_logits.dtype),
                     )
@@ -1242,7 +1242,7 @@ class BolmoTransformerGenerationModule(TransformerGenerationModule):
 
                     non_boundary_generated_tokens[example_idx].append(next_token_cpu)
             else:
-                next_tokens[:] = self.model.end_of_subword_token_blt # type: ignore
+                next_tokens[:] = self.model.end_of_subword_token_bolmo # type: ignore
                 boundary_state.selective_put(new_next_tokens, next_tokens, inv=True)
                 next_tokens_cpu = next_tokens.cpu()
 
@@ -1259,7 +1259,7 @@ class BolmoTransformerGenerationModule(TransformerGenerationModule):
                     for example_idx in range(batch_size):
                         next_token_cpu = next_tokens_cpu[example_idx].item()
 
-                        if next_token_cpu != self.model.end_of_subword_token_blt: # type: ignore
+                        if next_token_cpu != self.model.end_of_subword_token_bolmo: # type: ignore
                             non_boundary_generated_tokens[example_idx].append(next_token_cpu)
 
             is_first_forward = False
@@ -1270,7 +1270,7 @@ class BolmoTransformerGenerationModule(TransformerGenerationModule):
                     raise NotImplementedError("force_boundary_every not implemented with fuse_boundaries=True")
 
                 if (bytes_generated + 1) % force_boundary_every == 0:
-                    next_tokens[:] = self.model.end_of_subword_token_blt # type: ignore
+                    next_tokens[:] = self.model.end_of_subword_token_bolmo # type: ignore
                 else:
                     # doesn't matter but 36 is whitespace in blt tokenizer
                     next_tokens[:] = 36
@@ -1285,7 +1285,7 @@ class BolmoTransformerGenerationModule(TransformerGenerationModule):
                         next_tokens,
                     )
                 else:
-                    next_tokens[stop_mask] = self.model.end_of_subword_token_blt  # type: ignore
+                    next_tokens[stop_mask] = self.model.end_of_subword_token_bolmo  # type: ignore
 
                 if stop_on_exceed_patch_length:
                     finished |= stop_mask
@@ -1294,13 +1294,13 @@ class BolmoTransformerGenerationModule(TransformerGenerationModule):
                     log.warning(f"Forcing boundary since patch exceeds length {max_patch_length_decode}.")
 
             boundary_state = bolmo_utils.MaskState(
-                (next_tokens == self.model.end_of_subword_token_blt) |
+                (next_tokens == self.model.end_of_subword_token_bolmo) |
                 (next_tokens >= boundary_offset) |
                 finished
             )  # type: ignore
             if fuse_boundaries:
                 pad_state = bolmo_utils.MaskState(
-                    (next_tokens == self.model.end_of_subword_token_blt) |
+                    (next_tokens == self.model.end_of_subword_token_bolmo) |
                     finished
                 )
             else:

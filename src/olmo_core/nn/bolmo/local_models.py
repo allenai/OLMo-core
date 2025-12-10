@@ -691,7 +691,7 @@ class LocalEncoder(nn.Module):
         )
 
         # downsample h
-        # DIVERGENCE FROM BLT: + 1 for padding
+        # + 1 for padding
         reduced_h = torch.zeros(
             (h.shape[0], patch_lens.shape[-1] + 1, h.shape[-1]), dtype=h.dtype, device=h.device
         )
@@ -702,9 +702,9 @@ class LocalEncoder(nn.Module):
             reduce=self.cross_attn_init_pooling,
             include_self=False,
         )
-        reduced_h = reduced_h[:, :-1, :]  # DIVERGENCE FROM BLT: remove padding
+        reduced_h = reduced_h[:, :-1, :] # remove padding
 
-        # expand seq length by a factor of k (k=2 or 4 in BLT released checkpoints)
+        # expand seq length by a factor of k (k=2 or k=4 in BLT released checkpoints)
         # i.e. per patch, conduct k cross attentions (each with h heads)
         # NOTE: the need for an upprojection seems to imply an unwanted information bottleneck?
         if self.cross_attn_do_project:

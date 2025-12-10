@@ -1755,7 +1755,7 @@ class BolmoDistillTransformer(BolmoTransformer):
 
         if bolmo_config.do_alm_debiasing:
             if debiasing_logprobs is None:
-                space_mask_padded_blt = F.pad(
+                space_mask_padded_bolmo = F.pad(
                     self.space_mask_bolmo.to(y_hat.device),
                     (0, logprobs.shape[-1] - len(self.space_mask_bolmo)),
                     value=0
@@ -1767,7 +1767,7 @@ class BolmoDistillTransformer(BolmoTransformer):
                 )[None, None, :]
                 patch_end_indices = torch.cumsum(true_patch_lens, dim=1) - 1
                 minus_inf = torch.tensor(float('-inf'), device=logprobs.device)
-                y_space_hat_all = torch.where(space_mask_padded_blt.bool(), logprobs, minus_inf).logsumexp(dim=-1)  
+                y_space_hat_all = torch.where(space_mask_padded_bolmo.bool(), logprobs, minus_inf).logsumexp(dim=-1)  
                 y_space_hat = torch.gather(y_space_hat_all, dim=1, index=patch_end_indices[:, 1:])
                 y_space_true = torch.where(space_mask_padded_dolma2.bool(), teacher_logprobs[:, 1:], minus_inf).logsumexp(dim=-1)
 
