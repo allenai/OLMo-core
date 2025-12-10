@@ -185,8 +185,13 @@ class RunConfigurator(Config, metaclass=ABCMeta):
 
     @abstractmethod
     def plot_lr_schedule(
-        self, num_params: int, *, batch_size: int | None = None, save_path: PathOrStr | None = None
-    ):
+        self,
+        num_params: int,
+        *,
+        batch_size: int | None = None,
+        show: bool = True,
+        save_path: PathOrStr | None = None,
+    ) -> PathOrStr | None:
         """Render a plot of the learning rate schedule."""
         raise NotImplementedError
 
@@ -243,7 +248,7 @@ class ModelLadder(Config):
     def work_dir(self) -> PathOrStr:
         return "./cache" if io.is_url(self.dir) else str(io.join_path(self.dir, "cache"))
 
-    def dry_run(self, size_spec: str):
+    def dry_run(self, size_spec: str, show_plot: bool = True, save_plot: PathOrStr | None = None):
         """
         Do a dry-run, which prints relevant hyperparameters, the required number of devices,
         and a displays a plot of the learning rate schedule.
@@ -282,8 +287,14 @@ class ModelLadder(Config):
             f"with a data-parallel world size of {dp_world_size:,d}.",
             highlight=False,
         )
-        log.info("Plotting LR schedule...")
-        self.run_configurator.plot_lr_schedule(num_params, batch_size=global_batch_size)
+
+        if show_plot or save_plot is not None:
+            log.info("Plotting LR schedule...")
+            path = self.run_configurator.plot_lr_schedule(
+                num_params, batch_size=global_batch_size, show=show_plot, save_path=save_plot
+            )
+            if path is not None:
+                log.info(f"Saved LR schedule plot to '{path}'")
 
     def run(self, size_spec: str, for_benchmarking: bool = False):
         """

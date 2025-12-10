@@ -23,15 +23,28 @@ log = logging.getLogger(__name__)
 
 
 def parse_args() -> argparse.Namespace:
-    commands = [
-        "dry_run",
-        "benchmark",
-        "launch_benchmark",
-        "run",
-        "launch_run",
-        "status",
-        "metrics",
-    ]
+    command_descriptions = {
+        "dry_run": "Simulate the ladder run for a given model size, showing the LR schedule plot.",
+        "benchmark": textwrap.dedent(
+            """
+            Run a benchmark for a given model size locally.
+            This usually isn't invoked directly, but rather via `launch_benchmark`.
+            """
+        ).replace("\n", " "),
+        "launch_benchmark": "Launch a Beaker job to run a benchmark for a given model size.",
+        "run": textwrap.dedent(
+            """
+            Run the ladder for a given model size locally.
+            This usually isn't invoked directly, but rather via `launch_run`.
+            """
+        ).replace("\n", " "),
+        "launch_run": "Launch a Beaker job to run the ladder for a given model size.",
+        "status": "Check the status of the ladder run for a given model size.",
+        "metrics": "Download the metrics for a given model size.",
+        "help": "Show this help message.",
+    }
+
+    commands = list(command_descriptions.keys())
     command = sys.argv[1] if len(sys.argv) >= 2 else "help"
 
     parser = argparse.ArgumentParser(
@@ -40,12 +53,25 @@ def parse_args() -> argparse.Namespace:
         description=textwrap.dedent(
             """
             Launch and manage a ladder experiment on Beaker.
+
+            commands:
+            """
+        )
+        + "\n".join([f"• {cmd}: {desc}" for cmd, desc in command_descriptions.items()])
+        + textwrap.dedent(
+            f"""
+
+            examples:
+            • See a description of all options for a certain command:
+              ❯ python {sys.argv[0]} dry_run --help
+            • Run a dry run for the 190M model size:
+              ❯ python {sys.argv[0]} dry_run --size=190M
             """
         ),
         epilog=textwrap.dedent(
-            f"""
-            examples:
-              ❯ python {sys.argv[0]} dry_run --size=190M
+            """
+            notes:
+            • The command (e.g. 'dry_run', 'launch_run', etc) must always be the first argument.
             """
         ),
         formatter_class=type(  # type: ignore[arg-type]
@@ -57,11 +83,13 @@ def parse_args() -> argparse.Namespace:
             {},
         ),
     )
+
+    # General configuration options.
     parser.add_argument(
-        "cmd",
+        "--name",
         type=str,
-        choices=commands,
-        help="The command to execute.",
+        default="olmo3-ladder",
+        help="A name to assign to the ladder experiment.",
     )
     parser.add_argument(
         "--size",
@@ -71,10 +99,22 @@ def parse_args() -> argparse.Namespace:
         help="The model size.",
     )
     parser.add_argument(
-        "--name",
-        type=str,
-        default="olmo3-ladder",
-        help="A name to assign to the ladder experiment.",
+        "--sequence-length",
+        type=int,
+        default=8 * 1024,
+        help="The sequence length to configure the ladder with.",
+    )
+    parser.add_argument(
+        "--chinchilla-multiple",
+        type=float,
+        default=4.0,
+        help="The Chinchilla multiple to use for the ladder.",
+    )
+    parser.add_argument(
+        "--show-model",
+        action="store_true",
+        help="Show the model config.",
+        default=False,
     )
     parser.add_argument(
         "--cluster",
@@ -89,6 +129,8 @@ def parse_args() -> argparse.Namespace:
         default=64,
         help="The maximum number of GPUs to use for the ladder.",
     )
+
+    # Launch options.
     parser.add_argument(
         "--workspace",
         type=str,
@@ -100,18 +142,6 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default="ai2/oe-base",
         help="The Beaker budget to use.",
-    )
-    parser.add_argument(
-        "--sequence-length",
-        type=int,
-        default=8 * 1024,
-        help="The sequence length to configure the ladder with.",
-    )
-    parser.add_argument(
-        "--chinchilla-multiple",
-        type=float,
-        default=4.0,
-        help="The Chinchilla multiple to use for the ladder.",
     )
     parser.add_argument(
         "--beaker-image",
@@ -136,18 +166,21 @@ def parse_args() -> argparse.Namespace:
         help="""Allow launching with uncommitted changes.""",
         default=False,
     )
-    parser.add_argument(
-        "--show-model",
-        action="store_true",
-        help="Show the model config.",
-        default=False,
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        default=Path("~/Downloads").expanduser(),
-        help="""A local directory to store artifacts in like metrics.""",
-    )
+
+    # Artifacts.
+    if command in {"dry_run", "metrics"}:
+        parser.add_argument(
+            "--output-dir",
+            type=Path,
+            default=Path("~/Downloads").expanduser(),
+            help="""A local directory to store artifacts in like metrics or the LR schedule plot.""",
+        )
+    if command == "dry_run":
+        parser.add_argument(
+            "--show-plot",
+            action="store_true",
+            help="""Open a live display of the LR schedule plot.""",
+        )
 
     # Make sure the command is in the right position, otherwise the way we build the launch
     # config would fail.
@@ -155,7 +188,13 @@ def parse_args() -> argparse.Namespace:
         parser.print_help()
         sys.exit(1)
 
-    return parser.parse_args()
+    if command == "help":
+        parser.print_help()
+        sys.exit(0)
+
+    args = parser.parse_args(sys.argv[2:])
+    args.cmd = command
+    return args
 
 
 def configure_ladder(args: argparse.Namespace) -> ModelLadder:
@@ -241,7 +280,11 @@ def main():
 def dry_run(args: argparse.Namespace):
     prepare_cli_environment()
     ladder = configure_ladder(args)
-    ladder.dry_run(args.size)
+    ladder.dry_run(
+        args.size,
+        show_plot=args.show_plot,
+        save_plot=io.join_path(args.output_dir / f"lr_schedule_{args.size}.png"),
+    )
 
 
 def benchmark(args: argparse.Namespace):

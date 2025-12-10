@@ -130,8 +130,13 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
         return checkpoints
 
     def plot_lr_schedule(
-        self, num_params: int, *, batch_size: int | None = None, save_path: PathOrStr | None = None
-    ):
+        self,
+        num_params: int,
+        *,
+        batch_size: int | None = None,
+        show: bool = True,
+        save_path: PathOrStr | None = None,
+    ) -> PathOrStr | None:
         try:
             import matplotlib.pyplot as plt  # type: ignore
             import pandas as pd  # type: ignore
@@ -203,5 +208,8 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
 
         if save_path is not None:
             plt.savefig(save_path)
-        else:
+
+        if show:
             plt.show()
+
+        return save_path
