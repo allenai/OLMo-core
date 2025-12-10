@@ -26,8 +26,8 @@ from olmo_core.config import Config, DType
 from olmo_core.config import DType
 from olmo_core.data.tokenizer import TokenizerConfig, ByteTokenizerConfig
 from olmo_core.nn.attention import AttentionConfig
-from olmo_core.nn.blt.config import BLTConfig, LocalEncoderConfig, LocalDecoderConfig
-from olmo_core.generate.generation_module import TransformerGenerationModule, BLTTransformerGenerationModule
+from olmo_core.nn.blt.config import BolmoConfig, LocalEncoderConfig, LocalDecoderConfig
+from olmo_core.generate.generation_module import TransformerGenerationModule, BolmoTransformerGenerationModule
 from olmo_core.generate.generation_module.config import GenerationConfig
 from olmo_core.nn.mamba import MambaConfig
 from olmo_core.nn.transformer.config import TransformerBlockConfig, TransformerBlockType, TransformerConfig, TransformerType
@@ -210,10 +210,10 @@ def main(run_name: str, overrides: list[str]):
     log.info(f"Model: {model}")
 
     if MODEL_STYLE == "hnet":
-        generation_module = BLTTransformerGenerationModule(
+        generation_module = BolmoTransformerGenerationModule(
             model,
             tokenizer,
-            BLTConfig(teacher_force_boundaries=True),
+            BolmoConfig(teacher_force_boundaries=True),
             generation_config,
             compile_model=True,
             device=torch.device("cuda"),

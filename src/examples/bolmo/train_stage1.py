@@ -63,7 +63,7 @@ from olmo_core.train.callbacks import (
     WandBCallback,
 )
 from olmo_core.train.common import LoadStrategy
-from olmo_core.nn.blt.config import BLTConfig
+from olmo_core.nn.blt.config import BolmoConfig
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerTrainModuleConfig,
@@ -365,7 +365,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         optim=optim,
         compile_model=True,
         float8_config=Float8Config(enabled=False),
-        blt_config=BLTConfig(
+        bolmo_config=BolmoConfig(
             tokenizer=byte_tokenizer_config,
             losses=losses,
             loss_weights=loss_weights,
@@ -481,9 +481,9 @@ def main(run_name: str, overrides: List[str]):
 
     dataset = config.dataset.build()
 
-    if train_module.blt_config.gradual_boundary_compression_kind == "bpe":  # type: ignore
+    if train_module.bolmo_config.gradual_boundary_compression_kind == "bpe":  # type: ignore
         dataset.enable_compute_merges("bpe")  # type: ignore
-    elif train_module.blt_config.gradual_boundary_compression_kind in {"entropy", "cross_entropy"}:  # type: ignore
+    elif train_module.bolmo_config.gradual_boundary_compression_kind in {"entropy", "cross_entropy"}:  # type: ignore
         entropy_model_config = TransformerConfig.olmo2_190M(vocab_size=TokenizerConfig.dolma2().padded_vocab_size(), dtype=DType.bfloat16)
         entropy_model = entropy_model_config.build(init_device="cpu")
         load_model_and_optim_state(
@@ -491,7 +491,7 @@ def main(run_name: str, overrides: List[str]):
             entropy_model,
         )
         dataset.enable_compute_merges(  # type: ignore
-            train_module.blt_config.gradual_boundary_compression_kind, # type: ignore
+            train_module.bolmo_config.gradual_boundary_compression_kind, # type: ignore
             entropy_model=entropy_model
         )
 
@@ -531,7 +531,7 @@ def main(run_name: str, overrides: List[str]):
             log.info(f"Key {missing_key} was not found in checkpoint, is randomly initialized (this is expected for local encoder/decoder and student lm head).")
 
         # init embeddings + scale appropriately
-        model.fix_init(trainer.train_module.blt_config, EMBEDDING_INIT_PATH or None)  # type: ignore
+        model.fix_init(trainer.train_module.bolmo_config, EMBEDDING_INIT_PATH or None)  # type: ignore
     else:
         if not OLMO_CKPT_PATH:
             # Load BOLMo checkpoint. all keys must match.

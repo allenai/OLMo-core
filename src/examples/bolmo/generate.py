@@ -18,7 +18,7 @@ import torch
 from transformers import AutoTokenizer
 
 from olmo_core.config import DType
-from olmo_core.generate.generation_module import TransformerGenerationModule, BLTTransformerGenerationModule
+from olmo_core.generate.generation_module import TransformerGenerationModule, BolmoTransformerGenerationModule
 from olmo_core.generate.generation_module.config import GenerationConfig
 from olmo_core.utils import get_default_device
 
@@ -130,7 +130,7 @@ def generate_text(
     attention_mask = inputs["attention_mask"].to(device)
 
     # Generate
-    if isinstance(generation_module, BLTTransformerGenerationModule):
+    if isinstance(generation_module, BolmoTransformerGenerationModule):
         kwargs = {
             "stream": stream,
             "until": ["<|endoftext|>"]

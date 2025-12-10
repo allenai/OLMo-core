@@ -9,8 +9,8 @@ from olmo_core.distributed.utils import get_local_tensor, is_distributed
 from olmo_core.data.utils import get_labels, split_batch
 from olmo_core.utils import move_to_device
 from olmo_core.optim import OptimConfig, SkipStepOptimizer
-from olmo_core.nn.blt.config import BLTConfig
-from olmo_core.nn.blt import utils as blt_utils
+from olmo_core.nn.blt.config import BolmoConfig
+from olmo_core.nn.blt import utils as bolmo_utils
 from olmo_core.nn.lm_head import LMOutputWithLoss
 
 from ...common import ReduceType
@@ -18,33 +18,33 @@ from .train_module import TransformerTrainModule
 
 
 class TransformerBLTTrainModule(TransformerTrainModule):
-    def __init__(self, *args, blt_config: BLTConfig, **kwargs):
+    def __init__(self, *args, bolmo_config: BolmoConfig, **kwargs):
         super().__init__(*args, **kwargs)
 
-        self.blt_config = blt_config
+        self.bolmo_config = bolmo_config
 
-        if self.blt_config.tokenizer is None:
-            raise ValueError("BLTTrainModule requires a ByteTokenizerConfig in blt_config.tokenizer")
+        if self.bolmo_config.tokenizer is None:
+            raise ValueError("BLTTrainModule requires a ByteTokenizerConfig in bolmo_config.tokenizer")
 
-        self.tokenizer = self.blt_config.tokenizer.build()
+        self.tokenizer = self.bolmo_config.tokenizer.build()
 
     def _prepare_batch(
         self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any]]:
-        batch["blt_config"] = self.blt_config
+        batch["bolmo_config"] = self.bolmo_config
         batch["step"] = self.trainer.global_step 
 
         # this has had the byte collator + ByteFSLDataset applied, no need to patch
         if "patch_lens" in batch:
             # apply gradual boundary compression - only during training
-            if self.blt_config.gradual_boundary_compression_kind in {"bpe", "entropy", "cross_entropy"}:
+            if self.bolmo_config.gradual_boundary_compression_kind in {"bpe", "entropy", "cross_entropy"}:
                 if "bpe_merges" not in batch:
                     raise ValueError("To use bpe gradual boundary compression, bpe_merges must be computed and included in the batch.")
 
-                if self.trainer.global_step >= self.blt_config.gradual_boundary_compression_steps:
-                    current_ratio = self.blt_config.target_ratio
+                if self.trainer.global_step >= self.bolmo_config.gradual_boundary_compression_steps:
+                    current_ratio = self.bolmo_config.target_ratio
                 else:
-                    current_ratio = self.blt_config.start_ratio + (self.blt_config.target_ratio - self.blt_config.start_ratio) * (self.trainer.global_step / self.blt_config.gradual_boundary_compression_steps)
+                    current_ratio = self.bolmo_config.start_ratio + (self.bolmo_config.target_ratio - self.bolmo_config.start_ratio) * (self.trainer.global_step / self.bolmo_config.gradual_boundary_compression_steps)
 
                 patch_lens = [[l for l in lengths if l > 0] for lengths in batch["patch_lens"].tolist()]
                 n_bytes = (batch["labels"] != self.label_ignore_index).sum(dim=1)
@@ -61,19 +61,19 @@ class TransformerBLTTrainModule(TransformerTrainModule):
                         example_patch_lens[merge_idx + 1] = example_patch_lens[merge_idx + 1] + example_patch_lens[merge_idx + 2]
                         del example_patch_lens[merge_idx + 2]
 
-                patch_lens = blt_utils.pad_right([torch.tensor(lengths) for lengths in patch_lens])
+                patch_lens = bolmo_utils.pad_right([torch.tensor(lengths) for lengths in patch_lens])
 
                 batch["patch_lens"].zero_()
                 batch["patch_lens"][:, :patch_lens.shape[1]] = patch_lens
 
                 batch["original_input_ids"] = None # can't use
-            elif self.blt_config.gradual_boundary_compression_kind == "space":
+            elif self.bolmo_config.gradual_boundary_compression_kind == "space":
                 epsilon = 1e-6
 
-                if self.trainer.global_step >= self.blt_config.gradual_boundary_compression_steps:
-                    current_ratio = self.blt_config.target_ratio
+                if self.trainer.global_step >= self.bolmo_config.gradual_boundary_compression_steps:
+                    current_ratio = self.bolmo_config.target_ratio
                 else:
-                    current_ratio = self.blt_config.start_ratio + (self.blt_config.target_ratio - self.blt_config.start_ratio) * (self.trainer.global_step / self.blt_config.gradual_boundary_compression_steps)
+                    current_ratio = self.bolmo_config.start_ratio + (self.bolmo_config.target_ratio - self.bolmo_config.start_ratio) * (self.trainer.global_step / self.bolmo_config.gradual_boundary_compression_steps)
                 
                 n_bytes = (batch["labels"] != self.label_ignore_index).sum(dim=1)
 
@@ -106,7 +106,7 @@ class TransformerBLTTrainModule(TransformerTrainModule):
 
                     patch_lens.append(example_patch_lens)
 
-                patch_lens = blt_utils.pad_right(patch_lens)
+                patch_lens = bolmo_utils.pad_right(patch_lens)
 
                 batch["patch_lens"].zero_()
                 batch["patch_lens"][:, :patch_lens.shape[1]] = patch_lens
@@ -186,15 +186,15 @@ class TransformerBLTTrainModule(TransformerTrainModule):
                 all_dc_len.append(dc_len)
                 all_cont_len.append(cont_len)
 
-            batch["original_input_ids"] = blt_utils.pad_right(all_original_input_ids).to(device)
-            batch["input_ids"] = blt_utils.pad_right(all_input_ids).to(device)
-            batch["expanded_input_ids"] = blt_utils.pad_right(all_expanded_input_ids).to(device)
-            batch["attention_mask"] = blt_utils.pad_right([torch.ones_like(t) for t in all_input_ids]).to(device)
-            batch["patch_lens"] = blt_utils.pad_right(all_patch_lens).to(device)
-            batch["space_patch_lens"] = blt_utils.pad_right(all_space_patch_lens).to(device)
-            batch["dc_input_ids"] = blt_utils.pad_right(all_dc_input_ids).to(device)
-            batch["ctx"] = blt_utils.pad_right(all_ctx).to(device)
-            batch["continuation"] = blt_utils.pad_right(all_continuation).to(device)
+            batch["original_input_ids"] = bolmo_utils.pad_right(all_original_input_ids).to(device)
+            batch["input_ids"] = bolmo_utils.pad_right(all_input_ids).to(device)
+            batch["expanded_input_ids"] = bolmo_utils.pad_right(all_expanded_input_ids).to(device)
+            batch["attention_mask"] = bolmo_utils.pad_right([torch.ones_like(t) for t in all_input_ids]).to(device)
+            batch["patch_lens"] = bolmo_utils.pad_right(all_patch_lens).to(device)
+            batch["space_patch_lens"] = bolmo_utils.pad_right(all_space_patch_lens).to(device)
+            batch["dc_input_ids"] = bolmo_utils.pad_right(all_dc_input_ids).to(device)
+            batch["ctx"] = bolmo_utils.pad_right(all_ctx).to(device)
+            batch["continuation"] = bolmo_utils.pad_right(all_continuation).to(device)
             batch["ctx_len"] = torch.tensor(all_ctx_len, dtype=torch.long).to(device)
             batch["dc_len"] = torch.tensor(all_dc_len, dtype=torch.long).to(device)
             batch["cont_len"] = torch.tensor(all_cont_len, dtype=torch.long).to(device)
@@ -223,12 +223,12 @@ class TransformerBLTTrainModule(TransformerTrainModule):
                 "train/masked instances (%)", (~instance_mask).float().mean(), ReduceType.mean
             )
 
-        if self.blt_config.patching == "dolma2":
+        if self.bolmo_config.patching == "dolma2":
             patch_lens = batch["patch_lens"]
-        elif self.blt_config.patching == "space":
+        elif self.bolmo_config.patching == "space":
             patch_lens = batch["space_patch_lens"]
         else:
-            raise ValueError(f"Unknown patching type: {self.blt_config.patching}")
+            raise ValueError(f"Unknown patching type: {self.bolmo_config.patching}")
 
         # Calculate how many tokens are going to be used in the loss.
         batch_num_tokens_for_loss = move_to_device(

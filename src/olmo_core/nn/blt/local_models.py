@@ -16,7 +16,7 @@ from olmo_core.config import Config
 from olmo_core.io import resource_path
 from olmo_core.nn.transformer.config import TransformerDataParallelWrappingStrategy
 from olmo_core.nn.transformer.block import TransformerBlockBase
-import olmo_core.nn.blt.utils as blt_utils
+import olmo_core.nn.blt.utils as bolmo_utils
 from olmo_core.nn.buffer_cache import BufferCache
 from .embed import add_hash_embeddings
 from .utils import MaskState, log1mexp
@@ -681,8 +681,8 @@ class LocalEncoder(nn.Module):
             patch_lens,
             torch.zeros_like(patch_lens),
         )
-        patch_ids = blt_utils.lengths_to_ids(patch_lens, h.shape[1])
-        cross_attn_mask = blt_utils.cross_attn_mask(
+        patch_ids = bolmo_utils.lengths_to_ids(patch_lens, h.shape[1])
+        cross_attn_mask = bolmo_utils.cross_attn_mask(
             patch_ids,
             patch_lens,
             patches_as_queries=True,

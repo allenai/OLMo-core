@@ -35,7 +35,7 @@ from torch.utils.data import Dataset
 from transformers import AutoTokenizer
 
 from olmo_core.exceptions import OLMoConfigurationError, OLMoEnvironmentError
-import olmo_core.nn.blt.utils as blt_utils
+import olmo_core.nn.blt.utils as bolmo_utils
 
 from ..aliases import PathOrStr
 from ..config import Config, StrEnum
@@ -780,7 +780,7 @@ def prepare_byte_example(
     item["space_patch_lens"] = space_patch_lengths
 
     if compute_merge_kind == "bpe":
-        item["bpe_merges"] = blt_utils.compute_bpe_merges(
+        item["bpe_merges"] = bolmo_utils.compute_bpe_merges(
             original_input_ids.tolist(),
             max_compression_ratio=max_compression_ratio,
         )

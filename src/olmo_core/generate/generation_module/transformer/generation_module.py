@@ -37,9 +37,9 @@ from olmo_core.generate.sampling import select_next_token
 from olmo_core.generate.utils import selective_log_softmax
 from olmo_core.io import is_url, join_path, normalize_path
 from olmo_core.nn.attention import Attention, AttentionBackendName
-from olmo_core.nn.blt.config import BLTConfig
-from olmo_core.nn.blt import utils as blt_utils
-import olmo_core.nn.blt.utils as blt_utils
+from olmo_core.nn.blt.config import BolmoConfig
+from olmo_core.nn.blt import utils as bolmo_utils
+import olmo_core.nn.blt.utils as bolmo_utils
 from olmo_core.nn.mamba import Mamba
 from olmo_core.nn.xlstm import XLSTM
 from olmo_core.nn.fla import FLA
@@ -575,7 +575,7 @@ class TransformerGenerationModule(GenerationModule):
                 # don't need teacher
                 transformer_config.teacher_config = None  # type: ignore
 
-            return BLTTransformerGenerationModule.from_checkpoint(
+            return BolmoTransformerGenerationModule.from_checkpoint(
                 checkpoint_dir=checkpoint_dir,
                 transformer_config=transformer_config,
                 generation_config=generation_config,
@@ -659,12 +659,12 @@ class TransformerGenerationModule(GenerationModule):
         return generation_module
 
 
-class BLTTransformerGenerationModule(TransformerGenerationModule):
+class BolmoTransformerGenerationModule(TransformerGenerationModule):
     def __init__(
         self,
         model: Transformer,
         tokenizer: ByteTokenizer,
-        blt_config: BLTConfig,
+        bolmo_config: BolmoConfig,
         generation_config: GenerationConfig,
         compile_model: bool = False,
         float8_config: Optional[Float8Config] = None,
@@ -687,8 +687,8 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
             load_key_mapping=load_key_mapping,
         )
         self.tokenizer = tokenizer
-        filtered_kwargs = {k: v for k, v in kwargs.items() if hasattr(blt_config, k)}
-        self.blt_config = blt_config.replace(**filtered_kwargs)
+        filtered_kwargs = {k: v for k, v in kwargs.items() if hasattr(bolmo_config, k)}
+        self.bolmo_config = bolmo_config.replace(**filtered_kwargs)
 
     def prepare_inference_cache(self, batch_size: int, max_seq_len: int):
         blocks = [
@@ -783,7 +783,7 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
             expanded_input_ids = []
             for example_idx in range(input_ids.shape[0]):
                 expanded_input_ids.append(torch.tensor(self.tokenizer.expand_byte_ids(input_ids[example_idx].tolist()), dtype=torch.long))
-            expanded_input_ids = blt_utils.pad_right(expanded_input_ids, value=self.tokenizer.pad_token_id, multiple_of=1)
+            expanded_input_ids = bolmo_utils.pad_right(expanded_input_ids, value=self.tokenizer.pad_token_id, multiple_of=1)
             expanded_input_ids = move_to_device(expanded_input_ids, self.device)
         else:
             expanded_input_ids = None
@@ -799,7 +799,7 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
             labels=labels,
             patch_lens=patch_lens,
             expanded_input_ids=expanded_input_ids,
-            blt_config=self.blt_config,
+            bolmo_config=self.bolmo_config,
             **kwargs
         )[0].logits[:, :original_length, :]
 
@@ -855,8 +855,8 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         self.prepare_inference_cache(batch_size, n_prefill + n_generate)
         prefill_cache_leftpad = attention_mask_to_cache_leftpad(token_attention_mask).to(self.device)
 
-        zero_mask_state = blt_utils.MaskState(torch.zeros(batch_size, dtype=torch.bool, device=self.device))
-        one_mask_state = blt_utils.MaskState(torch.ones(batch_size, dtype=torch.bool, device=self.device))
+        zero_mask_state = bolmo_utils.MaskState(torch.zeros(batch_size, dtype=torch.bool, device=self.device))
+        one_mask_state = bolmo_utils.MaskState(torch.ones(batch_size, dtype=torch.bool, device=self.device))
 
         # prefill
         byte_mask = torch.ones_like(input_ids, dtype=torch.bool, device=input_ids.device)
@@ -880,7 +880,7 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
             cache_leftpad=prefill_cache_leftpad,
             boundary_state=zero_mask_state,
             pad_state=zero_mask_state,
-            blt_config=self.blt_config,
+            bolmo_config=self.bolmo_config,
         )
         next_token_probs = F.softmax(next_token_logits, dim=-1)
         next_token = next_token_logits.argmax(-1)
@@ -900,7 +900,7 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                 logits_to_keep=1,
                 boundary_state=boundary_state,
                 pad_state=zero_mask_state,
-                blt_config=self.blt_config,
+                bolmo_config=self.bolmo_config,
             )
             next_token_probs = F.softmax(next_token_logits, dim=-1)
             next_token = next_token_probs.argmax(-1)
@@ -984,14 +984,14 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                 expanded_input_ids.append(torch.tensor(self.tokenizer.expand_byte_ids(current_byte_input_ids), dtype=torch.long))
             patch_lens.append(torch.tensor(current_patch_lens, dtype=torch.long))
 
-        byte_input_ids = blt_utils.pad_left(byte_input_ids, value=self.tokenizer.pad_token_id, multiple_of=1)
-        patch_lens = blt_utils.pad_left(patch_lens, value=1, multiple_of=1)
+        byte_input_ids = bolmo_utils.pad_left(byte_input_ids, value=self.tokenizer.pad_token_id, multiple_of=1)
+        patch_lens = bolmo_utils.pad_left(patch_lens, value=1, multiple_of=1)
 
         byte_input_ids = move_to_device(byte_input_ids, self.device)
         patch_lens = move_to_device(patch_lens, self.device)
         
         if expanded_input_ids:
-            expanded_input_ids = blt_utils.pad_left(expanded_input_ids, value=self.tokenizer.pad_token_id, multiple_of=1)
+            expanded_input_ids = bolmo_utils.pad_left(expanded_input_ids, value=self.tokenizer.pad_token_id, multiple_of=1)
             expanded_input_ids = move_to_device(expanded_input_ids, self.device)
         else:
             expanded_input_ids = None
@@ -1030,7 +1030,7 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
             patch_lens=patch_lens,
             expanded_input_ids=expanded_input_ids,
             sequence_start_indices=sequence_start_indices,
-            blt_config=self.blt_config,
+            bolmo_config=self.bolmo_config,
         )
 
         if fuse_boundaries:
@@ -1096,8 +1096,8 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
             colour="blue",
         )
         forward_start_time = None
-        boundary_state = blt_utils.MaskState(boundary_mask[:, -1].clone())
-        pad_state = blt_utils.MaskState(torch.zeros(batch_size, dtype=torch.bool, device=self.device))
+        boundary_state = bolmo_utils.MaskState(boundary_mask[:, -1].clone())
+        pad_state = bolmo_utils.MaskState(torch.zeros(batch_size, dtype=torch.bool, device=self.device))
         next_tokens = torch.full((input_ids.shape[0],), self.model.end_of_subword_token_blt, device=self.device, dtype=torch.long)  # type: ignore
         non_boundary_generated_tokens = [[byte_input_ids[example_idx, -1].item()] for example_idx in range(byte_input_ids.shape[0])]
 
@@ -1150,7 +1150,7 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                 pad_state=pad_state,
                 sequence_start_indices=sequence_start_indices,
                 logits_to_keep=1,
-                blt_config=self.blt_config,
+                bolmo_config=self.bolmo_config,
                 cache_leftpad=cache_leftpad if generation_config.use_cache else None,
             )
 
@@ -1164,8 +1164,8 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
 
             temperature = generation_config.temperature
 
-            if isinstance(self.blt_config.inference_sampling_strategies, str):
-                inference_sampling_strategies = self.blt_config.inference_sampling_strategies.split(",")
+            if isinstance(self.bolmo_config.inference_sampling_strategies, str):
+                inference_sampling_strategies = self.bolmo_config.inference_sampling_strategies.split(",")
             else:
                 inference_sampling_strategies = []
 
@@ -1293,13 +1293,13 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                 if stop_mask.any().item():  # type: ignore
                     log.warning(f"Forcing boundary since patch exceeds length {max_patch_length_decode}.")
 
-            boundary_state = blt_utils.MaskState(
+            boundary_state = bolmo_utils.MaskState(
                 (next_tokens == self.model.end_of_subword_token_blt) |
                 (next_tokens >= boundary_offset) |
                 finished
             )  # type: ignore
             if fuse_boundaries:
-                pad_state = blt_utils.MaskState(
+                pad_state = bolmo_utils.MaskState(
                     (next_tokens == self.model.end_of_subword_token_blt) |
                     finished
                 )
@@ -1383,7 +1383,7 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         #                 input_ids=generated,
         #                 labels=get_labels({"input_ids": generated}),
         #                 patch_lens=patch_lens,
-        #                 blt_config=self.blt_config,
+        #                 bolmo_config=self.bolmo_config,
         #             )
         #         # last logit is potentially wrong since last_token_is_boundary=True in reference, so skip it
         #         assert (torch.argmax(logits[:, -bytes_generated-1:], -1) == reference_out.logits[:, -bytes_generated-1:-1].argmax(-1)).all()
@@ -1452,7 +1452,7 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
 
             generated_subword_ids.append(torch.tensor(subword_tokens, device=input_ids.device, dtype=torch.long))
 
-        generated_subword_ids = blt_utils.pad_right(
+        generated_subword_ids = bolmo_utils.pad_right(
             generated_subword_ids,
             value=self.tokenizer.hf_tokenizer.pad_token_id,
             multiple_of=1,
@@ -1474,7 +1474,7 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         checkpoint_dir: PathOrStr,
         *,
         transformer_config: Optional[TransformerConfig] = None,
-        blt_config: Optional[BLTConfig] = None,
+        bolmo_config: Optional[BolmoConfig] = None,
         generation_config: Optional[GenerationConfig] = None,
         process_group: Optional[ProcessGroup] = None,
         work_dir: Optional[PathOrStr] = None,
@@ -1520,8 +1520,8 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
                     transformer_config = TransformerConfig.from_dict(config_dict["model"])
                 if tokenizer_config is None:
                     tokenizer_config = TokenizerConfig.from_dict(config_dict["dataset"]["tokenizer"])
-                if blt_config is None:
-                    blt_config = BLTConfig.from_dict(config_dict["train_module"]["blt_config"])
+                if bolmo_config is None:
+                    bolmo_config = BolmoConfig.from_dict(config_dict["train_module"]["bolmo_config"])
             except KeyError as e:
                 raise OLMoConfigurationError(
                     f"Failed to load config from checkpoint at {config_path}: missing required field {e}"
@@ -1578,13 +1578,13 @@ class BLTTransformerGenerationModule(TransformerGenerationModule):
         generation_module = cls(
             model,
             cast(ByteTokenizerConfig, tokenizer_config).build(),
-            cast(BLTConfig, blt_config),
+            cast(BolmoConfig, bolmo_config),
             generation_config,
             **kwargs
         )
 
         # log later since **kwargs might overwrite
-        log_or_print(log, f"{generation_module.blt_config}")
+        log_or_print(log, f"{generation_module.bolmo_config}")
 
         # Load checkpoint
         generation_module.load_checkpoint(

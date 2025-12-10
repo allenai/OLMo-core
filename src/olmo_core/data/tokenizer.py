@@ -5,7 +5,7 @@ import numpy as np
 from functools import lru_cache
 
 from ..config import Config, StrEnum
-from ..nn.blt import utils as blt_utils
+from ..nn.blt import utils as bolmo_utils
 
 __all__ = [
     "TokenizerConfig",
@@ -295,7 +295,7 @@ class ByteTokenizer:
             elif value == self.hf_tokenizer.pad_token_id and self.pad_token_id is not None:
                 byte_sequence = [self.pad_token_id]
             else:
-                byte_sequence = [self.offset + i for i in blt_utils.chars_to_bytes(key)]
+                byte_sequence = [self.offset + i for i in bolmo_utils.chars_to_bytes(key)]
 
             assert self.byte_sequences.get(value) is None
             self.byte_sequences[value] = byte_sequence

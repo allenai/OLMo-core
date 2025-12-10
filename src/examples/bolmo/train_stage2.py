@@ -61,7 +61,7 @@ from olmo_core.train.callbacks import (
     WandBCallback,
 )
 from olmo_core.train.common import LoadStrategy
-from olmo_core.nn.blt.config import BLTConfig
+from olmo_core.nn.blt.config import BolmoConfig
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerTrainModuleConfig,
@@ -370,7 +370,7 @@ def build_config(run_name: str, overrides: List[str]) -> ExperimentConfig:
         optim=optim,
         compile_model=True,
         float8_config=Float8Config(enabled=False),
-        blt_config=BLTConfig(
+        bolmo_config=BolmoConfig(
             tokenizer=byte_tokenizer_config,
             losses=["ce","boundary"],
             loss_weights=[1.0,1.0],
@@ -481,16 +481,16 @@ def main(run_name: str, overrides: List[str]):
 
     dataset = config.dataset.build()
 
-    if train_module.blt_config.gradual_boundary_compression_kind == "bpe":  # type: ignore
+    if train_module.bolmo_config.gradual_boundary_compression_kind == "bpe":  # type: ignore
         dataset.enable_compute_merges("bpe")  # type: ignore
-    elif train_module.blt_config.gradual_boundary_compression_kind in {"entropy", "cross_entropy"}:  # type: ignore
+    elif train_module.bolmo_config.gradual_boundary_compression_kind in {"entropy", "cross_entropy"}:  # type: ignore
         entropy_path_replace = (
             ENTROPY_PATH_SUB,
-            CROSS_ENTROPY_PATH_ROOT if train_module.blt_config.gradual_boundary_compression_kind == "cross_entropy" else ENTROPY_PATH_ROOT  # type: ignore
+            CROSS_ENTROPY_PATH_ROOT if train_module.bolmo_config.gradual_boundary_compression_kind == "cross_entropy" else ENTROPY_PATH_ROOT  # type: ignore
         )
 
         dataset.enable_compute_merges(  # type: ignore
-            train_module.blt_config.gradual_boundary_compression_kind, # type: ignore
+            train_module.bolmo_config.gradual_boundary_compression_kind, # type: ignore
             entropy_path_replace=entropy_path_replace,
         )
 
@@ -596,7 +596,7 @@ def main(run_name: str, overrides: List[str]):
             log.info(f"Key {missing_key} was not found in checkpoint, is randomly initialized (this is expected for local encoder/decoder and student lm head).")
 
         # do not support path for heuristic embeddings for now, just rescale encoder out
-        model.fix_init(trainer.train_module.blt_config, None)  # type: ignore
+        model.fix_init(trainer.train_module.bolmo_config, None)  # type: ignore
 
     # TODO(benjaminm): this is not a nice place?
     register_fsdp_forward_method(model, "student_forward")

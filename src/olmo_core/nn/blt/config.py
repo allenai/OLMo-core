@@ -7,7 +7,7 @@ from olmo_core.config import Config, DType
 from olmo_core.data.tokenizer import ByteTokenizerConfig
 
 @dataclass
-class BLTConfig(Config):
+class BolmoConfig(Config):
     """Config for distillation into BLT."""
     tokenizer: Optional[ByteTokenizerConfig] = None
     losses: list[str] = field(default_factory=lambda: ["ce"])

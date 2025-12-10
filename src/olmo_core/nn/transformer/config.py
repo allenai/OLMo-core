@@ -95,12 +95,12 @@ class TransformerType(StrEnum):
 
     blt = "blt"
     """
-    ➡️ :class:`BLTTransformer`
+    ➡️ :class:`BolmoTransformer`
     """
 
     blt_distill = "blt_distill"
     """
-    ➡️ :class:`BLTDistillTransformer`
+    ➡️ :class:`BolmoDistillTransformer`
     """
 
 
@@ -341,10 +341,10 @@ class TransformerConfig(Config):
         :param init_device: The device to put the parameters on during initialization. In a
             distributed setting it usually makes sense to set this to "meta".
         """
-        from .model import MoETransformer, NormalizedTransformer, Transformer, BLTTransformer, BLTDistillTransformer
+        from .model import MoETransformer, NormalizedTransformer, Transformer, BolmoTransformer, BolmoDistillTransformer
 
         if self.name not in {TransformerType.blt, TransformerType.blt_distill}:
-            # not implemented for BLTTransformer
+            # not implemented for BolmoTransformer
             log.info(
                 f"Building transformer with {self.num_params:,d} total params, "
                 f"{self.num_non_embedding_params:,d} non-embedding params"
@@ -396,15 +396,15 @@ class TransformerConfig(Config):
         elif self.name == TransformerType.blt:
             if self.local_encoder is None or self.local_decoder is None:
                 raise OLMoConfigurationError(
-                    f"Both local_encoder and local_decoder must be specified for BLTTransformer, got {self.local_encoder} and {self.local_decoder}"
+                    f"Both local_encoder and local_decoder must be specified for BolmoTransformer, got {self.local_encoder} and {self.local_decoder}"
                 )
 
             if self.teacher_config is not None:
                 raise OLMoConfigurationError(
-                    f"Teacher config must be None for BLTTransformer (use BLTDistillTransformer)."
+                    f"Teacher config must be None for BolmoTransformer (use BolmoDistillTransformer)."
                 )
 
-            model = BLTTransformer(
+            model = BolmoTransformer(
                 d_model=self.d_model,
                 vocab_size=self.vocab_size,
                 n_layers=self.n_layers,
@@ -422,10 +422,10 @@ class TransformerConfig(Config):
         elif self.name == TransformerType.blt_distill:
             if self.local_encoder is None or self.local_decoder is None:
                 raise OLMoConfigurationError(
-                    f"Both local_encoder and local_decoder must be specified for BLTTransformer, got {self.local_encoder} and {self.local_decoder}"
+                    f"Both local_encoder and local_decoder must be specified for BolmoTransformer, got {self.local_encoder} and {self.local_decoder}"
                 )
 
-            model = BLTDistillTransformer(
+            model = BolmoDistillTransformer(
                 d_model=self.d_model,
                 vocab_size=self.vocab_size,
                 n_layers=self.n_layers,
@@ -472,7 +472,7 @@ class TransformerConfig(Config):
         The total number of parameters that a model from this config would have.
         """
         if self.name in {TransformerType.blt, TransformerType.blt_distill}:
-            raise NotImplementedError("BLTTransformer config does not support num_params")
+            raise NotImplementedError("BolmoTransformer config does not support num_params")
 
         num_params = 0
 
@@ -501,7 +501,7 @@ class TransformerConfig(Config):
         The total number of active parameters that a model from this config would have.
         """
         if self.name in {TransformerType.blt, TransformerType.blt_distill}:
-            raise NotImplementedError("BLTTransformer config does not support num_active_params")
+            raise NotImplementedError("BolmoTransformer config does not support num_active_params")
 
         num_active_params = 0
 
@@ -530,7 +530,7 @@ class TransformerConfig(Config):
         The number of parameters excluding embedding parameters.
         """
         if self.name in {TransformerType.blt, TransformerType.blt_distill}:
-            raise NotImplementedError("BLTTransformer config does not support num_non_embedding_params")
+            raise NotImplementedError("BolmoTransformer config does not support num_non_embedding_params")
 
         return self.num_params - self.d_model * self.vocab_size
 
@@ -540,7 +540,7 @@ class TransformerConfig(Config):
         The number of active parameters excluding embedding parameters.
         """
         if self.name in {TransformerType.blt, TransformerType.blt_distill}:
-            raise NotImplementedError("BLTTransformer config does not support num_active_non_embedding_params")
+            raise NotImplementedError("BolmoTransformer config does not support num_active_non_embedding_params")
 
         return self.num_active_params - self.d_model * self.vocab_size
 

@@ -12,7 +12,7 @@ from olmo_core.nn.transformer.model import (
     MoETransformer,
     NormalizedTransformer,
     Transformer,
-    BLTTransformer,
+    BolmoTransformer,
 )
 
 try:
@@ -25,7 +25,7 @@ try:
 except ImportError:
     Olmo3Config = None
 
-from olmo_core.nn.blt.hf.configuration_bolmo import BolmoConfig
+from olmo_core.nn.blt.hf import configuration_bolmo
 
 
 def _get_flex_olmo_config(model: MoETransformer) -> PretrainedConfig:
@@ -79,7 +79,7 @@ def _get_flex_olmo_config(model: MoETransformer) -> PretrainedConfig:
     )
 
 
-def _get_bolmo_config(model: BLTTransformer) -> BolmoConfig:
+def _get_bolmo_config(model: BolmoTransformer) -> configuration_bolmo.BolmoConfig:
     subword_vocab_size: int = model.local_encoder.expanded_embeddings.weight.shape[0] if model.local_encoder.add_expanded_embeddings else 0  # type: ignore
     first_global_block = model.blocks["0"]
     first_local_block = model.local_encoder.blocks["0"]
@@ -95,7 +95,7 @@ def _get_bolmo_config(model: BLTTransformer) -> BolmoConfig:
         # olmo 2 - all full attention
         layer_types = ["full_attention"] * model.n_layers
 
-    return BolmoConfig(
+    return configuration_bolmo.BolmoConfig(
         vocab_size=model.vocab_size,
         hidden_size=model.d_model,
         intermediate_size=first_global_block.feed_forward.hidden_size,
@@ -127,7 +127,7 @@ def get_hf_config(model: Transformer) -> PretrainedConfig:
     if isinstance(model, MoETransformer):
         return _get_flex_olmo_config(model)
 
-    if isinstance(model, BLTTransformer):
+    if isinstance(model, BolmoTransformer):
         return _get_bolmo_config(model)
 
     blocks = list(model.blocks.values())

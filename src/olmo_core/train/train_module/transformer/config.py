@@ -26,7 +26,7 @@ from olmo_core.nn.transformer import (
     TransformerActivationCheckpointingMode,
     TransformerDataParallelWrappingStrategy,
 )
-from olmo_core.nn.blt.config import BLTConfig
+from olmo_core.nn.blt.config import BolmoConfig
 from olmo_core.optim import OptimConfig
 from olmo_core.optim.scheduler import Scheduler
 
@@ -297,7 +297,7 @@ class TransformerTrainModuleConfig(Config):
 
     # Loss function settings.
 
-    blt_config: Optional[BLTConfig] = None
+    bolmo_config: Optional[BolmoConfig] = None
     z_loss_multiplier: Optional[float] = None
 
     # Checkpoint settings.
@@ -334,7 +334,7 @@ class TransformerTrainModuleConfig(Config):
         if (state_dict_load_opts := kwargs.pop("state_dict_load_opts", None)) is not None:
             kwargs["state_dict_load_opts"] = dist_cp_sd.StateDictOptions(**state_dict_load_opts)
 
-        if self.blt_config is not None:
+        if self.bolmo_config is not None:
             if self.pp_config is not None:
                 raise OLMoConfigurationError(
                     "BLT training/distillation is not supported with pipeline parallelism"

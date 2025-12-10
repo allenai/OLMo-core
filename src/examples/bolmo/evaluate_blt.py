@@ -36,7 +36,7 @@ from olmo_core.train import (
     prepare_training_environment,
     teardown_training_environment,
 )
-from olmo_core.nn.blt.config import BLTConfig
+from olmo_core.nn.blt.config import BolmoConfig
 from olmo_core.utils import seed_all
 
 NUM_WORKERS = 16
@@ -63,34 +63,34 @@ EVAL_TASKS = [
 ]
 # BLT_ARCH = "blt_7b"
 # BLT_CKPT_PATH = "/weka/oe-training-default/benjaminm/checkpoints/blt_7b/model_and_optim"
-# BLT_CONFIG_PATH = "../blt/hf-weights/blt_7b/params.json"
+# bolmo_config_PATH = "../blt/hf-weights/blt_7b/params.json"
 BLT_ARCH = "hnet_1stage_XL"
 BLT_CKPT_PATH = "/tmp/hnet_export/model_and_optim"
-BLT_CONFIG_PATH = None#"../blt/hf-weights/blt_1b/params.json"
+bolmo_config_PATH = None#"../blt/hf-weights/blt_1b/params.json"
 BLT_ENTROPY_CKPT_PATH = None#"../blt/hf-weights/entropy_model"
 OUTPUT = None#"../blt/hf-weights/blt_1b/metrics.json"
 
 log = logging.getLogger(__name__)
 
 def _load_patcher():
-    if BLT_CONFIG_PATH is not None and BLT_ENTROPY_CKPT_PATH is not None:
+    if bolmo_config_PATH is not None and BLT_ENTROPY_CKPT_PATH is not None:
         from bytelatent.data.file_util import get_fs
         from bytelatent.args import TrainArgs
 
-        fs = get_fs(BLT_CONFIG_PATH)
-        train_args = TrainArgs.model_validate_json(fs.read_text(BLT_CONFIG_PATH))
+        fs = get_fs(bolmo_config_PATH)
+        train_args = TrainArgs.model_validate_json(fs.read_text(bolmo_config_PATH))
         patcher_args = train_args.data.patcher_args.model_copy(deep=True)
         patcher_args.realtime_patching = True
         patcher_args.entropy_model_checkpoint_dir = BLT_ENTROPY_CKPT_PATH
 
         return patcher_args.build()
     else:
-        log.warning("No BLT_CONFIG_PATH or BLT_ENTROPY_CKPT_PATH provided, not using patcher.")
+        log.warning("No bolmo_config_PATH or BLT_ENTROPY_CKPT_PATH provided, not using patcher.")
         return None
 
 # prepare batch similar to TransformerBLTTrainModule._prepare_batch
 def _prepare_batch(batch, tokenizer, patcher=None):
-    train_module_duck = cast(TransformerBLTTrainModule, SimpleNamespace(tokenizer=tokenizer, blt_config=None))
+    train_module_duck = cast(TransformerBLTTrainModule, SimpleNamespace(tokenizer=tokenizer, bolmo_config=None))
     input_ids, labels, batch = TransformerBLTTrainModule._prepare_batch(train_module_duck, copy.deepcopy(batch))
 
     if patcher is not None:

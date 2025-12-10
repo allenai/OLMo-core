@@ -33,7 +33,7 @@ from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
 from olmo_core.utils import get_default_device, mark_dynamic, move_to_device
-from olmo_core.nn.blt.config import BLTConfig
+from olmo_core.nn.blt.config import BolmoConfig
 from olmo_core.nn.functional.cross_entropy_loss import cross_entropy_loss
 from olmo_core.nn.attention import FlashAttention2Backend
 
@@ -48,7 +48,7 @@ from ..functional import l2_normalize
 from ..lm_head import LMHeadConfig, LMOutputWithLoss
 from ..moe import MoEBase
 from ..blt.config import LocalEncoderConfig, LocalDecoderConfig
-from ..blt import utils as blt_utils
+from ..blt import utils as bolmo_utils
 from ..rope import RoPEBuffers, RotaryEmbeddingBase
 from ..utils import selective_checkpointing_context_fn
 from .block import (
@@ -1107,7 +1107,7 @@ def log1mexp(x):
     return torch.where(x < log_half, torch.log1p(-torch.exp(x)), torch.log(-torch.expm1(x)))
 
 
-class BLTTransformer(Transformer):
+class BolmoTransformer(Transformer):
     def __init__(
         self,
         *,
@@ -1157,9 +1157,9 @@ class BLTTransformer(Transformer):
         self.local_decoder = local_decoder.build(vocab_size, d_global_model=d_model)
 
          # TODO(benjaminm): generalize
-        self.space_mask_dolma2 = blt_utils.get_dolma2_space_mask()
+        self.space_mask_dolma2 = bolmo_utils.get_dolma2_space_mask()
         self.eos_token_dolma2 = 100257
-        self.space_mask_blt = blt_utils.get_blt_space_mask()
+        self.space_mask_blt = bolmo_utils.get_blt_space_mask()
         self.end_of_subword_token_blt = 3
         self.eos_token_blt = 1
         self.vocab_size_blt = (4 + 256)
@@ -1276,7 +1276,7 @@ class BLTTransformer(Transformer):
         z_loss_multiplier: Optional[float] = None,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         return_logits: Optional[bool] = None,
-        blt_config: Optional[BLTConfig] = None,
+        bolmo_config: Optional[BolmoConfig] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any], Dict[int, Dict[str, Any]], Dict[str, Any], Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
         input_ids, labels, all_block_kwargs, per_block_kwargs, lm_head_kwargs = super()._prepare_inputs(
@@ -1299,12 +1299,12 @@ class BLTTransformer(Transformer):
         original_input_ids: Optional[torch.Tensor] = None
 
         if (patch_lens := kwargs.pop("patch_lens", None)) is not None:
-            if blt_config is not None and blt_config.patching == "space":
+            if bolmo_config is not None and bolmo_config.patching == "space":
                 patch_lens = kwargs["space_patch_lens"]
                 assert patch_lens is not None, "space_patch_lens must be present if patch_lens is present"
 
             patch_lens = move_to_device(patch_lens, self.device)
-            patch_ids = blt_utils.lengths_to_ids(patch_lens, input_ids.shape[-1])
+            patch_ids = bolmo_utils.lengths_to_ids(patch_lens, input_ids.shape[-1])
             original_input_ids = kwargs.pop("original_input_ids", None) # must be present if patch_lens is present
 
         local_encoder_kwargs["patch_lens"] = patch_lens
@@ -1319,7 +1319,7 @@ class BLTTransformer(Transformer):
         if (teacher_inputs_embeds := kwargs.pop("teacher_inputs_embeds", None)) is not None:
             extra_kwargs["teacher_inputs_embeds"] = move_to_device(teacher_inputs_embeds, self.device)
 
-        if blt_config is not None and blt_config.patching != "dolma2":
+        if bolmo_config is not None and bolmo_config.patching != "dolma2":
             # can't use attributes relying on dolma2 patching
             extra_kwargs["original_input_ids"] = None
 
@@ -1413,7 +1413,7 @@ class BLTTransformer(Transformer):
         return self.lm_head(h_out, **lm_head_kwargs)
 
 
-class BLTDistillTransformer(BLTTransformer):
+class BolmoDistillTransformer(BolmoTransformer):
     def __init__(self, *args, teacher: Optional[Transformer], share_blocks: bool, use_teacher_embs_with_vocab_size: Optional[int], dtype, init_device, **kwargs):
         super().__init__(*args, dtype=dtype, **kwargs)
 
@@ -1513,7 +1513,7 @@ class BLTDistillTransformer(BLTTransformer):
         """
         out_hidden_states = []
 
-        if isinstance(self.teacher, BLTTransformer):
+        if isinstance(self.teacher, BolmoTransformer):
             raise NotImplementedError()
         elif isinstance(self.teacher, Transformer):
             input_ids, labels, all_block_kwargs, per_block_kwargs, lm_head_kwargs = self.teacher._prepare_inputs(
@@ -1584,7 +1584,7 @@ class BLTDistillTransformer(BLTTransformer):
         else:
             return None, ([], None, None)
 
-    def fix_init(self, blt_config, embedding_init_path: Optional[str] = None):
+    def fix_init(self, bolmo_config, embedding_init_path: Optional[str] = None):
         # fsdp requires fwd through root first
         dummy_size = 128
         self(
@@ -1593,7 +1593,7 @@ class BLTDistillTransformer(BLTTransformer):
             labels=torch.zeros((1, dummy_size), dtype=torch.long, device=self.device),
             patch_lens=torch.ones((1, dummy_size), dtype=torch.long, device=self.device),
             original_input_ids=torch.zeros((1, dummy_size), dtype=torch.long, device=self.device),
-            blt_config=blt_config
+            bolmo_config=bolmo_config
         )
         teacher_embs = self.teacher.embeddings.weight if self.teacher is not None else self.teacher_embeddings.weight  # type: ignore
         self.local_encoder.fix_init(embedding_init_path, teacher_embs)  # type: ignore
@@ -1601,30 +1601,30 @@ class BLTDistillTransformer(BLTTransformer):
         for block in list(self.local_encoder.blocks.values()) + list(self.local_decoder.blocks.values()):  # type: ignore
             if hasattr(block, "xlstm"):
                 # disable input gate
-                block.xlstm.igate_preact.bias.data.fill_(blt_config.xlstm_igate_bias_init)  # type: ignore
+                block.xlstm.igate_preact.bias.data.fill_(bolmo_config.xlstm_igate_bias_init)  # type: ignore
 
-    def _rep_compare_fn(self, blt_config: BLTConfig):
-        if blt_config.rep_compare_fn == "l2":
+    def _rep_compare_fn(self, bolmo_config: BolmoConfig):
+        if bolmo_config.rep_compare_fn == "l2":
             def l2_compare_fn(x, y):
                 return torch.linalg.norm(x - y, dim=-1) / math.sqrt(x.shape[-1])
 
             rep_compare_fn = l2_compare_fn
-        elif blt_config.rep_compare_fn == "cos_dist":
+        elif bolmo_config.rep_compare_fn == "cos_dist":
             def cos_dist_compare_fn(x, y):
                 return 1 - F.cosine_similarity(x, y, dim=-1)
 
             rep_compare_fn = cos_dist_compare_fn
-        elif blt_config.rep_compare_fn == "l2_rmsnorm":
+        elif bolmo_config.rep_compare_fn == "l2_rmsnorm":
             def l2_rmsnorm_compare_fn(x, y):
                 uncentered_y_std = torch.sqrt(
-                    torch.mean(torch.square(y), dim=-1, keepdim=True).clip(blt_config.epsilon)
+                    torch.mean(torch.square(y), dim=-1, keepdim=True).clip(bolmo_config.epsilon)
                 )
 
                 return torch.linalg.norm((x - y) / uncentered_y_std, dim=-1) / math.sqrt(x.shape[-1])
 
             rep_compare_fn = l2_rmsnorm_compare_fn
         else:
-            raise ValueError(f"Unknown distillation rep_compare_fn '{blt_config.rep_compare_fn}'")
+            raise ValueError(f"Unknown distillation rep_compare_fn '{bolmo_config.rep_compare_fn}'")
 
         return rep_compare_fn
 
@@ -1634,10 +1634,10 @@ class BLTDistillTransformer(BLTTransformer):
         teacher_embeds,
         byte_mask,
         true_patch_ids,
-        blt_config,
+        bolmo_config,
         metrics={},
     ):
-        rep_compare_fn = self._rep_compare_fn(blt_config)
+        rep_compare_fn = self._rep_compare_fn(bolmo_config)
 
         teacher_embs_repeated = torch.gather(
             teacher_embeds,
@@ -1660,7 +1660,7 @@ class BLTDistillTransformer(BLTTransformer):
         boundary_logprobs,
         boundary_mask,
         byte_mask,
-        blt_config,
+        bolmo_config,
         metrics={},
     ):
         true_ratio = (boundary_mask * byte_mask).float().mean() / byte_mask.float().mean()
@@ -1668,8 +1668,8 @@ class BLTDistillTransformer(BLTTransformer):
 
         ratio_loss = (
             (1 - true_ratio) * (1 - average_prob) +
-            (true_ratio) * (average_prob) * (blt_config.target_ratio - 1)
-        ) * blt_config.target_ratio / (blt_config.target_ratio - 1)
+            (true_ratio) * (average_prob) * (bolmo_config.target_ratio - 1)
+        ) * bolmo_config.target_ratio / (bolmo_config.target_ratio - 1)
         metrics["blt/ratio_loss"] = ratio_loss
         return ratio_loss
 
@@ -1684,13 +1684,13 @@ class BLTDistillTransformer(BLTTransformer):
         true_patch_ids: torch.Tensor,
         true_patch_lens: torch.Tensor,
         debiasing_logprobs: Optional[torch.Tensor],
-        blt_config: BLTConfig,
+        bolmo_config: BolmoConfig,
         metrics={},
     ):
-        if blt_config.div_fn == "kl":
+        if bolmo_config.div_fn == "kl":
             def kl_div_fn(log_y_true, log_y_pred):
-                log_y_true = (log_y_true.float() / blt_config.binarization_temp) - blt_config.epsilon
-                log_y_pred = (log_y_pred.float() / blt_config.binarization_temp) - blt_config.epsilon
+                log_y_true = (log_y_true.float() / bolmo_config.binarization_temp) - bolmo_config.epsilon
+                log_y_pred = (log_y_pred.float() / bolmo_config.binarization_temp) - bolmo_config.epsilon
 
                 e = (
                     torch.exp(log_y_true) * log_y_true
@@ -1704,10 +1704,10 @@ class BLTDistillTransformer(BLTTransformer):
                 return (e - ce)
 
             div_fn = kl_div_fn
-        elif blt_config.div_fn == "reverse_kl":
+        elif bolmo_config.div_fn == "reverse_kl":
             def reverse_kl_div_fn(log_y_true, log_y_pred):
-                log_y_true = (log_y_true.float() / blt_config.binarization_temp) - blt_config.epsilon
-                log_y_pred = (log_y_pred.float() / blt_config.binarization_temp) - blt_config.epsilon
+                log_y_true = (log_y_true.float() / bolmo_config.binarization_temp) - bolmo_config.epsilon
+                log_y_pred = (log_y_pred.float() / bolmo_config.binarization_temp) - bolmo_config.epsilon
 
                 e = (
                     torch.exp(log_y_pred) * log_y_pred
@@ -1721,22 +1721,22 @@ class BLTDistillTransformer(BLTTransformer):
                 return (e - ce)
 
             div_fn = reverse_kl_div_fn
-        elif blt_config.div_fn == "tvd":
+        elif bolmo_config.div_fn == "tvd":
             def tvd_div_fn(log_y_true, log_y_pred):
-                log_y_true = (log_y_true.float() / blt_config.binarization_temp) - blt_config.epsilon
-                log_y_pred = (log_y_pred.float() / blt_config.binarization_temp) - blt_config.epsilon
+                log_y_true = (log_y_true.float() / bolmo_config.binarization_temp) - bolmo_config.epsilon
+                log_y_pred = (log_y_pred.float() / bolmo_config.binarization_temp) - bolmo_config.epsilon
 
                 # TODO(benjaminm): how does this scale with temp?
                 return torch.abs(torch.exp(log_y_true) - torch.exp(log_y_pred))
 
             div_fn = tvd_div_fn
-        elif blt_config.div_fn == "tvd_temp_limit":
+        elif bolmo_config.div_fn == "tvd_temp_limit":
             def tvd_temp_limit_div_fn(log_y_true, log_y_pred):
                 return torch.abs(log_y_true - log_y_pred)
 
             div_fn = tvd_temp_limit_div_fn
         else:
-            raise ValueError(f"Unknown distillation div_fn '{blt_config.div_fn}'")
+            raise ValueError(f"Unknown distillation div_fn '{bolmo_config.div_fn}'")
 
         main_path_patch_logprobs = torch.zeros((patch_mask.shape[0], patch_mask.shape[1]), device=main_path_logprobs.device, dtype=main_path_logprobs.dtype)
         #assert (patch_ids[:, 2:] - 1).max().item() < main_path_patch_logprobs.shape[1]
@@ -1753,7 +1753,7 @@ class BLTDistillTransformer(BLTTransformer):
         y_hat = main_path_patch_logprobs[:, :-1]
         y_true = teacher_main_path_logprobs
 
-        if blt_config.do_alm_debiasing:
+        if bolmo_config.do_alm_debiasing:
             if debiasing_logprobs is None:
                 space_mask_padded_blt = F.pad(
                     self.space_mask_blt.to(y_hat.device),
@@ -1777,9 +1777,9 @@ class BLTDistillTransformer(BLTTransformer):
                 y_hat = y_hat + debiasing_logprobs
 
         local_decoder_loss_simple = (div_fn(y_true, y_hat) * patch_mask[:, :-1]).mean()
-        metrics["blt/local_decoder_teacher_mean_p_simple"] = (torch.exp(y_true) * patch_mask[:, :-1]).mean() / (patch_mask[:, :-1].float().mean() + blt_config.epsilon)
-        metrics["blt/local_decoder_loss_simple"] = local_decoder_loss_simple / (patch_mask[:, :-1].float().mean() + blt_config.epsilon)
-        metrics["blt/local_decoder_mae_simple"] = (torch.abs(y_true - y_hat) * patch_mask[:, :-1]).mean() / (patch_mask[:, :-1].float().mean() + blt_config.epsilon)
+        metrics["blt/local_decoder_teacher_mean_p_simple"] = (torch.exp(y_true) * patch_mask[:, :-1]).mean() / (patch_mask[:, :-1].float().mean() + bolmo_config.epsilon)
+        metrics["blt/local_decoder_loss_simple"] = local_decoder_loss_simple / (patch_mask[:, :-1].float().mean() + bolmo_config.epsilon)
+        metrics["blt/local_decoder_mae_simple"] = (torch.abs(y_true - y_hat) * patch_mask[:, :-1]).mean() / (patch_mask[:, :-1].float().mean() + bolmo_config.epsilon)
 
         return local_decoder_loss_simple, metrics
 
@@ -1790,7 +1790,7 @@ class BLTDistillTransformer(BLTTransformer):
         patch_mask,
         seq_sorted_indices,
         true_patch_ids,
-        blt_config,
+        bolmo_config,
         student_hidden_states=None,
         teacher_hidden_states=None,
         metrics={}
@@ -1812,20 +1812,20 @@ class BLTDistillTransformer(BLTTransformer):
             index=teacher_indices_to_select,
         )
 
-        rep_compare_fn = self._rep_compare_fn(blt_config)
+        rep_compare_fn = self._rep_compare_fn(bolmo_config)
 
         elementwise_local_encoder_loss = rep_compare_fn(h_patch, aligned_teacher_embeds)
         local_encoder_loss = (elementwise_local_encoder_loss * mask.float()).mean()
-        metrics["blt/local_encoder_loss"] = local_encoder_loss / (mask.float().mean() + blt_config.epsilon)
+        metrics["blt/local_encoder_loss"] = local_encoder_loss / (mask.float().mean() + bolmo_config.epsilon)
         metrics["blt/local_encoder_cos_sim"] = (F.cosine_similarity(
             h_patch.float(),
             aligned_teacher_embeds.float(),
             dim=-1,
-        ) * mask.float()).mean() / (mask.float().mean() + blt_config.epsilon)
+        ) * mask.float()).mean() / (mask.float().mean() + bolmo_config.epsilon)
 
-        local_encoder_loss *= blt_config.encoder_loss_no_lookahead_weight
+        local_encoder_loss *= bolmo_config.encoder_loss_no_lookahead_weight
 
-        for lookahead_idx in range(blt_config.encoder_loss_lookahead):
+        for lookahead_idx in range(bolmo_config.encoder_loss_lookahead):
             assert student_hidden_states is not None
             assert teacher_hidden_states is not None
             
@@ -1840,14 +1840,14 @@ class BLTDistillTransformer(BLTTransformer):
                 current_aligned_teacher_embeds,
             )
             local_encoder_loss_lookahead = (elementwise_local_encoder_loss * mask.float()).mean()
-            metrics[f"blt/local_encoder_loss_lookahead_{lookahead_idx}"] = local_encoder_loss_lookahead / (mask.float().mean() + blt_config.epsilon)
+            metrics[f"blt/local_encoder_loss_lookahead_{lookahead_idx}"] = local_encoder_loss_lookahead / (mask.float().mean() + bolmo_config.epsilon)
             metrics[f"blt/local_encoder_cos_sim_lookahead_{lookahead_idx}"] = (F.cosine_similarity(
                 student_hidden_states[lookahead_idx].float(),
                 current_aligned_teacher_embeds.float(),
                 dim=-1,
-            ) * mask.float()).mean() / (mask.float().mean() + blt_config.epsilon)
+            ) * mask.float()).mean() / (mask.float().mean() + bolmo_config.epsilon)
 
-            local_encoder_loss += local_encoder_loss_lookahead * blt_config.encoder_loss_lookahead_weights[lookahead_idx]
+            local_encoder_loss += local_encoder_loss_lookahead * bolmo_config.encoder_loss_lookahead_weights[lookahead_idx]
 
         return local_encoder_loss
 
@@ -1895,15 +1895,15 @@ class BLTDistillTransformer(BLTTransformer):
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         patch_loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         return_logits: Optional[bool] = None,
-        blt_config: Optional[BLTConfig] = None,
+        bolmo_config: Optional[BolmoConfig] = None,
         **kwargs,
     ):
-        if blt_config is None:
-            raise ValueError("`blt_config` must be provided for BLTDistillTransformer.forward")
+        if bolmo_config is None:
+            raise ValueError("`bolmo_config` must be provided for BolmoDistillTransformer.forward")
 
-        skip_blocks = blt_config.skip_blocks
-        skip_teacher_blocks = blt_config.skip_teacher_blocks
-        skip_teacher = blt_config.skip_teacher
+        skip_blocks = bolmo_config.skip_blocks
+        skip_teacher_blocks = bolmo_config.skip_teacher_blocks
+        skip_teacher = bolmo_config.skip_teacher
 
         input_ids, labels, all_block_kwargs, per_block_kwargs, lm_head_kwargs, local_encoder_kwargs, local_decoder_kwargs, extra_kwargs = self._prepare_inputs(
             input_ids,
@@ -1912,7 +1912,7 @@ class BLTDistillTransformer(BLTTransformer):
             loss_reduction=loss_reduction,
             z_loss_multiplier=z_loss_multiplier,
             loss_div_factor=loss_div_factor,
-            blt_config=blt_config,
+            bolmo_config=bolmo_config,
             return_logits=True,  # needed for distillation
             **kwargs,
         )
@@ -1944,14 +1944,14 @@ class BLTDistillTransformer(BLTTransformer):
 
         boundary_labels = torch.zeros_like(byte_mask, dtype=torch.float32)
 
-        if blt_config.boundary_mode == "end":
+        if bolmo_config.boundary_mode == "end":
             boundary_labels.scatter_(1, patch_end_indices, 1.0)
-        elif blt_config.boundary_mode == "start":
+        elif bolmo_config.boundary_mode == "start":
             boundary_labels.scatter_(1, patch_start_indices, 1.0)
         else:
-            raise ValueError(f"Unknown boundary mode '{blt_config.boundary_mode}'")
+            raise ValueError(f"Unknown boundary mode '{bolmo_config.boundary_mode}'")
 
-        if blt_config.boundary_mode == "end" and blt_config.skip_boundary_before_eos:
+        if bolmo_config.boundary_mode == "end" and bolmo_config.skip_boundary_before_eos:
             boundary_labels[:, :-1] = torch.where( # no boundary before eos
                 input_ids[:, 1:] == self.eos_token_blt,
                 0.0,
@@ -1962,9 +1962,9 @@ class BLTDistillTransformer(BLTTransformer):
 
         h_byte, h_patch, boundary_logprobs, boundary_mask = self.local_encoder(
             input_ids,
-            boundary_predictor_backprop_through_encoder=blt_config.boundary_predictor_backprop_through_encoder,
-            teacher_force_boundaries=blt_config.teacher_force_boundaries,
-            boundary_threshold=blt_config.boundary_threshold,
+            boundary_predictor_backprop_through_encoder=bolmo_config.boundary_predictor_backprop_through_encoder,
+            teacher_force_boundaries=bolmo_config.teacher_force_boundaries,
+            boundary_threshold=bolmo_config.boundary_threshold,
             true_boundary_mask=boundary_labels > 0.5,
             **local_encoder_kwargs,
         )
@@ -1993,7 +1993,7 @@ class BLTDistillTransformer(BLTTransformer):
             labels[:, :-1] += label_offsets
 
         # compute the boundary loss
-        elementwise_boundary_loss = blt_utils.binary_cross_entropy_with_logprobs(
+        elementwise_boundary_loss = bolmo_utils.binary_cross_entropy_with_logprobs(
             boundary_logprobs,
             boundary_labels,
         )
@@ -2001,7 +2001,7 @@ class BLTDistillTransformer(BLTTransformer):
         boundary_byte_mask[:, byte_mask.shape[1]-self.local_encoder.boundary_predictor_lookahead:] = False  # type: ignore
 
         # Optionally balance the loss between positive and negative classes
-        if blt_config.balance_boundary_loss:
+        if bolmo_config.balance_boundary_loss:
             pos_mask = (boundary_labels > 0) & boundary_byte_mask
             neg_mask = (boundary_labels == 0) & boundary_byte_mask
 
@@ -2009,8 +2009,8 @@ class BLTDistillTransformer(BLTTransformer):
             neg_count = neg_mask.float().sum()
 
             # Compute positive and negative losses separately
-            pos_loss = (elementwise_boundary_loss * pos_mask).sum() / (pos_count + blt_config.epsilon)
-            neg_loss = (elementwise_boundary_loss * neg_mask).sum() / (neg_count + blt_config.epsilon)
+            pos_loss = (elementwise_boundary_loss * pos_mask).sum() / (pos_count + bolmo_config.epsilon)
+            neg_loss = (elementwise_boundary_loss * neg_mask).sum() / (neg_count + bolmo_config.epsilon)
 
             # Balance the contributions equally (50% each)
             boundary_loss = 0.5 * pos_loss + 0.5 * neg_loss
@@ -2034,8 +2034,8 @@ class BLTDistillTransformer(BLTTransformer):
         false_boundary_positives = (boundary_preds & ~boundary_targets & boundary_byte_mask).float().sum()
         false_boundary_negatives = (~boundary_preds & boundary_targets & boundary_byte_mask).float().sum()
 
-        boundary_precision = true_boundary_positives / (true_boundary_positives + false_boundary_positives + blt_config.epsilon)
-        boundary_recall = true_boundary_positives / (true_boundary_positives + false_boundary_negatives + blt_config.epsilon)
+        boundary_precision = true_boundary_positives / (true_boundary_positives + false_boundary_positives + bolmo_config.epsilon)
+        boundary_recall = true_boundary_positives / (true_boundary_positives + false_boundary_negatives + bolmo_config.epsilon)
 
         metrics["blt/boundary_loss"] = boundary_loss / boundary_byte_mask.float().mean()
         metrics["blt/boundary_acc"] = boundary_acc / boundary_byte_mask.float().mean()
@@ -2046,8 +2046,8 @@ class BLTDistillTransformer(BLTTransformer):
 
         # First, run the teacher.
         if not skip_teacher:
-            with (torch.no_grad() if blt_config.teacher_blocks_no_grad else nullcontext()):
-                assert not isinstance(self.teacher, BLTTransformer)
+            with (torch.no_grad() if bolmo_config.teacher_blocks_no_grad else nullcontext()):
+                assert not isinstance(self.teacher, BolmoTransformer)
                 input_ids_for_teacher = torch.concatenate(
                     [
                         torch.full(
@@ -2062,7 +2062,7 @@ class BLTDistillTransformer(BLTTransformer):
                 )
                 teacher_loss_mask = shifted_patch_lens != 0
 
-                if blt_config.use_student_patch_reps_for_teacher:
+                if bolmo_config.use_student_patch_reps_for_teacher:
                     inputs_embeds_for_teacher = h_patch
                 else:
                     inputs_embeds_for_teacher = None
@@ -2074,10 +2074,10 @@ class BLTDistillTransformer(BLTTransformer):
                     return_logits=True,
                     skip_blocks=skip_blocks or skip_teacher_blocks,
                     zero_bos=True,
-                    hidden_states_to_return=list(range(blt_config.encoder_loss_lookahead)),
+                    hidden_states_to_return=list(range(bolmo_config.encoder_loss_lookahead)),
                     **kwargs,
                 )
-                if blt_config.boundary_mode == "start":
+                if bolmo_config.boundary_mode == "start":
                     if teacher_last_hidden_state is not None:
                         # in this case, the teacher bos embedding corresponds to two student embeddings
                         # once for bos, and once for the first patch start, so we duplicate the first position
@@ -2108,11 +2108,11 @@ class BLTDistillTransformer(BLTTransformer):
 
                 teacher_logits = teacher_out.logits if teacher_out is not None else None
                 if teacher_logits is not None:
-                    teacher_logprobs = F.log_softmax(teacher_logits.float() / blt_config.temperature, dim=-1) # type: ignore
+                    teacher_logprobs = F.log_softmax(teacher_logits.float() / bolmo_config.temperature, dim=-1) # type: ignore
                     teacher_main_path_logprobs = torch.gather(teacher_logprobs[:, :-1], -1, input_ids_for_teacher[:, 1:].unsqueeze(-1)).squeeze(-1)
 
                     # behind flag since it's compute intensive
-                    if blt_config.compute_teacher_ce:
+                    if bolmo_config.compute_teacher_ce:
                         teacher_labels = F.pad(
                             input_ids_for_teacher[:, 1:],
                             (0, 1),
@@ -2142,11 +2142,11 @@ class BLTDistillTransformer(BLTTransformer):
 
         # Run each block.
         if not skip_blocks:
-            if blt_config.use_oracle_patch_reps:
+            if bolmo_config.use_oracle_patch_reps:
                 assert teacher_last_hidden_state is not None
-                assert blt_config.teacher_force_boundaries
+                assert bolmo_config.teacher_force_boundaries
 
-                if blt_config.skip_boundary_before_eos:
+                if bolmo_config.skip_boundary_before_eos:
                     # need to align
                     teacher_indices_to_select = torch.gather(
                         local_encoder_kwargs["patch_ids"],
@@ -2167,11 +2167,11 @@ class BLTDistillTransformer(BLTTransformer):
                 else:
                     h_patch_after_global = teacher_last_hidden_state
 
-                with (torch.no_grad() if blt_config.student_blocks_no_grad else nullcontext()):
+                with (torch.no_grad() if bolmo_config.student_blocks_no_grad else nullcontext()):
                     _, student_hidden_states = self._block_forward(
                         h_patch,
-                        hidden_states_to_return=list(range(blt_config.encoder_loss_lookahead)),
-                        limit=blt_config.encoder_loss_lookahead,
+                        hidden_states_to_return=list(range(bolmo_config.encoder_loss_lookahead)),
+                        limit=bolmo_config.encoder_loss_lookahead,
                         all_block_kwargs=all_block_kwargs,
                         per_block_kwargs=per_block_kwargs,
                     )
@@ -2179,17 +2179,17 @@ class BLTDistillTransformer(BLTTransformer):
                 dtype = h_patch.dtype
                 global_dtype = torch.bfloat16 if isinstance(self.blocks["0"].attention.backend, FlashAttention2Backend) else dtype  # type: ignore
 
-                with (torch.no_grad() if blt_config.student_blocks_no_grad else nullcontext()):
+                with (torch.no_grad() if bolmo_config.student_blocks_no_grad else nullcontext()):
                     h_patch_after_global, student_hidden_states = self._block_forward(
                         h_patch.to(global_dtype),
-                        hidden_states_to_return=list(range(blt_config.encoder_loss_lookahead)),
+                        hidden_states_to_return=list(range(bolmo_config.encoder_loss_lookahead)),
                         all_block_kwargs=all_block_kwargs,
                         per_block_kwargs=per_block_kwargs,
                     )
                 h_patch_after_global = h_patch_after_global.to(dtype)
                 student_hidden_states = [x.to(dtype) for x in student_hidden_states]
 
-            if blt_config.decoder_backprop_through_encoder:
+            if bolmo_config.decoder_backprop_through_encoder:
                 h_byte_for_decoder = h_byte
                 h_patch_after_global_for_decoder = h_patch_after_global
                 h_patch_for_decoder = h_patch
@@ -2198,7 +2198,7 @@ class BLTDistillTransformer(BLTTransformer):
                 h_patch_after_global_for_decoder = h_patch_after_global.detach()
                 h_patch_for_decoder = h_patch.detach()
 
-            if blt_config.decoder_backprop_through_boundary_predictor:
+            if bolmo_config.decoder_backprop_through_boundary_predictor:
                 boundary_logprobs_for_decoder = boundary_logprobs if boundary_logprobs is not None else None
             else:
                 boundary_logprobs_for_decoder = boundary_logprobs.detach() if boundary_logprobs is not None else None
@@ -2221,7 +2221,7 @@ class BLTDistillTransformer(BLTTransformer):
                 all_boundary_logits = self.lm_head(h_out_for_all_boundaries, **lm_head_kwargs)
 
             logits = self.lm_head(h_out_for_logits, **lm_head_kwargs)
-            logprobs = F.log_softmax(logits.float() / blt_config.temperature, dim=-1)
+            logprobs = F.log_softmax(logits.float() / bolmo_config.temperature, dim=-1)
             main_path_logprobs = torch.gather(logprobs, -1, labels[:, :-1].clip(min=0).unsqueeze(-1)).squeeze(-1)
         else:
             student_hidden_states = None
@@ -2243,7 +2243,7 @@ class BLTDistillTransformer(BLTTransformer):
                 assert true_boundary_logits is not None
                 assert all_boundary_logits is not None
 
-                if blt_config.merge_boundary_loss:
+                if bolmo_config.merge_boundary_loss:
                     boundary_ce_loss, _ = cross_entropy_loss(
                         true_boundary_logits.view(-1, true_boundary_logits.shape[-1]),
                         torch.full(
@@ -2260,36 +2260,36 @@ class BLTDistillTransformer(BLTTransformer):
                 else:
                     all_output_boundary_logprobs = F.log_softmax(all_boundary_logits, dim=-1)[..., self.end_of_subword_token_blt]
 
-                    if blt_config.use_output_boundary_jsd:
-                        elementwise_boundary_jsd_loss = blt_utils.jsd(
+                    if bolmo_config.use_output_boundary_jsd:
+                        elementwise_boundary_jsd_loss = bolmo_utils.jsd(
                             all_output_boundary_logprobs,
                             boundary_logprobs[:, 1:],
                         )
                         output_boundary_loss = (elementwise_boundary_jsd_loss * boundary_byte_mask[:, 1:]).mean()
-                        metrics["blt/output_boundary_loss"] = output_boundary_loss / (boundary_byte_mask[:, 1:].float().mean() + blt_config.epsilon)
+                        metrics["blt/output_boundary_loss"] = output_boundary_loss / (boundary_byte_mask[:, 1:].float().mean() + bolmo_config.epsilon)
                     else:
                         # shift one
-                        elementwise_boundary_ce_loss = blt_utils.binary_cross_entropy_with_logprobs(
+                        elementwise_boundary_ce_loss = bolmo_utils.binary_cross_entropy_with_logprobs(
                             all_output_boundary_logprobs,
                             boundary_mask[:, 1:],
                         )
                         output_boundary_loss = (elementwise_boundary_ce_loss * boundary_byte_mask[:, 1:]).mean()
-                        metrics["blt/output_boundary_loss"] = output_boundary_loss / (boundary_byte_mask[:, 1:].float().mean() + blt_config.epsilon)
+                        metrics["blt/output_boundary_loss"] = output_boundary_loss / (boundary_byte_mask[:, 1:].float().mean() + bolmo_config.epsilon)
 
                     metrics["blt/output_boundary_logmae"] = (
                         torch.abs(all_output_boundary_logprobs - boundary_logprobs[:, 1:]) * boundary_byte_mask[:, 1:]
-                    ).mean() / (boundary_byte_mask[:, 1:].float().mean() + blt_config.epsilon)
+                    ).mean() / (boundary_byte_mask[:, 1:].float().mean() + bolmo_config.epsilon)
 
                 true_boundary_positives = boundary_mask[:, 1:] & boundary_byte_mask[:, 1:]
                 true_boundary_negatives = (~boundary_mask[:, 1:]) & boundary_byte_mask[:, 1:]
 
                 metrics["blt/boundary_true_positives"] = (
                     ((all_boundary_logits.argmax(-1) == self.end_of_subword_token_blt) & true_boundary_positives).float().mean()
-                    / (true_boundary_positives.float().mean() + blt_config.epsilon)
+                    / (true_boundary_positives.float().mean() + bolmo_config.epsilon)
                 )
                 metrics["blt/boundary_true_negatives"] = (
                     ((all_boundary_logits.argmax(-1) != self.end_of_subword_token_blt) & true_boundary_negatives).float().mean()
-                    / (true_boundary_negatives.float().mean() + blt_config.epsilon)
+                    / (true_boundary_negatives.float().mean() + bolmo_config.epsilon)
                 )
             else:
                 output_boundary_loss = torch.nan
@@ -2298,14 +2298,14 @@ class BLTDistillTransformer(BLTTransformer):
             ce_loss = torch.nan
 
         # could also have some version of the encoder loss for BLT teacher but not implemented for now
-        if not skip_teacher and not isinstance(self.teacher, BLTTransformer) and teacher_embeds is not None:
+        if not skip_teacher and not isinstance(self.teacher, BolmoTransformer) and teacher_embeds is not None:
             local_encoder_loss = self._compute_local_encoder_loss(
                 h_patch=h_patch,
                 teacher_embeds=teacher_embeds,
                 patch_mask=patch_mask,
                 seq_sorted_indices=seq_sorted_indices,
                 true_patch_ids=local_encoder_kwargs["patch_ids"],
-                blt_config=blt_config,
+                bolmo_config=bolmo_config,
                 student_hidden_states=student_hidden_states,
                 teacher_hidden_states=teacher_hidden_states,
                 metrics=metrics,
@@ -2321,11 +2321,11 @@ class BLTDistillTransformer(BLTTransformer):
             assert teacher_embeds is not None
             assert teacher_loss_mask is not None
 
-            if not self.local_decoder.fuse_boundaries and not self.local_decoder.no_boundaries and blt_config.teacher_force_boundaries:
+            if not self.local_decoder.fuse_boundaries and not self.local_decoder.no_boundaries and bolmo_config.teacher_force_boundaries:
                 assert true_boundary_logits is not None
 
                 debiasing_logprobs = F.log_softmax(
-                    true_boundary_logits.float() / blt_config.temperature,
+                    true_boundary_logits.float() / bolmo_config.temperature,
                     dim=-1
                 )[..., self.end_of_subword_token_blt]  # type: ignore
             else:
@@ -2341,20 +2341,20 @@ class BLTDistillTransformer(BLTTransformer):
                 local_encoder_kwargs["patch_ids"],
                 local_encoder_kwargs["patch_lens"],
                 debiasing_logprobs,
-                blt_config,
+                bolmo_config,
                 metrics,
             )
         else:
             local_decoder_loss = torch.nan
 
         # H-Net style embedding loss
-        if teacher_embeds is not None and not isinstance(self.teacher, BLTTransformer):
+        if teacher_embeds is not None and not isinstance(self.teacher, BolmoTransformer):
             hnet_embed_loss = self._compute_hnet_embed_loss(
                 h_byte=h_byte,
                 teacher_embeds=teacher_embeds,
                 byte_mask=byte_mask,
                 true_patch_ids=local_encoder_kwargs["patch_ids"],
-                blt_config=blt_config,
+                bolmo_config=bolmo_config,
                 metrics=metrics,
             )
         else:
@@ -2366,7 +2366,7 @@ class BLTDistillTransformer(BLTTransformer):
                 boundary_logprobs,
                 boundary_mask,
                 boundary_byte_mask,
-                blt_config,
+                bolmo_config,
                 metrics=metrics,
             )
         else:
@@ -2386,7 +2386,7 @@ class BLTDistillTransformer(BLTTransformer):
             combined_loss_div_factor = None
 
         # TODO(benjaminm): fix if possible by accumulating div factor across batches and dividing at the end
-        if blt_config.merge_boundary_loss:
+        if bolmo_config.merge_boundary_loss:
             ce_loss = self._finalize_loss(ce_loss, loss_div_factor=combined_loss_div_factor)
         else:
             ce_loss = self._finalize_loss(ce_loss, loss_div_factor=loss_div_factor)
@@ -2398,9 +2398,9 @@ class BLTDistillTransformer(BLTTransformer):
         teacher_ce_loss = self._finalize_loss(teacher_ce_loss, loss_div_factor=patch_loss_div_factor)
 
         loss = 0.0
-        for loss_idx, (loss_name, loss_weight) in enumerate(zip(blt_config.losses, blt_config.loss_weights)):
-            if blt_config.loss_schedules is not None:
-                schedule = blt_config.loss_schedules[loss_idx]
+        for loss_idx, (loss_name, loss_weight) in enumerate(zip(bolmo_config.losses, bolmo_config.loss_weights)):
+            if bolmo_config.loss_schedules is not None:
+                schedule = bolmo_config.loss_schedules[loss_idx]
                 if schedule.startswith("linear_decrease"):
                     _, n_steps = schedule.split(":")
                     n_steps = int(n_steps)
@@ -2455,11 +2455,11 @@ class BLTDistillTransformer(BLTTransformer):
         z_loss_multiplier: Optional[float] = None,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         return_logits: Optional[bool] = None,
-        blt_config: Optional[BLTConfig] = None,
+        bolmo_config: Optional[BolmoConfig] = None,
         **kwargs,
     ):
-        if blt_config is None:
-            raise ValueError("`blt_config` must be provided for student_forward")
+        if bolmo_config is None:
+            raise ValueError("`bolmo_config` must be provided for student_forward")
 
         input_ids, labels, all_block_kwargs, per_block_kwargs, lm_head_kwargs, local_encoder_kwargs, local_decoder_kwargs, extra_kwargs = self._prepare_inputs(
             input_ids,
@@ -2468,7 +2468,7 @@ class BLTDistillTransformer(BLTTransformer):
             loss_reduction=loss_reduction,
             z_loss_multiplier=z_loss_multiplier,
             loss_div_factor=loss_div_factor,
-            blt_config=blt_config,
+            bolmo_config=bolmo_config,
             return_logits=True,  # needed for distillation
             **kwargs,
         )
@@ -2501,14 +2501,14 @@ class BLTDistillTransformer(BLTTransformer):
 
         boundary_labels = torch.zeros_like(byte_mask, dtype=torch.float32)
 
-        if blt_config.boundary_mode == "end":
+        if bolmo_config.boundary_mode == "end":
             boundary_labels.scatter_(1, patch_end_indices, 1.0)
-        elif blt_config.boundary_mode == "start":
+        elif bolmo_config.boundary_mode == "start":
             boundary_labels.scatter_(1, patch_start_indices, 1.0)
         else:
-            raise ValueError(f"Unknown boundary mode '{blt_config.boundary_mode}'")
+            raise ValueError(f"Unknown boundary mode '{bolmo_config.boundary_mode}'")
 
-        if blt_config.boundary_mode == "end" and blt_config.skip_boundary_before_eos:
+        if bolmo_config.boundary_mode == "end" and bolmo_config.skip_boundary_before_eos:
             boundary_labels[:, :-1] = torch.where( # no boundary before eos
                 input_ids[:, 1:] == self.eos_token_blt,
                 0.0,
@@ -2518,8 +2518,8 @@ class BLTDistillTransformer(BLTTransformer):
 
         h_byte, h_patch, boundary_logprobs, boundary_mask = self.local_encoder(
             input_ids,
-            teacher_force_boundaries=blt_config.teacher_force_boundaries,
-            boundary_threshold=blt_config.boundary_threshold,
+            teacher_force_boundaries=bolmo_config.teacher_force_boundaries,
+            boundary_threshold=bolmo_config.boundary_threshold,
             true_boundary_mask=boundary_labels > 0.5,
             **local_encoder_kwargs
         )
@@ -2578,7 +2578,7 @@ class BLTDistillTransformer(BLTTransformer):
 
             ce_loss, _ = cross_entropy_loss(logits.view(-1, logits.shape[-1]), labels.view(-1))  # type: ignore
 
-            if blt_config.eval_add_boundary_logp:
+            if bolmo_config.eval_add_boundary_logp:
                 boundary_logits = self.lm_head(h_out_for_boundaries, **lm_head_kwargs)
 
                 main_path_logprobs = torch.gather(F.log_softmax(logits[:, :-1].float(), dim=-1), -1, input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
@@ -2624,13 +2624,13 @@ class BLTDistillTransformer(BLTTransformer):
         z_loss_multiplier: Optional[float] = None,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         return_logits: Optional[bool] = None,
-        blt_config: Optional[BLTConfig] = None,
+        bolmo_config: Optional[BolmoConfig] = None,
         **kwargs,
     ):
-        if blt_config is None:
-            raise ValueError("`blt_config` must be provided for student_forward")
+        if bolmo_config is None:
+            raise ValueError("`bolmo_config` must be provided for student_forward")
 
-        if not blt_config.teacher_force_boundaries:
+        if not bolmo_config.teacher_force_boundaries:
             raise ValueError("subword_forward only works with teacher_force_boundaries=True")
 
         input_ids, labels, all_block_kwargs, per_block_kwargs, lm_head_kwargs, local_encoder_kwargs, local_decoder_kwargs, extra_kwargs = self._prepare_inputs(
@@ -2640,7 +2640,7 @@ class BLTDistillTransformer(BLTTransformer):
             loss_reduction=loss_reduction,
             z_loss_multiplier=z_loss_multiplier,
             loss_div_factor=loss_div_factor,
-            blt_config=blt_config,
+            bolmo_config=bolmo_config,
             return_logits=True,  # needed for distillation
             **kwargs,
         )
@@ -2663,8 +2663,8 @@ class BLTDistillTransformer(BLTTransformer):
 
         h_byte, h_patch, boundary_logprobs, boundary_mask = self.local_encoder(
             input_ids,
-            teacher_force_boundaries=blt_config.teacher_force_boundaries,
-            boundary_threshold=blt_config.boundary_threshold,
+            teacher_force_boundaries=bolmo_config.teacher_force_boundaries,
+            boundary_threshold=bolmo_config.boundary_threshold,
             true_boundary_mask=boundary_labels > 0.5,
             **local_encoder_kwargs
         )
@@ -2718,7 +2718,7 @@ class BLTDistillTransformer(BLTTransformer):
             include_self=False,
         )[:, :-1]
 
-        if blt_config.eval_add_boundary_logp:
+        if bolmo_config.eval_add_boundary_logp:
             main_path_boundary_logprobs = F.log_softmax(boundary_logits.float(), dim=-1)[..., self.end_of_subword_token_blt]  # type: ignore
             # ignore last
             main_path_boundary_logprobs[:, :-1] = (main_path_boundary_logprobs[:, :-1] * patch_mask[:, 2:])
@@ -2748,14 +2748,14 @@ class BLTDistillTransformer(BLTTransformer):
     def prefill_boundary_prediction_forward(
         self,
         input_ids: torch.Tensor,
-        blt_config: BLTConfig,
+        bolmo_config: BolmoConfig,
         last_token_is_boundary: bool = False,
         sequence_start_indices: Optional[torch.Tensor] = None,
         **kwargs,
     ):
         input_ids, labels, all_block_kwargs, per_block_kwargs, lm_head_kwargs, local_encoder_kwargs, local_decoder_kwargs, extra_kwargs = self._prepare_inputs(
             input_ids,
-            blt_config=blt_config,
+            bolmo_config=bolmo_config,
             **kwargs,
         )
 
@@ -2774,11 +2774,11 @@ class BLTDistillTransformer(BLTTransformer):
 
         _, _, _, boundary_mask = self.local_encoder.inference_forward(  # type: ignore
             input_ids,
-            teacher_force_boundaries=blt_config.teacher_force_boundaries,
-            boundary_threshold=blt_config.boundary_threshold,
+            teacher_force_boundaries=bolmo_config.teacher_force_boundaries,
+            boundary_threshold=bolmo_config.boundary_threshold,
             true_boundary_mask=boundary_labels > 0.5,
-            boundary_state=blt_utils.MaskState(torch.full((input_ids.shape[0],), fill_value=last_token_is_boundary, device=input_ids.device, dtype=torch.bool)),
-            pad_state=blt_utils.MaskState(torch.full((input_ids.shape[0],), fill_value=last_token_is_boundary and not self.local_decoder.fuse_boundaries, device=input_ids.device, dtype=torch.bool)),
+            boundary_state=bolmo_utils.MaskState(torch.full((input_ids.shape[0],), fill_value=last_token_is_boundary, device=input_ids.device, dtype=torch.bool)),
+            pad_state=bolmo_utils.MaskState(torch.full((input_ids.shape[0],), fill_value=last_token_is_boundary and not self.local_decoder.fuse_boundaries, device=input_ids.device, dtype=torch.bool)),
             sequence_start_indices=sequence_start_indices,
             **local_encoder_kwargs
         )
@@ -2788,7 +2788,7 @@ class BLTDistillTransformer(BLTTransformer):
     def inference_forward(
         self,
         input_ids: torch.Tensor,
-        blt_config: BLTConfig,
+        bolmo_config: BolmoConfig,
         boundary_state: torch.Tensor,
         pad_state: torch.Tensor,
         sequence_start_indices: Optional[torch.Tensor] = None,
@@ -2797,7 +2797,7 @@ class BLTDistillTransformer(BLTTransformer):
     ):
         input_ids, labels, all_block_kwargs, per_block_kwargs, lm_head_kwargs, local_encoder_kwargs, local_decoder_kwargs, extra_kwargs = self._prepare_inputs(
             input_ids,
-            blt_config=blt_config,
+            bolmo_config=bolmo_config,
             **kwargs,
         )
 
