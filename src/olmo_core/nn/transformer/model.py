@@ -2818,8 +2818,9 @@ class BolmoDistillTransformer(BolmoTransformer):
             # since flash attention expects left-pad and local/enc dec expect right-pad global tokens
             # should add better left-pad support but this only affects prefill so OK for now
             # although super inefficient!
-            if boundary_mask is not None: # prefill
-                n_boundaries = boundary_mask.sum(-1)
+            needs_conversion = boundary_mask is not None and boundary_mask.sum(-1).item() != h_patch.shape[1]
+            if needs_conversion: # prefill
+                n_boundaries = boundary_mask.sum(-1)  # type: ignore
 
                 for i, current_n_boundaries in enumerate(n_boundaries):
                     h_patch[i, -current_n_boundaries:] = h_patch[i, :current_n_boundaries].clone()
@@ -2831,8 +2832,8 @@ class BolmoDistillTransformer(BolmoTransformer):
             )
             h_patch_after_global = h_patch_after_global.to(h_patch.dtype)
 
-            if boundary_mask is not None: # prefill
-                n_boundaries = boundary_mask.sum(-1)
+            if needs_conversion:
+                n_boundaries = boundary_mask.sum(-1)  # type: ignore
 
                 for i, current_n_boundaries in enumerate(n_boundaries):
                     h_patch_after_global[i, :current_n_boundaries] = h_patch_after_global[i, -current_n_boundaries:].clone()
