@@ -157,12 +157,13 @@ class XLSTMConfig(Config):
             embedding_dim=d_model,
             num_heads=self.num_heads,
             mlstm_backend=mLSTMBackendConfig(
-                chunkwise_kernel="chunkwise--triton_limit_chunk",
+                chunkwise_kernel="chunkwise--triton_xl_chunk",
                 sequence_kernel="native_sequence__triton",
                 step_kernel="triton",
                 mode="train",
                 return_last_states=True,
                 autocast_kernel_dtype="float32",
+                chunk_size=128,
             )
         )).to(device=init_device, dtype=self.dtype.as_pt())
 
