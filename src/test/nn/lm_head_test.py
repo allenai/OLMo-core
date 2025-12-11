@@ -41,7 +41,7 @@ def test_lm_head_fused_linear_loss(
 
     config1 = LMHeadConfig(loss_implementation=LMLossImplementation.default, bias=False)
     lm_head1 = config1.build(d_model=d_model, vocab_size=vocab_size, init_device="cuda")
-    config2 = LMHeadConfig(loss_implementation=LMLossImplementation.fused_linear, bias=False)
+    config2 = LMHeadConfig(loss_implementation=LMLossImplementation.liger_fused_linear, bias=False)
     lm_head2 = config2.build(d_model=d_model, vocab_size=vocab_size, init_device="cuda")
 
     lm_head2.load_state_dict(lm_head1.state_dict())

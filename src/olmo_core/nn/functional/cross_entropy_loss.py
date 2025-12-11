@@ -4,6 +4,8 @@ from typing import Callable, Literal, Optional, Tuple
 import torch
 import torch.nn.functional as F
 
+from olmo_core.kernels.helion.linear_cross_entropy import OlmoFusedLinearCrossEntropyFunction
+
 __all__ = ["cross_entropy_loss", "fused_linear_cross_entropy_loss"]
 
 log = logging.getLogger(__name__)
@@ -57,7 +59,7 @@ try:
         LigerFusedLinearCrossEntropyFunction,
     )
 
-    _fused_linear_cross_entropy_loss = LigerFusedLinearCrossEntropyFunction.apply
+    _liger_fused_linear_cross_entropy_loss = LigerFusedLinearCrossEntropyFunction.apply
 except ImportError:
     pass
 except Exception:
@@ -65,7 +67,7 @@ except Exception:
 
 
 @torch._dynamo.disable()
-def fused_linear_cross_entropy_loss(
+def liger_fused_linear_cross_entropy_loss(
     _input: torch.Tensor,
     weight: torch.Tensor,
     labels: torch.Tensor,
@@ -101,9 +103,9 @@ def fused_linear_cross_entropy_loss(
 
     :returns: The cross entropy loss and optionally the z-loss.
     """
-    if _fused_linear_cross_entropy_loss is None:
-        raise RuntimeError("'fused_linear_cross_entropy_loss' requires liger-kernel")
-    ce_loss, z_loss, per_token_acc = _fused_linear_cross_entropy_loss(
+    if _liger_fused_linear_cross_entropy_loss is None:
+        raise RuntimeError("'liger_fused_linear_cross_entropy_loss' requires liger-kernel")
+    ce_loss, z_loss, per_token_acc = _liger_fused_linear_cross_entropy_loss(
         _input,
         weight,
         labels,
@@ -118,6 +120,43 @@ def fused_linear_cross_entropy_loss(
         accum_dtype,
     )
     del per_token_acc
+    if compute_z_loss:
+        return ce_loss, z_loss
+    else:
+        return ce_loss, None
+
+
+def helion_fused_linear_cross_entropy_loss(
+    _input: torch.Tensor,
+    weight: torch.Tensor,
+    labels: torch.Tensor,
+    *,
+    ignore_index: int = -100,
+    reduction: Literal["sum", "none"] = "mean",
+    compute_z_loss: bool = False,
+    z_loss_multiplier: float = 1e-4,
+) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    """
+    Cross entropy loss fused with the linear layer that computes the logits, which avoids materialization
+    of the large logits tensor. Unlike the Liger-Kernel implementation, this function does not
+    compute gradients during the forward pass, so _input and labels need to be stored for the backwards pass.
+    Additionally, logits are recomputed in the backward pass - which in some cases is slower than the Liger-Kernel implementation.
+
+    :param _input: The inputs to pass through the linear layer to produce the logits ``(N, D)``.
+    :param weight: The weight of the linear layer.
+    :param labels: Ground truth class indices with shape ``(N,)``.
+    :param ignore_index: Specifies a target value that is ignored and does not contribute to
+        the input gradient.
+    :param reduction: Specifies the reduction to apply to the output. Can be "sum" or "none".
+    :param compute_z_loss: Compute the softmax auxiliary loss as well.
+    :param z_loss_multiplier: The multiplier to apply to the z-loss.
+
+    :returns: The cross entropy loss and optionally the z-loss.
+    """
+    ce_loss, z_loss = OlmoFusedLinearCrossEntropyFunction.apply(  # type: ignore[reportGeneralTypeIssues]
+        _input, weight, labels, ignore_index, reduction, z_loss_multiplier
+    )
+
     if compute_z_loss:
         return ce_loss, z_loss
     else:

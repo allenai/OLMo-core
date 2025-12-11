@@ -67,10 +67,15 @@ class LMLossImplementation(StrEnum):
     Uses native PyTorch's operations.
     """
 
-    fused_linear = "fused_linear"
+    liger_fused_linear = "liger_fused_linear"
     """
     A low-memory triton implementation from Liger-Kernel that fused the linear logits projection
     with the loss computation.
+    """
+
+    helion_fused_linear = "helion_fused_linear"
+    """
+    A low-memory helion kernel implementation from Olmo-Core that fused the linear logits projection
     """
 
 
@@ -264,7 +269,24 @@ class LMHead(nn.Module):
                 loss = ce_loss + z_loss
             else:
                 loss = ce_loss
-        elif self.loss_implementation == LMLossImplementation.fused_linear:
+        elif self.loss_implementation == LMLossImplementation.liger_fused_linear:
+            logits = None
+            loss, z_loss = fused_linear_cross_entropy_loss(
+                get_local_tensor(h).contiguous().view(-1, self.d_model),
+                weight=get_local_tensor(self.w_out.weight),
+                labels=get_local_tensor(labels).contiguous().view(-1),
+                bias=get_local_tensor(self.w_out.bias) if self.w_out.bias is not None else None,
+                ignore_index=ignore_index,
+                reduction=loss_reduction,
+                compute_z_loss=z_loss_multiplier is not None,
+                z_loss_multiplier=z_loss_multiplier or 1e-4,
+                accum_dtype=torch.float32,  # https://github.com/linkedin/Liger-Kernel/issues/512
+            )
+            if z_loss is not None:
+                ce_loss = loss - z_loss
+            else:
+                ce_loss = loss
+        elif self.loss_implementation == LMLossImplementation.helion_fused_linear:
             logits = None
             loss, z_loss = fused_linear_cross_entropy_loss(
                 get_local_tensor(h).contiguous().view(-1, self.d_model),
@@ -381,7 +403,7 @@ class LMHead(nn.Module):
                 input_layouts=None if input_layouts is None else input_layouts[0],
                 desired_input_layouts=Shard(1)
                 if (
-                    self.loss_implementation == LMLossImplementation.fused_linear
+                    self.loss_implementation == LMLossImplementation.liger_fused_linear
                     or self.norm is not None
                 )
                 else Replicate(),
@@ -397,7 +419,7 @@ class LMHead(nn.Module):
                 parallelize_plan=SequenceParallel(),
             )
 
-        if self.loss_implementation == LMLossImplementation.fused_linear:
+        if self.loss_implementation == LMLossImplementation.liger_fused_linear:
             parallelize_module(
                 module=self.w_out,
                 device_mesh=tp_mesh,
