@@ -6,7 +6,11 @@ import torch.nn.functional as F
 
 from olmo_core.kernels.helion.linear_cross_entropy import OlmoFusedLinearCrossEntropyFunction
 
-__all__ = ["cross_entropy_loss", "fused_linear_cross_entropy_loss"]
+__all__ = [
+    "cross_entropy_loss",
+    "liger_fused_linear_cross_entropy_loss",
+    "helion_fused_linear_cross_entropy_loss",
+]
 
 log = logging.getLogger(__name__)
 
@@ -130,9 +134,10 @@ def helion_fused_linear_cross_entropy_loss(
     _input: torch.Tensor,
     weight: torch.Tensor,
     labels: torch.Tensor,
+    bias: Optional[torch.Tensor] = None,
     *,
     ignore_index: int = -100,
-    reduction: Literal["sum", "none"] = "mean",
+    reduction: Literal["sum", "none"] = "sum",
     compute_z_loss: bool = False,
     z_loss_multiplier: float = 1e-4,
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
@@ -145,6 +150,7 @@ def helion_fused_linear_cross_entropy_loss(
     :param _input: The inputs to pass through the linear layer to produce the logits ``(N, D)``.
     :param weight: The weight of the linear layer.
     :param labels: Ground truth class indices with shape ``(N,)``.
+    :param bias: Optional bias for the linear layer.
     :param ignore_index: Specifies a target value that is ignored and does not contribute to
         the input gradient.
     :param reduction: Specifies the reduction to apply to the output. Can be "sum" or "none".
@@ -153,8 +159,12 @@ def helion_fused_linear_cross_entropy_loss(
 
     :returns: The cross entropy loss and optionally the z-loss.
     """
+    if bias is not None:
+        raise ValueError(
+            "Linear projection with bias is not supported for helion_fused_linear_cross_entropy_loss"
+        )
     ce_loss, z_loss = OlmoFusedLinearCrossEntropyFunction.apply(  # type: ignore[reportGeneralTypeIssues]
-        _input, weight, labels, ignore_index, reduction, z_loss_multiplier
+        _input, weight.T, labels, ignore_index, reduction, z_loss_multiplier
     )
 
     if compute_z_loss:

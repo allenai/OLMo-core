@@ -23,8 +23,9 @@ from olmo_core.exceptions import OLMoConfigurationError
 from .attention import RingAttentionLoadBalancerType
 from .functional import (
     cross_entropy_loss,
-    fused_linear_cross_entropy_loss,
+    helion_fused_linear_cross_entropy_loss,
     l2_normalize,
+    liger_fused_linear_cross_entropy_loss,
 )
 from .layer_norm import LayerNormConfig
 
@@ -271,7 +272,7 @@ class LMHead(nn.Module):
                 loss = ce_loss
         elif self.loss_implementation == LMLossImplementation.liger_fused_linear:
             logits = None
-            loss, z_loss = fused_linear_cross_entropy_loss(
+            loss, z_loss = liger_fused_linear_cross_entropy_loss(
                 get_local_tensor(h).contiguous().view(-1, self.d_model),
                 weight=get_local_tensor(self.w_out.weight),
                 labels=get_local_tensor(labels).contiguous().view(-1),
@@ -288,7 +289,7 @@ class LMHead(nn.Module):
                 ce_loss = loss
         elif self.loss_implementation == LMLossImplementation.helion_fused_linear:
             logits = None
-            loss, z_loss = fused_linear_cross_entropy_loss(
+            loss, z_loss = helion_fused_linear_cross_entropy_loss(
                 get_local_tensor(h).contiguous().view(-1, self.d_model),
                 weight=get_local_tensor(self.w_out.weight),
                 labels=get_local_tensor(labels).contiguous().view(-1),
@@ -297,7 +298,6 @@ class LMHead(nn.Module):
                 reduction=loss_reduction,
                 compute_z_loss=z_loss_multiplier is not None,
                 z_loss_multiplier=z_loss_multiplier or 1e-4,
-                accum_dtype=torch.float32,  # https://github.com/linkedin/Liger-Kernel/issues/512
             )
             if z_loss is not None:
                 ce_loss = loss - z_loss

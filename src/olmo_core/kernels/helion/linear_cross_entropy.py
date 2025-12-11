@@ -317,6 +317,7 @@ class OlmoFusedLinearCrossEntropyFunction(torch.autograd.Function):
             None,  # target
             None,  # ignore_index
             None,  # reduction
+            None,  # z_loss_multiplier
         )
 
 

@@ -30,7 +30,12 @@ def test_lm_head_builder_config():
 
 
 @requires_gpu
+@pytest.mark.parametrize(
+    "fused_loss_implementation",
+    [LMLossImplementation.liger_fused_linear, LMLossImplementation.helion_fused_linear],
+)
 def test_lm_head_fused_linear_loss(
+    fused_loss_implementation: LMLossImplementation,
     d_model: int = 256,
     vocab_size: int = 1024,
     z_loss_multiplier: float = 1e-3,
@@ -41,10 +46,11 @@ def test_lm_head_fused_linear_loss(
 
     config1 = LMHeadConfig(loss_implementation=LMLossImplementation.default, bias=False)
     lm_head1 = config1.build(d_model=d_model, vocab_size=vocab_size, init_device="cuda")
-    config2 = LMHeadConfig(loss_implementation=LMLossImplementation.liger_fused_linear, bias=False)
+    config2 = LMHeadConfig(loss_implementation=fused_loss_implementation, bias=False)
     lm_head2 = config2.build(d_model=d_model, vocab_size=vocab_size, init_device="cuda")
 
-    lm_head2.load_state_dict(lm_head1.state_dict())
+    sd = lm_head1.state_dict()
+    lm_head2.load_state_dict(sd)
 
     B, S = 2, 32
     inputs1 = torch.randn(B, S, d_model, device=device, requires_grad=True)
@@ -74,10 +80,11 @@ def test_lm_head_fused_linear_loss(
     loss2.backward()
     assert inputs2.grad is not None
 
-    torch.testing.assert_close(loss1, loss2)
-    torch.testing.assert_close(ce_loss1, ce_loss2)
-    torch.testing.assert_close(z_loss1, z_loss2)
-    torch.testing.assert_close(inputs1.grad, inputs2.grad)
+    rtol, atol = 1e-2, 1e-5  # tigher than recommended bfloat16 tolerances
+    torch.testing.assert_close(ce_loss1, ce_loss2, rtol=rtol, atol=atol)
+    torch.testing.assert_close(z_loss1, z_loss2, rtol=rtol, atol=atol)
+    torch.testing.assert_close(loss1, loss2, rtol=rtol, atol=atol)
+    torch.testing.assert_close(inputs1.grad, inputs2.grad, rtol=rtol, atol=atol)
 
 
 def run_lm_head_tp(
@@ -141,7 +148,12 @@ def run_lm_head_tp(
 @requires_multi_gpu
 @pytest.mark.parametrize("head_type", [LMHeadType.default])
 @pytest.mark.parametrize(
-    "loss_implementation", [LMLossImplementation.default, LMLossImplementation.fused_linear]
+    "loss_implementation",
+    [
+        LMLossImplementation.default,
+        LMLossImplementation.liger_fused_linear,
+        LMLossImplementation.helion_fused_linear,
+    ],
 )
 @pytest.mark.parametrize("layer_norm", [LayerNormConfig(bias=False), None])
 @pytest.mark.parametrize("d_model", [64])
