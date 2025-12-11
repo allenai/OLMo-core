@@ -20,5 +20,11 @@ python src/scripts/train/OLMo3/OLMo3-7B.py launch OLMo3-7B ai2/jupiter --launch.
 
 python src/scripts/train/linear-rnns/OLMo3-7B-hybrid.py launch OLMo3-7B-hybrid ai2/augusta --launch.num_nodes=2
 
-python src/scripts/train/linear-rnns/OLMo3.1-7B-hybrid.py launch OLMo3.1-7B-hybrid-6T ai2/augusta --launch.priority="urgent" --launch.num_nodes=16
+while true; do
+    python src/scripts/train/linear-rnns/OLMo3.1-7B-hybrid.py launch OLMo3.1-7B-6T-30h ai2/augusta \
+        --launch.use_hostname_constraints=true \
+        --launch.priority="urgent" \
+        --launch.num_nodes=64 \
+        --trainer.callbacks.profiler.enabled=true --trainer.callbacks.profiler.wait=10 # profiler
+done
 ```
