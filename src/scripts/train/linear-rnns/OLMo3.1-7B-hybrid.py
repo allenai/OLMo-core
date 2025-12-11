@@ -40,7 +40,7 @@ GLOBAL_BATCH_SIZE = 4 * 1024 * 1024  # ~4M tokens
 MICROBATCH_DISCOUNT = 1
 
 # Remove heads to match params/TPS of transformer.
-REMOVE_HEADS = 0
+REMOVE_HEADS = 2
 
 ### OLMo "3.1" 7B Settings (from OLMo 3 32B)
 DATA_MIX = DataMix.OLMo_mix_0925
