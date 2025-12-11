@@ -57,10 +57,16 @@ jobs:
               pytest -v --color=yes --durations=3 \
                 src/test/nn/transformer/
 
+          - name: Test attention
+            run: |
+              pytest -v --color=yes --durations=3 \
+                src/test/nn/attention*
+
           - name: Test nn
             run: |
               pytest -v --color=yes --durations=3 \
                 --ignore-glob='src/test/nn/transformer/*' \
+                --ignore-glob='src/test/nn/attention*' \
                 src/test/nn/
 
           - name: Test examples
