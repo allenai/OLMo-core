@@ -34,11 +34,12 @@ def model_config(request, tokenizer_config: TokenizerConfig) -> tuple[str, Trans
     model_family = request.param
 
     if model_family == "olmo2":
-        config = TransformerConfig.olmo2_190M(tokenizer_config.padded_vocab_size())
+        config = TransformerConfig.olmo2_190M(tokenizer_config.padded_vocab_size(), n_layers=4)
     elif model_family == "olmo3":
         config = TransformerConfig.olmo3_190M(
             tokenizer_config.padded_vocab_size(),
             attn_backend=AttentionBackendName.torch,  # Use torch backend for testing
+            n_layers=4,
         )
     else:
         raise ValueError(f"Unknown model family: {model_family}")
