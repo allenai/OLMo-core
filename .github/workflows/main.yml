@@ -52,9 +52,15 @@ jobs:
                 src/test/distributed/checkpoint* \
                 src/test/train/checkpoint*
 
+          - name: Test transformer
+            run: |
+              pytest -v --color=yes --durations=3 \
+                src/test/nn/transformer/
+
           - name: Test nn
             run: |
               pytest -v --color=yes --durations=3 \
+                --ignore-glob='src/test/nn/transformer/*' \
                 src/test/nn/
 
           - name: Test examples
