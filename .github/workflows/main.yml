@@ -59,7 +59,10 @@ jobs:
 
           - name: Test attention
             run: |
+              # Note: Exclude tensor parallel tests because they are resource-intensive and we test
+              # them on GPU anway.
               pytest -v --color=yes --durations=3 \
+                -k 'not tensor_parallel' \
                 src/test/nn/attention*
 
           - name: Test nn
