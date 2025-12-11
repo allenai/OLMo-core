@@ -2,7 +2,7 @@ import logging
 import warnings
 from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass, field
-from math import cos, pi, sqrt
+from math import cos, pi, sqrt, ceil
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 import numpy as np
