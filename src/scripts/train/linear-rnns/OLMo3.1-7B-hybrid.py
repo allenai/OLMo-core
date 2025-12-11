@@ -174,7 +174,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "checkpointer",
             CheckpointerCallback(
                 save_interval=1000,
-                ephemeral_save_interval=100,
+                ephemeral_save_interval=500,
                 save_async=True,
             ),
         )
@@ -205,5 +205,6 @@ if __name__ == "__main__":
         include_default_evals=False,
         include_instance_filter=INSTANCE_FILTER,
         beaker_workspace="ai2/linear-rnns",
+        use_hostname_constraints=True,
     )
     main(config_builder=config_builder)

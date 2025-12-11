@@ -22,9 +22,9 @@ python src/scripts/train/linear-rnns/OLMo3-7B-hybrid.py launch OLMo3-7B-hybrid a
 
 while true; do
     python src/scripts/train/linear-rnns/OLMo3.1-7B-hybrid.py launch OLMo3.1-7B-6T-30h ai2/augusta \
-        --launch.use_hostname_constraints=true \
+        --trainer.callbacks.profiler.enabled=true --trainer.callbacks.profiler.wait=10 \
         --launch.priority="urgent" \
-        --launch.num_nodes=64 \
-        --trainer.callbacks.profiler.enabled=true --trainer.callbacks.profiler.wait=10 # profiler
+        --launch.num_nodes=64
 done
+
 ```
