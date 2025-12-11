@@ -41,7 +41,8 @@ jobs:
               pytest -v --color=yes --durations=6 \
                 --ignore-glob='src/test/distributed/checkpoint*' \
                 --ignore-glob='src/test/train/checkpoint*' \
-                --ignore-glob='src/test/nn/*' \
+                --ignore-glob='src/test/nn/transformer*' \
+                --ignore-glob='src/test/nn/attention*' \
                 --ignore-glob='src/test/examples/*' \
                 --ignore-glob='src/test/scripts/*' \
                 src/test/
@@ -64,13 +65,6 @@ jobs:
               pytest -v --color=yes --durations=3 \
                 -k 'not tensor_parallel' \
                 src/test/nn/attention*
-
-          - name: Test nn
-            run: |
-              pytest -v --color=yes --durations=3 \
-                --ignore-glob='src/test/nn/transformer/*' \
-                --ignore-glob='src/test/nn/attention*' \
-                src/test/nn/
 
           - name: Test examples
             run: |
