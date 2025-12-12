@@ -98,7 +98,7 @@ class TransformerModelConfigurator(ModelConfigurator[TransformerConfig]):
             )
         return model
 
-    def configure_device_microbatch_size(
+    def configure_rank_microbatch_size(
         self,
         *,
         size_spec: str,
@@ -157,7 +157,7 @@ class TransformerModelConfigurator(ModelConfigurator[TransformerConfig]):
         *,
         size_spec: str,
         sequence_length: int,
-        device_microbatch_size: int,
+        rank_microbatch_size: int,
         model_config: TransformerConfig,
         optim_config: OptimConfig,
         scheduler: Scheduler,
@@ -177,7 +177,7 @@ class TransformerModelConfigurator(ModelConfigurator[TransformerConfig]):
         )
 
         train_module_config = TransformerTrainModuleConfig(
-            rank_microbatch_size=device_microbatch_size,
+            rank_microbatch_size=rank_microbatch_size,
             max_sequence_length=sequence_length,
             optim=optim_config,
             compile_model=True,

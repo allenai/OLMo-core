@@ -108,7 +108,7 @@ class ModelConfigurator(Config, Generic[M], metaclass=ABCMeta):
         raise NotImplementedError
 
     @abstractmethod
-    def configure_device_microbatch_size(
+    def configure_rank_microbatch_size(
         self,
         *,
         size_spec: str,
@@ -135,7 +135,7 @@ class ModelConfigurator(Config, Generic[M], metaclass=ABCMeta):
         *,
         size_spec: str,
         sequence_length: int,
-        device_microbatch_size: int,
+        rank_microbatch_size: int,
         model_config: M,
         optim_config: OptimConfig,
         scheduler: Scheduler,
@@ -263,16 +263,16 @@ class ModelLadder(Config):
         target_global_batch_size = self.run_configurator.configure_target_batch_size(num_params)
         (
             global_batch_size,
-            device_microbatch_size,
+            rank_microbatch_size,
             requested_devices,
             dp_world_size,
         ) = self._configure_batch_size_and_num_devices(size_spec, num_params)
-        assert device_microbatch_size % self.sequence_length == 0
-        assert global_batch_size % device_microbatch_size == 0
+        assert rank_microbatch_size % self.sequence_length == 0
+        assert global_batch_size % rank_microbatch_size == 0
         assert global_batch_size % self.sequence_length == 0
-        assert device_microbatch_size % self.sequence_length == 0
-        assert global_batch_size % (device_microbatch_size * dp_world_size) == 0
-        num_grad_accum_steps = global_batch_size // (device_microbatch_size * dp_world_size)
+        assert rank_microbatch_size % self.sequence_length == 0
+        assert global_batch_size % (rank_microbatch_size * dp_world_size) == 0
+        num_grad_accum_steps = global_batch_size // (rank_microbatch_size * dp_world_size)
 
         rich.get_console().print(
             f"Dry run for model size {size_spec}:\n"
@@ -280,8 +280,8 @@ class ModelLadder(Config):
             f" ❯ Target batch size is {target_global_batch_size:,d} tokens\n"
             f" ❯ Actual batch size is {global_batch_size:,d} tokens, which is "
             f"{global_batch_size // self.sequence_length:,d} instance(s)\n"
-            f" ❯ Micro-batch size per device size {device_microbatch_size:,d} tokens, which is "
-            f"{device_microbatch_size // self.sequence_length} instance(s)\n"
+            f" ❯ Micro-batch size per device size {rank_microbatch_size:,d} tokens, which is "
+            f"{rank_microbatch_size // self.sequence_length} instance(s)\n"
             f" ❯ And the run requires {requested_devices} out of {self.max_devices} devices, "
             f"with a data-parallel world size of {dp_world_size:,d}\n"
             f" ❯ So there will be {num_grad_accum_steps:,d} grad accumulation step(s) per batch",
@@ -313,7 +313,7 @@ class ModelLadder(Config):
         # of devices available.
         (
             global_batch_size,
-            device_microbatch_size,
+            rank_microbatch_size,
             requested_devices,
             _,
         ) = self._configure_batch_size_and_num_devices(size_spec, num_params)
@@ -350,7 +350,7 @@ class ModelLadder(Config):
         train_module = self.model_configurator.build_train_module(
             size_spec=size_spec,
             sequence_length=self.sequence_length,
-            device_microbatch_size=device_microbatch_size,
+            rank_microbatch_size=rank_microbatch_size,
             model_config=model_config,
             optim_config=optim_config,
             scheduler=scheduler,
@@ -508,12 +508,12 @@ class ModelLadder(Config):
     ) -> tuple[int, int, int, int]:
         # Configure global batch size and device micro-batch size.
         global_batch_size = self.run_configurator.configure_target_batch_size(num_params)
-        device_microbatch_size = self.model_configurator.configure_device_microbatch_size(
+        rank_microbatch_size = self.model_configurator.configure_rank_microbatch_size(
             size_spec=size_spec,
             sequence_length=self.sequence_length,
             device_type=self.device_type,
         )
-        device_microbatch_size = min(device_microbatch_size, global_batch_size)
+        rank_microbatch_size = min(rank_microbatch_size, global_batch_size)
 
         # Configure minimal device mesh spec, i.e. the minimum number of devices needed and the
         # corresponding minimum data parallel world size.
@@ -540,8 +540,8 @@ class ModelLadder(Config):
             )
 
         # And from that we adjust the global batch size to be a multiple of
-        # `device_microbatch_size x min_dp_world_size`.
-        gbz_factor = device_microbatch_size * min_dp_world_size
+        # `rank_microbatch_size x min_dp_world_size`.
+        gbz_factor = rank_microbatch_size * min_dp_world_size
         global_batch_size = round(global_batch_size / gbz_factor) * gbz_factor
 
         # Then we can determine the actual number of devices to allocate to the run. In particular
@@ -554,10 +554,10 @@ class ModelLadder(Config):
         dp_world_size = min_dp_world_size * expansion_factor
 
         # Finally we ensure `global_batch_size` is divisible by the micro-batch size.
-        microbatch_size = device_microbatch_size * dp_world_size
+        microbatch_size = rank_microbatch_size * dp_world_size
         global_batch_size = round(global_batch_size / microbatch_size) * microbatch_size
 
-        return global_batch_size, device_microbatch_size, num_devices, dp_world_size
+        return global_batch_size, rank_microbatch_size, num_devices, dp_world_size
 
     def _configure_trainer(
         self,
