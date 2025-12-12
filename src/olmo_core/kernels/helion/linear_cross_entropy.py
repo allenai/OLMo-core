@@ -178,31 +178,31 @@ def olmo_linear_cross_entropy_fwd_kernel(
 
 
 @helion.kernel(
-    config=helion.Config(
-        block_sizes=[128, 256, 32, 64, 32],
-        indexing=[
-            "pointer",
-            "pointer",
-            "pointer",
-            "tensor_descriptor",
-            "tensor_descriptor",
-            "pointer",
-            "pointer",
-            "pointer",
-        ],
-        l2_groupings=[16],
-        load_eviction_policies=["last", "first", "first", "", "", "", ""],
-        loop_orders=[[0, 1]],
-        num_stages=2,
-        num_warps=8,
-        pid_type="flat",
-        range_flattens=[None, True, True, False],
-        range_multi_buffers=[None, True, False, None],
-        range_num_stages=[0, 3, 2, 4],
-        range_unroll_factors=[0, 1, 3, 0],
-        range_warp_specializes=[],
-    ),
-    # autotune_effort="none",
+    # config=helion.Config(
+    #     block_sizes=[128, 256, 32, 64, 32],
+    #     indexing=[
+    #         "pointer",
+    #         "pointer",
+    #         "pointer",
+    #         "tensor_descriptor",
+    #         "tensor_descriptor",
+    #         "pointer",
+    #         "pointer",
+    #         "pointer",
+    #     ],
+    #     l2_groupings=[16],
+    #     load_eviction_policies=["last", "first", "first", "", "", "", ""],
+    #     loop_orders=[[0, 1]],
+    #     num_stages=2,
+    #     num_warps=8,
+    #     pid_type="flat",
+    #     range_flattens=[None, True, True, False],
+    #     range_multi_buffers=[None, True, False, None],
+    #     range_num_stages=[0, 3, 2, 4],
+    #     range_unroll_factors=[0, 1, 3, 0],
+    #     range_warp_specializes=[],
+    # ),
+    autotune_effort="none",
     static_shapes=False,
     autotuner_fn=LFBOPatternSearch,
     autotune_ignore_errors=False,
@@ -239,86 +239,69 @@ def olmo_linear_cross_entropy_bwd_recompute_kernel(
     grad_weight = torch.zeros([d, v], dtype=torch.float32, device=_input.device)
     grad_input = torch.zeros([n, d], dtype=torch.float32, device=_input.device)
 
-    # This visits each (tile_n, tile_v) once, computes d_logits, and scatters updates to grad_weight
-    for tile_n, tile_v in hl.tile([n, v]):
-        # 1. Recompute logits for this tile of N and tile of V
-        # We need full inner dimension D to compute logits
-        logits = hl.zeros([tile_n, tile_v], dtype=torch.float32)
-        for tile_k in hl.tile(d):
-            weight_kv = hl.load(  # eviction_policy="evict_last", needed later
-                weight, index=[tile_k, tile_v]
-            )
-            logits = torch.addmm(logits, _input[tile_n, tile_k], weight_kv)  # sadly we recompute
-
-        # 2. Compute softmax = exp(logits - lse)
-        # we already know lse for this batch tile so we dont need to see the whole vocab dimension
-        lse_tile = lse[tile_n]  # [t_n]
-        softmax = torch.exp(logits - lse_tile.unsqueeze(1))  # [t_n, t_v]
-        d_logits = softmax
-
-        # 3. Compute d_logits = (softmax - target)
-        # We subtract 1.0 from softmax probabilities at the target indices.
-        # Implement this without subscript assignment or boolean indexing that
-        # produces data-dependent shapes by using pure elementwise ops.
-        labels_tile = labels[tile_n]  # [t_n]
-        local_vocab_idx = labels_tile - tile_v.begin  # [t_n]
-        is_target_in_tile = (labels_tile >= tile_v.begin) & (labels_tile < tile_v.end)
-
-        # Broadcast compare over the vocab dimension within this tile:
-        # eq[i, j] = (j == local_vocab_idx[i])
-        cols = hl.arange(tile_v.block_size)  # [t_v]
-        eq = cols[None, :] == local_vocab_idx[:, None]  # [t_n, t_v] (boolean)
-        mask = eq & is_target_in_tile[:, None]  # [t_n, t_v]
-        d_logits = d_logits - mask.to(d_logits.dtype)
-
-        # Apply valid mask and scaling according to grad_ce_loss
-        # Fused gradient expansion: expand scalar gradient to per-token based on mask
-        valid_mask = (labels_tile != ignore_index).to(torch.float32)  # [t_n]
+    # 1D tiling over batch dimension only (matches forward pass pattern)
+    # Each batch tile processes ALL vocab tiles, allowing local grad_input accumulation
+    for tile_n in hl.tile(n):
+        labels_tile = labels[tile_n]
+        lse_tile = lse[tile_n]
+        valid_mask = (labels_tile != ignore_index).to(torch.float32)
 
         if reduction == "sum":
-            # Load scalar gradients (0-dimensional tensors must be loaded inside tile loop)
+            # Load scalar gradients once per batch tile
             grad_ce_scalar = grad_ce_loss_scalar[()]
             grad_z_scalar = grad_z_loss_scalar[()]
-
-            # For sum reduction: grad_ce_per_token[i] = mask[i] * grad_ce_loss_scalar
             grad_ce_per_token = valid_mask * grad_ce_scalar
-        else:
-            raise NotImplementedError(
-                f"Backward pass for reduction='{reduction}' not yet implemented"
-            )
-
-        scale = grad_ce_per_token  # [t_n]
-        d_logits = d_logits.mul(scale.unsqueeze(1))  # [t_n, v]
-
-        # 5. Add contribution from the z-loss.
-        # For each token i, if z_loss = z_loss_multiplier * lse_i^2 (with appropriate
-        # masking/reduction handled in the Python wrapper), then:
-        #   dL/dlogits_ij (from z-loss) = softmax_ij * dL/dlse_i
-        # Chain rule: dL/dlse_i = dL/dz_squared_i * dz_squared_i/dlse_i
-        #                        = grad_z_loss_scalar * z_loss_multiplier * mask_i * 2 * lse_i
-        if reduction == "sum":
+            # 5. Add contribution from the z-loss.
+            # For each token i, if z_loss = z_loss_multiplier * lse_i^2 (with appropriate
+            # masking/reduction handled in the Python wrapper), then:
+            #   dL/dlogits_ij (from z-loss) = softmax_ij * dL/dlse_i
+            # Chain rule: dL/dlse_i = dL/dz_squared_i * dz_squared_i/dlse_i
+            #                        = grad_z_loss_scalar * z_loss_multiplier * mask_i * 2 * lse_i
             grad_z_per_token = valid_mask * grad_z_scalar * z_loss_multiplier * 2.0 * lse_tile
         else:
             raise NotImplementedError(
                 f"Backward pass for reduction='{reduction}' not yet implemented"
             )
 
-        d_logits = d_logits + softmax * grad_z_per_token.unsqueeze(1)
+        # Process all vocab tiles for this batch tile
+        for tile_v in hl.tile(v):
+            # 1. Recompute logits for this (tile_n, tile_v)
+            logits = hl.zeros([tile_n, tile_v], dtype=torch.float32)
+            for tile_k in hl.tile(d):
+                weight_kv = hl.load(weight, index=[tile_k, tile_v])
+                logits = torch.addmm(logits, _input[tile_n, tile_k], weight_kv)
 
-        d_logits = d_logits.to(_input.dtype)
+            # 2. Compute softmax = exp(logits - lse)
+            # Because we stored the lse we dont need to do the online lse computation this time.
+            softmax = torch.exp(logits - lse_tile.unsqueeze(1))
 
-        # 4. Accumulate grad_weight and grad_input using atomics
-        for tile_k in hl.tile(d):
-            # Compute partial update for grad_weight[tile_k, tile_v]
-            input_tile = _input[tile_n, tile_k]
-            update_gw = hl.dot(input_tile.T, d_logits)
-            hl.atomic_add(grad_weight, [tile_k, tile_v], update_gw)
+            # 3. Compute d_logits = (softmax - one_hot_target)
+            local_vocab_idx = labels_tile - tile_v.begin
+            is_target_in_tile = (labels_tile >= tile_v.begin) & (labels_tile < tile_v.end)
+            cols = hl.arange(tile_v.block_size)
+            eq = cols[None, :] == local_vocab_idx[:, None]
+            mask = eq & is_target_in_tile[:, None]
+            d_logits = softmax - mask.to(softmax.dtype)
 
-        for tile_k in hl.tile(d):  # tile separately so they can be tuned independently
-            # Compute partial update for grad_input[tile_n, tile_k]
-            weight_kv = hl.load(weight, index=[tile_k, tile_v], eviction_policy="evict_first")
-            update_gi = hl.dot(d_logits, weight_kv.T)
-            hl.atomic_add(grad_input, [tile_n, tile_k], update_gi)
+            # 4. Apply CE gradient scaling
+            d_logits = d_logits * grad_ce_per_token.unsqueeze(1)
+
+            # 5. Add z-loss contribution
+            d_logits = d_logits + softmax * grad_z_per_token.unsqueeze(1)
+            d_logits = d_logits.to(_input.dtype)
+
+            # 6. Fused gradient accumulation (single D loop for better weight reuse)
+            for tile_k in hl.tile(d):
+                input_tile = _input[tile_n, tile_k]
+
+                # grad_weight: atomic add (multiple tile_n contribute to same location)
+                update_gw = hl.dot(input_tile.T, d_logits)
+                hl.atomic_add(grad_weight, [tile_k, tile_v], update_gw)
+
+                # grad_input: local accumulation (this tile_n owns these rows)
+                weight_kv = hl.load(weight, index=[tile_k, tile_v])
+                update_gi = hl.dot(d_logits, weight_kv.T)
+                grad_input[tile_n, tile_k] = update_gi
 
     return grad_input, grad_weight
 
