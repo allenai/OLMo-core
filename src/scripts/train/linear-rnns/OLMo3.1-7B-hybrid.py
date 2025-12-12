@@ -52,7 +52,7 @@ INSTANCE_FILTER = True
 def build_model_config(common: CommonComponents) -> TransformerConfig:
     config = TransformerConfig.olmo3_7B(
         vocab_size=common.tokenizer.padded_vocab_size(),
-        attn_backend=AttentionBackendName.flash_2,
+        attn_backend=AttentionBackendName.flash_3,
     )
 
     # Remove heads (and scale down d_model) to compensate for extra params.

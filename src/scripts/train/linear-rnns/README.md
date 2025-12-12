@@ -42,7 +42,6 @@ while true; do
     python src/scripts/train/linear-rnns/OLMo3.1-7B-hybrid.py launch OLMo3.1-7B-6T-30h ai2/augusta \
         --launch.priority="urgent" \
         --launch.num_nodes=64 \
-        --launch.num_execution_units=1
         --train_module.dp_config.name=hsdp \
         --train_module.dp_config.shard_degree=64
 done
