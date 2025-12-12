@@ -206,5 +206,6 @@ if __name__ == "__main__":
         include_instance_filter=INSTANCE_FILTER,
         beaker_workspace="ai2/linear-rnns",
         use_hostname_constraints=True,
+        num_execution_units=1,
     )
     main(config_builder=config_builder)
