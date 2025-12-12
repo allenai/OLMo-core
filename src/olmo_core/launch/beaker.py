@@ -310,11 +310,12 @@ class BeakerLaunchConfig(Config):
 
     num_execution_units: Optional[int] = None
     """
-    Number of "execution units", defaults to ``max(1, num_nodes // 32)``. An "execution unit" is abstraction
+    Number of "execution units", defaults to 1. An "execution unit" is abstraction
     for any node-using entity of which 1 or more copies are run, where each unit wants its nodes to be
     from colocated hardware (e.g., a model replica for large jobs, or a full distributed model for small jobs).
 
-    For internal experiments, this defaults to the number of data-parallel model replicas instead.
+    For example, when training with HSDP it would make sense to set ``num_execution_units`` to
+    the replica degree of the device mesh.
     """
 
     launch_timeout: Optional[int] = None
@@ -511,7 +512,7 @@ class BeakerLaunchConfig(Config):
 
             host_name_constraints = get_beaker_hostname_constraints(
                 self.num_nodes,
-                self.num_execution_units or max(1, self.num_nodes // 32),
+                self.num_execution_units or 1,
                 1,
                 "us-central1-b",
                 beaker_cluster=self.clusters[0],
