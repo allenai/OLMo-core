@@ -23,7 +23,7 @@ gantry run \
     --system-python \
     --uv-all-extras \
     -- \
-    bash -c "HELION_AOT_AUTOTUNE=create HELION_AUTOTUNE_PROGRESS_BAR=false python $FILE_TO_RUN || cp -r $CONFIG_DIR/* /results/"
+    bash -c "HELION_AOT_AUTOTUNE=create HELION_AUTOTUNE_PROGRESS_BAR=false python \"$FILE_TO_RUN\"; status=\$?; cp -r \"$CONFIG_DIR\"/. /results/ || true; exit \$status"
 
 # To extract the best config from gantry logs, use:
 # gantry logs 01KCB8KTG47EAYN8ND1FWN0B58 | grep -A 4 "One can hardcode the best config and skip autotuning with:"
