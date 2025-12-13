@@ -10,7 +10,8 @@ from transformers.utils.generic import TransformersKwargs
 
 from transformers.activations import ACT2FN
 from transformers.cache_utils import Cache, DynamicCache
-from transformers.generation import GenerationMixin
+from transformers.generation import GenerationMixin, GenerationConfig, LogitsProcessorList, StoppingCriteriaList
+from transformers.generation.utils import GenerateOutput
 from transformers.integrations import use_kernel_forward_from_hub
 from transformers.masking_utils import create_causal_mask, create_sliding_window_causal_mask
 from transformers.modeling_layers import GradientCheckpointingLayer
@@ -18,7 +19,7 @@ from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutpu
 from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS, dynamic_rope_update
 from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel
 from transformers.processing_utils import Unpack
-from transformers.utils import auto_docstring, can_return_tuple
+from transformers.utils import can_return_tuple
 from transformers.utils.deprecation import deprecate_kwarg
 from transformers.utils.generic import check_model_inputs
 
@@ -161,7 +162,7 @@ class BolmoAttention(nn.Module):
         position_embeddings: tuple[torch.Tensor, torch.Tensor],
         attention_mask: Optional[torch.Tensor],
         past_key_values: Optional[Cache] = None,
-        cache_position: Optional[torch.LongTensor] = None,
+        cache_position: Optional[torch.Tensor] = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
         input_shape = hidden_states.shape[:-1]
@@ -235,10 +236,10 @@ class BolmoDecoderLayer(GradientCheckpointingLayer):
         self,
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
         past_key_values: Optional[Cache] = None,
         use_cache: Optional[bool] = False,
-        cache_position: Optional[torch.LongTensor] = None,
+        cache_position: Optional[torch.Tensor] = None,
         position_embeddings: Optional[tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
         **kwargs: Unpack[TransformersKwargs],
     ) -> torch.Tensor:
@@ -834,7 +835,6 @@ class BolmoRotaryEmbedding(nn.Module):
             return cos, sin
 
 
-@auto_docstring
 class BolmoPreTrainedModel(PreTrainedModel):
     config: BolmoConfig
     base_model_prefix = "model"
@@ -853,7 +853,6 @@ class BolmoPreTrainedModel(PreTrainedModel):
     }
 
 
-@auto_docstring
 class BolmoModel(BolmoPreTrainedModel):
     def __init__(self, config: BolmoConfig):
         super().__init__(config)
@@ -897,7 +896,7 @@ class BolmoModel(BolmoPreTrainedModel):
     def prefill_boundary_prediction_forward(
         self,
         input_ids: torch.Tensor,
-        expanded_input_ids: Optional[torch.LongTensor] = None,
+        expanded_input_ids: Optional[torch.Tensor] = None,
         sequence_start_indices: Optional[torch.Tensor] = None,
         last_token_is_boundary: bool = False,
         **kwargs,
@@ -913,16 +912,14 @@ class BolmoModel(BolmoPreTrainedModel):
         return cast(torch.Tensor, boundary_mask)
 
     @check_model_inputs()
-    @auto_docstring
     def forward(
         self,
-        input_ids: torch.LongTensor,
-        expanded_input_ids: Optional[torch.LongTensor] = None,
+        input_ids: torch.Tensor,
+        expanded_input_ids: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
         past_key_values: Optional[Cache] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        cache_position: Optional[torch.LongTensor] = None,
+        cache_position: Optional[torch.Tensor] = None,
         use_cache: Optional[bool] = None,
         boundary_mask: Optional[torch.Tensor] = None,
         boundary_state: Optional[MaskState] = None,
@@ -1029,7 +1026,6 @@ class BolmoModel(BolmoPreTrainedModel):
         )
 
 
-@auto_docstring
 class BolmoForCausalLM(BolmoPreTrainedModel, GenerationMixin):
     _tied_weights_keys = ["lm_head.weight"]
     _tp_plan = {"lm_head": "colwise_rep"}
@@ -1051,16 +1047,15 @@ class BolmoForCausalLM(BolmoPreTrainedModel, GenerationMixin):
         self.lm_head = new_embeddings
 
     @can_return_tuple
-    @auto_docstring
     def forward(
         self,
-        input_ids: torch.LongTensor,
-        expanded_input_ids: Optional[torch.LongTensor] = None,
+        input_ids: torch.Tensor,
+        expanded_input_ids: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
         past_key_values: Optional[Cache] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
-        cache_position: Optional[torch.LongTensor] = None,
+        cache_position: Optional[torch.Tensor] = None,
         use_cache: Optional[bool] = None,
         boundary_mask: Optional[torch.Tensor] = None,
         boundary_state: Optional[MaskState] = None,
@@ -1114,22 +1109,42 @@ class BolmoForCausalLM(BolmoPreTrainedModel, GenerationMixin):
             attentions=outputs.attentions,
         )
 
-    def generate(self, input_ids: list[list[int]], max_new_tokens: int = 20):
+    @torch.no_grad()
+    def generate(  # type: ignore
+        self,
+        inputs: torch.Tensor,
+        generation_config: Optional[GenerationConfig] = None,
+        logits_processor: Optional[LogitsProcessorList] = None,
+        stopping_criteria: Optional[StoppingCriteriaList] = None,
+        use_model_defaults: Optional[bool] = None,
+        **kwargs,
+    ) -> Union[GenerateOutput, torch.Tensor]:
+        # generic preprocessing
+
+        generation_config, model_kwargs = self._prepare_generation_config(
+            generation_config, use_model_defaults, **kwargs
+        )
+        self._prepare_special_tokens(generation_config, device=self.model.device)
+
+        logits_processor = logits_processor if logits_processor is not None else LogitsProcessorList()
+        stopping_criteria = stopping_criteria if stopping_criteria is not None else StoppingCriteriaList()
+
+        # start of custom generate
+
         expand_input_ids = self.model.local_encoder.add_expanded_embeddings
-        batch_size = len(input_ids)
+        batch_size = len(inputs)
 
         if expand_input_ids:
             expanded_input_ids = []
 
-            for i in range(len(input_ids)):
-                expanded_input_ids.append(torch.tensor(self.model.tokenizer.expand_byte_ids(input_ids[i]), device=self.device, dtype=torch.long))
+            for i in range(len(inputs)):
+                expanded_input_ids.append(torch.tensor(self.model.tokenizer.expand_byte_ids(inputs[i].tolist()), device=self.device, dtype=torch.long))
 
             expanded_input_ids = pad_left(expanded_input_ids, value=self.model.tokenizer.pad_token_id, multiple_of=1)  # type: ignore
         else:
             expanded_input_ids = None
 
-        byte_input_ids: torch.Tensor = pad_left([torch.tensor(x, device=self.device, dtype=torch.long) for x in input_ids], value=self.model.tokenizer.pad_token_id, multiple_of=1)
-
+        byte_input_ids = inputs
         sequence_start_indices = (byte_input_ids == self.model.tokenizer.pad_token_id).sum(-1)
         batch_size, prompt_len = byte_input_ids.shape
         finished = torch.zeros(batch_size, dtype=torch.bool, device=self.device)
@@ -1155,14 +1170,37 @@ class BolmoForCausalLM(BolmoPreTrainedModel, GenerationMixin):
         # stays the same unless last token is pad.
         sequence_start_indices = (byte_input_ids == self.model.tokenizer.pad_token_id).sum(-1)
 
+        has_default_max_length = kwargs.get("max_length") is None and generation_config.max_length is not None
+        has_default_min_length = kwargs.get("min_length") is None and generation_config.min_length is not None
+        generation_config = self._prepare_generated_length(
+            generation_config=generation_config,
+            has_default_max_length=has_default_max_length,
+            has_default_min_length=has_default_min_length,
+            model_input_name="input_ids",
+            inputs_tensor=byte_input_ids,
+            input_ids_length=byte_input_ids.shape[1],
+        )
+
+        logits_processor = self._get_logits_processor(
+            generation_config=generation_config,  # type: ignore
+            input_ids_seq_length=byte_input_ids.shape[1],
+            encoder_input_ids=byte_input_ids,  # type: ignore
+            logits_processor=logits_processor,
+            device=byte_input_ids.device,  # type: ignore
+            model_kwargs=model_kwargs,
+        )
+        stopping_criteria = self._get_stopping_criteria(
+            generation_config=generation_config,  # type: ignore
+            stopping_criteria=stopping_criteria,
+            tokenizer=self.model.tokenizer,
+        )
+
         # output container
         generated = byte_input_ids
 
         max_n_prefill_patches = boundary_mask.sum(-1).max().item()
         tokens_generated_plus_prefilled = max_n_prefill_patches
         bytes_generated = 0
-
-        max_length = max_n_prefill_patches + max_new_tokens
 
         # generation state
         boundary_state = MaskState(boundary_mask[:, -1].clone())
@@ -1173,10 +1211,7 @@ class BolmoForCausalLM(BolmoPreTrainedModel, GenerationMixin):
         is_first_forward = True
         global_past_key_values = None
 
-        # TODO: impl
-        stop_token_sequences = []
-
-        while not ((max_length is not None and tokens_generated_plus_prefilled >= max_length) or finished.all()):
+        while not finished.all():
             input_ids_for_model = (
                 generated
                 if is_first_forward
@@ -1232,8 +1267,14 @@ class BolmoForCausalLM(BolmoPreTrainedModel, GenerationMixin):
 
                         forced_decoding_ids[example_idx] = None  # only force once
 
-            # TODO: impl non-greedy
-            new_next_tokens = next_token_logits.squeeze(1).argmax(dim=-1)
+            # passing input_ids to logit processor not implemented
+            next_token_scores = logits_processor(None, next_token_logits[:, -1]) # type: ignore
+
+            if generation_config is not None and generation_config.do_sample:
+                probs = nn.functional.softmax(next_token_scores, dim=-1)
+                new_next_tokens = torch.multinomial(probs, num_samples=1).squeeze(1)
+            else:
+                new_next_tokens = torch.argmax(next_token_scores, dim=-1)
 
             if boundary_state.all() or is_first_forward:
                 tokens_generated_plus_prefilled += 1
@@ -1241,6 +1282,9 @@ class BolmoForCausalLM(BolmoPreTrainedModel, GenerationMixin):
                 next_tokens = new_next_tokens
                 next_tokens_cpu = next_tokens.cpu()
                 for example_idx in range(batch_size):
+                    if finished[example_idx].item():
+                        continue
+
                     next_token_cpu = next_tokens_cpu[example_idx].item()
 
                     if next_token_cpu >= boundary_offset:
@@ -1253,6 +1297,9 @@ class BolmoForCausalLM(BolmoPreTrainedModel, GenerationMixin):
                 next_tokens_cpu = next_tokens.cpu()
 
                 for example_idx in range(batch_size):
+                    if finished[example_idx].item():
+                        continue
+
                     next_token_cpu = next_tokens_cpu[example_idx].item()
 
                     if not boundary_state.cpu_mask[example_idx].item():
@@ -1282,16 +1329,17 @@ class BolmoForCausalLM(BolmoPreTrainedModel, GenerationMixin):
             # Handle finished sequences
             stop_hit = next_tokens.eq(eos) | next_tokens.eq(eos + boundary_offset)
 
-            # Also check for stop tokens if provided
-            # TODO(benjaminm): this is very annoying due to the boundaries
-            # make better
-            if len(stop_token_sequences) > 0:
-                # TODO: implement
-                raise NotImplementedError("stop_token_sequences not implemented yet for Bolmo generation.")
+            for i in range(batch_size):
+                # passing `scores` to stopping criteria not implemented
+                if stopping_criteria(torch.tensor(non_boundary_generated_tokens[i], dtype=torch.long).unsqueeze(0), None).squeeze(0).item():  # type: ignore
+                    stop_hit[i] = True
 
             finished |= stop_hit
             bytes_generated += 1
 
-        return generated
+        return pad_left([
+            torch.cat([byte_input_ids[i, :-1], torch.tensor(x, dtype=torch.long, device=byte_input_ids.device)])
+            for i, x in enumerate(non_boundary_generated_tokens)
+        ], value=self.model.tokenizer.pad_token_id, multiple_of=1)  # type: ignore
 
 __all__ = ["BolmoForCausalLM", "BolmoModel", "BolmoPreTrainedModel"]

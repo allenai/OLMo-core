@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from functools import lru_cache
-from typing import Optional
+from typing import Optional, Union
 from transformers import AutoTokenizer
 from transformers.tokenization_utils import PreTrainedTokenizer
 
@@ -131,6 +131,7 @@ class BolmoTokenizer(PreTrainedTokenizer):
 
         self.add_bos_token = True
         self.add_eos_token = False
+        self.padding_side = "left" # for generate
 
         super().__init__(
             bos_token=self.config.special_tokens[self.config.bos_token_id],
@@ -309,10 +310,10 @@ class BolmoTokenizer(PreTrainedTokenizer):
         input_ids = self.hf_tokenizer.encode(string, add_special_tokens=add_special_tokens)
         return self._patch_ids_to_byte_ids(input_ids)
 
-    def _bolmo_decode(self, tokens: list[int]) -> str:
-        return self._decode_to_bytes(tokens).decode("utf-8", errors="replace")
+    def _bolmo_decode(self, tokens: list[int], skip_special_tokens: bool = False) -> str:
+        return self._decode_to_bytes(tokens, skip_special_tokens=skip_special_tokens).decode("utf-8", errors="replace")
 
-    def _decode_to_bytes(self, tokens: list[int]) -> bytes:
+    def _decode_to_bytes(self, tokens: list[int], skip_special_tokens: bool = False) -> bytes:
         tokens_without_boundary = []
         for token in tokens:
             if token >= (self.offset + 256):
@@ -320,7 +321,17 @@ class BolmoTokenizer(PreTrainedTokenizer):
 
             tokens_without_boundary.append(token)
 
-        utf8_bytes = [min(token - self.offset, 255) for token in tokens_without_boundary if token >= self.offset]
+        utf8_bytes = []
+
+        for token in tokens_without_boundary:
+            if token < self.offset:
+                if skip_special_tokens:
+                    continue
+                else:
+                    utf8_bytes.extend(self.config.special_tokens[token].encode("utf-8"))
+            else:
+                utf8_bytes.append(min(token - self.offset, 255))
+
         return bytes(utf8_bytes)
 
     def get_tokens_and_patch_lengths(self, original_input_ids: list[int], add_bos=False, strip_pad=False, skip_last=False):
@@ -347,5 +358,21 @@ class BolmoTokenizer(PreTrainedTokenizer):
 
         return byte_tokens, patch_lengths
 
-    def save_vocabulary(self, save_directory: str, filename_prefix: Optional[str] = None) -> Tuple[str]:
-        return ()
+    def convert_tokens_to_string(self, tokens: list[str]) -> str:
+        return self._bolmo_decode(self.convert_tokens_to_ids(tokens), skip_special_tokens=False)  # type: ignore
+
+    def _decode(
+        self,
+        token_ids: Union[int, list[int]],
+        skip_special_tokens: bool = False,
+        clean_up_tokenization_spaces: Optional[bool] = None,
+        spaces_between_special_tokens: bool = True,
+        **kwargs,
+    ) -> str:
+        if isinstance(token_ids, int):
+            token_ids = [token_ids]
+
+        return self._bolmo_decode(token_ids, skip_special_tokens=skip_special_tokens)
+
+    def save_vocabulary(self, save_directory: str, filename_prefix: Optional[str] = None) -> tuple[str]:
+        return ()  # type: ignore
