@@ -58,17 +58,19 @@ def load_autotune_data_from_json(
 ) -> tuple[dict[int, Any], dict[KernelKey, int]]:
     with open(path, "r") as f:
         json_obj = json.load(f)
-        useful_configs = {int(k): eval(v) for k, v in json_obj["useful_configs"].items()}
-        hash_configs = {}
-        for k, v in json_obj["hash_configs"].items():
+        # Schema:
+        # - "primary_configs": config_idx -> repr(config)
+        # - "secondary_configs": repr(KernelKey) -> config_idx
+        primary_configs = {int(k): eval(v) for k, v in json_obj["primary_configs"].items()}
+        secondary_configs: dict[KernelKey, int] = {}
+        for k, v in json_obj["secondary_configs"].items():
             key_tuple = tuple(eval(k))
             # Convert tuple to KernelKey
             if len(key_tuple) == 3:
-                hash_configs[KernelKey(*key_tuple)] = v
+                secondary_configs[KernelKey(*key_tuple)] = v
             else:
-                # Handle backwards compatibility if needed
-                hash_configs[KernelKey(*key_tuple)] = v
-    return useful_configs, hash_configs
+                secondary_configs[KernelKey(*key_tuple)] = v
+    return primary_configs, secondary_configs
 
 
 def bind_and_compile_kernel(kernel: helion.Kernel, args: Any, config: helion.Config) -> Callable:
@@ -173,30 +175,32 @@ def helion_aot_autotune(
                 list(primary_inputs()), key=lambda x: wrapped_kernel_key(*x).numeric_key
             )
             if autotune_mode == AOTAutotuneMode.CREATE:
-                useful_configs = []
+                primary_configs = []
                 for idx, input in enumerate(inputs):
                     log.info(f"Autotuning for {config_name} with key: {wrapped_kernel_key(*input)}")
                     config = kernel.autotune(input)
-                    useful_configs.append(repr(config))
+                    primary_configs.append(repr(config))
             elif autotune_mode == AOTAutotuneMode.RETUNE:
                 with open(path, "r") as f:
                     json_obj = json.load(f)
-                    useful_configs = list(json_obj["useful_configs"].values())
+                    primary_configs = list(json_obj["primary_configs"].values())
             elif autotune_mode == AOTAutotuneMode.IMPUTE:
                 # Load existing configs if available
-                existing_useful_configs = {}
-                existing_hash_configs = {}
+                existing_primary_configs: dict[int, Any] = {}
+                existing_secondary_configs: dict[KernelKey, int] = {}
                 if path.exists():
-                    existing_useful_configs, existing_hash_configs = load_autotune_data_from_json(
-                        path
+                    existing_primary_configs, existing_secondary_configs = (
+                        load_autotune_data_from_json(path)
                     )
-                    log.info(f"Loaded {len(existing_hash_configs)} existing configs from {path}")
+                    log.info(
+                        f"Loaded {len(existing_secondary_configs)} existing configs from {path}"
+                    )
 
                 # Identify which inputs need autotuning
                 missing_inputs = []
                 for input in inputs:
                     cur_key = wrapped_kernel_key(*input)
-                    if cur_key not in existing_hash_configs:
+                    if cur_key not in existing_secondary_configs:
                         missing_inputs.append(input)
 
                 log.info(f"Found {len(missing_inputs)} missing inputs out of {len(inputs)} total")
@@ -209,21 +213,23 @@ def helion_aot_autotune(
                     new_configs.append(repr(config))
 
                 # Combine existing and new configs
-                useful_configs = list(existing_useful_configs.values()) + new_configs
+                primary_configs = list(existing_primary_configs.values()) + new_configs
             elif autotune_mode == AOTAutotuneMode.ROUTE:
                 # Load existing configs - they must exist for route mode
                 if not path.exists():
                     raise RuntimeError(
                         f"Route mode requires existing configs. Run with HELION_AOT_AUTOTUNE=create first to generate configs at {path}"
                     )
-                existing_useful_configs, existing_hash_configs = load_autotune_data_from_json(path)
-                log.info(f"Loaded {len(existing_hash_configs)} existing configs from {path}")
+                existing_primary_configs, existing_secondary_configs = load_autotune_data_from_json(
+                    path
+                )
+                log.info(f"Loaded {len(existing_secondary_configs)} existing configs from {path}")
 
                 # Use only existing configs - no new autotuning
-                useful_configs = list(existing_useful_configs.values())
+                primary_configs = list(existing_primary_configs.values())
 
-            log.info("Candidate useful configs: ")
-            for idx, config in enumerate(useful_configs):
+            log.info("Candidate primary configs: ")
+            for idx, config in enumerate(primary_configs):
                 log.info(f"{idx}:, Config: {config}")
 
             input_timings = []
@@ -234,7 +240,7 @@ def helion_aot_autotune(
             for input in inputs:
                 cur_input_key = wrapped_kernel_key(*input)
                 timings = []
-                for idx, config in enumerate(useful_configs):
+                for idx, config in enumerate(primary_configs):
                     try:
                         cur_kernel = bind_and_compile_kernel(kernel, input, eval(config))
                         timings.append(do_bench(lambda: cur_kernel(*input), rep=retune_rep_ms))  # noqa: B023
@@ -249,19 +255,19 @@ def helion_aot_autotune(
                 lambda: (float("inf"), None)
             )
             for cur_kernel_key, input_timings in input_timings:
-                for config_idx, (config, timing) in enumerate(zip(useful_configs, input_timings)):
+                for config_idx, (config, timing) in enumerate(zip(primary_configs, input_timings)):
                     if timing < hash_configs_timings[cur_kernel_key][0] * threshold:
                         hash_configs_timings[cur_kernel_key] = (timing, config_idx)
 
             kept_configs = {}
-            hash_configs = {k: v[1] for k, v in hash_configs_timings.items()}
-            for key, config_idx in hash_configs.items():
+            secondary_configs = {k: v[1] for k, v in hash_configs_timings.items()}
+            for key, config_idx in secondary_configs.items():
                 assert config_idx is not None
-                kept_configs[config_idx] = useful_configs[config_idx]
+                kept_configs[config_idx] = primary_configs[config_idx]
 
             json_obj = {
-                "useful_configs": kept_configs,
-                "hash_configs": {repr(k): v for k, v in hash_configs.items()},
+                "primary_configs": kept_configs,
+                "secondary_configs": {repr(k): v for k, v in secondary_configs.items()},
             }
 
             # Also print the full JSON payload for easy inspection/copying.
@@ -284,9 +290,9 @@ def helion_aot_autotune(
                 return cached_kernels[key](*args)
             if has_int64:
                 kernel.settings.index_dtype = torch.int64
-            useful_configs, hash_configs = get_configs_from_autotuning(autotune_mode)
-            key_to_config = {k: useful_configs[v] for k, v in hash_configs.items()}
-            if key not in cached_kernels and cur_kernel_key in hash_configs:
+            primary_configs, secondary_configs = get_configs_from_autotuning(autotune_mode)
+            key_to_config = {k: primary_configs[v] for k, v in secondary_configs.items()}
+            if key not in cached_kernels and cur_kernel_key in secondary_configs:
                 cached_kernels[key] = bind_and_compile_kernel(
                     kernel, args, key_to_config[cur_kernel_key]
                 )
@@ -305,7 +311,7 @@ def helion_aot_autotune(
                         config_key.numeric_key,
                     )
 
-                sorted_keys = sorted(hash_configs.keys(), key=config_key_sort, reverse=True)
+                sorted_keys = sorted(secondary_configs.keys(), key=config_key_sort, reverse=True)
                 best_match_key = sorted_keys[0]
                 used_config = key_to_config[best_match_key]
                 # Verify that the exact_key matches - this is required for correctness
