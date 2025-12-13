@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Optional
 from transformers import AutoTokenizer
+from transformers.tokenization_utils import PreTrainedTokenizer
 
 # Source: https://github.com/openai/gpt-2/blob/master/src/encoder.py#L9
 # Also implemented in https://docs.rs/tokenizers/latest/src/tokenizers/pre_tokenizers/byte_level.rs.html#13-39
@@ -51,7 +52,7 @@ def _chars_to_bytes(char_sequence: str) -> list:
     return list(bytes(_CHARS_TO_BYTES[char] for char in char_sequence))
 
 @dataclass
-class ByteTokenizerConfig:
+class BolmoTokenizerConfig:
     vocab_size: int
     bos_token_id: int
     pad_token_id: int
@@ -63,7 +64,7 @@ class ByteTokenizerConfig:
 
 
     @classmethod
-    def bolmo(cls) -> "ByteTokenizerConfig":
+    def bolmo(cls) -> "BolmoTokenizerConfig":
         special_tokens = [
             "<pad>",
             "<bos>",
@@ -83,13 +84,15 @@ class ByteTokenizerConfig:
         )
     
     def build(self):
-        return ByteTokenizer(self)
+        return BolmoTokenizer(tokenizer_config=self)
 
 
-class ByteTokenizer:
+class BolmoTokenizer(PreTrainedTokenizer):
     TOKEN_ID_KEY = -1
 
-    def __init__(self, tokenizer_config: ByteTokenizerConfig):
+    def __init__(self, **kwargs):
+        tokenizer_config = kwargs.pop("tokenizer_config", BolmoTokenizerConfig.bolmo())
+
         self.config = tokenizer_config
         self.hf_tokenizer = AutoTokenizer.from_pretrained(tokenizer_config.original_identifier)
         if self.config.special_tokens_first:
@@ -124,7 +127,17 @@ class ByteTokenizer:
                 if byte not in current_dict:
                     current_dict[byte] = {}
                 current_dict = current_dict[byte]
-            current_dict[ByteTokenizer.TOKEN_ID_KEY] = token_id
+            current_dict[BolmoTokenizer.TOKEN_ID_KEY] = token_id
+
+        self.add_bos_token = True
+        self.add_eos_token = False
+
+        super().__init__(
+            bos_token=self.config.special_tokens[self.config.bos_token_id],
+            eos_token=self.config.special_tokens[self.config.eos_token_id],
+            pad_token=self.config.special_tokens[self.config.pad_token_id],
+            extra_ids=0,
+        )
 
     @property
     def bos_token_id(self):
@@ -141,6 +154,37 @@ class ByteTokenizer:
     @property
     def bpe_token_end_id(self):
         return self.config.bpe_token_end_id 
+
+    @property
+    def vocab_size(self):
+        return self.config.vocab_size
+
+    def _convert_id_to_token(self, index):
+        if index < self.offset:
+            return self.config.special_tokens[index - self.special_tokens_offset]
+
+        if index >= self.offset + 256 and index < self.offset * 2 + 256:
+            # special token with fused boundary
+            return self.config.special_tokens[index - self.offset - 256] + "b"
+
+        return _BYTES_TO_CHARS[index - self.offset - 256 - self.offset] + "b" if index >= self.offset + 256 else _BYTES_TO_CHARS[index - self.offset]
+
+    def _convert_token_to_id(self, token):
+        if token in self.config.special_tokens:
+            return self.config.special_tokens.index(token)
+
+        if token in [x + "b" for x in self.config.special_tokens]:
+            # special token with fused boundary
+            return 256 + self.config.special_tokens.index(token[:-1])
+
+        if len(token) > 1 and token[-1] == "b":
+            return self.offset + 256 + _CHARS_TO_BYTES[token[0]]
+        else:
+            return self.offset + _CHARS_TO_BYTES[token]
+
+    def get_vocab(self):
+        vocab = {self.convert_ids_to_tokens(i): i for i in range(self.vocab_size)}
+        return vocab
 
     def expand_byte_ids(self, byte_ids: list[int], n_last: Optional[int] = None) -> list[int]:
         # search in the byte tree for the longest matching token at every byte position
@@ -165,8 +209,8 @@ class ByteTokenizer:
 
                 try:
                     current_dict = current_dict[byte]
-                    if ByteTokenizer.TOKEN_ID_KEY in current_dict:
-                        current_expansion = current_dict[ByteTokenizer.TOKEN_ID_KEY]
+                    if BolmoTokenizer.TOKEN_ID_KEY in current_dict:
+                        current_expansion = current_dict[BolmoTokenizer.TOKEN_ID_KEY]
                 except KeyError:
                     assert current_expansion is not None
                     break
@@ -175,17 +219,100 @@ class ByteTokenizer:
 
         return expanded_ids
 
-    def patch_ids_to_byte_ids(self, input_ids: list[int]):
+    # Copied from transformers.models.llama.tokenization_llama.LlamaTokenizer.build_inputs_with_special_tokens
+    def build_inputs_with_special_tokens(self, token_ids_0, token_ids_1=None):
+        bos_token_id = [self.bos_token_id] if self.add_bos_token else []
+        eos_token_id = [self.eos_token_id] if self.add_eos_token else []
+
+        output = bos_token_id + token_ids_0 + eos_token_id
+
+        if token_ids_1 is not None:
+            output = output + bos_token_id + token_ids_1 + eos_token_id
+
+        return output
+
+    # Copied from transformers.models.llama.tokenization_llama.LlamaTokenizer.get_special_tokens_mask
+    def get_special_tokens_mask(
+        self, token_ids_0: list[int], token_ids_1: Optional[list[int]] = None, already_has_special_tokens: bool = False
+    ) -> list[int]:
+        """
+        Retrieve sequence ids from a token list that has no special tokens added. This method is called when adding
+        special tokens using the tokenizer `prepare_for_model` method.
+        Args:
+            token_ids_0 (`List[int]`):
+                List of IDs.
+            token_ids_1 (`List[int]`, *optional*):
+                Optional second list of IDs for sequence pairs.
+            already_has_special_tokens (`bool`, *optional*, defaults to `False`):
+                Whether or not the token list is already formatted with special tokens for the model.
+        Returns:
+            `List[int]`: A list of integers in the range [0, 1]: 1 for a special token, 0 for a sequence token.
+        """
+        if already_has_special_tokens:
+            return super().get_special_tokens_mask(
+                token_ids_0=token_ids_0, token_ids_1=token_ids_1, already_has_special_tokens=True
+            )
+
+        bos_token_id = [1] if self.add_bos_token else []
+        eos_token_id = [1] if self.add_eos_token else []
+
+        if token_ids_1 is None:
+            return bos_token_id + ([0] * len(token_ids_0)) + eos_token_id
+        return (
+            bos_token_id
+            + ([0] * len(token_ids_0))
+            + eos_token_id
+            + bos_token_id
+            + ([0] * len(token_ids_1))
+            + eos_token_id
+        )
+
+    # Copied from transformers.models.llama.tokenization_llama.LlamaTokenizer.create_token_type_ids_from_sequences
+    def create_token_type_ids_from_sequences(
+        self, token_ids_0: list[int], token_ids_1: Optional[list[int]] = None
+    ) -> list[int]:
+        """
+        Creates a mask from the two sequences passed to be used in a sequence-pair classification task. An ALBERT
+        sequence pair mask has the following format:
+        ```
+        0 0 0 0 0 0 0 0 0 0 0 1 1 1 1 1 1 1 1 1
+        | first sequence    | second sequence |
+        ```
+        if token_ids_1 is None, only returns the first portion of the mask (0s).
+        Args:
+            token_ids_0 (`List[int]`):
+                List of ids.
+            token_ids_1 (`List[int]`, *optional*):
+                Optional second list of IDs for sequence pairs.
+        Returns:
+            `List[int]`: List of [token type IDs](../glossary#token-type-ids) according to the given sequence(s).
+        """
+        bos_token_id = [self.bos_token_id] if self.add_bos_token else []
+        eos_token_id = [self.eos_token_id] if self.add_eos_token else []
+
+        output = [0] * len(bos_token_id + token_ids_0 + eos_token_id)
+
+        if token_ids_1 is not None:
+            output += [1] * len(bos_token_id + token_ids_1 + eos_token_id)
+
+        return output
+
+    def _tokenize(self, text: str, **kwargs) -> list[str]:
+        """Take as input a string and return a list of strings (tokens) for words/sub-words"""
+        tokens = self.convert_ids_to_tokens(self._bolmo_encode(text))
+        return tokens
+
+    def _patch_ids_to_byte_ids(self, input_ids: list[int]):
         return [byte_token_id for token_id in input_ids for byte_token_id in self.byte_sequences[token_id]]
 
-    def encode(self, string: str, add_special_tokens=False):
+    def _bolmo_encode(self, string: str, add_special_tokens=False):
         input_ids = self.hf_tokenizer.encode(string, add_special_tokens=add_special_tokens)
-        return self.patch_ids_to_byte_ids(input_ids)
+        return self._patch_ids_to_byte_ids(input_ids)
 
-    def decode(self, tokens: list[int]) -> str:
-        return self.decode_to_bytes(tokens).decode("utf-8", errors="replace")
+    def _bolmo_decode(self, tokens: list[int]) -> str:
+        return self._decode_to_bytes(tokens).decode("utf-8", errors="replace")
 
-    def decode_to_bytes(self, tokens: list[int]) -> bytes:
+    def _decode_to_bytes(self, tokens: list[int]) -> bytes:
         tokens_without_boundary = []
         for token in tokens:
             if token >= (self.offset + 256):
@@ -209,7 +336,7 @@ class ByteTokenizer:
             if skip_last and idx == len(original_input_ids) - 1:
                 break
 
-            token_byte_tokens = self.patch_ids_to_byte_ids([int(token)])
+            token_byte_tokens = self._patch_ids_to_byte_ids([int(token)])
 
             if strip_pad and all(t == self.pad_token_id for t in token_byte_tokens):
                 # skip padding tokens
@@ -220,82 +347,5 @@ class ByteTokenizer:
 
         return byte_tokens, patch_lengths
 
-    @lru_cache(maxsize=1024)
-    def _is_spacelike(self, token_id: int) -> bool:
-        """
-        Check if a token ID is spacelike.
-        """
-        byte = token_id - self.offset
-        # see https://github.com/kjslag/spacebyte/blob/321111315c92bce0bc2f9f1630cb0bc82b897c57/spacebyte.py#L137-L145.
-        is_spacelike = (
-            (byte < ord('0')) |
-            ((ord('9') < byte) & (byte < ord('A'))) | 
-            ((ord('Z') < byte) & (byte < ord('a'))) |
-            ((ord('z') < byte) & (byte < 0b1000_0000)) |
-            (0b1100_0000 <= byte)
-        )
-        return is_spacelike
-
-    @lru_cache(maxsize=1024)
-    def _is_strict_spacelike(self, token_id: int) -> bool:
-        """
-        Check if a token ID is strictly spacelike (only space, tab, newline, carriage return).
-        """
-        byte = token_id - self.offset
-        return byte in {ord(' '), ord('\t'), ord('\n'), ord('\r')}
-
-    def get_space_patch_lengths(self, input_ids: list[int], max_patch_length: int = 16, kind: str = "strict_end_before_space") -> list[int]:
-        patch_lengths = []
-        current_length = 0
-
-        special_tokens = {self.bos_token_id, self.eos_token_id, self.pad_token_id}
-
-        all_spacelike = [self._is_spacelike(token) for token in input_ids]
-
-        if kind == "spacebyte":
-            for token_idx, token in enumerate(input_ids):
-                current_length += 1
-
-                spacelike = all_spacelike[token_idx]
-                previous_spacelike = all_spacelike[token_idx - 1] if token_idx > 0 else False
-
-                if (not previous_spacelike and spacelike) or current_length >= max_patch_length or token in special_tokens:
-                    patch_lengths.append(current_length)
-                    current_length = 0
-        elif kind == "spacebyte_end_before_space":
-            for token_idx, token in enumerate(input_ids):
-                current_length += 1
-
-                spacelike = all_spacelike[token_idx]
-                next_spacelike = all_spacelike[token_idx + 1] if token_idx < len(input_ids) - 1 else True
-
-                if (not spacelike and next_spacelike) or current_length >= max_patch_length or token in special_tokens:
-                    patch_lengths.append(current_length)
-                    current_length = 0
-        elif kind == "strict_end_before_space":
-            all_strict_spacelike = [self._is_strict_spacelike(token) for token in input_ids]
-            in_strict_prefix = True
-
-            for token_idx, token in enumerate(input_ids):
-                current_length += 1
-
-                spacelike = all_spacelike[token_idx]
-                strict_spacelike = all_strict_spacelike[token_idx]
-                next_spacelike = all_spacelike[token_idx + 1] if token_idx < len(input_ids) - 1 else True
-                next_strict_spacelike = all_strict_spacelike[token_idx + 1] if token_idx < len(input_ids) - 1 else True
-
-                if not strict_spacelike:
-                    in_strict_prefix = False
-
-                if in_strict_prefix:
-                    continue
-
-                if (spacelike != next_spacelike) or (strict_spacelike != next_strict_spacelike) or current_length >= max_patch_length or token in special_tokens:
-                    patch_lengths.append(current_length)
-                    in_strict_prefix = True
-                    current_length = 0
-
-        if current_length > 0:
-            patch_lengths.append(current_length)
-
-        return patch_lengths
+    def save_vocabulary(self, save_directory: str, filename_prefix: Optional[str] = None) -> Tuple[str]:
+        return ()

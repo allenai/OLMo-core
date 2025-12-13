@@ -3,7 +3,7 @@ from typing import Any
 
 from transformers.configuration_utils import PretrainedConfig, layer_type_validation
 from transformers.modeling_rope_utils import rope_config_validation
-from .tokenization_bolmo import ByteTokenizerConfig
+from .tokenization_bolmo import BolmoTokenizerConfig
 
 class BolmoConfig(PretrainedConfig):
     r"""
@@ -167,7 +167,7 @@ class BolmoConfig(PretrainedConfig):
         local_intermediate_size: int = 5504,
         local_rms_norm_eps=1e-5,
         subword_vocab_size: int = 100278, # dolma2_tokenizer subword vocab size
-        tokenizer_config: ByteTokenizerConfig | dict[str, Any] | None = None,
+        tokenizer_config: BolmoTokenizerConfig | dict[str, Any] | None = None,
         **kwargs,
     ):
         super().__init__(
@@ -220,8 +220,8 @@ class BolmoConfig(PretrainedConfig):
         self.subword_vocab_size = subword_vocab_size
 
         if tokenizer_config is None:
-            self.tokenizer_config = asdict(ByteTokenizerConfig.bolmo())
-        elif isinstance(tokenizer_config, ByteTokenizerConfig):
+            self.tokenizer_config = asdict(BolmoTokenizerConfig.bolmo())
+        elif isinstance(tokenizer_config, BolmoTokenizerConfig):
             self.tokenizer_config = asdict(tokenizer_config)
         else:
             self.tokenizer_config = tokenizer_config

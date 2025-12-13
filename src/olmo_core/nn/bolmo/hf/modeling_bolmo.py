@@ -23,7 +23,7 @@ from transformers.utils.deprecation import deprecate_kwarg
 from transformers.utils.generic import check_model_inputs
 
 from .configuration_bolmo import BolmoConfig
-from .tokenization_bolmo import ByteTokenizerConfig
+from .tokenization_bolmo import BolmoTokenizerConfig
 from .utils_bolmo import compute_boundary_mask, pad_right, pad_left, MaskState
 
 from xlstm.xlstm_large.model import mLSTMLayer, mLSTMLayerConfig, mLSTMLayerStateType, soft_cap, mLSTMBackendConfig
@@ -875,7 +875,7 @@ class BolmoModel(BolmoPreTrainedModel):
             }
         )
 
-        self.tokenizer_config = ByteTokenizerConfig(**config.tokenizer_config)
+        self.tokenizer_config = BolmoTokenizerConfig(**config.tokenizer_config)
         self._tokenizer = None
 
         # Initialize weights and apply final processing
@@ -1235,7 +1235,7 @@ class BolmoForCausalLM(BolmoPreTrainedModel, GenerationMixin):
             # TODO: impl non-greedy
             new_next_tokens = next_token_logits.squeeze(1).argmax(dim=-1)
 
-            if boundary_state.all():
+            if boundary_state.all() or is_first_forward:
                 tokens_generated_plus_prefilled += 1
 
                 next_tokens = new_next_tokens
