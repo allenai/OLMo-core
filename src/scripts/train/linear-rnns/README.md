@@ -43,7 +43,9 @@ while true; do
         --launch.priority="urgent" \
         --launch.num_nodes=64 \
         --train_module.dp_config.name=hsdp \
-        --train_module.dp_config.shard_degree=64
+        --train_module.dp_config.shard_degree=64 \
+        --launch.beaker_image=tylerr/olmo-core-tch270cu128-2025-09-24 \
+        --model.block.attention.backend=flash_3
 done
 ```
 
@@ -61,4 +63,11 @@ Beyond that, it's worth experimenting a bit with FSDP vs. HSDP (and different sh
 ```shell
 --train_module.dp_config.name=hsdp \
 --train_module.dp_config.shard_degree=64
+```
+
+To run with Flash Attention 3 instead of 2, add:
+
+```shell
+--launch.beaker_image=tylerr/olmo-core-tch270cu128-2025-09-24 \
+--model.block.attention.backend=flash_3
 ```
