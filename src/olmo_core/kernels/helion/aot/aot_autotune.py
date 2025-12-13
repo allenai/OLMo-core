@@ -27,6 +27,7 @@ class KernelKey(NamedTuple):
     hash_key: Hashable key for exact matching (e.g., shape, dtype)
     exact_key: Key that must match exactly for config reuse (e.g., specialized dimensions)
     """
+
     numeric_key: Any
     hash_key: tuple[Any, ...]
     exact_key: tuple[Any, ...]
@@ -77,7 +78,7 @@ def bind_and_compile_kernel(kernel: helion.Kernel, args: Any, config: helion.Con
     return kernel.bind(args).compile_config(config)
 
 
-def aot_autotune(
+def helion_aot_autotune(
     config_name: str,
     kernel_key: Callable[..., KernelKey],
     primary_inputs: AutotuneInputFn,
@@ -168,7 +169,9 @@ def aot_autotune(
                     )
                 return load_autotune_data_from_json(path)
 
-            inputs = sorted(list(primary_inputs()), key=lambda x: wrapped_kernel_key(*x).numeric_key)
+            inputs = sorted(
+                list(primary_inputs()), key=lambda x: wrapped_kernel_key(*x).numeric_key
+            )
             if autotune_mode == AOTAutotuneMode.CREATE:
                 useful_configs = []
                 for idx, input in enumerate(inputs):
@@ -261,9 +264,13 @@ def aot_autotune(
                 "hash_configs": {repr(k): v for k, v in hash_configs.items()},
             }
 
+            # Also print the full JSON payload for easy inspection/copying.
+            json_str = json.dumps(json_obj, indent=2) + "\n"
+            log.info(f"Saving autotune config to {path}")
+            print(json_str, end="")
+
             with open(path, "w") as f:
-                json.dump(json_obj, f, indent=2)
-                f.write("\n")
+                f.write(json_str)
             return load_autotune_data_from_json(path)
 
         cached_kernels = {}
@@ -302,7 +309,9 @@ def aot_autotune(
                 best_match_key = sorted_keys[0]
                 used_config = key_to_config[best_match_key]
                 # Verify that the exact_key matches - this is required for correctness
-                assert best_match_key.exact_key == cur_kernel_key.exact_key, "Exact key not found in configs"
+                assert best_match_key.exact_key == cur_kernel_key.exact_key, (
+                    "Exact key not found in configs"
+                )
                 cached_kernels[key] = bind_and_compile_kernel(kernel, args, used_config)
             return cached_kernels[key](*args)
 

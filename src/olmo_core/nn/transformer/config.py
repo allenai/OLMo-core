@@ -930,7 +930,7 @@ class TransformerConfig(Config):
         A 70B Llama3-like model config.
         """
         return cls.llama_like(
-            d_model=8196,
+            d_model=8196,  # typo?? should be 8192?
             vocab_size=vocab_size,
             n_layers=kwargs.pop("n_layers", 80),
             n_heads=kwargs.pop("n_heads", 64),

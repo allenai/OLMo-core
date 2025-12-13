@@ -1,51 +1,128 @@
-import argparse
+import itertools
+from functools import partial
 from typing import Literal, Tuple
 
 import helion
 import helion.language as hl
 import torch
-from helion._testing import DEVICE, run_example
 from helion.autotuner import LFBOPatternSearch
+from triton.testing import do_bench  # pyright: ignore[reportMissingImports]
 
-from olmo_core.kernels.helion.aot.aot_autotune import KernelKey
+from olmo_core.data import TokenizerConfig
+from olmo_core.kernels.helion.aot.aot_autotune import KernelKey, helion_aot_autotune
+
+# --- AOT compilation helpers
 
 
-def linear_cross_entropy_fwd_key(inputs, weight, labels, ignore_index, reduction):
+# Shapes we tune/benchmark against (product of these lists).
+LCE_TUNE_PRIMARY_BT: list[int] = [8192, 16384, 32768]
+LCE_TUNE_PRIMARY_D: list[int] = [2560, 4096, 5120, 8192]
+LCE_TUNE_V: list[int] = [TokenizerConfig.dolma2().padded_vocab_size()]
+
+LCE_TUNE_SECONDARY_BT: list[int] = list(range(2048, 65536, 2048))
+LCE_TUNE_SECONDARY_D: list[int] = list(range(256, 16385, 256))
+
+
+def lce_fwd_key(inputs, weight, labels, ignore_index, reduction):
+    """Key used to lookup the best config for the forward pass of the linear cross entropy loss."""
     bt, d = inputs.shape
     v = weight.shape[1]
     return KernelKey(
-        numeric_key=bt * d,
-        hash_key=(bt, d, v),
-        exact_key=(weight.dtype, inputs.dtype, labels.dtype, reduction),
+        numeric_key=bt * d,  # used for routing if hash_key doesn't match
+        hash_key=(bt, d, v),  # will be used if it matches
+        exact_key=(weight.dtype, inputs.dtype, labels.dtype, reduction),  # must match
     )
 
 
-def lce_fwd_primary_inputs(bt: list[int], d: list[int], v: list[int]):
-    xprod = [
-        (torch.randn(_bt, _d), torch.randn(_d, _v), torch.randint(0, _v, (_bt,)), -100, "sum")
-        for _bt in bt
-        for _d in d
-        for _v in v
-    ]
-    for inputs, weight, labels, ignore_index, reduction in xprod:
-        yield (
-            inputs.to(device="cuda"),
-            weight.to(device="cuda"),
-            labels.to(device="cuda"),
-            ignore_index,
+def lce_fwd_inputs(bt: list[int], d: list[int], v: list[int]):
+    with torch.device("cuda"):
+        for _bt, _d, _v in itertools.product(bt, d, v):
+            inputs = torch.randn(_bt, _d, dtype=torch.bfloat16)
+            weight = torch.randn(_d, _v, dtype=torch.bfloat16)
+            labels = torch.randint(0, _v, (_bt,))
+            yield (inputs, weight, labels, -100, "sum")
+
+
+def lce_bwd_key(
+    inputs,
+    weight,
+    labels,
+    lse,
+    grad_ce_loss_scalar,
+    grad_z_loss_scalar,
+    z_loss_multiplier,
+    ignore_index,
+    reduction,
+):
+    # Backward kernel is specialized on (N, D, V) and several constexprs (e.g. reduction).
+    bt, d = inputs.shape
+    v = weight.shape[1]
+    return KernelKey(
+        # Backward cost scales with N*D*V (recomputing logits and accumulating grads).
+        numeric_key=bt * d * v,
+        hash_key=(
+            bt,
+            d,
+            v,
+            lse.dtype,
+            grad_ce_loss_scalar.dtype,
+            grad_z_loss_scalar.dtype,
             reduction,
-        )
+        ),
+        exact_key=(
+            weight.dtype,
+            inputs.dtype,
+            labels.dtype,
+            lse.dtype,
+            grad_ce_loss_scalar.dtype,
+            grad_z_loss_scalar.dtype,
+            reduction,
+        ),
+    )
 
 
-# @aot_autotune(
-#     config_name="linear_cross_entropy_fwd",
-#     kernel_key=linear_cross_entropy_fwd_key,
-#     primary_inputs=lce_fwd_primary_inputs(
-#         bt=[1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192],
-#         d=[2560],
-#         v=[100352],
-#     ),
-# )
+def lce_bwd_inputs(bt: list[int], d: list[int], v: list[int]):
+    with torch.device("cuda"):
+        for _bt, _d, _v in itertools.product(bt, d, v):
+            inputs = torch.randn(_bt, _d, dtype=torch.bfloat16)
+            weight = torch.randn(_d, _v, dtype=torch.bfloat16)
+            labels = torch.randint(0, _v, (_bt,), dtype=torch.long)
+
+            # Backward kernels consume per-token `lse` from forward. For autotuning we only need
+            # correct shape/dtype; choose a large value to avoid overflow in exp(logits - lse).
+            lse = torch.full((_bt,), 1.0e4, dtype=torch.float32)
+
+            # For reduction="sum", backward expands these scalar grads to per-token gradients.
+            grad_ce_loss_scalar = torch.ones([], dtype=torch.float32)
+            grad_z_loss_scalar = torch.ones([], dtype=torch.float32)
+            z_loss_multiplier = 1e-4
+
+            yield (
+                inputs,
+                weight,
+                labels,
+                lse,
+                grad_ce_loss_scalar,
+                grad_z_loss_scalar,
+                z_loss_multiplier,
+                -100,
+                "sum",
+            )
+
+
+# --- Helion kernels
+
+
+@helion_aot_autotune(
+    config_name="linear_cross_entropy_fwd",
+    kernel_key=lce_fwd_key,
+    primary_inputs=partial(
+        lce_fwd_inputs, bt=LCE_TUNE_PRIMARY_BT, d=LCE_TUNE_PRIMARY_D, v=LCE_TUNE_V
+    ),
+    secondary_inputs=partial(
+        lce_fwd_inputs, bt=LCE_TUNE_SECONDARY_BT, d=LCE_TUNE_SECONDARY_D, v=LCE_TUNE_V
+    ),
+)
 @helion.kernel(
     # config=helion.Config(  # H100
     #     block_sizes=[64, 512, 64],
@@ -60,19 +137,19 @@ def lce_fwd_primary_inputs(bt: list[int], d: list[int], v: list[int]):
     #     range_unroll_factors=[3, 1, 1],
     #     range_warp_specializes=[],
     # ),
-    config=helion.Config(  # 4090
-        block_sizes=[64, 512, 32],
-        indexing=["pointer", "pointer", "pointer", "pointer"],
-        load_eviction_policies=["first", "first", "first"],
-        num_stages=1,
-        num_warps=8,
-        pid_type="flat",
-        range_flattens=[None, None, None],
-        range_multi_buffers=[None, False, True],
-        range_num_stages=[0, 3, 3],
-        range_unroll_factors=[0, 0, 0],
-        range_warp_specializes=[],
-    ),
+    # config=helion.Config(  # 4090
+    #     block_sizes=[64, 512, 32],
+    #     indexing=["pointer", "pointer", "pointer", "pointer"],
+    #     load_eviction_policies=["first", "first", "first"],
+    #     num_stages=1,
+    #     num_warps=8,
+    #     pid_type="flat",
+    #     range_flattens=[None, None, None],
+    #     range_multi_buffers=[None, False, True],
+    #     range_num_stages=[0, 3, 3],
+    #     range_unroll_factors=[0, 0, 0],
+    #     range_warp_specializes=[],
+    # ),
     autotuner_fn=LFBOPatternSearch,
     static_shapes=False,  # allow dynamic shapes for the kernel, we specialize on specific dimensions
     autotune_ignore_errors=False,
@@ -190,7 +267,41 @@ def olmo_linear_cross_entropy_fwd_kernel(
     return losses, z_squared, lse
 
 
+@helion_aot_autotune(
+    config_name="linear_cross_entropy_bwd_1d",
+    kernel_key=lce_bwd_key,
+    primary_inputs=partial(
+        lce_bwd_inputs, bt=LCE_TUNE_PRIMARY_BT, d=LCE_TUNE_PRIMARY_D, v=LCE_TUNE_V
+    ),
+    secondary_inputs=partial(
+        lce_bwd_inputs, bt=LCE_TUNE_SECONDARY_BT, d=LCE_TUNE_SECONDARY_D, v=LCE_TUNE_V
+    ),
+)
 @helion.kernel(
+    # config=helion.Config(
+    #     block_sizes=[64, 512, 64, 128, 32],
+    #     indexing=[
+    #         "pointer",
+    #         "tensor_descriptor",
+    #         "pointer",
+    #         "pointer",
+    #         "tensor_descriptor",
+    #         "tensor_descriptor",
+    #         "tensor_descriptor",
+    #         "pointer",
+    #         "tensor_descriptor",
+    #         "pointer",
+    #     ],
+    #     load_eviction_policies=["first", "last", "", "", "", "", "first"],
+    #     num_stages=5,
+    #     num_warps=8,
+    #     pid_type="flat",
+    #     range_flattens=[None, None, False, False, True],
+    #     range_multi_buffers=[None, True, None, True, None],
+    #     range_num_stages=[0, 1, 3, 3, 4],
+    #     range_unroll_factors=[0, 1, 1, 4, 1],
+    #     range_warp_specializes=[],
+    # ),
     static_shapes=False,
     autotuner_fn=LFBOPatternSearch,
     autotune_ignore_errors=False,
@@ -216,8 +327,8 @@ def olmo_linear_cross_entropy_bwd_recompute_kernel(
     - For reduction="none": would need per-token grad arrays (not yet implemented)
 
     Args:
-        grad_ce_loss_scalar: 0-dimensional tensor (scalar) - no host-device sync required
-        grad_z_loss_scalar: 0-dimensional tensor (scalar) - no host-device sync required
+        grad_ce_loss_scalar: 0-dimensional tensor (scalar)
+        grad_z_loss_scalar: 0-dimensional tensor (scalar)
     """
     n = _input.shape[0]
     d = hl.specialize(_input.shape[1])
@@ -296,6 +407,16 @@ def olmo_linear_cross_entropy_bwd_recompute_kernel(
     return grad_input, grad_weight
 
 
+@helion_aot_autotune(
+    config_name="linear_cross_entropy_bwd_2d",
+    kernel_key=lce_bwd_key,
+    primary_inputs=partial(
+        lce_bwd_inputs, bt=LCE_TUNE_PRIMARY_BT, d=LCE_TUNE_PRIMARY_D, v=LCE_TUNE_V
+    ),
+    secondary_inputs=partial(
+        lce_bwd_inputs, bt=LCE_TUNE_SECONDARY_BT, d=LCE_TUNE_SECONDARY_D, v=LCE_TUNE_V
+    ),
+)
 @helion.kernel(
     # autotune_effort="none",
     static_shapes=False,
@@ -499,43 +620,6 @@ class OlmoFusedLinearCrossEntropyFunction(torch.autograd.Function):
         )
 
 
-# @torch.compile
-def lce_baseline_fn(
-    _input, weight, labels, ignore_index=-100, reduction="sum", z_loss_multiplier=1e-4
-):
-    logits = torch.matmul(_input, weight).float()
-    z_squared = logits.logsumexp(dim=-1).pow(2)
-
-    # Compute per-sample loss (no reduction for baseline comparison)
-    # Compute per-sample loss without reduction
-    ce_loss = torch.nn.functional.cross_entropy(
-        logits, labels, ignore_index=ignore_index, reduction="none"
-    )
-    # Apply mask and reduction manually
-    mask = labels != ignore_index
-    if reduction == "sum":
-        ce_loss = ce_loss.sum()
-        z_squared = (z_squared * mask).sum()
-    else:  # reduction == "none"
-        ce_loss = ce_loss
-        z_squared = z_squared * mask
-    z_loss = z_loss_multiplier * z_squared
-    return ce_loss, z_loss
-
-
-class TorchLMHeadCE(torch.nn.Module):
-    def __init__(
-        self, H: int, V: int, dtype: torch.dtype, ignore_index: int = -100, reduction: str = "sum"
-    ):
-        super().__init__()
-        self.lm_head = torch.nn.Linear(in_features=H, out_features=V, bias=False, dtype=dtype)
-        self.ce_loss = torch.nn.CrossEntropyLoss(ignore_index=ignore_index, reduction=reduction)
-
-    def forward(self, x, target):
-        logits = self.lm_head(x)
-        return self.ce_loss(logits.float(), target)
-
-
 class OlmoLMHeadCE(torch.nn.Module):
     def __init__(
         self, H: int, V: int, dtype: torch.dtype, ignore_index: int = -100, reduction: str = "sum"
@@ -547,73 +631,151 @@ class OlmoLMHeadCE(torch.nn.Module):
 
     def forward(self, x, target):
         ce_loss, lse = OlmoFusedLinearCrossEntropyFunction.apply(  # pyright: ignore[reportGeneralTypeIssues]
-            x,
-            self.lm_head.weight.T,
-            target,
-            self.ignore_index,
-            self.reduction,
+            x, self.lm_head.weight.T, target, self.ignore_index, self.reduction
         )
         return ce_loss
 
 
-def tune_and_test() -> None:
+# TODO: make sure I like the perf at our specific dims
+# TODO: then tune kernel across all dims
+# TODO: then test kernel against baseline implementations in actual training
+
+
+def tune_and_benchmark() -> None:
     """
     Run fused linear cross entropy kernel tuning and verification.
     """
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", type=str, choices=["fwd", "full"], default="full")
-    args = parser.parse_args()
+    from olmo_core.nn.lm_head import LMHead, LMLossImplementation
 
-    batch_size, seq_len, vocab_size = 1, 8192, 100352
-    hidden_size = 2560
+    # Benchmark a grid of sizes. We interpret `bt` as N (flattened batch tokens), so we use
+    # batch_size=1 and seq_len=bt when constructing LMHead inputs.
+    dtype = torch.bfloat16
+    z_loss_multiplier = 1e-4
+    loss_reduction = "sum"
 
-    # batch_size, seq_len, vocab_size = 1, 4096, 8192
-    # hidden_size = 2560
+    # Run the full product of declared size options (including V).
+    bt_grid = sorted({*LCE_TUNE_PRIMARY_BT, *LCE_TUNE_SECONDARY_BT})
+    d_grid = sorted({*LCE_TUNE_PRIMARY_D, *LCE_TUNE_SECONDARY_D})
+    v_grid = list(LCE_TUNE_V)
 
-    n = batch_size * seq_len
+    print("\nBenchmarking forward and full (forward+backward) across sizes...")
+    print(f"V={v_grid} dtype={dtype} reduction={loss_reduction} z={z_loss_multiplier}")
+    print("-" * 100)
+    print(f"{'BT':>8} {'D':>6} {'V':>7} {'kind':>5} | {'helion':>10} {'default':>11} {'liger':>9}")
+    print("-" * 100)
 
-    # Create inputs for fused version
-    _input = torch.randn(n, hidden_size, device=DEVICE, dtype=torch.bfloat16, requires_grad=True)
-    weight = torch.randn(
-        hidden_size, vocab_size, device=DEVICE, dtype=torch.bfloat16, requires_grad=True
-    )
-    labels = torch.randint(0, vocab_size, (n,), device=DEVICE, dtype=torch.long)
+    # Use fewer iterations than the old fixed-size benchmark; these shapes are large.
+    # (do_bench also warms up internally).
+    rep = 500
 
-    # @torch.compile
-    def helion_fn(_input, weight, labels):
-        ce_loss, z_loss = OlmoFusedLinearCrossEntropyFunction.apply(
-            _input, weight, labels, -100, "sum"
-        )  # pyright: ignore[reportGeneralTypeIssues]
-        return ce_loss + z_loss
+    for vocab_size in v_grid:
+        for hidden_size in d_grid:
+            # Create LMHead instances with different loss implementations (per hidden size + vocab).
+            helion_lm_head = LMHead(
+                d_model=hidden_size,
+                vocab_size=vocab_size,
+                dtype=dtype,
+                bias=False,
+                init_device="cuda",
+                loss_implementation=LMLossImplementation.helion_fused_linear,
+            )
 
-    @torch.compile
-    def torch_fn(_input, weight, labels):
-        ce_loss, z_loss = lce_baseline_fn(
-            _input, weight, labels, ignore_index=-100, reduction="sum"
-        )
-        return ce_loss + z_loss
+            default_lm_head = LMHead(
+                d_model=hidden_size,
+                vocab_size=vocab_size,
+                dtype=dtype,
+                bias=False,
+                init_device="cuda",
+                loss_implementation=LMLossImplementation.default,
+            )
 
-    # warmup / compile
-    torch_fn(_input, weight, labels)
-    _input.grad = None
-    weight.grad = None
-    helion_fn(_input, weight, labels)
-    _input.grad = None
-    weight.grad = None
+            liger_lm_head = LMHead(
+                d_model=hidden_size,
+                vocab_size=vocab_size,
+                dtype=dtype,
+                bias=False,
+                init_device="cuda",
+                loss_implementation=LMLossImplementation.liger_fused_linear,
+            )
 
-    rtol, atol = 2e-2, 1e-3  # tigher than recommended bfloat16 tolerances
-    run_example(
-        helion_fn,
-        torch_fn,
-        (_input, weight, labels),
-        kernel_name="helion",
-        baseline_name="torch",
-        rtol=rtol,
-        atol=atol,
-        bwd=args.mode == "full",
-    )
+            # Copy weights to ensure all heads use the same weights for fair comparison.
+            with torch.no_grad():
+                default_lm_head.w_out.weight.copy_(helion_lm_head.w_out.weight)
+                liger_lm_head.w_out.weight.copy_(helion_lm_head.w_out.weight)
+
+            def helion_fn(x, labels, _lm=helion_lm_head):
+                out = _lm(
+                    x,
+                    labels=labels,
+                    loss_reduction=loss_reduction,
+                    z_loss_multiplier=z_loss_multiplier,
+                )
+                return out.loss
+
+            def default_fn(x, labels, _lm=default_lm_head):
+                out = _lm(
+                    x,
+                    labels=labels,
+                    loss_reduction=loss_reduction,
+                    z_loss_multiplier=z_loss_multiplier,
+                )
+                return out.loss
+
+            def liger_fn(x, labels, _lm=liger_lm_head):
+                out = _lm(
+                    x,
+                    labels=labels,
+                    loss_reduction=loss_reduction,
+                    z_loss_multiplier=z_loss_multiplier,
+                )
+                return out.loss
+
+            impls = {
+                "helion": (helion_fn, helion_lm_head.w_out.weight),
+                "default": (default_fn, default_lm_head.w_out.weight),
+                "liger": (liger_fn, liger_lm_head.w_out.weight),
+            }
+
+            for bt in bt_grid:
+                batch_size, seq_len = 1, bt
+
+                # Create inputs in the shape expected by LMHead: (batch_size, seq_len, d_model)
+                _input = torch.randn(
+                    batch_size,
+                    seq_len,
+                    hidden_size,
+                    device="cuda",
+                    dtype=dtype,
+                    requires_grad=True,
+                )
+                labels = torch.randint(
+                    0, vocab_size, (batch_size, seq_len), device="cuda", dtype=torch.long
+                )
+
+                results: dict[str, tuple[float, float]] = {}
+                for name, (fn, w) in impls.items():
+                    fwd_ms = float(do_bench(lambda: fn(_input, labels), rep=rep))
+
+                    def full_pass():
+                        out = fn(_input, labels)
+                        out.backward()
+
+                    full_ms = float(do_bench(full_pass, grad_to_none=[_input, w], rep=rep))
+                    results[name] = (fwd_ms, full_ms)
+
+                h_fwd, h_full = results["helion"]
+                d_fwd, d_full = results["default"]
+                l_fwd, l_full = results["liger"]
+                print(
+                    f"{bt:8d} {hidden_size:6d} {vocab_size:7d} {'fwd':>5} | {h_fwd:10.3f} {d_fwd:11.3f} {l_fwd:9.3f}"
+                )
+                print(
+                    f"{bt:8d} {hidden_size:6d} {vocab_size:7d} {'full':>5} | {h_full:10.3f} {d_full:11.3f} {l_full:9.3f}"
+                )
+
+            del helion_lm_head, default_lm_head, liger_lm_head
 
 
 if __name__ == "__main__":
-    tune_and_test()
+    tune_and_benchmark()

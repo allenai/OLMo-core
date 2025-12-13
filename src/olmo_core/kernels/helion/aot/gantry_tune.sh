@@ -19,8 +19,11 @@ gantry run \
     --gpus=1 \
     --beaker-image=tylerr/olmo-core-tch291cu128-2025-11-25 \
     --priority=normal \
-    --preemptible \
+    --not-preemptible \
     --system-python \
     --uv-all-extras \
     -- \
-    bash -c "python $FILE_TO_RUN || cp -r $CONFIG_DIR/* /results/"
+    bash -c "HELION_AOT_AUTOTUNE=create python $FILE_TO_RUN || cp -r $CONFIG_DIR/* /results/"
+
+# To extract the best config from gantry logs, use:
+# gantry logs 01KCB8KTG47EAYN8ND1FWN0B58 | grep -A 4 "One can hardcode the best config and skip autotuning with:"
