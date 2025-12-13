@@ -1251,7 +1251,7 @@ class BolmoTransformerGenerationModule(TransformerGenerationModule):
                 top_p=generation_config.top_p,
             )
 
-            if boundary_state.all():
+            if boundary_state.all() or is_first_forward:
                 if prof is not None:
                     prof.step()
                 pbar.update(1)
