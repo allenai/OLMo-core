@@ -14,7 +14,7 @@ CONFIG_DIR="$FILE_DIR/aot/configs"
 gantry run \
     -w ai2/OLMo-core \
     -b oe/base \
-    --show-log \
+    --show-logs \
     --gpu-type=h100 \
     --gpus=1 \
     --beaker-image=tylerr/olmo-core-tch291cu128-2025-11-25 \
