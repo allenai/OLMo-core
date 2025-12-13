@@ -23,8 +23,15 @@ LCE_TUNE_SECONDARY_BT: list[int] = list(range(2048, 65536, 2048))
 LCE_TUNE_SECONDARY_D: list[int] = list(range(256, 16385, 256))
 
 
-def lce_fwd_key(inputs, weight, labels, ignore_index, reduction):
-    """Key used to lookup the best config for the forward pass of the linear cross entropy loss."""
+def lce_fwd_key(
+    inputs: torch.Tensor,
+    weight: torch.Tensor,
+    labels: torch.Tensor,
+    ignore_index: int,
+    reduction: str,
+) -> KernelKey:
+    """Key used to lookup the best config for the LCE forward kernel."""
+    del ignore_index
     bt, d = inputs.shape
     v = weight.shape[1]
     return KernelKey(
@@ -36,24 +43,25 @@ def lce_fwd_key(inputs, weight, labels, ignore_index, reduction):
 
 def lce_fwd_inputs(bt: list[int], d: list[int], v: list[int]):
     with torch.device("cuda"):
-        for _bt, _d, _v in itertools.product(bt, d, v):
-            inputs = torch.randn(_bt, _d, dtype=torch.bfloat16)
-            weight = torch.randn(_d, _v, dtype=torch.bfloat16)
-            labels = torch.randint(0, _v, (_bt,))
+        for bt_size, d_size, v_size in itertools.product(bt, d, v):
+            inputs = torch.randn(bt_size, d_size, dtype=torch.bfloat16)
+            weight = torch.randn(d_size, v_size, dtype=torch.bfloat16)
+            labels = torch.randint(0, v_size, (bt_size,), dtype=torch.long)
             yield (inputs, weight, labels, -100, "sum")
 
 
 def lce_bwd_key(
-    inputs,
-    weight,
-    labels,
-    lse,
-    grad_ce_loss_scalar,
-    grad_z_loss_scalar,
-    z_loss_multiplier,
-    ignore_index,
-    reduction,
+    inputs: torch.Tensor,
+    weight: torch.Tensor,
+    labels: torch.Tensor,
+    lse: torch.Tensor,
+    grad_ce_loss_scalar: torch.Tensor,
+    grad_z_loss_scalar: torch.Tensor,
+    z_loss_multiplier: float,
+    ignore_index: int,
+    reduction: str,
 ):
+    del z_loss_multiplier, ignore_index
     # Backward kernel is specialized on (N, D, V) and several constexprs (e.g. reduction).
     bt, d = inputs.shape
     v = weight.shape[1]
@@ -83,14 +91,14 @@ def lce_bwd_key(
 
 def lce_bwd_inputs(bt: list[int], d: list[int], v: list[int]):
     with torch.device("cuda"):
-        for _bt, _d, _v in itertools.product(bt, d, v):
-            inputs = torch.randn(_bt, _d, dtype=torch.bfloat16)
-            weight = torch.randn(_d, _v, dtype=torch.bfloat16)
-            labels = torch.randint(0, _v, (_bt,), dtype=torch.long)
+        for bt_size, d_size, v_size in itertools.product(bt, d, v):
+            inputs = torch.randn(bt_size, d_size, dtype=torch.bfloat16)
+            weight = torch.randn(d_size, v_size, dtype=torch.bfloat16)
+            labels = torch.randint(0, v_size, (bt_size,), dtype=torch.long)
 
             # Backward kernels consume per-token `lse` from forward. For autotuning we only need
             # correct shape/dtype; choose a large value to avoid overflow in exp(logits - lse).
-            lse = torch.full((_bt,), 1.0e4, dtype=torch.float32)
+            lse = torch.full((bt_size,), 1.0e4, dtype=torch.float32)
 
             # For reduction="sum", backward expands these scalar grads to per-token gradients.
             grad_ce_loss_scalar = torch.ones([], dtype=torch.float32)
@@ -153,6 +161,7 @@ def lce_bwd_inputs(bt: list[int], d: list[int], v: list[int]):
     autotuner_fn=LFBOPatternSearch,
     static_shapes=False,  # allow dynamic shapes for the kernel, we specialize on specific dimensions
     autotune_ignore_errors=False,
+    print_output_code=False,
     autotune_compile_timeout=30,
     ignore_warnings=[helion.exc.TensorOperationInWrapper],
 )
@@ -160,11 +169,15 @@ def olmo_linear_cross_entropy_fwd_kernel(
     inputs: torch.Tensor,  # [N, D] input to final layer
     weight: torch.Tensor,  # [D, V] weight matrix of final layer
     labels: torch.Tensor,  # [N] target labels
-    ignore_index: hl.constexpr = -100,
+    ignore_index: hl.constexpr = -100,  # pyright: ignore[reportArgumentType]
     reduction: hl.constexpr = "sum",  # pyright: ignore[reportArgumentType]
 ) -> Tuple[torch.Tensor | float, torch.Tensor | float, torch.Tensor]:
     """
-    Computes the fused linear cross entropy loss with partial pre-computation of gradients.
+    Fused linear + cross-entropy forward.
+
+    This avoids materializing the full logits matrix by streaming over the vocab dimension
+    and maintaining an online log-sum-exp (LSE) state. We also emit per-token `lse` for the
+    backward kernels.
 
     Args:
         inputs: Input tensor of shape [N, D] where N is batch size and D is hidden dimension
@@ -174,10 +187,10 @@ def olmo_linear_cross_entropy_fwd_kernel(
         reduction: Reduction mode, either "sum" or "none" (default: "sum")
 
     Returns:
-        A tuple of (loss, z_squared, lse) where:
-        - loss: The cross entropy loss, scalar if reduction="sum", shape [N] if reduction="none"
-        - z_squared: The squared log-sum-exp values, scalar if reduction="sum", shape [N] if reduction="none"
-        - lse: The log-sum-exp values (used for the backward pass), shape [N]
+        (ce_loss, z_squared, lse):
+        - ce_loss: Scalar if reduction="sum", else shape [N].
+        - z_squared: Scalar if reduction="sum", else shape [N].
+        - lse: Per-token log-sum-exp values, shape [N].
     """
     assert inputs.ndim == 2, f"Inputs must be 2D, got {inputs.ndim}D"
     assert inputs.shape[1] == weight.shape[0], (
@@ -187,12 +200,12 @@ def olmo_linear_cross_entropy_fwd_kernel(
     assert labels.shape[0] == inputs.shape[0], (
         f"Batch dimension mismatch: {labels.shape[0]} != {inputs.shape[0]}"
     )
-    n = inputs.shape[0]
+    bt = inputs.shape[0]
     d = hl.specialize(inputs.shape[1])
     v = hl.specialize(weight.shape[1])
 
     # Always need per-token lse for backward pass
-    lse = torch.zeros([n], dtype=torch.float32, device=inputs.device)
+    lse = torch.zeros([bt], dtype=torch.float32, device=inputs.device)
 
     # Initialize outputs based on reduction mode - use same variable names, just different shapes
     if reduction == "sum":
@@ -201,68 +214,72 @@ def olmo_linear_cross_entropy_fwd_kernel(
         z_squared = torch.zeros([], dtype=torch.float32, device=inputs.device)
     else:  # reduction == "none"
         # Per-token outputs
-        losses = torch.zeros([n], dtype=torch.float32, device=inputs.device)
-        z_squared = torch.zeros([n], dtype=torch.float32, device=inputs.device)
+        losses = torch.zeros([bt], dtype=torch.float32, device=inputs.device)
+        z_squared = torch.zeros([bt], dtype=torch.float32, device=inputs.device)
 
     # --- Device Code (compiles to triton) ---
     # Outer tile loop is mapped to the launch grid, this is what gets parallelized
-    for tile_n in hl.tile(n):  # Tile over the batch dimension
-        labels_tile = labels[tile_n]  # [t_n]
+    for tile_bt in hl.tile(bt):  # Tile over the token (batch) dimension
+        labels_bt = labels[tile_bt]  # [t_bt]
 
-        # Initialize running max, sum_exp, target_logits
-        max_logits = hl.zeros([tile_n], dtype=torch.float32)  # [t_n] - running max
-        sum_exp = hl.zeros([tile_n], dtype=torch.float32)  # [t_n] - running sum of exp
-        target_logits = hl.zeros([tile_n], dtype=torch.float32)  # logits at target
+        # Online log-sum-exp state.
+        max_logits = hl.full([tile_bt], float("-inf"), dtype=torch.float32)  # [t_bt]
+        sum_exp = hl.zeros([tile_bt], dtype=torch.float32)  # [t_bt] running sum of exp
+        target_logits = hl.zeros([tile_bt], dtype=torch.float32)  # [t_bt] logit at target
 
-        # 1) Combine matmul and online log-sum-exp computation in one loop
+        # Stream over vocab tiles: compute logits, update LSE state, and capture target logits.
         for tile_v in hl.tile(v):  # inner tile loops are sequential
-            # 1a) compute logits for this v tile
-            logits = hl.zeros([tile_n, tile_v], dtype=torch.float32)
-            for tile_k in hl.tile(d):
-                weight_tile_k = hl.load(weight, index=[tile_k, tile_v])
+            # 1) Compute logits for this vocab tile.
+            logits = hl.zeros([tile_bt, tile_v], dtype=torch.float32)
+            for tile_d in hl.tile(d):
+                weight_tile = hl.load(weight, index=[tile_d, tile_v])
                 # compute logits in bf16, accumulate in fp32 for numerical stability
-                logits = torch.addmm(logits, inputs[tile_n, tile_k], weight_tile_k)
+                logits = torch.addmm(logits, inputs[tile_bt, tile_d], weight_tile)
 
-            # 1b) Update running max logit and sum_exp (online lse)
+            # 2) Update online log-sum-exp.
             new_max = torch.maximum(max_logits, logits.amax(dim=-1))  # [t_n]
             scale = torch.exp(max_logits - new_max)  # [t_n]
             sum_exp = sum_exp * scale + torch.exp(logits - new_max.unsqueeze(1)).sum(dim=-1)
             max_logits = new_max
 
-            # 1c) Gather logits at target indices that fall within this tile
-            local_idx = labels_tile - tile_v.begin  # [t_n]
-            # Gather values and apply mask to only accumulate for labels actually in this tile
+            # 3) Extract logits at the target indices for labels that fall within this tile.
+            # IMPORTANT: `labels_tile` may contain `ignore_index` (e.g. -100). Never use
+            # out-of-range indices with `tl.gather`; mask them out before and after gathering.
+            is_target_in_tile = (labels_bt >= tile_v.begin) & (labels_bt < tile_v.end)  # [t_n]
+            local_vocab_idx = labels_bt - tile_v.begin  # [t_n]
+            safe_local_vocab_idx = torch.where(is_target_in_tile, local_vocab_idx, 0)
             gathered_target_logits = hl.inline_triton(
                 "tl.sum(tl.gather({0}, {1}.to(tl.int32)[:, None], axis=1), axis=1)",
-                args=(logits, local_idx),
-                output_like=local_idx.to(torch.float32),
+                args=(logits, safe_local_vocab_idx),
+                output_like=safe_local_vocab_idx.to(torch.float32),
             )
-            in_tile_mask = (labels_tile >= tile_v.begin) & (labels_tile < tile_v.end)  # [t_n]
-            target_logits = target_logits + gathered_target_logits * in_tile_mask.to(torch.float32)
+            target_logits = target_logits + gathered_target_logits * is_target_in_tile.to(  # pyright: ignore[reportAttributeAccessIssue]
+                torch.float32
+            )
 
-        # finalize lse for this tile
+        # Finalize per-token LSE for this batch tile.
         lse_tile = max_logits + torch.log(sum_exp)
 
-        # 4) Compute cross entropy loss: log_sum_exp - logit_at_target
+        # Cross-entropy: LSE - logit_at_target (masked below).
         losses_tile = lse_tile - target_logits  # [t_n]
         z_squared_tile = lse_tile.pow(2)  # [t_n]
 
-        # Always save lse for backward pass
-        lse[tile_n] = lse_tile  # [t_n]
+        # Always save LSE for backward pass.
+        lse[tile_bt] = lse_tile  # [t_n]
 
-        # Apply masking and reduction
-        valid_mask = (labels_tile != ignore_index).to(torch.float32)  # [t_n]
+        # Apply masking and reduction.
+        is_valid = (labels_bt != ignore_index).to(torch.float32)  # pyright: ignore[reportAttributeAccessIssue]  # [t_n]
 
         if reduction == "sum":
-            # Fused masking and sum reduction with atomic adds for parallel safety
-            masked_ce = (losses_tile * valid_mask).sum()
-            masked_z_sq = (z_squared_tile * valid_mask).sum()
+            # Fused masking and sum reduction with atomics for parallel safety.
+            masked_ce = (losses_tile * is_valid).sum()
+            masked_z_sq = (z_squared_tile * is_valid).sum()
             hl.atomic_add(losses, [], masked_ce)
             hl.atomic_add(z_squared, [], masked_z_sq)
         else:  # reduction == "none"
             # Store per-token values with masking applied
-            losses[tile_n] = losses_tile * valid_mask
-            z_squared[tile_n] = z_squared_tile * valid_mask
+            losses[tile_bt] = losses_tile * is_valid
+            z_squared[tile_bt] = z_squared_tile * is_valid
 
     return losses, z_squared, lse
 
@@ -308,14 +325,14 @@ def olmo_linear_cross_entropy_fwd_kernel(
     ignore_warnings=[helion.exc.TensorOperationInWrapper],
 )
 def olmo_linear_cross_entropy_bwd_recompute_kernel(
-    _input: torch.Tensor,  # [N, D] input to final layer
+    inputs: torch.Tensor,  # [N, D] input to final layer
     weight: torch.Tensor,  # [D, V] weight matrix of final layer
     labels: torch.Tensor,  # [N] target labels
     lse: torch.Tensor,  # [N] log-sum-exp from forward pass
     grad_ce_loss_scalar: torch.Tensor,  # [] scalar gradient of CE loss (for sum reduction)
     grad_z_loss_scalar: torch.Tensor,  # [] scalar gradient of z-loss (for sum reduction)
     z_loss_multiplier: float,  # z-loss multiplier
-    ignore_index: hl.constexpr = -100,
+    ignore_index: hl.constexpr = -100,  # pyright: ignore[reportArgumentType]
     reduction: hl.constexpr = "sum",  # pyright: ignore[reportArgumentType]
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
@@ -330,33 +347,33 @@ def olmo_linear_cross_entropy_bwd_recompute_kernel(
         grad_ce_loss_scalar: 0-dimensional tensor (scalar)
         grad_z_loss_scalar: 0-dimensional tensor (scalar)
     """
-    n = _input.shape[0]
-    d = hl.specialize(_input.shape[1])
+    bt = inputs.shape[0]
+    d = hl.specialize(inputs.shape[1])
     v = hl.specialize(weight.shape[1])
     assert d == weight.shape[0], f"Input dimension mismatch: {d} != {weight.shape[0]}"
 
-    grad_weight = torch.zeros([d, v], dtype=torch.float32, device=_input.device)
-    grad_input = torch.zeros([n, d], dtype=torch.float32, device=_input.device)
+    # Accumulate gradients in fp32 for stability, then cast to the parameter/input dtype
+    # at the end to satisfy autograd dtype requirements.
+    grad_weight = torch.zeros([d, v], dtype=torch.float32, device=inputs.device)
+    grad_input = torch.zeros([bt, d], dtype=torch.float32, device=inputs.device)
 
     # 1D tiling over batch dimension only (matches forward pass pattern)
     # Each batch tile processes ALL vocab tiles, allowing local grad_input accumulation
-    for tile_n in hl.tile(n):
-        labels_tile = labels[tile_n]
-        lse_tile = lse[tile_n]
-        valid_mask = (labels_tile != ignore_index).to(torch.float32)
+    for tile_bt in hl.tile(bt):
+        labels_bt = labels[tile_bt]
+        lse_bt = lse[tile_bt]
+        is_valid = (labels_bt != ignore_index).to(  # pyright: ignore[reportAttributeAccessIssue]
+            torch.float32
+        )
 
         if reduction == "sum":
             # Load scalar gradients once per batch tile
             grad_ce_scalar = grad_ce_loss_scalar[()]
             grad_z_scalar = grad_z_loss_scalar[()]
-            grad_ce_per_token = valid_mask * grad_ce_scalar
-            # 5. Add contribution from the z-loss.
-            # For each token i, if z_loss = z_loss_multiplier * lse_i^2 (with appropriate
-            # masking/reduction handled in the Python wrapper), then:
-            #   dL/dlogits_ij (from z-loss) = softmax_ij * dL/dlse_i
-            # Chain rule: dL/dlse_i = dL/dz_squared_i * dz_squared_i/dlse_i
-            #                        = grad_z_loss_scalar * z_loss_multiplier * mask_i * 2 * lse_i
-            grad_z_per_token = valid_mask * grad_z_scalar * z_loss_multiplier * 2.0 * lse_tile
+            grad_ce_per_token = is_valid * grad_ce_scalar
+            # z-loss contribution: dL/dlogits_ij += softmax_ij * dL/dlse_i
+            # where dL/dlse_i = grad_z_loss_scalar * z_loss_multiplier * mask_i * 2 * lse_i.
+            grad_z_per_token = is_valid * grad_z_scalar * z_loss_multiplier * 2.0 * lse_bt
         else:
             raise NotImplementedError(
                 f"Backward pass for reduction='{reduction}' not yet implemented"
@@ -365,46 +382,44 @@ def olmo_linear_cross_entropy_bwd_recompute_kernel(
         # Process all vocab tiles for this batch tile
         for tile_v in hl.tile(v):
             # 1. Recompute logits for this (tile_n, tile_v)
-            logits = hl.zeros([tile_n, tile_v], dtype=torch.float32)
-            for tile_k in hl.tile(d):
-                weight_kv = hl.load(weight, index=[tile_k, tile_v], eviction_policy="evict_last")
-                logits = torch.addmm(logits, _input[tile_n, tile_k], weight_kv)
+            logits = hl.zeros([tile_bt, tile_v], dtype=torch.float32)
+            for tile_d in hl.tile(d):
+                weight_tile = hl.load(weight, index=[tile_d, tile_v], eviction_policy="evict_last")
+                logits = torch.addmm(logits, inputs[tile_bt, tile_d], weight_tile)
 
             # 2. Compute softmax = exp(logits - lse)
-            # Because we stored the lse we dont need to do the online lse computation this time.
-            softmax = torch.exp(logits - lse_tile.unsqueeze(1))
+            # Because we stored the LSE, we don't need the online LSE computation here.
+            softmax = torch.exp(logits - lse_bt.unsqueeze(1))
 
             # 3. Compute d_logits = (softmax - one_hot_target)
-            local_vocab_idx = labels_tile - tile_v.begin
-            is_target_in_tile = (labels_tile >= tile_v.begin) & (labels_tile < tile_v.end)
+            local_vocab_idx = labels_bt - tile_v.begin
+            is_target_in_tile = (labels_bt >= tile_v.begin) & (labels_bt < tile_v.end)
             cols = hl.arange(tile_v.block_size)
-            eq = cols[None, :] == local_vocab_idx[:, None]
-            mask = eq & is_target_in_tile[:, None]
-            d_logits = softmax - mask.to(softmax.dtype)
+            is_target = (cols[None, :] == local_vocab_idx[:, None]) & is_target_in_tile[:, None]
+            grad_logits = softmax - is_target.to(softmax.dtype)
 
             # 4. Apply CE gradient scaling
-            d_logits = d_logits * grad_ce_per_token.unsqueeze(1)
+            grad_logits = grad_logits * grad_ce_per_token.unsqueeze(1)
 
             # 5. Add z-loss contribution
-            d_logits = d_logits + softmax * grad_z_per_token.unsqueeze(1)
-            d_logits = d_logits.to(_input.dtype)
-            # basically the whole point is to avoid materializing the d_logits tensor
+            grad_logits = grad_logits + softmax * grad_z_per_token.unsqueeze(1)
+            grad_logits = grad_logits.to(inputs.dtype)
 
             # 6. Fused gradient accumulation (single D loop for better weight reuse)
-            for tile_k in hl.tile(d):
+            for tile_d in hl.tile(d):
                 # grad_input: local accumulation (this tile_n owns these rows)
-                weight_kv = hl.load(weight, index=[tile_k, tile_v], eviction_policy="evict_first")
-                grad_input[tile_n, tile_k] = torch.addmm(
-                    grad_input[tile_n, tile_k], d_logits, weight_kv.T
+                weight_tile = hl.load(weight, index=[tile_d, tile_v], eviction_policy="evict_first")
+                grad_input[tile_bt, tile_d] = torch.addmm(
+                    grad_input[tile_bt, tile_d], grad_logits, weight_tile.T
                 )
 
-            for tile_k in hl.tile(d):  # second loop to tune independently
+            for tile_d in hl.tile(d):  # second loop to tune independently
                 # grad_weight: atomic add (multiple tile_n contribute to same location)
-                input_tile = _input[tile_n, tile_k]
-                update_gw = hl.dot(input_tile.T, d_logits)
-                hl.atomic_add(grad_weight, [tile_k, tile_v], update_gw)
+                input_tile = inputs[tile_bt, tile_d]
+                update_gw = hl.dot(input_tile.T, grad_logits)
+                hl.atomic_add(grad_weight, [tile_d, tile_v], update_gw)
 
-    return grad_input, grad_weight
+    return grad_input.to(inputs.dtype), grad_weight.to(weight.dtype)
 
 
 @helion_aot_autotune(
@@ -425,14 +440,14 @@ def olmo_linear_cross_entropy_bwd_recompute_kernel(
     ignore_warnings=[helion.exc.TensorOperationInWrapper],
 )
 def olmo_linear_cross_entropy_bwd_recompute_2dgrid_kernel(
-    _input: torch.Tensor,  # [N, D] input to final layer
+    inputs: torch.Tensor,  # [N, D] input to final layer
     weight: torch.Tensor,  # [D, V] weight matrix of final layer
     labels: torch.Tensor,  # [N] target labels
     lse: torch.Tensor,  # [N] log-sum-exp from forward pass
     grad_ce_loss_scalar: torch.Tensor,  # [] scalar gradient of CE loss (for sum reduction)
     grad_z_loss_scalar: torch.Tensor,  # [] scalar gradient of z-loss (for sum reduction)
     z_loss_multiplier: float,  # z-loss multiplier
-    ignore_index: hl.constexpr = -100,
+    ignore_index: hl.constexpr = -100,  # pyright: ignore[reportArgumentType]
     reduction: hl.constexpr = "sum",  # pyright: ignore[reportArgumentType]
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
@@ -447,47 +462,50 @@ def olmo_linear_cross_entropy_bwd_recompute_2dgrid_kernel(
         grad_ce_loss_scalar: 0-dimensional tensor (scalar) - no host-device sync required
         grad_z_loss_scalar: 0-dimensional tensor (scalar) - no host-device sync required
     """
-    n = _input.shape[0]
-    d = hl.specialize(_input.shape[1])
+    bt = inputs.shape[0]
+    d = hl.specialize(inputs.shape[1])
     v = hl.specialize(weight.shape[1])
     assert d == weight.shape[0], f"Input dimension mismatch: {d} != {weight.shape[0]}"
 
-    grad_weight = torch.zeros([d, v], dtype=torch.float32, device=_input.device)
-    grad_input = torch.zeros([n, d], dtype=torch.float32, device=_input.device)
+    # Accumulate gradients in fp32 for stability, then cast to the parameter/input dtype
+    # at the end to satisfy autograd dtype requirements.
+    grad_weight = torch.zeros([d, v], dtype=torch.float32, device=inputs.device)
+    grad_input = torch.zeros([bt, d], dtype=torch.float32, device=inputs.device)
 
     # This visits each (tile_n, tile_v) once, computes d_logits, and scatters updates to grad_weight
-    for tile_n, tile_v in hl.tile([n, v]):
+    for tile_bt, tile_v in hl.tile([bt, v]):
         # 1. Recompute logits for this tile of N and tile of V
         # We need full inner dimension D to compute logits
-        logits = hl.zeros([tile_n, tile_v], dtype=torch.float32)
-        for tile_k in hl.tile(d):
-            weight_kv = hl.load(weight, index=[tile_k, tile_v], eviction_policy="evict_last")
-            logits = torch.addmm(logits, _input[tile_n, tile_k], weight_kv)  # sadly we recompute
+        logits = hl.zeros([tile_bt, tile_v], dtype=torch.float32)
+        for tile_d in hl.tile(d):
+            weight_tile = hl.load(weight, index=[tile_d, tile_v], eviction_policy="evict_last")
+            logits = torch.addmm(logits, inputs[tile_bt, tile_d], weight_tile)
 
         # 2. Compute softmax = exp(logits - lse)
-        # we already know lse for this batch tile so we dont need to see the whole vocab dimension
-        lse_tile = lse[tile_n]  # [t_n]
-        softmax = torch.exp(logits - lse_tile.unsqueeze(1))  # [t_n, t_v]
-        d_logits = softmax
+        # We already know the LSE for this batch tile, so we don't need the full vocab dimension.
+        lse_bt = lse[tile_bt]  # [t_n]
+        softmax = torch.exp(logits - lse_bt.unsqueeze(1))  # [t_n, t_v]
+        grad_logits = softmax
 
         # 3. Compute d_logits = (softmax - target)
         # We subtract 1.0 from softmax probabilities at the target indices.
         # Implement this without subscript assignment or boolean indexing that
         # produces data-dependent shapes by using pure elementwise ops.
-        labels_tile = labels[tile_n]  # [t_n]
-        local_vocab_idx = labels_tile - tile_v.begin  # [t_n]
-        is_target_in_tile = (labels_tile >= tile_v.begin) & (labels_tile < tile_v.end)
+        labels_bt = labels[tile_bt]  # [t_n]
+        local_vocab_idx = labels_bt - tile_v.begin  # [t_n]
+        is_target_in_tile = (labels_bt >= tile_v.begin) & (labels_bt < tile_v.end)
 
         # Broadcast compare over the vocab dimension within this tile:
         # eq[i, j] = (j == local_vocab_idx[i])
         cols = hl.arange(tile_v.block_size)  # [t_v]
-        eq = cols[None, :] == local_vocab_idx[:, None]  # [t_n, t_v] (boolean)
-        mask = eq & is_target_in_tile[:, None]  # [t_n, t_v]
-        d_logits = d_logits - mask.to(d_logits.dtype)
+        is_target = (cols[None, :] == local_vocab_idx[:, None]) & is_target_in_tile[:, None]
+        grad_logits = grad_logits - is_target.to(grad_logits.dtype)
 
         # Apply valid mask and scaling according to grad_ce_loss
         # Fused gradient expansion: expand scalar gradient to per-token based on mask
-        valid_mask = (labels_tile != ignore_index).to(torch.float32)  # [t_n]
+        is_valid = (labels_bt != ignore_index).to(  # pyright: ignore[reportAttributeAccessIssue]
+            torch.float32
+        )  # [t_n]
 
         if reduction == "sum":
             # Load scalar gradients (0-dimensional tensors must be loaded inside tile loop)
@@ -495,14 +513,14 @@ def olmo_linear_cross_entropy_bwd_recompute_2dgrid_kernel(
             grad_z_scalar = grad_z_loss_scalar[()]
 
             # For sum reduction: grad_ce_per_token[i] = mask[i] * grad_ce_loss_scalar
-            grad_ce_per_token = valid_mask * grad_ce_scalar
+            grad_ce_per_token = is_valid * grad_ce_scalar
         else:
             raise NotImplementedError(
                 f"Backward pass for reduction='{reduction}' not yet implemented"
             )
 
         scale = grad_ce_per_token  # [t_n]
-        d_logits = d_logits.mul(scale.unsqueeze(1))  # [t_n, v]
+        grad_logits = grad_logits.mul(scale.unsqueeze(1))  # [t_n, v]
 
         # 5. Add contribution from the z-loss.
         # For each token i, if z_loss = z_loss_multiplier * lse_i^2 (with appropriate
@@ -511,30 +529,30 @@ def olmo_linear_cross_entropy_bwd_recompute_2dgrid_kernel(
         # Chain rule: dL/dlse_i = dL/dz_squared_i * dz_squared_i/dlse_i
         #                        = grad_z_loss_scalar * z_loss_multiplier * mask_i * 2 * lse_i
         if reduction == "sum":
-            grad_z_per_token = valid_mask * grad_z_scalar * z_loss_multiplier * 2.0 * lse_tile
+            grad_z_per_token = is_valid * grad_z_scalar * z_loss_multiplier * 2.0 * lse_bt
         else:
             raise NotImplementedError(
                 f"Backward pass for reduction='{reduction}' not yet implemented"
             )
 
-        d_logits = d_logits + softmax * grad_z_per_token.unsqueeze(1)
+        grad_logits = grad_logits + softmax * grad_z_per_token.unsqueeze(1)
 
-        d_logits = d_logits.to(_input.dtype)
+        grad_logits = grad_logits.to(inputs.dtype)
 
         # 4. Accumulate grad_weight and grad_input using atomics
-        for tile_k in hl.tile(d):  # tile separately so they can be tuned independently
+        for tile_d in hl.tile(d):  # tile separately so they can be tuned independently
             # Compute partial update for grad_input[tile_n, tile_k]
-            weight_kv = hl.load(weight, index=[tile_k, tile_v], eviction_policy="evict_first")
-            update_gi = hl.dot(d_logits, weight_kv.T)
-            hl.atomic_add(grad_input, [tile_n, tile_k], update_gi)
+            weight_tile = hl.load(weight, index=[tile_d, tile_v], eviction_policy="evict_first")
+            update_gi = hl.dot(grad_logits, weight_tile.T)
+            hl.atomic_add(grad_input, [tile_bt, tile_d], update_gi)
 
-        for tile_k in hl.tile(d):
+        for tile_d in hl.tile(d):
             # Compute partial update for grad_weight[tile_k, tile_v]
-            input_tile = _input[tile_n, tile_k]
-            update_gw = hl.dot(input_tile.T, d_logits)
-            hl.atomic_add(grad_weight, [tile_k, tile_v], update_gw)
+            input_tile = inputs[tile_bt, tile_d]
+            update_gw = hl.dot(input_tile.T, grad_logits)
+            hl.atomic_add(grad_weight, [tile_d, tile_v], update_gw)
 
-    return grad_input, grad_weight
+    return grad_input.to(inputs.dtype), grad_weight.to(weight.dtype)
 
 
 class OlmoFusedLinearCrossEntropyFunction(torch.autograd.Function):
@@ -566,7 +584,9 @@ class OlmoFusedLinearCrossEntropyFunction(torch.autograd.Function):
         return ce_loss, z_loss
 
     @staticmethod
-    def backward(ctx, grad_ce_loss: torch.Tensor, grad_z_loss: torch.Tensor | None):
+    def backward(  # pyright: ignore[reportIncompatibleMethodOverride]
+        ctx, grad_ce_loss: torch.Tensor, grad_z_loss: torch.Tensor | None
+    ):
         """
         Backward for the fused linear + CE(+optional z-loss) op.
 
@@ -641,175 +661,147 @@ class OlmoLMHeadCE(torch.nn.Module):
 # TODO: then test kernel against baseline implementations in actual training
 
 
-def tune_and_benchmark() -> None:
+def tune_aot() -> None:
     """
-    Run fused linear cross entropy kernel tuning and verification.
+    Trigger Helion AOT tuning for the LCE kernels.
     """
+    dtype: torch.dtype = torch.bfloat16
+    ignore_index: int = -100
+    z_loss_multiplier: float = 1e-4
+    reduction: str = "sum"
 
+    # Trigger AOT routing/tuning by running one representative shape through each kernel.
+    # Any call into a @helion_aot_autotune-wrapped kernel triggers the AOT logic.
+    bt_grid = sorted({*LCE_TUNE_PRIMARY_BT, *LCE_TUNE_SECONDARY_BT})
+    d_grid = sorted({*LCE_TUNE_PRIMARY_D, *LCE_TUNE_SECONDARY_D})
+    v_grid = list(LCE_TUNE_V)
+    bt0, d0, v0 = bt_grid[0], d_grid[0], v_grid[0]
+
+    device = torch.device("cuda")
+    with torch.device(device):
+        x0 = torch.randn(bt0, d0, device=device, dtype=dtype)
+        w0 = torch.randn(d0, v0, device=device, dtype=dtype)
+        y0 = torch.randint(0, v0, (bt0,), device=device, dtype=torch.long)
+
+        print("AOT tuning")
+
+        # Forward (triggers fwd AOT)
+        print("- tuning forward...")
+        _, _, lse0 = olmo_linear_cross_entropy_fwd_kernel(x0, w0, y0, ignore_index, reduction)
+        torch.cuda.synchronize()
+
+        # Backward kernels (trigger bwd AOT)
+        grad_ce0 = torch.ones([], device=device, dtype=torch.float32)
+        grad_z0 = torch.ones([], device=device, dtype=torch.float32)
+
+        print("- tuning backward (1d grid)...")
+        olmo_linear_cross_entropy_bwd_recompute_kernel(
+            x0, w0, y0, lse0, grad_ce0, grad_z0, z_loss_multiplier, ignore_index, reduction
+        )
+        torch.cuda.synchronize()
+
+        print("- tuning backward (2d grid)...")
+        olmo_linear_cross_entropy_bwd_recompute_2dgrid_kernel(
+            x0, w0, y0, lse0, grad_ce0, grad_z0, z_loss_multiplier, ignore_index, reduction
+        )
+        torch.cuda.synchronize()
+
+        print("AOT tuning complete")
+
+
+def benchmark() -> None:
+    """
+    Benchmark forward and full (forward+backward) across the configured size grid.
+    """
     from olmo_core.nn.lm_head import LMHead, LMLossImplementation
 
-    # Benchmark a grid of sizes. We interpret `bt` as N (flattened batch tokens), so we use
-    # batch_size=1 and seq_len=bt when constructing LMHead inputs.
-    dtype = torch.bfloat16
-    z_loss_multiplier = 1e-4
-    loss_reduction = "sum"
+    dtype: torch.dtype = torch.bfloat16
+    z_loss_multiplier: float = 1e-4
+    loss_reduction: str = "sum"
 
-    # Run the full product of declared size options (including V).
+    # Interpret `bt` as N (flattened batch tokens), so we use batch_size=1 and seq_len=bt.
     bt_grid = sorted({*LCE_TUNE_PRIMARY_BT, *LCE_TUNE_SECONDARY_BT})
     d_grid = sorted({*LCE_TUNE_PRIMARY_D, *LCE_TUNE_SECONDARY_D})
     v_grid = list(LCE_TUNE_V)
 
-    # Ensure Helion AOT autotuning/routing happens *before* we start benchmarking.
-    # Any call into a @helion_aot_autotune-wrapped kernel triggers the AOT logic (load/route/tune).
-    bt0, d0, v0 = bt_grid[0], d_grid[0], v_grid[0]
-    with torch.device("cuda"):
-        _x0 = torch.randn(bt0, d0, device="cuda", dtype=dtype)
-        _w0 = torch.randn(d0, v0, device="cuda", dtype=dtype)
-        _y0 = torch.randint(0, v0, (bt0,), device="cuda", dtype=torch.long)
+    device = torch.device("cuda")
+    rep = 500
 
-        # Forward (triggers fwd AOT)
-        print("AOT tuning forward pass...")
-        _ce0, _zsq0, _lse0 = olmo_linear_cross_entropy_fwd_kernel(
-            _x0, _w0, _y0, -100, loss_reduction
+    def build_head(d_model: int, vocab_size: int, impl: LMLossImplementation) -> LMHead:
+        return LMHead(
+            d_model=d_model,
+            vocab_size=vocab_size,
+            dtype=dtype,
+            bias=False,
+            init_device=device.type,
+            loss_implementation=impl,
         )
-        torch.cuda.synchronize()
-        print("AOT tuning forward pass complete")
-
-        # Backward 1D (triggers bwd_1d AOT)
-        print("AOT tuning backward 1D pass...")
-        _grad_ce0 = torch.ones([], device="cuda", dtype=torch.float32)
-        _grad_z0 = torch.ones([], device="cuda", dtype=torch.float32)
-        olmo_linear_cross_entropy_bwd_recompute_kernel(
-            _x0, _w0, _y0, _lse0, _grad_ce0, _grad_z0, z_loss_multiplier, -100, loss_reduction
-        )
-        torch.cuda.synchronize()
-        print("AOT tuning backward 1D pass complete")
-
-        # Backward 2D (triggers bwd_2d AOT)
-        print("AOT tuning backward 2D pass...")
-        olmo_linear_cross_entropy_bwd_recompute_2dgrid_kernel(
-            _x0, _w0, _y0, _lse0, _grad_ce0, _grad_z0, z_loss_multiplier, -100, loss_reduction
-        )
-        torch.cuda.synchronize()
-        print("AOT tuning backward 2D pass complete")
 
     print("\nBenchmarking forward and full (forward+backward) across sizes...")
-    print(f"V={v_grid} dtype={dtype} reduction={loss_reduction} z={z_loss_multiplier}")
+    print(f"V={v_grid} dtype={dtype} reduction={loss_reduction} z={z_loss_multiplier} rep={rep}")
     print("-" * 100)
     print(f"{'BT':>8} {'D':>6} {'V':>7} {'kind':>5} | {'helion':>10} {'default':>11} {'liger':>9}")
     print("-" * 100)
 
-    # Use fewer iterations than the old fixed-size benchmark; these shapes are large.
-    # (do_bench also warms up internally).
-    rep = 500
-
-    for vocab_size in v_grid:
-        for hidden_size in d_grid:
-            # Create LMHead instances with different loss implementations (per hidden size + vocab).
-            helion_lm_head = LMHead(
-                d_model=hidden_size,
-                vocab_size=vocab_size,
-                dtype=dtype,
-                bias=False,
-                init_device="cuda",
-                loss_implementation=LMLossImplementation.helion_fused_linear,
+    for v in v_grid:
+        for d in d_grid:
+            # Create LMHead instances with different loss implementations (per (d, v)).
+            helion_head = build_head(
+                d_model=d, vocab_size=v, impl=LMLossImplementation.helion_fused_linear
             )
-
-            default_lm_head = LMHead(
-                d_model=hidden_size,
-                vocab_size=vocab_size,
-                dtype=dtype,
-                bias=False,
-                init_device="cuda",
-                loss_implementation=LMLossImplementation.default,
-            )
-
-            liger_lm_head = LMHead(
-                d_model=hidden_size,
-                vocab_size=vocab_size,
-                dtype=dtype,
-                bias=False,
-                init_device="cuda",
-                loss_implementation=LMLossImplementation.liger_fused_linear,
+            default_head = build_head(d_model=d, vocab_size=v, impl=LMLossImplementation.default)
+            liger_head = build_head(
+                d_model=d, vocab_size=v, impl=LMLossImplementation.liger_fused_linear
             )
 
             # Copy weights to ensure all heads use the same weights for fair comparison.
             with torch.no_grad():
-                default_lm_head.w_out.weight.copy_(helion_lm_head.w_out.weight)
-                liger_lm_head.w_out.weight.copy_(helion_lm_head.w_out.weight)
+                default_head.w_out.weight.copy_(helion_head.w_out.weight)
+                liger_head.w_out.weight.copy_(helion_head.w_out.weight)
 
-            def helion_fn(x, labels, _lm=helion_lm_head):
-                out = _lm(
+            def loss_fn(head: LMHead, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+                out = head(
                     x,
-                    labels=labels,
+                    labels=y,
                     loss_reduction=loss_reduction,
                     z_loss_multiplier=z_loss_multiplier,
                 )
                 return out.loss
 
-            def default_fn(x, labels, _lm=default_lm_head):
-                out = _lm(
-                    x,
-                    labels=labels,
-                    loss_reduction=loss_reduction,
-                    z_loss_multiplier=z_loss_multiplier,
-                )
-                return out.loss
-
-            def liger_fn(x, labels, _lm=liger_lm_head):
-                out = _lm(
-                    x,
-                    labels=labels,
-                    loss_reduction=loss_reduction,
-                    z_loss_multiplier=z_loss_multiplier,
-                )
-                return out.loss
-
-            impls = {
-                "helion": (helion_fn, helion_lm_head.w_out.weight),
-                "default": (default_fn, default_lm_head.w_out.weight),
-                "liger": (liger_fn, liger_lm_head.w_out.weight),
+            impls: dict[str, tuple[LMHead, torch.Tensor]] = {
+                "helion": (helion_head, helion_head.w_out.weight),
+                "default": (default_head, default_head.w_out.weight),
+                "liger": (liger_head, liger_head.w_out.weight),
             }
 
             for bt in bt_grid:
-                batch_size, seq_len = 1, bt
-
-                # Create inputs in the shape expected by LMHead: (batch_size, seq_len, d_model)
-                _input = torch.randn(
-                    batch_size,
-                    seq_len,
-                    hidden_size,
-                    device="cuda",
-                    dtype=dtype,
-                    requires_grad=True,
-                )
-                labels = torch.randint(
-                    0, vocab_size, (batch_size, seq_len), device="cuda", dtype=torch.long
-                )
+                x = torch.randn(1, bt, d, device=device, dtype=dtype, requires_grad=True)
+                y = torch.randint(0, v, (1, bt), device=device, dtype=torch.long)
 
                 results: dict[str, tuple[float, float]] = {}
-                for name, (fn, w) in impls.items():
-                    fwd_ms = float(do_bench(lambda: fn(_input, labels), rep=rep))
+                for name, (head, w) in impls.items():
+                    fwd_ms = float(do_bench(lambda _h=head: loss_fn(_h, x, y), rep=rep))
 
-                    def full_pass():
-                        out = fn(_input, labels)
-                        out.backward()
+                    def full_pass(_h=head):
+                        loss = loss_fn(_h, x, y)
+                        loss.backward()
 
-                    full_ms = float(do_bench(full_pass, grad_to_none=[_input, w], rep=rep))
+                    full_ms = float(do_bench(full_pass, grad_to_none=[x, w], rep=rep))
                     results[name] = (fwd_ms, full_ms)
 
                 h_fwd, h_full = results["helion"]
                 d_fwd, d_full = results["default"]
                 l_fwd, l_full = results["liger"]
                 print(
-                    f"{bt:8d} {hidden_size:6d} {vocab_size:7d} {'fwd':>5} | {h_fwd:10.3f} {d_fwd:11.3f} {l_fwd:9.3f}"
+                    f"{bt:8d} {d:6d} {v:7d} {'fwd':>5} | {h_fwd:10.3f} {d_fwd:11.3f} {l_fwd:9.3f}"
                 )
                 print(
-                    f"{bt:8d} {hidden_size:6d} {vocab_size:7d} {'full':>5} | {h_full:10.3f} {d_full:11.3f} {l_full:9.3f}"
+                    f"{bt:8d} {d:6d} {v:7d} {'full':>5} | {h_full:10.3f} {d_full:11.3f} {l_full:9.3f}"
                 )
 
-            del helion_lm_head, default_lm_head, liger_lm_head
+            del helion_head, default_head, liger_head
 
 
 if __name__ == "__main__":
-    tune_and_benchmark()
+    tune_aot()
+    benchmark()

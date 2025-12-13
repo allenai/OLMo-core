@@ -45,8 +45,6 @@ class AOTAutotuneMode(Enum):
     NONE = "none"
     RETUNE = "retune"
     CREATE = "create"
-    IMPUTE = "impute"
-    ROUTE = "route"
 
     @classmethod
     def from_str(cls, mode: str) -> "AOTAutotuneMode":
@@ -112,12 +110,10 @@ def helion_aot_autotune(
     4. We'll save the configs and the dispatch choices to a json file.
     5. We create a dispatch function that will lookup to see whether each kernel is one we've tuned for in step 2. If so, we'll use that config. Otherwise, we'll use some heuristic to (deterministically) find a reasonable config for the kernel.
 
-    There are 5 modes (set by env variable HELION_AOT_AUTOTUNE):
+    There are 3 modes (set by env variable HELION_AOT_AUTOTUNE):
     - none: No autotuning will be done. We will skip to step 5. If the config json file doesn't exist, we'll raise an error.
     - retune: We only benchmark the existing useful configs on the primary/secondary inputs. We'll skip to step 2. This finishes much faster than create (albeit won't fully retune for each shape), but requires create to have been run first. For example, for rmsnorm, retune takes maybe one minute for 10 shapes, but create might take 30 minutes.
-    - route: Like retune but JIT instead of AOT. For each input, benchmark all existing configs and select the fastest one. No new configs are generated via autotuning. This allows finding the best existing config for new input shapes. Requires existing configs to have been created first.
     - create: The kernel will be fully autotuned, starting from step 1.
-    - impute: Like create but doesn't retuneLoad existing configs if available, then only autotune missing inputs. For inputs already in the config, skip autotuning and reuse existing configs. For new inputs, run full autotuning (step 1) and benchmark all configs. This is useful for incrementally adding new shapes without re-tuning existing ones.
 
     You can also minimize the kernels to be autotuned by setting the env variable HELION_AOT_AUTOTUNE_KERNEL to the name of the kernel. For example, if you want to only autotune rmsnorm, you can set HELION_AOT_AUTOTUNE_KERNEL="rms_norm_fwd".
 
@@ -184,49 +180,6 @@ def helion_aot_autotune(
                 with open(path, "r") as f:
                     json_obj = json.load(f)
                     primary_configs = list(json_obj["primary_configs"].values())
-            elif autotune_mode == AOTAutotuneMode.IMPUTE:
-                # Load existing configs if available
-                existing_primary_configs: dict[int, Any] = {}
-                existing_secondary_configs: dict[KernelKey, int] = {}
-                if path.exists():
-                    existing_primary_configs, existing_secondary_configs = (
-                        load_autotune_data_from_json(path)
-                    )
-                    log.info(
-                        f"Loaded {len(existing_secondary_configs)} existing configs from {path}"
-                    )
-
-                # Identify which inputs need autotuning
-                missing_inputs = []
-                for input in inputs:
-                    cur_key = wrapped_kernel_key(*input)
-                    if cur_key not in existing_secondary_configs:
-                        missing_inputs.append(input)
-
-                log.info(f"Found {len(missing_inputs)} missing inputs out of {len(inputs)} total")
-
-                # Autotune only missing inputs
-                new_configs = []
-                for idx, input in enumerate(missing_inputs):
-                    log.info(f"Autotuning for {config_name} with key: {wrapped_kernel_key(*input)}")
-                    config = kernel.autotune(input)
-                    new_configs.append(repr(config))
-
-                # Combine existing and new configs
-                primary_configs = list(existing_primary_configs.values()) + new_configs
-            elif autotune_mode == AOTAutotuneMode.ROUTE:
-                # Load existing configs - they must exist for route mode
-                if not path.exists():
-                    raise RuntimeError(
-                        f"Route mode requires existing configs. Run with HELION_AOT_AUTOTUNE=create first to generate configs at {path}"
-                    )
-                existing_primary_configs, existing_secondary_configs = load_autotune_data_from_json(
-                    path
-                )
-                log.info(f"Loaded {len(existing_secondary_configs)} existing configs from {path}")
-
-                # Use only existing configs - no new autotuning
-                primary_configs = list(existing_primary_configs.values())
 
             log.info("Candidate primary configs: ")
             for idx, config in enumerate(primary_configs):
