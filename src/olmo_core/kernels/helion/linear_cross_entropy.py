@@ -659,6 +659,40 @@ def tune_and_benchmark() -> None:
     d_grid = sorted({*LCE_TUNE_PRIMARY_D, *LCE_TUNE_SECONDARY_D})
     v_grid = list(LCE_TUNE_V)
 
+    # Ensure Helion AOT autotuning/routing happens *before* we start benchmarking.
+    # Any call into a @helion_aot_autotune-wrapped kernel triggers the AOT logic (load/route/tune).
+    bt0, d0, v0 = bt_grid[0], d_grid[0], v_grid[0]
+    with torch.device("cuda"):
+        _x0 = torch.randn(bt0, d0, device="cuda", dtype=dtype)
+        _w0 = torch.randn(d0, v0, device="cuda", dtype=dtype)
+        _y0 = torch.randint(0, v0, (bt0,), device="cuda", dtype=torch.long)
+
+        # Forward (triggers fwd AOT)
+        print("AOT tuning forward pass...")
+        _ce0, _zsq0, _lse0 = olmo_linear_cross_entropy_fwd_kernel(
+            _x0, _w0, _y0, -100, loss_reduction
+        )
+        torch.cuda.synchronize()
+        print("AOT tuning forward pass complete")
+
+        # Backward 1D (triggers bwd_1d AOT)
+        print("AOT tuning backward 1D pass...")
+        _grad_ce0 = torch.ones([], device="cuda", dtype=torch.float32)
+        _grad_z0 = torch.ones([], device="cuda", dtype=torch.float32)
+        olmo_linear_cross_entropy_bwd_recompute_kernel(
+            _x0, _w0, _y0, _lse0, _grad_ce0, _grad_z0, z_loss_multiplier, -100, loss_reduction
+        )
+        torch.cuda.synchronize()
+        print("AOT tuning backward 1D pass complete")
+
+        # Backward 2D (triggers bwd_2d AOT)
+        print("AOT tuning backward 2D pass...")
+        olmo_linear_cross_entropy_bwd_recompute_2dgrid_kernel(
+            _x0, _w0, _y0, _lse0, _grad_ce0, _grad_z0, z_loss_multiplier, -100, loss_reduction
+        )
+        torch.cuda.synchronize()
+        print("AOT tuning backward 2D pass complete")
+
     print("\nBenchmarking forward and full (forward+backward) across sizes...")
     print(f"V={v_grid} dtype={dtype} reduction={loss_reduction} z={z_loss_multiplier}")
     print("-" * 100)
