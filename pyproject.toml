@@ -61,7 +61,7 @@ torchao = ["torchao"]
 transformers = ["transformers"]
 wandb = ["wandb"]
 helion = [
-    "helion",
+    "helion[surrogate]",
     "triton>=3.5; sys_platform == 'linux'",
 ]
 all = ["ai2-olmo-core[dev,beaker,comet,eval,torchao,transformers,wandb,helion]"]

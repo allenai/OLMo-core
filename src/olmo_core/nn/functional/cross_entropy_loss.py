@@ -140,6 +140,7 @@ def helion_fused_linear_cross_entropy_loss(
     reduction: Literal["sum", "none"] = "sum",
     compute_z_loss: bool = False,
     z_loss_multiplier: float = 1e-4,
+    bwd_impl: Literal["1d", "2d"] = "1d",
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
     """
     Cross entropy loss fused with the linear layer that computes the logits, which avoids materialization
@@ -156,6 +157,7 @@ def helion_fused_linear_cross_entropy_loss(
     :param reduction: Specifies the reduction to apply to the output. Can be "sum" or "none".
     :param compute_z_loss: Compute the softmax auxiliary loss as well.
     :param z_loss_multiplier: The multiplier to apply to the z-loss.
+    :param bwd_impl: The implementation to use for the backward pass. Can be "1d" or "2d".
 
     :returns: The cross entropy loss and optionally the z-loss.
     """
@@ -164,7 +166,7 @@ def helion_fused_linear_cross_entropy_loss(
             "Linear projection with bias is not supported for helion_fused_linear_cross_entropy_loss"
         )
     ce_loss, z_loss = OlmoFusedLinearCrossEntropyFunction.apply(  # type: ignore[reportGeneralTypeIssues]
-        _input, weight.T, labels, ignore_index, reduction, z_loss_multiplier
+        _input, weight.T, labels, ignore_index, reduction, z_loss_multiplier, bwd_impl
     )
 
     if compute_z_loss:

@@ -47,23 +47,36 @@ def lce_fwd_primary_inputs(bt: list[int], d: list[int], v: list[int]):
 #     ),
 # )
 @helion.kernel(
-    config=helion.Config(
-        block_sizes=[64, 512, 64],
-        indexing=["pointer", "tensor_descriptor", "pointer", "tensor_descriptor"],
-        load_eviction_policies=["last", "last", "last"],
-        num_stages=3,
+    # config=helion.Config(  # H100
+    #     block_sizes=[64, 512, 64],
+    #     indexing=["pointer", "tensor_descriptor", "pointer", "tensor_descriptor"],
+    #     load_eviction_policies=["last", "last", "last"],
+    #     num_stages=3,
+    #     num_warps=8,
+    #     pid_type="persistent_interleaved",
+    #     range_flattens=[None, False, False],
+    #     range_multi_buffers=[False, None, None],
+    #     range_num_stages=[4, 3, 0],
+    #     range_unroll_factors=[3, 1, 1],
+    #     range_warp_specializes=[],
+    # ),
+    config=helion.Config(  # 4090
+        block_sizes=[64, 512, 32],
+        indexing=["pointer", "pointer", "pointer", "pointer"],
+        load_eviction_policies=["first", "first", "first"],
+        num_stages=1,
         num_warps=8,
-        pid_type="persistent_interleaved",
-        range_flattens=[None, False, False],
-        range_multi_buffers=[False, None, None],
-        range_num_stages=[4, 3, 0],
-        range_unroll_factors=[3, 1, 1],
+        pid_type="flat",
+        range_flattens=[None, None, None],
+        range_multi_buffers=[None, False, True],
+        range_num_stages=[0, 3, 3],
+        range_unroll_factors=[0, 0, 0],
         range_warp_specializes=[],
     ),
     autotuner_fn=LFBOPatternSearch,
     static_shapes=False,  # allow dynamic shapes for the kernel, we specialize on specific dimensions
     autotune_ignore_errors=False,
-    autotune_compile_timeout=20,
+    autotune_compile_timeout=30,
     ignore_warnings=[helion.exc.TensorOperationInWrapper],
 )
 def olmo_linear_cross_entropy_fwd_kernel(
@@ -178,31 +191,6 @@ def olmo_linear_cross_entropy_fwd_kernel(
 
 
 @helion.kernel(
-    # config=helion.Config(
-    #     block_sizes=[128, 256, 32, 64, 32],
-    #     indexing=[
-    #         "pointer",
-    #         "pointer",
-    #         "pointer",
-    #         "tensor_descriptor",
-    #         "tensor_descriptor",
-    #         "pointer",
-    #         "pointer",
-    #         "pointer",
-    #     ],
-    #     l2_groupings=[16],
-    #     load_eviction_policies=["last", "first", "first", "", "", "", ""],
-    #     loop_orders=[[0, 1]],
-    #     num_stages=2,
-    #     num_warps=8,
-    #     pid_type="flat",
-    #     range_flattens=[None, True, True, False],
-    #     range_multi_buffers=[None, True, False, None],
-    #     range_num_stages=[0, 3, 2, 4],
-    #     range_unroll_factors=[0, 1, 3, 0],
-    #     range_warp_specializes=[],
-    # ),
-    autotune_effort="none",
     static_shapes=False,
     autotuner_fn=LFBOPatternSearch,
     autotune_ignore_errors=False,
@@ -268,7 +256,7 @@ def olmo_linear_cross_entropy_bwd_recompute_kernel(
             # 1. Recompute logits for this (tile_n, tile_v)
             logits = hl.zeros([tile_n, tile_v], dtype=torch.float32)
             for tile_k in hl.tile(d):
-                weight_kv = hl.load(weight, index=[tile_k, tile_v])
+                weight_kv = hl.load(weight, index=[tile_k, tile_v], eviction_policy="evict_last")
                 logits = torch.addmm(logits, _input[tile_n, tile_k], weight_kv)
 
             # 2. Compute softmax = exp(logits - lse)
@@ -289,19 +277,141 @@ def olmo_linear_cross_entropy_bwd_recompute_kernel(
             # 5. Add z-loss contribution
             d_logits = d_logits + softmax * grad_z_per_token.unsqueeze(1)
             d_logits = d_logits.to(_input.dtype)
+            # basically the whole point is to avoid materializing the d_logits tensor
 
             # 6. Fused gradient accumulation (single D loop for better weight reuse)
             for tile_k in hl.tile(d):
-                input_tile = _input[tile_n, tile_k]
+                # grad_input: local accumulation (this tile_n owns these rows)
+                weight_kv = hl.load(weight, index=[tile_k, tile_v], eviction_policy="evict_first")
+                grad_input[tile_n, tile_k] = torch.addmm(
+                    grad_input[tile_n, tile_k], d_logits, weight_kv.T
+                )
 
+            for tile_k in hl.tile(d):  # second loop to tune independently
                 # grad_weight: atomic add (multiple tile_n contribute to same location)
+                input_tile = _input[tile_n, tile_k]
                 update_gw = hl.dot(input_tile.T, d_logits)
                 hl.atomic_add(grad_weight, [tile_k, tile_v], update_gw)
 
-                # grad_input: local accumulation (this tile_n owns these rows)
-                weight_kv = hl.load(weight, index=[tile_k, tile_v])
-                update_gi = hl.dot(d_logits, weight_kv.T)
-                grad_input[tile_n, tile_k] = update_gi
+    return grad_input, grad_weight
+
+
+@helion.kernel(
+    # autotune_effort="none",
+    static_shapes=False,
+    autotuner_fn=LFBOPatternSearch,
+    autotune_ignore_errors=False,
+    ignore_warnings=[helion.exc.TensorOperationInWrapper],
+)
+def olmo_linear_cross_entropy_bwd_recompute_2dgrid_kernel(
+    _input: torch.Tensor,  # [N, D] input to final layer
+    weight: torch.Tensor,  # [D, V] weight matrix of final layer
+    labels: torch.Tensor,  # [N] target labels
+    lse: torch.Tensor,  # [N] log-sum-exp from forward pass
+    grad_ce_loss_scalar: torch.Tensor,  # [] scalar gradient of CE loss (for sum reduction)
+    grad_z_loss_scalar: torch.Tensor,  # [] scalar gradient of z-loss (for sum reduction)
+    z_loss_multiplier: float,  # z-loss multiplier
+    ignore_index: hl.constexpr = -100,
+    reduction: hl.constexpr = "sum",  # pyright: ignore[reportArgumentType]
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Computes the backward pass for the fused linear cross entropy loss.
+    Recomputes the logits to compute the gradient with respect to the weight and input.
+
+    The per-token gradient expansion is fused into the kernel:
+    - For reduction="sum": grad_ce_per_token[i] = mask[i] * grad_ce_loss_scalar
+    - For reduction="none": would need per-token grad arrays (not yet implemented)
+
+    Args:
+        grad_ce_loss_scalar: 0-dimensional tensor (scalar) - no host-device sync required
+        grad_z_loss_scalar: 0-dimensional tensor (scalar) - no host-device sync required
+    """
+    n = _input.shape[0]
+    d = hl.specialize(_input.shape[1])
+    v = hl.specialize(weight.shape[1])
+    assert d == weight.shape[0], f"Input dimension mismatch: {d} != {weight.shape[0]}"
+
+    grad_weight = torch.zeros([d, v], dtype=torch.float32, device=_input.device)
+    grad_input = torch.zeros([n, d], dtype=torch.float32, device=_input.device)
+
+    # This visits each (tile_n, tile_v) once, computes d_logits, and scatters updates to grad_weight
+    for tile_n, tile_v in hl.tile([n, v]):
+        # 1. Recompute logits for this tile of N and tile of V
+        # We need full inner dimension D to compute logits
+        logits = hl.zeros([tile_n, tile_v], dtype=torch.float32)
+        for tile_k in hl.tile(d):
+            weight_kv = hl.load(weight, index=[tile_k, tile_v], eviction_policy="evict_last")
+            logits = torch.addmm(logits, _input[tile_n, tile_k], weight_kv)  # sadly we recompute
+
+        # 2. Compute softmax = exp(logits - lse)
+        # we already know lse for this batch tile so we dont need to see the whole vocab dimension
+        lse_tile = lse[tile_n]  # [t_n]
+        softmax = torch.exp(logits - lse_tile.unsqueeze(1))  # [t_n, t_v]
+        d_logits = softmax
+
+        # 3. Compute d_logits = (softmax - target)
+        # We subtract 1.0 from softmax probabilities at the target indices.
+        # Implement this without subscript assignment or boolean indexing that
+        # produces data-dependent shapes by using pure elementwise ops.
+        labels_tile = labels[tile_n]  # [t_n]
+        local_vocab_idx = labels_tile - tile_v.begin  # [t_n]
+        is_target_in_tile = (labels_tile >= tile_v.begin) & (labels_tile < tile_v.end)
+
+        # Broadcast compare over the vocab dimension within this tile:
+        # eq[i, j] = (j == local_vocab_idx[i])
+        cols = hl.arange(tile_v.block_size)  # [t_v]
+        eq = cols[None, :] == local_vocab_idx[:, None]  # [t_n, t_v] (boolean)
+        mask = eq & is_target_in_tile[:, None]  # [t_n, t_v]
+        d_logits = d_logits - mask.to(d_logits.dtype)
+
+        # Apply valid mask and scaling according to grad_ce_loss
+        # Fused gradient expansion: expand scalar gradient to per-token based on mask
+        valid_mask = (labels_tile != ignore_index).to(torch.float32)  # [t_n]
+
+        if reduction == "sum":
+            # Load scalar gradients (0-dimensional tensors must be loaded inside tile loop)
+            grad_ce_scalar = grad_ce_loss_scalar[()]
+            grad_z_scalar = grad_z_loss_scalar[()]
+
+            # For sum reduction: grad_ce_per_token[i] = mask[i] * grad_ce_loss_scalar
+            grad_ce_per_token = valid_mask * grad_ce_scalar
+        else:
+            raise NotImplementedError(
+                f"Backward pass for reduction='{reduction}' not yet implemented"
+            )
+
+        scale = grad_ce_per_token  # [t_n]
+        d_logits = d_logits.mul(scale.unsqueeze(1))  # [t_n, v]
+
+        # 5. Add contribution from the z-loss.
+        # For each token i, if z_loss = z_loss_multiplier * lse_i^2 (with appropriate
+        # masking/reduction handled in the Python wrapper), then:
+        #   dL/dlogits_ij (from z-loss) = softmax_ij * dL/dlse_i
+        # Chain rule: dL/dlse_i = dL/dz_squared_i * dz_squared_i/dlse_i
+        #                        = grad_z_loss_scalar * z_loss_multiplier * mask_i * 2 * lse_i
+        if reduction == "sum":
+            grad_z_per_token = valid_mask * grad_z_scalar * z_loss_multiplier * 2.0 * lse_tile
+        else:
+            raise NotImplementedError(
+                f"Backward pass for reduction='{reduction}' not yet implemented"
+            )
+
+        d_logits = d_logits + softmax * grad_z_per_token.unsqueeze(1)
+
+        d_logits = d_logits.to(_input.dtype)
+
+        # 4. Accumulate grad_weight and grad_input using atomics
+        for tile_k in hl.tile(d):  # tile separately so they can be tuned independently
+            # Compute partial update for grad_input[tile_n, tile_k]
+            weight_kv = hl.load(weight, index=[tile_k, tile_v], eviction_policy="evict_first")
+            update_gi = hl.dot(d_logits, weight_kv.T)
+            hl.atomic_add(grad_input, [tile_n, tile_k], update_gi)
+
+        for tile_k in hl.tile(d):
+            # Compute partial update for grad_weight[tile_k, tile_v]
+            input_tile = _input[tile_n, tile_k]
+            update_gw = hl.dot(input_tile.T, d_logits)
+            hl.atomic_add(grad_weight, [tile_k, tile_v], update_gw)
 
     return grad_input, grad_weight
 
@@ -316,6 +426,7 @@ class OlmoFusedLinearCrossEntropyFunction(torch.autograd.Function):
         ignore_index: int = -100,
         reduction: Literal["sum", "none"] = "sum",
         z_loss_multiplier: float = 1e-4,
+        bwd_impl: Literal["1d", "2d"] = "1d",
     ) -> Tuple[torch.Tensor | float, torch.Tensor | float]:
         # Masking and reduction now happens inside the kernel
         ce_loss, z_squared, lse = olmo_linear_cross_entropy_fwd_kernel(
@@ -328,6 +439,7 @@ class OlmoFusedLinearCrossEntropyFunction(torch.autograd.Function):
         ctx.ignore_index = ignore_index
         ctx.reduction = reduction
         ctx.z_loss_multiplier = z_loss_multiplier
+        ctx.bwd_impl = bwd_impl
 
         z_loss = z_loss_multiplier * z_squared  # move inside kernel?
         return ce_loss, z_loss
@@ -356,7 +468,15 @@ class OlmoFusedLinearCrossEntropyFunction(torch.autograd.Function):
         if grad_z_loss is None:
             grad_z_loss = torch.zeros([], dtype=lse.dtype, device=lse.device)
 
-        grad_input, grad_weight = olmo_linear_cross_entropy_bwd_recompute_kernel(
+        # Select backward implementation:
+        # - "1d": 1D tiling over N (default, no redundant logits recomputation)
+        # - "2d": 2D tiling over (N, V) (original implementation with atomics on both grads)
+        if ctx.bwd_impl == "2d":
+            bwd_kernel = olmo_linear_cross_entropy_bwd_recompute_2dgrid_kernel
+        else:
+            bwd_kernel = olmo_linear_cross_entropy_bwd_recompute_kernel
+
+        grad_input, grad_weight = bwd_kernel(
             inputs,
             weight,
             target,
@@ -375,6 +495,7 @@ class OlmoFusedLinearCrossEntropyFunction(torch.autograd.Function):
             None,  # ignore_index
             None,  # reduction
             None,  # z_loss_multiplier
+            None,  # bwd_impl
         )
 
 
@@ -435,9 +556,9 @@ class OlmoLMHeadCE(torch.nn.Module):
         return ce_loss
 
 
-def main() -> None:
+def tune_and_test() -> None:
     """
-    Main entry point that runs the fused linear cross entropy kernel verification.
+    Run fused linear cross entropy kernel tuning and verification.
     """
 
     parser = argparse.ArgumentParser()
@@ -474,8 +595,6 @@ def main() -> None:
         return ce_loss + z_loss
 
     # warmup / compile
-    _input.grad = None
-    weight.grad = None
     torch_fn(_input, weight, labels)
     _input.grad = None
     weight.grad = None
@@ -483,144 +602,18 @@ def main() -> None:
     _input.grad = None
     weight.grad = None
 
-    try:
-        rtol, atol = 2e-2, 1e-3  # tigher than recommended bfloat16 tolerances
-        run_example(
-            helion_fn,
-            torch_fn,
-            (_input, weight, labels),
-            kernel_name="helion",
-            baseline_name="torch",
-            rtol=rtol,
-            atol=atol,
-            bwd=args.mode == "full",
-        )
-    except AssertionError as e:
-        print(f"\nCaught AssertionError in run_example: {e}")
-        if args.mode == "full":
-            print("Running manual gradient comparison for debugging...")
-
-            # 1. Compute Reference Gradients
-            _input.grad = None
-            weight.grad = None
-            loss_ref = torch_fn(_input, weight, labels)
-            loss_ref.backward()
-            grad_input_ref = _input.grad.clone() if _input.grad is not None else None
-            grad_weight_ref = weight.grad.clone() if weight.grad is not None else None
-
-            # 2. Compute Kernel Gradients
-            _input.grad = None
-            weight.grad = None
-            loss_act = helion_fn(_input, weight, labels)
-            loss_act.backward()
-            grad_input_act = _input.grad.clone() if _input.grad is not None else None
-            grad_weight_act = weight.grad.clone() if weight.grad is not None else None
-
-            # Print data types of gradients
-            print("\n--- Gradient Data Types ---")
-            print(
-                f"grad_input_ref dtype: {grad_input_ref.dtype if grad_input_ref is not None else None}"
-            )
-            print(
-                f"grad_input_act dtype: {grad_input_act.dtype if grad_input_act is not None else None}"
-            )
-            print(
-                f"grad_weight_ref dtype: {grad_weight_ref.dtype if grad_weight_ref is not None else None}"
-            )
-            print(
-                f"grad_weight_act dtype: {grad_weight_act.dtype if grad_weight_act is not None else None}"
-            )
-
-            def report_diff(name, ref, act):
-                if ref is None or act is None:
-                    print(
-                        f"{name}: One of the gradients is None. Ref: {ref is not None}, Act: {act is not None}"
-                    )
-                    return
-
-                diff = (ref - act).abs()
-                max_diff = diff.max().item()
-                mean_diff = diff.mean().item()
-                median_diff = diff.median().item()
-                ref_abs_max = ref.abs().max().item()
-                ref_abs_mean = ref.abs().mean().item()
-                ref_abs_median = ref.abs().median().item()
-                act_abs_max = act.abs().max().item()
-                act_abs_mean = act.abs().mean().item()
-                act_abs_median = act.abs().median().item()
-
-                print(f"\n--- {name} Gradient Comparison ---")
-                print(f"Max Diff: {max_diff:.2e}")
-                print(f"Mean Diff: {mean_diff:.2e}")
-                print(f"Median Diff: {median_diff:.2e}")
-                print(
-                    f"Ref Max Abs: {ref_abs_max:.2e}, Mean Abs: {ref_abs_mean:.2e}, Median Abs: {ref_abs_median:.2e}"
-                )
-                print(
-                    f"Act Max Abs: {act_abs_max:.2e}, Mean Abs: {act_abs_mean:.2e}, Median Abs: {act_abs_median:.2e}"
-                )
-
-                if max_diff > 0:
-                    # Find indices of max diff
-                    flat_indices = torch.topk(diff.flatten(), 5).indices
-                    print("Top 5 discrepancies:")
-                    for idx in flat_indices:
-                        # Convert flat index to coords
-                        coords = []
-                        rem = idx.item()
-                        for dim in reversed(ref.shape):
-                            coords.append(rem % dim)
-                            rem //= dim
-                        coords = tuple(reversed(coords))
-
-                        r_val = ref[coords].item()
-                        a_val = act[coords].item()
-                        d_val = diff[coords].item()
-                        annotation = ""
-                        # For input gradients, coords[0] corresponds to flattened (batch, seq) index
-                        if name.lower() == "input" and len(coords) == 2:
-                            token_idx = coords[0]
-                            label_id = labels[token_idx].item()
-                            batch_idx = token_idx // seq_len
-                            seq_idx = token_idx % seq_len
-                            annotation = (
-                                f" | token_idx={token_idx}, batch={batch_idx}, seq={seq_idx}, "
-                                f"label_id={label_id}"
-                            )
-                        # For weight gradients, coords[1] is the vocab / label dimension
-                        elif name.lower() == "weight" and len(coords) == 2:
-                            vocab_idx = coords[1]
-                            # Find where this vocab index actually appears as a target label
-                            matching = (labels == vocab_idx).nonzero(as_tuple=True)[0]
-                            if matching.numel() > 0:
-                                # Show up to first 3 occurrences
-                                shown = matching[:3].tolist()
-                                extra = matching.numel() - len(shown)
-                                annotation = (
-                                    f" | vocab_idx={vocab_idx} (label dim), "
-                                    f"as target at token_idx(s)={shown}"
-                                )
-                                if extra > 0:
-                                    annotation += f" (+{extra} more)"
-                            else:
-                                annotation = (
-                                    f" | vocab_idx={vocab_idx} (label dim), "
-                                    "never a target label in this batch"
-                                )
-
-                        print(
-                            f"  Idx {coords}: Ref={r_val:.4e}, Act={a_val:.4e}, "
-                            f"Diff={d_val:.4e}{annotation}"
-                        )
-
-            if grad_input_ref is not None and grad_input_act is not None:
-                report_diff("Input", grad_input_ref, grad_input_act)
-
-            if grad_weight_ref is not None and grad_weight_act is not None:
-                report_diff("Weight", grad_weight_ref, grad_weight_act)
-
-        raise e
+    rtol, atol = 2e-2, 1e-3  # tigher than recommended bfloat16 tolerances
+    run_example(
+        helion_fn,
+        torch_fn,
+        (_input, weight, labels),
+        kernel_name="helion",
+        baseline_name="torch",
+        rtol=rtol,
+        atol=atol,
+        bwd=args.mode == "full",
+    )
 
 
 if __name__ == "__main__":
-    main()
+    tune_and_test()
