@@ -27,7 +27,10 @@ from .configuration_bolmo import BolmoConfig
 from .tokenization_bolmo import BolmoTokenizerConfig
 from .utils_bolmo import compute_boundary_mask, pad_right, pad_left, MaskState
 
-from xlstm.xlstm_large.model import mLSTMLayer, mLSTMLayerConfig, mLSTMLayerStateType, soft_cap, mLSTMBackendConfig
+try:
+    from xlstm.xlstm_large.model import mLSTMLayer, mLSTMLayerConfig, mLSTMLayerStateType, soft_cap, mLSTMBackendConfig
+except ImportError:
+    raise ImportError("The `xlstm` package is required to use Bolmo. Please install it via `pip install xlstm`.")
 
 
 @use_kernel_forward_from_hub("RMSNorm")
