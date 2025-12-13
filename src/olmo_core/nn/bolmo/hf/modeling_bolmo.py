@@ -1155,6 +1155,9 @@ class BolmoForCausalLM(BolmoPreTrainedModel, GenerationMixin):
         boundary_offset = self.model.tokenizer.offset + 256
         eos = self.model.tokenizer.eos_token_id
 
+        self.model.local_encoder.free_inference_cache()
+        self.model.local_decoder.free_inference_cache()
+
         boundary_mask = self.model.prefill_boundary_prediction_forward(  # type: ignore
             byte_input_ids,
             expanded_input_ids=expanded_input_ids,
