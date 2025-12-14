@@ -324,6 +324,8 @@ class SFTRouterConfig(Config):
             print("Batch size config (before overrides):")
             print(bs_config)
 
+        ep_degree=2
+
         dp_shard_degree = GPUS_PER_NODE // (bs_config.cp_degree or 1)
         if not dp_shard_degree > 0:
             raise OLMoConfigurationError(f"dp_shard_degree ({dp_shard_degree}) must be positive.")
@@ -383,6 +385,7 @@ class SFTRouterConfig(Config):
                     "blocks.*.feed_forward_moe.experts*", # Uncomment to only train the router
                 ],
             )
+            ep_degree=3
         elif model_name == "olmoe-4x7b":
             # MoE model configuration for router SFT
             model = TransformerConfig.olmoe_nx7b(  # Use MoE configuration
@@ -398,8 +401,6 @@ class SFTRouterConfig(Config):
 
         print("overrides here:")
         print(overrides)
-
-        ep_degree=2
 
         config = SFTRouterConfig(
             run_name=run_name,
