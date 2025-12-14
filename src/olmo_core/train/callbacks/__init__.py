@@ -25,6 +25,8 @@ from .sequence_length_scheduler import SequenceLengthSchedulerCallback
 from .slack_notifier import SlackNotificationSetting, SlackNotifierCallback
 from .speed_monitor import SpeedMonitorCallback
 from .wandb import WandBCallback
+from .data_mixture_monitor import DataMixtureMonitorCallback
+
 
 __all__ = [
     "Callback",
@@ -52,6 +54,7 @@ __all__ = [
     "MonkeyPatcherCallback",
     "MetricSaverCallback",
     "ListCheckpointerCallback",
+    "DataMixtureMonitorCallback",
 ]
 
 __doc__ += "\n"

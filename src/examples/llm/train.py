@@ -42,6 +42,7 @@ from olmo_core.train.callbacks import (
     LMEvaluatorCallbackConfig,
     ProfilerCallback,
     WandBCallback,
+    DataMixtureMonitorCallback,
 )
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
@@ -246,6 +247,10 @@ def build_config(opts, overrides: List[str]) -> ExperimentConfig:
                 tokenizer=tokenizer_config,
                 eval_interval=250,
             ),
+        )
+        .with_callback(
+            "data_mixture_monitor",
+            DataMixtureMonitorCallback(log_interval=10),
         )
     )
 
