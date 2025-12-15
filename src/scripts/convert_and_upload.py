@@ -45,11 +45,13 @@ subprocess.run([
     "python", "src/examples/huggingface/convert_checkpoint_to_hf.py",
     f"--checkpoint-input-path={src}",
     f"--huggingface-output-dir={out}",
-    "-s", "8192"
+    "-s", "8192",
+    "--debug"
 ], check=True)
 
 print(f"=== Uploading to {repo_id}@{branch} ===")
 api = HfApi()
+api.create_repo(repo_id, repo_type="model", exist_ok=True)
 api.create_branch(repo_id, branch=branch, repo_type="model", exist_ok=True)
 upload_folder(
     repo_id=repo_id,
