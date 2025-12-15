@@ -441,7 +441,7 @@ class SFTConfig(Config):
                 max_grad_norm=1.0,
             ),
             trainer=TrainerConfig(
-                save_folder=f"{root_dir}/checkpoints/{user_name}/olmo2-7B-sft/{run_name}",
+                save_folder=f"{root_dir}/checkpoints/{user_name}/olmo-sft/{run_name}",
                 load_strategy=LoadStrategy.never,  # we manually load the checkpoint below
                 checkpointer=CheckpointerConfig(
                     save_thread_count=1, load_thread_count=32, throttle_uploads=True
