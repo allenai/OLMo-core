@@ -52,7 +52,7 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
 
     ```bash
     BASE_CKPT="/weka/oe-training-default/ai2-llm/path/to-base/checkpoint/step12345"
-    python src/scripts/train/sft/Olmo-sft.py launch \
+    python src/scripts/train/sft/Olmo-SFT.py launch \
         MODEL_NAME_HERE $BASE_CKPT \
             ai2/jupiter \
         --trainer.callbacks.wandb.enabled=True \
