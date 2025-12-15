@@ -24,7 +24,7 @@ from olmo_core.data import (
 )
 from olmo_core.data.types import LongDocStrategy
 from olmo_core.distributed.parallel import DataParallelType
-from olmo_core.distributed.utils import barrier, get_local_rank, get_rank
+from olmo_core.distributed.utils import get_local_rank, get_rank
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.internal.common import (
     CLUSTER_TO_GPU_TYPE,
