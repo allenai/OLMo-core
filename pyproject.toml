@@ -24,6 +24,8 @@ dependencies = [
     "importlib_resources",
     "bettermap",
     "beaker-py>=1.38.1",
+    "smart-open>=7.5.0",
+    "zstandard>=0.25.0",
 ]
 
 [project.urls]
