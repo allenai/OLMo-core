@@ -16,7 +16,7 @@
 
 sources:
 - source_name: science_math_and_technology_repeat1
-  target_ratio: 0.085183
+  target_ratio: 0.085187
   max_repetition_ratio: 1.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/science_math_and_technology/part-2-00023.npy
@@ -108,7 +108,7 @@ sources:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/science_math_and_technology/part-6-00011.npy
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/science_math_and_technology/part-6-00009.npy
 - source_name: science_math_and_technology_repeat3
-  target_ratio: 0.073557
+  target_ratio: 0.073556
   max_repetition_ratio: 3.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/science_math_and_technology/part-0-00032.npy
@@ -137,7 +137,7 @@ sources:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/science_math_and_technology/part-1-00018.npy
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/science_math_and_technology/part-1-00019.npy
 - source_name: science_math_and_technology_repeat6
-  target_ratio: 0.072284
+  target_ratio: 0.072322
   max_repetition_ratio: 6.0277694767646715
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/science_math_and_technology/part-0-00000.npy
@@ -153,7 +153,7 @@ sources:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/science_math_and_technology/part-0-00010.npy
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/science_math_and_technology/part-0-00011.npy
 - source_name: software_repeat1
-  target_ratio: 0.040334
+  target_ratio: 0.040333
   max_repetition_ratio: 1.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/software/part-2-00012.npy
@@ -246,7 +246,7 @@ sources:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/health/part-5-00002.npy
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/health/part-5-00000.npy
 - source_name: software_repeat6
-  target_ratio: 0.035999
+  target_ratio: 0.035998
   max_repetition_ratio: 6.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/software/part-0-00000.npy
@@ -256,7 +256,7 @@ sources:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/software/part-0-00004.npy
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/software/part-0-00005.npy
 - source_name: software_repeat3
-  target_ratio: 0.034476
+  target_ratio: 0.034475
   max_repetition_ratio: 3.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/software/part-0-00016.npy
@@ -272,7 +272,7 @@ sources:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/software/part-1-00008.npy
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/software/part-1-00009.npy
 - source_name: health_repeat3
-  target_ratio: 0.030872
+  target_ratio: 0.030871
   max_repetition_ratio: 3.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/health/part-0-00014.npy
@@ -352,7 +352,7 @@ sources:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/health/part-0-00003.npy
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/health/part-0-00004.npy
 - source_name: entertainment_repeat6
-  target_ratio: 0.029951
+  target_ratio: 0.02995
   max_repetition_ratio: 6.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/entertainment/part-0-00000.npy
@@ -361,7 +361,7 @@ sources:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/entertainment/part-0-00003.npy
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/entertainment/part-0-00004.npy
 - source_name: literature_repeat1
-  target_ratio: 0.02944
+  target_ratio: 0.029439
   max_repetition_ratio: 1.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/literature/part-2-00007.npy
@@ -432,7 +432,7 @@ sources:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/games/part-6-00009.npy
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/games/part-6-00000.npy
 - source_name: software_development_repeat1
-  target_ratio: 0.019804
+  target_ratio: 0.019803
   max_repetition_ratio: 1.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/software_development/part-2-00005.npy
@@ -470,7 +470,7 @@ sources:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/games/part-1-00004.npy
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/games/part-1-00010.npy
 - source_name: literature_repeat3
-  target_ratio: 0.01807
+  target_ratio: 0.018069
   max_repetition_ratio: 3.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/literature/part-0-00010.npy
@@ -481,7 +481,7 @@ sources:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/literature/part-1-00003.npy
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/literature/part-1-00004.npy
 - source_name: literature_repeat6
-  target_ratio: 0.017996
+  target_ratio: 0.017995
   max_repetition_ratio: 6.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/literature/part-0-00000.npy
@@ -517,7 +517,7 @@ sources:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/education_and_jobs/part-4-00006.npy
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/education_and_jobs/part-6-00006.npy
 - source_name: history_and_geography_repeat1
-  target_ratio: 0.014789
+  target_ratio: 0.014788
   max_repetition_ratio: 1.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/history_and_geography/part-2-00002.npy
@@ -538,7 +538,7 @@ sources:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/history_and_geography/part-7-00003.npy
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/history_and_geography/part-5-00003.npy
 - source_name: electronics_and_hardware_repeat1
-  target_ratio: 0.014151
+  target_ratio: 0.01415
   max_repetition_ratio: 1.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/electronics_and_hardware/part-2-00003.npy
@@ -610,25 +610,25 @@ sources:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/crime_and_law/part-7-00004.npy
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/crime_and_law/part-4-00004.npy
 - source_name: finance_and_business_repeat6
-  target_ratio: 0.012
+  target_ratio: 0.011999
   max_repetition_ratio: 6.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/finance_and_business/part-0-00000.npy
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/finance_and_business/part-0-00001.npy
 - source_name: education_and_jobs_repeat6
-  target_ratio: 0.011992
+  target_ratio: 0.011991
   max_repetition_ratio: 6.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/education_and_jobs/part-0-00000.npy
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/education_and_jobs/part-0-00001.npy
 - source_name: software_development_repeat6
-  target_ratio: 0.01189
+  target_ratio: 0.011889
   max_repetition_ratio: 6.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/software_development/part-0-00000.npy
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/software_development/part-0-00001.npy
 - source_name: education_and_jobs_repeat3
-  target_ratio: 0.010999
+  target_ratio: 0.010998
   max_repetition_ratio: 3.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/education_and_jobs/part-0-00006.npy
@@ -663,7 +663,7 @@ sources:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/finance_and_business/part-1-00002.npy
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/finance_and_business/part-1-00006.npy
 - source_name: religion_repeat1
-  target_ratio: 0.008556
+  target_ratio: 0.008555
   max_repetition_ratio: 1.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/religion/part-2-00002.npy
@@ -680,21 +680,21 @@ sources:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/religion/part-4-00003.npy
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/religion/part-5-00000.npy
 - source_name: crime_and_law_repeat3
-  target_ratio: 0.00763
+  target_ratio: 0.007629
   max_repetition_ratio: 3.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/crime_and_law/part-0-00004.npy
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/crime_and_law/part-1-00000.npy
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/crime_and_law/part-1-00001.npy
 - source_name: history_and_geography_repeat3
-  target_ratio: 0.007548
+  target_ratio: 0.007547
   max_repetition_ratio: 3.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/history_and_geography/part-0-00004.npy
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/history_and_geography/part-1-00000.npy
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/history_and_geography/part-1-00001.npy
 - source_name: electronics_and_hardware_repeat3
-  target_ratio: 0.006815
+  target_ratio: 0.006814
   max_repetition_ratio: 3.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/electronics_and_hardware/part-0-00005.npy
@@ -715,7 +715,7 @@ sources:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/industrial/part-7-00002.npy
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/industrial/part-4-00002.npy
 - source_name: sports_and_fitness_repeat1
-  target_ratio: 0.006003
+  target_ratio: 0.006002
   max_repetition_ratio: 1.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/sports_and_fitness/part-3-00000.npy
@@ -727,32 +727,32 @@ sources:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/sports_and_fitness/part-5-00001.npy
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/sports_and_fitness/part-6-00001.npy
 - source_name: politics_repeat6
-  target_ratio: 0.006
+  target_ratio: 0.005999
   max_repetition_ratio: 6.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/politics/part-0-00000.npy
 - source_name: transportation_repeat6
-  target_ratio: 0.006
+  target_ratio: 0.005999
   max_repetition_ratio: 6.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/transportation/part-0-00000.npy
 - source_name: sports_and_fitness_repeat6
-  target_ratio: 0.006
+  target_ratio: 0.005999
   max_repetition_ratio: 6.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/sports_and_fitness/part-0-00000.npy
 - source_name: industrial_repeat6
-  target_ratio: 0.006
+  target_ratio: 0.005999
   max_repetition_ratio: 6.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/industrial/part-0-00000.npy
 - source_name: crime_and_law_repeat6
-  target_ratio: 0.006
+  target_ratio: 0.005999
   max_repetition_ratio: 6.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/crime_and_law/part-0-00000.npy
 - source_name: food_and_dining_repeat6
-  target_ratio: 0.006
+  target_ratio: 0.005999
   max_repetition_ratio: 6.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/food_and_dining/part-0-00000.npy
@@ -767,17 +767,17 @@ sources:
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/electronics_and_hardware/part-0-00000.npy
 - source_name: religion_repeat6
-  target_ratio: 0.005999
+  target_ratio: 0.005998
   max_repetition_ratio: 6.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/religion/part-0-00000.npy
 - source_name: home_and_hobbies_repeat6
-  target_ratio: 0.005997
+  target_ratio: 0.005996
   max_repetition_ratio: 6.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/home_and_hobbies/part-0-00000.npy
 - source_name: history_and_geography_repeat6
-  target_ratio: 0.005986
+  target_ratio: 0.005985
   max_repetition_ratio: 6.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/history_and_geography/part-0-00000.npy
@@ -794,7 +794,7 @@ sources:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/art_and_design/part-7-00002.npy
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/art_and_design/part-4-00001.npy
 - source_name: food_and_dining_repeat1
-  target_ratio: 0.005036
+  target_ratio: 0.005035
   max_repetition_ratio: 1.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/food_and_dining/part-2-00001.npy
@@ -808,7 +808,7 @@ sources:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/food_and_dining/part-7-00002.npy
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/food_and_dining/part-5-00002.npy
 - source_name: transportation_repeat1
-  target_ratio: 0.004835
+  target_ratio: 0.004834
   max_repetition_ratio: 1.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/transportation/part-2-00000.npy
@@ -832,7 +832,7 @@ sources:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/home_and_hobbies/part-4-00001.npy
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/home_and_hobbies/part-6-00001.npy
 - source_name: religion_repeat3
-  target_ratio: 0.00448
+  target_ratio: 0.004479
   max_repetition_ratio: 3.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/religion/part-0-00003.npy
@@ -854,7 +854,7 @@ sources:
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/social_life/part-0-00000.npy
 - source_name: politics_repeat3
-  target_ratio: 0.004055
+  target_ratio: 0.004054
   max_repetition_ratio: 3.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/politics/part-0-00003.npy
@@ -866,12 +866,12 @@ sources:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/art_and_design/part-1-00000.npy
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/art_and_design/part-1-00002.npy
 - source_name: sports_and_fitness_repeat3
-  target_ratio: 0.003
+  target_ratio: 0.002999
   max_repetition_ratio: 3.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/sports_and_fitness/part-1-00000.npy
 - source_name: travel_and_tourism_repeat6
-  target_ratio: 0.002152
+  target_ratio: 0.002151
   max_repetition_ratio: 6.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/travel_and_tourism/part-0-00000.npy
@@ -881,7 +881,7 @@ sources:
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/social_life/part-1-00000.npy
 - source_name: travel_and_tourism_repeat1
-  target_ratio: 0.002046
+  target_ratio: 0.002045
   max_repetition_ratio: 1.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/travel_and_tourism/part-2-00000.npy
@@ -891,7 +891,7 @@ sources:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/travel_and_tourism/part-6-00000.npy
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/travel_and_tourism/part-4-00000.npy
 - source_name: industrial_repeat3
-  target_ratio: 0.001998
+  target_ratio: 0.001997
   max_repetition_ratio: 3.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/industrial/part-0-00002.npy
@@ -907,7 +907,7 @@ sources:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/adult_content/part-7-00000.npy
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/adult_content/part-5-00000.npy
 - source_name: adult_content_repeat6
-  target_ratio: 0.001735
+  target_ratio: 0.001734
   max_repetition_ratio: 6.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/adult_content/part-0-00000.npy
@@ -933,12 +933,12 @@ sources:
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/travel_and_tourism/part-1-00000.npy
 - source_name: adult_content_repeat3
-  target_ratio: 0.000858
+  target_ratio: 0.000857
   max_repetition_ratio: 3.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/adult_content/part-1-00000.npy
 - source_name: fashion_and_beauty_repeat1
-  target_ratio: 9.9e-05
+  target_ratio: 9.8e-05
   max_repetition_ratio: 1.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/fashion_and_beauty/part-2-00000.npy
@@ -953,7 +953,7 @@ sources:
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/fashion_and_beauty/part-0-00000.npy
 - source_name: fashion_and_beauty_repeat3
-  target_ratio: 5.0e-05
+  target_ratio: 4.9e-05
   max_repetition_ratio: 3.0
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/fashion_and_beauty/part-1-00000.npy

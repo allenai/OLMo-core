@@ -15,6 +15,7 @@ Requirements:
     - Access to the GCS bucket
 """
 
+import math
 import subprocess
 import re
 from dataclasses import dataclass
@@ -374,16 +375,30 @@ def normalize_to_sum_one(sources: List[Dict]) -> List[Dict]:
     # Use integer arithmetic for precise rounding
     PRECISION = 1_000_000
     
-    # Round all except the first (largest) to 6 decimal places
+    # Find the _repeat6 source that will absorb the rounding remainder
+    # (same one that absorbed the gap earlier)
+    repeat6_sources = [s for s in sources if "_repeat6" in s["source_name"]]
+    if repeat6_sources:
+        repeat6_sources.sort(key=lambda s: -s["_effective_tokens"])
+        absorber = repeat6_sources[0]
+    else:
+        absorber = sources[0]  # Fallback
+    
+    # Round DOWN all sources EXCEPT the absorber
+    # This ensures we never request more tokens than available
     rounded_parts = []
-    for s in sources[1:]:
-        parts = round(s["target_ratio"] * PRECISION)
+    for s in sources:
+        if s is absorber:
+            continue  # Skip the absorber for now
+        # Floor to always request slightly LESS than available
+        parts = math.floor(s["target_ratio"] * PRECISION)
         rounded_parts.append(parts)
         s["target_ratio"] = parts / PRECISION
     
-    # Set the largest to exactly fill the remainder (absorbs rounding error)
+    # Set the absorber (_repeat6 source) to fill the remainder
+    # This source has headroom due to increased max_repetition_ratio
     remainder = PRECISION - sum(rounded_parts)
-    sources[0]["target_ratio"] = remainder / PRECISION
+    absorber["target_ratio"] = remainder / PRECISION
     
     # Verify the sum
     final_sum = sum(s["target_ratio"] for s in sources)
