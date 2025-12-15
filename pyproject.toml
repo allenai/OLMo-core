@@ -22,7 +22,8 @@ dependencies = [
     "omegaconf",
     "safetensors",
     "importlib_resources",
-    "bettermap"
+    "bettermap",
+    "beaker-py>=1.38.1",
 ]
 
 [project.urls]
