@@ -357,13 +357,16 @@ def normalize_to_sum_one(sources: List[Dict]) -> List[Dict]:
             new_ratio = old_ratio + gap
             ratio_increase = new_ratio / old_ratio if old_ratio > 0 else 1.0
             
-            # Increase max_repetition_ratio proportionally to allow the extra tokens
+            # Increase max_repetition_ratio proportionally, PLUS extra buffer
+            # The buffer accounts for:
+            # 1. Rounding remainder that will also be added to this source
+            # 2. Small discrepancies between our byte-based estimate and actual tokens
             old_max_rep = target_source["max_repetition_ratio"]
-            new_max_rep = old_max_rep * ratio_increase
+            new_max_rep = old_max_rep * ratio_increase * 1.01  # 1% extra buffer
             
             print(f"  Sum < 1.0: Adding gap of {gap:.6f} to _repeat6 source: {target_source['source_name']}")
             print(f"    Ratio: {old_ratio:.6f} → {new_ratio:.6f}")
-            print(f"    max_repetition_ratio: {old_max_rep:.3f} → {new_max_rep:.3f}")
+            print(f"    max_repetition_ratio: {old_max_rep:.3f} → {new_max_rep:.3f} (includes 1% buffer)")
             
             target_source["target_ratio"] = new_ratio
             target_source["max_repetition_ratio"] = new_max_rep
@@ -396,9 +399,25 @@ def normalize_to_sum_one(sources: List[Dict]) -> List[Dict]:
         s["target_ratio"] = parts / PRECISION
     
     # Set the absorber (_repeat6 source) to fill the remainder
-    # This source has headroom due to increased max_repetition_ratio
     remainder = PRECISION - sum(rounded_parts)
-    absorber["target_ratio"] = remainder / PRECISION
+    final_absorber_ratio = remainder / PRECISION
+    absorber["target_ratio"] = final_absorber_ratio
+    
+    # Now recalculate max_repetition_ratio based on the FINAL ratio
+    # This ensures the absorber can provide enough tokens
+    original_effective = absorber["_effective_tokens"]
+    original_actual = absorber["_actual_tokens"]
+    original_repeat = 6.0  # Base repeat for _repeat6 sources
+    
+    # Final ratio requests: final_ratio * budget tokens
+    # Absorber can provide: actual_tokens * max_rep tokens
+    # So: max_rep >= (final_ratio * budget) / actual_tokens
+    if original_actual > 0:
+        required_rep = (final_absorber_ratio * TOTAL_BUDGET_TOKENS) / original_actual
+        # Add 1% buffer for any remaining discrepancies
+        absorber["max_repetition_ratio"] = required_rep * 1.01
+        print(f"  Absorber final ratio: {final_absorber_ratio:.6f}")
+        print(f"  Absorber max_repetition_ratio: {absorber['max_repetition_ratio']:.4f} (to provide {required_rep:.4f}x with 1% buffer)")
     
     # Verify the sum
     final_sum = sum(s["target_ratio"] for s in sources)

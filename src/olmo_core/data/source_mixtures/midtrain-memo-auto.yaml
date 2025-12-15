@@ -138,7 +138,7 @@ sources:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/science_math_and_technology/part-1-00019.npy
 - source_name: science_math_and_technology_repeat6
   target_ratio: 0.072322
-  max_repetition_ratio: 6.0277694767646715
+  max_repetition_ratio: 6.09124229013409
   paths:
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/science_math_and_technology/part-0-00000.npy
   - gs://ai2-llm/yapeic/dolmino2-mix-0925-reconstructed/preprocessed/sources/cc_all_dressed/all_dressed_v3/weborganizer_ft/dclm_plus2_vigintiles/vigintile_0018_subset-decon-2/allenai/dolma2-tokenizer/science_math_and_technology/part-0-00001.npy
