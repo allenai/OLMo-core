@@ -676,7 +676,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         assert self.routed_experts_router is not None
         assert self.ep_enabled == True
         assert self.num_local_routed_experts is not None
-
+        # print(f'rank={dist.get_rank()} grad={torch.is_grad_enabled()} combined_forward_ep block {self.block_idx} start')
 
         B, S, D = x.shape
 
@@ -1128,6 +1128,8 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
 
             # NOTE: the attach only writes 1.0 to the aux loss grad slot, so it should not matter where to attach
             final_out = attach_auxiliary_loss(final_out, routed_expert_router_aux_loss)
+            
+        # print(f'rank={dist.get_rank()} grad={torch.is_grad_enabled()} combined_forward_ep block {self.block_idx} end')
         
         return final_out
     

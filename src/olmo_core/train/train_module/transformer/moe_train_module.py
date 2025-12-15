@@ -855,6 +855,10 @@ class MoEV2TransformerTrainModule(TrainModule):
                             z_batch_loss += get_local_tensor(z_loss.detach())
                             del z_loss
 
+                        # if dry_run:
+                        #     torch.cuda.empty_cache()
+                        #     print(f'[Dry Run {dist.get_rank()}] after fwd mb{micro_batch_idx} {torch.cuda.memory_allocated()/1024**3:.2f} GB, activation used {dbg_mem_activation_usage:.2f} GB')
+
                     with nvtx.annotate(f"bwd_mb{micro_batch_idx}", color='red'):
                         # Run backward pass.
                         dbg_mem_before_bwd = torch.cuda.memory_allocated()/1024**3
@@ -865,6 +869,9 @@ class MoEV2TransformerTrainModule(TrainModule):
                         #     print(f"-------before bwd {micro_batch_idx}--------")
                         loss.backward()
 
+                        # if dry_run:
+                        #     torch.cuda.empty_cache()
+                        #     print(f'[Dry Run {dist.get_rank()}] after bwd mb{micro_batch_idx} {torch.cuda.memory_allocated()/1024**3:.2f} GB')
                         # dist.barrier()
                         # if dist.get_rank() == 0:
                         #     print(f"-------after bwd {micro_batch_idx}--------")
@@ -972,6 +979,8 @@ class MoEV2TransformerTrainModule(TrainModule):
         if dry_run:
             for model in self.model_parts:
                 model.reset_auxiliary_metrics()
+
+            torch.cuda.empty_cache()
             return
 
         # Record loss metrics.

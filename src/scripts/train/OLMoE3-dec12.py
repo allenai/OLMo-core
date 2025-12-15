@@ -229,6 +229,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                 random_expert_assignment=RANDOM_ASSIGN,
                 # lb_loss_weight=0.1,
                 lb_loss_weight=0.005,
+                # lb_loss_weight=0.0065,
                 z_loss_weight=None,
                 lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
                 dtype=dtype,
@@ -372,6 +373,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     cluster = 'ai2/augusta'
     # cluster = 'cirrascale'
     from olmo_core.train.common import StepSkipRange
+    from olmo_core.train.checkpoint import CheckpointerConfig
 
     return (
         TrainerConfig(
@@ -379,10 +381,13 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             # save_folder=f'{WORK_DIR}/tmp/{common.run_name}_{D_MODEL}d{D_ATTN}a_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K{NUM_SHARED_EXPERTS}S_{TAG}',
             save_folder=f'{common.save_folder}/{common.run_name}_{D_MODEL}d{D_ATTN}a_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K{NUM_SHARED_EXPERTS}S_{TAG}',
             save_overwrite=True,
+            checkpointer=CheckpointerConfig(
+                save_thread_count=1, load_thread_count=2, throttle_uploads=True
+            ),
             metrics_collect_interval=5,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(MAX_DURATION),
-            # steps_to_skip=StepSkipRange(start=501, step=520)
+            # steps_to_skip=[StepSkipRange(start=41312, stop=41329)]
         )
         .with_callback(
             "checkpointer",
@@ -436,9 +441,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             )
         )
         # TODO: might not be able to run in-loop evals depending on parallel strategies
-        .with_recommended_evals(
-            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
-        )
+        # .with_recommended_evals(
+        #     common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
+        # )
     )
 
 

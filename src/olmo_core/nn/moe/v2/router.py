@@ -171,6 +171,9 @@ class MoERouterV2(nn.Module):
         )
         self.reset_parameters()
 
+        self._debug_index = None
+        self._recompute_cache = None
+
     def reset_parameters(self):
         self._batch_size_per_expert = hide_from_torch(
             torch.zeros(self.num_experts, device=self.device)
@@ -460,6 +463,17 @@ class MoERouterV2(nn.Module):
         # shape: (batch_size, seq_len, top_k)
         expert_weights, expert_indices = self.get_top_k(scores)
 
+
+        # TODO: check
+        # WARN: does not work with PP
+        if self._recompute_cache is None: # first forward
+            if torch.is_grad_enabled():
+                self._recompute_cache = expert_indices.detach() # save for recompute
+        else: # recompute
+            expert_indices = self._recompute_cache # use saved expert indices
+            self._recompute_cache = None # 
+
+
         if self.normalize_expert_weights is not None:
             expert_weights = expert_weights.div(
                 torch.norm(
@@ -484,7 +498,31 @@ class MoERouterV2(nn.Module):
             # shape: (num_experts,)
             batch_size_per_expert = batched_batch_size_per_expert.sum(dim=0)
 
-        
+        # with torch.no_grad():
+        #     if self._debug_index is None: # first forward
+        #         self._debug_index = expert_indices.detach().cpu()
+        #     else: # recompute
+        #         recomputed = expert_indices.detach().cpu()
+        #         if not (self._debug_index == recomputed).all():
+        #             print("Debug expert indices mismatch!")
+        #             with open(f"/workspace/{dist.get_rank()}_ori_index.pt", "wb") as f:
+        #                 torch.save(self._debug_index, f)
+        #             with open(f"/workspace/{dist.get_rank()}_recomputed_index.pt", "wb") as f:
+        #                 torch.save(recomputed, f)
+        #             debug_info = {
+        #                 'scores': scores.detach().cpu(),
+        #                 'expert_weights': expert_weights.detach().cpu(),
+        #                 'logits': logits.detach().cpu(),    
+        #                 'weight': self.weight.data.detach().cpu(),
+        #                 'x': x.detach().cpu(),
+        #             }
+        #             with open(f"/workspace/{dist.get_rank()}_debug_info.pt", "wb") as f:
+        #                 torch.save(debug_info, f)
+                        
+        #             raise ValueError("Debug expert indices mismatch!")
+        #         else:
+        #             self._debug_index = None #
+
         aux_loss_info = (scores, logits, batch_size_per_expert, batched_batch_size_per_expert, loss_div_factor)
         return expert_weights, expert_indices, batch_size_per_expert, aux_loss_info
 
