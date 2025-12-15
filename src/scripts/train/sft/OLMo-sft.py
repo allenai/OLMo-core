@@ -8,6 +8,7 @@ import fnmatch
 import logging
 import shutil
 import sys
+from cloudpathlib import AnyPath
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Tuple, cast
@@ -491,15 +492,15 @@ def train(checkpoint: str, config: SFTConfig, save_tokenizer: bool):
     trainer = config.trainer.build(train_module, data_loader)
 
     if save_tokenizer and get_local_rank() == 0:
-        tokenizer_path = Path(dataset.paths[0]).parent / "tokenizer"
+        tokenizer_path = AnyPath(dataset.paths[0]).parent / "tokenizer"
         if tokenizer_path.exists() and tokenizer_path.is_dir():
             log.info("saving tokenizer...")
-            destination_path = Path(trainer.save_folder) / "tokenizer"
+            destination_path = AnyPath(trainer.save_folder) / "tokenizer"
             if destination_path.exists():
                 log.info(f"Tokenizer already exists: {destination_path}")
             else:
                 log.info(f"Saving tokenizer to {destination_path}")
-                shutil.copytree(tokenizer_path, destination_path, dirs_exist_ok=True)
+                destination_path.copytree(tokenizer_path)
 
     # Record the config to W&B/Comet and each checkpoint dir.
     config_dict = config.as_config_dict()
