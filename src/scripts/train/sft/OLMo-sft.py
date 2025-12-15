@@ -24,7 +24,7 @@ from olmo_core.data import (
 )
 from olmo_core.data.types import LongDocStrategy
 from olmo_core.distributed.parallel import DataParallelType
-from olmo_core.distributed.utils import get_local_rank, get_rank
+from olmo_core.distributed.utils import barrier, get_local_rank, get_rank
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.internal.common import (
     CLUSTER_TO_GPU_TYPE,
@@ -494,13 +494,15 @@ def train(checkpoint: str, config: SFTConfig, save_tokenizer: bool):
     if save_tokenizer and get_rank() == 0:
         tokenizer_path = AnyPath(dataset.paths[0]).parent / "tokenizer"
         if tokenizer_path.exists() and tokenizer_path.is_dir():
-            log.info("saving tokenizer...")
+            log.info("Saving tokenizer...")
             destination_path = AnyPath(trainer.save_folder) / "tokenizer"
             if destination_path.exists():
                 log.info(f"Tokenizer already exists: {destination_path}")
             else:
                 log.info(f"Saving tokenizer to {destination_path}")
                 destination_path.copytree(tokenizer_path)
+
+    barrier()
 
     # Record the config to W&B/Comet and each checkpoint dir.
     config_dict = config.as_config_dict()
