@@ -8,12 +8,12 @@ import fnmatch
 import logging
 import shutil
 import sys
-from cloudpathlib import AnyPath, CloudPath
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Tuple, cast
 from urllib.parse import urlparse
 
+from cloudpathlib import AnyPath, CloudPath
 from rich import print
 
 from olmo_core.config import Config, DType
@@ -505,7 +505,6 @@ def train(checkpoint: str, config: SFTConfig, save_tokenizer: bool):
                     tokenizer_path.copytree(destination_path)
                 else:
                     shutil.copytree(tokenizer_path, destination_path)
-
 
     # Record the config to W&B/Comet and each checkpoint dir.
     config_dict = config.as_config_dict()
