@@ -91,9 +91,11 @@ def _get_bolmo_config(model: BolmoTransformer) -> configuration_bolmo.BolmoConfi
     if len(sliding_window_blocks) > 0:
         # assume olmo 3 - 3 out of 4 are sliding window. this is the default in the Bolmo config
         layer_types = None
+        rope_scaling = _get_and_validate_rope_scaling_config(model.blocks)
     else:
         # olmo 2 - all full attention
         layer_types = ["full_attention"] * model.n_layers
+        rope_scaling = None
 
     return configuration_bolmo.BolmoConfig(
         vocab_size=model.vocab_size,
@@ -105,6 +107,8 @@ def _get_bolmo_config(model: BolmoTransformer) -> configuration_bolmo.BolmoConfi
         max_position_embeddings=-1,
         rms_norm_eps=first_global_block.feed_forward_norm.eps,
         local_rms_norm_eps=model.local_encoder.post_last_block_norm.eps,
+        rope_scaling=rope_scaling,
+        rope_theta=first_global_block.attention.rope.theta,
         layer_types=layer_types,
         add_expanded_embeddings=model.local_encoder.add_expanded_embeddings,
         boundary_predictor_lookahead=model.local_encoder.boundary_predictor_module.boundary_predictor_lookahead,
