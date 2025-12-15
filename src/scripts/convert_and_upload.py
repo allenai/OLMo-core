@@ -33,7 +33,7 @@ if not step:
     raise SystemExit("❌ Environment variable STEP not set!")
 
 # Paths
-src = f"gs://ai2-llm/checkpoints/memo-7b-20251215T075258+0000/{step}"
+src = f"gs://ai2-llm/checkpoints/memo-7b-20251215T075257+0000/{step}"
 out_root = os.environ.get("OUT_ROOT", "/data")   # defaults to ephemeral /data
 out = f"{out_root}/{step}-hf"
 
