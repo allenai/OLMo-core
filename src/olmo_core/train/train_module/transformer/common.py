@@ -156,6 +156,8 @@ def parallelize_model(
             device=device,
             world_mesh=world_mesh,
         )
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
     elapsed_time = time.monotonic() - start_time
     log.info(f"Model weight initialization completed in {elapsed_time:.2f} seconds")
 
