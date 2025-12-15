@@ -27,6 +27,9 @@ OUTPUT_FILE = "src/olmo_core/data/source_mixtures/midtrain-memo-auto.yaml"
 TOTAL_BUDGET_TOKENS = 10_000_000_000  # 10B tokens
 BYTES_PER_TOKEN = 4  # uint32
 
+# No safety margin needed - we'll handle the gap in normalization by adding
+# the difference to the largest source only (which has the most tokens to spare)
+
 # File size thresholds (in bytes)
 LARGE_FILE_MIN_SIZE = 1_000_000   # 1MB - for most topics
 SMALL_FILE_MIN_SIZE = 100_000     # 100KB - for small topics
@@ -126,7 +129,7 @@ def scan_topic(topic: str) -> List[FileInfo]:
     filtered = []
     for path, size in files:
         if size >= min_size:
-            tokens = size // BYTES_PER_TOKEN  # Actual token count
+            tokens = size // BYTES_PER_TOKEN
             filtered.append(FileInfo(path=path, size=size, tokens=tokens))
     
     return filtered
@@ -311,9 +314,9 @@ def normalize_to_sum_one(sources: List[Dict]) -> List[Dict]:
             raise OLMoConfigurationError(...)
     
     Strategy:
-    1. Scale all ratios proportionally
-    2. Round all except the largest
-    3. Set the largest to 1.0 - sum(others) to guarantee exact sum
+    - If sum > 1.0: Scale down all ratios (safe - we request less than available)
+    - If sum < 1.0: DON'T scale up all ratios (would over-request from every source)
+      Instead, add the gap to the LARGEST source only (it has the most tokens to spare)
     """
     if not sources:
         return sources
@@ -323,34 +326,62 @@ def normalize_to_sum_one(sources: List[Dict]) -> List[Dict]:
     if total_ratio == 0:
         return sources
     
-    scale_factor = 1.0 / total_ratio
     print(f"\nNormalizing ratios to sum to EXACTLY 1.0:")
     print(f"  Current sum: {total_ratio:.6f}")
-    print(f"  Scale factor: {scale_factor:.6f}")
     
-    # This represents how much "extra" repetition each file gets due to normalization
-    extra_repeat_percent = (scale_factor - 1.0) * 100
-    print(f"  Impact on repetition: {extra_repeat_percent:+.4f}% (should be < 1% for exact repetition)")
+    # Sort by effective tokens (largest first) - largest source will absorb the gap
+    sources.sort(key=lambda s: -s["_effective_tokens"])
     
-    # Scale all ratios
-    for s in sources:
-        s["target_ratio"] = s["target_ratio"] * scale_factor
+    gap = 1.0 - total_ratio
     
-    # Sort by ratio to find the largest (will absorb rounding error)
-    sources.sort(key=lambda s: -s["target_ratio"])
+    if gap < 0:
+        # Sum > 1.0: scale down all ratios proportionally (safe)
+        scale_factor = 1.0 / total_ratio
+        print(f"  Sum > 1.0: Scaling down all ratios by {scale_factor:.6f}")
+        for s in sources:
+            s["target_ratio"] = s["target_ratio"] * scale_factor
+    else:
+        # Sum < 1.0: add the gap to a _repeat6 source (has most headroom for extra tokens)
+        # _repeat1 sources can't absorb extra tokens (max_repetition_ratio=1.0 means no repeat allowed)
+        # _repeat6 sources can absorb a small gap - we also increase max_repetition_ratio accordingly
+        repeat6_sources = [s for s in sources if "_repeat6" in s["source_name"]]
+        
+        if repeat6_sources:
+            # Add gap to the largest _repeat6 source
+            repeat6_sources.sort(key=lambda s: -s["_effective_tokens"])
+            target_source = repeat6_sources[0]
+            
+            # Calculate how much extra repetition is needed
+            old_ratio = target_source["target_ratio"]
+            new_ratio = old_ratio + gap
+            ratio_increase = new_ratio / old_ratio if old_ratio > 0 else 1.0
+            
+            # Increase max_repetition_ratio proportionally to allow the extra tokens
+            old_max_rep = target_source["max_repetition_ratio"]
+            new_max_rep = old_max_rep * ratio_increase
+            
+            print(f"  Sum < 1.0: Adding gap of {gap:.6f} to _repeat6 source: {target_source['source_name']}")
+            print(f"    Ratio: {old_ratio:.6f} → {new_ratio:.6f}")
+            print(f"    max_repetition_ratio: {old_max_rep:.3f} → {new_max_rep:.3f}")
+            
+            target_source["target_ratio"] = new_ratio
+            target_source["max_repetition_ratio"] = new_max_rep
+        else:
+            # Fallback: add to largest source (shouldn't happen with our bucket setup)
+            print(f"  Sum < 1.0: No _repeat6 source found, adding gap to: {sources[0]['source_name']}")
+            sources[0]["target_ratio"] += gap
     
-    # Use integer arithmetic to avoid floating point errors
-    # Work in units of 1e-6 (i.e., parts per million)
+    # Use integer arithmetic for precise rounding
     PRECISION = 1_000_000
     
-    # Round all except the first (largest) to 6 decimal places as integers
+    # Round all except the first (largest) to 6 decimal places
     rounded_parts = []
     for s in sources[1:]:
         parts = round(s["target_ratio"] * PRECISION)
         rounded_parts.append(parts)
         s["target_ratio"] = parts / PRECISION
     
-    # Set the largest to exactly fill the remainder
+    # Set the largest to exactly fill the remainder (absorbs rounding error)
     remainder = PRECISION - sum(rounded_parts)
     sources[0]["target_ratio"] = remainder / PRECISION
     
