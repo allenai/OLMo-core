@@ -29,9 +29,10 @@ from olmo_core.optim import OptimConfig
 from olmo_core.optim.scheduler import Scheduler
 from olmo_core.train.train_module.config import TrainModuleConfig
 
+
+# from .train_module import TransformerTrainModule
 if TYPE_CHECKING:
     from .pipeline_train_module import TransformerPipelineTrainModule
-    from .train_module import TransformerTrainModule
 
 log = logging.getLogger(__name__)
 
@@ -354,3 +355,32 @@ class TransformerPipelineTrainModuleConfig(TransformerTrainModuleConfig):
     def __post_init__(self):
         if self.pp_config is None:
             raise OLMoConfigurationError("'pp_config' is required")
+        
+@dataclass
+class FreezeTransformerTrainModuleConfig(TransformerTrainModuleConfig):
+    def __init__(self, *args, **kwargs):
+        self.freeze_experts = kwargs.pop("freeze_experts", "first_half")
+        super().__init__(*args, **kwargs)
+
+
+    def build(
+        self,
+        model: Transformer,
+        device: Optional[torch.device] = None,
+    ) -> "FreezeTransformerTrainModule":
+        kwargs = self.as_dict(exclude_none=True, recurse=False)
+        # bp()
+        if (autocast_precision := kwargs.pop("autocast_precision", None)) is not None:
+            kwargs["autocast_precision"] = cast(DType, autocast_precision).as_pt()
+        if (state_dict_save_opts := kwargs.pop("state_dict_save_opts", None)) is not None:
+            kwargs["state_dict_save_opts"] = dist_cp_sd.StateDictOptions(**state_dict_save_opts)
+        if (state_dict_load_opts := kwargs.pop("state_dict_load_opts", None)) is not None:
+            kwargs["state_dict_load_opts"] = dist_cp_sd.StateDictOptions(**state_dict_load_opts)
+
+        from .train_module import FreezeTransformerTrainModule
+
+        return FreezeTransformerTrainModule(
+            model=model,
+            device=device,
+            **kwargs,
+        )

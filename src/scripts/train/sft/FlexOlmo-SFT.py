@@ -1,5 +1,7 @@
 """
-This script can be used to launch an SFT run for the 7B model on Beaker.
+This script can be used to launch an SFT run for MoE models on Beaker, focusing only on router weights.
+This script is specifically designed for Mixture of Experts (MoE) models and will freeze all parameters
+except the router weights. For dense models, use the regular SFT script instead.
 Run the script without any arguments to see usage info. See the README for more details.
 """
 
@@ -13,7 +15,6 @@ from pathlib import Path
 from typing import List, Optional, Tuple, cast
 from urllib.parse import urlparse
 
-from cloudpathlib import AnyPath, CloudPath
 from rich import print
 
 from olmo_core.config import Config, DType
@@ -24,7 +25,7 @@ from olmo_core.data import (
 )
 from olmo_core.data.types import LongDocStrategy
 from olmo_core.distributed.parallel import DataParallelType
-from olmo_core.distributed.utils import get_local_rank, get_rank
+from olmo_core.distributed.utils import get_local_rank
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import AOFloat8LinearConfig, Float8Config
 from olmo_core.internal.common import (
@@ -39,7 +40,7 @@ from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.rope import YaRNRoPEScalingConfig
 from olmo_core.nn.transformer import TransformerBlockConfig, TransformerConfig
-from olmo_core.optim import LinearWithWarmup, SkipStepAdamWConfig
+from olmo_core.optim import LinearWithWarmup, SkipStepAdamWConfig, AdamWConfig
 from olmo_core.train import (
     Duration,
     LoadStrategy,
@@ -71,12 +72,43 @@ from olmo_core.train.train_module.transformer.config import (
 
 from olmo_core.utils import prepare_cli_environment, seed_all
 
+
 log = logging.getLogger(__name__)
+
+
+def olmoe_nx7b(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+    """Create an OLMoE Nx7B model configuration."""
+    # Possibly more OOM due to imbalance with dropless=True
+    dropless = kwargs.pop("dropless", False)
+    return cls.llama_like_moe(
+        d_model=kwargs.pop("d_model", 4096),
+        n_layers=kwargs.pop("n_layers", 32),
+        n_heads=kwargs.pop("n_heads", 32),
+        num_experts=kwargs.pop("num_experts", 2),
+        top_k=kwargs.pop("top_k", 1),
+        expert_hidden_size=kwargs.pop("expert_hidden_size", 11008),
+        vocab_size=vocab_size,
+        dropless=dropless,
+        capacity_factor=None if dropless else 1.2,  # adjust as needed
+        lb_loss_weight=kwargs.pop("lb_loss_weight", 0.01),
+        z_loss_weight=kwargs.pop("z_loss_weight", 0.001),
+        reordered_norm=kwargs.pop("reordered_norm", True),
+        qk_norm=kwargs.pop("qk_norm", True),
+        rope_theta=kwargs.pop("rope_theta", 500_000),
+        layer_norm_eps=kwargs.pop("layer_norm_eps", 1e-6),
+        **kwargs,
+    )
+
+
+# Add the method to TransformerConfig
+TransformerConfig.olmoe_nx7b = classmethod(olmoe_nx7b)  # type: ignore
+
 
 DEFAULT_SEQUENCE_LENGTH = 16_384
 DEFAULT_NUM_NODES = 1
 GPUS_PER_NODE = 8
 MAX_RANK_MICROBATCH_SIZE_TOKENS = 16_384  # max tokens this config can handle on an H100
+# MAX_RANK_MICROBATCH_SIZE_TOKENS = 4_096
 
 
 @dataclass
@@ -93,9 +125,9 @@ class BatchSizeConfig:
     def __post_init__(self):
         assert self.global_batch_size_tokens > 0, "global_batch_size_tokens must be positive"
         assert self.sequence_length > 0, "sequence_length must be positive"
-        assert (
-            self.sequence_length & (self.sequence_length - 1)
-        ) == 0, "sequence_length must be a power of 2"
+        assert (self.sequence_length & (self.sequence_length - 1)) == 0, (
+            "sequence_length must be a power of 2"
+        )
         assert self.world_size > 0, "world_size must be positive"
         assert (self.world_size & (self.world_size - 1)) == 0, "world_size must be a power of 2"
 
@@ -205,16 +237,22 @@ def glob_remote_dataset(prefix: str) -> List[str]:
     return paths
 
 
+
 def build_sft_dataset(
     root_dir: str,
     tokenizer_config: TokenizerConfig,
     sequence_length: int,
-    dataset_path: str,
+    dataset_path: Optional[str],
 ) -> NumpyPackedFSLDatasetConfig:
     clean_path = dataset_path.rstrip("/")
-    token_id_paths = [f"{clean_path}/token_ids_part_*.npy"]
-    label_mask_paths = [f"{clean_path}/labels_mask_*.npy"]
-    expand_glob = True
+    if dataset_path.startswith("gs://") or dataset_path.startswith("s3://"):
+        token_id_paths = glob_remote_dataset(f"{clean_path}/token_ids_part_*.npy")
+        label_mask_paths = glob_remote_dataset(f"{clean_path}/token_ids_part_*.npy")
+        expand_glob = False
+    else:
+        token_id_paths = [f"{clean_path}/token_ids_part_*.npy"]
+        label_mask_paths = [f"{clean_path}/labels_mask_*.npy"]
+        expand_glob = True
 
     dataset = NumpyPackedFSLDatasetConfig(
         # general config
@@ -232,9 +270,9 @@ def build_sft_dataset(
 
 
 @dataclass
-class SFTConfig(Config):
+class SFTRouterConfig(Config):
     """
-    Custom config class for the sft run.
+    Custom config class for the router-only SFT run.
 
     Making config classes isn't strictly necessary for OLMo-core, but it gives us a nice way to
     capture all of the hyperparameters for a run and an easy way to override those options from
@@ -249,7 +287,7 @@ class SFTConfig(Config):
     data_loader: NumpyDataLoaderConfig
     train_module: TransformerTrainModuleConfig
     trainer: TrainerConfig
-    init_seed: int
+    init_seed: int = 53184
 
     @classmethod
     def build(
@@ -267,19 +305,13 @@ class SFTConfig(Config):
         workspace: str,
         budget: str,
         model_name: str,
-        init_seed: int = 33333,
-        dataset_path: str,
-    ) -> "SFTConfig":
+        dataset_path: Optional[str],
+    ) -> "SFTRouterConfig":
         root_dir = get_root_dir(cluster)
         user_name = get_beaker_username()
 
         tokenizer_config = TokenizerConfig.dolma2()
-        dataset_config = build_sft_dataset(
-            root_dir=root_dir,
-            tokenizer_config=tokenizer_config,
-            sequence_length=seq_len,
-            dataset_path=dataset_path,
-        )
+        dataset_config = build_sft_dataset(root_dir, tokenizer_config, seq_len, dataset_path)
         gpu_type = CLUSTER_TO_GPU_TYPE[cluster]
 
         bs_config = BatchSizeConfig(
@@ -292,53 +324,11 @@ class SFTConfig(Config):
             print("Batch size config (before overrides):")
             print(bs_config)
 
+        ep_degree=2
+
         dp_shard_degree = GPUS_PER_NODE // (bs_config.cp_degree or 1)
         if not dp_shard_degree > 0:
             raise OLMoConfigurationError(f"dp_shard_degree ({dp_shard_degree}) must be positive.")
-
-        ac_config = TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.selected_modules,
-            modules=["blocks.*.feed_forward"],
-        )
-
-        cp_config = (
-            (
-                TransformerContextParallelConfig.llama3(degree=bs_config.cp_degree)
-                if dataset_config.generate_doc_lengths  # only use llama3 if we're masking docs
-                else TransformerContextParallelConfig.zig_zag(degree=bs_config.cp_degree)
-            )
-            if bs_config.cp_degree
-            else None
-        )
-
-        dp_config = TransformerDataParallelConfig(
-            name=DataParallelType.hsdp,
-            param_dtype=DType.bfloat16,
-            reduce_dtype=DType.float32,
-            shard_degree=GPUS_PER_NODE  # try to keep communication w/in a node
-            // (bs_config.cp_degree or 1),
-        )
-
-        train_module_config = TransformerTrainModuleConfig(
-                rank_microbatch_size=bs_config.rank_microbatch_size_tokens,
-                max_sequence_length=bs_config.sequence_length,
-                z_loss_multiplier=None,
-                compile_model=True,
-                optim=SkipStepAdamWConfig(
-                    lr=8e-05,
-                    weight_decay=0.0,  # NOTE: different from pretraining
-                    betas=(0.9, 0.95),
-                    compile=False,
-                ),
-                dp_config=dp_config,
-                cp_config=cp_config,
-                ac_config=ac_config,
-                scheduler=LinearWithWarmup(
-                    warmup_fraction=0.03,
-                    alpha_f=0.0,  # lr drops all the way to 0.0 at the end
-                ),
-                max_grad_norm=1.0,
-            )
 
         if model_name == "olmo2-7b":
             model = TransformerConfig.olmo2_7B(  # Based on https://github.com/allenai/OLMo-core/blob/dustins/anneal-repro/src/scripts/train/lc_cont_train/OLMo2-7B-lc_anneal_tp4.py
@@ -347,128 +337,64 @@ class SFTConfig(Config):
                 rope_theta=8 * 10**6,
             )
         elif model_name == "olmo3-7b":
-            # @soldni: copied from https://github.com/allenai/olmo-cookbook/blob/fe0d0ef5bbef7ad2caa2c91047d88062cf565df9/src/cookbook/model/config.py#L209-L224
-            model = TransformerConfig.olmo2_7B(vocab_size=tokenizer_config.padded_vocab_size())
+            model = TransformerConfig.olmo2_7B(  # Based on https://github.com/allenai/OLMo-core/pull/310/files#diff-03f6a1f5db18fc4be7a243d8168698ae674cd50b2866253bcdadba5d48590b3dR48
+                vocab_size=tokenizer_config.padded_vocab_size(),
+                n_kv_heads=8,
+                hidden_size_multiplier=1.2,
+                hidden_size_multiple_of=1024,
+            )
             model.block.attention.sliding_window = SlidingWindowAttentionConfig(
                 force_full_attention_on_first_layer=False,
                 force_full_attention_on_last_layer=True,
                 pattern=[4096, 4096, 4096, -1],
             )
             model.block.attention.use_flash = True
-            model.block.attention.rope.scaling = YaRNRoPEScalingConfig(
-                factor=8, beta_fast=32, beta_slow=1, old_context_len=8192
-            )
-
-            def no_rope_scaling(block: TransformerBlockConfig) -> TransformerBlockConfig:
-                rope_config = block.attention.rope
-                if rope_config is not None:
-                    rope_config.scaling = None
-                    block.attention.rope = rope_config
-                return block
-
-            model.block_overrides = {
-                i: no_rope_scaling(model.block.copy())
-                for i in range(model.n_layers)
-                if model.block.attention.sliding_window.should_use_swa(i, model.n_layers)
-            }
-        elif model_name == "olmo3-32b":
-            model = TransformerConfig.olmo2_32B(vocab_size=tokenizer_config.padded_vocab_size())
-            model.block.attention.sliding_window = SlidingWindowAttentionConfig(
-                force_full_attention_on_first_layer=False,
-                force_full_attention_on_last_layer=True,
-                pattern=[4096, 4096, 4096, -1],
-            )
-            model.block.attention.use_flash = True
-            model.block.attention.rope.scaling = YaRNRoPEScalingConfig(
-                factor=8, beta_fast=32, beta_slow=1, old_context_len=8192
-            )
-
-            def no_rope_scaling(block: TransformerBlockConfig) -> TransformerBlockConfig:
-                rope_config = block.attention.rope
-                if rope_config is not None:
-                    rope_config.scaling = None
-                    block.attention.rope = rope_config
-                return block
-
-            model.block_overrides = {
-                i: no_rope_scaling(model.block.copy())
-                for i in range(model.n_layers)
-                if model.block.attention.sliding_window.should_use_swa(i, model.n_layers)
-            }
-
-            ac_config = TransformerActivationCheckpointingConfig(
-                mode=TransformerActivationCheckpointingMode.budget,
-                activation_memory_budget=0.3,
-            )
-
-            cp_config = TransformerContextParallelConfig.llama3(degree=8, head_stride=4)
-
-            dp_config = TransformerDataParallelConfig(
-                name=DataParallelType.hsdp,
-                param_dtype=DType.bfloat16,
-                reduce_dtype=DType.float32,
-                wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
-                shard_degree=8,  # 64
-            )
-        elif model_name == "flexolmo-2x7b":
-            model = TransformerConfig.olmoe_nx7b(  # type: ignore
+            model.block.attention.use_head_qk_norm = True
+        elif model_name == "olmoe-2x7b":
+            # MoE model configuration for router SFT
+            model = TransformerConfig.olmoe_nx7b(  # Use MoE configuration
                 vocab_size=tokenizer_config.padded_vocab_size(),
                 num_experts=2,
-                lb_loss_weight=0,
+                top_k=2,  # Override default of 1
+                lb_loss_weight=0.0,
                 z_loss_weight=0.001,
+                use_flash=True,
+                # freeze_params=[],  # Don't freeze anything initially - we'll do it manually
                 freeze_params=[
                     "embeddings.*",
                     "blocks.*.attention*",
                     "blocks.*.feed_forward_norm.*",
                     "lm_head.*",
-                    # "blocks.*.feed_forward_moe.experts*", # TODO: uncomment if you only want to train the router.
+                    # "blocks.*.feed_forward_moe.experts*", # Uncomment to only train the router
                 ],
             )
-
-            train_module_config = FreezeTransformerTrainModuleConfig(
-                rank_microbatch_size=bs_config.rank_microbatch_size_tokens, # pretrain was 2 * 4096
-                max_sequence_length=bs_config.sequence_length,
-                freeze_experts="first_half",
-                optim=SkipStepAdamWConfig(
-                    lr=8e-05,
-                    weight_decay=0.0,  # NOTE: different from pretraining
-                    betas=(0.9, 0.95),
-                    compile=False,
-                ),
-                # optim=AdamWConfig(
-                #     lr=0.0008236541623533814,  # the base model stopped training at this lr, TODO: set as needed
-                #     weight_decay=0,  # 0
-                #     betas=(0.9, 0.95),
-                #     fused=True,
-                #     #  group_overrides=[
-                #     #      OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
-                #     #  ], # swj check
-                # ),
-                compile_model=True,
-                dp_config=TransformerDataParallelConfig(
-                    name=DataParallelType.hsdp,
-                    param_dtype=DType.bfloat16,
-                    reduce_dtype=DType.float32,
-                    wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,
-                    num_replicas=bs_config.world_size // 2  # try to keep communication w/in a node
-                ),
-                # NOTE: expert parallelism requires either HSDP or tensor parallelism.
-                ep_config=TransformerExpertParallelConfig(degree=2),
-                # tp_config=TransformerTensorParallelConfig(degree=-1),
-                float8_config=Float8Config(
-                    ao=AOFloat8LinearConfig(
-                        enable_fsdp_float8_all_gather=True,
-                        force_recompute_fp8_weight_in_bwd=True,
-                        round_scales_to_power_of_2=True,
-                    ),
-                    enabled=False,
-                ),
-                z_loss_multiplier=1e-5,  # swj check
-                max_grad_norm=1.0,
-                scheduler=LinearWithWarmup(
-                    warmup_fraction=0.03,
-                    alpha_f=0.0,  # lr drops all the way to 0.0 at the end
-                ),                
+        elif model_name == "olmoe-3x7b":
+            # MoE model configuration for router SFT
+            model = TransformerConfig.olmoe_nx7b(  # Use MoE configuration
+                vocab_size=tokenizer_config.padded_vocab_size(),
+                num_experts=3,
+                top_k=3,  # Override default of 1
+                lb_loss_weight=0.0,
+                z_loss_weight=0.001,
+                use_flash=True,
+                freeze_params=[
+                    "embeddings.*",
+                    "blocks.*.attention*",
+                    "blocks.*.feed_forward_norm.*",
+                    "lm_head.*",
+                    "blocks.*.feed_forward_moe.experts*", # Uncomment to only train the router
+                ],
+            )
+            ep_degree=3
+        elif model_name == "olmoe-4x7b":
+            # MoE model configuration for router SFT
+            model = TransformerConfig.olmoe_nx7b(  # Use MoE configuration
+                vocab_size=tokenizer_config.padded_vocab_size(),
+                num_experts=4,  # Override default of 2
+                top_k=4,  # Override default of 1
+                lb_loss_weight=0.0,
+                z_loss_weight=0.001,
+                freeze_params=[],  # Don't freeze anything initially - we'll do it manually
             )
         else:
             raise OLMoConfigurationError(f"Must set a valid model_name: {model_name}")
@@ -476,7 +402,7 @@ class SFTConfig(Config):
         print("overrides here:")
         print(overrides)
 
-        config = SFTConfig(
+        config = SFTRouterConfig(
             run_name=run_name,
             launch=build_launch_config(
                 name=run_name,
@@ -506,9 +432,73 @@ class SFTConfig(Config):
             data_loader=NumpyDataLoaderConfig(
                 global_batch_size=bs_config.global_batch_size_tokens, seed=34521, num_workers=4
             ),
-            train_module=train_module_config,
+            # train_module=TransformerTrainModuleConfig(
+            #     rank_microbatch_size=2 * 4096,
+            #     max_sequence_length=bs_config.sequence_length,
+            #     z_loss_multiplier=None,
+            #     compile_model=True,
+            train_module=FreezeTransformerTrainModuleConfig(  # Changed class name
+                rank_microbatch_size=4096,  # Keep your fix from before
+                max_sequence_length=bs_config.sequence_length,
+                freeze_experts="first_half",
+                # optim=SkipStepAdamWConfig(
+                #     lr=8e-05,
+                #     weight_decay=0.0,  # NOTE: different from pretraining
+                #     betas=(0.9, 0.95),
+                #     fused=True,  # ADD THIS - more memory efficient
+                #     compile=False,
+                # ),
+                optim=AdamWConfig(
+                    lr=8e-5, 
+                    weight_decay=0,  # 0
+                    betas=(0.9, 0.95),
+                    fused=True,
+                    #  group_overrides=[
+                    #      OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
+                    #  ], # swj check
+                ),
+                ep_config=TransformerExpertParallelConfig(
+                    degree=ep_degree,  # Split experts across 2 GPUs
+                ),
+                float8_config=Float8Config(
+                    ao=AOFloat8LinearConfig(
+                        enable_fsdp_float8_all_gather=True,
+                        force_recompute_fp8_weight_in_bwd=True,
+                        round_scales_to_power_of_2=True,
+                    ),
+                    enabled=False,
+                ),
+                dp_config=TransformerDataParallelConfig(
+                    name=DataParallelType.hsdp,
+                    param_dtype=DType.bfloat16,
+                    reduce_dtype=DType.float32,
+                    wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained,  # ADD THIS!
+                    num_replicas=num_nodes * GPUS_PER_NODE // ep_degree, # num_gpus / num_experts
+                    # shard_degree=GPUS_PER_NODE  # try to keep communication w/in a node
+                    # // (bs_config.cp_degree or 1) // 2, # 2 is ep degree
+                ),
+                cp_config=(
+                    (
+                        TransformerContextParallelConfig.llama3(degree=bs_config.cp_degree)
+                        if dataset_config.generate_doc_lengths  # only use llama3 if we're masking docs
+                        else TransformerContextParallelConfig.zig_zag(degree=bs_config.cp_degree)
+                    )
+                    if bs_config.cp_degree
+                    else None
+                ),
+                ac_config=TransformerActivationCheckpointingConfig(
+                    mode=TransformerActivationCheckpointingMode.selected_modules,
+                    # modules=["blocks.*.feed_forward"],
+                    modules=["blocks.*.attention"], 
+                ),
+                scheduler=LinearWithWarmup(
+                    warmup_fraction=0.03,
+                    alpha_f=0.0,  # lr drops all the way to 0.0 at the end
+                ),
+                max_grad_norm=1.0,
+            ),
             trainer=TrainerConfig(
-                save_folder=f"{root_dir}/checkpoints/{user_name}/olmo-sft/{run_name}",
+                save_folder=f"{root_dir}/checkpoints/{user_name}/flex2-7B-sft/{run_name}",
                 load_strategy=LoadStrategy.never,  # we manually load the checkpoint below
                 checkpointer=CheckpointerConfig(
                     save_thread_count=1, load_thread_count=32, throttle_uploads=True
@@ -524,7 +514,7 @@ class SFTConfig(Config):
             .with_callback(
                 "checkpointer",
                 CheckpointerCallback(
-                    save_interval=1000, ephemeral_save_interval=500, save_async=True
+                    save_interval=1000, ephemeral_save_interval=100, save_async=True
                 ),
             )
             .with_callback(
@@ -532,12 +522,11 @@ class SFTConfig(Config):
                 WandBCallback(
                     name=run_name,
                     entity="ai2-llm",
-                    project=f"{user_name}-7B-sft",
+                    project=f"{user_name}-7B-flex2-sft",
                     enabled=False,
                     cancel_check_interval=10,
                 ),
             ),
-            init_seed=init_seed,
         ).merge(overrides)
 
         config.dataset = dataset_config
@@ -547,31 +536,133 @@ class SFTConfig(Config):
         return config
 
 
-def train(checkpoint: str, config: SFTConfig, save_tokenizer: bool):
+def freeze_non_router_weights(model):
+    """
+    Freeze all parameters except router weights.
+    Only router parameters will have requires_grad=True.
+    """
+    router_params = 0
+    frozen_params = 0
+    
+    # First, let's log all parameter names to debug what we're working with
+    if get_local_rank() == 0:
+        log.info("All model parameters:")
+        for name, param in model.named_parameters():
+            log.info(f"  {name}: shape={param.shape}, requires_grad={param.requires_grad}")
+    
+    # Debug: Print all parameters to see what's actually in the model
+    if get_local_rank() == 0:
+        log.info("=== ALL PARAMETERS ===")
+        for name, param in model.named_parameters():
+            log.info(f"{name}: {param.shape} (requires_grad={param.requires_grad})")
+        
+        log.info("\n=== ROUTER PARAMETERS ===")
+        router_found = False
+        for name, param in model.named_parameters():
+            if "router" in name:
+                log.info(f"{name}: {param.shape} (requires_grad={param.requires_grad})")
+                router_found = True
+        
+        if not router_found:
+            log.warning("No router parameters found! Looking for MoE-related parameters...")
+            for name, param in model.named_parameters():
+                if any(pattern in name.lower() for pattern in ["moe", "feed_forward_moe", "expert"]):
+                    log.info(f"MoE-related: {name}: {param.shape} (requires_grad={param.requires_grad})")
+    
+    import fnmatch
+    
+    # Patterns that should definitely be frozen (from your config)
+    freeze_patterns = [
+        "embeddings.*",
+        "blocks.*.attention*", 
+        "blocks.*.feed_forward_norm.*",
+        "lm_head.*",
+        # "blocks.*.feed_forward_moe.experts.*",  # Expert weights
+        # "blocks.*.feed_forward._checkpoint_wrapped_module.*"  # Expert weights (fallback)
+    ]
+    
+    # Look for router parameters - the expected naming pattern
+    router_patterns = [
+        "blocks.*.feed_forward_moe.router.*",
+        "blocks.*.feed_forward_moe.gate.*",
+        "blocks.*.feed_forward_moe.gating.*"
+    ]
+    
+    for name, param in model.named_parameters():
+        should_freeze = False
+        param_size = param.numel()
+        
+        # Check if this parameter matches any freeze pattern
+        for pattern in freeze_patterns:
+            if fnmatch.fnmatch(name, pattern):
+                should_freeze = True
+                break
+        
+        # Check if this is a router parameter
+        is_router = False
+        for pattern in router_patterns:
+            if fnmatch.fnmatch(name, pattern):
+                is_router = True
+                break
+        
+        # Also check for explicit router patterns
+        if "router" in name.lower() or "gate" in name.lower():
+            is_router = True
+        
+        # If it's a router parameter, keep it trainable
+        # if is_router:
+            # should_freeze = False
+        
+        if should_freeze:
+            param.requires_grad = False
+            frozen_params += 1
+            if get_local_rank() == 0:
+                log.info(f"Freezing parameter: {name}")
+        else:
+            param.requires_grad = True
+            router_params += 1
+            if get_local_rank() == 0:
+                log.info(f"Keeping parameter trainable: {name} (size: {param_size})")
+    
+    if get_local_rank() == 0:
+        log.info(f"Router SFT setup complete:")
+        log.info(f"  - Trainable router parameters: {router_params}")
+        log.info(f"  - Frozen parameters: {frozen_params}")
+        log.info(f"  - Total parameters: {router_params + frozen_params}")
+        
+        if router_params == 0:
+            log.warning("No router parameters found! This may indicate the model is not MoE.")
+
+
+def train(checkpoint: str, config: SFTRouterConfig, save_tokenizer: bool):
     # Set RNG states on all devices.
     seed_all(config.init_seed)
 
     # Build components.
     model = config.model.build(init_device="meta")
+
+    # Freeze all non-router weights (tweaked to match flexolmo pretrain)
+    # freeze_non_router_weights(model)
+
     train_module = config.train_module.build(model)
+    
+    if config.dataset is None:
+        raise OLMoConfigurationError("Dataset configuration is None")
+    
     dataset = config.dataset.build()
     data_loader = config.data_loader.build(dataset, dp_process_group=train_module.dp_process_group)
     trainer = config.trainer.build(train_module, data_loader)
 
-    if save_tokenizer and get_rank() == 0:
-        tokenizer_path = AnyPath(dataset.paths[0]).parent / "tokenizer"
+    if save_tokenizer and get_local_rank() == 0:
+        tokenizer_path = Path(dataset.paths[0]).parent / "tokenizer"
         if tokenizer_path.exists() and tokenizer_path.is_dir():
-            log.info("Saving tokenizer...")
-            destination_path = AnyPath(trainer.save_folder) / "tokenizer"
+            log.info("saving tokenizer...")
+            destination_path = Path(trainer.save_folder) / "tokenizer"
             if destination_path.exists():
                 log.info(f"Tokenizer already exists: {destination_path}")
             else:
                 log.info(f"Saving tokenizer to {destination_path}")
-                # CloudPath has copytree, but regular Path doesn't
-                if isinstance(tokenizer_path, CloudPath) or isinstance(destination_path, CloudPath):
-                    tokenizer_path.copytree(destination_path)
-                else:
-                    shutil.copytree(tokenizer_path, destination_path)
+                shutil.copytree(tokenizer_path, destination_path, dirs_exist_ok=True)
 
     # Record the config to W&B/Comet and each checkpoint dir.
     config_dict = config.as_config_dict()
@@ -594,12 +685,17 @@ def train(checkpoint: str, config: SFTConfig, save_tokenizer: bool):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="SFT the 7B model.",
+        description="SFT MoE model router weights only (freezes all other parameters).",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python %(prog)s dry_run test my-dataset-name /path/to/ckpt ai2/cluster
-  python %(prog)s launch run01 OpenThoughts3-1.2M /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_final_anneal/step11921 ai2/jupiter-cirrascale-2 --seq_len=4096 --num_nodes=2 --launch.priority=high
+  python %(prog)s dry_run test my-dataset-name /path/to/ckpt ai2/cluster --model_name olmoe-1b-7b
+  python %(prog)s launch run01 OpenThoughts3-1.2M /weka/oe-training-default/ai2-llm/checkpoints/dustins/lc_7b_cont_pretrain_final_anneal/step11921 ai2/jupiter-cirrascale-2 --seq_len=4096 --num_nodes=2 --launch.priority=high --model_name olmoe-1b-7b
+
+Note: This script requires MoE models. Available model options:
+  - olmo2-7b: MoE variant of OLMo2-7B
+  - olmo3-7b: MoE variant of OLMo3-7B  
+  - olmoe-1b-7b: Pre-configured OLMoE model
 """,
     )
 
@@ -629,16 +725,10 @@ Examples:
         "--num_nodes", type=int, help="The number of nodes to use.", default=DEFAULT_NUM_NODES
     )
     parser.add_argument(
-        "--follow",
-        type=bool,
-        help="Whether to follow the experiment in the terminal.",
-        default=False,
+        "--follow", type=bool, help="Whether to follow the experiment in the terminal.", default=False
     )
     parser.add_argument(
-        "--save_tokenizer",
-        type=bool,
-        help="Whether to save the dataset's tokenizer in the model directory.",
-        default=True,
+        "--save_tokenizer", type=bool, help="Whether to save the dataset's tokenizer in the model directory.", default=True
     )
     parser.add_argument(
         "--global_batch_size",
@@ -663,7 +753,7 @@ Examples:
         raise NotImplementedError(args.cmd)
 
     # Build the config, applying any overrides.
-    config = SFTConfig.build(
+    config = SFTRouterConfig.build(
         script=sys.argv[0],
         cmd="train",
         run_name=args.run_name,

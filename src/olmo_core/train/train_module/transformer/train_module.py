@@ -16,6 +16,8 @@ from torch.distributed.tensor import DTensor
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import Optimizer
 
+from torch.distributed.tensor import DTensor, distribute_tensor
+
 from olmo_core.data.utils import get_labels, split_batch
 from olmo_core.distributed.checkpoint import (
     merge_state_dicts,
@@ -29,6 +31,7 @@ from olmo_core.distributed.parallel import (
 )
 from olmo_core.distributed.utils import (
     get_local_tensor,
+    get_full_tensor,
     get_reduce_divide_factor,
     get_world_size,
     is_distributed,
@@ -419,6 +422,49 @@ class TransformerTrainModule(TrainModule):
 
         self.model.post_batch(dry_run=dry_run)
 
+        for name, param in self.model.named_parameters():
+            if "experts" in name or "router" in name:
+                # bp()
+                # print("name: ", name, "shape: ", param.shape)
+                full_grad = get_full_tensor(param.grad)
+                # check whether the param is frozen
+                # print("param.grad: ", param.grad)
+                if param.grad is None:
+                    # print(f"{name} grad is None")
+                    continue
+                if "experts" in name:
+                    # get_full_tensor(param.grad)[
+                    #     : get_full_tensor(param.grad).shape[0] // 2, :
+                    # ] = 0
+                    mask = torch.zeros_like(full_grad, dtype=torch.bool)
+                    mask[: full_grad.shape[0] // 2, :] = True
+                    local_mask = get_local_tensor(distribute_like(param, mask))
+                    # print("target.device_mesh: ", param.device_mesh)
+                    get_local_tensor(param.grad).masked_fill_(local_mask, 0.0)
+                    # print("mask: ", mask)
+                elif "router" in name:
+                    # get_full_tensor(param.grad)[
+                    #     : get_full_tensor(param.grad).shape[0] // 2
+                    # ] = 0
+                    mask = torch.zeros_like(full_grad, dtype=torch.bool)
+                    # swj change, free the entire router
+                    mask[: full_grad.shape[0] // 2] = 1
+                    # mask = torch.ones_like(full_grad, dtype=torch.bool)
+                    local_mask = get_local_tensor(distribute_like(param, mask))
+                    get_local_tensor(param.grad).masked_fill_(local_mask, 0.0)
+                    # print("mask: ", mask)
+                    # get_local_tensor(param.grad) = get_local_tensor(param.grad).mul(local_mask)
+            # elif self.freeze_experts == "last_half":
+            #     if "experts" in name:
+            #         get_full_tensor(param.grad)[
+            #             get_full_tensor(param.grad).shape[0] // 2 :, :
+            #         ] = 0
+            #     elif "router" in name:
+            #         get_full_tensor(param.grad)[
+            #             get_full_tensor(param.grad).shape[0] // 2 :
+            #         ] = 0
+
+
         if dry_run:
             self.model.reset_auxiliary_metrics()
             return
@@ -624,3 +670,191 @@ class TransformerTrainModule(TrainModule):
             else:
                 raise ValueError(f"Invalid model mode: {mode}")
             self._model_mode = mode
+
+def distribute_like(source: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    if not isinstance(source, DTensor):
+        return get_full_tensor(target)
+    if isinstance(target, DTensor):
+        if target.device_mesh == source.device_mesh and target.placements == source.placements:
+            return target
+        else:
+            return target.redistribute(device_mesh=source.device_mesh, placements=source.placements)
+    return distribute_tensor(target, device_mesh=source.device_mesh, placements=source.placements)
+
+
+# Copied from FlexOlmo for SFT (testing as of 11/15)
+class FreezeTransformerTrainModule(TransformerTrainModule):
+    """
+    Custom transformer train module that zeros out gradients for the first half of expert parameters.
+    Inherits from the original TransformerTrainModule.
+    """
+
+    def __init__(self, *args, **kwargs):
+        """
+        Initialize the CustomTransformerTrainModule by calling the parent class's __init__ method.
+        #"""
+        # swj change
+        # extract freeze_experts from kwargs
+        self.freeze_experts = kwargs.pop("freeze_experts", "first_half")
+        super().__init__(*args, **kwargs)
+
+def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
+        # Set model to train mode if it isn't already.
+        self.model.train()
+
+        # Generate labels.
+        if "labels" not in batch:
+            batch["labels"] = get_labels(batch, label_ignore_index=self.label_ignore_index)
+
+        # Record how many instances are going to be skipped (masked out).
+        if (instance_mask := batch.get("instance_mask")) is not None and not dry_run:
+            self.record_metric(
+                "train/masked instances (%)", (~instance_mask).float().mean(), ReduceType.mean
+            )
+
+        # Calculate how many tokens are going to be used in the loss.
+        batch_num_tokens_for_loss = move_to_device(
+            (batch["labels"] != self.label_ignore_index).sum(), self.device
+        )
+        if self.cp_enabled:
+            assert self._cp_config is not None
+            batch_num_tokens_for_loss = batch_num_tokens_for_loss / self._cp_config.degree
+
+        # Batch losses to record.
+        ce_batch_loss = move_to_device(torch.tensor(0.0), self.device)
+        z_batch_loss: Optional[torch.Tensor] = None
+        if self.z_loss_multiplier is not None:
+            z_batch_loss = move_to_device(torch.tensor(0.0), self.device)
+        auxiliary_batch_losses: Dict[str, torch.Tensor] = {}
+
+        # Split into micro-batches.
+        if self.rank_microbatch_size < (seq_len := batch["input_ids"].shape[1]):
+            raise RuntimeError(
+                f"Microbatch size ({self.rank_microbatch_size}) is too small relative to sequence length ({seq_len})"
+            )
+        micro_batches = split_batch(batch, self.rank_microbatch_size // seq_len)
+        num_micro_batches = len(micro_batches)
+
+        # Train one micro-batch at a time.
+        for micro_batch_idx, micro_batch in enumerate(micro_batches):
+            with self._train_microbatch_context(micro_batch_idx, num_micro_batches):
+                input_ids, labels, model_kwargs = self._prepare_batch(micro_batch)
+
+                # --- FIX 1: Correct Tuple Unpacking ---
+                # Your old code: _, ce_loss, z_loss = self.model_forward(...)
+                # The Transformer returns 4 items: (logits, total_loss, ce_loss, z_loss)
+                # If you don't fix this, you will get a "too many values to unpack" error next.
+                _, loss, ce_loss, z_loss = self.model_forward(
+                    input_ids,
+                    labels=labels,
+                    ignore_index=self.label_ignore_index,
+                    loss_reduction="sum",
+                    z_loss_multiplier=self.z_loss_multiplier,
+                    loss_div_factor=batch_num_tokens_for_loss,
+                    return_logits=False,
+                    **model_kwargs,
+                )
+
+                # Update total batch CE and Z loss.
+                ce_batch_loss += get_local_tensor(ce_loss.detach())
+                del ce_loss
+                if z_batch_loss is not None:
+                    assert z_loss is not None
+                    z_batch_loss += get_local_tensor(z_loss.detach())
+                    del z_loss
+
+                # --- FIX 2: Handle FSDP Wrapping for Attribute Access ---
+                # FSDPMoETransformer isn't forwarding 'compute_auxiliary_losses', 
+                # so we access the inner module explicitly.
+                if hasattr(self.model, "compute_auxiliary_losses"):
+                    auxiliary_losses = self.model.compute_auxiliary_losses(
+                        batch_num_tokens_for_loss, reset=True
+                    )
+                else:
+                    # Fallback for FSDP/DDP wrapping
+                    auxiliary_losses = self.model.module.compute_auxiliary_losses(
+                        batch_num_tokens_for_loss, reset=True
+                    )
+
+                for loss_name, loss_val in auxiliary_losses.items():
+                    loss += loss_val
+                    loss_val = get_local_tensor(loss_val.detach())
+                    if loss_name in auxiliary_batch_losses:
+                        auxiliary_batch_losses[loss_name] += loss_val
+                    else:
+                        auxiliary_batch_losses[loss_name] = loss_val
+                del auxiliary_losses
+
+                # Run backward pass.
+                loss.backward()
+
+        # ... (Rest of your zero-grad logic for experts remains the same) ... 
+        # Manual Zero-Grad Logic for Router/Experts
+        for name, param in self.model.named_parameters():
+            if "experts" in name or "router" in name:
+                if self.freeze_experts == "first_half":
+                    if param.grad is None:
+                        continue
+                    
+                    full_grad = get_full_tensor(param.grad)
+                    
+                    if "experts" in name:
+                        mask = torch.zeros_like(full_grad, dtype=torch.bool)
+                        mask[: full_grad.shape[0] // 2, :] = True
+                        local_mask = get_local_tensor(distribute_like(param, mask))
+                        get_local_tensor(param.grad).masked_fill_(local_mask, 0.0)
+                    elif "router" in name:
+                         # Keep your swj change (freeze entire router logic) if that's what you intended
+                        mask = torch.zeros_like(full_grad, dtype=torch.bool)
+                        mask[: full_grad.shape[0] // 2] = 1
+                        local_mask = get_local_tensor(distribute_like(param, mask))
+                        get_local_tensor(param.grad).masked_fill_(local_mask, 0.0)
+
+        del batch 
+
+        if dry_run:
+            # FIX 3: Same attribute access fix for reset
+            if hasattr(self.model, "reset_auxiliary_losses"):
+                self.model.reset_auxiliary_losses()
+            else:
+                 self.model.module.reset_auxiliary_losses()
+                 
+            if hasattr(self.model, "reset_auxiliary_metrics"):
+                self.model.reset_auxiliary_metrics()
+            else:
+                 self.model.module.reset_auxiliary_metrics()
+            return
+
+        # Record loss metrics.
+        self.record_ce_loss(ce_batch_loss, ReduceType.mean)
+        if z_batch_loss is not None:
+            self.record_metric(
+                "Z loss",
+                z_batch_loss,
+                ReduceType.mean,
+                namespace="train",
+            )
+        for loss_name, loss_val in auxiliary_batch_losses.items():
+            self.record_metric(
+                loss_name,
+                loss_val,
+                ReduceType.mean,
+                namespace="train",
+            )
+
+        # And additional metrics.
+        # FIX 4: Same attribute access fix for metrics
+        if hasattr(self.model, "compute_auxiliary_metrics"):
+             metrics = self.model.compute_auxiliary_metrics(batch_num_tokens_for_loss, reset=True)
+        else:
+             metrics = self.model.module.compute_auxiliary_metrics(batch_num_tokens_for_loss, reset=True)
+             
+        for metric_name, (metric_val, reduction) in metrics.items():
+            self.record_metric(
+                metric_name,
+                metric_val,
+                reduction,
+                namespace="train",
+            )
+        if isinstance(self.optim, SkipStepOptimizer):
+            self.optim.latest_loss = ce_batch_loss

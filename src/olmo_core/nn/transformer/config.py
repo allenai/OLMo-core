@@ -2,7 +2,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from fnmatch import fnmatch
-from typing import TYPE_CHECKING, Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional, Type
 
 from olmo_core.config import DType, StrEnum
 from olmo_core.doc_utils import beta_feature
@@ -24,11 +24,115 @@ from ..moe import MoEConfig, MoERouterConfig, MoEType
 from ..rope import RoPEConfig, RoPEScalingConfig, RoPEType
 from .init import InitMethod
 
+from olmo_core.nn.moe.router import MoERouter
+from olmo_core.nn.moe.router import MoERouter as MoERouterBase
+from olmo_core.nn.moe.router import (
+    MoERouterConfig,
+    MoERouterType,
+    _uniform_expert_assignment,
+)
+
+from olmo_core.nn.moe.router import (
+    MoELinearRouter,
+)
+
 if TYPE_CHECKING:
     from .block import TransformerBlockBase
     from .model import Transformer
 
 log = logging.getLogger(__name__)
+
+class ExtendedMoERouterType(StrEnum):
+    """
+    An enumeration of the different MoE router implementations.
+    """
+
+    default = "default"
+    """
+    ➡️ :class:`MoELinearRouter`
+    """
+
+    with_expert_bias = "with_expert_bias"
+    """
+    ➡️ :class:`MoELinearRouterWithExpertBias`
+    """
+
+    @classmethod
+    def from_original(cls, router_type: MoERouterType) -> "ExtendedMoERouterType":
+        return cls(router_type)
+
+
+class RouterRegistry:
+    _registry: Dict[ExtendedMoERouterType, Type[MoERouterBase]] = {
+        ExtendedMoERouterType.default: MoELinearRouter  # type: ignore
+    }
+
+    @classmethod
+    def register(cls, name: ExtendedMoERouterType, router_cls: Type[MoERouterBase]):
+        cls._registry[name] = router_cls
+
+    @classmethod
+    def get(cls, name: ExtendedMoERouterType) -> Type[MoERouterBase]:
+        if name not in cls._registry:
+            raise ValueError(f"Unknown router type: {name}")
+        return cls._registry[name]
+
+class ExtendedMoERouterType(StrEnum):
+    """
+    An enumeration of the different MoE router implementations.
+    """
+
+    default = "default"
+    """
+    ➡️ :class:`MoELinearRouter`
+    """
+
+    with_expert_bias = "with_expert_bias"
+    """
+    ➡️ :class:`MoELinearRouterWithExpertBias`
+    """
+
+    @classmethod
+    def from_original(cls, router_type: MoERouterType) -> "ExtendedMoERouterType":
+        return cls(router_type)
+    
+@dataclass
+class ExtendedMoERouterConfig(MoERouterConfig):
+    name: ExtendedMoERouterType = ExtendedMoERouterType.default  # type: ignore
+
+    def num_params(self, d_model: int, num_experts: int) -> int:
+        """
+        The number of params that the module will have once built.
+
+        :param d_model: The model dimensionality.
+        """
+        num_params = 0
+        if (
+            self.name == MoERouterType.default
+            or self.name == ExtendedMoERouterType.with_expert_bias
+        ):
+            num_params += d_model * num_experts
+        else:
+            raise NotImplementedError
+
+        return num_params
+
+    # def build(self, *args, **kwargs):
+    def build(
+        self,
+        d_model: int,
+        num_experts,
+        **kwargs,
+    ):
+        if self.dtype is not None:
+            kwargs["dtype"] = self.dtype.as_pt()
+        try:
+            router_cls = RouterRegistry.get(self.name)
+            return router_cls(d_model=d_model, num_experts=num_experts, **kwargs)
+        except TypeError as e:
+            raise OLMoConfigurationError(
+                f"invalid options for '{self.name}' {self.__class__.__name__}, {e}"
+            ) from e
 
 
 class TransformerDataParallelWrappingStrategy(StrEnum):
@@ -786,6 +890,39 @@ class TransformerConfig(ModelConfig):
             **kwargs,
         )
         return config
+
+
+    @classmethod
+    def olmoe_nx7b(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        # Possibly more OOM due to imbalance with dropless=True
+        dropless = kwargs.pop("dropless", False)
+        return cls.llama_like_moe(
+            d_model=kwargs.pop("d_model", 4096),
+            n_layers=kwargs.pop("n_layers", 32),
+            n_heads=kwargs.pop("n_heads", 32),
+            num_experts=kwargs.pop("num_experts", 2),
+            top_k=kwargs.pop("top_k", 1),
+            expert_hidden_size=kwargs.pop("expert_hidden_size", 11008),
+            vocab_size=vocab_size,
+            dropless=dropless,
+            capacity_factor=None if dropless else 1.2,  # adjust as needed
+            lb_loss_weight=kwargs.pop("lb_loss_weight", 0.01),
+            z_loss_weight=kwargs.pop("z_loss_weight", 0.001),
+            reordered_norm=kwargs.pop("reordered_norm", True),
+            qk_norm=kwargs.pop("qk_norm", True),
+            rope_theta=kwargs.pop("rope_theta", 500_000),
+            layer_norm_eps=kwargs.pop("layer_norm_eps", 1e-6),
+            **kwargs,
+        )
+
+    @classmethod
+    def olmoe_nx7b_with_expert_bias(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        model_config = cls.olmoe_nx7b(vocab_size=vocab_size, **kwargs)
+        # Overwrite the feed_forward_moe config to use expert bias
+        model_config.block.feed_forward_moe.router = ExtendedMoERouterConfig(
+            name=ExtendedMoERouterType.with_expert_bias, top_k=1  # type: ignore
+        )
+        return model_config
 
     @classmethod
     def olmo3_13B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
