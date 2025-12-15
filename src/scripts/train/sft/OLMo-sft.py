@@ -85,7 +85,7 @@ class BatchSizeConfig:
     grad_accum_steps: int = field(init=False)
     cp_degree: Optional[int] = None
 
-    def __post_init__(self):
+    def __post_init__(self): 
         assert self.global_batch_size_tokens > 0, "global_batch_size_tokens must be positive"
         assert self.sequence_length > 0, "sequence_length must be positive"
         assert (
