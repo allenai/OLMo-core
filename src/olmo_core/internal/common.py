@@ -1,6 +1,7 @@
 import logging
 from functools import lru_cache
-from typing import List, Optional
+from pathlib import Path
+from typing import List, Optional, Union
 
 import torch
 from beaker import Beaker, BeakerError, SecretNotFound
@@ -12,8 +13,10 @@ from olmo_core.launch.beaker import (
     BeakerEnvVar,
     BeakerLaunchConfig,
     BeakerWekaBucket,
+    OLMoCoreBeakerImage,
     is_running_in_beaker_batch_job,
 )
+from olmo_core.train.callbacks.beaker import BEAKER_RESULT_DIR
 from olmo_core.utils import generate_uuid
 
 log = logging.getLogger(__name__)
@@ -107,9 +110,9 @@ def build_launch_config(
     task_name: str = "train",
     workspace: str = "ai2/OLMo-core",
     budget: str = "ai2/oe-base",
-    nccl_debug: bool = False,
-    cuda_launch_blocking: bool = False,
-    beaker_image: str = "olmo-core-tch280cu128-2025-09-24",
+    nccl_debug: Union[bool, str] = False,
+    flight_recorder: bool = False,
+    beaker_image: str = OLMoCoreBeakerImage.stable,
     num_nodes: int = 1,
     use_hostname_constraints: bool = False,
     num_execution_units: Optional[int] = None,
@@ -183,6 +186,20 @@ def build_launch_config(
         google_creds,
     ]
 
+    env_vars: List[BeakerEnvVar] = []
+    if isinstance(nccl_debug, str):
+        env_vars.append(BeakerEnvVar(name="NCCL_DEBUG", value=nccl_debug))
+    else:
+        env_vars.append(BeakerEnvVar(name="NCCL_DEBUG", value="INFO" if nccl_debug else "WARN"))
+    if flight_recorder:
+        # https://github.com/pytorch/tutorials/blob/main/unstable_source/flight_recorder_tutorial.rst
+        fr_dump_location = Path(BEAKER_RESULT_DIR) / "flightrecorder" / "nccl_trace_rank_"
+        env_vars += [
+            BeakerEnvVar(name="TORCH_NCCL_TRACE_BUFFER_SIZE", value="2000"),
+            BeakerEnvVar(name="TORCH_NCCL_DUMP_ON_TIMEOUT", value="1"),
+            BeakerEnvVar(name="TORCH_FR_DUMP_TEMP_FILE", value=str(fr_dump_location)),
+        ]
+
     launch_config = BeakerLaunchConfig(
         name=f"{name}-{generate_uuid()[:8]}",
         budget=budget,
@@ -198,10 +215,7 @@ def build_launch_config(
         num_execution_units=num_execution_units,
         shared_filesystem=not is_url(root_dir),
         allow_dirty=False,
-        env_vars=[
-            BeakerEnvVar(name="NCCL_DEBUG", value="INFO" if nccl_debug else "WARN"),
-            BeakerEnvVar(name="CUDA_LAUNCH_BLOCKING", value="1" if cuda_launch_blocking else "0"),
-        ],
+        env_vars=env_vars,
         env_secrets=[env_secret for env_secret in env_secrets if env_secret is not None],
         setup_steps=[
             # Clone repo.
@@ -222,6 +236,15 @@ def build_launch_config(
             "printenv AWS_CREDENTIALS > ~/.aws/credentials",
         ],
     )
+
+    if cluster == "ai2/augusta":
+        # Print out host metadata for easy debugging.
+        launch_config.setup_steps.insert(
+            0,
+            """ID=$(curl -s -H Metadata-Flavor:Google http://metadata.google.internal/computeMetadata/v1/instance/id); """
+            """TOPOLOGY=$(curl -s -H Metadata-Flavor:Google http://metadata.google.internal/computeMetadata/v1/instance/attributes/physical_host_topology); """
+            """printf 'Google Instance Metadata: {"id":"%s","physical_host_topology":%s}' "$ID" "$TOPOLOGY" | tr -d '[:space:]'; echo""",
+        )
 
     if google_creds:
         launch_config.setup_steps += [

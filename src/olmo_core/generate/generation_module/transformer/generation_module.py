@@ -20,11 +20,11 @@ from olmo_core.data.utils import attention_mask_to_cache_leftpad
 from olmo_core.distributed.checkpoint import get_checkpoint_metadata, load_state_dict
 from olmo_core.distributed.parallel import build_world_mesh, get_dp_process_group
 from olmo_core.distributed.utils import (
+    broadcast_object,
     get_fs_local_rank,
     get_rank,
     get_world_size,
     is_distributed,
-    scatter_object,
 )
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
@@ -38,7 +38,7 @@ from olmo_core.train.train_module.transformer.common import parallelize_model
 from olmo_core.train.train_module.transformer.config import (
     TransformerDataParallelConfig,
 )
-from olmo_core.utils import get_default_device, log_or_print, move_to_device
+from olmo_core.utils import gc_cuda, get_default_device, log_or_print, move_to_device
 
 log = logging.getLogger(__name__)
 
@@ -371,7 +371,7 @@ class TransformerGenerationModule(GenerationModule):
                 metadata = get_checkpoint_metadata(checkpoint_dir)
                 train_module_dir = checkpoint_dir
 
-        train_module_dir = scatter_object(train_module_dir)
+        train_module_dir = broadcast_object(train_module_dir)
         if metadata is None:
             metadata = get_checkpoint_metadata(train_module_dir)
 
@@ -452,7 +452,7 @@ class TransformerGenerationModule(GenerationModule):
         )
 
         # Broadcast config and work_dir to all ranks
-        transformer_config, work_dir, tokenizer_config = scatter_object(
+        transformer_config, work_dir, tokenizer_config = broadcast_object(
             (transformer_config, work_dir, tokenizer_config)
         )
 
@@ -511,3 +511,94 @@ class TransformerGenerationModule(GenerationModule):
         )
 
         return generation_module
+
+    @classmethod
+    @torch.no_grad()
+    def from_checkpoints(
+        cls,
+        checkpoint_dirs: List[PathOrStr],
+        dtype: Optional[DType] = None,
+        **kwargs,
+    ) -> "TransformerGenerationModule":
+        if len(checkpoint_dirs) == 1:
+            return cls.from_checkpoint(checkpoint_dirs[0], dtype=dtype, **kwargs)
+
+        log.info(f"Merging {len(checkpoint_dirs)} checkpoints")
+
+        # Override device to CPU for intermediate checkpoint loading to save GPU memory
+        cpu_kwargs = kwargs.copy()
+        cpu_kwargs["device"] = torch.device("cpu")
+
+        log.info(
+            "Loading checkpoints on CPU for merging, will transfer to target device at the end"
+        )
+        log.info(f"Merging {checkpoint_dirs[0]}")
+        first_generation_module = cls.from_checkpoint(
+            checkpoint_dirs[0], dtype=DType.float32, **cpu_kwargs
+        )
+
+        # Get the state dict from the first module to use as accumulator
+        merged_state_dict = first_generation_module.state_dict()
+
+        # Free the first module since we have its state dict
+        del first_generation_module
+        gc_cuda()
+
+        # Average weights from all checkpoints
+        for i, checkpoint_dir in enumerate(checkpoint_dirs[1:], start=2):
+            log.info(f"Merging {checkpoint_dir}")
+            next_generation_module = cls.from_checkpoint(
+                checkpoint_dir, dtype=DType.float32, **cpu_kwargs
+            )
+            next_state_dict = next_generation_module.state_dict()
+            del next_generation_module
+
+            # Average the weights
+            for key in merged_state_dict["model"].keys():
+                target_tensor = merged_state_dict["model"][key]
+                if torch.is_tensor(target_tensor) and torch.is_floating_point(target_tensor):
+                    source_tensor = next_state_dict["model"].pop(key)
+                    assert target_tensor.shape == source_tensor.shape
+                    # in-place operations for better memory consumption
+                    target_tensor.mul_((i - 1) / i).add_(source_tensor, alpha=1.0 / i)
+                    del target_tensor
+                    del source_tensor
+
+            # Free memory from the temporary module and run garbage collection
+            del next_state_dict
+            gc_cuda()
+
+        # Now load the final model on the target device with the correct dtype
+        if dtype == DType.float32:
+            # If target dtype is float32, we can reuse the merged state dict
+            log.info("Loading merged checkpoint with dtype float32")
+            final_generation_module = cls.from_checkpoint(
+                checkpoint_dirs[0], dtype=DType.float32, **kwargs
+            )
+            final_generation_module.load_state_dict(merged_state_dict)
+            return final_generation_module
+
+        # Otherwise, load with the target dtype and convert the merged weights
+        log.info(f"Loading merged checkpoint with dtype {dtype}")
+        final_generation_module = cls.from_checkpoint(checkpoint_dirs[0], dtype=dtype, **kwargs)
+        final_state_dict = final_generation_module.state_dict()
+        assert merged_state_dict["model"].keys() == final_state_dict["model"].keys()
+
+        # Convert merged state dict to the target dtype
+        for key in merged_state_dict["model"].keys():
+            merged_state_dict_tensor = merged_state_dict["model"][key]
+            if not torch.is_tensor(merged_state_dict_tensor):
+                continue
+            final_state_dict_tensor = final_state_dict["model"][key]
+            if not torch.is_tensor(final_state_dict_tensor):
+                continue
+            if merged_state_dict_tensor.dtype != final_state_dict_tensor.dtype:
+                merged_state_dict["model"][key] = merged_state_dict_tensor.to(
+                    final_state_dict_tensor.dtype
+                )
+
+        final_generation_module.load_state_dict(merged_state_dict)
+
+        gc_cuda()
+
+        return final_generation_module

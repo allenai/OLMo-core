@@ -1,15 +1,17 @@
 import argparse
+import concurrent.futures
 import logging
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 import google.auth
-from beaker import Job, Priority
+from beaker import Beaker, Job, Node, Priority
 from google.cloud.compute_v1.services.instances.client import InstancesClient
 
 from olmo_core.exceptions import BeakerInsufficientResourcesError
+from olmo_core.utils import prepare_cli_environment
 
 log = logging.getLogger(__name__)
 
@@ -58,7 +60,23 @@ def get_hosts_metadata_from_gcp(
         )
         for page in instance_pages
         for instance in page.items
+        if instance.status == "RUNNING"
     }
+
+
+def node_is_occupied(beaker: Beaker, node: Node, beaker_priority: Priority) -> Tuple[Node, bool]:
+    jobs = beaker.job.list(node=node)
+    for job in jobs:
+        if (
+            job.is_running
+            and job.execution is not None
+            and (resources := job.execution.spec.resources) is not None
+            and resources.gpu_count is not None
+            and resources.gpu_count > 0
+            and not _is_job_preemptible(job, beaker_priority)
+        ):
+            return node, True
+    return node, False
 
 
 def get_occupied_beaker_hosts(
@@ -73,30 +91,35 @@ def get_occupied_beaker_hosts(
 
     cluster = beaker.cluster.get(beaker_cluster)
     nodes = beaker.cluster.nodes(cluster)
-    for node in sorted(nodes, key=lambda node: node.hostname):
-        host = node.hostname
-        assert host not in occupied_hosts, f"Host {host} is somehow already in occupied hosts"
-        if host not in hosts_metadata:
-            log.warning(f"No metadata found for beaker host {host}")
-            continue
+    missing_metadata_count = 0
 
-        if node.cordoned is not None:
-            # Treat cordoned node as occupied since it might be uncordoned later.
-            occupied_hosts.add(host)
-            continue
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        futures = []
+        for node in sorted(nodes, key=lambda node: node.hostname):
+            host = node.hostname
+            assert host not in occupied_hosts, f"Host {host} is somehow already in occupied hosts"
+            if host not in hosts_metadata:
+                log.warning(f"No metadata found for beaker host {host}")
+                missing_metadata_count += 1
+                continue
 
-        jobs = beaker.job.list(node=node)
-        for job in jobs:
-            if (
-                job.is_running
-                and job.execution is not None
-                and (resources := job.execution.spec.resources) is not None
-                and resources.gpu_count is not None
-                and resources.gpu_count > 0
-                and not _is_job_preemptible(job, beaker_priority)
-            ):
+            if node.cordoned is not None:
+                # Treat cordoned node as occupied since it might be uncordoned later.
                 occupied_hosts.add(host)
-                break
+                continue
+
+            futures.append(executor.submit(node_is_occupied, beaker, node, beaker_priority))
+
+        for future in concurrent.futures.as_completed(futures):
+            node, is_occupied = future.result()
+            if is_occupied:
+                occupied_hosts.add(node.hostname)
+
+    if missing_metadata_count > 1:
+        log.warning(
+            f"Could not find metadata for {missing_metadata_count} hosts; "
+            "these hosts will be ignored when selecting hosts."
+        )
 
     return occupied_hosts
 
@@ -183,7 +206,10 @@ def get_hostname_constraints(
         )
     if len(hosts_per_task[-1]) < num_hosts_per_task:
         raise BeakerInsufficientResourcesError(
-            f"Could not satisfy task number {len(hosts_per_task) - 1}, only got {len(hosts_per_task[-1])} hosts"
+            f"Could not satisfy task {len(hosts_per_task)} of {num_tasks}. "
+            f"Only found {len(hosts_per_task[-1])} elegible hosts with the constraint that "
+            f"all {num_hosts_per_exec_unit} hosts for an execution unit must be in the same block, "
+            f"but {num_hosts_per_task} are required."
         )
 
     return hosts_per_task
@@ -198,6 +224,7 @@ def get_beaker_hostname_constraints(
     beaker_cluster: str,
     beaker_priority: Priority,
     gcp_credentials_path: Optional[Path] = None,
+    hosts_metadata: Optional[dict[str, HostMetadata]] = None,
 ) -> list[list[str]]:
     if beaker_cluster != "ai2/augusta":
         raise ValueError(
@@ -215,7 +242,10 @@ def get_beaker_hostname_constraints(
     assert num_nodes % beaker_task_count == 0
     beaker_num_hosts_per_task = num_nodes // beaker_task_count
 
-    hosts_metadata = get_hosts_metadata_from_gcp(gcp_zone, credentials_path=gcp_credentials_path)
+    if hosts_metadata is None:
+        hosts_metadata = get_hosts_metadata_from_gcp(
+            gcp_zone, credentials_path=gcp_credentials_path
+        )
 
     occupied_hosts = get_occupied_beaker_hosts(hosts_metadata, beaker_cluster, beaker_priority)
 
@@ -271,8 +301,14 @@ def main():
         help="The path to GCP credetials.",
     )
     args = parser.parse_args()
+    prepare_cli_environment()
 
-    print(
+    hosts_metadata = get_hosts_metadata_from_gcp(
+        args.zone,
+        credentials_path=args.credentials_path,
+    )
+
+    for task, hosts in enumerate(
         get_beaker_hostname_constraints(
             args.num_nodes,
             args.num_execution_units,
@@ -280,8 +316,14 @@ def main():
             args.zone,
             beaker_cluster=args.cluster,
             beaker_priority=args.priority,
+            gcp_credentials_path=args.credentials_path,
+            hosts_metadata=hosts_metadata,
         )
-    )
+    ):
+        print(f"Task {task+1}/{args.task_count}, found {len(hosts)} elegible hosts:")
+        for host in hosts:
+            metadata = hosts_metadata[host]
+            print(f"  {host} - block: {metadata.block}, subblock: {metadata.subblock}")
 
 
 if __name__ == "__main__":

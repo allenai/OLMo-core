@@ -2,7 +2,7 @@ ARG UBUNTU_VERSION=22.04
 ARG TARGET_PLATFORM=x86_64
 ARG CUDA_VERSION=12.8.1
 ARG CUDA_VERSION_PATH=cu128
-ARG PYTHON_VERSION=3.11
+ARG PYTHON_VERSION=3.12
 ARG BASE_IMAGE=ubuntu:${UBUNTU_VERSION}
 ARG DEVEL_BASE_IMAGE=nvidia/cuda:${CUDA_VERSION}-cudnn-devel-ubuntu${UBUNTU_VERSION}
 
@@ -43,7 +43,7 @@ RUN chmod +x ~/miniconda.sh && \
 
 # Install PyTorch core ecosystem.
 ARG CUDA_VERSION_PATH
-ARG TORCH_VERSION=2.8.0
+ARG TORCH_VERSION=2.9.1
 ARG INSTALL_CHANNEL=whl
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/${INSTALL_CHANNEL}/${CUDA_VERSION_PATH}/ \
     torch==${TORCH_VERSION} torchao torchvision torchaudio
@@ -62,19 +62,20 @@ ARG FLASH_ATTN_VERSION=2.8.2
 RUN pip install --no-build-isolation --no-cache-dir flash-attn==${FLASH_ATTN_VERSION}
 
 # Install flash-attn 3
-ARG FLASH_ATTN_3_SHA="1ceaa984b2f348caea18b39a98458d33b4ea7a09"
+ARG FLASH_ATTN_3_SHA="92ca9da8d66f7b34ff50dc080ec0fef9661260d6"
+ARG FA3_MAX_JOBS=16
 RUN git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com/Dao-AILab/flash-attention.git && \
     cd flash-attention && \
     git fetch --depth 1 origin ${FLASH_ATTN_3_SHA} && \
     git checkout ${FLASH_ATTN_3_SHA} && \
     git submodule update --init --depth 1 && \
     cd hopper && \
-    FLASH_ATTENTION_DISABLE_FP16=TRUE python setup.py install && \
+    FLASH_ATTENTION_DISABLE_FP16=TRUE MAX_JOBS=${FA3_MAX_JOBS} python setup.py install && \
     cd /app/build && \
     rm -rf flash-attention
 
 # Install transformer-engine.
-ARG TE_VERSION=2.6.0.post1
+ARG TE_VERSION=2.9
 RUN pip install --no-build-isolation --no-cache-dir transformer-engine[pytorch]==${TE_VERSION}
 
 # Install ring-flash-attn.
@@ -82,7 +83,7 @@ ARG RING_FLASH_ATTN_VERSION=0.1.8
 RUN pip install --no-build-isolation --no-cache-dir ring-flash-attn==${RING_FLASH_ATTN_VERSION}
 
 # Install liger-kernel.
-ARG LIGER_KERNEL_VERSION=0.6.2
+ARG LIGER_KERNEL_VERSION=0.6.4
 RUN pip install --no-build-isolation --no-cache-dir liger-kernel==${LIGER_KERNEL_VERSION}
 
 # Install direct dependencies, but not source code.

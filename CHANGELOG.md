@@ -9,18 +9,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added `olmo_core.data.composable` module.
+- Added `PeriNormTransformerBlock`.
+- Added exponential learning rate scheduler to `olmo_core.optim.scheduler`.
+- Added internal Olmo3 32B midtraining and long context configs.
+- MoE: Added `TrainModuleConfig` ABC
+- Added a `MetricSaverCallback` which just saves metrics at specific intervals to JSON files in the `save_folder`.
+- Added `fixed_steps` option to `Checkpointer` and `Evaluator` callbacks for configuring checkpoints/evals at specific step numbers.
+
+### Fixed
+
+- Fixed `AttentionConfig.num_params()` overcounting QK norm parameters when using GQA/MQA with `use_head_qk_norm=False`.
+- Fixed the peak learning rate in `src/scripts/train/OLMo3/OLMo3-32B-midtraining.py` to the correct one.
+- Fixed type annotation issue in `NumpyInterleavedFSLDataset` where `_num_interleaving_exempt_instances` and `_num_interleavable_instances` were missing `Optional[int]` type hints, causing mypy type errors.
+- Fixed bug in GPUMonitorCallback where it was using a Wandb reserved keyword, causing data to be unable to be visualized in the Wandb dashboard.
+
+### Changed
+
+- Renamed `olmo_core.distributed.utils.scatter_object()` to `broadcast_object()` for correctness.
+- Updated stable torch version to 2.9.1, updated versions of underlying libraries in Beaker Images.
+- `olmo_core.io.join_path()` now accepts an arbitrary number of components to join.
+- All `olmo_core.nn` module configs now inherit from a common base class, `ModuleConfig`.
+
+## [v2.4.0](https://github.com/allenai/OLMo-core/releases/tag/v2.4.0) - 2025-11-20
+
+### Added
+
 - Added option to skip ranges of steps in the trainer.
 - Send a Slack notification when a Beaker job appears to be stuck.
 - Added `ignore_fingerprint_mismatch` parameter to `NumpyDataLoaderConfig` to allow resuming training from a checkpoint with a different dataset mix.
 - Added helpful error messages when OLMo-mix-0625 files are not found, directing users to use OLMo-mix-0925 and the fingerprint override flag.
 - Added `olmo_core.generate.chat` module to allow interacting with OlmoCore models without conversion to other formats.
-- Added official OLMo3-7B pretraining scripts and data mix.
+- Added `GAPMonitorCallback` for monitoring gradients, activations, and parameters (GAP).
+- Added official Olmo 3 7B and 32B pretraining scripts and data mix.
+- Added official Olmo 3 7B and 32B midtraining scripts and data mix.
+- Added official Olmo 3 7B and 32B long-context scripts and data mix.
 - Added a `NoOpOptimizer` that does nothing, uses no memory, and can be used for debugging.
+- Added official config for Olmo 3 32B.
+- Olmo 3 model card and checkpoint manifests.
 
 ### Fixed
 
 - Set missing `NCCL_NVLSTREE_MAX_CHUNKSIZE` env var that is now needed for running jobs on Augusta cluster.
+- Fixed bug with `RemoteFileSystemReader` that caused excess memory usage.
 - No longer overrides `random`'s RNG seed when building `SourceMixtureDatasetConfig`.
+- Fix handling URLs in `olmo_core.nn.hf.checkpoint.save_hf_model` and in `examples/huggingface`.
+- Fix potential NaN loss that can occur when using instance masking.
+- Stability improvements developed while training Olmo3 32B.
+
+### Changed
+
+- Removed unused field in `YaRNRoPEScalingConfig`.
 
 ### Fixed
 
@@ -89,6 +128,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `olmo3_7B` model config.
 - Added additional internal configuration tools.
 - Added a new named data mix that we used for the 32B run
+- Added the ability for `GenerationModule` to load multiple checkpoints at once and average them.
+- Added internal OLMo3 7B midtraining config.
 - Added internal OLMo3 7B midtraining and long-context configs.
 - Added ability to convert OLMo3 models to/from HF format with support for rope scaling configs.
 - Added the `WSDS` (Warmup-Stable-Decay-Simplified) learning rate scheduler.

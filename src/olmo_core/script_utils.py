@@ -56,9 +56,9 @@ def get_cli_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--data-root",
         type=str,
-        default="http://olmo-data.org",
+        default="https://olmo-data.org",
         help="""The root directory/URL of the data source files.
-        The default 'http://olmo-data.org' is public, but potentially very slow.
+        The default 'https://olmo-data.org' is public, but potentially very slow.
         Ai2 employees should prefer '/weka/oe-training-default/ai2-llm' when using a cluster with weka access,
         otherwise 'gs://ai2-llm' or 's3://ai2-llm'.""",
     )

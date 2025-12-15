@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from fnmatch import fnmatch
 from typing import TYPE_CHECKING, Dict, List, Optional
 
-from olmo_core.config import Config, DType, StrEnum
+from olmo_core.config import DType, StrEnum
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import ensure_multiple_of
@@ -16,6 +16,7 @@ from ..attention import (
     SlidingWindowAttentionConfig,
 )
 from ..buffer_cache import BufferCache
+from ..config import ModelConfig, ModuleConfig
 from ..feed_forward import FeedForwardConfig, FeedForwardType
 from ..layer_norm import LayerNormConfig, LayerNormType
 from ..lm_head import LMHeadConfig, LMHeadType
@@ -100,9 +101,19 @@ class TransformerBlockType(StrEnum):
     ➡️ :class:`TransformerBlock`
     """
 
+    default_scaled = "default_scaled"
+    """
+    ➡️ :class:`LayerNormScaledTransformerBlock` (applies LayerNorm Scaling)
+    """
+
     reordered_norm = "reordered_norm"
     """
     ➡️ :class:`ReorderedNormTransformerBlock`
+    """
+
+    peri_norm = "peri_norm"
+    """
+    ➡️ :class:`PeriNormTransformerBlock`
     """
 
     normalized = "normalized"
@@ -130,14 +141,9 @@ class TransformerBlockType(StrEnum):
     ➡️ :class:`MoEHybridReorderedNormTransformerBlock`
     """
 
-    default_scaled = "default_scaled"
-    """
-    ➡️ :class:`LayerNormScaledTransformerBlock` (applies LayerNorm Scaling)
-    """
-
 
 @dataclass
-class TransformerBlockConfig(Config):
+class TransformerBlockConfig(ModuleConfig):
     """
     A configuration class for easily building transformer blocks.
     """
@@ -166,6 +172,14 @@ class TransformerBlockConfig(Config):
     """
     Dropout probability.
     """
+    attention_residual_alpha: Optional[float] = None
+    """
+    A scaling factor applied to the attention output before adding it to the residual stream.
+    """
+    feed_forward_residual_alpha: Optional[float] = None
+    """
+    A scaling factor applied to the feed-forward (MLP) output before adding it to the residual stream.
+    """
 
     def build(
         self,
@@ -183,6 +197,7 @@ class TransformerBlockConfig(Config):
             MoEReorderedNormTransformerBlock,
             MoETransformerBlock,
             NormalizedTransformerBlock,
+            PeriNormTransformerBlock,
             ReorderedNormTransformerBlock,
             TransformerBlock,
         )
@@ -204,6 +219,8 @@ class TransformerBlockConfig(Config):
                 return LayerNormScaledTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.reordered_norm:
                 return ReorderedNormTransformerBlock(**kwargs)
+            elif self.name == TransformerBlockType.peri_norm:
+                return PeriNormTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.normalized:
                 return NormalizedTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.moe:
@@ -243,6 +260,11 @@ class TransformerBlockConfig(Config):
             if self.layer_norm is not None:
                 block_params += self.layer_norm.num_params(d_model)
 
+        # Two extra norms for Peri-LN block type.
+        if self.name == TransformerBlockType.peri_norm:
+            assert self.layer_norm is not None
+            block_params += 2 * self.layer_norm.num_params(d_model)
+
         return block_params
 
     def num_active_params(self, d_model: int) -> int:
@@ -257,7 +279,7 @@ class TransformerBlockConfig(Config):
 
 
 @dataclass
-class TransformerConfig(Config):
+class TransformerConfig(ModelConfig):
     """
     A config for easily building transformer models.
 
@@ -495,7 +517,7 @@ class TransformerConfig(Config):
     @classmethod
     def olmo2_600M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         return cls.llama_like(
-            d_model=1344,
+            d_model=kwargs.pop("d_model", 1344),
             hidden_size_multiplier=1.5,
             n_layers=kwargs.pop("n_layers", 16),
             n_heads=kwargs.pop("n_heads", 16),
@@ -645,11 +667,152 @@ class TransformerConfig(Config):
         return config
 
     @classmethod
+    def olmo3_370M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 370M OLMo3 model config.
+        """
+        config = cls.olmo2_370M(
+            vocab_size=vocab_size,
+            sliding_window=kwargs.pop(
+                "sliding_window",
+                SlidingWindowAttentionConfig(
+                    force_full_attention_on_first_layer=False,
+                    force_full_attention_on_last_layer=True,
+                    pattern=[4096, 4096, 4096, -1],
+                ),
+            ),
+            attn_backend=kwargs.pop("attn_backend", AttentionBackendName.flash_2),
+            **kwargs,
+        )
+        return config
+
+    @classmethod
+    def olmo3_600M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 600M OLMo3 model config.
+        """
+        config = cls.olmo2_600M(
+            vocab_size=vocab_size,
+            d_model=kwargs.pop("d_model", 1280),
+            sliding_window=kwargs.pop(
+                "sliding_window",
+                SlidingWindowAttentionConfig(
+                    force_full_attention_on_first_layer=False,
+                    force_full_attention_on_last_layer=True,
+                    pattern=[4096, 4096, 4096, -1],
+                ),
+            ),
+            attn_backend=kwargs.pop("attn_backend", AttentionBackendName.flash_2),
+            **kwargs,
+        )
+        return config
+
+    @classmethod
+    def olmo3_760M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 760M OLMo3 model config.
+        """
+        config = cls.olmo2_760M(
+            vocab_size=vocab_size,
+            sliding_window=kwargs.pop(
+                "sliding_window",
+                SlidingWindowAttentionConfig(
+                    force_full_attention_on_first_layer=False,
+                    force_full_attention_on_last_layer=True,
+                    pattern=[4096, 4096, 4096, -1],
+                ),
+            ),
+            attn_backend=kwargs.pop("attn_backend", AttentionBackendName.flash_2),
+            **kwargs,
+        )
+        return config
+
+    @classmethod
+    def olmo3_1B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 1B OLMo3 model config.
+        """
+        config = cls.olmo2_1B_v2(
+            vocab_size=vocab_size,
+            sliding_window=kwargs.pop(
+                "sliding_window",
+                SlidingWindowAttentionConfig(
+                    force_full_attention_on_first_layer=False,
+                    force_full_attention_on_last_layer=True,
+                    pattern=[4096, 4096, 4096, -1],
+                ),
+            ),
+            attn_backend=kwargs.pop("attn_backend", AttentionBackendName.flash_2),
+            **kwargs,
+        )
+        return config
+
+    @classmethod
+    def olmo3_3B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 3B OLMo3 model config.
+        """
+        config = cls.olmo2_3B(
+            vocab_size=vocab_size,
+            sliding_window=kwargs.pop(
+                "sliding_window",
+                SlidingWindowAttentionConfig(
+                    force_full_attention_on_first_layer=False,
+                    force_full_attention_on_last_layer=True,
+                    pattern=[4096, 4096, 4096, -1],
+                ),
+            ),
+            attn_backend=kwargs.pop("attn_backend", AttentionBackendName.flash_2),
+            **kwargs,
+        )
+        return config
+
+    @classmethod
     def olmo3_7B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
         A 7B OLMo3 model config.
         """
         config = cls.olmo2_7B(
+            vocab_size=vocab_size,
+            sliding_window=kwargs.pop(
+                "sliding_window",
+                SlidingWindowAttentionConfig(
+                    force_full_attention_on_first_layer=False,
+                    force_full_attention_on_last_layer=True,
+                    pattern=[4096, 4096, 4096, -1],
+                ),
+            ),
+            attn_backend=kwargs.pop("attn_backend", AttentionBackendName.flash_2),
+            **kwargs,
+        )
+        return config
+
+    @classmethod
+    def olmo3_13B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 13B OLMo3 model config.
+        """
+        config = cls.olmo2_13B(
+            vocab_size=vocab_size,
+            sliding_window=kwargs.pop(
+                "sliding_window",
+                SlidingWindowAttentionConfig(
+                    force_full_attention_on_first_layer=False,
+                    force_full_attention_on_last_layer=True,
+                    pattern=[4096, 4096, 4096, -1],
+                ),
+            ),
+            attn_backend=kwargs.pop("attn_backend", AttentionBackendName.flash_2),
+            **kwargs,
+        )
+        return config
+
+    @classmethod
+    def olmo3_32B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 32B OLMo3 model config.
+        """
+        config = cls.olmo2_32B(
             vocab_size=vocab_size,
             sliding_window=kwargs.pop(
                 "sliding_window",

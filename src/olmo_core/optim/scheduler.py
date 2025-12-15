@@ -66,12 +66,20 @@ class Scheduler(Config, metaclass=ABCMeta):
 
         # Set new LR.
         if self.units == SchedulerUnits.steps:
+            if trainer.max_steps is None:
+                raise OLMoConfigurationError(
+                    "'max_steps' must be known in the trainer for step-based scheduling."
+                )
             new_lr = self.get_lr(
                 group[self.initial_lr_field],
                 trainer.global_step,
                 trainer.max_steps,
             )
         elif self.units == SchedulerUnits.tokens:
+            if trainer.max_tokens is None:
+                raise OLMoConfigurationError(
+                    "'max_tokens' must be known in the trainer for token-based scheduling."
+                )
             new_lr = self.get_lr(
                 group[self.initial_lr_field],
                 trainer.global_train_tokens_seen,
@@ -639,6 +647,7 @@ class WSDS(Scheduler):
     def get_lr(
         self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
     ) -> Union[float, torch.Tensor]:
+        del t_max
         if current < self._warmup_steps:
             return _linear_warmup(initial_lr, current, self._warmup_steps, self.warmup_min_lr)
 
@@ -661,3 +670,36 @@ class WSDS(Scheduler):
         else:
             t = pos - S
             return _linear_decay(initial_lr, D - t, D, self.decay_min_lr)
+
+
+@dataclass
+class ExponentialScheduler(Scheduler):
+    """
+    Exponential learning rate schedule that increases from a minimum LR to a maximum LR. Thus:
+        - lr(0) = lr_min
+        - lr(t_max) = initial_lr
+    """
+
+    lr_min: float = 1e-9
+
+    def __post_init__(self):
+        if self.lr_min <= 0:
+            raise OLMoConfigurationError("'lr_min' must be positive.")
+
+    def get_lr(
+        self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
+    ) -> Union[float, torch.Tensor]:
+        if current >= t_max:
+            return initial_lr
+
+        if current == 0:
+            return self.lr_min
+
+        # Exponential growth: lr(t) = lr_min * (lr_max / lr_min)^(t / t_max)
+        ratio = current / t_max
+        if isinstance(initial_lr, torch.Tensor):
+            growth_factor = torch.pow(initial_lr / self.lr_min, ratio)
+        else:
+            growth_factor = (initial_lr / self.lr_min) ** ratio
+
+        return self.lr_min * growth_factor

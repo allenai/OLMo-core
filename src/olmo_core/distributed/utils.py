@@ -107,7 +107,7 @@ def init_distributed(
                 "enp6s0,enp7s0,enp13s0,enp14s0,enp134s0,enp135s0,enp141s0,enp142s0",
             )
             set_env_var("NCCL_SOCKET_IFNAME", "enp0s12")
-            set_env_var(  # Add COLL here to log all collective operations. Extreamly verbose, dont use for production.
+            set_env_var(  # Add COLL here to log all collective operations. Extremely verbose, don't use for production.
                 "NCCL_DEBUG_SUBSYS", "INIT,NET"
             )
 
@@ -118,6 +118,7 @@ def init_distributed(
         device = torch.device(f"cuda:{int(os.environ[OLMO_LOCAL_RANK_ENV_VAR])}")
         torch.cuda.set_device(device)
 
+    log_or_print(log, f"Initializing process group with {timeout=}...")
     dist.init_process_group(backend, timeout=timeout, **kwargs)
 
     validate_env_vars()
@@ -346,17 +347,16 @@ def all_reduce_value(
 T = TypeVar("T")
 
 
-def scatter_object(obj: T, src: int = 0, group: Optional[dist.ProcessGroup] = None) -> T:
+def broadcast_object(obj: T, src: int = 0, group: Optional[dist.ProcessGroup] = None) -> T:
     """
-    Scatter an object using pickle to all ranks in the process group.
+    Broadcast an object using pickle to all ranks in the process group.
     """
     if not is_distributed():
         return obj
 
-    output_list: List[T] = [obj]
-    input_list = [obj] * get_world_size(group) if get_rank(group) == src else None
-    dist.scatter_object_list(output_list, input_list, src=src, group=group)
-    return output_list[0]
+    object_list = [obj]
+    dist.broadcast_object_list(object_list, src=src, group=group)
+    return object_list[0]
 
 
 def all_gather(

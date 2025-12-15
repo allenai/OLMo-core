@@ -5,6 +5,8 @@ from enum import Enum
 from typing import (
     Any,
     Callable,
+    ClassVar,
+    Collection,
     Dict,
     Generator,
     List,
@@ -66,11 +68,17 @@ class Config:
     :meth:`as_config_dict()`.
     """
 
+    _IGNORE_FIELDS: ClassVar[Tuple[str, ...]] = ()
+    """
+    Fields to ignore when loading from config (for backwards compatibility).
+    """
+
     def as_dict(
         self,
         *,
         exclude_none: bool = False,
         exclude_private_fields: bool = False,
+        exclude: Optional[Collection[str]] = None,
         include_class_name: bool = False,
         json_safe: bool = False,
         recurse: bool = True,
@@ -80,13 +88,18 @@ class Config:
 
         :param exclude_none: Don't include values that are ``None``.
         :param exclude_private_fields: Don't include private fields.
+        :param exclude: A list of field names to exclude.
         :param include_class_name: Include a field for the name of the class.
         :param json_safe: Output only JSON-safe types.
         :param recurse: Recurse into fields that are also configs/dataclasses.
         """
 
+        exclude_set = set(exclude) if exclude is not None else set()
+
         def iter_fields(d) -> Generator[Tuple[str, Any], None, None]:
             for field in fields(d):
+                if field.name in exclude_set:
+                    continue
                 value = getattr(d, field.name)
                 if exclude_none and value is None:
                     continue
@@ -243,6 +256,11 @@ class Config:
                 if (cls_name := d.get(cls.CLASS_NAME_FIELD)) is not None and (
                     cls_o := resolve_cls(cls_name)
                 ) is not None:
+                    # Remove ignored fields if the class defines any
+                    if cls_o._IGNORE_FIELDS:
+                        new_dict = {
+                            k: v for k, v in new_dict.items() if k not in cls_o._IGNORE_FIELDS
+                        }
                     schema = om.structured(cls_o)
                     try:
                         return om.to_object(om.merge(schema, new_dict))
