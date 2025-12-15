@@ -45,8 +45,7 @@ subprocess.run([
     "python", "src/examples/huggingface/convert_checkpoint_to_hf.py",
     f"--checkpoint-input-path={src}",
     f"--huggingface-output-dir={out}",
-    "-s", "8192",
-    "--debug"
+    "-s", "8192"
 ], check=True)
 
 print(f"=== Uploading to {repo_id}@{branch} ===")
