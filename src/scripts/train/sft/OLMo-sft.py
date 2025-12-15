@@ -24,7 +24,7 @@ from olmo_core.data import (
 )
 from olmo_core.data.types import LongDocStrategy
 from olmo_core.distributed.parallel import DataParallelType
-from olmo_core.distributed.utils import barrier, get_local_rank, get_rank
+from olmo_core.distributed.utils import barrier, get_local_rank, get_rank, get_global_rank
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.internal.common import (
     CLUSTER_TO_GPU_TYPE,
@@ -492,7 +492,7 @@ def train(checkpoint: str, config: SFTConfig, save_tokenizer: bool):
     trainer = config.trainer.build(train_module, data_loader)
 
     if save_tokenizer:
-        if get_rank() == 0:
+        if get_global_rank() == 0:
             tokenizer_path = AnyPath(dataset.paths[0]).parent / "tokenizer"
             if tokenizer_path.exists() and tokenizer_path.is_dir():
                 log.info("Saving tokenizer...")
@@ -504,9 +504,9 @@ def train(checkpoint: str, config: SFTConfig, save_tokenizer: bool):
                     destination_path.copytree(tokenizer_path)
                     log.info("Tokenizer save complete")
         
-        log.info(f"Rank {get_rank()} waiting at tokenizer barrier")
+        log.info(f"Rank {get_global_rank()} waiting at tokenizer barrier")
         barrier()
-        log.info(f"Rank {get_rank()} passed tokenizer barrier")
+        log.info(f"Rank {get_global_rank()} passed tokenizer barrier")
 
 
     # Record the config to W&B/Comet and each checkpoint dir.
