@@ -845,8 +845,16 @@ class Trainer:
         error: Optional[Exception] = None
         if get_rank() == 0 and not self.checkpointer.dir_is_checkpoint(dir):
             # Try to find the latest checkpoint in the directory.
-            dir = self.checkpointer.latest_checkpoint(dir)
-        dir = broadcast_object(dir)
+            try:
+                dir_to_scatter = self.checkpointer.latest_checkpoint(dir)
+            except FileNotFoundError as e:  # defer raising until after the scatter
+                dir_to_scatter, error = None, e
+        dir_to_scatter = broadcast_object(dir_to_scatter)
+        if dir_to_scatter is None:
+            if error is None:
+                raise FileNotFoundError(f"No checkpoints found in '{dir}'")
+            raise error
+        dir = dir_to_scatter
 
         log.info(f"Loading checkpoint from '{dir}'...")
         trainer_state = self.checkpointer.load(

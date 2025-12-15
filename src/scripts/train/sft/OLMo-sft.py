@@ -203,17 +203,12 @@ def build_sft_dataset(
     root_dir: str,
     tokenizer_config: TokenizerConfig,
     sequence_length: int,
-    dataset_path: Optional[str],
+    dataset_path: str,
 ) -> NumpyPackedFSLDatasetConfig:
     clean_path = dataset_path.rstrip("/")
-    if dataset_path.startswith("gs://") or dataset_path.startswith("s3://"):
-        token_id_paths = glob_remote_dataset(f"{clean_path}/token_ids_part_*.npy")
-        label_mask_paths = glob_remote_dataset(f"{clean_path}/token_ids_part_*.npy")
-        expand_glob = False
-    else:
-        token_id_paths = [f"{clean_path}/token_ids_part_*.npy"]
-        label_mask_paths = [f"{clean_path}/labels_mask_*.npy"]
-        expand_glob = True
+    token_id_paths = [f"{clean_path}/token_ids_part_*.npy"]
+    label_mask_paths = [f"{clean_path}/labels_mask_*.npy"]
+    expand_glob = True
 
     dataset = NumpyPackedFSLDatasetConfig(
         # general config
@@ -267,7 +262,7 @@ class SFTConfig(Config):
         budget: str,
         model_name: str,
         init_seed: int = 33333,
-        dataset_path: Optional[str],
+        dataset_path: str,
     ) -> "SFTConfig":
         root_dir = get_root_dir(cluster)
         user_name = get_beaker_username()
