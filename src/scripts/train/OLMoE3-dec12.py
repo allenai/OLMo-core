@@ -229,7 +229,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                 random_expert_assignment=RANDOM_ASSIGN,
                 # lb_loss_weight=0.1,
                 # lb_loss_weight=0.005,
-                lb_loss_weight=0.004,
+                lb_loss_weight=0.0045,
                 z_loss_weight=None,
                 lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
                 dtype=dtype,
