@@ -37,12 +37,12 @@ from olmo_core.train.callbacks import (
     CheckpointerCallback,
     CometCallback,
     ConfigSaverCallback,
+    DataMixtureMonitorCallback,
     DownstreamEvaluatorCallbackConfig,
     GPUMemoryMonitorCallback,
     LMEvaluatorCallbackConfig,
     ProfilerCallback,
     WandBCallback,
-    DataMixtureMonitorCallback,
 )
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
