@@ -44,7 +44,7 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
     * For example, if you are using `ai2/jupiter`, the dataset and model should be available on the `/weka/oe-training-default/ai2-llm` bucket.
     * If you are using ai2/augusta, the dataset and model should be available on the `gs://ai2-llm` bucket.
     * Both can be copied to/from gcs/weka using the `gsutil` command line tool.
-        * From a machine with weka mounted: `gsutil cp -r /weka/<bucket-name>/path/to/dataset_or_model gs://ai2-llm/path/to/dataset_or_model`
+        * From a machine with weka mounted: `gsutil -m cp -r /weka/<bucket-name>/path/to/dataset_or_model gs://ai2-llm/path/to/dataset_or_model`
 
 3. Ensure that the tokenizer used when prepping your dataset matches the one you have configured for SFT in Olmo-core.
 
@@ -70,7 +70,7 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
 
     * Tips:
         * The "launch" command automatically creates a Beaker experiment and runs the exact same command remotely with "train" substituted for launch.
-        * Highly recommended: Tokenize and train at the same context length (recommended 16k)
+        * Highly recommended: Tokenize and train at the same context length (recommended 32k)
         * `--model_name`: Loads the correct model config. Currently supported: `olmo2-7b`, `olmo3-7b`, and `olmo3-32b`.
         * `--dataset_path`: Path to your tokenized dataset. If on Augusta, you must copy it to GCP. Include `gs://`.
 
