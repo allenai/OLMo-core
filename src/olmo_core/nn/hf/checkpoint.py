@@ -176,9 +176,7 @@ def save_hf_model(
         hf_model.generation_config.eos_token_id = huggingface_tokenizer.convert_tokens_to_ids(
             ["<|im_end|>", "<|endoftext|>"]
         )
-        hf_model.generation_config.pad_token = huggingface_tokenizer.convert_tokens_to_ids(
-            huggingface_tokenizer.pad_token
-        )
+        hf_model.generation_config.pad_token = huggingface_tokenizer.pad_token_id
 
     if get_fs_local_rank(process_group) == 0:
         if is_url(save_dir):
