@@ -127,7 +127,7 @@ def save_hf_model(
     save_dir: PathOrStr,
     model_state_dict: Dict[str, Any],
     model: Transformer,
-    huggingface_tokenizer: Optional[AutoTokenizer],
+    huggingface_tokenizer: Optional[AutoTokenizer] = None,
     *,
     dtype: Optional[DType] = None,
     vocab_size: Optional[int] = None,
