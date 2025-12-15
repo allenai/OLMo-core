@@ -171,6 +171,7 @@ def save_hf_model(
 
     hf_model.config.vocab_size = vocab_size or model.vocab_size
     hf_model.resize_token_embeddings(hf_model.config.vocab_size)
+    hf_model.generation_config.do_sample = True
 
     if huggingface_tokenizer is not None:
         hf_model.generation_config.eos_token_id = huggingface_tokenizer.convert_tokens_to_ids(
