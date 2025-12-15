@@ -109,6 +109,8 @@ if __name__ == "__main__":
         To launch a training run on Augusta w/ 8 nodes:
         python src/scripts/train/OLMo3/memo-7b.py launch memo-7b ai2/augusta \
             --launch.num_nodes=8 \
-            --launch.priority=high
+            --launch.priority=high \
+            --trainer.callbacks.checkpointer.save_interval=200 \
+            --trainer.callbacks.checkpointer.ephemeral_save_interval=100
     """
     main(config_builder=build_experiment_config)
