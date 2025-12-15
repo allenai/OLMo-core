@@ -33,7 +33,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         cluster=cli_context.cluster,
         root_dir=root_dir,
         workspace="ai2/oe-data",
-        num_nodes=4,
+        num_nodes=8,
         nccl_debug=True,
         # override priority from the CLI eg `--launch.priority=high`
     )
@@ -106,9 +106,9 @@ if __name__ == "__main__":
         To render the config and exit:
             python src/scripts/train/OLMo3/memo-7b.py dry_run debug_run ai2/augusta
 
-        To launch a training run on Augusta w/ 4 nodes:
+        To launch a training run on Augusta w/ 8 nodes:
         python src/scripts/train/OLMo3/memo-7b.py launch memo-7b ai2/augusta \
-            --launch.num_nodes=4 \
+            --launch.num_nodes=8 \
             --launch.priority=high
     """
     main(config_builder=build_experiment_config)
