@@ -8,7 +8,7 @@ import fnmatch
 import logging
 import shutil
 import sys
-from cloudpathlib import AnyPath
+from cloudpathlib import AnyPath, CloudPath
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Tuple, cast
@@ -500,7 +500,12 @@ def train(checkpoint: str, config: SFTConfig, save_tokenizer: bool):
                 log.info(f"Tokenizer already exists: {destination_path}")
             else:
                 log.info(f"Saving tokenizer to {destination_path}")
-                tokenizer_path.copytree(destination_path)
+                # CloudPath has copytree, but regular Path doesn't
+                if isinstance(tokenizer_path, CloudPath) or isinstance(destination_path, CloudPath):
+                    tokenizer_path.copytree(destination_path)
+                else:
+                    shutil.copytree(tokenizer_path, destination_path)
+
 
     # Record the config to W&B/Comet and each checkpoint dir.
     config_dict = config.as_config_dict()
