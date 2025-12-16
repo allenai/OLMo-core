@@ -548,7 +548,19 @@ def main():
         "--max-npy-files",
         type=int,
         default=None,
-        help="Maximum number of NPY files to scan (for testing)"
+        help="Maximum total number of NPY files to scan across all sources (for testing)"
+    )
+    parser.add_argument(
+        "--max-npy-per-source",
+        type=int,
+        default=None,
+        help="Maximum NPY files per source (topic+repeat combination)"
+    )
+    parser.add_argument(
+        "--max-npy-per-topic",
+        type=int,
+        default=None,
+        help="Maximum NPY files per topic (across all repeat rates)"
     )
     parser.add_argument(
         "--max-source-files",
@@ -593,31 +605,59 @@ def main():
         sources = load_sources_from_yaml(args.yaml_path)
         print(f"Found {len(sources)} sources with {sum(len(s.paths) for s in sources)} total NPY files")
         
-        if args.max_npy_files:
-            # Limit sources (rough approximation)
+        # Apply limits
+        if args.max_npy_per_source or args.max_npy_per_topic or args.max_npy_files:
             limited_sources = []
-            path_count = 0
+            global_count = 0
+            topic_counts: dict[str, int] = defaultdict(int)
+            
             for source in sources:
-                if path_count >= args.max_npy_files:
+                # Check global limit
+                if args.max_npy_files and global_count >= args.max_npy_files:
                     break
-                remaining = args.max_npy_files - path_count
-                if len(source.paths) <= remaining:
-                    limited_sources.append(source)
-                    path_count += len(source.paths)
+                
+                # Check per-topic limit
+                if args.max_npy_per_topic:
+                    topic_remaining = args.max_npy_per_topic - topic_counts[source.topic]
+                    if topic_remaining <= 0:
+                        continue
                 else:
-                    # Partially include this source
-                    partial = SourceInfo(
-                        source_name=source.source_name,
-                        topic=source.topic,
-                        repetition_rate=source.repetition_rate,
-                        target_ratio=source.target_ratio,
-                        max_repetition_ratio=source.max_repetition_ratio,
-                        paths=source.paths[:remaining]
-                    )
-                    limited_sources.append(partial)
-                    path_count += remaining
+                    topic_remaining = float('inf')
+                
+                # Check per-source limit
+                source_limit = args.max_npy_per_source if args.max_npy_per_source else float('inf')
+                
+                # Check global remaining
+                if args.max_npy_files:
+                    global_remaining = args.max_npy_files - global_count
+                else:
+                    global_remaining = float('inf')
+                
+                # Take the minimum of all limits
+                max_paths = int(min(len(source.paths), source_limit, topic_remaining, global_remaining))
+                
+                if max_paths > 0:
+                    if max_paths < len(source.paths):
+                        # Partially include this source
+                        partial = SourceInfo(
+                            source_name=source.source_name,
+                            topic=source.topic,
+                            repetition_rate=source.repetition_rate,
+                            target_ratio=source.target_ratio,
+                            max_repetition_ratio=source.max_repetition_ratio,
+                            paths=source.paths[:max_paths]
+                        )
+                        limited_sources.append(partial)
+                    else:
+                        limited_sources.append(source)
+                    
+                    global_count += max_paths
+                    topic_counts[source.topic] += max_paths
+            
             sources = limited_sources
-            print(f"Limited to {sum(len(s.paths) for s in sources)} NPY files")
+            print(f"After applying limits: {sum(len(s.paths) for s in sources)} NPY files")
+            if args.max_npy_per_topic:
+                print(f"  Per-topic counts: {dict(topic_counts)}")
         
         # Collect source files organized by topic/repetition
         print("\nScanning CSV metadata files...")
