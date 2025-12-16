@@ -344,7 +344,7 @@ class BeakerLaunchConfig(Config):
             ("OLMO_CORE_VERSION", VERSION),
             ("FORCE_COLOR", "1"),  # for 'rich' because Beaker supports ANSI colors in logs
             ("TORCH_LOGS", "recompiles,graph_breaks"),
-            ("TORCH_COMPILE_DYNAMIC_SOURCES", "L['max_doc_len']"),
+            ("TORCH_COMPILE_DYNAMIC_SOURCES", "L['max_doc_len'], L['max_seqlen']"),
         ]
         if self.shared_filesystem:
             env_vars.append((OLMO_SHARED_FS_ENV_VAR, "1"))
