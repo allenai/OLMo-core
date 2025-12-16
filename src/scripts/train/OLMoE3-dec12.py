@@ -91,7 +91,7 @@ SEQUENCE_LENGTH = 8192
 
 MAX_DURATION = int(7000e9)  # int(6e12), don't forget to adjust the LR when you increase this
 EVAL_INTERVAL = 1000
-SAVE_INTERVAL=35
+SAVE_INTERVAL=100
 
 NUM_EXPERTS = 64
 TOP_K = 4
@@ -126,7 +126,7 @@ GLOBAL_BATCH_SIZE = (
 NUM_MICRO_BATCHES = GLOBAL_BATCH_SIZE_SEQ // (REF_NUM_NODES * 8) // MICRO_BSZ
 GLOBAL_BATCH_TOKENS_IN_M = SEQUENCE_LENGTH * GLOBAL_BATCH_SIZE_SEQ // 1024 // 1024
 
-LR= 3e-9 # target lr for 32M tokens
+LR= 3e-4 # target lr for 32M tokens
 LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (4 * 1024 * 1024))
 NUM_LAYERS=32
 
@@ -437,9 +437,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             )
         )
         # TODO: might not be able to run in-loop evals depending on parallel strategies
-        .with_recommended_evals(
-            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
-        )
+        # .with_recommended_evals(
+        #     common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
+        # )
     )
 
 
