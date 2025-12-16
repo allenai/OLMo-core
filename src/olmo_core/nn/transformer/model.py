@@ -443,6 +443,9 @@ class Transformer(nn.Module):
             if cache_leftpad is not None:
                 all_block_kwargs["cache_leftpad"] = move_to_device(cache_leftpad, self.device)
 
+        if "cu_doc_lens" in all_block_kwargs:
+            mark_dynamic(all_block_kwargs["cu_doc_lens"], 0, strict=False)  # type: ignore[arg-type]
+
         return (
             input_ids,
             labels,
