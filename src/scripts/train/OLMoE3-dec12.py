@@ -119,7 +119,7 @@ PP_DIM=1
 
 # ref
 REF_NUM_NODES=64
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (48)
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (32)
 GLOBAL_BATCH_SIZE = (
     (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
 )  
@@ -228,8 +228,8 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                 uniform_expert_assignment=UNIFORM_ASSIGN,
                 random_expert_assignment=RANDOM_ASSIGN,
                 # lb_loss_weight=0.1,
-                # lb_loss_weight=0.005,
-                lb_loss_weight=0.0065,
+                lb_loss_weight=0.005,
+                # lb_loss_weight=0.0065,
                 z_loss_weight=None,
                 lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
                 dtype=dtype,
@@ -383,7 +383,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             metrics_collect_interval=5,
             cancel_check_interval=cancel_check_interval,
             max_duration=Duration.tokens(MAX_DURATION),
-            # steps_to_skip=StepSkipRange(start=501, step=520)
+            steps_to_skip=StepSkipRange(start=41315, step=41322)
         )
         .with_callback(
             "checkpointer",
