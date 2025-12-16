@@ -156,6 +156,6 @@ if __name__ == "__main__":
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
         include_default_evals=False,
-        include_instance_filter=False,  # We use SkipStepOptimizer for this problem.
+        include_instance_filter=True,  # We use SkipStepOptimizer for this problem.
     )
     main(config_builder=config_builder)
