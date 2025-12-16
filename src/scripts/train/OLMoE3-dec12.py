@@ -91,7 +91,7 @@ SEQUENCE_LENGTH = 8192
 
 MAX_DURATION = int(7000e9)  # int(6e12), don't forget to adjust the LR when you increase this
 EVAL_INTERVAL = 1000
-SAVE_INTERVAL=500
+SAVE_INTERVAL=100
 
 NUM_EXPERTS = 64
 TOP_K = 4
@@ -118,7 +118,7 @@ EP_DIM=8
 PP_DIM=1
 
 # ref
-REF_NUM_NODES=64
+REF_NUM_NODES=32
 GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (32)
 GLOBAL_BATCH_SIZE = (
     (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
@@ -228,8 +228,8 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                 uniform_expert_assignment=UNIFORM_ASSIGN,
                 random_expert_assignment=RANDOM_ASSIGN,
                 # lb_loss_weight=0.1,
-                # lb_loss_weight=0.005,
-                lb_loss_weight=0.0045,
+                lb_loss_weight=0.005,
+                # lb_loss_weight=0.0045,
                 z_loss_weight=None,
                 lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
                 dtype=dtype,
