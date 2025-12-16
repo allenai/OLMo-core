@@ -443,6 +443,9 @@ class Transformer(nn.Module):
             if cache_leftpad is not None:
                 all_block_kwargs["cache_leftpad"] = move_to_device(cache_leftpad, self.device)
 
+        if "cu_doc_lens" in all_block_kwargs:
+            mark_dynamic(all_block_kwargs["cu_doc_lens"], 0, strict=False)  # type: ignore[arg-type]
+
         return (
             input_ids,
             labels,
@@ -722,6 +725,7 @@ class Transformer(nn.Module):
         if self.lm_head is not None:
             self.lm_head.compile(fullgraph=False)
 
+        torch.compiler.config.dynamic_sources += "L['kwargs']['max_doc_len'],"
         self._compile_enabled = True
 
     def apply_fsdp(
