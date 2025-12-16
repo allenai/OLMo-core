@@ -725,7 +725,7 @@ class Transformer(nn.Module):
         if self.lm_head is not None:
             self.lm_head.compile(fullgraph=False)
 
-        torch.compiler.config.dynamic_sources += "kwargs['max_doc_len'],"
+        torch.compiler.config.dynamic_sources += "L['kwargs']['max_doc_len'],"
         self._compile_enabled = True
 
     def apply_fsdp(
