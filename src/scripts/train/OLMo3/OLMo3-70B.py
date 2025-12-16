@@ -20,6 +20,7 @@ from olmo_core.internal.experiment import (
 from olmo_core.nn.attention import AttentionBackendName, SlidingWindowAttentionConfig
 from olmo_core.nn.transformer import (
     TransformerActivationCheckpointingMode,
+    TransformerBlockType,
     TransformerConfig,
 )
 from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
@@ -49,7 +50,10 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         n_layers=80,
         n_heads=64,
         n_kv_heads=8,
-        rope_theta=10_000,
+        block_name=TransformerBlockType.reordered_norm,
+        qk_norm=True,
+        rope_theta=500_000,
+        layer_norm_eps=1e-6,
         hidden_size_multiplier=1.3,
         hidden_size_multiple_of=4096,
         attn_backend=AttentionBackendName.flash_3,
@@ -88,7 +92,8 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             shard_degree=64,
         ),
         ac_config=TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.budget, activation_memory_budget=0.1
+            mode=TransformerActivationCheckpointingMode.full,
+            #  activation_memory_budget=0.1,
         ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
