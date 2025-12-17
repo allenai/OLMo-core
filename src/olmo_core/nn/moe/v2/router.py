@@ -171,6 +171,8 @@ class MoERouterV2(nn.Module):
         )
         self.reset_parameters()
 
+        self._debug_index = None
+
     def reset_parameters(self):
         self._batch_size_per_expert = hide_from_torch(
             torch.zeros(self.num_experts, device=self.device)
@@ -484,7 +486,21 @@ class MoERouterV2(nn.Module):
             # shape: (num_experts,)
             batch_size_per_expert = batched_batch_size_per_expert.sum(dim=0)
 
-        
+        with torch.no_grad():
+            if self._debug_index is None: # first forward
+                self._debug_index = expert_indices.detach().cpu()
+            else: # recompute
+                recomputed = expert_indices.detach().cpu()
+                if not (self._debug_index == recomputed).all():
+                    print("Debug expert indices mismatch!")
+                    with open(f"/workspace/{dist.get_rank()}_ori_index.pt", "wb") as f:
+                        torch.save(self._debug_index, f)
+                    with open(f"/workspace/{dist.get_rank()}_recomputed_index.pt", "wb") as f:
+                        torch.save(recomputed, f)
+                    raise ValueError("Debug expert indices mismatch!")
+                else:
+                    self._debug_index = None #
+
         aux_loss_info = (scores, logits, batch_size_per_expert, batched_batch_size_per_expert, loss_div_factor)
         return expert_weights, expert_indices, batch_size_per_expert, aux_loss_info
 
