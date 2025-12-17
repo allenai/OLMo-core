@@ -6,8 +6,9 @@ import fla.layers
 import torch
 from torch import nn
 from torch.distributed import DeviceMesh
+from torch.distributed.tensor import distribute_tensor
 from torch.distributed.tensor.parallel import parallelize_module
-from torch.distributed.tensor.placement_types import Placement, Replicate
+from torch.distributed.tensor.placement_types import Placement, Replicate, Shard
 
 from olmo_core.config import Config, DType
 from olmo_core.nn.utils import get_tp_wrappers
@@ -82,7 +83,7 @@ class FLA(nn.Module):
 
         # Input projections (columnwise parallel - shard output dimension)
         # q_proj, k_proj, v_proj: standard attention-like projections
-        # a_proj, b_proj: GatedDeltaNet-specific gating projections
+        # a_proj, b_proj: GatedDeltaNet-specific gating projections (output num_heads)
         # g_proj: optional gate projection (only when use_gate=True)
         for proj_name in ["q_proj", "k_proj", "v_proj", "a_proj", "b_proj", "g_proj"]:
             if hasattr(inner, proj_name) and getattr(inner, proj_name) is not None:
@@ -99,6 +100,19 @@ class FLA(nn.Module):
             device_mesh=tp_mesh,
             parallelize_plan=plan,
         )
+
+        # Shard per-head parameters to match sharded a_proj/b_proj outputs.
+        # A_log and dt_bias are [num_heads] tensors used with a_proj output in:
+        #   g = -A_log.exp() * softplus(a_proj(x) + dt_bias)
+        # They must be sharded on dim 0 to match the colwise-sharded a_proj output.
+        if hasattr(inner, "A_log") and inner.A_log is not None:
+            inner.register_parameter(
+                "A_log", nn.Parameter(distribute_tensor(inner.A_log, tp_mesh, [Shard(0)]))
+            )
+        if hasattr(inner, "dt_bias") and inner.dt_bias is not None:
+            inner.register_parameter(
+                "dt_bias", nn.Parameter(distribute_tensor(inner.dt_bias, tp_mesh, [Shard(0)]))
+            )
 
 
 @dataclass
