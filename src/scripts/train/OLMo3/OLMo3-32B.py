@@ -102,12 +102,10 @@ def build_data_components(
         sequence_length=common.max_sequence_length,
         max_target_sequence_length=max(common.max_sequence_length, 8192),
         generate_doc_lengths=intra_document_masking,
-        instance_filter_config=(
-            None
-            if not include_instance_filter
-            else InstanceFilterConfig(
-                repetition_max_period=13, repetition_min_period=1, repetition_max_count=32
-            )
+        instance_filter_config=None
+        if not include_instance_filter
+        else InstanceFilterConfig(
+            repetition_max_period=13, repetition_min_period=1, repetition_max_count=32
         ),
     )
 
