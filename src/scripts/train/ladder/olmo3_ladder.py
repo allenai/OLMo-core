@@ -3,11 +3,12 @@ import logging
 import sys
 import textwrap
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Type
 
 import rich
 
 import olmo_core.io as io
+from olmo_core.config import StrEnum
 from olmo_core.data import DataMix, TokenizerConfig
 from olmo_core.data.composable import *
 from olmo_core.exceptions import OLMoConfigurationError
@@ -18,13 +19,16 @@ from olmo_core.launch.beaker import (
     OLMoCoreBeakerImage,
     is_running_in_beaker_batch_job,
 )
-from olmo_core.model_ladder2 import *
+from olmo_core.model_ladder import *
 from olmo_core.utils import prepare_cli_environment
 
 log = logging.getLogger(__name__)
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(
+    size_enum: Type[StrEnum] = TransformerSize,
+    add_additional_args: Callable[[str, argparse.ArgumentParser], None] | None = None,
+) -> argparse.Namespace:
     formatter_class = type(
         "CustomFormatter",
         (
@@ -44,8 +48,8 @@ def parse_args() -> argparse.Namespace:
             examples:
             • See a description of all options for a certain command:
               ❯ python {sys.argv[0]} dry-run --help
-            • Run a dry run for the 190M model size:
-              ❯ python {sys.argv[0]} dry-run --size=190M
+            • Run a dry run for the {list(size_enum)[0]} model size:
+              ❯ python {sys.argv[0]} dry-run --size={list(size_enum)[0]}
             """
         ),
         epilog=textwrap.dedent(
@@ -136,7 +140,7 @@ def parse_args() -> argparse.Namespace:
             help=help,
             formatter_class=formatter_class,  # type: ignore[arg-type]
         )
-        sub_commands[name].set_defaults(func=func)
+        sub_commands[name].set_defaults(func=func, configure_ladder=configure_ladder)
 
     add_sub_command(
         "dry-run",
@@ -191,7 +195,7 @@ def parse_args() -> argparse.Namespace:
         if cmd != "launch-all":
             parser.add_argument(
                 "--size",
-                choices=list(TransformerSize),
+                choices=list(size_enum),
                 required=cmd
                 in {"dry-run", "benchmark", "launch-benchmark", "run", "launch", "metrics"},
                 help="The model size.",
@@ -200,7 +204,7 @@ def parse_args() -> argparse.Namespace:
         if cmd in {"launch-all", "status"}:
             parser.add_argument(
                 "--max-size",
-                choices=list(TransformerSize),
+                choices=list(size_enum),
                 default=None,
                 help="The maximum model size. If not specified, status/metrics for all sizes will be shown.",
             )
@@ -228,6 +232,9 @@ def parse_args() -> argparse.Namespace:
 
         if "launch" in cmd:
             add_launch_args(parser)
+
+        if add_additional_args is not None:
+            add_additional_args(cmd, parser)
 
     # Make sure the command is in the right position, otherwise the way we build the launch
     # config would fail.
@@ -288,7 +295,6 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
 def configure_launcher(
     args: argparse.Namespace, ladder: ModelLadder, cmd: str, size: str | None = None
 ) -> BeakerLaunchConfig:
-    ladder = configure_ladder(args)
     size = size or args.size
     num_gpus = ladder.get_num_devices(size)
     assert (num_gpus % 8 == 0) or num_gpus < 8
@@ -313,7 +319,7 @@ def configure_launcher(
 
 def dry_run(args: argparse.Namespace):
     prepare_cli_environment()
-    ladder = configure_ladder(args)
+    ladder = args.configure_ladder(args)
     if args.show_model:
         log.info("Model config:")
         log.info(ladder.get_model_config(args.size))
@@ -325,19 +331,19 @@ def dry_run(args: argparse.Namespace):
 
 
 def benchmark(args: argparse.Namespace):
-    ladder = configure_ladder(args)
+    ladder = args.configure_ladder(args)
     ladder.run_benchmark(args.size)
 
 
 def launch_benchmark(args: argparse.Namespace):
     prepare_cli_environment()
-    ladder = configure_ladder(args)
+    ladder = args.configure_ladder(args)
     launcher = configure_launcher(args, ladder, "benchmark")
     launcher.launch(follow=True, slack_notifications=False)
 
 
 def run(args: argparse.Namespace):
-    ladder = configure_ladder(args)
+    ladder = args.configure_ladder(args)
     ladder.run(args.size)
 
 
@@ -363,14 +369,14 @@ def _launch_run(
 
 def launch(args: argparse.Namespace):
     prepare_cli_environment()
-    ladder = configure_ladder(args)
+    ladder = args.configure_ladder(args)
     launcher = configure_launcher(args, ladder, "run")
     _launch_run(ladder, launcher, TransformerSize(args.size))
 
 
 def launch_all(args: argparse.Namespace):
     prepare_cli_environment()
-    ladder = configure_ladder(args)
+    ladder = args.configure_ladder(args)
     sizes = [TransformerSize(s) for s in ladder.sizes]
     if args.max_size:
         sizes = [s for s in sizes if s <= TransformerSize(args.max_size)]
@@ -382,7 +388,7 @@ def launch_all(args: argparse.Namespace):
 
 def status(args: argparse.Namespace):
     prepare_cli_environment()
-    ladder = configure_ladder(args)
+    ladder = args.configure_ladder(args)
 
     sizes: list[TransformerSize]
     if args.size:
@@ -423,7 +429,7 @@ def status(args: argparse.Namespace):
 
 def metrics(args: argparse.Namespace):
     prepare_cli_environment()
-    ladder = configure_ladder(args)
+    ladder = args.configure_ladder(args)
     df = ladder.get_metrics(args.size)
     if df is not None:
         path = io.join_path(args.output_dir, f"metrics_{args.size}.pkl")
