@@ -441,9 +441,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             )
         )
         # TODO: might not be able to run in-loop evals depending on parallel strategies
-        .with_recommended_evals(
-            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
-        )
+        # .with_recommended_evals(
+        #     common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
+        # )
     )
 
 
