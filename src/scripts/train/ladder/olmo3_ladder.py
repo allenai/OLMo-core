@@ -25,6 +25,15 @@ log = logging.getLogger(__name__)
 
 
 def parse_args() -> argparse.Namespace:
+    formatter_class = type(
+        "CustomFormatter",
+        (
+            argparse.ArgumentDefaultsHelpFormatter,
+            argparse.RawDescriptionHelpFormatter,
+        ),
+        {},
+    )
+
     base_parser = argparse.ArgumentParser(
         sys.argv[0],
         usage=f"python {sys.argv[0]} [CMD] [OPTIONS...]",
@@ -45,14 +54,7 @@ def parse_args() -> argparse.Namespace:
             • The command (e.g. 'dry-run', 'launch', etc) must always be the first argument.
             """
         ),
-        formatter_class=type(  # type: ignore[arg-type]
-            "CustomFormatter",
-            (
-                argparse.ArgumentDefaultsHelpFormatter,
-                argparse.RawDescriptionHelpFormatter,
-            ),
-            {},
-        ),
+        formatter_class=formatter_class,  # type: ignore[arg-type]
     )
     sub_parsers = base_parser.add_subparsers(dest="cmd")
 
@@ -104,8 +106,8 @@ def parse_args() -> argparse.Namespace:
         )
         parser.add_argument(
             "--beaker-image",
-            choices=list(OLMoCoreBeakerImage),
             default=OLMoCoreBeakerImage.stable,
+            type=str,
             help="The Beaker image to use.",
         )
         parser.add_argument(
@@ -129,7 +131,11 @@ def parse_args() -> argparse.Namespace:
     sub_commands: dict[str, argparse.ArgumentParser] = {}
 
     def add_sub_command(name: str, func: Callable[[argparse.Namespace], None], help: str):
-        sub_commands[name] = sub_parsers.add_parser(name, help=help)
+        sub_commands[name] = sub_parsers.add_parser(
+            name,
+            help=help,
+            formatter_class=formatter_class,  # type: ignore[arg-type]
+        )
         sub_commands[name].set_defaults(func=func)
 
     add_sub_command(
