@@ -11,6 +11,7 @@ import rich
 from cached_path import cached_path
 
 import olmo_core.distributed.utils as dist_utils
+import olmo_core.eval.task_groups as task_groups
 import olmo_core.io as io
 import olmo_core.train.callbacks as callbacks
 from olmo_core.aliases import PathOrStr
@@ -620,81 +621,4 @@ class ModelLadder(Config):
         )
 
     def _get_in_loop_eval_tasks(self) -> list[str]:
-        # For training runs where we don't expect the model to acquire MC (e.g., 1B-5xC, short 7B training runs).
-        tasks_small_compute = [
-            # OLMES Core 9(-ish) RC
-            "arc_challenge_test_rc_5shot",
-            "arc_easy_test_rc_5shot",
-            "hellaswag_rc_5shot",  # 1K subset of HellaSwag
-            "winogrande_val_rc_5shot",  # Helpful after 750M-5xC scale
-            "csqa_val_rc_5shot",
-            "piqa_val_rc_5shot",
-            "socialiqa_val_rc_5shot",
-            # Too noisy to be worth tracking
-            # "boolq_val_rc_5shot",
-            # "openbookqa_test_rc_5shot",
-            # MMLU RC
-            "mmlu_stem_val_rc_5shot",
-            "mmlu_humanities_val_rc_5shot",
-            "mmlu_social_sciences_val_rc_5shot",
-            "mmlu_other_val_rc_5shot",
-            "mmlu_stem_test_rc_5shot",
-            "mmlu_humanities_test_rc_5shot",
-            "mmlu_social_sciences_test_rc_5shot",
-            "mmlu_other_test_rc_5shot",
-            # Gen tasks BPB
-            "gsm8k_gold_bpb_5shot",
-            "minerva_math_algebra_gold_bpb_0shot",
-            "minerva_math_counting_and_probability_gold_bpb_0shot",
-            "minerva_math_geometry_gold_bpb_0shot",
-            "minerva_math_intermediate_algebra_gold_bpb_0shot",
-            "minerva_math_number_theory_gold_bpb_0shot",
-            "minerva_math_prealgebra_gold_bpb_0shot",
-            "minerva_math_precalculus_gold_bpb_0shot",
-            "codex_humaneval_gold_bpb_0shot",
-            "codex_mbpp_gold_bpb_0shot",
-            # Sanity check for MCQA ability
-            "copycolors_10way",
-        ]
-
-        # For training runs where we expect the model to acquire MC
-        tasks_large_compute = [
-            # OLMES Core 9(-ish) MC
-            "arc_challenge_test_mc_5shot",
-            "arc_easy_test_mc_5shot",
-            "hellaswag_rc_5shot",  # 1K subset of HellaSwag
-            "csqa_val_mc_5shot",
-            "piqa_val_mc_5shot",
-            "socialiqa_val_mc_5shot",
-            "winogrande_val_rc_5shot",
-            # Too noisy to be worth tracking
-            # "boolq_val_mc_5shot",
-            # "openbookqa_test_mc_5shot",
-            # MMLU MC BPB
-            "mmlu_stem_val_mc_5shot",
-            "mmlu_humanities_val_mc_5shot",
-            "mmlu_social_sciences_val_mc_5shot",
-            "mmlu_other_val_mc_5shot",
-            "mmlu_stem_test_mc_5shot",
-            "mmlu_humanities_test_mc_5shot",
-            "mmlu_social_sciences_test_mc_5shot",
-            "mmlu_other_test_mc_5shot",
-            # Gen tasks BPB
-            "gsm8k_gold_bpb_5shot",
-            "minerva_math_algebra_gold_bpb_0shot",
-            "minerva_math_counting_and_probability_gold_bpb_0shot",
-            "minerva_math_geometry_gold_bpb_0shot",
-            "minerva_math_intermediate_algebra_gold_bpb_0shot",
-            "minerva_math_number_theory_gold_bpb_0shot",
-            "minerva_math_prealgebra_gold_bpb_0shot",
-            "minerva_math_precalculus_gold_bpb_0shot",
-            "codex_humaneval_gold_bpb_0shot",
-            "codex_mbpp_gold_bpb_0shot",
-            # Sanity check for MCQA ability
-            "copycolors_10way",
-        ]
-
-        # Unfortunately we need the same metrics for everything, so we run them all.
-        tasks = list(set(tasks_small_compute + tasks_large_compute))
-        tasks.sort()
-        return tasks
+        return sorted(task_groups.FULL_TASKS)
