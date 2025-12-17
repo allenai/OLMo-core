@@ -133,7 +133,9 @@ def test_tensor_parallel_block(
 
     block = _build_block(block_cls, d_model=d_model, init_device=device.type, kwargs=kwargs)
 
-    bs, seq_len = 2, 64
+    # FLA GatedDeltaNet requires seq_len > 64 for training (chunk mode)
+    # because fused_recurrent mode (used when seq_len <= 64) is inference-only
+    bs, seq_len = 2, 128
     x = torch.randn(bs, seq_len, d_model, device=device)
     y = block(x)
 
