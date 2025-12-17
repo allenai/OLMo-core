@@ -3,6 +3,7 @@ import logging
 import sys
 import textwrap
 from pathlib import Path
+from typing import Callable
 
 import rich
 
@@ -15,6 +16,7 @@ from olmo_core.launch.beaker import (
     BeakerLaunchConfig,
     BeakerPriority,
     OLMoCoreBeakerImage,
+    is_running_in_beaker_batch_job,
 )
 from olmo_core.model_ladder2 import *
 from olmo_core.utils import prepare_cli_environment
@@ -23,56 +25,24 @@ log = logging.getLogger(__name__)
 
 
 def parse_args() -> argparse.Namespace:
-    command_descriptions = {
-        "dry_run": "Simulate the ladder run for a given model size, showing the LR schedule plot.",
-        "benchmark": textwrap.dedent(
-            """
-            Run a benchmark for a given model size locally.
-            This usually isn't invoked directly, but rather via `launch_benchmark`.
-            """
-        ).replace("\n", " "),
-        "launch_benchmark": "Launch a Beaker job to run a benchmark for a given model size.",
-        "run": textwrap.dedent(
-            """
-            Run the ladder for a given model size locally.
-            This usually isn't invoked directly, but rather via `launch_run`.
-            """
-        ).replace("\n", " "),
-        "launch_run": "Launch a Beaker job to run the ladder for a given model size.",
-        "launch_all": "Launch Beaker jobs to run the all model sizes of the ladder.",
-        "status": "Check the status of the ladder run for a given model size.",
-        "metrics": "Download the metrics for a given model size.",
-        "help": "Show this help message.",
-    }
-
-    commands = list(command_descriptions.keys())
-    command = sys.argv[1] if len(sys.argv) >= 2 else "help"
-
-    parser = argparse.ArgumentParser(
+    base_parser = argparse.ArgumentParser(
         sys.argv[0],
         usage=f"python {sys.argv[0]} [CMD] [OPTIONS...]",
         description=textwrap.dedent(
-            """
-            Launch and manage a ladder experiment on Beaker.
-
-            commands:
-            """
-        )
-        + "\n".join([f"• {cmd}: {desc}" for cmd, desc in command_descriptions.items()])
-        + textwrap.dedent(
             f"""
+            Launch and manage a ladder experiment on Beaker.
 
             examples:
             • See a description of all options for a certain command:
-              ❯ python {sys.argv[0]} dry_run --help
+              ❯ python {sys.argv[0]} dry-run --help
             • Run a dry run for the 190M model size:
-              ❯ python {sys.argv[0]} dry_run --size=190M
+              ❯ python {sys.argv[0]} dry-run --size=190M
             """
         ),
         epilog=textwrap.dedent(
             """
             notes:
-            • The command (e.g. 'dry_run', 'launch_run', etc) must always be the first argument.
+            • The command (e.g. 'dry-run', 'launch', etc) must always be the first argument.
             """
         ),
         formatter_class=type(  # type: ignore[arg-type]
@@ -84,129 +54,197 @@ def parse_args() -> argparse.Namespace:
             {},
         ),
     )
+    sub_parsers = base_parser.add_subparsers(dest="cmd")
 
-    # General configuration options.
-    parser.add_argument(
-        "--name",
-        type=str,
-        default="olmo3-ladder",
-        help="A name to assign to the ladder experiment.",
-    )
-    if command not in {"launch_all"}:
+    def add_general_args(parser: argparse.ArgumentParser):
         parser.add_argument(
-            "--size",
-            choices=list(TransformerSize),
-            required=command
-            in {"dry_run", "benchmark", "launch_benchmark", "run", "launch_run", "metrics"},
-            help="The model size.",
+            "--name",
+            type=str,
+            default="olmo3-ladder",
+            help="A name to assign to the ladder experiment.",
         )
-    if command in {"launch_all", "status"}:
         parser.add_argument(
-            "--max-size",
-            choices=list(TransformerSize),
-            default=None,
-            help="The maximum model size. If not specified, status/metrics for all sizes will be shown.",
+            "--sequence-length",
+            type=int,
+            default=8 * 1024,
+            help="The sequence length to configure the ladder with.",
         )
-    parser.add_argument(
-        "--sequence-length",
-        type=int,
-        default=8 * 1024,
-        help="The sequence length to configure the ladder with.",
-    )
-    parser.add_argument(
-        "--chinchilla-multiple",
-        type=float,
-        default=4.0,
-        help="The Chinchilla multiple to use for the ladder.",
-    )
-    parser.add_argument(
-        "--cluster",
-        type=str,
-        choices=["ai2/augusta", "ai2/jupiter", "ai2/titan"],
-        default="ai2/augusta",
-        help="The Beaker cluster to launch each run on.",
-    )
-    parser.add_argument(
-        "--max-gpus",
-        type=int,
-        default=64,
-        help="The maximum number of GPUs to use for the ladder.",
-    )
+        parser.add_argument(
+            "--chinchilla-multiple",
+            type=float,
+            default=4.0,
+            help="The Chinchilla multiple to use for the ladder.",
+        )
+        parser.add_argument(
+            "--cluster",
+            type=str,
+            choices=["ai2/augusta", "ai2/jupiter", "ai2/titan"],
+            default="ai2/augusta",
+            help="The Beaker cluster to launch each run on.",
+        )
+        parser.add_argument(
+            "--max-gpus",
+            type=int,
+            default=64,
+            help="The maximum number of GPUs to use for the ladder.",
+        )
 
-    # Launch options.
-    parser.add_argument(
-        "--workspace",
-        type=str,
-        default="ai2/oe-t-ladder",
-        help="The Beaker workspace to use.",
-    )
-    parser.add_argument(
-        "--budget",
-        type=str,
-        default="ai2/oe-base",
-        help="The Beaker budget to use.",
-    )
-    parser.add_argument(
-        "--beaker-image",
-        choices=list(OLMoCoreBeakerImage),
-        default=OLMoCoreBeakerImage.stable,
-        help="The Beaker image to use.",
-    )
-    parser.add_argument(
-        "--priority",
-        choices=[p.value for p in BeakerPriority],
-        default=BeakerPriority.normal,
-        help="The priority level.",
-    )
-    parser.add_argument(
-        "--preemptible",
-        action=argparse.BooleanOptionalAction,
-        help="""If the job should be preemptible.""",
-    )
-    parser.add_argument(
-        "--allow-dirty",
-        action="store_true",
-        help="""Allow launching with uncommitted changes.""",
-        default=False,
-    )
-
-    # Artifacts.
-    if command in {"dry_run", "metrics"}:
+    def add_launch_args(parser: argparse.ArgumentParser):
         parser.add_argument(
-            "--output-dir",
-            type=Path,
-            default=Path("~/Downloads").expanduser(),
-            help="""A local directory to store artifacts in like metrics or the LR schedule plot.""",
+            "--workspace",
+            type=str,
+            default="ai2/oe-t-ladder",
+            help="The Beaker workspace to use.",
         )
-    if command == "dry_run":
         parser.add_argument(
-            "--show-plot",
+            "--budget",
+            type=str,
+            default="ai2/oe-base",
+            help="The Beaker budget to use.",
+        )
+        parser.add_argument(
+            "--beaker-image",
+            choices=list(OLMoCoreBeakerImage),
+            default=OLMoCoreBeakerImage.stable,
+            help="The Beaker image to use.",
+        )
+        parser.add_argument(
+            "--priority",
+            choices=[p.value for p in BeakerPriority],
+            default=BeakerPriority.normal,
+            help="The priority level.",
+        )
+        parser.add_argument(
+            "--preemptible",
+            action=argparse.BooleanOptionalAction,
+            help="""If the job should be preemptible.""",
+        )
+        parser.add_argument(
+            "--allow-dirty",
             action="store_true",
-            help="""Open a live display of the LR schedule plot.""",
-        )
-
-    # Debug.
-    if command == "dry_run":
-        parser.add_argument(
-            "--show-model",
-            action="store_true",
-            help="Show the model config.",
+            help="""Allow launching with uncommitted changes.""",
             default=False,
         )
 
+    sub_commands: dict[str, argparse.ArgumentParser] = {}
+
+    def add_sub_command(name: str, func: Callable[[argparse.Namespace], None], help: str):
+        sub_commands[name] = sub_parsers.add_parser(name, help=help)
+        sub_commands[name].set_defaults(func=func)
+
+    add_sub_command(
+        "dry-run",
+        dry_run,
+        "Simulate the ladder run for a given model size, showing the LR schedule plot.",
+    )
+    add_sub_command(
+        "benchmark",
+        benchmark,
+        "Run a benchmark for a given model size locally.",
+    )
+    add_sub_command(
+        "launch-benchmark",
+        launch_benchmark,
+        """
+        Launch a Beaker job to run a benchmark for a given model size.
+        This usually isn't invoked directly, but rather via 'launch-benchmark'.
+        """,
+    )
+    add_sub_command(
+        "run",
+        run,
+        """
+        Run the ladder for a given model size locally.
+        This usually isn't invoked directly, but rather via 'launch'.
+        """,
+    )
+    add_sub_command(
+        "launch",
+        launch,
+        "Launch a Beaker job to run the ladder for a given model size.",
+    )
+    add_sub_command(
+        "launch-all",
+        launch_all,
+        "Launch Beaker jobs to run the all model sizes of the ladder.",
+    )
+    add_sub_command(
+        "status",
+        status,
+        "Check the status of the ladder run for a given model size.",
+    )
+    add_sub_command(
+        "metrics",
+        metrics,
+        "Download the metrics for a given model size.",
+    )
+
+    for cmd, parser in sub_commands.items():
+        add_general_args(parser)
+
+        if cmd != "launch-all":
+            parser.add_argument(
+                "--size",
+                choices=list(TransformerSize),
+                required=cmd
+                in {"dry-run", "benchmark", "launch-benchmark", "run", "launch", "metrics"},
+                help="The model size.",
+            )
+
+        if cmd in {"launch-all", "status"}:
+            parser.add_argument(
+                "--max-size",
+                choices=list(TransformerSize),
+                default=None,
+                help="The maximum model size. If not specified, status/metrics for all sizes will be shown.",
+            )
+
+        if cmd in {"dry-run", "metrics"}:
+            parser.add_argument(
+                "--output-dir",
+                type=Path,
+                default=Path("~/Downloads").expanduser(),
+                help="""A local directory to store artifacts in like metrics or the LR schedule plot.""",
+            )
+
+        if cmd == "dry-run":
+            parser.add_argument(
+                "--show-plot",
+                action="store_true",
+                help="""Open a live display of the LR schedule plot.""",
+            )
+            parser.add_argument(
+                "--show-model",
+                action="store_true",
+                help="Show the model config.",
+                default=False,
+            )
+
+        if "launch" in cmd:
+            add_launch_args(parser)
+
     # Make sure the command is in the right position, otherwise the way we build the launch
     # config would fail.
-    if command not in commands:
-        parser.print_help()
+    if len(sys.argv) < 2 or sys.argv[1] not in sub_commands:
+        base_parser.print_help()
         sys.exit(1)
 
-    if command == "help":
-        parser.print_help()
-        sys.exit(0)
+    # If running in a Beaker batch job only parse known args to ignore extra args from the launch command,
+    # otherwise parse strictly.
+    if is_running_in_beaker_batch_job():
+        args, _ = base_parser.parse_known_args()
+        return args
+    else:
+        return base_parser.parse_args()
 
-    args = parser.parse_args(sys.argv[2:])
-    args.cmd = command
-    return args
+
+def main():
+    args = parse_args()
+    if hasattr(args, "func"):
+        args.func(args)
+    else:
+        args.print_help()
+        sys.exit(1)
 
 
 def configure_ladder(args: argparse.Namespace) -> ModelLadder:
@@ -267,28 +305,6 @@ def configure_launcher(
     return launch_config
 
 
-def main():
-    args = parse_args()
-    if args.cmd == "dry_run":
-        dry_run(args)
-    elif args.cmd == "benchmark":
-        benchmark(args)
-    elif args.cmd == "launch_benchmark":
-        launch_benchmark(args)
-    elif args.cmd == "run":
-        run(args)
-    elif args.cmd == "launch_run":
-        launch_run(args)
-    elif args.cmd == "launch_all":
-        launch_all(args)
-    elif args.cmd == "status":
-        status(args)
-    elif args.cmd == "metrics":
-        metrics(args)
-    else:
-        raise NotImplementedError(f"Command '{args.cmd}' is not implemented.")
-
-
 def dry_run(args: argparse.Namespace):
     prepare_cli_environment()
     ladder = configure_ladder(args)
@@ -339,7 +355,7 @@ def _launch_run(
     launcher.launch(follow=follow, slack_notifications=False)
 
 
-def launch_run(args: argparse.Namespace):
+def launch(args: argparse.Namespace):
     prepare_cli_environment()
     ladder = configure_ladder(args)
     launcher = configure_launcher(args, ladder, "run")
