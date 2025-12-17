@@ -32,7 +32,7 @@ class TransformerSize(StrEnum):
     size_13B = "13B"
 
     @property
-    def num_params(self) -> int:
+    def approx_num_params(self) -> int:
         size = self.replace(" ", "").upper()
         if (m := re.match(r"^([\d\.]+)([KMBT])$", size)) is not None:
             value, unit = m.groups()
@@ -87,8 +87,8 @@ class TransformerModelConfigurator(ModelConfigurator[TransformerConfig]):
         # Make sure actual number of params is close to target number.
         if (
             pct_diff := (
-                math.fabs(model.num_non_embedding_params - size_spec.num_params)
-                / size_spec.num_params
+                math.fabs(model.num_non_embedding_params - size_spec.approx_num_params)
+                / size_spec.approx_num_params
             )
         ) > 0.05:
             warn_once(
@@ -111,7 +111,7 @@ class TransformerModelConfigurator(ModelConfigurator[TransformerConfig]):
         assert sequence_length in {2048, 4096, 8192}
         size_spec = TransformerSize(size_spec)
 
-        num_params = size_spec.num_params
+        num_params = size_spec.approx_num_params
         mbz: int
         if num_params <= 190e6:
             mbz = 16 * 4096
@@ -146,7 +146,7 @@ class TransformerModelConfigurator(ModelConfigurator[TransformerConfig]):
         assert sequence_length in {2048, 4096, 8192}
         size_spec = TransformerSize(size_spec)
 
-        num_params = size_spec.num_params
+        num_params = size_spec.approx_num_params
         if num_params < 13e9:
             return DeviceMeshSpec(world_size=8, dp_world_size=None)
         else:
