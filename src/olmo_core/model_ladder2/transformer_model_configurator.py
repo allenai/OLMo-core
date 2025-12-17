@@ -41,29 +41,33 @@ class TransformerSize(StrEnum):
         else:
             raise ValueError(f"Invalid size descriptor '{self}'")
 
-    def __lt__(self, other: "TransformerSize") -> bool:
+    def __lt__(self, other) -> bool:
         """Less than comparison based on approximate number of parameters."""
-        if not isinstance(other, TransformerSize):
-            return NotImplemented
-        return self.approx_num_params < other.approx_num_params
+        if isinstance(other, TransformerSize):
+            return self.approx_num_params < other.approx_num_params
+        else:
+            return super().__lt__(other)
 
-    def __le__(self, other: "TransformerSize") -> bool:
+    def __le__(self, other) -> bool:
         """Less than or equal comparison based on approximate number of parameters."""
-        if not isinstance(other, TransformerSize):
-            return NotImplemented
-        return self.approx_num_params <= other.approx_num_params
+        if isinstance(other, TransformerSize):
+            return self.approx_num_params <= other.approx_num_params
+        else:
+            return super().__le__(other)
 
-    def __gt__(self, other: "TransformerSize") -> bool:
+    def __gt__(self, other) -> bool:
         """Greater than comparison based on approximate number of parameters."""
-        if not isinstance(other, TransformerSize):
-            return NotImplemented
-        return self.approx_num_params > other.approx_num_params
+        if isinstance(other, TransformerSize):
+            return self.approx_num_params > other.approx_num_params
+        else:
+            return super().__gt__(other)
 
-    def __ge__(self, other: "TransformerSize") -> bool:
+    def __ge__(self, other) -> bool:
         """Greater than or equal comparison based on approximate number of parameters."""
-        if not isinstance(other, TransformerSize):
-            return NotImplemented
-        return self.approx_num_params >= other.approx_num_params
+        if isinstance(other, TransformerSize):
+            return self.approx_num_params >= other.approx_num_params
+        else:
+            return super().__ge__(other)
 
 
 @dataclass(kw_only=True, eq=True)

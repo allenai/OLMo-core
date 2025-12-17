@@ -361,9 +361,15 @@ def launch_all(args: argparse.Namespace):
 def status(args: argparse.Namespace):
     prepare_cli_environment()
     ladder = configure_ladder(args)
-    sizes = [TransformerSize(args.size)] if args.size else ladder.sizes
-    if args.max_size:
-        sizes = [s for s in sizes if s <= TransformerSize(args.max_size)]
+
+    sizes: list[TransformerSize]
+    if args.size:
+        sizes = [TransformerSize(args.size)]
+    else:
+        sizes = [TransformerSize(s) for s in ladder.sizes]
+        if args.max_size:
+            sizes = [s for s in sizes if s <= TransformerSize(args.max_size)]
+
     for size in sizes:
         print()
         checkpoints = ladder.get_checkpoints(size)
