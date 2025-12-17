@@ -270,11 +270,11 @@ class TransformerBlockConfig(Config):
                 else:
                     # Support negative indices (e.g., -1 for last layer)
                     normalized_indices = [
-                        idx if idx >= 0 else n_layers + idx 
+                        idx if idx >= 0 else n_layers + idx
                         for idx in self.fla_hybrid_attention_indices
                     ]
                     use_attention = block_idx in normalized_indices
-                
+
                 if use_attention:
                     kwargs.pop("fla")
                     return ReorderedNormTransformerBlock(**kwargs)

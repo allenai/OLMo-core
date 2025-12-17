@@ -149,7 +149,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         root_dir = "/weka/oe-training-default/ai2-llm"
     else:
         root_dir = "gs://ai2-llm"
-    
+
     run_name = f"{common.run_name}-{datetime.now().astimezone().strftime('%Y%m%dT%H%M%S%z')}"
 
     return (
