@@ -387,15 +387,22 @@ class SFTRouterConfig(Config):
             )
             ep_degree=3
         elif model_name == "olmoe-4x7b":
-            # MoE model configuration for router SFT
             model = TransformerConfig.olmoe_nx7b(  # Use MoE configuration
                 vocab_size=tokenizer_config.padded_vocab_size(),
-                num_experts=4,  # Override default of 2
+                num_experts=4,
                 top_k=4,  # Override default of 1
                 lb_loss_weight=0.0,
                 z_loss_weight=0.001,
-                freeze_params=[],  # Don't freeze anything initially - we'll do it manually
+                use_flash=True,
+                freeze_params=[
+                    "embeddings.*",
+                    "blocks.*.attention*",
+                    "blocks.*.feed_forward_norm.*",
+                    "lm_head.*",
+                    "blocks.*.feed_forward_moe.experts*", # Uncomment to only train the router
+                ],
             )
+            ep_degree=4
         else:
             raise OLMoConfigurationError(f"Must set a valid model_name: {model_name}")
 
