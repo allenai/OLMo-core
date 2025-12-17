@@ -1,5 +1,15 @@
 # Training Linear RNNs and Hybrid Models
 
+## Dependencies
+
+You will need to install OLMo-core and FLA:
+
+```shell
+pip install -e ".[all]"
+pip install flash-linear-attention  # Might already be in dependencies?
+pip install git+https://github.com/triton-lang/triton
+```
+
 ## 1B and 7B Experiments
 
 ```shell
@@ -35,19 +45,18 @@ This may fail if you don't have permissions.
 It could also be the case that there are no hosts satisfying these constraints, resulting in an `BeakerInsufficientResourcesError`.
 In either case, you can add `--launch.use_hostname_constraints=false` to disable hostname constraints (which means you won't need to authenticate).
 
-At this point, you can launch the run inside a while loop as follows so it immediately restarts when it fails:
-
 ```shell
-while true; do
-    python src/scripts/train/linear-rnns/OLMo3.1-7B-hybrid.py launch OLMo3.1-7B-6T-30h ai2/augusta \
-        --launch.priority="urgent" \
-        --launch.num_nodes=64 \
-        --train_module.dp_config.name=hsdp \
-        --train_module.dp_config.shard_degree=64 \
-        --launch.beaker_image=tylerr/olmo-core-tch270cu128-2025-09-24 \
-        --model.block.attention.backend=flash_3
-done
+python src/scripts/train/linear-rnns/OLMo3.1-7B-hybrid.py launch OLMo3.1-7B-6T-30h ai2/augusta \
+    --launch.priority="urgent" \
+    --launch.num_nodes=64 \
+    --train_module.dp_config.name=hsdp \
+    --train_module.dp_config.shard_degree=128 \
+    --launch.beaker_image=tylerr/olmo-core-tch270cu128-2025-09-24 \
+    --model.block.attention.backend=flash_3 \
+    --launch.num_execution_units=4
 ```
+
+If the run is consistently failing, you can launch it inside a while loop.
 
 ### Optimizing Throughput
 
