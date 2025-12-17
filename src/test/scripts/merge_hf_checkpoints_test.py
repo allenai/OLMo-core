@@ -1,7 +1,6 @@
 """
 Tests for the merge_hf_checkpoints.py script.
 """
-
 import gc
 import importlib.util
 import json
