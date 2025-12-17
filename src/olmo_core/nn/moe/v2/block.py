@@ -773,6 +773,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 local_x_global_shared_expert_weights,
                 global_batch_size_per_local_expert,
                 routed_expert_router_aux_loss_info,
+                use_reentrant=True,
             )
         else:   
             return self._combined_forward_ep_part2(
