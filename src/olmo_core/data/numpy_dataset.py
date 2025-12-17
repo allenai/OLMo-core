@@ -1269,7 +1269,6 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
             indices_dtype=self.indices_dtype,
             long_doc_strategy=self._long_doc_strategy,
         )
-
         document_indices = document_indices.reshape(-1)
 
         instance_start_offset = 0
