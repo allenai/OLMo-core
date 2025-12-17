@@ -771,6 +771,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 local_x_global_routed_expert_indices,
                 local_batch_size_per_global_routed_expert,
                 local_x_global_shared_expert_weights,
+                global_batch_size_per_local_expert,
                 routed_expert_router_aux_loss_info,
             )
         else:   
@@ -780,6 +781,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                 local_x_global_routed_expert_indices=local_x_global_routed_expert_indices,
                 local_batch_size_per_global_routed_expert=local_batch_size_per_global_routed_expert,
                 local_x_global_shared_expert_weights=local_x_global_shared_expert_weights,
+                global_batch_size_per_local_expert=global_batch_size_per_local_expert,
                 routed_expert_router_aux_loss_info=routed_expert_router_aux_loss_info,
             )
 
@@ -790,6 +792,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         local_x_global_routed_expert_indices: torch.Tensor,
         local_batch_size_per_global_routed_expert: torch.Tensor,
         local_x_global_shared_expert_weights: Optional[torch.Tensor],
+        global_batch_size_per_local_expert: torch.Tensor,
         routed_expert_router_aux_loss_info: Optional[Tuple]  
     ):
         B, S, D = attn_res_out.shape
