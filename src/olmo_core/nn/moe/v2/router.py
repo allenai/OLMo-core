@@ -497,6 +497,16 @@ class MoERouterV2(nn.Module):
                         torch.save(self._debug_index, f)
                     with open(f"/workspace/{dist.get_rank()}_recomputed_index.pt", "wb") as f:
                         torch.save(recomputed, f)
+                    debug_info = {
+                        'scores': scores.detach().cpu(),
+                        'expert_weights': expert_weights.detach().cpu(),
+                        'logits': logits.detach().cpu(),    
+                        'weight': self.weight.data.detach().cpu(),
+                        'x': x.detach().cpu(),
+                    }
+                    with open(f"/workspace/{dist.get_rank()}_debug_info.pt", "wb") as f:
+                        torch.save(debug_info, f)
+                        
                     raise ValueError("Debug expert indices mismatch!")
                 else:
                     self._debug_index = None #
