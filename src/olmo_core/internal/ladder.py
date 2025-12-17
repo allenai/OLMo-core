@@ -3,12 +3,11 @@ import logging
 import sys
 import textwrap
 from pathlib import Path
-from typing import Callable, Type, TypeVar
+from typing import Callable, Type
 
 import rich
 
 import olmo_core.io as io
-from olmo_core.config import StrEnum
 from olmo_core.data.composable import *
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.internal.common import build_launch_config
@@ -24,13 +23,10 @@ from olmo_core.utils import prepare_cli_environment
 log = logging.getLogger(__name__)
 
 
-S = TypeVar("S", bound=StrEnum)
-
-
 def parse_args(
     configure_ladder: Callable[[argparse.Namespace], ModelLadder],
     *,
-    size_enum: Type[S] = TransformerSize,
+    size_enum: Type[TransformerSize] = TransformerSize,
     add_additional_args: Callable[[str, argparse.ArgumentParser], None] | None = None,
 ) -> argparse.Namespace:
     formatter_class = type(
@@ -266,7 +262,7 @@ def parse_args(
 def main(
     configure_ladder: Callable[[argparse.Namespace], ModelLadder],
     *,
-    size_enum: Type[S] = TransformerSize,
+    size_enum: Type[TransformerSize] = TransformerSize,
     add_additional_args: Callable[[str, argparse.ArgumentParser], None] | None = None,
 ):
     args = parse_args(
