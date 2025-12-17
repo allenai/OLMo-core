@@ -173,7 +173,7 @@ class TransformerModelConfigurator(ModelConfigurator[TransformerConfig]):
             name=DataParallelType.fsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
-            wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
+            wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
         )
 
         train_module_config = TransformerTrainModuleConfig(
