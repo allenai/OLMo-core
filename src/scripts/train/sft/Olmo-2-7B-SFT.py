@@ -35,9 +35,7 @@ from olmo_core.internal.common import (
 )
 from olmo_core.io import list_directory
 from olmo_core.launch.beaker import BeakerLaunchConfig
-from olmo_core.nn.attention import SlidingWindowAttentionConfig
-from olmo_core.nn.rope import YaRNRoPEScalingConfig
-from olmo_core.nn.transformer import TransformerBlockConfig, TransformerConfig
+from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import LinearWithWarmup, SkipStepAdamWConfig
 from olmo_core.train import (
     Duration,
@@ -58,7 +56,6 @@ from olmo_core.train.train_module import (
     TransformerActivationCheckpointingConfig,
     TransformerActivationCheckpointingMode,
     TransformerDataParallelConfig,
-    TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
 from olmo_core.train.train_module.transformer.config import (

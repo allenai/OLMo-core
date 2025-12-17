@@ -58,7 +58,6 @@ from olmo_core.train.train_module import (
     TransformerActivationCheckpointingConfig,
     TransformerActivationCheckpointingMode,
     TransformerDataParallelConfig,
-    TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
 from olmo_core.train.train_module.transformer.config import (
