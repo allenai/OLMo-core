@@ -126,8 +126,8 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
             pre_decay = dataclasses.replace(
                 period, value=period.value - round(period_length * self.decay_fraction)
             )
-            checkpoints.append((pre_decay, f"Period {pidx+1}, {c}xC pre-decay"))
-            checkpoints.append((period, f"Period {pidx+1}, {c}xC post-decay"))
+            checkpoints.append((pre_decay, f"period {pidx+1}, {c}xC pre-decay"))
+            checkpoints.append((period, f"period {pidx+1}, {c}xC post-decay"))
         return checkpoints
 
     def plot_lr_schedule(
