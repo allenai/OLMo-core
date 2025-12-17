@@ -977,6 +977,8 @@ class MoEV2TransformerTrainModule(TrainModule):
         if dry_run:
             for model in self.model_parts:
                 model.reset_auxiliary_metrics()
+
+            torch.cuda.empty_cache()
             return
 
         # Record loss metrics.
