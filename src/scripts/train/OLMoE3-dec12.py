@@ -114,7 +114,7 @@ DENSE_LAYER_MLP = (TOP_K * MOE_HIDDEN_SIZE + SHARED_MLP_HIDDEN_SIZE * NUM_SHARED
 
 MICRO_BSZ = 1
 # DP_DIM=2
-EP_DIM=16
+EP_DIM=8
 PP_DIM=1
 
 # ref
@@ -190,14 +190,15 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         init_seed=SEED,
         d_model=d_model,
         two_batch_overlap=USE_TBO,
-        recompute_each_block=True,
+        recompute_each_block=False,
         recompute_all_blocks_by_chunk=False,
         vocab_size=common.tokenizer.padded_vocab_size(),
         n_layers=NUM_LAYERS,
         block=MoEFusedV2TransformerBlockConfig(
             name=TransformerBlockType.moe_fused_v2,
             checkpoint_permute_moe_unpermute=False,
-            checkpoint_attn=False,
+            checkpoint_attn=True,
+            checkpoint_part2=True,
             checkpoint_second_unpermute=False,
             attention=AttentionConfig(
                 name=AttentionType.default,
