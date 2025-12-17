@@ -39,6 +39,7 @@ def parse_args() -> argparse.Namespace:
             """
         ).replace("\n", " "),
         "launch_run": "Launch a Beaker job to run the ladder for a given model size.",
+        "launch_all": "Launch Beaker jobs to run the all model sizes of the ladder.",
         "status": "Check the status of the ladder run for a given model size.",
         "metrics": "Download the metrics for a given model size.",
         "help": "Show this help message.",
@@ -91,13 +92,21 @@ def parse_args() -> argparse.Namespace:
         default="olmo3-ladder",
         help="A name to assign to the ladder experiment.",
     )
-    parser.add_argument(
-        "--size",
-        choices=list(TransformerSize),
-        required=command
-        in {"dry_run", "benchmark", "launch_benchmark", "run", "launch_run", "metrics"},
-        help="The model size.",
-    )
+    if command not in {"launch_all"}:
+        parser.add_argument(
+            "--size",
+            choices=list(TransformerSize),
+            required=command
+            in {"dry_run", "benchmark", "launch_benchmark", "run", "launch_run", "metrics"},
+            help="The model size.",
+        )
+    if command in {"launch_all", "status"}:
+        parser.add_argument(
+            "--max-size",
+            choices=list(TransformerSize),
+            default=None,
+            help="The maximum model size. If not specified, status/metrics for all sizes will be shown.",
+        )
     parser.add_argument(
         "--sequence-length",
         type=int,
@@ -109,12 +118,6 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=4.0,
         help="The Chinchilla multiple to use for the ladder.",
-    )
-    parser.add_argument(
-        "--show-model",
-        action="store_true",
-        help="Show the model config.",
-        default=False,
     )
     parser.add_argument(
         "--cluster",
@@ -182,6 +185,15 @@ def parse_args() -> argparse.Namespace:
             help="""Open a live display of the LR schedule plot.""",
         )
 
+    # Debug.
+    if command == "dry_run":
+        parser.add_argument(
+            "--show-model",
+            action="store_true",
+            help="Show the model config.",
+            default=False,
+        )
+
     # Make sure the command is in the right position, otherwise the way we build the launch
     # config would fail.
     if command not in commands:
@@ -226,21 +238,19 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         instance_sources=instance_sources,
         data_loader=ComposableDataLoaderConfig(num_workers=8),
     )
-    if args.show_model:
-        log.info("Model config:")
-        log.info(ladder.get_model_config(args.size))
     return ladder
 
 
 def configure_launcher(
-    args: argparse.Namespace, ladder: ModelLadder, cmd: str
+    args: argparse.Namespace, ladder: ModelLadder, cmd: str, size: str | None = None
 ) -> BeakerLaunchConfig:
     ladder = configure_ladder(args)
-    num_gpus = ladder.get_num_devices(args.size)
+    size = size or args.size
+    num_gpus = ladder.get_num_devices(size)
     assert (num_gpus % 8 == 0) or num_gpus < 8
     launch_config = build_launch_config(
         cmd=[sys.argv[0], cmd] + sys.argv[2:],
-        name=f"{args.name}-{args.size}",
+        name=f"{args.name}-{size}",
         num_nodes=max(num_gpus // 8, 1),
         cluster=args.cluster,
         workspace=args.workspace,
@@ -269,6 +279,8 @@ def main():
         run(args)
     elif args.cmd == "launch_run":
         launch_run(args)
+    elif args.cmd == "launch_all":
+        launch_all(args)
     elif args.cmd == "status":
         status(args)
     elif args.cmd == "metrics":
@@ -280,6 +292,9 @@ def main():
 def dry_run(args: argparse.Namespace):
     prepare_cli_environment()
     ladder = configure_ladder(args)
+    if args.show_model:
+        log.info("Model config:")
+        log.info(ladder.get_model_config(args.size))
     ladder.dry_run(
         args.size,
         show_plot=args.show_plot,
@@ -304,34 +319,51 @@ def run(args: argparse.Namespace):
     ladder.run(args.size)
 
 
-def launch_run(args: argparse.Namespace):
-    prepare_cli_environment()
-    ladder = configure_ladder(args)
-
+def _launch_run(
+    ladder: ModelLadder, launcher: BeakerLaunchConfig, size: TransformerSize, follow: bool = True
+):
     # Check status of run. Don't do anything if final checkpoint already exist.
-    checkpoints = ladder.get_checkpoints(args.size)
+    checkpoints = ladder.get_checkpoints(size)
     if not checkpoints:
-        raise OLMoConfigurationError(
-            f"Run for size {args.size} has no configured checkpoint intervals."
-        )
+        raise OLMoConfigurationError(f"Run for size {size} has no configured checkpoint intervals.")
     elif checkpoints[-1].exists:
         rich.get_console().print(
-            f"[b green]✔[/] Run for size [green]{args.size}[/] already complete. "
+            f"[b green]✔[/] Run for size [green]{size}[/] already complete. "
             f"Final checkpoint can be found at [u blue]{checkpoints[-1].path}[/]",
             highlight=False,
         )
         return
 
+    log.info(f"Launching ladder run for size {size}...")
+    log.info(f"Results will be saved to {ladder.get_save_folder(size)}")
+    launcher.launch(follow=follow, slack_notifications=False)
+
+
+def launch_run(args: argparse.Namespace):
+    prepare_cli_environment()
+    ladder = configure_ladder(args)
     launcher = configure_launcher(args, ladder, "run")
-    log.info(f"Launching ladder run for size {args.size}...")
-    log.info(f"Results will be saved to {ladder.get_save_folder(args.size)}")
-    launcher.launch(follow=True, slack_notifications=False)
+    _launch_run(ladder, launcher, TransformerSize(args.size))
+
+
+def launch_all(args: argparse.Namespace):
+    prepare_cli_environment()
+    ladder = configure_ladder(args)
+    sizes = [TransformerSize(s) for s in ladder.sizes]
+    if args.max_size:
+        sizes = [s for s in sizes if s <= TransformerSize(args.max_size)]
+
+    for size in sizes:
+        launcher = configure_launcher(args, ladder, "run", size=size)
+        _launch_run(ladder, launcher, size, follow=False)
 
 
 def status(args: argparse.Namespace):
     prepare_cli_environment()
     ladder = configure_ladder(args)
-    sizes = [args.size] if args.size else ladder.sizes
+    sizes = [TransformerSize(args.size)] if args.size else ladder.sizes
+    if args.max_size:
+        sizes = [s for s in sizes if s <= TransformerSize(args.max_size)]
     for size in sizes:
         print()
         checkpoints = ladder.get_checkpoints(size)

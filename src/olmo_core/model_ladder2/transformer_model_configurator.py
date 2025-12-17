@@ -41,6 +41,30 @@ class TransformerSize(StrEnum):
         else:
             raise ValueError(f"Invalid size descriptor '{self}'")
 
+    def __lt__(self, other: "TransformerSize") -> bool:
+        """Less than comparison based on approximate number of parameters."""
+        if not isinstance(other, TransformerSize):
+            return NotImplemented
+        return self.approx_num_params < other.approx_num_params
+
+    def __le__(self, other: "TransformerSize") -> bool:
+        """Less than or equal comparison based on approximate number of parameters."""
+        if not isinstance(other, TransformerSize):
+            return NotImplemented
+        return self.approx_num_params <= other.approx_num_params
+
+    def __gt__(self, other: "TransformerSize") -> bool:
+        """Greater than comparison based on approximate number of parameters."""
+        if not isinstance(other, TransformerSize):
+            return NotImplemented
+        return self.approx_num_params > other.approx_num_params
+
+    def __ge__(self, other: "TransformerSize") -> bool:
+        """Greater than or equal comparison based on approximate number of parameters."""
+        if not isinstance(other, TransformerSize):
+            return NotImplemented
+        return self.approx_num_params >= other.approx_num_params
+
 
 @dataclass(kw_only=True, eq=True)
 class TransformerModelConfigurator(ModelConfigurator[TransformerConfig]):
