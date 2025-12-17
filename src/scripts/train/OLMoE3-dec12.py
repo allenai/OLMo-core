@@ -91,7 +91,7 @@ SEQUENCE_LENGTH = 8192
 
 MAX_DURATION = int(7000e9)  # int(6e12), don't forget to adjust the LR when you increase this
 EVAL_INTERVAL = 1000
-SAVE_INTERVAL=200
+SAVE_INTERVAL=500
 
 NUM_EXPERTS = 64
 TOP_K = 4
@@ -118,7 +118,7 @@ EP_DIM=8
 PP_DIM=1
 
 # ref
-REF_NUM_NODES=16
+REF_NUM_NODES=32
 GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (32)
 GLOBAL_BATCH_SIZE = (
     (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
@@ -437,9 +437,9 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             )
         )
         # TODO: might not be able to run in-loop evals depending on parallel strategies
-        # .with_recommended_evals(
-        #     common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
-        # )
+        .with_recommended_evals(
+            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
+        )
     )
 
 
