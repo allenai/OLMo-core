@@ -1,5 +1,4 @@
 import logging
-import time
 from typing import List, Optional, TypeVar, cast
 
 import torch
@@ -148,7 +147,6 @@ def parallelize_model(
 
     # Materialize and init parameters.
     log.info("Initializing model weights...")
-    start_time = time.monotonic()
     for m in model_parts:
         m.init_weights(
             max_seq_len=max_sequence_length,
@@ -156,9 +154,5 @@ def parallelize_model(
             device=device,
             world_mesh=world_mesh,
         )
-    if torch.cuda.is_available():
-        torch.cuda.synchronize()
-    elapsed_time = time.monotonic() - start_time
-    log.info(f"Model weight initialization completed in {elapsed_time:.2f} seconds")
 
     return model
