@@ -106,12 +106,12 @@ class FLA(nn.Module):
         #   g = -A_log.exp() * softplus(a_proj(x) + dt_bias)
         # They must be sharded on dim 0 to match the colwise-sharded a_proj output.
         if hasattr(inner, "A_log") and inner.A_log is not None:
-            inner.register_parameter(
-                "A_log", nn.Parameter(distribute_tensor(inner.A_log, tp_mesh, [Shard(0)]))
+            inner.A_log = nn.Parameter(
+                distribute_tensor(inner.A_log.data, tp_mesh, [Shard(0)])
             )
         if hasattr(inner, "dt_bias") and inner.dt_bias is not None:
-            inner.register_parameter(
-                "dt_bias", nn.Parameter(distribute_tensor(inner.dt_bias, tp_mesh, [Shard(0)]))
+            inner.dt_bias = nn.Parameter(
+                distribute_tensor(inner.dt_bias.data, tp_mesh, [Shard(0)])
             )
 
 
