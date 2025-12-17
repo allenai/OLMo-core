@@ -486,30 +486,30 @@ class MoERouterV2(nn.Module):
             # shape: (num_experts,)
             batch_size_per_expert = batched_batch_size_per_expert.sum(dim=0)
 
-        with torch.no_grad():
-            if self._debug_index is None: # first forward
-                self._debug_index = expert_indices.detach().cpu()
-            else: # recompute
-                recomputed = expert_indices.detach().cpu()
-                if not (self._debug_index == recomputed).all():
-                    print("Debug expert indices mismatch!")
-                    with open(f"/workspace/{dist.get_rank()}_ori_index.pt", "wb") as f:
-                        torch.save(self._debug_index, f)
-                    with open(f"/workspace/{dist.get_rank()}_recomputed_index.pt", "wb") as f:
-                        torch.save(recomputed, f)
-                    debug_info = {
-                        'scores': scores.detach().cpu(),
-                        'expert_weights': expert_weights.detach().cpu(),
-                        'logits': logits.detach().cpu(),    
-                        'weight': self.weight.data.detach().cpu(),
-                        'x': x.detach().cpu(),
-                    }
-                    with open(f"/workspace/{dist.get_rank()}_debug_info.pt", "wb") as f:
-                        torch.save(debug_info, f)
+        # with torch.no_grad():
+        #     if self._debug_index is None: # first forward
+        #         self._debug_index = expert_indices.detach().cpu()
+        #     else: # recompute
+        #         recomputed = expert_indices.detach().cpu()
+        #         if not (self._debug_index == recomputed).all():
+        #             print("Debug expert indices mismatch!")
+        #             with open(f"/workspace/{dist.get_rank()}_ori_index.pt", "wb") as f:
+        #                 torch.save(self._debug_index, f)
+        #             with open(f"/workspace/{dist.get_rank()}_recomputed_index.pt", "wb") as f:
+        #                 torch.save(recomputed, f)
+        #             debug_info = {
+        #                 'scores': scores.detach().cpu(),
+        #                 'expert_weights': expert_weights.detach().cpu(),
+        #                 'logits': logits.detach().cpu(),    
+        #                 'weight': self.weight.data.detach().cpu(),
+        #                 'x': x.detach().cpu(),
+        #             }
+        #             with open(f"/workspace/{dist.get_rank()}_debug_info.pt", "wb") as f:
+        #                 torch.save(debug_info, f)
                         
-                    raise ValueError("Debug expert indices mismatch!")
-                else:
-                    self._debug_index = None #
+        #             raise ValueError("Debug expert indices mismatch!")
+        #         else:
+        #             self._debug_index = None #
 
         aux_loss_info = (scores, logits, batch_size_per_expert, batched_batch_size_per_expert, loss_div_factor)
         return expert_weights, expert_indices, batch_size_per_expert, aux_loss_info
