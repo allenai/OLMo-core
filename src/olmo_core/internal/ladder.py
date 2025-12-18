@@ -123,18 +123,24 @@ def parse_args(
         parser.add_argument(
             "--preemptible",
             action=argparse.BooleanOptionalAction,
-            help="""If the job should be preemptible.""",
+            help="If the job should be preemptible.",
         )
         parser.add_argument(
             "--allow-dirty",
             action="store_true",
-            help="""Allow launching with uncommitted changes.""",
+            help="Allow launching with uncommitted changes.",
             default=False,
         )
         parser.add_argument(
             "--slack-notifications",
             action="store_true",
-            help="""Enable Slack notifications for job status updates.""",
+            help="Enable Slack notifications for job status updates.",
+            default=False,
+        )
+        parser.add_argument(
+            "--dry-run",
+            action="store_true",
+            help="Print the launch config without launching the run.",
             default=False,
         )
 
@@ -158,14 +164,16 @@ def parse_args(
     add_sub_command(
         "benchmark",
         benchmark,
-        "Run a benchmark for a given model size locally.",
+        """
+        Run a benchmark for a given model size locally.
+        This usually isn't invoked directly, but rather via 'launch-benchmark' or 'torchrun'.
+        """,
     )
     add_sub_command(
         "launch-benchmark",
         launch_benchmark,
         """
         Launch a Beaker job to run a benchmark for a given model size.
-        This usually isn't invoked directly, but rather via 'launch-benchmark'.
         """,
     )
     add_sub_command(
@@ -173,7 +181,7 @@ def parse_args(
         run,
         """
         Run the ladder for a given model size locally.
-        This usually isn't invoked directly, but rather via 'launch'.
+        This usually isn't invoked directly, but rather via 'launch' or 'torchrun'.
         """,
     )
     add_sub_command(
@@ -274,11 +282,20 @@ def main(
 def configure_launcher(
     args: argparse.Namespace, ladder: ModelLadder, cmd: str, size: str | None = None
 ) -> BeakerLaunchConfig:
-    size = size or args.size
+    cmd_to_run = [sys.argv[0], cmd] + sys.argv[2:]
+
+    if size is not None:
+        cmd_to_run += ["--size", str(size)]
+    else:
+        assert args.size
+        size = args.size
+    assert size is not None
+
     num_gpus = ladder.get_num_devices(size)
     assert (num_gpus % 8 == 0) or num_gpus < 8
+
     launch_config = build_launch_config(
-        cmd=[sys.argv[0], cmd] + sys.argv[2:],
+        cmd=cmd_to_run,
         name=f"{args.name}-{size}",
         num_nodes=max(num_gpus // 8, 1),
         cluster=args.cluster,
@@ -332,6 +349,7 @@ def _launch_run(
     size: str,
     follow: bool = True,
     slack_notifications: bool = False,
+    dry_run: bool = False,
 ):
     # Check status of run. Don't do anything if final checkpoint already exist.
     checkpoints = ladder.get_checkpoints(size)
@@ -345,9 +363,14 @@ def _launch_run(
         )
         return
 
-    log.info(f"Launching ladder run for size {size}...")
-    log.info(f"Results will be saved to {ladder.get_save_folder(size)}")
-    launcher.launch(follow=follow, slack_notifications=slack_notifications)
+    if dry_run:
+        log.info(f"Launch dry run for size {size}...")
+        log.info(f"Results would be saved to {ladder.get_save_folder(size)}")
+        rich.get_console().print(launcher)
+    else:
+        log.info(f"Launching ladder run for size {size}...")
+        log.info(f"Results will be saved to {ladder.get_save_folder(size)}")
+        launcher.launch(follow=follow, slack_notifications=slack_notifications)
 
 
 def launch(args: argparse.Namespace):
@@ -360,6 +383,7 @@ def launch(args: argparse.Namespace):
         args.size_enum(args.size),
         follow=True,
         slack_notifications=args.slack_notifications,
+        dry_run=args.dry_run,
     )
 
 
@@ -378,6 +402,7 @@ def launch_all(args: argparse.Namespace):
             size,
             follow=False,
             slack_notifications=args.slack_notifications,
+            dry_run=args.dry_run,
         )
 
 
