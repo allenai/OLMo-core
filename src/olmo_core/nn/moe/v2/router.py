@@ -172,6 +172,7 @@ class MoERouterV2(nn.Module):
         self.reset_parameters()
 
         self._debug_index = None
+        self._recompute_cache = None
 
     def reset_parameters(self):
         self._batch_size_per_expert = hide_from_torch(
