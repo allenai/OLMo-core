@@ -383,7 +383,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             save_folder=f'{common.save_folder}/{common.run_name}_{D_MODEL}d{D_ATTN}a_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K{NUM_SHARED_EXPERTS}S_{TAG}',
             save_overwrite=True,
             checkpointer=CheckpointerConfig(
-                save_thread_count=2, load_thread_count=2, throttle_uploads=True
+                save_thread_count=3, load_thread_count=2, throttle_uploads=True
             ),
             metrics_collect_interval=5,
             cancel_check_interval=cancel_check_interval,
