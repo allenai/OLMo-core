@@ -177,7 +177,7 @@ class MultiGroupDistributedDataParallel(Module):
         self.broadcast_buffers = broadcast_buffers
         self.require_backward_grad_sync = True
         self.require_forward_param_sync = True
-        self.overlap_grad_reduce = False
+        self.overlap_grad_reduce = True
 
         # Multi-process-group support.
         if param_process_group_fn is None:

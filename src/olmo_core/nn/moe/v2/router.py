@@ -465,8 +465,10 @@ class MoERouterV2(nn.Module):
 
 
         # TODO: check
+        # WARN: does not work with PP
         if self._recompute_cache is None: # first forward
-            self._recompute_cache = expert_indices.detach() # save for recompute
+            if torch.is_grad_enabled():
+                self._recompute_cache = expert_indices.detach() # save for recompute
         else: # recompute
             expert_indices = self._recompute_cache # use saved expert indices
             self._recompute_cache = None # 
