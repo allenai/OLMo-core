@@ -43,9 +43,11 @@ while true; do
         --launch.priority="urgent" \
         --launch.num_nodes=64 \
         --train_module.dp_config.name=hsdp \
-        --train_module.dp_config.shard_degree=64 \
+        --train_module.dp_config.shard_degree=128 \
         --launch.beaker_image=tylerr/olmo-core-tch270cu128-2025-09-24 \
-        --model.block.attention.backend=flash_3
+        --model.block.attention.backend=flash_3 \
+        --launch.use_hostname_constraints=false \
+        --launch.num_execution_units=4
 done
 ```
 
