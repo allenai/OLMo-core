@@ -86,14 +86,14 @@ class FLA(nn.Module):
         # a_proj, b_proj: GatedDeltaNet-specific gating projections (output num_heads)
         # g_proj: optional gate projection (only when use_gate=True)
         for proj_name in ["q_proj", "k_proj", "v_proj", "a_proj", "b_proj", "g_proj"]:
-            if hasattr(inner, proj_name) and getattr(inner, proj_name) is not None:
-                plan[f"inner.{proj_name}"] = colwise_parallel()
+            assert hasattr(inner, proj_name) and getattr(inner, proj_name) is not None
+            plan[f"inner.{proj_name}"] = colwise_parallel()
 
         # Output projection (rowwise parallel - shard input dimension)
-        if hasattr(inner, "o_proj") and inner.o_proj is not None:
-            plan["inner.o_proj"] = rowwise_parallel(
-                output_layouts=output_layout, use_local_output=use_local_output
-            )
+        assert hasattr(inner, "o_proj") and getattr(inner, "o_proj") is not None
+        plan["inner.o_proj"] = rowwise_parallel(
+            output_layouts=output_layout, use_local_output=use_local_output
+        )
 
         parallelize_module(
             module=self,
@@ -105,14 +105,8 @@ class FLA(nn.Module):
         # A_log and dt_bias are [num_heads] tensors used with a_proj output in:
         #   g = -A_log.exp() * softplus(a_proj(x) + dt_bias)
         # They must be sharded on dim 0 to match the colwise-sharded a_proj output.
-        if hasattr(inner, "A_log") and inner.A_log is not None:
-            inner.A_log = nn.Parameter(
-                distribute_tensor(inner.A_log.data, tp_mesh, [Shard(0)])
-            )
-        if hasattr(inner, "dt_bias") and inner.dt_bias is not None:
-            inner.dt_bias = nn.Parameter(
-                distribute_tensor(inner.dt_bias.data, tp_mesh, [Shard(0)])
-            )
+        inner.A_log = nn.Parameter(distribute_tensor(inner.A_log.data, tp_mesh, [Shard(0)]))
+        inner.dt_bias = nn.Parameter(distribute_tensor(inner.dt_bias.data, tp_mesh, [Shard(0)]))
 
 
 @dataclass
