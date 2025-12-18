@@ -330,7 +330,7 @@ def build_config(
     max_sequence_length: int = 4096,
     beaker_image: str = OLMoCoreBeakerImage.stable,
     num_nodes: int = 1,
-    beaker_workspace: str = "ai2/OLMo-core",
+    beaker_workspace: str = "ai2/long-contexts",
     use_hostname_constraints: bool = False,
     flight_recorder: bool = False,
     num_execution_units: Optional[int] = None,
