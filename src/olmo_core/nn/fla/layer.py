@@ -6,7 +6,7 @@ import fla.layers
 import torch
 from torch import nn
 from torch.distributed import DeviceMesh
-from torch.distributed.tensor import distribute_tensor
+from torch.distributed.tensor import DTensor, distribute_tensor
 from torch.distributed.tensor.parallel import parallelize_module
 from torch.distributed.tensor.placement_types import Placement, Replicate, Shard
 
@@ -107,6 +107,12 @@ class FLA(nn.Module):
         # They must be sharded on dim 0 to match the colwise-sharded a_proj output.
         inner.A_log = nn.Parameter(distribute_tensor(inner.A_log.data, tp_mesh, [Shard(0)]))
         inner.dt_bias = nn.Parameter(distribute_tensor(inner.dt_bias.data, tp_mesh, [Shard(0)]))
+
+        for name, param in inner.named_parameters():
+            if isinstance(param, DTensor):
+                log.info(f"{name}: is_dtensor=True, placements={param.placements}")
+            else:
+                log.info(f"{name}: is_dtensor=False")
 
 
 @dataclass
