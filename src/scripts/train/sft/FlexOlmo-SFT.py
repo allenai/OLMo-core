@@ -404,7 +404,7 @@ class SFTRouterConfig(Config):
                 ],
             )
             ep_degree=4
-            rank_microbatch_size=1024
+            rank_microbatch_size=2048
         else:
             raise OLMoConfigurationError(f"Must set a valid model_name: {model_name}")
 
