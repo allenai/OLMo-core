@@ -50,7 +50,9 @@ class FLA(nn.Module):
         Currently only GatedDeltaNet is supported. GatedDeltaNet has:
         - q_proj, k_proj, v_proj: input projections (columnwise parallel)
         - a_proj, b_proj: gating projections (columnwise parallel)
-        - g_proj: optional gate projection (columnwise parallel)
+        - g_proj: optional gate projection (columnwise parallel, only when use_gate=True)
+        - q_conv1d, k_conv1d, v_conv1d: short convolutions (when use_short_conv=True)
+        - o_norm: output normalization (operates on head_v_dim, no sharding needed)
         - o_proj: output projection (rowwise parallel)
         """
         inner = self.inner
@@ -84,10 +86,13 @@ class FLA(nn.Module):
         # Input projections (columnwise parallel - shard output dimension)
         # q_proj, k_proj, v_proj: standard attention-like projections
         # a_proj, b_proj: GatedDeltaNet-specific gating projections (output num_heads)
-        # g_proj: optional gate projection (only when use_gate=True)
-        for proj_name in ["q_proj", "k_proj", "v_proj", "a_proj", "b_proj", "g_proj"]:
+        for proj_name in ["q_proj", "k_proj", "v_proj", "a_proj", "b_proj"]:
             assert hasattr(inner, proj_name) and getattr(inner, proj_name) is not None
             plan[f"inner.{proj_name}"] = colwise_parallel()
+
+        # g_proj: optional gate projection (only when use_gate=True)
+        if hasattr(inner, "g_proj") and inner.g_proj is not None:
+            plan["inner.g_proj"] = colwise_parallel()
 
         # Output projection (rowwise parallel - shard input dimension)
         assert hasattr(inner, "o_proj") and getattr(inner, "o_proj") is not None
@@ -107,6 +112,26 @@ class FLA(nn.Module):
         # They must be sharded on dim 0 to match the colwise-sharded a_proj output.
         inner.A_log = nn.Parameter(distribute_tensor(inner.A_log.data, tp_mesh, [Shard(0)]))
         inner.dt_bias = nn.Parameter(distribute_tensor(inner.dt_bias.data, tp_mesh, [Shard(0)]))
+
+        # Shard ShortConvolution layers (when use_short_conv=True).
+        # These process the sharded outputs of q_proj/k_proj/v_proj.
+        # ShortConvolution wraps a Conv1d with shape (out_channels, in_channels/groups, kernel_size).
+        # We shard on dim 0 (out_channels) to match the colwise-sharded projection outputs.
+        for conv_name in ["q_conv1d", "k_conv1d", "v_conv1d"]:
+            if hasattr(inner, conv_name) and getattr(inner, conv_name) is not None:
+                conv = getattr(inner, conv_name)
+                # ShortConvolution has a .conv attribute that is the actual Conv1d
+                conv.conv.weight = nn.Parameter(
+                    distribute_tensor(conv.conv.weight.data, tp_mesh, [Shard(0)])
+                )
+                if conv.conv.bias is not None:
+                    conv.conv.bias = nn.Parameter(
+                        distribute_tensor(conv.conv.bias.data, tp_mesh, [Shard(0)])
+                    )
+
+        # o_norm: normalizes over head_v_dim (last dimension), not the head dimension.
+        # Since heads are sharded but each shard has complete head_v_dim vectors,
+        # o_norm can operate locally without sharding its weights.
 
         for name, param in inner.named_parameters():
             if isinstance(param, DTensor):
