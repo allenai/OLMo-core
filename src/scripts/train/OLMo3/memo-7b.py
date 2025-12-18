@@ -50,7 +50,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     source_list = SourceMixtureList.from_yaml(
-        "src/olmo_core/data/source_mixtures/midtrain-memo-auto.yaml"
+        "src/olmo_core/data/source_mixtures/midtrain-memo-10B-4tier.yaml"
     )
     source_list.validate()
     dataset_config = NumpyFSLDatasetConfig.from_src_mix(
@@ -107,10 +107,10 @@ if __name__ == "__main__":
             python src/scripts/train/OLMo3/memo-7b.py dry_run debug_run ai2/augusta
 
         To launch a training run on Augusta w/ 8 nodes:
-        python src/scripts/train/OLMo3/memo-7b.py launch memo-7b ai2/augusta \
+        python src/scripts/train/OLMo3/memo-7b.py launch memo-7b-4tier ai2/jupiter \
             --launch.num_nodes=8 \
             --launch.priority=high \
-            --trainer.callbacks.checkpointer.save_interval=200 \
-            --trainer.callbacks.checkpointer.ephemeral_save_interval=100
+            --trainer.callbacks.checkpointer.save_interval=500 \
+            --trainer.callbacks.checkpointer.ephemeral_save_interval=250
     """
     main(config_builder=build_experiment_config)

@@ -18,7 +18,8 @@ Output Structure (when using --yaml-path):
     ├── art_and_design/
     │   ├── repeat1/documents.jsonl.gz
     │   ├── repeat3/documents.jsonl.gz
-    │   └── repeat6/documents.jsonl.gz
+    │   ├── repeat6/documents.jsonl.gz
+    │   └── repeat10/documents.jsonl.gz
     ├── science_math_and_technology/
     │   └── repeat1/documents.jsonl.gz
     └── ...
@@ -87,7 +88,7 @@ class SourceInfo:
     """Information about a source from the YAML file."""
     source_name: str
     topic: str
-    repetition_rate: int  # 1, 3, or 6
+    repetition_rate: int  # 1, 3, 6, or 10
     target_ratio: float
     max_repetition_ratio: float
     paths: list[str] = field(default_factory=list)
