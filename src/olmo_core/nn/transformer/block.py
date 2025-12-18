@@ -1132,3 +1132,39 @@ class FLABlock(TransformerBlockBase):
                     fsdp_fla.set_modules_to_forward_prefetch([fsdp_mlp])  # type: ignore
         else:
             fully_shard(self, mesh=dp_mesh, **fsdp_kwargs)
+
+    def apply_tp(
+        self, tp_mesh: DeviceMesh, *, input_layout: Placement, float8_enabled: bool = False
+    ):
+        parallelize_module(
+            self,
+            device_mesh=tp_mesh,
+            parallelize_plan=PrepareModuleInput(
+                input_layouts=(input_layout,),
+                desired_input_layouts=(Shard(1),),
+            ),
+        )
+
+        parallelize_module(self.fla_norm, device_mesh=tp_mesh, parallelize_plan=SequenceParallel())
+        parallelize_module(self.dropout, device_mesh=tp_mesh, parallelize_plan=SequenceParallel())
+
+        self.fla.apply_tp(
+            tp_mesh,
+            input_layout=Shard(1),
+            output_layout=Shard(1),
+            use_local_output=False,
+            float8_enabled=float8_enabled,
+        )
+
+        if self.feed_forward is not None:
+            assert self.feed_forward_norm is not None
+            parallelize_module(
+                self.feed_forward_norm, device_mesh=tp_mesh, parallelize_plan=SequenceParallel()
+            )
+            self.feed_forward.apply_tp(
+                tp_mesh,
+                input_layout=Shard(1),
+                output_layout=Shard(1),
+                use_local_output=False,
+                float8_enabled=float8_enabled,
+            )

@@ -8,7 +8,12 @@ from functools import partial
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE, get_root_dir
-from olmo_core.internal.experiment import CommonComponents, ExperimentConfig, build_config, main
+from olmo_core.internal.experiment import (
+    CommonComponents,
+    ExperimentConfig,
+    build_config,
+    main,
+)
 from olmo_core.nn.attention import AttentionConfig, SlidingWindowAttentionConfig
 from olmo_core.nn.fla.layer import FLAConfig
 from olmo_core.nn.transformer import TransformerBlockType, TransformerConfig
@@ -96,7 +101,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         gpus = {CLUSTER_TO_GPU_TYPE.get(c, "unknown") for c in common.launch.clusters}
         if all("B200" in g for g in gpus):
             rank_microbatch_size *= 2
-    
+
     # Added because FLA models seem to use more memory than transformers.
     rank_microbatch_size = int(rank_microbatch_size // MICROBATCH_DISCOUNT)
 

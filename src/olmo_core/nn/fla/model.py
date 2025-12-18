@@ -1,10 +1,11 @@
 from dataclasses import dataclass
 from typing import Any, Dict
-from olmo_core.config import Config
 
-import torch
 import fla.models
+import torch
 from transformers import AutoModelForCausalLM
+
+from olmo_core.config import Config
 
 
 class FLAModel(torch.nn.Module):
