@@ -10,6 +10,7 @@ from .scheduler import (
     ConstantScheduler,
     ConstantWithWarmup,
     CosWithWarmup,
+    CosWithWarmupAndLinearDecay,
     ExponentialScheduler,
     HalfCosWithWarmup,
     InvSqrtWithWarmup,

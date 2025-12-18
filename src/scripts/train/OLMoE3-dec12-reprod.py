@@ -46,7 +46,7 @@ from olmo_core.nn.transformer import (
     TransformerType,
     MoEFusedV2TransformerConfig,
 )
-from olmo_core.optim import WSD, OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig, AdamWConfig, CosWithWarmup, WSD
+from olmo_core.optim import WSD, OptimGroupOverride, SchedulerUnits, SkipStepAdamWConfig, AdamWConfig, CosWithWarmup
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
     BatchSizeSchedulerCallback,
@@ -90,8 +90,8 @@ SEQUENCE_LENGTH = 8192
 
 
 MAX_DURATION = int(7000e9)  # int(6e12), don't forget to adjust the LR when you increase this
-EVAL_INTERVAL = 100
-SAVE_INTERVAL=25
+EVAL_INTERVAL = 20
+SAVE_INTERVAL=20
 
 NUM_EXPERTS = 64
 TOP_K = 4
@@ -118,7 +118,7 @@ EP_DIM=8
 PP_DIM=1
 
 # ref
-REF_NUM_NODES=3
+REF_NUM_NODES=12
 GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (96)
 GLOBAL_BATCH_SIZE = (
     (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
@@ -150,7 +150,8 @@ RANDOM_ASSIGN=False
 
 SEED = 2026
 
-TAG=f'dev-S{SEED}-WA'
+RESUME_STEP=58800
+TAG=f'dev-S{SEED}-WA-{RESUME_STEP}'
 
 # if UNIFORM_ASSIGN:
 #     TAG = 'U-' + TAG
@@ -191,13 +192,13 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         init_seed=SEED,
         d_model=d_model,
         two_batch_overlap=USE_TBO,
-        recompute_each_block=False,
+        recompute_each_block=True,
         recompute_all_blocks_by_chunk=False,
         vocab_size=common.tokenizer.padded_vocab_size(),
         n_layers=NUM_LAYERS,
         block=MoEFusedV2TransformerBlockConfig(
             name=TransformerBlockType.moe_fused_v2,
-            checkpoint_permute_moe_unpermute=True,
+            checkpoint_permute_moe_unpermute=False,
             checkpoint_attn=False,
             checkpoint_second_unpermute=False,
             attention=AttentionConfig(
@@ -208,9 +209,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                 rope=RoPEConfig(name=RoPEType.default, theta=500_000, scaling=None, full_precision=True),
                 qk_norm=layer_norm ,
                 # use_flash=True,
-                # backend=AttentionBackendName.flash_3,
-                # backend=AttentionBackendName.flash_2,
-                backend=AttentionBackendName.te,
+                backend=AttentionBackendName.flash_3,
                 use_head_qk_norm=True,
                 dtype=dtype,
                 d_attn=D_ATTN,
@@ -290,9 +289,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                     rope=RoPEConfig(name=RoPEType.default, theta=500_000, scaling=None, full_precision=True),
                     qk_norm=layer_norm ,
                     # use_flash=True,
-                    # backend=AttentionBackendName.flash_3,
-                    # backend=AttentionBackendName.flash_2,
-                    backend=AttentionBackendName.te,
+                    backend=AttentionBackendName.flash_3,
                     use_head_qk_norm=True,
                     dtype=dtype,
                     d_attn=D_ATTN,
@@ -307,7 +304,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     return config
 
 
-EXPERT_LR = LR * math.sqrt(TOP_K / NUM_EXPERTS)  # scale lr for expert params
+
 def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrainModuleConfig:
     from olmo_core.optim.moe_optimizer import MoEFusedV2OptimizerConfig
     return MoEV2TransformerTrainModuleConfig(
@@ -319,7 +316,7 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
             betas=(0.9, 0.95),
             group_overrides=[
                 OptimGroupOverride(params=["embeddings.weight", "*_norm.weight"], opts=dict(weight_decay=0.0)),
-                # OptimGroupOverride(params=["*w_up_gate", "*w_down"], opts=dict(lr=EXPERT_LR)),
+                # OptimGroupOverride(params=["*w_up_gate"], opts=dict(weight_decay=0.1)) # HACK: just to make a separate group to avoid OOM in RS
                 # OptimGroupOverride(params=["embeddings.weight", ], opts=dict(weight_decay=0.0)) #TODO: fix
             ],
             #TODO: weight decay for norm?
@@ -371,7 +368,7 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
     )
 
 # WORK_DIR = "/jfs/tianhua-tao/ws-olmoe"
-WORK_DIR = "/workspace"
+WORK_DIR = "/weka/oe-training-default/tianhua/ws-megatron"
 
 def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     cancel_check_interval = 10
@@ -383,8 +380,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
     return (
         TrainerConfig(
-            # load_path='/workspace/checkpoint/OLMoE3-dec12/OLMoE3-dec12_3072d3072a_32L2560M2560S_64E4K1S_dev-S2026-WA/step57500',
-            # load_path='/workspace/checkpoint/OLMoE3-dec12_3072d3072a_32L2560M2560S_64E4K1S_dev-S2026-WA/step59150',
+            load_path=f'/weka/oe-training-default/tianhua/ws-megatron/checkpoint/OLMoE3-dec12/OLMoE3-dec12_3072d3072a_32L2560M2560S_64E4K1S_dev-S2026-WA/step{RESUME_STEP}',
             save_folder=f'{WORK_DIR}/checkpoint/{common.run_name}_{D_MODEL}d{D_ATTN}a_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K{NUM_SHARED_EXPERTS}S_{TAG}',
             # save_folder=f'{common.save_folder}/{common.run_name}_{D_MODEL}d{D_ATTN}a_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K{NUM_SHARED_EXPERTS}S_{TAG}',
             save_overwrite=True,
@@ -434,23 +430,23 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             "profiler", 
             NvidiaProfilerCallback(enabled=False, # NOTE: change this
                                    profile_ranks=list(range(0, 8*128, 8)),
-                                   start=59156,
-                                   end=59159
+                                   start=3031,
+                                   end=3034
             )
         )
         .with_callback(
             "torch_mem_history",
             TorchMemoryHistoryCallback(enabled=False, # NOTE: change this
                                    profile_ranks=list(range(0, 8*128, 8)),
-                                   start=59161,
-                                   end=59164,
+                                   start=821,
+                                   end=824,
                                    output_dir='/workspace/tmp'
             )
         )
         # TODO: might not be able to run in-loop evals depending on parallel strategies
-        .with_recommended_evals(
-            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
-        )
+        # .with_recommended_evals(
+        #     common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=EVAL_INTERVAL
+        # )
     )
 
 

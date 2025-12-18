@@ -356,7 +356,7 @@ class AllToAllWaitOp(torch.autograd.Function):
         setattr(x_grad, "_a2a_handle", x_grad_handle)
         return x_grad, y_grad, None
 
-
+@torch._dynamo.disable()
 def all_to_all_async(
     x: torch.Tensor,
     output_split_sizes: Optional[List[int]] = None,
@@ -370,6 +370,7 @@ def all_to_all_async(
         group,
     )
 
+@torch._dynamo.disable()
 def all_to_all_wait(
     x: torch.Tensor,
     y: torch.Tensor,

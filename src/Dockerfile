@@ -1,4 +1,4 @@
-ARG UBUNTU_VERSION=22.04
+ARG UBUNTU_VERSION=24.04
 ARG TARGET_PLATFORM=x86_64
 ARG CUDA_VERSION=12.8.1
 ARG CUDA_VERSION_PATH=cu128
@@ -43,10 +43,10 @@ RUN chmod +x ~/miniconda.sh && \
 
 # Install PyTorch core ecosystem.
 ARG CUDA_VERSION_PATH
-ARG TORCH_VERSION=2.9.1
+ARG TORCH_VERSION=2.10.0
 ARG INSTALL_CHANNEL=whl
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/${INSTALL_CHANNEL}/${CUDA_VERSION_PATH}/ \
-    torch==${TORCH_VERSION} torchao torchvision torchaudio
+    torch==${TORCH_VERSION} torchvision torchaudio
 
 ENV TORCH_CUDA_ARCH_LIST="8.0 9.0 10.0"
 
@@ -54,14 +54,14 @@ ENV TORCH_CUDA_ARCH_LIST="8.0 9.0 10.0"
 # NOTE: right now we need to build with CUTLASS so we can pass batch sizes on GPU.
 # See https://github.com/tgale96/grouped_gemm/pull/21
 ENV GROUPED_GEMM_CUTLASS="1"
-ARG GROUPED_GEMM_VERSION="grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@main"
-RUN pip install --no-build-isolation --no-cache-dir "${GROUPED_GEMM_VERSION}"
+ARG GROUPED_GEMM_SHA="f1429a3c44c98f7912aa4b00125144cdf4e7fdb2"
+RUN pip install --no-build-isolation --no-cache-dir "grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@${GROUPED_GEMM_SHA}"
 
 # Install flash-attn 2
 ARG FLASH_ATTN_VERSION=2.8.2
 RUN pip install --no-build-isolation --no-cache-dir flash-attn==${FLASH_ATTN_VERSION}
 
-# Install flash-attn 3
+# Install flash-attn 3.
 ARG FLASH_ATTN_3_SHA="92ca9da8d66f7b34ff50dc080ec0fef9661260d6"
 ARG FA3_MAX_JOBS=16
 RUN git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com/Dao-AILab/flash-attention.git && \
@@ -73,6 +73,30 @@ RUN git clone --depth 1 --recurse-submodules --shallow-submodules https://github
     FLASH_ATTENTION_DISABLE_FP16=TRUE MAX_JOBS=${FA3_MAX_JOBS} python setup.py install && \
     cd /app/build && \
     rm -rf flash-attention
+
+# flash-attn 3 will be installed to '/opt/conda/lib/python3.12/site-packages/flash_attn_3-*.egg/'
+# and will only be importable as 'flash_attn_interface'. However, TE expects to import this
+# as 'flash_attn_3.flash_attn_interface'. So we modify the package directory structure to adhere
+# to that.
+RUN cd /opt/conda/lib/python${PYTHON_VERSION}/site-packages/ && \
+    mkdir -p flash_attn_3 && \
+    mv flash_attn_3-*.egg/flash_attn_3/* flash_attn_3/ && \
+    mv flash_attn_3-*.egg/flash_attn_interface.py flash_attn_3/ && \
+    touch flash_attn_3/__init__.py && \
+    rm -rf flash_attn_3-*
+
+# Install flash-attn 4 if requested.
+ARG FLASH_ATTN_4_SHA=""
+RUN if [ -n "${FLASH_ATTN_4_SHA}" ] ; then \
+    git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com/Dao-AILab/flash-attention.git && \
+    cd flash-attention && \
+    git fetch --depth 1 origin ${FLASH_ATTN_4_SHA} && \
+    git checkout ${FLASH_ATTN_4_SHA} && \
+    git submodule update --init --depth 1 && \
+    cd flash_attn/cute && \
+    pip install --no-build-isolation --no-cache-dir . && \
+    cd /app/build && \
+    rm -rf flash-attention; fi
 
 # Install transformer-engine.
 ARG TE_VERSION=2.9
@@ -98,7 +122,8 @@ RUN pip install --no-cache-dir '.[all]' && \
 # Release image
 #########################################################################
 
-FROM ${BASE_IMAGE} AS release
+# FROM ${BASE_IMAGE} AS release
+FROM ${DEVEL_BASE_IMAGE} AS release
 
 # Install system dependencies.
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -107,18 +132,43 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
         cmake \
         curl \
         wget \
+        unzip \
         libxml2-dev \
         libjpeg-dev \
         libpng-dev \
+        gnupg \
+        jq \
         gcc \
+        net-tools \
+        openssh-server \
+        git-lfs \
+        bc \
+        sudo \
         git && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* \
+    # AWS CLI \
+    && curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" \
+    && unzip awscliv2.zip \
+    && ./aws/install \
+    && rm awscliv2.zip \
+    # Google Cloud SDK \
+    && echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] http://packages.cloud.google.com/apt cloud-sdk main" \
+        | tee -a /etc/apt/sources.list.d/google-cloud-sdk.list \
+    && curl https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+        | apt-key --keyring /usr/share/keyrings/cloud.google.gpg add - \
+    && apt-get update \
+    && apt-get install -y google-cloud-sdk \
+    && rm -rf /var/lib/apt/lists/* \
+    # GitHub CLI \
+    && curl -sS https://webi.sh/gh | sh \
+    # uv \
+    && curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Install MLNX OFED user-space drivers
 # See https://docs.nvidia.com/networking/pages/releaseview.action?pageId=15049785#Howto:DeployRDMAacceleratedDockercontaineroverInfiniBandfabric.-Dockerfile
 ARG UBUNTU_VERSION
 ARG TARGET_PLATFORM
-ENV MOFED_VER="24.01-0.3.3.1"
+ENV MOFED_VER="24.04-0.6.6.0"
 RUN wget --quiet https://content.mellanox.com/ofed/MLNX_OFED-${MOFED_VER}/MLNX_OFED_LINUX-${MOFED_VER}-ubuntu${UBUNTU_VERSION}-${TARGET_PLATFORM}.tgz && \
     tar -xvf MLNX_OFED_LINUX-${MOFED_VER}-ubuntu${UBUNTU_VERSION}-${TARGET_PLATFORM}.tgz && \
     MLNX_OFED_LINUX-${MOFED_VER}-ubuntu${UBUNTU_VERSION}-${TARGET_PLATFORM}/mlnxofedinstall --basic --user-space-only --without-fw-update -q && \
@@ -128,11 +178,48 @@ RUN wget --quiet https://content.mellanox.com/ofed/MLNX_OFED-${MOFED_VER}/MLNX_O
 # Copy conda environment.
 COPY --from=build /opt/conda /opt/conda
 
-ENV PATH=/opt/conda/bin:$PATH
+# Keep these for non-interactive processes (docker run / docker exec / VS Code server)
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
-ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
-ENV PATH=/usr/local/nvidia/bin:/usr/local/cuda/bin:$PATH
+ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64:${LD_LIBRARY_PATH}
+ENV UV_SYSTEM_PYTHON=1
+ENV UV_BREAK_SYSTEM_PACKAGES=1
+ENV PATH=/usr/local/nvidia/bin:/usr/local/cuda/bin:/root/.local/bin:/root/.cargo/bin:/opt/conda/bin:$PATH
+
+# One canonical env script (login shells) + source it for interactive non-login bash shells (VS Code terminal)
+RUN set -eux; \
+  cat > /etc/profile.d/99-container-env.sh <<'EOF'
+# Container-wide env for login shells (SSH, su -) and (via bash.bashrc below) interactive shells.
+export PATH=/usr/local/nvidia/bin:/usr/local/cuda/bin:/root/.local/bin:/root/.cargo/bin:/opt/conda/bin:${PATH}
+export LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64:${LD_LIBRARY_PATH}
+export UV_SYSTEM_PYTHON=1
+export UV_BREAK_SYSTEM_PACKAGES=1
+EOF
+RUN chmod 0644 /etc/profile.d/99-container-env.sh && \
+  grep -q '99-container-env.sh' /etc/bash.bashrc || \
+  printf '\n# Load container env for interactive shells\n[ -r /etc/profile.d/99-container-env.sh ] && . /etc/profile.d/99-container-env.sh\n' >> /etc/bash.bashrc
+
 
 LABEL org.opencontainers.image.source=https://github.com/allenai/OLMo-core
 WORKDIR /app/olmo-core
+
+
+# additional tools
+RUN pip install nvitop
+
+# nsys
+ARG UBUNTU_VERSION
+RUN set -eux; \
+    . /etc/os-release; \
+    UBUNTU_SHORT="$(echo "$UBUNTU_VERSION" | tr -d .)"; \
+    ARCH="$(dpkg --print-architecture)"; \
+    echo "deb [trusted=yes] https://developer.download.nvidia.com/devtools/repos/ubuntu${UBUNTU_SHORT}/${ARCH}/ /" \
+      > /etc/apt/sources.list.d/nvidia-devtools.list; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends nsight-systems-cli; \
+    rm -rf /var/lib/apt/lists/*
+
+# install beaker
+RUN wget https://beaker.org/install -O /tmp/install-beaker.sh && \
+    bash /tmp/install-beaker.sh && \
+    rm /tmp/install-beaker.sh

@@ -765,8 +765,45 @@ class MoEV2TransformerTrainModule(TrainModule):
 
         return
 
+    def _dump_debug_info(self, step=None, tag=None):
+        # dump model param stats
+        debug_info = {}
+        step = self.trainer.global_step if step is None else step
+        rank = dist.get_rank()
+        for m_idx, model_part in enumerate(self.model_parts):
+            debug_info[m_idx] = {}
+            for name, param in model_part.named_parameters():
+                grad = param._main_grad_fp32
+                debug_info[m_idx][f'{name}'] = {
+                    'param': {
+                        'mean': param.data.mean().item(),
+                        'std': param.data.std().item(),
+                        'max': param.data.max().item(),
+                        'min': param.data.min().item(),
+                        'norm': param.data.norm().item(),
+                    },
+                    'grad': {
+                        'mean': grad.mean().item(),
+                        'std': grad.std().item(),   
+                        'max': grad.max().item(),
+                        'min': grad.min().item(),
+                        'norm': grad.norm().item(),
+                    }
+                }
+        base_dir = './debug_info'
+        filename = f'{base_dir}/rank{rank}_step{step}'
+        if tag is not None:
+            filename += f'_{tag}'
+        filename += '.pt'
+        import os
+        os.makedirs(base_dir, exist_ok=True)
+        torch.save(debug_info, filename)
+
+
     @nvtx.annotate("train_batch")
     def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
+        DEBUG_MODE = False
+
         # Set model to train mode if it isn't already.
         for m in self.model_parts:
             m.train()
@@ -863,6 +900,9 @@ class MoEV2TransformerTrainModule(TrainModule):
                         # Run backward pass.
                         dbg_mem_before_bwd = torch.cuda.memory_allocated()/1024**3
 
+                        # if DEBUG_MODE and not dry_run and self.trainer.global_step == 23525:
+                        #     if micro_batch_idx == 17 and dist.get_rank() == 17:
+                        #         loss = loss.detach() + 0.0 * loss
 
                         # dist.barrier()
                         # if dist.get_rank() == 0:
@@ -888,6 +928,11 @@ class MoEV2TransformerTrainModule(TrainModule):
                         dbg_mem_after_bwd = torch.cuda.memory_allocated()/1024**3
                         dbg_mem_activation_freed = dbg_mem_before_bwd - dbg_mem_after_bwd
                         dbg_mem_activation_freed_all.append(dbg_mem_activation_freed)
+
+                        # if DEBUG_MODE and not dry_run and self.trainer.global_step == 23525:
+                        #     if micro_batch_idx == 17 and dist.get_rank() == 17:
+                        #         torch.save(input_ids.cpu(), f'input_ids_rank{dist.get_rank()}_step{self.trainer.global_step}_mb{micro_batch_idx}.pt')
+                            # self._dump_debug_info(step=micro_batch_idx)
                         pass
 
 
@@ -952,6 +997,8 @@ class MoEV2TransformerTrainModule(TrainModule):
             
         #############################
         # debug_norm = [torch.nn.utils.get_total_norm([p.grad for p in model_part.parameters()]) for model_part in self.model_parts]
+        if DEBUG_MODE and not dry_run:
+            self._dump_debug_info()
 
         # self._point_to_full_precision_params()
         # if dist.get_rank() == 0:
@@ -1607,15 +1654,16 @@ class MoEV2TransformerTrainModule(TrainModule):
         else:
             # Pure DP (no EP)
             pass
-            # assert self.world_mesh is not None, "World mesh must be built before applying expert parallelism"
-            # assert self.world_mesh["dense"] is not None, "Dense mesh must be built before applying expert parallelism"
+            assert self.world_mesh is not None, "World mesh must be built before applying expert parallelism"
+            assert self.world_mesh["dense"] is not None, "Dense mesh must be built before applying expert parallelism"
             # param_dtype = dp_config.param_dtype.as_pt() if dp_config.param_dtype is not None else None
-            # dp_mesh = self.world_mesh["dense"]["dp"]
+            dp_mesh = self.world_mesh["dense"]["dp"]
+            ep_mesh = None
             # for m in model_parts:
             #     cast(MoEFusedV2Transformer, m).apply_ddp(dp_mesh=dp_mesh, compile_enabled=compile_model, param_dtype=param_dtype)
             # log.info(f"Applied DDP to the model with {get_device_mesh_info(dp_mesh)}")
 
-            # Maybe apply activation checkpointing.
+        # Maybe apply activation checkpointing.
         if ac_config is not None:
             for m in model_parts:
                 m.apply_activation_checkpointing(
@@ -1639,15 +1687,16 @@ class MoEV2TransformerTrainModule(TrainModule):
         ddp_model_parts = []
         for idx, m in enumerate(model_parts):
             ddp_m = m.apply_dp(
-                 dp_mesh=dp_mesh,
-                    ep_mesh=ep_mesh,
-                    param_dtype=None,
-                    compile_enabled=compile_model
+                dp_mesh=dp_mesh,
+                ep_mesh=ep_mesh,
+                param_dtype=None,
+                compile_enabled=compile_model
             )
             ddp_model_parts.append(ddp_m)
 
             if pp_config is not None:
                 # update stage reference to point to the ddp wrapped model part
+                assert self._pp_stages is not None
                 assert self._pp_stages[idx].submod is m
                 self._pp_stages[idx].submod = ddp_m
 

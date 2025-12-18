@@ -114,6 +114,8 @@ class MoEFusedV2OptimizerConfig(Config):
 
     max_grad_norm: float = 1.0
 
+    use_distributed: bool = True
+
     @property
     def device(self) -> torch.device:
         return get_default_device()

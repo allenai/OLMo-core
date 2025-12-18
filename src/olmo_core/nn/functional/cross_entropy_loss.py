@@ -125,9 +125,13 @@ def fused_linear_cross_entropy_loss(
     else:
         return ce_loss, None
 
-
-from cut_cross_entropy import linear_cross_entropy
-from cut_cross_entropy.utils import compute_z_loss as cce_compute_z_loss
+HAS_CCE = False
+try:
+    from cut_cross_entropy import linear_cross_entropy
+    from cut_cross_entropy.utils import compute_z_loss as cce_compute_z_loss
+    HAS_CCE = True
+except ImportError:
+    HAS_CCE = False
 
 @torch._dynamo.disable()
 def cce_loss(
@@ -142,7 +146,8 @@ def cce_loss(
     z_loss_multiplier: float = 1e-4,
     softcap: Optional[float] = None,
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-    
+    if not HAS_CCE:
+        raise RuntimeError("'cce_loss' requires cut-cross-entropy package")
 
     ce_loss, lse = linear_cross_entropy(
         e =_input, 

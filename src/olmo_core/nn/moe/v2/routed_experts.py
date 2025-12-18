@@ -17,8 +17,11 @@ from olmo_core.distributed.utils import get_local_tensor
 import transformer_engine
 from torch.utils.checkpoint import checkpoint
 
+# from .gmm import gmm as olmo_gmm
+
 @torch.compiler.disable
 def gmm_no_compile(a, b, batch_sizes, trans_b=False):
+    # return olmo_gmm(a, b, batch_sizes, trans_b=trans_b)
     return grouped_gemm.ops.gmm(a, b, batch_sizes, trans_b)
 
 @dataclass
@@ -105,14 +108,7 @@ class RoutedExperts(nn.Module):
                 device=init_device
             ),
         )
-        # self.w_up_gate_te = transformer_engine.pytorch.GroupedLinear(
-        #     num_gemms=num_experts,
-        #     in_features=d_model,
-        #     out_features=2 * hidden_size,
-        #     bias = False,
-        #     params_dtype=dtype.as_pt(),
-        #     device=init_device,
-        # )
+
         self.w_down = nn.Parameter(
             torch.empty(
                 num_experts,
@@ -122,7 +118,6 @@ class RoutedExperts(nn.Module):
                 device=init_device
             ),
         )
-        # self.gmm_ops = gmm_no_compile
 
         # assume no ep in init
         self.num_local_experts: int = num_experts
@@ -140,14 +135,9 @@ class RoutedExperts(nn.Module):
         `batch_size_per_expert` specifies the number of tokens in x for each expert.
         """
 
-        # assert isinstance(batch_size_per_expert, List), "only accept List for batch_size_per_expert"
         assert isinstance(batch_size_per_expert, torch.Tensor), "only accept Tensor for batch_size_per_expert"
-        # batch_size_per_expert_tensor = torch.tensor(
-        #     batch_size_per_expert, 
-        #     device='cpu', 
-        #     dtype=torch.int64,  # NOTE: int64 required for grouped_gemm
-        # )
         assert batch_size_per_expert.device.type == 'cpu', "batch_size_per_expert must be on cpu"
+
         batch_size_per_expert_tensor = batch_size_per_expert.to(dtype=torch.int64)  # NOTE: int64 required for grouped_gemm
 
         if x.numel() == 0:
@@ -218,7 +208,6 @@ class RoutedExperts(nn.Module):
 
 
         self._ep_sharded = True
-
 
     def extra_repr(self):
         return f'num_experts={self.num_experts}, hidden_size={self.hidden_size}, d_model={self.d_model}'

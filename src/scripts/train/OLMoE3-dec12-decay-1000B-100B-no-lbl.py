@@ -89,9 +89,9 @@ SEQUENCE_LENGTH = 8192
 
 
 
-MAX_DURATION = int(7000e9)  # int(6e12), don't forget to adjust the LR when you increase this
-EVAL_INTERVAL = 100
-SAVE_INTERVAL=25
+MAX_DURATION = int(1100e9)  # 1T + 100B
+EVAL_INTERVAL = 200
+SAVE_INTERVAL=100
 
 NUM_EXPERTS = 64
 TOP_K = 4
@@ -118,17 +118,18 @@ EP_DIM=8
 PP_DIM=1
 
 # ref
-REF_NUM_NODES=3
-GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (96)
+REF_NUM_NODES=4
+GLOBAL_BATCH_SIZE_SEQ=(8 * 8) * (16)
 GLOBAL_BATCH_SIZE = (
     (GLOBAL_BATCH_SIZE_SEQ) * SEQUENCE_LENGTH
 )  
 NUM_MICRO_BATCHES = GLOBAL_BATCH_SIZE_SEQ // (REF_NUM_NODES * 8) // MICRO_BSZ
 GLOBAL_BATCH_TOKENS_IN_M = SEQUENCE_LENGTH * GLOBAL_BATCH_SIZE_SEQ // 1024 // 1024
 
-LR= 3e-4 # target lr for 32M tokens
-# LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (4 * 1024 * 1024))
-LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (8 * 1024 * 1024))
+# LR= 3e-4 # target lr for 32M tokens
+# # LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (4 * 1024 * 1024))
+# LR=LR * math.sqrt(GLOBAL_BATCH_SIZE / (8 * 1024 * 1024))
+LR=0.00057907 # the RL at step 59275 (999.5B tokens)
 NUM_LAYERS=32
 
 if PP_DIM > 1:
@@ -231,7 +232,8 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
                 uniform_expert_assignment=UNIFORM_ASSIGN,
                 random_expert_assignment=RANDOM_ASSIGN,
                 # lb_loss_weight=0.1,
-                lb_loss_weight=0.005,
+                # lb_loss_weight=0.005,
+                lb_loss_weight=0.0,
                 # lb_loss_weight=0.0065,
                 z_loss_weight=None,
                 lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
@@ -367,7 +369,13 @@ def build_train_module_config(common: CommonComponents) -> MoEV2TransformerTrain
         #     decay=(int(50e9 / GLOBAL_BATCH_SIZE)),
         #     decay_fraction=None,
         # ),
-        scheduler=CosWithWarmup(warmup_steps=2500),
+        # scheduler=CosWithWarmup(warmup_steps=2500),
+        scheduler=WSD(
+            units=SchedulerUnits.steps,
+            warmup=500,
+            decay=(int(100e9 / GLOBAL_BATCH_SIZE)+1),
+            decay_fraction=None,
+        )
     )
 
 # WORK_DIR = "/jfs/tianhua-tao/ws-olmoe"
@@ -384,7 +392,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     return (
         TrainerConfig(
             # load_path='/workspace/checkpoint/OLMoE3-dec12/OLMoE3-dec12_3072d3072a_32L2560M2560S_64E4K1S_dev-S2026-WA/step57500',
-            # load_path='/workspace/checkpoint/OLMoE3-dec12_3072d3072a_32L2560M2560S_64E4K1S_dev-S2026-WA/step59150',
+            load_path='/workspace/checkpoint/OLMoE3-dec12-decay-1000B-100B_3072d3072a_32L2560M2560S_64E4K1S_dev-S2026-WA/step60600',
             save_folder=f'{WORK_DIR}/checkpoint/{common.run_name}_{D_MODEL}d{D_ATTN}a_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K{NUM_SHARED_EXPERTS}S_{TAG}',
             # save_folder=f'{common.save_folder}/{common.run_name}_{D_MODEL}d{D_ATTN}a_{NUM_LAYERS}L{MOE_HIDDEN_SIZE}M{SHARED_MLP_HIDDEN_SIZE}S_{NUM_EXPERTS}E{TOP_K}K{NUM_SHARED_EXPERTS}S_{TAG}',
             save_overwrite=True,

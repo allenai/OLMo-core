@@ -423,7 +423,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         # NOTE: the tbo might be called by the outer model directly (by block.combined_forward_ep_tbo(x, ...) instead of block(x, ...)), so need to compile it here as well
         self.combined_forward_ep_tbo = torch.compile(self.combined_forward_ep_tbo) 
         self._res_norm_attn = torch.compile(self._res_norm_attn)
-        self._permute_routed_experts_unpermute = torch.compile(self._permute_routed_experts_unpermute)
+        self._routed_experts_unpermute = torch.compile(self._routed_experts_unpermute)
 
 
     @property
@@ -459,12 +459,12 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         assert self.shared_experts is not None
         raise NotImplementedError("combined_forward_shared_only is not implemented")
 
-    @torch.compiler.disable
-    def async_copy_to_cpu(
-            self, gpu_buf
-    ):
-        cpu_buf, copy_stream, dtoh_event = async_copy_to_cpu(gpu_buf, event=self._dtoh_event)
-        return cpu_buf
+    # @torch.compiler.disable
+    # def async_copy_to_cpu(
+    #         self, gpu_buf
+    # ):
+    #     cpu_buf, copy_stream, dtoh_event = async_copy_to_cpu(gpu_buf, event=self._dtoh_event)
+    #     return cpu_buf
     
     @torch.compiler.disable
     def sync_dtoh_event(self):
@@ -503,7 +503,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             local_x_global_routed_expert_weights, # (B, S, top_k)
             local_x_global_routed_expert_indices, # (B, S, top_k)
             local_batch_size_per_global_routed_expert, # (num_experts, )
-            routed_expert_router_aux_loss # scalar # TODO: update code
+            routed_expert_router_aux_loss_info # tuple
         ) = self.router_forward(
             router=self.routed_experts_router,
             local_x=attn_res_out, 
@@ -533,13 +533,6 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         else:
             local_x_global_shared_expert_weights = None
         
-
-        # only when grad enabled
-        if torch.is_grad_enabled():
-            with nvtx.annotate("attach_auxiliary_loss", color="blue"):
-                if routed_expert_router_aux_loss is not None: # TODO: update code
-                    # TODO: should attach to router input or output?
-                    attn_res_out = attach_auxiliary_loss(attn_res_out, routed_expert_router_aux_loss) # TODO: update code
         
         moe_inp = attn_res_out
 
@@ -591,11 +584,11 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
 
 
         ####################################
-        # copy_stream.synchronize() # wait for the copy to CPU to finish
+
         assert dtoh_event is not None 
         dtoh_event = cast(torch.cuda.Event, dtoh_event)
         dtoh_event.synchronize()
-        # self.sync_dtoh_event()
+
         ####################################
 
         # step 3: MLP
@@ -641,7 +634,18 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
 
         #######################
 
-        
+        # attach aux loss
+        # if torch.is_grad_enabled(): # only when grad enabled
+        # with nvtx.annotate("attach_auxiliary_loss", color="blue"):
+        if routed_expert_router_aux_loss_info is not None:
+            # NOTE: this part cpu runtime > gpu runtime, so it's moved from directly after router_forward to here
+            # because we need to avoid stalling the gpu stream
+            # gpu stream is generally more ahead of cpu thread at the end of the block, hence less harmful to put it here
+            routed_expert_router_aux_loss = self.routed_experts_router.compute_aux_loss(*routed_expert_router_aux_loss_info)
+
+            # NOTE: the attach only writes 1.0 to the aux loss grad slot, so it should not matter where to attach
+            final_out = attach_auxiliary_loss(final_out, routed_expert_router_aux_loss)
+
         return final_out
 
     def merge_shared_and_routed_out(
@@ -663,6 +667,315 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         assert self.routed_experts is not None
         global_x = self.routed_experts(global_x, parallel_batch_size_per_local_expert_cpu)
         return global_x
+
+
+    def combined_forward_ep_test(
+        self,
+        x: torch.Tensor,
+        *,
+        loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        """Forward function with EP using PyTorch Symmetric Memory"""
+
+        assert self.routed_experts_router is not None
+        assert self.ep_enabled == True
+        assert self.num_local_routed_experts is not None
+
+        B, S, D = x.shape
+
+        # rename "x" to avoid confusion
+        block_inp = x
+        del x
+
+        # attention 
+        # + attention norm
+        # + residual connection
+        # attn_res_out = block_inp + self.attention_norm(self.attention(block_inp, **kwargs))
+        attn_res_out = self._checkpointed_res_norm_attn(block_inp, **kwargs)
+
+        # remove attention kwargs
+        kwargs.pop("max_doc_len", None)
+        kwargs.pop("cu_doc_lens", None)
+
+
+        # routed expert router
+        (
+            local_x_global_routed_expert_weights, # (B, S, top_k)
+            local_x_global_routed_expert_indices, # (B, S, top_k)
+            local_batch_size_per_global_routed_expert, # (num_experts, )
+            routed_expert_router_aux_loss_info # tuple
+        ) = self.router_forward(
+            router=self.routed_experts_router,
+            local_x=attn_res_out, 
+            scores_only=False,
+            loss_div_factor=loss_div_factor # scalar
+        )
+        
+
+        # the shared experts (executed on the dense stream) need to wait for `attn_res_out` and `local_x_global_shared_expert_weights` (on the main stream) to be complete
+        wait_stream_no_compile(
+            this_stream=self.get_dense_stream(),  
+            other_stream=torch.cuda.current_stream() 
+        ) 
+
+        ########### Communicate the number of tokens that will be sent to each device ###########
+        with nvtx.annotate("Token count all_to_all", color='green'):
+            with torch.no_grad():
+                # Pass token count information to the device on which the
+                # target expert resides.
+                global_batch_size_per_local_expert = torch.empty_like(
+                    local_batch_size_per_global_routed_expert,
+                )
+                global_batch_size_handle = dist.all_to_all_single(
+                    global_batch_size_per_local_expert, # Gathered concatenated output tensor.
+                    local_batch_size_per_global_routed_expert, # Input tensor to scatter.
+                    group=self.ep_pg,
+                    async_op=True,
+                )
+                # NOTE:
+                # local_batch_size_per_global_routed_expert: 
+                # (num_experts, ) -> view as: (EP, num_local_routed_experts)
+                #   data[i] = how many tokens should go to global expert i (can be on other rank)
+                # global_batch_size_per_local_expert: 
+                # (num_experts, ) -> view as: (EP, num_local_routed_experts)
+                #   data[i][j] = how many tokens from rank i will go to local expert j on this rank
+                assert global_batch_size_handle is not None # because of async
+
+        ############################################ end
+        with torch.cuda.stream(self.get_dense_stream()):
+            if self.shared_experts_router:
+                # shared expert router
+                (
+                    local_x_global_shared_expert_weights, # (B, S, E_shared)
+                    _, 
+                    _, 
+                    _ 
+                ) = self.router_forward(
+                    router=self.shared_experts_router,
+                    local_x=attn_res_out, 
+                    scores_only=True,  # only need scores for shared experts
+                    loss_div_factor=loss_div_factor # scalar
+                )
+            else:
+                local_x_global_shared_expert_weights = None
+        
+        
+        moe_inp = attn_res_out
+
+        in_shape = moe_inp.size()
+        
+        moe_inp = moe_inp.view(-1, in_shape[-1])  # (B*S, D)
+
+
+        ########### Configure the sizes for grouped GEMM ###########
+
+        # Compute the number of tokens that will be received from each
+        # device and permute the input data across the devices.
+        with nvtx.annotate("Sync token count", color='green'):
+            with torch.no_grad():
+                global_batch_size_handle.wait()
+
+                # Reshape to (ep_world_size, num_local_routed_experts).
+                local_batch_size_per_global_routed_expert = local_batch_size_per_global_routed_expert.view(
+                    self.ep_world_size, self.num_local_routed_experts
+                )
+                global_batch_size_per_local_expert = global_batch_size_per_local_expert.view(
+                    self.ep_world_size, self.num_local_routed_experts
+                )
+                # Calculate the bins boundaries from the token counts. # [EP, num_local_routed_experts] -> [num_local_routed_experts,]
+                parallel_batch_size_per_local_expert = global_batch_size_per_local_expert.sum(
+                    dim=0,
+                    dtype=torch.long,
+                )
+                
+                # NOTE: host-device sync here.
+                send_counts_gpu = local_batch_size_per_global_routed_expert.sum(dim=-1)
+                recv_counts_gpu = global_batch_size_per_local_expert.sum(dim=-1)
+                send_counts_cpu, copy_stream, dtoh_event_send = async_copy_to_cpu(send_counts_gpu, event=self._dtoh_event_send)  
+                recv_counts_cpu, copy_stream, dtoh_event_recv = async_copy_to_cpu(recv_counts_gpu, event=self._dtoh_event_recv) 
+                parallel_batch_size_per_local_expert_cpu, copy_stream, dtoh_event = async_copy_to_cpu(parallel_batch_size_per_local_expert, event=self._dtoh_event)  
+
+
+        with torch.no_grad():
+            # Construct the expert indices for the permuted tokens.
+            global_x_local_expert_indices = torch.remainder(
+                torch.arange(
+                    self.routed_experts_router.num_experts,
+                    dtype=torch.int32,
+                    device=moe_inp.device,
+                ),
+                self.num_local_routed_experts,
+            ) # e.g. [0, 1, 2, 3, 0, 1, 2, 3, ...] for 4 local experts
+
+        ########### permute local tokens to be ready for all-to-all communication ###########
+        with nvtx.annotate("Permute local tokens", color='green'):
+            routing_map = local_x_global_routed_expert_indices.view(-1, self.routed_experts_router.top_k).int()
+            num_out_tokens = routing_map.size(0) * self.routed_experts_router.top_k # dropless
+            hidden_shape_before_permute = moe_inp.shape
+            permutated_local_x, reversed_local_x_permutation_mapping = moe_permute_no_compile(
+                inp=moe_inp, 
+                routing_map=routing_map, 
+                num_out_tokens=num_out_tokens, 
+                map_type='index'
+            ) 
+            
+            # now permutated_local_x tokens are grouped by expert, which means tokens will go to expert id:
+            # [0 , 0 , ... 1, ... 2, ..., ..., 31, 31]  (if 32 experts)
+            # if EP=8, each rank has 4 experts, then tokens of
+            # [0, 0, ..., 3, 3] go to rank 0,
+            # [4, 4, ..., 7, 7] go to rank 1, 
+            # and so on.
+        ##### end
+
+        if self.shared_experts is not None:
+            # overlap compute while waiting for all2all
+            wait_stream_no_compile(
+                this_stream=self.get_dense_stream(), 
+                other_stream=torch.cuda.current_stream()
+            )
+            with torch.cuda.stream(self.get_dense_stream()):
+                shared_out_up, shared_out_gate = self.shared_experts.forward1(attn_res_out)
+                # shared_out = self.shared_experts.forward(attn_res_out)
+                # NOTE: the shared_experts forward is queued, but will not start to run until the DtoH is done
+        else:
+             shared_out_up, shared_out_gate = None, None
+
+        with torch.no_grad():
+
+            assert dtoh_event_send
+            assert dtoh_event_recv
+            assert dtoh_event
+
+            dtoh_event.synchronize() # wait for parallel_batch_size_per_local_expert_cpu to be ready
+            # send_counts_cpu and recv_counts_cpu should be ready as well
+            send_counts = send_counts_cpu.tolist() # tensor to list
+            recv_counts = recv_counts_cpu.tolist() # tensor to list
+
+            tokens_received = sum(recv_counts)
+
+        if tokens_received == 0:
+            print(f"[Warning] (grad={torch.is_grad_enabled()}) block {self.block_idx} EP rank {get_rank(self.ep_pg)} has 0 tokens received in all2all: send_counts={send_counts} recv_counts={recv_counts}")
+
+
+        
+        ########### Start the all-to-all communication asynchronously ###########
+        with nvtx.annotate("all2all", color='green'):
+            permutated_local_x, global_x, global_x_handle = ops.all_to_all_async(
+                permutated_local_x,
+                recv_counts,
+                send_counts,
+                group=self.ep_pg,
+            )
+            
+
+        with torch.no_grad():
+            # this specifiyes for the received global tokens, which local expert they belong to
+            global_x_local_expert_indices = torch.repeat_interleave(
+                global_x_local_expert_indices,
+                global_batch_size_per_local_expert.flatten(),
+                output_size=tokens_received,
+            ) # e.g. [0, ...,  0, ... , 3, ..., 3, 0, ...] for 4 local experts
+        
+
+        global_x = ops.all_to_all_wait(permutated_local_x, global_x, global_x_handle)
+
+        ### end
+
+        ########### permute global tokens + routed experts forward + unpermute global tokens###########
+        global_x = self._checkpointed_permute_routed_experts_unpermute(
+            global_x=global_x,
+            global_x_local_expert_indices=global_x_local_expert_indices,
+            parallel_batch_size_per_local_expert_cpu=parallel_batch_size_per_local_expert_cpu
+        )
+
+        
+        ########## reverse_all_to_all ###########
+        before_rev_all2all_event = torch.cuda.current_stream().record_event(
+            event=self._before_rev_all2all_event # type: ignore
+        ) 
+        with nvtx.annotate("reverse_all_to_all", color='green'):
+            global_x = cast(torch.Tensor, global_x)
+
+            global_x, local_x, local_x_handle = ops.all_to_all_async(
+                global_x,
+                send_counts,
+                recv_counts,
+                group=self.ep_pg,
+            )
+
+        if self.shared_experts is not None:
+            # variables from forward1
+            assert shared_out_up is not None
+            assert shared_out_gate is not None
+
+            before_rev_all2all_event.wait(self.get_dense_stream()) # the `merge_shared` should not start until the start of the reverse all2all to better overlap it
+            # merge shared experts when waiting for all2all
+            with nvtx.annotate("merge_shared", color='purple'):
+                with torch.cuda.stream(self.get_dense_stream()):
+
+                    shared_out = self.shared_experts.forward2(shared_out_up, shared_out_gate, attn_res_out.shape)
+                    if self.shared_experts_router:
+                        assert local_x_global_shared_expert_weights is not None
+                        # weighted sum of the shared experts by router weights
+                        # local_x_global_shared_expert_weights -> (B, S, E_shared)
+                        # shared_out -> (E_shared, B, S, D)
+                        _, _, E_s = local_x_global_shared_expert_weights.shape
+                        local_x_global_shared_expert_weights.shape
+                        mixed_shared_out = torch.bmm(
+                            local_x_global_shared_expert_weights.to(shared_out.dtype).reshape(B*S, 1, E_s),            # (BS, 1, E), 
+                            shared_out.permute(1, 2, 0, 3).contiguous().view(B*S, E_s, D)              # (BS, E, D)
+                        ).squeeze(1).view(B, S, D)
+                    else:
+                        mixed_shared_out = shared_out.squeeze(0)
+        else:
+            mixed_shared_out = None
+
+
+        local_x = ops.all_to_all_wait(global_x, local_x, local_x_handle)
+        ##### end
+        
+        
+        ############  Unpermute the (local) tokens returned by all-to-all communication ##########
+        with nvtx.annotate("Unpermute-Merge local tokens", color='green'):
+            local_x = moe_unpermute_no_compile(
+                inp=local_x,
+                row_id_map=reversed_local_x_permutation_mapping,
+                merging_probs=local_x_global_routed_expert_weights.view(-1, self.routed_experts_router.top_k),
+                restore_shape=hidden_shape_before_permute,
+                map_type='index',
+            )
+        ############################################ end
+    
+        local_x = local_x.view(in_shape)
+
+        # need to use `mixed_shared_out`
+        wait_stream_no_compile(torch.cuda.current_stream(), self.get_dense_stream()) 
+
+        # weighted sum of the shared experts and routed experts
+        if self.shared_experts is not None:
+            assert mixed_shared_out is not None
+            mlp_out = local_x + mixed_shared_out
+        else:
+            mlp_out = local_x
+
+        final_out = attn_res_out + self.feed_forward_norm(mlp_out)
+
+        #######################
+
+        # attach aux loss
+        # if torch.is_grad_enabled(): # only when grad enabled
+        # with nvtx.annotate("attach_auxiliary_loss", color="blue"):
+        if routed_expert_router_aux_loss_info is not None:
+            # NOTE: this part cpu runtime > gpu runtime, so it's moved from directly after router_forward to here
+            # because we need to avoid stalling the gpu stream
+            # gpu stream is generally more ahead of cpu thread at the end of the block, hence less harmful to put it here
+            routed_expert_router_aux_loss = self.routed_experts_router.compute_aux_loss(*routed_expert_router_aux_loss_info)
+
+            # NOTE: the attach only writes 1.0 to the aux loss grad slot, so it should not matter where to attach
+            final_out = attach_auxiliary_loss(final_out, routed_expert_router_aux_loss)
+                    
+        return final_out
 
     def combined_forward_ep(
         self,
@@ -1135,7 +1448,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
     
 
 
-    def _permute_routed_experts_unpermute(
+    def _routed_experts_unpermute(
         self,
         global_x,
         global_x_local_expert_indices,
@@ -1149,26 +1462,6 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
         ## 6. MLP forwrad ##
         global_x = self.routed_experts(global_x, parallel_batch_size_per_local_expert_cpu)
 
-        ###################################
-#         assert isinstance(parallel_batch_size_per_local_expert_cpu, torch.Tensor), "only accept Tensor for batch_size_per_expert"
-
-#         assert parallel_batch_size_per_local_expert_cpu.device.type == 'cpu', "batch_size_per_expert must be on cpu"
-#         batch_size_per_expert_tensor = parallel_batch_size_per_local_expert_cpu.to(dtype=torch.int64)  # NOTE: int64 required for grouped_gemm
-
-#         if global_x.numel() == 0:
-#             return global_x
-        
-#         w_up_gate = self.routed_experts.w_up_gate # (E, H, 2D)
-#         w_down = self.routed_experts.w_down # (E, H, D)
-#         up_gate = gmm_no_compile(global_x, w_up_gate, batch_size_per_expert_tensor, trans_b=True) # -> (BS, 2H)
-#         up_gate = cast(torch.Tensor, up_gate)  # ensure type is Tensor
-
-# ### START AC ###
-#         h = self.routed_experts.chunk_and_activate(up_gate) # -> (BS, H)
-        
-#         global_x = gmm_no_compile(h, w_down, batch_size_per_expert_tensor, trans_b=False) # -> (BS, H)
-        
-        ###################################
         
         ## 7. Unpermute the output tokens to be ready for all-to-all communication ##
         with nvtx.annotate("Unpermute global tokens", color='green'):
@@ -1182,40 +1475,30 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
                     restore_shape=hidden_shape_before_permute2,
                     map_type='index',
                 ) 
-### END AC ###
-        # global_x = checkpoint(
-        #     self._act_down_unpermute,
-        #     up_gate,
-        #     batch_size_per_expert_tensor,
-        #     reversed_global_x_permutation_mapping,
-        #     hidden_shape_before_permute2,
-        #     use_reentrant=False,
-        # )
-### REPLACE ###
 
         return global_x
     
-    def _act_down_unpermute(self, up_gate, batch_size_per_expert_tensor, reversed_global_x_permutation_mapping, hidden_shape_before_permute2):
-        h = self.routed_experts.chunk_and_activate(up_gate) # -> (BS, H)
+    # def _act_down_unpermute(self, up_gate, batch_size_per_expert_tensor, reversed_global_x_permutation_mapping, hidden_shape_before_permute2):
+    #     h = self.routed_experts.chunk_and_activate(up_gate) # -> (BS, H)
         
-        global_x = gmm_no_compile(h, self.routed_experts.w_down, batch_size_per_expert_tensor, trans_b=False) # -> (BS, H)
+    #     global_x = gmm_no_compile(h, self.routed_experts.w_down, batch_size_per_expert_tensor, trans_b=False) # -> (BS, H)
         
-        ###################################
+    #     ###################################
         
-        ## 7. Unpermute the output tokens to be ready for all-to-all communication ##
-        with nvtx.annotate("Unpermute global tokens", color='green'):
-            if self.routed_experts.num_local_experts == 1:
-                pass  # skip unpermute if only one local expert
-            else:
-                global_x = moe_unpermute_no_compile(
-                    inp=global_x,
-                    row_id_map=reversed_global_x_permutation_mapping,
-                    merging_probs=None,
-                    restore_shape=hidden_shape_before_permute2,
-                    map_type='index',
-                ) 
+    #     ## 7. Unpermute the output tokens to be ready for all-to-all communication ##
+    #     with nvtx.annotate("Unpermute global tokens", color='green'):
+    #         if self.routed_experts.num_local_experts == 1:
+    #             pass  # skip unpermute if only one local expert
+    #         else:
+    #             global_x = moe_unpermute_no_compile(
+    #                 inp=global_x,
+    #                 row_id_map=reversed_global_x_permutation_mapping,
+    #                 merging_probs=None,
+    #                 restore_shape=hidden_shape_before_permute2,
+    #                 map_type='index',
+    #             ) 
 
-        return global_x
+    #     return global_x
 
     def _checkpointed_permute_routed_experts_unpermute(
         self,
@@ -1242,7 +1525,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
 
         if self.checkpoint_permute_moe_unpermute:
             out = checkpoint(
-                self._permute_routed_experts_unpermute, 
+                self._routed_experts_unpermute, 
                 global_x,
                 global_x_local_expert_indices,
                 parallel_batch_size_per_local_expert_cpu, 
@@ -1252,7 +1535,7 @@ class MoEFusedV2TransformerBlock(olmo_core.nn.transformer.block.TransformerBlock
             )
             return cast(torch.Tensor, out)
         else:
-            return self._permute_routed_experts_unpermute(
+            return self._routed_experts_unpermute(
                 global_x,
                 global_x_local_expert_indices,
                 parallel_batch_size_per_local_expert_cpu, 

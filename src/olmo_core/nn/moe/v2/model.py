@@ -64,7 +64,7 @@ should_save_ops = [
     torch.ops.aten.rand_like.default,
     # torch.ops.c10d.alltoall_base_.default,
     torch.ops.flash_attn._flash_attn_forward.default,
-    torch.ops.flash_attn_3.fwd.default,
+    # torch.ops.flash_attn_3.fwd.default,
 ]
 from torch.utils.checkpoint import SelectiveCheckpointContext
 def policy_fn(ctx: SelectiveCheckpointContext, op, *args, **kwargs):
@@ -298,7 +298,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
     def apply_dp(
         self,
         dp_mesh: DeviceMesh,
-        ep_mesh: DeviceMesh,
+        ep_mesh: Optional[DeviceMesh],
         param_dtype: Optional[torch.dtype] = None,
         compile_enabled: bool = False,
         autograd_compile_enabled: bool = False,
@@ -345,7 +345,11 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             self.to(torch.bfloat16) # HACK, need fix
 
             dp_group = dp_mesh.get_group()
-            epdp_group = ep_mesh['ep_dp'].get_group()
+
+            if ep_mesh is None:
+                epdp_group = dp_group
+            else:
+                epdp_group = ep_mesh['ep_dp'].get_group()
 
             def param_process_group_fn(name: str, param: torch.nn.Parameter):
                 # MoE params → EP_DP group
@@ -360,7 +364,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
             ddp_model = MultiGroupDistributedDataParallel(
                 module=self,
                 dim=0, # for scatter/gather
-                broadcast_buffers=True,
+                # broadcast_buffers=True,
                 init_sync=True, # meta device
                 process_group=dp_mesh.get_group(),
                 param_process_group_fn=param_process_group_fn,
