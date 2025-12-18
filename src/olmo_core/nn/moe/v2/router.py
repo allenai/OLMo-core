@@ -404,6 +404,22 @@ class MoERouterV2(nn.Module):
         if (orth_loss := self.orth_loss) is not None:
             orth_loss.zero_()
 
+    def _break_ties(self, logits):
+        eid = torch.arange(logits.size(-1), device=logits.device, dtype=torch.float32)
+        logits = logits + eid * 1e-7 # small constant to break ties
+        return logits
+
+
+    def _quantize_scores(self, logits):
+        q = 2**14  # tune; 
+        # NOTE: smaller q (coarser) tolerates larger drift
+        #       larger q (finer) tolerates smaller drift
+        # q = 2**13 = 8192 → Δ ≈ 1/8192 ≈ 1.22e-4
+        # q = 2**14 = 16384 → Δ ≈ 1/16384 ≈ 6.10e-5
+        # q = 2**15 = 32768 → Δ ≈ 1/32768 ≈ 3.05e-5
+        logits = torch.round(logits.float() * q) / q
+        return logits
+
     @nvtx.annotate("MoERouter.forward", color='blue')
     def forward(
         self,
@@ -460,8 +476,19 @@ class MoERouterV2(nn.Module):
             # If we only need the scores, return them directly.
             return scores, None, None, None
 
-        # shape: (batch_size, seq_len, top_k)
-        expert_weights, expert_indices = self.get_top_k(scores)
+        UES_QUANT_SCORES = False
+        if UES_QUANT_SCORES:
+            # TODO: merge into get_top_k
+            scores_sel  = self._quantize_scores(scores)
+            scores_sel  = self._break_ties(scores_sel )
+            expert_indices = self.get_top_k(scores_sel).indices
+
+            # weights from original scores/logits (not quantized), to keep smooth grads
+            expert_weights = scores.gather(-1, expert_indices)
+
+        else:
+            # shape: (batch_size, seq_len, top_k)
+            expert_weights, expert_indices = self.get_top_k(scores)
 
 
         # TODO: check
