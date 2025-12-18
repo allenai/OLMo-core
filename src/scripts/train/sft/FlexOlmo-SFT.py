@@ -325,6 +325,7 @@ class SFTRouterConfig(Config):
             print(bs_config)
 
         ep_degree=2
+        rank_microbatch_size=4096
 
         dp_shard_degree = GPUS_PER_NODE // (bs_config.cp_degree or 1)
         if not dp_shard_degree > 0:
@@ -403,6 +404,7 @@ class SFTRouterConfig(Config):
                 ],
             )
             ep_degree=4
+            rank_microbatch_size=1024
         else:
             raise OLMoConfigurationError(f"Must set a valid model_name: {model_name}")
 
@@ -445,7 +447,7 @@ class SFTRouterConfig(Config):
             #     z_loss_multiplier=None,
             #     compile_model=True,
             train_module=FreezeTransformerTrainModuleConfig(  # Changed class name
-                rank_microbatch_size=4096,  # Keep your fix from before
+                rank_microbatch_size=rank_microbatch_size,  # Keep your fix from before
                 max_sequence_length=bs_config.sequence_length,
                 freeze_experts="first_half",
                 # optim=SkipStepAdamWConfig(
