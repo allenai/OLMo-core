@@ -268,11 +268,7 @@ def main(
     args = parse_args(
         configure_ladder, size_enum=size_enum, add_additional_args=add_additional_args
     )
-    if hasattr(args, "func"):
-        args.func(args)
-    else:
-        args.print_help()
-        sys.exit(1)
+    args.func(args)
 
 
 def configure_launcher(
@@ -339,7 +335,7 @@ def _launch_run(
 ):
     # Check status of run. Don't do anything if final checkpoint already exist.
     checkpoints = ladder.get_checkpoints(size)
-    if not checkpoints:
+    if not checkpoints or checkpoints[-1].step == 0:
         raise OLMoConfigurationError(f"Run for size {size} has no configured checkpoint intervals.")
     elif checkpoints[-1].exists:
         rich.get_console().print(
@@ -400,7 +396,7 @@ def status(args: argparse.Namespace):
     for size in sizes:
         print()
         checkpoints = ladder.get_checkpoints(size)
-        if not checkpoints:
+        if not checkpoints or checkpoints[-1].step == 0:
             rich.get_console().print(
                 f"[b yellow]Run for size {size} has no configured checkpoint intervals.[/]",
                 highlight=False,

@@ -543,7 +543,7 @@ class ModelLadder(Config):
         # And from that we adjust the global batch size to be a multiple of
         # `rank_microbatch_size x min_dp_world_size`.
         gbz_factor = rank_microbatch_size * min_dp_world_size
-        global_batch_size = round(global_batch_size / gbz_factor) * gbz_factor
+        global_batch_size = max(1, round(global_batch_size / gbz_factor)) * gbz_factor
 
         # Then we can determine the actual number of devices to allocate to the run. In particular
         # we can expand `min_world_size` up to the number of devices available (`self.max_devices`)
@@ -556,7 +556,7 @@ class ModelLadder(Config):
 
         # Finally we ensure `global_batch_size` is divisible by the micro-batch size.
         microbatch_size = rank_microbatch_size * dp_world_size
-        global_batch_size = round(global_batch_size / microbatch_size) * microbatch_size
+        global_batch_size = max(1, round(global_batch_size / microbatch_size)) * microbatch_size
 
         return global_batch_size, rank_microbatch_size, num_devices, dp_world_size
 
