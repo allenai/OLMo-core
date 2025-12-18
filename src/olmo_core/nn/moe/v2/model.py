@@ -807,7 +807,7 @@ class MoEFusedV2Transformer(olmo_core.nn.transformer.Transformer):
                         combined_kwargs, 
                         use_reentrant=False, 
                         # context_fn=recompute_context_fn
-                        determinism_check='none',
+                        # determinism_check='none',
                     )
                     h = cast(torch.Tensor, h)
                 else:

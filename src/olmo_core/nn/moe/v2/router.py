@@ -426,6 +426,13 @@ class MoERouterV2(nn.Module):
         # shape: (batch_size, seq_len, num_experts)
         logits = self.get_expert_logits(x).float()
 
+        # TODO: check
+        if self._recompute_cache is None: # first forward
+            self._recompute_cache = logits.detach() # save for recompute
+        else: # recompute
+            logits = self._recompute_cache # use saved logits
+            self._recompute_cache = None # 
+
         # shape: (batch_size, seq_len, num_experts)
         if self.gating_function == MoERouterGatingFunction.softmax:
             scores = logits.softmax(dim=-1)
