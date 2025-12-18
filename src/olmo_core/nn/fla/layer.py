@@ -4,7 +4,6 @@ from typing import Optional
 
 import fla.layers
 import torch
-from _typeshed import NoneType
 from torch import nn
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import distribute_tensor
@@ -87,11 +86,11 @@ class FLA(nn.Module):
         # a_proj, b_proj: GatedDeltaNet-specific gating projections (output num_heads)
         # g_proj: optional gate projection (only when use_gate=True)
         for proj_name in ["q_proj", "k_proj", "v_proj", "a_proj", "b_proj", "g_proj"]:
-            assert hasattr(inner, proj_name) and getattr(inner, proj_name) is not NoneType
+            assert hasattr(inner, proj_name) and getattr(inner, proj_name) is not None
             plan[f"inner.{proj_name}"] = colwise_parallel()
 
         # Output projection (rowwise parallel - shard input dimension)
-        assert hasattr(inner, "o_proj") and getattr(inner, "o_proj") is not NoneType
+        assert hasattr(inner, "o_proj") and getattr(inner, "o_proj") is not None
         plan["inner.o_proj"] = rowwise_parallel(
             output_layouts=output_layout, use_local_output=use_local_output
         )
