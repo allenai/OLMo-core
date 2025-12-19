@@ -426,7 +426,7 @@ def train(checkpoint: str, config: SFTConfig, no_save_tokenizer: bool):
         )
         trainer = config.trainer.build(train_module, data_loader)
 
-        if no_save_tokenizer and get_rank() == 0:
+        if not no_save_tokenizer and get_rank() == 0:
             tokenizer_path = join_path(get_parent(dataset.paths[0]), "tokenizer")
             if not dir_is_empty(tokenizer_path):
                 log.info("Saving tokenizer...")
