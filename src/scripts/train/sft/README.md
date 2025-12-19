@@ -51,7 +51,7 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
 4. Launch the SFT training script using a command like:
 
     ```bash
-    BASE_CKPT="/weka/oe-training-default/ai2-llm/path/to-base/checkpoint/step12345"
+    BASE_CKPT="/weka/oe-training-default/ai2-llm/path/to-base/checkpoint/step12345/model_and_optim"
     python src/scripts/train/sft/Olmo-3-7B-SFT.py launch \
         MODEL_NAME_HERE $BASE_CKPT \
             ai2/jupiter \
@@ -72,6 +72,7 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
         * Highly recommended: Tokenize and train at the same context length (recommended 32k)
         * Make sure to use the right script for your model: Currently supported: `Olmo-2-7B`, `Olmo-3-7B`, and `Olmo-3-32B`.
         * `--dataset_path`: Path to your tokenized dataset. If on Augusta, you must copy it to GCP. Include `gs://`.
+        * Include `model_and_optim` at the end of your base checkpoint.
 
 ## Evaluation
 
