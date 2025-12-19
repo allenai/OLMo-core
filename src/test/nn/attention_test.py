@@ -1017,6 +1017,7 @@ def test_sliding_window_attention_config_invalid_pattern_error():
         bad_config._get_window_size(0, n_layers=12)
 
 
+@pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize(
     "dtype",
     [
@@ -1027,8 +1028,12 @@ def test_sliding_window_attention_config_invalid_pattern_error():
 @pytest.mark.parametrize(
     "gate_granularity", [GateGranularity.headwise, GateGranularity.elementwise]
 )
+@pytest.mark.parametrize("full_precision", [True, False])
 def test_attention_gating(
-    device: torch.device, dtype: torch.dtype, gate_granularity: GateGranularity
+    device: torch.device,
+    dtype: torch.dtype,
+    gate_granularity: GateGranularity,
+    full_precision: bool,
 ):
     seed_all(0)
 
@@ -1040,7 +1045,7 @@ def test_attention_gating(
     attention = Attention(
         d_model=d_model,
         n_heads=n_heads,
-        gate=GateConfig(granularity=gate_granularity),
+        gate=GateConfig(granularity=gate_granularity, full_precision=full_precision),
         backend=AttentionBackendName.torch,
         init_device=device.type,
     )
