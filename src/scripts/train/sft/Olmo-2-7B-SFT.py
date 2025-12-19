@@ -422,7 +422,7 @@ def train(checkpoint: str, config: SFTConfig, save_tokenizer: bool):
         tokenizer_path = AnyPath(dataset.paths[0]).parent / "tokenizer"
         if tokenizer_path.exists() and tokenizer_path.is_dir():
             log.info("Saving tokenizer...")
-            destination_path = AnyPath(trainer.save_folder) / "tokenizer"
+            destination_path = olmo_core.io.join_path(trainer.save_folder, "tokenizer")
             if destination_path.exists():
                 log.info(f"Tokenizer already exists: {destination_path}")
             else:
