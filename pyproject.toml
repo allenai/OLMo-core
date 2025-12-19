@@ -66,7 +66,7 @@ torchao = ["torchao"]
 transformers = ["transformers"]
 wandb = ["wandb"]
 fla = [
-    "flash-linear-attention",
+    "flash-linear-attention @ git+https://github.com/fla-org/flash-linear-attention.git@0abbe028dfb5f033b35eb6da6fc6924accb0dc7a",
 ]
 all = ["ai2-olmo-core[dev,beaker,comet,eval,torchao,transformers,wandb,fla]"]
 
