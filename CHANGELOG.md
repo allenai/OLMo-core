@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MoE: Added `TrainModuleConfig` ABC
 - Added a `MetricSaverCallback` which just saves metrics at specific intervals to JSON files in the `save_folder`.
 - Added `fixed_steps` option to `Checkpointer` and `Evaluator` callbacks for configuring checkpoints/evals at specific step numbers.
+- Added support for gated attention.
 
 ### Fixed
 
