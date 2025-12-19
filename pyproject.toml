@@ -16,7 +16,6 @@ dependencies = [
     "numpy",
     "torch>=2.6.0",
     "cached-path>=1.7.2",
-    "cloudpathlib[gs]",
     "requests",
     "packaging",
     "rich",

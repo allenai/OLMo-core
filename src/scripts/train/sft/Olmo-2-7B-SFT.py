@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import List, Optional, Tuple, cast
 from urllib.parse import urlparse
 
-from cloudpathlib import AnyPath, CloudPath
 from rich import print
 
 from olmo_core.config import Config, DType
@@ -33,7 +32,7 @@ from olmo_core.internal.common import (
     get_root_dir,
     get_work_dir,
 )
-from olmo_core.io import list_directory
+from olmo_core.io import copy_dir, get_parent, list_directory
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import LinearWithWarmup, SkipStepAdamWConfig
@@ -419,15 +418,15 @@ def train(checkpoint: str, config: SFTConfig, save_tokenizer: bool):
     trainer = config.trainer.build(train_module, data_loader)
 
     if save_tokenizer and get_rank() == 0:
-        tokenizer_path = AnyPath(dataset.paths[0]).parent / "tokenizer"
+        tokenizer_path = join_path(get_parent(dataset.paths[0]), "tokenizer")
         if tokenizer_path.exists() and tokenizer_path.is_dir():
             log.info("Saving tokenizer...")
-            destination_path = olmo_core.io.join_path(trainer.save_folder, "tokenizer")
+            destination_path = join_path(trainer.save_folder, "tokenizer")
             if destination_path.exists():
                 log.info(f"Tokenizer already exists: {destination_path}")
             else:
                 log.info(f"Saving tokenizer to {destination_path}")
-                olmo_core.io.copy_dir(tokenizer_path, destination_path)
+                copy_dir(tokenizer_path, destination_path)
 
     # Record the config to W&B/Comet and each checkpoint dir.
     config_dict = config.as_config_dict()
