@@ -6,7 +6,6 @@ Run the script without any arguments to see usage info. See the README for more 
 import argparse
 import fnmatch
 import logging
-import shutil
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,7 +23,6 @@ from olmo_core.data import (
 from olmo_core.data.types import LongDocStrategy
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_local_rank, get_rank
-from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.internal.common import (
     CLUSTER_TO_GPU_TYPE,
     build_launch_config,

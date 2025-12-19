@@ -6,7 +6,6 @@ Run the script without any arguments to see usage info. See the README for more 
 import argparse
 import fnmatch
 import logging
-import shutil
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
