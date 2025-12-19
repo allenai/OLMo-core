@@ -71,14 +71,9 @@ log = logging.getLogger(__name__)
 
 class GateGranularity(StrEnum):
     headwise = "headwise"
-    """
-    Head-wise gating: one gate value per attention head, broadcast across head dimension.
-    """
-
+    """Head-wise gating: one gate value per attention head, broadcast across head dimension."""
     elementwise = "elementwise"
-    """
-    Element-wise gating: one gate value per output element.
-    """
+    """Element-wise gating: one gate value per output element."""
 
 
 @dataclass
