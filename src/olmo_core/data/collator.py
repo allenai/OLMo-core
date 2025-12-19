@@ -28,6 +28,7 @@ class DataCollator:
 
     pad_token_id: int
     pad_direction: PaddingDirection = PaddingDirection.right
+    label_ignore_index: int = -100
 
     def __call__(
         self, items: Union[Sequence[Dict[str, Any]], Sequence[torch.Tensor]]
