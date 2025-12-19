@@ -1,7 +1,7 @@
 import logging
 from functools import lru_cache
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import torch
 from beaker import Beaker, BeakerError, SecretNotFound
@@ -116,6 +116,7 @@ def build_launch_config(
     num_nodes: int = 1,
     use_hostname_constraints: bool = False,
     num_execution_units: Optional[int] = None,
+    extra_env_vars: Optional[List[Tuple[str, str]]] = None,
 ) -> BeakerLaunchConfig:
     weka_buckets: List[BeakerWekaBucket] = []
 
@@ -187,6 +188,9 @@ def build_launch_config(
     ]
 
     env_vars = [BeakerEnvVar(name="NCCL_DEBUG", value="INFO" if nccl_debug else "WARN")]
+    if extra_env_vars:
+        for key, value in extra_env_vars:
+            env_vars.append(BeakerEnvVar(name=key, value=value))
     if flight_recorder:
         # https://github.com/pytorch/tutorials/blob/main/unstable_source/flight_recorder_tutorial.rst
         fr_dump_location = Path(BEAKER_RESULT_DIR) / "flightrecorder" / "nccl_trace_rank_"
