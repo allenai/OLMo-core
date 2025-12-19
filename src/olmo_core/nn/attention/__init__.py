@@ -662,6 +662,10 @@ class Attention(AttentionBase):
                 output_layouts=output_layout, use_local_output=use_local_output
             ),
         }
+
+        if self.w_g is not None:
+            plan["w_g"] = colwise_parallel()
+
         if self.q_norm is not None:
             # if full-dim norm: output is sharded on the embedding dimension (B, T, E [sharded])
             #    which will be reshaped into (B, T, H [sharded], D)
