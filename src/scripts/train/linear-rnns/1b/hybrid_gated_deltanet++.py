@@ -220,6 +220,6 @@ if __name__ == "__main__":
         include_default_evals=False,
         intra_document_masking=True,
         beaker_workspace="ai2/linear-rnns",
-        extra_env_vars=[("CUDA_LAUNCH_BLOCKING", "1")],
+        #  extra_env_vars=[("CUDA_LAUNCH_BLOCKING", "1")],
     )
     main(config_builder=config_builder)
