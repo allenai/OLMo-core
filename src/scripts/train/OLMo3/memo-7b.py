@@ -50,7 +50,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     source_list = SourceMixtureList.from_yaml(
-        "src/olmo_core/data/source_mixtures/midtrain-memo-10B-4tier-s3.yaml"
+        "src/olmo_core/data/source_mixtures/midtrain-memo-10B-4tier-local.yaml"
     )
     source_list.validate()
     dataset_config = NumpyFSLDatasetConfig.from_src_mix(
@@ -71,7 +71,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     trainer_config = cookbook.configure_trainer(
-        load_path="s3://ai2-llm/checkpoints/OLMo25/step1413814",
+        load_path="/weka/oe-training-default/ai2-llm/checkpoints/OLMo25/step1413814",
         load_trainer_state=False,
         load_optim_state=True,
         max_duration=Duration.tokens(MAX_TOKENS),
