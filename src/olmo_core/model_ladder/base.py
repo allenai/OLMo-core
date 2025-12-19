@@ -153,11 +153,6 @@ class RunConfigurator(Config, metaclass=ABCMeta):
     """
 
     @abstractmethod
-    def configure_duration(self, num_params: int) -> Duration:
-        """Get the training duration for a model of this size."""
-        raise NotImplementedError
-
-    @abstractmethod
     def configure_target_batch_size(self, num_params: int) -> int:
         """
         Get the target global batch size in tokens for a model of this size.
@@ -167,19 +162,26 @@ class RunConfigurator(Config, metaclass=ABCMeta):
         raise NotImplementedError
 
     @abstractmethod
-    def configure_optimizer(self, num_params: int) -> OptimConfig:
-        """Get the optimizer config for a model of this size."""
+    def configure_duration(self, num_params: int, batch_size: int) -> Duration:
+        """Get the training duration for a given model and batch size."""
         raise NotImplementedError
 
     @abstractmethod
-    def configure_lr_scheduler(self, num_params: int) -> Scheduler:
-        """Get the learning rate scheduler for a model of this size."""
+    def configure_optimizer(self, num_params: int, batch_size: int) -> OptimConfig:
+        """Get the optimizer config for a given model and batch size."""
         raise NotImplementedError
 
     @abstractmethod
-    def configure_checkpoint_intervals(self, num_params: int) -> list[tuple[Duration, str]]:
+    def configure_lr_scheduler(self, num_params: int, batch_size: int) -> Scheduler:
+        """Get the learning rate scheduler for a given model and batch size."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def configure_checkpoint_intervals(
+        self, num_params: int, batch_size: int
+    ) -> list[tuple[Duration, str]]:
         """
-        Get the checkpoint intervals for a model of this size.
+        Get the checkpoint intervals for a given model and batch size.
         Returns a list of (checkpoint interval, checkpoint description) tuples.
         """
         raise NotImplementedError
@@ -188,8 +190,8 @@ class RunConfigurator(Config, metaclass=ABCMeta):
     def plot_lr_schedule(
         self,
         num_params: int,
+        batch_size: int,
         *,
-        batch_size: int | None = None,
         show: bool = True,
         save_path: PathOrStr | None = None,
     ) -> PathOrStr | None:
@@ -292,7 +294,7 @@ class ModelLadder(Config):
         if show_plot or save_plot is not None:
             log.info("Plotting LR schedule...")
             path = self.run_configurator.plot_lr_schedule(
-                num_params, batch_size=global_batch_size, show=show_plot, save_path=save_plot
+                num_params, global_batch_size, show=show_plot, save_path=save_plot
             )
             if path is not None:
                 log.info(f"Saved LR schedule plot to '{path}'")
@@ -325,8 +327,8 @@ class ModelLadder(Config):
             )
 
         # Configure optimizer and scheduler.
-        optim_config = self.run_configurator.configure_optimizer(num_params)
-        scheduler = self.run_configurator.configure_lr_scheduler(num_params)
+        optim_config = self.run_configurator.configure_optimizer(num_params, global_batch_size)
+        scheduler = self.run_configurator.configure_lr_scheduler(num_params, global_batch_size)
 
         # Configure trainer.
         trainer_config = self._configure_trainer(size_spec, for_benchmarking=for_benchmarking)
@@ -448,7 +450,7 @@ class ModelLadder(Config):
             self._get_checkpoint_intervals(
                 num_params=num_params, global_batch_size=global_batch_size
             ),
-            self.run_configurator.configure_checkpoint_intervals(num_params),
+            self.run_configurator.configure_checkpoint_intervals(num_params, global_batch_size),
         ):
             checkpoints_to_check[step] = checkpoint_name
 
@@ -492,7 +494,9 @@ class ModelLadder(Config):
     def _get_checkpoint_intervals(self, *, num_params: int, global_batch_size: int) -> list[int]:
         return [
             self._duration_to_steps(d, global_batch_size)
-            for d, _ in self.run_configurator.configure_checkpoint_intervals(num_params)
+            for d, _ in self.run_configurator.configure_checkpoint_intervals(
+                num_params, global_batch_size
+            )
         ]
 
     def _duration_to_steps(self, d: Duration, global_batch_size: int) -> int:
@@ -569,7 +573,7 @@ class ModelLadder(Config):
         save_folder = self.get_save_folder(size_spec)
         num_params = self.get_num_params(size_spec)
         global_batch_size, *_ = self._configure_batch_size_and_num_devices(size_spec, num_params)
-        duration = self.run_configurator.configure_duration(num_params)
+        duration = self.run_configurator.configure_duration(num_params, global_batch_size)
         checkpoint_interval_steps = self._get_checkpoint_intervals(
             num_params=num_params, global_batch_size=global_batch_size
         )

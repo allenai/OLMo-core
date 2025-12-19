@@ -46,18 +46,20 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
                 "'decay_fraction' must be greater than 0.0 and less than 0.5"
             )
 
-    def configure_duration(self, num_params: int) -> Duration:
-        return self._chinchilla_duration(
-            num_params,
-            self.chinchilla_multiple,
-        )
-
     def configure_target_batch_size(self, num_params: int) -> int:
         # Calculate global batch size according to https://api.semanticscholar.org/CorpusID:270764838
         # which assumes a sequence length of 2048.
         return round(2048 * 160 * (num_params / 108_000_000) ** (2 / 3))
 
-    def configure_optimizer(self, num_params: int) -> SkipStepAdamWConfig:
+    def configure_duration(self, num_params: int, batch_size: int) -> Duration:
+        return self._chinchilla_duration(
+            num_params,
+            batch_size,
+            self.chinchilla_multiple,
+        )
+
+    def configure_optimizer(self, num_params: int, batch_size: int) -> SkipStepAdamWConfig:
+        del batch_size  # unused
         # Calculate LR according to https://api.semanticscholar.org/CorpusID:270764838
         # but divide by 2 for WSD schedule (seems to work emperically).
         lr = 0.0047 * (num_params / 108_000_000) ** (-1 / 3)
@@ -88,17 +90,19 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
 
         return warmup, chinchilla_periods
 
-    def configure_lr_scheduler(self, num_params: int) -> Scheduler:
+    def configure_lr_scheduler(self, num_params: int, batch_size: int) -> Scheduler:
         warmup, chinchilla_periods = self.configure_chinchilla_periods(num_params)
         period_lengths = []
         for pidx, c in enumerate(chinchilla_periods):
-            period = self._chinchilla_duration(num_params, c).value
+            period = self._chinchilla_duration(num_params, batch_size, c).value
             if pidx == 0:
                 period_lengths.append(period)
             else:
                 period_lengths.append(
                     period
-                    - self._chinchilla_duration(num_params, chinchilla_periods[pidx - 1]).value
+                    - self._chinchilla_duration(
+                        num_params, batch_size, chinchilla_periods[pidx - 1]
+                    ).value
                 )
 
         return WSDS(
@@ -108,20 +112,24 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
             period_lengths=period_lengths,
         )
 
-    def configure_checkpoint_intervals(self, num_params: int) -> list[tuple[Duration, str]]:
+    def configure_checkpoint_intervals(
+        self, num_params: int, batch_size: int
+    ) -> list[tuple[Duration, str]]:
         # We save two checkpoints for each period. One right before the decay and one at the bottom
         # of the decay (end of the period).
         _, chinchilla_periods = self.configure_chinchilla_periods(num_params)
         checkpoints: list[tuple[Duration, str]] = []
         for pidx, c in enumerate(chinchilla_periods):
-            period = self._chinchilla_duration(num_params, c)
+            period = self._chinchilla_duration(num_params, batch_size, c)
             period_length: int
             if pidx == 0:
                 period_length = period.value
             else:
                 period_length = (
                     period.value
-                    - self._chinchilla_duration(num_params, chinchilla_periods[pidx - 1]).value
+                    - self._chinchilla_duration(
+                        num_params, batch_size, chinchilla_periods[pidx - 1]
+                    ).value
                 )
             pre_decay = dataclasses.replace(
                 period, value=period.value - round(period_length * self.decay_fraction)
@@ -133,8 +141,8 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
     def plot_lr_schedule(
         self,
         num_params: int,
+        batch_size: int,
         *,
-        batch_size: int | None = None,
         show: bool = True,
         save_path: PathOrStr | None = None,
     ) -> PathOrStr | None:
@@ -146,17 +154,14 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
                 "matplotlib and pandas are required to use the plotting functionality."
             ) from exc
 
-        if batch_size is None:
-            batch_size = self.configure_target_batch_size(num_params)
-
-        optim = self.configure_optimizer(num_params)
-        scheduler = self.configure_lr_scheduler(num_params)
+        optim = self.configure_optimizer(num_params, batch_size)
+        scheduler = self.configure_lr_scheduler(num_params, batch_size)
         warmup, chinchilla_periods = self.configure_chinchilla_periods(num_params)
-        t_max = self.configure_duration(num_params).value
+        t_max = self.configure_duration(num_params, batch_size).value
         tokens_seen = 0
         tokens = []
         lrs = []
-        while tokens_seen < t_max:
+        while tokens_seen <= t_max:
             tokens_seen += batch_size
             lr = float(scheduler.get_lr(optim.lr, tokens_seen, t_max))
             tokens.append(tokens_seen)
@@ -167,7 +172,7 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
         plt.grid(True)
 
         for c in chinchilla_periods:
-            period = self._chinchilla_duration(num_params, c).value
+            period = self._chinchilla_duration(num_params, batch_size, c).value
             plt.axvline(x=period, color="red", linestyle="--", alpha=0.5)
             plt.text(
                 period,
@@ -184,7 +189,7 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
         # to steps and then back to tokens to ensure accuracy.
         checkpoint_intervals = [
             batch_size * (d.value // batch_size)
-            for d, _ in self.configure_checkpoint_intervals(num_params)
+            for d, _ in self.configure_checkpoint_intervals(num_params, batch_size)
         ]
         plt.scatter(
             checkpoint_intervals,
@@ -215,9 +220,11 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
 
         return save_path
 
-    def _chinchilla_duration(self, num_params: int, c: float) -> Duration:
-        return Duration.chinchilla_tokens(
+    def _chinchilla_duration(self, num_params: int, batch_size: int, c: float) -> Duration:
+        duration = Duration.chinchilla_tokens(
             c,
             model_params=num_params,
             _tok_per_param=self.tokens_per_param,
         )
+        # Round duration to nearest multiple of batch size.
+        return dataclasses.replace(duration, value=batch_size * round(duration.value / batch_size))
