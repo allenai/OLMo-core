@@ -32,7 +32,7 @@ from olmo_core.internal.common import (
     get_root_dir,
     get_work_dir,
 )
-from olmo_core.io import copy_dir, get_parent, list_directory
+from olmo_core.io import copy_dir, get_parent, join_path, list_directory
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.rope import YaRNRoPEScalingConfig
