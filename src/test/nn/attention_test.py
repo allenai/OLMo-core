@@ -18,6 +18,8 @@ from olmo_core.nn.attention import (
     AttentionConfig,
     AttentionType,
     FusedAttention,
+    GateConfig,
+    GateGranularity,
     NormalizedAttention,
     RingAttentionLoadBalancerType,
     RingAttentionZigZagLoadBalancer,
@@ -834,6 +836,16 @@ def test_attention_leftpad_shift_equivalence(use_rope):
             ),
             id="OLMo3-32B-like-qk-norm",
         ),
+        pytest.param(
+            AttentionConfig(
+                name=AttentionType.default,
+                n_heads=8,
+                bias=False,
+                qk_norm=LayerNormConfig(),
+                gate_config=GateConfig(granularity=GateGranularity.headwise),
+            ),
+            id="headwise-gating",
+        ),
     ],
 )
 def test_attention_builder_config(attn_config: AttentionConfig):
@@ -1005,6 +1017,37 @@ def test_sliding_window_attention_config_invalid_pattern_error():
         bad_config._get_window_size(0, n_layers=12)
 
 
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        pytest.param(torch.bfloat16, id="bf16", marks=GPU_MARKS),
+        pytest.param(torch.float32, id="fp32"),
+    ],
+)
+@pytest.mark.parametrize("gate_type", [GateType.headwise, GateType.elementwise])
+def test_attention_gating(device: torch.device, dtype: torch.dtype, gate_type: GateType):
+    seed_all(0)
+
+    d_model = 64
+    n_heads = 4
+    seq_len = 8
+    batch_size = 2
+
+    attention = Attention(
+        d_model=d_model,
+        n_heads=n_heads,
+        gate_config=GateConfig(gate_type=gate_type),
+        backend=AttentionBackendName.torch,
+        init_device=device.type,
+    )
+
+    x = torch.randn(batch_size, seq_len, d_model, dtype=dtype, device=device, requires_grad=True)
+
+    with torch.autocast(device.type, dtype=dtype, enabled=dtype != torch.float32):
+        y = attention(x)
+        y.sum().backward()
+
+
 def _run_tensor_parallel_attention(
     checkpoint_dir: str, inputs_path: str, outputs_path: str, attn_kwargs: Dict[str, Any]
 ):
@@ -1046,6 +1089,10 @@ def _run_tensor_parallel_attention(
         pytest.param(
             {"qk_norm": LayerNormConfig(), "use_head_qk_norm": True, "rope": RoPEConfig()},
             id="headwise-qk-layernorm-rope",
+        ),
+        pytest.param(
+            {"gate_config": GateConfig(gate_type=GateType.headwise)},
+            id="headwise-gating",
         ),
     ],
 )
