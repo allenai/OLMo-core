@@ -30,7 +30,7 @@ from olmo_core.internal.common import (
     get_root_dir,
     get_work_dir,
 )
-from olmo_core.io import copy_dir, get_parent, join_path, list_directory
+from olmo_core.io import copy_dir, dir_is_empty, get_parent, join_path, list_directory
 from olmo_core.launch.beaker import BeakerLaunchConfig
 from olmo_core.nn.attention import SlidingWindowAttentionConfig
 from olmo_core.nn.rope import YaRNRoPEScalingConfig
@@ -290,9 +290,10 @@ class SFTConfig(Config):
             pattern=[4096, 4096, 4096, -1],
         )
         model.block.attention.use_flash = True
-        model.block.attention.rope.scaling = YaRNRoPEScalingConfig(
-            factor=8, beta_fast=32, beta_slow=1, old_context_len=8192
-        )
+        if model.block.attention.rope is not None:
+            model.block.attention.rope.scaling = YaRNRoPEScalingConfig(
+                factor=8, beta_fast=32, beta_slow=1, old_context_len=8192
+            )
 
         def no_rope_scaling(block: TransformerBlockConfig) -> TransformerBlockConfig:
             rope_config = block.attention.rope
@@ -418,38 +419,41 @@ def train(checkpoint: str, config: SFTConfig, no_save_tokenizer: bool):
     # Build components.
     model = config.model.build(init_device="meta")
     train_module = config.train_module.build(model)
-    dataset = config.dataset.build()
-    data_loader = config.data_loader.build(dataset, dp_process_group=train_module.dp_process_group)
-    trainer = config.trainer.build(train_module, data_loader)
+    if config.dataset is not None:
+        dataset = config.dataset.build()
+        data_loader = config.data_loader.build(dataset, dp_process_group=train_module.dp_process_group)
+        trainer = config.trainer.build(train_module, data_loader)
 
-    if not no_save_tokenizer and get_rank() == 0:
-        tokenizer_path = join_path(get_parent(dataset.paths[0]), "tokenizer")
-        if tokenizer_path.exists() and tokenizer_path.is_dir():
-            log.info("Saving tokenizer...")
-            destination_path = join_path(trainer.save_folder, "tokenizer")
-            if destination_path.exists():
-                log.info(f"Tokenizer already exists: {destination_path}")
-            else:
-                log.info(f"Saving tokenizer to {destination_path}")
-                copy_dir(tokenizer_path, destination_path)
+        if no_save_tokenizer and get_rank() == 0:
+            tokenizer_path = join_path(get_parent(dataset.paths[0]), "tokenizer")
+            if not dir_is_empty(tokenizer_path):
+                log.info("Saving tokenizer...")
+                destination_path = join_path(trainer.save_folder, "tokenizer")
+                if not dir_is_empty(destination_path):
+                    log.info(f"Tokenizer already exists: {destination_path}")
+                else:
+                    log.info(f"Saving tokenizer to {destination_path}")
+                    copy_dir(tokenizer_path, destination_path)
 
-    # Record the config to W&B/Comet and each checkpoint dir.
-    config_dict = config.as_config_dict()
-    cast(WandBCallback, trainer.callbacks["wandb"]).config = config_dict
-    cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
+        # Record the config to W&B/Comet and each checkpoint dir.
+        config_dict = config.as_config_dict()
+        cast(WandBCallback, trainer.callbacks["wandb"]).config = config_dict
+        cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
 
-    # Try loading a checkpoint from the save folder, otherwise start from the pretraining checkpoint.
-    log.info("Loading checkpoint...")
-    if not trainer.maybe_load_checkpoint(trainer.save_folder):
-        log.info(
-            f"No checkpoint found in save folder '{trainer.save_folder}', attempting to load from pretraining checkpoint '{checkpoint}'"
-        )
-        trainer.load_checkpoint(checkpoint, load_trainer_state=False)
+        # Try loading a checkpoint from the save folder, otherwise start from the pretraining checkpoint.
+        log.info("Loading checkpoint...")
+        if not trainer.maybe_load_checkpoint(trainer.save_folder):
+            log.info(
+                f"No checkpoint found in save folder '{trainer.save_folder}', attempting to load from pretraining checkpoint '{checkpoint}'"
+            )
+            trainer.load_checkpoint(checkpoint, load_trainer_state=False)
+        else:
+            log.info(f"Loaded checkpoint from save folder '{trainer.save_folder}'")
+
+        # Train.
+        trainer.fit()
     else:
-        log.info(f"Loaded checkpoint from save folder '{trainer.save_folder}'")
-
-    # Train.
-    trainer.fit()
+        log.error(f"Config dataset is None: {config}")
 
 
 if __name__ == "__main__":
