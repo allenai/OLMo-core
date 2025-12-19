@@ -159,13 +159,13 @@ def helion_fused_linear_cross_entropy_loss(
     :param z_loss_multiplier: The multiplier to apply to the z-loss.
     :param bwd_impl: The implementation to use for the backward pass. Can be "1d" or "2d".
 
-    :returns: The cross entropy loss and optionally the z-loss.
+    :returns: The loss (ce_loss + z_loss), cross entropy loss, and optionally the z-loss.
     """
     if bias is not None:
         raise ValueError(
             "Linear projection with bias is not supported for helion_fused_linear_cross_entropy_loss"
         )
-    ce_loss, z_loss = OlmoFusedLinearCrossEntropyFunction.apply(  # type: ignore[reportGeneralTypeIssues]
+    loss, ce_loss, z_loss = OlmoFusedLinearCrossEntropyFunction.apply(  # type: ignore[reportGeneralTypeIssues]
         _input, weight.T, labels, ignore_index, reduction, z_loss_multiplier, bwd_impl
     )
 

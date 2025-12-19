@@ -63,11 +63,7 @@ def load_autotune_data_from_json(
         secondary_configs: dict[KernelKey, int] = {}
         for k, v in json_obj["secondary_configs"].items():
             key_tuple = tuple(eval(k))
-            # Convert tuple to KernelKey
-            if len(key_tuple) == 3:
-                secondary_configs[KernelKey(*key_tuple)] = v
-            else:
-                secondary_configs[KernelKey(*key_tuple)] = v
+            secondary_configs[KernelKey(*key_tuple)] = v
     return primary_configs, secondary_configs
 
 
@@ -173,7 +169,10 @@ def helion_aot_autotune(
             if autotune_mode == AOTAutotuneMode.CREATE:
                 primary_configs = []
                 for idx, input in enumerate(inputs):
-                    log.info(f"Autotuning for {config_name} with key: {wrapped_kernel_key(*input)}")
+                    log.info(
+                        f"Autotuning {config_name} primary config {idx + 1}/? "
+                        f"with key: {wrapped_kernel_key(*input)}"
+                    )
                     config = kernel.autotune(input)
                     primary_configs.append(repr(config))
             elif autotune_mode == AOTAutotuneMode.RETUNE:

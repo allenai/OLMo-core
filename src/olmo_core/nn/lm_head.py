@@ -289,7 +289,8 @@ class LMHead(nn.Module):
                 ce_loss = loss
         elif self.loss_implementation == LMLossImplementation.helion_fused_linear:
             logits = None
-            loss, z_loss = helion_fused_linear_cross_entropy_loss(
+            assert loss_reduction == "sum"
+            ce_loss, z_loss = helion_fused_linear_cross_entropy_loss(
                 get_local_tensor(h).contiguous().view(-1, self.d_model),
                 weight=get_local_tensor(self.w_out.weight),
                 labels=get_local_tensor(labels).contiguous().view(-1),
@@ -300,9 +301,9 @@ class LMHead(nn.Module):
                 z_loss_multiplier=z_loss_multiplier or 1e-4,
             )
             if z_loss is not None:
-                ce_loss = loss - z_loss
+                loss = ce_loss + z_loss
             else:
-                ce_loss = loss
+                loss = ce_loss
         else:
             raise NotImplementedError(
                 f"'{self.loss_implementation}' loss implementation is not supported by {self.__class__.__name__}"
