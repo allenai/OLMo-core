@@ -1024,8 +1024,12 @@ def test_sliding_window_attention_config_invalid_pattern_error():
         pytest.param(torch.float32, id="fp32"),
     ],
 )
-@pytest.mark.parametrize("gate_type", [GateType.headwise, GateType.elementwise])
-def test_attention_gating(device: torch.device, dtype: torch.dtype, gate_type: GateType):
+@pytest.mark.parametrize(
+    "gate_granularity", [GateGranularity.headwise, GateGranularity.elementwise]
+)
+def test_attention_gating(
+    device: torch.device, dtype: torch.dtype, gate_granularity: GateGranularity
+):
     seed_all(0)
 
     d_model = 64
@@ -1036,7 +1040,7 @@ def test_attention_gating(device: torch.device, dtype: torch.dtype, gate_type: G
     attention = Attention(
         d_model=d_model,
         n_heads=n_heads,
-        gate=GateConfig(gate_type=gate_type),
+        gate=GateConfig(granularity=gate_granularity),
         backend=AttentionBackendName.torch,
         init_device=device.type,
     )
@@ -1091,7 +1095,7 @@ def _run_tensor_parallel_attention(
             id="headwise-qk-layernorm-rope",
         ),
         pytest.param(
-            {"gate": GateConfig(gate_type=GateType.headwise)},
+            {"gate": GateConfig(granularity=GateGranularity.headwise)},
             id="headwise-gating",
         ),
     ],
