@@ -115,19 +115,14 @@ class FLA(nn.Module):
 
         # Shard ShortConvolution layers (when use_short_conv=True).
         # These process the sharded outputs of q_proj/k_proj/v_proj.
-        # ShortConvolution wraps a Conv1d with shape (out_channels, in_channels/groups, kernel_size).
+        # ShortConvolution is a subclass of Conv1d with weight shape (out_channels, in_channels/groups, kernel_size).
         # We shard on dim 0 (out_channels) to match the colwise-sharded projection outputs.
         for conv_name in ["q_conv1d", "k_conv1d", "v_conv1d"]:
             if hasattr(inner, conv_name) and getattr(inner, conv_name) is not None:
                 conv = getattr(inner, conv_name)
-                # ShortConvolution has a .conv attribute that is the actual Conv1d
-                conv.conv.weight = nn.Parameter(
-                    distribute_tensor(conv.conv.weight.data, tp_mesh, [Shard(0)])
-                )
-                if conv.conv.bias is not None:
-                    conv.conv.bias = nn.Parameter(
-                        distribute_tensor(conv.conv.bias.data, tp_mesh, [Shard(0)])
-                    )
+                conv.weight = nn.Parameter(distribute_tensor(conv.weight.data, tp_mesh, [Shard(0)]))
+                if conv.bias is not None:
+                    conv.bias = nn.Parameter(distribute_tensor(conv.bias.data, tp_mesh, [Shard(0)]))
 
         # o_norm: normalizes over head_v_dim (last dimension), not the head dimension.
         # Since heads are sharded but each shard has complete head_v_dim vectors,
