@@ -30,6 +30,12 @@ Usage:
         --yaml-path src/olmo_core/data/source_mixtures/midtrain-memo-auto.yaml \
         --output-dir /path/to/output
 
+    # Use parallel workers for faster downloading (recommended: 8-16 for cloud storage)
+    python src/scripts/download_untokenized_data.py \
+        --yaml-path src/olmo_core/data/source_mixtures/midtrain-memo-auto.yaml \
+        --output-dir /path/to/output \
+        --workers 16
+
     # Preview what would be downloaded (dry run)
     python src/scripts/download_untokenized_data.py \
         --yaml-path src/olmo_core/data/source_mixtures/midtrain-memo-auto.yaml \
@@ -54,6 +60,7 @@ import json
 import os
 import re
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator, Optional
@@ -201,10 +208,23 @@ def extract_npy_paths_from_yaml(yaml_path: str) -> list[str]:
     return paths
 
 
+def _scan_single_csv(args: tuple) -> dict[str, list[tuple[str, int]]]:
+    """Helper function to scan a single CSV file (for parallel processing)."""
+    npy_path, path_remapper = args
+    csv_path = get_csv_path(npy_path)
+    result: dict[str, list[tuple[str, int]]] = defaultdict(list)
+    
+    for meta in read_csv_metadata(csv_path, path_remapper):
+        result[meta.src].append((meta.doc_id, meta.loc))
+    
+    return dict(result)
+
+
 def collect_source_files(
     npy_paths: list[str],
     path_remapper: Optional[PathRemapper] = None,
-    verbose: bool = True
+    verbose: bool = True,
+    num_workers: int = 1
 ) -> dict[str, list[tuple[str, int]]]:
     """
     Collect all source files referenced in CSV metadata files.
@@ -214,22 +234,57 @@ def collect_source_files(
     """
     source_files: dict[str, list[tuple[str, int]]] = defaultdict(list)
     
-    for i, npy_path in enumerate(npy_paths):
-        csv_path = get_csv_path(npy_path)
-        if verbose:
-            print(f"[{i+1}/{len(npy_paths)}] Scanning {csv_path}")
+    if num_workers <= 1:
+        # Sequential processing
+        for i, npy_path in enumerate(npy_paths):
+            csv_path = get_csv_path(npy_path)
+            if verbose:
+                print(f"[{i+1}/{len(npy_paths)}] Scanning {csv_path}")
+            
+            for meta in read_csv_metadata(csv_path, path_remapper):
+                source_files[meta.src].append((meta.doc_id, meta.loc))
+    else:
+        # Parallel processing
+        args_list = [(npy_path, path_remapper) for npy_path in npy_paths]
+        completed = 0
         
-        for meta in read_csv_metadata(csv_path, path_remapper):
-            source_files[meta.src].append((meta.doc_id, meta.loc))
+        with ThreadPoolExecutor(max_workers=num_workers) as executor:
+            futures = {executor.submit(_scan_single_csv, args): args[0] for args in args_list}
+            
+            for future in as_completed(futures):
+                completed += 1
+                npy_path = futures[future]
+                if verbose:
+                    print(f"[{completed}/{len(npy_paths)}] Scanned {os.path.basename(get_csv_path(npy_path))}")
+                
+                try:
+                    result = future.result()
+                    for src, refs in result.items():
+                        source_files[src].extend(refs)
+                except Exception as e:
+                    print(f"Error scanning {npy_path}: {e}")
     
     return source_files
+
+
+def _scan_single_csv_with_metadata(args: tuple) -> tuple[str, int, dict[str, list[tuple[str, int]]]]:
+    """Helper function to scan a single CSV file with topic metadata (for parallel processing)."""
+    npy_path, path_remapper, topic, rep_rate = args
+    csv_path = get_csv_path(npy_path)
+    result: dict[str, list[tuple[str, int]]] = defaultdict(list)
+    
+    for meta in read_csv_metadata(csv_path, path_remapper):
+        result[meta.src].append((meta.doc_id, meta.loc))
+    
+    return topic, rep_rate, dict(result)
 
 
 def collect_source_files_by_topic(
     sources: list[SourceInfo],
     path_remapper: Optional[PathRemapper] = None,
     max_sources: Optional[int] = None,
-    verbose: bool = True
+    verbose: bool = True,
+    num_workers: int = 1
 ) -> dict[str, dict[int, dict[str, list[tuple[str, int]]]]]:
     """
     Collect source files organized by topic and repetition rate.
@@ -244,20 +299,46 @@ def collect_source_files_by_topic(
     
     sources_to_process = sources[:max_sources] if max_sources else sources
     total_paths = sum(len(s.paths) for s in sources_to_process)
-    path_idx = 0
     
-    for source in sources_to_process:
-        topic = source.topic
-        rep_rate = source.repetition_rate
-        
-        for npy_path in source.paths:
-            path_idx += 1
-            csv_path = get_csv_path(npy_path)
-            if verbose:
-                print(f"[{path_idx}/{total_paths}] [{topic}/repeat{rep_rate}] Scanning {os.path.basename(csv_path)}")
+    if num_workers <= 1:
+        # Sequential processing
+        path_idx = 0
+        for source in sources_to_process:
+            topic = source.topic
+            rep_rate = source.repetition_rate
             
-            for meta in read_csv_metadata(csv_path, path_remapper):
-                organized[topic][rep_rate][meta.src].append((meta.doc_id, meta.loc))
+            for npy_path in source.paths:
+                path_idx += 1
+                csv_path = get_csv_path(npy_path)
+                if verbose:
+                    print(f"[{path_idx}/{total_paths}] [{topic}/repeat{rep_rate}] Scanning {os.path.basename(csv_path)}")
+                
+                for meta in read_csv_metadata(csv_path, path_remapper):
+                    organized[topic][rep_rate][meta.src].append((meta.doc_id, meta.loc))
+    else:
+        # Parallel processing
+        args_list = []
+        for source in sources_to_process:
+            for npy_path in source.paths:
+                args_list.append((npy_path, path_remapper, source.topic, source.repetition_rate))
+        
+        completed = 0
+        with ThreadPoolExecutor(max_workers=num_workers) as executor:
+            futures = {executor.submit(_scan_single_csv_with_metadata, args): args for args in args_list}
+            
+            for future in as_completed(futures):
+                completed += 1
+                args = futures[future]
+                npy_path, _, topic, rep_rate = args
+                if verbose:
+                    print(f"[{completed}/{total_paths}] [{topic}/repeat{rep_rate}] Scanned {os.path.basename(get_csv_path(npy_path))}")
+                
+                try:
+                    topic, rep_rate, result = future.result()
+                    for src, refs in result.items():
+                        organized[topic][rep_rate][src].extend(refs)
+                except Exception as e:
+                    print(f"Error scanning {npy_path}: {e}")
     
     return organized
 
@@ -283,11 +364,46 @@ def read_document_from_source(src_path: str, loc: int) -> Optional[dict]:
     return None
 
 
+def _fetch_from_single_source_simple(args: tuple) -> list[dict]:
+    """Helper function to fetch documents from a single source file (for parallel processing, simple mode)."""
+    src_path, doc_refs = args
+    documents = []
+    sorted_refs = sorted(doc_refs, key=lambda x: x[1])
+    
+    try:
+        with smart_open.open(src_path, "rt") as f:
+            needed_locs = {loc for _, loc in sorted_refs}
+            loc_to_docs = {}
+            
+            for line_num, line in enumerate(f, start=1):
+                if line_num in needed_locs:
+                    doc = json.loads(line)
+                    loc_to_docs[line_num] = doc
+                if line_num > max(needed_locs):
+                    break
+            
+            for doc_id, loc in sorted_refs:
+                if loc in loc_to_docs:
+                    doc = loc_to_docs[loc]
+                    doc["_metadata"] = {
+                        "doc_id": doc_id,
+                        "src": src_path,
+                        "loc": loc
+                    }
+                    documents.append(doc)
+    except Exception as e:
+        # Return empty list on error
+        pass
+    
+    return documents
+
+
 def download_source_documents(
     source_files: dict[str, list[tuple[str, int]]],
     output_dir: str,
     max_files: Optional[int] = None,
-    verbose: bool = True
+    verbose: bool = True,
+    num_workers: int = 1
 ) -> None:
     """
     Download documents from source files and save them.
@@ -297,6 +413,7 @@ def download_source_documents(
         output_dir: Directory to save output files
         max_files: Maximum number of source files to process (for testing)
         verbose: Print progress
+        num_workers: Number of parallel workers (default 1 for sequential)
     """
     os.makedirs(output_dir, exist_ok=True)
     
@@ -307,36 +424,35 @@ def download_source_documents(
     
     all_documents = []
     
-    for i, (src_path, doc_refs) in enumerate(source_list):
-        if verbose:
-            print(f"[{i+1}/{len(source_list)}] Reading {len(doc_refs)} docs from {src_path}")
+    if num_workers <= 1:
+        # Sequential processing
+        for i, (src_path, doc_refs) in enumerate(source_list):
+            if verbose:
+                print(f"[{i+1}/{len(source_list)}] Reading {len(doc_refs)} docs from {src_path}")
+            
+            result = _fetch_from_single_source_simple((src_path, doc_refs))
+            if not result and verbose:
+                print(f"Warning: No documents fetched from {src_path}")
+            all_documents.extend(result)
+    else:
+        # Parallel processing
+        args_list = [(src_path, doc_refs) for src_path, doc_refs in source_list]
+        completed = 0
         
-        # Sort by line number for efficient sequential reading
-        sorted_refs = sorted(doc_refs, key=lambda x: x[1])
-        
-        try:
-            with smart_open.open(src_path, "rt") as f:
-                needed_locs = {loc for _, loc in sorted_refs}
-                loc_to_docs = {}
+        with ThreadPoolExecutor(max_workers=num_workers) as executor:
+            futures = {executor.submit(_fetch_from_single_source_simple, args): args[0] for args in args_list}
+            
+            for future in as_completed(futures):
+                completed += 1
+                src_path = futures[future]
+                if verbose:
+                    print(f"[{completed}/{len(source_list)}] Fetched from {os.path.basename(src_path)}")
                 
-                for line_num, line in enumerate(f, start=1):
-                    if line_num in needed_locs:
-                        doc = json.loads(line)
-                        loc_to_docs[line_num] = doc
-                    if line_num > max(needed_locs):
-                        break
-                
-                for doc_id, loc in sorted_refs:
-                    if loc in loc_to_docs:
-                        doc = loc_to_docs[loc]
-                        doc["_metadata"] = {
-                            "doc_id": doc_id,
-                            "src": src_path,
-                            "loc": loc
-                        }
-                        all_documents.append(doc)
-        except Exception as e:
-            print(f"Error processing {src_path}: {e}")
+                try:
+                    result = future.result()
+                    all_documents.extend(result)
+                except Exception as e:
+                    print(f"Error processing {src_path}: {e}")
     
     # Save all documents
     output_path = os.path.join(output_dir, "documents.jsonl.gz")
@@ -347,47 +463,82 @@ def download_source_documents(
     print(f"\nSaved {len(all_documents)} documents to {output_path}")
 
 
+def _fetch_from_single_source(args: tuple) -> list[dict]:
+    """Helper function to fetch documents from a single source file (for parallel processing)."""
+    src_path, doc_refs, topic, rep_rate = args
+    documents = []
+    sorted_refs = sorted(doc_refs, key=lambda x: x[1])
+    
+    try:
+        with smart_open.open(src_path, "rt") as f:
+            needed_locs = {loc for _, loc in sorted_refs}
+            loc_to_docs = {}
+            
+            for line_num, line in enumerate(f, start=1):
+                if line_num in needed_locs:
+                    doc = json.loads(line)
+                    loc_to_docs[line_num] = doc
+                if line_num > max(needed_locs):
+                    break
+            
+            for doc_id, loc in sorted_refs:
+                if loc in loc_to_docs:
+                    doc = loc_to_docs[loc]
+                    doc["_metadata"] = {
+                        "doc_id": doc_id,
+                        "src": src_path,
+                        "loc": loc,
+                        "topic": topic,
+                        "repetition_rate": rep_rate
+                    }
+                    documents.append(doc)
+    except Exception as e:
+        # Return empty list on error, error will be logged by caller if needed
+        pass
+    
+    return documents
+
+
 def fetch_documents_from_sources(
     source_files: dict[str, list[tuple[str, int]]],
     topic: str,
     rep_rate: int,
-    verbose: bool = True
+    verbose: bool = True,
+    num_workers: int = 1
 ) -> list[dict]:
     """Fetch documents from source files, adding topic/repetition metadata."""
     documents = []
     source_list = list(source_files.items())
     
-    for i, (src_path, doc_refs) in enumerate(source_list):
-        if verbose:
-            print(f"  [{i+1}/{len(source_list)}] Reading {len(doc_refs)} docs from {os.path.basename(src_path)}")
+    if num_workers <= 1:
+        # Sequential processing
+        for i, (src_path, doc_refs) in enumerate(source_list):
+            if verbose:
+                print(f"  [{i+1}/{len(source_list)}] Reading {len(doc_refs)} docs from {os.path.basename(src_path)}")
+            
+            result = _fetch_from_single_source((src_path, doc_refs, topic, rep_rate))
+            if not result and verbose:
+                print(f"  Warning: No documents fetched from {src_path}")
+            documents.extend(result)
+    else:
+        # Parallel processing
+        args_list = [(src_path, doc_refs, topic, rep_rate) for src_path, doc_refs in source_list]
+        completed = 0
         
-        sorted_refs = sorted(doc_refs, key=lambda x: x[1])
-        
-        try:
-            with smart_open.open(src_path, "rt") as f:
-                needed_locs = {loc for _, loc in sorted_refs}
-                loc_to_docs = {}
+        with ThreadPoolExecutor(max_workers=num_workers) as executor:
+            futures = {executor.submit(_fetch_from_single_source, args): args[0] for args in args_list}
+            
+            for future in as_completed(futures):
+                completed += 1
+                src_path = futures[future]
+                if verbose:
+                    print(f"  [{completed}/{len(source_list)}] Fetched from {os.path.basename(src_path)}")
                 
-                for line_num, line in enumerate(f, start=1):
-                    if line_num in needed_locs:
-                        doc = json.loads(line)
-                        loc_to_docs[line_num] = doc
-                    if line_num > max(needed_locs):
-                        break
-                
-                for doc_id, loc in sorted_refs:
-                    if loc in loc_to_docs:
-                        doc = loc_to_docs[loc]
-                        doc["_metadata"] = {
-                            "doc_id": doc_id,
-                            "src": src_path,
-                            "loc": loc,
-                            "topic": topic,
-                            "repetition_rate": rep_rate
-                        }
-                        documents.append(doc)
-        except Exception as e:
-            print(f"  Error processing {src_path}: {e}")
+                try:
+                    result = future.result()
+                    documents.extend(result)
+                except Exception as e:
+                    print(f"  Error processing {src_path}: {e}")
     
     return documents
 
@@ -395,7 +546,8 @@ def fetch_documents_from_sources(
 def download_by_topic_and_repetition(
     organized_sources: dict[str, dict[int, dict[str, list[tuple[str, int]]]]],
     output_dir: str,
-    verbose: bool = True
+    verbose: bool = True,
+    num_workers: int = 1
 ) -> dict:
     """
     Download documents organized by topic and repetition rate.
@@ -429,7 +581,7 @@ def download_by_topic_and_repetition(
                 print(f"\n[{topic}/repeat{rep_rate}] Downloading {total_docs} docs from {len(source_files)} files...")
             
             # Fetch documents
-            documents = fetch_documents_from_sources(source_files, topic, rep_rate, verbose)
+            documents = fetch_documents_from_sources(source_files, topic, rep_rate, verbose, num_workers)
             
             # Create output directory
             topic_dir = os.path.join(output_dir, topic, f"repeat{rep_rate}")
@@ -582,6 +734,13 @@ def main():
         action="store_true",
         help="Use default path remappings (local mount paths to GCS)"
     )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=16,
+        help="Number of parallel workers for downloading (default: 16). "
+             "Use 1 for sequential processing. Recommended: 8-16 for cloud storage, 4-8 for local storage."
+    )
     
     args = parser.parse_args()
     
@@ -661,8 +820,8 @@ def main():
                 print(f"  Per-topic counts: {dict(topic_counts)}")
         
         # Collect source files organized by topic/repetition
-        print("\nScanning CSV metadata files...")
-        organized_sources = collect_source_files_by_topic(sources, path_remapper)
+        print(f"\nScanning CSV metadata files{f' with {args.workers} workers' if args.workers > 1 else ''}...")
+        organized_sources = collect_source_files_by_topic(sources, path_remapper, num_workers=args.workers)
         
         # Print organized summary
         print_organized_summary(organized_sources)
@@ -672,14 +831,14 @@ def main():
             return
         
         # Download organized by topic and repetition rate
-        print(f"\nDownloading documents to {args.output_dir}...")
-        download_by_topic_and_repetition(organized_sources, args.output_dir)
+        print(f"\nDownloading documents to {args.output_dir}{f' with {args.workers} workers' if args.workers > 1 else ''}...")
+        download_by_topic_and_repetition(organized_sources, args.output_dir, num_workers=args.workers)
     
     else:
         # Single NPY file mode: simple flat download
         npy_paths = [args.npy_path]
         print(f"\nScanning CSV metadata for: {args.npy_path}")
-        source_files = collect_source_files(npy_paths, path_remapper)
+        source_files = collect_source_files(npy_paths, path_remapper, num_workers=args.workers)
         
         # Print summary
         print_summary(source_files)
@@ -689,11 +848,12 @@ def main():
             return
         
         # Download documents
-        print(f"\nDownloading documents to {args.output_dir}...")
+        print(f"\nDownloading documents to {args.output_dir}{f' with {args.workers} workers' if args.workers > 1 else ''}...")
         download_source_documents(
             source_files,
             args.output_dir,
-            max_files=args.max_source_files
+            max_files=args.max_source_files,
+            num_workers=args.workers
         )
 
 
