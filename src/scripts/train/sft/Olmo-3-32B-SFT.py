@@ -421,7 +421,9 @@ def train(checkpoint: str, config: SFTConfig, no_save_tokenizer: bool):
     train_module = config.train_module.build(model)
     if config.dataset is not None:
         dataset = config.dataset.build()
-        data_loader = config.data_loader.build(dataset, dp_process_group=train_module.dp_process_group)
+        data_loader = config.data_loader.build(
+            dataset, dp_process_group=train_module.dp_process_group
+        )
         trainer = config.trainer.build(train_module, data_loader)
 
         if no_save_tokenizer and get_rank() == 0:
