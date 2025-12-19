@@ -84,9 +84,9 @@ class GateGranularity(StrEnum):
 @dataclass
 class GateConfig(Config):
     granularity: GateGranularity = GateGranularity.headwise
-    """
-    The granularity of gating to use.
-    """
+    """The granularity of gating to use."""
+    full_precision: bool = True
+    """Whether to always apply gating in full precision regardless of the input data type."""
 
 
 @dataclass
@@ -609,7 +609,10 @@ class Attention(AttentionBase):
 
         if self.gate is not None:
             assert self.w_g is not None
-            gate_values = torch.sigmoid(self.w_g(x).float()).to(att.dtype)
+            g = self.w_g(x)
+            if self.gate.full_precision:
+                g = g.float()
+            gate_values = torch.sigmoid(g).to(att.dtype)
             if self.gate.granularity == GateGranularity.headwise:
                 # head-wise gating is broadcast across the head dimension
                 att = att * gate_values.unsqueeze(-1)
