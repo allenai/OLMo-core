@@ -618,8 +618,8 @@ class Attention(AttentionBase):
                 # head-wise gating is broadcast across the head dimension
                 att = att * gate_values.unsqueeze(-1)
             elif self.gate.granularity == GateGranularity.elementwise:
-                # element-wise gating: reshape att to (B, T, d_model) first
                 att = att.view(B, T, -1) * gate_values
+                # the following att.view op is redundant (a no-op)
 
         # shape: (batch_size, seq_len, n_heads * head_dim)
         att = att.view(B, T, -1)
