@@ -1,7 +1,6 @@
 """
 Tests for the merge_core_checkpoints.py script.
 """
-
 import importlib.util
 import json
 import tempfile
