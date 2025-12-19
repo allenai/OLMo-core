@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 from typing import Any, Dict
 
-import fla.models
 import torch
 from transformers import AutoModelForCausalLM
 
@@ -25,6 +24,8 @@ class FLAModelConfig(Config):
     kwargs: Dict[str, Any]
 
     def build(self) -> FLAModel:
+        import fla.models
+
         config_cls = getattr(fla.models, self.fla_model_name + "Config", None)
         assert config_cls is not None, f"Unknown FLA model name: {self.fla_model_name}"
         config = config_cls(**self.kwargs)
