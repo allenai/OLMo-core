@@ -257,7 +257,6 @@ class SFTConfig(Config):
         overrides: List[str],
         workspace: str,
         budget: str,
-        model_name: str,
         init_seed: int = 33333,
         dataset_path: str,
     ) -> "SFTConfig":
@@ -332,7 +331,6 @@ class SFTConfig(Config):
                     f"--global_batch_size={global_batch_size}",
                     f"--budget={budget}",
                     f"--workspace={workspace}",
-                    f"--model_name={model_name}",
                     f"--dataset_path={dataset_path}",
                     *overrides,
                 ],
@@ -501,7 +499,6 @@ Examples:
         help="The global batch size in tokens.",
         default=64 * DEFAULT_SEQUENCE_LENGTH,
     )
-    parser.add_argument("--model_name", help="The name of the model architecture to use.")
     parser.add_argument("--budget", help="The beaker budget to use.")
     parser.add_argument("--workspace", help="The workspace to run in.")
     parser.add_argument("--dataset_path", help="The path to the pre-tokenized SFT dataset.")
@@ -530,7 +527,6 @@ Examples:
         overrides=overrides,
         budget=args.budget,
         workspace=args.workspace,
-        model_name=args.model_name,
         dataset_path=args.dataset_path,
     )
 

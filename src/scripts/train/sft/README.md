@@ -64,14 +64,13 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
         --num_nodes=1 \
         --budget ai2/BUDGET \
         --workspace ai2/<your_workspace> \
-        --model_name olmo3-7b \
         --dataset_path /weka/<bucket-name>/path/to/dataset
     ```
 
     * Tips:
         * The "launch" command automatically creates a Beaker experiment and runs the exact same command remotely with "train" substituted for launch.
         * Highly recommended: Tokenize and train at the same context length (recommended 32k)
-        * `--model_name`: Loads the correct model config. Currently supported: `olmo2-7b`, `olmo3-7b`, and `olmo3-32b`.
+        * Make sure to use the right script for your model: Currently supported: `Olmo-2-7B`, `Olmo-3-7B`, and `Olmo-3-32B`.
         * `--dataset_path`: Path to your tokenized dataset. If on Augusta, you must copy it to GCP. Include `gs://`.
 
 ## Evaluation
