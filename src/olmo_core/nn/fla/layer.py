@@ -1,9 +1,10 @@
 import logging
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, cast
 
 import fla.layers
 import torch
+import torch.distributed as dist
 from torch import nn
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import DTensor, distribute_tensor
@@ -110,19 +111,66 @@ class FLA(nn.Module):
         # A_log and dt_bias are [num_heads] tensors used with a_proj output in:
         #   g = -A_log.exp() * softplus(a_proj(x) + dt_bias)
         # They must be sharded on dim 0 to match the colwise-sharded a_proj output.
-        inner.A_log = nn.Parameter(distribute_tensor(inner.A_log.data, tp_mesh, [Shard(0)]))
-        inner.dt_bias = nn.Parameter(distribute_tensor(inner.dt_bias.data, tp_mesh, [Shard(0)]))
+        inner.A_log = nn.Parameter(
+            distribute_tensor(cast(torch.Tensor, inner.A_log.data), tp_mesh, [Shard(0)])
+        )
+        inner.dt_bias = nn.Parameter(
+            distribute_tensor(cast(torch.Tensor, inner.dt_bias.data), tp_mesh, [Shard(0)])
+        )
 
         # Shard ShortConvolution layers (when use_short_conv=True).
-        # These process the sharded outputs of q_proj/k_proj/v_proj.
-        # ShortConvolution is a subclass of Conv1d with weight shape (out_channels, in_channels/groups, kernel_size).
-        # We shard on dim 0 (out_channels) to match the colwise-sharded projection outputs.
+        #
+        # IMPORTANT: FLA's ShortConvolution runs custom Triton kernels, which do not work with DTensor
+        # parameters. Instead we *materialize per-rank local Conv1d parameters* by slicing along the
+        # channel dimension and updating the Conv1d metadata (in/out/groups). This matches the
+        # colwise-sharded outputs of q_proj/k_proj/v_proj.
+        tp_rank = dist.get_rank(tp_mesh.get_group())
+        tp_world_size = dist.get_world_size(tp_mesh.get_group())
+
         for conv_name in ["q_conv1d", "k_conv1d", "v_conv1d"]:
-            if hasattr(inner, conv_name) and getattr(inner, conv_name) is not None:
-                conv = getattr(inner, conv_name)
-                conv.weight = nn.Parameter(distribute_tensor(conv.weight.data, tp_mesh, [Shard(0)]))
-                if conv.bias is not None:
-                    conv.bias = nn.Parameter(distribute_tensor(conv.bias.data, tp_mesh, [Shard(0)]))
+            if not (hasattr(inner, conv_name) and getattr(inner, conv_name) is not None):
+                continue
+
+            conv = getattr(inner, conv_name)
+            if not (hasattr(conv, "weight") and hasattr(conv, "groups")):
+                raise NotImplementedError(
+                    f"Don't know how to shard {conv_name} of type {type(conv).__name__}"
+                )
+
+            # Expect depthwise Conv1d: groups == in_channels == out_channels
+            in_channels = int(getattr(conv, "in_channels", conv.weight.shape[0]))
+            out_channels = int(getattr(conv, "out_channels", conv.weight.shape[0]))
+            groups = int(conv.groups)
+            if not (groups == in_channels == out_channels):
+                raise NotImplementedError(
+                    f"TP sharding only implemented for depthwise Conv1d in {conv_name}, "
+                    f"but got in={in_channels}, out={out_channels}, groups={groups}"
+                )
+
+            if out_channels % tp_world_size != 0:
+                raise ValueError(
+                    f"{conv_name} out_channels={out_channels} must be divisible by tp_world_size={tp_world_size}"
+                )
+
+            local_channels = out_channels // tp_world_size
+            start = tp_rank * local_channels
+            end = start + local_channels
+
+            # Conv1d weight shape is (out_channels, in_channels/groups, kernel_size).
+            # For depthwise conv, in_channels/groups == 1, so slicing dim 0 is correct.
+            w_local = conv.weight.detach()[start:end].contiguous()
+            conv.weight = nn.Parameter(w_local)
+            if conv.bias is not None:
+                b_local = conv.bias.detach()[start:end].contiguous()
+                conv.bias = nn.Parameter(b_local)
+
+            conv.in_channels = local_channels
+            conv.out_channels = local_channels
+            conv.groups = local_channels
+
+            # Some implementations keep a separate attribute used by kernels.
+            if hasattr(conv, "hidden_size"):
+                conv.hidden_size = local_channels
 
         # o_norm: normalizes over head_v_dim (last dimension), not the head dimension.
         # Since heads are sharded but each shard has complete head_v_dim vectors,
