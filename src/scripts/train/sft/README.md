@@ -57,7 +57,7 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
             ai2/jupiter \
         --trainer.callbacks.wandb.enabled=True \
         --trainer.max_duration.value=2 \
-        --train_module.optim.lr=1e-4 \
+        --train_module.optim.lr=5e-5 \
         --launch.priority=high \
         --seq_len=32768 \
         --launch.num_gpus=8 \
