@@ -609,13 +609,14 @@ class Attention(AttentionBase):
                 g = g.float()
             gate_values = torch.sigmoid(g).to(att.dtype)
             if self.gate.granularity == GateGranularity.headwise:
-                # head-wise gating is broadcast across the head dimension
+                # head-wise gating is broadcast across head_dim
+                # shape: (batch_size, seq_len, n_heads, head_dim)
                 att = att * gate_values.unsqueeze(-1)
             elif self.gate.granularity == GateGranularity.elementwise:
                 att = att.view(B, T, -1) * gate_values
                 # the following att.view op is redundant (a no-op)
 
-        # shape: (batch_size, seq_len, n_heads * head_dim)
+        # shape: (batch_size, seq_len, d_model)
         att = att.view(B, T, -1)
 
         # shape: (batch_size, seq_len, d_model)
