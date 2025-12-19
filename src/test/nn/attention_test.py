@@ -842,7 +842,7 @@ def test_attention_leftpad_shift_equivalence(use_rope):
                 n_heads=8,
                 bias=False,
                 qk_norm=LayerNormConfig(),
-                gate_config=GateConfig(granularity=GateGranularity.headwise),
+                gate=GateConfig(granularity=GateGranularity.headwise),
             ),
             id="headwise-gating",
         ),
@@ -1036,7 +1036,7 @@ def test_attention_gating(device: torch.device, dtype: torch.dtype, gate_type: G
     attention = Attention(
         d_model=d_model,
         n_heads=n_heads,
-        gate_config=GateConfig(gate_type=gate_type),
+        gate=GateConfig(gate_type=gate_type),
         backend=AttentionBackendName.torch,
         init_device=device.type,
     )
@@ -1091,7 +1091,7 @@ def _run_tensor_parallel_attention(
             id="headwise-qk-layernorm-rope",
         ),
         pytest.param(
-            {"gate_config": GateConfig(gate_type=GateType.headwise)},
+            {"gate": GateConfig(gate_type=GateType.headwise)},
             id="headwise-gating",
         ),
     ],
