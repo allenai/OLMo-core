@@ -70,10 +70,6 @@ log = logging.getLogger(__name__)
 
 
 class GateGranularity(StrEnum):
-    """
-    An enumeration of the different gating granularities for attention.
-    """
-
     headwise = "headwise"
     """
     Head-wise gating: one gate value per attention head, broadcast across head dimension.
@@ -613,7 +609,7 @@ class Attention(AttentionBase):
 
         if self.gate is not None:
             assert self.w_g is not None
-            gate_values = torch.sigmoid(self.w_g(x))
+            gate_values = torch.sigmoid(self.w_g(x).float()).to(att.dtype)
             if self.gate.granularity == GateGranularity.headwise:
                 # head-wise gating is broadcast across the head dimension
                 att = att * gate_values.unsqueeze(-1)
