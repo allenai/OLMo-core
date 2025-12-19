@@ -542,7 +542,7 @@ Examples:
         config.launch.launch(follow=args.follow)
     elif args.cmd == "train":
         try:
-            train(args.pretrain_checkpoint, config, args.save_tokenizer)
+            train(args.pretrain_checkpoint, config, args.no_save_tokenizer)
         finally:
             teardown_training_environment()
     else:
