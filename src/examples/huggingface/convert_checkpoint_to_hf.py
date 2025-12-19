@@ -147,6 +147,9 @@ def convert_checkpoint_to_hf(
         huggingface_tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
         huggingface_tokenizer.save_pretrained(output_path)
         print(f"Successfully saved model tokenizer to '{output_path}'")
+        max_sequence_length = max_sequence_length or getattr(
+            huggingface_tokenizer, "model_max_length", None
+        )
     else:
         tokenizer_id = tokenizer_id or tokenizer_config.identifier
         if tokenizer_id is not None:

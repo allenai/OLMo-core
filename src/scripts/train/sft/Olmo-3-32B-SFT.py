@@ -285,33 +285,6 @@ class SFTConfig(Config):
             print("Batch size config (before overrides):")
             print(bs_config)
 
-        dp_shard_degree = GPUS_PER_NODE // (bs_config.cp_degree or 1)
-        if not dp_shard_degree > 0:
-            raise OLMoConfigurationError(f"dp_shard_degree ({dp_shard_degree}) must be positive.")
-
-        ac_config = TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.selected_modules,
-            modules=["blocks.*.feed_forward"],
-        )
-
-        cp_config = (
-            (
-                TransformerContextParallelConfig.llama3(degree=bs_config.cp_degree)
-                if dataset_config.generate_doc_lengths  # only use llama3 if we're masking docs
-                else TransformerContextParallelConfig.zig_zag(degree=bs_config.cp_degree)
-            )
-            if bs_config.cp_degree
-            else None
-        )
-
-        dp_config = TransformerDataParallelConfig(
-            name=DataParallelType.hsdp,
-            param_dtype=DType.bfloat16,
-            reduce_dtype=DType.float32,
-            shard_degree=GPUS_PER_NODE  # try to keep communication w/in a node
-            // (bs_config.cp_degree or 1),
-        )
-
         model = TransformerConfig.olmo2_32B(vocab_size=tokenizer_config.padded_vocab_size())
         model.block.attention.sliding_window = SlidingWindowAttentionConfig(
             force_full_attention_on_first_layer=False,
@@ -425,7 +398,7 @@ class SFTConfig(Config):
                 WandBCallback(
                     name=run_name,
                     entity="ai2-llm",
-                    project=f"{user_name}-7B-sft",
+                    project=f"{user_name}-32B-sft",
                     enabled=False,
                     cancel_check_interval=10,
                 ),
@@ -440,7 +413,7 @@ class SFTConfig(Config):
         return config
 
 
-def train(checkpoint: str, config: SFTConfig, save_tokenizer: bool):
+def train(checkpoint: str, config: SFTConfig, no_save_tokenizer: bool):
     # Set RNG states on all devices.
     seed_all(config.init_seed)
 
@@ -451,7 +424,7 @@ def train(checkpoint: str, config: SFTConfig, save_tokenizer: bool):
     data_loader = config.data_loader.build(dataset, dp_process_group=train_module.dp_process_group)
     trainer = config.trainer.build(train_module, data_loader)
 
-    if save_tokenizer and get_rank() == 0:
+    if not no_save_tokenizer and get_rank() == 0:
         tokenizer_path = join_path(get_parent(dataset.paths[0]), "tokenizer")
         if tokenizer_path.exists() and tokenizer_path.is_dir():
             log.info("Saving tokenizer...")
@@ -519,15 +492,13 @@ Examples:
     )
     parser.add_argument(
         "--follow",
-        type=bool,
+        action="store_true",
         help="Whether to follow the experiment in the terminal.",
-        default=False,
     )
     parser.add_argument(
-        "--save_tokenizer",
-        type=bool,
-        help="Whether to save the dataset's tokenizer in the model directory.",
-        default=True,
+        "--no_save_tokenizer",
+        action="store_true",
+        help="Disable saving the dataset's tokenizer in the model directory.",
     )
     parser.add_argument(
         "--global_batch_size",
@@ -576,7 +547,7 @@ Examples:
         config.launch.launch(follow=args.follow)
     elif args.cmd == "train":
         try:
-            train(args.pretrain_checkpoint, config, args.save_tokenizer)
+            train(args.pretrain_checkpoint, config, args.no_save_tokenizer)
         finally:
             teardown_training_environment()
     else:

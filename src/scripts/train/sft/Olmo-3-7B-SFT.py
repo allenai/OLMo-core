@@ -424,7 +424,7 @@ class SFTConfig(Config):
         return config
 
 
-def train(checkpoint: str, config: SFTConfig, save_tokenizer: bool):
+def train(checkpoint: str, config: SFTConfig, no_save_tokenizer: bool):
     # Set RNG states on all devices.
     seed_all(config.init_seed)
 
@@ -435,7 +435,7 @@ def train(checkpoint: str, config: SFTConfig, save_tokenizer: bool):
     data_loader = config.data_loader.build(dataset, dp_process_group=train_module.dp_process_group)
     trainer = config.trainer.build(train_module, data_loader)
 
-    if save_tokenizer and get_rank() == 0:
+    if no_save_tokenizer and get_rank() == 0:
         tokenizer_path = join_path(get_parent(dataset.paths[0]), "tokenizer")
         if tokenizer_path.exists() and tokenizer_path.is_dir():
             log.info("Saving tokenizer...")
@@ -503,15 +503,13 @@ Examples:
     )
     parser.add_argument(
         "--follow",
-        type=bool,
+        action="store_true",
         help="Whether to follow the experiment in the terminal.",
-        default=False,
     )
     parser.add_argument(
-        "--save_tokenizer",
-        type=bool,
-        help="Whether to save the dataset's tokenizer in the model directory.",
-        default=True,
+        "--no_save_tokenizer",
+        action="store_true",
+        help="Disable saving the dataset's tokenizer in the model directory.",
     )
     parser.add_argument(
         "--global_batch_size",
@@ -560,7 +558,7 @@ Examples:
         config.launch.launch(follow=args.follow)
     elif args.cmd == "train":
         try:
-            train(args.pretrain_checkpoint, config, args.save_tokenizer)
+            train(args.pretrain_checkpoint, config, args.no_save_tokenizer)
         finally:
             teardown_training_environment()
     else:
