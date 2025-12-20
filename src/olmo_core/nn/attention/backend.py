@@ -16,6 +16,7 @@ from .flash_attn_api import (
     dispatch_flash_attn_3,
     dispatch_flash_attn_3_qkvpacked,
     dispatch_flash_attn_3_with_kvcache,
+    dispatch_flash_attn_4,
     dispatch_flash_attn_qkvpacked,
     dispatch_flash_attn_with_kvcache,
     dispatch_ring_flash_attn,
@@ -48,6 +49,11 @@ class AttentionBackendName(StrEnum):
     Flash attention 3 (beta) from the `flash-attn <https://github.com/Dao-AILab/flash-attention>`_
     library ``hopper/`` subdirectory. Only supports H100/H800 GPUs. ➡️ :class:`FlashAttention3Backend`
     """
+    flash_4 = "flash_4"
+    """
+    Flash attention 4 (beta) from the `flash-attn <https://github.com/Dao-AILab/flash-attention>`_
+    library ``cute/`` subdirectory. ➡️ :class:`FlashAttention4Backend`
+    """
     te = "te"
     """
     Transformer Engine attention ➡️ :class:`TEAttentionBackend`.
@@ -60,6 +66,8 @@ class AttentionBackendName(StrEnum):
             return FlashAttention2Backend
         elif self == self.flash_3:
             return FlashAttention3Backend
+        elif self == self.flash_4:
+            return FlashAttention4Backend
         elif self == self.te:
             return TEAttentionBackend
         else:
@@ -620,6 +628,91 @@ class FlashAttention3Backend(AttentionBackend):
             )
 
         return dispatch_flash_attn_3(
+            q,
+            k,
+            v,
+            cu_seqlens=cu_doc_lens,
+            cu_seqlens_q=cu_doc_lens_q,
+            cu_seqlens_k=cu_doc_lens_k,
+            max_seqlen=max_doc_len,
+            max_seqlen_q=max_doc_len_q,
+            max_seqlen_k=max_doc_len_k,
+            softmax_scale=self.scale,
+            causal=True,
+            window_size=self.window_size,
+        )
+
+
+class FlashAttention4Backend(AttentionBackend):
+    """
+    SDPA via flash-attn.cute package. Does not currently support context parallelism.
+    """
+
+    def __init__(
+        self,
+        *,
+        head_dim: int,
+        n_heads: int,
+        n_kv_heads: Optional[int] = None,
+        scale: Optional[float] = None,
+        dropout_p: float = 0.0,
+        window_size: Tuple[int, int] = (-1, -1),
+        cache: Optional[BufferCache] = None,
+    ):
+        if dropout_p > 0.0:
+            raise RuntimeError("dropout_p > 0.0 is not supported for flash-attn 4")
+        super().__init__(
+            head_dim=head_dim,
+            n_heads=n_heads,
+            n_kv_heads=n_kv_heads,
+            scale=scale,
+            dropout_p=dropout_p,
+            window_size=window_size,
+            cache=cache,
+        )
+
+    @classmethod
+    def assert_supported(cls):
+        if not has_flash_attn_2():
+            raise RuntimeError(f"'{cls.__name__}' requires the flash-attn package.")
+
+    @classmethod
+    def assert_supports_swa(cls):
+        pass
+
+    @classmethod
+    def assert_supports_cp(cls):
+        raise RuntimeError(f"'{cls.__name__}' doesn't support context parallelism")
+
+    @classmethod
+    def assert_supports_packed_qkv(cls):
+        pass
+
+    @classmethod
+    def assert_supports_kv_cache(cls):
+        pass
+
+    def forward(
+        self,
+        qkv: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
+        cu_doc_lens: Optional[torch.Tensor] = None,
+        cu_doc_lens_q: Optional[torch.Tensor] = None,
+        cu_doc_lens_k: Optional[torch.Tensor] = None,
+        max_doc_len: Optional[int] = None,
+        max_doc_len_q: Optional[int] = None,
+        max_doc_len_k: Optional[int] = None,
+        local_k_slice: Optional[slice] = None,
+        kv_cache_manager: Optional[KVCacheManager] = None,
+    ) -> torch.Tensor:
+        if isinstance(qkv, torch.Tensor):
+            raise RuntimeError(f"'{self.__class__.__name__}' doesn't support packed QKV")
+
+        q, k, v = qkv
+
+        if kv_cache_manager:
+            raise RuntimeError(f"'{self.__class__.__name__}' doesn't support KV caching")
+
+        return dispatch_flash_attn_4(
             q,
             k,
             v,
