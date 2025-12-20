@@ -219,7 +219,11 @@ class AOMXLinearConfig(Config, _AOTypePlaceholder["MXLinearConfig"]):
     )  #  removed soon in favor of kernel_preference
     """if the preferred kernel is not supported on the given hardware an exception will be thrown"""
     mxfp8_cast_kernel_choice: AOMXFP8Dim1CastKernelChoice = AOMXFP8Dim1CastKernelChoice.torch
-    """which kernel to use for the mx fp8 cast along dim1 (dim0 is always torch)"""
+    """
+    which kernel to use for the mx fp8 cast along dim1 (dim0 is always torch).
+    torch is slow. cuda is fastest but requires torchao compiled on a blackwell machine.
+    triton only supports "floor" scale calculation mode.
+    """
     scale_calculation_mode: AOScaleCalculationMode = AOScaleCalculationMode.floor
     """how to calculate the mx block scaling factors"""
 
