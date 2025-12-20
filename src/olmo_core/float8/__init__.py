@@ -6,14 +6,15 @@ import logging
 from dataclasses import dataclass
 from typing import Optional, Set
 
-import torch
 import torch.nn as nn
+
+from olmo_core.utils import has_compute_capability
 
 from ..config import Config
 from ..exceptions import OLMoConfigurationError
-from .ao import AOFloat8LinearConfig, AOFloat8LinearRecipe
+from .ao import AOFloat8LinearConfig, AOFloat8LinearRecipe, AOMXLinearConfig
 
-__all__ = ["Float8Config", "AOFloat8LinearConfig", "AOFloat8LinearRecipe"]
+__all__ = ["Float8Config", "AOFloat8LinearConfig", "AOFloat8LinearRecipe", "AOMXLinearConfig"]
 
 log = logging.getLogger(__name__)
 
@@ -25,17 +26,31 @@ class Float8Config(Config):
 
     :param ao: A torchao ``Float8Linear`` linear configuration.
     :param ao_recipe: Alternatively you can specify a recipe name from torchao.
+    :param ao_mx: A torchao ``MXLinearConfig`` configuration for MX formats (MXFP8/MXFP4).
     :param enabled: If ``False`` this will be a no-op.
     """
 
     ao: Optional[AOFloat8LinearConfig] = None
     ao_recipe: Optional[AOFloat8LinearRecipe] = None
+    ao_mx: Optional[AOMXLinearConfig] = None
 
     enabled: bool = True
 
+    def __post_init__(self):
+        self.validate()
+
+    def validate(self):
+        config_count = sum(
+            [self.ao is not None, self.ao_recipe is not None, self.ao_mx is not None]
+        )
+        if config_count > 1:
+            raise OLMoConfigurationError(
+                "'ao', 'ao_recipe', and 'ao_mx' configs are mutually exclusive"
+            )
+
     @property
     def should_precompute_float8_dynamic_scale_for_fsdp(self):
-        if self.ao_recipe is not None:
+        if self.ao_recipe is not None or self.ao_mx is not None:
             return False
 
         float8_linear_config = (
@@ -47,7 +62,7 @@ class Float8Config(Config):
         self, model: nn.Module, *, modules_to_ignore: Optional[Set[str]] = None
     ):
         """
-        This method converts the linear layers of ``model`` to ``Float8Linear``.
+        This method converts the linear layers of ``model`` to ``Float8Linear`` or ``MXLinear``.
 
         .. warning::
             This will mutate the model in place.
@@ -59,13 +74,7 @@ class Float8Config(Config):
         if not self.enabled:
             return
 
-        if not (torch.cuda.is_available() and torch.cuda.get_device_capability() >= (8, 9)):
-            raise RuntimeError("Float8 training is only supported on SM89 or later")
-
-        if self.ao_recipe is not None and self.ao is not None:
-            raise OLMoConfigurationError("'ao_recipe' and 'ao' config are mutually exclusive")
-
-        from torchao.float8 import Float8LinearConfig, convert_to_float8_training
+        self.validate()
 
         ignored_modules_found = set()
 
@@ -91,20 +100,40 @@ class Float8Config(Config):
             if not p.requires_grad:
                 frozen_params.add(n)
 
-        # Mutates the model in place, replacing instances of nn.Linear with Float8Linear.
-        float8_linear_config: Float8LinearConfig
-        if self.ao_recipe is not None:
-            float8_linear_config = Float8LinearConfig.from_recipe_name(self.ao_recipe.to_ao_type())
-        else:
-            float8_linear_config = (
-                self.ao if self.ao is not None else AOFloat8LinearConfig()
-            ).to_ao_type()
+        # Handle MX format conversion
+        if self.ao_mx is not None:
+            if not has_compute_capability(10, 0):
+                raise RuntimeError("MX format training is only supported on SM100 or later")
 
-        convert_to_float8_training(
-            model,
-            config=float8_linear_config,
-            module_filter_fn=module_filter_fn,
-        )
+            from torchao.quantization import quantize_ as ao_quantize_
+
+            mx_linear_config = self.ao_mx.to_ao_type()
+
+            ao_quantize_(
+                model,
+                config=mx_linear_config,
+                filter_fn=module_filter_fn,
+            )
+
+        else:
+            from torchao.float8 import Float8LinearConfig, convert_to_float8_training
+
+            # Mutates the model in place, replacing instances of nn.Linear with Float8Linear.
+            float8_linear_config: Float8LinearConfig
+            if self.ao_recipe is not None:
+                float8_linear_config = Float8LinearConfig.from_recipe_name(
+                    self.ao_recipe.to_ao_type()
+                )
+            else:
+                float8_linear_config = (
+                    self.ao if self.ao is not None else AOFloat8LinearConfig()
+                ).to_ao_type()
+
+            convert_to_float8_training(
+                model,
+                config=float8_linear_config,
+                module_filter_fn=module_filter_fn,
+            )
 
         if modules_to_ignore is not None and modules_to_ignore != ignored_modules_found:
             raise OLMoConfigurationError(
