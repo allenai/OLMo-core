@@ -327,6 +327,7 @@ class RoPEConfig(ModuleConfig):
         """
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         kwargs.pop("name")
+        kwargs.pop("no_global_rope")
         kwargs.update(head_size=head_size, cache=cache)
 
         try:
