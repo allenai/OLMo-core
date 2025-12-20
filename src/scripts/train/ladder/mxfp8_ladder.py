@@ -111,7 +111,7 @@ class MXFP8TransformerModelConfigurator(TransformerModelConfigurator):
             scheduler=scheduler,
             float8_config=Float8Config(
                 enabled=True,
-                ao_mx=AOMXLinearConfig.mxfp8_cutlass(),  # <- this is the intervention
+                ao_mx=AOMXLinearConfig.mxfp8_cublas(),  # <- this is the intervention
             ),
         )
 

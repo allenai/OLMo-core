@@ -224,15 +224,6 @@ class AOMXLinearConfig(Config, _AOTypePlaceholder["MXLinearConfig"]):
     """how to calculate the mx block scaling factors"""
 
     @classmethod
-    def mxfp8_cutlass(cls, **kwargs: Any) -> "AOMXLinearConfig":
-        return AOMXLinearConfig(
-            # kernel_preference=AOKernelPreference.auto,
-            gemm_kernel_choice=AOMXGemmKernelChoice.cutlass,
-            mxfp8_cast_kernel_choice=AOMXFP8Dim1CastKernelChoice.cuda,
-            **kwargs,
-        )
-
-    @classmethod
     def mxfp8_cublas(cls, **kwargs: Any) -> "AOMXLinearConfig":
         return AOMXLinearConfig(
             # kernel_preference=AOKernelPreference.auto,
