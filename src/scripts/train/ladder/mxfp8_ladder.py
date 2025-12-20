@@ -79,7 +79,8 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
             sources=[
                 NumpyDocumentSourceMixConfig(
                     tokenizer=tokenizer,
-                    mix=DataMix.OLMo_mix_0925,
+                    # mix=DataMix.OLMo_mix_0925,
+                    mix=DataMix.OLMo_mix_0625_150Bsample,  # TODO: revert this
                     mix_base_dir=get_root_dir(args.cluster),
                 )
             ],
