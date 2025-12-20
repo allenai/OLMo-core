@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated stable torch version to 2.9.1, updated versions of underlying libraries in Beaker Images.
 - `olmo_core.io.join_path()` now accepts an arbitrary number of components to join.
 - All `olmo_core.nn` module configs now inherit from a common base class, `ModuleConfig`.
+- Big changes to `olmo_core.model_ladder` API.
 
 ## [v2.4.0](https://github.com/allenai/OLMo-core/releases/tag/v2.4.0) - 2025-11-20
 
