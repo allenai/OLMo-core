@@ -228,7 +228,7 @@ class AOMXLinearConfig(Config, _AOTypePlaceholder["MXLinearConfig"]):
         return AOMXLinearConfig(
             # kernel_preference=AOKernelPreference.auto,
             gemm_kernel_choice=AOMXGemmKernelChoice.cublas,
-            mxfp8_cast_kernel_choice=AOMXFP8Dim1CastKernelChoice.cuda,
+            mxfp8_cast_kernel_choice=AOMXFP8Dim1CastKernelChoice.triton,
             **kwargs,
         )
 
