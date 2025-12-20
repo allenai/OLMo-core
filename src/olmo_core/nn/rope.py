@@ -309,6 +309,9 @@ class RoPEConfig(ModuleConfig):
     full_precision: bool = True
     """Whether to always apply RoPE in full precision regardless of the input data type."""
 
+    no_global_rope: bool = False
+    """Whether to disable RoPE on global (non-SWA) attention layers."""
+
     scaling: Optional[RoPEScalingConfig] = None
     """The scaling config to apply to RoPE."""
 
@@ -324,6 +327,7 @@ class RoPEConfig(ModuleConfig):
         """
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         kwargs.pop("name")
+        kwargs.pop("no_global_rope")
         kwargs.update(head_size=head_size, cache=cache)
 
         try:

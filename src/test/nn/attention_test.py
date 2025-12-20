@@ -18,6 +18,8 @@ from olmo_core.nn.attention import (
     AttentionConfig,
     AttentionType,
     FusedAttention,
+    GateConfig,
+    GateGranularity,
     NormalizedAttention,
     RingAttentionLoadBalancerType,
     RingAttentionZigZagLoadBalancer,
@@ -834,6 +836,16 @@ def test_attention_leftpad_shift_equivalence(use_rope):
             ),
             id="OLMo3-32B-like-qk-norm",
         ),
+        pytest.param(
+            AttentionConfig(
+                name=AttentionType.default,
+                n_heads=8,
+                bias=False,
+                qk_norm=LayerNormConfig(),
+                gate=GateConfig(granularity=GateGranularity.headwise),
+            ),
+            id="headwise-gating",
+        ),
     ],
 )
 def test_attention_builder_config(attn_config: AttentionConfig):
@@ -845,6 +857,73 @@ def test_attention_builder_config(attn_config: AttentionConfig):
     # Make sure the estimated number of params matches the actual number of params.
     n_params = sum(p.numel() for p in attn.parameters())
     assert attn_config.num_params(d_model) == n_params
+
+
+@pytest.mark.parametrize(
+    "no_global_rope,expected_rope_enabled",
+    [
+        pytest.param(True, False, id="no_global_rope=True-disables"),
+        pytest.param(False, True, id="no_global_rope=False-enables"),
+        pytest.param(None, True, id="no_global_rope-default-enables"),
+    ],
+)
+def test_no_global_rope_on_global_layers(
+    no_global_rope: Optional[bool], expected_rope_enabled: bool
+):
+    """Test that no_global_rope controls RoPE on global (non-SWA) layers."""
+    d_model = 128
+    rope_config = (
+        RoPEConfig(no_global_rope=no_global_rope) if no_global_rope is not None else RoPEConfig()
+    )
+    attn_config = AttentionConfig(
+        name=AttentionType.default,
+        n_heads=8,
+        rope=rope_config,
+    )
+
+    # Build a global layer (no sliding window)
+    attn = attn_config.build(d_model, layer_idx=0, n_layers=1)
+
+    if expected_rope_enabled:
+        assert attn.rope is not None
+    else:
+        assert attn.rope is None
+
+
+@pytest.mark.parametrize(
+    "force_full_attention,expected_rope_enabled",
+    [
+        pytest.param(False, True, id="swa-layer-preserves-rope"),
+        pytest.param(True, False, id="forced-full-attention-disables-rope"),
+    ],
+)
+def test_no_global_rope_with_sliding_window(
+    force_full_attention: bool, expected_rope_enabled: bool
+):
+    """Test that no_global_rope=True only affects global layers, not SWA layers."""
+    d_model = 128
+    rope_config = RoPEConfig(no_global_rope=True)
+    sliding_window_config = SlidingWindowAttentionConfig(
+        pattern=[1024, 2048, -1],
+        force_full_attention_on_first_layer=force_full_attention,
+        force_full_attention_on_last_layer=False,
+    )
+    attn_config = AttentionConfig(
+        name=AttentionType.default,
+        n_heads=8,
+        rope=rope_config,
+        sliding_window=sliding_window_config,
+    )
+
+    # Build layer_idx=0
+    # - If force_full_attention=False: uses SWA (window_size=1024), so RoPE should be preserved
+    # - If force_full_attention=True: forced to full attention (global), so RoPE should be disabled
+    attn = attn_config.build(d_model, layer_idx=0, n_layers=12)
+
+    if expected_rope_enabled:
+        assert attn.rope is not None
+    else:
+        assert attn.rope is None
 
 
 def _get_lb(rank: int, world_size: int) -> RingAttentionZigZagLoadBalancer:
@@ -1005,6 +1084,46 @@ def test_sliding_window_attention_config_invalid_pattern_error():
         bad_config._get_window_size(0, n_layers=12)
 
 
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        pytest.param(torch.bfloat16, id="bf16", marks=GPU_MARKS),
+        pytest.param(torch.float32, id="fp32"),
+    ],
+)
+@pytest.mark.parametrize(
+    "gate_granularity", [GateGranularity.headwise, GateGranularity.elementwise]
+)
+@pytest.mark.parametrize("full_precision", [True, False])
+def test_attention_gating(
+    device: torch.device,
+    dtype: torch.dtype,
+    gate_granularity: GateGranularity,
+    full_precision: bool,
+):
+    seed_all(0)
+
+    d_model = 64
+    n_heads = 4
+    seq_len = 8
+    batch_size = 2
+
+    attention = Attention(
+        d_model=d_model,
+        n_heads=n_heads,
+        gate=GateConfig(granularity=gate_granularity, full_precision=full_precision),
+        backend=AttentionBackendName.torch,
+        init_device=device.type,
+    )
+
+    x = torch.randn(batch_size, seq_len, d_model, dtype=dtype, device=device, requires_grad=True)
+
+    with torch.autocast(device.type, dtype=dtype, enabled=dtype != torch.float32):
+        y = attention(x)
+        y.sum().backward()
+
+
 def _run_tensor_parallel_attention(
     checkpoint_dir: str, inputs_path: str, outputs_path: str, attn_kwargs: Dict[str, Any]
 ):
@@ -1046,6 +1165,10 @@ def _run_tensor_parallel_attention(
         pytest.param(
             {"qk_norm": LayerNormConfig(), "use_head_qk_norm": True, "rope": RoPEConfig()},
             id="headwise-qk-layernorm-rope",
+        ),
+        pytest.param(
+            {"gate": GateConfig(granularity=GateGranularity.headwise)},
+            id="headwise-gating",
         ),
     ],
 )
