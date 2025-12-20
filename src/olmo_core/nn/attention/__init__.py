@@ -46,6 +46,8 @@ from .ring import (
 
 __all__ = [
     "SlidingWindowAttentionConfig",
+    "GateGranularity",
+    "GateConfig",
     "AttentionType",
     "AttentionBackendName",
     "AttentionBackend",
@@ -65,6 +67,21 @@ __all__ = [
 ]
 
 log = logging.getLogger(__name__)
+
+
+class GateGranularity(StrEnum):
+    headwise = "headwise"
+    """Head-wise gating: one gate value per attention head, broadcast across head dimension."""
+    elementwise = "elementwise"
+    """Element-wise gating: one gate value per output element."""
+
+
+@dataclass
+class GateConfig(Config):
+    granularity: GateGranularity = GateGranularity.headwise
+    """The granularity of gating to use."""
+    full_precision: bool = True
+    """Whether to always apply gating in full precision regardless of the input data type."""
 
 
 @dataclass
@@ -159,6 +176,7 @@ class AttentionConfig(ModuleConfig):
     n_heads: int = 16
     n_kv_heads: Optional[int] = None
     bias: Optional[bool] = None
+    gate: Optional[GateConfig] = None
     rope: Optional[RoPEConfig] = None
     clip_qkv: Optional[float] = None
     qk_norm: Optional[LayerNormConfig] = None
@@ -204,6 +222,17 @@ class AttentionConfig(ModuleConfig):
         params += d_model * d_model
         if bias:
             params += d_model
+
+        # Block attention gate projection.
+        if self.gate is not None:
+            if self.gate.granularity == GateGranularity.headwise:
+                params += d_model * n_heads
+                if bias:
+                    params += n_heads
+            elif self.gate.granularity == GateGranularity.elementwise:
+                params += d_model * d_model
+                if bias:
+                    params += d_model
 
         # Block QK scaling factors.
         if self.name == AttentionType.normalized:
@@ -312,6 +341,7 @@ class Attention(AttentionBase):
     :param n_heads: The number of attention heads.
     :param n_kv_heads: The number of key and value heads, if different.
     :param bias: Include biases with linear layers.
+    :param gate: Configuration for attention gating. If None, no gating is applied.
     :param rope: The config for RoPE, if RoPE should be used.
     :param clip_qkv: Clip QKV to this value, if set.
     :param qk_norm: Configuration a layer norm for queries and keys.
@@ -329,6 +359,7 @@ class Attention(AttentionBase):
         n_heads: int,
         n_kv_heads: Optional[int] = None,
         bias: bool = True,
+        gate: Optional[GateConfig] = None,
         rope: Optional[RoPEConfig] = None,
         clip_qkv: Optional[float] = None,
         qk_norm: Optional[LayerNormConfig] = None,
@@ -355,6 +386,17 @@ class Attention(AttentionBase):
             d_model, self.n_kv_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device
         )
         self.w_out = nn.Linear(d_model, d_model, bias=bias, dtype=dtype, device=init_device)
+
+        self.gate = gate
+        self.w_g: Optional[nn.Linear] = None
+        if gate is not None:
+            if gate.granularity == GateGranularity.headwise:
+                self.w_g = nn.Linear(
+                    d_model, self.n_heads, bias=bias, dtype=dtype, device=init_device
+                )
+            elif gate.granularity == GateGranularity.elementwise:
+                self.w_g = nn.Linear(d_model, d_model, bias=bias, dtype=dtype, device=init_device)
+
         self.clip_qkv = clip_qkv
         self.use_head_qk_norm = use_head_qk_norm
 
@@ -560,6 +602,20 @@ class Attention(AttentionBase):
             cache_leftpad=cache_leftpad,
         )
 
+        if self.gate is not None:
+            assert self.w_g is not None
+            g = self.w_g(x)
+            if self.gate.full_precision:
+                g = g.float()
+            gate_values = torch.sigmoid(g).to(att.dtype)
+            if self.gate.granularity == GateGranularity.headwise:
+                # head-wise gating is broadcast across head_dim
+                # shape: (batch_size, seq_len, n_heads, head_dim)
+                att = att * gate_values.unsqueeze(-1)
+            elif self.gate.granularity == GateGranularity.elementwise:
+                att = att.view(B, T, -1) * gate_values
+                # the following att.view op is redundant (a no-op)
+
         # shape: (batch_size, seq_len, d_model)
         att = att.view(B, T, -1)
 
@@ -601,6 +657,10 @@ class Attention(AttentionBase):
                 output_layouts=output_layout, use_local_output=use_local_output
             ),
         }
+
+        if self.w_g is not None:
+            plan["w_g"] = colwise_parallel()
+
         if self.q_norm is not None:
             # if full-dim norm: output is sharded on the embedding dimension (B, T, E [sharded])
             #    which will be reshaped into (B, T, H [sharded], D)
