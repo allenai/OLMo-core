@@ -23,11 +23,12 @@ dependencies = [
     "safetensors",
     "importlib_resources",
     "bettermap",
-    "beaker-py>=1.38.1",
+    "beaker-py==2.5.3",
     "smart-open>=7.5.0",
     "zstandard>=0.25.0",
     "google-cloud-compute>=1.40.0",
     "gitpython>=3.1.45",
+    "transformers>=4.57.3",
 ]
 
 [project.urls]
@@ -59,7 +60,7 @@ dev = [
     "twine>=1.11.0",
     "wheel",
 ]
-beaker = ["beaker-py>=1.37.0,<2.0", "GitPython>=3.0,<4.0", "google-cloud-compute"]
+beaker = ["beaker-py", "GitPython>=3.0,<4.0", "google-cloud-compute"]
 comet = ["comet_ml"]
 eval = ["ai2-olmo-eval==0.8.5"]
 torchao = ["torchao"]
