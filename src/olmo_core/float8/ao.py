@@ -15,9 +15,11 @@ if TYPE_CHECKING:
     )
     from torchao.prototype.mx_formats.config import (
         MXFP8Dim1CastKernelChoice,
-        MXGemmKernelChoice,
         MXLinearConfig,
         ScaleCalculationMode,
+    )
+    from torchao.quantization.quantize_.common.kernel_preference import (
+        KernelPreference,
     )
 
 
@@ -109,31 +111,31 @@ class AOFloat8LinearRecipe(_AOTypePlaceholder["Float8LinearRecipeName"], StrEnum
         return Float8LinearRecipeName
 
 
-# class AOKernelPreference(_AOTypePlaceholder["KernelPreference"], StrEnum):
-#     emulated = "emulated"
-#     auto = "auto"
-#     cuda = "cuda"
-#     torch = "torch"
-
-#     @property
-#     def ao_type(self) -> Type["KernelPreference"]:
-#         from torchao.quantization.quantize_.common.kernel_preference import (
-#             KernelPreference,
-#         )
-
-#         return KernelPreference
-
-
-class AOMXGemmKernelChoice(_AOTypePlaceholder["MXGemmKernelChoice"], StrEnum):
+class AOKernelPreference(_AOTypePlaceholder["KernelPreference"], StrEnum):
     emulated = "emulated"
-    cutlass = "cutlass"
-    cublas = "cublas"
+    auto = "auto"
+    cuda = "cuda"
+    torch = "torch"
 
     @property
-    def ao_type(self) -> Type["MXGemmKernelChoice"]:
-        from torchao.prototype.mx_formats.config import MXGemmKernelChoice
+    def ao_type(self) -> Type["KernelPreference"]:
+        from torchao.quantization.quantize_.common.kernel_preference import (
+            KernelPreference,
+        )
 
-        return MXGemmKernelChoice
+        return KernelPreference
+
+
+# class AOMXGemmKernelChoice(_AOTypePlaceholder["MXGemmKernelChoice"], StrEnum):
+#     emulated = "emulated"
+#     cutlass = "cutlass"
+#     cublas = "cublas"
+
+#     @property
+#     def ao_type(self) -> Type["MXGemmKernelChoice"]:
+#         from torchao.prototype.mx_formats.config import MXGemmKernelChoice
+
+#         return MXGemmKernelChoice
 
 
 class AOMXFP8Dim1CastKernelChoice(_AOTypePlaceholder["MXFP8Dim1CastKernelChoice"], StrEnum):
@@ -213,10 +215,7 @@ class AOMXLinearConfig(Config, _AOTypePlaceholder["MXLinearConfig"]):
     """optional element dtype override for weights"""
     elem_dtype_grad_output_override: Optional[DType] = None
     """optional element dtype override for gradients"""
-    # kernel_preference: AOKernelPreference = AOKernelPreference.auto
-    gemm_kernel_choice: AOMXGemmKernelChoice = (
-        AOMXGemmKernelChoice.emulated
-    )  #  removed soon in favor of kernel_preference
+    kernel_preference: AOKernelPreference = AOKernelPreference.auto
     """if the preferred kernel is not supported on the given hardware an exception will be thrown"""
     mxfp8_cast_kernel_choice: AOMXFP8Dim1CastKernelChoice = AOMXFP8Dim1CastKernelChoice.torch
     """
@@ -225,20 +224,23 @@ class AOMXLinearConfig(Config, _AOTypePlaceholder["MXLinearConfig"]):
     triton only supports "floor" scale calculation mode.
     """
     scale_calculation_mode: AOScaleCalculationMode = AOScaleCalculationMode.floor
-    """how to calculate the mx block scaling factors"""
-
-    @classmethod
-    def mxfp8_cublas(cls, **kwargs: Any) -> "AOMXLinearConfig":
-        return AOMXLinearConfig(
-            # kernel_preference=AOKernelPreference.auto,
-            gemm_kernel_choice=AOMXGemmKernelChoice.cublas,
-            mxfp8_cast_kernel_choice=AOMXFP8Dim1CastKernelChoice.triton,
-            **kwargs,
-        )
+    """
+    how to calculate the mx block scaling factors
+    * floor: strightforward method but most prone to overflow / bad for gradient calculation (dont use)
+    * rceil (ratio ceil): computes the tightest valid ceiling. has good support from nvidia.
+    * ceil: similar to floor but avoids overflow; prone to underflow / precision loss / quant to zero.
+    * even: best choice from a mathematical standpoint, but does not yet work with torch.compile.
+    """
 
     @classmethod
     def mxfp8_cublas_rceil(cls, **kwargs: Any) -> "AOMXLinearConfig":
-        return cls.mxfp8_cublas(scale_calculation_mode=AOScaleCalculationMode.rceil, **kwargs)
+        """preferred mxfp8 recipe"""
+        return AOMXLinearConfig(
+            kernel_preference=AOKernelPreference.auto,
+            mxfp8_cast_kernel_choice=AOMXFP8Dim1CastKernelChoice.cuda,
+            scale_calculation_mode=AOScaleCalculationMode.rceil,
+            **kwargs,
+        )
 
     @property
     def ao_type(self) -> Type["MXLinearConfig"]:
