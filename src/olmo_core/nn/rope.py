@@ -309,6 +309,9 @@ class RoPEConfig(ModuleConfig):
     full_precision: bool = True
     """Whether to always apply RoPE in full precision regardless of the input data type."""
 
+    no_global_rope: bool = False
+    """Whether to disable global RoPE on global attention layers."""
+
     scaling: Optional[RoPEScalingConfig] = None
     """The scaling config to apply to RoPE."""
 
