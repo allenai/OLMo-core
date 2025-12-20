@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Optional, Set
 
 import torch.nn as nn
+from torchao.utils import torch
 
 from olmo_core.utils import has_compute_capability
 
@@ -95,6 +96,15 @@ class Float8Config(Config):
 
             return True
 
+        def quantize_filter_fn(m: nn.Module, fqn: str) -> bool:
+            nonlocal ignored_modules_found
+            if modules_to_ignore is not None and fqn in modules_to_ignore:
+                ignored_modules_found.add(fqn)
+                return False
+            if isinstance(m, torch.nn.Linear) and hasattr(m, "weight"):
+                return True
+            return False
+
         # NOTE: there's a bug with `Float8Linear.from_float()` where it will override `requires_grad=False`
         # when `enable_fsdp_float8_all_gather=True`. So we have to reset frozen params after the fact.
         # https://github.com/pytorch/ao/issues/1871
@@ -115,7 +125,7 @@ class Float8Config(Config):
             ao_quantize_(
                 model,
                 config=mx_linear_config,
-                filter_fn=module_filter_fn,
+                filter_fn=quantize_filter_fn,  # !!! Opposite semantics of the module_filter_fn below
             )
 
         else:
