@@ -1,6 +1,6 @@
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, Generic, Literal, Optional, Type, TypeVar
+from typing import TYPE_CHECKING, Any, Dict, Generic, Optional, Type, TypeVar
 
 from ..config import Config, DType, StrEnum
 
@@ -126,18 +126,6 @@ class AOKernelPreference(_AOTypePlaceholder["KernelPreference"], StrEnum):
         return KernelPreference
 
 
-# class AOMXGemmKernelChoice(_AOTypePlaceholder["MXGemmKernelChoice"], StrEnum):
-#     emulated = "emulated"
-#     cutlass = "cutlass"
-#     cublas = "cublas"
-
-#     @property
-#     def ao_type(self) -> Type["MXGemmKernelChoice"]:
-#         from torchao.prototype.mx_formats.config import MXGemmKernelChoice
-
-#         return MXGemmKernelChoice
-
-
 class AOMXFP8Dim1CastKernelChoice(_AOTypePlaceholder["MXFP8Dim1CastKernelChoice"], StrEnum):
     torch = "torch"
     cuda = "cuda"
@@ -208,7 +196,7 @@ class AOMXLinearConfig(Config, _AOTypePlaceholder["MXLinearConfig"]):
     https://github.com/pytorch/ao/blob/main/torchao/prototype/mx_formats/config.py#L106
     """
 
-    block_size: Literal[32] = 32
+    block_size: int = 32
     elem_dtype: DType = DType.float8_e4m3fn
     """element dtype, used for activations, weights and gradients"""
     elem_dtype_weight_override: Optional[DType] = None
@@ -220,8 +208,7 @@ class AOMXLinearConfig(Config, _AOTypePlaceholder["MXLinearConfig"]):
     mxfp8_cast_kernel_choice: AOMXFP8Dim1CastKernelChoice = AOMXFP8Dim1CastKernelChoice.torch
     """
     which kernel to use for the mx fp8 cast along dim1 (dim0 is always torch).
-    torch is slow. cuda is fastest but requires torchao compiled on a blackwell machine.
-    triton only supports "floor" scale calculation mode.
+    torch is slow. cuda is fastest. triton only supports "floor" scale calculation mode.
     """
     scale_calculation_mode: AOScaleCalculationMode = AOScaleCalculationMode.floor
     """
@@ -234,11 +221,18 @@ class AOMXLinearConfig(Config, _AOTypePlaceholder["MXLinearConfig"]):
 
     @classmethod
     def mxfp8_cublas_rceil(cls, **kwargs: Any) -> "AOMXLinearConfig":
-        """preferred mxfp8 recipe"""
+        """mxfp8 recipe predefined in torchao, strange that e4m3fn is used for grads"""
         return AOMXLinearConfig(
-            kernel_preference=AOKernelPreference.auto,
             mxfp8_cast_kernel_choice=AOMXFP8Dim1CastKernelChoice.cuda,
             scale_calculation_mode=AOScaleCalculationMode.rceil,
+            **kwargs,
+        )
+
+    @classmethod
+    def mxfp8_conservative(cls, **kwargs: Any) -> "AOMXLinearConfig":
+        """preferred mxfp8 recipe; conservative defaults"""
+        return cls.mxfp8_cublas_rceil(
+            elem_dtype_grad_output_override=DType.float8_e5m2,  # grads in e5m2 due to larger range
             **kwargs,
         )
 
