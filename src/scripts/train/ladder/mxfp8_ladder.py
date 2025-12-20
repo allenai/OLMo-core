@@ -1,0 +1,108 @@
+import argparse
+import logging
+
+import olmo_core.io as io
+from olmo_core.config import DType
+from olmo_core.data import DataMix, TokenizerConfig
+from olmo_core.data.composable import *
+from olmo_core.distributed.parallel import DataParallelType
+from olmo_core.float8 import AOMXLinearConfig, Float8Config
+from olmo_core.internal.common import get_gpu_type, get_root_dir
+from olmo_core.internal.ladder import main
+from olmo_core.model_ladder import *
+from olmo_core.nn.transformer import TransformerConfig, TransformerDataParallelWrappingStrategy
+from olmo_core.optim import OptimConfig, Scheduler
+from olmo_core.train.train_module import (
+    TransformerDataParallelConfig,
+    TransformerTrainModule,
+    TransformerTrainModuleConfig,
+)
+
+log = logging.getLogger(__name__)
+
+
+class MXFP8TransformerModelConfigurator(TransformerModelConfigurator):
+    def build_train_module(
+        self,
+        *,
+        size_spec: str,
+        sequence_length: int,
+        rank_microbatch_size: int,
+        model_config: TransformerConfig,
+        optim_config: OptimConfig,
+        scheduler: Scheduler,
+        device_type: str,
+    ) -> TransformerTrainModule:
+        # TODO: configure context-parallelism if needed.
+        device_type = device_type.lower()
+        assert "h100" in device_type or "b200" in device_type
+        assert sequence_length in {2048, 4096, 8192}
+        size_spec = TransformerSize(size_spec)
+
+        dp_config = TransformerDataParallelConfig(
+            name=DataParallelType.fsdp,
+            param_dtype=DType.bfloat16,
+            reduce_dtype=DType.float32,
+            wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
+        )
+
+        train_module_config = TransformerTrainModuleConfig(
+            rank_microbatch_size=rank_microbatch_size,
+            max_sequence_length=sequence_length,
+            optim=optim_config,
+            compile_model=True,
+            dp_config=dp_config,
+            z_loss_multiplier=1e-5,
+            max_grad_norm=1.0,
+            scheduler=scheduler,
+            float8_config=Float8Config(
+                enabled=True,
+                ao_mx=AOMXLinearConfig.mxfp8_cublas(),  # <- this is the intervention
+            ),
+        )
+
+        # Build the model.
+        model = model_config.build(init_device="meta")
+
+        # Build the train module.
+        train_module = train_module_config.build(model)
+        assert isinstance(train_module, TransformerTrainModule)
+
+        return train_module
+
+
+def configure_ladder(args: argparse.Namespace) -> ModelLadder:
+    # ladder_name = "olmo3-mxfp8-all-linear-layers"
+    tokenizer = TokenizerConfig.dolma2()
+    instance_sources: list[InstanceSourceConfig] = [
+        ConcatAndChunkInstanceSourceConfig(
+            sources=[
+                NumpyDocumentSourceMixConfig(
+                    tokenizer=tokenizer,
+                    mix=DataMix.OLMo_mix_0925,
+                    mix_base_dir=get_root_dir(args.cluster),
+                )
+            ],
+            sequence_length=args.sequence_length,
+        ),
+    ]
+    ladder = ModelLadder(
+        name=args.name,
+        dir=str(io.join_path(get_root_dir(args.cluster), "model-ladders", args.name)),
+        sizes=list(TransformerSize),
+        max_devices=args.max_gpus,
+        device_type=get_gpu_type(args.cluster),
+        model_configurator=TransformerModelConfigurator(),
+        run_configurator=WSDSChinchillaRunConfigurator(
+            chinchilla_multiple=args.chinchilla_multiple
+        ),
+        sequence_length=args.sequence_length,
+        tokenizer=tokenizer,
+        instance_sources=instance_sources,
+        data_loader=ComposableDataLoaderConfig(num_workers=8),
+    )
+    return ladder
+
+
+if __name__ == "__main__":
+    main(configure_ladder)
