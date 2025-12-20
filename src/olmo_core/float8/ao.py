@@ -18,7 +18,6 @@ if TYPE_CHECKING:
         MXLinearConfig,
         ScaleCalculationMode,
     )
-    from torchao.quantization.quantize_.common.kernel_preference import KernelPreference
 
 
 T = TypeVar("T")
@@ -109,19 +108,19 @@ class AOFloat8LinearRecipe(_AOTypePlaceholder["Float8LinearRecipeName"], StrEnum
         return Float8LinearRecipeName
 
 
-class AOKernelPreference(_AOTypePlaceholder["KernelPreference"], StrEnum):
-    emulated = "emulated"
-    auto = "auto"
-    cuda = "cuda"
-    torch = "torch"
+# class AOKernelPreference(_AOTypePlaceholder["KernelPreference"], StrEnum):
+#     emulated = "emulated"
+#     auto = "auto"
+#     cuda = "cuda"
+#     torch = "torch"
 
-    @property
-    def ao_type(self) -> Type["KernelPreference"]:
-        from torchao.quantization.quantize_.common.kernel_preference import (
-            KernelPreference,
-        )
+#     @property
+#     def ao_type(self) -> Type["KernelPreference"]:
+#         from torchao.quantization.quantize_.common.kernel_preference import (
+#             KernelPreference,
+#         )
 
-        return KernelPreference
+#         return KernelPreference
 
 
 class AOMXFP8Dim1CastKernelChoice(_AOTypePlaceholder["MXFP8Dim1CastKernelChoice"], StrEnum):
@@ -201,7 +200,7 @@ class AOMXLinearConfig(Config, _AOTypePlaceholder["MXLinearConfig"]):
     """optional element dtype override for weights"""
     elem_dtype_grad_output_override: Optional[DType] = None
     """optional element dtype override for gradients"""
-    kernel_preference: AOKernelPreference = AOKernelPreference.auto
+    # kernel_preference: AOKernelPreference = AOKernelPreference.auto
     """if the preferred kernel is not supported on the given hardware an exception will be thrown"""
     mxfp8_cast_kernel_choice: AOMXFP8Dim1CastKernelChoice = AOMXFP8Dim1CastKernelChoice.torch
     """which kernel to use for the mx fp8 cast along dim1 (dim0 is always torch)"""
@@ -211,7 +210,7 @@ class AOMXLinearConfig(Config, _AOTypePlaceholder["MXLinearConfig"]):
     @classmethod
     def mxfp8_cublas(cls, **kwargs: Any) -> "AOMXLinearConfig":
         return AOMXLinearConfig(
-            kernel_preference=AOKernelPreference.auto,
+            # kernel_preference=AOKernelPreference.auto,
             mxfp8_cast_kernel_choice=AOMXFP8Dim1CastKernelChoice.cuda,
             **kwargs,
         )
