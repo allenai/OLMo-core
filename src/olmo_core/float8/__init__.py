@@ -34,6 +34,9 @@ class Float8Config(Config):
     ao_recipe: Optional[AOFloat8LinearRecipe] = None
     ao_mx: Optional[AOMXLinearConfig] = None
 
+    modules_to_ignore: Optional[Set[str]] = None
+    """A set of fully-qualified module names to ignore for Float8 conversion."""
+
     enabled: bool = True
 
     def __post_init__(self):
@@ -139,6 +142,9 @@ class Float8Config(Config):
             raise OLMoConfigurationError(
                 f"invalid module name(s) in 'modules_to_ignore': {list(modules_to_ignore - ignored_modules_found)}"
             )
+
+        if ignored_modules_found:
+            log.info(f"Ignored modules for Float8 conversion: {sorted(ignored_modules_found)}")
 
         for n in frozen_params:
             p = model.get_parameter(n)
