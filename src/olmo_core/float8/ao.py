@@ -198,9 +198,10 @@ class AOMXLinearConfig(Config, _AOTypePlaceholder["MXLinearConfig"]):
     Useful reference for MXFP8 training: https://docs.nvidia.com/deeplearning/transformer-engine/user-guide/examples/fp8_primer.html
     """
 
-    block_size: int = 32
-    elem_dtype: DType = DType.float8_e4m3fn
-    """element dtype, used for activations, weights and gradients"""
+    block_size: Optional[int] = None
+    """block size, defaults to 32 if not specified"""
+    elem_dtype: Optional[DType] = None
+    """element dtype, used for activations, weights and gradients, defaults to e4m3fn if not specified"""
     elem_dtype_weight_override: Optional[DType] = None
     """optional element dtype override for weights"""
     elem_dtype_grad_output_override: Optional[DType] = None
@@ -208,17 +209,17 @@ class AOMXLinearConfig(Config, _AOTypePlaceholder["MXLinearConfig"]):
     optional element dtype override for gradients.
     note that e4m3 is thought to be fine here because of the block-wise nature of MXFP8.
     """
-    kernel_preference: AOKernelPreference = AOKernelPreference.auto
+    kernel_preference: Optional[AOKernelPreference] = None
     """if the preferred kernel is not supported on the given hardware an exception will be thrown"""
-    mxfp8_cast_kernel_choice: AOMXFP8Dim1CastKernelChoice = AOMXFP8Dim1CastKernelChoice.torch
+    mxfp8_cast_kernel_choice: Optional[AOMXFP8Dim1CastKernelChoice] = None
     """
     which kernel to use for the mx fp8 cast along dim1 (dim0 is always torch).
     torch is slow. cuda is fastest. triton only supports "floor" scale calculation mode.
     """
-    scale_calculation_mode: AOScaleCalculationMode = AOScaleCalculationMode.floor
+    scale_calculation_mode: Optional[AOScaleCalculationMode] = None
     """
     how to calculate the mx block scaling factors.
-    * floor: strightforward method but most prone to overflow / bad for gradient calculation (dont use)
+    * floor [default]: strightforward method but most prone to overflow / bad for gradient calculation (dont use)
     * rceil (ratio ceil): computes the tightest valid ceiling. has good support from nvidia.
     * ceil: similar to floor but avoids overflow; prone to underflow / precision loss / quant to zero.
     * even: best choice from a mathematical standpoint. unbiased error distribution. but does not yet work with torch.compile.
