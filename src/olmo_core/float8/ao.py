@@ -194,6 +194,8 @@ class AOMXLinearConfig(Config, _AOTypePlaceholder["MXLinearConfig"]):
     This matches the config from torchao.
     Applies to MXFP8 and MXFP4 formats.
     https://github.com/pytorch/ao/blob/main/torchao/prototype/mx_formats/config.py#L106
+
+    Useful reference for MXFP8 training: https://docs.nvidia.com/deeplearning/transformer-engine/user-guide/examples/fp8_primer.html
     """
 
     block_size: int = 32
@@ -202,7 +204,10 @@ class AOMXLinearConfig(Config, _AOTypePlaceholder["MXLinearConfig"]):
     elem_dtype_weight_override: Optional[DType] = None
     """optional element dtype override for weights"""
     elem_dtype_grad_output_override: Optional[DType] = None
-    """optional element dtype override for gradients"""
+    """
+    optional element dtype override for gradients.
+    note that e4m3 is thought to be fine here because of the block-wise nature of MXFP8.
+    """
     kernel_preference: AOKernelPreference = AOKernelPreference.auto
     """if the preferred kernel is not supported on the given hardware an exception will be thrown"""
     mxfp8_cast_kernel_choice: AOMXFP8Dim1CastKernelChoice = AOMXFP8Dim1CastKernelChoice.torch
@@ -221,18 +226,10 @@ class AOMXLinearConfig(Config, _AOTypePlaceholder["MXLinearConfig"]):
 
     @classmethod
     def mxfp8_cublas_rceil(cls, **kwargs: Any) -> "AOMXLinearConfig":
-        """mxfp8 recipe predefined in torchao, strange that e4m3fn is used for grads"""
+        """standard mxfp8 recipe predefined in torchao"""
         return AOMXLinearConfig(
             mxfp8_cast_kernel_choice=AOMXFP8Dim1CastKernelChoice.cuda,
             scale_calculation_mode=AOScaleCalculationMode.rceil,
-            **kwargs,
-        )
-
-    @classmethod
-    def mxfp8_conservative(cls, **kwargs: Any) -> "AOMXLinearConfig":
-        """preferred mxfp8 recipe; conservative defaults"""
-        return cls.mxfp8_cublas_rceil(
-            elem_dtype_grad_output_override=DType.float8_e5m2,  # grads in e5m2 due to larger range
             **kwargs,
         )
 
