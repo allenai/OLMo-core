@@ -40,7 +40,7 @@ class MXFP8TransformerModelConfigurator(TransformerModelConfigurator):
         assert sequence_length in {2048, 4096, 8192}
         size_spec = TransformerSize(size_spec)
         vocab_size = tokenizer.padded_vocab_size()
-        kwargs = dict(attn_backend=AttentionBackendName.flash_2)
+        kwargs = dict(attn_backend=AttentionBackendName.flash_4)
 
         model: TransformerConfig
         if size_spec == TransformerSize.size_190M:
