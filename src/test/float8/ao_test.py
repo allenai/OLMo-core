@@ -60,9 +60,7 @@ def test_ao_mx_linear_config():
         == "rceil"
     )
 
-    mxfp8_config = AOMXLinearConfig.mxfp8_cublas()
-    assert mxfp8_config.kernel_preference == AOKernelPreference.auto
-    assert mxfp8_config.mxfp8_cast_kernel_choice == AOMXFP8Dim1CastKernelChoice.cuda
-
     mxfp8_rceil_config = AOMXLinearConfig.mxfp8_cublas_rceil()
+    assert mxfp8_rceil_config.kernel_preference == AOKernelPreference.auto
+    assert mxfp8_rceil_config.mxfp8_cast_kernel_choice == AOMXFP8Dim1CastKernelChoice.cuda
     assert mxfp8_rceil_config.scale_calculation_mode == AOScaleCalculationMode.rceil

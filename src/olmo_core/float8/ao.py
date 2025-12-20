@@ -225,11 +225,11 @@ class AOMXLinearConfig(Config, _AOTypePlaceholder["MXLinearConfig"]):
     """
     scale_calculation_mode: AOScaleCalculationMode = AOScaleCalculationMode.floor
     """
-    how to calculate the mx block scaling factors
+    how to calculate the mx block scaling factors.
     * floor: strightforward method but most prone to overflow / bad for gradient calculation (dont use)
     * rceil (ratio ceil): computes the tightest valid ceiling. has good support from nvidia.
     * ceil: similar to floor but avoids overflow; prone to underflow / precision loss / quant to zero.
-    * even: best choice from a mathematical standpoint, but does not yet work with torch.compile.
+    * even: best choice from a mathematical standpoint. unbiased error distribution. but does not yet work with torch.compile.
     """
 
     @classmethod
