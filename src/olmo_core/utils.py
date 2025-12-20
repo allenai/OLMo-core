@@ -723,6 +723,11 @@ def log_once(logger: logging.Logger, msg: str, *args, level: int = logging.INFO,
     logger.log(level, msg, *args, **kwargs)
 
 
+@lru_cache(maxsize=128)
+def warn_once(msg: str, *args, **kwargs):
+    warnings.warn(msg, *args, **kwargs)
+
+
 def info_value_of_dtype(dtype: torch.dtype):
     """
     Returns the `finfo` or `iinfo` object of a given PyTorch data type. Does not allow torch.bool.
