@@ -23,7 +23,7 @@ dependencies = [
     "safetensors",
     "importlib_resources",
     "bettermap",
-    "beaker-py==2.5.3",
+    "beaker-py==1.38.1",
     "smart-open>=7.5.0",
     "zstandard>=0.25.0",
     "google-cloud-compute>=1.40.0",
