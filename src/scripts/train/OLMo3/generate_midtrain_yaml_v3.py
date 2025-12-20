@@ -9,17 +9,25 @@ This script ensures EXACT repetition control by:
 4. Scaling file counts to fit within budget if needed
 
 Usage:
-    # Generate with 4 tiers (10x, 6x, 3x, 1x) from both vigintile folders:
+    # FRESH MODE: Generate with 4 tiers (10x, 6x, 3x, 1x) from both vigintile folders:
     python src/scripts/train/OLMo3/generate_midtrain_yaml_v3.py
 
     # Customize tiers and budget:
     python src/scripts/train/OLMo3/generate_midtrain_yaml_v3.py --tiers 10,6,3,1 --budget 50.0
 
-    # Extend an existing YAML by adding repeat10 from UNUSED files only:
+    # EXTEND MODE: Add repeat10 tier from UNUSED files only:
     python src/scripts/train/OLMo3/generate_midtrain_yaml_v3.py \
         --base-yaml src/olmo_core/data/source_mixtures/midtrain-memo-auto.yaml \
         --new-tier 10 \
         --output midtrain-memo-50B-extended.yaml
+
+    # PRESERVE TIERS MODE: Scale up from 10B to 50B while keeping same tier assignments:
+    # Files from the 10B YAML keep their tier, new files (from additional GCS paths) 
+    # are distributed normally. This ensures consistency when scaling up budgets.
+    python src/scripts/train/OLMo3/generate_midtrain_yaml_v3.py \
+        --preserve-tiers-from src/olmo_core/data/source_mixtures/midtrain-memo-10B-4tier.yaml \
+        --budget 50.0 \
+        --output midtrain-memo-50B-4tier-preserved.yaml
 
 Requirements:
     - gsutil or google-cloud-storage
@@ -106,6 +114,32 @@ def load_base_yaml(yaml_path: str) -> Tuple[List[Dict], Set[str]]:
             used_paths.add(path)
     
     return sources, used_paths
+
+
+def load_tier_assignments(yaml_path: str) -> Dict[str, Tuple[str, int]]:
+    """
+    Load an existing YAML and extract file → (topic, tier) mappings.
+    
+    This is used to preserve tier assignments from a previous run
+    when scaling to a larger budget.
+    
+    Returns:
+        Dict mapping file_path → (topic, repetition_rate)
+    """
+    with open(yaml_path, "r") as f:
+        data = yaml.safe_load(f)
+    
+    sources = data.get("sources", [])
+    file_to_tier: Dict[str, Tuple[str, int]] = {}
+    
+    for source in sources:
+        source_name = source.get("source_name", "")
+        topic, rep_rate = parse_source_name(source_name)
+        
+        for path in source.get("paths", []):
+            file_to_tier[path] = (topic, rep_rate)
+    
+    return file_to_tier
 
 
 def parse_source_name(source_name: str) -> Tuple[str, int]:
@@ -360,18 +394,45 @@ def generate_yaml_sources(all_buckets: List[Tuple[str, BucketInfo]]) -> List[Dic
         # Calculate ratio from ACTUAL tokens
         ratio = bucket.effective_tokens / TOTAL_BUDGET_TOKENS
         
+        # Deduplicate paths (preserves order, removes duplicates)
+        paths = list(dict.fromkeys(f.path for f in bucket.files))
+        if len(paths) < len(bucket.files):
+            print(f"  WARNING: Removed {len(bucket.files) - len(paths)} duplicate paths from {source_name}")
+        
         sources.append({
             "source_name": source_name,
             "target_ratio": ratio,  # Don't round yet - will normalize first
             "max_repetition_ratio": float(bucket.repeat),
-            "paths": [f.path for f in bucket.files],
+            "paths": paths,
             # Metadata for verification (will be in comments)
             "_actual_tokens": bucket.actual_tokens,
             "_effective_tokens": bucket.effective_tokens,
-            "_n_files": len(bucket.files),
+            "_n_files": len(paths),  # Use deduplicated count
         })
     
     return sources
+
+
+def check_for_cross_source_duplicates(sources: List[Dict]) -> None:
+    """Check if any path appears in multiple sources and warn if so."""
+    path_to_sources: Dict[str, List[str]] = {}
+    
+    for source in sources:
+        source_name = source["source_name"]
+        for path in source["paths"]:
+            if path not in path_to_sources:
+                path_to_sources[path] = []
+            path_to_sources[path].append(source_name)
+    
+    duplicates = {p: srcs for p, srcs in path_to_sources.items() if len(srcs) > 1}
+    
+    if duplicates:
+        print(f"\n⚠️  WARNING: {len(duplicates)} paths appear in multiple sources!")
+        for path, srcs in list(duplicates.items())[:5]:  # Show first 5
+            print(f"   {path}")
+            print(f"     → in: {', '.join(srcs)}")
+        if len(duplicates) > 5:
+            print(f"   ... and {len(duplicates) - 5} more")
 
 
 def normalize_to_sum_one(sources: List[Dict], max_tier: int) -> List[Dict]:
@@ -524,6 +585,15 @@ def main():
         default=None,
         help="Comma-separated list of GCS base paths to scan. If not provided, uses default paths."
     )
+    parser.add_argument(
+        "--preserve-tiers-from",
+        type=str,
+        default=None,
+        help="Path to existing YAML file (e.g., from v2 with 10B budget). Files in this YAML "
+             "will be assigned to the SAME repetition tier. New files (from additional GCS paths) "
+             "will be distributed normally. Use this to scale up from a smaller budget while "
+             "maintaining consistency."
+    )
     args = parser.parse_args()
     
     global TOTAL_BUDGET_TOKENS, GCS_BASE_PATHS
@@ -539,7 +609,12 @@ def main():
     if args.base_yaml:
         run_extend_mode(args)
     # =========================================================================
-    # MODE 2: FRESH generation with all tiers from scratch
+    # MODE 2: PRESERVE tier assignments from existing YAML, add new files
+    # =========================================================================
+    elif args.preserve_tiers_from:
+        run_preserve_tiers_mode(args)
+    # =========================================================================
+    # MODE 3: FRESH generation with all tiers from scratch
     # =========================================================================
     else:
         run_fresh_mode(args)
@@ -680,6 +755,9 @@ def run_extend_mode(args):
         s["_from_base"] = False
         merged_sources.append(s)
     
+    # Check for cross-source duplicates
+    check_for_cross_source_duplicates(merged_sources)
+    
     # Step 6: Normalize to sum to exactly 1.0
     # The new tier should absorb the gap since base sources are already set
     all_tiers = sorted(existing_tiers | {new_tier}, reverse=True)
@@ -770,6 +848,247 @@ def run_extend_mode(args):
             print(f"  repeat{tier}: {count} sources (from base)")
 
 
+def run_preserve_tiers_mode(args):
+    """
+    Generate YAML preserving tier assignments from an existing YAML.
+    
+    This mode:
+    1. Loads tier assignments from an existing YAML (e.g., v2 with 10B budget)
+    2. Scans all GCS paths for files
+    3. Files from the existing YAML → same tier as before
+    4. New files (not in existing YAML) → distributed across tiers normally
+    5. Recalculates all ratios for the new budget
+    
+    Use case: Scale up from 10B to 50B while maintaining consistency for
+    files that were already assigned tiers.
+    """
+    global TOTAL_BUDGET_TOKENS
+    
+    # Parse repetition tiers
+    repetition_tiers = [int(x.strip()) for x in args.tiers.split(",")]
+    repetition_tiers.sort(reverse=True)  # Ensure descending order
+    
+    print("=" * 80)
+    print("MIDTRAIN YAML GENERATOR v3 - PRESERVE TIERS MODE (Multi-folder)")
+    print("=" * 80)
+    print(f"Preserve tiers from: {args.preserve_tiers_from}")
+    print(f"Repetition tiers: {repetition_tiers}")
+    print(f"Budget: {TOTAL_BUDGET_TOKENS/1e9:.0f}B tokens")
+    print(f"Output: {args.output}")
+    print(f"Bytes per token: {BYTES_PER_TOKEN} (uint32)")
+    print(f"GCS base paths:")
+    for path in GCS_BASE_PATHS:
+        print(f"  - {path}")
+    print()
+    
+    # Step 1: Load tier assignments from existing YAML
+    print("Loading tier assignments from existing YAML...")
+    file_to_tier = load_tier_assignments(args.preserve_tiers_from)
+    print(f"  Found {len(file_to_tier)} files with tier assignments")
+    
+    # Summarize existing tiers
+    tier_counts: Dict[int, int] = {}
+    for _, (_, rep) in file_to_tier.items():
+        tier_counts[rep] = tier_counts.get(rep, 0) + 1
+    print(f"  Tier distribution: {dict(sorted(tier_counts.items(), reverse=True))}")
+    
+    # Validate that existing tiers match requested tiers
+    existing_tiers_set = set(tier_counts.keys())
+    requested_tiers_set = set(repetition_tiers)
+    if not existing_tiers_set.issubset(requested_tiers_set):
+        extra_tiers = existing_tiers_set - requested_tiers_set
+        print(f"  WARNING: Existing YAML has tiers {extra_tiers} not in requested tiers {repetition_tiers}")
+        print(f"           Files from these tiers will be added to their original tier anyway.")
+        # Add missing tiers to the list
+        repetition_tiers = sorted(existing_tiers_set | requested_tiers_set, reverse=True)
+        print(f"           Updated tiers: {repetition_tiers}")
+    
+    # Step 2: Scan all GCS paths and categorize files
+    print("\nScanning GCS paths...")
+    
+    # Collect buckets: {(topic, tier): [files]}
+    buckets_dict: Dict[Tuple[str, int], List[FileInfo]] = {}
+    
+    # Initialize buckets for all topic × tier combinations
+    for topic in TOPICS:
+        for tier in repetition_tiers:
+            buckets_dict[(topic, tier)] = []
+    
+    total_preserved = 0
+    total_new = 0
+    
+    for topic in TOPICS:
+        print(f"  Scanning {topic}...")
+        all_files = scan_topic_multi(topic, GCS_BASE_PATHS)
+        
+        if not all_files:
+            print(f"    No files found")
+            continue
+        
+        # Separate files into preserved (from existing YAML) and new
+        preserved_files: Dict[int, List[FileInfo]] = {t: [] for t in repetition_tiers}
+        new_files: List[FileInfo] = []
+        
+        for f in all_files:
+            if f.path in file_to_tier:
+                _, rep = file_to_tier[f.path]
+                preserved_files[rep].append(f)
+                total_preserved += 1
+            else:
+                new_files.append(f)
+                total_new += 1
+        
+        # Add preserved files to their designated buckets
+        for tier, files in preserved_files.items():
+            if files:
+                buckets_dict[(topic, tier)].extend(files)
+        
+        # Distribute new files across tiers using normal algorithm
+        if new_files:
+            new_buckets = split_files_into_buckets(new_files, repetition_tiers)
+            for bucket, tier in zip(new_buckets, repetition_tiers):
+                if bucket.files:
+                    buckets_dict[(topic, tier)].extend(bucket.files)
+        
+        # Report
+        preserved_str = ", ".join([f"{len(preserved_files[t])}×{t}" for t in repetition_tiers if preserved_files[t]])
+        new_str = f"{len(new_files)} new"
+        print(f"    Preserved: {preserved_str or 'none'}")
+        print(f"    New: {new_str}")
+    
+    print(f"\nTotal files: {total_preserved} preserved, {total_new} new")
+    
+    # Step 3: Convert to bucket list format
+    all_buckets: List[Tuple[str, BucketInfo]] = []
+    for (topic, tier), files in buckets_dict.items():
+        if files:
+            bucket = create_bucket(files, tier)
+            all_buckets.append((f"{topic}_repeat{tier}", bucket))
+    
+    # Track file counts before scaling
+    files_before_scaling = sum(len(b.files) for _, b in all_buckets)
+    
+    # Step 4: Scale to budget if needed
+    all_buckets = scale_buckets_to_budget(all_buckets)
+    
+    # Check if files were dropped during scaling
+    files_after_scaling = sum(len(b.files) for _, b in all_buckets)
+    if files_after_scaling < files_before_scaling:
+        dropped = files_before_scaling - files_after_scaling
+        print(f"\n⚠️  WARNING: {dropped} files were dropped during budget scaling!")
+        print(f"   This may include some preserved files from the original YAML.")
+    
+    # Calculate final totals
+    total_effective = sum(b.effective_tokens for _, b in all_buckets)
+    print(f"\nFinal total effective tokens: {total_effective/1e9:.4f}B")
+    
+    print("\nGenerating YAML...")
+    sources = generate_yaml_sources(all_buckets)
+    
+    # Check for cross-source duplicates
+    check_for_cross_source_duplicates(sources)
+    
+    # Normalize to sum to exactly 1.0
+    max_tier = max(repetition_tiers)
+    sources = normalize_to_sum_one(sources, max_tier)
+    
+    # Sort by ratio (largest first)
+    sources.sort(key=lambda s: -s["target_ratio"])
+    
+    # Verify sum
+    total_ratio = sum(s["target_ratio"] for s in sources)
+    print(f"Total ratio: {total_ratio:.6f}")
+    
+    # Build YAML structure
+    yaml_sources = []
+    for s in sources:
+        yaml_sources.append({
+            "source_name": s["source_name"],
+            "target_ratio": s["target_ratio"],
+            "max_repetition_ratio": s["max_repetition_ratio"],
+            "paths": s["paths"],
+        })
+    
+    yaml_content = {"sources": yaml_sources}
+    
+    # Build tier description
+    tier_desc = "\n".join([f"#   - _repeat{r}: {r}x repetition" for r in repetition_tiers])
+    
+    # Write YAML
+    with open(args.output, "w") as f:
+        f.write("# Auto-generated midtraining mix with EXACT repetition control\n")
+        f.write(f"# Generated by: {__file__}\n")
+        f.write(f"# Preserved tiers from: {args.preserve_tiers_from}\n")
+        f.write(f"# Total sources: {len(sources)}\n")
+        f.write(f"# Budget: {TOTAL_BUDGET_TOKENS/1e9:.0f}B tokens\n")
+        f.write(f"# Total ratio: {total_ratio:.6f}\n")
+        f.write("#\n")
+        f.write("# GCS base paths:\n")
+        for path in GCS_BASE_PATHS:
+            f.write(f"#   - {path}\n")
+        f.write("#\n")
+        f.write("# IMPORTANT: target_ratio is calculated as:\n")
+        f.write("#   ratio = (actual_tokens_in_bucket × max_repetition_ratio) / budget\n")
+        f.write("# This ensures each file is repeated EXACTLY max_repetition_ratio times.\n")
+        f.write("#\n")
+        f.write("# Repetition tiers:\n")
+        f.write(tier_desc + "\n")
+        f.write("#\n")
+        f.write(f"# NOTE: {total_preserved} files preserved from {args.preserve_tiers_from}\n")
+        f.write(f"#       {total_new} new files added from additional GCS paths\n")
+        f.write("#\n\n")
+        yaml.dump(yaml_content, f, default_flow_style=False, sort_keys=False, width=200)
+    
+    print(f"\nWritten to {args.output}")
+    print(f"Total sources: {len(sources)}")
+    
+    # Print detailed summary
+    print("\n" + "=" * 90)
+    print("VERIFICATION SUMMARY")
+    print("=" * 90)
+    print(f"{'Source Name':<50} {'Files':>6} {'Actual':>10} {'×Rep':>5} {'Effective':>12} {'Ratio':>10}")
+    print("-" * 90)
+    
+    for s in sources:
+        name = s["source_name"]
+        n_files = s["_n_files"]
+        actual = s["_actual_tokens"] / 1e9
+        repeat = s["max_repetition_ratio"]
+        effective = s["_effective_tokens"] / 1e9
+        ratio = s["target_ratio"]
+        print(f"{name:<50} {n_files:>6} {actual:>9.4f}B ×{repeat:>5.1f} {effective:>11.4f}B {ratio:>10.6f}")
+    
+    print("-" * 90)
+    print(f"{'TOTAL':<50} {'':<6} {'':<10} {'':<5} {total_effective/1e9:>11.4f}B {total_ratio:>10.6f}")
+    print()
+    
+    # Count sources per tier
+    print("Sources per tier:")
+    for tier in repetition_tiers:
+        count = sum(1 for s in sources if f"_repeat{tier}" in s["source_name"])
+        print(f"  repeat{tier}: {count} sources")
+    
+    print(f"\nFiles breakdown:")
+    print(f"  Preserved from existing YAML: {total_preserved}")
+    print(f"  New from additional GCS paths: {total_new}")
+    
+    # Verify all preserved files are in the output
+    output_paths = set()
+    for s in sources:
+        output_paths.update(s["paths"])
+    
+    preserved_in_output = sum(1 for p in file_to_tier.keys() if p in output_paths)
+    if preserved_in_output == len(file_to_tier):
+        print(f"\n✓ All {len(file_to_tier)} preserved files are in the output")
+    else:
+        missing = len(file_to_tier) - preserved_in_output
+        print(f"\n⚠️  WARNING: {missing} preserved files are NOT in the output!")
+        print(f"   This may be due to:")
+        print(f"   - Budget scaling (files dropped to fit budget)")
+        print(f"   - Files no longer exist in GCS")
+        print(f"   - Files filtered out by size threshold")
+
+
 def run_fresh_mode(args):
     """
     Generate a fresh YAML with all tiers from scratch.
@@ -847,6 +1166,9 @@ def run_fresh_mode(args):
     
     print("\nGenerating YAML...")
     sources = generate_yaml_sources(all_buckets)
+    
+    # Check for cross-source duplicates
+    check_for_cross_source_duplicates(sources)
     
     # Normalize to sum to exactly 1.0
     max_tier = max(repetition_tiers)
