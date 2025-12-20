@@ -15,6 +15,8 @@ from ..common import MetricMergeStrategy, ReduceType
 from ..train_module import TransformerTrainModule
 from .callback import Callback
 
+SPARSITY_THRESHOLD = 1e-6
+
 
 @dataclass
 class GAPMonitorCallback(Callback):
@@ -25,6 +27,8 @@ class GAPMonitorCallback(Callback):
     """
 
     enabled: bool = True
+    interval: int = 1
+    """How often (in steps) to measure statistics. Default is every step."""
 
     _handles: Optional[list] = dataclasses.field(default=None, repr=False)
     _local_batch_size_instances: int = dataclasses.field(default=1, repr=False)
@@ -34,7 +38,7 @@ class GAPMonitorCallback(Callback):
         if not self.enabled:
             return
         if not isinstance(self.trainer.train_module, TransformerTrainModule):
-            raise ValueError(f"{type(self).__name__ } only works with the TransformerTrainModule.")
+            raise ValueError(f"{type(self).__name__} only works with the TransformerTrainModule.")
 
     def pre_train(self):
         if not self.enabled:
@@ -108,6 +112,8 @@ class GAPMonitorCallback(Callback):
         tensor: torch.Tensor,
         kind: Literal["grad", "activation", "activation_grad", "param"],
     ):
+        if self.step % self.interval != 0:
+            return
         if tensor.numel() <= 1:
             return
 
@@ -130,6 +136,9 @@ class GAPMonitorCallback(Callback):
             # we use the "sum" merge strategy.
             var = var.float().sum() / self._local_batch_size_instances
             mean = mean.float().sum() / self._local_batch_size_instances
+            sparsity = (tensor.abs() < SPARSITY_THRESHOLD).float().mean(
+                dim=-1
+            ).sum() / self._local_batch_size_instances
             if self._dry_run_complete:
                 self.trainer.record_metric(
                     f"{prefix}/{name}/max",
@@ -149,13 +158,24 @@ class GAPMonitorCallback(Callback):
                     reduce_type=ReduceType.mean,
                     merge_strategy=MetricMergeStrategy.sum,
                 )
+                self.trainer.record_metric(
+                    f"{prefix}/{name}/sparsity",
+                    sparsity,
+                    reduce_type=ReduceType.mean,
+                    merge_strategy=MetricMergeStrategy.sum,
+                )
         else:
-            max_ = get_local_tensor(tensor).abs().max()
+            local_tensor = get_local_tensor(tensor)
+            max_ = local_tensor.abs().max()
             var, mean = var_mean(tensor)
+            sparsity = (local_tensor.abs() < SPARSITY_THRESHOLD).float().mean()
             if self._dry_run_complete:
                 self.trainer.record_metric(f"{prefix}/{name}/max", max_, reduce_type=ReduceType.max)
                 self.trainer.record_metric(f"{prefix}/{name}/mean", mean, reduce_type=None)
                 self.trainer.record_metric(f"{prefix}/{name}/var", var, reduce_type=None)
+                self.trainer.record_metric(
+                    f"{prefix}/{name}/sparsity", sparsity, reduce_type=ReduceType.mean
+                )
 
     def close(self):
         self._reset()
