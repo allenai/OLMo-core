@@ -117,7 +117,9 @@ class AOKernelPreference(_AOTypePlaceholder["KernelPreference"], StrEnum):
 
     @property
     def ao_type(self) -> Type["KernelPreference"]:
-        from torchao.quantization.quantize_.common.kernel_preference import KernelPreference
+        from torchao.quantization.quantize_.common.kernel_preference import (
+            KernelPreference,
+        )
 
         return KernelPreference
 
