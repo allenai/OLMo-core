@@ -45,7 +45,7 @@ from olmo_core.testing import (
     requires_multi_gpu,
     run_distributed_test,
 )
-from olmo_core.utils import get_default_device
+from olmo_core.utils import get_default_device, record_flops, seed_all
 
 log = logging.getLogger(__name__)
 
@@ -457,3 +457,44 @@ def test_build_with_block_overrides():
     assert isinstance(model.blocks["1"], MoEHybridTransformerBlockBase)
 
     assert config.num_params == model.num_params
+
+
+def test_transformer_num_flops_per_token():
+    seed_all(0)
+
+    d_model = 128
+    seq_len = 2048
+    batch_size = 1
+    n_heads = 8
+    n_kv_heads = 4
+    n_layers = 4
+    vocab_size = 1024
+
+    config = TransformerConfig.llama_like(
+        vocab_size=vocab_size,
+        d_model=d_model,
+        n_layers=n_layers,
+        n_heads=n_heads,
+        n_kv_heads=n_kv_heads,
+        sliding_window=SlidingWindowAttentionConfig(
+            pattern=[16, 16, 16, 16],
+        ),
+    )
+
+    model = config.build(init_device="cpu")
+
+    x = torch.randint(0, vocab_size, (batch_size, seq_len))
+
+    actual_flops = record_flops(model, x, with_backward=True)
+    actual_flops_per_token = actual_flops / seq_len
+
+    estimated_flops_per_token = model.num_flops_per_token(seq_len)
+
+    tolerance = 0.02
+    relative_error = (
+        abs(estimated_flops_per_token - actual_flops_per_token) / actual_flops_per_token
+    )
+    assert relative_error < tolerance, (
+        f"Estimated FLOPs ({estimated_flops_per_token}) differs too much from actual ({actual_flops_per_token}), "
+        f"{relative_error=:.2%}, {tolerance=:.2%}"
+    )

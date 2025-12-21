@@ -597,7 +597,10 @@ class TransformerPipelineTrainModule(TrainModule):
         return ce_batch_loss, z_batch_loss
 
     def num_flops_per_token(self, seq_len: int) -> int:
-        return self.model_parts[0].num_flops_per_token(seq_len)
+        raise NotImplementedError(
+            f"`{self.__class__.__name__}.num_flops_per_token()` is not implemented. "
+            "Extra work is needed to support PP-aware FLOPs/token calculation."
+        )
 
     @contextlib.contextmanager
     def _model_forward_context(self) -> Generator[None, None, None]:
