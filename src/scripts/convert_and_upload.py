@@ -34,12 +34,12 @@ if not step:
 
 # Paths
 # src = f"gs://ai2-llm/checkpoints/memo-7b-20251216T012857+0000/{step}"
-src = f"/weka/oe-training-default/ai2-llm/checkpoints/memo-7b-4tier/{step}"
+src = f"/weka/oe-training-default/ai2-llm/checkpoints/memo-7b-4tier-50B-preserved/{step}"
 out_root = os.environ.get("OUT_ROOT", "/data")   # defaults to ephemeral /data
 out = f"{out_root}/{step}-hf"
 
 # repo_id = "yapeichang/memo-7b"
-repo_id = "yapeichang/memo-7b-4tier"
+repo_id = "yapeichang/memo-7b-4tier-50B-preserved"
 branch = "main"
 
 print(f"=== Converting {step} ===")

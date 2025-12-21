@@ -29,6 +29,7 @@ dependencies = [
     "google-cloud-compute>=1.40.0",
     "gitpython>=3.1.45",
     "transformers>=4.57.3",
+    "backports-zstd>=1.2.0",
 ]
 
 [project.urls]
