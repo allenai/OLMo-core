@@ -1,6 +1,7 @@
 import logging
 import time
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any, ClassVar, Dict, Optional
 
 import torch
@@ -50,6 +51,7 @@ class SpeedMonitorCallback(Callback):
     def bps_avg(self) -> Optional[float]:
         return self._bps_avg
 
+    @lru_cache(maxsize=1)
     def _get_num_flops_per_token(self, seq_len: int) -> Optional[int]:
         if self.num_flops_per_token is not None:
             return self.num_flops_per_token
@@ -144,6 +146,22 @@ class SpeedMonitorCallback(Callback):
                 "throughput/total tokens", self.trainer.global_train_tokens_seen
             )
 
+        num_flops_per_token = self._get_num_flops_per_token(self._step_seq_len)
+        if num_flops_per_token is not None and self._step_tokens and self._total_tokens:
+            step_flops = num_flops_per_token * self._step_tokens
+            total_flops = num_flops_per_token * self._total_tokens
+
+            self.trainer.record_metric("throughput/device/flopsPS", step_flops / step_time)
+            self.trainer.record_metric(
+                "throughput/device/flopsPS (actual avg)", total_flops / total_time
+            )
+
+            if self.trainer.global_train_tokens_seen is not None:
+                self.trainer.record_metric(
+                    "throughput/total flops",
+                    num_flops_per_token * self.trainer.global_train_tokens_seen,
+                )
+
         bps = 1 / step_time
         bps_avg = self._total_steps / total_time
         self._bps_avg = bps_avg
@@ -156,7 +174,7 @@ class SpeedMonitorCallback(Callback):
         )
 
         if (
-            (num_flops_per_token := self._get_num_flops_per_token(self._step_seq_len)) is not None
+            num_flops_per_token is not None
             and self.device_peak_flops is not None
             and tps is not None
             and tps_avg is not None
