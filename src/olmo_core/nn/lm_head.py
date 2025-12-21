@@ -421,6 +421,11 @@ class LMHead(nn.Module):
         del load_balancer
         self._cp_mesh = cp_mesh
 
+    def num_flops_per_token(self, seq_len: int) -> int:
+        del seq_len
+        # 6 FLOPs per parameter (2 ops * 3 for forward+backward)
+        return 6 * sum(p.numel() for p in self.parameters())
+
 
 @beta_feature
 class NormalizedLMHead(LMHead):
