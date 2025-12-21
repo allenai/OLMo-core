@@ -25,7 +25,7 @@ from olmo_core.nn.moe import (
     MoEType,
 )
 from olmo_core.testing import requires_gpu, requires_multi_gpu, run_distributed_test
-from olmo_core.utils import get_default_device, seed_all
+from olmo_core.utils import get_default_device, record_flops, seed_all
 
 
 @requires_gpu
@@ -227,4 +227,41 @@ def test_moe_with_expert_parallelism(
             lb_loss.detach().cpu(),
             z_loss.detach().cpu(),
         ),
+    )
+
+
+@requires_gpu
+@pytest.mark.parametrize("moe_type", [MoEType.default, MoEType.dropless])
+@pytest.mark.parametrize("shared", [False, True])
+def test_moe_num_flops_per_token(moe_type: MoEType, shared: bool):
+    seed_all(0)
+
+    d_model = 128
+    hidden_size = 256
+    seq_len = 32
+    batch_size = 1
+
+    config = MoEConfig(
+        name=moe_type,
+        num_experts=4,
+        hidden_size=hidden_size,
+        router=MoERouterConfig(top_k=1),
+        shared_mlp=None if not shared else FeedForwardConfig(hidden_size=hidden_size),
+    )
+    moe = config.build(d_model=d_model, init_device="cuda")
+
+    x = torch.randn(batch_size, seq_len, d_model, device="cuda")
+
+    actual_flops = record_flops(moe, x, with_backward=True)
+    actual_flops_per_token = actual_flops / seq_len
+
+    estimated_flops_per_token = moe.num_flops_per_token(seq_len)
+
+    tolerance = 0.02
+    relative_error = (
+        abs(estimated_flops_per_token - actual_flops_per_token) / actual_flops_per_token
+    )
+    assert relative_error < tolerance, (
+        f"Estimated FLOPs ({estimated_flops_per_token}) differs too much from actual ({actual_flops_per_token}), "
+        f"{relative_error=:.2%}, {tolerance=:.2%}"
     )

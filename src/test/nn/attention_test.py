@@ -40,7 +40,7 @@ from olmo_core.testing import (
     run_distributed_test,
 )
 from olmo_core.testing.utils import requires_compute_capability
-from olmo_core.utils import get_default_device, seed_all
+from olmo_core.utils import get_default_device, record_flops, seed_all
 
 BF16_RTOL = 1e-5
 BF16_ATOL = 5e-3
@@ -1273,4 +1273,71 @@ def test_context_parallel_attention(load_balancer_type, head_stride: int, tmp_pa
             load_balancer_type,
             head_stride,
         ),
+    )
+
+
+@pytest.mark.parametrize(
+    "n_kv_heads",
+    [pytest.param(None, id="MHA"), pytest.param(2, id="GQA")],
+)
+@pytest.mark.parametrize("window_size", [pytest.param(None, id="full"), pytest.param(16, id="SWA")])
+def test_attention_num_flops_per_token(n_kv_heads: Optional[int], window_size: Optional[int]):
+    seed_all(0)
+
+    d_model = 128
+    n_heads = 8
+    seq_len = 32
+    batch_size = 1
+
+    attention = Attention(
+        d_model=d_model,
+        n_heads=n_heads,
+        n_kv_heads=n_kv_heads,
+        window_size=window_size,
+        backend=AttentionBackendName.torch,
+        init_device="cpu",
+    )
+
+    x = torch.randn(batch_size, seq_len, d_model)
+
+    actual_flops = record_flops(attention, x, with_backward=True)
+    actual_flops_per_token = actual_flops / seq_len
+
+    estimated_flops_per_token = attention.num_flops_per_token(seq_len)
+
+    tolerance = 0.02  # 2%
+    relative_error = (
+        abs(estimated_flops_per_token - actual_flops_per_token) / actual_flops_per_token
+    )
+    assert relative_error < tolerance, (
+        f"Estimated FLOPs ({estimated_flops_per_token}) differs too much from actual ({actual_flops_per_token}), "
+        f"{relative_error=:.2%}, {tolerance=:.2%}"
+    )
+
+
+@requires_gpu
+def test_fused_attention_num_flops_per_token():
+    seed_all(0)
+
+    d_model = 128
+    n_heads = 8
+    seq_len = 32
+    batch_size = 1
+
+    fused_att = FusedAttention(d_model=d_model, n_heads=n_heads, init_device="cuda")
+
+    x = torch.randn(batch_size, seq_len, d_model, device="cuda")
+
+    actual_flops = record_flops(fused_att, x, with_backward=True)
+    actual_flops_per_token = actual_flops / seq_len
+
+    estimated_flops_per_token = fused_att.num_flops_per_token(seq_len)
+
+    tolerance = 0.02  # 2%
+    relative_error = (
+        abs(estimated_flops_per_token - actual_flops_per_token) / actual_flops_per_token
+    )
+    assert relative_error < tolerance, (
+        f"Estimated FLOPs ({estimated_flops_per_token}) differs too much from actual ({actual_flops_per_token}), "
+        f"{relative_error=:.2%}, {tolerance=:.2%}"
     )
