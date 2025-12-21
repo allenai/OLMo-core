@@ -11,7 +11,7 @@ from torch.distributed import DeviceMesh
 
 from olmo_core.distributed.utils import get_local_tensor, get_world_size
 from olmo_core.ops import moe as ops
-from olmo_core.utils import ensure_multiple_of, get_default_device, move_to_device
+from olmo_core.utils import ensure_multiple_of, get_default_device, move_to_device, warn_once
 
 from ..buffer_cache import BufferCache
 from .mlp import DroplessMoEMLP, MoEMLP, MoEMLPBase
@@ -332,8 +332,26 @@ class ParallelMLPBase(nn.Module):
     ):
         raise NotImplementedError
 
+    def num_flops_per_token(self, seq_len: int) -> int:
+        del seq_len
+        # Each token activates top_k experts.
+        # The expert MLP parameters are typically stored as a single batched tensor with a leading
+        # expert dimension (not shared weights). On average, each token "touches" top_k experts,
+        # i.e. a fraction (top_k / num_experts) of the total expert parameters.
+        expert_params = sum(p.numel() for p in self.mlp.parameters())
+        return 6 * int(expert_params * self.top_k / self.num_experts)
+
 
 class ParallelMLP(ParallelMLPBase):
+    def num_flops_per_token(self, seq_len: int) -> int:
+        warn_once(
+            f"{self.__class__.__name__}: approximating extra FLOPs from padding experts to a fixed capacity using "
+            "capacity_factor. The true overhead depends on batch size and rounding to alignment constraints.",
+            UserWarning,
+        )
+        dropless_flops = super().num_flops_per_token(seq_len)
+        return int(dropless_flops * self.capacity_factor)
+
     def __init__(
         self,
         *,

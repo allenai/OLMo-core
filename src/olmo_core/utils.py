@@ -23,6 +23,7 @@ from rich.console import Console, ConsoleRenderable
 from rich.highlighter import NullHighlighter
 from rich.text import Text
 from rich.traceback import Traceback
+from torch.utils.flop_counter import FlopCounterMode
 
 from .config import StrEnum
 from .exceptions import OLMoCLIError, OLMoEnvironmentError, OLMoError, OLMoThreadError
@@ -758,3 +759,27 @@ def get_or_init_stream(id: str, priority: int = 0) -> torch.cuda.Stream:
         stream = cast(torch.cuda.Stream, torch.cuda.Stream(priority=priority))
         _CUDA_STREAMS[id] = stream
         return stream
+
+
+def record_flops(
+    model: torch.nn.Module,
+    inp: Union[torch.Tensor, tuple],
+    with_backward: bool = False,
+    display: bool = False,
+) -> int:
+    # Source: https://alessiodevoto.github.io/Compute-Flops-with-Pytorch-built-in-flops-counter/
+    istrain = model.training
+    model.eval()
+
+    inp = inp if isinstance(inp, torch.Tensor) else torch.randn(inp)
+
+    flop_counter = FlopCounterMode(mods=model, display=display, depth=999999)
+    with flop_counter:
+        if with_backward:
+            model(inp).sum().backward()
+        else:
+            model(inp)
+    total_flops = flop_counter.get_total_flops()
+    if istrain:
+        model.train()
+    return total_flops
