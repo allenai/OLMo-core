@@ -1,5 +1,6 @@
 from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Dict, Optional, Union
 
 import torch
@@ -189,6 +190,23 @@ class TrainModule(Stateful, metaclass=ABCMeta):
     def zero_grads(self):
         """
         Zero-out gradients.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    @lru_cache
+    def num_flops_per_token(self, seq_len: int) -> Optional[int]:
+        """
+        Returns the number of flops per token for the given sequence length, or ``None`` if flops
+        estimation is not supported.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def global_num_flops_in_batch(self, batch: Dict[str, Any]) -> Optional[int]:
+        """
+        Return the total (global) number of flops in the batch, or ``None`` if flops estimation
+        is not supported.
         """
         raise NotImplementedError
 
