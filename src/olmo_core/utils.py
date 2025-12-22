@@ -637,7 +637,7 @@ def format_float(value: float) -> str:
     abs_value = abs(value)
     if abs_value == 0.0:
         return "0.0"
-    elif abs_value >= 1_000_000_000:
+    elif abs_value >= 1e9:
         for suffix, factor in (("E", 1e18), ("P", 1e15), ("T", 1e12), ("B", 1e9)):
             if abs_value >= factor:
                 scaled = value / factor
@@ -650,9 +650,10 @@ def format_float(value: float) -> str:
                     decimals = 3
                 else:
                     decimals = 4
-                scaled_str = f"{scaled:.{decimals}f}"
-                return f"{scaled_str}{suffix}"
-    elif abs_value < 0.0001:
+                scaled_str = f"{scaled:,.{decimals}f}"
+                return f"{scaled_str} {suffix}"
+
+    if abs_value < 0.0001:
         return f"{value:.2E}"
     elif abs_value >= 1000:
         return f"{int(value):,d}"

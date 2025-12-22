@@ -32,6 +32,7 @@ class SpeedMonitorCallback(Callback):
 
     _total_steps: int = 0
     _total_tokens: int = 0
+    _total_flops: int = 0
     _start_time: float = 0.0
     _first_step: bool = True
     _step_last_logged: float = 0.0
@@ -117,10 +118,12 @@ class SpeedMonitorCallback(Callback):
             self._total_tokens += self._step_tokens
 
             self._step_flops = 0
+            self._total_flops = 0
             if (
                 num_flops_per_token := self._get_num_flops_per_token(self._step_seq_len)
             ) is not None:
-                self._step_flops = num_flops_per_token * tokens_in_batch
+                self._step_flops = num_flops_per_token * self._step_tokens
+                self._total_flops += self._step_flops
 
     def post_step(self):
         counter = time.perf_counter()
@@ -132,6 +135,7 @@ class SpeedMonitorCallback(Callback):
             # Now we can start recording.
             self._total_steps = 0
             self._total_tokens = 0
+            self._total_flops = 0
             self._start_time = counter
             self._first_step = False
             self._step_last_logged = counter
@@ -154,9 +158,9 @@ class SpeedMonitorCallback(Callback):
 
         flops_ps: Optional[float] = None
         flops_ps_avg: Optional[float] = None
-        if self._step_flops and self.trainer.global_train_flops:
+        if self._step_flops and self._total_flops:
             flops_ps = self._step_flops / step_time
-            flops_ps_avg = self.trainer.global_train_flops / total_time
+            flops_ps_avg = self._total_flops / total_time
             self.trainer.record_metric("throughput/device/flopsPS", flops_ps)
             self.trainer.record_metric("throughput/device/flopsPS (actual avg)", flops_ps_avg)
             self.trainer.record_metric("throughput/total flops", self.trainer.global_train_flops)
