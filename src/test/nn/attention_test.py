@@ -1325,6 +1325,7 @@ def test_attention_num_flops_per_token():
 
 
 @requires_gpu
+@requires_flash_attn_2
 def test_fused_attention_num_flops_per_token():
     n_heads = 8
 

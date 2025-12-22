@@ -778,7 +778,7 @@ def record_flops(
     # since they use recomputation internally (a la flash attention). Additionally, if custom kernels
     # are used, it will not count the flops for them unless a custom flop formula is registered.
     # https://github.com/pytorch/pytorch/issues/123800
-    flop_counter = FlopCounterMode(mods=model, display=display, depth=999999)
+    flop_counter = FlopCounterMode(display=display, depth=999999)
     with flop_counter:
         if with_backward:
             model(inp).sum().backward()
