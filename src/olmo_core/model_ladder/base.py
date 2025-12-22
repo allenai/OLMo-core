@@ -16,7 +16,7 @@ import olmo_core.io as io
 import olmo_core.train.callbacks as callbacks
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import Config
-from olmo_core.data import TokenizerConfig
+from olmo_core.data import DataMix, NumpyPaddedFSLDatasetConfig, TokenizerConfig
 from olmo_core.data.composable import (
     ComposableDataLoaderConfig,
     InstanceSourceConfig,
@@ -610,6 +610,19 @@ class ModelLadder(Config):
                     cancel_check_interval=50,
                     enabled=not for_benchmarking,
                 ),
+                "lm_evaluator": callbacks.LMEvaluatorCallbackConfig(
+                    eval_dataset=NumpyPaddedFSLDatasetConfig.from_data_mix(
+                        DataMix.v3_small_ppl_validation,
+                        mix_base_dir=self._get_mix_base_dir(),
+                        sequence_length=self.sequence_length,
+                        tokenizer=self.tokenizer,
+                        work_dir=str(self.work_dir),
+                        eval_interval=None,
+                        fixed_steps=checkpoint_interval_steps,
+                        enabled=not for_benchmarking,
+                    ),
+                    eval_interval=1000,
+                ),
                 "downstream_evaluator": callbacks.DownstreamEvaluatorCallbackConfig(
                     tokenizer=self.tokenizer,
                     tasks=self._get_in_loop_eval_tasks(),
@@ -626,3 +639,9 @@ class ModelLadder(Config):
 
     def _get_in_loop_eval_tasks(self) -> list[str]:
         return sorted(task_groups.FULL_TASKS)
+
+    def _get_mix_base_dir(self) -> str:
+        if self.dir.startswith("/weka/"):
+            return "/weka/oe-training-default/ai2-llm"
+        else:
+            return "gs://ai2-llm"
