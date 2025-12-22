@@ -118,7 +118,6 @@ class SpeedMonitorCallback(Callback):
             self._total_tokens += self._step_tokens
 
             self._step_flops = 0
-            self._total_flops = 0
             if (
                 num_flops_per_token := self._get_num_flops_per_token(self._step_seq_len)
             ) is not None:

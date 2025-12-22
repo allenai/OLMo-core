@@ -651,7 +651,7 @@ def format_float(value: float) -> str:
                 else:
                     decimals = 4
                 scaled_str = f"{scaled:,.{decimals}f}"
-                return f"{scaled_str} {suffix}"
+                return f"{scaled_str}{suffix}"
 
     if abs_value < 0.0001:
         return f"{value:.2E}"
