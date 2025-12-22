@@ -40,7 +40,7 @@ from olmo_core.testing import (
     run_distributed_test,
 )
 from olmo_core.testing.utils import requires_compute_capability
-from olmo_core.utils import get_default_device, record_flops, seed_all
+from olmo_core.utils import get_default_device, seed_all
 
 BF16_RTOL = 1e-5
 BF16_ATOL = 5e-3
@@ -1276,68 +1276,72 @@ def test_context_parallel_attention(load_balancer_type, head_stride: int, tmp_pa
     )
 
 
-@pytest.mark.parametrize(
-    "n_kv_heads",
-    [pytest.param(None, id="MHA"), pytest.param(2, id="GQA")],
-)
-@pytest.mark.parametrize("window_size", [pytest.param(None, id="full"), pytest.param(16, id="SWA")])
-def test_attention_num_flops_per_token(n_kv_heads: Optional[int], window_size: Optional[int]):
-    seed_all(0)
-
+def test_attention_num_flops_per_token():
     d_model = 128
     n_heads = 8
     seq_len = 32
-    batch_size = 1
 
-    attention = Attention(
-        d_model=d_model,
-        n_heads=n_heads,
-        n_kv_heads=n_kv_heads,
-        window_size=window_size,
-        backend=AttentionBackendName.torch,
-        init_device="cpu",
+    def _flops_per_token(
+        *,
+        n_kv_heads: Optional[int],
+        window_size: Optional[int],
+        gate: Optional[GateConfig],
+    ) -> int:
+        attn = Attention(
+            d_model=d_model,
+            n_heads=n_heads,
+            n_kv_heads=n_kv_heads,
+            window_size=window_size,
+            gate=gate,
+            backend=AttentionBackendName.torch,
+            init_device="cpu",
+        )
+        return attn.num_flops_per_token(seq_len)
+
+    mha_full = _flops_per_token(n_kv_heads=None, window_size=None, gate=None)
+    mha_swa = _flops_per_token(n_kv_heads=None, window_size=16, gate=None)
+    gqa_full = _flops_per_token(n_kv_heads=2, window_size=None, gate=None)
+    gqa_swa = _flops_per_token(n_kv_heads=2, window_size=16, gate=None)
+    mha_full_gated = _flops_per_token(
+        n_kv_heads=None,
+        window_size=None,
+        gate=GateConfig(granularity=GateGranularity.headwise),
     )
 
-    x = torch.randn(batch_size, seq_len, d_model)
+    # NOTE: we use relative comparisons here rather than direct comparisons to record_flops() for
+    # the Attention estimate, since the idealized estimate used by Attention is different from the
+    # actual FLOPs used by SDPA/flash-attn due to the use of recomputation in the backward pass.
 
-    actual_flops = record_flops(attention, x, with_backward=True)
-    actual_flops_per_token = actual_flops / seq_len
+    # full attention should be more expensive than SWA.
+    assert mha_full > mha_swa
+    assert gqa_full > gqa_swa
 
-    estimated_flops_per_token = attention.num_flops_per_token(seq_len)
+    # MHA should be more expensive than GQA.
+    assert mha_full > gqa_full
+    assert mha_swa > gqa_swa
 
-    tolerance = 0.02  # 2%
-    relative_error = (
-        abs(estimated_flops_per_token - actual_flops_per_token) / actual_flops_per_token
-    )
-    assert relative_error < tolerance, (
-        f"Estimated FLOPs ({estimated_flops_per_token}) differs too much from actual ({actual_flops_per_token}), "
-        f"{relative_error=:.2%}, {tolerance=:.2%}"
-    )
+    # Gating should add additional compute.
+    assert mha_full_gated > mha_full
 
 
 @requires_gpu
 def test_fused_attention_num_flops_per_token():
-    seed_all(0)
-
-    d_model = 128
     n_heads = 8
-    seq_len = 32
-    batch_size = 1
 
-    fused_att = FusedAttention(d_model=d_model, n_heads=n_heads, init_device="cuda")
+    fused_small = FusedAttention(d_model=128, n_heads=n_heads, init_device="cuda")
 
-    x = torch.randn(batch_size, seq_len, d_model, device="cuda")
-
-    actual_flops = record_flops(fused_att, x, with_backward=True)
-    actual_flops_per_token = actual_flops / seq_len
-
-    estimated_flops_per_token = fused_att.num_flops_per_token(seq_len)
-
-    tolerance = 0.02  # 2%
-    relative_error = (
-        abs(estimated_flops_per_token - actual_flops_per_token) / actual_flops_per_token
+    # Compare against the basic Attention estimate for the same configuration.
+    attn_small = Attention(
+        d_model=128,
+        n_heads=n_heads,
+        backend=AttentionBackendName.torch,
+        init_device="cuda",
     )
-    assert relative_error < tolerance, (
-        f"Estimated FLOPs ({estimated_flops_per_token}) differs too much from actual ({actual_flops_per_token}), "
-        f"{relative_error=:.2%}, {tolerance=:.2%}"
-    )
+    assert fused_small.num_flops_per_token(32) == attn_small.num_flops_per_token(32)
+
+    # Longer sequences should be more expensive.
+    assert fused_small.num_flops_per_token(64) > fused_small.num_flops_per_token(32)
+
+    # Larger models should be more expensive.
+    fused_large = FusedAttention(d_model=256, n_heads=n_heads, init_device="cuda")
+    assert fused_large.num_flops_per_token(32) > fused_small.num_flops_per_token(32)

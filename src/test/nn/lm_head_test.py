@@ -258,10 +258,10 @@ def test_lm_head_num_flops_per_token(
     batch_size = 1
     vocab_size = 1024
 
-    config = LMHeadConfig(name=head_type, loss_implementation=loss_implementation, bias=False)
+    config = LMHeadConfig(name=head_type, loss_implementation=loss_implementation)
     lm_head = config.build(d_model=d_model, vocab_size=vocab_size, init_device="cpu")
 
-    x = torch.randn(batch_size, seq_len, d_model)
+    x = torch.randn(batch_size, seq_len, d_model, requires_grad=True)
 
     actual_flops = record_flops(lm_head, x, with_backward=True)
     actual_flops_per_token = actual_flops / seq_len

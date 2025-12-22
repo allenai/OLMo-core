@@ -79,10 +79,10 @@ def test_feed_forward_num_flops_per_token():
 
     ff = FeedForward(d_model=d_model, hidden_size=hidden_size, init_device="cpu")
 
-    x = torch.randn(batch_size, seq_len, d_model)
+    x = torch.randn(batch_size, seq_len, d_model, requires_grad=True)
 
     actual_flops = record_flops(ff, x, with_backward=True)
-    actual_flops_per_token = actual_flops / seq_len
+    actual_flops_per_token = actual_flops // seq_len
 
     estimated_flops_per_token = ff.num_flops_per_token(seq_len)
 

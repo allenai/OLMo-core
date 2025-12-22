@@ -18,7 +18,7 @@ from olmo_core.nn.transformer.block import (
     TransformerBlock,
 )
 from olmo_core.testing import BACKENDS, run_distributed_test
-from olmo_core.utils import get_default_device, record_flops, seed_all
+from olmo_core.utils import get_default_device, seed_all
 
 
 def _build_block(
@@ -115,34 +115,4 @@ def test_tensor_parallel_transformer_block(
         backend=backend,
         start_method="spawn",
         func_args=(checkpoint_dir, inputs_path, outputs_path, block_cls, d_model, attn_kwargs),
-    )
-
-
-@pytest.mark.parametrize(
-    "block_cls", [TransformerBlock, ReorderedNormTransformerBlock, PeriNormTransformerBlock]
-)
-def test_transformer_block_num_flops_per_token(block_cls: Type[TransformerBlock]):
-    seed_all(0)
-
-    d_model = 128
-    seq_len = 32
-    batch_size = 1
-    attn_kwargs: Dict[str, Any] = {"name": AttentionType.default, "n_heads": 8, "use_flash": False}
-
-    block = _build_block(block_cls, d_model=d_model, init_device="cpu", attn_kwargs=attn_kwargs)
-
-    x = torch.randn(batch_size, seq_len, d_model)
-
-    actual_flops = record_flops(block, x, with_backward=True)
-    actual_flops_per_token = actual_flops / seq_len
-
-    estimated_flops_per_token = block.num_flops_per_token(seq_len)
-
-    tolerance = 0.02
-    relative_error = (
-        abs(estimated_flops_per_token - actual_flops_per_token) / actual_flops_per_token
-    )
-    assert relative_error < tolerance, (
-        f"Estimated FLOPs ({estimated_flops_per_token}) differs too much from actual ({actual_flops_per_token}), "
-        f"{relative_error=:.2%}, {tolerance=:.2%}"
     )

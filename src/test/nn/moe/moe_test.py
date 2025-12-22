@@ -231,9 +231,8 @@ def test_moe_with_expert_parallelism(
 
 
 @requires_gpu
-@pytest.mark.parametrize("moe_type", [MoEType.default, MoEType.dropless])
-@pytest.mark.parametrize("shared", [False, True])
-def test_moe_num_flops_per_token(moe_type: MoEType, shared: bool):
+@pytest.mark.parametrize("shared", [False, True], ids=["no_shared_expert", "with_shared_expert"])
+def test_moe_num_flops_per_token(shared: bool):
     seed_all(0)
 
     d_model = 128
@@ -242,18 +241,20 @@ def test_moe_num_flops_per_token(moe_type: MoEType, shared: bool):
     batch_size = 1
 
     config = MoEConfig(
-        name=moe_type,
-        num_experts=4,
+        #  Idealized FLOPs differ too much from actual FLOPs for default MoE implementation
+        # (due to padding experts to a fixed capacity). So we use the dropless MoE implementation.
+        name=MoEType.dropless,
+        num_experts=16,
         hidden_size=hidden_size,
-        router=MoERouterConfig(top_k=1),
+        router=MoERouterConfig(top_k=2),
         shared_mlp=None if not shared else FeedForwardConfig(hidden_size=hidden_size),
     )
     moe = config.build(d_model=d_model, init_device="cuda")
 
-    x = torch.randn(batch_size, seq_len, d_model, device="cuda")
+    x = torch.randn(batch_size, seq_len, d_model, device="cuda", requires_grad=True)
 
     actual_flops = record_flops(moe, x, with_backward=True)
-    actual_flops_per_token = actual_flops / seq_len
+    actual_flops_per_token = actual_flops // seq_len
 
     estimated_flops_per_token = moe.num_flops_per_token(seq_len)
 

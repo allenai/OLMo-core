@@ -15,7 +15,6 @@ from olmo_core.utils import (
     ensure_multiple_of,
     get_default_device,
     move_to_device,
-    warn_once,
 )
 
 from ..buffer_cache import BufferCache
@@ -338,6 +337,11 @@ class ParallelMLPBase(nn.Module):
         raise NotImplementedError
 
     def num_flops_per_token(self, seq_len: int) -> int:
+        """
+        Returns idealized FLOPs per token, not accounting for padding. This is fairly accurate for
+        the dropless MoE implementation, but under-estimates the non-idealized FLOPs for the default
+        MoE implementation.
+        """
         del seq_len
         # Each token activates top_k experts.
         # The expert MLP parameters are typically stored as a single batched tensor with a leading
@@ -348,15 +352,6 @@ class ParallelMLPBase(nn.Module):
 
 
 class ParallelMLP(ParallelMLPBase):
-    def num_flops_per_token(self, seq_len: int) -> int:
-        warn_once(
-            f"{self.__class__.__name__}: approximating extra FLOPs from padding experts to a fixed capacity using "
-            "capacity_factor. The true overhead depends on batch size and rounding to alignment constraints.",
-            UserWarning,
-        )
-        dropless_flops = super().num_flops_per_token(seq_len)
-        return int(dropless_flops * self.capacity_factor)
-
     def __init__(
         self,
         *,
