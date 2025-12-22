@@ -407,6 +407,7 @@ def launch_all(args: argparse.Namespace):
 
 
 def status(args: argparse.Namespace):
+    # for weka checkpoints, needs to be run on a beaker node with weka access
     prepare_cli_environment()
     ladder = args.configure_ladder(args)
 

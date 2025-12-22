@@ -16,7 +16,7 @@ import olmo_core.io as io
 import olmo_core.train.callbacks as callbacks
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import Config
-from olmo_core.data import TokenizerConfig
+from olmo_core.data import DataMix, NumpyPaddedFSLDatasetConfig, TokenizerConfig
 from olmo_core.data.composable import (
     ComposableDataLoaderConfig,
     InstanceSourceConfig,
@@ -478,7 +478,7 @@ class ModelLadder(Config):
         for checkpoint in checkpoints:
             if checkpoint.metrics_path is not None:
                 with open(checkpoint.metrics_path, "r") as f:
-                    metrics = {k: v for k, v in json.load(f).items() if k.startswith(prefix)}
+                    metrics = {k: v for k, v in json.load(f).items()}  # if k.startswith(prefix)}
                     metrics["name"] = checkpoint.name
                     metrics["step"] = checkpoint.step
                     metrics["tokens"] = checkpoint.tokens
@@ -609,6 +609,16 @@ class ModelLadder(Config):
                     project=self.name,
                     cancel_check_interval=50,
                     enabled=not for_benchmarking,
+                ),
+                "lm_evaluator": callbacks.LMEvaluatorCallbackConfig(
+                    eval_dataset=NumpyPaddedFSLDatasetConfig.from_data_mix(
+                        DataMix.v3_small_ppl_validation,
+                        mix_base_dir=get_root_dir(self.cluster),
+                        sequence_length=self.sequence_length,
+                        tokenizer=self.tokenizer,
+                        work_dir=self.work_dir,
+                    ),
+                    eval_interval=1000,
                 ),
                 "downstream_evaluator": callbacks.DownstreamEvaluatorCallbackConfig(
                     tokenizer=self.tokenizer,
