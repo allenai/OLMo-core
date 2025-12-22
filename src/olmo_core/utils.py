@@ -630,17 +630,37 @@ def capped_powers_of_2(x: int, cap: int) -> List[int]:
 
 
 def format_float(value: float) -> str:
-    if value == 0.0:
+    if math.isnan(value):
+        return "nan"
+    elif math.isinf(value):
+        return "inf" if value > 0 else "-inf"
+    abs_value = abs(value)
+    if abs_value == 0.0:
         return "0.0"
-    elif value < 0.0001:
+    elif abs_value >= 1_000_000_000:
+        for suffix, factor in (("E", 1e18), ("P", 1e15), ("T", 1e12), ("B", 1e9)):
+            if abs_value >= factor:
+                scaled = value / factor
+                abs_scaled = abs(scaled)
+                if abs_scaled > 100:
+                    decimals = 1
+                elif abs_scaled > 10:
+                    decimals = 2
+                elif abs_scaled > 1:
+                    decimals = 3
+                else:
+                    decimals = 4
+                scaled_str = f"{scaled:.{decimals}f}"
+                return f"{scaled_str}{suffix}"
+    elif abs_value < 0.0001:
         return f"{value:.2E}"
-    elif value > 1000:
+    elif abs_value >= 1000:
         return f"{int(value):,d}"
-    elif value > 100:
+    elif abs_value > 100:
         return f"{value:.1f}"
-    elif value > 10:
+    elif abs_value > 10:
         return f"{value:.2f}"
-    elif value > 1:
+    elif abs_value > 1:
         return f"{value:.3f}"
     else:
         return f"{value:.4f}"
