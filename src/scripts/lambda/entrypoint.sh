@@ -18,9 +18,16 @@ function path_prepend {
   done
 }
 
-path_prepend /data/ai2/bin/
+function set_env_var_from_beaker {
+    VAR_NAME=$1
+    SECRET_NAME=$2
+    SECRET_VALUE=$(beaker secret read --workspace="$WORKSPACE" "$SECRET_NAME") || exit 1
+    export "$VAR_NAME"="$SECRET_VALUE"
+}
 
 echo "============= Starting setup ============="
+
+path_prepend /data/ai2/bin/
 
 # Debugging info.
 echo "PATH: $PATH"
@@ -34,11 +41,14 @@ echo "Using Beaker workspace: $WORKSPACE"
 cd "$REPO_DIR" || exit 1
 
 # Activate Python virtual env.
+echo "Activating Python virtual environment..."
 source "$VENV_DIR/bin/activate"
 uv pip freeze
 
-# Install necessary Beaker secrets.
-# beaker secret read --workspace="$WORKSPACE" GOOGLE_CREDENTIALS
+# Set necessary environment variables.
+echo "Setting environment variables..."
+export GOOGLE_APPLICATION_CREDENTIALS=/data/ai2/google/credentials.json
+set_env_var_from_beaker WANDB_API_KEY "${USERNAME}_WANDB_API_KEY" || exit 1
 
 echo "============= Setup complete ============="
 
