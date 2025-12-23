@@ -434,7 +434,9 @@ def memmap_to_write(
     file until the context exists successfully.
     """
     path.parent.mkdir(exist_ok=True, parents=True)
-    tmp_path = path.with_suffix(f".{random.randint(0, 2**32)}.npy.tmp")
+    # NOTE: we use 'random.SystemRandom' here to minimize the probability of collisions in temp
+    # filenames from different runs using the same seed and working directory.
+    tmp_path = path.with_suffix(f".{random.SystemRandom().randint(0, 2**32)}.npy.tmp")
     mmap = np.memmap(tmp_path, dtype=dtype, mode="w+", shape=shape)
     try:
         yield mmap
@@ -442,7 +444,15 @@ def memmap_to_write(
         tmp_path.unlink(missing_ok=True)
     mmap.flush()
     del mmap
-    tmp_path.replace(path)
+    try:
+        tmp_path.replace(path)
+    except FileNotFoundError:
+        # Handle potential race condition if multiple processes are trying to replace the same
+        # 'tmp_path' concurrently, in which case we might get a FileNotFoundError because the
+        # 'tmp_path' was already moved by another process.
+        # In this case we'll ignore the error if 'path' already exists.
+        if not path.is_file():
+            raise
 
 
 def write_array_to_disk(arr: np.ndarray, path: Path):
