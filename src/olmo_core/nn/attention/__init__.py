@@ -1055,8 +1055,7 @@ class FusedAttention(AttentionBase):
         param_flops = 6 * sum(p.numel() for p in self.parameters())
 
         # Attention computation (QK^T and Attn*V)
-        # 14x multiplier: 2 matmuls in forward + 5 matmuls in backward, each with (mul+add).
-        # This matches PyTorch's flop counter formulas for SDPA kernels.
-        attn_flops = 14 * self.n_heads * self.head_dim * seq_len
+        # 12x multiplier: 2 matmuls * 2 ops each * 3 for forward+backward
+        attn_flops = 12 * self.n_heads * self.head_dim * seq_len
 
         return param_flops + attn_flops
