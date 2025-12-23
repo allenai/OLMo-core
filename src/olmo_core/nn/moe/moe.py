@@ -325,17 +325,12 @@ class MoEBase(nn.Module):
         )
 
     def num_flops_per_token(self, seq_len: int) -> int:
-        # Router
-        flops = 6 * sum(p.numel() for p in self.router.parameters())
-
-        # Shared MLP
-        if self.shared_mlp is not None:
-            flops += self.shared_mlp.num_flops_per_token(seq_len)
-
-        # Experts
-        flops += self.experts.num_flops_per_token(seq_len)
-
-        return flops
+        router_flops = 6 * sum(p.numel() for p in self.router.parameters())
+        shared_mlp_flops = (
+            self.shared_mlp.num_flops_per_token(seq_len) if self.shared_mlp is not None else 0
+        )
+        expert_flops = self.experts.num_flops_per_token(seq_len)
+        return router_flops + shared_mlp_flops + expert_flops
 
 
 class MoE(MoEBase):

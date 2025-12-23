@@ -850,6 +850,10 @@ class Transformer(nn.Module):
         return self.num_params - self.embeddings.weight.numel()
 
     def num_flops_per_token(self, seq_len: int) -> int:
+        """
+        Returns the idealized number of flops per token for the given sequence length. Purposefully
+        does not account for wasted flops due to padding, recomputation, etc.
+        """
         flops_per_token = 0
         blocks = cast(List[TransformerBlockBase], list(self.blocks.values()))
         for block in blocks:

@@ -494,9 +494,9 @@ class NormalizedTransformerBlock(TransformerBlockBase):
         w.copy_(l2_normalize(w, dim=dim))
 
     def num_flops_per_token(self, seq_len: int) -> int:
-        return self.attention.num_flops_per_token(seq_len) + self.feed_forward.num_flops_per_token(
-            seq_len
-        )
+        attn_flops = self.attention.num_flops_per_token(seq_len)
+        ff_flops = self.feed_forward.num_flops_per_token(seq_len)
+        return attn_flops + ff_flops
 
 
 @beta_feature

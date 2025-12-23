@@ -19,8 +19,7 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
                 NumpyDocumentSourceMixConfig(
                     tokenizer=tokenizer,
                     mix=DataMix.OLMo_mix_0925,
-                    # mix_base_dir=get_root_dir(args.cluster),
-                    mix_base_dir="gs://ai2-llm",
+                    mix_base_dir=get_root_dir(args.cluster),
                 )
             ],
             sequence_length=args.sequence_length,
