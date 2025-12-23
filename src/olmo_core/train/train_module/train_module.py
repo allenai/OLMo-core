@@ -404,3 +404,10 @@ class BasicTrainModule(TrainModule):
 
     def model_forward(self, micro_batch: Dict[str, Any]) -> torch.Tensor:
         return self.model(input_ids=micro_batch["input_ids"])
+
+    @lru_cache
+    def num_flops_per_token(self, seq_len: int) -> Optional[int]:
+        raise NotImplementedError
+
+    def global_num_flops_in_batch(self, batch: Dict[str, Any]) -> Optional[int]:
+        raise NotImplementedError

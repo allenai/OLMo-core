@@ -24,7 +24,13 @@ from olmo_core.nn.moe import (
     MoERouterConfig,
     MoEType,
 )
-from olmo_core.testing import requires_gpu, requires_multi_gpu, run_distributed_test
+from olmo_core.testing import (
+    has_grouped_gemm,
+    requires_gpu,
+    requires_grouped_gemm,
+    requires_multi_gpu,
+    run_distributed_test,
+)
 from olmo_core.utils import get_default_device, record_flops, seed_all
 
 
@@ -231,8 +237,12 @@ def test_moe_with_expert_parallelism(
 
 
 @requires_gpu
+@requires_grouped_gemm
 @pytest.mark.parametrize("shared", [False, True], ids=["no_shared_expert", "with_shared_expert"])
 def test_moe_num_flops_per_token(shared: bool):
+    if has_grouped_gemm:
+        pytest.skip("Pytorch flop recording is not supported for custom kernel grouped_gemm")
+
     seed_all(0)
 
     d_model = 128
