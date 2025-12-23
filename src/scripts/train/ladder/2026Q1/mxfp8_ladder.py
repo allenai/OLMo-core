@@ -129,7 +129,6 @@ class MXFP8TransformerModelConfigurator(TransformerModelConfigurator):
 
 
 def configure_ladder(args: argparse.Namespace) -> ModelLadder:
-    # ladder_name = "olmo3-mxfp8-all-linear-layers"
     tokenizer = TokenizerConfig.dolma2()
     instance_sources: list[InstanceSourceConfig] = [
         ConcatAndChunkInstanceSourceConfig(
@@ -137,7 +136,7 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
                 NumpyDocumentSourceMixConfig(
                     tokenizer=tokenizer,
                     mix=DataMix.OLMo_mix_0925,
-                    mix_base_dir="gs://ai2-llm/",  # HACK bc data isnt on weka
+                    mix_base_dir=get_root_dir(args.cluster),
                 )
             ],
             sequence_length=args.sequence_length,
@@ -156,7 +155,9 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         sequence_length=args.sequence_length,
         tokenizer=tokenizer,
         instance_sources=instance_sources,
-        data_loader=ComposableDataLoaderConfig(num_workers=8),
+        data_loader=ComposableDataLoaderConfig(
+            num_workers=8, instance_filter_config=InstanceFilterConfig()
+        ),
     )
     return ladder
 

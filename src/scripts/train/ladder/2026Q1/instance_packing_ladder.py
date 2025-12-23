@@ -7,13 +7,16 @@ from olmo_core.config import DType
 from olmo_core.data import DataMix, TokenizerConfig
 from olmo_core.data.composable import *
 from olmo_core.distributed.parallel import DataParallelType
-from olmo_core.float8 import Float8Config
+from olmo_core.float8 import AOMXLinearConfig, Float8Config
 from olmo_core.internal.common import get_gpu_type, get_root_dir
 from olmo_core.internal.ladder import main
 from olmo_core.model_ladder import *
 from olmo_core.model_ladder.utils import format_count
-from olmo_core.nn.attention import AttentionBackendName, GateConfig, GateGranularity
-from olmo_core.nn.transformer import TransformerConfig, TransformerDataParallelWrappingStrategy
+from olmo_core.nn.attention import AttentionBackendName
+from olmo_core.nn.transformer import (
+    TransformerConfig,
+    TransformerDataParallelWrappingStrategy,
+)
 from olmo_core.optim import OptimConfig, Scheduler
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
@@ -25,7 +28,7 @@ from olmo_core.utils import warn_once
 log = logging.getLogger(__name__)
 
 
-class GatedAttentionTransformerModelConfigurator(TransformerModelConfigurator):
+class MXFP8TransformerModelConfigurator(TransformerModelConfigurator):
     def configure_model(
         self,
         *,
@@ -40,12 +43,7 @@ class GatedAttentionTransformerModelConfigurator(TransformerModelConfigurator):
         assert sequence_length in {2048, 4096, 8192}
         size_spec = TransformerSize(size_spec)
         vocab_size = tokenizer.padded_vocab_size()
-        kwargs = dict(
-            attn_backend=AttentionBackendName.flash_2,
-            gate_config=GateConfig(  # <- this is the intervention
-                granularity=GateGranularity.headwise
-            ),
-        )
+        kwargs = dict(attn_backend=AttentionBackendName.flash_2)
 
         model: TransformerConfig
         if size_spec == TransformerSize.size_190M:
@@ -114,7 +112,10 @@ class GatedAttentionTransformerModelConfigurator(TransformerModelConfigurator):
             z_loss_multiplier=1e-5,
             max_grad_norm=1.0,
             scheduler=scheduler,
-            float8_config=Float8Config(enabled=False),
+            float8_config=Float8Config(
+                enabled=True,
+                ao_mx=AOMXLinearConfig.mxfp8_cublas_rceil(),  # <- this is the intervention
+            ),
         )
 
         # Build the model.
@@ -129,25 +130,33 @@ class GatedAttentionTransformerModelConfigurator(TransformerModelConfigurator):
 
 def configure_ladder(args: argparse.Namespace) -> ModelLadder:
     tokenizer = TokenizerConfig.dolma2()
+    source_group_size = 8
     instance_sources: list[InstanceSourceConfig] = [
-        ConcatAndChunkInstanceSourceConfig(
+        PackingInstanceSourceConfig(  # <- this is the intervention
             sources=[
                 NumpyDocumentSourceMixConfig(
                     tokenizer=tokenizer,
                     mix=DataMix.OLMo_mix_0925,
                     mix_base_dir=get_root_dir(args.cluster),
+                    # mix_base_dir="gs://ai2-llm/",  # HACK bc data isnt on weka
+                    source_permutation_seed=828,
+                    source_group_size=source_group_size,
                 )
             ],
             sequence_length=args.sequence_length,
+            tokenizer=tokenizer,
+            long_doc_strategy=LongDocStrategy.truncate,
+            source_group_size=source_group_size,
         ),
     ]
+
     ladder = ModelLadder(
         name=args.name,
         dir=str(io.join_path(get_root_dir(args.cluster), "model-ladders", args.name)),
         sizes=list(TransformerSize),
         max_devices=args.max_gpus,
         device_type=get_gpu_type(args.cluster),
-        model_configurator=TransformerModelConfigurator(),
+        model_configurator=MXFP8TransformerModelConfigurator(),
         run_configurator=WSDSChinchillaRunConfigurator(
             chinchilla_multiple=args.chinchilla_multiple
         ),
