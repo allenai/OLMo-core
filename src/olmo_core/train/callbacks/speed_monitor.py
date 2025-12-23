@@ -162,7 +162,9 @@ class SpeedMonitorCallback(Callback):
             flops_ps_avg = self._total_flops / total_time
             self.trainer.record_metric("throughput/device/flopsPS", flops_ps)
             self.trainer.record_metric("throughput/device/flopsPS (actual avg)", flops_ps_avg)
-            self.trainer.record_metric("throughput/total flops", self.trainer.global_train_flops)
+            self.trainer.record_metric(
+                "throughput/total petaflops", self.trainer.global_train_petaflops
+            )
 
         bps = 1 / step_time
         bps_avg = self._total_steps / total_time
