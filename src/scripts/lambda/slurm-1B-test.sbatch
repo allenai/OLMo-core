@@ -19,6 +19,8 @@ WORKSPACE=ai2/linear-rnns
     ./src/scripts/train/OLMo2/OLMo2-1B.py train slurm-test lambda \
     --dataset.mix_base_dir=/data/caia-mltrain/data/ \
     --dataset.mix=OLMo-mix-0925-official \
+    --model.block.attention.backend=te \
+    --train_module.rank_microbatch_size=$((16 * 4096)) \
     --trainer.callbacks.wandb.enabled=false \
     --trainer.callbacks.comet.enabled=false \
     --trainer.callbacks.lm_evaluator.enabled=false \
