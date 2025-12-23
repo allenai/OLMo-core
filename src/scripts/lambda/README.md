@@ -20,14 +20,10 @@ uv pip install -e '.[all]'
 
 ## Run a test job
 
-Submit a job with `sbatch` like this:
+Submit a job through SLURM with:
 
 ```bash
-git pull; sbatch src/scripts/lambda/slurm-test-job.sbatch
+./src/scripts/lambda/launch.sh ./src/scripts/lambda/slurm-test-job.sbatch
 ```
 
-This will print out the job ID. Suppose the job ID is `849`. You can follow the logs by running:
-
-```bash
-tail -n +1 -f /data/ai2/logs/849.log
-```
+This will print out the job ID, wait for it to start, and then stream the logs.
