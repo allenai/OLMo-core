@@ -12,6 +12,7 @@ DATA_DIR=/data/caia-mltrain/data/
 echo "============= Starting setup ============="
 
 # Debugging info.
+echo "PATH: $PATH"
 echo "Using repo dir: $REPO_DIR"
 echo "Using venv dir: $VENV_DIR"
 echo "Using data dir: $DATA_DIR"
