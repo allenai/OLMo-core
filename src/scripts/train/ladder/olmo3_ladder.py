@@ -40,8 +40,7 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         tokenizer=tokenizer,
         instance_sources=instance_sources,
         data_loader=ComposableDataLoaderConfig(
-            num_workers=8,
-            instance_filter_config=InstanceFilterConfig(),
+            num_workers=8, instance_filter_config=InstanceFilterConfig()
         ),
     )
     return ladder

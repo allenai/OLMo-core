@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Flops tracking for ParallelMLP and SWA layers.
 - Fix overflow when too many global flops are computed.
 - Ladder lmevaluator typo.
+- Made some functions involved in data loading preprocessing more robust to race conditions.
 
 ### Changed
 
@@ -41,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `olmo_core.io.join_path()` now accepts an arbitrary number of components to join.
 - All `olmo_core.nn` module configs now inherit from a common base class, `ModuleConfig`.
 - Big changes to `olmo_core.model_ladder` API.
+- Add ngram instance filter to olmo3_ladder.
 
 ## [v2.4.0](https://github.com/allenai/OLMo-core/releases/tag/v2.4.0) - 2025-11-20
 
