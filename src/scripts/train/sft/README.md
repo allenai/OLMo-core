@@ -42,7 +42,6 @@ You can follow the instructions here to generate an Olmo-core compatable SFT dat
 
 2. Ensure that the dataset and model you want to use are available on the correct storage bucket for the cluster you are using.
     * For example, if you are using `ai2/jupiter`, the dataset and model should be available on the `/weka/oe-training-default/ai2-llm` bucket.
-    * If you are using ai2/augusta, the dataset and model should be available on the `gs://ai2-llm` bucket.
     * Both can be copied to/from gcs/weka using the `gsutil` command line tool.
         * From a machine with weka mounted: `gsutil -m cp -r /weka/<bucket-name>/path/to/dataset_or_model gs://ai2-llm/path/to/dataset_or_model`
 
