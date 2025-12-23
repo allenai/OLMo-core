@@ -11,6 +11,7 @@ if [ -z "$BEAKER_TOKEN" ]; then
     exit 1
 fi
 
+# Find an open port to use for distributed training.
 echo "Submitting job script: $JOB_SCRIPT"
 
 # Submit the job and capture the output (the Job ID).

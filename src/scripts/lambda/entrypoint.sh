@@ -50,11 +50,17 @@ export OMP_NUM_THREADS=8
 export FORCE_COLOR=1
 export TORCH_LOGS=recompiles,graph_breaks
 
-# Resolve distributed address and find an open port.
+# Resolve hostname of master address and port to use.
 export MASTER_ADDR
 MASTER_ADDR=$(scontrol show hostname "$SLURM_JOB_NODELIST" | head -n 1)
 export MASTER_PORT
-MASTER_PORT=$(comm -23 <(seq 49152 65535 | sort) <(ss -Htan | awk '{print $4}' | cut -d':' -f2 | sort -u) | shuf | head -n 1)
+MASTER_PORT=$((60000 + SLURM_JOB_ID % 5000))
+
+# Ensure port is available.
+if ! nc -vz "$MASTER_ADDR" $MASTER_PORT; then
+    echo "Error: Master port $MASTER_PORT on $MASTER_ADDR is not available."
+    exit 1
+fi
 
 set_env_var_from_beaker WANDB_API_KEY "${USERNAME}_WANDB_API_KEY" || exit 1
 
