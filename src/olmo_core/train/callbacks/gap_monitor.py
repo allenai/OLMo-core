@@ -136,9 +136,6 @@ class GAPMonitorCallback(Callback):
             # we use the "sum" merge strategy.
             var = var.float().sum() / self._local_batch_size_instances
             mean = mean.float().sum() / self._local_batch_size_instances
-            sparsity = (tensor.abs() < SPARSITY_THRESHOLD).float().mean(
-                dim=-1
-            ).sum() / self._local_batch_size_instances
             if self._dry_run_complete:
                 self.trainer.record_metric(
                     f"{prefix}/{name}/max",
@@ -158,24 +155,14 @@ class GAPMonitorCallback(Callback):
                     reduce_type=ReduceType.mean,
                     merge_strategy=MetricMergeStrategy.sum,
                 )
-                self.trainer.record_metric(
-                    f"{prefix}/{name}/sparsity",
-                    sparsity,
-                    reduce_type=ReduceType.mean,
-                    merge_strategy=MetricMergeStrategy.sum,
-                )
         else:
             local_tensor = get_local_tensor(tensor)
             max_ = local_tensor.abs().max()
             var, mean = var_mean(tensor)
-            sparsity = (local_tensor.abs() < SPARSITY_THRESHOLD).float().mean()
             if self._dry_run_complete:
                 self.trainer.record_metric(f"{prefix}/{name}/max", max_, reduce_type=ReduceType.max)
                 self.trainer.record_metric(f"{prefix}/{name}/mean", mean, reduce_type=None)
                 self.trainer.record_metric(f"{prefix}/{name}/var", var, reduce_type=None)
-                self.trainer.record_metric(
-                    f"{prefix}/{name}/sparsity", sparsity, reduce_type=ReduceType.mean
-                )
 
     def close(self):
         self._reset()
