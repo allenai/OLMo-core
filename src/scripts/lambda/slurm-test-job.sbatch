@@ -1,4 +1,5 @@
 #!/bin/bash
+#SBATCH --job-name=ai2-slurm-test
 #SBATCH --nodes=1
 #SBATCH --gpus-per-node=8
 #SBATCH --ntasks-per-node=1
@@ -8,6 +9,17 @@ REPO_DIR=/data/ai2/petew/OLMo-core
 VENV_DIR=/data/ai2/uv/OLMo-core
 DATA_DIR=/data/caia-mltrain/data/
 
+# Debugging info.
+echo "Using repo dir: $REPO_DIR"
+echo "Using venv dir: $VENV_DIR"
+echo "Using data dir: $DATA_DIR"
+
+# Change to repo directory.
+cd "$REPO_DIR" || exit 1
+
+# Activate Python virtual env.
 source "$VENV_DIR/bin/activate"
-# srun python -c "import torch; print(f'Torch version: {torch.__version__}'); print(f'Number of GPUs available: {torch.cuda.device_count()}')"
+echo "Using $(python --version) at $(which python)"
+pip freeze
+
 python -c "import torch; print(f'Torch version: {torch.__version__}'); print(f'Number of GPUs available: {torch.cuda.device_count()}')"
