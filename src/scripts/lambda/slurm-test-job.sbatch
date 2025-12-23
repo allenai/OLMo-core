@@ -6,8 +6,10 @@
 #SBATCH --output=/data/ai2/logs/%j.log
 
 REPO_DIR=/data/ai2/petew/OLMo-core
-VENV_DIR=/data/ai2/uv/OLMo-core
+VENV_DIR=/data/ai2/uv/OLMo-core-petew
 DATA_DIR=/data/caia-mltrain/data/
+
+echo "============= Starting setup ============="
 
 # Debugging info.
 echo "Using repo dir: $REPO_DIR"
@@ -19,7 +21,9 @@ cd "$REPO_DIR" || exit 1
 
 # Activate Python virtual env.
 source "$VENV_DIR/bin/activate"
-echo "Using $(python --version) at $(which python)"
-pip freeze
+echo "Using $(python --version) at $(which python) with the following packages:"
+uv pip freeze
+
+echo "============= Setup complete ============="
 
 python -c "import torch; print(f'Torch version: {torch.__version__}'); print(f'Number of GPUs available: {torch.cuda.device_count()}')"
