@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MoE: Added `TrainModuleConfig` ABC
 - Added a `MetricSaverCallback` which just saves metrics at specific intervals to JSON files in the `save_folder`.
 - Added `fixed_steps` option to `Checkpointer` and `Evaluator` callbacks for configuring checkpoints/evals at specific step numbers.
+- Added support for supervised finetuning.
 - Added support for gated attention.
 - Added support for no-global-rope ("GNoPE").
 - Added support for MXFP8 Linear layers via torchao.
@@ -164,6 +165,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add support for BOS token matching EOS token for intra-document masking in FSL numpy datasets.
 - Added option to allow profiler to record on multiple ranks.
 - Added support for accessing Google on non-Google clusters via auth with service account keys.
+- Added an example script for launching an SFT job.
 - Added support for revisions in `convert_checkpoint_from_hf.py` and the `load_hf_model` method of `olmo_core.nn.hf.checkpoint`.
 - `foreach` support in `SkipStepAdamW`.
 - Added `budget` mode for activation checkpointing configuration.

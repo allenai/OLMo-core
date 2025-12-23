@@ -63,6 +63,22 @@ def join_path(path: PathOrStr, *paths: PathOrStr) -> PathOrStr:
     return path
 
 
+def get_parent(path: PathOrStr) -> PathOrStr:
+    """
+    Get the parent directory of a path.
+
+    :param path: The path/URL to get the parent of.
+    """
+    if is_url(path):
+        path = str(normalize_path(path))
+        if path.count("/") > 2:
+            return "/".join(path.split("/")[:-1])
+        else:
+            return path
+    else:
+        return Path(normalize_path(path)).parent
+
+
 def resource_path(folder: PathOrStr, fname: str, local_cache: Optional[PathOrStr] = None) -> Path:
     """
     Returns an actual path for local or remote file, potentially downloading it if a copy doesn't
