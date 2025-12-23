@@ -50,10 +50,11 @@ export OMP_NUM_THREADS=8
 export FORCE_COLOR=1
 export TORCH_LOGS=recompiles,graph_breaks
 
+# Resolve distributed address and find an open port.
 export MASTER_ADDR
 MASTER_ADDR=$(scontrol show hostname "$SLURM_JOB_NODELIST" | head -n 1)
 export MASTER_PORT
-MASTER_PORT=1234
+MASTER_PORT=$(comm -23 <(seq 49152 65535 | sort) <(ss -Htan | awk '{print $4}' | cut -d':' -f2 | sort -u) | shuf | head -n 1)
 
 set_env_var_from_beaker WANDB_API_KEY "${USERNAME}_WANDB_API_KEY" || exit 1
 
