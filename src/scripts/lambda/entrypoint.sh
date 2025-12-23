@@ -36,7 +36,7 @@ echo "Using repo dir: $REPO_DIR"
 echo "Using venv dir: $VENV_DIR"
 echo "Using data dir: $DATA_DIR"
 echo "Using Beaker workspace: $WORKSPACE"
-echo "Authenticated to Beaker as $(beaker account whoami)"
+echo "Authenticated to Beaker as $(beaker account whoami --format=json | jq -r '.[].name')"
 
 # Change to repo directory.
 cd "$REPO_DIR" || exit 1
