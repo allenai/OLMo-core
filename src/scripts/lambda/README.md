@@ -14,13 +14,13 @@ username=petew
 tmux new-session -A -s $username
 ```
 
-## Initial setup
-
 Check that `/data/ai2/bin/` is in your `PATH`, and if not add it:
 
 ```bash
-export PATH="/data/ai2/bin/:$PATH"
+export PATH="/data/ai2/bin:$PATH"
 ```
+
+## Initial setup
 
 We all login as the same user, so we need to be careful to use unique repo directories and virtual environment.
 
