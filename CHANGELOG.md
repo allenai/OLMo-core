@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Flops tracking for ParallelMLP and SWA layers.
 - Fix overflow when too many global flops are computed.
 - Ladder lmevaluator typo.
+- Made some functions involved in data loading preprocessing more robust to race conditions.
 
 ### Changed
 
