@@ -45,6 +45,7 @@ cd "$REPO_DIR" || exit 1
 echo "Setting environment variables..."
 export GOOGLE_APPLICATION_CREDENTIALS=/data/ai2/google/credentials.json
 export OLMO_SHARED_FS=1
+export OLMO_RICH_LOGGING=1
 export OMP_NUM_THREADS=8
 export FORCE_COLOR=1
 export TORCH_LOGS=recompiles,graph_breaks

@@ -312,8 +312,10 @@ def setup_logging(
 
     handler: logging.Handler
     # NOTE: Beaker supports rich logging now.
-    if os.environ.get("BEAKER_EXPERIMENT_ID") is None and (
-        os.environ.get("DEBIAN_FRONTEND", None) == "noninteractive" or not sys.stdout.isatty()
+    if (
+        os.environ.get("OLMO_RICH_LOGGING") is None
+        and os.environ.get("BEAKER_EXPERIMENT_ID") is None
+        and (os.environ.get("DEBIAN_FRONTEND", None) == "noninteractive" or not sys.stdout.isatty())
     ):
         handler = logging.StreamHandler(sys.stdout)
         formatter = logging.Formatter(
