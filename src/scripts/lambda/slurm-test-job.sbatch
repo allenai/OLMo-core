@@ -15,10 +15,4 @@ WORKSPACE=ai2/linear-rnns
 # * Your Beaker username.
 # * A Beaker workspace to pull env variables from.
 # * All other args are passed to torchrun.
-./src/scripts/lambda/entrypoint.sh $USERNAME $WORKSPACE python -c "$(cat <<'EOF'
-import torch
-print(f"Torch version: {torch.__version__}")
-print(f"Number of GPUs available: {torch.cuda.device_count()}")
-print("Done!")
-EOF
-)"
+./src/scripts/lambda/entrypoint.sh $USERNAME $WORKSPACE ./src/scripts/lambda/distributed_test.py
