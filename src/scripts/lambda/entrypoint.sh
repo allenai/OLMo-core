@@ -36,6 +36,7 @@ echo "Using repo dir: $REPO_DIR"
 echo "Using venv dir: $VENV_DIR"
 echo "Using data dir: $DATA_DIR"
 echo "Using Beaker workspace: $WORKSPACE"
+echo "Authenticated to Beaker as $(beaker account whoami)" || exit 1
 
 # Change to repo directory.
 cd "$REPO_DIR" || exit 1

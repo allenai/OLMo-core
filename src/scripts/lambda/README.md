@@ -20,6 +20,12 @@ Check that `/data/ai2/bin/` is in your `PATH`, and if not add it:
 export PATH="/data/ai2/bin:$PATH"
 ```
 
+Export your Beaker token to the `BEAKER_TOKEN` env variable:
+
+```bash
+export BEAKER_TOKEN=XXXX
+```
+
 ## Initial setup
 
 We all login as the same user, so we need to be careful to use unique repo directories and virtual environment.

@@ -5,11 +5,17 @@ git pull
 # Define the script you want to submit
 JOB_SCRIPT="${1:-src/scripts/lambda/slurm-test-job.sbatch}"
 
+# Check that BEAKER_TOKEN env var is set.
+if [ -z "$BEAKER_TOKEN" ]; then
+    echo "Error: BEAKER_TOKEN environment variable is not set."
+    exit 1
+fi
+
 echo "Submitting job script: $JOB_SCRIPT"
 
 # Submit the job and capture the output (the Job ID).
 # The --parsable option ensures only the Job ID is returned.
-JOB_ID=$(sbatch --parsable "$JOB_SCRIPT")
+JOB_ID=$(sbatch --export=BEAKER_TOKEN --parsable "$JOB_SCRIPT")
 
 # Check if the submission was successful (sbatch returns a non-zero exit code on failure).
 if [ $? -eq 0 ]; then
