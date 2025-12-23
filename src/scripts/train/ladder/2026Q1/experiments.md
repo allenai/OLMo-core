@@ -7,11 +7,11 @@ uv run src/scripts/train/ladder/olmo3_ladder.py launch-all --max-size 760M --clu
 ```
 
 ```bash
-uv run src/scripts/train/ladder/olmo3_ladder.py status --max-size 760M --cluster ai2/titan --name "olmo3-baseline-ladder" --chinchilla-multiple 8.0
+uv run src/scripts/train/ladder/olmo3_ladder.py status --max-size 1B --cluster ai2/titan --name "olmo3-baseline-ladder" --chinchilla-multiple 8.0
 ```
 
 ```bash
-uv run src/scripts/train/ladder/olmo3_ladder.py metrics --size 190M --cluster ai2/titan --name "olmo3-baseline-ladder" --chinchilla-multiple 8.0
+uv run src/scripts/train/ladder/olmo3_ladder.py metrics --size 1B --cluster ai2/titan --name "olmo3-baseline-ladder" --chinchilla-multiple 8.0
 ```
 
 ## mxfp8
@@ -19,7 +19,7 @@ uv run src/scripts/train/ladder/olmo3_ladder.py metrics --size 190M --cluster ai
 ### all linear layers (except lm_head)
 
 ```bash
-uv run src/scripts/train/ladder/2026Q1/mxfp8_ladder.py launch-all --max-size 760M --cluster ai2/titan --name "olmo3-mxfp8-all-linear" --preemptible --chinchilla-multiple 8.0
+uv run src/scripts/train/ladder/2026Q1/mxfp8_ladder.py launch-all --max-size 1B --cluster ai2/titan --name "olmo3-mxfp8-all-linear" --preemptible --chinchilla-multiple 8.0
 ```
 
 ## gated attention
@@ -27,5 +27,5 @@ uv run src/scripts/train/ladder/2026Q1/mxfp8_ladder.py launch-all --max-size 760
 ### headwise
 
 ```bash
-uv run src/scripts/train/ladder/2026Q1/gatted_attn_ladder.py launch-all --max-size 760M --cluster ai2/jupiter --name "olmo3-gated-attn" --preemptible --chinchilla-multiple 8.0
+uv run src/scripts/train/ladder/2026Q1/gatted_attn_ladder.py launch-all --max-size 1B --cluster ai2/jupiter --name "olmo3-gated-attn" --preemptible --chinchilla-multiple 8.0
 ```
