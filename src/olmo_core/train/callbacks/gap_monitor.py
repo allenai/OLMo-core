@@ -106,6 +106,7 @@ class GAPMonitorCallback(Callback):
                 f"unsupported grad_output type {type(grad_output)} for module '{module_name}'"
             )
 
+    @torch.no_grad()
     def record_tensor_stats(
         self,
         name: str,
