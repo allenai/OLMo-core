@@ -600,7 +600,7 @@ class ModelLadder(Config):
                     enabled=not for_benchmarking,
                 ),
                 "profiler": callbacks.ProfilerCallback(enabled=for_benchmarking),
-                "gap_monitor": callbacks.GAPMonitorCallback(enabled=True, interval=20),
+                "gap_monitor": callbacks.GAPMonitorCallback(enabled=False, interval=20),
                 "slack_notifier": callbacks.SlackNotifierCallback(name=run_name, enabled=False),
                 "beaker": callbacks.BeakerCallback(),
                 "wandb": callbacks.WandBCallback(
