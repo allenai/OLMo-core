@@ -15,8 +15,6 @@ from ..common import MetricMergeStrategy, ReduceType
 from ..train_module import TransformerTrainModule
 from .callback import Callback
 
-SPARSITY_THRESHOLD = 1e-6
-
 
 @dataclass
 class GAPMonitorCallback(Callback):
@@ -157,8 +155,7 @@ class GAPMonitorCallback(Callback):
                     merge_strategy=MetricMergeStrategy.sum,
                 )
         else:
-            local_tensor = get_local_tensor(tensor)
-            max_ = local_tensor.abs().max()
+            max_ = get_local_tensor(tensor).abs().max()
             var, mean = var_mean(tensor)
             if self._dry_run_complete:
                 self.trainer.record_metric(f"{prefix}/{name}/max", max_, reduce_type=ReduceType.max)
