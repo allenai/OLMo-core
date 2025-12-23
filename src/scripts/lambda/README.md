@@ -57,3 +57,8 @@ Submit a job through SLURM with:
 
 The first argument to the `launch.sh` is the sbatch script to run.
 This will print out the job ID, wait for it to start, and then stream the logs.
+
+## Running your own script
+
+Copy the test sbatch script `slurm-test-job.sbatch` and modifying to your needs.
+Then launch it with the `./src/scripts/lambda/launch.sh` script in the same way as we did in the previous section.

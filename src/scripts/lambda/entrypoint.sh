@@ -36,21 +36,35 @@ echo "Using repo dir: $REPO_DIR"
 echo "Using venv dir: $VENV_DIR"
 echo "Using data dir: $DATA_DIR"
 echo "Using Beaker workspace: $WORKSPACE"
-echo "Authenticated to Beaker as $(beaker account whoami)" || exit 1
+echo "Authenticated to Beaker as $(beaker account whoami)"
 
 # Change to repo directory.
 cd "$REPO_DIR" || exit 1
+
+# Set necessary environment variables.
+echo "Setting environment variables..."
+export GOOGLE_APPLICATION_CREDENTIALS=/data/ai2/google/credentials.json
+export OLMO_SHARED_FS=1
+
+export MASTER_ADDR
+MASTER_ADDR=$(scontrol show hostname "$SLURM_JOB_NODELIST" | head -n 1)
+export MASTER_PORT
+MASTER_PORT=12345
+
+set_env_var_from_beaker WANDB_API_KEY "${USERNAME}_WANDB_API_KEY" || exit 1
 
 # Activate Python virtual env.
 echo "Activating Python virtual environment..."
 source "$VENV_DIR/bin/activate"
 uv pip freeze
 
-# Set necessary environment variables.
-echo "Setting environment variables..."
-export GOOGLE_APPLICATION_CREDENTIALS=/data/ai2/google/credentials.json
-set_env_var_from_beaker WANDB_API_KEY "${USERNAME}_WANDB_API_KEY" || exit 1
-
 echo "============= Setup complete ============="
 
-exec "$@"
+set -x
+exec torchrun \
+    --nnodes="$SLURM_NNODES" \
+    --nproc_per_node="$SLURM_GPUS_ON_NODE" \
+    --master_addr="$MASTER_ADDR" \
+    --master_port="$MASTER_PORT" \
+    --node_rank="$SLURM_NODEID" \
+    "$@"
