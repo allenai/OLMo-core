@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed the ConsoleLoggerCallback filtering to support the new prefix (gpu_memory) for GPUMonitorCallback.
 - Avoid torch dynamo recompiles when intra-document masking enabled by marking `cu_doc_lens` and `max_doc_len` dynamic.
 - Flops tracking for ParallelMLP and SWA layers.
+- Fix overflow when too many global flops are computed.
 - Ladder lmevaluator typo.
 
 ### Changed
