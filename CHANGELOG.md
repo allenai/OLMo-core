@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added support for gated attention.
 - Added support for no-global-rope ("GNoPE").
 - Added support for MXFP8 Linear layers via torchao.
+- Added support for tracking total flops.
 
 ### Fixed
 
@@ -28,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed bug in GPUMonitorCallback where it was using a Wandb reserved keyword, causing data to be unable to be visualized in the Wandb dashboard.
 - Fixed the ConsoleLoggerCallback filtering to support the new prefix (gpu_memory) for GPUMonitorCallback.
 - Avoid torch dynamo recompiles when intra-document masking enabled by marking `cu_doc_lens` and `max_doc_len` dynamic.
+- Flops tracking for ParallelMLP and SWA layers.
 
 ### Changed
 
