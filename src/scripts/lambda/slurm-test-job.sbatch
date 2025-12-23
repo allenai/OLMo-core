@@ -7,4 +7,9 @@
 
 USERNAME=petew
 
-./src/scripts/lambda/entrypoint.sh $USERNAME python -c "import torch; print(f'Torch version: {torch.__version__}'); print(f'Number of GPUs available: {torch.cuda.device_count()}')"
+./src/scripts/lambda/entrypoint.sh $USERNAME python -c "$(cat <<'EOF'
+import torch
+print(f'Torch version: {torch.__version__}')
+print(f'Number of GPUs available: {torch.cuda.device_count()}')
+EOF
+)"
