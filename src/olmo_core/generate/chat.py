@@ -202,6 +202,12 @@ Examples:
         """,
     )
     parser.add_argument(
+        "--print-shape",
+        action="store_true",
+        help="Print logits tensor shape at each decoding step during generation.",
+    )
+
+    parser.add_argument(
         "checkpoint_dir",
         type=str,
         help="Path to checkpoint directory",
@@ -323,6 +329,7 @@ Examples:
         top_p=args.top_p,
         use_cache=args.use_cache,
     )
+    generation_config.print_shape = args.print_shape
 
     attention_backend = None
     if args.attention_backend:
