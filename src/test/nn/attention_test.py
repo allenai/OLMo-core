@@ -859,6 +859,73 @@ def test_attention_builder_config(attn_config: AttentionConfig):
     assert attn_config.num_params(d_model) == n_params
 
 
+@pytest.mark.parametrize(
+    "no_global_rope,expected_rope_enabled",
+    [
+        pytest.param(True, False, id="no_global_rope=True-disables"),
+        pytest.param(False, True, id="no_global_rope=False-enables"),
+        pytest.param(None, True, id="no_global_rope-default-enables"),
+    ],
+)
+def test_no_global_rope_on_global_layers(
+    no_global_rope: Optional[bool], expected_rope_enabled: bool
+):
+    """Test that no_global_rope controls RoPE on global (non-SWA) layers."""
+    d_model = 128
+    rope_config = (
+        RoPEConfig(no_global_rope=no_global_rope) if no_global_rope is not None else RoPEConfig()
+    )
+    attn_config = AttentionConfig(
+        name=AttentionType.default,
+        n_heads=8,
+        rope=rope_config,
+    )
+
+    # Build a global layer (no sliding window)
+    attn = attn_config.build(d_model, layer_idx=0, n_layers=1)
+
+    if expected_rope_enabled:
+        assert attn.rope is not None
+    else:
+        assert attn.rope is None
+
+
+@pytest.mark.parametrize(
+    "force_full_attention,expected_rope_enabled",
+    [
+        pytest.param(False, True, id="swa-layer-preserves-rope"),
+        pytest.param(True, False, id="forced-full-attention-disables-rope"),
+    ],
+)
+def test_no_global_rope_with_sliding_window(
+    force_full_attention: bool, expected_rope_enabled: bool
+):
+    """Test that no_global_rope=True only affects global layers, not SWA layers."""
+    d_model = 128
+    rope_config = RoPEConfig(no_global_rope=True)
+    sliding_window_config = SlidingWindowAttentionConfig(
+        pattern=[1024, 2048, -1],
+        force_full_attention_on_first_layer=force_full_attention,
+        force_full_attention_on_last_layer=False,
+    )
+    attn_config = AttentionConfig(
+        name=AttentionType.default,
+        n_heads=8,
+        rope=rope_config,
+        sliding_window=sliding_window_config,
+    )
+
+    # Build layer_idx=0
+    # - If force_full_attention=False: uses SWA (window_size=1024), so RoPE should be preserved
+    # - If force_full_attention=True: forced to full attention (global), so RoPE should be disabled
+    attn = attn_config.build(d_model, layer_idx=0, n_layers=12)
+
+    if expected_rope_enabled:
+        assert attn.rope is not None
+    else:
+        assert attn.rope is None
+
+
 def _get_lb(rank: int, world_size: int) -> RingAttentionZigZagLoadBalancer:
     return RingAttentionZigZagLoadBalancer(cp_rank=rank, cp_world_size=world_size)
 
@@ -1207,3 +1274,75 @@ def test_context_parallel_attention(load_balancer_type, head_stride: int, tmp_pa
             head_stride,
         ),
     )
+
+
+def test_attention_num_flops_per_token():
+    d_model = 128
+    n_heads = 8
+    seq_len = 32
+
+    def _flops_per_token(
+        *,
+        n_kv_heads: Optional[int],
+        window_size: Optional[int],
+        gate: Optional[GateConfig],
+    ) -> int:
+        attn = Attention(
+            d_model=d_model,
+            n_heads=n_heads,
+            n_kv_heads=n_kv_heads,
+            window_size=window_size,
+            gate=gate,
+            backend=AttentionBackendName.torch,
+            init_device="cpu",
+        )
+        return attn.num_flops_per_token(seq_len)
+
+    mha_full = _flops_per_token(n_kv_heads=None, window_size=None, gate=None)
+    mha_swa = _flops_per_token(n_kv_heads=None, window_size=16, gate=None)
+    gqa_full = _flops_per_token(n_kv_heads=2, window_size=None, gate=None)
+    gqa_swa = _flops_per_token(n_kv_heads=2, window_size=16, gate=None)
+    mha_full_gated = _flops_per_token(
+        n_kv_heads=None,
+        window_size=None,
+        gate=GateConfig(granularity=GateGranularity.headwise),
+    )
+
+    # NOTE: we use relative comparisons here rather than direct comparisons to record_flops() for
+    # the Attention estimate, since the idealized estimate used by Attention is different from the
+    # actual FLOPs used by SDPA/flash-attn due to the use of recomputation in the backward pass.
+
+    # full attention should be more expensive than SWA.
+    assert mha_full > mha_swa
+    assert gqa_full > gqa_swa
+
+    # MHA should be more expensive than GQA.
+    assert mha_full > gqa_full
+    assert mha_swa > gqa_swa
+
+    # Gating should add additional compute.
+    assert mha_full_gated > mha_full
+
+
+@requires_gpu
+@requires_flash_attn_2
+def test_fused_attention_num_flops_per_token():
+    n_heads = 8
+
+    fused_small = FusedAttention(d_model=128, n_heads=n_heads, init_device="cuda")
+
+    # Compare against the basic Attention estimate for the same configuration.
+    attn_small = Attention(
+        d_model=128,
+        n_heads=n_heads,
+        backend=AttentionBackendName.torch,
+        init_device="cuda",
+    )
+    assert fused_small.num_flops_per_token(32) == attn_small.num_flops_per_token(32)
+
+    # Longer sequences should be more expensive.
+    assert fused_small.num_flops_per_token(64) > fused_small.num_flops_per_token(32)
+
+    # Larger models should be more expensive.
+    fused_large = FusedAttention(d_model=256, n_heads=n_heads, init_device="cuda")
+    assert fused_large.num_flops_per_token(32) > fused_small.num_flops_per_token(32)

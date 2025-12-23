@@ -161,6 +161,11 @@ class FeedForward(nn.Module):
             },
         )
 
+    def num_flops_per_token(self, seq_len: int) -> int:
+        del seq_len
+        # 6 FLOPs per parameter (2 ops * 3 for forward+backward)
+        return 6 * sum(p.numel() for p in self.parameters())
+
 
 @beta_feature
 class NormalizedFeedForward(FeedForward):

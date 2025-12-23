@@ -77,6 +77,7 @@ T = TypeVar("T")
 class TrainerStateDict(TypedDict):
     global_step: int
     global_train_tokens_seen: int
+    global_train_flops: int
     max_steps: Optional[int]
     data_loader: Dict[str, Any]
     epoch: int
@@ -221,6 +222,11 @@ class Trainer:
     global_train_tokens_seen: int = 0
     """
     The total number of training tokens seen.
+    """
+
+    global_train_flops: int = 0
+    """
+    The total number of training flops computed.
     """
 
     epoch: int = 1
@@ -750,6 +756,7 @@ class Trainer:
         return {
             "global_step": self.global_step,
             "global_train_tokens_seen": self.global_train_tokens_seen,
+            "global_train_flops": self.global_train_flops,
             "max_steps": self.max_steps,
             "data_loader": self.data_loader.state_dict(),
             "epoch": self.epoch,
@@ -784,6 +791,7 @@ class Trainer:
         self.data_loader.load_state_dict(state_dict["data_loader"])
         self.global_step = state_dict["global_step"]
         self.global_train_tokens_seen = state_dict["global_train_tokens_seen"]
+        self.global_train_flops = state_dict.get("global_train_flops", 0)
         self.epoch = state_dict["epoch"]
 
         for cb_name, cb_state in state_dict.get("callbacks", {}).items():
@@ -1347,6 +1355,8 @@ class Trainer:
                 global_num_tokens := self.data_loader.global_num_tokens_in_batch(batch)
             ) is not None:
                 self.global_train_tokens_seen += global_num_tokens
+            if (global_num_flops := self.train_module.global_num_flops_in_batch(batch)) is not None:
+                self.global_train_flops += global_num_flops
 
             should_skip = False
             if self.steps_to_skip:

@@ -267,6 +267,10 @@ class AttentionConfig(ModuleConfig):
             layer_idx, n_layers
         ):
             kwargs["window_size"] = sliding_window_config.get_window_size(layer_idx, n_layers)
+        else:  # global (non-SWA) layer
+            rope_config: Optional[RoPEConfig] = kwargs.get("rope")
+            if rope_config is not None and rope_config.no_global_rope:
+                kwargs["rope"] = None
 
         kwargs.update(
             dtype=kwargs.pop("dtype").as_pt(),
@@ -322,6 +326,10 @@ class AttentionBase(nn.Module):
         load_balancer: RingAttentionLoadBalancerType,
         head_stride: int = 1,
     ):
+        raise NotImplementedError
+
+    @abstractmethod
+    def num_flops_per_token(self, seq_len: int) -> int:
         raise NotImplementedError
 
 
@@ -437,6 +445,7 @@ class Attention(AttentionBase):
                 backend = AttentionBackendName.flash_2
 
         # Translate window size so that we only look left, not right.
+        self.window_size = window_size
         window_size_tuple: Tuple[int, int] = (-1, -1)
         if window_size is not None:
             if window_size <= 0:
@@ -708,6 +717,26 @@ class Attention(AttentionBase):
             head_dim=self.head_dim,
             device=self.w_k.weight.device,
         )
+
+    def num_flops_per_token(self, seq_len: int) -> int:
+        """
+        This accounts for:
+        - Linear projections (Q, K, V, output, and gating if enabled)
+        - Attention computation (QK^T and softmax(QK^T) @ V)
+        - Sliding window attention (reduced effective sequence length)
+        """
+        # 6 FLOPs per parameter (2 ops * 3 for forward+backward)
+        param_flops = 6 * sum(p.numel() for p in self.parameters())
+
+        # Attention computation (QK^T and Attn*V)
+        # 12x multiplier: 2 matmuls * 2 ops each * 3 for forward+backward
+        # For sliding window attention, effective sequence length is limited by window size
+        # Note that flash attention technically uses more flops (14x multiplier) due to recomputation,
+        # however, we just compute the idealized flops for SDPA.
+        effective_seq_len = min(self.window_size, seq_len) if self.window_size else seq_len
+        attn_flops = 12 * self.n_heads * self.head_dim * effective_seq_len
+
+        return param_flops + attn_flops
 
 
 @beta_feature
@@ -1020,3 +1049,13 @@ class FusedAttention(AttentionBase):
         head_stride: int = 1,
     ):
         self.backend.apply_cp(cp_mesh, load_balancer, head_stride=head_stride)
+
+    def num_flops_per_token(self, seq_len: int) -> int:
+        # 6 FLOPs per parameter (2 ops * 3 for forward+backward)
+        param_flops = 6 * sum(p.numel() for p in self.parameters())
+
+        # Attention computation (QK^T and Attn*V)
+        # 12x multiplier: 2 matmuls * 2 ops each * 3 for forward+backward
+        attn_flops = 12 * self.n_heads * self.head_dim * seq_len
+
+        return param_flops + attn_flops

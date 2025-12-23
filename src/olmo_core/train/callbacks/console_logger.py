@@ -38,7 +38,7 @@ class ConsoleLoggerCallback(Callback):
             "train/load balancing loss",
             "train/router Z loss",
             "train/block */load imbalance",
-            "system/*",
+            "gpu_memory/*",
             "optim/total grad norm",
             "optim/step skipped",
             "optim/LR*",
