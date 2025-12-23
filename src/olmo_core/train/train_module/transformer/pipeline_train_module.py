@@ -2,7 +2,7 @@ import contextlib
 import logging
 import math
 from dataclasses import replace
-from functools import cached_property, partial
+from functools import cached_property, lru_cache, partial
 from typing import Any, Dict, Generator, List, Optional, Tuple, Union, cast
 
 import torch
@@ -41,7 +41,13 @@ from olmo_core.nn.lm_head import LMOutputWithLoss
 from olmo_core.nn.transformer import Transformer
 from olmo_core.optim import OptimConfig, SkipStepOptimizer
 from olmo_core.optim.scheduler import Scheduler
-from olmo_core.utils import gc_cuda, get_default_device, log_once, move_to_device
+from olmo_core.utils import (
+    gc_cuda,
+    get_default_device,
+    log_once,
+    move_to_device,
+    warn_once,
+)
 
 from ...common import MetricMergeStrategy, ReduceType
 from ..train_module import EvalBatchSizeUnit, EvalBatchSpec, TrainModule
@@ -596,8 +602,20 @@ class TransformerPipelineTrainModule(TrainModule):
 
         return ce_batch_loss, z_batch_loss
 
-    def num_flops_per_token(self, seq_len: int) -> int:
-        return self.model_parts[0].num_flops_per_token(seq_len)
+    @lru_cache
+    def num_flops_per_token(self, seq_len: int) -> Optional[int]:
+        warn_once(
+            f"`{self.__class__.__name__}.num_flops_per_token()` is not implemented. "
+            "Extra work is needed to support PP-aware FLOPs/token calculation."
+        )
+        return None
+
+    def global_num_flops_in_batch(self, batch: Dict[str, Any]) -> Optional[int]:
+        global_num_tokens = self.trainer.data_loader.global_num_tokens_in_batch(batch)
+        if global_num_tokens is None:
+            return None
+        flops_per_token = self.num_flops_per_token(seq_len=batch["input_ids"].shape[1])
+        return flops_per_token * global_num_tokens if flops_per_token is not None else None
 
     @contextlib.contextmanager
     def _model_forward_context(self) -> Generator[None, None, None]:
