@@ -23,12 +23,23 @@ uv run src/scripts/train/ladder/2026Q1/mxfp8_ladder.py launch-all --max-size 1B 
 ```
 
 ### only FF layers
+
 TODO
 
-## gated attention
-
-### headwise
+## gated attention (headwise)
 
 ```bash
 uv run src/scripts/train/ladder/2026Q1/gatted_attn_ladder.py launch-all --max-size 1B --cluster ai2/jupiter --name "olmo3-gated-attn" --preemptible --chinchilla-multiple 8.0
+```
+
+## Instance Packing
+
+```bash
+uv run src/scripts/train/ladder/2026Q1/instance_packing_ladder.py launch-all --max-size 1B --cluster ai2/jupiter --name "olmo3-instance-packing" --preemptible --chinchilla-multiple 8.0
+```
+
+## No Global Rope (GNoPE)
+
+```bash
+uv run src/scripts/train/ladder/2026Q1/gnope_ladder.py launch-all --max-size 1B --cluster ai2/jupiter --name "olmo3-gnope" --preemptible --chinchilla-multiple 8.0
 ```
