@@ -617,7 +617,6 @@ class ModelLadder(Config):
                         sequence_length=self.sequence_length,
                         tokenizer=self.tokenizer,
                         work_dir=str(self.work_dir),
-                        eval_interval=None,
                         fixed_steps=checkpoint_interval_steps,
                         enabled=not for_benchmarking,
                     ),
