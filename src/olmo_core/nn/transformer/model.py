@@ -853,24 +853,16 @@ class Transformer(nn.Module):
 
     def num_flops_per_token(self, seq_len: int) -> int:
         """
-        Get the approximate number of flops per token.
+        Returns the idealized number of flops per token for the given sequence length. Purposefully
+        does not account for wasted flops due to padding, recomputation, etc.
         """
-        n, h, q, t = (
-            self.n_layers,
-            self.n_attn_heads,
-            self.d_model // self.n_attn_heads,
-            seq_len,
-        )
-
-        # Reasoning behind the factor of 12 for the self-attention part of the formula:
-        # 1. each self-attention has 2 matmul in the forward and 4 in the backward (6)
-        # 2. the flash attention does 1 more matmul recomputation in the backward
-        #    but recomputation should not be counted in calculating MFU           (+0)
-        # 3. each matmul performs 1 multiplication and 1 addition                 (*2)
-        # 4. we follow the convention and do not account for sparsity in causal attention
-        flop_per_token = 6 * self.num_non_embedding_params + 12 * n * h * q * t
-
-        return flop_per_token
+        flops_per_token = 0
+        blocks = cast(List[TransformerBlockBase], list(self.blocks.values()))
+        for block in blocks:
+            flops_per_token += block.num_flops_per_token(seq_len)
+        if self.lm_head is not None:
+            flops_per_token += self.lm_head.num_flops_per_token(seq_len)
+        return flops_per_token
 
     def post_batch(self, dry_run: bool = False):
         """

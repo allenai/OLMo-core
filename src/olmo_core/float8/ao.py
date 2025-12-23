@@ -18,9 +18,7 @@ if TYPE_CHECKING:
         MXLinearConfig,
         ScaleCalculationMode,
     )
-    from torchao.quantization.quantize_.common.kernel_preference import (
-        KernelPreference,
-    )
+    from torchao.quantization.quantize_.common.kernel_preference import KernelPreference
 
 
 T = TypeVar("T")

@@ -11,7 +11,7 @@ from olmo_core.distributed.checkpoint import (
 from olmo_core.distributed.utils import get_rank, get_world_size
 from olmo_core.nn.feed_forward import FeedForward
 from olmo_core.testing import BACKENDS, run_distributed_test
-from olmo_core.utils import get_default_device, seed_all
+from olmo_core.utils import get_default_device, record_flops, seed_all
 
 
 def _run_tensor_parallel_feed_forward(
@@ -66,4 +66,31 @@ def test_tensor_parallel_feed_forward(backend: str, tmp_path):
         backend=backend,
         start_method="spawn",
         func_args=(checkpoint_dir, inputs_path, outputs_path, ff_kwargs),
+    )
+
+
+def test_feed_forward_num_flops_per_token():
+    seed_all(0)
+
+    d_model = 128
+    hidden_size = 4 * d_model
+    seq_len = 32
+    batch_size = 1
+
+    ff = FeedForward(d_model=d_model, hidden_size=hidden_size, init_device="cpu")
+
+    x = torch.randn(batch_size, seq_len, d_model, requires_grad=True)
+
+    actual_flops = record_flops(ff, x, with_backward=True)
+    actual_flops_per_token = actual_flops // seq_len
+
+    estimated_flops_per_token = ff.num_flops_per_token(seq_len)
+
+    tolerance = 0.02
+    relative_error = (
+        abs(estimated_flops_per_token - actual_flops_per_token) / actual_flops_per_token
+    )
+    assert relative_error < tolerance, (
+        f"Estimated FLOPs ({estimated_flops_per_token}) differs too much from actual ({actual_flops_per_token}), "
+        f"{relative_error=:.2%}, {tolerance=:.2%}"
     )

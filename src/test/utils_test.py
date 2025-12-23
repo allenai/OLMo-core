@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import pytest
 import torch
 
-from olmo_core.utils import apply_to_tensors, flatten_dict
+from olmo_core.utils import apply_to_tensors, flatten_dict, format_float
 
 
 @dataclass
@@ -47,3 +47,24 @@ def test_flatten_dict():
         "a.bar.baz": 2,
         "b": 2,
     }
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        (0.0, "0.0"),
+        (1e-5, "1.00E-05"),
+        (1234.0, "1,234"),
+        (1234.56, "1,234"),
+        (1_234_567.0, "1,234,567"),
+        (2_500_000_000.0, "2.500B"),
+        (1_000_000_000_000.0, "1.0000T"),
+        (123_456_789_000_000_000_000.0, "123.5E"),
+        (-1_234_567.0, "-1,234,567"),
+        (float("inf"), "inf"),
+        (float("-inf"), "-inf"),
+        (float("nan"), "nan"),
+    ],
+)
+def test_format_float(value, expected):
+    assert format_float(value) == expected

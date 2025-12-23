@@ -45,7 +45,7 @@ from olmo_core.testing import (
     requires_multi_gpu,
     run_distributed_test,
 )
-from olmo_core.utils import get_default_device
+from olmo_core.utils import get_default_device, seed_all
 
 log = logging.getLogger(__name__)
 
@@ -457,3 +457,36 @@ def test_build_with_block_overrides():
     assert isinstance(model.blocks["1"], MoEHybridTransformerBlockBase)
 
     assert config.num_params == model.num_params
+
+
+def test_transformer_num_flops_per_token():
+    seed_all(0)
+
+    d_model = 128
+    seq_len = 256
+    n_heads = 8
+    n_kv_heads = 4
+    vocab_size = 1024
+
+    def _flops_per_token(*, n_layers: int, swa_pattern: list[int]) -> int:
+        config = TransformerConfig.llama_like(
+            vocab_size=vocab_size,
+            d_model=d_model,
+            n_layers=n_layers,
+            n_heads=n_heads,
+            n_kv_heads=n_kv_heads,
+            sliding_window=SlidingWindowAttentionConfig(pattern=swa_pattern),
+        )
+        model = config.build(init_device="cpu")
+        return model.num_flops_per_token(seq_len)
+
+    base = _flops_per_token(n_layers=4, swa_pattern=[16, 16, 16, 16])
+    assert base > 0
+
+    # adding layers should strictly increase FLOPs/token.
+    more_blocks = _flops_per_token(n_layers=8, swa_pattern=[16, 16, 16, 16])
+    assert more_blocks > base
+
+    # Relative checks: increasing sliding window size should increase FLOPs/token.
+    bigger_window = _flops_per_token(n_layers=4, swa_pattern=[128, 128, 128, 128])
+    assert bigger_window > base

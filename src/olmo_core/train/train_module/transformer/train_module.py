@@ -1,7 +1,7 @@
 import contextlib
 import logging
 from dataclasses import replace
-from functools import cached_property
+from functools import cached_property, lru_cache
 from typing import Any, Dict, Generator, Literal, Optional, Tuple, Union
 
 import torch
@@ -40,7 +40,13 @@ from olmo_core.nn.transformer import Transformer
 from olmo_core.nn.transformer.config import TransformerActivationCheckpointingMode
 from olmo_core.optim import OptimConfig, SkipStepOptimizer
 from olmo_core.optim.scheduler import Scheduler
-from olmo_core.utils import gc_cuda, get_default_device, log_once, move_to_device
+from olmo_core.utils import (
+    gc_cuda,
+    get_default_device,
+    log_once,
+    move_to_device,
+    warn_once,
+)
 
 from ...common import ReduceType
 from ..train_module import EvalBatchSpec, TrainModule
@@ -528,8 +534,20 @@ class TransformerTrainModule(TrainModule):
         with self._model_forward_context():
             return self.model(input_ids, labels=labels, **kwargs)
 
-    def num_flops_per_token(self, seq_len: int) -> int:
-        return self.model.num_flops_per_token(seq_len)
+    @lru_cache
+    def num_flops_per_token(self, seq_len: int) -> Optional[int]:
+        try:
+            return self.model.num_flops_per_token(seq_len)
+        except NotImplementedError as ex:
+            warn_once(f"Unable to estimate num flops per token: {ex}")
+            return None
+
+    def global_num_flops_in_batch(self, batch: Dict[str, Any]) -> Optional[int]:
+        global_num_tokens = self.trainer.data_loader.global_num_tokens_in_batch(batch)
+        if global_num_tokens is None:
+            return None
+        flops_per_token = self.num_flops_per_token(seq_len=batch["input_ids"].shape[1])
+        return flops_per_token * global_num_tokens if flops_per_token is not None else None
 
     @contextlib.contextmanager
     def _train_microbatch_context(
