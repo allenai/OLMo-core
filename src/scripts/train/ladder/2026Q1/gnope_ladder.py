@@ -28,7 +28,7 @@ from olmo_core.utils import warn_once
 log = logging.getLogger(__name__)
 
 
-class MXFP8TransformerModelConfigurator(TransformerModelConfigurator):
+class GnopeTransformerModelConfigurator(TransformerModelConfigurator):
     def configure_model(
         self,
         *,
@@ -149,7 +149,7 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         sizes=list(TransformerSize),
         max_devices=args.max_gpus,
         device_type=get_gpu_type(args.cluster),
-        model_configurator=MXFP8TransformerModelConfigurator(),
+        model_configurator=GnopeTransformerModelConfigurator(),
         run_configurator=WSDSChinchillaRunConfigurator(
             chinchilla_multiple=args.chinchilla_multiple
         ),
