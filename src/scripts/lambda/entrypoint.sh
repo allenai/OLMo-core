@@ -57,10 +57,10 @@ export MASTER_PORT
 MASTER_PORT=$((60000 + SLURM_JOB_ID % 5000))
 
 # Ensure port is available.
-if ! nc -vz "$MASTER_ADDR" $MASTER_PORT; then
-    echo "Error: Master port $MASTER_PORT on $MASTER_ADDR is not available."
-    exit 1
-fi
+# if ! nc -vz "$MASTER_ADDR" $MASTER_PORT; then
+#     echo "Error: Master port $MASTER_PORT on $MASTER_ADDR is not available."
+#     exit 1
+# fi
 
 set_env_var_from_beaker WANDB_API_KEY "${USERNAME}_WANDB_API_KEY" || exit 1
 
