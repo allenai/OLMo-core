@@ -22,7 +22,6 @@ cd "$REPO_DIR" || exit 1
 
 # Activate Python virtual env.
 source "$VENV_DIR/bin/activate"
-echo "Using $(python --version) at $(which python) with the following packages:"
 uv pip freeze
 
 echo "============= Setup complete ============="
