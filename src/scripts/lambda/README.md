@@ -1,8 +1,25 @@
+## Logging in
+
+SSH into one of the login nodes:
+
+```bash
+ssh ubuntu@192.222.61.240
+# OR: ssh ubuntu@192.222.60.249
+```
+
+Start or attach your own tmux session:
+
+```bash
+username=petew
+tmux new-session -A -s $username
+```
+
 ## Initial setup
 
 We all login as the same user, so we need to be careful to use unique repo directories and virtual environment.
 
 ```bash
+# Set your unique username (ideally use your Ai2/Beaker username).
 username=petew
 
 # Clone repo to unique directory.
@@ -26,4 +43,5 @@ Submit a job through SLURM with:
 ./src/scripts/lambda/launch.sh ./src/scripts/lambda/slurm-test-job.sbatch
 ```
 
+The first argument to the `launch.sh` is the sbatch script to run.
 This will print out the job ID, wait for it to start, and then stream the logs.
