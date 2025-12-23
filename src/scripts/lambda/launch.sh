@@ -26,10 +26,11 @@ while squeue -j "$JOB_ID" | grep " PD " > /dev/null; do
 done
 
 # Loop until the log file is created.
-echo "Waiting on log file at /data/ai2/logs/$JOB_ID..."
-while [ ! -f "/data/ai2/logs/$JOB_ID.log" ]; do
+LOG_FILE="/data/ai2/logs/$JOB_ID/task_0.log"
+echo "Waiting on log file at $LOG_FILE..."
+while [ ! -f "$LOG_FILE" ]; do
     sleep 1
 done
 
 # Stream the log file from the first task.
-tail -n +1 -f "/data/ai2/logs/$JOB_ID/task_0.log"
+tail -n +1 -f "$LOG_FILE"
