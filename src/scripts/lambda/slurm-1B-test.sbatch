@@ -20,7 +20,6 @@ WORKSPACE=ai2/linear-rnns
     --dataset.mix_base_dir=/data/caia-mltrain/data/ \
     --dataset.mix=OLMo-mix-0925-official \
     --model.block.attention.backend=te \
-    --train_module.rank_microbatch_size=$((16 * 4096)) \
     --trainer.callbacks.wandb.enabled=false \
     --trainer.callbacks.comet.enabled=false \
     --trainer.callbacks.lm_evaluator.enabled=false \
@@ -28,3 +27,5 @@ WORKSPACE=ai2/linear-rnns
     --trainer.no_checkpoints \
     --trainer.no_evals \
     --trainer.hard_stop='{unit: steps, value: 100}'
+
+    # --train_module.rank_microbatch_size=$((16 * 4096)) \
