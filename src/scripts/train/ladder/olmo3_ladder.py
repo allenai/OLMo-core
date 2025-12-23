@@ -39,7 +39,10 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         sequence_length=args.sequence_length,
         tokenizer=tokenizer,
         instance_sources=instance_sources,
-        data_loader=ComposableDataLoaderConfig(num_workers=8),
+        data_loader=ComposableDataLoaderConfig(
+            num_workers=8,
+            instance_filter_config=InstanceFilterConfig(),
+        ),
     )
     return ladder
 
