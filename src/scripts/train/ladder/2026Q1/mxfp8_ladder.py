@@ -13,7 +13,10 @@ from olmo_core.internal.ladder import main
 from olmo_core.model_ladder import *
 from olmo_core.model_ladder.utils import format_count
 from olmo_core.nn.attention import AttentionBackendName
-from olmo_core.nn.transformer import TransformerConfig, TransformerDataParallelWrappingStrategy
+from olmo_core.nn.transformer import (
+    TransformerConfig,
+    TransformerDataParallelWrappingStrategy,
+)
 from olmo_core.optim import OptimConfig, Scheduler
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
