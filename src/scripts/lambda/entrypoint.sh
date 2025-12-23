@@ -45,11 +45,14 @@ cd "$REPO_DIR" || exit 1
 echo "Setting environment variables..."
 export GOOGLE_APPLICATION_CREDENTIALS=/data/ai2/google/credentials.json
 export OLMO_SHARED_FS=1
+export OMP_NUM_THREADS=8
+export FORCE_COLOR=1
+export TORCH_LOGS=recompiles,graph_breaks
 
 export MASTER_ADDR
 MASTER_ADDR=$(scontrol show hostname "$SLURM_JOB_NODELIST" | head -n 1)
 export MASTER_PORT
-MASTER_PORT=12345
+MASTER_PORT=1234
 
 set_env_var_from_beaker WANDB_API_KEY "${USERNAME}_WANDB_API_KEY" || exit 1
 
