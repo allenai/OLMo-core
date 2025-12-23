@@ -1,7 +1,6 @@
 import logging
 import time
 from dataclasses import dataclass
-from functools import lru_cache
 from typing import Any, ClassVar, Dict, Optional
 
 import torch
@@ -53,7 +52,6 @@ class SpeedMonitorCallback(Callback):
     def bps_avg(self) -> Optional[float]:
         return self._bps_avg
 
-    @lru_cache(maxsize=1)
     def _get_num_flops_per_token(self, seq_len: int) -> Optional[int]:
         if self.num_flops_per_token is not None:
             return self.num_flops_per_token
