@@ -140,6 +140,37 @@ def convert_checkpoint_to_hf(
     tokenizer_config = TokenizerConfig.from_dict(tokenizer_config_dict)
     vocab_size = tokenizer_config.vocab_size
 
+    tokenizer_path = Path(original_checkpoint_path).parent / "tokenizer"
+    huggingface_tokenizer = None
+    if tokenizer_path.exists():
+        log.info(f"Saving preexisting tokenizer from {tokenizer_path}")
+        huggingface_tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
+        huggingface_tokenizer.save_pretrained(output_path)
+        print(f"Successfully saved model tokenizer to '{output_path}'")
+        max_sequence_length = max_sequence_length or getattr(
+            huggingface_tokenizer, "model_max_length", None
+        )
+    else:
+        tokenizer_id = tokenizer_id or tokenizer_config.identifier
+        if tokenizer_id is not None:
+            log.info(
+                f"Saving HF tokenizer {tokenizer_id}, using updated config from tokenizer config data and script arguments"
+            )
+            huggingface_tokenizer = AutoTokenizer.from_pretrained(tokenizer_id)
+            max_sequence_length = max_sequence_length or getattr(
+                huggingface_tokenizer, "model_max_length", None
+            )
+            huggingface_tokenizer.model_max_length = max_sequence_length
+            huggingface_tokenizer.pad_token_id = tokenizer_config.pad_token_id
+            huggingface_tokenizer.bos_token_id = tokenizer_config.bos_token_id
+            huggingface_tokenizer.eos_token_id = tokenizer_config.eos_token_id
+            huggingface_tokenizer.save_pretrained(output_path)
+            log.info(f"Successfully saved tokenizer {tokenizer_id}")
+        else:
+            log.info(
+                "No tokenizer passed in script arguments or in experiment config, skipping saving tokenizer"
+            )
+
     with TemporaryDirectory() as work_dir:
         model_and_optim_dir = join_path(original_checkpoint_path, "model_and_optim")
         log.info(f"Loading checkpoint from '{model_and_optim_dir}'")
@@ -179,6 +210,7 @@ def convert_checkpoint_to_hf(
             output_path,
             model_state_dict,
             model,
+            huggingface_tokenizer=huggingface_tokenizer,
             dtype=dtype,
             vocab_size=vocab_size,
             work_dir=work_dir,
@@ -186,26 +218,6 @@ def convert_checkpoint_to_hf(
         )
         # checkpointer.save(output_path, train_module, train_state={}, format=output_format)
         log.info(f"Successfully saved converted model to '{output_path}'")
-
-    tokenizer_id = tokenizer_id or tokenizer_config.identifier
-    if tokenizer_id is not None:
-        log.info(
-            f"Saving HF tokenizer {tokenizer_id}, using updated config from tokenizer config data and script arguments"
-        )
-        huggingface_tokenizer = AutoTokenizer.from_pretrained(tokenizer_id)
-        max_sequence_length = max_sequence_length or getattr(
-            huggingface_tokenizer, "model_max_length", None
-        )
-        huggingface_tokenizer.model_max_length = max_sequence_length
-        huggingface_tokenizer.pad_token_id = tokenizer_config.pad_token_id
-        huggingface_tokenizer.bos_token_id = tokenizer_config.bos_token_id
-        huggingface_tokenizer.eos_token_id = tokenizer_config.eos_token_id
-        huggingface_tokenizer.save_pretrained(output_path)
-        log.info(f"Successfully saved tokenizer {tokenizer_id}")
-    else:
-        log.info(
-            "No tokenizer passed in script arguments or in experiment config, skipping saving tokenizer"
-        )
 
     log.info(
         "Fixing HF config using updated config from tokenizer config data and script arguments"
