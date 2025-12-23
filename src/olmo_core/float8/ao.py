@@ -13,6 +13,12 @@ if TYPE_CHECKING:
         ScalingGranularity,
         ScalingType,
     )
+    from torchao.prototype.mx_formats.config import (
+        MXFP8Dim1CastKernelChoice,
+        MXLinearConfig,
+        ScaleCalculationMode,
+    )
+    from torchao.quantization.quantize_.common.kernel_preference import KernelPreference
 
 
 T = TypeVar("T")
@@ -103,6 +109,46 @@ class AOFloat8LinearRecipe(_AOTypePlaceholder["Float8LinearRecipeName"], StrEnum
         return Float8LinearRecipeName
 
 
+class AOKernelPreference(_AOTypePlaceholder["KernelPreference"], StrEnum):
+    emulated = "emulated"
+    auto = "auto"
+    cuda = "cuda"
+    torch = "torch"
+
+    @property
+    def ao_type(self) -> Type["KernelPreference"]:
+        from torchao.quantization.quantize_.common.kernel_preference import (
+            KernelPreference,
+        )
+
+        return KernelPreference
+
+
+class AOMXFP8Dim1CastKernelChoice(_AOTypePlaceholder["MXFP8Dim1CastKernelChoice"], StrEnum):
+    torch = "torch"
+    cuda = "cuda"
+    triton = "triton"
+
+    @property
+    def ao_type(self) -> Type["MXFP8Dim1CastKernelChoice"]:
+        from torchao.prototype.mx_formats.config import MXFP8Dim1CastKernelChoice
+
+        return MXFP8Dim1CastKernelChoice
+
+
+class AOScaleCalculationMode(_AOTypePlaceholder["ScaleCalculationMode"], StrEnum):
+    floor = "floor"
+    rceil = "rceil"
+    ceil = "ceil"
+    even = "even"
+
+    @property
+    def ao_type(self) -> Type["ScaleCalculationMode"]:
+        from torchao.prototype.mx_formats.config import ScaleCalculationMode
+
+        return ScaleCalculationMode
+
+
 @dataclass
 class AOFloat8LinearConfig(Config, _AOTypePlaceholder["Float8LinearConfig"]):
     """
@@ -121,11 +167,73 @@ class AOFloat8LinearConfig(Config, _AOTypePlaceholder["Float8LinearConfig"]):
     enable_fsdp_float8_all_gather: Optional[bool] = None
     pad_inner_dim: Optional[bool] = None
     emulate: Optional[bool] = None
-    force_recompute_fp8_weight_in_bwd: Optional[bool] = None
+    force_recompute_fp8_weight_in_bwd: Optional[bool] = None  # deprecated, no effect
     round_scales_to_power_of_2: Optional[bool] = None
+
+    @staticmethod
+    def recommended(**kwargs: Any) -> "AOFloat8LinearConfig":
+        return AOFloat8LinearConfig(
+            enable_fsdp_float8_all_gather=True,
+            force_recompute_fp8_weight_in_bwd=True,
+            round_scales_to_power_of_2=True,
+            **kwargs,
+        )
 
     @property
     def ao_type(self) -> Type["Float8LinearConfig"]:
         from torchao.float8.config import Float8LinearConfig
 
         return Float8LinearConfig
+
+
+@dataclass
+class AOMXLinearConfig(Config, _AOTypePlaceholder["MXLinearConfig"]):
+    """
+    This matches the config from torchao.
+    Applies to MXFP8 and MXFP4 formats.
+    https://github.com/pytorch/ao/blob/main/torchao/prototype/mx_formats/config.py#L106
+
+    Useful reference for MXFP8 training: https://docs.nvidia.com/deeplearning/transformer-engine/user-guide/examples/fp8_primer.html
+    """
+
+    block_size: Optional[int] = None
+    """block size, defaults to 32 if not specified"""
+    elem_dtype: Optional[DType] = None
+    """element dtype, used for activations, weights and gradients, defaults to e4m3fn if not specified"""
+    elem_dtype_weight_override: Optional[DType] = None
+    """optional element dtype override for weights"""
+    elem_dtype_grad_output_override: Optional[DType] = None
+    """
+    optional element dtype override for gradients.
+    note that e4m3 is thought to be fine here because of the block-wise nature of MXFP8.
+    """
+    kernel_preference: Optional[AOKernelPreference] = None
+    """if the preferred kernel is not supported on the given hardware an exception will be thrown"""
+    mxfp8_cast_kernel_choice: Optional[AOMXFP8Dim1CastKernelChoice] = None
+    """
+    which kernel to use for the mx fp8 cast along dim1 (dim0 is always torch).
+    torch is slow. cuda is fastest. triton only supports "floor" scale calculation mode.
+    """
+    scale_calculation_mode: Optional[AOScaleCalculationMode] = None
+    """
+    how to calculate the mx block scaling factors.
+    * floor [default]: strightforward method but most prone to overflow / bad for gradient calculation (dont use)
+    * rceil (ratio ceil): computes the tightest valid ceiling. has good support from nvidia.
+    * ceil: similar to floor but avoids overflow; prone to underflow / precision loss / quant to zero.
+    * even: best choice from a mathematical standpoint. unbiased error distribution. but does not yet work with torch.compile.
+    """
+
+    @classmethod
+    def mxfp8_cublas_rceil(cls, **kwargs: Any) -> "AOMXLinearConfig":
+        """standard mxfp8 recipe predefined in torchao"""
+        return AOMXLinearConfig(
+            mxfp8_cast_kernel_choice=AOMXFP8Dim1CastKernelChoice.cuda,
+            scale_calculation_mode=AOScaleCalculationMode.rceil,
+            **kwargs,
+        )
+
+    @property
+    def ao_type(self) -> Type["MXLinearConfig"]:
+        from torchao.prototype.mx_formats import MXLinearConfig
+
+        return MXLinearConfig

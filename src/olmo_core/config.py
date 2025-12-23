@@ -332,6 +332,8 @@ class DType(StrEnum):
     float32 = "float32"
     bfloat16 = "bfloat16"
     float16 = "float16"
+    float8_e4m3fn = "float8_e4m3fn"  # note: other e4m3 variants are supported in torch
+    float8_e5m2 = "float8_e5m2"
 
     @classmethod
     def from_pt(cls, dtype: torch.dtype) -> "DType":
@@ -341,6 +343,10 @@ class DType(StrEnum):
             return DType.bfloat16
         elif dtype == torch.float16:
             return DType.float16
+        elif dtype == torch.float8_e4m3fn:
+            return DType.float8_e4m3fn
+        elif dtype == torch.float8_e5m2:
+            return DType.float8_e5m2
         else:
             raise NotImplementedError(dtype)
 

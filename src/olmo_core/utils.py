@@ -152,6 +152,13 @@ def get_default_device() -> torch.device:
         return torch.device("cpu")
 
 
+def has_compute_capability(major: int, minor: int) -> bool:
+    return torch.cuda.is_available() and torch.cuda.get_device_capability() >= (
+        major,
+        minor,
+    )
+
+
 def seed_all(seed: int):
     """
     Seed all RNG states.

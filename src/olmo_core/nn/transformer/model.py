@@ -537,6 +537,8 @@ class Transformer(nn.Module):
         modules_to_ignore = set()
         if self.lm_head is not None:
             modules_to_ignore.add("lm_head.w_out")
+        if float8_config.modules_to_ignore is not None:
+            modules_to_ignore.update(float8_config.modules_to_ignore)
 
         float8_config.apply_float8_linear(self, modules_to_ignore=modules_to_ignore)
 

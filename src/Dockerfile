@@ -46,7 +46,7 @@ ARG CUDA_VERSION_PATH
 ARG TORCH_VERSION=2.9.1
 ARG INSTALL_CHANNEL=whl
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/${INSTALL_CHANNEL}/${CUDA_VERSION_PATH}/ \
-    torch==${TORCH_VERSION} torchao torchvision torchaudio
+    torch==${TORCH_VERSION} torchvision torchaudio
 
 ENV TORCH_CUDA_ARCH_LIST="8.0 9.0 10.0"
 
