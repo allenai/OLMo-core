@@ -58,12 +58,7 @@ BF16_ATOL = 5e-3
 @pytest.mark.parametrize("head_dim", [128])
 @pytest.mark.parametrize(
     "backend_name",
-    [
-        AttentionBackendName.flash_2,
-        AttentionBackendName.flash_3,
-        AttentionBackendName.flash_4,
-        AttentionBackendName.te,
-    ],
+    [AttentionBackendName.flash_2, AttentionBackendName.flash_3, AttentionBackendName.te],
 )
 @requires_gpu
 def test_attention_backend(
@@ -115,7 +110,6 @@ def test_attention_backend(
     [
         pytest.param("flash_2", id="flash-attn-2", marks=FLASH_2_MARKS),
         pytest.param("flash_3", id="flash-attn-3", marks=FLASH_3_MARKS),
-        pytest.param("flash_4", id="flash-attn-4", marks=FLASH_2_MARKS),
         pytest.param("torch", id="torch-SDPA"),
         pytest.param("te", id="te-attn", marks=TE_MARKS),
     ],
@@ -192,8 +186,7 @@ def test_attention(
     "backend_name",
     [
         pytest.param(AttentionBackendName.flash_2, id="flash-attn-2", marks=FLASH_2_MARKS),
-        pytest.param(AttentionBackendName.flash_3, id="flash-attn-3", marks=FLASH_3_MARKS),
-        pytest.param(AttentionBackendName.flash_4, id="flash-attn-4", marks=FLASH_2_MARKS),
+        pytest.param(AttentionBackendName.flash_3, id="flash-attn-2", marks=FLASH_3_MARKS),
         pytest.param(AttentionBackendName.torch, id="torch-SDPA"),
         pytest.param(AttentionBackendName.te, id="te-attn", marks=TE_MARKS),
     ],

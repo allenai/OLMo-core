@@ -155,64 +155,6 @@ def dispatch_flash_attn_3(
         )
 
 
-def dispatch_flash_attn_4(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    v: torch.Tensor,
-    *,
-    cu_seqlens: Optional[torch.Tensor] = None,
-    cu_seqlens_q: Optional[torch.Tensor] = None,
-    cu_seqlens_k: Optional[torch.Tensor] = None,
-    max_seqlen: Optional[int] = None,
-    max_seqlen_q: Optional[int] = None,
-    max_seqlen_k: Optional[int] = None,
-    softmax_scale: Optional[float] = None,
-    causal: bool = False,
-    window_size: Tuple[int, int] = (-1, -1),
-    learnable_sink: Optional[torch.Tensor] = None,
-    pack_gqa: Optional[bool] = None,
-) -> torch.Tensor:
-    if flash_attn_2 is None:
-        raise RuntimeError("flash-attn 2 (which contains flash-attn 4) is required!")
-
-    if cu_seqlens is not None:
-        cu_seqlens_q = cu_seqlens if cu_seqlens_q is None else cu_seqlens_q
-        cu_seqlens_k = cu_seqlens if cu_seqlens_k is None else cu_seqlens_k
-    if max_seqlen is not None:
-        max_seqlen_q = max_seqlen if max_seqlen_q is None else max_seqlen_q
-        max_seqlen_k = max_seqlen if max_seqlen_k is None else max_seqlen_k
-
-    varlen = all(x is not None for x in (cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k))
-
-    if varlen:
-        # NOTE: as of Dec 2025, flash-attn 4 does not implement a backward pass for varlen attention.
-        return flash_attn_2.cute.flash_attn_varlen_func(
-            _flatten_batch_dim(q),
-            _flatten_batch_dim(k),
-            _flatten_batch_dim(v),
-            cu_seqlens_q,
-            cu_seqlens_k,
-            seqused_q=max_seqlen_q,
-            seqused_k=max_seqlen_k,
-            softmax_scale=softmax_scale,
-            causal=causal,
-            window_size=window_size,
-            learnable_sink=learnable_sink,
-            pack_gqa=pack_gqa,
-        )
-    else:
-        return flash_attn_2.cute.flash_attn_func(
-            q,
-            k,
-            v,
-            softmax_scale=softmax_scale,
-            causal=causal,
-            window_size=window_size,
-            learnable_sink=learnable_sink,
-            pack_gqa=pack_gqa,
-        )
-
-
 def dispatch_flash_attn_qkvpacked(
     qkv: torch.Tensor,
     *,
@@ -251,28 +193,25 @@ def dispatch_flash_attn_3_qkvpacked(
     *,
     cu_seqlens: Optional[torch.Tensor] = None,
     max_seqlen: Optional[int] = None,
-    dropout_p: float = 0.0,
     softmax_scale: Optional[float] = None,
     causal: bool = False,
     window_size: Tuple[int, int] = (-1, -1),
 ) -> torch.Tensor:
-    if flash_attn_2 is None:
-        raise RuntimeError("flash-attn 2 is required!")
+    if flash_attn_3 is None:
+        raise RuntimeError("flash-attn 3 is required!")
 
     if cu_seqlens is not None and max_seqlen is not None:
-        return flash_attn_2.flash_attn_varlen_qkvpacked_func(
+        return flash_attn_3.flash_attn_varlen_qkvpacked_func(
             _flatten_batch_dim(qkv),
             cu_seqlens,
             max_seqlen,
-            dropout_p=dropout_p,
             softmax_scale=softmax_scale,
             causal=causal,
             window_size=window_size,
         )
     else:
-        return flash_attn_2.flash_attn_qkvpacked_func(
+        return flash_attn_3.flash_attn_qkvpacked_func(
             qkv,
-            dropout_p=dropout_p,
             softmax_scale=softmax_scale,
             causal=causal,
             window_size=window_size,
