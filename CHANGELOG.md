@@ -52,6 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Send a Slack notification when a Beaker job appears to be stuck.
 - Added `ignore_fingerprint_mismatch` parameter to `NumpyDataLoaderConfig` to allow resuming training from a checkpoint with a different dataset mix.
 - Added helpful error messages when OLMo-mix-0625 files are not found, directing users to use OLMo-mix-0925 and the fingerprint override flag.
+- Added `GradientDumperCallback` for saving gradient shards during FSDP/HSDP training. Supports two modes: per-rank sharded saving for full reconstruction, or preview mode (`save_first_n`) to gather and save only the first N elements to rank 0 for quick inspection. Files are organized into step-specific directories.
 - Added `olmo_core.generate.chat` module to allow interacting with OlmoCore models without conversion to other formats.
 - Added `GAPMonitorCallback` for monitoring gradients, activations, and parameters (GAP).
 - Added official Olmo 3 7B and 32B pretraining scripts and data mix.
