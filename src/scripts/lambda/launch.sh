@@ -31,5 +31,5 @@ while [ ! -f "/data/ai2/logs/$JOB_ID.log" ]; do
     sleep 1
 done
 
-# Stream the log file.
-tail -n +1 -f "/data/ai2/logs/$JOB_ID.log"
+# Stream the log file from the first task.
+tail -n +1 -f "/data/ai2/logs/$JOB_ID/task_0.log"

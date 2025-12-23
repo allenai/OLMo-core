@@ -3,7 +3,7 @@
 #SBATCH --nodes=1
 #SBATCH --gpus-per-node=8
 #SBATCH --ntasks-per-node=1
-#SBATCH --output=/data/ai2/logs/%j.log
+#SBATCH --output=/data/ai2/logs/%j/task_%t.log
 
 REPO_DIR=/data/ai2/petew/OLMo-core
 VENV_DIR=/data/ai2/uv/OLMo-core-petew
