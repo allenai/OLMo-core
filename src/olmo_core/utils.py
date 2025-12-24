@@ -566,7 +566,7 @@ class _RichHandler(logging.Handler):
 
     def get_location_text(self, record: logging.LogRecord) -> Text:
         name_and_line = f"{record.name}:{record.lineno}" if record.name != "root" else "root"
-        text = f"[{name_and_line}, rank={record.local_rank}]"  # type: ignore
+        text = f"[{name_and_line}, {record.hostname}, rank={record.local_rank}]"  # type: ignore
         return Text(text, style="log.path")
 
 
