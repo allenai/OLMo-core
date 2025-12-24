@@ -58,8 +58,9 @@ if ! ./src/scripts/lambda/healthchecks.sh; then
     exit 1
 fi
 
-node_0_only log_info "Setup complete..."
+node_0_only log_info "Setup complete."
 
+node_0_only log_info "Launching script with torchrun..."
 exec torchrun \
     --nnodes="$SLURM_NNODES" \
     --nproc_per_node="$SLURM_GPUS_ON_NODE" \
