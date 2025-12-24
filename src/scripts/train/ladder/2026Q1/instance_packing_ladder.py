@@ -147,7 +147,7 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
             sequence_length=args.sequence_length,
             tokenizer=tokenizer,
             long_doc_strategy=LongDocStrategy.truncate,
-            source_group_size=source_group_size,
+            source_group_size=source_group_size,  # should be 1?
         ),
     ]
 
