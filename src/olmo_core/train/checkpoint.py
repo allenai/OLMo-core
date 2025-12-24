@@ -423,7 +423,9 @@ class Checkpointer:
             # replacing the temp directory with the final directory from rank 0 might not be immediately
             # realized in the file systems of the other ranks.
             # So we wait here across all ranks until that final checkpoint directory is visible.
-            wait_for(lambda: Path(dir).exists(), "Waiting for checkpoint directory", timeout=10.0)
+            wait_for(
+                lambda: Path(dir).exists(), f"Waiting for checkpoint directory {dir}", timeout=10.0
+            )
         else:
             # NOTE: When dir is a URL, each rank will have its own tmp dir so synchronizing with a
             # barrier isn't necessary.
