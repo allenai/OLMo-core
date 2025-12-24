@@ -50,7 +50,10 @@ SBATCH_ARGS=(
 
 if [ -f "/data/ai2/cordoned-nodes.txt" ]; then
     cordoned_nodes=$(grep -v '^#' /data/ai2/cordoned-nodes.txt | tr '\n' ',' | sed 's/,$//')
-    log_warning "Cordoned nodes detected: $cordoned_nodes"
+    formatted_cordoned_nodes=$(echo "$cordoned_nodes" | tr ',' '\n' | sed 's/^/ • /')
+    cordoned_nodes_count=$(echo "$formatted_cordoned_nodes" | wc -l)
+    log_warning "$cordoned_nodes_count cordoned nodes detected"
+    echo "$formatted_cordoned_nodes"
     SBATCH_ARGS+=(--exclude="$cordoned_nodes")
 fi
 
