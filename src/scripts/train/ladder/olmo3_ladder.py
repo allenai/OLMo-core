@@ -25,7 +25,7 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
             sources=[
                 NumpyDocumentSourceMixConfig(
                     tokenizer=tokenizer,
-                    mix=DataMix.OLMo_mix_0925,
+                    mix=DataMix.OLMo_mix_0925_official,
                     mix_base_dir=get_mix_base_dir(args.cluster),
                     # mix_base_dir="gs://ai2-llm/",  # HACK bc data isnt on weka
                 )
