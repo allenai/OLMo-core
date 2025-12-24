@@ -71,4 +71,35 @@ function with_retries {
     done
 }
 
+function job_pending {
+    if squeue -j "$1" | grep " PD " > /dev/null; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+function job_completed {
+    if squeue -j "$1" > /dev/null; then
+        return 1
+    else
+        return 0
+    fi
+}
+
+function job_succeeded {
+    if ! job_completed "$1"; then
+        return 1
+    fi
+
+    local exit_status
+    exit_status=$(sacct -j "$1" --format=exitcode --parsable2 --noheader | tail -n 1)
+    # exit_status has the form '<exitcode>:<signal>'. '0:0' indicates success.
+    if [[ "$exit_status" == "0:0" ]]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
 path_prepend /data/ai2/bin/

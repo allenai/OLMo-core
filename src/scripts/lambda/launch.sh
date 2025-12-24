@@ -71,7 +71,7 @@ fi
 
 # Loop until the job status is no longer PENDING (PD).
 log_info "Waiting for job to start..."
-while squeue -j "$JOB_ID" | grep " PD " > /dev/null; do
+while job_pending "$JOB_ID"; do
     sleep 2
 done
 
@@ -80,7 +80,7 @@ LOG_FILE="/data/ai2/logs/$RUN_NAME/$JOB_ID.log"
 log_info "Waiting on log file at $LOG_FILE..."
 while [ ! -f "$LOG_FILE" ]; do
     sleep 2
-    if ! squeue -j "$JOB_ID" > /dev/null; then
+    if job_completed; then
         log_error "Job $JOB_ID stopped before log file was created."
         exit 1
     fi
@@ -89,15 +89,19 @@ done
 # On keyboard interrupt, print some useful information before exiting.
 control_c() {
     log_warning "Caught keyboard interrupt!"
-    echo "You can check the job status with:"
-    echo "  squeue -j $JOB_ID"
-    echo ""
-    echo "Or get detailed information about the job with:"
-    echo "  scontrol show job $JOB_ID"
-    echo ""
-    echo "Or cancel the job with:"
-    echo "  scancel $JOB_ID"
-    echo ""
+    if ! job_completed "$JOB_ID"; then
+        # Job has completed.
+        echo "You can check the job status with:"
+        echo "  squeue -j $JOB_ID"
+        echo ""
+        echo "Or cancel the job with:"
+        echo "  scancel $JOB_ID"
+        echo ""
+    elif job_succeeded "$JOB_ID"; then
+        log_info "Job $JOB_ID completed successfully."
+    else
+        log_warning "Job $JOB_ID may have failed."
+    fi
     echo "The main log file is located at '$LOG_FILE'. Use this command to grep through it:"
     echo "  cat $LOG_FILE | less -R"
     echo ""
