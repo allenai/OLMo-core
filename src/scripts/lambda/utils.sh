@@ -6,14 +6,17 @@ function log_debug {
 }
 
 function log_info {
+    script_name=$(basename "$0")
     echo -e "\e[36m[$(date '+%Y-%m-%d %H:%M:%S')]\e[0m \e[34mINFO   \e[0m [$script_name, $(hostname), node=${SLURM_NODEID:-?}] $1"
 }
 
 function log_warning {
+    script_name=$(basename "$0")
     echo -e >&2 "\e[36m[$(date '+%Y-%m-%d %H:%M:%S')]\e[0m \e[33mWARNING\e[0m [$script_name, $(hostname), node=${SLURM_NODEID:-?}] $1"
 }
 
 function log_error {
+    script_name=$(basename "$0")
     echo -e >&2 "\e[36m[$(date '+%Y-%m-%d %H:%M:%S')]\e[0m \e[31mERROR  \e[0m [$script_name, $(hostname), node=${SLURM_NODEID:-?}] $1"
 }
 
