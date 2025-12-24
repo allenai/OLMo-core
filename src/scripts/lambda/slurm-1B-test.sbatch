@@ -12,16 +12,22 @@ USERNAME=petew
 # It expects the following arguments:
 # * Your (Beaker) username.
 # * All other args are passed to torchrun.
-srun ./src/scripts/lambda/entrypoint.sh $USERNAME \
-    ./src/scripts/train/OLMo2/OLMo2-1B.py train slurm-test lambda \
-    --dataset.mix_base_dir=/data/caia-mltrain/data/ \
-    --dataset.mix=OLMo-mix-0925-official \
-    --model.block.attention.backend=torch \
-    --train_module.rank_microbatch_size=$((16 * 4096)) \
-    --trainer.callbacks.wandb.enabled=false \
-    --trainer.callbacks.comet.enabled=false \
-    --trainer.callbacks.lm_evaluator.enabled=false \
-    --trainer.callbacks.downstream_evaluator.enabled=false \
-    --trainer.no_checkpoints \
-    --trainer.no_evals \
-    --trainer.hard_stop='{unit: steps, value: 100}'
+srun --kill-on-bad-exit=1 \
+    --ntasks="$SLURM_NNODES" \
+    --ntasks-per-node=1 \
+    --gpus-per-task=8 \
+    --gpu-bind=none \
+    --cpus-per-task="${SLURM_CPUS_PER_TASK:-64}" \
+    ./src/scripts/lambda/entrypoint.sh $USERNAME \
+        ./src/scripts/train/OLMo2/OLMo2-1B.py train slurm-test lambda \
+        --dataset.mix_base_dir=/data/caia-mltrain/data/ \
+        --dataset.mix=OLMo-mix-0925-official \
+        --model.block.attention.backend=torch \
+        --train_module.rank_microbatch_size=$((16 * 4096)) \
+        --trainer.callbacks.wandb.enabled=false \
+        --trainer.callbacks.comet.enabled=false \
+        --trainer.callbacks.lm_evaluator.enabled=false \
+        --trainer.callbacks.downstream_evaluator.enabled=false \
+        --trainer.no_checkpoints \
+        --trainer.no_evals \
+        --trainer.hard_stop='{unit: steps, value: 100}'
