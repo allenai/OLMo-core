@@ -36,6 +36,10 @@ MASTER_PORT=$((60000 + SLURM_JOB_ID % 5000))
 node_0_only log_info "MASTER_ADDR: $MASTER_ADDR"
 node_0_only log_info "MASTER_PORT: $MASTER_PORT"
 
+# Increase open file limit
+ulimit -n 65536
+node_0_only log_info "Open File Limit (ulimit -n): $(ulimit -n)"
+
 # Ensure port is available.
 # if ! nc -vz "$MASTER_ADDR" $MASTER_PORT; then
 #     echo "Error: Master port $MASTER_PORT on $MASTER_ADDR is not available."
