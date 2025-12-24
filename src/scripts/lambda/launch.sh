@@ -71,6 +71,7 @@ fi
 
 # On keyboard interrupt, print some useful information before exiting.
 on_exit() {
+    local exit_code=0
     if ! job_completed "$JOB_ID"; then
         # Job has completed.
         echo "You can check the job status with:"
@@ -79,16 +80,18 @@ on_exit() {
         echo "Or cancel the job with:"
         echo "  scancel $JOB_ID"
         echo ""
+        exit_code=1
     elif job_succeeded "$JOB_ID"; then
         log_info "Job $JOB_ID completed successfully."
     else
         log_warning "Job $JOB_ID may have failed."
+        exit_code=1
     fi
     echo ""
     echo "The main log file is located at '$LOG_FILE'. Use this command to grep through it:"
     echo "  cat $LOG_FILE | less -R"
     echo ""
-    exit 1
+    exit $exit_code
 }
 
 trap on_exit SIGINT
@@ -111,5 +114,5 @@ while [ ! -f "$LOG_FILE" ]; do
 done
 
 # Stream the log file from the first task.
-log_info "Streaming logs..."
+log_info "Streaming logs (stay tuned)..."
 tail -n +1 -f "$LOG_FILE"
