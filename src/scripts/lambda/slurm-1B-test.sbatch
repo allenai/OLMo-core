@@ -1,9 +1,8 @@
 #!/bin/bash
-#SBATCH --job-name=ai2-slurm-test
+#SBATCH --job-name=ai2-1B-test
 #SBATCH --nodes=2
 #SBATCH --gpus-per-node=8
 #SBATCH --ntasks-per-node=1
-#SBATCH --output=/data/ai2/logs/%j/node_%n.log
 
 USERNAME=petew
 
