@@ -71,6 +71,7 @@ fi
 
 # On keyboard interrupt, print some useful information before exiting.
 on_exit() {
+    log_warning "Caught interrupt signal. Checking job status..."
     local exit_code=0
     if ! job_completed "$JOB_ID"; then
         # Job has completed.
@@ -79,7 +80,6 @@ on_exit() {
         echo ""
         echo "Or cancel the job with:"
         echo "  scancel $JOB_ID"
-        echo ""
         exit_code=1
     elif job_succeeded "$JOB_ID"; then
         log_info "Job $JOB_ID completed successfully."
