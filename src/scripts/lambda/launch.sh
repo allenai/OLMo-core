@@ -106,7 +106,7 @@ done
 LOG_FILE="/data/ai2/logs/$RUN_NAME/$JOB_ID.log"
 log_info "Waiting on log file at $LOG_FILE..."
 while [ ! -f "$LOG_FILE" ]; do
-    if job_completed "$JOB_ID"; then
+    if job_completed "$JOB_ID" && ! job_succeeded "$JOB_ID"; then
         log_error "Job $JOB_ID ended before log file was created."
         exit 1
     fi
