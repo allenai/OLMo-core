@@ -111,4 +111,5 @@ while [ ! -f "$LOG_FILE" ]; do
 done
 
 # Stream the log file from the first task.
+log_info "Streaming logs..."
 tail -n +1 -f "$LOG_FILE"
