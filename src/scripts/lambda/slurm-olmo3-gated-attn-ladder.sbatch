@@ -12,5 +12,5 @@ srun --kill-on-bad-exit=1 ./src/scripts/lambda/entrypoint.sh \
     --cluster=lambda \
     --max-gpus=64 \
     --chinchilla-multiple=8.0 \
-    --size=3B
+    --size=1B
 # 7B requires 64 GPUs but can run on 128 or 256 GPUs
