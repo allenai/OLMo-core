@@ -24,7 +24,7 @@ echo "HOME: $HOME"
 echo "Using repo dir: $REPO_DIR"
 echo "Using venv dir: $VENV_DIR"
 echo "Using data dir: $DATA_DIR"
-echo "SLURM task ID: $SLURM_ARRAY_TASK_ID"
+echo "SLURM node ID: $SLURM_NODEID"
 
 # Change to repo directory.
 cd "$REPO_DIR" || exit 1
