@@ -21,6 +21,12 @@ export WANDB_API_KEY=XXXX
 export USERNAME=petew
 ```
 
+Optionally, export a `SLACK_WEBHOOK_URL` for alerting.
+
+```bash
+export SLACK_WEBHOOK_URL=XXXX
+```
+
 ## Initial setup
 
 We all log in as the same user, so we need to be careful to use unique repo directories and virtual environment, which we'll identify by our Ai2/Beaker username (set to the `USERNAME` env var).
