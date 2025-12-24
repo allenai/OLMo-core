@@ -82,7 +82,7 @@ control_c() {
     echo "You can check the job status with:"
     echo "  squeue -j $JOB_ID"
     echo ""
-    echo "Or get detailed information about the job status with:"
+    echo "Or get detailed information about the job with:"
     echo "  scontrol show job $JOB_ID"
     echo ""
     echo "Or cancel the job with:"
@@ -90,6 +90,7 @@ control_c() {
     echo ""
     echo "The main log file is located at '$LOG_FILE'. Use this command to grep through it:"
     echo "  cat $LOG_FILE | less -R"
+    echo ""
     exit 1
 }
 
