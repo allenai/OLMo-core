@@ -72,7 +72,7 @@ function with_retries {
 }
 
 function get_job_name {
-    sacct -j "$1" --format=JobName%60 --noheader | head -n 1 | sed 's/^ *//'
+    sacct -j "$1" --format=JobName%60 --noheader | head -n 1 | xargs
 }
 
 function job_pending {
