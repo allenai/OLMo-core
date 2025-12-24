@@ -15,6 +15,8 @@ node_0_only log_info "HOME: $HOME"
 node_0_only log_info "Using repo dir: $REPO_DIR"
 node_0_only log_info "Using venv dir: $VENV_DIR"
 node_0_only log_info "Using data dir: $DATA_DIR"
+node_0_only log_info "ulimit settings:"
+node_0_only ulimit -a
 
 # Change to repo directory.
 cd "$REPO_DIR" || exit 1
