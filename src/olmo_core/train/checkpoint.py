@@ -80,7 +80,7 @@ class Checkpointer:
 
     METADATA_FNAME: ClassVar[str] = ".metadata.json"
     CHECKPOINT_DIR: ClassVar[str] = "step{step}"
-    FS_TIMEOUT: ClassVar[float] = 10.0
+    FS_TIMEOUT: ClassVar[float] = 60.0
 
     work_dir: Path
     save_overwrite: bool = False
