@@ -10,7 +10,7 @@ USERNAME=petew
 # * Your (Beaker) username.
 # * All other args are passed to torchrun.
 srun --kill-on-bad-exit=1 \
-    --ntasks="$SLURM_NNODES" \
+    --task-id="$SLURM_ARRAY_TASK_ID" \
     --ntasks-per-node=1 \
     --gpus-per-task=8 \
     --gpu-bind=none \

@@ -4,17 +4,15 @@
 JOB_SCRIPT=$1
 shift
 
-if [ -z "$JOB_SCRIPT" ]; then
-    echo "Usage: $0 <job_script.sbatch> [run_name]"
-    exit 1
-fi
-
 RUN_NAME=$1
 shift
 
-for var in "JOB_SCRIPT" "RUN_NAME"; do
+NODES=$1
+shift
+
+for var in "JOB_SCRIPT" "RUN_NAME" "NODES"; do
     if [ -z "${!var}" ]; then
-        echo "Usage: $0 <job_script.sbatch> [run_name]"
+        echo "Usage: $0 <job_script.sbatch> <run_name> <nodes>"
         exit 1
     fi
 done
@@ -36,7 +34,7 @@ echo "Submitting job script: $JOB_SCRIPT"
 
 # Submit the job and capture the output (the Job ID).
 # The --parsable option ensures only the Job ID is returned.
-JOB_ID=$(sbatch --export=WANDB_API_KEY --output="/data/ai2/logs/${RUN_NAME}/%j/node_%n.log" --gpus-per-node=8 --parsable "$JOB_SCRIPT")
+JOB_ID=$(sbatch --export=WANDB_API_KEY --output="/data/ai2/logs/${RUN_NAME}/%j/node_%a.log" --array="0-$((NODES-1))" --nodes="$NODES" --gpus-per-node=8 --parsable "$JOB_SCRIPT")
 
 # Check if the submission was successful (sbatch returns a non-zero exit code on failure).
 if [ $? -eq 0 ]; then
