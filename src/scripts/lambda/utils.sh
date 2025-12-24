@@ -71,6 +71,10 @@ function with_retries {
     done
 }
 
+function get_job_name {
+    sacct -j "$1" --format=JobName%60 --noheader | head -n 1 | sed 's/^ *//'
+}
+
 function job_pending {
     if squeue -j "$1" | grep " PD " > /dev/null; then
         return 0

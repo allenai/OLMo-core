@@ -31,12 +31,6 @@ fi
 if [ -z "$SLACK_WEBHOOK_URL" ]; then
     log_warning "SLACK_WEBHOOK_URL environment variable is not set."
 fi
-# for env_var in "BEAKER_TOKEN" "WANDB_API_KEY"; do
-#     if [[ -z "${!env_var+x}" ]]; then
-#         log_error "Required environment variable '$env_var' is empty"
-#         exit 1
-#     fi
-# done
 
 SBATCH_ARGS=(
     --export="WANDB_API_KEY,USERNAME,HOME"
