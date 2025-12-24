@@ -30,7 +30,6 @@ node_0_only echo "HOME: $HOME"
 node_0_only echo "Using repo dir: $REPO_DIR"
 node_0_only echo "Using venv dir: $VENV_DIR"
 node_0_only echo "Using data dir: $DATA_DIR"
-node_0_only echo "Open File Limit (ulimit -n): $(ulimit -n)"
 
 # Change to repo directory.
 cd "$REPO_DIR" || exit 1
@@ -51,6 +50,10 @@ export MASTER_PORT
 MASTER_PORT=$((60000 + SLURM_JOB_ID % 5000))
 node_0_only echo "MASTER_ADDR: $MASTER_ADDR"
 node_0_only echo "MASTER_PORT: $MASTER_PORT"
+
+# Increase open file limit
+ulimit -n 65536
+node_0_only echo "Open File Limit (ulimit -n): $(ulimit -n)"
 
 # Ensure port is available.
 # if ! nc -vz "$MASTER_ADDR" $MASTER_PORT; then
