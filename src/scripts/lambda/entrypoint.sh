@@ -73,7 +73,7 @@ uv pip freeze
 echo "============= Setup complete ============="
 
 set -x
-exec srun torchrun \
+exec torchrun \
     --nnodes="$SLURM_NNODES" \
     --nproc_per_node="$SLURM_GPUS_ON_NODE" \
     --master_addr="$MASTER_ADDR" \
