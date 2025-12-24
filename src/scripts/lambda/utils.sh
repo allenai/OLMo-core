@@ -1,19 +1,19 @@
 #!/bin/bash
 
 function log_debug {
-    echo -e "\e[36m[$(date '+%Y-%m-%d %H:%M:%S')]\e[0m \e[90m\e[1mDEBUG\e[0m       [$(hostname), node=${SLURM_NODEID:-?}] $1"
+    echo -e "\e[36m[$(date '+%Y-%m-%d %H:%M:%S')]\e[0m \e[90mDEBUG\e[0m       [$(hostname), node=${SLURM_NODEID:-?}] $1"
 }
 
 function log_info {
-    echo -e "\e[36m[$(date '+%Y-%m-%d %H:%M:%S')]\e[0m \e[34m\e[1mINFO\e[0m        [$(hostname), node=${SLURM_NODEID:-?}] $1"
+    echo -e "\e[36m[$(date '+%Y-%m-%d %H:%M:%S')]\e[0m \e[34mINFO\e[0m        [$(hostname), node=${SLURM_NODEID:-?}] $1"
 }
 
 function log_warning {
-    echo -e >&2 "\e[36m[$(date '+%Y-%m-%d %H:%M:%S')]\e[0m \e[33m\e[1mWARNING\e[0m [$(hostname), node=${SLURM_NODEID:-?}] $1"
+    echo -e >&2 "\e[36m[$(date '+%Y-%m-%d %H:%M:%S')]\e[0m \e[33mWARNING\e[0m [$(hostname), node=${SLURM_NODEID:-?}] $1"
 }
 
 function log_error {
-    echo -e >&2 "\e[36m[$(date '+%Y-%m-%d %H:%M:%S')]\e[0m \e[31m\e[1mERROR\e[0m   [$(hostname), node=${SLURM_NODEID:-?}] $1"
+    echo -e >&2 "\e[36m[$(date '+%Y-%m-%d %H:%M:%S')]\e[0m \e[31mERROR\e[0m   [$(hostname), node=${SLURM_NODEID:-?}] $1"
 }
 
 function die {
