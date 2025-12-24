@@ -17,35 +17,6 @@ for var in "JOB_SCRIPT" "RUN_NAME" "NODES"; do
     fi
 done
 
-# After we start tailing, always print the job ID + log file path again on exit
-TAIL_STARTED=0
-JOB_ID=""
-LOG_FILE=""
-
-on_exit() {
-    local exit_code=$?
-    if [ "$TAIL_STARTED" -eq 1 ]; then
-        echo
-        echo "Job ID: $JOB_ID"
-        echo "Log file: $LOG_FILE"
-    fi
-    # Preserve original exit code.
-    :
-}
-
-on_signal() {
-    local sig="$1"
-    case "$sig" in
-        INT) exit 130 ;;  # 128 + SIGINT(2)
-        TERM) exit 143 ;; # 128 + SIGTERM(15)
-        *) exit 128 ;;
-    esac
-}
-
-trap on_exit EXIT
-trap 'on_signal INT' INT
-trap 'on_signal TERM' TERM
-
 # Check for requirement env vars.
 if [ -z "$WANDB_API_KEY" ]; then
     echo "Error: WANDB_API_KEY environment variable is not set."
@@ -63,7 +34,6 @@ fi
 # done
 
 SBATCH_ARGS=(
-    --job-name="$RUN_NAME"
     --export="WANDB_API_KEY,USERNAME"
     --job-name="$RUN_NAME"
     --output="/data/ai2/logs/${RUN_NAME}/%j.log"
@@ -83,6 +53,7 @@ fi
 echo "Submitting job script: $JOB_SCRIPT"
 
 # Submit the job and capture the output (the Job ID).
+# The --parsable option ensures only the Job ID is returned.
 JOB_ID=$(sbatch "${SBATCH_ARGS[@]}" "$JOB_SCRIPT")
 
 # Check if the submission was successful (sbatch returns a non-zero exit code on failure).
@@ -131,5 +102,4 @@ control_c() {
 trap control_c SIGINT
 
 # Stream the log file from the first task.
-TAIL_STARTED=1
 tail -n +1 -f "$LOG_FILE"
