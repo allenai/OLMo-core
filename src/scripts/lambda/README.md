@@ -28,7 +28,7 @@ export WANDB_API_KEY=XXXX
 
 ## Initial setup
 
-We all login as the same user, so we need to be careful to use unique repo directories and virtual environment.
+We all log in as the same user, so we need to be careful to use unique repo directories and virtual environment.
 
 ```bash
 # Set your unique username (ideally use your Ai2/Beaker username).
@@ -52,10 +52,11 @@ uv pip install -e '.[all]'
 Submit a job through SLURM with:
 
 ```bash
-./src/scripts/lambda/launch.sh ./src/scripts/lambda/slurm-test-job.sbatch
+./src/scripts/lambda/launch.sh ./src/scripts/lambda/slurm-test-job.sbatch ai2-test-001
 ```
 
 The first argument to the `launch.sh` is the sbatch script to run.
+The second is a name to assign to the run.
 This will print out the job ID, wait for it to start, and then stream the logs.
 
 ## Running your own script
