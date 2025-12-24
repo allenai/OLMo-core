@@ -36,7 +36,7 @@ echo "Submitting job script: $JOB_SCRIPT"
 
 # Submit the job and capture the output (the Job ID).
 # The --parsable option ensures only the Job ID is returned.
-JOB_ID=$(sbatch --export=WANDB_API_KEY --output="/data/ai2/logs/${RUN_NAME}/%j/node_%n.log" --parsable "$JOB_SCRIPT")
+JOB_ID=$(sbatch --export=WANDB_API_KEY --output="/data/ai2/logs/${RUN_NAME}/%j/node_%t.log" --parsable "$JOB_SCRIPT")
 
 # Check if the submission was successful (sbatch returns a non-zero exit code on failure).
 if [ $? -eq 0 ]; then
