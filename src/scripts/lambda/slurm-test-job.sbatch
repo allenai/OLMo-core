@@ -6,4 +6,4 @@
 # It expects the following arguments:
 # * Your (Beaker) username.
 # * All other args are passed to torchrun.
-srun ./src/scripts/lambda/entrypoint.sh ./src/scripts/lambda/distributed_test.py
+srun --kill-on-bad-exit=1 ./src/scripts/lambda/entrypoint.sh ./src/scripts/lambda/distributed_test.py

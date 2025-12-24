@@ -13,24 +13,29 @@ function path_prepend {
   done
 }
 
-echo "============= Starting setup ============="
+function echo_node_0 {
+    if [ "$SLURM_NODEID" -eq 0 ]; then
+        echo "$@"
+    fi
+}
+
+echo_node_0 "============= Starting setup ============="
 
 path_prepend /data/ai2/bin/
 
 # Debugging info.
-echo "HOSTNAME: $(hostname)"
-echo "PATH: $PATH"
-echo "HOME: $HOME"
-echo "Using repo dir: $REPO_DIR"
-echo "Using venv dir: $VENV_DIR"
-echo "Using data dir: $DATA_DIR"
-echo "SLURM node ID: $SLURM_NODEID"
+echo_node_0 "HOSTNAME: $(hostname)"
+echo_node_0 "PATH: $PATH"
+echo_node_0 "HOME: $HOME"
+echo_node_0 "Using repo dir: $REPO_DIR"
+echo_node_0 "Using venv dir: $VENV_DIR"
+echo_node_0 "Using data dir: $DATA_DIR"
 
 # Change to repo directory.
 cd "$REPO_DIR" || exit 1
 
 # Set necessary environment variables.
-echo "Setting environment variables..."
+echo_node_0 "Setting environment variables..."
 export GOOGLE_APPLICATION_CREDENTIALS=/data/ai2/google/credentials.json
 export OLMO_SHARED_FS=1
 export OLMO_RICH_LOGGING=1
@@ -51,11 +56,11 @@ MASTER_PORT=$((60000 + SLURM_JOB_ID % 5000))
 # fi
 
 # Activate Python virtual env.
-echo "Activating Python virtual environment..."
+echo_node_0 "Activating Python virtual environment..."
 source "$VENV_DIR/bin/activate"
 uv pip freeze
 
-echo "============= Setup complete ============="
+echo_node_0 "============= Setup complete ============="
 
 set -x
 exec torchrun \
