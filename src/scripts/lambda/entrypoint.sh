@@ -30,6 +30,7 @@ echo "============= Starting setup ============="
 path_prepend /data/ai2/bin/
 
 # Debugging info.
+echo "HOSTNAME: $(hostname)"
 echo "PATH: $PATH"
 echo "HOME: $HOME"
 echo "Using repo dir: $REPO_DIR"
