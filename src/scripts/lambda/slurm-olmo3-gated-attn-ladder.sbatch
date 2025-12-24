@@ -8,7 +8,7 @@
 # * All other args are passed to torchrun.
 srun --kill-on-bad-exit=1 ./src/scripts/lambda/entrypoint.sh \
     src/scripts/train/ladder/2026Q1/gatted_attn_ladder.py run \
-    --name=olmo3-baseline-ladder-test \
+    --name=olmo3-gated-attn \
     --cluster=lambda \
     --max-gpus=64 \
     --chinchilla-multiple=8.0 \
