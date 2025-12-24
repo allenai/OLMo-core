@@ -37,6 +37,10 @@ source "/data/ai2/uv/OLMo-core-${USERNAME}/bin/activate"
 uv pip install --torch-backend=cu129 numpy torch==2.8.0 torchvision torchaudio torchao==0.15.0
 uv pip install "flash-linear-attention @ git+https://github.com/fla-org/flash-linear-attention.git@0abbe028dfb5f033b35eb6da6fc6924accb0dc7a"
 uv pip install -e '.[all]'
+# fix pyarrow issue in evalutor:
+uv pip install -U "datasets>=2.20.0"
+# fox torchmetrics issue in evaluator:
+uv pip install -U "huggingface-hub>=0.34.0,<1.0"
 ```
 
 ## Run a test job
@@ -51,6 +55,27 @@ The first argument to the `launch.sh` is the sbatch script to run.
 The second is a name to assign to the run.
 The third is how many nodes to use.
 This will print out the job ID, wait for it to start, and then stream the logs.
+
+## Tail logs later (attach by job id)
+
+If `launch.sh` already exited (or you want to attach from another shell), you can tail the log by job id:
+
+```bash
+./src/scripts/lambda/tail.sh <job_id>
+```
+
+Useful options:
+
+```bash
+# Tail stderr instead of stdout:
+./src/scripts/lambda/tail.sh <job_id> --stderr
+
+# Start at end of file (last ~200 lines):
+./src/scripts/lambda/tail.sh <job_id> --from-end
+
+# Keep tailing even after the job leaves the queue:
+./src/scripts/lambda/tail.sh <job_id> --keep-alive
+```
 
 ## Running your own script
 
