@@ -35,9 +35,14 @@ cd OLMo-core
 uv venv --python=3.12 /data/ai2/uv/OLMo-core-$USERNAME
 source "/data/ai2/uv/OLMo-core-${USERNAME}/bin/activate"
 uv pip install --torch-backend=cu129 numpy torch==2.8.0 torchvision torchaudio torchao==0.15.0
-uv pip install "flash-linear-attention @ git+https://github.com/fla-org/flash-linear-attention.git@0abbe028dfb5f033b35eb6da6fc6924accb0dc7a"
 uv pip install flash-attn --no-build-isolation
+uv pip install "flash-linear-attention @ git+https://github.com/fla-org/flash-linear-attention.git@0abbe028dfb5f033b35eb6da6fc6924accb0dc7a"
 uv pip install -e '.[all]'
+```
+
+You may also need these version constraints in order for evaluation to work:
+
+```bash
 # fix pyarrow issue in evalutor:
 uv pip install -U "datasets>=2.20.0"
 # fox torchmetrics issue in evaluator:

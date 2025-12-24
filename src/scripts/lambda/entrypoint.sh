@@ -62,6 +62,11 @@ node_0_only echo "Activating Python virtual environment..."
 source "$VENV_DIR/bin/activate"
 node_0_only uv pip freeze
 
+
+# Run per-node healthchecks (fails fast on bad nodes).
+node_0_only echo "Running per-node healthchecks..."
+bash src/scripts/lambda/healthchecks.sh
+
 node_0_only echo "============= Setup complete ============="
 
 exec torchrun \
