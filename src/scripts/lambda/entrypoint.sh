@@ -48,6 +48,8 @@ export MASTER_ADDR
 MASTER_ADDR=$(scontrol show hostname "$SLURM_JOB_NODELIST" | head -n 1)
 export MASTER_PORT
 MASTER_PORT=$((60000 + SLURM_JOB_ID % 5000))
+node_0_only echo "MASTER_ADDR: $MASTER_ADDR"
+node_0_only echo "MASTER_PORT: $MASTER_PORT"
 
 # Ensure port is available.
 # if ! nc -vz "$MASTER_ADDR" $MASTER_PORT; then
@@ -62,7 +64,6 @@ node_0_only uv pip freeze
 
 node_0_only echo "============= Setup complete ============="
 
-set -x
 exec torchrun \
     --nnodes="$SLURM_NNODES" \
     --nproc_per_node="$SLURM_GPUS_ON_NODE" \
