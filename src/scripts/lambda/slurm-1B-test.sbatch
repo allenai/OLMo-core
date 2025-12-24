@@ -1,10 +1,4 @@
 #!/bin/bash
-#SBATCH --job-name=ai2-1B-test
-#SBATCH --nodes=2
-#SBATCH --gpus-per-node=8
-#SBATCH --ntasks-per-node=1
-
-USERNAME=petew
 
 # NOTE:
 # The entrypoint script we use here will configure our training environment in the same way
@@ -12,7 +6,7 @@ USERNAME=petew
 # It expects the following arguments:
 # * Your (Beaker) username.
 # * All other args are passed to torchrun.
-srun ./src/scripts/lambda/entrypoint.sh $USERNAME \
+srun --kill-on-bad-exit=1 ./src/scripts/lambda/entrypoint.sh \
     ./src/scripts/train/OLMo2/OLMo2-1B.py train slurm-test lambda \
     --dataset.mix_base_dir=/data/caia-mltrain/data/ \
     --dataset.mix=OLMo-mix-0925-official \

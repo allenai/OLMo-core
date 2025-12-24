@@ -1,8 +1,5 @@
 #!/bin/bash
 
-USERNAME=$1
-shift
-
 REPO_DIR=/data/ai2/$USERNAME/OLMo-core
 VENV_DIR=/data/ai2/uv/OLMo-core-$USERNAME
 # DATA_DIR=/data/caia-mltrain/data/
@@ -16,23 +13,29 @@ function path_prepend {
   done
 }
 
-echo "============= Starting setup ============="
+function node_0_only {
+    if [ "$SLURM_NODEID" -eq 0 ]; then
+        "$@"
+    fi
+}
+
+node_0_only echo "============= Starting setup ============="
 
 path_prepend /data/ai2/bin/
 
 # Debugging info.
-echo "HOSTNAME: $(hostname)"
-echo "PATH: $PATH"
-echo "HOME: $HOME"
-echo "Using repo dir: $REPO_DIR"
-echo "Using venv dir: $VENV_DIR"
-# echo "Using data dir: $DATA_DIR"
+node_0_only echo "HOSTNAME: $(hostname)"
+node_0_only echo "PATH: $PATH"
+node_0_only echo "HOME: $HOME"
+node_0_only echo "Using repo dir: $REPO_DIR"
+node_0_only echo "Using venv dir: $VENV_DIR"
+# node_0_only echo "Using data dir: $DATA_DIR"
 
 # Change to repo directory.
 cd "$REPO_DIR" || exit 1
 
 # Set necessary environment variables.
-echo "Setting environment variables..."
+node_0_only echo "Setting environment variables..."
 export GOOGLE_APPLICATION_CREDENTIALS=/data/ai2/google/credentials.json
 export OLMO_SHARED_FS=1
 export OLMO_RICH_LOGGING=1
@@ -45,6 +48,8 @@ export MASTER_ADDR
 MASTER_ADDR=$(scontrol show hostname "$SLURM_JOB_NODELIST" | head -n 1)
 export MASTER_PORT
 MASTER_PORT=$((60000 + SLURM_JOB_ID % 5000))
+node_0_only echo "MASTER_ADDR: $MASTER_ADDR"
+node_0_only echo "MASTER_PORT: $MASTER_PORT"
 
 # Ensure port is available.
 # if ! nc -vz "$MASTER_ADDR" $MASTER_PORT; then
@@ -53,13 +58,12 @@ MASTER_PORT=$((60000 + SLURM_JOB_ID % 5000))
 # fi
 
 # Activate Python virtual env.
-echo "Activating Python virtual environment..."
+node_0_only echo "Activating Python virtual environment..."
 source "$VENV_DIR/bin/activate"
-uv pip freeze
+node_0_only uv pip freeze
 
-echo "============= Setup complete ============="
+node_0_only echo "============= Setup complete ============="
 
-set -x
 exec torchrun \
     --nnodes="$SLURM_NNODES" \
     --nproc_per_node="$SLURM_GPUS_ON_NODE" \

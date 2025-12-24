@@ -4,17 +4,15 @@
 JOB_SCRIPT=$1
 shift
 
-if [ -z "$JOB_SCRIPT" ]; then
-    echo "Usage: $0 <job_script.sbatch> [run_name]"
-    exit 1
-fi
-
 RUN_NAME=$1
 shift
 
-for var in "JOB_SCRIPT" "RUN_NAME"; do
+NODES=$1
+shift
+
+for var in "JOB_SCRIPT" "RUN_NAME" "NODES"; do
     if [ -z "${!var}" ]; then
-        echo "Usage: $0 <job_script.sbatch> [run_name]"
+        echo "Usage: $0 <job_script.sbatch> <run_name> <nodes>"
         exit 1
     fi
 done
@@ -22,6 +20,10 @@ done
 # Check for requirement env vars.
 if [ -z "$WANDB_API_KEY" ]; then
     echo "Error: WANDB_API_KEY environment variable is not set."
+    exit 1
+fi
+if [ -z "$USERNAME" ]; then
+    echo "Error: USERNAME environment variable is not set (e.g. 'petew', 'tylerr')."
     exit 1
 fi
 # for env_var in "BEAKER_TOKEN" "WANDB_API_KEY"; do
@@ -36,7 +38,7 @@ echo "Submitting job script: $JOB_SCRIPT"
 
 # Submit the job and capture the output (the Job ID).
 # The --parsable option ensures only the Job ID is returned.
-JOB_ID=$(sbatch --export=WANDB_API_KEY --output="/data/ai2/logs/${RUN_NAME}/%j/node_%n.log" --parsable "$JOB_SCRIPT")
+JOB_ID=$(sbatch --export=WANDB_API_KEY,USERNAME --output="/data/ai2/logs/${RUN_NAME}/%j.log" --nodes="$NODES" --gpus-per-node=8 --ntasks-per-node=1 --parsable "$JOB_SCRIPT")
 
 # Check if the submission was successful (sbatch returns a non-zero exit code on failure).
 if [ $? -eq 0 ]; then
@@ -53,7 +55,7 @@ while squeue -j "$JOB_ID" | grep " PD " > /dev/null; do
 done
 
 # Loop until the log file is created.
-LOG_FILE="/data/ai2/logs/$RUN_NAME/$JOB_ID/node_0.log"
+LOG_FILE="/data/ai2/logs/$RUN_NAME/$JOB_ID.log"
 echo "Waiting on log file at $LOG_FILE..."
 while [ ! -f "$LOG_FILE" ]; do
     sleep 1
