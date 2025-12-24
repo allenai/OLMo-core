@@ -275,16 +275,25 @@ class Checkpointer:
         Check if a directory is a checkpoint directory.
         """
         dir = normalize_path(dir)
-        if file_exists(f"{dir}/.metadata"):  # just model (and maybe optim state), no trainer state
+        log.info(f"Checking if '{dir}' is a checkpoint directory...")
+
+        metadata_path = f"{dir}/.metadata"
+        if file_exists(metadata_path):  # just model (and maybe optim state), no trainer state
             return True
+        log.info(f"No '.metadata' file found at '{metadata_path}'")
+
         paths_to_check = [
             f"{dir}/train/rank0.pt",
             f"{dir}/model_and_optim/.metadata",
             f"{dir}/{cls.METADATA_FNAME}",
         ]
+        log.info(f"Checking for required checkpoint files: {paths_to_check}")
         for path in paths_to_check:
             if not file_exists(path):
+                log.info(f"Required file '{path}' not found, directory is not a valid checkpoint")
                 return False
+            log.info(f"Found required file: '{path}'")
+        log.info(f"All required checkpoint files found, '{dir}' is a valid checkpoint directory")
         return True
 
     @classmethod
@@ -295,13 +304,17 @@ class Checkpointer:
         dir = normalize_path(dir)
         for path in list_directory(dir):
             name = os.path.basename(path)
+            log.info(f"Checking '{path}'...")
             if (m := re.match("^" + cls.CHECKPOINT_DIR.format(step=r"(\d+)$"), name)) is not None:
                 step = int(m.group(1))
+                log.info(f"Found potential checkpoint directory at step {step}: '{path}'")
 
                 # Make sure the directory is a valid checkpoint dir.
                 if not cls.dir_is_checkpoint(path):
+                    log.info(f"Skipping '{path}' - not a valid checkpoint directory")
                     continue
 
+                log.debug(f"Confirmed valid checkpoint at step {step}: '{path}'")
                 yield step, path
 
     @classmethod
