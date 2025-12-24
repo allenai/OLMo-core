@@ -88,6 +88,10 @@ class TransformerBlockBase(nn.Module):
     ):
         raise NotImplementedError
 
+    @abstractmethod
+    def num_flops_per_token(self, seq_len: int) -> int:
+        raise NotImplementedError
+
 
 class TransformerBlock(TransformerBlockBase):
     """
@@ -214,6 +218,11 @@ class TransformerBlock(TransformerBlockBase):
                 fsdp_att.set_modules_to_forward_prefetch([fsdp_mlp])
         else:
             fully_shard(self, mesh=dp_mesh, **fsdp_kwargs)
+
+    def num_flops_per_token(self, seq_len: int) -> int:
+        attn_flops = self.attention.num_flops_per_token(seq_len)
+        ff_flops = self.feed_forward.num_flops_per_token(seq_len)
+        return attn_flops + ff_flops
 
 
 class LayerNormScaledTransformerBlock(TransformerBlock):
@@ -485,6 +494,11 @@ class NormalizedTransformerBlock(TransformerBlockBase):
     def _normalize_matrix(self, w: torch.Tensor, dim: int = -1):
         w.copy_(l2_normalize(w, dim=dim))
 
+    def num_flops_per_token(self, seq_len: int) -> int:
+        attn_flops = self.attention.num_flops_per_token(seq_len)
+        ff_flops = self.feed_forward.num_flops_per_token(seq_len)
+        return attn_flops + ff_flops
+
 
 @beta_feature
 class MoETransformerBlock(TransformerBlockBase):
@@ -643,6 +657,11 @@ class MoETransformerBlock(TransformerBlockBase):
                 fsdp_att.set_modules_to_forward_prefetch([fsdp_moe])
         else:
             fully_shard(self, mesh=dp_mesh, **fsdp_kwargs)
+
+    def num_flops_per_token(self, seq_len: int) -> int:
+        attn_flops = self.attention.num_flops_per_token(seq_len)
+        moe_flops = self.feed_forward_moe.num_flops_per_token(seq_len)
+        return attn_flops + moe_flops
 
 
 @beta_feature

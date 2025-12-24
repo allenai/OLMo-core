@@ -1,7 +1,7 @@
 import logging
 from functools import lru_cache
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Union
 
 import torch
 from beaker import Beaker, BeakerError, SecretNotFound
@@ -89,6 +89,8 @@ def get_root_dir(cluster: str) -> str:
         return "gs://ai2-llm"
     elif "local" in cluster:
         return "gs://ai2-llm"
+    elif cluster == "lambda":
+        return "/data/ai2"
     raise OLMoConfigurationError(f"Unknown cluster: {cluster}")
 
 
@@ -110,7 +112,7 @@ def build_launch_config(
     task_name: str = "train",
     workspace: str = "ai2/OLMo-core",
     budget: str = "ai2/oe-base",
-    nccl_debug: bool = False,
+    nccl_debug: Union[bool, str] = False,
     flight_recorder: bool = False,
     beaker_image: str = OLMoCoreBeakerImage.stable,
     num_nodes: int = 1,
@@ -186,7 +188,11 @@ def build_launch_config(
         google_creds,
     ]
 
-    env_vars = [BeakerEnvVar(name="NCCL_DEBUG", value="INFO" if nccl_debug else "WARN")]
+    env_vars: List[BeakerEnvVar] = []
+    if isinstance(nccl_debug, str):
+        env_vars.append(BeakerEnvVar(name="NCCL_DEBUG", value=nccl_debug))
+    else:
+        env_vars.append(BeakerEnvVar(name="NCCL_DEBUG", value="INFO" if nccl_debug else "WARN"))
     if flight_recorder:
         # https://github.com/pytorch/tutorials/blob/main/unstable_source/flight_recorder_tutorial.rst
         fr_dump_location = Path(BEAKER_RESULT_DIR) / "flightrecorder" / "nccl_trace_rank_"
@@ -265,6 +271,8 @@ def get_gpu_type(cluster: str) -> str:
         return CLUSTER_TO_GPU_TYPE[cluster]
     elif cluster == "local":
         return torch.get_default_device().type
+    elif cluster == "lambda":
+        return "NVIDIA B200"
     else:
         log.warning(f"Missing cluster '{cluster}' in CLUSTER_TO_GPU_TYPE mapping")
         beaker = get_beaker_client()

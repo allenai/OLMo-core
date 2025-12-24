@@ -66,12 +66,20 @@ class Scheduler(Config, metaclass=ABCMeta):
 
         # Set new LR.
         if self.units == SchedulerUnits.steps:
+            if trainer.max_steps is None:
+                raise OLMoConfigurationError(
+                    "'max_steps' must be known in the trainer for step-based scheduling."
+                )
             new_lr = self.get_lr(
                 group[self.initial_lr_field],
                 trainer.global_step,
                 trainer.max_steps,
             )
         elif self.units == SchedulerUnits.tokens:
+            if trainer.max_tokens is None:
+                raise OLMoConfigurationError(
+                    "'max_tokens' must be known in the trainer for token-based scheduling."
+                )
             new_lr = self.get_lr(
                 group[self.initial_lr_field],
                 trainer.global_train_tokens_seen,
@@ -639,6 +647,7 @@ class WSDS(Scheduler):
     def get_lr(
         self, initial_lr: Union[float, torch.Tensor], current: int, t_max: int
     ) -> Union[float, torch.Tensor]:
+        del t_max
         if current < self._warmup_steps:
             return _linear_warmup(initial_lr, current, self._warmup_steps, self.warmup_min_lr)
 

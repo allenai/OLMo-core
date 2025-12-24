@@ -18,6 +18,7 @@ from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention.kv_cache import KVCacheManager
 
 from ..buffer_cache import BufferCache
+from ..config import ModuleConfig
 from ..functional import l2_normalize
 from ..layer_norm import LayerNorm, LayerNormConfig
 from ..rope import (
@@ -45,6 +46,8 @@ from .ring import (
 
 __all__ = [
     "SlidingWindowAttentionConfig",
+    "GateGranularity",
+    "GateConfig",
     "AttentionType",
     "AttentionBackendName",
     "AttentionBackend",
@@ -64,6 +67,21 @@ __all__ = [
 ]
 
 log = logging.getLogger(__name__)
+
+
+class GateGranularity(StrEnum):
+    headwise = "headwise"
+    """Head-wise gating: one gate value per attention head, broadcast across head dimension."""
+    elementwise = "elementwise"
+    """Element-wise gating: one gate value per output element."""
+
+
+@dataclass
+class GateConfig(Config):
+    granularity: GateGranularity = GateGranularity.headwise
+    """The granularity of gating to use."""
+    full_precision: bool = True
+    """Whether to always apply gating in full precision regardless of the input data type."""
 
 
 @dataclass
@@ -144,7 +162,7 @@ class AttentionType(StrEnum):
 
 
 @dataclass
-class AttentionConfig(Config):
+class AttentionConfig(ModuleConfig):
     """
     A configuration class for easily building any of the different attention modules.
 
@@ -158,6 +176,7 @@ class AttentionConfig(Config):
     n_heads: int = 16
     n_kv_heads: Optional[int] = None
     bias: Optional[bool] = None
+    gate: Optional[GateConfig] = None
     rope: Optional[RoPEConfig] = None
     clip_qkv: Optional[float] = None
     qk_norm: Optional[LayerNormConfig] = None
@@ -196,12 +215,24 @@ class AttentionConfig(Config):
             if self.use_head_qk_norm:
                 params += 2 * self.qk_norm.num_params(head_dim)
             else:
-                params += 2 * self.qk_norm.num_params(d_model)
+                params += self.qk_norm.num_params(d_model)  # q_norm
+                params += self.qk_norm.num_params(n_kv_heads * head_dim)  # k_norm
 
         # Block attention out.
         params += d_model * d_model
         if bias:
             params += d_model
+
+        # Block attention gate projection.
+        if self.gate is not None:
+            if self.gate.granularity == GateGranularity.headwise:
+                params += d_model * n_heads
+                if bias:
+                    params += n_heads
+            elif self.gate.granularity == GateGranularity.elementwise:
+                params += d_model * d_model
+                if bias:
+                    params += d_model
 
         # Block QK scaling factors.
         if self.name == AttentionType.normalized:
@@ -236,6 +267,10 @@ class AttentionConfig(Config):
             layer_idx, n_layers
         ):
             kwargs["window_size"] = sliding_window_config.get_window_size(layer_idx, n_layers)
+        else:  # global (non-SWA) layer
+            rope_config: Optional[RoPEConfig] = kwargs.get("rope")
+            if rope_config is not None and rope_config.no_global_rope:
+                kwargs["rope"] = None
 
         kwargs.update(
             dtype=kwargs.pop("dtype").as_pt(),
@@ -293,6 +328,10 @@ class AttentionBase(nn.Module):
     ):
         raise NotImplementedError
 
+    @abstractmethod
+    def num_flops_per_token(self, seq_len: int) -> int:
+        raise NotImplementedError
+
 
 class Attention(AttentionBase):
     """
@@ -310,6 +349,7 @@ class Attention(AttentionBase):
     :param n_heads: The number of attention heads.
     :param n_kv_heads: The number of key and value heads, if different.
     :param bias: Include biases with linear layers.
+    :param gate: Configuration for attention gating. If None, no gating is applied.
     :param rope: The config for RoPE, if RoPE should be used.
     :param clip_qkv: Clip QKV to this value, if set.
     :param qk_norm: Configuration a layer norm for queries and keys.
@@ -327,6 +367,7 @@ class Attention(AttentionBase):
         n_heads: int,
         n_kv_heads: Optional[int] = None,
         bias: bool = True,
+        gate: Optional[GateConfig] = None,
         rope: Optional[RoPEConfig] = None,
         clip_qkv: Optional[float] = None,
         qk_norm: Optional[LayerNormConfig] = None,
@@ -353,6 +394,17 @@ class Attention(AttentionBase):
             d_model, self.n_kv_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device
         )
         self.w_out = nn.Linear(d_model, d_model, bias=bias, dtype=dtype, device=init_device)
+
+        self.gate = gate
+        self.w_g: Optional[nn.Linear] = None
+        if gate is not None:
+            if gate.granularity == GateGranularity.headwise:
+                self.w_g = nn.Linear(
+                    d_model, self.n_heads, bias=bias, dtype=dtype, device=init_device
+                )
+            elif gate.granularity == GateGranularity.elementwise:
+                self.w_g = nn.Linear(d_model, d_model, bias=bias, dtype=dtype, device=init_device)
+
         self.clip_qkv = clip_qkv
         self.use_head_qk_norm = use_head_qk_norm
 
@@ -393,6 +445,7 @@ class Attention(AttentionBase):
                 backend = AttentionBackendName.flash_2
 
         # Translate window size so that we only look left, not right.
+        self.window_size = window_size
         window_size_tuple: Tuple[int, int] = (-1, -1)
         if window_size is not None:
             if window_size <= 0:
@@ -406,6 +459,12 @@ class Attention(AttentionBase):
             window_size_tuple = (window_size - 1, 0)
 
         if backend is None:
+            backend = AttentionBackendName.torch
+
+        if not torch.cuda.is_available() and backend != AttentionBackendName.torch:
+            warnings.warn(
+                f"Backend is set to {backend}, but GPUs are not available. Defaulting to torch."
+            )
             backend = AttentionBackendName.torch
 
         backend.assert_supported()
@@ -552,6 +611,20 @@ class Attention(AttentionBase):
             cache_leftpad=cache_leftpad,
         )
 
+        if self.gate is not None:
+            assert self.w_g is not None
+            g = self.w_g(x)
+            if self.gate.full_precision:
+                g = g.float()
+            gate_values = torch.sigmoid(g).to(att.dtype)
+            if self.gate.granularity == GateGranularity.headwise:
+                # head-wise gating is broadcast across head_dim
+                # shape: (batch_size, seq_len, n_heads, head_dim)
+                att = att * gate_values.unsqueeze(-1)
+            elif self.gate.granularity == GateGranularity.elementwise:
+                att = att.view(B, T, -1) * gate_values
+                # the following att.view op is redundant (a no-op)
+
         # shape: (batch_size, seq_len, d_model)
         att = att.view(B, T, -1)
 
@@ -593,6 +666,10 @@ class Attention(AttentionBase):
                 output_layouts=output_layout, use_local_output=use_local_output
             ),
         }
+
+        if self.w_g is not None:
+            plan["w_g"] = colwise_parallel()
+
         if self.q_norm is not None:
             # if full-dim norm: output is sharded on the embedding dimension (B, T, E [sharded])
             #    which will be reshaped into (B, T, H [sharded], D)
@@ -640,6 +717,26 @@ class Attention(AttentionBase):
             head_dim=self.head_dim,
             device=self.w_k.weight.device,
         )
+
+    def num_flops_per_token(self, seq_len: int) -> int:
+        """
+        This accounts for:
+        - Linear projections (Q, K, V, output, and gating if enabled)
+        - Attention computation (QK^T and softmax(QK^T) @ V)
+        - Sliding window attention (reduced effective sequence length)
+        """
+        # 6 FLOPs per parameter (2 ops * 3 for forward+backward)
+        param_flops = 6 * sum(p.numel() for p in self.parameters())
+
+        # Attention computation (QK^T and Attn*V)
+        # 12x multiplier: 2 matmuls * 2 ops each * 3 for forward+backward
+        # For sliding window attention, effective sequence length is limited by window size
+        # Note that flash attention technically uses more flops (14x multiplier) due to recomputation,
+        # however, we just compute the idealized flops for SDPA.
+        effective_seq_len = min(self.window_size, seq_len) if self.window_size else seq_len
+        attn_flops = 12 * self.n_heads * self.head_dim * effective_seq_len
+
+        return param_flops + attn_flops
 
 
 @beta_feature
@@ -952,3 +1049,13 @@ class FusedAttention(AttentionBase):
         head_stride: int = 1,
     ):
         self.backend.apply_cp(cp_mesh, load_balancer, head_stride=head_stride)
+
+    def num_flops_per_token(self, seq_len: int) -> int:
+        # 6 FLOPs per parameter (2 ops * 3 for forward+backward)
+        param_flops = 6 * sum(p.numel() for p in self.parameters())
+
+        # Attention computation (QK^T and Attn*V)
+        # 12x multiplier: 2 matmuls * 2 ops each * 3 for forward+backward
+        attn_flops = 12 * self.n_heads * self.head_dim * seq_len
+
+        return param_flops + attn_flops

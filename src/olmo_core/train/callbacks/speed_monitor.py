@@ -28,10 +28,11 @@ class SpeedMonitorCallback(Callback):
     priority: ClassVar[int] = -2
 
     num_flops_per_token: Optional[int] = None
-    device_peak_flops: Optional[int] = None
+    device_peak_flops_per_second: Optional[int] = None
 
     _total_steps: int = 0
     _total_tokens: int = 0
+    _total_flops: int = 0
     _start_time: float = 0.0
     _first_step: bool = True
     _step_last_logged: float = 0.0
@@ -39,6 +40,7 @@ class SpeedMonitorCallback(Callback):
     _batch_load_time: float = 0.0
     _step_tokens: int = 0
     _step_seq_len: int = 0
+    _step_flops: int = 0
     _parallel_degree: int = 1
     _bps_avg: Optional[float] = None
 
@@ -67,7 +69,7 @@ class SpeedMonitorCallback(Callback):
             )
 
         if (
-            self.device_peak_flops is None
+            self.device_peak_flops_per_second is None
             and self.trainer.device.type == "cuda"
             and isinstance(self.trainer.train_module, TransformerTrainModule)
         ):
@@ -82,18 +84,20 @@ class SpeedMonitorCallback(Callback):
                 if "H100" in device_name:
                     # data from https://www.nvidia.com/en-us/data-center/h100/
                     if "NVL" in device_name:
-                        self.device_peak_flops = int(1671e12 * dense_correction)
+                        self.device_peak_flops_per_second = int(1671e12 * dense_correction)
                     elif "PCIe" in device_name:
-                        self.device_peak_flops = int(1513e12 * dense_correction)
+                        self.device_peak_flops_per_second = int(1513e12 * dense_correction)
                     else:  # for SXM and other variants
-                        self.device_peak_flops = int(1979e12 * dense_correction)
+                        self.device_peak_flops_per_second = int(1979e12 * dense_correction)
                 elif "B200" in device_name:
                     # data from https://www.nvidia.com/en-us/data-center/hgx/
-                    self.device_peak_flops = int(4.5e15 * dense_correction)
+                    self.device_peak_flops_per_second = int(4.5e15 * dense_correction)
                 else:  # for other GPU types, assume A100
                     # data from https://www.nvidia.com/en-us/data-center/a100/
-                    self.device_peak_flops = int(312e12 * dense_correction)
-            log.info(f"Device: {device_name}, Device peak FLOPS: {self.device_peak_flops}")
+                    self.device_peak_flops_per_second = int(312e12 * dense_correction)
+            log.info(
+                f"Device: {device_name}, Device peak Flops/s: {self.device_peak_flops_per_second}"
+            )
 
     def pre_load_batch(self):
         self._batch_load_start = time.perf_counter()
@@ -108,9 +112,17 @@ class SpeedMonitorCallback(Callback):
 
         self._total_steps += 1
         if "input_ids" in batch:
-            self._step_tokens = batch["input_ids"].numel() // self._parallel_degree
+            tokens_in_batch = batch["input_ids"].numel()
+            self._step_tokens = tokens_in_batch // self._parallel_degree
             self._step_seq_len = batch["input_ids"].shape[1]
             self._total_tokens += self._step_tokens
+
+            self._step_flops = 0
+            if (
+                num_flops_per_token := self._get_num_flops_per_token(self._step_seq_len)
+            ) is not None:
+                self._step_flops = num_flops_per_token * self._step_tokens
+                self._total_flops += self._step_flops
 
     def post_step(self):
         counter = time.perf_counter()
@@ -122,6 +134,7 @@ class SpeedMonitorCallback(Callback):
             # Now we can start recording.
             self._total_steps = 0
             self._total_tokens = 0
+            self._total_flops = 0
             self._start_time = counter
             self._first_step = False
             self._step_last_logged = counter
@@ -131,8 +144,6 @@ class SpeedMonitorCallback(Callback):
         total_time = counter - self._start_time
         self._step_last_logged = counter
 
-        tps: Optional[float] = None
-        tps_avg: Optional[float] = None
         if self._step_tokens and self._total_tokens:
             tps = self._step_tokens / step_time
             tps_avg = self._total_tokens / total_time
@@ -142,6 +153,17 @@ class SpeedMonitorCallback(Callback):
         if self.trainer.global_train_tokens_seen is not None:
             self.trainer.record_metric(
                 "throughput/total tokens", self.trainer.global_train_tokens_seen
+            )
+
+        flops_ps: Optional[float] = None
+        flops_ps_avg: Optional[float] = None
+        if self._step_flops and self._total_flops:
+            flops_ps = self._step_flops / step_time
+            flops_ps_avg = self._total_flops / total_time
+            self.trainer.record_metric("throughput/device/flopsPS", flops_ps)
+            self.trainer.record_metric("throughput/device/flopsPS (actual avg)", flops_ps_avg)
+            self.trainer.record_metric(
+                "throughput/total petaflops", self.trainer.global_train_petaflops
             )
 
         bps = 1 / step_time
@@ -156,15 +178,15 @@ class SpeedMonitorCallback(Callback):
         )
 
         if (
-            (num_flops_per_token := self._get_num_flops_per_token(self._step_seq_len)) is not None
-            and self.device_peak_flops is not None
-            and tps is not None
-            and tps_avg is not None
+            self.device_peak_flops_per_second is not None
+            and flops_ps is not None
+            and flops_ps_avg is not None
         ):
             # model FLOPS utilization
             # For its definition and calculation, please refer to the PaLM paper:
             # https://arxiv.org/abs/2204.02311
-            mfu = 100 * num_flops_per_token * tps / self.device_peak_flops
-            mfu_avg = 100 * num_flops_per_token * tps_avg / self.device_peak_flops
+            # MFU is computed from FLOPs/sec. This stays correct even if sequence length changes.
+            mfu = 100 * flops_ps / self.device_peak_flops_per_second
+            mfu_avg = 100 * flops_ps_avg / self.device_peak_flops_per_second
             self.trainer.record_metric("throughput/device/MFU", mfu)
             self.trainer.record_metric("throughput/device/MFU (actual avg)", mfu_avg)

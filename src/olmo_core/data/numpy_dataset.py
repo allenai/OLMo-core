@@ -1264,6 +1264,7 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
             *source_paths,
             max_sequence_length=self.sequence_length,
             eos_token_id=self.eos_token_id,
+            bos_token_id=self.bos_token_id,
             dtype=self.dtype,
             indices_dtype=self.indices_dtype,
             long_doc_strategy=self._long_doc_strategy,
@@ -1380,8 +1381,8 @@ class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
         self._chunks_per_doc = chunks_per_doc
         self._seed = seed
         self._interleaving_exempt_paths = interleaving_exempt_paths
-        self._num_interleaving_exempt_instances = None
-        self._num_interleavable_instances = None
+        self._num_interleaving_exempt_instances: Optional[int] = None
+        self._num_interleavable_instances: Optional[int] = None
 
     @property
     def fingerprint_fields(self) -> Tuple[str, ...]:

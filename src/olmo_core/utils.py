@@ -23,6 +23,7 @@ from rich.console import Console, ConsoleRenderable
 from rich.highlighter import NullHighlighter
 from rich.text import Text
 from rich.traceback import Traceback
+from torch.utils.flop_counter import FlopCounterMode
 
 from .config import StrEnum
 from .exceptions import OLMoCLIError, OLMoEnvironmentError, OLMoError, OLMoThreadError
@@ -149,6 +150,13 @@ def get_default_device() -> torch.device:
         return torch.device("mps")
     else:
         return torch.device("cpu")
+
+
+def has_compute_capability(major: int, minor: int) -> bool:
+    return torch.cuda.is_available() and torch.cuda.get_device_capability() >= (
+        major,
+        minor,
+    )
 
 
 def seed_all(seed: int):
@@ -304,8 +312,10 @@ def setup_logging(
 
     handler: logging.Handler
     # NOTE: Beaker supports rich logging now.
-    if os.environ.get("BEAKER_EXPERIMENT_ID") is None and (
-        os.environ.get("DEBIAN_FRONTEND", None) == "noninteractive" or not sys.stdout.isatty()
+    if (
+        os.environ.get("OLMO_RICH_LOGGING") is None
+        and os.environ.get("BEAKER_EXPERIMENT_ID") is None
+        and (os.environ.get("DEBIAN_FRONTEND", None) == "noninteractive" or not sys.stdout.isatty())
     ):
         handler = logging.StreamHandler(sys.stdout)
         formatter = logging.Formatter(
@@ -556,7 +566,7 @@ class _RichHandler(logging.Handler):
 
     def get_location_text(self, record: logging.LogRecord) -> Text:
         name_and_line = f"{record.name}:{record.lineno}" if record.name != "root" else "root"
-        text = f"[{name_and_line}, rank={record.local_rank}]"  # type: ignore
+        text = f"[{name_and_line}, {record.hostname}, rank={record.local_rank}]"  # type: ignore
         return Text(text, style="log.path")
 
 
@@ -629,17 +639,38 @@ def capped_powers_of_2(x: int, cap: int) -> List[int]:
 
 
 def format_float(value: float) -> str:
-    if value == 0.0:
+    if math.isnan(value):
+        return "nan"
+    elif math.isinf(value):
+        return "inf" if value > 0 else "-inf"
+    abs_value = abs(value)
+    if abs_value == 0.0:
         return "0.0"
-    elif value < 0.0001:
+    elif abs_value >= 1e9:
+        for suffix, factor in (("E", 1e18), ("P", 1e15), ("T", 1e12), ("B", 1e9)):
+            if abs_value >= factor:
+                scaled = value / factor
+                abs_scaled = abs(scaled)
+                if abs_scaled > 100:
+                    decimals = 1
+                elif abs_scaled > 10:
+                    decimals = 2
+                elif abs_scaled > 1:
+                    decimals = 3
+                else:
+                    decimals = 4
+                scaled_str = f"{scaled:,.{decimals}f}"
+                return f"{scaled_str}{suffix}"
+
+    if abs_value < 0.0001:
         return f"{value:.2E}"
-    elif value > 1000:
+    elif abs_value >= 1000:
         return f"{int(value):,d}"
-    elif value > 100:
+    elif abs_value > 100:
         return f"{value:.1f}"
-    elif value > 10:
+    elif abs_value > 10:
         return f"{value:.2f}"
-    elif value > 1:
+    elif abs_value > 1:
         return f"{value:.3f}"
     else:
         return f"{value:.4f}"
@@ -723,6 +754,11 @@ def log_once(logger: logging.Logger, msg: str, *args, level: int = logging.INFO,
     logger.log(level, msg, *args, **kwargs)
 
 
+@lru_cache(maxsize=128)
+def warn_once(msg: str, *args, **kwargs):
+    warnings.warn(msg, *args, **kwargs)
+
+
 def info_value_of_dtype(dtype: torch.dtype):
     """
     Returns the `finfo` or `iinfo` object of a given PyTorch data type. Does not allow torch.bool.
@@ -753,3 +789,32 @@ def get_or_init_stream(id: str, priority: int = 0) -> torch.cuda.Stream:
         stream = cast(torch.cuda.Stream, torch.cuda.Stream(priority=priority))
         _CUDA_STREAMS[id] = stream
         return stream
+
+
+def record_flops(
+    model: torch.nn.Module,
+    inp: Union[torch.Tensor, tuple],
+    with_backward: bool = False,
+    display: bool = False,
+) -> int:
+    # Source: https://alessiodevoto.github.io/Compute-Flops-with-Pytorch-built-in-flops-counter/
+    istrain = model.training
+    model.eval()
+
+    inp = inp if isinstance(inp, torch.Tensor) else torch.randn(inp)
+
+    # FlopCounterMode has some limitations, for example if activation recomputation is used,
+    # it will count the flops for the recomputation as well. This applies to SDPA kernels as well,
+    # since they use recomputation internally (a la flash attention). Additionally, if custom kernels
+    # are used, it will not count the flops for them unless a custom flop formula is registered.
+    # https://github.com/pytorch/pytorch/issues/123800
+    flop_counter = FlopCounterMode(display=display, depth=999999)
+    with flop_counter:
+        if with_backward:
+            model(inp).sum().backward()
+        else:
+            model(inp)
+    total_flops = flop_counter.get_total_flops()
+    if istrain:
+        model.train()
+    return total_flops

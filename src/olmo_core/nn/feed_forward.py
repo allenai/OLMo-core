@@ -9,9 +9,10 @@ from torch.distributed import DeviceMesh
 from torch.distributed.tensor.parallel import parallelize_module
 from torch.distributed.tensor.placement_types import Placement, Replicate
 
-from ..config import Config, DType, StrEnum
+from ..config import DType, StrEnum
 from ..doc_utils import beta_feature
 from ..exceptions import OLMoConfigurationError
+from .config import ModuleConfig
 from .functional import l2_normalize
 from .utils import get_tp_wrappers
 
@@ -35,7 +36,7 @@ class FeedForwardType(StrEnum):
 
 
 @dataclass
-class FeedForwardConfig(Config):
+class FeedForwardConfig(ModuleConfig):
     """
     A config for building :class:`FeedForward` modules.
     """
@@ -159,6 +160,11 @@ class FeedForward(nn.Module):
                 "w3": colwise_parallel(),
             },
         )
+
+    def num_flops_per_token(self, seq_len: int) -> int:
+        del seq_len
+        # 6 FLOPs per parameter (2 ops * 3 for forward+backward)
+        return 6 * sum(p.numel() for p in self.parameters())
 
 
 @beta_feature

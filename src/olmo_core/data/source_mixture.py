@@ -170,8 +170,8 @@ class SourceTokenDetails:
     def for_table(self, requested_tokens: int) -> Dict:
         return {
             "source_name": self.config.source_name,
-            "source_population": f"{self.population:.2e}",
-            "num_selected": f"{self.num_selected:.2e}",
+            "source_population": f"{self.population}",
+            "num_selected": f"{self.num_selected}",
             "target_ratio": str(self.config.target_ratio),
             "max_repetion_ratio": str(self.config.max_repetition_ratio),
             "max_source_fraction": str(self.config.max_source_fraction),

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from transformers import AutoModelForCausalLM
 from transformers.configuration_utils import PretrainedConfig
 
-from olmo_core.config import Config, DType, StrEnum
+from olmo_core.config import DType, StrEnum
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.fla import FLAConfig, FLAModelConfig
@@ -20,6 +20,7 @@ from ..attention import (
     SlidingWindowAttentionConfig,
 )
 from ..buffer_cache import BufferCache
+from ..config import ModelConfig, ModuleConfig
 from ..feed_forward import FeedForwardConfig, FeedForwardType
 from ..layer_norm import LayerNormConfig, LayerNormType
 from ..lm_head import LMHeadConfig, LMHeadType
@@ -160,7 +161,7 @@ class TransformerBlockType(StrEnum):
 
 
 @dataclass
-class TransformerBlockConfig(Config):
+class TransformerBlockConfig(ModuleConfig):
     """
     A configuration class for easily building transformer blocks.
     """
@@ -330,7 +331,7 @@ class TransformerBlockConfig(Config):
 
 
 @dataclass
-class TransformerConfig(Config):
+class TransformerConfig(ModelConfig):
     """
     A config for easily building transformer models.
 
@@ -506,26 +507,6 @@ class TransformerConfig(Config):
         """
         return self.num_active_params - self.d_model * self.vocab_size
 
-    def num_flops_per_token(self, seq_len: int) -> int:
-        """
-        Get the approximate number of flops per token.
-        """
-        n, h, q, t = (
-            self.n_layers,
-            self.block.attention.n_heads,
-            self.d_model // self.block.attention.n_heads,
-            seq_len,
-        )
-        # Reasoning behind the factor of 12 for the self-attention part of the formula:
-        # 1. each self-attention has 2 matmul in the forward and 4 in the backward (6)
-        # 2. the flash attention does 1 more matmul recomputation in the backward
-        #    but recomputation should not be counted in calculating MFU           (+0)
-        # 3. each matmul performs 1 multiplication and 1 addition                 (*2)
-        # 4. we follow the convention and do not account for sparsity in causal attention
-        flop_per_token = 6 * self.num_non_embedding_params + 12 * n * h * q * t
-
-        return flop_per_token
-
     @classmethod
     def olmo2_30M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         return cls.llama_like(
@@ -573,7 +554,7 @@ class TransformerConfig(Config):
     @classmethod
     def olmo2_600M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         return cls.llama_like(
-            d_model=1344,
+            d_model=kwargs.pop("d_model", 1344),
             hidden_size_multiplier=1.5,
             n_layers=kwargs.pop("n_layers", 16),
             n_heads=kwargs.pop("n_heads", 16),
@@ -723,11 +704,132 @@ class TransformerConfig(Config):
         return config
 
     @classmethod
+    def olmo3_370M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 370M OLMo3 model config.
+        """
+        config = cls.olmo2_370M(
+            vocab_size=vocab_size,
+            sliding_window=kwargs.pop(
+                "sliding_window",
+                SlidingWindowAttentionConfig(
+                    force_full_attention_on_first_layer=False,
+                    force_full_attention_on_last_layer=True,
+                    pattern=[4096, 4096, 4096, -1],
+                ),
+            ),
+            attn_backend=kwargs.pop("attn_backend", AttentionBackendName.flash_2),
+            **kwargs,
+        )
+        return config
+
+    @classmethod
+    def olmo3_600M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 600M OLMo3 model config.
+        """
+        config = cls.olmo2_600M(
+            vocab_size=vocab_size,
+            d_model=kwargs.pop("d_model", 1280),
+            sliding_window=kwargs.pop(
+                "sliding_window",
+                SlidingWindowAttentionConfig(
+                    force_full_attention_on_first_layer=False,
+                    force_full_attention_on_last_layer=True,
+                    pattern=[4096, 4096, 4096, -1],
+                ),
+            ),
+            attn_backend=kwargs.pop("attn_backend", AttentionBackendName.flash_2),
+            **kwargs,
+        )
+        return config
+
+    @classmethod
+    def olmo3_760M(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 760M OLMo3 model config.
+        """
+        config = cls.olmo2_760M(
+            vocab_size=vocab_size,
+            sliding_window=kwargs.pop(
+                "sliding_window",
+                SlidingWindowAttentionConfig(
+                    force_full_attention_on_first_layer=False,
+                    force_full_attention_on_last_layer=True,
+                    pattern=[4096, 4096, 4096, -1],
+                ),
+            ),
+            attn_backend=kwargs.pop("attn_backend", AttentionBackendName.flash_2),
+            **kwargs,
+        )
+        return config
+
+    @classmethod
+    def olmo3_1B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 1B OLMo3 model config.
+        """
+        config = cls.olmo2_1B_v2(
+            vocab_size=vocab_size,
+            sliding_window=kwargs.pop(
+                "sliding_window",
+                SlidingWindowAttentionConfig(
+                    force_full_attention_on_first_layer=False,
+                    force_full_attention_on_last_layer=True,
+                    pattern=[4096, 4096, 4096, -1],
+                ),
+            ),
+            attn_backend=kwargs.pop("attn_backend", AttentionBackendName.flash_2),
+            **kwargs,
+        )
+        return config
+
+    @classmethod
+    def olmo3_3B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 3B OLMo3 model config.
+        """
+        config = cls.olmo2_3B(
+            vocab_size=vocab_size,
+            sliding_window=kwargs.pop(
+                "sliding_window",
+                SlidingWindowAttentionConfig(
+                    force_full_attention_on_first_layer=False,
+                    force_full_attention_on_last_layer=True,
+                    pattern=[4096, 4096, 4096, -1],
+                ),
+            ),
+            attn_backend=kwargs.pop("attn_backend", AttentionBackendName.flash_2),
+            **kwargs,
+        )
+        return config
+
+    @classmethod
     def olmo3_7B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         """
         A 7B OLMo3 model config.
         """
         config = cls.olmo2_7B(
+            vocab_size=vocab_size,
+            sliding_window=kwargs.pop(
+                "sliding_window",
+                SlidingWindowAttentionConfig(
+                    force_full_attention_on_first_layer=False,
+                    force_full_attention_on_last_layer=True,
+                    pattern=[4096, 4096, 4096, -1],
+                ),
+            ),
+            attn_backend=kwargs.pop("attn_backend", AttentionBackendName.flash_2),
+            **kwargs,
+        )
+        return config
+
+    @classmethod
+    def olmo3_13B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        """
+        A 13B OLMo3 model config.
+        """
+        config = cls.olmo2_13B(
             vocab_size=vocab_size,
             sliding_window=kwargs.pop(
                 "sliding_window",

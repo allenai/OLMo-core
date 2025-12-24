@@ -86,14 +86,7 @@ def configure_train_module(
         )
         if activation_memory_budget < 1.0
         else None,
-        float8_config=Float8Config(
-            enabled=float8_enabled,
-            ao=AOFloat8LinearConfig(
-                enable_fsdp_float8_all_gather=True,
-                force_recompute_fp8_weight_in_bwd=True,
-                round_scales_to_power_of_2=True,
-            ),
-        ),
+        float8_config=Float8Config(enabled=float8_enabled, ao=AOFloat8LinearConfig.recommended()),
     )
 
 

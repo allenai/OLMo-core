@@ -6,6 +6,7 @@ from typing import (
     Any,
     Callable,
     ClassVar,
+    Collection,
     Dict,
     Generator,
     List,
@@ -77,6 +78,7 @@ class Config:
         *,
         exclude_none: bool = False,
         exclude_private_fields: bool = False,
+        exclude: Optional[Collection[str]] = None,
         include_class_name: bool = False,
         json_safe: bool = False,
         recurse: bool = True,
@@ -86,13 +88,18 @@ class Config:
 
         :param exclude_none: Don't include values that are ``None``.
         :param exclude_private_fields: Don't include private fields.
+        :param exclude: A list of field names to exclude.
         :param include_class_name: Include a field for the name of the class.
         :param json_safe: Output only JSON-safe types.
         :param recurse: Recurse into fields that are also configs/dataclasses.
         """
 
+        exclude_set = set(exclude) if exclude is not None else set()
+
         def iter_fields(d) -> Generator[Tuple[str, Any], None, None]:
             for field in fields(d):
+                if field.name in exclude_set:
+                    continue
                 value = getattr(d, field.name)
                 if exclude_none and value is None:
                     continue
@@ -325,6 +332,8 @@ class DType(StrEnum):
     float32 = "float32"
     bfloat16 = "bfloat16"
     float16 = "float16"
+    float8_e4m3fn = "float8_e4m3fn"  # note: other e4m3 variants are supported in torch
+    float8_e5m2 = "float8_e5m2"
 
     @classmethod
     def from_pt(cls, dtype: torch.dtype) -> "DType":
@@ -334,6 +343,10 @@ class DType(StrEnum):
             return DType.bfloat16
         elif dtype == torch.float16:
             return DType.float16
+        elif dtype == torch.float8_e4m3fn:
+            return DType.float8_e4m3fn
+        elif dtype == torch.float8_e5m2:
+            return DType.float8_e5m2
         else:
             raise NotImplementedError(dtype)
 

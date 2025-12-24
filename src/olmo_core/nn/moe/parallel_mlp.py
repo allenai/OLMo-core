@@ -332,6 +332,20 @@ class ParallelMLPBase(nn.Module):
     ):
         raise NotImplementedError
 
+    def num_flops_per_token(self, seq_len: int) -> int:
+        """
+        Returns idealized FLOPs per token, not accounting for padding. This is fairly accurate for
+        the dropless MoE implementation, but under-estimates the non-idealized FLOPs for the default
+        MoE implementation.
+        """
+        del seq_len
+        # Each token activates top_k experts.
+        # The expert MLP parameters are typically stored as a single batched tensor with a leading
+        # expert dimension (not shared weights). On average, each token "touches" top_k experts,
+        # i.e. a fraction (top_k / num_experts) of the total expert parameters.
+        expert_params = sum(p.numel() for p in self.mlp.parameters())
+        return 6 * int(expert_params * self.top_k / self.num_experts)
+
 
 class ParallelMLP(ParallelMLPBase):
     def __init__(

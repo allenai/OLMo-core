@@ -13,7 +13,7 @@ from torch.distributed.tensor.parallel import (
     parallelize_module,
 )
 
-from olmo_core.config import Config, DType, StrEnum
+from olmo_core.config import DType, StrEnum
 from olmo_core.distributed.parallel import (
     flatten_mesh,
     get_pp_stage_mesh,
@@ -23,6 +23,7 @@ from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.ops import attach_auxiliary_loss
 
 from ..buffer_cache import BufferCache
+from ..config import ModuleConfig
 from ..feed_forward import FeedForwardConfig
 from .loss import MoELoadBalancingLossGranularity
 from .mlp import DroplessMoEMLP, MoEMLP
@@ -55,7 +56,7 @@ class MoEType(StrEnum):
 
 
 @dataclass
-class MoEConfig(Config):
+class MoEConfig(ModuleConfig):
     name: MoEType = MoEType.default
     """
     The name of the implementation.
@@ -322,6 +323,14 @@ class MoEBase(nn.Module):
                 use_local_output=use_local_output,
             ),
         )
+
+    def num_flops_per_token(self, seq_len: int) -> int:
+        router_flops = 6 * sum(p.numel() for p in self.router.parameters())
+        shared_mlp_flops = (
+            self.shared_mlp.num_flops_per_token(seq_len) if self.shared_mlp is not None else 0
+        )
+        expert_flops = self.experts.num_flops_per_token(seq_len)
+        return router_flops + shared_mlp_flops + expert_flops
 
 
 class MoE(MoEBase):

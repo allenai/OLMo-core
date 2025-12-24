@@ -47,19 +47,36 @@ def normalize_path(path: PathOrStr) -> str:
     return str(path).rstrip("/").replace("file://", "")
 
 
-def join_path(path1: PathOrStr, path2: PathOrStr) -> PathOrStr:
+def join_path(path: PathOrStr, *paths: PathOrStr) -> PathOrStr:
     """
-    Join two paths.
-
-    :param path1: The first path.
-    :param path2: The second path.
+    Join two or more paths.
 
     :returns: The joined result.
     """
-    if is_url(path1):
-        return f"{normalize_path(path1)}/{normalize_path(path2)}"
+    if not paths:
+        return path
+    for p in paths:
+        if is_url(path):
+            path = f"{normalize_path(path)}/{normalize_path(p)}"
+        else:
+            path = Path(path) / p
+    return path
+
+
+def get_parent(path: PathOrStr) -> PathOrStr:
+    """
+    Get the parent directory of a path.
+
+    :param path: The path/URL to get the parent of.
+    """
+    if is_url(path):
+        path = str(normalize_path(path))
+        if path.count("/") > 2:
+            return "/".join(path.split("/")[:-1])
+        else:
+            return path
     else:
-        return Path(path1) / path2
+        return Path(normalize_path(path)).parent
 
 
 def resource_path(folder: PathOrStr, fname: str, local_cache: Optional[PathOrStr] = None) -> Path:

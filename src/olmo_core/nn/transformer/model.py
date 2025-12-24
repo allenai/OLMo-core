@@ -450,6 +450,9 @@ class Transformer(nn.Module):
             if cache_leftpad is not None:
                 all_block_kwargs["cache_leftpad"] = move_to_device(cache_leftpad, self.device)
 
+        if "cu_doc_lens" in all_block_kwargs:
+            mark_dynamic(all_block_kwargs["cu_doc_lens"], 0, strict=False)  # type: ignore[arg-type]
+
         return (
             input_ids,
             labels,
@@ -541,6 +544,8 @@ class Transformer(nn.Module):
         modules_to_ignore = set()
         if self.lm_head is not None:
             modules_to_ignore.add("lm_head.w_out")
+        if float8_config.modules_to_ignore is not None:
+            modules_to_ignore.update(float8_config.modules_to_ignore)
 
         float8_config.apply_float8_linear(self, modules_to_ignore=modules_to_ignore)
 
@@ -729,6 +734,7 @@ class Transformer(nn.Module):
         if self.lm_head is not None:
             self.lm_head.compile(fullgraph=False)
 
+        torch.compiler.config.dynamic_sources += "L['kwargs']['max_doc_len'],"
         self._compile_enabled = True
 
     def apply_fsdp(
@@ -854,24 +860,16 @@ class Transformer(nn.Module):
 
     def num_flops_per_token(self, seq_len: int) -> int:
         """
-        Get the approximate number of flops per token.
+        Returns the idealized number of flops per token for the given sequence length. Purposefully
+        does not account for wasted flops due to padding, recomputation, etc.
         """
-        n, h, q, t = (
-            self.n_layers,
-            self.n_attn_heads,
-            self.d_model // self.n_attn_heads,
-            seq_len,
-        )
-
-        # Reasoning behind the factor of 12 for the self-attention part of the formula:
-        # 1. each self-attention has 2 matmul in the forward and 4 in the backward (6)
-        # 2. the flash attention does 1 more matmul recomputation in the backward
-        #    but recomputation should not be counted in calculating MFU           (+0)
-        # 3. each matmul performs 1 multiplication and 1 addition                 (*2)
-        # 4. we follow the convention and do not account for sparsity in causal attention
-        flop_per_token = 6 * self.num_non_embedding_params + 12 * n * h * q * t
-
-        return flop_per_token
+        flops_per_token = 0
+        blocks = cast(List[TransformerBlockBase], list(self.blocks.values()))
+        for block in blocks:
+            flops_per_token += block.num_flops_per_token(seq_len)
+        if self.lm_head is not None:
+            flops_per_token += self.lm_head.num_flops_per_token(seq_len)
+        return flops_per_token
 
     def post_batch(self, dry_run: bool = False):
         """
