@@ -343,11 +343,14 @@ class Checkpointer:
         # NOTE: if 'dir' is a URL, the 'wd' will be a different temp dir for each rank.
         if is_url(dir) or get_fs_local_rank() == 0:
             train_dir.mkdir(exist_ok=True, parents=True)
+
+        # Account for NFS latency by waiting for the directory to exist.
         wait_for(
             train_dir.exists,
             description=f"Waiting for '{train_dir}' to be created...",
             timeout=30.0,
         )
+        log.info(f"Saving train state to '{train_dir / f'rank{get_rank()}.pt'}...")
         torch.save(train_state, train_dir / f"rank{get_rank()}.pt")
 
     def _save_metadata(self, dir: PathOrStr, metadata: CheckpointMetadata):

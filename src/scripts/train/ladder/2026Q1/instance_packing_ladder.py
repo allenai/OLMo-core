@@ -136,9 +136,10 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
             sources=[
                 NumpyDocumentSourceMixConfig(
                     tokenizer=tokenizer,
-                    mix=DataMix.OLMo_mix_0925_official,
+                    mix=DataMix.OLMo_mix_0925_official
+                    if args.cluster == "lambda"
+                    else DataMix.OLMo_mix_0925,
                     mix_base_dir=get_mix_base_dir(args.cluster),
-                    # mix_base_dir="gs://ai2-llm/",  # HACK bc data isnt on weka
                     source_permutation_seed=828,
                     source_group_size=source_group_size,
                 )
