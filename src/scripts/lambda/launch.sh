@@ -36,7 +36,7 @@ fi
 # done
 
 SBATCH_ARGS=(
-    --export="WANDB_API_KEY,USERNAME"
+    --export="WANDB_API_KEY,USERNAME,HOME"
     --job-name="$RUN_NAME"
     --output="/data/ai2/logs/${RUN_NAME}/%j.log"
     --nodes="$NODES"
