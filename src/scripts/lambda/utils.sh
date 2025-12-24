@@ -1,27 +1,27 @@
 #!/bin/bash
 
 function log_debug {
-    echo -e "[$(hostname), node=${SLURM_NODEID:-?}] \e[1m[DEBUG]\e[0m $1"
+    echo -e "\e[1m[DEBUG]\e[0m [$(hostname), node=${SLURM_NODEID:-?}] $1"
 }
 
 function log_info {
-    echo -e "[$(hostname), node=${SLURM_NODEID:-?}] \e[36m\e[1m[INFO]\e[0m $1"
+    echo -e "\e[34m\e[1m[INFO]\e[0m [$(hostname), node=${SLURM_NODEID:-?}] $1"
 }
 
 function log_warning {
-    echo -e >&2 "[$(hostname), node=${SLURM_NODEID:-?}] \e[33m\e[1m[WARN]\e[0m $1"
+    echo -e >&2 "\e[33m\e[1m[WARN]\e[0m [$(hostname), node=${SLURM_NODEID:-?}] $1"
 }
 
 function log_error {
-    echo -e >&2 "[$(hostname), node=${SLURM_NODEID:-?}] \e[31m\e[1m[ERROR]\e[0m $1"
+    echo -e >&2 "\e[31m\e[1m[ERROR]\e[0m [$(hostname), node=${SLURM_NODEID:-?}] $1"
 }
 
-die() {
+function die {
   log_error "$1"
   exit 1
 }
 
-have_cmd() {
+function have_cmd {
   command -v "$1" >/dev/null 2>&1
 }
 
