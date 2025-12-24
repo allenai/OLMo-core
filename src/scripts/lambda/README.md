@@ -1,13 +1,7 @@
 ## Logging in
 
-SSH into one of the login nodes:
-
-```bash
-ssh ubuntu@192.222.61.240
-# OR: ssh ubuntu@192.222.60.249
-```
-
-Start or attach your own tmux session:
+SSH into one of the login nodes.
+Then start or attach your own tmux session:
 
 ```bash
 username=petew
