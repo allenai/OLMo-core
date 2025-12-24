@@ -80,7 +80,7 @@ function job_pending {
 }
 
 function job_completed {
-    if squeue -j "$1" > /dev/null; then
+    if squeue -j "$1" --noheader | grep "$1" > /dev/null; then
         return 1
     else
         return 0
