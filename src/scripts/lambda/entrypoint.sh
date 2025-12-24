@@ -62,6 +62,16 @@ node_0_only echo "Activating Python virtual environment..."
 source "$VENV_DIR/bin/activate"
 node_0_only uv pip freeze
 
+# Run per-node healthchecks (fails fast on bad nodes).
+node_0_only echo "Running per-node healthchecks..."
+if ! ./src/scripts/lambda/healthchecks.sh; then
+    echo "Healthcheck failed on node '$(hostname)'. Consider adding it to the cordoned list by running:"
+    echo ""
+    echo "  echo $(hostname) >> /data/ai2/cordoned-nodes.txt"
+    echo ""
+    exit 1
+fi
+
 node_0_only echo "============= Setup complete ============="
 
 exec torchrun \
