@@ -14,20 +14,18 @@ Check that `/data/ai2/bin/` is in your `PATH`, and if not add it:
 export PATH="/data/ai2/bin:$PATH"
 ```
 
-Export your WANDB token to the `WANDB_API_KEY` env variable:
+Export your WANDB token to the `WANDB_API_KEY` env variable, and your Ai2/Beaker username to the `USERNAME` env variable:
 
 ```bash
 export WANDB_API_KEY=XXXX
+export USERNAME=petew
 ```
 
 ## Initial setup
 
-We all log in as the same user, so we need to be careful to use unique repo directories and virtual environment.
+We all log in as the same user, so we need to be careful to use unique repo directories and virtual environment, which we'll identify by our Ai2/Beaker username (set to the `USERNAME` env var).
 
 ```bash
-# Set your unique username (ideally use your Ai2/Beaker username).
-export USERNAME=petew
-
 # Clone repo to unique directory.
 cd "/data/ai2/$USERNAME"
 git clone https://github.com/allenai/OLMo-core.git
