@@ -43,7 +43,7 @@ SBATCH_ARGS=(
 )
 
 if [ -f "/data/ai2/cordoned-nodes.txt" ]; then
-    cordoned_nodes=$(tr '\n' ',' < /data/ai2/cordoned_nodes.txt | sed 's/,$//')
+    cordoned_nodes=$(tr '\n' ',' < /data/ai2/cordoned-nodes.txt | sed 's/,$//')
     echo "Cordoned nodes detected: $cordoned_nodes"
     SBATCH_ARGS+=(--exclude="$cordoned_nodes")
 fi
