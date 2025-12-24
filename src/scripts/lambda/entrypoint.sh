@@ -1,6 +1,7 @@
 #!/bin/bash
 
 REPO_DIR=/data/ai2/$USERNAME/OLMo-core
+USER_DIR=/data/ai2/$USERNAME
 VENV_DIR=/data/ai2/uv/OLMo-core-$USERNAME
 DATA_DIR=/data/caia-mltrain/data/
 
@@ -30,6 +31,7 @@ node_0_only echo "HOME: $HOME"
 node_0_only echo "Using repo dir: $REPO_DIR"
 node_0_only echo "Using venv dir: $VENV_DIR"
 node_0_only echo "Using data dir: $DATA_DIR"
+node_0_only echo "Using user dir: $USER_DIR"
 
 # Change to repo directory.
 cd "$REPO_DIR" || exit 1
@@ -42,6 +44,7 @@ export OLMO_RICH_LOGGING=1
 export OMP_NUM_THREADS=8
 export FORCE_COLOR=1
 export TORCH_LOGS=recompiles,graph_breaks
+export PYTORCH_KERNEL_CACHE_PATH=$USER_DIR/.cache/torch/kernels
 
 # Resolve hostname of master address and port to use.
 export MASTER_ADDR
