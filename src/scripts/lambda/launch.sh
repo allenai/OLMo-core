@@ -57,7 +57,7 @@ JOB_ID=$(sbatch "${SBATCH_ARGS[@]}" "$JOB_SCRIPT")
 
 # Check if the submission was successful (sbatch returns a non-zero exit code on failure).
 if [ $? -eq 0 ]; then
-    echo "Submitted job with ID: $JOB_ID"
+    echo "Submitted slurm job $JOB_ID"
 else
     echo "Job submission failed."
     exit 1
@@ -73,7 +73,11 @@ done
 LOG_FILE="/data/ai2/logs/$RUN_NAME/$JOB_ID.log"
 echo "Waiting on log file at $LOG_FILE..."
 while [ ! -f "$LOG_FILE" ]; do
-    sleep 1
+    sleep 2
+    if ! squeue -j "$JOB_ID" > /dev/null; then
+        echo "Job $JOB_ID stopped before log file was created."
+        exit 1
+    fi
 done
 
 # On keyboard interrupt, print some useful information before exiting.
