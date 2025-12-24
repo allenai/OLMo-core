@@ -80,6 +80,7 @@ class Checkpointer:
 
     METADATA_FNAME: ClassVar[str] = ".metadata.json"
     CHECKPOINT_DIR: ClassVar[str] = "step{step}"
+    FS_TIMEOUT: ClassVar[float] = 120.0
 
     work_dir: Path
     save_overwrite: bool = False
@@ -343,14 +344,11 @@ class Checkpointer:
         # NOTE: if 'dir' is a URL, the 'wd' will be a different temp dir for each rank.
         if is_url(dir) or get_fs_local_rank() == 0:
             train_dir.mkdir(exist_ok=True, parents=True)
-
-        # Account for NFS latency by waiting for the directory to exist.
         wait_for(
             train_dir.exists,
-            description=f"Waiting for '{train_dir}' to be created...",
-            timeout=30.0,
+            description=f"waiting for '{train_dir}' to be created...",
+            timeout=self.FS_TIMEOUT,
         )
-        log.info(f"Saving train state to '{train_dir / f'rank{get_rank()}.pt'}...")
         torch.save(train_state, train_dir / f"rank{get_rank()}.pt")
 
     def _save_metadata(self, dir: PathOrStr, metadata: CheckpointMetadata):
@@ -383,7 +381,9 @@ class Checkpointer:
             # Ensure the dir exists for all ranks before continuing. This might take a second if we're
             # saving to an NFS drive or something like that.
             wait_for(
-                Path(dir).exists, description=f"Waiting on '{dir}' to be created...", timeout=30.0
+                Path(dir).exists,
+                description=f"waiting on '{dir}' to be created...",
+                timeout=self.FS_TIMEOUT,
             )
 
         return dir
@@ -407,7 +407,11 @@ class Checkpointer:
             # creating the temp directory from rank 0 might not be immediately
             # realized in the file systems of the other ranks.
             # So we wait here across all ranks until that tmp checkpoint directory is visible.
-            wait_for(lambda: tmp_dir.exists(), "Waiting for checkpoint directory", timeout=30.0)
+            wait_for(
+                lambda: tmp_dir.exists(),
+                "Waiting for checkpoint directory",
+                timeout=self.FS_TIMEOUT,
+            )
 
         return tmp_dir
 
@@ -435,8 +439,8 @@ class Checkpointer:
             # So we wait here across all ranks until that final checkpoint directory is visible.
             wait_for(
                 lambda: Path(dir).exists(),
-                "Waiting for checkpoint directory",
-                timeout=30.0,
+                f"waiting for checkpoint directory '{dir}' from rank {get_rank()}",
+                timeout=self.FS_TIMEOUT,
             )
         else:
             # NOTE: When dir is a URL, each rank will have its own tmp dir so synchronizing with a

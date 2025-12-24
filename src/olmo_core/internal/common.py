@@ -90,7 +90,7 @@ def get_root_dir(cluster: str) -> str:
     elif "local" in cluster:
         return "gs://ai2-llm"
     elif cluster == "lambda":
-        return "/data/ai2/"
+        return "/data/ai2"
     raise OLMoConfigurationError(f"Unknown cluster: {cluster}")
 
 
