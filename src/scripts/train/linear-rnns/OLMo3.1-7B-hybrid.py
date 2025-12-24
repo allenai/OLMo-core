@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 from functools import partial
 
@@ -10,7 +11,6 @@ from olmo_core.data import (
 )
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
-from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE, get_gpu_type
 from olmo_core.internal.experiment import (
     CommonComponents,
     DataComponents,
@@ -29,6 +29,8 @@ from olmo_core.train.train_module import (
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
 )
+
+log = logging.getLogger(__name__)
 
 SEQUENCE_LENGTH = 8 * 1024
 GLOBAL_BATCH_SIZE = 4 * 1024 * 1024  # ~4M tokens
@@ -86,14 +88,10 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
     rank_microbatch_size = common.max_sequence_length
 
-    if common.cluster == "lambda":
-        gpus = {get_gpu_type(common.cluster)}
-        if all("B200" in g for g in gpus):
-            rank_microbatch_size *= 2
-    elif common.launch is not None:
-        gpus = {CLUSTER_TO_GPU_TYPE.get(c, "unknown") for c in common.launch.clusters}
-        if all("B200" in g for g in gpus):
-            rank_microbatch_size *= 2
+    # if common.launch is not None:
+    #     gpus = {CLUSTER_TO_GPU_TYPE.get(c, "unknown") for c in common.launch.clusters}
+    #     if all("B200" in g for g in gpus):
+    #         rank_microbatch_size *= 2
 
     # Added because FLA models seem to use more memory than transformers.
     rank_microbatch_size = int(rank_microbatch_size // MICROBATCH_DISCOUNT)
