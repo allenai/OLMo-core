@@ -93,5 +93,7 @@ control_c() {
     exit 1
 }
 
+trap control_c SIGINT
+
 # Stream the log file from the first task.
 tail -n +1 -f "$LOG_FILE"
