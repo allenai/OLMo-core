@@ -7,15 +7,9 @@ from olmo_core.data.composable import *
 from olmo_core.internal.common import get_gpu_type, get_root_dir
 from olmo_core.internal.ladder import main
 from olmo_core.model_ladder import *
+from olmo_core.model_ladder.utils import get_mix_base_dir
 
 log = logging.getLogger(__name__)
-
-
-def get_mix_base_dir(cluster: str) -> str:
-    if cluster == "lambda":
-        return "/data/caia-mltrain/data/"
-    else:
-        return "gs://ai2-llm/"
 
 
 def configure_ladder(args: argparse.Namespace) -> ModelLadder:

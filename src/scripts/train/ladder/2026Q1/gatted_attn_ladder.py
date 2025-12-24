@@ -11,7 +11,7 @@ from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import get_gpu_type, get_root_dir
 from olmo_core.internal.ladder import main
 from olmo_core.model_ladder import *
-from olmo_core.model_ladder.utils import format_count
+from olmo_core.model_ladder.utils import format_count, get_mix_base_dir
 from olmo_core.nn.attention import AttentionBackendName, GateConfig, GateGranularity
 from olmo_core.nn.transformer import TransformerConfig, TransformerDataParallelWrappingStrategy
 from olmo_core.optim import OptimConfig, Scheduler
@@ -134,9 +134,9 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
             sources=[
                 NumpyDocumentSourceMixConfig(
                     tokenizer=tokenizer,
-                    mix=DataMix.OLMo_mix_0925,
-                    # mix_base_dir=get_root_dir(args.cluster),
-                    mix_base_dir="gs://ai2-llm",
+                    mix=DataMix.OLMo_mix_0925_official,
+                    mix_base_dir=get_mix_base_dir(args.cluster),
+                    # mix_base_dir="gs://ai2-llm",
                 )
             ],
             sequence_length=args.sequence_length,

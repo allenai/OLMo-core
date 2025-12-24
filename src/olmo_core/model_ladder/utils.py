@@ -15,3 +15,10 @@ def format_count(count: int) -> str:
 def format_tokens(tokens: int) -> str:
     """Format number of tokens into a human-readable string."""
     return f"{format_count(tokens)} tokens"
+
+
+def get_mix_base_dir(cluster: str) -> str:
+    if cluster == "lambda":
+        return "/data/caia-mltrain/data/"
+    else:
+        return "gs://ai2-llm/"
