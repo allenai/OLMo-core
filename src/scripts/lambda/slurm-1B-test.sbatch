@@ -1,6 +1,5 @@
 #!/bin/bash
 #SBATCH --nodes=2
-#SBATCH --gpus-per-node=8
 
 USERNAME=petew
 
