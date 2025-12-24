@@ -10,7 +10,7 @@ from olmo_core.data import (
 )
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
-from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
+from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE, get_gpu_type
 from olmo_core.internal.experiment import (
     CommonComponents,
     DataComponents,
@@ -85,7 +85,12 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
     rank_microbatch_size = common.max_sequence_length
-    if common.launch is not None:
+
+    if common.cluster == "lambda":
+        gpus = {get_gpu_type(common.cluster)}
+        if all("B200" in g for g in gpus):
+            rank_microbatch_size *= 2
+    elif common.launch is not None:
         gpus = {CLUSTER_TO_GPU_TYPE.get(c, "unknown") for c in common.launch.clusters}
         if all("B200" in g for g in gpus):
             rank_microbatch_size *= 2
@@ -149,9 +154,7 @@ def build_data_components(
 def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     cancel_check_interval = 10
 
-    assert common.launch is not None
-    assert len(common.launch.clusters) == 1
-    cluster = common.launch.clusters[0]
+    cluster = common.cluster
 
     run_name = f"{common.run_name}-{datetime.now().astimezone().strftime('%Y%m%dT%H%M%S%z')}"
 
