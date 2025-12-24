@@ -64,7 +64,13 @@ node_0_only uv pip freeze
 
 # Run per-node healthchecks (fails fast on bad nodes).
 node_0_only echo "Running per-node healthchecks..."
-bash src/scripts/lambda/healthchecks.sh
+if ! ./src/scripts/lambda/healthchecks.sh; then
+    echo "Healthcheck failed on node '$(hostname)'. Consider adding it to the cordoned list by running:"
+    echo ""
+    echo "  echo $(hostname) >> /data/ai2/cordoned-nodes.txt"
+    echo ""
+    exit 1
+fi
 
 node_0_only echo "============= Setup complete ============="
 
