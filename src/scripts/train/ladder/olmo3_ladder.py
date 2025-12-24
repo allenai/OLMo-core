@@ -11,6 +11,13 @@ from olmo_core.model_ladder import *
 log = logging.getLogger(__name__)
 
 
+def get_mix_base_dir(cluster: str) -> str:
+    if cluster == "lambda":
+        return "/data/caia-mltrain/data/"
+    else:
+        return "gs://ai2-llm/"
+
+
 def configure_ladder(args: argparse.Namespace) -> ModelLadder:
     tokenizer = TokenizerConfig.dolma2()
     instance_sources: list[InstanceSourceConfig] = [
@@ -19,7 +26,7 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
                 NumpyDocumentSourceMixConfig(
                     tokenizer=tokenizer,
                     mix=DataMix.OLMo_mix_0925,
-                    mix_base_dir=get_root_dir(args.cluster),
+                    mix_base_dir=get_mix_base_dir(args.cluster),
                     # mix_base_dir="gs://ai2-llm/",  # HACK bc data isnt on weka
                 )
             ],
