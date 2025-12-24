@@ -17,7 +17,7 @@ for var in "JOB_SCRIPT" "RUN_NAME" "NODES"; do
     fi
 done
 
-# Check for requirement env vars.
+# Check for required env vars.
 if [ -z "$WANDB_API_KEY" ]; then
     echo "Error: WANDB_API_KEY environment variable is not set."
     exit 1
@@ -25,6 +25,9 @@ fi
 if [ -z "$USERNAME" ]; then
     echo "Error: USERNAME environment variable is not set (e.g. 'petew', 'tylerr')."
     exit 1
+fi
+if [ -z "$SLACK_WEBHOOK_URL" ]; then
+    echo "Warning: SLACK_WEBHOOK_URL environment variable is not set."
 fi
 # for env_var in "BEAKER_TOKEN" "WANDB_API_KEY"; do
 #     if [[ -z "${!env_var+x}" ]]; then
@@ -34,7 +37,7 @@ fi
 # done
 
 SBATCH_ARGS=(
-    --export="WANDB_API_KEY,USERNAME,HOME"
+    --export="WANDB_API_KEY,SLACK_WEBHOOK_URL,USERNAME,HOME"
     --job-name="$RUN_NAME"
     --output="/data/ai2/logs/${RUN_NAME}/%j.log"
     --nodes="$NODES"
