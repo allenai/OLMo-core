@@ -55,3 +55,10 @@ uv run src/scripts/train/ladder/2026Q1/instance_packing_ladder.py launch-all --m
 ```bash
 uv run src/scripts/train/ladder/2026Q1/gnope_ladder.py launch-all --max-size 1B --cluster ai2/jupiter --name "olmo3-gnope" --preemptible --chinchilla-multiple 8.0
 ```
+
+Note this is configured for 128 GPUs / 16 nodes:
+
+```bash
+USERNAME=tylerr
+./src/scripts/lambda/launch.sh ./src/scripts/lambda/slurm-olmo3-gnope-ladder.sbatch $USERNAME-gnope-7B 16
+```
