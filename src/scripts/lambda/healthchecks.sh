@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Temperature-based node healthchecks for Lambda/SLURM jobs.
+# Node healthchecks for Lambda/SLURM jobs.
+#
+# Checks:
+# - GPU temperature
+# - GPU idle (process + memory)
 #
 # This script is intended to be run on *every node* before training starts.
 # It will exit non-zero on failure to force the job to fail fast.
