@@ -13,11 +13,6 @@ USERNAME=petew
 # * Your (Beaker) username.
 # * All other args are passed to torchrun.
 srun --kill-on-bad-exit=1 \
-    --ntasks="$SLURM_NNODES" \
-    --ntasks-per-node=1 \
-    --gpus-per-task=8 \
-    --gpu-bind=none \
-    --cpus-per-task="${SLURM_CPUS_PER_TASK:-64}" \
     ./src/scripts/lambda/entrypoint.sh $USERNAME \
         ./src/scripts/train/OLMo2/OLMo2-1B.py train slurm-test lambda \
         --dataset.mix_base_dir=/data/caia-mltrain/data/ \
