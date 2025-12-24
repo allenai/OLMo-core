@@ -18,10 +18,11 @@ fi
 job_name=$(get_job_name "$JOB_ID")
 
 if job_completed "$JOB_ID"; then
-    log_info "Job $JOB_ID '$job_name' is no longer runnig."
+    log_info "Job $JOB_ID '$job_name' is no longer running."
     exit 0
 fi
 
+log_info "Waiting on job $JOB_ID '$job_name'..."
 while ! job_completed "$JOB_ID"; do
     sleep 5
 done
