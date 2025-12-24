@@ -23,7 +23,7 @@ from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.nn.transformer.config import TransformerBlockType
 from olmo_core.optim import CosWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import Duration, TrainerConfig
-from olmo_core.train.callbacks import CheckpointerCallback, CometCallback, WandBCallback
+from olmo_core.train.callbacks import CheckpointerCallback, WandBCallback
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
@@ -153,18 +153,12 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     assert len(common.launch.clusters) == 1
     cluster = common.launch.clusters[0]
 
-    # Would be nice to avoid having this hardcoded logic.
-    if cluster == "ai2/jupiter":
-        root_dir = "/weka/oe-training-default/ai2-llm"
-    else:
-        root_dir = "gs://ai2-llm"
-
     run_name = f"{common.run_name}-{datetime.now().astimezone().strftime('%Y%m%dT%H%M%S%z')}"
 
     return (
         TrainerConfig(
             # willm: Adapted this from 1B linear RNN runs.
-            save_folder=f"{root_dir}/checkpoints/willm/linear-rnns/{common.run_name}/",
+            save_folder=f"{common.root_dir}/checkpoints/willm/linear-rnns/{common.run_name}/",
             save_overwrite=True,
             metrics_collect_interval=50,
             cancel_check_interval=cancel_check_interval,
