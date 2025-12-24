@@ -1,8 +1,5 @@
 #!/bin/bash
 
-USERNAME=$1
-shift
-
 REPO_DIR=/data/ai2/$USERNAME/OLMo-core
 VENV_DIR=/data/ai2/uv/OLMo-core-$USERNAME
 DATA_DIR=/data/caia-mltrain/data/
@@ -27,6 +24,7 @@ echo "HOME: $HOME"
 echo "Using repo dir: $REPO_DIR"
 echo "Using venv dir: $VENV_DIR"
 echo "Using data dir: $DATA_DIR"
+echo "SLURM task ID: $SLURM_ARRAY_TASK_ID"
 
 # Change to repo directory.
 cd "$REPO_DIR" || exit 1
