@@ -5,18 +5,24 @@ git pull
 # Define the script you want to submit
 JOB_SCRIPT="${1:-src/scripts/lambda/slurm-test-job.sbatch}"
 
-# Check that BEAKER_TOKEN env var is set.
-if [ -z "$BEAKER_TOKEN" ]; then
-    echo "Error: BEAKER_TOKEN environment variable is not set."
+# Check for requirement env vars.
+if [ -z "$WANDB_API_KEY" ]; then
+    echo "Error: WANDB_API_KEY environment variable is not set."
     exit 1
 fi
+# for env_var in "BEAKER_TOKEN" "WANDB_API_KEY"; do
+#     if [[ -z "${!env_var+x}" ]]; then
+#         log_error "Required environment variable '$env_var' is empty"
+#         exit 1
+#     fi
+# done
 
 # Find an open port to use for distributed training.
 echo "Submitting job script: $JOB_SCRIPT"
 
 # Submit the job and capture the output (the Job ID).
 # The --parsable option ensures only the Job ID is returned.
-JOB_ID=$(sbatch --export=BEAKER_TOKEN --parsable "$JOB_SCRIPT")
+JOB_ID=$(sbatch --export=WANDB_API_KEY --parsable "$JOB_SCRIPT")
 
 # Check if the submission was successful (sbatch returns a non-zero exit code on failure).
 if [ $? -eq 0 ]; then

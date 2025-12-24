@@ -2,8 +2,6 @@
 
 USERNAME=$1
 shift
-WORKSPACE=$1
-shift
 
 REPO_DIR=/data/ai2/$USERNAME/OLMo-core
 VENV_DIR=/data/ai2/uv/OLMo-core-$USERNAME
@@ -18,13 +16,6 @@ function path_prepend {
   done
 }
 
-function set_env_var_from_beaker {
-    VAR_NAME=$1
-    SECRET_NAME=$2
-    SECRET_VALUE=$(beaker secret read --workspace="$WORKSPACE" "$SECRET_NAME") || exit 1
-    export "$VAR_NAME"="$SECRET_VALUE"
-}
-
 echo "============= Starting setup ============="
 
 path_prepend /data/ai2/bin/
@@ -36,8 +27,6 @@ echo "HOME: $HOME"
 echo "Using repo dir: $REPO_DIR"
 echo "Using venv dir: $VENV_DIR"
 echo "Using data dir: $DATA_DIR"
-echo "Using Beaker workspace: $WORKSPACE"
-echo "Authenticated to Beaker as $(beaker account whoami --format=json | jq -r '.[].name')"
 
 # Change to repo directory.
 cd "$REPO_DIR" || exit 1
@@ -62,8 +51,6 @@ MASTER_PORT=$((60000 + SLURM_JOB_ID % 5000))
 #     echo "Error: Master port $MASTER_PORT on $MASTER_ADDR is not available."
 #     exit 1
 # fi
-
-set_env_var_from_beaker WANDB_API_KEY "${USERNAME}_WANDB_API_KEY" || exit 1
 
 # Activate Python virtual env.
 echo "Activating Python virtual environment..."

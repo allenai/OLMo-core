@@ -20,10 +20,10 @@ Check that `/data/ai2/bin/` is in your `PATH`, and if not add it:
 export PATH="/data/ai2/bin:$PATH"
 ```
 
-Export your Beaker token to the `BEAKER_TOKEN` env variable:
+Export your Beaker token to the `WANDB_API_KEY` env variable:
 
 ```bash
-export BEAKER_TOKEN=XXXX
+export WANDB_API_KEY=XXXX
 ```
 
 ## Initial setup

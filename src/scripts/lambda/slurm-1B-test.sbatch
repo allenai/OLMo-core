@@ -6,16 +6,14 @@
 #SBATCH --output=/data/ai2/logs/%j/node_%n.log
 
 USERNAME=petew
-WORKSPACE=ai2/linear-rnns
 
 # NOTE:
 # The entrypoint script we use here will configure our training environment in the same way
 # that our Beaker launcher does, and run the command you give it with 'torchrun'.
 # It expects the following arguments:
-# * Your Beaker username.
-# * A Beaker workspace to pull env variables from.
+# * Your (Beaker) username.
 # * All other args are passed to torchrun.
-srun ./src/scripts/lambda/entrypoint.sh $USERNAME $WORKSPACE \
+srun ./src/scripts/lambda/entrypoint.sh $USERNAME \
     ./src/scripts/train/OLMo2/OLMo2-1B.py train slurm-test lambda \
     --dataset.mix_base_dir=/data/caia-mltrain/data/ \
     --dataset.mix=OLMo-mix-0925-official \
