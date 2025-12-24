@@ -17,7 +17,7 @@ srun --kill-on-bad-exit=1 ./src/scripts/lambda/entrypoint.sh \
     --dataset.mix_base_dir="gs://ai2-llm/" \
     --trainer.callbacks.lm_evaluator.eval_dataset.mix_base_dir="gs://ai2-llm/" \
     --train_module.dp_config.name=hsdp \
-    --train_module.dp_config.shard_degree=64 \
+    --train_module.dp_config.shard_degree=128 \
     --model.block.attention.backend=flash_2
 
 # Launch on 64 nodes, shard degree 128
