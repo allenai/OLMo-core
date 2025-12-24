@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
+
 set -euo pipefail
+
+# Source helper functions.
+. ./src/scripts/lambda/utils.sh
 
 # Node healthchecks for Lambda/SLURM jobs.
 #
@@ -14,24 +18,11 @@ set -euo pipefail
 #   export OLMO_SKIP_HEALTHCHECKS=1
 
 if [[ "${OLMO_SKIP_HEALTHCHECKS:-0}" == "1" ]]; then
-  echo "[healthchecks][$(hostname)][node=${SLURM_NODEID:-?}] SKIP (OLMO_SKIP_HEALTHCHECKS=1)"
+  log_info "SKIP (OLMO_SKIP_HEALTHCHECKS=1)"
   exit 0
 fi
 
-log() {
-  echo "[healthchecks][$(hostname)][node=${SLURM_NODEID:-?}] $*"
-}
-
-die() {
-  echo "[healthchecks][$(hostname)][node=${SLURM_NODEID:-?}][ERROR] $*" 1>&2
-  exit 1
-}
-
-have_cmd() {
-  command -v "$1" >/dev/null 2>&1
-}
-
-log "Starting GPU temperature healthcheck..."
+log_info "Starting GPU temperature healthcheck..."
 
 # Check for unusually hot GPUs (can indicate stuck workloads or cooling issues).
 # Defaults are conservative to avoid false positives.
@@ -75,14 +66,14 @@ if [[ "${OLMO_SKIP_GPU_TEMP_CHECK:-0}" != "1" ]]; then
       die "GPU ${idx} temperature is ${temp}C (>= ${fail_c}C fail threshold) on node $(hostname)"
     fi
     if [[ "$temp" -ge "$warn_c" ]]; then
-      log "WARNING: GPU ${idx} temperature is ${temp}C (>= ${warn_c}C warn threshold) on node $(hostname)"
+      log_warning "GPU ${idx} temperature is ${temp}C (>= ${warn_c}C warn threshold) on node $(hostname)"
     fi
   done <<<"$temps"
 
   [[ "$hottest" -ge 0 ]] || die "No GPU temperatures returned by nvidia-smi"
-  log "GPU temperature check complete; hottest GPU=${hottest_idx} at ${hottest}C (warn=${warn_c}C fail=${fail_c}C)"
+  log_info "GPU temperature check complete; hottest GPU=${hottest_idx} at ${hottest}C (warn=${warn_c}C fail=${fail_c}C)"
 else
-  log "Skipping GPU temperature check (OLMO_SKIP_GPU_TEMP_CHECK=1)"
+  log_info "Skipping GPU temperature check (OLMO_SKIP_GPU_TEMP_CHECK=1)"
 fi
 
 # Ensure GPUs are idle: no compute processes, and low/empty memory usage.
@@ -92,7 +83,7 @@ fi
 #   OLMO_GPU_MEM_WARN_MIB=200       -> warn at/above this memory.used (MiB)
 #   OLMO_GPU_MEM_FAIL_MIB=500       -> fail at/above this memory.used (MiB)
 #   OLMO_GPU_PROC_ALLOW_REGEX='...' -> allow listed compute process_name(s) (bash regex)
-log "Starting GPU idle (process + memory) healthcheck..."
+log_info "Starting GPU idle (process + memory) healthcheck..."
 if [[ "${OLMO_SKIP_GPU_IDLE_CHECK:-0}" != "1" ]]; then
   have_cmd nvidia-smi || die "nvidia-smi not found in PATH; required for GPU idle check"
 
@@ -120,7 +111,7 @@ if [[ "${OLMO_SKIP_GPU_IDLE_CHECK:-0}" != "1" ]]; then
       die "GPU ${idx} memory.used is ${mem_used}MiB (>= ${mem_fail_mib}MiB fail threshold) on node $(hostname)"
     fi
     if [[ "$mem_used" -ge "$mem_warn_mib" ]]; then
-      log "WARNING: GPU ${idx} memory.used is ${mem_used}MiB (>= ${mem_warn_mib}MiB warn threshold) on node $(hostname)"
+      log_warning "GPU ${idx} memory.used is ${mem_used}MiB (>= ${mem_warn_mib}MiB warn threshold) on node $(hostname)"
     fi
   done <<<"$mems"
 
@@ -134,20 +125,20 @@ if [[ "${OLMO_SKIP_GPU_IDLE_CHECK:-0}" != "1" ]]; then
       used_mem="$(echo "${used_mem:-}" | tr -d '[:space:]')"
 
       if [[ -n "$proc_allow_re" ]] && [[ "$pname" =~ $proc_allow_re ]]; then
-        log "Allowed GPU compute process found (matches OLMO_GPU_PROC_ALLOW_REGEX): gpu_uuid=${gpu_uuid} pid=${pid} name='${pname}' used_memory=${used_mem}MiB"
+        log_info "Allowed GPU compute process found (matches OLMO_GPU_PROC_ALLOW_REGEX): gpu_uuid=${gpu_uuid} pid=${pid} name='${pname}' used_memory=${used_mem}MiB"
         continue
       fi
 
-      log "ERROR: Unexpected GPU compute process found: gpu_uuid=${gpu_uuid} pid=${pid} name='${pname}' used_memory=${used_mem}MiB"
+      log_error "Unexpected GPU compute process found: gpu_uuid=${gpu_uuid} pid=${pid} name='${pname}' used_memory=${used_mem}MiB"
       bad=1
     done <<<"$procs"
 
     [[ "$bad" == "0" ]] || die "Found running GPU compute processes; GPUs are not idle"
   else
-    log "No running GPU compute processes found."
+    log_info "No running GPU compute processes found."
   fi
 else
-  log "Skipping GPU idle check (OLMO_SKIP_GPU_IDLE_CHECK=1)"
+  log_info "Skipping GPU idle check (OLMO_SKIP_GPU_IDLE_CHECK=1)"
 fi
 
-log "Healthcheck passed."
+log_info "Healthcheck passed."
