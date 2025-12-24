@@ -68,10 +68,10 @@ if [[ "${OLMO_SKIP_GPU_TEMP_CHECK:-0}" != "1" ]]; then
       hottest_idx="$idx"
     fi
     if [[ "$temp" -ge "$fail_c" ]]; then
-      die "GPU ${idx} temperature is ${temp}C (>= ${fail_c}C fail threshold) on node ${SLURM_NODEID:-?}"
+      die "GPU ${idx} temperature is ${temp}C (>= ${fail_c}C fail threshold) on node $(hostname)"
     fi
     if [[ "$temp" -ge "$warn_c" ]]; then
-      log "WARNING: GPU ${idx} temperature is ${temp}C (>= ${warn_c}C warn threshold) on node ${SLURM_NODEID:-?}"
+      log "WARNING: GPU ${idx} temperature is ${temp}C (>= ${warn_c}C warn threshold) on node $(hostname)"
     fi
   done <<<"$temps"
 
@@ -79,6 +79,71 @@ if [[ "${OLMO_SKIP_GPU_TEMP_CHECK:-0}" != "1" ]]; then
   log "GPU temperature check complete; hottest GPU=${hottest_idx} at ${hottest}C (warn=${warn_c}C fail=${fail_c}C)"
 else
   log "Skipping GPU temperature check (OLMO_SKIP_GPU_TEMP_CHECK=1)"
+fi
+
+# Ensure GPUs are idle: no compute processes, and low/empty memory usage.
+#
+# Controls:
+#   OLMO_SKIP_GPU_IDLE_CHECK=1      -> skip this check entirely
+#   OLMO_GPU_MEM_WARN_MIB=200       -> warn at/above this memory.used (MiB)
+#   OLMO_GPU_MEM_FAIL_MIB=500       -> fail at/above this memory.used (MiB)
+#   OLMO_GPU_PROC_ALLOW_REGEX='...' -> allow listed compute process_name(s) (bash regex)
+log "Starting GPU idle (process + memory) healthcheck..."
+if [[ "${OLMO_SKIP_GPU_IDLE_CHECK:-0}" != "1" ]]; then
+  have_cmd nvidia-smi || die "nvidia-smi not found in PATH; required for GPU idle check"
+
+  mem_warn_mib="${OLMO_GPU_MEM_WARN_MIB:-200}"
+  mem_fail_mib="${OLMO_GPU_MEM_FAIL_MIB:-500}"
+  proc_allow_re="${OLMO_GPU_PROC_ALLOW_REGEX:-}"
+
+  if [[ ! "$mem_warn_mib" =~ ^[0-9]+$ ]] || [[ ! "$mem_fail_mib" =~ ^[0-9]+$ ]]; then
+    die "Invalid memory thresholds: OLMO_GPU_MEM_WARN_MIB='${mem_warn_mib}', OLMO_GPU_MEM_FAIL_MIB='${mem_fail_mib}' (expected integers in MiB)"
+  fi
+  if [[ "$mem_fail_mib" -lt "$mem_warn_mib" ]]; then
+    die "Invalid memory thresholds: fail (${mem_fail_mib}MiB) < warn (${mem_warn_mib}MiB)"
+  fi
+
+  mems="$(nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits 2>/dev/null || true)"
+  [[ -n "$mems" ]] || die "Unable to query GPU memory usage via nvidia-smi"
+
+  while IFS=, read -r idx mem_used; do
+    idx="$(echo "${idx:-}" | tr -d '[:space:]')"
+    mem_used="$(echo "${mem_used:-}" | tr -d '[:space:]')"
+    if [[ ! "$mem_used" =~ ^[0-9]+$ ]]; then
+      die "Could not parse memory.used for GPU ${idx}: '${mem_used}'"
+    fi
+    if [[ "$mem_used" -ge "$mem_fail_mib" ]]; then
+      die "GPU ${idx} memory.used is ${mem_used}MiB (>= ${mem_fail_mib}MiB fail threshold) on node $(hostname)"
+    fi
+    if [[ "$mem_used" -ge "$mem_warn_mib" ]]; then
+      log "WARNING: GPU ${idx} memory.used is ${mem_used}MiB (>= ${mem_warn_mib}MiB warn threshold) on node $(hostname)"
+    fi
+  done <<<"$mems"
+
+  procs="$(nvidia-smi --query-compute-apps=gpu_uuid,pid,process_name,used_memory --format=csv,noheader,nounits 2>/dev/null || true)"
+  if [[ -n "$procs" ]]; then
+    bad=0
+    while IFS=, read -r gpu_uuid pid pname used_mem; do
+      gpu_uuid="$(echo "${gpu_uuid:-}" | tr -d '[:space:]')"
+      pid="$(echo "${pid:-}" | tr -d '[:space:]')"
+      pname="$(echo "${pname:-}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+      used_mem="$(echo "${used_mem:-}" | tr -d '[:space:]')"
+
+      if [[ -n "$proc_allow_re" ]] && [[ "$pname" =~ $proc_allow_re ]]; then
+        log "Allowed GPU compute process found (matches OLMO_GPU_PROC_ALLOW_REGEX): gpu_uuid=${gpu_uuid} pid=${pid} name='${pname}' used_memory=${used_mem}MiB"
+        continue
+      fi
+
+      log "ERROR: Unexpected GPU compute process found: gpu_uuid=${gpu_uuid} pid=${pid} name='${pname}' used_memory=${used_mem}MiB"
+      bad=1
+    done <<<"$procs"
+
+    [[ "$bad" == "0" ]] || die "Found running GPU compute processes; GPUs are not idle"
+  else
+    log "No running GPU compute processes found."
+  fi
+else
+  log "Skipping GPU idle check (OLMO_SKIP_GPU_IDLE_CHECK=1)"
 fi
 
 log "Healthcheck passed."
