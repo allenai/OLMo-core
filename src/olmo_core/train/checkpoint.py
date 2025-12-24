@@ -136,6 +136,7 @@ class Checkpointer:
             torch.cuda.synchronize()
         dir = normalize_path(dir)
 
+        barrier()
         with self._temporary_wd(dir) as wd:
             # Save trainer state.
             self._save_train_state(dir, wd, train_state)
@@ -342,7 +343,11 @@ class Checkpointer:
         # NOTE: if 'dir' is a URL, the 'wd' will be a different temp dir for each rank.
         if is_url(dir) or get_fs_local_rank() == 0:
             train_dir.mkdir(exist_ok=True, parents=True)
-        wait_for(train_dir.exists, description=f"Waiting for '{train_dir}' to be created...")
+        wait_for(
+            train_dir.exists,
+            description=f"Waiting for '{train_dir}' to be created...",
+            timeout=30.0,
+        )
         torch.save(train_state, train_dir / f"rank{get_rank()}.pt")
 
     def _save_metadata(self, dir: PathOrStr, metadata: CheckpointMetadata):
