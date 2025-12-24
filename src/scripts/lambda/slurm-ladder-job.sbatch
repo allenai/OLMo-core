@@ -11,5 +11,5 @@ srun --kill-on-bad-exit=1 ./src/scripts/lambda/entrypoint.sh \
     --name=olmo3-baseline-ladder-test \
     --cluster=lambda \
     --max-gpus=64 \
-    --chinchilla_multiple=8.0 \
+    --chinchilla-multiple=8.0 \
     --size=370M
