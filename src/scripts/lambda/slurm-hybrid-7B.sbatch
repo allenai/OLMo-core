@@ -15,6 +15,7 @@ srun --kill-on-bad-exit=1 ./src/scripts/lambda/entrypoint.sh \
     ./src/scripts/train/linear-rnns/OLMo3.1-7B-hybrid.py train OLMo3.1-7B-6T-30h lambda \
     --launch=null \
     --dataset.mix_base_dir="gs://ai2-llm/" \
+    --trainer.callbacks.lm_evaluator.eval_dataset.mix_base_dir="gs://ai2-llm/" \
     --train_module.dp_config.name=hsdp \
     --train_module.dp_config.shard_degree=64 \
     --model.block.attention.backend=flash_2
