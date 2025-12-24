@@ -4,7 +4,7 @@ Utilities for training in Float8 via `torchao <https://github.com/pytorch/ao>`_.
 
 import logging
 from dataclasses import dataclass
-from typing import Optional, Set
+from typing import List, Optional, Set
 
 import torch.nn as nn
 from torchao.utils import torch
@@ -35,7 +35,7 @@ class Float8Config(Config):
     ao_recipe: Optional[AOFloat8LinearRecipe] = None
     ao_mx: Optional[AOMXLinearConfig] = None
 
-    modules_to_ignore: Optional[Set[str]] = None
+    modules_to_ignore: Optional[List[str]] = None
     """A set of fully-qualified module names to ignore for Float8 conversion."""
 
     enabled: bool = True
