@@ -34,7 +34,7 @@ echo "Submitting job script: $JOB_SCRIPT"
 
 # Submit the job and capture the output (the Job ID).
 # The --parsable option ensures only the Job ID is returned.
-JOB_ID=$(sbatch --export=WANDB_API_KEY --output="/data/ai2/logs/${RUN_NAME}/%A/node_%a.log" --array="0-$((NODES-1))" --nodes="$NODES" --gpus-per-node=8 --parsable "$JOB_SCRIPT")
+JOB_ID=$(sbatch --export=WANDB_API_KEY --output="/data/ai2/logs/${RUN_NAME}/%j.log" --nodes="$NODES" --gpus-per-node=8 --ntasks-per-node=1 --parsable "$JOB_SCRIPT")
 
 # Check if the submission was successful (sbatch returns a non-zero exit code on failure).
 if [ $? -eq 0 ]; then
@@ -51,7 +51,7 @@ while squeue -j "$JOB_ID" | grep " PD " > /dev/null; do
 done
 
 # Loop until the log file is created.
-LOG_FILE="/data/ai2/logs/$RUN_NAME/$JOB_ID/node_0.log"
+LOG_FILE="/data/ai2/logs/$RUN_NAME/$JOB_ID.log"
 echo "Waiting on log file at $LOG_FILE..."
 while [ ! -f "$LOG_FILE" ]; do
     sleep 1
