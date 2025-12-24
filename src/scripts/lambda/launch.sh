@@ -62,12 +62,27 @@ fi
 #     fi
 # done
 
+SBATCH_ARGS=(
+    --job-name="$RUN_NAME"
+    --export="WANDB_API_KEY,USERNAME"
+    --output="/data/ai2/logs/${RUN_NAME}/%j.log"
+    --nodes="$NODES"
+    --gpus-per-node=8
+    --ntasks-per-node=1
+    --parsable
+)
+
+if [ -f "/data/ai2/cordoned-nodes.txt" ]; then
+    cordoned_nodes=$(tr '\n' ',' < /data/ai2/cordoned-nodes.txt | sed 's/,$//')
+    echo "Cordoned nodes detected: $cordoned_nodes"
+    SBATCH_ARGS+=(--exclude="$cordoned_nodes")
+fi
+
 # Find an open port to use for distributed training.
 echo "Submitting job script: $JOB_SCRIPT"
 
 # Submit the job and capture the output (the Job ID).
-# The --parsable option ensures only the Job ID is returned.
-JOB_ID=$(sbatch --job-name="$RUN_NAME" --export=WANDB_API_KEY,USERNAME --output="/data/ai2/logs/${RUN_NAME}/%j.log" --nodes="$NODES" --gpus-per-node=8 --ntasks-per-node=1 --parsable "$JOB_SCRIPT")
+JOB_ID=$(sbatch "${SBATCH_ARGS[@]}" "$JOB_SCRIPT")
 
 # Check if the submission was successful (sbatch returns a non-zero exit code on failure).
 if [ $? -eq 0 ]; then
