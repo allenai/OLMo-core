@@ -89,6 +89,8 @@ def get_root_dir(cluster: str) -> str:
         return "gs://ai2-llm"
     elif "local" in cluster:
         return "gs://ai2-llm"
+    elif cluster == "lambda":
+        return "/data/ai2/"
     raise OLMoConfigurationError(f"Unknown cluster: {cluster}")
 
 
@@ -269,6 +271,8 @@ def get_gpu_type(cluster: str) -> str:
         return CLUSTER_TO_GPU_TYPE[cluster]
     elif cluster == "local":
         return torch.get_default_device().type
+    elif cluster == "lambda":
+        return "NVIDIA B200"
     else:
         log.warning(f"Missing cluster '{cluster}' in CLUSTER_TO_GPU_TYPE mapping")
         beaker = get_beaker_client()
