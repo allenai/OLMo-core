@@ -424,7 +424,9 @@ class Checkpointer:
             # realized in the file systems of the other ranks.
             # So we wait here across all ranks until that final checkpoint directory is visible.
             wait_for(
-                lambda: Path(dir).exists(), f"Waiting for checkpoint directory {dir}", timeout=10.0
+                lambda: Path(dir).exists(),
+                f"waiting for checkpoint directory '{dir}' from rank {get_rank()}",
+                timeout=10.0,
             )
         else:
             # NOTE: When dir is a URL, each rank will have its own tmp dir so synchronizing with a
