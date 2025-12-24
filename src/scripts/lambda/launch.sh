@@ -74,7 +74,7 @@ on_exit() {
     log_warning "Caught interrupt signal. Checking job status..."
     local exit_code=0
     if ! job_completed "$JOB_ID"; then
-        # Job has completed.
+        log_info "Job $JOB_ID may still be running."
         echo "You can check the job status with:"
         echo "  squeue -j $JOB_ID"
         echo ""
