@@ -10,6 +10,6 @@ srun --kill-on-bad-exit=1 ./src/scripts/lambda/entrypoint.sh \
     ./src/scripts/train/ladder/olmo3_ladder.py run \
     --name=olmo3-baseline-ladder-test \
     --cluster=lambda \
-    --max-gpus=64 \
+    --max-gpus=8 \
     --chinchilla-multiple=8.0 \
     --size=370M
