@@ -69,26 +69,8 @@ else
     exit 1
 fi
 
-# Loop until the job status is no longer PENDING (PD).
-log_info "Waiting for job to start..."
-while job_pending "$JOB_ID"; do
-    sleep 2
-done
-
-# Loop until the log file is created.
-LOG_FILE="/data/ai2/logs/$RUN_NAME/$JOB_ID.log"
-log_info "Waiting on log file at $LOG_FILE..."
-while [ ! -f "$LOG_FILE" ]; do
-    sleep 2
-    if job_completed "$JOB_ID"; then
-        log_error "Job $JOB_ID stopped before log file was created."
-        exit 1
-    fi
-done
-
 # On keyboard interrupt, print some useful information before exiting.
-control_c() {
-    log_warning "Caught keyboard interrupt!"
+on_exit() {
     if ! job_completed "$JOB_ID"; then
         # Job has completed.
         echo "You can check the job status with:"
@@ -102,13 +84,31 @@ control_c() {
     else
         log_warning "Job $JOB_ID may have failed."
     fi
+    echo ""
     echo "The main log file is located at '$LOG_FILE'. Use this command to grep through it:"
     echo "  cat $LOG_FILE | less -R"
     echo ""
     exit 1
 }
 
-trap control_c SIGINT
+trap on_exit SIGINT
+
+# Loop until the job status is no longer PENDING (PD).
+log_info "Waiting for job to start..."
+while job_pending "$JOB_ID"; do
+    sleep 2
+done
+
+# Loop until the log file is created.
+LOG_FILE="/data/ai2/logs/$RUN_NAME/$JOB_ID.log"
+log_info "Waiting on log file at $LOG_FILE..."
+while [ ! -f "$LOG_FILE" ]; do
+    if job_completed "$JOB_ID"; then
+        log_error "Job $JOB_ID ended before log file was created."
+        exit 1
+    fi
+    sleep 2
+done
 
 # Stream the log file from the first task.
 tail -n +1 -f "$LOG_FILE"
