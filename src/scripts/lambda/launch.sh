@@ -35,6 +35,7 @@ fi
 
 SBATCH_ARGS=(
     --export="WANDB_API_KEY,USERNAME"
+    --job-name="$RUN_NAME"
     --output="/data/ai2/logs/${RUN_NAME}/%j.log"
     --nodes="$NODES"
     --gpus-per-node=8
