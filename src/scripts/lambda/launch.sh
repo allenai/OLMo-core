@@ -43,6 +43,7 @@ SBATCH_ARGS=(
     --gpus-per-node=8
     --ntasks-per-node=1
     --parsable
+    --propagate=NOFILE
 )
 
 if [ -f "/data/ai2/cordoned-nodes.txt" ]; then
@@ -53,6 +54,9 @@ fi
 
 # Find an open port to use for distributed training.
 log_info "Submitting job script: $JOB_SCRIPT"
+
+# Increase ulimit for open files. This will propagate to the slurm job due to '--propagate=NOFILE' flag.
+ulimit -n unlimited
 
 # Submit the job and capture the output (the Job ID).
 # The --parsable option ensures only the Job ID is returned.
