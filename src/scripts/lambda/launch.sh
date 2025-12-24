@@ -56,7 +56,8 @@ fi
 log_info "Submitting job script: $JOB_SCRIPT"
 
 # Increase ulimit for open files. This will propagate to the slurm job due to '--propagate=NOFILE' flag.
-ulimit -n unlimited
+# ulimit -n unlimited
+sudo prlimit --pid=$$ --nofile=65000
 
 # Submit the job and capture the output (the Job ID).
 # The --parsable option ensures only the Job ID is returned.
