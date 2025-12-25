@@ -72,3 +72,9 @@ This will print out the job ID, wait for it to start, and then stream the logs.
 
 Copy the test sbatch script `slurm-test-job.sbatch` and modifying to your needs.
 Then launch it with the `./src/scripts/lambda/launch.sh` script in the same way as we did in the previous section.
+
+## Running a job with retries
+
+For long training jobs that should be automatically resubmitted after failures, use the `launch_with_retries.sh` script
+instead of `launch.sh`. It takes the same arguments but will continually resubmit the job until it completes successfully,
+and send Slack notifications on failures if the `SLACK_WEBHOOK_URL` environment variable is set.
