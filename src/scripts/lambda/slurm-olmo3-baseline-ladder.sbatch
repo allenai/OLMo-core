@@ -12,4 +12,4 @@ srun --kill-on-bad-exit=1 ./src/scripts/lambda/entrypoint.sh \
     --cluster=lambda \
     --max-gpus=128 \
     --chinchilla-multiple=8.0 \
-    --size=370M
+    --size=7B
