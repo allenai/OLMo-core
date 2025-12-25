@@ -35,20 +35,22 @@ fi
 SBATCH_ARGS=(
     --export="WANDB_API_KEY,USERNAME,HOME"
     --job-name="$RUN_NAME"
-    --output="/data/ai2/logs/${RUN_NAME}/%j.log"
+    --output="${LOGS_DIR}/${RUN_NAME}/%j.log"
     --nodes="$NODES"
     --gpus-per-node=8
     --ntasks-per-node=1
     --parsable
 )
 
-if [ -f "/data/ai2/cordoned-nodes.txt" ]; then
-    cordoned_nodes=$(grep -v '^#' /data/ai2/cordoned-nodes.txt | tr '\n' ',' | sed 's/,$//')
+if [ -f "$CORDONED_NODES_FILE" ]; then
+    cordoned_nodes=$(grep -v '^#' "$CORDONED_NODES_FILE" | tr '\n' ',' | sed 's/,$//')
     formatted_cordoned_nodes=$(echo "$cordoned_nodes" | tr ',' '\n' | sed 's/^/ • /')
     cordoned_nodes_count=$(echo "$formatted_cordoned_nodes" | wc -l)
     log_warning "$cordoned_nodes_count cordoned nodes detected:"
     echo "$formatted_cordoned_nodes"
     SBATCH_ARGS+=(--exclude="$cordoned_nodes")
+else
+    log_warning "No cordoned nodes file found at '$CORDONED_NODES_FILE'."
 fi
 
 # Find an open port to use for distributed training.
@@ -66,8 +68,10 @@ else
     exit 1
 fi
 
+LOG_FILE="${LOGS_DIR}/${RUN_NAME}/${JOB_ID}.log"
+
 # On keyboard interrupt, print some useful information before exiting.
-on_exit() {
+on_interrupt() {
     log_warning "Caught interrupt signal. Checking job status..."
     local exit_code=0
     if ! job_completed "$JOB_ID"; then
@@ -91,7 +95,7 @@ on_exit() {
     exit $exit_code
 }
 
-trap on_exit SIGINT
+trap on_interrupt SIGINT
 
 # Loop until the job status is no longer PENDING (PD).
 log_info "Waiting for job to start..."
@@ -100,7 +104,6 @@ while job_pending "$JOB_ID"; do
 done
 
 # Loop until the log file is created.
-LOG_FILE="/data/ai2/logs/$RUN_NAME/$JOB_ID.log"
 log_info "Waiting on log file at $LOG_FILE..."
 while [ ! -f "$LOG_FILE" ]; do
     if job_completed "$JOB_ID" && ! job_succeeded "$JOB_ID"; then

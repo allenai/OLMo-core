@@ -1,5 +1,19 @@
 #!/bin/bash
 
+export CORDONED_NODES_FILE=/data/ai2/cordoned-nodes.txt
+export LOGS_DIR=/data/ai2/logs
+
+function path_prepend {
+  for ((i=$#; i>0; i--)); do
+      ARG=${!i}
+      if [[ -d "$ARG" ]] && [[ ":$PATH:" != *":$ARG:"* ]]; then
+          export PATH="$ARG${PATH:+":$PATH"}"
+      fi
+  done
+}
+
+path_prepend /data/ai2/bin/
+
 function log_debug {
     local script_name
     script_name=$(basename "$0")
@@ -31,15 +45,6 @@ function die {
 
 function have_cmd {
   command -v "$1" >/dev/null 2>&1
-}
-
-function path_prepend {
-  for ((i=$#; i>0; i--)); do
-      ARG=${!i}
-      if [[ -d "$ARG" ]] && [[ ":$PATH:" != *":$ARG:"* ]]; then
-          export PATH="$ARG${PATH:+":$PATH"}"
-      fi
-  done
 }
 
 function node_0_only {
@@ -117,5 +122,3 @@ function post_to_slack {
     curl -X POST -H 'Content-type: application/json' --data "{\"text\":$encoded_text}" "$SLACK_WEBHOOK_URL" || return 1
     return 0
 }
-
-path_prepend /data/ai2/bin/
