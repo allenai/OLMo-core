@@ -106,4 +106,16 @@ function job_succeeded {
     fi
 }
 
+function post_to_slack {
+    if [ -z "$SLACK_WEBHOOK_URL" ]; then
+        log_error "SLACK_WEBHOOK_URL is not set."
+        return 1
+    fi
+
+    local encoded_text
+    encoded_text=$(printf '%s' "$1" | jq -sR .)
+    curl -X POST -H 'Content-type: application/json' --data "{\"text\":$encoded_text}" "$SLACK_WEBHOOK_URL" || return 1
+    return 0
+}
+
 path_prepend /data/ai2/bin/

@@ -32,6 +32,6 @@ if job_succeeded "$JOB_ID"; then
     exit 0
 else
     log_error "Job $JOB_ID '$job_name' failed."
-    curl -X POST -H 'Content-type: application/json' --data "{\"text\":\"Slurm job $JOB_ID '$job_name' failed!\"}" "$SLACK_WEBHOOK_URL"
+    post_to_slack "Slurm job $JOB_ID '$job_name' failed!"
     exit 1
 fi
