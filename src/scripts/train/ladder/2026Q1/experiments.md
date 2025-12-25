@@ -14,6 +14,10 @@ uv run src/scripts/train/ladder/olmo3_ladder.py status --max-size 1B --cluster a
 uv run src/scripts/train/ladder/olmo3_ladder.py metrics --size 1B --cluster ai2/titan --name "olmo3-baseline-ladder" --chinchilla-multiple 8.0
 ```
 
+```bash
+./src/scripts/lambda/launch.sh ./src/scripts/lambda/slurm-olmo3-baseline-ladder.sbatch $USERNAME-olmo3-baseline-7B 16
+```
+
 ## mxfp8
 
 ### all linear layers (except lm_head)
