@@ -17,6 +17,8 @@ fi
 
 job_name=$(get_job_name "$JOB_ID")
 
+curl -X POST -H 'Content-type: application/json' --data "{\"text\":\"Slurm job $JOB_ID '$job_name' failed! Just kidding this is a test.\"}" "$SLACK_WEBHOOK_URL"
+
 if job_completed "$JOB_ID"; then
     log_info "Job $JOB_ID '$job_name' is no longer running."
     exit 0
@@ -32,5 +34,6 @@ if job_succeeded "$JOB_ID"; then
     exit 0
 else
     log_error "Job $JOB_ID '$job_name' failed."
+    curl -X POST -H 'Content-type: application/json' --data "{\"text\":\"Slurm job $JOB_ID '$job_name' failed!\"}" "$SLACK_WEBHOOK_URL"
     exit 1
 fi
