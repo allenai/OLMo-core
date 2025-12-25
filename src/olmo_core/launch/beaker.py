@@ -324,6 +324,47 @@ class BeakerLaunchConfig(Config):
     If the job doesn't start in time a timeout error will be raised.
     """
 
+    nsys_profile: bool = False
+    """
+    If ``True``, insert ``nsys profile`` between torchrun and the application for NVIDIA Nsight Systems profiling.
+    This requires nsys to be installed.
+
+    For multi-node applications, the command structure is:
+    ``torchrun [torchrun options] nsys profile [nsys options] application``
+
+    Each node runs this command independently, and nsys automatically creates per-rank output files.
+    For multi-node, output files will include node rank information in the filename.
+
+    See https://docs.nvidia.com/nsight-systems/UserGuide/index.html#handling-application-launchers-mpirun-deepspeed-etc
+    for details.
+    """
+
+    nsys_profile_output: Optional[str] = None
+    """
+    Output path for nsys profile traces. If ``None``, defaults to ``nsys_profile_rank{RANK}``.
+    This will be set per-rank automatically. Only used when ``nsys_profile=True``.
+
+    Note: If you want traces to be automatically persisted via ``NvidiaProfilerCallback.persist_nsys_traces``,
+    ensure the output path is relative (not absolute) so traces are saved in the work directory.
+    """
+
+    nsys_profile_options: List[str] = field(
+        default_factory=lambda: [
+            "-w=true",
+            "-t=cuda,nvtx,osrt,cudnn,cublas",
+            "-s=cpu",
+            "--cudabacktrace=true",
+            "--cudabacktrace-threshold=10000",  # nanoseconds
+            "--capture-range=cudaProfilerApi",
+            "--stop-on-range-end=true",
+            "-x=true",
+        ]
+    )
+    """
+    Additional options to pass to ``nsys profile``. Defaults to profiling from cudaProfilerStart/Stop
+    and tracing CUDA, NVTX, OSRT, CUDNN, and CUBLAS events. Only used when ``nsys_profile=True``.
+    """
+
     # NOTE: don't assign a type here because omegaconf can't validate arbitrary classes
     #  _beaker: Optional[Beaker] = None
     _beaker = None
@@ -392,6 +433,37 @@ class BeakerLaunchConfig(Config):
 
         return torchrun
 
+    def _get_nsys_profile_cmd(self) -> List[str]:
+        """
+        Get the nsys profile command to insert between torchrun and the application.
+        Returns empty list if nsys_profile is False.
+        """
+        if not self.nsys_profile:
+            return []
+
+        nsys_cmd = ["nsys", "profile"]
+
+        # Add nsys options
+        nsys_cmd.extend(self.nsys_profile_options)
+
+        # Set output path
+        # For multi-node: include node rank in path; nsys will append local rank automatically
+        # For single-node: nsys will append local rank automatically
+        if self.nsys_profile_output:
+            output_path = self.nsys_profile_output
+        else:
+            # Default output path - nsys will append rank-specific suffixes automatically
+            # For multi-node, we can use environment variable to include node rank
+            if self.num_nodes > 1:
+                # Use environment variable substitution to include node rank
+                output_path = "nsys_profile_node${BEAKER_REPLICA_RANK}"
+            else:
+                output_path = "nsys_profile"
+
+        nsys_cmd.extend(["--output", output_path])
+
+        return nsys_cmd
+
     def _create_script_dataset(self, script_name: str, script: List[str]) -> Dataset:
         workspace_id = self.beaker.workspace.get(self.workspace).id
 
@@ -450,6 +522,13 @@ class BeakerLaunchConfig(Config):
             else:
                 torchrun = self.num_gpus > 1
 
+        # Validate nsys_profile usage
+        if self.nsys_profile and not torchrun:
+            raise OLMoConfigurationError(
+                "nsys_profile=True requires torchrun to be enabled. "
+                "nsys profile must wrap the torchrun command."
+            )
+
         if self.git is None:
             raise OLMoConfigurationError(
                 f"{self.__class__.__name__}.git field is required!\n"
@@ -489,7 +568,19 @@ class BeakerLaunchConfig(Config):
                     ")"
                 )
                 entrypoint_script.append("export BEAKER_REPLICA_RANK=$BEAKER_REPLICA_RANK")
-            entrypoint_script.append("exec " + " ".join(self._get_torchrun_cmd()) + ' "$@"')
+
+            # Build command: torchrun [options] nsys profile [options] application
+            # Pattern per NVIDIA docs: launcher comes first, then nsys profile, then application
+            torchrun_cmd = self._get_torchrun_cmd()
+            nsys_cmd = self._get_nsys_profile_cmd()
+
+            if nsys_cmd:
+                # Insert nsys profile between torchrun and application
+                cmd_parts = torchrun_cmd + nsys_cmd
+                entrypoint_script.append("exec " + " ".join(cmd_parts) + ' "$@"')
+            else:
+                # No nsys profiling, just torchrun
+                entrypoint_script.append("exec " + " ".join(torchrun_cmd) + ' "$@"')
         elif entrypoint:
             entrypoint_script.append(f'{entrypoint} "$@"')
         elif self.cmd and os.path.isfile(self.cmd[0]) and self.cmd[0].endswith(".py"):
@@ -954,6 +1045,28 @@ def _parse_args():
         help="""If the command should be run via torchrun. This will default to true when '--gpus' is greater than 1.""",
     )
     parser.add_argument(
+        "--nsys-profile",
+        action="store_true",
+        help="""Wrap torchrun with nsys profile for NVIDIA Nsight Systems profiling.
+        Requires nsys to be installed in the container image. See
+        https://docs.nvidia.com/nsight-systems/UserGuide/index.html#torchrun-pytorch for details.""",
+    )
+    parser.add_argument(
+        "--nsys-profile-output",
+        type=str,
+        default=None,
+        help="""Output path prefix for nsys profile traces. If not specified, defaults to 'nsys_profile_rank{RANK}'.
+        nsys will automatically append rank-specific suffixes. Only used when --nsys-profile is set.""",
+    )
+    parser.add_argument(
+        "--nsys-profile-options",
+        type=str,
+        nargs="*",
+        default=None,
+        help="""Additional options to pass to nsys profile. Defaults to comprehensive profiling options.
+        Only used when --nsys-profile is set. Example: --nsys-profile-options '--trace=cuda,nvtx,cudnn' '--force-overwrite=true'""",
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="""Set debugging env vars, like 'CUDA_LAUNCH_BLOCKING=1'.""",
@@ -1005,6 +1118,8 @@ def _build_config(opts: argparse.Namespace, command: List[str]) -> BeakerLaunchC
             raise ValueError(f"Invalid env secret '{e}', must be in the form NAME=SECRET_NAME")
         name, secret = e.split("=", 1)
         env_secrets.append(BeakerEnvSecret(name=name, secret=secret))
+    nsys_options = opts.nsys_options or ["--profile-from-start=off", "--trace=cuda,nvtx"]
+
     return BeakerLaunchConfig(
         name=f"{opts.name}-{generate_uuid()[:8]}",
         budget=opts.budget,
@@ -1025,6 +1140,7 @@ def _build_config(opts: argparse.Namespace, command: List[str]) -> BeakerLaunchC
         weka_buckets=[
             BeakerWekaBucket(bucket=bucket, mount=f"/weka/{bucket}") for bucket in (opts.weka or [])
         ],
+        nsys_profile=opts.nsys_profile,
     )
 
 
