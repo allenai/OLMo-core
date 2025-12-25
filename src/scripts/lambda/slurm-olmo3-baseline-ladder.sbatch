@@ -8,8 +8,8 @@
 # * All other args are passed to torchrun.
 srun --kill-on-bad-exit=1 ./src/scripts/lambda/entrypoint.sh \
     ./src/scripts/train/ladder/olmo3_ladder.py run \
-    --name=olmo3-baseline-ladder-test \
+    --name=olmo3-baseline-ladder \
     --cluster=lambda \
-    --max-gpus=64 \
+    --max-gpus=128 \
     --chinchilla-multiple=8.0 \
     --size=370M
