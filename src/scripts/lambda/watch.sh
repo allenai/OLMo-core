@@ -1,4 +1,6 @@
 #!/bin/bash
+#
+# Watch a Slurm job and send Slack notifications when it fails or completes successfully.
 
 # Source helper functions.
 . ./src/scripts/lambda/utils.sh
@@ -28,10 +30,13 @@ while ! job_completed "$JOB_ID"; do
 done
 
 if job_succeeded "$JOB_ID"; then
-    log_info "Job $JOB_ID '$job_name' completed successfully."
+    msg="Job $JOB_ID '$job_name' completed successfully."
+    log_info "$msg"
+    post_to_slack "$msg"
     exit 0
 else
-    log_error "Job $JOB_ID '$job_name' failed."
-    post_to_slack "Slurm job $JOB_ID '$job_name' failed!"
+    msg="Job $JOB_ID '$job_name' failed."
+    log_error "$msg"
+    post_to_slack "$msg"
     exit 1
 fi
