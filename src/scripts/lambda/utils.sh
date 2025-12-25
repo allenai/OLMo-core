@@ -17,13 +17,13 @@ path_prepend /data/ai2/bin/
 function log_debug {
     local script_name
     script_name=$(basename "$0")
-    echo -e "\e[36m[$(date '+%Y-%m-%d %H:%M:%S')]\e[0m \e[90mDEBUG  \e[0m [$script_name, $(hostname), node=${SLURM_NODEID:-?}] $1"
+    echo -e >&2 "\e[36m[$(date '+%Y-%m-%d %H:%M:%S')]\e[0m \e[90mDEBUG  \e[0m [$script_name, $(hostname), node=${SLURM_NODEID:-?}] $1"
 }
 
 function log_info {
     local script_name
     script_name=$(basename "$0")
-    echo -e "\e[36m[$(date '+%Y-%m-%d %H:%M:%S')]\e[0m \e[34mINFO   \e[0m [$script_name, $(hostname), node=${SLURM_NODEID:-?}] $1"
+    echo -e >&2 "\e[36m[$(date '+%Y-%m-%d %H:%M:%S')]\e[0m \e[34mINFO   \e[0m [$script_name, $(hostname), node=${SLURM_NODEID:-?}] $1"
 }
 
 function log_warning {
@@ -121,4 +121,114 @@ function post_to_slack {
     encoded_text=$(printf '%s' "$1" | jq -sR .)
     curl -X POST -H 'Content-type: application/json' --data "{\"text\":$encoded_text}" "$SLACK_WEBHOOK_URL" || return 1
     return 0
+}
+
+function launch_job {
+    local JOB_SCRIPT="$1"
+    local RUN_NAME="$2"
+    local NODES="$3"
+    for var in "JOB_SCRIPT" "RUN_NAME" "NODES"; do
+        if [ -z "${!var}" ]; then
+            log_error "Usage: launch_job <job_script.sbatch> <run_name> <nodes>"
+            exit 1
+        fi
+    done
+
+    if [ ! -f "$JOB_SCRIPT" ]; then
+        log_error "Job script '$JOB_SCRIPT' does not exist."
+        exit 1
+    fi
+
+    # Check for requirement env vars.
+    if [ -z "$WANDB_API_KEY" ]; then
+        log_error "WANDB_API_KEY environment variable is not set."
+        exit 1
+    fi
+    if [ -z "$USERNAME" ]; then
+        log_error "USERNAME environment variable is not set (e.g. 'petew', 'tylerr')."
+        exit 1
+    fi
+    if [ -z "$SLACK_WEBHOOK_URL" ]; then
+        log_warning "SLACK_WEBHOOK_URL environment variable is not set."
+    fi
+    
+    SBATCH_ARGS=(
+        --export="WANDB_API_KEY,USERNAME,HOME"
+        --job-name="$RUN_NAME"
+        --output="${LOGS_DIR}/${RUN_NAME}/%j.log"
+        --nodes="$NODES"
+        --gpus-per-node=8
+        --ntasks-per-node=1
+        --parsable
+    )
+    
+    # Check for cordoned nodes and exclude them.
+    if [ -f "$CORDONED_NODES_FILE" ]; then
+        cordoned_nodes=$(grep -v '^#' "$CORDONED_NODES_FILE" | tr '\n' ',' | sed 's/,$//')
+        formatted_cordoned_nodes=$(echo "$cordoned_nodes" | tr ',' '\n' | sed 's/^/ • /')
+        cordoned_nodes_count=$(echo "$formatted_cordoned_nodes" | wc -l)
+        log_warning "$cordoned_nodes_count cordoned nodes detected:"
+        echo >&2 "$formatted_cordoned_nodes"
+        SBATCH_ARGS+=(--exclude="$cordoned_nodes")
+    else
+        log_warning "No cordoned nodes file found at '$CORDONED_NODES_FILE'."
+    fi
+    
+    # Find an open port to use for distributed training.
+    log_info "Submitting job script: $JOB_SCRIPT"
+    
+    # Submit the job and capture the output (the Job ID).
+    # The --parsable option ensures only the Job ID is returned.
+    JOB_ID=$(sbatch "${SBATCH_ARGS[@]}" "$JOB_SCRIPT")
+    
+    # Check if the submission was successful (sbatch returns a non-zero exit code on failure).
+    if [ $? -eq 0 ]; then
+        log_info "Submitted slurm job $JOB_ID"
+    else
+        log_info "Job submission failed."
+        return 1
+    fi
+
+    echo "$JOB_ID"
+    return 0
+}
+    
+function watch_job {
+    local JOB_ID="$1"
+    local RUN_NAME="$2"
+    for var in "JOB_ID" "RUN_NAME"; do
+        if [ -z "${!var}" ]; then
+            log_error "Usage: watch_job <job_id> <run_name>"
+            exit 1
+        fi
+    done
+
+    LOG_FILE="${LOGS_DIR}/${RUN_NAME}/${JOB_ID}.log"
+
+    # Loop until the job status is no longer PENDING (PD).
+    log_info "Waiting for job to start..."
+    while job_pending "$JOB_ID"; do
+        sleep 2
+    done
+    
+    # Loop until the log file is created.
+    log_info "Waiting on log file at '$LOG_FILE'..."
+    while [ ! -f "$LOG_FILE" ]; do
+        if job_completed "$JOB_ID" && ! job_succeeded "$JOB_ID"; then
+            log_error "Job $JOB_ID ended before log file was created."
+            return 1
+        fi
+        sleep 2
+    done
+
+    log_info "Log file detected at '$LOG_FILE'."
+    return 0
+
+    # echo ""
+    # echo "Use this command to grep through the log file:"
+    # echo "  cat $LOG_FILE | less -R"
+    # echo ""
+    # echo "Or use this command to stream it live:"
+    # echo "  tail -n +1 -f $LOG_FILE"
+    # echo ""
 }

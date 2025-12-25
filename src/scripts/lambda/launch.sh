@@ -19,52 +19,8 @@ for var in "JOB_SCRIPT" "RUN_NAME" "NODES"; do
     fi
 done
 
-# Check for requirement env vars.
-if [ -z "$WANDB_API_KEY" ]; then
-    log_error "WANDB_API_KEY environment variable is not set."
-    exit 1
-fi
-if [ -z "$USERNAME" ]; then
-    log_error "USERNAME environment variable is not set (e.g. 'petew', 'tylerr')."
-    exit 1
-fi
-if [ -z "$SLACK_WEBHOOK_URL" ]; then
-    log_warning "SLACK_WEBHOOK_URL environment variable is not set."
-fi
-
-SBATCH_ARGS=(
-    --export="WANDB_API_KEY,USERNAME,HOME"
-    --job-name="$RUN_NAME"
-    --output="${LOGS_DIR}/${RUN_NAME}/%j.log"
-    --nodes="$NODES"
-    --gpus-per-node=8
-    --ntasks-per-node=1
-    --parsable
-)
-
-if [ -f "$CORDONED_NODES_FILE" ]; then
-    cordoned_nodes=$(grep -v '^#' "$CORDONED_NODES_FILE" | tr '\n' ',' | sed 's/,$//')
-    formatted_cordoned_nodes=$(echo "$cordoned_nodes" | tr ',' '\n' | sed 's/^/ • /')
-    cordoned_nodes_count=$(echo "$formatted_cordoned_nodes" | wc -l)
-    log_warning "$cordoned_nodes_count cordoned nodes detected:"
-    echo "$formatted_cordoned_nodes"
-    SBATCH_ARGS+=(--exclude="$cordoned_nodes")
-else
-    log_warning "No cordoned nodes file found at '$CORDONED_NODES_FILE'."
-fi
-
-# Find an open port to use for distributed training.
-log_info "Submitting job script: $JOB_SCRIPT"
-
-# Submit the job and capture the output (the Job ID).
-# The --parsable option ensures only the Job ID is returned.
-JOB_ID=$(sbatch "${SBATCH_ARGS[@]}" "$JOB_SCRIPT")
-
-# Check if the submission was successful (sbatch returns a non-zero exit code on failure).
-if [ $? -eq 0 ]; then
-    log_info "Submitted slurm job $JOB_ID"
-else
-    log_info "Job submission failed."
+JOB_ID=$(launch_job "$JOB_SCRIPT" "$RUN_NAME" "$NODES")
+if ! [ $? -eq 0 ]; then
     exit 1
 fi
 
