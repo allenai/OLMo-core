@@ -130,7 +130,6 @@ class InstancePackingTransformerModelConfigurator(TransformerModelConfigurator):
 
 def configure_ladder(args: argparse.Namespace) -> ModelLadder:
     tokenizer = TokenizerConfig.dolma2()
-    source_group_size = 8
     instance_sources: list[InstanceSourceConfig] = [
         PackingInstanceSourceConfig(  # <- this is the intervention
             sources=[
@@ -141,13 +140,12 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
                     else DataMix.OLMo_mix_0925,
                     mix_base_dir=get_mix_base_dir(args.cluster),
                     source_permutation_seed=828,
-                    source_group_size=source_group_size,
+                    source_group_size=4,
                 )
             ],
             sequence_length=args.sequence_length,
             tokenizer=tokenizer,
             long_doc_strategy=LongDocStrategy.truncate,
-            source_group_size=source_group_size,  # should be 1?
         ),
     ]
 
