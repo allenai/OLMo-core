@@ -7,7 +7,7 @@ from olmo_core.config import DType
 from olmo_core.data import DataMix, TokenizerConfig
 from olmo_core.data.composable import *
 from olmo_core.distributed.parallel import DataParallelType
-from olmo_core.float8 import AOMXLinearConfig, Float8Config
+from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import get_gpu_type, get_root_dir
 from olmo_core.internal.ladder import main
 from olmo_core.model_ladder import *
@@ -112,10 +112,7 @@ class InstancePackingTransformerModelConfigurator(TransformerModelConfigurator):
             z_loss_multiplier=1e-5,
             max_grad_norm=1.0,
             scheduler=scheduler,
-            float8_config=Float8Config(
-                enabled=True,
-                ao_mx=AOMXLinearConfig.mxfp8_cublas_rceil(),  # <- this is the intervention
-            ),
+            float8_config=Float8Config(enabled=False),
         )
 
         # Build the model.
