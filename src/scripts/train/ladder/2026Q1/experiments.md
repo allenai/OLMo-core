@@ -50,6 +50,10 @@ USERNAME=tylerr
 uv run src/scripts/train/ladder/2026Q1/instance_packing_ladder.py launch-all --max-size 1B --cluster ai2/jupiter --name "olmo3-instance-packing" --preemptible --chinchilla-multiple 8.0
 ```
 
+```bash
+uv run src/scripts/train/ladder/2026Q1/instance_packing_ladder.py launch --size 190M --cluster ai2/jupiter --name "olmo3-instance-packing" --preemptible --chinchilla-multiple 8.0
+```
+
 ## No Global Rope (GNoPE)
 
 ```bash
