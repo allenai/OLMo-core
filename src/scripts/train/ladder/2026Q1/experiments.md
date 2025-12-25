@@ -58,6 +58,10 @@ uv run src/scripts/train/ladder/2026Q1/instance_packing_ladder.py launch-all --m
 uv run src/scripts/train/ladder/2026Q1/instance_packing_ladder.py launch --size 190M --cluster ai2/jupiter --name "olmo3-instance-packing" --preemptible --chinchilla-multiple 8.0
 ```
 
+```bash
+./src/scripts/lambda/launch.sh ./src/scripts/lambda/slurm-olmo3-instance-packing-ladder.sbatch $USERNAME-instance-packing-7B 8
+```
+
 ## No Global Rope (GNoPE)
 
 ```bash
