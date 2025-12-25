@@ -1,4 +1,6 @@
 #!/bin/bash
+#
+# Launch a Slurm job and stream its logs in real-time.
 
 # Source helper functions.
 . ./src/scripts/lambda/utils.sh
@@ -18,6 +20,10 @@ for var in "JOB_SCRIPT" "RUN_NAME" "NODES"; do
         exit 1
     fi
 done
+
+if [ -z "$SLACK_WEBHOOK_URL" ]; then
+    log_warning "SLACK_WEBHOOK_URL environment variable is not set."
+fi
 
 JOB_ID=$(launch_job "$JOB_SCRIPT" "$RUN_NAME" "$NODES")
 if ! [ $? -eq 0 ]; then

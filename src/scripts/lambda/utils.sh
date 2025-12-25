@@ -148,9 +148,6 @@ function launch_job {
         log_error "USERNAME environment variable is not set (e.g. 'petew', 'tylerr')."
         exit 1
     fi
-    if [ -z "$SLACK_WEBHOOK_URL" ]; then
-        log_warning "SLACK_WEBHOOK_URL environment variable is not set."
-    fi
     
     SBATCH_ARGS=(
         --export="WANDB_API_KEY,USERNAME,HOME"
@@ -183,52 +180,12 @@ function launch_job {
     
     # Check if the submission was successful (sbatch returns a non-zero exit code on failure).
     if [ $? -eq 0 ]; then
-        log_info "Submitted slurm job $JOB_ID"
+        log_info "Submitted slurm job $JOB_ID '$RUN_NAME'."
     else
-        log_info "Job submission failed."
+        log_error "Job submission failed."
         return 1
     fi
 
     echo "$JOB_ID"
     return 0
-}
-    
-function watch_job {
-    local JOB_ID="$1"
-    local RUN_NAME="$2"
-    for var in "JOB_ID" "RUN_NAME"; do
-        if [ -z "${!var}" ]; then
-            log_error "Usage: watch_job <job_id> <run_name>"
-            exit 1
-        fi
-    done
-
-    LOG_FILE="${LOGS_DIR}/${RUN_NAME}/${JOB_ID}.log"
-
-    # Loop until the job status is no longer PENDING (PD).
-    log_info "Waiting for job to start..."
-    while job_pending "$JOB_ID"; do
-        sleep 2
-    done
-    
-    # Loop until the log file is created.
-    log_info "Waiting on log file at '$LOG_FILE'..."
-    while [ ! -f "$LOG_FILE" ]; do
-        if job_completed "$JOB_ID" && ! job_succeeded "$JOB_ID"; then
-            log_error "Job $JOB_ID ended before log file was created."
-            return 1
-        fi
-        sleep 2
-    done
-
-    log_info "Log file detected at '$LOG_FILE'."
-    return 0
-
-    # echo ""
-    # echo "Use this command to grep through the log file:"
-    # echo "  cat $LOG_FILE | less -R"
-    # echo ""
-    # echo "Or use this command to stream it live:"
-    # echo "  tail -n +1 -f $LOG_FILE"
-    # echo ""
 }
