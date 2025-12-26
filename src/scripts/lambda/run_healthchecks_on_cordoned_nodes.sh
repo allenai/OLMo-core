@@ -62,6 +62,7 @@ for node in "${nodes[@]}"; do
     --nodelist="$node" \
     --ntasks=1 \
     --nodes=1 \
+    --gpus-per-node=8 \
     --kill-on-bad-exit=1 \
     bash "$HEALTHCHECKS_SCRIPT"; then
     log_info "✓ Healthcheck PASSED on node: $node"
