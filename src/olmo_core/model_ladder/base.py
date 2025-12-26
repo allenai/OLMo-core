@@ -586,7 +586,7 @@ class ModelLadder(Config):
             hard_stop=Duration.steps(100) if for_benchmarking else None,
             no_checkpoints=for_benchmarking,
             no_evals=for_benchmarking,
-            save_overwrite=for_benchmarking,
+            save_overwrite=True,
             callbacks={
                 "gpu_monitor": callbacks.GPUMemoryMonitorCallback(),
                 "config_saver": callbacks.ConfigSaverCallback(),
