@@ -155,10 +155,15 @@ class GAPMonitorCallback(Callback):
                     merge_strategy=MetricMergeStrategy.sum,
                 )
         else:
-            max_ = get_local_tensor(tensor).abs().max()
+            local_tensor = get_local_tensor(tensor)
+            if local_tensor.numel() > 0:
+                max_ = local_tensor.abs().max()
+                if self._dry_run_complete:
+                    self.trainer.record_metric(
+                        f"{prefix}/{name}/max", max_, reduce_type=ReduceType.max
+                    )
             var, mean = var_mean(tensor)
             if self._dry_run_complete:
-                self.trainer.record_metric(f"{prefix}/{name}/max", max_, reduce_type=ReduceType.max)
                 self.trainer.record_metric(f"{prefix}/{name}/mean", mean, reduce_type=None)
                 self.trainer.record_metric(f"{prefix}/{name}/var", var, reduce_type=None)
 
