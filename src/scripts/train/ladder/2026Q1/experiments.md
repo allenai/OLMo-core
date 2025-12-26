@@ -74,3 +74,9 @@ Note this is configured for 128 GPUs / 16 nodes:
 USERNAME=tylerr
 ./src/scripts/lambda/launch.sh ./src/scripts/lambda/slurm-olmo3-gnope-ladder.sbatch $USERNAME-gnope-7B 16
 ```
+
+## Cautious Weight Decay
+
+```bash
+uv run src/scripts/train/ladder/2026Q1/cautious_weight_decay_ladder.py launch-all --max-size 1B --cluster ai2/jupiter --name "olmo3-cautious-wd" --preemptible --chinchilla-multiple 8.0
+```
