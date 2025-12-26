@@ -21,12 +21,10 @@ def adamw_step(
     exp_avg_sq: torch.Tensor,
     step: torch.Tensor,
     step_factor: torch.Tensor,
+    cautious_weight_decay: bool = False,
     step_increment_bugfix: bool = True,
 ):
     beta1, beta2 = betas
-
-    # Perform step weight decay.
-    p.mul_(1 - step_factor * (lr * weight_decay))
 
     # Decay the first and second moment running average coefficient.
     exp_avg.lerp_(grad.type_as(exp_avg), (step_factor * (1 - beta1)).type_as(exp_avg))
@@ -42,6 +40,19 @@ def adamw_step(
 
     update = -step_size * torch.div(exp_avg, denom)
     update.mul_(step_factor)
+
+    # Perform step weight decay.
+    if weight_decay != 0.0:
+        if cautious_weight_decay:
+            # Cautious Weight Decay (CWD): apply decay only when u_t * x_t >= 0 entrywise.
+            # Our `update` is the actual parameter delta: x <- x + update = x - lr * u_t.
+            # So u_t * x_t >= 0 <=> (-update) * x_t >= 0 <=> update * x_t <= 0.
+            mask = torch.le(update * p, 0).type_as(p)
+            wd = (step_factor * (lr * weight_decay)).type_as(p)
+            p.mul_(1 - wd * mask)
+        else:
+            p.mul_(1 - step_factor * (lr * weight_decay))
+
     p.add_(update)
     if step_increment_bugfix:
         step.add_(step_factor)
@@ -59,6 +70,7 @@ def foreach_adamw_step(
     eps: float,
     weight_decay: float,
     step_factor: torch.Tensor,
+    cautious_weight_decay: bool = False,
     step_increment_bugfix: bool = True,
 ):
     """Perform a single AdamW update with multi-tensor (*foreach*) kernels."""
@@ -66,9 +78,6 @@ def foreach_adamw_step(
         return  # nothing to do
 
     beta1, beta2 = betas
-
-    # Perform step weight decay.
-    torch._foreach_mul_(params, 1 - step_factor * (lr * weight_decay))
 
     grads = [g.type_as(ea) for g, ea in zip(grads, exp_avgs)]
 
@@ -97,6 +106,19 @@ def foreach_adamw_step(
 
     updates = torch._foreach_div(exp_avgs, denoms)
     torch._foreach_mul_(updates, (-step_factor * step_sizes).unbind())
+
+    # Perform step weight decay.
+    if weight_decay != 0.0:
+        if cautious_weight_decay:
+            # TODO: proper "foreach" implementation for CWD
+            # See `adamw_step` for derivation. Apply elementwise decay based on `update * p <= 0`.
+            wd = (step_factor * (lr * weight_decay)).type_as(params[0])
+            for p, u in zip(params, updates):
+                mask = torch.le(u * p, 0).type_as(p)
+                p.mul_(1 - wd * mask)
+        else:
+            torch._foreach_mul_(params, 1 - step_factor * (lr * weight_decay))
+
     torch._foreach_add_(params, updates)
     if step_increment_bugfix:
         torch._foreach_add_(steps, [step_factor] * len(steps))
@@ -118,6 +140,7 @@ class SkipStepAdamW(SkipStepOptimizer):
         sigma_factor: int = 6,
         dtype: Optional[Union[torch.dtype, DType]] = None,
         foreach: bool = False,
+        cautious_weight_decay: bool = False,
         step_increment_bugfix: bool = True,
     ) -> None:
         assert lr >= 0.0
@@ -133,6 +156,7 @@ class SkipStepAdamW(SkipStepOptimizer):
             dtype = dtype.as_pt()
         self.dtype = dtype
         self.foreach = foreach
+        self.cautious_weight_decay = cautious_weight_decay
         self.stepfix = step_increment_bugfix
         self._step_skipped: Optional[torch.Tensor] = None
 
@@ -144,7 +168,7 @@ class SkipStepAdamW(SkipStepOptimizer):
             return torch.tensor(0.0)
 
     @torch.no_grad()
-    def step(self, closure=None) -> None:
+    def step(self, closure=None) -> None:  # type: ignore[override]
         if self.foreach:
             self._step_foreach(closure)
         else:
@@ -179,6 +203,7 @@ class SkipStepAdamW(SkipStepOptimizer):
                     exp_avg_sq=get_local_tensor(state["exp_avg_sq"]),
                     step=state["step"],
                     step_factor=step_factor,
+                    cautious_weight_decay=self.cautious_weight_decay,
                     step_increment_bugfix=self.stepfix,
                 )
 
@@ -226,6 +251,7 @@ class SkipStepAdamW(SkipStepOptimizer):
                 eps=group["eps"],
                 weight_decay=group["weight_decay"],
                 step_factor=step_factor,
+                cautious_weight_decay=self.cautious_weight_decay,
                 step_increment_bugfix=self.stepfix,
             )
 
@@ -282,6 +308,12 @@ class SkipStepAdamWConfig(OptimConfig):
     sigma_factor: int = 6
     """
     The number of standard deviations above the mean loss to skip a step.
+    """
+
+    cautious_weight_decay: bool = False
+    """
+    If ``True``, use *Cautious Weight Decay* (CWD): apply weight decay only to parameters where
+    the (Adam) update direction agrees with the current parameter sign (entrywise).
     """
 
     @classmethod
