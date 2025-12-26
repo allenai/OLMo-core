@@ -155,15 +155,19 @@ class GAPMonitorCallback(Callback):
                     merge_strategy=MetricMergeStrategy.sum,
                 )
         else:
+            var, mean = var_mean(tensor)
             local_tensor = get_local_tensor(tensor)
             if local_tensor.numel() > 0:
-                max_ = local_tensor.abs().max()
-                if self._dry_run_complete:
-                    self.trainer.record_metric(
-                        f"{prefix}/{name}/max", max_, reduce_type=ReduceType.max
-                    )
-            var, mean = var_mean(tensor)
+                local_max = local_tensor.abs().max()
+            else:
+                # Use 0.0 as sentinel value for empty tensors in max reduction.
+                # Since we're taking abs(), all actual values are >= 0, so 0.0
+                # won't affect the max reduction when other processes have non-empty tensors.
+                local_max = torch.tensor(0.0, device=tensor.device, dtype=tensor.dtype)
             if self._dry_run_complete:
+                self.trainer.record_metric(
+                    f"{prefix}/{name}/max", local_max, reduce_type=ReduceType.max
+                )
                 self.trainer.record_metric(f"{prefix}/{name}/mean", mean, reduce_type=None)
                 self.trainer.record_metric(f"{prefix}/{name}/var", var, reduce_type=None)
 
