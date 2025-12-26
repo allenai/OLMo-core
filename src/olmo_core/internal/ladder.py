@@ -204,11 +204,16 @@ def parse_args(
         metrics,
         "Download the metrics for a given model size.",
     )
+    add_sub_command(
+        "all-metrics",
+        all_metrics,
+        "Download the metrics for all model sizes of the ladder.",
+    )
 
     for cmd, parser in sub_commands.items():
         add_general_args(parser)
 
-        if cmd != "launch-all":
+        if cmd not in {"launch-all", "all-metrics"}:
             parser.add_argument(
                 "--size",
                 choices=list(size_enum),
@@ -217,7 +222,7 @@ def parse_args(
                 help="The model size.",
             )
 
-        if cmd in {"launch-all", "status"}:
+        if cmd in {"launch-all", "status", "all-metrics"}:
             parser.add_argument(
                 "--max-size",
                 choices=list(size_enum),
@@ -225,7 +230,7 @@ def parse_args(
                 help="The maximum model size. If not specified, status/metrics for all sizes will be shown.",
             )
 
-        if cmd in {"dry-run", "metrics"}:
+        if cmd in {"dry-run", "metrics", "all-metrics"}:
             parser.add_argument(
                 "--output-dir",
                 type=Path,
@@ -464,6 +469,46 @@ def metrics(args: argparse.Namespace):
     else:
         rich.get_console().print(
             f"[b yellow]Run for size {args.size} has no metrics yet.[/]",
+            highlight=False,
+        )
+        sys.exit(1)
+
+
+def all_metrics(args: argparse.Namespace):
+    prepare_cli_environment()
+    ladder = args.configure_ladder(args)
+    sizes = [args.size_enum(s) for s in ladder.sizes]
+    if args.max_size:
+        sizes = [s for s in sizes if s <= args.size_enum(args.max_size)]
+
+    saved_count = 0
+    for size in sizes:
+        df = ladder.get_metrics(size)
+        if df is not None:
+            path = io.join_path(args.output_dir, f"metrics_{size}.pkl")
+            df.to_pickle(path)
+            rich.get_console().print(
+                f"[b green]✔[/] Metrics for size [green]{size}[/] saved to [u blue]{path}[/]",
+                highlight=False,
+            )
+            saved_count += 1
+        else:
+            rich.get_console().print(
+                f"[b yellow]Run for size {size} has no metrics yet.[/]",
+                highlight=False,
+            )
+
+    if saved_count > 0:
+        rich.get_console().print(
+            f"\n[b green]✔[/] Saved metrics for [green]{saved_count}[/] size(s) to [u blue]{args.output_dir}[/]\n"
+            f"Use pandas to load and analyze the metrics, e.g.:\n\n"
+            f"    import pandas as pd\n"
+            f"    df = pd.read_pickle('{args.output_dir}/metrics_<size>.pkl')\n",
+            highlight=False,
+        )
+    else:
+        rich.get_console().print(
+            "\n[b yellow]No metrics found for any of the requested sizes.[/]",
             highlight=False,
         )
         sys.exit(1)
