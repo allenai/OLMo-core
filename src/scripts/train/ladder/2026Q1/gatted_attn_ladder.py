@@ -41,7 +41,7 @@ class GatedAttentionTransformerModelConfigurator(TransformerModelConfigurator):
         size_spec = TransformerSize(size_spec)
         vocab_size = tokenizer.padded_vocab_size()
         kwargs = dict(
-            attn_backend=AttentionBackendName.flash_2,
+            attn_backend=AttentionBackendName.flash_3,
             gate_config=GateConfig(  # <- this is the intervention
                 granularity=GateGranularity.headwise
             ),
