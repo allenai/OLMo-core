@@ -2,7 +2,6 @@ import logging
 from dataclasses import dataclass, field
 from typing import Optional, cast
 
-import fla.layers
 import torch
 import torch.distributed as dist
 from torch import nn
@@ -18,7 +17,7 @@ log = logging.getLogger(__name__)
 
 
 class FLA(nn.Module):
-    def __init__(self, inner: fla.layers.ABCAttention):
+    def __init__(self, inner: "fla.layers.ABCAttention"):
         super().__init__()
         self.inner = inner
 
@@ -190,6 +189,8 @@ class FLAConfig(Config):
     dtype: DType = DType.float32
 
     def build(self, d_model: int, n_heads: int, init_device) -> FLA:
+        import fla.layers
+
         layer = getattr(fla.layers, self.name)(
             hidden_size=d_model,
             num_heads=n_heads,
