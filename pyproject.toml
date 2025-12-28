@@ -59,6 +59,7 @@ dev = [
 beaker = ["beaker-py>=1.37.0,<2.0", "GitPython>=3.0,<4.0", "google-cloud-compute"]
 comet = ["comet_ml"]
 eval = ["ai2-olmo-eval==0.8.5"]
+quack = ["quack-kernels @ git+https://github.com/Dao-AILab/quack.git@9a8b58cadf6adcf770e284401799f89b67325735 ; sys_platform == 'linux'"]
 torchao = ["torchao==0.15.0"]
 transformers = ["transformers"]
 wandb = ["wandb"]
