@@ -67,13 +67,14 @@ def muon_update(
     nesterov=True,
     step_factor: torch.Tensor = torch.tensor(1.0),
 ):
+    a, b = grad.size(-2), grad.size(-1)
     momentum.lerp_(grad, step_factor * (1 - beta))
     update = grad.lerp_(momentum, beta) if nesterov else momentum
     if update.ndim == 4:  # for the case of conv filters
         update = update.view(len(update), -1)
     update = zeropower_via_newtonschulz5(update, steps=5)
-    update *= max(1, grad.size(-2) / grad.size(-1)) ** 0.5
-    update.mul_(step_factor)
+    # update *= max(1, a / b) ** 0.5  # original scaling
+    update *= 0.2 * max(a, b) ** 0.5  # moonlight scaling
     return update
 
 
