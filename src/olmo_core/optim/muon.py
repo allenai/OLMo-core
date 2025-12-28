@@ -217,9 +217,9 @@ class SkipStepMuonConfig(OptimConfig):
     """
 
     # Default values for Muon groups
-    lr: float = 0.02
+    lr: float = 1e-3
     momentum: float = 0.95
-    weight_decay: float = 0.0
+    weight_decay: float = 0.1
 
     # Default values for Adam groups, private so they are not included in the config dict
     _adam_lr: float = 1e-3
