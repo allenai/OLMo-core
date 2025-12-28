@@ -17,6 +17,13 @@ from olmo_core.utils import ensure_multiple_of, warn_once
 log = logging.getLogger(__name__)
 
 
+def get_mix_base_dir(cluster: str) -> str:
+    if cluster == "lambda":
+        return "/data/caia-mltrain/data/"
+    else:
+        return "gs://ai2-llm/"
+
+
 class HybridGDNTransformerModelConfigurator(TransformerModelConfigurator):
     def configure_model(
         self,
@@ -102,8 +109,10 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
             sources=[
                 NumpyDocumentSourceMixConfig(
                     tokenizer=tokenizer,
-                    mix=DataMix.OLMo_mix_0925,
-                    mix_base_dir=get_root_dir(args.cluster),
+                    mix=DataMix.OLMo_mix_0925_official
+                    if args.cluster == "lambda"
+                    else DataMix.OLMo_mix_0925,
+                    mix_base_dir=get_mix_base_dir(args.cluster),
                 )
             ],
             sequence_length=args.sequence_length,
