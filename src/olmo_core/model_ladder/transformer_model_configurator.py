@@ -6,6 +6,7 @@ from olmo_core.config import DType, StrEnum
 from olmo_core.data import TokenizerConfig
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import OptimConfig, Scheduler
 from olmo_core.train.train_module import (
