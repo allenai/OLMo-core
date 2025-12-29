@@ -82,7 +82,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
-        scheduler=WSD(warmup_steps=360),
+        scheduler=WSD(warmup_fraction=0.05),
     )
 
     dataset_config = NumpyFSLDatasetConfig.from_data_mix(
