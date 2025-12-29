@@ -18,6 +18,7 @@ from olmo_core.internal.experiment import (
     main,
 )
 from olmo_core.launch.beaker import OLMoCoreBeakerImage
+from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.transformer import (
     TransformerConfig,
 )
@@ -39,7 +40,9 @@ GLOBAL_BATCH_SIZE = 8 * 1024 * 64  # 524288
 
 
 def build_model_config(common: CommonComponents) -> TransformerConfig:
-    config = TransformerConfig.olmo3_190M(vocab_size=common.tokenizer.padded_vocab_size())
+    config = TransformerConfig.olmo3_190M(
+        vocab_size=common.tokenizer.padded_vocab_size(), attn_backend=AttentionBackendName.torch
+    )
     return config
 
 
