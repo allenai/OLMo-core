@@ -113,6 +113,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             run_name=run_name_with_ts,
             wandb_group_name=cli_context.run_name,
             wandb_project="olmo3-dion",
+            checkpoint_save_interval=5000,
         )
     )
 
