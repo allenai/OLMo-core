@@ -13,18 +13,14 @@ from olmo_core.data import (
 )
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
+from olmo_core.internal import cookbook
 from olmo_core.internal.common import build_launch_config, get_gpu_type, get_root_dir, get_work_dir
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
 from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
 from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import WSD, DionConfig
-from olmo_core.train import Duration, TrainerConfig
-from olmo_core.train.callbacks import (
-    CheckpointerCallback,
-    SlackNotifierCallback,
-    WandBCallback,
-)
+from olmo_core.train import Duration
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
@@ -51,6 +47,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         root_dir=root_dir,
         workspace="ai2/OLMo-core",
         beaker_image=OLMoCoreBeakerImage.stable,
+        num_nodes=1,
         # override priority from the CLI eg `--launch.priority=high`
     )
 
@@ -102,47 +99,21 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=GLOBAL_BATCH_SIZE, seed=SEED, num_workers=8
+        global_batch_size=GLOBAL_BATCH_SIZE,
+        seed=SEED,
+        num_workers=8,
     )
 
-    cancel_check_interval = 10
-    trainer_config = (
-        TrainerConfig(
-            save_folder=save_dir,
-            save_overwrite=True,
-            metrics_collect_interval=50,
-            cancel_check_interval=cancel_check_interval,
-            max_duration=Duration.chinchilla_tokens(1.0, model_params=num_params),
-        )
-        .with_callback(
-            "checkpointer",
-            CheckpointerCallback(
-                save_interval=1000,
-                ephemeral_save_interval=None,
-                save_async=False,
-            ),
-        )
-        .with_callback(
-            "wandb",
-            WandBCallback(
-                name=run_name_with_ts,
-                group=cli_context.run_name,
-                entity="ai2-llm",
-                project="olmo3-dion",
-                enabled=True,
-                cancel_check_interval=cancel_check_interval,
-            ),
-        )
-        .with_callback(
-            "slack_notifier",
-            SlackNotifierCallback(name=run_name_with_ts, enabled=False),
-        )
-        .with_recommended_evals(
-            tokenizer_config,
-            SEQUENCE_LENGTH,
-            cli_context.cluster,
-            task_set="fast",
-            eval_interval=1000,
+    trainer_config = cookbook.configure_trainer(
+        max_duration=Duration.chinchilla_tokens(1.0, model_params=num_params),
+        checkpoint_dir=save_dir,
+        work_dir=work_dir,
+    ).with_callbacks(
+        cookbook.configure_default_callbacks(
+            run_name=run_name_with_ts,
+            wandb_group_name=cli_context.run_name,
+            wandb_project="olmo3-dion",
+            ephemeral_checkpoint_save_interval=1000,
         )
     )
 
