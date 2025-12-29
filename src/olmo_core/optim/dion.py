@@ -3,10 +3,9 @@ import math
 from collections import OrderedDict
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Tuple, Type, Union, cast
+from typing import TYPE_CHECKING, Any, Tuple, Type, Union, cast
 
 import torch
-from dion import Dion
 from torch.distributed.device_mesh import DeviceMesh
 
 from olmo_core.distributed.parallel import (
@@ -24,6 +23,9 @@ from olmo_core.utils import move_to_device
 
 log = logging.getLogger(__name__)
 
+if TYPE_CHECKING:
+    from dion import Dion
+
 
 @dataclass
 class DionConfig(OptimConfig):
@@ -34,7 +36,9 @@ class DionConfig(OptimConfig):
     rank_fraction: float = 1.0
 
     @classmethod
-    def optimizer(cls) -> Type[Dion]:
+    def optimizer(cls) -> Type["Dion"]:
+        from dion import Dion
+
         return Dion
 
     def default_group_overrides(self, model: torch.nn.Module) -> list[OptimGroupOverride]:
@@ -149,13 +153,15 @@ class DionConfig(OptimConfig):
 
         return meshes
 
-    def build(self, model: torch.nn.Module, strict: bool = True) -> Dion:
+    def build(self, model: torch.nn.Module, strict: bool = True) -> "Dion":
         """
         Build the optimizer.
 
         :param strict: If ``True`` an error is raised if a pattern in ``group_overrides`` doesn't
             match any parameter.
         """
+        from dion import Dion
+
         kwargs = self.as_dict(exclude_private_fields=True)
         kwargs.pop("group_overrides")
         kwargs.pop("compile")
