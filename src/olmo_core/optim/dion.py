@@ -132,6 +132,8 @@ class DionConfig(OptimConfig):
         if world_mesh is None:
             return meshes
         dim_names = world_mesh.mesh_dim_names
+        log.info(f"World mesh dimensions: {dim_names}")
+        log.info(f"World mesh shape: {world_mesh.shape}")
         if dim_names is None:
             raise RuntimeError("world mesh has no dimension names")
 
@@ -150,6 +152,8 @@ class DionConfig(OptimConfig):
 
         if MeshDimName.tp in dim_names:
             meshes["inner_shard_mesh"] = get_tp_mesh(world_mesh)
+
+        log.info(f"Dion Meshes: {meshes}")
 
         return meshes
 
