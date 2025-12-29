@@ -1,5 +1,7 @@
 from datetime import datetime
-from functools import partial
+from typing import Optional
+
+import torchvision  # noqa: F401
 
 from olmo_core.config import DType
 from olmo_core.data import (
@@ -7,21 +9,15 @@ from olmo_core.data import (
     InstanceFilterConfig,
     NumpyDataLoaderConfig,
     NumpyFSLDatasetConfig,
+    TokenizerConfig,
 )
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
-from olmo_core.internal.common import CLUSTER_TO_GPU_TYPE
-from olmo_core.internal.experiment import (
-    CommonComponents,
-    DataComponents,
-    build_config,
-    main,
-)
-from olmo_core.launch.beaker import OLMoCoreBeakerImage
+from olmo_core.internal.common import build_launch_config, get_gpu_type, get_root_dir, get_work_dir
+from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
+from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
 from olmo_core.nn.attention import AttentionBackendName
-from olmo_core.nn.transformer import (
-    TransformerConfig,
-)
+from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import WSD, DionConfig
 from olmo_core.train import Duration, TrainerConfig
 from olmo_core.train.callbacks import (
@@ -37,26 +33,48 @@ from olmo_core.train.train_module import (
 
 SEQUENCE_LENGTH = 8 * 1024
 GLOBAL_BATCH_SIZE = 8 * 1024 * 64  # 524288
+SEED = 34521
 
 
-def build_model_config(common: CommonComponents) -> TransformerConfig:
-    config = TransformerConfig.olmo3_190M(
-        vocab_size=common.tokenizer.padded_vocab_size(), attn_backend=AttentionBackendName.torch
+def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
+    run_name_with_ts = (
+        f"{cli_context.run_name}-{datetime.now().astimezone().strftime('%Y%m%dT%H%M%z')}"
     )
-    return config
+    root_dir = get_root_dir(cli_context.cluster)
+    work_dir = get_work_dir(root_dir)
+    save_dir = f"{root_dir}/checkpoints/{cli_context.run_name}/"
 
+    beaker_launch_config: Optional[BeakerLaunchConfig] = build_launch_config(
+        name=cli_context.run_name,
+        cmd=cli_context.remote_cmd,
+        cluster=cli_context.cluster,
+        root_dir=root_dir,
+        workspace="ai2/OLMo-core",
+        beaker_image=OLMoCoreBeakerImage.stable,
+        # override priority from the CLI eg `--launch.priority=high`
+    )
 
-def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
+    tokenizer_config = TokenizerConfig.dolma2()
+    model_config = TransformerConfig.olmo3_190M(
+        vocab_size=tokenizer_config.padded_vocab_size(), attn_backend=AttentionBackendName.torch
+    )
+    num_params = model_config.num_active_non_embedding_params
+    d_model = model_config.d_model
+
+    # Determine rank_microbatch_size based on GPU type
     rank_microbatch_size = SEQUENCE_LENGTH
-    if common.launch is not None:
-        gpus = {CLUSTER_TO_GPU_TYPE.get(c, "unknown") for c in common.launch.clusters}
-        if all("B200" in g for g in gpus):
-            rank_microbatch_size *= 2
+    gpu_type = get_gpu_type(cli_context.cluster)
+    if "B200" in gpu_type:
+        rank_microbatch_size *= 2
 
-    return TransformerTrainModuleConfig(
+    train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=rank_microbatch_size,
-        max_sequence_length=common.max_sequence_length,
-        optim=DionConfig(lr=0.00194, weight_decay=0.1, betas=(0.9, 0.95)),
+        max_sequence_length=SEQUENCE_LENGTH,
+        optim=DionConfig(
+            lr=0.00194,
+            weight_decay=0.1,
+            betas=(0.9, 0.95),
+        ),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.fsdp,
@@ -70,50 +88,31 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         scheduler=WSD(warmup_steps=360),
     )
 
-
-def build_data_components(
-    common: CommonComponents,
-    intra_document_masking: bool = False,
-    include_instance_filter: bool = True,
-) -> DataComponents:
     dataset_config = NumpyFSLDatasetConfig.from_data_mix(
         DataMix.OLMo_mix_0925,
-        tokenizer=common.tokenizer,
+        tokenizer=tokenizer_config,
         mix_base_dir="gs://ai2-llm/",
-        work_dir=common.work_dir,
-        sequence_length=common.max_sequence_length,
-        max_target_sequence_length=max(common.max_sequence_length, 8192),
-        generate_doc_lengths=intra_document_masking,
-        instance_filter_config=None
-        if not include_instance_filter
-        else InstanceFilterConfig(
+        work_dir=work_dir,
+        sequence_length=SEQUENCE_LENGTH,
+        max_target_sequence_length=max(SEQUENCE_LENGTH, 8192),
+        generate_doc_lengths=False,
+        instance_filter_config=InstanceFilterConfig(
             repetition_max_period=13, repetition_min_period=1, repetition_max_count=32
         ),
     )
 
     data_loader_config = NumpyDataLoaderConfig(
-        global_batch_size=common.global_batch_size, seed=34521, num_workers=8
+        global_batch_size=GLOBAL_BATCH_SIZE, seed=SEED, num_workers=8
     )
 
-    return DataComponents(dataset=dataset_config, data_loader=data_loader_config)
-
-
-def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     cancel_check_interval = 10
-
-    assert common.launch is not None
-    assert len(common.launch.clusters) == 1
-    cluster = common.launch.clusters[0]
-
-    run_name = f"{common.run_name}-{datetime.now().astimezone().strftime('%Y%m%dT%H%M%z')}"
-
-    return (
+    trainer_config = (
         TrainerConfig(
-            save_folder=f"gs://ai2-llm/checkpoints/{common.run_name}/",
+            save_folder=save_dir,
             save_overwrite=True,
             metrics_collect_interval=50,
             cancel_check_interval=cancel_check_interval,
-            max_duration=Duration.chinchilla_tokens(1.0, model_params=190_000_000),
+            max_duration=Duration.chinchilla_tokens(1.0, model_params=num_params),
         )
         .with_callback(
             "checkpointer",
@@ -126,8 +125,8 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         .with_callback(
             "wandb",
             WandBCallback(
-                name=run_name,
-                group=common.run_name,
+                name=run_name_with_ts,
+                group=cli_context.run_name,
                 entity="ai2-llm",
                 project="olmo3-dion",
                 enabled=True,
@@ -136,26 +135,43 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
         )
         .with_callback(
             "slack_notifier",
-            SlackNotifierCallback(name=run_name, enabled=False),
+            SlackNotifierCallback(name=run_name_with_ts, enabled=False),
         )
         .with_recommended_evals(
-            common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=1000
+            tokenizer_config,
+            SEQUENCE_LENGTH,
+            cli_context.cluster,
+            task_set="fast",
+            eval_interval=1000,
         )
     )
+
+    experiment_config = ExperimentConfig(
+        run_name=cli_context.run_name,
+        launch=beaker_launch_config,
+        model=model_config,
+        train_module=train_module_config,
+        trainer=trainer_config,
+        dataset=dataset_config,
+        data_loader=data_loader_config,
+        init_seed=SEED,
+    )
+    experiment_config = experiment_config.merge(cli_context.overrides)
+    return experiment_config
 
 
 if __name__ == "__main__":
-    config_builder = partial(
-        build_config,
-        global_batch_size=GLOBAL_BATCH_SIZE,
-        max_sequence_length=SEQUENCE_LENGTH,
-        data_config_builder=build_data_components,
-        model_config_builder=build_model_config,
-        train_module_config_builder=build_train_module_config,
-        trainer_config_builder=build_trainer_config,
-        beaker_image=OLMoCoreBeakerImage.tch270_cu128,
-        include_instance_filter=True,
-        flight_recorder=True,
-        include_default_evals=False,
-    )
-    main(config_builder=config_builder)
+    """
+    Invoke this script directly to access the internal experiment CLI, which
+    supports launch, train, dry_run, and other subcommands.
+
+    Examples:
+        To render the config and exit:
+            python src/scripts/train/OLMo3/OLMo3-190M.py dry_run debug_run ai2/augusta
+
+        To launch a training run on Augusta:
+        python src/scripts/train/OLMo3/OLMo3-190M.py launch my_run ai2/augusta \
+            --launch.num_nodes=1 \
+            --launch.priority=high
+    """
+    main(config_builder=build_experiment_config)
