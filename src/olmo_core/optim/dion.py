@@ -116,7 +116,8 @@ class DionConfig(OptimConfig):
 
         Supports:
         - Single-device: All meshes are None
-        - FSDP: replicate_mesh = DP mesh, outer_shard_mesh = None
+        - DDP (not supported, would be): replicate_mesh = DP mesh, outer_shard_mesh = None
+        - FSDP: outer_shard_mesh = DP mesh, replicate_mesh = None
         - HSDP: replicate_mesh = DP replicate mesh, outer_shard_mesh = DP shard mesh
         - TP: inner_shard_mesh = TP mesh (can be combined with FSDP or HSDP)
 
@@ -141,16 +142,15 @@ class DionConfig(OptimConfig):
         has_dp_replicate = MeshDimName.dp_replicate in dim_names
         has_dp_shard = MeshDimName.dp_shard in dim_names
 
-        if has_dp_replicate and has_dp_shard:  # HSDP configuration
+        if has_dp_replicate and has_dp_shard:
+            # HSDP configuration
             meshes["replicate_mesh"] = get_dp_replicate_mesh(world_mesh)
             meshes["outer_shard_mesh"] = get_dp_shard_mesh(world_mesh)
         elif MeshDimName.dp in dim_names or any(d.startswith("dp") for d in dim_names):
-            # TODO: is this right?
-            # FSDP configuration (has DP dimension but not HSDP split)
-            meshes["replicate_mesh"] = get_dp_model_mesh(world_mesh)
-            # outer_shard_mesh is None for FSDP (FSDP handles sharding internally)
-
+            # FSDP configuration
+            meshes["outer_shard_mesh"] = get_dp_model_mesh(world_mesh)
         if MeshDimName.tp in dim_names:
+            # TP configuration
             meshes["inner_shard_mesh"] = get_tp_mesh(world_mesh)
 
         log.info(f"Dion Meshes: {meshes}")
