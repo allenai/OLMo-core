@@ -24,6 +24,7 @@ dependencies = [
     "importlib_resources",
     "bettermap",
     "pandas",
+    "dion @ git+https://github.com/microsoft/dion.git ; sys_platform == 'linux'",
 ]
 
 [project.urls]

@@ -10,15 +10,16 @@ from olmo_core.distributed.utils import all_gather, get_rank, get_world_size
 from olmo_core.optim.config import OptimConfig, OptimGroupOverride
 from olmo_core.optim.skip_step_optimizer import SkipStepOptimizer
 
-try:
-    from quack.gemm_interface import gemm_symmetric  # type: ignore[reportMissingImports]
-except ModuleNotFoundError:
+# try:
+#     from quack.gemm_interface import gemm_symmetric  # type: ignore[reportMissingImports]
+# except ModuleNotFoundError:
 
-    def gemm_symmetric(X, Y, out=None):
-        if out is None:
-            out = torch.empty_like(X)
-        torch.matmul(X, Y, out=out)
-        return out
+
+def gemm_symmetric(X, Y, out=None):
+    if out is None:
+        out = torch.empty_like(X)
+    torch.matmul(X, Y, out=out)
+    return out
 
 
 log = logging.getLogger(__name__)

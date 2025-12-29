@@ -10,35 +10,26 @@ from olmo_core.internal.common import get_gpu_type, get_root_dir
 from olmo_core.internal.ladder import main
 from olmo_core.model_ladder import *
 from olmo_core.model_ladder.utils import get_mix_base_dir
-from olmo_core.optim import SkipStepMuonConfig
+from olmo_core.optim.dion import DionConfig
 
 log = logging.getLogger(__name__)
 
 
 @dataclass(kw_only=True)
-class MuonWSDSChinchillaRunConfigurator(WSDSChinchillaRunConfigurator):
+class DionWSDSChinchillaRunConfigurator(WSDSChinchillaRunConfigurator):
     def configure_target_batch_size(self, num_params: int) -> int:
         # Calculate global batch size according to https://api.semanticscholar.org/CorpusID:270764838
         # which assumes a sequence length of 2048.
-        muon_multiplier = 2
+        muon_multiplier = 2  # https://arxiv.org/html/2507.01598v2#S4
         return round(muon_multiplier * 2048 * 160 * (num_params / 108_000_000) ** (2 / 3))
 
-    def configure_optimizer(self, num_params: int, batch_size: int) -> SkipStepMuonConfig:
+    def configure_optimizer(self, num_params: int, batch_size: int) -> DionConfig:
         del batch_size  # unused
         # Calculate LR according to https://api.semanticscholar.org/CorpusID:270764838
         # but divide by 2 for WSD schedule (seems to work emperically).
         lr = 0.0047 * (num_params / 108_000_000) ** (-1 / 3)
         lr /= 2.0
-        return SkipStepMuonConfig(  # same lr for Muon (moonlight) and AdamW
-            lr=lr,
-            weight_decay=0.1,
-            _adam_lr=lr,
-            _adam_betas=(
-                0.9,
-                0.95,  # NOTE: paper above suggest using larger beta2 (~0.99) for small batch sizes.
-            ),
-            # Muon auto sets emb weight decay to 0.0, so we don't need to set it here.
-        )
+        return DionConfig(lr=lr, weight_decay=0.1)
 
     def configure_chinchilla_periods(self, num_params: int) -> tuple[int, list[float]]:
         # NOTE! Chinchilla periods are probably different for Muon.
@@ -79,7 +70,7 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         max_devices=args.max_gpus,
         device_type=get_gpu_type(args.cluster),
         model_configurator=TransformerModelConfigurator(),
-        run_configurator=MuonWSDSChinchillaRunConfigurator(
+        run_configurator=DionWSDSChinchillaRunConfigurator(
             chinchilla_multiple=args.chinchilla_multiple
         ),
         sequence_length=args.sequence_length,
