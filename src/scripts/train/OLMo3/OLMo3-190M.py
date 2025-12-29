@@ -76,7 +76,7 @@ def build_data_components(
     dataset_config = NumpyFSLDatasetConfig.from_data_mix(
         DataMix.OLMo_mix_0925,
         tokenizer=common.tokenizer,
-        mix_base_dir=common.root_dir,
+        mix_base_dir="gs://ai2-llm/",
         work_dir=common.work_dir,
         sequence_length=common.max_sequence_length,
         max_target_sequence_length=max(common.max_sequence_length, 8192),
@@ -126,17 +126,14 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 name=run_name,
                 group=common.run_name,
                 entity="ai2-llm",
-                project="olmo3",
+                project="olmo3-dion",
                 enabled=True,
                 cancel_check_interval=cancel_check_interval,
             ),
         )
         .with_callback(
             "slack_notifier",
-            SlackNotifierCallback(
-                name=run_name,
-                enabled=False,
-            ),
+            SlackNotifierCallback(name=run_name, enabled=False),
         )
         .with_recommended_evals(
             common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast", eval_interval=1000
