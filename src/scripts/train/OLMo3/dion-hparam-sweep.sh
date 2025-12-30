@@ -1,10 +1,10 @@
 #!/bin/bash
 
 # Learning rates to sweep
-LRS=(2.5e-3 1.94e-2)  # too small: 1.0e-3 1.94e-3  5.0e-4
+LRS=(1.94e-2)  # too small: 1.0e-3 1.94e-3  5.0e-4  2.5e-3
 
 # Batch sizes to sweep (in tokens)
-BATCH_SIZES=(1048576 2097152)  # too small: 262144 524288
+BATCH_SIZES=( 2097152)  # too small: 262144 524288 1048576
 
 for lr in "${LRS[@]}"; do
     for bs in "${BATCH_SIZES[@]}"; do
