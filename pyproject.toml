@@ -58,6 +58,7 @@ dev = [
 ]
 beaker = ["beaker-py>=1.37.0,<2.0", "GitPython>=3.0,<4.0", "google-cloud-compute"]
 comet = ["comet_ml"]
+dion = ["dion @ git+https://github.com/microsoft/dion.git ; sys_platform == 'linux'"]
 eval = ["ai2-olmo-eval==0.8.5"]
 torchao = ["torchao==0.15.0"]
 transformers = ["transformers"]

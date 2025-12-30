@@ -120,8 +120,8 @@ def configure_default_callbacks(
     run_name: str,
     wandb_group_name: str,
     wandb_project: str = "olmo-cookbook",
-    checkpoint_save_interval: int = 1000,
-    ephemeral_checkpoint_save_interval: int = 250,
+    checkpoint_save_interval: int | None = 1000,
+    ephemeral_checkpoint_save_interval: int | None = None,
 ) -> Dict[str, Callback]:
     callbacks = {
         "checkpointer": CheckpointerCallback(
