@@ -19,7 +19,11 @@ import torch.nn as nn
 from torch.distributed import DeviceMesh
 from torch.distributed.fsdp import FSDPModule, MixedPrecisionPolicy, fully_shard
 from torch.distributed.tensor import Replicate, Shard
-from torch.distributed.tensor.parallel import RowwiseParallel, parallelize_module
+from torch.distributed.tensor.parallel import (
+    RowwiseParallel,
+    SequenceParallel,
+    parallelize_module,
+)
 
 from olmo_core.data.utils import get_cumulative_document_lengths
 from olmo_core.distributed.parallel import get_pp_mesh
@@ -37,6 +41,7 @@ from ..attention import (
 )
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
+from ..layer_norm import LayerNormConfig
 from ..lm_head import LMHeadConfig, LMOutputWithLoss
 from ..moe import MoEBase
 from ..rope import RoPEBuffers, RotaryEmbeddingBase
@@ -91,6 +96,7 @@ class Transformer(nn.Module):
         n_layers: int,
         block: TransformerBlockConfig,
         lm_head: LMHeadConfig,
+        embedding_norm: Optional[LayerNormConfig] = None,
         dtype: torch.dtype = torch.float32,
         init_method: InitMethod = InitMethod.normal,
         init_device: str = "cpu",
@@ -109,6 +115,14 @@ class Transformer(nn.Module):
         self.dtype = dtype
 
         self.embeddings = nn.Embedding(vocab_size, d_model, dtype=dtype, device=init_device)
+        self.embedding_norm = (
+            None
+            if embedding_norm is None
+            else embedding_norm.build(
+                d_model,
+                init_device=init_device,
+            )
+        )
         self.blocks = nn.ModuleDict()
         for block_idx in range(n_layers):
             block_config = block
@@ -503,6 +517,8 @@ class Transformer(nn.Module):
         # Get embeddings but pass-through for non-existent layers to allow easy
         # pipeline parallel configuration.
         h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
+        if self.embedding_norm is not None:
+            h = self.embedding_norm(h)
 
         # Run each block.
         for block_key, block in self.blocks.items():
@@ -580,6 +596,10 @@ class Transformer(nn.Module):
                     output_layouts=Shard(1),
                     use_local_output=False,
                 ),
+            )
+        if self.embedding_norm is not None:
+            parallelize_module(
+                self.embedding_norm, device_mesh=tp_mesh, parallelize_plan=SequenceParallel()
             )
 
         # Apply tensor/sequence parallelism to every transformer block.
@@ -781,11 +801,11 @@ class Transformer(nn.Module):
             # Embedding params are not needed for backwards computation.
             cast(FSDPModule, self.embeddings).set_unshard_in_backward(False)
 
-        if (
-            wrapping_strategy != TransformerDataParallelWrappingStrategy.blocks
-            and self.lm_head is not None
-        ):
-            fully_shard(self.lm_head, reshard_after_forward=False, **fsdp_config)
+        if wrapping_strategy != TransformerDataParallelWrappingStrategy.blocks:
+            if self.embedding_norm is not None:
+                fully_shard(self.embedding_norm, **fsdp_config)
+            if self.lm_head is not None:
+                fully_shard(self.lm_head, reshard_after_forward=False, **fsdp_config)
 
         fully_shard(self, reshard_after_forward=reshard_after_forward, **fsdp_config)
         # Some inputs need to be on CPU initially, but FSDP will move everything to model's
