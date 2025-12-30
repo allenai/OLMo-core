@@ -47,7 +47,7 @@ class DionConfig(MatrixAwareOptimConfig):
 
     @classmethod
     def optimizer(cls) -> Type["Dion"]:
-        from dion import Dion
+        from dion import Dion  # type: ignore[reportMissingImports]
 
         return Dion
 
@@ -99,8 +99,6 @@ class DionConfig(MatrixAwareOptimConfig):
         if world_mesh is None:
             return meshes
         dim_names = world_mesh.mesh_dim_names
-        log.info(f"World mesh dimensions: {dim_names}")
-        log.info(f"World mesh shape: {world_mesh.shape}")
         if dim_names is None:
             raise RuntimeError("world mesh has no dimension names")
 
@@ -114,20 +112,18 @@ class DionConfig(MatrixAwareOptimConfig):
             meshes["outer_shard_mesh"] = get_dp_shard_mesh(world_mesh)
         elif MeshDimName.dp in dim_names or any(d.startswith("dp") for d in dim_names):
             # FSDP configuration
+            log.warning("Cannot determine if model is FSDP or DDP, assuming FSDP.")
             meshes["outer_shard_mesh"] = get_dp_model_mesh(world_mesh)
         if MeshDimName.tp in dim_names:
             # TP configuration
             meshes["inner_shard_mesh"] = get_tp_mesh(world_mesh)
-
-        log.info(f"Dion Meshes: {meshes}")
-
         return meshes
 
     def create_optimizer(self, model: torch.nn.Module, strict: bool = True, **kwargs) -> "Dion":
         """
         Create the optimizer.
         """
-        from dion import Dion
+        from dion import Dion  # type: ignore[reportMissingImports]
 
         torch._dynamo.config.recompile_limit = 16
 
