@@ -29,9 +29,9 @@ if TYPE_CHECKING:
 
 @dataclass
 class DionConfig(OptimConfig):
-    lr: float = 1e-3
+    lr: float = 0.01  # Shared lr for Dion and AdamW
     mu: float = 0.95  # momentum for Dion
-    betas: Tuple[float, float] = (0.9, 0.95)
+    betas: Tuple[float, float] = (0.9, 0.95)  # betas for AdamW
     weight_decay: float = 0.1
     rank_fraction: float = 1.0
 

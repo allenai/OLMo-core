@@ -52,7 +52,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     tokenizer_config = TokenizerConfig.dolma2()
-    model_config = TransformerConfig.olmo3_190M(
+    model_config = TransformerConfig.olmo3_370M(
         vocab_size=tokenizer_config.padded_vocab_size(), attn_backend=AttentionBackendName.torch
     )
     num_params = model_config.num_active_non_embedding_params
@@ -68,7 +68,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         rank_microbatch_size=rank_microbatch_size,
         max_sequence_length=SEQUENCE_LENGTH,
         optim=DionConfig(
-            lr=0.01,
+            lr=0.00194,
             weight_decay=0.1,
             betas=(0.9, 0.95),
         ),

@@ -1,6 +1,5 @@
 import argparse
 import logging
-import math
 from dataclasses import dataclass
 
 import olmo_core.io as io
@@ -18,33 +17,23 @@ log = logging.getLogger(__name__)
 @dataclass(kw_only=True)
 class DionWSDSChinchillaRunConfigurator(WSDSChinchillaRunConfigurator):
     def configure_target_batch_size(self, num_params: int) -> int:
-        # Calculate global batch size according to https://api.semanticscholar.org/CorpusID:270764838
-        # which assumes a sequence length of 2048.
-        muon_multiplier = 2  # https://arxiv.org/html/2507.01598v2#S4
-        return round(muon_multiplier * 2048 * 160 * (num_params / 108_000_000) ** (2 / 3))
+        # One of the points of using Muon / Dion is that they can handle
+        # over-large batch sizes without much degradation in data efficiency.
+        # Although, they have similar critical batch sizes wrt AdamW:
+        # https://arxiv.org/abs/2505.02222
+        # For the purpose of comparing peak performance, we will use the same
+        # batch size as AdamW. However, this does not demonstrate one of the primary
+        # benefits of Muon / Dion: scaling over-large batch sizes, which allows
+        # for additional use of data parallelism.
+        return super().configure_target_batch_size(num_params)
 
     def configure_optimizer(self, num_params: int, batch_size: int) -> DionConfig:
+        del num_params  # unused
         del batch_size  # unused
-        # Calculate LR according to https://api.semanticscholar.org/CorpusID:270764838
-        # but divide by 2 for WSD schedule (seems to work emperically).
-        lr = 0.0047 * (num_params / 108_000_000) ** (-1 / 3)
-        lr /= 2.0
-        return DionConfig(lr=lr, weight_decay=0.1)
 
-    def configure_chinchilla_periods(self, num_params: int) -> tuple[int, list[float]]:
-        # NOTE! Chinchilla periods are probably different for Muon.
-        # Warm up 1 token per parameter according to https://api.semanticscholar.org/CorpusID:270764838
-        warmup = num_params
-
-        # Generate Chinchilla (decay) periods as multiples of two, but at least the minimum.
-        chinchilla_periods: list[float] = []
-        max_pow = math.log(self.chinchilla_multiple, 2)
-        assert max_pow.is_integer()  # checked in `__post_init__()` as well.
-        for p in range(-1, int(max_pow) + 1):
-            period = 2**p
-            chinchilla_periods.append(period)
-
-        return warmup, chinchilla_periods
+        # Dion optimal lr stays at 0.01 across model scales
+        # https://arxiv.org/pdf/2504.05295
+        return DionConfig(lr=0.01, weight_decay=0.1)
 
 
 def configure_ladder(args: argparse.Namespace) -> ModelLadder:
