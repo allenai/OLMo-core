@@ -6,6 +6,7 @@ from .base import (
     RunConfigurator,
 )
 from .transformer_model_configurator import (
+    Olmo3ModelConfigurator,
     TransformerModelConfigurator,
     TransformerSize,
 )
@@ -21,5 +22,6 @@ __all__ = [
     # Concrete implementations.
     "WSDSChinchillaRunConfigurator",
     "TransformerModelConfigurator",
+    "Olmo3ModelConfigurator",
     "TransformerSize",
 ]

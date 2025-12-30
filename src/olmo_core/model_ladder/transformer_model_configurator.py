@@ -73,58 +73,8 @@ class TransformerSize(StrEnum):
 @dataclass(kw_only=True, eq=True)
 class TransformerModelConfigurator(ModelConfigurator[TransformerConfig]):
     """
-    Ladder configurator for transformer models. Use the OLMo 3 architecture by default.
+    Generic model configurator for transformer models.
     """
-
-    def configure_model(
-        self,
-        *,
-        size_spec: str,
-        sequence_length: int,
-        tokenizer: TokenizerConfig,
-        device_type: str,
-    ) -> TransformerConfig:
-        # TODO: configure context-parallelism if needed.
-        device_type = device_type.lower()
-        assert "h100" in device_type or "b200" in device_type
-        assert sequence_length in {2048, 4096, 8192}
-        size_spec = TransformerSize(size_spec)
-        vocab_size = tokenizer.padded_vocab_size()
-        kwargs = dict(attn_backend=AttentionBackendName.flash_3)
-
-        model: TransformerConfig
-        if size_spec == TransformerSize.size_190M:
-            model = TransformerConfig.olmo3_190M(vocab_size, **kwargs)
-        elif size_spec == TransformerSize.size_370M:
-            model = TransformerConfig.olmo3_370M(vocab_size, **kwargs)
-        elif size_spec == TransformerSize.size_600M:
-            model = TransformerConfig.olmo3_600M(vocab_size, **kwargs)
-        elif size_spec == TransformerSize.size_760M:
-            model = TransformerConfig.olmo3_760M(vocab_size, **kwargs)
-        elif size_spec == TransformerSize.size_1B:
-            model = TransformerConfig.olmo3_1B(vocab_size, **kwargs)
-        elif size_spec == TransformerSize.size_3B:
-            model = TransformerConfig.olmo3_3B(vocab_size, **kwargs)
-        elif size_spec == TransformerSize.size_7B:
-            model = TransformerConfig.olmo3_7B(vocab_size, **kwargs)
-        elif size_spec == TransformerSize.size_13B:
-            model = TransformerConfig.olmo3_13B(vocab_size, **kwargs)
-        else:
-            raise OLMoConfigurationError(f"Unsupported model size '{size_spec}'")
-
-        # Make sure actual number of params is close to target number.
-        if (
-            pct_diff := (
-                math.fabs(model.num_non_embedding_params - size_spec.approx_num_params)
-                / size_spec.approx_num_params
-            )
-        ) > 0.05:
-            warn_once(
-                f"Configured model has {format_count(model.num_non_embedding_params)} (non-embedding) parameters, "
-                f"which differs from target of {size_spec} by ~{100 * pct_diff:.1f}%.",
-                UserWarning,
-            )
-        return model
 
     def configure_rank_microbatch_size(
         self,
@@ -223,3 +173,75 @@ class TransformerModelConfigurator(ModelConfigurator[TransformerConfig]):
         assert isinstance(train_module, TransformerTrainModule)
 
         return train_module
+
+
+@dataclass(kw_only=True, eq=True)
+class Olmo3ModelConfigurator(TransformerModelConfigurator):
+    """
+    Model configurator for Olmo 3 transformer models.
+    """
+
+    def configure_model(
+        self,
+        *,
+        size_spec: str,
+        sequence_length: int,
+        tokenizer: TokenizerConfig,
+        device_type: str,
+    ) -> TransformerConfig:
+        # TODO: configure context-parallelism if needed.
+        device_type = device_type.lower()
+        assert "h100" in device_type or "b200" in device_type
+        assert sequence_length in {2048, 4096, 8192}
+        size_spec = TransformerSize(size_spec)
+        vocab_size = tokenizer.padded_vocab_size()
+
+        attn_backend = AttentionBackendName.torch
+        if "h100" in device_type:
+            try:
+                AttentionBackendName.flash_3.assert_supported()
+                attn_backend = AttentionBackendName.flash_3
+            except AssertionError:
+                pass
+        elif "b200" in device_type:
+            try:
+                AttentionBackendName.flash_2.assert_supported()
+                attn_backend = AttentionBackendName.flash_2
+            except AssertionError:
+                pass
+
+        kwargs = dict(attn_backend=attn_backend)
+
+        model: TransformerConfig
+        if size_spec == TransformerSize.size_190M:
+            model = TransformerConfig.olmo3_190M(vocab_size, **kwargs)
+        elif size_spec == TransformerSize.size_370M:
+            model = TransformerConfig.olmo3_370M(vocab_size, **kwargs)
+        elif size_spec == TransformerSize.size_600M:
+            model = TransformerConfig.olmo3_600M(vocab_size, **kwargs)
+        elif size_spec == TransformerSize.size_760M:
+            model = TransformerConfig.olmo3_760M(vocab_size, **kwargs)
+        elif size_spec == TransformerSize.size_1B:
+            model = TransformerConfig.olmo3_1B(vocab_size, **kwargs)
+        elif size_spec == TransformerSize.size_3B:
+            model = TransformerConfig.olmo3_3B(vocab_size, **kwargs)
+        elif size_spec == TransformerSize.size_7B:
+            model = TransformerConfig.olmo3_7B(vocab_size, **kwargs)
+        elif size_spec == TransformerSize.size_13B:
+            model = TransformerConfig.olmo3_13B(vocab_size, **kwargs)
+        else:
+            raise OLMoConfigurationError(f"Unsupported model size '{size_spec}'")
+
+        # Make sure actual number of params is close to target number.
+        if (
+            pct_diff := (
+                math.fabs(model.num_non_embedding_params - size_spec.approx_num_params)
+                / size_spec.approx_num_params
+            )
+        ) > 0.05:
+            warn_once(
+                f"Configured model has {format_count(model.num_non_embedding_params)} (non-embedding) parameters, "
+                f"which differs from target of {size_spec} by ~{100 * pct_diff:.1f}%.",
+                UserWarning,
+            )
+        return model
