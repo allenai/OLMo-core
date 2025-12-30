@@ -25,7 +25,8 @@ class DionWSDSChinchillaRunConfigurator(WSDSChinchillaRunConfigurator):
         # batch size as AdamW. However, this does not demonstrate one of the primary
         # benefits of Muon / Dion: scaling over-large batch sizes, which allows
         # for additional use of data parallelism.
-        return super().configure_target_batch_size(num_params)
+        bs_multiplier = 4
+        return round(super().configure_target_batch_size(num_params) * bs_multiplier)
 
     def configure_optimizer(self, num_params: int, batch_size: int) -> DionConfig:
         del num_params  # unused
