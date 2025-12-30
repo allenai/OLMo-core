@@ -30,6 +30,9 @@ class DionConfig(MatrixAwareOptimConfig):
 
     Dion is a Muon-like optimizer that is designed to be scalable for DP-replicated, DP-shareded,
     and TP-sharded models. See https://arxiv.org/abs/2504.05295 for more details.
+
+    Matrix-aware optimizers require a different optimizer for matrix parameters than for vector
+    and embedding parameters. This optimizer is backed by AdamW for vector and embedding parameters.
     """
 
     lr: float = 0.01
@@ -40,7 +43,9 @@ class DionConfig(MatrixAwareOptimConfig):
 
     betas: Tuple[float, float] = (0.9, 0.95)
     """Betas for AdamW"""
+
     weight_decay: float = 0.1
+    """Weight decay for non-embedding parameters"""
 
     rank_fraction: float = 1.0
     """Rank fraction for Dion. Set to 1.0 for full-rank optimization."""
@@ -53,8 +58,7 @@ class DionConfig(MatrixAwareOptimConfig):
 
     def default_group_overrides(self, model: torch.nn.Module) -> list[OptimGroupOverride]:
         """
-        Split the model parameters into Adam and Muon groups.
-        Only >=2d, internal parameters are meant to be optimized with Muon.
+        Apply Dion's parameter grouping rules.
         """
         assert isinstance(model, Transformer)
         params = self.categorize_parameters(model)
@@ -62,16 +66,17 @@ class DionConfig(MatrixAwareOptimConfig):
         lm_head_out: torch.nn.Linear = model.lm_head.w_out
         model_dim = lm_head_out.weight.shape[1]
 
-        # Only matrix parameters are optimized with Dion.
+        # Matrix parameters are optimized with Dion.
         matrix_override = OptimGroupOverride(params=params["matrix"], opts=dict(algorithm="dion"))
 
         # Vector, embedding, and lm_head parameters are optimized with AdamW.
-        embed_override = OptimGroupOverride(  # no weight decay for embeddings
-            params=params["embed"], opts=dict(algorithm="adamw", weight_decay=0)
+        embed_override = OptimGroupOverride(
+            params=params["embed"], opts=dict(algorithm="adamw", weight_decay=0.0)
         )
         vector_override = OptimGroupOverride(params=params["vector"], opts=dict(algorithm="adamw"))
-        lm_head_override = OptimGroupOverride(  # lr scaled by sqrt(model_dim) for lm_head as suggested in the paper
+        lm_head_override = OptimGroupOverride(
             params=params["lm_head"],
+            # lr scaled by sqrt(model_dim) for lm_head as suggested in the paper
             opts=dict(algorithm="adamw", lr=self.lr / math.sqrt(model_dim)),
         )
         return [matrix_override, vector_override, embed_override, lm_head_override]
