@@ -25,6 +25,8 @@ class GAPMonitorCallback(Callback):
     """
 
     enabled: bool = True
+    interval: int = 1
+    """How often (in steps) to measure statistics. Default is every step."""
 
     _handles: Optional[list] = dataclasses.field(default=None, repr=False)
     _local_batch_size_instances: int = dataclasses.field(default=1, repr=False)
@@ -34,7 +36,7 @@ class GAPMonitorCallback(Callback):
         if not self.enabled:
             return
         if not isinstance(self.trainer.train_module, TransformerTrainModule):
-            raise ValueError(f"{type(self).__name__ } only works with the TransformerTrainModule.")
+            raise ValueError(f"{type(self).__name__} only works with the TransformerTrainModule.")
 
     def pre_train(self):
         if not self.enabled:
@@ -102,12 +104,15 @@ class GAPMonitorCallback(Callback):
                 f"unsupported grad_output type {type(grad_output)} for module '{module_name}'"
             )
 
+    @torch.no_grad()
     def record_tensor_stats(
         self,
         name: str,
         tensor: torch.Tensor,
         kind: Literal["grad", "activation", "activation_grad", "param"],
     ):
+        if self.step % self.interval != 0:
+            return
         if tensor.numel() <= 1:
             return
 
@@ -150,10 +155,19 @@ class GAPMonitorCallback(Callback):
                     merge_strategy=MetricMergeStrategy.sum,
                 )
         else:
-            max_ = get_local_tensor(tensor).abs().max()
             var, mean = var_mean(tensor)
+            local_tensor = get_local_tensor(tensor)
+            if local_tensor.numel() > 0:
+                local_max = local_tensor.abs().max()
+            else:
+                # Use 0.0 as sentinel value for empty tensors in max reduction.
+                # Since we're taking abs(), all actual values are >= 0, so 0.0
+                # won't affect the max reduction when other processes have non-empty tensors.
+                local_max = torch.tensor(0.0, device=tensor.device, dtype=tensor.dtype)
             if self._dry_run_complete:
-                self.trainer.record_metric(f"{prefix}/{name}/max", max_, reduce_type=ReduceType.max)
+                self.trainer.record_metric(
+                    f"{prefix}/{name}/max", local_max, reduce_type=ReduceType.max
+                )
                 self.trainer.record_metric(f"{prefix}/{name}/mean", mean, reduce_type=None)
                 self.trainer.record_metric(f"{prefix}/{name}/var", var, reduce_type=None)
 
