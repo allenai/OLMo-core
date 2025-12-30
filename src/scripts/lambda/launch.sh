@@ -48,7 +48,7 @@ SBATCH_ARGS=(
     --parsable
 )
 
-if [ -f "/data/ai2/cordoned-nodes.txt" ]; then
+if [ -z "$NO_CORDON" ] && [ -f "/data/ai2/cordoned-nodes.txt" ]; then
     cordoned_nodes=$(grep -v '^#' /data/ai2/cordoned-nodes.txt | tr '\n' ',' | sed 's/,$//')
     log_warning "Cordoned nodes detected: $cordoned_nodes"
     SBATCH_ARGS+=(--exclude="$cordoned_nodes")

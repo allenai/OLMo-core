@@ -86,3 +86,7 @@ uv run src/scripts/train/ladder/2026Q1/cautious_weight_decay_ladder.py launch-al
 ```bash
 uv run src/scripts/train/ladder/2026Q1/dion_ladder.py launch-all --max-size 1B --cluster ai2/jupiter --name "olmo3-dion-sameBS" --preemptible --chinchilla-multiple 8.0 --priority high
 ```
+
+```bash
+NO_CORDON=1 ./src/scripts/lambda/launch.sh ./src/scripts/lambda/slurm-olmo3-dion-ladder.sbatch $USERNAME-dion-7B 8
+```
