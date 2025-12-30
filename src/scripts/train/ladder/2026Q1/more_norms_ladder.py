@@ -9,6 +9,7 @@ from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.internal.common import get_gpu_type, get_root_dir
 from olmo_core.internal.ladder import main
 from olmo_core.model_ladder import *
+from olmo_core.model_ladder.utils import get_mix_base_dir
 from olmo_core.nn.transformer import TransformerBlockType, TransformerConfig
 
 log = logging.getLogger(__name__)
@@ -68,8 +69,10 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
             sources=[
                 NumpyDocumentSourceMixConfig(
                     tokenizer=tokenizer,
-                    mix=DataMix.OLMo_mix_0925,
-                    mix_base_dir=get_root_dir(args.cluster),
+                    mix=DataMix.OLMo_mix_0925_official
+                    if args.cluster == "lambda"
+                    else DataMix.OLMo_mix_0925,
+                    mix_base_dir=get_mix_base_dir(args.cluster),
                 )
             ],
             sequence_length=args.sequence_length,
