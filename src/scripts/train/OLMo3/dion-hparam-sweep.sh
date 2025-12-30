@@ -1,10 +1,10 @@
 #!/bin/bash
 
 # Learning rates to sweep
-LRS=(1.0e-3 1.94e-3 2.5e-3)  # too small: 5.0e-4
+LRS=(2.5e-3 1.94e-2)  # too small: 1.0e-3 1.94e-3  5.0e-4
 
 # Batch sizes to sweep (in tokens)
-BATCH_SIZES=(262144 524288 1048576)  #
+BATCH_SIZES=(1048576 2097152)  # too small: 262144 524288
 
 for lr in "${LRS[@]}"; do
     for bs in "${BATCH_SIZES[@]}"; do
@@ -18,7 +18,7 @@ for lr in "${LRS[@]}"; do
         # Format lr for run name
         lr_name=$(echo $lr | sed 's/e-/e-/')
 
-        run_name="adamw-190M-lr${lr_name}-bs${bs_name}"
+        run_name="dion-190M-lr${lr_name}-bs${bs_name}"
 
         echo "Launching: $run_name"
         uv run src/scripts/train/OLMo3/OLMo3-190M.py launch \

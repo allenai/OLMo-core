@@ -19,7 +19,7 @@ from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
 from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
 from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.optim import WSD, OptimGroupOverride, SkipStepAdamWConfig
+from olmo_core.optim import WSD, DionConfig
 from olmo_core.train import Duration
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
@@ -67,19 +67,19 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=rank_microbatch_size,
         max_sequence_length=SEQUENCE_LENGTH,
-        # optim=DionConfig(
-        #     lr=0.00194,
-        #     weight_decay=0.1,
-        #     betas=(0.9, 0.95),
-        # ),
-        optim=SkipStepAdamWConfig(
+        optim=DionConfig(
             lr=0.00194,
             weight_decay=0.1,
             betas=(0.9, 0.95),
-            group_overrides=[
-                OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
-            ],
         ),
+        # optim=SkipStepAdamWConfig(
+        #     lr=0.00194,
+        #     weight_decay=0.1,
+        #     betas=(0.9, 0.95),
+        #     group_overrides=[
+        #         OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
+        #     ],
+        # ),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.fsdp,
@@ -113,7 +113,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     trainer_config = cookbook.configure_trainer(
-        max_duration=Duration.chinchilla_tokens(1.0, model_params=num_params),
+        max_duration=Duration.chinchilla_tokens(4.0, model_params=num_params),
         checkpoint_dir=save_dir,
         work_dir=work_dir,
     ).with_callbacks(
