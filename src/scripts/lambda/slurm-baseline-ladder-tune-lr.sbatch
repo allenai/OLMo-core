@@ -12,5 +12,6 @@ srun --kill-on-bad-exit=1 ./src/scripts/lambda/entrypoint.sh \
     --cluster=lambda \
     --max-gpus=64 \
     --rank-mbz="${rank_mbz}" \
+    --lr-multiplier="${lr_multiplier}" \
     --chinchilla-multiple=1.0 \
     --size="${size}"
