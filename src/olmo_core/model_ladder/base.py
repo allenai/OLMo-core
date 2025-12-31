@@ -575,7 +575,9 @@ class ModelLadder(Config):
             warn_once(
                 f"Global batch size to use ({format_tokens(global_batch_size)}) "
                 f"differs from target global batch size ({format_tokens(target_global_batch_size)}) "
-                f"by ~{100 * pct_diff:.1f}%.",
+                f"by ~{100 * pct_diff:.1f}%.\n"
+                f"Consider making the configured rank micro-batch size smaller if possible, which is set by the "
+                f"method {self.model_configurator.__class__.__name__}.configure_rank_microbatch_size().",
                 UserWarning,
             )
 
