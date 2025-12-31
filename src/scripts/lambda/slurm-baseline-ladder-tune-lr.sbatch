@@ -2,7 +2,7 @@
 
 lr_multiplier=${1:-1.0}
 
-size=760M
+size=7B
 # rank_mbz=8  # set based on rank mbz for H100s
     # --rank-mbz="${rank_mbz}" \
 
