@@ -572,14 +572,20 @@ class ModelLadder(Config):
                 math.fabs(global_batch_size - target_global_batch_size) / target_global_batch_size
             )
         ) > 0.1:
-            warn_once(
+            msg = (
                 f"Global batch size to use ({format_tokens(global_batch_size)}) "
                 f"differs from target global batch size ({format_tokens(target_global_batch_size)}) "
-                f"by ~{100 * pct_diff:.1f}%.\n"
-                f"Consider making the configured rank micro-batch size smaller if possible, which is set by the "
-                f"method {self.model_configurator.__class__.__name__}.configure_rank_microbatch_size().",
-                UserWarning,
+                f"by ~{100 * pct_diff:.1f}%."
             )
+            # In most cases the discrepancy is due to the rank micro-batch size being too large.
+            # So we can suggest making it smaller if the micro-batch size per rank is more than one
+            # instance.
+            if rank_microbatch_size // self.sequence_length > 1:
+                msg += (
+                    f"\nConsider decreasing the configured rank micro-batch size, which is set by the "
+                    f"method {self.model_configurator.__class__.__name__}.configure_rank_microbatch_size()."
+                )
+            warn_once(msg, UserWarning)
 
         return global_batch_size, rank_microbatch_size, num_devices, dp_world_size
 
