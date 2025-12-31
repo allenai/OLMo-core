@@ -107,6 +107,12 @@ def parse_args(
             default=64,
             help="The maximum number of GPUs to use for the ladder.",
         )
+        parser.add_argument(
+            "--rank-mbz",
+            type=int,
+            default=None,
+            help="Override the rank micro-batch size, in instances.",
+        )
 
     def add_launch_args(parser: argparse.ArgumentParser):
         parser.add_argument(

@@ -32,7 +32,9 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         sizes=list(TransformerSize),
         max_devices=args.max_gpus,
         device_type=get_gpu_type(args.cluster),
-        model_configurator=Olmo3ModelConfigurator(),
+        model_configurator=Olmo3ModelConfigurator(
+            rank_microbatch_size=args.rank_mbz * args.sequence_length
+        ),
         run_configurator=WSDSChinchillaRunConfigurator(
             chinchilla_multiple=args.chinchilla_multiple,
             lr_multiplier=args.lr_multiplier,
