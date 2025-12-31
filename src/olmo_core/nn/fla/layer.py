@@ -26,7 +26,12 @@ class FLA(nn.Module):
     def init_kv_cache_manager(self, batch_size: int):
         raise NotImplementedError()
 
-    def forward(self, x: torch.Tensor, **_kwargs) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        cu_doc_lens: Optional[torch.Tensor] = None,
+        **_kwargs,
+    ) -> torch.Tensor:
         # FIXME: Right now we just ignore the kwargs.
 
         if self.kv_cache_manager is not None and self.kv_cache_manager.current_position() == 0:
@@ -34,7 +39,7 @@ class FLA(nn.Module):
         elif self.kv_cache_manager is not None:
             raise NotImplementedError()  # generate step
         else:
-            return self.inner(x)[0]  # returns out, ?, cache
+            return self.inner(x, cu_seqlens=cu_doc_lens)[0]  # returns out, ?, cache
 
     def apply_tp(
         self,
