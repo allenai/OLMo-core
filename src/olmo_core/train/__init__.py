@@ -86,7 +86,7 @@ def prepare_training_environment(
     *,
     seed: Optional[int] = None,
     backend: Optional[str] = "cpu:gloo,cuda:nccl",
-    timeout: timedelta = timedelta(minutes=15),
+    timeout: timedelta = timedelta(minutes=60),  # TODO: reduce this back to 15 minutes
     log_filter_type: Optional[LogFilterType] = None,
     shared_filesystem: Optional[bool] = None,
 ):
