@@ -124,7 +124,7 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         sizes=list(TransformerSize),
         max_devices=args.max_gpus,
         device_type=get_gpu_type(args.cluster),
-        model_configurator=TransformerModelConfigurator(),
+        model_configurator=HybridGDNTransformerModelConfigurator(),
         run_configurator=WSDSChinchillaRunConfigurator(
             chinchilla_multiple=args.chinchilla_multiple
         ),

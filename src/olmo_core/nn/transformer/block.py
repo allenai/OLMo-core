@@ -1187,3 +1187,11 @@ class FLABlock(TransformerBlockBase):
                 use_local_output=False,
                 float8_enabled=float8_enabled,
             )
+
+    def num_flops_per_token(self, seq_len: int) -> int:
+        attn_flops = self.fla.num_flops_per_token(seq_len)
+        if self.feed_forward is not None:
+            ff_flops = self.feed_forward.num_flops_per_token(seq_len)
+        else:
+            ff_flops = 0
+        return attn_flops + ff_flops
