@@ -70,6 +70,13 @@ def parse_args(
             help="A name to assign to the ladder experiment.",
         )
         parser.add_argument(
+            "--project",
+            type=str,
+            default=None,
+            help="""A project name to associate with the ladder runs.
+            Used by the W&B logger, for example.""",
+        )
+        parser.add_argument(
             "--sequence-length",
             type=int,
             default=8 * 1024,

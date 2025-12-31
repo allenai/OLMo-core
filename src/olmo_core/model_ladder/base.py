@@ -211,6 +211,11 @@ class ModelLadder(Config):
     """A name to assign to the ladder."""
     dir: str
     """A unique directory where ladder run results and intermediate checkpoints should be saved."""
+    project: str | None = None
+    """
+    An optional project name to associate with the ladder runs. Defaults to :data:`name`.
+    This is used by some logging backends (e.g. Weights & Biases).
+    """
     sizes: list[str]
     """A list of model size specs to run as part of the ladder."""
     max_devices: int
@@ -631,7 +636,7 @@ class ModelLadder(Config):
                 "wandb": callbacks.WandBCallback(
                     name=run_name,
                     group=run_name,
-                    project=self.name,
+                    project=self.project or self.name,
                     cancel_check_interval=50,
                     enabled=not for_benchmarking,
                 ),

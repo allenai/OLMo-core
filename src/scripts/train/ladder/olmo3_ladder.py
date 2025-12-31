@@ -27,6 +27,7 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
     ]
     ladder = ModelLadder(
         name=args.name,
+        project=args.project,
         dir=str(io.join_path(get_root_dir(args.cluster), "model-ladders", args.name)),
         sizes=list(TransformerSize),
         max_devices=args.max_gpus,
