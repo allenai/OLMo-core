@@ -27,7 +27,7 @@ from olmo_core.optim import (
     SchedulerUnits,
     SkipStepAdamWConfig,
 )
-from olmo_core.train import Duration, TrainerConfig
+from olmo_core.train import Duration, LoadStrategy, TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, WandBCallback
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
@@ -168,7 +168,10 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
 
     return (
         TrainerConfig(
-            # willm: Adapted this from 1B linear RNN runs.
+            load_strategy=LoadStrategy.always,
+            load_trainer_state=False,
+            load_optim_state=True,
+            load_path=f"{common.root_dir}/checkpoints/willm/linear-rnns/OLMo3.1-7B-6T-30h/step1414078/",
             save_folder=f"{common.root_dir}/checkpoints/willm/linear-rnns/{common.run_name}/",
             save_overwrite=True,
             metrics_collect_interval=50,
