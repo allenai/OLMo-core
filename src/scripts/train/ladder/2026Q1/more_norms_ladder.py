@@ -90,7 +90,8 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
             embedding_norm=args.embedding_norm,
         ),
         run_configurator=WSDSChinchillaRunConfigurator(
-            chinchilla_multiple=args.chinchilla_multiple
+            chinchilla_multiple=args.chinchilla_multiple,
+            lr_multiplier=args.lr_multiplier,
         ),
         sequence_length=args.sequence_length,
         tokenizer=tokenizer,

@@ -89,6 +89,12 @@ def parse_args(
             help="The Chinchilla multiple to use for the ladder.",
         )
         parser.add_argument(
+            "--lr-multiplier",
+            type=float,
+            default=1.0,
+            help="A multiplier to apply to the default learning rate.",
+        )
+        parser.add_argument(
             "--cluster",
             type=str,
             choices=["ai2/augusta", "ai2/jupiter", "ai2/titan", "lambda"],
