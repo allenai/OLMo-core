@@ -39,7 +39,7 @@ from olmo_core.train.train_module import (
 log = logging.getLogger(__name__)
 
 SEQUENCE_LENGTH = 65536
-GLOBAL_BATCH_SIZE = 4 * 1024 * 1024  # ~2M tokens
+GLOBAL_BATCH_SIZE = 4 * 1024 * 1024  # ~4M tokens
 MAX_TOKENS = 100_000_000_000  # 100B
 LR = 0.00020712352850360292
 
@@ -117,7 +117,6 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
-            shard_degree=64,
         ),
         # tp_config=TransformerTensorParallelConfig(degree=8),
         ac_config=TransformerActivationCheckpointingConfig(
@@ -197,7 +196,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
                 cancel_check_interval=cancel_check_interval,
             ),
         )
-        .with_recommended_evals(common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast")
+        # .with_recommended_evals(common.tokenizer, SEQUENCE_LENGTH, cluster, task_set="fast")
     )
 
 
