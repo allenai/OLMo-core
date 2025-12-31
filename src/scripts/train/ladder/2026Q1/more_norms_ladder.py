@@ -88,7 +88,9 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         model_configurator=MoreNormsModelConfigurator(
             style=args.norm_style,
             embedding_norm=args.embedding_norm,
-            rank_microbatch_size=args.rank_mbz * args.sequence_length,
+            rank_microbatch_size=None
+            if args.rank_mbz is None
+            else args.rank_mbz * args.sequence_length,
         ),
         run_configurator=WSDSChinchillaRunConfigurator(
             chinchilla_multiple=args.chinchilla_multiple,
