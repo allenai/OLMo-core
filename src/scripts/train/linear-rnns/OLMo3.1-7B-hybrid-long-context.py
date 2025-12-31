@@ -120,7 +120,8 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         ),
         # tp_config=TransformerTensorParallelConfig(degree=8),
         ac_config=TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.budget, activation_memory_budget=0.7
+            mode=TransformerActivationCheckpointingMode.budget,
+            activation_memory_budget=0.2,
         ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
