@@ -61,7 +61,7 @@ class WSDSChinchillaRunConfigurator(RunConfigurator):
     def configure_optimizer(self, num_params: int, batch_size: int) -> SkipStepAdamWConfig:
         del batch_size  # unused
         # Calculate LR according to https://api.semanticscholar.org/CorpusID:270764838
-        # but divide by 2 for WSD schedule (seems to work emperically).
+        # but divide by 2 for WSD schedule (seems to work empirically).
         lr = 0.0047 * (num_params / 108_000_000) ** (-1 / 3)
         lr /= 2.0
         return SkipStepAdamWConfig(
