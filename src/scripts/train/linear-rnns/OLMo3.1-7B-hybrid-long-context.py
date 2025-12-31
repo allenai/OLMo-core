@@ -33,7 +33,6 @@ from olmo_core.train.train_module import (
     TransformerActivationCheckpointingConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
-    TransformerTensorParallelConfig,
     TransformerTrainModuleConfig,
 )
 
@@ -118,10 +117,11 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
+            shard_degree=64,
         ),
-        tp_config=TransformerTensorParallelConfig(degree=8),
+        # tp_config=TransformerTensorParallelConfig(degree=8),
         ac_config=TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.budget, activation_memory_budget=0.5
+            mode=TransformerActivationCheckpointingMode.budget, activation_memory_budget=0.7
         ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
