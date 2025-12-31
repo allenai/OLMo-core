@@ -130,7 +130,7 @@ def build_data_components(
     include_instance_filter: bool = False,
 ) -> DataComponents:
     source_list = SourceMixtureList.from_yaml(
-        "src/olmo_core/data/source_mixtures/OLMo3-7B-midtraining.yaml"
+        "src/olmo_core/data/source_mixtures/OLMo3-32B-midtraining-modelnamefilter.yaml"
     )
     source_list.validate()
     dataset_config = NumpyFSLDatasetConfig.from_src_mix(
