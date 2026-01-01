@@ -125,7 +125,7 @@ def test_tensor_parallel_block(
     device = torch.device("cuda") if "nccl" in backend else torch.device("cpu")
 
     seed_all(0)
-    d_model = 128
+    d_model = 64
 
     # Add attention-specific defaults for non-FLA blocks
     if block_cls != FLABlock:

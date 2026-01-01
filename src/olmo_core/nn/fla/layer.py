@@ -124,11 +124,9 @@ class FLA(nn.Module):
 
         # Shard ShortConvolution layers (when use_short_conv=True).
         #
-        # IMPORTANT: FLA's ShortConvolution runs custom Triton kernels, which do not work with DTensor
-        # parameters. Instead we *materialize per-rank local Conv1d parameters* by slicing along the
-        # channel dimension and updating the Conv1d metadata (in/out/groups). This matches the
-        # colwise-sharded outputs of q_proj/k_proj/v_proj.
-        tp_rank = dist.get_rank(tp_mesh.get_group())
+        # FLA's ShortConvolution uses custom Triton kernels that access weight.data directly.
+        # We use DTensor with Shard(0) placement for checkpoint compatibility, then the kernels
+        # will access the local tensor data. We must also update conv metadata to match local size.
         tp_world_size = dist.get_world_size(tp_mesh.get_group())
 
         for conv_name in ["q_conv1d", "k_conv1d", "v_conv1d"]:
@@ -157,17 +155,21 @@ class FLA(nn.Module):
                 )
 
             local_channels = out_channels // tp_world_size
-            start = tp_rank * local_channels
-            end = start + local_channels
 
             # Conv1d weight shape is (out_channels, in_channels/groups, kernel_size).
-            # For depthwise conv, in_channels/groups == 1, so slicing dim 0 is correct.
-            w_local = conv.weight.detach()[start:end].contiguous()
-            conv.weight = nn.Parameter(w_local)
+            # For depthwise conv, in_channels/groups == 1, so sharding dim 0 is correct.
+            # Use DTensor for checkpoint compatibility - the Triton kernels will access
+            # the underlying local tensor via ._local_tensor.
+            conv.weight = nn.Parameter(
+                distribute_tensor(cast(torch.Tensor, conv.weight.data), tp_mesh, [Shard(0)])
+            )
             if conv.bias is not None:
-                b_local = conv.bias.detach()[start:end].contiguous()
-                conv.bias = nn.Parameter(b_local)
+                conv.bias = nn.Parameter(
+                    distribute_tensor(cast(torch.Tensor, conv.bias.data), tp_mesh, [Shard(0)])
+                )
 
+            # Update Conv1d metadata to reflect local shard size.
+            # This is needed because the Triton kernels use these attributes.
             conv.in_channels = local_channels
             conv.out_channels = local_channels
             conv.groups = local_channels
