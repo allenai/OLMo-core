@@ -41,7 +41,8 @@ SEQUENCE_LENGTH = 8 * 1024
 GLOBAL_BATCH_SIZE = 2 * 1024 * 1024  # ~2M tokens
 MAX_TOKENS = 100_000_000_000  # 100B
 LR = 0.00020712352850360292
-SEED = 1337
+# SEED = 1337  #  ingredient 1
+SEED = 683  #  ingredient 2
 
 # Reduce per-device batch size to save on memory.
 MICROBATCH_DISCOUNT = 1
