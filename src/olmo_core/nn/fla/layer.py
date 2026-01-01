@@ -1,12 +1,11 @@
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 import torch
-import torch.distributed as dist
 from torch import nn
 from torch.distributed import DeviceMesh
-from torch.distributed.tensor import DTensor
+from torch.distributed.tensor import DTensor, Shard, distribute_tensor
 from torch.distributed.tensor.parallel import parallelize_module
 from torch.distributed.tensor.placement_types import Placement, Replicate
 
@@ -114,40 +113,36 @@ class FLA(nn.Module):
         # Shard A_log and dt_bias to match the sharded a_proj output.
         # These are [num_heads] tensors used in: g = -A_log.exp() * softplus(a_proj(x) + dt_bias)
         # Since a_proj is columnwise parallel (output sharded), A_log and dt_bias must also
-        # be sharded to match. We manually slice them rather than using DTensor because
-        # FLA's code does .float() operations that can break DTensor dispatch.
-        tp_rank = dist.get_rank(tp_mesh.get_group())
-        tp_world_size = dist.get_world_size(tp_mesh.get_group())
-        num_heads = inner.A_log.shape[0]
-        local_heads = num_heads // tp_world_size
-        start = tp_rank * local_heads
-        end = start + local_heads
+        # be sharded to match.
+        #
+        # We use DTensor with Shard(0) placement so that distributed checkpointing (DCP)
+        # correctly handles resharding when loading from unsharded checkpoints. However,
+        # FLA's code does .float() operations that can break DTensor dispatch, so we
+        # register a forward pre-hook that replaces DTensor parameters with their local
+        # tensors before FLA runs, and a forward hook that restores them afterward.
+        inner.A_log = nn.Parameter(
+            distribute_tensor(inner.A_log.data, tp_mesh, placements=[Shard(0)])
+        )
+        inner.dt_bias = nn.Parameter(
+            distribute_tensor(inner.dt_bias.data, tp_mesh, placements=[Shard(0)])
+        )
 
-        inner.A_log = nn.Parameter(inner.A_log.data[start:end].contiguous())
-        inner.dt_bias = nn.Parameter(inner.dt_bias.data[start:end].contiguous())
+        # Store original DTensor parameters and swap to local tensors during forward
+        def _pre_forward_hook(module: nn.Module, args: Any) -> None:
+            # Save DTensor params and replace with local tensors for FLA's kernels
+            module._A_log_dtensor = module.A_log
+            module._dt_bias_dtensor = module.dt_bias
+            module.A_log = nn.Parameter(module.A_log.to_local(), requires_grad=True)
+            module.dt_bias = nn.Parameter(module.dt_bias.to_local(), requires_grad=True)
 
-        # Register a load state dict hook to slice A_log and dt_bias when loading from checkpoint.
-        # This is needed because checkpoints save the full (unsharded) parameters, but after
-        # apply_tp() the model has sharded (smaller) parameters. The hook intercepts the loaded
-        # state dict and slices the parameters to match the local shard.
-        def _load_state_dict_pre_hook(
-            state_dict: Dict[str, Any],
-            prefix: str,
-            local_metadata: Dict[str, Any],
-            strict: bool,
-            missing_keys: List[str],
-            unexpected_keys: List[str],
-            error_msgs: List[str],
-        ) -> None:
-            for param_name in ["A_log", "dt_bias"]:
-                key = f"{prefix}{param_name}"
-                if key in state_dict:
-                    full_param = state_dict[key]
-                    # Only slice if the checkpoint has the full (unsharded) parameter
-                    if full_param.shape[0] > local_heads:
-                        state_dict[key] = full_param[start:end].contiguous()
+        def _post_forward_hook(module: nn.Module, args: Any, output: Any) -> None:
+            # Restore DTensor params for proper gradient handling and checkpointing
+            module.A_log = module._A_log_dtensor
+            module.dt_bias = module._dt_bias_dtensor
+            del module._A_log_dtensor, module._dt_bias_dtensor
 
-        inner._register_load_state_dict_pre_hook(_load_state_dict_pre_hook)
+        inner.register_forward_pre_hook(_pre_forward_hook)
+        inner.register_forward_hook(_post_forward_hook)
 
         # ShortConvolution layers (q_conv1d, k_conv1d, v_conv1d) are NOT sharded.
         # FLA's ShortConvolution uses custom Triton kernels that access weight.data directly
