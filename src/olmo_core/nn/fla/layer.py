@@ -1,6 +1,6 @@
 import logging
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 import torch
 import torch.distributed as dist
@@ -125,6 +125,29 @@ class FLA(nn.Module):
 
         inner.A_log = nn.Parameter(inner.A_log.data[start:end].contiguous())
         inner.dt_bias = nn.Parameter(inner.dt_bias.data[start:end].contiguous())
+
+        # Register a load state dict hook to slice A_log and dt_bias when loading from checkpoint.
+        # This is needed because checkpoints save the full (unsharded) parameters, but after
+        # apply_tp() the model has sharded (smaller) parameters. The hook intercepts the loaded
+        # state dict and slices the parameters to match the local shard.
+        def _load_state_dict_pre_hook(
+            state_dict: Dict[str, Any],
+            prefix: str,
+            local_metadata: Dict[str, Any],
+            strict: bool,
+            missing_keys: List[str],
+            unexpected_keys: List[str],
+            error_msgs: List[str],
+        ) -> None:
+            for param_name in ["A_log", "dt_bias"]:
+                key = f"{prefix}{param_name}"
+                if key in state_dict:
+                    full_param = state_dict[key]
+                    # Only slice if the checkpoint has the full (unsharded) parameter
+                    if full_param.shape[0] > local_heads:
+                        state_dict[key] = full_param[start:end].contiguous()
+
+        inner._register_load_state_dict_pre_hook(_load_state_dict_pre_hook)
 
         # ShortConvolution layers (q_conv1d, k_conv1d, v_conv1d) are NOT sharded.
         # FLA's ShortConvolution uses custom Triton kernels that access weight.data directly
