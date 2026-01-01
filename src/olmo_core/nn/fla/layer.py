@@ -1,13 +1,13 @@
 import logging
 from dataclasses import dataclass, field
-from typing import Optional, cast
+from typing import Optional
 
 import torch
 from torch import nn
 from torch.distributed import DeviceMesh
-from torch.distributed.tensor import DTensor, distribute_tensor
+from torch.distributed.tensor import DTensor
 from torch.distributed.tensor.parallel import parallelize_module
-from torch.distributed.tensor.placement_types import Placement, Replicate, Shard
+from torch.distributed.tensor.placement_types import Placement, Replicate
 
 from olmo_core.config import Config, DType
 from olmo_core.nn.utils import get_tp_wrappers
@@ -110,23 +110,15 @@ class FLA(nn.Module):
             parallelize_plan=plan,
         )
 
-        # Shard per-head parameters to match sharded a_proj/b_proj outputs.
-        # A_log and dt_bias are [num_heads] tensors used with a_proj output in:
-        #   g = -A_log.exp() * softplus(a_proj(x) + dt_bias)
-        # They must be sharded on dim 0 to match the colwise-sharded a_proj output.
-        inner.A_log = nn.Parameter(
-            distribute_tensor(cast(torch.Tensor, inner.A_log.data), tp_mesh, [Shard(0)])
-        )
-        inner.dt_bias = nn.Parameter(
-            distribute_tensor(cast(torch.Tensor, inner.dt_bias.data), tp_mesh, [Shard(0)])
-        )
-
-        # ShortConvolution layers (q_conv1d, k_conv1d, v_conv1d) are NOT sharded.
+        # A_log, dt_bias, and ShortConvolution layers are NOT sharded.
         #
-        # FLA's ShortConvolution uses custom Triton kernels that access weight.data directly
-        # and cannot handle DTensor. Rather than implementing complex workarounds, we keep
-        # these weights replicated across TP ranks. The memory overhead is minimal since
-        # conv weights are small (kernel_size * hidden_size parameters per conv).
+        # FLA's GatedDeltaNet performs operations like `.float()` on these tensors which
+        # can break DTensor dispatch. Additionally, ShortConvolution uses custom Triton
+        # kernels that access weight.data directly and cannot handle DTensor.
+        #
+        # We keep these weights replicated across TP ranks. The memory overhead is minimal:
+        # - A_log and dt_bias: [num_heads] each (e.g., 32 floats)
+        # - conv weights: kernel_size * hidden_size per conv (e.g., 4 * 4096 = 16K params)
 
         # o_norm: normalizes over head_v_dim (last dimension), not the head dimension.
         # Since heads are sharded but each shard has complete head_v_dim vectors,
