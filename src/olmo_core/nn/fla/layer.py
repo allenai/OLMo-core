@@ -1,6 +1,6 @@
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple, cast
+from typing import Optional, cast
 
 import torch
 import torch.distributed as dist
@@ -14,6 +14,67 @@ from olmo_core.config import Config, DType
 from olmo_core.nn.utils import get_tp_wrappers
 
 log = logging.getLogger(__name__)
+
+
+class _ShardedConvWrapper(nn.Module):
+    """
+    Wrapper for FLA's ShortConvolution that stores weights as DTensors for checkpoint
+    compatibility but provides local tensors to the inner conv for Triton kernel compatibility.
+
+    FLA's ShortConvolution uses custom Triton kernels that cannot handle DTensor parameters.
+    This wrapper:
+    1. Stores weight/bias as DTensor nn.Parameters (for checkpoint save/load via DCP)
+    2. Delegates forward() to the inner conv after temporarily setting local tensors
+    """
+
+    def __init__(self, inner_conv: nn.Module, tp_mesh: DeviceMesh, local_channels: int):
+        super().__init__()
+        self._inner = inner_conv
+        self._tp_mesh = tp_mesh
+
+        # Convert inner conv's params to DTensors and store them on this wrapper.
+        # This makes them visible to state_dict() for checkpoint compatibility.
+        weight_dtensor = distribute_tensor(
+            cast(torch.Tensor, inner_conv.weight).detach(), tp_mesh, [Shard(0)]
+        )
+        self.weight = nn.Parameter(weight_dtensor)
+
+        if inner_conv.bias is not None:
+            bias_dtensor = distribute_tensor(
+                cast(torch.Tensor, inner_conv.bias).detach(), tp_mesh, [Shard(0)]
+            )
+            self.bias: Optional[nn.Parameter] = nn.Parameter(bias_dtensor)
+        else:
+            self.bias = None
+
+        # Remove params from inner conv to avoid duplication in state_dict.
+        # Use object.__setattr__ to bypass nn.Module's __setattr__ type checking.
+        object.__setattr__(inner_conv, "weight", None)
+        object.__setattr__(inner_conv, "bias", None)
+
+        # Update inner conv's metadata to reflect local shard size.
+        object.__setattr__(inner_conv, "in_channels", local_channels)
+        object.__setattr__(inner_conv, "out_channels", local_channels)
+        object.__setattr__(inner_conv, "groups", local_channels)
+        if hasattr(inner_conv, "hidden_size"):
+            object.__setattr__(inner_conv, "hidden_size", local_channels)
+
+    def forward(self, *args, **kwargs):
+        # Temporarily set local tensors on inner conv for Triton kernel compatibility.
+        # The weight/bias are DTensors; we extract _local_tensor for Triton.
+        weight_local = cast(DTensor, self.weight.data)._local_tensor
+        object.__setattr__(self._inner, "weight", weight_local)
+
+        if self.bias is not None:
+            bias_local = cast(DTensor, self.bias.data)._local_tensor
+            object.__setattr__(self._inner, "bias", bias_local)
+
+        try:
+            return self._inner(*args, **kwargs)
+        finally:
+            # Clear to avoid holding references (params live on wrapper)
+            object.__setattr__(self._inner, "weight", None)
+            object.__setattr__(self._inner, "bias", None)
 
 
 class FLA(nn.Module):
@@ -125,13 +186,10 @@ class FLA(nn.Module):
         # Shard ShortConvolution layers (when use_short_conv=True).
         #
         # FLA's ShortConvolution uses custom Triton kernels that access weight.data directly
-        # and cannot handle DTensor. We keep conv weights as local (sliced) tensors for runtime,
-        # but register state dict hooks to convert to/from DTensor for checkpoint compatibility.
-        tp_rank = dist.get_rank(tp_mesh.get_group())
+        # and cannot handle DTensor. We wrap each conv with _ShardedConvWrapper which:
+        # 1. Stores weights as DTensors (for checkpoint compatibility with DCP)
+        # 2. Provides local tensors to the inner conv during forward (for Triton kernels)
         tp_world_size = dist.get_world_size(tp_mesh.get_group())
-
-        # Track which conv params need DTensor conversion for checkpointing
-        conv_tp_params: Dict[str, Tuple[str, torch.Size]] = {}  # param_name -> (conv_name, global_shape)
 
         for conv_name in ["q_conv1d", "k_conv1d", "v_conv1d"]:
             if not (hasattr(inner, conv_name) and getattr(inner, conv_name) is not None):
@@ -159,83 +217,10 @@ class FLA(nn.Module):
                 )
 
             local_channels = out_channels // tp_world_size
-            start = tp_rank * local_channels
-            end = start + local_channels
 
-            # Record global shape before slicing for checkpoint hooks
-            conv_tp_params[f"{conv_name}.weight"] = (conv_name, conv.weight.shape)
-            if conv.bias is not None:
-                conv_tp_params[f"{conv_name}.bias"] = (conv_name, conv.bias.shape)
-
-            # Conv1d weight shape is (out_channels, in_channels/groups, kernel_size).
-            # For depthwise conv, in_channels/groups == 1, so slicing dim 0 is correct.
-            w_local = conv.weight.detach()[start:end].contiguous()
-            conv.weight = nn.Parameter(w_local)
-            if conv.bias is not None:
-                b_local = conv.bias.detach()[start:end].contiguous()
-                conv.bias = nn.Parameter(b_local)
-
-            conv.in_channels = local_channels
-            conv.out_channels = local_channels
-            conv.groups = local_channels
-
-            # Some implementations keep a separate attribute used by kernels.
-            if hasattr(conv, "hidden_size"):
-                conv.hidden_size = local_channels
-
-        # Register state dict hooks to handle conv params as DTensors for checkpoint compatibility.
-        # This allows loading checkpoints saved with different TP configurations.
-        if conv_tp_params:
-            self._conv_tp_params = conv_tp_params
-            self._tp_mesh = tp_mesh
-
-            def state_dict_hook(
-                module: "FLA",
-                state_dict: Dict[str, Any],
-                prefix: str,
-                _local_metadata: Dict[str, Any],
-            ) -> None:
-                """Convert local conv tensors to DTensors when saving state dict."""
-                for param_name in module._conv_tp_params:
-                    key = f"{prefix}inner.{param_name}"
-                    if key in state_dict:
-                        local_tensor = state_dict[key]
-                        state_dict[key] = distribute_tensor(
-                            local_tensor, module._tp_mesh, [Shard(0)]
-                        )
-
-            def load_state_dict_hook(
-                module: "FLA",
-                state_dict: Dict[str, Any],
-                prefix: str,
-                _local_metadata: Dict[str, Any],
-                _strict: bool,
-                _missing_keys: List[str],
-                _unexpected_keys: List[str],
-                _error_msgs: List[str],
-            ) -> None:
-                """Convert DTensors to local tensors when loading state dict."""
-                for param_name, (_, global_shape) in module._conv_tp_params.items():
-                    key = f"{prefix}inner.{param_name}"
-                    if key in state_dict:
-                        tensor = state_dict[key]
-                        if isinstance(tensor, DTensor):
-                            # Already a DTensor from checkpoint - extract local shard
-                            state_dict[key] = tensor.to_local()
-                        elif tensor.shape != global_shape:
-                            # Already a local tensor with correct shape - nothing to do
-                            pass
-                        else:
-                            # Full tensor from non-TP checkpoint - slice it
-                            tp_rank = dist.get_rank(module._tp_mesh.get_group())
-                            tp_world_size = dist.get_world_size(module._tp_mesh.get_group())
-                            local_size = tensor.shape[0] // tp_world_size
-                            start = tp_rank * local_size
-                            end = start + local_size
-                            state_dict[key] = tensor[start:end].contiguous()
-
-            self._register_state_dict_hook(state_dict_hook)
-            self._register_load_state_dict_pre_hook(load_state_dict_hook, with_module=True)
+            # Wrap the conv with our sharded wrapper that handles DTensor <-> local conversion
+            wrapped_conv = _ShardedConvWrapper(conv, tp_mesh, local_channels)
+            setattr(inner, conv_name, wrapped_conv)
 
         # o_norm: normalizes over head_v_dim (last dimension), not the head dimension.
         # Since heads are sharded but each shard has complete head_v_dim vectors,
