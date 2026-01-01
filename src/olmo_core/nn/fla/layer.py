@@ -3,7 +3,6 @@ from dataclasses import dataclass, field
 from typing import Optional, cast
 
 import torch
-import torch.distributed as dist
 from torch import nn
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import DTensor, distribute_tensor
@@ -14,67 +13,6 @@ from olmo_core.config import Config, DType
 from olmo_core.nn.utils import get_tp_wrappers
 
 log = logging.getLogger(__name__)
-
-
-class _ShardedConvWrapper(nn.Module):
-    """
-    Wrapper for FLA's ShortConvolution that stores weights as DTensors for checkpoint
-    compatibility but provides local tensors to the inner conv for Triton kernel compatibility.
-
-    FLA's ShortConvolution uses custom Triton kernels that cannot handle DTensor parameters.
-    This wrapper:
-    1. Stores weight/bias as DTensor nn.Parameters (for checkpoint save/load via DCP)
-    2. Delegates forward() to the inner conv after temporarily setting local tensors
-    """
-
-    def __init__(self, inner_conv: nn.Module, tp_mesh: DeviceMesh, local_channels: int):
-        super().__init__()
-        self._inner = inner_conv
-        self._tp_mesh = tp_mesh
-
-        # Convert inner conv's params to DTensors and store them on this wrapper.
-        # This makes them visible to state_dict() for checkpoint compatibility.
-        weight_dtensor = distribute_tensor(
-            cast(torch.Tensor, inner_conv.weight).detach(), tp_mesh, [Shard(0)]
-        )
-        self.weight = nn.Parameter(weight_dtensor)
-
-        if inner_conv.bias is not None:
-            bias_dtensor = distribute_tensor(
-                cast(torch.Tensor, inner_conv.bias).detach(), tp_mesh, [Shard(0)]
-            )
-            self.bias: Optional[nn.Parameter] = nn.Parameter(bias_dtensor)
-        else:
-            self.bias = None
-
-        # Remove params from inner conv to avoid duplication in state_dict.
-        # Use object.__setattr__ to bypass nn.Module's __setattr__ type checking.
-        object.__setattr__(inner_conv, "weight", None)
-        object.__setattr__(inner_conv, "bias", None)
-
-        # Update inner conv's metadata to reflect local shard size.
-        object.__setattr__(inner_conv, "in_channels", local_channels)
-        object.__setattr__(inner_conv, "out_channels", local_channels)
-        object.__setattr__(inner_conv, "groups", local_channels)
-        if hasattr(inner_conv, "hidden_size"):
-            object.__setattr__(inner_conv, "hidden_size", local_channels)
-
-    def forward(self, *args, **kwargs):
-        # Temporarily set local tensors on inner conv for Triton kernel compatibility.
-        # The weight/bias are DTensors; we extract _local_tensor for Triton.
-        weight_local = cast(DTensor, self.weight.data)._local_tensor
-        object.__setattr__(self._inner, "weight", weight_local)
-
-        if self.bias is not None:
-            bias_local = cast(DTensor, self.bias.data)._local_tensor
-            object.__setattr__(self._inner, "bias", bias_local)
-
-        try:
-            return self._inner(*args, **kwargs)
-        finally:
-            # Clear to avoid holding references (params live on wrapper)
-            object.__setattr__(self._inner, "weight", None)
-            object.__setattr__(self._inner, "bias", None)
 
 
 class FLA(nn.Module):
@@ -183,44 +121,12 @@ class FLA(nn.Module):
             distribute_tensor(cast(torch.Tensor, inner.dt_bias.data), tp_mesh, [Shard(0)])
         )
 
-        # Shard ShortConvolution layers (when use_short_conv=True).
+        # ShortConvolution layers (q_conv1d, k_conv1d, v_conv1d) are NOT sharded.
         #
         # FLA's ShortConvolution uses custom Triton kernels that access weight.data directly
-        # and cannot handle DTensor. We wrap each conv with _ShardedConvWrapper which:
-        # 1. Stores weights as DTensors (for checkpoint compatibility with DCP)
-        # 2. Provides local tensors to the inner conv during forward (for Triton kernels)
-        tp_world_size = dist.get_world_size(tp_mesh.get_group())
-
-        for conv_name in ["q_conv1d", "k_conv1d", "v_conv1d"]:
-            if not (hasattr(inner, conv_name) and getattr(inner, conv_name) is not None):
-                continue
-
-            conv = getattr(inner, conv_name)
-            if not (hasattr(conv, "weight") and hasattr(conv, "groups")):
-                raise NotImplementedError(
-                    f"Don't know how to shard {conv_name} of type {type(conv).__name__}"
-                )
-
-            # Expect depthwise Conv1d: groups == in_channels == out_channels
-            in_channels = int(getattr(conv, "in_channels", conv.weight.shape[0]))
-            out_channels = int(getattr(conv, "out_channels", conv.weight.shape[0]))
-            groups = int(conv.groups)
-            if not (groups == in_channels == out_channels):
-                raise NotImplementedError(
-                    f"TP sharding only implemented for depthwise Conv1d in {conv_name}, "
-                    f"but got in={in_channels}, out={out_channels}, groups={groups}"
-                )
-
-            if out_channels % tp_world_size != 0:
-                raise ValueError(
-                    f"{conv_name} out_channels={out_channels} must be divisible by tp_world_size={tp_world_size}"
-                )
-
-            local_channels = out_channels // tp_world_size
-
-            # Wrap the conv with our sharded wrapper that handles DTensor <-> local conversion
-            wrapped_conv = _ShardedConvWrapper(conv, tp_mesh, local_channels)
-            setattr(inner, conv_name, wrapped_conv)
+        # and cannot handle DTensor. Rather than implementing complex workarounds, we keep
+        # these weights replicated across TP ranks. The memory overhead is minimal since
+        # conv weights are small (kernel_size * hidden_size parameters per conv).
 
         # o_norm: normalizes over head_v_dim (last dimension), not the head dimension.
         # Since heads are sharded but each shard has complete head_v_dim vectors,
