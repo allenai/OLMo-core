@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 import torch
+import torch.distributed as dist
 from torch import nn
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import DTensor
@@ -110,15 +111,25 @@ class FLA(nn.Module):
             parallelize_plan=plan,
         )
 
-        # A_log, dt_bias, and ShortConvolution layers are NOT sharded.
-        #
-        # FLA's GatedDeltaNet performs operations like `.float()` on these tensors which
-        # can break DTensor dispatch. Additionally, ShortConvolution uses custom Triton
-        # kernels that access weight.data directly and cannot handle DTensor.
-        #
-        # We keep these weights replicated across TP ranks. The memory overhead is minimal:
-        # - A_log and dt_bias: [num_heads] each (e.g., 32 floats)
-        # - conv weights: kernel_size * hidden_size per conv (e.g., 4 * 4096 = 16K params)
+        # Shard A_log and dt_bias to match the sharded a_proj output.
+        # These are [num_heads] tensors used in: g = -A_log.exp() * softplus(a_proj(x) + dt_bias)
+        # Since a_proj is columnwise parallel (output sharded), A_log and dt_bias must also
+        # be sharded to match. We manually slice them rather than using DTensor because
+        # FLA's code does .float() operations that can break DTensor dispatch.
+        tp_rank = dist.get_rank(tp_mesh.get_group())
+        tp_world_size = dist.get_world_size(tp_mesh.get_group())
+        num_heads = inner.A_log.shape[0]
+        local_heads = num_heads // tp_world_size
+        start = tp_rank * local_heads
+        end = start + local_heads
+
+        inner.A_log = nn.Parameter(inner.A_log.data[start:end].contiguous())
+        inner.dt_bias = nn.Parameter(inner.dt_bias.data[start:end].contiguous())
+
+        # ShortConvolution layers (q_conv1d, k_conv1d, v_conv1d) are NOT sharded.
+        # FLA's ShortConvolution uses custom Triton kernels that access weight.data directly
+        # and cannot handle DTensor. We keep these weights replicated across TP ranks.
+        # The memory overhead is minimal (kernel_size * hidden_size per conv).
 
         # o_norm: normalizes over head_v_dim (last dimension), not the head dimension.
         # Since heads are sharded but each shard has complete head_v_dim vectors,
