@@ -1,6 +1,6 @@
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 import torch
 from torch import nn
@@ -130,24 +130,77 @@ class FLA(nn.Module):
         # Store original DTensor parameters and swap to local tensors during forward
         def _pre_forward_hook(module: nn.Module, args: Any) -> None:
             # Save DTensor params and replace with local tensors for FLA's kernels
-            module._A_log_dtensor = module.A_log
-            module._dt_bias_dtensor = module.dt_bias
-            module.A_log = nn.Parameter(module.A_log.to_local(), requires_grad=True)
-            module.dt_bias = nn.Parameter(module.dt_bias.to_local(), requires_grad=True)
+            module._A_log_dtensor = cast(DTensor, module.A_log)
+            module._dt_bias_dtensor = cast(DTensor, module.dt_bias)
+            module._A_log_local_param = nn.Parameter(
+                module._A_log_dtensor.to_local(), requires_grad=module._A_log_dtensor.requires_grad
+            )
+            module._dt_bias_local_param = nn.Parameter(
+                module._dt_bias_dtensor.to_local(),
+                requires_grad=module._dt_bias_dtensor.requires_grad,
+            )
+            module.A_log = module._A_log_local_param
+            module.dt_bias = module._dt_bias_local_param
 
         def _post_forward_hook(module: nn.Module, args: Any, output: Any) -> None:
-            # Restore DTensor params for proper gradient handling and checkpointing
+            # Restore DTensor params for the rest of the program; keep locals for backward
             module.A_log = module._A_log_dtensor
             module.dt_bias = module._dt_bias_dtensor
-            del module._A_log_dtensor, module._dt_bias_dtensor
+
+            # If no grad will be computed, clean up immediately to avoid leaks.
+            if not torch.is_grad_enabled():
+                del module._A_log_dtensor, module._dt_bias_dtensor
+                del module._A_log_local_param, module._dt_bias_local_param
+
+        def _backward_hook(module: nn.Module, grad_input: Any, grad_output: Any) -> None:
+            # Copy grads from local params back to DTensor params before optimizer step.
+            if hasattr(module, "_A_log_dtensor") and hasattr(module, "_A_log_local_param"):
+                a_dtensor = cast(DTensor, module._A_log_dtensor)
+                local_grad = cast(torch.Tensor, module._A_log_local_param.grad)
+                if local_grad is not None:
+                    dt_grad = distribute_tensor(
+                        local_grad,
+                        a_dtensor.device_mesh,
+                        placements=a_dtensor.placements,
+                    )
+                    if a_dtensor.grad is None:
+                        a_dtensor.grad = dt_grad
+                    else:
+                        a_dtensor.grad += dt_grad
+
+            if hasattr(module, "_dt_bias_dtensor") and hasattr(module, "_dt_bias_local_param"):
+                dt_bias_dtensor = cast(DTensor, module._dt_bias_dtensor)
+                local_grad = cast(torch.Tensor, module._dt_bias_local_param.grad)
+                if local_grad is not None:
+                    dt_grad = distribute_tensor(
+                        local_grad,
+                        dt_bias_dtensor.device_mesh,
+                        placements=dt_bias_dtensor.placements,
+                    )
+                    if dt_bias_dtensor.grad is None:
+                        dt_bias_dtensor.grad = dt_grad
+                    else:
+                        dt_bias_dtensor.grad += dt_grad
+
+            # Restore module attributes and clean up
+            if hasattr(module, "_A_log_dtensor"):
+                module.A_log = module._A_log_dtensor
+                del module._A_log_dtensor
+            if hasattr(module, "_dt_bias_dtensor"):
+                module.dt_bias = module._dt_bias_dtensor
+                del module._dt_bias_dtensor
+            if hasattr(module, "_A_log_local_param"):
+                del module._A_log_local_param
+            if hasattr(module, "_dt_bias_local_param"):
+                del module._dt_bias_local_param
 
         inner.register_forward_pre_hook(_pre_forward_hook)
         inner.register_forward_hook(_post_forward_hook)
+        inner.register_full_backward_hook(_backward_hook)
 
         # ShortConvolution layers (q_conv1d, k_conv1d, v_conv1d) are NOT sharded.
         # FLA's ShortConvolution uses custom Triton kernels that access weight.data directly
         # and cannot handle DTensor. We keep these weights replicated across TP ranks.
-        # The memory overhead is minimal (kernel_size * hidden_size per conv).
 
         # o_norm: normalizes over head_v_dim (last dimension), not the head dimension.
         # Since heads are sharded but each shard has complete head_v_dim vectors,
