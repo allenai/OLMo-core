@@ -43,10 +43,17 @@ class PrepareModuleWeight(ParallelStyle):
         device_mesh: DeviceMesh,
     ):
         for p_name, param in module.named_parameters():
-            replicated_param = nn.Parameter(
-                DTensor.from_local(param, device_mesh, self.parameter_layouts, run_check=False),
-            )
-            module.register_parameter(p_name, replicated_param)
+            # Idempotent: if already a DTensor with desired placements, keep it.
+            if isinstance(param, DTensor):
+                if param.placements == tuple(self.parameter_layouts):
+                    continue
+                param = param.redistribute(placements=tuple(self.parameter_layouts), async_op=True)
+            else:
+                param = DTensor.from_local(
+                    param, device_mesh, self.parameter_layouts, run_check=False
+                )
+
+            module.register_parameter(p_name, nn.Parameter(param))
 
     @staticmethod
     def _prepare_input_fn(input_layouts, mod, inputs, device_mesh):
@@ -198,12 +205,6 @@ class FLA(nn.Module):
         # o_norm: normalizes over head_v_dim (last dimension), not the head dimension.
         # Since heads are sharded but each shard has complete head_v_dim vectors,
         # o_norm can operate locally without sharding its weights.
-
-        for name, param in inner.named_parameters():
-            if isinstance(param, DTensor):
-                log.info(f"{name}: is_dtensor=True, placements={param.placements}")
-            else:
-                log.info(f"{name}: is_dtensor=False")
 
     def num_flops_per_token(self, seq_len: int) -> int:
         """
