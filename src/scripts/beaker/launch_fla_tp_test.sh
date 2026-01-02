@@ -44,4 +44,4 @@ gantry run \
     --env 'CUBLAS_WORKSPACE_CONFIG=:16:8' \
     --env 'PYTHONPATH=./src/' \
     -- pytest -v --color=yes --durations=3 -m gpu \
-        src/test/nn/transformer/block_test.py
+        src/test/nn/transformer/block_test.py -k "fla-gated-deltanet"

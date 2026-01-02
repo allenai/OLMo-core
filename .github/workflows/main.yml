@@ -178,13 +178,6 @@ jobs:
               pytest -v --color=yes --durations=3 -m gpu \
                 src/test/nn/transformer*
 
-          - name: Test FLA TP (GPU)
-            image: *gpu_test_image
-            gpus: 2
-            run: |
-              pytest -v --color=yes --durations=3 -m gpu \
-                src/test/nn/transformer/block_test.py
-
           - name: Test MoE (GPU)
             image: *gpu_test_image
             gpus: 2

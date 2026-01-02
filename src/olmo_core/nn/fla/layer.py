@@ -46,9 +46,16 @@ class PrepareModuleWeight(ParallelStyle):
             # Idempotent: if already a DTensor with desired placements, keep it.
             if isinstance(param, DTensor):
                 if param.placements == tuple(self.parameter_layouts):
+                    log.info(f"Parameter {name}.{p_name} already has desired placements, skipping")
                     continue
+                log.info(
+                    f"Redistributing parameter {name}.{p_name} from {param.placements} to {self.parameter_layouts}"
+                )
                 param = param.redistribute(placements=tuple(self.parameter_layouts), async_op=True)
             else:
+                log.info(
+                    f"Converting parameter {name}.{p_name} to DTensor with placements {self.parameter_layouts}"
+                )
                 param = DTensor.from_local(
                     param, device_mesh, self.parameter_layouts, run_check=False
                 )
