@@ -1,6 +1,5 @@
 import logging
 from dataclasses import dataclass, field
-from functools import partial
 from typing import Optional
 
 import torch
@@ -17,141 +16,35 @@ from torch.distributed.tensor.parallel import ParallelStyle, parallelize_module
 from torch.distributed.tensor.placement_types import Placement
 
 from olmo_core.config import Config, DType
+from olmo_core.nn.utils import get_tp_wrappers
 
 log = logging.getLogger(__name__)
 
 
-class GatedDeltaNetParallel(ParallelStyle):
+class ShardParameter(ParallelStyle):
     """
-    A ParallelStyle that applies tensor parallelism to a GatedDeltaNet module.
+    A ParallelStyle that shards a specific parameter (not a submodule) on a given dimension.
 
-    This handles:
-    - q_proj, k_proj, v_proj, a_proj, b_proj, g_proj: columnwise parallel (Shard(0) on weight)
-    - o_proj: rowwise parallel (Shard(1) on weight)
-    - A_log, dt_bias: Shard(0) on the num_heads dimension
-    - q_conv1d, k_conv1d, v_conv1d: replicated (Triton kernels can't handle DTensor)
-    - o_norm: replicated (operates on head_v_dim, not sharded dimension)
-
-    Keyword Args:
-        input_layouts: The DTensor layout of input tensor (how it arrives), default: Replicate().
-        output_layouts: The DTensor layout of output tensor (how it should leave), default: Replicate().
-        use_local_output: Whether to convert output back to local tensor, default: True.
+    This is used for parameters like A_log and dt_bias in GatedDeltaNet that are
+    nn.Parameter attributes directly on the module, not inside submodules like nn.Linear.
     """
 
-    def __init__(
-        self,
-        *,
-        input_layouts: Optional[Placement] = None,
-        output_layouts: Optional[Placement] = None,
-        use_local_output: bool = True,
-    ):
+    def __init__(self, param_name: str, shard_dim: int = 0):
         super().__init__()
-        # input_layouts: how the input arrives (for annotation)
-        self.input_layouts = (input_layouts or Replicate(),)
-        # desired_input_layouts: what the module needs (Replicate for colwise parallel)
-        self.desired_input_layouts = (Replicate(),)
-        # output_layouts: desired output placement
-        self.output_layouts = (output_layouts or Replicate(),)
-        self.use_local_output = use_local_output
+        self.param_name = param_name
+        self.shard_dim = shard_dim
 
     def _partition_fn(self, name: str, module: nn.Module, device_mesh: DeviceMesh):
-        """Partition the GatedDeltaNet module's parameters."""
-        # Columnwise parallel projections: shard weight on dim 0, bias on dim 0
-        colwise_projs = ["q_proj", "k_proj", "v_proj", "a_proj", "b_proj", "g_proj"]
-        for proj_name in colwise_projs:
-            if hasattr(module, proj_name):
-                proj = getattr(module, proj_name)
-                if proj is not None and isinstance(proj, nn.Linear):
-                    proj.weight = nn.Parameter(
-                        distribute_tensor(proj.weight, device_mesh, [Shard(0)])
-                    )
-                    if proj.bias is not None:
-                        proj.bias = nn.Parameter(
-                            distribute_tensor(proj.bias, device_mesh, [Shard(0)])
-                        )
-
-        # Rowwise parallel output projection: shard weight on dim 1, replicate bias
-        if hasattr(module, "o_proj") and module.o_proj is not None:
-            o_proj = module.o_proj
-            if isinstance(o_proj, nn.Linear):
-                o_proj.weight = nn.Parameter(
-                    distribute_tensor(o_proj.weight, device_mesh, [Shard(1)])
+        if hasattr(module, self.param_name):
+            param = getattr(module, self.param_name)
+            if param is not None and not isinstance(param, DTensor):
+                new_param = nn.Parameter(
+                    distribute_tensor(param, device_mesh, [Shard(self.shard_dim)])
                 )
-                if o_proj.bias is not None:
-                    o_proj.bias = nn.Parameter(
-                        distribute_tensor(o_proj.bias, device_mesh, [Replicate()])
-                    )
-
-        # A_log and dt_bias: shard on dim 0 to match colwise-sharded a_proj output
-        for param_name in ["A_log", "dt_bias"]:
-            if hasattr(module, param_name):
-                param = getattr(module, param_name)
-                if param is not None and isinstance(param, nn.Parameter):
-                    new_param = nn.Parameter(distribute_tensor(param, device_mesh, [Shard(0)]))
-                    setattr(module, param_name, new_param)
-
-        # Convolutions (q_conv1d, k_conv1d, v_conv1d): keep replicated
-        # FLA's ShortConvolution uses Triton kernels that access .data directly
-        for conv_name in ["q_conv1d", "k_conv1d", "v_conv1d"]:
-            if hasattr(module, conv_name):
-                conv = getattr(module, conv_name)
-                if conv is not None:
-                    for p_name, param in conv.named_parameters():
-                        if not isinstance(param, DTensor):
-                            new_param = nn.Parameter(
-                                distribute_tensor(param, device_mesh, [Replicate()])
-                            )
-                            conv.register_parameter(p_name, new_param)
-
-        # o_norm: replicate (operates on head_v_dim, not the sharded dimension)
-        if hasattr(module, "o_norm") and module.o_norm is not None:
-            for p_name, param in module.o_norm.named_parameters():
-                if not isinstance(param, DTensor):
-                    new_param = nn.Parameter(distribute_tensor(param, device_mesh, [Replicate()]))
-                    module.o_norm.register_parameter(p_name, new_param)
-
-    @staticmethod
-    def _prepare_input_fn(input_layouts, desired_input_layouts, mod, inputs, device_mesh):
-        # Annotate input with input_layouts, then redistribute to desired_input_layouts
-        input_tensor = inputs[0]
-        if not isinstance(input_tensor, DTensor):
-            input_tensor = DTensor.from_local(
-                input_tensor, device_mesh, input_layouts, run_check=False
-            )
-
-        # Redistribute to desired layout if needed (colwise parallel needs Replicate input)
-        if input_tensor.placements != desired_input_layouts:
-            input_tensor = input_tensor.redistribute(
-                placements=desired_input_layouts, async_op=True
-            )
-        return input_tensor
-
-    @staticmethod
-    def _prepare_output_fn(output_layouts, use_local_output, mod, outputs, device_mesh):
-        # After rowwise parallel o_proj, output has Partial placement, needs reduction
-        if outputs.placements != output_layouts:
-            outputs = outputs.redistribute(placements=output_layouts, async_op=True)
-        return outputs.to_local() if use_local_output else outputs
+                setattr(module, self.param_name, new_param)
 
     def _apply(self, module: nn.Module, device_mesh: DeviceMesh) -> nn.Module:
-        return distribute_module(
-            module,
-            device_mesh,
-            partition_fn=self._partition_fn,
-            input_fn=partial(
-                self._prepare_input_fn, self.input_layouts, self.desired_input_layouts
-            ),
-            output_fn=partial(self._prepare_output_fn, self.output_layouts, self.use_local_output),
-        )
-
-    def __repr__(self) -> str:
-        return (
-            f"{self.__class__.__name__}("
-            f"input_layouts={self.input_layouts}, "
-            f"desired_input_layouts={self.desired_input_layouts}, "
-            f"output_layouts={self.output_layouts}, "
-            f"use_local_output={self.use_local_output})"
-        )
+        return distribute_module(module, device_mesh, partition_fn=self._partition_fn)
 
 
 class FLA(nn.Module):
@@ -198,6 +91,9 @@ class FLA(nn.Module):
         - q_conv1d, k_conv1d, v_conv1d: short convolutions (replicated, Triton kernels)
         - o_norm: output normalization (replicated, operates on head_v_dim)
         - o_proj: output projection (rowwise parallel)
+
+        IMPORTANT: All parallel styles use use_local_output=True because FLA's internal
+        Triton kernels (convolutions, etc.) cannot work with DTensors - they access .data directly.
         """
         if float8_enabled:
             raise NotImplementedError("float8 is not yet supported for FLA layers")
@@ -210,17 +106,49 @@ class FLA(nn.Module):
                 "Please file an issue if you need TP support for other FLA layer types."
             )
 
-        parallelize_module(
-            module=self,
-            device_mesh=tp_mesh,
-            parallelize_plan={
-                "inner": GatedDeltaNetParallel(
-                    input_layouts=input_layout,
-                    output_layouts=output_layout,
-                    use_local_output=use_local_output,
-                )
-            },
+        rowwise_parallel, colwise_parallel, prepare_module_input = get_tp_wrappers(
+            float8_enabled=float8_enabled
         )
+
+        # Build parallelization plan for GatedDeltaNet
+        # All styles use use_local_output=True because FLA's Triton kernels need local tensors
+        plan: dict[str, ParallelStyle] = {}
+
+        # Handle input: redistribute to Replicate if needed, output local tensor
+        plan["inner"] = prepare_module_input(
+            input_layouts=None if input_layout is None else (input_layout,),
+            desired_input_layouts=(Replicate(),),
+            use_local_output=True,  # FLA needs local tensors
+        )
+
+        # Input projections (columnwise parallel - shard output dimension)
+        # All use use_local_output=True so Triton kernels get local tensors
+        for proj_name in ["q_proj", "k_proj", "v_proj", "a_proj", "b_proj"]:
+            if hasattr(inner, proj_name) and getattr(inner, proj_name) is not None:
+                plan[f"inner.{proj_name}"] = colwise_parallel(use_local_output=True)
+
+        # g_proj: optional gate projection (only when use_gate=True)
+        if hasattr(inner, "g_proj") and inner.g_proj is not None:
+            plan["inner.g_proj"] = colwise_parallel(use_local_output=True)
+
+        # Output projection (rowwise parallel - shard input dimension)
+        # This one handles the final output layout
+        if hasattr(inner, "o_proj") and inner.o_proj is not None:
+            plan["inner.o_proj"] = rowwise_parallel(
+                output_layouts=output_layout,
+                use_local_output=use_local_output,
+            )
+
+        parallelize_module(module=self, device_mesh=tp_mesh, parallelize_plan=plan)
+
+        # A_log and dt_bias: shard on dim 0 to match colwise-sharded a_proj output
+        # These are nn.Parameter attributes, not submodules, so we handle them separately
+        for param_name in ["A_log", "dt_bias"]:
+            if hasattr(inner, param_name):
+                param = getattr(inner, param_name)
+                if param is not None and not isinstance(param, DTensor):
+                    new_param = nn.Parameter(distribute_tensor(param, tp_mesh, [Shard(0)]))
+                    setattr(inner, param_name, new_param)
 
     def num_flops_per_token(self, seq_len: int) -> int:
         """
