@@ -8,7 +8,7 @@
 # * All other args are passed to torchrun.
 srun --kill-on-bad-exit=1 ./src/scripts/lambda/entrypoint.sh \
     src/scripts/train/ladder/2026Q1/dion_ladder.py run \
-    --name=olmo3-dion-4xBS-0.5xLR \
+    --name=olmo3-dion-4xBS-1xLR \
     --cluster=lambda \
     --max-gpus=128 \
     --chinchilla-multiple=8.0 \
