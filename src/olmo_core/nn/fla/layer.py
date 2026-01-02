@@ -192,16 +192,6 @@ class FLA(nn.Module):
         if hasattr(inner, "g_proj") and inner.g_proj is not None:
             plan["inner.g_proj"] = colwise_parallel()
 
-        # A_log and dt_bias are [num_heads] parameter tensors (not submodules) used in:
-        #   g = -A_log.exp() * softplus(a_proj(x) + dt_bias)
-        # They must be sharded on dim 0 to match the colwise-sharded a_proj output.
-        # We apply PrepareModuleWeight to "inner" with a filter for these specific parameters.
-        plan["inner"] = PrepareModuleWeight(
-            parameter_layouts=[Shard(0)],  # match the sharded a_proj output
-            parameter_names=["A_log", "dt_bias"],
-            # use_local_output=True,
-        )
-
         # ShortConvolution layers (q_conv1d, k_conv1d, v_conv1d) are NOT sharded.
         # FLA's ShortConvolution uses custom Triton kernels that access weight.data directly
         # and cannot handle DTensor. We keep these weights replicated across TP ranks.
@@ -212,6 +202,17 @@ class FLA(nn.Module):
             output_layouts=output_layout, use_local_output=use_local_output
         )
         parallelize_module(module=self, device_mesh=tp_mesh, parallelize_plan=plan)
+
+        # A_log and dt_bias are [num_heads] parameter tensors (not submodules) used in:
+        #   g = -A_log.exp() * softplus(a_proj(x) + dt_bias)
+        # They must be sharded on dim 0 to match the colwise-sharded a_proj output.
+        # We handle these manually since parallelize_module only works with submodules.
+        for param_name in ["A_log", "dt_bias"]:
+            if hasattr(inner, param_name):
+                param = getattr(inner, param_name)
+                if param is not None and not isinstance(param, DTensor):
+                    sharded_param = DTensor.from_local(param, tp_mesh, [Shard(0)], run_check=False)
+                    setattr(inner, param_name, nn.Parameter(sharded_param))
 
         # o_norm: normalizes over head_v_dim (last dimension), not the head dimension.
         # Since heads are sharded but each shard has complete head_v_dim vectors,
