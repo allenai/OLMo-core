@@ -23,8 +23,6 @@ echo "Launching FLA TP test on Beaker..."
 echo "  Workspace: ${BEAKER_WORKSPACE}"
 echo "  Image: ${BEAKER_IMAGE}"
 echo "  GPUs: ${GPUS}"
-echo "  Commit: ${COMMIT_SHA}"
-echo "  Branch: ${BRANCH_NAME}"
 
 # Launch the test using gantry
 gantry run \
