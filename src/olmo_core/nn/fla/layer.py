@@ -33,8 +33,8 @@ class GatedDeltaNetParallel(ParallelStyle):
     - o_norm: replicated (operates on head_v_dim, not sharded dimension)
 
     Keyword Args:
-        input_layouts: The DTensor layout of input tensor, default: Replicate().
-        output_layouts: The DTensor layout of output tensor, default: Replicate().
+        input_layouts: The DTensor layout of input tensor (how it arrives), default: Replicate().
+        output_layouts: The DTensor layout of output tensor (how it should leave), default: Replicate().
         use_local_output: Whether to convert output back to local tensor, default: True.
     """
 
@@ -46,7 +46,11 @@ class GatedDeltaNetParallel(ParallelStyle):
         use_local_output: bool = True,
     ):
         super().__init__()
+        # input_layouts: how the input arrives (for annotation)
         self.input_layouts = (input_layouts or Replicate(),)
+        # desired_input_layouts: what the module needs (Replicate for colwise parallel)
+        self.desired_input_layouts = (Replicate(),)
+        # output_layouts: desired output placement
         self.output_layouts = (output_layouts or Replicate(),)
         self.use_local_output = use_local_output
 
@@ -107,14 +111,19 @@ class GatedDeltaNetParallel(ParallelStyle):
                     module.o_norm.register_parameter(p_name, new_param)
 
     @staticmethod
-    def _prepare_input_fn(input_layouts, mod, inputs, device_mesh):
+    def _prepare_input_fn(input_layouts, desired_input_layouts, mod, inputs, device_mesh):
+        # Annotate input with input_layouts, then redistribute to desired_input_layouts
         input_tensor = inputs[0]
         if not isinstance(input_tensor, DTensor):
             input_tensor = DTensor.from_local(
                 input_tensor, device_mesh, input_layouts, run_check=False
             )
-        elif input_tensor.placements != input_layouts:
-            input_tensor = input_tensor.redistribute(placements=input_layouts, async_op=True)
+
+        # Redistribute to desired layout if needed (colwise parallel needs Replicate input)
+        if input_tensor.placements != desired_input_layouts:
+            input_tensor = input_tensor.redistribute(
+                placements=desired_input_layouts, async_op=True
+            )
         return input_tensor
 
     @staticmethod
@@ -129,7 +138,9 @@ class GatedDeltaNetParallel(ParallelStyle):
             module,
             device_mesh,
             partition_fn=self._partition_fn,
-            input_fn=partial(self._prepare_input_fn, self.input_layouts),
+            input_fn=partial(
+                self._prepare_input_fn, self.input_layouts, self.desired_input_layouts
+            ),
             output_fn=partial(self._prepare_output_fn, self.output_layouts, self.use_local_output),
         )
 
@@ -137,6 +148,7 @@ class GatedDeltaNetParallel(ParallelStyle):
         return (
             f"{self.__class__.__name__}("
             f"input_layouts={self.input_layouts}, "
+            f"desired_input_layouts={self.desired_input_layouts}, "
             f"output_layouts={self.output_layouts}, "
             f"use_local_output={self.use_local_output})"
         )
