@@ -26,12 +26,14 @@ class PrepareModuleWeight(ParallelStyle):
         self,
         *,
         parameter_layouts: Sequence[Placement] | None,
+        parameter_names: Optional[Sequence[str]] = None,
         input_layouts: Optional[Placement] = None,
         output_layouts: Optional[Placement] = None,
         use_local_output: bool = True,
     ):
         super().__init__()
         self.parameter_layouts = parameter_layouts
+        self.parameter_names = set(parameter_names) if parameter_names else None
         self.input_layouts = (input_layouts or Replicate(),)
         self.output_layouts = output_layouts
         self.use_local_output = use_local_output
@@ -42,7 +44,11 @@ class PrepareModuleWeight(ParallelStyle):
         module: nn.Module,
         device_mesh: DeviceMesh,
     ):
-        for p_name, param in module.named_parameters():
+        for p_name, param in module.named_parameters(recurse=False):
+            # Skip if we have a filter and this param isn't in it
+            if self.parameter_names is not None and p_name not in self.parameter_names:
+                continue
+
             # Idempotent: if already a DTensor with desired placements, keep it.
             if isinstance(param, DTensor):
                 if param.placements == tuple(self.parameter_layouts):
@@ -186,15 +192,14 @@ class FLA(nn.Module):
         if hasattr(inner, "g_proj") and inner.g_proj is not None:
             plan["inner.g_proj"] = colwise_parallel()
 
-        # A_log and dt_bias are [num_heads] tensors used in: g = -A_log.exp() * softplus(a_proj(x) + dt_bias)
+        # A_log and dt_bias are [num_heads] parameter tensors (not submodules) used in:
+        #   g = -A_log.exp() * softplus(a_proj(x) + dt_bias)
         # They must be sharded on dim 0 to match the colwise-sharded a_proj output.
-        plan["inner.A_log"] = PrepareModuleWeight(
+        # We apply PrepareModuleWeight to "inner" with a filter for these specific parameters.
+        plan["inner"] = PrepareModuleWeight(
             parameter_layouts=[Shard(0)],  # match the sharded a_proj output
-            use_local_output=True,
-        )
-        plan["inner.dt_bias"] = PrepareModuleWeight(
-            parameter_layouts=[Shard(0)],  # match the sharded a_proj output
-            use_local_output=True,
+            parameter_names=["A_log", "dt_bias"],
+            # use_local_output=True,
         )
 
         # ShortConvolution layers (q_conv1d, k_conv1d, v_conv1d) are NOT sharded.
