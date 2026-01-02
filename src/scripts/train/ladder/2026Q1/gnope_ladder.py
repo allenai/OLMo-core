@@ -44,7 +44,7 @@ class GnopeTransformerModelConfigurator(TransformerModelConfigurator):
         size_spec = TransformerSize(size_spec)
         vocab_size = tokenizer.padded_vocab_size()
         kwargs = dict(
-            attn_backend=AttentionBackendName.flash_3,
+            attn_backend=AttentionBackendName.flash_2,
             no_global_rope=True,  # <- this is the intervention
             # NOTE: we may want to try a smaller value of theta, and/or smaller sliding window sizes
         )
