@@ -34,7 +34,7 @@ class DionWSDSChinchillaRunConfigurator(WSDSChinchillaRunConfigurator):
 
         # Dion optimal lr stays at 0.01 across model scales
         # https://arxiv.org/pdf/2504.05295
-        lr_divider = 2.0
+        lr_divider = 1.0
         return DionConfig(lr=0.01 / lr_divider, weight_decay=0.1)
 
 
