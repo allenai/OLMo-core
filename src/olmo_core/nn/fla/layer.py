@@ -1,18 +1,93 @@
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Optional, cast
+from functools import partial
+from typing import Optional, Sequence
 
 import torch
 from torch import nn
 from torch.distributed import DeviceMesh
-from torch.distributed.tensor import DTensor, Shard, distribute_tensor
-from torch.distributed.tensor.parallel import parallelize_module
-from torch.distributed.tensor.placement_types import Placement, Replicate
+from torch.distributed.tensor import (
+    DTensor,
+    Replicate,
+    Shard,
+    distribute_module,
+)
+from torch.distributed.tensor.parallel import ParallelStyle, parallelize_module
+from torch.distributed.tensor.placement_types import Placement
 
 from olmo_core.config import Config, DType
 from olmo_core.nn.utils import get_tp_wrappers
 
 log = logging.getLogger(__name__)
+
+
+class PrepareModuleWeight(ParallelStyle):
+    def __init__(
+        self,
+        *,
+        parameter_layouts: Sequence[Placement] | None,
+        input_layouts: Optional[Placement] = None,
+        output_layouts: Optional[Placement] = None,
+        use_local_output: bool = True,
+    ):
+        super().__init__()
+        self.parameter_layouts = parameter_layouts
+        self.input_layouts = (input_layouts or Replicate(),)
+        self.output_layouts = output_layouts
+        self.use_local_output = use_local_output
+
+    def _replicate_module_fn(
+        self,
+        name: str,
+        module: nn.Module,
+        device_mesh: DeviceMesh,
+    ):
+        for p_name, param in module.named_parameters():
+            replicated_param = nn.Parameter(
+                DTensor.from_local(param, device_mesh, self.parameter_layouts, run_check=False),
+            )
+            module.register_parameter(p_name, replicated_param)
+
+    @staticmethod
+    def _prepare_input_fn(input_layouts, mod, inputs, device_mesh):
+        # annotate module input placements/sharding with input_layouts
+        input_tensor = inputs[0]
+        if not isinstance(input_tensor, DTensor):
+            input_tensor = DTensor.from_local(
+                input_tensor, device_mesh, input_layouts, run_check=False
+            )
+
+        # transform the input layouts to the desired layouts of PrepareModuleWeight
+        # if input_layouts != desired_input_layouts:
+        #     input_tensor = input_tensor.redistribute(
+        #         placements=desired_input_layouts, async_op=True
+        #     )
+        return input_tensor
+
+    @staticmethod
+    def _prepare_output_fn(output_layouts, use_local_output, mod, outputs, device_mesh):
+        if output_layouts is not None and outputs.placements != output_layouts:
+            outputs = outputs.redistribute(placements=output_layouts, async_op=True)
+        # back to local tensor if use_local_output is True
+        return outputs.to_local() if use_local_output else outputs
+
+    def _apply(self, module: nn.Module, device_mesh: DeviceMesh) -> nn.Module:
+        return distribute_module(
+            module,
+            device_mesh,
+            partition_fn=self._replicate_module_fn,
+            input_fn=partial(self._prepare_input_fn, self.input_layouts),
+            output_fn=partial(self._prepare_output_fn, self.output_layouts, self.use_local_output),
+        )
+
+    def __repr__(self) -> str:
+        tmpstr = self.__class__.__name__ + "("
+        tmpstr += f"parameter_layouts={self.parameter_layouts}, "
+        tmpstr += f"input_layouts={self.input_layouts}, "
+        tmpstr += f"output_layouts={self.output_layouts}, "
+        tmpstr += f"use_local_output={self.use_local_output}"
+        tmpstr += ")"
+        return tmpstr
 
 
 class FLA(nn.Module):
@@ -66,9 +141,8 @@ class FLA(nn.Module):
         # TODO: implementation specific factorization of FLA variants instead of just one wrapper class
         if inner_type != "GatedDeltaNet":
             raise NotImplementedError(
-                f"Tensor parallelism is only supported for GatedDeltaNet, "
-                f"but got {inner_type}. Please file an issue if you need TP support "
-                f"for other FLA layer types."
+                f"Tensor parallelism is only supported for GatedDeltaNet,  but got {inner_type}. "
+                "Please file an issue if you need TP support for other FLA layer types."
             )
 
         rowwise_parallel, colwise_parallel, prepare_module_input = get_tp_wrappers(
@@ -104,103 +178,22 @@ class FLA(nn.Module):
             output_layouts=output_layout, use_local_output=use_local_output
         )
 
-        parallelize_module(
-            module=self,
-            device_mesh=tp_mesh,
-            parallelize_plan=plan,
+        # A_log and dt_bias are [num_heads] tensors used in: g = -A_log.exp() * softplus(a_proj(x) + dt_bias)
+        # They must be sharded on dim 0 to match the colwise-sharded a_proj output.
+        plan["inner.A_log"] = PrepareModuleWeight(
+            parameter_layouts=[Shard(0)],  # match the sharded a_proj output
+            use_local_output=True,
         )
-
-        # Shard A_log and dt_bias to match the sharded a_proj output.
-        # These are [num_heads] tensors used in: g = -A_log.exp() * softplus(a_proj(x) + dt_bias)
-        # Since a_proj is columnwise parallel (output sharded), A_log and dt_bias must also
-        # be sharded to match.
-        #
-        # We use DTensor with Shard(0) placement so that distributed checkpointing (DCP)
-        # correctly handles resharding when loading from unsharded checkpoints. However,
-        # FLA's code does .float() operations that can break DTensor dispatch, so we
-        # register a forward pre-hook that replaces DTensor parameters with their local
-        # tensors before FLA runs, and a forward hook that restores them afterward.
-        inner.A_log = nn.Parameter(
-            distribute_tensor(inner.A_log.data, tp_mesh, placements=[Shard(0)])
+        plan["inner.dt_bias"] = PrepareModuleWeight(
+            parameter_layouts=[Shard(0)],  # match the sharded a_proj output
+            use_local_output=True,
         )
-        inner.dt_bias = nn.Parameter(
-            distribute_tensor(inner.dt_bias.data, tp_mesh, placements=[Shard(0)])
-        )
-
-        # Store original DTensor parameters and swap to local tensors during forward
-        def _pre_forward_hook(module: nn.Module, args: Any) -> None:
-            # Save DTensor params and replace with local tensors for FLA's kernels
-            module._A_log_dtensor = cast(DTensor, module.A_log)
-            module._dt_bias_dtensor = cast(DTensor, module.dt_bias)
-            module._A_log_local_param = nn.Parameter(
-                module._A_log_dtensor.to_local(), requires_grad=module._A_log_dtensor.requires_grad
-            )
-            module._dt_bias_local_param = nn.Parameter(
-                module._dt_bias_dtensor.to_local(),
-                requires_grad=module._dt_bias_dtensor.requires_grad,
-            )
-            module.A_log = module._A_log_local_param
-            module.dt_bias = module._dt_bias_local_param
-
-        def _post_forward_hook(module: nn.Module, args: Any, output: Any) -> None:
-            # Restore DTensor params for the rest of the program; keep locals for backward
-            module.A_log = module._A_log_dtensor
-            module.dt_bias = module._dt_bias_dtensor
-
-            # If no grad will be computed, clean up immediately to avoid leaks.
-            if not torch.is_grad_enabled():
-                del module._A_log_dtensor, module._dt_bias_dtensor
-                del module._A_log_local_param, module._dt_bias_local_param
-
-        def _backward_hook(module: nn.Module, grad_input: Any, grad_output: Any) -> None:
-            # Copy grads from local params back to DTensor params before optimizer step.
-            if hasattr(module, "_A_log_dtensor") and hasattr(module, "_A_log_local_param"):
-                a_dtensor = cast(DTensor, module._A_log_dtensor)
-                local_grad = cast(torch.Tensor, module._A_log_local_param.grad)
-                if local_grad is not None:
-                    dt_grad = distribute_tensor(
-                        local_grad,
-                        a_dtensor.device_mesh,
-                        placements=a_dtensor.placements,
-                    )
-                    if a_dtensor.grad is None:
-                        a_dtensor.grad = dt_grad
-                    else:
-                        a_dtensor.grad += dt_grad
-
-            if hasattr(module, "_dt_bias_dtensor") and hasattr(module, "_dt_bias_local_param"):
-                dt_bias_dtensor = cast(DTensor, module._dt_bias_dtensor)
-                local_grad = cast(torch.Tensor, module._dt_bias_local_param.grad)
-                if local_grad is not None:
-                    dt_grad = distribute_tensor(
-                        local_grad,
-                        dt_bias_dtensor.device_mesh,
-                        placements=dt_bias_dtensor.placements,
-                    )
-                    if dt_bias_dtensor.grad is None:
-                        dt_bias_dtensor.grad = dt_grad
-                    else:
-                        dt_bias_dtensor.grad += dt_grad
-
-            # Restore module attributes and clean up
-            if hasattr(module, "_A_log_dtensor"):
-                module.A_log = module._A_log_dtensor
-                del module._A_log_dtensor
-            if hasattr(module, "_dt_bias_dtensor"):
-                module.dt_bias = module._dt_bias_dtensor
-                del module._dt_bias_dtensor
-            if hasattr(module, "_A_log_local_param"):
-                del module._A_log_local_param
-            if hasattr(module, "_dt_bias_local_param"):
-                del module._dt_bias_local_param
-
-        inner.register_forward_pre_hook(_pre_forward_hook)
-        inner.register_forward_hook(_post_forward_hook)
-        inner.register_full_backward_hook(_backward_hook)
 
         # ShortConvolution layers (q_conv1d, k_conv1d, v_conv1d) are NOT sharded.
         # FLA's ShortConvolution uses custom Triton kernels that access weight.data directly
         # and cannot handle DTensor. We keep these weights replicated across TP ranks.
+
+        parallelize_module(module=self, device_mesh=tp_mesh, parallelize_plan=plan)
 
         # o_norm: normalizes over head_v_dim (last dimension), not the head dimension.
         # Since heads are sharded but each shard has complete head_v_dim vectors,
