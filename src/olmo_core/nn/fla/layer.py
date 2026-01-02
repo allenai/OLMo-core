@@ -179,12 +179,6 @@ class FLA(nn.Module):
         if hasattr(inner, "g_proj") and inner.g_proj is not None:
             plan["inner.g_proj"] = colwise_parallel()
 
-        # Output projection (rowwise parallel - shard input dimension)
-        assert hasattr(inner, "o_proj") and getattr(inner, "o_proj") is not None
-        plan["inner.o_proj"] = rowwise_parallel(
-            output_layouts=output_layout, use_local_output=use_local_output
-        )
-
         # A_log and dt_bias are [num_heads] tensors used in: g = -A_log.exp() * softplus(a_proj(x) + dt_bias)
         # They must be sharded on dim 0 to match the colwise-sharded a_proj output.
         plan["inner.A_log"] = PrepareModuleWeight(
@@ -200,6 +194,11 @@ class FLA(nn.Module):
         # FLA's ShortConvolution uses custom Triton kernels that access weight.data directly
         # and cannot handle DTensor. We keep these weights replicated across TP ranks.
 
+        # Output projection (rowwise parallel - shard input dimension)
+        assert hasattr(inner, "o_proj") and getattr(inner, "o_proj") is not None
+        plan["inner.o_proj"] = rowwise_parallel(
+            output_layouts=output_layout, use_local_output=use_local_output
+        )
         parallelize_module(module=self, device_mesh=tp_mesh, parallelize_plan=plan)
 
         # o_norm: normalizes over head_v_dim (last dimension), not the head dimension.
