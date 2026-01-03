@@ -363,9 +363,7 @@ class GatedDeltaNet(nn.Module):
             ),
         )
 
-        from fla.modules.parallel import PrepareModuleWeight
-
-        from olmo_core.nn.fla.layer import ShardParameters
+        from olmo_core.nn.fla.layer import ShardModule, ShardParameters
 
         plan = {
             # Shard A_log and dt_bias as DTensors (for checkpoint compatibility).
@@ -396,10 +394,10 @@ class GatedDeltaNet(nn.Module):
             plan["g_proj"] = colwise_parallel()
 
         # Shard short convolutions on channel dimension to match columnwise-parallel projections.
-        # PrepareModuleWeight from FLA wraps parameters as DTensors with the given placement.
+        # ShardModule uses distribute_tensor to properly shard from full tensor.
         if self.use_short_conv:
-            plan["q_conv1d"] = PrepareModuleWeight(layouts=Shard(0))
-            plan["k_conv1d"] = PrepareModuleWeight(layouts=Shard(0))
-            plan["v_conv1d"] = PrepareModuleWeight(layouts=Shard(0))
+            plan["q_conv1d"] = ShardModule(shard_dim=0)
+            plan["k_conv1d"] = ShardModule(shard_dim=0)
+            plan["v_conv1d"] = ShardModule(shard_dim=0)
 
         parallelize_module(module=self, device_mesh=tp_mesh, parallelize_plan=plan)
