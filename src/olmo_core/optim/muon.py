@@ -1,277 +1,70 @@
-# Adapted from https://github.com/KellerJordan/Muon/blob/master/muon.py
 import logging
 from collections import OrderedDict
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Iterable, Optional, Tuple, Type, Union
+from typing import TYPE_CHECKING, Any, Literal, Tuple, Type, Union
 
 import torch
+from torch.distributed.device_mesh import DeviceMesh
 
-from olmo_core.distributed.utils import all_gather, get_rank, get_world_size
+from olmo_core.distributed.parallel import (
+    MeshDimName,
+    get_dp_model_mesh,
+    get_dp_shard_mesh,
+    get_world_mesh,
+)
+from olmo_core.nn.transformer import Transformer
+from olmo_core.optim import INITIAL_LR_FIELD, LR_FIELD
 from olmo_core.optim.config import OptimConfig, OptimGroupOverride
-from olmo_core.optim.skip_step_optimizer import SkipStepOptimizer
-
-# try:
-#     from quack.gemm_interface import gemm_symmetric  # type: ignore[reportMissingImports]
-# except ModuleNotFoundError:
-
-
-def gemm_symmetric(X, Y, out=None):
-    if out is None:
-        out = torch.empty_like(X)
-    torch.matmul(X, Y, out=out)
-    return out
-
+from olmo_core.utils import move_to_device
 
 log = logging.getLogger(__name__)
 
-
-@torch.compile(dynamic=False, fullgraph=True)
-def zeropower_via_newtonschulz5(G, steps: int):
-    """
-    Newton-Schulz iteration to compute the zeroth power / orthogonalization of G.
-
-    Adapted from https://github.com/KellerJordan/Muon/blob/master/muon.py
-    """
-    assert gemm_symmetric is not None
-    assert G.ndim >= 2
-    a, b, c = (3.4445, -4.7750, 2.0315)
-    X = G.bfloat16()
-    if G.size(-2) > G.size(-1):
-        X = X.mT
-
-    buf1 = torch.empty(X.size(0), X.size(0), dtype=X.dtype, device=X.device)
-    buf2 = torch.empty(X.size(0), X.size(0), dtype=X.dtype, device=X.device)
-
-    # Ensure spectral norm is at most 1
-    X = X / (X.norm(dim=(-2, -1), keepdim=True) + 1e-7)
-
-    # Perform the NS iterations
-    for _ in range(steps):
-        # symmul usage adapted from
-        # - https://www.lakernewhouse.com/assets/writing/faster-symmul-with-thunderkittens.pdf
-        # - https://github.com/nil0x9/flash-muon/
-        gemm_symmetric(X, X.mT, out=buf1)
-        gemm_symmetric(buf1, buf1.mT, out=buf2)
-        B = b * buf1 + c * buf2
-        X = a * X + B @ X
-
-    if G.size(-2) > G.size(-1):
-        X = X.mT
-    return X
-
-
-def muon_update(
-    grad,
-    momentum,
-    *,
-    beta=0.95,
-    nesterov=True,
-    step_factor: torch.Tensor = torch.tensor(1.0),
-):
-    a, b = grad.size(-2), grad.size(-1)
-    momentum.lerp_(grad, step_factor * (1 - beta))
-    update = grad.lerp_(momentum, beta) if nesterov else momentum
-    if update.ndim == 4:  # for the case of conv filters
-        update = update.view(len(update), -1)
-    update = zeropower_via_newtonschulz5(update, steps=5)
-    # update *= max(1, a / b) ** 0.5  # original scaling
-    update *= 0.2 * max(a, b) ** 0.5  # moonlight scaling
-    return update
-
-
-def adam_update(grad, buf1, buf2, step, betas, eps, step_factor: torch.Tensor):
-    buf1.lerp_(grad, step_factor * (1 - betas[0]))
-    buf2.lerp_(grad.square(), step_factor * (1 - betas[1]))
-    buf1c = buf1 / (1 - betas[0] ** (step + 1))
-    buf2c = buf2 / (1 - betas[1] ** (step + 1))
-    update = buf1c / (buf2c.sqrt() + eps)
-    update.mul_(step_factor)
-    step.add_(step_factor)
-    return update
-
-
-class SkipStepMuon(SkipStepOptimizer):
-    """
-    Distributed Muon variant that can be used for all parameters in the network, since it runs an
-    internal AdamW for the parameters that are not compatible with Muon. The user must manually
-    specify which parameters shall be optimized with Muon and which with Adam by passing in a
-    list of param_groups with the `use_muon` flag set.
-
-    The point of this class is to allow the user to have a single optimizer in their code, rather
-    than having both a Muon and an Adam which each need to be stepped.
-
-    Example usage:
-    ```python
-    hidden_matrix_params = [p for n, p in model.blocks.named_parameters() if p.ndim >= 2 and "embed" not in n]
-    embed_params = [p for n, p in model.named_parameters() if "embed" in n]
-    scalar_params = [p for p in model.parameters() if p.ndim < 2]
-    head_params = [model.lm_head.weight]
-
-    from muon import MuonWithAuxAdam
-    adam_groups = [dict(params=head_params, lr=0.22), dict(params=embed_params, lr=0.6), dict(params=scalar_params, lr=0.04)]
-    adam_groups = [dict(**g, betas=(0.8, 0.95), eps=1e-10, use_muon=False) for g in adam_groups]
-    muon_group = dict(params=hidden_matrix_params, lr=0.05, momentum=0.95, use_muon=True)
-    param_groups = [*adam_groups, muon_group]
-    optimizer = MuonWithAuxAdam(param_groups)
-    ```
-    """
-
-    def __init__(
-        self,
-        param_groups,
-        *,
-        lr,
-        momentum,
-        weight_decay,
-        rolling_interval_length: int = 128,
-        sigma_factor: int = 6,
-    ):
-        defaults = dict(lr=lr, weight_decay=weight_decay, momentum=momentum, use_muon=True)
-        for group in param_groups:
-            if group.get("use_muon", False):
-                # group params by size, largest to smallest
-                group["params"] = sorted(group["params"], key=lambda x: x.numel(), reverse=True)
-        super().__init__(param_groups, defaults)
-        self._step_skipped: Optional[torch.Tensor] = None
-
-    @property
-    def step_skipped(self) -> torch.Tensor:
-        if self._step_skipped is not None:
-            return self._step_skipped
-        else:
-            return torch.tensor(0.0)
-
-    @torch.no_grad()
-    def step(self, closure=None) -> None:
-        if closure is not None:
-            with torch.enable_grad():
-                closure()
-
-        step_factor = self.get_step_factor()
-        self._step_skipped = 1 - step_factor
-        for group in self.param_groups:
-            if group.get("use_muon", False):
-                params = group["params"]
-                world_size = get_world_size()
-                params_pad = params + [torch.empty_like(params[-1])] * (
-                    world_size - len(params) % world_size
-                )
-                for base_i in range(len(params))[::world_size]:
-                    if base_i + get_rank() < len(params):
-                        p = params[base_i + get_rank()]
-                        if p.grad is None:
-                            # continue
-                            p.grad = torch.zeros_like(p)  # Force synchronization
-                        state = self.state[p]
-                        if len(state) == 0:
-                            state["momentum_buffer"] = torch.zeros_like(p)
-                        update = muon_update(
-                            p.grad,
-                            state["momentum_buffer"],
-                            beta=group["momentum"],
-                            step_factor=step_factor,
-                        )
-                        p.mul_(1 - step_factor * (group["lr"] * group["weight_decay"]))
-                        p.add_(update.reshape(p.shape), alpha=-group["lr"])
-                    params_pad[base_i : base_i + world_size] = all_gather(
-                        params_pad[base_i + get_rank()]
-                    )
-
-            else:
-                for p in group["params"]:
-                    if p.grad is None:
-                        # continue
-                        p.grad = torch.zeros_like(p)  # Force synchronization
-                    state = self.state[p]
-                    if len(state) == 0:
-                        state["exp_avg"] = torch.zeros_like(p)
-                        state["exp_avg_sq"] = torch.zeros_like(p)
-                        state["step"] = torch.zeros((), dtype=torch.float32, device=p.device)
-                    update = adam_update(
-                        p.grad,
-                        state["exp_avg"],
-                        state["exp_avg_sq"],
-                        state["step"],
-                        group["betas"],
-                        group["eps"],
-                        step_factor=step_factor,
-                    )
-                    p.mul_(1 - step_factor * (group["lr"] * group["weight_decay"]))
-                    p.add_(update, alpha=-group["lr"])
-        return
+if TYPE_CHECKING:
+    from dion import Muon
 
 
 @dataclass
-class SkipStepMuonConfig(OptimConfig):
-    """
-    Configuration class for building a :class:`SkipStepMuon` optimizer.
-    """
-
-    rolling_interval_length: int = 128
-    """
-    The length of the rolling interval to use for computing the mean and standard deviation of the loss.
-    """
-
-    sigma_factor: int = 6
-    """
-    The number of standard deviations above the mean loss to skip a step.
-    """
-
-    # Default values for Muon groups
-    lr: float = 1e-3
-    momentum: float = 0.95
+class MuonConfig(OptimConfig):
+    lr: float = 0.01  # Shared lr for Muon and AdamW
+    mu: float = 0.95  # momentum for Muon
+    betas: Tuple[float, float] = (0.9, 0.95)  # betas for AdamW
     weight_decay: float = 0.1
-
-    # Default values for Adam groups, private so they are not included in the config dict
-    _adam_lr: float = 1e-3
-    _adam_betas: Tuple[float, float] = (0.9, 0.999)
-    _adam_eps: float = 1e-8
-    _adam_weight_decay: float = 1e-2
-    _adam_embed_weight_decay: float = 0.0
+    nesterov: bool = False
+    adjust_lr: Literal["spectral_norm", "rms_norm"] | None = "rms_norm"
+    use_triton: bool = False
 
     @classmethod
-    def optimizer(cls) -> Type[SkipStepMuon]:
-        return SkipStepMuon
+    def optimizer(cls) -> Type["Muon"]:
+        from dion import Muon
+
+        return Muon
 
     def default_group_overrides(self, model: torch.nn.Module) -> list[OptimGroupOverride]:
         """
         Split the model parameters into Adam and Muon groups.
         Only >=2d, internal parameters are meant to be optimized with Muon.
         """
-        embed_param_names = [n for n, p in model.named_parameters() if "embed" in n]
-        scalar_param_names = [n for n, p in model.named_parameters() if p.ndim < 2]
-        head_param_names = [
-            n for n, p in model.named_parameters() if "lm_head" in n and p.ndim >= 2
+        assert isinstance(model, Transformer)
+        embed_params = [f"embeddings.{n}" for n, p in model.embeddings.named_parameters()]
+        matrix_params = [f"blocks.{n}" for n, p in model.blocks.named_parameters() if p.ndim >= 2]
+        vector_params = [f"blocks.{n}" for n, p in model.blocks.named_parameters() if p.ndim < 2]
+        vector_params += [f"lm_head.{n}" for n, p in model.lm_head.named_parameters() if p.ndim < 2]
+        lm_head_params = [
+            f"lm_head.{n}" for n, p in model.lm_head.named_parameters() if p.ndim >= 2
         ]
-        adam_param_names = set(embed_param_names + scalar_param_names + head_param_names)
-        hidden_matrix_param_names = [
-            n for n, _ in model.named_parameters() if n not in adam_param_names
-        ]
-        assert all(
-            p.ndim >= 2 for n, p in model.named_parameters() if n in hidden_matrix_param_names
-        )
 
-        adam_override = OptimGroupOverride(
-            params=head_param_names + scalar_param_names,
-            opts=dict(
-                lr=self._adam_lr,
-                betas=self._adam_betas,
-                eps=self._adam_eps,
-                weight_decay=self._adam_weight_decay,
-                use_muon=False,
-            ),
-        )
+        lm_head_out: torch.nn.Linear = model.lm_head.w_out
+        model_dim = lm_head_out.weight.shape[1]
+
+        matrix_override = OptimGroupOverride(params=matrix_params, opts=dict())
+        vector_override = OptimGroupOverride(params=vector_params, opts=dict(algorithm="adamw"))
         embed_override = OptimGroupOverride(
-            params=embed_param_names,
-            opts=dict(
-                lr=self._adam_lr,
-                betas=self._adam_betas,
-                eps=self._adam_eps,
-                weight_decay=self._adam_embed_weight_decay,
-                use_muon=False,
-            ),
+            params=embed_params, opts=dict(algorithm="adamw", weight_decay=0)
         )
-        return [adam_override, embed_override]
+        lm_head_override = OptimGroupOverride(params=lm_head_params, opts=dict(algorithm="adamw"))
+
+        return [matrix_override, vector_override, embed_override, lm_head_override]
 
     def build_groups(
         self, model: torch.nn.Module, strict: bool = True
@@ -291,8 +84,10 @@ class SkipStepMuonConfig(OptimConfig):
             else:
                 frozen_params.add(n)
 
-        if self.group_overrides is None:
-            self.group_overrides = self.default_group_overrides(model)
+        if self.group_overrides is not None:
+            raise RuntimeError("group_overrides are not supported for Muon")
+
+        self.group_overrides = self.default_group_overrides(model)
 
         group_overrides = [
             self._expand_param_globs(go, all_params, frozen_params, g_idx, strict=strict)
@@ -312,13 +107,125 @@ class SkipStepMuonConfig(OptimConfig):
             if len(go.params) > 0
         ]
 
-    def build(self, model: torch.nn.Module, strict: bool = True) -> SkipStepMuon:
+    def build_parallelism_config(self) -> dict[str, DeviceMesh | None]:
+        """
+        Prepare device mesh for Muon optimizer based on the parallelism configuration.
+
+        Muon requires a single 1D DeviceMesh for distributed training:
+        - Single-device: Returns None
+        - FSDP: Returns the DP mesh (parameter sharding mesh)
+        - HSDP: Returns the DP shard mesh (the 1D sharded sub-mesh)
+
+        Note: TP is not directly supported by Muon. For TP configurations,
+        you may need to handle tensor parallelism separately.
+
+        :returns: 1D DeviceMesh for distributed Muon, or None for single-device.
+        """
+        world_mesh = get_world_mesh()
+
+        if world_mesh is None:
+            return {"distributed_mesh": None}
+
+        dim_names = world_mesh.mesh_dim_names
+        log.info(f"World mesh dimensions: {dim_names}")
+        log.info(f"World mesh shape: {world_mesh.shape}")
+        if dim_names is None:
+            raise RuntimeError("world mesh has no dimension names")
+
+        # Check for HSDP (has both dp_replicate and dp_shard)
+        has_dp_replicate = MeshDimName.dp_replicate in dim_names
+        has_dp_shard = MeshDimName.dp_shard in dim_names
+        has_tp = MeshDimName.tp in dim_names
+        if has_tp:
+            raise NotImplementedError("Tensor parallelism is not supported for Muon")
+
+        parallelism_config: dict[str, DeviceMesh | None] = {}
+
+        if has_dp_replicate and has_dp_shard:
+            # HSDP configuration: use the shard mesh (1D sharded sub-mesh)
+            parallelism_config["distributed_mesh"] = get_dp_shard_mesh(world_mesh)
+        elif MeshDimName.dp in dim_names or any(d.startswith("dp") for d in dim_names):
+            # FSDP configuration: use the DP mesh
+            parallelism_config["distributed_mesh"] = get_dp_model_mesh(world_mesh)
+
+        log.info(f"Muon parallelism_config: {parallelism_config}")
+        return parallelism_config
+
+    def build(self, model: torch.nn.Module, strict: bool = True) -> "Opt":
         """
         Build the optimizer.
 
-        :param model: The model to optimize.
         :param strict: If ``True`` an error is raised if a pattern in ``group_overrides`` doesn't
             match any parameter.
         """
 
-        return super().build(model, strict=strict)
+        kwargs = self.as_dict(exclude_private_fields=True)
+        kwargs.pop("group_overrides")
+        kwargs.pop("compile")
+        kwargs.pop("fixed_fields")
+
+        torch._dynamo.config.recompile_limit = 16
+
+        parallelism_config = self.build_parallelism_config()
+        optim = self.optimizer()(
+            self.build_groups(model, strict=strict),
+            **parallelism_config,
+            **kwargs,
+        )
+
+        # Set 'lr' and 'initial_lr' in each group if needed.
+        fixed_fields_per_group: list[dict[str, Any]] = [{} for _ in optim.param_groups]
+        for fixed_fields, group in zip(fixed_fields_per_group, optim.param_groups):
+            lr: float | None = None
+            if LR_FIELD in group:
+                lr = group[LR_FIELD]
+            elif hasattr(self, LR_FIELD):
+                lr = getattr(self, LR_FIELD)
+
+            if lr is not None:
+                if self.compile:
+                    # 'lr' should be a tensor.
+                    group[LR_FIELD] = move_to_device(torch.tensor(lr), self.device)
+                else:
+                    group[LR_FIELD] = lr
+                group.setdefault(INITIAL_LR_FIELD, lr)
+
+            for k in self.fixed_fields:
+                if k in group:
+                    fixed_fields[k] = group[k]
+
+        log.info(
+            f"Building {self.optimizer().__name__} optimizer with {len(optim.param_groups)} param group(s)..."
+        )
+        for g_idx, group in enumerate(optim.param_groups):
+            group_fields_list = "\n - ".join(
+                [f"{k}: {v}" for k, v in optim.param_groups[g_idx].items() if k != "params"]
+            )
+            if group_fields_list:
+                log.info(
+                    f"Group {g_idx}, {len(group['params'])} parameter(s):\n - {group_fields_list}"
+                )
+            else:
+                log.info(f"Group {g_idx}, {len(group['params'])} parameter(s)")
+
+        if self.compile:
+            raise NotImplementedError("Compiling optimizer step is not supported for Muon")
+
+        # Register hook to reset fixed fields after loading a checkpoint.
+        def reset_fixed_fields(opt: torch.optim.Optimizer):
+            for fixed_fields, group in zip(fixed_fields_per_group, opt.param_groups):
+                group.update(fixed_fields)
+
+        optim.register_load_state_dict_post_hook(reset_fixed_fields)
+
+        return optim
+
+
+class NorMuonConfig(MuonConfig):
+    muon_beta2: float = 0.95
+
+    @classmethod
+    def optimizer(cls) -> Type["NorMuon"]:
+        from dion import NorMuon
+
+        return NorMuon

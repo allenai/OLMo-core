@@ -7,7 +7,7 @@ from olmo_core.distributed.checkpoint import (
 )
 from olmo_core.nn.transformer.config import TransformerConfig
 from olmo_core.nn.transformer.model import Transformer
-from olmo_core.optim.muon import SkipStepMuon, SkipStepMuonConfig
+from olmo_core.optim.dion import MuonConfig, NorMuonConfig
 from olmo_core.testing import DEVICES
 
 
@@ -17,21 +17,22 @@ def build_transformer_model() -> Transformer:
     return model
 
 
-def test_muon_config_to_optim():
-    config = SkipStepMuonConfig()
+@pytest.mark.parametrize("config_cls", [MuonConfig, NorMuonConfig])
+def test_muon_config_to_optim(config_cls):
+    config = config_cls()
 
     model = build_transformer_model()
     optim = config.build(model)
 
-    assert isinstance(optim, SkipStepMuon)
-    assert len(optim.param_groups) == 3
+    assert isinstance(optim, config_cls.optimizer())
+    assert len(optim.param_groups) == 4  # emb, matrix, vector, lm_head
 
     assert config.merge(["lr=1e-1"]).lr == 0.1
 
 
 @pytest.mark.parametrize("device", DEVICES)
 def test_muon(device: torch.device, tmp_path):
-    config = SkipStepMuonConfig()
+    config = MuonConfig()
 
     model = build_transformer_model().train().to(device)
     optim = config.build(model)
