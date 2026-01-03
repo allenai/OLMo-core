@@ -393,7 +393,6 @@ class GatedDeltaNet(nn.Module):
             plan["g_proj"] = colwise_parallel()
 
         # Shard short convolutions on channel dimension to match columnwise-parallel projections.
-        # Shard short convolutions on channel dimension to match columnwise-parallel projections.
         if self.use_short_conv:
             plan["q_conv1d"] = ShardModule(shard_dim=0)
             plan["k_conv1d"] = ShardModule(shard_dim=0)

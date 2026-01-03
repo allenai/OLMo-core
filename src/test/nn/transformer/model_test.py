@@ -25,6 +25,7 @@ from olmo_core.nn.attention import (
     SlidingWindowAttentionConfig,
 )
 from olmo_core.nn.feed_forward import FeedForwardConfig
+from olmo_core.nn.fla import FLAConfig
 from olmo_core.nn.layer_norm import LayerNorm, LayerNormConfig, LayerNormType
 from olmo_core.nn.lm_head import LMHeadConfig
 from olmo_core.nn.moe import MoEConfig, MoERouterConfig, MoEType
@@ -192,6 +193,41 @@ def get_transformer_inputs() -> torch.Tensor:
     return torch.arange(0, 128).unsqueeze(0)
 
 
+def _fla_available():
+    try:
+        import fla  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+def get_fla_transformer_config(dtype: torch.dtype = torch.float32) -> TransformerConfig:
+    """Get a transformer config with FLA blocks."""
+    config = TransformerConfig.olmo2_190M(
+        vocab_size=16_000,
+        n_layers=2,
+        fused_ops=False,
+        use_flash=False,
+        dtype=DType.from_pt(dtype),
+    )
+
+    # Update the config to use FLA blocks
+    config.block.name = TransformerBlockType.fla
+    config.block.attention = AttentionConfig(n_heads=4)  # n_heads needed for FLA
+    config.block.fla = FLAConfig(
+        name="GatedDeltaNet",
+        dtype=DType.from_pt(dtype),
+        fla_layer_kwargs={
+            "head_dim": int(config.d_model / config.block.attention.n_heads),
+            "use_gate": True,
+            "allow_neg_eigval": False,
+        },
+    )
+
+    return config
+
+
 def run_tensor_parallel_transformer(checkpoint_dir, outputs_path, architecture: str):
     device = get_default_device()
     config = get_transformer_config(architecture)
@@ -241,6 +277,58 @@ def test_tensor_parallel_transformer(backend: str, architecture: str, tmp_path):
             checkpoint_dir,
             outputs_path,
             architecture,
+        ),
+    )
+
+
+def run_tensor_parallel_fla_transformer(checkpoint_dir, outputs_path):
+    device = get_default_device()
+    config = get_fla_transformer_config()
+    input_ids = get_transformer_inputs().to(device)
+
+    mesh = init_device_mesh(
+        device.type,
+        (get_world_size(),),
+        mesh_dim_names=("tp",),
+    )
+
+    model = config.build()
+    model.apply_tp(mesh["tp"])
+    model.init_weights(device=device, max_seq_len=512)
+    load_model_and_optim_state(checkpoint_dir, model)
+
+    logits = model(input_ids=input_ids)
+
+    loss = logits.sum()
+    loss.backward()
+
+    og_logits = torch.load(outputs_path, map_location=device)
+    torch.testing.assert_close(og_logits, get_full_tensor(logits))
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+@pytest.mark.skipif(not _fla_available(), reason="fla library not installed")
+def test_tensor_parallel_fla_transformer(backend: str, tmp_path):
+    device = torch.device("cuda") if "nccl" in backend else torch.device("cpu")
+    config = get_fla_transformer_config()
+    model = config.build()
+    model.init_weights(device=device, max_seq_len=512)
+    input_ids = get_transformer_inputs().to(device)
+    logits = model(input_ids=input_ids)
+
+    outputs_path = tmp_path / "logits.pt"
+    torch.save(logits, outputs_path)
+
+    checkpoint_dir = tmp_path / "checkpoint"
+    save_model_and_optim_state(checkpoint_dir, model)
+
+    run_distributed_test(
+        run_tensor_parallel_fla_transformer,
+        backend=backend,
+        start_method="spawn",
+        func_args=(
+            checkpoint_dir,
+            outputs_path,
         ),
     )
 

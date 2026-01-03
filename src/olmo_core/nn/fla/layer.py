@@ -101,7 +101,6 @@ class ShardModule(ParallelStyle):
                 )
 
         # Wrap the forward method to swap DTensor params to local tensors,
-        # and disable torch.compile to avoid graph tracing issues.
         original_forward = module.forward
 
         def wrapped_forward(*args, **kwargs):
