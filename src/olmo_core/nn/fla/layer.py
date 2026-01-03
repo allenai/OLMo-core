@@ -154,15 +154,19 @@ class LocalInputModule(ParallelStyle):
 
         return tuple(get_local_tensor(arg) if isinstance(arg, DTensor) else arg for arg in inputs)
 
+    @staticmethod
     def _prepare_output_fn(
-        self, mod: nn.Module, outputs: torch.Tensor, device_mesh: DeviceMesh
+        output_layout: Optional[Placement],
+        mod: nn.Module,
+        outputs: torch.Tensor,
+        device_mesh: DeviceMesh,
     ) -> torch.Tensor:
         """Convert output back to DTensor if output_layout is specified."""
         del mod
-        if self.output_layout is not None and not isinstance(outputs, DTensor):
+        if output_layout is not None and not isinstance(outputs, DTensor):
             from torch.distributed.tensor import distribute_tensor
 
-            return distribute_tensor(outputs, device_mesh, [self.output_layout])
+            return distribute_tensor(outputs, device_mesh, [output_layout])
         return outputs
 
     def _apply(self, module: nn.Module, device_mesh: DeviceMesh) -> nn.Module:
@@ -173,7 +177,7 @@ class LocalInputModule(ParallelStyle):
             device_mesh,
             partition_fn=self._replicate_module_fn,
             input_fn=self._prepare_input_fn,  # type: ignore[arg-type]
-            output_fn=partial(self._prepare_output_fn, device_mesh=device_mesh),  # type: ignore[arg-type]
+            output_fn=partial(self._prepare_output_fn, self.output_layout),  # type: ignore[arg-type]
         )
 
 
