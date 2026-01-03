@@ -123,7 +123,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
         ),
-        tp_config=TransformerTensorParallelConfig(degree=8),
+        tp_config=TransformerTensorParallelConfig(degree=2),
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.budget,
             activation_memory_budget=0.1,
