@@ -7,44 +7,51 @@ from torch import nn
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import (
     DTensor,
-    Replicate,
     Shard,
-    distribute_module,
     distribute_tensor,
 )
-from torch.distributed.tensor.parallel import ParallelStyle, parallelize_module
+from torch.distributed.tensor.parallel import ParallelStyle
 from torch.distributed.tensor.placement_types import Placement
 
 from olmo_core.config import Config, DType
-from olmo_core.nn.utils import get_tp_wrappers
 
 log = logging.getLogger(__name__)
 
 
-class ShardParameter(ParallelStyle):
+class ShardParameters(ParallelStyle):
     """
-    A ParallelStyle that shards a specific parameter (not a submodule) on a given dimension.
+    A ParallelStyle that shards multiple parameters on the module as DTensors.
 
     This is used for parameters like A_log and dt_bias in GatedDeltaNet that are
     nn.Parameter attributes directly on the module, not inside submodules like nn.Linear.
+
+    Use with the "" (empty string) key in a parallelize_plan to apply to the current module.
+
+    Args:
+        param_specs: List of (param_name, shard_dim) tuples specifying which parameters
+            to shard and on which dimension.
+
+    Example:
+        plan = {
+            "": ShardParameters([("A_log", 0), ("dt_bias", 0)]),
+            "A_log_id": PrepareModuleOutput(..., use_local_output=True),
+        }
     """
 
-    def __init__(self, param_name: str, shard_dim: int = 0):
+    def __init__(self, param_specs: list[tuple[str, int]]):
         super().__init__()
-        self.param_name = param_name
-        self.shard_dim = shard_dim
-
-    def _partition_fn(self, name: str, module: nn.Module, device_mesh: DeviceMesh):
-        if hasattr(module, self.param_name):
-            param = getattr(module, self.param_name)
-            if param is not None and not isinstance(param, DTensor):
-                new_param = nn.Parameter(
-                    distribute_tensor(param, device_mesh, [Shard(self.shard_dim)])
-                )
-                setattr(module, self.param_name, new_param)
+        self.param_specs = param_specs
 
     def _apply(self, module: nn.Module, device_mesh: DeviceMesh) -> nn.Module:
-        return distribute_module(module, device_mesh, partition_fn=self._partition_fn)
+        for param_name, shard_dim in self.param_specs:
+            if hasattr(module, param_name):
+                param = getattr(module, param_name)
+                if param is not None and not isinstance(param, DTensor):
+                    new_param = nn.Parameter(
+                        distribute_tensor(param, device_mesh, [Shard(shard_dim)])
+                    )
+                    setattr(module, param_name, new_param)
+        return module
 
 
 class FLA(nn.Module):
@@ -80,75 +87,13 @@ class FLA(nn.Module):
         use_local_output: bool = True,
         float8_enabled: bool = False,
     ):
-        """
-        Apply tensor parallelism to the FLA layer.
-
-        Currently only GatedDeltaNet is supported. GatedDeltaNet has:
-        - q_proj, k_proj, v_proj: input projections (columnwise parallel)
-        - a_proj, b_proj: gating projections (columnwise parallel)
-        - g_proj: optional gate projection (columnwise parallel, only when use_gate=True)
-        - A_log, dt_bias: per-head parameters (sharded on head dimension)
-        - q_conv1d, k_conv1d, v_conv1d: short convolutions (replicated, Triton kernels)
-        - o_norm: output normalization (replicated, operates on head_v_dim)
-        - o_proj: output projection (rowwise parallel)
-
-        IMPORTANT: All parallel styles use use_local_output=True because FLA's internal
-        Triton kernels (convolutions, etc.) cannot work with DTensors - they access .data directly.
-        """
-        if float8_enabled:
-            raise NotImplementedError("float8 is not yet supported for FLA layers")
-
-        inner = self.inner
-        inner_type = type(inner).__name__
-        if inner_type != "GatedDeltaNet":
-            raise NotImplementedError(
-                f"Tensor parallelism is only supported for GatedDeltaNet, but got {inner_type}. "
-                "Please file an issue if you need TP support for other FLA layer types."
-            )
-
-        rowwise_parallel, colwise_parallel, prepare_module_input = get_tp_wrappers(
-            float8_enabled=float8_enabled
+        self.inner.apply_tp(
+            tp_mesh,
+            input_layout,
+            output_layout,
+            use_local_output,
+            float8_enabled,
         )
-
-        # Build parallelization plan for GatedDeltaNet
-        # All styles use use_local_output=True because FLA's Triton kernels need local tensors
-        plan: dict[str, ParallelStyle] = {}
-
-        # Handle input: redistribute to Replicate if needed, output local tensor
-        plan["inner"] = prepare_module_input(
-            input_layouts=None if input_layout is None else (input_layout,),
-            desired_input_layouts=(Replicate(),),
-            use_local_output=True,  # FLA needs local tensors
-        )
-
-        # Input projections (columnwise parallel - shard output dimension)
-        # All use use_local_output=True so Triton kernels get local tensors
-        for proj_name in ["q_proj", "k_proj", "v_proj", "a_proj", "b_proj"]:
-            if hasattr(inner, proj_name) and getattr(inner, proj_name) is not None:
-                plan[f"inner.{proj_name}"] = colwise_parallel(use_local_output=True)
-
-        # g_proj: optional gate projection (only when use_gate=True)
-        if hasattr(inner, "g_proj") and inner.g_proj is not None:
-            plan["inner.g_proj"] = colwise_parallel(use_local_output=True)
-
-        # Output projection (rowwise parallel - shard input dimension)
-        # This one handles the final output layout
-        if hasattr(inner, "o_proj") and inner.o_proj is not None:
-            plan["inner.o_proj"] = rowwise_parallel(
-                output_layouts=output_layout,
-                use_local_output=use_local_output,
-            )
-
-        parallelize_module(module=self, device_mesh=tp_mesh, parallelize_plan=plan)
-
-        # A_log and dt_bias: shard on dim 0 to match colwise-sharded a_proj output
-        # These are nn.Parameter attributes, not submodules, so we handle them separately
-        for param_name in ["A_log", "dt_bias"]:
-            if hasattr(inner, param_name):
-                param = getattr(inner, param_name)
-                if param is not None and not isinstance(param, DTensor):
-                    new_param = nn.Parameter(distribute_tensor(param, tp_mesh, [Shard(0)]))
-                    setattr(inner, param_name, new_param)
 
     def num_flops_per_token(self, seq_len: int) -> int:
         """
@@ -222,13 +167,23 @@ class FLAConfig(Config):
     dtype: DType = DType.float32
 
     def build(self, d_model: int, n_heads: int, init_device) -> FLA:
-        import fla.layers
+        if self.name == "GatedDeltaNet":
+            from olmo_core.nn.fla.gated_deltanet import GatedDeltaNet
 
-        layer = getattr(fla.layers, self.name)(
-            hidden_size=d_model,
-            num_heads=n_heads,
-            **self.fla_layer_kwargs,
-        ).to(device=init_device, dtype=self.dtype.as_pt())
+            layer = GatedDeltaNet(
+                hidden_size=d_model,
+                num_heads=n_heads,
+                **self.fla_layer_kwargs,
+            ).to(device=init_device, dtype=self.dtype.as_pt())
+        else:
+            raise NotImplementedError(f"Layer {self.name} not implemented")
+            import fla.layers
+
+            layer = getattr(fla.layers, self.name)(
+                hidden_size=d_model,
+                num_heads=n_heads,
+                **self.fla_layer_kwargs,
+            ).to(device=init_device, dtype=self.dtype.as_pt())
 
         return FLA(layer)
 
