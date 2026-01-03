@@ -4,6 +4,7 @@ import pytest
 import torch
 from torch.distributed.tensor import Shard, init_device_mesh
 
+from olmo_core.data.utils import get_cumulative_document_lengths
 from olmo_core.distributed.checkpoint import (
     load_model_and_optim_state,
     save_model_and_optim_state,
@@ -68,6 +69,8 @@ def _run_tensor_parallel_block(
     block_cls: Type[TransformerBlockBase],
     d_model: int,
     kwargs: Optional[Dict[str, Any]] = None,
+    doc_lens_path: Optional[str] = None,
+    max_doc_len: Optional[int] = None,
 ):
     device = get_default_device()
     mesh = init_device_mesh(device.type, (get_world_size(),), mesh_dim_names=("tp",))
@@ -76,13 +79,23 @@ def _run_tensor_parallel_block(
 
     # Shard sequence dim in/out like the transformer model does.
     block.apply_tp(mesh["tp"], input_layout=Shard(1))
+    block.apply_compile()
     load_model_and_optim_state(checkpoint_dir, block)
 
     x = torch.load(inputs_path, map_location=device)
     rank, world_size = get_rank(), get_world_size()
     chunk = x.size(1) // world_size
     x_local = x[:, rank * chunk : (rank + 1) * chunk, :]
-    y_local = block(x_local)
+
+    # Prepare doclengths kwargs if provided
+    forward_kwargs = {}
+    if doc_lens_path is not None and max_doc_len is not None:
+        doc_lens = torch.load(doc_lens_path, map_location=device)
+        cu_doc_lens = get_cumulative_document_lengths(doc_lens)
+        forward_kwargs["cu_doc_lens"] = cu_doc_lens
+        forward_kwargs["max_doc_len"] = max_doc_len
+
+    y_local = block(x_local, **forward_kwargs)
 
     # Backward to exercise graph in TP mode.
     y_local.sum().backward()
@@ -132,17 +145,28 @@ def test_tensor_parallel_block(
         kwargs = {**kwargs, "name": AttentionType.default, "use_flash": False}
 
     block = _build_block(block_cls, d_model=d_model, init_device=device.type, kwargs=kwargs)
+    block.apply_compile()
 
     # FLA GatedDeltaNet requires seq_len > 64 for training (chunk mode)
     # because fused_recurrent mode (used when seq_len <= 64) is inference-only
     bs, seq_len = 2, 128
     x = torch.randn(bs, seq_len, d_model, device=device)
-    y = block(x)
+
+    # Create doc_lens: each batch item has multiple documents that sum to seq_len
+    # First batch: [32, 48, 32, 16] = 128
+    # Second batch: [64, 32, 32] = 128
+    doc_lens = torch.tensor([[32, 48, 32, 16], [64, 32, 32]], dtype=torch.int32, device=device)
+    max_doc_len = int(torch.max(doc_lens))
+    cu_doc_lens = get_cumulative_document_lengths(doc_lens)
+
+    y = block(x, cu_doc_lens=cu_doc_lens, max_doc_len=max_doc_len)
 
     outputs_path = tmp_path / "block_y.pt"
     torch.save(y, outputs_path)
     inputs_path = tmp_path / "block_x.pt"
     torch.save(x, inputs_path)
+    doc_lens_path = tmp_path / "doc_lens.pt"
+    torch.save(doc_lens, doc_lens_path)
     checkpoint_dir = tmp_path / "checkpoint"
     save_model_and_optim_state(checkpoint_dir, block)
 
@@ -150,5 +174,14 @@ def test_tensor_parallel_block(
         _run_tensor_parallel_block,
         backend=backend,
         start_method="spawn",
-        func_args=(checkpoint_dir, inputs_path, outputs_path, block_cls, d_model, kwargs),
+        func_args=(
+            str(checkpoint_dir),
+            str(inputs_path),
+            str(outputs_path),
+            block_cls,
+            d_model,
+            kwargs,
+            str(doc_lens_path),
+            max_doc_len,
+        ),
     )
