@@ -67,6 +67,7 @@ class ShardModule(ParallelStyle):
     1. Shard parameters as DTensors via distribute_module (for checkpoint compatibility)
     2. Register forward hooks to swap DTensor params to local tensors during forward,
        then restore DTensors after forward for checkpoint compatibility.
+    3. Disable torch.compile on the module to avoid graph tracing issues with the hooks.
 
     Args:
         shard_dim: Dimension to shard all parameters on. Default: 0.
@@ -111,6 +112,10 @@ class ShardModule(ParallelStyle):
 
         module.register_forward_pre_hook(pre_forward_hook)
         module.register_forward_hook(post_forward_hook)
+
+        # Disable torch.compile on this module to avoid graph tracing issues
+        # with the parameter swapping hooks.
+        module.forward = torch.compiler.disable(module.forward)  # type: ignore[method-assign]
 
         return module
 
