@@ -9,20 +9,20 @@ from olmo_core.internal.common import get_gpu_type, get_root_dir
 from olmo_core.internal.ladder import main
 from olmo_core.model_ladder import *
 from olmo_core.model_ladder.utils import get_mix_base_dir
-from olmo_core.optim.muon import NorMuonConfig
+from olmo_core.optim.muon import MuonConfig
 
 log = logging.getLogger(__name__)
 
 
 @dataclass(kw_only=True)
 class MuonWSDSChinchillaRunConfigurator(WSDSChinchillaRunConfigurator):
-    def configure_optimizer(self, num_params: int, batch_size: int) -> NorMuonConfig:
+    def configure_optimizer(self, num_params: int, batch_size: int) -> MuonConfig:
         del batch_size  # unused
         # Calculate LR according to https://api.semanticscholar.org/CorpusID:270764838
         # but divide by 2 for WSD schedule (seems to work emperically).
         lr = 0.0047 * (num_params / 108_000_000) ** (-1 / 3)
         lr /= 2.0
-        return NorMuonConfig(lr=lr, weight_decay=0.1, adjust_lr="rms_norm")
+        return MuonConfig(lr=lr, weight_decay=0.1, adjust_lr="rms_norm")
 
 
 def configure_ladder(args: argparse.Namespace) -> ModelLadder:
