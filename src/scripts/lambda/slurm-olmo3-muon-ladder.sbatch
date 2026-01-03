@@ -8,7 +8,7 @@
 # * All other args are passed to torchrun.
 srun --kill-on-bad-exit=1 ./src/scripts/lambda/entrypoint.sh \
     src/scripts/train/ladder/2026Q1/muon_ladder.py run \
-    --name=olmo3-muon \
+    --name=olmo3-muon-lmheadscaled \
     --cluster=lambda \
     --max-gpus=$((32 * 8)) \
     --chinchilla-multiple=8.0 \

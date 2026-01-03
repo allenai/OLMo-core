@@ -23,7 +23,7 @@ class MuonWSDSChinchillaRunConfigurator(WSDSChinchillaRunConfigurator):
         # but divide by 2 for WSD schedule (seems to work emperically).
         lr = 0.0047 * (num_params / 108_000_000) ** (-1 / 3)
         lr /= 2.0
-        return MuonConfig(lr=lr, weight_decay=0.1, adjust_lr="rms_norm")
+        return MuonConfig(lr=lr, weight_decay=0.1, adjust_lr="rms_norm", use_triton=True)
 
 
 class MuonLadder(ModelLadder):

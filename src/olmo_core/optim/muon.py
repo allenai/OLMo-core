@@ -62,7 +62,10 @@ class MuonConfig(OptimConfig):
         embed_override = OptimGroupOverride(
             params=embed_params, opts=dict(algorithm="adamw", weight_decay=0)
         )
-        lm_head_override = OptimGroupOverride(params=lm_head_params, opts=dict(algorithm="adamw"))
+        lm_head_override = OptimGroupOverride(
+            params=lm_head_params, opts=dict(algorithm="adamw", lr=self.lr / math.sqrt(model_dim))
+        )
+        # lm_head_override = OptimGroupOverride(params=lm_head_params, opts=dict(algorithm="adamw"))
 
         return [matrix_override, vector_override, embed_override, lm_head_override]
 
