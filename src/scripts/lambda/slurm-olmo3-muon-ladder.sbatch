@@ -7,10 +7,10 @@
 # * Your (Beaker) username.
 # * All other args are passed to torchrun.
 srun --kill-on-bad-exit=1 ./src/scripts/lambda/entrypoint.sh \
-    src/scripts/train/ladder/2026Q1/dion_ladder.py run \
-    --name=olmo3-dion-4xBS-0.25xLR \
+    src/scripts/train/ladder/2026Q1/muon_ladder.py run \
+    --name=olmo3-muon \
     --cluster=lambda \
-    --max-gpus=128 \
+    --max-gpus=$((16 * 8)) \
     --chinchilla-multiple=8.0 \
     --size=7B
 # 7B requires 64 GPUs but can run on 128 or 256 GPUs
