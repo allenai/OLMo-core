@@ -68,6 +68,7 @@ def _run_tensor_parallel_block(
     block_cls: Type[TransformerBlockBase],
     d_model: int,
     kwargs: Optional[Dict[str, Any]] = None,
+    compile_model: bool = False,
 ):
     device = get_default_device()
     mesh = init_device_mesh(device.type, (get_world_size(),), mesh_dim_names=("tp",))
@@ -77,6 +78,9 @@ def _run_tensor_parallel_block(
     # Shard sequence dim in/out like the transformer model does.
     block.apply_tp(mesh["tp"], input_layout=Shard(1))
     load_model_and_optim_state(checkpoint_dir, block)
+
+    if compile_model:
+        block.apply_compile()
 
     x = torch.load(inputs_path, map_location=device)
     rank, world_size = get_rank(), get_world_size()
@@ -103,6 +107,10 @@ def _fla_available():
 
 @pytest.mark.parametrize("backend", BACKENDS)
 @pytest.mark.parametrize(
+    "compile_model",
+    [pytest.param(False, id="compile_model=False"), pytest.param(True, id="compile_model=True")],
+)
+@pytest.mark.parametrize(
     "block_cls,kwargs",
     [
         pytest.param(TransformerBlock, dict(n_heads=8), id="transformer-default"),
@@ -120,7 +128,11 @@ def _fla_available():
     ],
 )
 def test_tensor_parallel_block(
-    backend: str, block_cls: Type[TransformerBlockBase], kwargs: Dict[str, Any], tmp_path
+    backend: str,
+    compile_model: bool,
+    block_cls: Type[TransformerBlockBase],
+    kwargs: Dict[str, Any],
+    tmp_path,
 ):
     device = torch.device("cuda") if "nccl" in backend else torch.device("cpu")
 
@@ -132,6 +144,9 @@ def test_tensor_parallel_block(
         kwargs = {**kwargs, "name": AttentionType.default, "use_flash": False}
 
     block = _build_block(block_cls, d_model=d_model, init_device=device.type, kwargs=kwargs)
+
+    if compile_model:
+        block.apply_compile()
 
     # FLA GatedDeltaNet requires seq_len > 64 for training (chunk mode)
     # because fused_recurrent mode (used when seq_len <= 64) is inference-only
@@ -150,5 +165,13 @@ def test_tensor_parallel_block(
         _run_tensor_parallel_block,
         backend=backend,
         start_method="spawn",
-        func_args=(checkpoint_dir, inputs_path, outputs_path, block_cls, d_model, kwargs),
+        func_args=(
+            checkpoint_dir,
+            inputs_path,
+            outputs_path,
+            block_cls,
+            d_model,
+            kwargs,
+            compile_model,
+        ),
     )
