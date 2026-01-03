@@ -57,11 +57,16 @@ class ShardParameters(ParallelStyle):
 
 class ShardModule(ParallelStyle):
     """
-    A ParallelStyle that shards all parameters of a module as DTensors.
+    A ParallelStyle that shards all parameters of a module as DTensors, converting
+    them to local tensors before forward pass for Triton kernel compatibility.
 
-    This uses distribute_module to shard parameters. The module will have DTensor
-    parameters for checkpoint compatibility, and PyTorch's DTensor dispatch will
-    handle the computation.
+    This is necessary for modules like ShortConvolution whose Triton kernels cannot
+    work with DTensors directly - they bypass PyTorch's dispatch and access raw data.
+
+    The approach:
+    1. Shard parameters as DTensors via distribute_module (for checkpoint compatibility)
+    2. Register forward hooks to swap DTensor params to local tensors during forward,
+       then restore DTensors after forward for checkpoint compatibility.
 
     Args:
         shard_dim: Dimension to shard all parameters on. Default: 0.
@@ -81,11 +86,33 @@ class ShardModule(ParallelStyle):
                 module.register_parameter(param_name, new_param)
 
     def _apply(self, module: nn.Module, device_mesh: DeviceMesh) -> nn.Module:
-        return distribute_module(
-            module,
-            device_mesh,
-            self._partition_fn,
-        )
+        # First, shard parameters as DTensors
+        distribute_module(module, device_mesh, self._partition_fn)
+
+        # Cache DTensor params and their local versions once
+        dtensor_params: dict[str, DTensor] = {}
+        local_params: dict[str, nn.Parameter] = {}
+        for name, param in list(module.named_parameters(recurse=False)):
+            if isinstance(param, DTensor):
+                dtensor_params[name] = param
+                local_params[name] = nn.Parameter(
+                    param.to_local(), requires_grad=param.requires_grad
+                )
+
+        # Register hooks to swap params during forward
+        def pre_forward_hook(mod, args):
+            for name, local_param in local_params.items():
+                setattr(mod, name, local_param)
+
+        def post_forward_hook(mod, args, output):
+            for name, dtensor_param in dtensor_params.items():
+                setattr(mod, name, dtensor_param)
+            return output
+
+        module.register_forward_pre_hook(pre_forward_hook)
+        module.register_forward_hook(post_forward_hook)
+
+        return module
 
 
 class FLA(nn.Module):
