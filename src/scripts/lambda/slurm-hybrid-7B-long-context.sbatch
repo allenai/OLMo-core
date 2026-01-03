@@ -18,5 +18,5 @@ srun --kill-on-bad-exit=1 ./src/scripts/lambda/entrypoint.sh \
     --model.block.attention.backend=flash_2 \
     --trainer.callbacks.slack_notifier.enabled=true
 
-# Launch on 8 nodes, shard degree 64
+# Launch on 16 nodes
 # Ideally we would use flash_3
