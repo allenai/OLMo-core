@@ -38,7 +38,6 @@ gantry run \
     --task-timeout "${TASK_TIMEOUT}" \
     --host-networking \
     --gpu-type h100 \
-    --gpu-type a100 \
     --system-python \
     --env 'TOKENIZERS_PARALLELISM=false' \
     --env 'CUBLAS_WORKSPACE_CONFIG=:16:8' \
