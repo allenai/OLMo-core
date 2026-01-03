@@ -55,19 +55,13 @@ class ShardParameters(ParallelStyle):
         return module
 
 
-class ShardModuleToLocal(ParallelStyle):
+class ShardModule(ParallelStyle):
     """
-    A ParallelStyle that shards all parameters of a module as DTensors, but ensures
-    that during forward pass the Triton kernels receive local tensors.
+    A ParallelStyle that shards all parameters of a module as DTensors.
 
-    This is necessary for modules like ShortConvolution whose Triton kernels cannot
-    work with DTensors directly.
-
-    The approach:
-    1. Shard parameters as DTensors via distribute_module (for checkpoint compatibility)
-    2. Use output_fn to convert any DTensor outputs to local tensors
-
-    The input_fn extracts local tensors from DTensor inputs before the forward pass.
+    This uses distribute_module to shard parameters. The module will have DTensor
+    parameters for checkpoint compatibility, and PyTorch's DTensor dispatch will
+    handle the computation.
 
     Args:
         shard_dim: Dimension to shard all parameters on. Default: 0.
@@ -86,27 +80,11 @@ class ShardModuleToLocal(ParallelStyle):
                 )
                 module.register_parameter(param_name, new_param)
 
-    @staticmethod
-    def _input_fn(mod, inputs, device_mesh):  # type: ignore[override]
-        # Convert any DTensor inputs to local tensors for Triton kernel compatibility
-        # The first input is the main tensor (x), extract local if DTensor
-        if len(inputs) > 0 and isinstance(inputs[0], DTensor):
-            return inputs[0].to_local()
-        return inputs[0] if len(inputs) > 0 else inputs
-
-    @staticmethod
-    def _output_fn(mod, outputs, device_mesh):
-        # The output should already be a local tensor since the kernel operates on local data
-        # Just pass through - the downstream operations will handle it
-        return outputs
-
     def _apply(self, module: nn.Module, device_mesh: DeviceMesh) -> nn.Module:
         return distribute_module(
             module,
             device_mesh,
             self._partition_fn,
-            self._input_fn,
-            self._output_fn,
         )
 
 
