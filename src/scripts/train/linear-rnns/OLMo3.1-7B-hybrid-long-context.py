@@ -137,7 +137,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
 
 def build_data_components(
     common: CommonComponents,
-    intra_document_masking: bool = True,
+    intra_document_masking: bool = False,  # disable intra-document masking for TP test
     include_instance_filter: bool = False,
 ) -> DataComponents:
     dataset_config = NumpyPackedFSLDatasetConfig.glob(
