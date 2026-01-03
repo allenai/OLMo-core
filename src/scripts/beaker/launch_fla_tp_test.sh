@@ -10,7 +10,7 @@ BEAKER_WORKSPACE="${BEAKER_WORKSPACE:-ai2/OLMo-core}"
 BEAKER_IMAGE="tylerr/olmo-core-tch291cu128-2025-11-25"
 GPUS=2
 BUDGET="ai2/oe-base"
-PRIORITY="normal"
+PRIORITY="high"
 TASK_TIMEOUT="8m"
 
 # Check if gantry is installed
