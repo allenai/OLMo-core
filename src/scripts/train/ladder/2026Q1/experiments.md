@@ -94,5 +94,5 @@ NO_CORDON=1 ./src/scripts/lambda/launch.sh ./src/scripts/lambda/slurm-olmo3-dion
 ## NorMuon (w/ Moonlight scaling to match AdamW LR)
 
 ```bash
-uv run src/scripts/train/ladder/2026Q1/dion_ladder.py launch-all --max-size 1B --cluster ai2/jupiter --name "olmo3-normuon" --preemptible --chinchilla-multiple 8.0 --priority high
+uv run src/scripts/train/ladder/2026Q1/muon_ladder.py launch-all --max-size 1B --cluster ai2/jupiter --name "olmo3-normuon" --preemptible --chinchilla-multiple 8.0 --priority high
 ```
