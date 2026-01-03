@@ -8,6 +8,7 @@ from torch.distributed import DeviceMesh
 from torch.distributed.tensor import (
     DTensor,
     Shard,
+    distribute_module,
     distribute_tensor,
 )
 from torch.distributed.tensor.parallel import ParallelStyle
@@ -76,14 +77,18 @@ class ShardModule(ParallelStyle):
         super().__init__()
         self.shard_dim = shard_dim
 
-    def _apply(self, module: nn.Module, device_mesh: DeviceMesh) -> nn.Module:
-        # Shard all parameters as DTensors
-        for param_name, param in list(module.named_parameters(recurse=False)):
+    def _partition_fn(self, name: str, module: nn.Module, device_mesh: DeviceMesh):
+        # Shard all parameters on the specified dimension
+        for param_name, param in module.named_parameters():
             if param is not None and not isinstance(param, DTensor):
                 new_param = nn.Parameter(
                     distribute_tensor(param, device_mesh, [Shard(self.shard_dim)])
                 )
                 module.register_parameter(param_name, new_param)
+
+    def _apply(self, module: nn.Module, device_mesh: DeviceMesh) -> nn.Module:
+        # First, shard parameters as DTensors
+        distribute_module(module, device_mesh, self._partition_fn)
 
         # Cache DTensor params and their local versions once
         dtensor_params: dict[str, DTensor] = {}
@@ -91,9 +96,9 @@ class ShardModule(ParallelStyle):
         for name, param in list(module.named_parameters(recurse=False)):
             if isinstance(param, DTensor):
                 dtensor_params[name] = param
-                # Get local tensor and ensure it's contiguous for Triton kernels
-                local_tensor = param.to_local().contiguous()
-                local_params[name] = nn.Parameter(local_tensor, requires_grad=param.requires_grad)
+                local_params[name] = nn.Parameter(
+                    param.to_local(), requires_grad=param.requires_grad
+                )
 
         # Wrap the forward method to swap DTensor params to local tensors,
         # and disable torch.compile to avoid graph tracing issues.
