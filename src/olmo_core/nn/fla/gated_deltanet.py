@@ -362,7 +362,7 @@ class GatedDeltaNet(nn.Module):
             ),
         )
 
-        from olmo_core.nn.fla.layer import ShardModule, ShardParameters
+        from olmo_core.nn.fla.layer import LocalInputModule, ShardModule, ShardParameters
 
         plan = {
             # Shard A_log and dt_bias as DTensors (for checkpoint compatibility).
@@ -373,7 +373,8 @@ class GatedDeltaNet(nn.Module):
             "v_proj": colwise_parallel(),
             "a_proj": colwise_parallel(),
             "b_proj": colwise_parallel(),
-            # "o_norm": replicated(),
+            # Convert DTensor inputs to local tensors for Triton kernel compatibility
+            "o_norm": LocalInputModule(),
             "o_proj": rowwise_parallel(
                 output_layouts=output_layout, use_local_output=use_local_output
             ),

@@ -7,6 +7,7 @@ from torch import nn
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import (
     DTensor,
+    Replicate,
     Shard,
     distribute_module,
     distribute_tensor,
@@ -117,6 +118,63 @@ class ShardModule(ParallelStyle):
         module.forward = wrapped_forward  # type: ignore[method-assign]
 
         return module
+
+
+class LocalInputModule(ParallelStyle):
+    """
+    A ParallelStyle that uses distribute_module with input_fn/output_fn to convert DTensor
+    inputs to local tensors for Triton kernel compatibility.
+
+    This is necessary for modules like FusedRMSNormGated whose Triton kernels cannot
+    work with DTensors directly - they bypass PyTorch's dispatch and access raw data.
+
+    Args:
+        output_layout: Optional placement for the output. If None, output remains a local tensor.
+    """
+
+    def __init__(self, output_layout: Optional[Placement] = None):
+        super().__init__()
+        self.output_layout = output_layout
+
+    @staticmethod
+    def _replicate_module_fn(name: str, module: nn.Module, device_mesh: DeviceMesh) -> None:
+        """Replicate all parameters across the mesh (no sharding)."""
+        from torch.distributed.tensor import distribute_tensor
+
+        for param_name, param in module.named_parameters(recurse=False):
+            if param is not None and not isinstance(param, DTensor):
+                new_param = nn.Parameter(distribute_tensor(param, device_mesh, [Replicate()]))
+                module.register_parameter(param_name, new_param)
+
+    @staticmethod
+    def _prepare_input_fn(mod: nn.Module, inputs: tuple, device_mesh: DeviceMesh) -> tuple:
+        """Convert DTensor inputs to local tensors."""
+        del mod, device_mesh
+        from olmo_core.distributed.utils import get_local_tensor
+
+        return tuple(get_local_tensor(arg) if isinstance(arg, DTensor) else arg for arg in inputs)
+
+    def _prepare_output_fn(
+        self, mod: nn.Module, outputs: torch.Tensor, device_mesh: DeviceMesh
+    ) -> torch.Tensor:
+        """Convert output back to DTensor if output_layout is specified."""
+        del mod
+        if self.output_layout is not None and not isinstance(outputs, DTensor):
+            from torch.distributed.tensor import distribute_tensor
+
+            return distribute_tensor(outputs, device_mesh, [self.output_layout])
+        return outputs
+
+    def _apply(self, module: nn.Module, device_mesh: DeviceMesh) -> nn.Module:
+        from functools import partial
+
+        return distribute_module(
+            module,
+            device_mesh,
+            partition_fn=self._replicate_module_fn,
+            input_fn=self._prepare_input_fn,  # type: ignore[arg-type]
+            output_fn=partial(self._prepare_output_fn, device_mesh=device_mesh),  # type: ignore[arg-type]
+        )
 
 
 class FLA(nn.Module):
