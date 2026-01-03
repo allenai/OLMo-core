@@ -294,7 +294,6 @@ def run_tensor_parallel_fla_transformer(checkpoint_dir, outputs_path):
 
     model = config.build()
     model.apply_tp(mesh["tp"])
-    model.init_weights(device=device, max_seq_len=512)
     load_model_and_optim_state(checkpoint_dir, model)
 
     logits = model(input_ids=input_ids)
@@ -310,6 +309,7 @@ def run_tensor_parallel_fla_transformer(checkpoint_dir, outputs_path):
 @pytest.mark.skipif(not _fla_available(), reason="fla library not installed")
 def test_tensor_parallel_fla_transformer(backend: str, tmp_path):
     device = torch.device("cuda") if "nccl" in backend else torch.device("cpu")
+    seed_all(0)
     config = get_fla_transformer_config()
     model = config.build()
     model.init_weights(device=device, max_seq_len=512)

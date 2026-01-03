@@ -20,7 +20,7 @@ from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.fla.layer import FLAConfig
 from olmo_core.nn.lm_head import LMLossImplementation
 from olmo_core.nn.rope import YaRNRoPEScalingConfig
-from olmo_core.nn.transformer import TransformerActivationCheckpointingMode, TransformerConfig
+from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.nn.transformer.config import TransformerBlockType
 from olmo_core.optim import (
     LinearWithWarmup,
@@ -31,7 +31,6 @@ from olmo_core.optim import (
 from olmo_core.train import Duration, LoadStrategy, TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, WandBCallback
 from olmo_core.train.train_module import (
-    TransformerActivationCheckpointingConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTensorParallelConfig,
@@ -123,11 +122,11 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
         ),
-        tp_config=TransformerTensorParallelConfig(degree=2),
-        ac_config=TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.budget,
-            activation_memory_budget=0.1,
-        ),
+        tp_config=TransformerTensorParallelConfig(degree=8),
+        # ac_config=TransformerActivationCheckpointingConfig(
+        #     mode=TransformerActivationCheckpointingMode.budget,
+        #     activation_memory_budget=0.1,
+        # ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
