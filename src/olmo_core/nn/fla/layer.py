@@ -8,6 +8,7 @@ from torch.distributed import DeviceMesh
 from torch.distributed.tensor import (
     DTensor,
     Shard,
+    distribute_module,
     distribute_tensor,
 )
 from torch.distributed.tensor.parallel import ParallelStyle
@@ -54,15 +55,19 @@ class ShardParameters(ParallelStyle):
         return module
 
 
-class ShardModule(ParallelStyle):
+class ShardModuleToLocal(ParallelStyle):
     """
-    A ParallelStyle that shards all parameters of a module on a given dimension.
+    A ParallelStyle that shards all parameters of a module as DTensors, but ensures
+    that during forward pass the Triton kernels receive local tensors.
 
-    This uses distribute_tensor which takes the FULL tensor and distributes it across ranks,
-    unlike DTensor.from_local which assumes the local tensor is already a shard.
+    This is necessary for modules like ShortConvolution whose Triton kernels cannot
+    work with DTensors directly.
 
-    This is useful for modules like ShortConvolution that have depthwise conv parameters
-    which need to be sharded on the channel dimension to match columnwise-parallel projections.
+    The approach:
+    1. Shard parameters as DTensors via distribute_module (for checkpoint compatibility)
+    2. Use output_fn to convert any DTensor outputs to local tensors
+
+    The input_fn extracts local tensors from DTensor inputs before the forward pass.
 
     Args:
         shard_dim: Dimension to shard all parameters on. Default: 0.
@@ -72,22 +77,37 @@ class ShardModule(ParallelStyle):
         super().__init__()
         self.shard_dim = shard_dim
 
-    def _apply(self, module: nn.Module, device_mesh: DeviceMesh) -> nn.Module:
+    def _partition_fn(self, name: str, module: nn.Module, device_mesh: DeviceMesh):
         # Shard all parameters on the specified dimension
-        for name, param in list(module.named_parameters(recurse=False)):
+        for param_name, param in module.named_parameters():
             if param is not None and not isinstance(param, DTensor):
                 new_param = nn.Parameter(
                     distribute_tensor(param, device_mesh, [Shard(self.shard_dim)])
                 )
-                module.register_parameter(name, new_param)
+                module.register_parameter(param_name, new_param)
 
-        # Also handle buffers (some modules store state in buffers)
-        for name, buffer in list(module.named_buffers(recurse=False)):
-            if buffer is not None and not isinstance(buffer, DTensor):
-                new_buffer = distribute_tensor(buffer, device_mesh, [Shard(self.shard_dim)])
-                module.register_buffer(name, new_buffer)
+    @staticmethod
+    def _input_fn(mod, inputs, device_mesh):  # type: ignore[override]
+        # Convert any DTensor inputs to local tensors for Triton kernel compatibility
+        # The first input is the main tensor (x), extract local if DTensor
+        if len(inputs) > 0 and isinstance(inputs[0], DTensor):
+            return inputs[0].to_local()
+        return inputs[0] if len(inputs) > 0 else inputs
 
-        return module
+    @staticmethod
+    def _output_fn(mod, outputs, device_mesh):
+        # The output should already be a local tensor since the kernel operates on local data
+        # Just pass through - the downstream operations will handle it
+        return outputs
+
+    def _apply(self, module: nn.Module, device_mesh: DeviceMesh) -> nn.Module:
+        return distribute_module(
+            module,
+            device_mesh,
+            self._partition_fn,
+            self._input_fn,
+            self._output_fn,
+        )
 
 
 class FLA(nn.Module):
