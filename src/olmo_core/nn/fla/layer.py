@@ -100,22 +100,23 @@ class ShardModule(ParallelStyle):
                     param.to_local(), requires_grad=param.requires_grad
                 )
 
-        # Register hooks to swap params during forward
-        def pre_forward_hook(mod, args):
+        # Wrap the forward method to swap DTensor params to local tensors,
+        # and disable torch.compile to avoid graph tracing issues.
+        original_forward = module.forward
+
+        @torch.compiler.disable
+        def wrapped_forward(*args, **kwargs):
+            # Swap to local params for Triton kernel compatibility
             for name, local_param in local_params.items():
-                setattr(mod, name, local_param)
+                setattr(module, name, local_param)
+            try:
+                return original_forward(*args, **kwargs)
+            finally:
+                # Restore DTensor params for checkpoint compatibility
+                for name, dtensor_param in dtensor_params.items():
+                    setattr(module, name, dtensor_param)
 
-        def post_forward_hook(mod, args, output):
-            for name, dtensor_param in dtensor_params.items():
-                setattr(mod, name, dtensor_param)
-            return output
-
-        module.register_forward_pre_hook(pre_forward_hook)
-        module.register_forward_hook(post_forward_hook)
-
-        # Disable torch.compile on this module to avoid graph tracing issues
-        # with the parameter swapping hooks.
-        module.forward = torch.compiler.disable(module.forward)  # type: ignore[method-assign]
+        module.forward = wrapped_forward  # type: ignore[method-assign]
 
         return module
 
