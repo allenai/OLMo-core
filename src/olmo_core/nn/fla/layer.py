@@ -104,7 +104,6 @@ class ShardModule(ParallelStyle):
         # and disable torch.compile to avoid graph tracing issues.
         original_forward = module.forward
 
-        @torch.compiler.disable
         def wrapped_forward(*args, **kwargs):
             # Swap to local params for Triton kernel compatibility
             for name, local_param in local_params.items():
@@ -131,6 +130,7 @@ class FLA(nn.Module):
     def init_kv_cache_manager(self, batch_size: int):
         raise NotImplementedError()
 
+    @torch._dynamo.disable()
     def forward(
         self,
         x: torch.Tensor,

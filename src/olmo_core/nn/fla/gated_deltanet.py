@@ -16,7 +16,6 @@ from fla.ops.gated_delta_rule import chunk_gated_delta_rule, fused_recurrent_gat
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import Replicate, Shard
 from torch.distributed.tensor.parallel import (
-    PrepareModuleInput,
     PrepareModuleOutput,
     parallelize_module,
 )
@@ -357,7 +356,7 @@ class GatedDeltaNet(nn.Module):
         parallelize_module(
             self,
             device_mesh=tp_mesh,
-            parallelize_plan=PrepareModuleInput(
+            parallelize_plan=prepare_module_input(
                 input_layouts=None if input_layout is None else (input_layout,),
                 desired_input_layouts=(Replicate(),),
             ),
