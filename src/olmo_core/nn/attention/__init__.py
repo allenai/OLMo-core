@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import List, Optional, Tuple, Union
 
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 from torch.distributed import DeviceMesh
 from torch.distributed.tensor import Placement, Replicate, Shard
@@ -16,6 +17,7 @@ from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention.kv_cache import KVCacheManager
+from olmo_core.nn.fla.gated_deltanet import _All2All as _HeadAll2All
 
 from ..buffer_cache import BufferCache
 from ..config import ModuleConfig
@@ -43,6 +45,17 @@ from .ring import (
     RingAttentionLoadBalancerType,
     RingAttentionZigZagLoadBalancer,
 )
+
+
+def _a2a_heads(x: torch.Tensor, *, is_qkv: bool, group: dist.ProcessGroup) -> torch.Tensor:
+    """All-to-all across head dimension (Ulysses-style)."""
+    b, t, h, d = x.shape
+    x_flat = x.reshape(b * t, h, d).contiguous()
+    fwd_stage, bwd_stage = (1, 2) if is_qkv else (2, 1)
+    out = _HeadAll2All.apply(x_flat, (fwd_stage, bwd_stage), group)
+    world_size = dist.get_world_size(group)
+    h_out = h // world_size if is_qkv else h * world_size
+    return out.view(b, t, h_out, d)
 
 __all__ = [
     "SlidingWindowAttentionConfig",
@@ -323,7 +336,7 @@ class AttentionBase(nn.Module):
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
-        load_balancer: RingAttentionLoadBalancerType,
+        load_balancer: RingAttentionLoadBalancerType | None,
         head_stride: int = 1,
     ):
         raise NotImplementedError
@@ -479,10 +492,12 @@ class Attention(AttentionBase):
             cache=cache,
         )
         self.kv_cache_manager: Optional[KVCacheManager] = None
+        self._cp_pg: Optional[dist.ProcessGroup] = None
+        self._cp_ulysses: bool = False
 
     @property
     def cp_enabled(self) -> bool:
-        return self.backend.cp_enabled
+        return self.backend.cp_enabled or self._cp_ulysses
 
     def sdpa(
         self,
@@ -577,9 +592,23 @@ class Attention(AttentionBase):
             if self.k_norm is not None:
                 k = self.k_norm(k)
 
+        if self._cp_ulysses:
+            assert self._cp_pg is not None
+            world_size = dist.get_world_size(self._cp_pg)
+            if self.n_heads % world_size != 0 or self.n_kv_heads % world_size != 0:
+                raise OLMoConfigurationError(
+                    f"Ulysses CP requires n_heads ({self.n_heads}) and n_kv_heads ({self.n_kv_heads}) "
+                    f"to be divisible by cp degree ({world_size})"
+                )
+            if self.kv_cache_manager is not None:
+                raise RuntimeError("KV cache is not supported with Ulysses context parallelism")
+            q = _a2a_heads(q, is_qkv=True, group=self._cp_pg)
+            k = _a2a_heads(k, is_qkv=True, group=self._cp_pg)
+            v = _a2a_heads(v, is_qkv=True, group=self._cp_pg)
+
         if self.rope is not None:
-            # In context-parallel mode we must be given pre-sharded buffers
-            if self.cp_enabled and pos_sin is None and pos_cos is None and freqs_cis is None:
+            # In ring CP we must be given pre-sharded buffers
+            if self.backend.cp_enabled and pos_sin is None and pos_cos is None and freqs_cis is None:
                 raise RuntimeError(
                     "RoPE buffers must be passed through to attention after being properly "
                     "sharded by the context parallel load balancer"
@@ -610,6 +639,10 @@ class Attention(AttentionBase):
             local_k_slice=local_k_slice,
             cache_leftpad=cache_leftpad,
         )
+
+        if self._cp_ulysses:
+            assert self._cp_pg is not None
+            att = _a2a_heads(att, is_qkv=False, group=self._cp_pg)
 
         if self.gate is not None:
             assert self.w_g is not None
@@ -687,19 +720,30 @@ class Attention(AttentionBase):
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
-        load_balancer: RingAttentionLoadBalancerType,
+        load_balancer: RingAttentionLoadBalancerType | None,
         head_stride: int = 1,
     ):
         """
         Prepare the module for context-parallelism (ring attention).
 
         .. important::
-            This requires a backend that supports CP, such as "flash_2" or "te".
+            Ring CP requires a backend that supports CP, such as "flash_2" or "te".
 
         :param cp_mesh: The context parallel device sub-mesh.
         :param load_balancer: The load balancer type.
         """
-        self.backend.apply_cp(cp_mesh, load_balancer, head_stride=head_stride)
+        self._cp_pg = cp_mesh.get_group()
+        if cp_mesh.size() == 1:
+            # Single-rank CP is a no-op.
+            self._cp_pg = None
+            self._cp_ulysses = False
+            return
+        if load_balancer is None:
+            # Enable Ulysses A2A path; do not enable backend CP.
+            self._cp_ulysses = True
+        else:
+            self._cp_ulysses = False
+            self.backend.apply_cp(cp_mesh, load_balancer, head_stride=head_stride)
 
     def init_kv_cache_manager(self, batch_size: int, max_seq_len: int):
         """

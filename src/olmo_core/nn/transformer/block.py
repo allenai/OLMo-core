@@ -201,8 +201,6 @@ class TransformerBlock(TransformerBlockBase):
         load_balancer: RingAttentionLoadBalancerType | None,
         head_stride: int = 1,
     ):
-        if load_balancer is None:
-            raise OLMoConfigurationError("Ulysses CP not supported for attention blocks")
         self.attention.apply_cp(cp_mesh, load_balancer, head_stride=head_stride)
 
     def apply_fsdp(
@@ -456,8 +454,6 @@ class NormalizedTransformerBlock(TransformerBlockBase):
         load_balancer: RingAttentionLoadBalancerType | None,
         head_stride: int = 1,
     ):
-        if load_balancer is None:
-            raise OLMoConfigurationError("Ulysses CP not supported for attention blocks")
         self.attention.apply_cp(cp_mesh, load_balancer, head_stride=head_stride)
 
     def apply_fsdp(
@@ -641,8 +637,6 @@ class MoETransformerBlock(TransformerBlockBase):
         load_balancer: RingAttentionLoadBalancerType | None,
         head_stride: int = 1,
     ):
-        if load_balancer is None:
-            raise OLMoConfigurationError("Ulysses CP not supported for attention blocks")
         self.attention.apply_cp(cp_mesh, load_balancer, head_stride=head_stride)
         self.feed_forward_moe.apply_cp(cp_mesh)
 

@@ -20,7 +20,7 @@ from olmo_core.nn.transformer.block import (
     TransformerBlock,
     TransformerBlockBase,
 )
-from olmo_core.testing import BACKENDS, run_distributed_test
+from olmo_core.testing import BACKENDS, GPU_MARKS, requires_multi_gpu, run_distributed_test
 from olmo_core.utils import get_default_device, seed_all
 
 
@@ -173,5 +173,59 @@ def test_tensor_parallel_block(
             d_model,
             kwargs,
             compile_model,
+        ),
+    )
+
+
+def _run_context_parallel_block(checkpoint_dir, inputs_path, outputs_path, d_model, kwargs):
+    device = get_default_device()
+    mesh = init_device_mesh(device.type, (get_world_size(),), mesh_dim_names=("cp",))
+
+    block = _build_block(TransformerBlock, d_model=d_model, init_device=device.type, kwargs=kwargs)
+    block.apply_cp(mesh["cp"], load_balancer=None)
+    load_model_and_optim_state(checkpoint_dir, block)
+
+    x = torch.load(inputs_path, map_location=device)
+    logits = block(x)
+    logits.sum().backward()
+
+    ref = torch.load(outputs_path, map_location=device)
+    torch.testing.assert_close(ref, logits)
+
+
+@requires_multi_gpu
+@pytest.mark.parametrize(
+    "backend", ["nccl"], ids=["ulysses-cp"]
+)  # ring CP still tested elsewhere
+def test_context_parallel_block(backend: str, tmp_path):
+    device = torch.device("cuda")
+    seed_all(0)
+    d_model = 64
+    kwargs = dict(name=AttentionType.default, n_heads=8, use_flash=True)
+
+    block = _build_block(TransformerBlock, d_model=d_model, init_device=device.type, kwargs=kwargs)
+    block.init_weights(device=device)
+
+    bs, seq_len = 2, 128
+    x = torch.randn(bs, seq_len, d_model, device=device)
+    y = block(x)
+
+    outputs_path = tmp_path / "block_y.pt"
+    torch.save(y, outputs_path)
+    inputs_path = tmp_path / "block_x.pt"
+    torch.save(x, inputs_path)
+    checkpoint_dir = tmp_path / "checkpoint"
+    save_model_and_optim_state(checkpoint_dir, block)
+
+    run_distributed_test(
+        _run_context_parallel_block,
+        backend=backend,
+        start_method="spawn",
+        func_args=(
+            checkpoint_dir,
+            inputs_path,
+            outputs_path,
+            d_model,
+            kwargs,
         ),
     )
