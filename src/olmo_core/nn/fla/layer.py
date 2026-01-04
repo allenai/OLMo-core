@@ -252,6 +252,9 @@ class FLA(nn.Module):
             float8_enabled,
         )
 
+    def apply_cp(self, cp_mesh: DeviceMesh):
+        self.inner.apply_cp(cp_mesh)
+
     def num_flops_per_token(self, seq_len: int) -> int:
         """
         Calculate FLOPs per token for FLA (Flash Linear Attention) layer.

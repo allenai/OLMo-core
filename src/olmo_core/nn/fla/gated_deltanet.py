@@ -8,6 +8,7 @@ import warnings
 from typing import TYPE_CHECKING, Optional
 
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 from einops import rearrange, repeat
 from fla.layers.utils import get_unpad_data, index_first_axis, pad_input
@@ -22,7 +23,8 @@ from torch.distributed.tensor.parallel import (
 from torch.distributed.tensor.placement_types import Placement
 from torch.nn import functional as F
 
-from olmo_core.distributed.utils import get_local_tensor
+from olmo_core.distributed.utils import get_local_tensor, get_world_size
+from olmo_core.nn.fla.cp_utils import _qkvo_all2ll
 from olmo_core.nn.utils import get_tp_wrappers
 
 if TYPE_CHECKING:
@@ -211,6 +213,9 @@ class GatedDeltaNet(nn.Module):
         else:
             self.o_norm = RMSNorm(self.head_v_dim, eps=norm_eps, dtype=torch.float32)
         self.o_proj = nn.Linear(self.value_dim, hidden_size, bias=False)
+        self._cp_mesh: DeviceMesh | None = None
+        self._cp_group: dist.ProcessGroup | None = None
+        self.cp_enabled = False
 
     def forward(
         self,
@@ -232,9 +237,14 @@ class GatedDeltaNet(nn.Module):
         if attention_mask is not None:
             attention_mask = get_local_tensor(attention_mask)
 
+        cp_group = self._cp_group
+        cp_enabled = self.cp_enabled and cp_group is not None
+
         batch_size, q_len, _ = hidden_states.shape
         # change to inference mode.
         mode = "fused_recurrent" if (q_len <= 64 and not self.training) else self.mode
+        if cp_enabled:
+            assert mode == "chunk", "Only chunk mode is supported in context parallelism."
         if self.training:
             assert mode == "chunk", "Only chunk mode is supported in training."
 
@@ -245,6 +255,16 @@ class GatedDeltaNet(nn.Module):
         cu_seqlens = kwargs.get("cu_seqlens")
         if cu_seqlens is not None:
             cu_seqlens = get_local_tensor(cu_seqlens)
+        if cp_enabled:
+            if batch_size != 1:
+                raise AssertionError("Context parallelism only supports batch_size == 1")
+            if cu_seqlens is None:
+                total_len = q_len * dist.get_world_size(cp_group)
+                cu_seqlens = torch.tensor(
+                    [0, total_len],
+                    dtype=torch.int32,
+                    device=hidden_states.device,
+                )
         if attention_mask is not None:
             indices, cu_seqlens, _ = get_unpad_data(attention_mask[:, -q_len:])
             hidden_states = index_first_axis(
@@ -302,7 +322,35 @@ class GatedDeltaNet(nn.Module):
         g = self.g_id(get_local_tensor(g))
 
         recurrent_state = last_state["recurrent_state"] if last_state is not None else None
-        if mode == "chunk":
+        if cp_enabled:
+            world_size = get_world_size(cp_group)
+            if self.num_heads % world_size != 0 or self.num_v_heads % world_size != 0:
+                raise AssertionError(
+                    f"num_heads ({self.num_heads}) and num_v_heads ({self.num_v_heads}) must be divisible "
+                    f"by cp world size ({world_size}) for A2A CP."
+                )
+            # Ulysses-style all-to-all on QKV/G/Beta.
+            q2, k2, v2 = [
+                _qkvo_all2ll(t.squeeze(0), is_qkv=True, group=cp_group).unsqueeze(0)
+                for t in (q, k, v)
+            ]
+            g2 = _qkvo_all2ll(g.squeeze(0).unsqueeze(-1), is_qkv=True, group=cp_group)
+            g2 = g2.unsqueeze(0).squeeze(-1)
+            beta2 = _qkvo_all2ll(beta.squeeze(0).unsqueeze(-1), is_qkv=True, group=cp_group)
+            beta2 = beta2.unsqueeze(0).squeeze(-1)
+            o, recurrent_state = chunk_gated_delta_rule(
+                q=q2,
+                k=k2,
+                v=v2,
+                g=g2,
+                beta=beta2,
+                initial_state=recurrent_state,
+                output_final_state=use_cache,
+                cu_seqlens=cu_seqlens,
+                use_qk_l2norm_in_kernel=True,
+            )
+            o = _qkvo_all2ll(o.squeeze(0), is_qkv=False, group=cp_group).unsqueeze(0)
+        elif mode == "chunk":
             o, recurrent_state = chunk_gated_delta_rule(
                 q=q,
                 k=k,
@@ -350,6 +398,19 @@ class GatedDeltaNet(nn.Module):
             o = pad_input(o.squeeze(0), indices, batch_size, q_len)
 
         return o, None, past_key_values
+
+    def apply_cp(self, cp_mesh: DeviceMesh):
+        """Applies ulysses-style A2A context parallelism to the module."""
+        if self.mode != "chunk":
+            raise NotImplementedError("Context parallelism only supports chunk mode")
+
+        group = cp_mesh.get_group()
+        if cp_mesh.size() == 1:
+            group = None
+
+        self._cp_mesh = cp_mesh
+        self._cp_group = group
+        self.cp_enabled = group is not None
 
     def apply_tp(
         self,

@@ -1188,6 +1188,15 @@ class FLABlock(TransformerBlockBase):
                 float8_enabled=float8_enabled,
             )
 
+    def apply_cp(
+        self,
+        cp_mesh: DeviceMesh,
+        load_balancer: RingAttentionLoadBalancerType,
+        head_stride: int = 1,
+    ):
+        del load_balancer, head_stride
+        self.fla.apply_cp(cp_mesh)
+
     def num_flops_per_token(self, seq_len: int) -> int:
         attn_flops = self.fla.num_flops_per_token(seq_len)
         if self.feed_forward is not None:
