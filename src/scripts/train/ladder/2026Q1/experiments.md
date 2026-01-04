@@ -104,3 +104,7 @@ NO_CORDON=1 ./src/scripts/lambda/launch.sh ./src/scripts/lambda/slurm-olmo3-muon
 ```bash
 uv run src/scripts/train/ladder/2026Q1/muon_ladder.py launch-all --max-size 1B --cluster ai2/jupiter --name "olmo3-muon-lmheadscaled" --preemptible --chinchilla-multiple 8.0 --priority high
 ```
+
+```bash
+uv run src/scripts/train/ladder/2026Q1/muon_ladder.py launch-all --max-size 1B --cluster ai2/jupiter --name "olmo3-muon-2xBS" --preemptible --chinchilla-multiple 8.0 --priority high
+```
