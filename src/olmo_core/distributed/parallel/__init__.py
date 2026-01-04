@@ -10,7 +10,6 @@ from olmo_core.utils import get_default_device
 
 from .context_parallel import (
     ContextParallelConfig,
-    ContextParallelStyle,
     RingContextParallelStyle,
     UlyssesContextParallelStyle,
 )
@@ -49,7 +48,6 @@ __all__ = [
     "PipelineSplitStyle",
     "PipelineSchedule",
     "ContextParallelConfig",
-    "ContextParallelStyle",
     "RingContextParallelStyle",
     "UlyssesContextParallelStyle",
 ]
