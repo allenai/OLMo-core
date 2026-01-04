@@ -66,25 +66,28 @@ class ShardModule(ParallelStyle):
     work with DTensors directly - they bypass PyTorch's dispatch and access raw data.
 
     The approach:
-    1. Shard parameters as DTensors via distribute_module (for checkpoint compatibility)
+    1. Shard or replicate parameters as DTensors via distribute_module (for checkpoint compatibility)
     2. Register forward hooks to swap DTensor params to local tensors during forward,
        then restore DTensors after forward for checkpoint compatibility.
     3. Disable torch.compile on the module to avoid graph tracing issues with the hooks.
 
     Args:
         shard_dim: Dimension to shard all parameters on. Default: 0.
+        placements: Optional list of placements to use instead of sharding (e.g., [Replicate()]).
     """
 
-    def __init__(self, shard_dim: int = 0):
+    def __init__(self, shard_dim: int = 0, placements: Optional[list[Placement]] = None):
         super().__init__()
         self.shard_dim = shard_dim
+        self.placements = placements
 
     def _partition_fn(self, name: str, module: nn.Module, device_mesh: DeviceMesh):
         # Shard all parameters on the specified dimension
         for param_name, param in module.named_parameters():
             if param is not None and not isinstance(param, DTensor):
+                placements = self.placements or [Shard(self.shard_dim)]
                 new_param = nn.Parameter(
-                    distribute_tensor(param, device_mesh, [Shard(self.shard_dim)])
+                    distribute_tensor(param, device_mesh, placements)
                 )
                 module.register_parameter(param_name, new_param)
 
