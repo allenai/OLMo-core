@@ -22,6 +22,7 @@ from torch.distributed.tensor.parallel import (
 from torch.distributed.tensor.placement_types import Placement
 from torch.nn import functional as F
 
+from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.nn.utils import get_tp_wrappers
 
 if TYPE_CHECKING:
@@ -227,6 +228,10 @@ class GatedDeltaNet(nn.Module):
                 "Arbitrary attention masks of shape [batch_size, seq_len, seq_len] are not allowed."
             )
 
+        hidden_states = get_local_tensor(hidden_states)
+        if attention_mask is not None:
+            attention_mask = get_local_tensor(attention_mask)
+
         batch_size, q_len, _ = hidden_states.shape
         # change to inference mode.
         mode = "fused_recurrent" if (q_len <= 64 and not self.training) else self.mode
@@ -238,6 +243,8 @@ class GatedDeltaNet(nn.Module):
             last_state = past_key_values[self.layer_idx]
 
         cu_seqlens = kwargs.get("cu_seqlens")
+        if cu_seqlens is not None:
+            cu_seqlens = get_local_tensor(cu_seqlens)
         if attention_mask is not None:
             indices, cu_seqlens, _ = get_unpad_data(attention_mask[:, -q_len:])
             hidden_states = index_first_axis(
@@ -249,27 +256,31 @@ class GatedDeltaNet(nn.Module):
             if last_state is not None:
                 conv_state_q, conv_state_k, conv_state_v = last_state["conv_state"]
             q, conv_state_q = self.q_conv1d(
-                x=self.q_proj(hidden_states),
+                x=get_local_tensor(self.q_proj(hidden_states)),
                 cache=conv_state_q,
                 output_final_state=use_cache,
                 cu_seqlens=cu_seqlens,
             )
             k, conv_state_k = self.k_conv1d(
-                x=self.k_proj(hidden_states),
+                x=get_local_tensor(self.k_proj(hidden_states)),
                 cache=conv_state_k,
                 output_final_state=use_cache,
                 cu_seqlens=cu_seqlens,
             )
             v, conv_state_v = self.v_conv1d(
-                x=self.v_proj(hidden_states),
+                x=get_local_tensor(self.v_proj(hidden_states)),
                 cache=conv_state_v,
                 output_final_state=use_cache,
                 cu_seqlens=cu_seqlens,
             )
         else:
-            q = F.silu(self.q_proj(hidden_states))
-            k = F.silu(self.k_proj(hidden_states))
-            v = F.silu(self.v_proj(hidden_states))
+            q = get_local_tensor(F.silu(self.q_proj(hidden_states)))
+            k = get_local_tensor(F.silu(self.k_proj(hidden_states)))
+            v = get_local_tensor(F.silu(self.v_proj(hidden_states)))
+
+        q = get_local_tensor(q)
+        k = get_local_tensor(k)
+        v = get_local_tensor(v)
 
         q, k = map(lambda x: rearrange(x, "... (h d) -> ... h d", d=self.head_k_dim), (q, k))
         v = rearrange(v, "... (h d) -> ... h d", d=self.head_v_dim)
@@ -280,14 +291,15 @@ class GatedDeltaNet(nn.Module):
                 (q, k),
             )
 
-        beta = self.b_proj(hidden_states).sigmoid()
+        beta = get_local_tensor(self.b_proj(hidden_states)).sigmoid()
         if self.allow_neg_eigval:
             beta = beta * 2.0
 
+        a = get_local_tensor(self.a_proj(hidden_states))
         g = -self.A_log_id(self.A_log).float().exp() * F.softplus(
-            self.a_proj(hidden_states).float() + self.dt_bias_id(self.dt_bias)
+            a.float() + self.dt_bias_id(self.dt_bias)
         )
-        g = self.g_id(g)
+        g = self.g_id(get_local_tensor(g))
 
         recurrent_state = last_state["recurrent_state"] if last_state is not None else None
         if mode == "chunk":

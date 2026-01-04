@@ -16,6 +16,7 @@ from torch.distributed.tensor.parallel import ParallelStyle
 from torch.distributed.tensor.placement_types import Placement
 
 from olmo_core.config import Config, DType
+from olmo_core.distributed.utils import get_local_tensor
 
 log = logging.getLogger(__name__)
 
@@ -105,15 +106,40 @@ class ShardModule(ParallelStyle):
         original_forward = module.forward
 
         def wrapped_forward(*args, **kwargs):
+            local_args = tuple(get_local_tensor(arg) for arg in args)
+            local_kwargs = {
+                key: get_local_tensor(value) if isinstance(value, torch.Tensor) else value
+                for key, value in kwargs.items()
+            }
             # Swap to local params for Triton kernel compatibility
             for name, local_param in local_params.items():
                 setattr(module, name, local_param)
             try:
-                return original_forward(*args, **kwargs)
+                return original_forward(*local_args, **local_kwargs)
             finally:
                 # Restore DTensor params for checkpoint compatibility
                 for name, dtensor_param in dtensor_params.items():
                     setattr(module, name, dtensor_param)
+
+        for name, local_param in local_params.items():
+            dtensor_param = dtensor_params[name]
+
+            def _copy_grad_to_dtensor(local_grad, *, dtensor_param=dtensor_param):
+                if local_grad is None:
+                    return None
+
+                dtensor_grad = distribute_tensor(
+                    local_grad, dtensor_param.device_mesh, dtensor_param.placements
+                )
+                if dtensor_param.grad is None:
+                    dtensor_param.grad = dtensor_grad
+                else:
+                    dtensor_param.grad += dtensor_grad
+
+                # Avoid keeping grads on the temporary local parameter.
+                return None
+
+            local_param.register_hook(_copy_grad_to_dtensor)
 
         module.forward = wrapped_forward  # type: ignore[method-assign]
 
