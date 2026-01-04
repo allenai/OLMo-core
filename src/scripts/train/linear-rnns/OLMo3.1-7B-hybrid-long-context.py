@@ -137,7 +137,7 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
 
 def build_data_components(
     common: CommonComponents,
-    intra_document_masking: bool = False,  # disable intra-document masking for TP test
+    intra_document_masking: bool = True,
     include_instance_filter: bool = False,
 ) -> DataComponents:
     dataset_config = NumpyPackedFSLDatasetConfig.glob(
@@ -165,8 +165,6 @@ def build_data_components(
 def build_trainer_config(common: CommonComponents) -> TrainerConfig:
     cancel_check_interval = 10
 
-    cluster = common.cluster
-
     run_name = f"{common.run_name}-{datetime.now().astimezone().strftime('%Y%m%dT%H%M%S%z')}"
 
     return (
@@ -175,7 +173,7 @@ def build_trainer_config(common: CommonComponents) -> TrainerConfig:
             load_trainer_state=False,
             load_optim_state=True,
             # !!! TODO: update this to the final midtrain checkpoint
-            load_path=f"{common.root_dir}/checkpoints/willm/linear-rnns/OLMo3.1-7B-6T-30h/step1414078/",
+            load_path=f"{common.root_dir}/checkpoints/willm/linear-rnns/OLMo3.1-7B-hybrid-midtraining/step21634/",
             save_folder=f"{common.root_dir}/checkpoints/willm/linear-rnns/{common.run_name}/",
             save_overwrite=True,
             metrics_collect_interval=50,
