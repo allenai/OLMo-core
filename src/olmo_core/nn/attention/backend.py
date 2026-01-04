@@ -100,8 +100,11 @@ class AttentionBackendName(StrEnum):
     def assert_supports_swa(self):
         self.get_class().assert_supports_swa()
 
-    def assert_supports_cp(self):
-        self.get_class().assert_supports_cp()
+    def assert_supports_ring_cp(self):
+        self.get_class().assert_supports_ring_cp()
+
+    def assert_supports_ulysses_cp(self):
+        self.get_class().assert_supports_ulysses_cp()
 
     def assert_supports_packed_qkv(self):
         self.get_class().assert_supports_packed_qkv()
@@ -261,8 +264,7 @@ class TorchAttentionBackend(AttentionBackend):
 
     @classmethod
     def assert_supports_ulysses_cp(cls):
-        # NOTE(tylerr): this would be pretty straightforward to support, but we don't have a use case for it yet
-        raise RuntimeError(f"'{cls.__name__}' doesn't support ulysses context parallelism")
+        pass
 
     @classmethod
     def assert_supports_packed_qkv(cls):
@@ -326,6 +328,14 @@ class TorchAttentionBackend(AttentionBackend):
                 f"'{self.__class__.__name__}' doesn't support intra-document masking"
             )
 
+        if self.cp_enabled and self.uly is not None:
+            assert self.cp_pg is not None
+            # Transform from context-parallel to head-parallel partitioning
+            # [batch_size, seq_len/CP, n_heads, head_dim] -> [batch_size, seq_len, n_heads/CP, head_dim]
+            q = all_to_all_cp2hp(q, self.cp_pg)
+            k = all_to_all_cp2hp(k, self.cp_pg)
+            v = all_to_all_cp2hp(v, self.cp_pg)
+
         # NOTE: PyTorch's SDPA doesn't support GQA, so we have to do this.
         n_rep = self.n_heads // self.n_kv_heads
         # shape: (batch_size, seq_len, n_heads, head_dim)
@@ -350,7 +360,13 @@ class TorchAttentionBackend(AttentionBackend):
         )
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
-        return att.transpose(1, 2).contiguous()
+        att = att.transpose(1, 2)
+
+        if self.cp_enabled and self.uly is not None:
+            assert self.cp_pg is not None
+            att = all_to_all_hp2cp(att, self.cp_pg)
+
+        return att.contiguous()
 
     def _get_sliding_window_mask(
         self,
