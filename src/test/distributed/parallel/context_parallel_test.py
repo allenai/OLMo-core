@@ -2,7 +2,10 @@ import pytest
 import torch
 import torch.distributed as dist
 
-from olmo_core.distributed.parallel.context_parallel import all_to_all_cp2hp, all_to_all_hp2cp
+from olmo_core.distributed.parallel.context_parallel import (
+    all_to_all_cp2hp,
+    all_to_all_hp2cp,
+)
 from olmo_core.testing import BACKENDS, run_distributed_test
 from olmo_core.utils import get_default_device
 
@@ -105,14 +108,16 @@ def _test_roundtrip():
     hp = all_to_all_cp2hp(original, group)
     recovered = all_to_all_hp2cp(hp, group)
 
-    assert torch.allclose(original, recovered), (
-        f"Rank {rank}: roundtrip failed, max diff = {(original - recovered).abs().max()}"
-    )
+    assert torch.allclose(
+        original, recovered
+    ), f"Rank {rank}: roundtrip failed, max diff = {(original - recovered).abs().max()}"
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_cp2hp_scatter(backend: str):
-    run_distributed_test(_test_cp2hp_scatter_dim1, backend=backend, start_method="spawn", world_size=2)
+    run_distributed_test(
+        _test_cp2hp_scatter_dim1, backend=backend, start_method="spawn", world_size=2
+    )
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
