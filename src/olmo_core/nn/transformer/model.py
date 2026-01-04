@@ -33,11 +33,7 @@ from olmo_core.train.train_module.transformer.config import (
 )
 from olmo_core.utils import get_default_device, mark_dynamic, move_to_device
 
-from ..attention import (
-    Attention,
-    FusedAttention,
-    RingAttentionLoadBalancer,
-)
+from ..attention import Attention, FusedAttention, RingAttentionLoadBalancer
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
 from ..lm_head import LMHeadConfig, LMOutputWithLoss

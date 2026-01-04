@@ -2,7 +2,10 @@ import pytest
 import torch
 import torch.distributed as dist
 
-from olmo_core.distributed.parallel.context_parallel import all_to_all_cp2hp, all_to_all_hp2cp
+from olmo_core.distributed.parallel.context_parallel import (
+    all_to_all_cp2hp,
+    all_to_all_hp2cp,
+)
 from olmo_core.testing import BACKENDS, run_distributed_test
 from olmo_core.testing.utils import requires_multi_gpu
 
@@ -24,9 +27,11 @@ def _test_cp2hp_scatter_dim2():
     output = all_to_all_cp2hp(input_tensor, group, scatter_dim=2)
 
     # Output shape should be [T, B, H/CP]
-    assert output.shape == (T, B, H // world_size), (
-        f"Expected shape {(T, B, H // world_size)}, got {output.shape}"
-    )
+    assert output.shape == (
+        T,
+        B,
+        H // world_size,
+    ), f"Expected shape {(T, B, H // world_size)}, got {output.shape}"
 
 
 def _test_cp2hp_scatter_dim1():
@@ -44,9 +49,11 @@ def _test_cp2hp_scatter_dim1():
     output = all_to_all_cp2hp(input_tensor, group, scatter_dim=1)
 
     # Output shape should be [T, H/CP, D]
-    assert output.shape == (T, H // world_size, D), (
-        f"Expected shape {(T, H // world_size, D)}, got {output.shape}"
-    )
+    assert output.shape == (
+        T,
+        H // world_size,
+        D,
+    ), f"Expected shape {(T, H // world_size, D)}, got {output.shape}"
 
 
 def _test_hp2cp_gather_dim2():
@@ -64,9 +71,11 @@ def _test_hp2cp_gather_dim2():
     output = all_to_all_hp2cp(input_tensor, group, gather_dim=2)
 
     # Output shape should be [T/CP, B, H]
-    assert output.shape == (T // world_size, B, H), (
-        f"Expected shape {(T // world_size, B, H)}, got {output.shape}"
-    )
+    assert output.shape == (
+        T // world_size,
+        B,
+        H,
+    ), f"Expected shape {(T // world_size, B, H)}, got {output.shape}"
 
 
 def _test_hp2cp_gather_dim1():
@@ -84,9 +93,11 @@ def _test_hp2cp_gather_dim1():
     output = all_to_all_hp2cp(input_tensor, group, gather_dim=1)
 
     # Output shape should be [T/CP, H, D]
-    assert output.shape == (T // world_size, H, D), (
-        f"Expected shape {(T // world_size, H, D)}, got {output.shape}"
-    )
+    assert output.shape == (
+        T // world_size,
+        H,
+        D,
+    ), f"Expected shape {(T // world_size, H, D)}, got {output.shape}"
 
 
 def _test_roundtrip_dim2():
@@ -106,9 +117,9 @@ def _test_roundtrip_dim2():
     hp = all_to_all_cp2hp(original, group, scatter_dim=2)
     recovered = all_to_all_hp2cp(hp, group, gather_dim=2)
 
-    assert torch.allclose(original, recovered), (
-        f"Rank {rank}: roundtrip failed, max diff = {(original - recovered).abs().max()}"
-    )
+    assert torch.allclose(
+        original, recovered
+    ), f"Rank {rank}: roundtrip failed, max diff = {(original - recovered).abs().max()}"
 
 
 def _test_roundtrip_dim1():
@@ -128,9 +139,9 @@ def _test_roundtrip_dim1():
     hp = all_to_all_cp2hp(original, group, scatter_dim=1)
     recovered = all_to_all_hp2cp(hp, group, gather_dim=1)
 
-    assert torch.allclose(original, recovered), (
-        f"Rank {rank}: roundtrip failed, max diff = {(original - recovered).abs().max()}"
-    )
+    assert torch.allclose(
+        original, recovered
+    ), f"Rank {rank}: roundtrip failed, max diff = {(original - recovered).abs().max()}"
 
 
 @requires_multi_gpu
