@@ -13,7 +13,7 @@ from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
 from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.doc_utils import beta_feature
 from olmo_core.ops import attach_auxiliary_loss
-from olmo_core.train.train_module.transformer.config import (
+from olmo_core.distributed.parallel import (
     RingContextParallelStyle,
     UlyssesContextParallelStyle,
 )

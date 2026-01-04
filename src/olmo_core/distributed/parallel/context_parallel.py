@@ -4,6 +4,7 @@ import torch
 
 from olmo_core.config import Config
 from olmo_core.distributed.autograd import all_to_all
+from olmo_core.nn.attention.ring import RingAttentionLoadBalancerType
 
 
 @dataclass
@@ -153,3 +154,38 @@ def all_to_all_hp2cp(
         raise ValueError(f"gather_dim must be 1 or 2, got {gather_dim}")
 
     return output
+
+
+class ContextParallelStyle(Config):
+    """
+    Base class for context parallel styles.
+    """
+
+    pass
+
+
+class UlyssesContextParallelStyle(ContextParallelStyle):
+    """
+    Configuration for Ulysses-style context parallelism.
+    """
+
+    pass
+
+
+@dataclass
+class RingContextParallelStyle(ContextParallelStyle):
+    """
+    Configuration for ring attention-style context parallelism.
+    """
+
+    load_balancer: RingAttentionLoadBalancerType = RingAttentionLoadBalancerType.zig_zag
+    """
+    The type of load balancer to use for ring attention.
+    """
+
+    head_stride: int = 1
+    """
+    The stride of the head dimension to process for each iteration of ring attention. A value of 1
+    means each iteration will process one k and one v head. A value of 2 will process two k and two
+    v heads, etc. A larger stride will reduce the number of communication ops.
+    """

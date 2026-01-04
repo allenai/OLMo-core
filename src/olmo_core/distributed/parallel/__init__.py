@@ -8,7 +8,12 @@ from olmo_core.distributed.utils import get_world_size
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.utils import get_default_device
 
-from .context_parallel import ContextParallelConfig
+from .context_parallel import (
+    ContextParallelConfig,
+    ContextParallelStyle,
+    RingContextParallelStyle,
+    UlyssesContextParallelStyle,
+)
 from .data_parallel import DataParallelConfig, DataParallelType, DPMeshDimName
 from .expert_parallel import ExpertParallelConfig
 from .pipeline_parallel import (
@@ -44,6 +49,9 @@ __all__ = [
     "PipelineSplitStyle",
     "PipelineSchedule",
     "ContextParallelConfig",
+    "ContextParallelStyle",
+    "RingContextParallelStyle",
+    "UlyssesContextParallelStyle",
 ]
 
 log = logging.getLogger(__name__)

@@ -19,6 +19,11 @@ from olmo_core.distributed.parallel import (
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
+from olmo_core.distributed.parallel import (
+    ContextParallelStyle,
+    RingContextParallelStyle,
+    UlyssesContextParallelStyle,
+)
 from olmo_core.nn.attention import RingAttentionLoadBalancerType
 from olmo_core.nn.transformer import (
     Transformer,
@@ -169,29 +174,6 @@ class TransformerDataParallelConfig(DataParallelConfig):
 class TransformerTensorParallelConfig(TensorParallelConfig):
     """
     Transformer-specific tensor parallel config.
-    """
-
-
-class ContextParallelStyle(Config):
-    pass
-
-
-class UlyssesContextParallelStyle(ContextParallelStyle):
-    pass
-
-
-@dataclass
-class RingContextParallelStyle(ContextParallelStyle):
-    load_balancer: RingAttentionLoadBalancerType = RingAttentionLoadBalancerType.zig_zag
-    """
-    The type of load balancer to use for ring attention.
-    """
-
-    head_stride: int = 1
-    """
-    The stride of the head dimension to process for each iteration of ring attention. A value of 1
-    means each iteration will process one k and one v head. A value of 2 will process two k and two
-    v heads, etc. A larger stride will reduce the number of communication ops.
     """
 
 

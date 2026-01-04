@@ -40,7 +40,7 @@ from olmo_core.testing import (
     run_distributed_test,
 )
 from olmo_core.testing.utils import requires_compute_capability
-from olmo_core.train.train_module.transformer.config import (
+from olmo_core.distributed.parallel import (
     RingContextParallelStyle,
     UlyssesContextParallelStyle,
 )

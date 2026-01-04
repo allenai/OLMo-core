@@ -15,11 +15,11 @@ from olmo_core.config import Config, DType, StrEnum
 from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.nn.attention.kv_cache import KVCacheManager
-from olmo_core.train.train_module.transformer.config import (
+from olmo_core.distributed.parallel import (
     RingContextParallelStyle,
     UlyssesContextParallelStyle,
 )
+from olmo_core.nn.attention.kv_cache import KVCacheManager
 
 from ..buffer_cache import BufferCache
 from ..config import ModuleConfig

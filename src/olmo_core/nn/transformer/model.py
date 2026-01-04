@@ -27,7 +27,7 @@ from olmo_core.distributed.utils import hide_from_torch, unhide_from_torch
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
-from olmo_core.train.train_module.transformer.config import (
+from olmo_core.distributed.parallel import (
     RingContextParallelStyle,
     UlyssesContextParallelStyle,
 )

@@ -12,12 +12,12 @@ from olmo_core.distributed.parallel.context_parallel import (
     all_to_all_cp2hp,
     all_to_all_hp2cp,
 )
-from olmo_core.nn.attention.kv_cache import KVCacheManager
-from olmo_core.nn.buffer_cache import BufferCache
-from olmo_core.train.train_module.transformer.config import (
+from olmo_core.distributed.parallel import (
     RingContextParallelStyle,
     UlyssesContextParallelStyle,
 )
+from olmo_core.nn.attention.kv_cache import KVCacheManager
+from olmo_core.nn.buffer_cache import BufferCache
 
 from .flash_attn_api import (
     dispatch_flash_attn,
