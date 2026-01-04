@@ -40,7 +40,7 @@ class _AllToAll(torch.autograd.Function):
             output = iinput.new_empty(
                 size=[sum(output_split_sizes)] + list(iinput.size()[1:]),
                 dtype=iinput.dtype,
-                device=torch.cuda.current_device(),
+                device=iinput.device,
             )
         torch.distributed.all_to_all_single(
             output,
