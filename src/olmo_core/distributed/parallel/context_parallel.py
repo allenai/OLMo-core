@@ -82,7 +82,7 @@ def all_to_all_hp2cp(
     exchanged = all_to_all(cp_group, input_split)
 
     # [CP, B, T/CP, H/CP, D] -> [B, T/CP, CP, H/CP, D] -> [B, T/CP, H, D]
-    exchanged = exchanged.view(world_size, B, t_out, h_in, d_in).permute(1, 0, 2, 3, 4)
+    exchanged = exchanged.view(world_size, B, t_out, h_in, d_in).permute(1, 2, 0, 3, 4)
     exchanged = exchanged.reshape(B, t_out, h_in * world_size, d_in)
     return exchanged
 
