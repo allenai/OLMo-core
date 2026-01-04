@@ -20,7 +20,6 @@ from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 
-from .attention import RingAttentionLoadBalancerType
 from .config import ModuleConfig
 from .functional import (
     cross_entropy_loss,
@@ -417,8 +416,7 @@ class LMHead(nn.Module):
 
         self._tp_mesh = tp_mesh
 
-    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType | None):
-        del load_balancer
+    def apply_cp(self, cp_mesh: DeviceMesh):
         self._cp_mesh = cp_mesh
 
     def num_flops_per_token(self, seq_len: int) -> int:

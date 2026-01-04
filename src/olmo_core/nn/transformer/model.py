@@ -22,19 +22,18 @@ from torch.distributed.tensor import Replicate, Shard
 from torch.distributed.tensor.parallel import RowwiseParallel, parallelize_module
 
 from olmo_core.data.utils import get_cumulative_document_lengths
-from olmo_core.distributed.parallel import get_pp_mesh
+from olmo_core.distributed.parallel import (
+    RingContextParallelStyle,
+    UlyssesContextParallelStyle,
+    get_pp_mesh,
+)
 from olmo_core.distributed.utils import hide_from_torch, unhide_from_torch
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
 from olmo_core.utils import get_default_device, mark_dynamic, move_to_device
 
-from ..attention import (
-    Attention,
-    FusedAttention,
-    RingAttentionLoadBalancer,
-    RingAttentionLoadBalancerType,
-)
+from ..attention import Attention, FusedAttention, RingAttentionLoadBalancer
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
 from ..lm_head import LMHeadConfig, LMOutputWithLoss
@@ -365,7 +364,7 @@ class Transformer(nn.Module):
             max_doc_len = max(max_doc_lens)
             cu_doc_lens = get_cumulative_document_lengths(doc_lens)
 
-        # Shard inputs and RoPE buffers on sequence dimension if using context parallelism.
+        # Shard inputs and RoPE buffers on sequence dimension if using ring context parallelism.
         if (cp_load_balancer := self._cp_load_balancer) is not None:
             inputs = [input_ids]
             seq_dims = [1]
@@ -603,22 +602,23 @@ class Transformer(nn.Module):
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
-        load_balancer: RingAttentionLoadBalancerType | None,
-        head_stride: int = 1,
+        ring: RingContextParallelStyle | None = None,
+        uly: UlyssesContextParallelStyle | None = None,
     ):
         """
         Prepare the model for context-parallelism (CP).
 
         :param cp_mesh: The CP device mesh.
-        :param load_balancer: The load balancing method.
+        :param ring: The ring context parallel style.
+        :param uly: The ulysses context parallel style.
         """
-        self._cp_load_balancer = load_balancer.build(cp_mesh) if load_balancer else None
+        if ring is not None:
+            self._cp_load_balancer = ring.load_balancer.build(cp_mesh)
+
         for block in self.blocks.values():
-            cast(TransformerBlockBase, block).apply_cp(
-                cp_mesh, load_balancer, head_stride=head_stride
-            )
+            cast(TransformerBlockBase, block).apply_cp(cp_mesh, ring=ring, uly=uly)
         if self.lm_head is not None:
-            self.lm_head.apply_cp(cp_mesh, load_balancer)
+            self.lm_head.apply_cp(cp_mesh)
 
     def apply_activation_checkpointing(
         self,

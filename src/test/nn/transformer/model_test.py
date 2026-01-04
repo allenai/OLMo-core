@@ -16,10 +16,13 @@ from olmo_core.distributed.checkpoint import (
 from olmo_core.distributed.parallel import (
     DataParallelConfig,
     DataParallelType,
+    RingContextParallelStyle,
+    UlyssesContextParallelStyle,
     build_world_mesh,
 )
 from olmo_core.distributed.utils import get_full_tensor, get_world_size
 from olmo_core.nn.attention import (
+    AttentionBackendName,
     AttentionConfig,
     RingAttentionLoadBalancerType,
     SlidingWindowAttentionConfig,
@@ -41,7 +44,10 @@ from olmo_core.nn.transformer import (
 )
 from olmo_core.testing import (
     BACKENDS,
+    FLASH_2_MARKS,
+    FLASH_3_MARKS,
     GPU_MARKS,
+    TE_MARKS,
     requires_flash_attn_2,
     requires_multi_gpu,
     run_distributed_test,
@@ -281,111 +287,7 @@ def test_tensor_parallel_transformer(backend: str, architecture: str, tmp_path):
     )
 
 
-def run_tensor_parallel_fla_transformer(checkpoint_dir, outputs_path):
-    device = get_default_device()
-    config = get_fla_transformer_config()
-    input_ids = get_transformer_inputs().to(device)
-
-    mesh = init_device_mesh(
-        device.type,
-        (get_world_size(),),
-        mesh_dim_names=("tp",),
-    )
-
-    model = config.build()
-    model.apply_tp(mesh["tp"])
-    load_model_and_optim_state(checkpoint_dir, model)
-
-    logits = model(input_ids=input_ids)
-
-    loss = logits.sum()
-    loss.backward()
-
-    og_logits = torch.load(outputs_path, map_location=device)
-    torch.testing.assert_close(og_logits, get_full_tensor(logits))
-
-
-@pytest.mark.parametrize("backend", BACKENDS)
-@pytest.mark.skipif(not _fla_available(), reason="fla library not installed")
-def test_tensor_parallel_fla_transformer(backend: str, tmp_path):
-    device = torch.device("cuda") if "nccl" in backend else torch.device("cpu")
-    seed_all(0)
-    config = get_fla_transformer_config()
-    model = config.build()
-    model.init_weights(device=device, max_seq_len=512)
-    input_ids = get_transformer_inputs().to(device)
-    logits = model(input_ids=input_ids)
-
-    outputs_path = tmp_path / "logits.pt"
-    torch.save(logits, outputs_path)
-
-    checkpoint_dir = tmp_path / "checkpoint"
-    save_model_and_optim_state(checkpoint_dir, model)
-
-    run_distributed_test(
-        run_tensor_parallel_fla_transformer,
-        backend=backend,
-        start_method="spawn",
-        func_args=(
-            checkpoint_dir,
-            outputs_path,
-        ),
-    )
-
-
-def run_context_parallel_fla_transformer(checkpoint_dir, outputs_path):
-    device = get_default_device()
-    config = get_fla_transformer_config(dtype=torch.bfloat16)
-    input_ids = get_transformer_inputs().to(device)
-
-    mesh = init_device_mesh(
-        device.type,
-        (get_world_size(),),
-        mesh_dim_names=("cp",),
-    )
-
-    model = config.build()
-    model.apply_cp(mesh["cp"], load_balancer=None)
-    model.init_weights(device=device, max_seq_len=512)
-    load_model_and_optim_state(checkpoint_dir, model)
-
-    logits = model(input_ids=input_ids)
-    loss = logits.sum()
-    loss.backward()
-
-    og_logits = torch.load(outputs_path, map_location=device)
-    torch.testing.assert_close(og_logits, get_full_tensor(logits))
-
-
-@requires_multi_gpu
-@pytest.mark.skipif(not _fla_available(), reason="fla library not installed")
-def test_context_parallel_fla_transformer(tmp_path):
-    device = torch.device("cuda")
-    seed_all(0)
-    config = get_fla_transformer_config(dtype=torch.bfloat16)
-    model = config.build()
-    model.init_weights(device=device, max_seq_len=512)
-    input_ids = get_transformer_inputs().to(device)
-    logits = model(input_ids=input_ids)
-
-    outputs_path = tmp_path / "logits.pt"
-    torch.save(logits, outputs_path)
-
-    checkpoint_dir = tmp_path / "checkpoint"
-    save_model_and_optim_state(checkpoint_dir, model)
-
-    run_distributed_test(
-        run_context_parallel_fla_transformer,
-        backend="nccl",
-        start_method="spawn",
-        func_args=(
-            checkpoint_dir,
-            outputs_path,
-        ),
-    )
-
-
-def run_context_parallel_transformer(checkpoint_dir, outputs_path, architecture: str):
+def run_context_parallel_transformer_ring(checkpoint_dir, outputs_path, architecture: str):
     device = get_default_device()
     config = get_transformer_config(architecture, dtype=torch.bfloat16)
     config.block.attention.use_flash = True
@@ -397,7 +299,8 @@ def run_context_parallel_transformer(checkpoint_dir, outputs_path, architecture:
     )
 
     model = config.build()
-    model.apply_cp(mesh["cp"], RingAttentionLoadBalancerType.zig_zag)
+    ring_style = RingContextParallelStyle(load_balancer=RingAttentionLoadBalancerType.zig_zag)
+    model.apply_cp(mesh["cp"], ring=ring_style)
     model.init_weights(device=device, max_seq_len=512)
     load_model_and_optim_state(checkpoint_dir, model)
 
@@ -413,7 +316,7 @@ def run_context_parallel_transformer(checkpoint_dir, outputs_path, architecture:
 @requires_flash_attn_2
 @pytest.mark.parametrize("architecture", ["olmo2"])
 @pytest.mark.skip("known precision issues with ring-flash-attn")
-def test_context_parallel_transformer(architecture: str, tmp_path):
+def test_context_parallel_transformer_ring(architecture: str, tmp_path):
     device = torch.device("cuda")
     config = get_transformer_config(architecture, dtype=torch.bfloat16)
     config.block.attention.use_flash = True
@@ -430,13 +333,80 @@ def test_context_parallel_transformer(architecture: str, tmp_path):
     save_model_and_optim_state(checkpoint_dir, model)
 
     run_distributed_test(
-        run_context_parallel_transformer,
+        run_context_parallel_transformer_ring,
         backend="nccl",
         start_method="spawn",
         func_args=(
             checkpoint_dir,
             outputs_path,
             architecture,
+        ),
+    )
+
+
+def run_context_parallel_transformer_ulysses(
+    checkpoint_dir, outputs_path, architecture: str, backend_name: AttentionBackendName
+):
+    device = get_default_device()
+    config = get_transformer_config(architecture, dtype=torch.bfloat16)
+    config.block.attention.backend = backend_name
+
+    mesh = init_device_mesh(
+        device.type,
+        (get_world_size(),),
+        mesh_dim_names=("cp",),
+    )
+
+    model = config.build()
+    model.apply_cp(mesh["cp"], uly=UlyssesContextParallelStyle())
+    model.init_weights(device=device, max_seq_len=512)
+    load_model_and_optim_state(checkpoint_dir, model)
+
+    input_ids = get_transformer_inputs().to(device)
+    local_logits = model(input_ids=input_ids)
+    logits = DTensor.from_local(local_logits, mesh, (Shard(1),))
+
+    og_logits = torch.load(outputs_path, map_location=device)
+    torch.testing.assert_close(og_logits, get_full_tensor(logits))
+
+
+@requires_multi_gpu
+@pytest.mark.parametrize("architecture", ["olmo2"])
+@pytest.mark.parametrize(
+    "backend_name",
+    [
+        pytest.param(AttentionBackendName.flash_2, id="flash-attn-2", marks=FLASH_2_MARKS),
+        pytest.param(AttentionBackendName.flash_3, id="flash-attn-3", marks=FLASH_3_MARKS),
+        pytest.param(AttentionBackendName.te, id="te-attn", marks=TE_MARKS),
+    ],
+)
+def test_context_parallel_transformer_ulysses(
+    architecture: str, backend_name: AttentionBackendName, tmp_path
+):
+    device = torch.device("cuda")
+    config = get_transformer_config(architecture, dtype=torch.bfloat16)
+    config.block.attention.backend = backend_name
+
+    model = config.build()
+    model.init_weights(device=device, max_seq_len=512)
+    input_ids = get_transformer_inputs().to(device)
+    logits = model(input_ids=input_ids)
+
+    outputs_path = tmp_path / "logits.pt"
+    torch.save(logits, outputs_path)
+
+    checkpoint_dir = tmp_path / "checkpoint"
+    save_model_and_optim_state(checkpoint_dir, model)
+
+    run_distributed_test(
+        run_context_parallel_transformer_ulysses,
+        backend="nccl",
+        start_method="spawn",
+        func_args=(
+            checkpoint_dir,
+            outputs_path,
+            architecture,
+            backend_name,
         ),
     )
 

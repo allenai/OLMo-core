@@ -465,7 +465,7 @@ class ModelLadder(Config):
 
         return [step_to_checkpoint_info[step] for step in sorted(step_to_checkpoint_info.keys())]
 
-    def get_metrics(self, size_spec: str, prefix: str = "eval/") -> "DataFrame | None":
+    def get_metrics(self, size_spec: str, prefix: str | None = None) -> "DataFrame | None":
         """
         Get the metrics from the run of the given size spec, at the intervals
         defined by :meth:`RunConfigurator.configure_checkpoint_intervals()`.
@@ -478,7 +478,9 @@ class ModelLadder(Config):
         for checkpoint in checkpoints:
             if checkpoint.metrics_path is not None:
                 with open(checkpoint.metrics_path, "r") as f:
-                    metrics = {k: v for k, v in json.load(f).items() if k.startswith(prefix)}
+                    metrics = json.load(f)
+                    if prefix is not None:
+                        metrics = {k: v for k, v in metrics.items() if k.startswith(prefix)}
                     metrics["name"] = checkpoint.name
                     metrics["step"] = checkpoint.step
                     metrics["tokens"] = checkpoint.tokens
@@ -586,7 +588,7 @@ class ModelLadder(Config):
             hard_stop=Duration.steps(100) if for_benchmarking else None,
             no_checkpoints=for_benchmarking,
             no_evals=for_benchmarking,
-            save_overwrite=for_benchmarking,
+            save_overwrite=True,
             callbacks={
                 "gpu_monitor": callbacks.GPUMemoryMonitorCallback(),
                 "config_saver": callbacks.ConfigSaverCallback(),

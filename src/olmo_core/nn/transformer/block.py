@@ -9,14 +9,17 @@ from torch.distributed.fsdp import FSDPModule, fully_shard
 from torch.distributed.tensor import Placement, Shard
 from torch.distributed.tensor.parallel import PrepareModuleInput, parallelize_module
 
+from olmo_core.distributed.parallel import (
+    RingContextParallelStyle,
+    UlyssesContextParallelStyle,
+)
 from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
 from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.doc_utils import beta_feature
-from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.fla import FLAConfig
 from olmo_core.ops import attach_auxiliary_loss
 
-from ..attention import AttentionConfig, RingAttentionLoadBalancerType
+from ..attention import AttentionConfig
 from ..buffer_cache import BufferCache
 from ..feed_forward import FeedForward, FeedForwardConfig
 from ..functional import l2_normalize
@@ -71,8 +74,8 @@ class TransformerBlockBase(nn.Module):
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
-        load_balancer: RingAttentionLoadBalancerType,
-        head_stride: int = 1,
+        ring: Optional[RingContextParallelStyle] = None,
+        uly: Optional[UlyssesContextParallelStyle] = None,
     ):
         raise NotImplementedError
 
@@ -198,10 +201,10 @@ class TransformerBlock(TransformerBlockBase):
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
-        load_balancer: RingAttentionLoadBalancerType | None,
-        head_stride: int = 1,
+        ring: Optional[RingContextParallelStyle] = None,
+        uly: Optional[UlyssesContextParallelStyle] = None,
     ):
-        self.attention.apply_cp(cp_mesh, load_balancer, head_stride=head_stride)
+        self.attention.apply_cp(cp_mesh, ring=ring, uly=uly)
 
     def apply_fsdp(
         self,
@@ -451,10 +454,10 @@ class NormalizedTransformerBlock(TransformerBlockBase):
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
-        load_balancer: RingAttentionLoadBalancerType | None,
-        head_stride: int = 1,
+        ring: Optional[RingContextParallelStyle] = None,
+        uly: Optional[UlyssesContextParallelStyle] = None,
     ):
-        self.attention.apply_cp(cp_mesh, load_balancer, head_stride=head_stride)
+        self.attention.apply_cp(cp_mesh, ring=ring, uly=uly)
 
     def apply_fsdp(
         self,
@@ -634,10 +637,10 @@ class MoETransformerBlock(TransformerBlockBase):
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
-        load_balancer: RingAttentionLoadBalancerType | None,
-        head_stride: int = 1,
+        ring: Optional[RingContextParallelStyle] = None,
+        uly: Optional[UlyssesContextParallelStyle] = None,
     ):
-        self.attention.apply_cp(cp_mesh, load_balancer, head_stride=head_stride)
+        self.attention.apply_cp(cp_mesh, ring=ring, uly=uly)
         self.feed_forward_moe.apply_cp(cp_mesh)
 
     def apply_fsdp(
@@ -1192,11 +1195,10 @@ class FLABlock(TransformerBlockBase):
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
-        load_balancer: RingAttentionLoadBalancerType | None,
-        head_stride: int = 1,
+        ring: Optional[RingContextParallelStyle] = None,
+        uly: Optional[UlyssesContextParallelStyle] = None,
     ):
-        del load_balancer, head_stride
-        self.fla.apply_cp(cp_mesh)
+        self.fla.apply_cp(cp_mesh, ring=ring, uly=uly)
 
     def num_flops_per_token(self, seq_len: int) -> int:
         attn_flops = self.fla.num_flops_per_token(seq_len)
