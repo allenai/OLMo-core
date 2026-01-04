@@ -606,14 +606,15 @@ class Transformer(nn.Module):
         Prepare the model for context-parallelism (CP).
 
         :param cp_mesh: The CP device mesh.
-        :param load_balancer: The load balancing method.
+        :param ring: The ring context parallel style.
+        :param uly: The ulysses context parallel style.
         """
         if ring is not None:
             self._cp_load_balancer = ring.load_balancer.build(cp_mesh)
-            for block in self.blocks.values():
-                cast(TransformerBlockBase, block).apply_cp(cp_mesh, ring=ring, uly=uly)
-            if self.lm_head is not None:
-                self.lm_head.apply_cp(cp_mesh, ring=ring, uly=uly)
+        for block in self.blocks.values():
+            cast(TransformerBlockBase, block).apply_cp(cp_mesh, ring=ring, uly=uly)
+        if self.lm_head is not None:
+            self.lm_head.apply_cp(cp_mesh)
 
     def apply_activation_checkpointing(
         self,

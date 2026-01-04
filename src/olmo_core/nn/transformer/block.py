@@ -18,7 +18,7 @@ from olmo_core.train.train_module.transformer.config import (
     UlyssesContextParallelStyle,
 )
 
-from ..attention import AttentionConfig, RingAttentionLoadBalancerType
+from ..attention import AttentionConfig
 from ..buffer_cache import BufferCache
 from ..feed_forward import FeedForward, FeedForwardConfig
 from ..functional import l2_normalize
@@ -200,10 +200,10 @@ class TransformerBlock(TransformerBlockBase):
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
-        load_balancer: RingAttentionLoadBalancerType,
-        head_stride: int = 1,
+        ring: Optional[RingContextParallelStyle] = None,
+        uly: Optional[UlyssesContextParallelStyle] = None,
     ):
-        self.attention.apply_cp(cp_mesh, load_balancer, head_stride=head_stride)
+        self.attention.apply_cp(cp_mesh, ring=ring, uly=uly)
 
     def apply_fsdp(
         self,
@@ -453,10 +453,10 @@ class NormalizedTransformerBlock(TransformerBlockBase):
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
-        load_balancer: RingAttentionLoadBalancerType,
-        head_stride: int = 1,
+        ring: Optional[RingContextParallelStyle] = None,
+        uly: Optional[UlyssesContextParallelStyle] = None,
     ):
-        self.attention.apply_cp(cp_mesh, load_balancer, head_stride=head_stride)
+        self.attention.apply_cp(cp_mesh, ring=ring, uly=uly)
 
     def apply_fsdp(
         self,
@@ -636,10 +636,10 @@ class MoETransformerBlock(TransformerBlockBase):
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
-        load_balancer: RingAttentionLoadBalancerType,
-        head_stride: int = 1,
+        ring: Optional[RingContextParallelStyle] = None,
+        uly: Optional[UlyssesContextParallelStyle] = None,
     ):
-        self.attention.apply_cp(cp_mesh, load_balancer, head_stride=head_stride)
+        self.attention.apply_cp(cp_mesh, ring=ring, uly=uly)
         self.feed_forward_moe.apply_cp(cp_mesh)
 
     def apply_fsdp(

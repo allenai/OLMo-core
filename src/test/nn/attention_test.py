@@ -40,6 +40,10 @@ from olmo_core.testing import (
     run_distributed_test,
 )
 from olmo_core.testing.utils import requires_compute_capability
+from olmo_core.train.train_module.transformer.config import (
+    RingContextParallelStyle,
+    UlyssesContextParallelStyle,
+)
 from olmo_core.utils import get_default_device, seed_all
 
 BF16_RTOL = 1e-5
@@ -1198,7 +1202,7 @@ def test_tensor_parallel_attention(backend: str, attn_kwargs: Dict[str, Any], tm
     )
 
 
-def _run_context_parallel_attention(
+def _run_context_parallel_attention_ring(
     checkpoint_dir: str,
     inputs_path: str,
     outputs_path: str,
@@ -1210,7 +1214,8 @@ def _run_context_parallel_attention(
     mesh = init_device_mesh(device.type, (get_world_size(),), mesh_dim_names=("cp",))
 
     attn = Attention(init_device=device.type, **attn_kwargs)
-    attn.apply_cp(mesh["cp"], load_balancer_type, head_stride=head_stride)
+    ring_style = RingContextParallelStyle(load_balancer=load_balancer_type, head_stride=head_stride)
+    attn.apply_cp(mesh["cp"], ring=ring_style)
     load_model_and_optim_state(checkpoint_dir, attn)
 
     # Load the input and split it across ranks on the sequence dimension.
@@ -1262,7 +1267,7 @@ def test_context_parallel_attention(load_balancer_type, head_stride: int, tmp_pa
     save_model_and_optim_state(checkpoint_dir, attn)
 
     run_distributed_test(
-        _run_context_parallel_attention,
+        _run_context_parallel_attention_ring,
         backend="nccl",
         start_method="spawn",
         func_args=(
@@ -1272,6 +1277,89 @@ def test_context_parallel_attention(load_balancer_type, head_stride: int, tmp_pa
             attn_kwargs,
             load_balancer_type,
             head_stride,
+        ),
+    )
+
+
+def _run_context_parallel_attention_ulysses(
+    checkpoint_dir: str,
+    inputs_path: str,
+    outputs_path: str,
+    attn_kwargs: Dict[str, Any],
+):
+    device = get_default_device()
+    mesh = init_device_mesh(device.type, (get_world_size(),), mesh_dim_names=("cp",))
+
+    attn = Attention(init_device=device.type, **attn_kwargs)
+    attn.apply_cp(mesh["cp"], uly=UlyssesContextParallelStyle())
+    load_model_and_optim_state(checkpoint_dir, attn)
+
+    # Load the input and split it across ranks on the sequence dimension.
+    x = torch.load(inputs_path, map_location=device)
+    rank, world_size = get_rank(), get_world_size()
+    chunk_size = x.size(1) // world_size
+    x_local = x[:, rank * chunk_size : (rank + 1) * chunk_size, :]
+
+    with torch.autocast(device.type, dtype=x_local.dtype):
+        y_local = attn(x_local)
+
+    # Backward to exercise graph in CP mode.
+    y_local.sum().backward()
+
+    # Load the reference output and split it across ranks on the sequence dimension.
+    y_ref = torch.load(outputs_path, map_location=device)
+    y_ref_local = y_ref[:, rank * chunk_size : (rank + 1) * chunk_size, :]
+
+    # Compare the local output with the reference output.
+    torch.testing.assert_close(y_ref_local, y_local)
+
+
+@requires_multi_gpu
+@pytest.mark.parametrize(
+    "backend_name",
+    [
+        pytest.param(AttentionBackendName.flash_2, id="flash-attn-2", marks=FLASH_2_MARKS),
+        pytest.param(AttentionBackendName.flash_3, id="flash-attn-3", marks=FLASH_3_MARKS),
+        pytest.param(AttentionBackendName.te, id="te-attn", marks=TE_MARKS),
+    ],
+)
+def test_context_parallel_attention_ulysses(tmp_path, backend_name: AttentionBackendName):
+    """
+    Test Ulysses-style context parallelism.
+
+    Unlike ring attention, Ulysses-style CP uses all-to-all communication to gather the full
+    sequence while partitioning heads, then runs standard flash attention, and finally uses
+    all-to-all to restore the sequence-partitioned layout. This doesn't require a load balancer
+    or ring-flash-attn.
+    """
+    seed_all(0)
+    device = torch.device("cuda")
+
+    # n_heads must be divisible by CP degree (world_size).
+    attn_kwargs: Dict[str, Any] = {"d_model": 128, "n_heads": 8, "backend": backend_name}
+    attn = Attention(init_device=device.type, **attn_kwargs)
+
+    bs, seq_len = 2, 64
+    x = torch.randn(bs, seq_len, attn_kwargs["d_model"], device=device, dtype=torch.bfloat16)
+    with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+        y = attn(x)
+
+    outputs_path = tmp_path / "attn_y.pt"
+    torch.save(y, outputs_path)
+    inputs_path = tmp_path / "attn_x.pt"
+    torch.save(x, inputs_path)
+    checkpoint_dir = tmp_path / "checkpoint"
+    save_model_and_optim_state(checkpoint_dir, attn)
+
+    run_distributed_test(
+        _run_context_parallel_attention_ulysses,
+        backend="nccl",
+        start_method="spawn",
+        func_args=(
+            checkpoint_dir,
+            inputs_path,
+            outputs_path,
+            attn_kwargs,
         ),
     )
 
