@@ -1340,6 +1340,8 @@ def test_context_parallel_attention_ulysses(
     # n_heads must be divisible by CP degree (world_size).
     attn_kwargs: Dict[str, Any] = {"d_model": 128, "n_heads": 8, "backend": attn_backend}
     attn = Attention(init_device=device.type, **attn_kwargs)
+    if device.type == "cpu":
+        attn = attn.to(dtype=torch.bfloat16)
 
     bs, seq_len = 2, 64
     x = torch.randn(bs, seq_len, attn_kwargs["d_model"], device=device, dtype=torch.bfloat16)
