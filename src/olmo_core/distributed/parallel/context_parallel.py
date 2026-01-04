@@ -44,16 +44,15 @@ def all_to_all_cp2hp(
     h_out = h_in // world_size
 
     # [B, T/CP, H, D] -> [B, T/CP, CP, H/CP, D] -> [CP, B, T/CP, H/CP, D]
-    # dim0 indexes destination rank for the all-to-all
     input_split = input_.view(B, t_local, world_size, h_out, d_in).permute(2, 0, 1, 3, 4)
-    exchanged = all_to_all(cp_group, input_split.flatten(0, 3))
-    # After all-to-all: dim0 indexes source rank
+    input_split = input_split.flatten(0, 3)
+
+    exchanged = all_to_all(cp_group, input_split)
+
     # [CP, B, T/CP, H/CP, D] -> [B, CP, T/CP, H/CP, D] -> [B, T, H/CP, D]
-    return (
-        exchanged.view(world_size, B, t_local, h_out, d_in)
-        .permute(1, 0, 2, 3, 4)
-        .reshape(B, t_local * world_size, h_out, d_in)
-    )
+    exchanged = exchanged.view(world_size, B, t_local, h_out, d_in).permute(1, 0, 2, 3, 4)
+    exchanged = exchanged.reshape(B, t_local * world_size, h_out, d_in)
+    return exchanged
 
 
 def all_to_all_hp2cp(
@@ -77,15 +76,15 @@ def all_to_all_hp2cp(
     t_out = t_full // world_size
 
     # [B, T, H/CP, D] -> [B, CP, T/CP, H/CP, D] -> [CP, B, T/CP, H/CP, D]
-    # dim0 indexes destination rank for the all-to-all
     input_split = input_.view(B, world_size, t_out, h_in, d_in).permute(1, 0, 2, 3, 4)
-    exchanged = all_to_all(cp_group, input_split.flatten(0, 3))
+    input_split = input_split.flatten(0, 3)
+
+    exchanged = all_to_all(cp_group, input_split)
+
     # [CP, B, T/CP, H/CP, D] -> [B, T/CP, CP, H/CP, D] -> [B, T/CP, H, D]
-    return (
-        exchanged.view(world_size, B, t_out, h_in, d_in)
-        .permute(1, 2, 0, 3, 4)
-        .reshape(B, t_out, h_in * world_size, d_in)
-    )
+    exchanged = exchanged.view(world_size, B, t_out, h_in, d_in).permute(1, 0, 2, 3, 4)
+    exchanged = exchanged.reshape(B, t_out, h_in * world_size, d_in)
+    return exchanged
 
 
 class UlyssesContextParallelStyle(Config):
