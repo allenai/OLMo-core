@@ -42,6 +42,7 @@ from ..moe import MoEBase
 from ..rope import RoPEBuffers, RotaryEmbeddingBase
 from ..utils import selective_checkpointing_context_fn
 from .block import (
+    FLABlock,
     MoETransformerBlock,
     NormalizedTransformerBlock,
     TransformerBlock,
@@ -252,21 +253,27 @@ class Transformer(nn.Module):
         for block in self.blocks.values():
             # This might fail if it's wrapped.
             #  assert isinstance(block, TransformerBlock)
-            block = cast(TransformerBlock, block)
-            att = cast(Union[Attention, FusedAttention], block.attention)
 
-            # Attention weights.
-            self.init_method.init_attention(
-                att,
-                d_model=self.d_model,
-                block_idx=block.block_idx,
-                num_blocks=self.n_layers,
-                std=self.init_std,
-                generator=generator,
-            )
+            if not isinstance(block, FLABlock):
+                block = cast(TransformerBlock, block)
+                att = cast(Union[Attention, FusedAttention], block.attention)
+            else:
+                block = cast(FLABlock, block)
+                att = None
+
+            if att is not None:
+                # Attention weights.
+                self.init_method.init_attention(
+                    att,
+                    d_model=self.d_model,
+                    block_idx=block.block_idx,
+                    num_blocks=self.n_layers,
+                    std=self.init_std,
+                    generator=generator,
+                )
 
             # Feed-forward weights.
-            if hasattr(block, "feed_forward"):
+            if hasattr(block, "feed_forward") and block.feed_forward is not None:
                 self.init_method.init_feed_forward(
                     block.feed_forward,
                     d_model=self.d_model,
@@ -291,11 +298,11 @@ class Transformer(nn.Module):
                 )
 
             # Warm up attention backend cache.
-            if max_seq_len is not None and att.backend is not None:
+            if max_seq_len is not None and att is not None and att.backend is not None:
                 att.backend.warmup_cache(max_seq_len, device)
 
             # Warm up RoPE cache.
-            if max_seq_len is not None and att.rope is not None:
+            if max_seq_len is not None and att is not None and att.rope is not None:
                 att.rope.warmup_cache(max_seq_len, device)
 
         if self.lm_head is not None:
@@ -596,7 +603,7 @@ class Transformer(nn.Module):
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
-        load_balancer: RingAttentionLoadBalancerType,
+        load_balancer: RingAttentionLoadBalancerType | None,
         head_stride: int = 1,
     ):
         """
@@ -605,7 +612,7 @@ class Transformer(nn.Module):
         :param cp_mesh: The CP device mesh.
         :param load_balancer: The load balancing method.
         """
-        self._cp_load_balancer = load_balancer.build(cp_mesh)
+        self._cp_load_balancer = load_balancer.build(cp_mesh) if load_balancer else None
         for block in self.blocks.values():
             cast(TransformerBlockBase, block).apply_cp(
                 cp_mesh, load_balancer, head_stride=head_stride

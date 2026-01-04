@@ -2,6 +2,7 @@
 Distributed, deterministic, stateful data loaders used by the :class:`~olmo_core.train.Trainer`.
 
 """
+
 import functools
 import logging
 import math
@@ -625,7 +626,8 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
         assert isinstance(self.dataset, NumpyFSLDatasetBase)
         if self.rank_batch_size % self.dataset.sequence_length != 0:
             raise OLMoConfigurationError(
-                "rank batch size (in tokens) must be divisible by sequence length"
+                f"rank batch size (in tokens) must be divisible by sequence length, "
+                f"but got rank_batch_size={self.rank_batch_size} and sequence_length={self.dataset.sequence_length}"
             )
 
     @property
@@ -957,9 +959,9 @@ class NumpyVSLDataLoader(NumpyDataLoaderBase):
                 bucket_indices_file, instance_start_index, instance_end_index, np.uint32
             )
 
-        assert (
-            local_instance_indices.shape[0] == instances_per_rank
-        ), f"Expected {instances_per_rank} instances, got {local_instance_indices.shape[0]}"
+        assert local_instance_indices.shape[0] == instances_per_rank, (
+            f"Expected {instances_per_rank} instances, got {local_instance_indices.shape[0]}"
+        )
 
         return local_instance_indices
 

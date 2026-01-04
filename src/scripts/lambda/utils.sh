@@ -148,9 +148,9 @@ function launch_job {
         log_error "USERNAME environment variable is not set (e.g. 'petew', 'tylerr')."
         exit 1
     fi
-    
+
     SBATCH_ARGS=(
-        --export="WANDB_API_KEY,USERNAME,HOME"
+        --export="WANDB_API_KEY,SLACK_WEBHOOK_URL,USERNAME,HOME"
         --job-name="$RUN_NAME"
         --output="${LOGS_DIR}/${RUN_NAME}/%j.log"
         --nodes="$NODES"
@@ -158,7 +158,7 @@ function launch_job {
         --ntasks-per-node=1
         --parsable
     )
-    
+
     # Check for cordoned nodes and exclude them.
     if [ -f "$CORDONED_NODES_FILE" ]; then
         cordoned_nodes=$(grep -v '^#' "$CORDONED_NODES_FILE" | tr '\n' ',' | sed 's/,$//')
@@ -170,14 +170,14 @@ function launch_job {
     else
         log_warning "No cordoned nodes file found at '$CORDONED_NODES_FILE'."
     fi
-    
+
     # Find an open port to use for distributed training.
     log_info "Submitting job script: $JOB_SCRIPT"
-    
+
     # Submit the job and capture the output (the Job ID).
     # The --parsable option ensures only the Job ID is returned.
     JOB_ID=$(sbatch "${SBATCH_ARGS[@]}" "$JOB_SCRIPT")
-    
+
     # Check if the submission was successful (sbatch returns a non-zero exit code on failure).
     if [ $? -eq 0 ]; then
         log_info "Submitted slurm job $JOB_ID '$RUN_NAME'."

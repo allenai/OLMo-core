@@ -22,7 +22,8 @@ for var in "JOB_SCRIPT" "RUN_NAME" "NODES"; do
 done
 
 if [ -z "$SLACK_WEBHOOK_URL" ]; then
-    log_warning "SLACK_WEBHOOK_URL environment variable is not set."
+    log_error "SLACK_WEBHOOK_URL environment variable is not set."
+    exit 1
 fi
 
 while true; do
@@ -40,7 +41,7 @@ while true; do
     while job_pending "$JOB_ID"; do
         sleep 2
     done
-    
+
     # Loop until the log file is created.
     log_info "Waiting on log file at '$LOG_FILE'..."
     while [ ! -f "$LOG_FILE" ]; do

@@ -18,6 +18,7 @@ from olmo_core.float8 import Float8Config
 from olmo_core.nn.transformer import MoETransformer, Transformer
 
 from .config import (
+    ContextParallelStyle,
     TransformerActivationCheckpointingConfig,
     TransformerContextParallelConfig,
     TransformerDataParallelConfig,
@@ -66,11 +67,23 @@ def parallelize_model(
     if cp_config is not None:
         assert world_mesh is not None
         cp_mesh = get_cp_mesh(world_mesh)
-        for m in model_parts:
-            m.apply_cp(
-                cp_mesh, load_balancer=cp_config.load_balancer, head_stride=cp_config.head_stride
+        if cp_config.style == ContextParallelStyle.ulysses:
+            for m in model_parts:
+                m.apply_cp(cp_mesh, load_balancer=None, head_stride=cp_config.head_stride)
+            log.info(
+                f"Applied Ulysses context parallelism to the model with {get_device_mesh_info(cp_mesh)}"
             )
-        log.info(f"Applied context parallelism to the model with {get_device_mesh_info(cp_mesh)}")
+        else:
+            assert cp_config.load_balancer is not None
+            for m in model_parts:
+                m.apply_cp(
+                    cp_mesh,
+                    load_balancer=cp_config.load_balancer,
+                    head_stride=cp_config.head_stride,
+                )
+            log.info(
+                f"Applied ring context parallelism to the model with {get_device_mesh_info(cp_mesh)}"
+            )
 
     # Maybe apply tensor.
     if tp_config is not None:
