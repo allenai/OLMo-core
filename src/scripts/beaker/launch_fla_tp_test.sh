@@ -19,7 +19,7 @@ if ! command -v gantry &> /dev/null; then
     exit 1
 fi
 
-echo "Launching FLA TP test on Beaker..."
+echo "Launching FLA TP/CP tests on Beaker..."
 echo "  Workspace: ${BEAKER_WORKSPACE}"
 echo "  Image: ${BEAKER_IMAGE}"
 echo "  GPUs: ${GPUS}"
@@ -29,7 +29,7 @@ gantry run \
     --show-logs \
     --yes \
     --workspace "${BEAKER_WORKSPACE}" \
-    --description "OLMo-core Test FLA TP (GPU)" \
+    --description "OLMo-core Test FLA TP/CP (GPU)" \
     --beaker-image "${BEAKER_IMAGE}" \
     --budget "${BUDGET}" \
     --priority "${PRIORITY}" \
@@ -43,4 +43,5 @@ gantry run \
     --env 'CUBLAS_WORKSPACE_CONFIG=:16:8' \
     --env 'PYTHONPATH=./src/' \
     -- pytest -v --color=yes --durations=3 -m gpu \
-        src/test/nn/transformer/model_test.py -k "test_tensor_parallel_fla_transformer"
+        src/test/nn/transformer/model_test.py -k "test_context_parallel_fla_transformer" \
+        src/test/nn/transformer/block_test.py -k "test_context_parallel_block"
