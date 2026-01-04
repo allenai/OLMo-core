@@ -172,12 +172,16 @@ class TransformerTensorParallelConfig(TensorParallelConfig):
     """
 
 
-@dataclass
-class TransformerContextParallelConfig(ContextParallelConfig):
-    """
-    Transformer-specific context parallel config.
-    """
+class ContextParallelStyle(Config):
+    pass
 
+
+class UlyssesContextParallelStyle(ContextParallelStyle):
+    pass
+
+
+@dataclass
+class RingContextParallelStyle(ContextParallelStyle):
     load_balancer: RingAttentionLoadBalancerType = RingAttentionLoadBalancerType.zig_zag
     """
     The type of load balancer to use for ring attention.
@@ -190,20 +194,50 @@ class TransformerContextParallelConfig(ContextParallelConfig):
     v heads, etc. A larger stride will reduce the number of communication ops.
     """
 
+
+@dataclass
+class TransformerContextParallelConfig(ContextParallelConfig):
+    """
+    Transformer-specific context parallel config.
+    """
+
+    ring: RingContextParallelStyle | None = None
+    uly: UlyssesContextParallelStyle | None = None
+
+    def __post_init__(self):
+        if self.ring is not None and self.uly is not None:
+            raise NotImplementedError(
+                "Only one of ring or ulysses can be specified. While not technically "
+                "mutually exclusive, a combined context parallel style is not yet supported."
+            )
+        elif self.ring is None and self.uly is None:
+            raise OLMoConfigurationError("One of ring or uly must be specified")
+
     @classmethod
     def zig_zag(cls, degree: int, head_stride: int = 1) -> "TransformerContextParallelConfig":
         return cls(
             degree=degree,
-            load_balancer=RingAttentionLoadBalancerType.zig_zag,
-            head_stride=head_stride,
+            ring=RingContextParallelStyle(
+                load_balancer=RingAttentionLoadBalancerType.zig_zag,
+                head_stride=head_stride,
+            ),
         )
 
     @classmethod
     def llama3(cls, degree: int, head_stride: int = 1) -> "TransformerContextParallelConfig":
         return cls(
             degree=degree,
-            load_balancer=RingAttentionLoadBalancerType.llama3,
-            head_stride=head_stride,
+            ring=RingContextParallelStyle(
+                load_balancer=RingAttentionLoadBalancerType.llama3,
+                head_stride=head_stride,
+            ),
+        )
+
+    @classmethod
+    def ulysses(cls, degree: int) -> "TransformerContextParallelConfig":
+        return cls(
+            degree=degree,
+            uly=UlyssesContextParallelStyle(),
         )
 
 

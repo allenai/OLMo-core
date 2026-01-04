@@ -13,6 +13,10 @@ from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
 from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.doc_utils import beta_feature
 from olmo_core.ops import attach_auxiliary_loss
+from olmo_core.train.train_module.transformer.config import (
+    RingContextParallelStyle,
+    UlyssesContextParallelStyle,
+)
 
 from ..attention import AttentionConfig, RingAttentionLoadBalancerType
 from ..buffer_cache import BufferCache
@@ -69,8 +73,8 @@ class TransformerBlockBase(nn.Module):
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
-        load_balancer: RingAttentionLoadBalancerType,
-        head_stride: int = 1,
+        ring: Optional[RingContextParallelStyle] = None,
+        uly: Optional[UlyssesContextParallelStyle] = None,
     ):
         raise NotImplementedError
 

@@ -16,6 +16,10 @@ from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention.kv_cache import KVCacheManager
+from olmo_core.train.train_module.transformer.config import (
+    RingContextParallelStyle,
+    UlyssesContextParallelStyle,
+)
 
 from ..buffer_cache import BufferCache
 from ..config import ModuleConfig
@@ -323,13 +327,9 @@ class AttentionBase(nn.Module):
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
-        load_balancer: RingAttentionLoadBalancerType,
-        head_stride: int = 1,
+        ring: Optional[RingContextParallelStyle] = None,
+        uly: Optional[UlyssesContextParallelStyle] = None,
     ):
-        raise NotImplementedError
-
-    @abstractmethod
-    def num_flops_per_token(self, seq_len: int) -> int:
         raise NotImplementedError
 
 
@@ -687,8 +687,8 @@ class Attention(AttentionBase):
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
-        load_balancer: RingAttentionLoadBalancerType,
-        head_stride: int = 1,
+        ring: Optional[RingContextParallelStyle] = None,
+        uly: Optional[UlyssesContextParallelStyle] = None,
     ):
         """
         Prepare the module for context-parallelism (ring attention).
@@ -697,9 +697,10 @@ class Attention(AttentionBase):
             This requires a backend that supports CP, such as "flash_2" or "te".
 
         :param cp_mesh: The context parallel device sub-mesh.
-        :param load_balancer: The load balancer type.
+        :param ring: The ring context parallel style.
+        :param uly: The ulysses context parallel style.
         """
-        self.backend.apply_cp(cp_mesh, load_balancer, head_stride=head_stride)
+        self.backend.apply_cp(cp_mesh, ring=ring, uly=uly)
 
     def init_kv_cache_manager(self, batch_size: int, max_seq_len: int):
         """
