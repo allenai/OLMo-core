@@ -31,9 +31,9 @@ from olmo_core.optim import (
 from olmo_core.train import Duration, LoadStrategy, TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, WandBCallback
 from olmo_core.train.train_module import (
+    TransformerContextParallelConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
-    TransformerTensorParallelConfig,
     TransformerTrainModuleConfig,
 )
 
@@ -122,7 +122,8 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
         ),
-        tp_config=TransformerTensorParallelConfig(degree=8),
+        cp_config=TransformerContextParallelConfig.ulysses(degree=8),
+        # tp_config=TransformerTensorParallelConfig(degree=8),
         # ac_config=TransformerActivationCheckpointingConfig(
         #     mode=TransformerActivationCheckpointingMode.budget,
         #     activation_memory_budget=0.1,

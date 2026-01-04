@@ -224,7 +224,7 @@ class TransformerContextParallelConfig(ContextParallelConfig):
             degree=degree,
             style=ContextParallelStyle.ulysses,
             load_balancer=None,
-            head_stride=1,
+            head_stride=1,  # unused
         )
 
 
