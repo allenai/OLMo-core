@@ -332,9 +332,15 @@ class TorchAttentionBackend(AttentionBackend):
             assert self.cp_pg is not None
             # Transform from context-parallel to head-parallel partitioning
             # [batch_size, seq_len/CP, n_heads, head_dim] -> [batch_size, seq_len, n_heads/CP, head_dim]
-            q = all_to_all_cp2hp(q, self.cp_pg)
-            k = all_to_all_cp2hp(k, self.cp_pg)
-            v = all_to_all_cp2hp(v, self.cp_pg)
+            B = q.shape[0]
+            # Flatten batch and seq dims for all_to_all: [B, T/CP, H, D] -> [B*T/CP, H, D]
+            q = all_to_all_cp2hp(q.flatten(0, 1), self.cp_pg)
+            k = all_to_all_cp2hp(k.flatten(0, 1), self.cp_pg)
+            v = all_to_all_cp2hp(v.flatten(0, 1), self.cp_pg)
+            # Reshape back to 4D: [B*T, H/CP, D] -> [B, T, H/CP, D]
+            q = q.view(B, -1, q.shape[1], q.shape[2])
+            k = k.view(B, -1, k.shape[1], k.shape[2])
+            v = v.view(B, -1, v.shape[1], v.shape[2])
 
         # NOTE: PyTorch's SDPA doesn't support GQA, so we have to do this.
         n_rep = self.n_heads // self.n_kv_heads
@@ -364,7 +370,11 @@ class TorchAttentionBackend(AttentionBackend):
 
         if self.cp_enabled and self.uly is not None:
             assert self.cp_pg is not None
-            att = all_to_all_hp2cp(att, self.cp_pg)
+            # Flatten batch and seq dims: [B, T, H/CP, D] -> [B*T, H/CP, D]
+            B = att.shape[0]
+            att = all_to_all_hp2cp(att.flatten(0, 1), self.cp_pg)
+            # Reshape back to 4D: [B*T/CP, H, D] -> [B, T/CP, H, D]
+            att = att.view(B, -1, att.shape[1], att.shape[2])
 
         return att.contiguous()
 
@@ -557,10 +567,16 @@ class FlashAttention2Backend(AttentionBackend):
                 assert self.cp_pg is not None
 
                 # Transform from context-parallel to head-parallel partitioning
-                # [seq_len/CP, n_heads, head_dim] -> [seq_len, n_heads/CP, head_dim]
-                q = all_to_all_cp2hp(q, self.cp_pg)
-                k = all_to_all_cp2hp(k, self.cp_pg)
-                v = all_to_all_cp2hp(v, self.cp_pg)
+                # [B, T/CP, H, D] -> [B, T, H/CP, D]
+                B = q.shape[0]
+                # Flatten batch and seq dims for all_to_all: [B, T/CP, H, D] -> [B*T/CP, H, D]
+                q = all_to_all_cp2hp(q.flatten(0, 1), self.cp_pg)
+                k = all_to_all_cp2hp(k.flatten(0, 1), self.cp_pg)
+                v = all_to_all_cp2hp(v.flatten(0, 1), self.cp_pg)
+                # Reshape back to 4D: [B*T, H/CP, D] -> [B, T, H/CP, D]
+                q = q.view(B, -1, q.shape[1], q.shape[2])
+                k = k.view(B, -1, k.shape[1], k.shape[2])
+                v = v.view(B, -1, v.shape[1], v.shape[2])
 
                 # NOTE: cu_doc_lens and max_doc_len are assumed to describe the FULL sequence
                 # (same on all CP ranks), so we use them directly after gathering the full sequence.
@@ -584,8 +600,10 @@ class FlashAttention2Backend(AttentionBackend):
                 )
 
                 # Transform back from head-parallel to context-parallel partitioning
-                # [seq_len, n_heads/CP, head_dim] -> [seq_len/CP, n_heads, head_dim]
-                return all_to_all_hp2cp(out, self.cp_pg)
+                # [B, T, H/CP, D] -> [B, T/CP, H, D]
+                out = all_to_all_hp2cp(out.flatten(0, 1), self.cp_pg)
+                out = out.view(B, -1, out.shape[1], out.shape[2])
+                return out
             else:
                 raise RuntimeError("One of ring or uly must be specified")
 
@@ -721,10 +739,16 @@ class FlashAttention3Backend(AttentionBackend):
                 assert self.cp_pg is not None
 
                 # Transform from context-parallel to head-parallel partitioning
-                # [seq_len/CP, n_heads, head_dim] -> [seq_len, n_heads/CP, head_dim]
-                q = all_to_all_cp2hp(q, self.cp_pg)
-                k = all_to_all_cp2hp(k, self.cp_pg)
-                v = all_to_all_cp2hp(v, self.cp_pg)
+                # [B, T/CP, H, D] -> [B, T, H/CP, D]
+                B = q.shape[0]
+                # Flatten batch and seq dims for all_to_all: [B, T/CP, H, D] -> [B*T/CP, H, D]
+                q = all_to_all_cp2hp(q.flatten(0, 1), self.cp_pg)
+                k = all_to_all_cp2hp(k.flatten(0, 1), self.cp_pg)
+                v = all_to_all_cp2hp(v.flatten(0, 1), self.cp_pg)
+                # Reshape back to 4D: [B*T, H/CP, D] -> [B, T, H/CP, D]
+                q = q.view(B, -1, q.shape[1], q.shape[2])
+                k = k.view(B, -1, k.shape[1], k.shape[2])
+                v = v.view(B, -1, v.shape[1], v.shape[2])
 
                 # NOTE: cu_doc_lens and max_doc_len are assumed to describe the FULL sequence
                 # (same on all CP ranks), so we use them directly after gathering the full sequence.
@@ -747,8 +771,10 @@ class FlashAttention3Backend(AttentionBackend):
                 )
 
                 # Transform back from head-parallel to context-parallel partitioning
-                # [seq_len, n_heads/CP, head_dim] -> [seq_len/CP, n_heads, head_dim]
-                return all_to_all_hp2cp(out, self.cp_pg)
+                # [B, T, H/CP, D] -> [B, T/CP, H, D]
+                out = all_to_all_hp2cp(out.flatten(0, 1), self.cp_pg)
+                out = out.view(B, -1, out.shape[1], out.shape[2])
+                return out
             else:
                 raise RuntimeError("One of ring or uly must be specified")
 

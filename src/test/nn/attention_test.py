@@ -1344,7 +1344,9 @@ def test_context_parallel_attention_ulysses(
 
     bs, seq_len = 2, 64
     x = torch.randn(bs, seq_len, attn_kwargs["d_model"], device=device, dtype=torch.bfloat16)
-    with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+    with torch.autocast(
+        device_type=device.type, dtype=torch.bfloat16, enabled=device.type != "cpu"
+    ):
         y = attn(x)
 
     outputs_path = tmp_path / "attn_y.pt"
