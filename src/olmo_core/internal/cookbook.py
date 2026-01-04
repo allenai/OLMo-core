@@ -76,9 +76,7 @@ def configure_train_module(
             shard_degree=dp_shard_degree,
         ),
         cp_config=(
-            TransformerContextParallelConfig.llama3(degree=cp_degree, head_stride=4)
-            if cp_degree
-            else None
+            TransformerContextParallelConfig.ulysses(degree=cp_degree) if cp_degree else None
         ),
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.budget,

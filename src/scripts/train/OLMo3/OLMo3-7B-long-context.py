@@ -93,11 +93,6 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         checkpoint_dir=save_dir,
         work_dir=work_dir,
     )
-    trainer_config.add_callbacks(
-        cookbook.configure_default_callbacks(
-            run_name=run_name_with_ts, wandb_group_name=cli_context.run_name
-        )
-    )
 
     experiment_config = ExperimentConfig(
         run_name=cli_context.run_name,
