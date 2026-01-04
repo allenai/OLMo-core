@@ -23,8 +23,13 @@ from torch.distributed.tensor.parallel import (
 from torch.distributed.tensor.placement_types import Placement
 from torch.nn import functional as F
 
-from olmo_core.distributed.utils import get_local_tensor, get_world_size
-from olmo_core.nn.fla.cp_utils import _qkvo_all2ll
+from olmo_core.distributed.parallel import RingContextParallelStyle
+from olmo_core.distributed.parallel.context_parallel import (
+    UlyssesContextParallelStyle,
+    all_to_all_cp2hp,
+    all_to_all_hp2cp,
+)
+from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.nn.utils import get_tp_wrappers
 
 if TYPE_CHECKING:
@@ -40,6 +45,38 @@ def elu_p1(x):
 @torch.compile
 def sum_norm(x):
     return (x / x.sum(-1, keepdim=True)).to(x)
+
+
+def _to_channel_parallel(x: torch.Tensor, cp_group: dist.ProcessGroup) -> torch.Tensor:
+    """
+    Transform from sequence-parallel to channel-parallel for conv in CP mode.
+    [B, T/CP, C] -> [B, T, C/CP]
+    """
+    world_size = dist.get_world_size(cp_group)
+    B, t_local, C = x.shape
+    c_local = C // world_size
+    # Reshape to [B, T/CP, CP, C/CP] to match [B, T/CP, H, D] expected by cp2hp
+    x_4d = x.view(B, t_local, world_size, c_local)
+    # cp2hp: [B, T/CP, H, D] -> [B, T, H/CP, D] = [B, T, 1, C/CP]
+    out_4d = all_to_all_cp2hp(x_4d, cp_group)
+    # Flatten back to 3D: [B, T, C/CP]
+    return out_4d.view(B, t_local * world_size, c_local)
+
+
+def _to_seq_parallel(x: torch.Tensor, orig_C: int, cp_group: dist.ProcessGroup) -> torch.Tensor:
+    """
+    Transform from channel-parallel to sequence-parallel after conv in CP mode.
+    [B, T, C/CP] -> [B, T/CP, C]
+    """
+    world_size = dist.get_world_size(cp_group)
+    B, t_full, c_local = x.shape
+    t_local = t_full // world_size
+    # Reshape to [B, T, 1, C/CP] to match [B, T, H/CP, D] expected by hp2cp
+    x_4d = x.view(B, t_full, 1, c_local)
+    # hp2cp: [B, T, H/CP, D] -> [B, T/CP, H, D] = [B, T/CP, CP, C/CP]
+    out_4d = all_to_all_hp2cp(x_4d, cp_group)
+    # Flatten back to 3D: [B, T/CP, C]
+    return out_4d.view(B, t_local, orig_C)
 
 
 class GatedDeltaNet(nn.Module):
@@ -216,6 +253,7 @@ class GatedDeltaNet(nn.Module):
         self._cp_mesh: DeviceMesh | None = None
         self._cp_group: dist.ProcessGroup | None = None
         self.cp_enabled = False
+        self.uly: Optional[UlyssesContextParallelStyle] = None
 
     def forward(
         self,
@@ -237,13 +275,10 @@ class GatedDeltaNet(nn.Module):
         if attention_mask is not None:
             attention_mask = get_local_tensor(attention_mask)
 
-        cp_group = self._cp_group
-        cp_enabled = self.cp_enabled and cp_group is not None
-
         batch_size, q_len, _ = hidden_states.shape
         # change to inference mode.
         mode = "fused_recurrent" if (q_len <= 64 and not self.training) else self.mode
-        if cp_enabled:
+        if self.cp_enabled:
             assert mode == "chunk", "Only chunk mode is supported in context parallelism."
         if self.training:
             assert mode == "chunk", "Only chunk mode is supported in training."
@@ -255,11 +290,11 @@ class GatedDeltaNet(nn.Module):
         cu_seqlens = kwargs.get("cu_seqlens")
         if cu_seqlens is not None:
             cu_seqlens = get_local_tensor(cu_seqlens)
-        if cp_enabled:
+        if self.cp_enabled:
             if batch_size != 1:
                 raise AssertionError("Context parallelism only supports batch_size == 1")
             if cu_seqlens is None:
-                total_len = q_len * dist.get_world_size(cp_group)
+                total_len = q_len * dist.get_world_size(self._cp_group)
                 cu_seqlens = torch.tensor(
                     [0, total_len],
                     dtype=torch.int32,
@@ -275,24 +310,45 @@ class GatedDeltaNet(nn.Module):
             conv_state_q, conv_state_k, conv_state_v = None, None, None
             if last_state is not None:
                 conv_state_q, conv_state_k, conv_state_v = last_state["conv_state"]
+
+            # Get projected values
+            q_proj = get_local_tensor(self.q_proj(hidden_states))  # [B, T/CP, key_dim]
+            k_proj = get_local_tensor(self.k_proj(hidden_states))  # [B, T/CP, key_dim]
+            v_proj = get_local_tensor(self.v_proj(hidden_states))  # [B, T/CP, value_dim]
+
+            if self.cp_enabled and self.uly is not None:
+                assert self._cp_group is not None
+                # For conv, we need full sequence. Swap from seq-parallel to channel-parallel.
+                # [B, T/CP, C] -> [B, T, C/CP]
+                q_proj = _to_channel_parallel(q_proj, self._cp_group)
+                k_proj = _to_channel_parallel(k_proj, self._cp_group)
+                v_proj = _to_channel_parallel(v_proj, self._cp_group)
+
             q, conv_state_q = self.q_conv1d(
-                x=get_local_tensor(self.q_proj(hidden_states)),
+                x=q_proj,
                 cache=conv_state_q,
                 output_final_state=use_cache,
                 cu_seqlens=cu_seqlens,
             )
             k, conv_state_k = self.k_conv1d(
-                x=get_local_tensor(self.k_proj(hidden_states)),
+                x=k_proj,
                 cache=conv_state_k,
                 output_final_state=use_cache,
                 cu_seqlens=cu_seqlens,
             )
             v, conv_state_v = self.v_conv1d(
-                x=get_local_tensor(self.v_proj(hidden_states)),
+                x=v_proj,
                 cache=conv_state_v,
                 output_final_state=use_cache,
                 cu_seqlens=cu_seqlens,
             )
+
+            if self.cp_enabled and self.uly is not None:
+                assert self._cp_group is not None
+                # Swap back to seq-parallel (partitioned sequence, full channels)
+                q = _to_seq_parallel(q, self.key_dim, self._cp_group)
+                k = _to_seq_parallel(k, self.key_dim, self._cp_group)
+                v = _to_seq_parallel(v, self.value_dim, self._cp_group)
         else:
             q = get_local_tensor(F.silu(self.q_proj(hidden_states)))
             k = get_local_tensor(F.silu(self.k_proj(hidden_states)))
@@ -322,34 +378,31 @@ class GatedDeltaNet(nn.Module):
         g = self.g_id(get_local_tensor(g))
 
         recurrent_state = last_state["recurrent_state"] if last_state is not None else None
-        if cp_enabled:
-            world_size = get_world_size(cp_group)
-            if self.num_heads % world_size != 0 or self.num_v_heads % world_size != 0:
-                raise AssertionError(
-                    f"num_heads ({self.num_heads}) and num_v_heads ({self.num_v_heads}) must be divisible "
-                    f"by cp world size ({world_size}) for A2A CP."
-                )
-            # Ulysses-style all-to-all on QKV/G/Beta.
-            q2, k2, v2 = [
-                _qkvo_all2ll(t.squeeze(0), is_qkv=True, group=cp_group).unsqueeze(0)
-                for t in (q, k, v)
-            ]
-            g2 = _qkvo_all2ll(g.squeeze(0).unsqueeze(-1), is_qkv=True, group=cp_group)
-            g2 = g2.unsqueeze(0).squeeze(-1)
-            beta2 = _qkvo_all2ll(beta.squeeze(0).unsqueeze(-1), is_qkv=True, group=cp_group)
-            beta2 = beta2.unsqueeze(0).squeeze(-1)
+        if self.cp_enabled and self.uly is not None:
+            assert self._cp_group is not None
+            # Transform from context-parallel to head-parallel partitioning
+            # [B, T/CP, H, D] -> [B, T, H/CP, D]
+            q = all_to_all_cp2hp(q, self._cp_group)
+            k = all_to_all_cp2hp(k, self._cp_group)
+            v = all_to_all_cp2hp(v, self._cp_group)
+            g = all_to_all_cp2hp(g.unsqueeze(-1), self._cp_group).squeeze(-1)
+            beta = all_to_all_cp2hp(beta.unsqueeze(-1), self._cp_group).squeeze(-1)
+
             o, recurrent_state = chunk_gated_delta_rule(
-                q=q2,
-                k=k2,
-                v=v2,
-                g=g2,
-                beta=beta2,
+                q=q,
+                k=k,
+                v=v,
+                g=g,
+                beta=beta,
                 initial_state=recurrent_state,
                 output_final_state=use_cache,
                 cu_seqlens=cu_seqlens,
                 use_qk_l2norm_in_kernel=True,
             )
-            o = _qkvo_all2ll(o.squeeze(0), is_qkv=False, group=cp_group).unsqueeze(0)
+
+            # Transform back from head-parallel to context-parallel partitioning
+            # [B, T, H/CP, D] -> [B, T/CP, H, D]
+            o = all_to_all_hp2cp(o, self._cp_group)
         elif mode == "chunk":
             o, recurrent_state = chunk_gated_delta_rule(
                 q=q,
@@ -399,10 +452,17 @@ class GatedDeltaNet(nn.Module):
 
         return o, None, past_key_values
 
-    def apply_cp(self, cp_mesh: DeviceMesh):
-        """Applies ulysses-style A2A context parallelism to the module."""
-        if self.mode != "chunk":
-            raise NotImplementedError("Context parallelism only supports chunk mode")
+    def apply_cp(
+        self,
+        cp_mesh: DeviceMesh,
+        ring: Optional[RingContextParallelStyle] = None,
+        uly: Optional[UlyssesContextParallelStyle] = None,
+    ):
+        if ring is not None:
+            raise NotImplementedError("Ring context parallelism is not supported for GatedDeltaNet")
+        if uly is None:
+            raise ValueError("Ulysses context parallelism is required for GatedDeltaNet CP")
+        self.uly = uly
 
         group = cp_mesh.get_group()
         if cp_mesh.size() == 1:
@@ -410,7 +470,21 @@ class GatedDeltaNet(nn.Module):
 
         self._cp_mesh = cp_mesh
         self._cp_group = group
-        self.cp_enabled = group is not None
+        self.cp_enabled = True
+
+        # Shard conv weights across CP ranks for channel-parallel execution.
+        # After _to_channel_parallel, each rank processes C/CP channels with full sequence.
+        # The conv weights need to be sharded on dim 0 (the channel dimension).
+        # We use ShardModule which handles DTensor conversion for checkpoint compatibility.
+        if self.use_short_conv and group is not None:
+            from olmo_core.nn.fla.layer import ShardModule
+
+            # ShortConvolution has weight of shape [hidden_size, 1, kernel_size]
+            # Shard on dim 0 (hidden_size / channel dimension)
+            shard_plan = ShardModule(shard_dim=0)
+            parallelize_module(self.q_conv1d, cp_mesh, shard_plan)
+            parallelize_module(self.k_conv1d, cp_mesh, shard_plan)
+            parallelize_module(self.v_conv1d, cp_mesh, shard_plan)
 
     def apply_tp(
         self,

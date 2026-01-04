@@ -16,6 +16,7 @@ from torch.distributed.tensor.parallel import ParallelStyle
 from torch.distributed.tensor.placement_types import Placement
 
 from olmo_core.config import Config, DType
+from olmo_core.distributed.parallel import RingContextParallelStyle, UlyssesContextParallelStyle
 from olmo_core.distributed.utils import get_local_tensor
 
 log = logging.getLogger(__name__)
@@ -86,9 +87,7 @@ class ShardModule(ParallelStyle):
         for param_name, param in module.named_parameters():
             if param is not None and not isinstance(param, DTensor):
                 placements = self.placements or [Shard(self.shard_dim)]
-                new_param = nn.Parameter(
-                    distribute_tensor(param, device_mesh, placements)
-                )
+                new_param = nn.Parameter(distribute_tensor(param, device_mesh, placements))
                 module.register_parameter(param_name, new_param)
 
     def _apply(self, module: nn.Module, device_mesh: DeviceMesh) -> nn.Module:
@@ -252,8 +251,13 @@ class FLA(nn.Module):
             float8_enabled,
         )
 
-    def apply_cp(self, cp_mesh: DeviceMesh):
-        self.inner.apply_cp(cp_mesh)
+    def apply_cp(
+        self,
+        cp_mesh: DeviceMesh,
+        ring: Optional[RingContextParallelStyle] = None,
+        uly: Optional[UlyssesContextParallelStyle] = None,
+    ):
+        self.inner.apply_cp(cp_mesh, ring=ring, uly=uly)
 
     def num_flops_per_token(self, seq_len: int) -> int:
         """
