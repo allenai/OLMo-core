@@ -25,6 +25,11 @@ class MuonWSDSChinchillaRunConfigurator(WSDSChinchillaRunConfigurator):
         lr /= 2.0
         return MuonConfig(lr=lr, weight_decay=0.1, adjust_lr="rms_norm", use_triton=True)
 
+    def configure_target_batch_size(self, num_params: int) -> int:
+        bs = super().configure_target_batch_size(num_params)
+        bs *= 2  # try doubling batch size
+        return bs
+
 
 class MuonLadder(ModelLadder):
     def _configure_batch_size_and_num_devices(
