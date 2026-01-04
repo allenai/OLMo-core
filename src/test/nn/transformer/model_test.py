@@ -333,6 +333,58 @@ def test_tensor_parallel_fla_transformer(backend: str, tmp_path):
     )
 
 
+def run_context_parallel_fla_transformer(checkpoint_dir, outputs_path):
+    device = get_default_device()
+    config = get_fla_transformer_config(dtype=torch.bfloat16)
+    input_ids = get_transformer_inputs().to(device)
+
+    mesh = init_device_mesh(
+        device.type,
+        (get_world_size(),),
+        mesh_dim_names=("cp",),
+    )
+
+    model = config.build()
+    model.apply_cp(mesh["cp"], load_balancer=None)
+    model.init_weights(device=device, max_seq_len=512)
+    load_model_and_optim_state(checkpoint_dir, model)
+
+    logits = model(input_ids=input_ids)
+    loss = logits.sum()
+    loss.backward()
+
+    og_logits = torch.load(outputs_path, map_location=device)
+    torch.testing.assert_close(og_logits, get_full_tensor(logits))
+
+
+@requires_multi_gpu
+@pytest.mark.skipif(not _fla_available(), reason="fla library not installed")
+def test_context_parallel_fla_transformer(tmp_path):
+    device = torch.device("cuda")
+    seed_all(0)
+    config = get_fla_transformer_config(dtype=torch.bfloat16)
+    model = config.build()
+    model.init_weights(device=device, max_seq_len=512)
+    input_ids = get_transformer_inputs().to(device)
+    logits = model(input_ids=input_ids)
+
+    outputs_path = tmp_path / "logits.pt"
+    torch.save(logits, outputs_path)
+
+    checkpoint_dir = tmp_path / "checkpoint"
+    save_model_and_optim_state(checkpoint_dir, model)
+
+    run_distributed_test(
+        run_context_parallel_fla_transformer,
+        backend="nccl",
+        start_method="spawn",
+        func_args=(
+            checkpoint_dir,
+            outputs_path,
+        ),
+    )
+
+
 def run_context_parallel_transformer(checkpoint_dir, outputs_path, architecture: str):
     device = get_default_device()
     config = get_transformer_config(architecture, dtype=torch.bfloat16)
