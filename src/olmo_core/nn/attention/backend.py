@@ -8,6 +8,7 @@ import torch.nn.functional as F
 from torch.distributed import DeviceMesh
 
 from olmo_core.config import StrEnum
+from olmo_core.distributed.parallel.context_parallel import all_to_all_cp2hp, all_to_all_hp2cp
 from olmo_core.nn.attention.kv_cache import KVCacheManager
 from olmo_core.nn.buffer_cache import BufferCache
 from olmo_core.train.train_module.transformer.config import (
@@ -257,6 +258,7 @@ class TorchAttentionBackend(AttentionBackend):
 
     @classmethod
     def assert_supports_ulysses_cp(cls):
+        # NOTE(tylerr): this would be pretty straightforward to support, but we don't have a use case for it yet
         raise RuntimeError(f"'{cls.__name__}' doesn't support ulysses context parallelism")
 
     @classmethod
@@ -431,7 +433,7 @@ class FlashAttention2Backend(AttentionBackend):
 
     @classmethod
     def assert_supports_ulysses_cp(cls):
-        raise RuntimeError(f"'{cls.__name__}' doesn't support ulysses context parallelism")
+        pass
 
     @classmethod
     def assert_supports_packed_qkv(cls):
@@ -533,7 +535,20 @@ class FlashAttention2Backend(AttentionBackend):
                     window_size=self.window_size,
                 )
             elif self.uly is not None:
-                return dispatch_flash_attn(
+                assert self.cp_pg is not None
+
+                # Transform from context-parallel to head-parallel partitioning
+                # [seq_len/CP, n_heads, head_dim] -> [seq_len, n_heads/CP, head_dim]
+                q = all_to_all_cp2hp(q, self.cp_pg, scatter_dim=1)
+                k = all_to_all_cp2hp(k, self.cp_pg, scatter_dim=1)
+                v = all_to_all_cp2hp(v, self.cp_pg, scatter_dim=1)
+
+                # NOTE: cu_doc_lens and max_doc_len are assumed to describe the FULL sequence
+                # (same on all CP ranks), so we use them directly after gathering the full sequence.
+                # This is the default state of cu_doc_lens and max_doc_len before a load balancer is applied.
+
+                # Run attention with full sequence, partitioned heads
+                out = dispatch_flash_attn(
                     q,
                     k,
                     v,
@@ -548,6 +563,10 @@ class FlashAttention2Backend(AttentionBackend):
                     softmax_scale=self.scale,
                     window_size=self.window_size,
                 )
+
+                # Transform back from head-parallel to context-parallel partitioning
+                # [seq_len, n_heads/CP, head_dim] -> [seq_len/CP, n_heads, head_dim]
+                return all_to_all_hp2cp(out, self.cp_pg, gather_dim=1)
             else:
                 raise RuntimeError("One of ring or uly must be specified")
 
@@ -611,7 +630,7 @@ class FlashAttention3Backend(AttentionBackend):
 
     @classmethod
     def assert_supports_ulysses_cp(cls):
-        raise RuntimeError(f"'{cls.__name__}' doesn't support ulysses context parallelism")
+        pass
 
     @classmethod
     def assert_supports_packed_qkv(cls):
@@ -655,6 +674,10 @@ class FlashAttention3Backend(AttentionBackend):
         q, k, v = qkv
 
         if kv_cache_manager:
+            if self.cp_enabled:
+                raise RuntimeError(
+                    f"'{self.__class__.__name__}' doesn't support KV caching with context parallelism"
+                )
             return dispatch_flash_attn_3_with_kvcache(
                 q,
                 k=k,
@@ -669,6 +692,46 @@ class FlashAttention3Backend(AttentionBackend):
                     kv_cache_manager.cache_leftpad.shape[0]
                 ).contiguous(),
             )
+
+        if self.cp_enabled:
+            if self.ring is not None:
+                raise RuntimeError(
+                    f"'{self.__class__.__name__}' doesn't support ring context parallelism"
+                )
+            elif self.uly is not None:
+                assert self.cp_pg is not None
+
+                # Transform from context-parallel to head-parallel partitioning
+                # [seq_len/CP, n_heads, head_dim] -> [seq_len, n_heads/CP, head_dim]
+                q = all_to_all_cp2hp(q, self.cp_pg, scatter_dim=1)
+                k = all_to_all_cp2hp(k, self.cp_pg, scatter_dim=1)
+                v = all_to_all_cp2hp(v, self.cp_pg, scatter_dim=1)
+
+                # NOTE: cu_doc_lens and max_doc_len are assumed to describe the FULL sequence
+                # (same on all CP ranks), so we use them directly after gathering the full sequence.
+                # This is the default state of cu_doc_lens and max_doc_len before a load balancer is applied.
+
+                # Run attention with full sequence, partitioned heads
+                out = dispatch_flash_attn_3(
+                    q,
+                    k,
+                    v,
+                    cu_seqlens=cu_doc_lens,
+                    cu_seqlens_q=cu_doc_lens_q,
+                    cu_seqlens_k=cu_doc_lens_k,
+                    max_seqlen=max_doc_len,
+                    max_seqlen_q=max_doc_len_q,
+                    max_seqlen_k=max_doc_len_k,
+                    softmax_scale=self.scale,
+                    causal=True,
+                    window_size=self.window_size,
+                )
+
+                # Transform back from head-parallel to context-parallel partitioning
+                # [seq_len, n_heads/CP, head_dim] -> [seq_len/CP, n_heads, head_dim]
+                return all_to_all_hp2cp(out, self.cp_pg, gather_dim=1)
+            else:
+                raise RuntimeError("One of ring or uly must be specified")
 
         return dispatch_flash_attn_3(
             q,
