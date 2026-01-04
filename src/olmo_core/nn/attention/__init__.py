@@ -1046,10 +1046,10 @@ class FusedAttention(AttentionBase):
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
-        load_balancer: RingAttentionLoadBalancerType,
-        head_stride: int = 1,
+        ring: Optional[RingContextParallelStyle] = None,
+        uly: Optional[UlyssesContextParallelStyle] = None,
     ):
-        self.backend.apply_cp(cp_mesh, load_balancer, head_stride=head_stride)
+        self.backend.apply_cp(cp_mesh, ring=ring, uly=uly)
 
     def num_flops_per_token(self, seq_len: int) -> int:
         # 6 FLOPs per parameter (2 ops * 3 for forward+backward)
