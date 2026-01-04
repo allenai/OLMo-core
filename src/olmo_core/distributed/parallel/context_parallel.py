@@ -31,28 +31,29 @@ def all_to_all_cp2hp(
 
     Ref: https://github.com/NVIDIA/Megatron-LM/blob/main/megatron/core/ssm/mamba_context_parallel.py#L287
 
-
-    :param input_: The input tensor with shape ``[BT/CP, H, D]``, partitioned along
+    :param input_: The input tensor with shape ``[B, T/CP, H, D]``, partitioned along
         the sequence dimension across context parallel ranks.
     :param cp_group: The process group for context parallel communication.
-    :returns: The output tensor with shape ``[BT, H/CP, D]``, partitioned along
-        the sequence dimension but with full head dimension.
+    :returns: The output tensor with shape ``[B, T, H/CP, D]``, partitioned along
+        the head dimension.
     """
-    assert input_.dim() == 3, "all_to_all_cp2hp assumes 3-d input shape."
+    assert input_.dim() == 4, "all_to_all_cp2hp expects 4-d input shape [B, T/CP, H, D]."
     world_size = get_world_size(cp_group)
 
-    # Scatter along middle dimension (for attention: [BT, n_heads, head_dim])
-    bt_in, h_in, d_in = input_.shape
+    B, t_local, h_in, d_in = input_.shape
     h_out = h_in // world_size
 
-    # [bt/CP, CP, h/CP, d] -> [CP, bt/CP, h/CP, d] where dim0 indexes destination rank.
-    input_split = input_.reshape(bt_in, world_size, h_out, d_in).permute(1, 0, 2, 3)
-    flattened = input_split.flatten(0, 2)  # [CP*bt/CP*h/CP, d]
-    exchanged = all_to_all(cp_group, flattened)  # [CP * bt/CP * h/CP, d]
-
-    output = exchanged.reshape(bt_in * world_size, h_out, d_in)  # [bt, h/CP, d]
-
-    return output
+    # [B, T/CP, H, D] -> [B, T/CP, CP, H/CP, D] -> [CP, B, T/CP, H/CP, D]
+    # dim0 indexes destination rank for the all-to-all
+    input_split = input_.view(B, t_local, world_size, h_out, d_in).permute(2, 0, 1, 3, 4)
+    exchanged = all_to_all(cp_group, input_split.flatten(0, 3))
+    # After all-to-all: dim0 indexes source rank
+    # [CP, B, T/CP, H/CP, D] -> [B, CP, T/CP, H/CP, D] -> [B, T, H/CP, D]
+    return (
+        exchanged.view(world_size, B, t_local, h_out, d_in)
+        .permute(1, 0, 2, 3, 4)
+        .reshape(B, t_local * world_size, h_out, d_in)
+    )
 
 
 def all_to_all_hp2cp(
@@ -63,30 +64,28 @@ def all_to_all_hp2cp(
 
     Ref: https://github.com/NVIDIA/Megatron-LM/blob/main/megatron/core/ssm/mamba_context_parallel.py#L324
 
-    :param input_: The input tensor with shape ``[BT, H/CP, D]``, containing full sequence
+    :param input_: The input tensor with shape ``[B, T, H/CP, D]``, containing full sequence
         but partitioned along the head dimension.
     :param cp_group: The process group for context parallel communication.
-    :returns: The output tensor with shape ``[BT/CP, H, D]``, partitioned along
+    :returns: The output tensor with shape ``[B, T/CP, H, D]``, partitioned along
         the sequence dimension but with full head dimension.
     """
-    assert input_.dim() == 3, "all_to_all_hp2cp assumes 3-d input shape."
+    assert input_.dim() == 4, "all_to_all_hp2cp expects 4-d input shape [B, T, H/CP, D]."
     world_size = get_world_size(cp_group)
 
-    # Gather along middle dimension (for attention: [T, n_heads, head_dim])
-    t_in, h_in, d_in = input_.shape
-    t_out = t_in // world_size
+    B, t_full, h_in, d_in = input_.shape
+    t_out = t_full // world_size
 
-    # [CP, t_out, h/CP, d]
-    input_split = input_.reshape(world_size, t_out, h_in, d_in)
-    flattened = input_split.flatten(0, 2)  # [CP*t_out*h/CP, d]
-    exchanged = all_to_all(cp_group, flattened)
-
-    output_split = exchanged.reshape(world_size, t_out, h_in, d_in)
-    output = output_split.permute(1, 0, 2, 3).reshape(
-        t_out, h_in * world_size, d_in
-    )  # [t/CP, h, d]
-
-    return output
+    # [B, T, H/CP, D] -> [B, CP, T/CP, H/CP, D] -> [CP, B, T/CP, H/CP, D]
+    # dim0 indexes destination rank for the all-to-all
+    input_split = input_.view(B, world_size, t_out, h_in, d_in).permute(1, 0, 2, 3, 4)
+    exchanged = all_to_all(cp_group, input_split.flatten(0, 3))
+    # [CP, B, T/CP, H/CP, D] -> [B, T/CP, CP, H/CP, D] -> [B, T/CP, H, D]
+    return (
+        exchanged.view(world_size, B, t_out, h_in, d_in)
+        .permute(1, 2, 0, 3, 4)
+        .reshape(B, t_out, h_in * world_size, d_in)
+    )
 
 
 class UlyssesContextParallelStyle(Config):

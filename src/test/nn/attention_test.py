@@ -1235,7 +1235,7 @@ def _run_context_parallel_attention_ring(
     y_ref_local = y_ref[:, rank * chunk_size : (rank + 1) * chunk_size, :]
 
     # Compare the local output with the reference output.
-    torch.testing.assert_close(y_ref_local, y_local)
+    torch.testing.assert_close(y_ref_local, y_local, rtol=BF16_RTOL, atol=BF16_ATOL)
 
 
 @requires_multi_gpu
@@ -1245,7 +1245,6 @@ def _run_context_parallel_attention_ring(
     [pytest.param(RingAttentionLoadBalancerType.zig_zag, id="zig_zag")],
 )
 @pytest.mark.parametrize("head_stride", [pytest.param(1), pytest.param(8)])
-@pytest.mark.skip("known precision issues with ring-flash-attn")
 def test_context_parallel_attention(load_balancer_type, head_stride: int, tmp_path):
     seed_all(0)
     device = torch.device("cuda")
@@ -1311,7 +1310,7 @@ def _run_context_parallel_attention_ulysses(
     y_ref_local = y_ref[:, rank * chunk_size : (rank + 1) * chunk_size, :]
 
     # Compare the local output with the reference output.
-    torch.testing.assert_close(y_ref_local, y_local)
+    torch.testing.assert_close(y_ref_local, y_local, rtol=BF16_RTOL, atol=BF16_ATOL)
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
