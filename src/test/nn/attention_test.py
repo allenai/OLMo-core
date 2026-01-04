@@ -10,6 +10,10 @@ from olmo_core.distributed.checkpoint import (
     load_model_and_optim_state,
     save_model_and_optim_state,
 )
+from olmo_core.distributed.parallel import (
+    RingContextParallelStyle,
+    UlyssesContextParallelStyle,
+)
 from olmo_core.distributed.utils import get_rank, get_world_size
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention import (
@@ -40,10 +44,6 @@ from olmo_core.testing import (
     run_distributed_test,
 )
 from olmo_core.testing.utils import requires_compute_capability
-from olmo_core.distributed.parallel import (
-    RingContextParallelStyle,
-    UlyssesContextParallelStyle,
-)
 from olmo_core.utils import get_default_device, seed_all
 
 BF16_RTOL = 1e-5

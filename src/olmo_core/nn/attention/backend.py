@@ -8,13 +8,13 @@ import torch.nn.functional as F
 from torch.distributed import DeviceMesh
 
 from olmo_core.config import StrEnum
-from olmo_core.distributed.parallel.context_parallel import (
-    all_to_all_cp2hp,
-    all_to_all_hp2cp,
-)
 from olmo_core.distributed.parallel import (
     RingContextParallelStyle,
     UlyssesContextParallelStyle,
+)
+from olmo_core.distributed.parallel.context_parallel import (
+    all_to_all_cp2hp,
+    all_to_all_hp2cp,
 )
 from olmo_core.nn.attention.kv_cache import KVCacheManager
 from olmo_core.nn.buffer_cache import BufferCache

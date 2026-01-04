@@ -14,16 +14,13 @@ from olmo_core.distributed.parallel import (
     DataParallelConfig,
     ExpertParallelConfig,
     PipelineParallelConfig,
+    RingContextParallelStyle,
     TensorParallelConfig,
+    UlyssesContextParallelStyle,
 )
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
-from olmo_core.distributed.parallel import (
-    ContextParallelStyle,
-    RingContextParallelStyle,
-    UlyssesContextParallelStyle,
-)
 from olmo_core.nn.attention import RingAttentionLoadBalancerType
 from olmo_core.nn.transformer import (
     Transformer,

@@ -22,15 +22,15 @@ from torch.distributed.tensor import Replicate, Shard
 from torch.distributed.tensor.parallel import RowwiseParallel, parallelize_module
 
 from olmo_core.data.utils import get_cumulative_document_lengths
-from olmo_core.distributed.parallel import get_pp_mesh
+from olmo_core.distributed.parallel import (
+    RingContextParallelStyle,
+    UlyssesContextParallelStyle,
+    get_pp_mesh,
+)
 from olmo_core.distributed.utils import hide_from_torch, unhide_from_torch
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
-from olmo_core.distributed.parallel import (
-    RingContextParallelStyle,
-    UlyssesContextParallelStyle,
-)
 from olmo_core.utils import get_default_device, mark_dynamic, move_to_device
 
 from ..attention import Attention, FusedAttention, RingAttentionLoadBalancer

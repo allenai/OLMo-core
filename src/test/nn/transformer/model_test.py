@@ -16,6 +16,8 @@ from olmo_core.distributed.checkpoint import (
 from olmo_core.distributed.parallel import (
     DataParallelConfig,
     DataParallelType,
+    RingContextParallelStyle,
+    UlyssesContextParallelStyle,
     build_world_mesh,
 )
 from olmo_core.distributed.utils import get_full_tensor, get_world_size
@@ -48,10 +50,6 @@ from olmo_core.testing import (
     requires_flash_attn_2,
     requires_multi_gpu,
     run_distributed_test,
-)
-from olmo_core.distributed.parallel import (
-    RingContextParallelStyle,
-    UlyssesContextParallelStyle,
 )
 from olmo_core.utils import get_default_device, seed_all
 
