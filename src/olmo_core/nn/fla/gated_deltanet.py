@@ -374,7 +374,7 @@ class GatedDeltaNet(nn.Module):
             ),
         )
 
-        from olmo_core.nn.fla.layer import LocalInputModule, ShardModule, ShardParameters
+        from olmo_core.nn.fla.layer import LocalInputModule, ShardParameters
 
         plan = {
             # Shard A_log and dt_bias as DTensors (for checkpoint compatibility).
@@ -405,10 +405,10 @@ class GatedDeltaNet(nn.Module):
         if self.use_gate:
             plan["g_proj"] = colwise_parallel()
 
-        # Shard short convolutions on channel dimension to match columnwise-parallel projections.
         if self.use_short_conv:
-            plan["q_conv1d"] = ShardModule(shard_dim=0)
-            plan["k_conv1d"] = ShardModule(shard_dim=0)
-            plan["v_conv1d"] = ShardModule(shard_dim=0)
+            # Use LocalInputModule to keep convolution weights replicated while accepting local tensors.
+            plan["q_conv1d"] = LocalInputModule()
+            plan["k_conv1d"] = LocalInputModule()
+            plan["v_conv1d"] = LocalInputModule()
 
         parallelize_module(module=self, device_mesh=tp_mesh, parallelize_plan=plan)
