@@ -417,7 +417,7 @@ class LMHead(nn.Module):
 
         self._tp_mesh = tp_mesh
 
-    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType):
+    def apply_cp(self, cp_mesh: DeviceMesh, load_balancer: RingAttentionLoadBalancerType | None):
         del load_balancer
         self._cp_mesh = cp_mesh
 

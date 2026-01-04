@@ -12,6 +12,7 @@ from torch.distributed.tensor.parallel import PrepareModuleInput, parallelize_mo
 from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
 from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.doc_utils import beta_feature
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.fla import FLAConfig
 from olmo_core.ops import attach_auxiliary_loss
 
@@ -197,9 +198,11 @@ class TransformerBlock(TransformerBlockBase):
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
-        load_balancer: RingAttentionLoadBalancerType,
+        load_balancer: RingAttentionLoadBalancerType | None,
         head_stride: int = 1,
     ):
+        if load_balancer is None:
+            raise OLMoConfigurationError("Ulysses CP not supported for attention blocks")
         self.attention.apply_cp(cp_mesh, load_balancer, head_stride=head_stride)
 
     def apply_fsdp(
@@ -450,9 +453,11 @@ class NormalizedTransformerBlock(TransformerBlockBase):
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
-        load_balancer: RingAttentionLoadBalancerType,
+        load_balancer: RingAttentionLoadBalancerType | None,
         head_stride: int = 1,
     ):
+        if load_balancer is None:
+            raise OLMoConfigurationError("Ulysses CP not supported for attention blocks")
         self.attention.apply_cp(cp_mesh, load_balancer, head_stride=head_stride)
 
     def apply_fsdp(
@@ -633,9 +638,11 @@ class MoETransformerBlock(TransformerBlockBase):
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
-        load_balancer: RingAttentionLoadBalancerType,
+        load_balancer: RingAttentionLoadBalancerType | None,
         head_stride: int = 1,
     ):
+        if load_balancer is None:
+            raise OLMoConfigurationError("Ulysses CP not supported for attention blocks")
         self.attention.apply_cp(cp_mesh, load_balancer, head_stride=head_stride)
         self.feed_forward_moe.apply_cp(cp_mesh)
 
@@ -1191,7 +1198,7 @@ class FLABlock(TransformerBlockBase):
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
-        load_balancer: RingAttentionLoadBalancerType,
+        load_balancer: RingAttentionLoadBalancerType | None,
         head_stride: int = 1,
     ):
         del load_balancer, head_stride

@@ -603,7 +603,7 @@ class Transformer(nn.Module):
     def apply_cp(
         self,
         cp_mesh: DeviceMesh,
-        load_balancer: RingAttentionLoadBalancerType,
+        load_balancer: RingAttentionLoadBalancerType | None,
         head_stride: int = 1,
     ):
         """
@@ -612,7 +612,7 @@ class Transformer(nn.Module):
         :param cp_mesh: The CP device mesh.
         :param load_balancer: The load balancing method.
         """
-        self._cp_load_balancer = load_balancer.build(cp_mesh)
+        self._cp_load_balancer = load_balancer.build(cp_mesh) if load_balancer else None
         for block in self.blocks.values():
             cast(TransformerBlockBase, block).apply_cp(
                 cp_mesh, load_balancer, head_stride=head_stride

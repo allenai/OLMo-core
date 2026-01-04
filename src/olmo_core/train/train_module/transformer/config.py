@@ -8,7 +8,7 @@ import torch.distributed.checkpoint.state_dict as dist_cp_sd
 from torch.distributed import DeviceMesh
 from torch.distributed.pipelining import PipelineStage
 
-from olmo_core.config import Config, DType
+from olmo_core.config import Config, DType, StrEnum
 from olmo_core.distributed.parallel import (
     ContextParallelConfig,
     DataParallelConfig,
@@ -172,13 +172,23 @@ class TransformerTensorParallelConfig(TensorParallelConfig):
     """
 
 
+class ContextParallelStyle(StrEnum):
+    ring = "ring"
+    ulysses = "ulysses"
+
+
 @dataclass
 class TransformerContextParallelConfig(ContextParallelConfig):
     """
     Transformer-specific context parallel config.
     """
 
-    load_balancer: RingAttentionLoadBalancerType = RingAttentionLoadBalancerType.zig_zag
+    style: ContextParallelStyle = ContextParallelStyle.ring
+    """
+    Context parallel strategy.
+    """
+
+    load_balancer: Optional[RingAttentionLoadBalancerType] = RingAttentionLoadBalancerType.zig_zag
     """
     The type of load balancer to use for ring attention.
     """
@@ -194,6 +204,7 @@ class TransformerContextParallelConfig(ContextParallelConfig):
     def zig_zag(cls, degree: int, head_stride: int = 1) -> "TransformerContextParallelConfig":
         return cls(
             degree=degree,
+            style=ContextParallelStyle.ring,
             load_balancer=RingAttentionLoadBalancerType.zig_zag,
             head_stride=head_stride,
         )
@@ -202,8 +213,18 @@ class TransformerContextParallelConfig(ContextParallelConfig):
     def llama3(cls, degree: int, head_stride: int = 1) -> "TransformerContextParallelConfig":
         return cls(
             degree=degree,
+            style=ContextParallelStyle.ring,
             load_balancer=RingAttentionLoadBalancerType.llama3,
             head_stride=head_stride,
+        )
+
+    @classmethod
+    def ulysses(cls, degree: int) -> "TransformerContextParallelConfig":
+        return cls(
+            degree=degree,
+            style=ContextParallelStyle.ulysses,
+            load_balancer=None,
+            head_stride=1,
         )
 
 
