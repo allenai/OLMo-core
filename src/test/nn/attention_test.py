@@ -1314,16 +1314,19 @@ def _run_context_parallel_attention_ulysses(
     torch.testing.assert_close(y_ref_local, y_local)
 
 
-@requires_multi_gpu
+@pytest.mark.parametrize("backend", BACKENDS)
 @pytest.mark.parametrize(
-    "backend_name",
+    "attn_backend",
     [
+        pytest.param(AttentionBackendName.torch, id="torch-SDPA"),
         pytest.param(AttentionBackendName.flash_2, id="flash-attn-2", marks=FLASH_2_MARKS),
         pytest.param(AttentionBackendName.flash_3, id="flash-attn-3", marks=FLASH_3_MARKS),
         pytest.param(AttentionBackendName.te, id="te-attn", marks=TE_MARKS),
     ],
 )
-def test_context_parallel_attention_ulysses(tmp_path, backend_name: AttentionBackendName):
+def test_context_parallel_attention_ulysses(
+    tmp_path, backend: str, attn_backend: AttentionBackendName
+):
     """
     Test Ulysses-style context parallelism.
 
@@ -1333,10 +1336,10 @@ def test_context_parallel_attention_ulysses(tmp_path, backend_name: AttentionBac
     or ring-flash-attn.
     """
     seed_all(0)
-    device = torch.device("cuda")
+    device = get_default_device()
 
     # n_heads must be divisible by CP degree (world_size).
-    attn_kwargs: Dict[str, Any] = {"d_model": 128, "n_heads": 8, "backend": backend_name}
+    attn_kwargs: Dict[str, Any] = {"d_model": 128, "n_heads": 8, "backend": attn_backend}
     attn = Attention(init_device=device.type, **attn_kwargs)
 
     bs, seq_len = 2, 64
@@ -1353,7 +1356,7 @@ def test_context_parallel_attention_ulysses(tmp_path, backend_name: AttentionBac
 
     run_distributed_test(
         _run_context_parallel_attention_ulysses,
-        backend="nccl",
+        backend=backend,
         start_method="spawn",
         func_args=(
             checkpoint_dir,
