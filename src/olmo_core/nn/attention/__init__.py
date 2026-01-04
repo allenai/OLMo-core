@@ -17,7 +17,7 @@ from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention.kv_cache import KVCacheManager
-from olmo_core.nn.fla.gated_deltanet import _All2All as _HeadAll2All
+from olmo_core.nn.fla.cp_utils import _qkvo_all2ll
 
 from ..buffer_cache import BufferCache
 from ..config import ModuleConfig
@@ -51,11 +51,11 @@ def _a2a_heads(x: torch.Tensor, *, is_qkv: bool, group: dist.ProcessGroup) -> to
     """All-to-all across head dimension (Ulysses-style)."""
     b, t, h, d = x.shape
     x_flat = x.reshape(b * t, h, d).contiguous()
-    fwd_stage, bwd_stage = (1, 2) if is_qkv else (2, 1)
-    out = _HeadAll2All.apply(x_flat, (fwd_stage, bwd_stage), group)
+    out = _qkvo_all2ll(x_flat, is_qkv=is_qkv, group=group)
     world_size = dist.get_world_size(group)
     h_out = h // world_size if is_qkv else h * world_size
     return out.view(b, t, h_out, d)
+
 
 __all__ = [
     "SlidingWindowAttentionConfig",
@@ -608,7 +608,12 @@ class Attention(AttentionBase):
 
         if self.rope is not None:
             # In ring CP we must be given pre-sharded buffers
-            if self.backend.cp_enabled and pos_sin is None and pos_cos is None and freqs_cis is None:
+            if (
+                self.backend.cp_enabled
+                and pos_sin is None
+                and pos_cos is None
+                and freqs_cis is None
+            ):
                 raise RuntimeError(
                     "RoPE buffers must be passed through to attention after being properly "
                     "sharded by the context parallel load balancer"
