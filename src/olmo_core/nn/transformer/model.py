@@ -357,7 +357,7 @@ class Transformer(nn.Module):
             max_doc_len = max(max_doc_lens)
             cu_doc_lens = get_cumulative_document_lengths(doc_lens)
 
-        # Shard inputs and RoPE buffers on sequence dimension if using context parallelism.
+        # Shard inputs and RoPE buffers on sequence dimension if using ring context parallelism.
         if (cp_load_balancer := self._cp_load_balancer) is not None:
             inputs = [input_ids]
             seq_dims = [1]
@@ -607,6 +607,7 @@ class Transformer(nn.Module):
         """
         if ring is not None:
             self._cp_load_balancer = ring.load_balancer.build(cp_mesh)
+
         for block in self.blocks.values():
             cast(TransformerBlockBase, block).apply_cp(cp_mesh, ring=ring, uly=uly)
         if self.lm_head is not None:

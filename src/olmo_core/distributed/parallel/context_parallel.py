@@ -1,10 +1,13 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import torch
 
 from olmo_core.config import Config
 from olmo_core.distributed.autograd import all_to_all
-from olmo_core.nn.attention.ring import RingAttentionLoadBalancerType
+
+if TYPE_CHECKING:
+    from olmo_core.nn.attention.ring import RingAttentionLoadBalancerType
 
 
 @dataclass
@@ -27,8 +30,6 @@ def all_to_all_cp2hp(
 
     This function redistributes tensor data across a context parallel process group,
     converting from sequence-partitioned to hidden-dimension-partitioned layout.
-    This is typically used in attention mechanisms to gather the full sequence
-    while distributing across attention heads.
 
     Ref: https://github.com/NVIDIA/Megatron-LM/blob/main/megatron/core/ssm/mamba_context_parallel.py#L287
 
@@ -96,8 +97,6 @@ def all_to_all_hp2cp(
 
     This function redistributes tensor data across a context parallel process group,
     converting from hidden-dimension-partitioned to sequence-partitioned layout.
-    This is typically used in attention mechanisms to distribute the sequence
-    while gathering across attention heads.
 
     Ref: https://github.com/NVIDIA/Megatron-LM/blob/main/megatron/core/ssm/mamba_context_parallel.py#L324
 
@@ -156,15 +155,7 @@ def all_to_all_hp2cp(
     return output
 
 
-class ContextParallelStyle(Config):
-    """
-    Base class for context parallel styles.
-    """
-
-    pass
-
-
-class UlyssesContextParallelStyle(ContextParallelStyle):
+class UlyssesContextParallelStyle(Config):
     """
     Configuration for Ulysses-style context parallelism.
     """
@@ -172,13 +163,22 @@ class UlyssesContextParallelStyle(ContextParallelStyle):
     pass
 
 
+def _get_zig_zag_load_balancer():
+    """Lazy import to avoid circular dependency."""
+    from olmo_core.nn.attention.ring import RingAttentionLoadBalancerType
+
+    return RingAttentionLoadBalancerType.zig_zag
+
+
 @dataclass
-class RingContextParallelStyle(ContextParallelStyle):
+class RingContextParallelStyle(Config):
     """
     Configuration for ring attention-style context parallelism.
     """
 
-    load_balancer: RingAttentionLoadBalancerType = RingAttentionLoadBalancerType.zig_zag
+    load_balancer: "RingAttentionLoadBalancerType" = field(
+        default_factory=_get_zig_zag_load_balancer
+    )
     """
     The type of load balancer to use for ring attention.
     """
