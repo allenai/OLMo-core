@@ -116,39 +116,32 @@ def all_to_all_hp2cp(
     world_size = cp_group.size()
 
     if gather_dim == 2:
-        # Original behavior: gather along last dimension
+        # Gather along the last dimension. Split the sequence evenly so each rank
+        # keeps its t_out chunk and gathers all h shards from every rank.
         t_in, b_in, h_in = input_.shape
-        input_ = input_.reshape(-1, h_in)  # [t*b, h/CP]
-
         t_out = t_in // world_size
-        split_tensors = torch.split(
-            input_, split_size_or_sections=t_out * b_in, dim=0
-        )  # [t/CP*b, h/CP] * CP
 
-        # all-to-all on a single tensor.
-        concat_tensor = torch.cat(split_tensors, dim=1)  # [t/CP*b, h/CP*CP] = [t/CP*b, h]
-        output = all_to_all(cp_group, concat_tensor)  # [t/CP*b, h]
+        # [CP, t_out, b, h/CP]
+        input_split = input_.reshape(world_size, t_out, b_in, h_in)
+        # Flatten leading dims so all_to_all routes the correct t_out block to each rank.
+        flattened = input_split.reshape(world_size * t_out * b_in, h_in)
+        exchanged = all_to_all(cp_group, flattened)
 
-        # Recover the t and b dimensions
-        output = output.reshape(t_out, b_in, h_in * world_size)  # [t/CP, b, h]
+        # [CP, t_out, b, h/CP] with CP dimension now indexing source rank.
+        output_split = exchanged.reshape(world_size, t_out, b_in, h_in)
+        output = output_split.permute(1, 2, 0, 3).reshape(t_out, b_in, h_in * world_size)  # [t/CP, b, h]
     elif gather_dim == 1:
         # Gather along middle dimension (for attention: [T, n_heads, head_dim])
         t_in, h_in, d_in = input_.shape
         t_out = t_in // world_size
 
-        # Split along sequence dimension
-        input_3d = input_.reshape(t_in, h_in, d_in)
-        split_tensors = torch.split(
-            input_3d, split_size_or_sections=t_out, dim=0
-        )  # [t/CP, h/CP, d] * CP
+        # [CP, t_out, h/CP, d]
+        input_split = input_.reshape(world_size, t_out, h_in, d_in)
+        flattened = input_split.reshape(world_size * t_out * h_in, d_in)
+        exchanged = all_to_all(cp_group, flattened)
 
-        # Concatenate along heads dimension
-        concat_tensor = torch.cat(split_tensors, dim=1)  # [t/CP, h/CP*CP, d] = [t/CP, h, d]
-        concat_tensor = concat_tensor.reshape(-1, d_in)  # [t/CP*h, d]
-        output = all_to_all(cp_group, concat_tensor)  # [t/CP*h, d]
-
-        # Recover dimensions
-        output = output.reshape(t_out, h_in * world_size, d_in)  # [t/CP, h, d]
+        output_split = exchanged.reshape(world_size, t_out, h_in, d_in)
+        output = output_split.permute(1, 0, 2, 3).reshape(t_out, h_in * world_size, d_in)  # [t/CP, h, d]
     else:
         raise ValueError(f"gather_dim must be 1 or 2, got {gather_dim}")
 
