@@ -12,7 +12,13 @@ import torch.distributed as dist
 import torch.nn as nn
 from einops import rearrange, repeat
 from fla.layers.utils import get_unpad_data, index_first_axis, pad_input
-from fla.modules import FusedRMSNormGated, RMSNorm, ShortConvolution
+from fla.modules import FusedRMSNormGated, RMSNorm  # , ShortConvolution
+from fla.modules.convolution import causal_conv1d, causal_conv1d_update, causal_conv1d_update_cuda
+
+try:
+    from causal_conv1d import causal_conv1d_fn
+except ImportError:
+    causal_conv1d_fn = None
 from fla.ops.gated_delta_rule import chunk_gated_delta_rule, fused_recurrent_gated_delta_rule
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import Replicate, Shard
@@ -475,16 +481,10 @@ class GatedDeltaNet(nn.Module):
         # Shard conv weights across CP ranks for channel-parallel execution.
         # After _to_channel_parallel, each rank processes C/CP channels with full sequence.
         # The conv weights need to be sharded on dim 0 (the channel dimension).
-        # We use ShardModule which handles DTensor conversion for checkpoint compatibility.
         if self.use_short_conv and group is not None:
-            from olmo_core.nn.fla.layer import ShardModule
-
-            # ShortConvolution has weight of shape [hidden_size, 1, kernel_size]
-            # Shard on dim 0 (hidden_size / channel dimension)
-            shard_plan = ShardModule(shard_dim=0)
-            parallelize_module(self.q_conv1d, cp_mesh, shard_plan)
-            parallelize_module(self.k_conv1d, cp_mesh, shard_plan)
-            parallelize_module(self.v_conv1d, cp_mesh, shard_plan)
+            self.q_conv1d.apply_cp(cp_mesh)
+            self.k_conv1d.apply_cp(cp_mesh)
+            self.v_conv1d.apply_cp(cp_mesh)
 
     def apply_tp(
         self,
@@ -547,3 +547,271 @@ class GatedDeltaNet(nn.Module):
             plan["v_conv1d"] = ShardModule(placements=[Replicate()])
 
         parallelize_module(module=self, device_mesh=tp_mesh, parallelize_plan=plan)
+
+
+class ShortConvolution(nn.Conv1d):
+    """Short convolution layer for efficient causal convolution operations.
+
+    This class implements a depthwise separable 1D convolution with causal padding,
+    designed for efficient sequence processing. It supports multiple backends (Triton/CUDA)
+    and optional activation functions.
+
+    Args:
+        hidden_size (int): Number of input/output channels (must be equal for depthwise conv)
+        kernel_size (int): Size of the convolution kernel
+        bias (bool, optional): Whether to include learnable bias. Defaults to False.
+        activation (Optional[str], optional): Activation function ('silu' or 'swish'). Defaults to 'silu'.
+        backend (Optional[str], optional): Backend implementation ('triton' or 'cuda'). Defaults to 'triton'.
+        device (Optional[torch.device], optional): Device to place the layer on. Defaults to None.
+        dtype (Optional[torch.dtype], optional): Data type for layer parameters. Defaults to None.
+        **kwargs: Additional keyword arguments (deprecated 'use_fast_conv1d' supported for compatibility)
+
+    Attributes:
+        hidden_size (int): Number of channels
+        activation (Optional[str]): Selected activation function
+        backend (str): Actual backend being used (may differ from input due to availability)
+
+    Note:
+        - Uses depthwise convolution (groups=hidden_size) for efficiency
+        - Applies causal padding (kernel_size-1) to ensure no future information leakage
+        - Falls back to Triton backend if CUDA backend is unavailable
+    """
+
+    def __init__(
+        self,
+        hidden_size: int,
+        kernel_size: int,
+        bias: bool = False,
+        activation: str | None = "silu",
+        backend: str | None = "triton",
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None,
+        **kwargs,
+    ):
+        super().__init__(
+            in_channels=hidden_size,
+            out_channels=hidden_size,
+            kernel_size=kernel_size,
+            groups=hidden_size,
+            bias=bias,
+            padding=kernel_size - 1,
+            device=device,
+            dtype=dtype,
+        )
+
+        self.hidden_size = hidden_size
+        self.activation = None
+        self.cp_enabled = False
+
+        if activation is not None:
+            assert activation in ["silu", "swish"], f"Activation `{activation}` not supported yet."
+            self.activation = activation
+
+        if "use_fast_conv1d" in kwargs:
+            warnings.warn(
+                "The `use_fast_conv1d` parameter is deprecated and will be ignored. "
+                "Please use the `backend` parameter instead.",
+            )
+        import os
+
+        self.backend = os.environ.get("FLA_CONV_BACKEND", backend)
+        if backend not in ["cuda", "triton"]:
+            raise ValueError(f"Invalid backend: {backend}, must be one of ['cuda', 'triton']")
+        if backend == "cuda":
+            if causal_conv1d_fn is None:
+                warnings.warn(
+                    "The `backend` parameter is set to `cuda`, but `causal_conv1d_fn` is not available. "
+                    "Switching to the Triton implementation instead. "
+                    "Consider installing `causal_conv1d` to enable the CUDA backend.",
+                )
+                self.backend = "triton"
+
+    def extra_repr(self):
+        s = "{in_channels}, {out_channels}, kernel_size={kernel_size}, stride={stride}"
+        if self.padding != (0,) * len(self.padding):
+            s += ", padding={padding}"
+        if self.dilation != (1,) * len(self.dilation):
+            s += ", dilation={dilation}"
+        if self.output_padding != (0,) * len(self.output_padding):
+            s += ", output_padding={output_padding}"
+        if self.groups != 1:
+            s += ", groups={groups}"
+        if self.bias is None:
+            s += ", bias=False"
+        if self.padding_mode != "zeros":
+            s += ", padding_mode={padding_mode}"
+        if self.activation is not None:
+            s += ", activation={activation}"
+        s += f", backend={self.backend}"
+        return s.format(**self.__dict__)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        residual: torch.Tensor | None = None,
+        mask: torch.Tensor | None = None,
+        cache: torch.Tensor | None = None,
+        output_final_state: bool = False,
+        cu_seqlens: torch.LongTensor | None = None,
+        chunk_indices: torch.LongTensor | None = None,
+        **kwargs,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Args:
+            x (`torch.Tensor`):
+                Tensor of shape `[B, T, D]`. `B` must be 1 if `cu_seqlens` is provided.
+            residual (`Optional[torch.Tensor]`):
+                Residual tensor of shape `[B, T, D]`. Default: `None`.
+            mask (`Optional[torch.Tensor]`):
+                Attention mask dealing with padded positions.
+            cache (`Optional[torch.Tensor]`):
+                Previous cache tensor of shape `[N, D, W]`, where `W` is the kernel size.
+                If provided, the cache is updated **inplace**.
+            output_final_state (Optional[bool]):
+                Whether to output the final state of shape `[N, D, W]`. Default: `False`.
+            cu_seqlens (Optional[torch.LongTensor]):
+                Cumulative sequence lengths for each batch. Used for varlen. Default: `None`.
+                Shape: [B+1]
+            chunk_indices (Optional[torch.LongTensor]):
+                Chunk indices for variable-length sequences. Default: `None`.
+
+        Returns:
+            Tensor of shape `[B, T, D]`.
+        """
+
+        B, T, *_ = x.shape
+        N = B if cu_seqlens is None else len(cu_seqlens) - 1
+        if mask is not None:
+            if cu_seqlens is not None:
+                raise ValueError("`mask` and `cu_seqlens` cannot be provided at the same time")
+            x = x.mul_(mask.unsqueeze(-1))
+
+        # in decoding phase, the cache (if provided) is updated inplace
+        if B * T == N:
+            y, cache = self.step(
+                x=x,
+                residual=residual,
+                cache=cache,
+                output_final_state=output_final_state,
+                cu_seqlens=cu_seqlens,
+            )
+            return y, cache
+
+        # cuda backend do not support:
+        # 1. both `cu_seqlens` and `cache` being provided
+        # 2. both `cu_seqlens` and `output_final_state` being provided
+        if self.backend == "cuda" and (
+            (cu_seqlens is not None and cache is not None)
+            or (cu_seqlens is not None and output_final_state)
+        ):
+            warnings.warn(
+                "The CUDA backend does not support both `cu_seqlens` and `cache` being provided, "
+                "or both `cu_seqlens` and `output_final_state` being provided. "
+                "Switching to the Triton backend instead. ",
+                stacklevel=2,
+            )
+            self.backend = "triton"
+
+        # Get weight and bias - slice if CP is enabled
+        weight = self.weight
+        bias = self.bias
+        if self.cp_enabled:
+            # Slice to local C/CP channels
+            weight = weight[self._cp_channel_start : self._cp_channel_end]
+            if bias is not None:
+                bias = bias[self._cp_channel_start : self._cp_channel_end]
+
+        return causal_conv1d(
+            x=x,
+            weight=rearrange(weight, "d 1 w -> d w"),
+            bias=bias,
+            residual=residual,
+            initial_state=cache,
+            output_final_state=output_final_state,
+            activation=self.activation,
+            backend=self.backend,
+            cu_seqlens=cu_seqlens,
+            chunk_indices=chunk_indices,
+            **kwargs,
+        )
+
+    def step(
+        self,
+        x: torch.Tensor,
+        residual: torch.Tensor,
+        cache: torch.Tensor,
+        output_final_state: bool = False,
+        cu_seqlens: torch.LongTensor | None = None,
+    ):
+        B, _, D, W = *x.shape, self.kernel_size[0]
+        N = B if cu_seqlens is None else len(cu_seqlens) - 1
+        if output_final_state and cache is None:
+            cache = x.new_zeros(N, D, W)
+
+        # Get weight and bias - slice if CP is enabled
+        weight = self.weight
+        bias = self.bias
+        if self.cp_enabled:
+            weight = weight[self._cp_channel_start : self._cp_channel_end]
+            if bias is not None:
+                bias = bias[self._cp_channel_start : self._cp_channel_end]
+
+        # NOTE: we follow the fast mode that updates the cache in-place
+        if self.backend == "triton":
+            return causal_conv1d_update(
+                x=x,
+                cache=cache,
+                residual=residual,
+                weight=rearrange(weight, "d 1 w -> d w"),
+                bias=bias,
+                activation=self.activation,
+            )
+
+        shape = x.shape
+        x = x.squeeze(0) if cu_seqlens is not None else x.squeeze(1)
+        # equivalent to:
+        # cache.copy_(cache.roll(shifts=-1, dims=-1))
+        # cache[:, :, -1] = x
+        # y = torch.sum(cache * rearrange(self.weight, "d 1 w -> d w"), dim=-1)
+        y = causal_conv1d_update_cuda(
+            x=x,
+            conv_state=cache,
+            weight=rearrange(weight, "d 1 w -> d w"),
+            bias=bias,
+            activation=self.activation,
+        )
+        y = y.view(shape)
+        if residual is not None:
+            y.add_(residual)
+        return y, cache
+
+    @property
+    def state_size(self) -> int:
+        return self.hidden_size * self.kernel_size
+
+    def apply_cp(self, cp_mesh: DeviceMesh):
+        """
+        Configure conv for Ulysses-style context parallelism.
+
+        Instead of sharding parameters (which conflicts with FSDP), we keep the full
+        parameters and slice to the local C/CP channels during forward based on CP rank.
+
+        This way:
+        - FSDP handles the full parameters normally (no DTensor conflicts)
+        - Checkpoints save/load the full parameters
+        - Forward pass uses only the local slice for the C/CP channels this rank processes
+        """
+
+        if cp_mesh.size() == 1:
+            return
+
+        # Store CP info for slicing in forward
+        self._cp_mesh = cp_mesh
+        self._cp_world_size = cp_mesh.size()
+        self._cp_rank = cp_mesh.get_rank()
+        self.cp_enabled = True
+
+        # Compute the local channel range
+        local_channels = self.hidden_size // self._cp_world_size
+        self._cp_channel_start = self._cp_rank * local_channels
+        self._cp_channel_end = self._cp_channel_start + local_channels

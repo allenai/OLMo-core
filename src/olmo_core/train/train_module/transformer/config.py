@@ -8,7 +8,7 @@ import torch.distributed.checkpoint.state_dict as dist_cp_sd
 from torch.distributed import DeviceMesh
 from torch.distributed.pipelining import PipelineStage
 
-from olmo_core.config import Config, DType, StrEnum
+from olmo_core.config import Config, DType
 from olmo_core.distributed.parallel import (
     ContextParallelConfig,
     DataParallelConfig,
@@ -172,11 +172,6 @@ class TransformerTensorParallelConfig(TensorParallelConfig):
     """
     Transformer-specific tensor parallel config.
     """
-
-
-class ContextParallelStyle(StrEnum):
-    ring = "ring"
-    ulysses = "ulysses"
 
 
 @dataclass
