@@ -385,6 +385,26 @@ class GatedDeltaNet(nn.Module):
             g = all_to_all_cp2hp(g.unsqueeze(-1), self._cp_group).squeeze(-1)
             beta = all_to_all_cp2hp(beta.unsqueeze(-1), self._cp_group).squeeze(-1)
 
+            # Debugging: ensure lengths match expected padded full sequence
+            try:
+                world_size = dist.get_world_size(self._cp_group)
+                expected_full = q_len * world_size
+                cu_last = int(cu_seqlens[-1]) if cu_seqlens is not None else None
+                seq_len_after_a2a = q.shape[1]
+                if cu_last is not None and (
+                    cu_last != expected_full or cu_last != seq_len_after_a2a
+                ):
+                    warnings.warn(
+                        f"[GatedDeltaNet CP] Length mismatch before kernel: "
+                        f"cu_seqlens[-1]={cu_last}, "
+                        f"expected_full={expected_full}, "
+                        f"seq_len_after_a2a={seq_len_after_a2a}"
+                    )
+            except Exception:
+                # Best-effort debug; don't break training if something goes wrong here.
+                warnings.warn(f"Exception in length debug: {e}")
+                pass
+
             o, recurrent_state = chunk_gated_delta_rule(
                 q=q,
                 k=k,
