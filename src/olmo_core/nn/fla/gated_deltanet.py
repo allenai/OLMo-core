@@ -391,19 +391,26 @@ class GatedDeltaNet(nn.Module):
                 expected_full = q_len * world_size
                 cu_last = int(cu_seqlens[-1]) if cu_seqlens is not None else None
                 seq_len_after_a2a = q.shape[1]
-                if cu_last is not None and (
-                    cu_last != expected_full or cu_last != seq_len_after_a2a
-                ):
+                if cu_last is None:
+                    warnings.warn(
+                        f"[GatedDeltaNet CP] cu_seqlens is None; "
+                        f"expected_full={expected_full}, seq_len_after_a2a={seq_len_after_a2a}"
+                    )
+                elif cu_last != expected_full or cu_last != seq_len_after_a2a:
                     warnings.warn(
                         f"[GatedDeltaNet CP] Length mismatch before kernel: "
                         f"cu_seqlens[-1]={cu_last}, "
                         f"expected_full={expected_full}, "
                         f"seq_len_after_a2a={seq_len_after_a2a}"
                     )
-            except Exception:
-                # Best-effort debug; don't break training if something goes wrong here.
-                warnings.warn(f"Exception in length debug: {e}")
-                pass
+                warnings.warn(
+                    f"[GatedDeltaNet CP] Shapes before kernel: "
+                    f"q={tuple(q.shape)}, k={tuple(k.shape)}, v={tuple(v.shape)}, "
+                    f"g={tuple(g.shape)}, beta={tuple(beta.shape)}, "
+                    f"cu_last={cu_last}"
+                )
+            except Exception as e:  # pragma: no cover - best-effort debug
+                warnings.warn(f"[GatedDeltaNet CP] Exception in length debug: {e}")
 
             o, recurrent_state = chunk_gated_delta_rule(
                 q=q,
