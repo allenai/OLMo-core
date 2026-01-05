@@ -461,6 +461,18 @@ class UlyssesLoadBalancer(RingAttentionLoadBalancer):
         if cu_doc_lens[0] != 0:
             raise RuntimeError("expected 'cu_doc_lens' to start with a 0")
 
+        if length_multiple is None:
+            length_multiple = self.cp_world_size
+        elif length_multiple % self.cp_world_size != 0:
+            raise RuntimeError(
+                f"length multiple ({length_multiple}) must be divisible by "
+                f"CP degree ({self.cp_world_size})"
+            )
+
+        total_length = int(cu_doc_lens[-1])
+        padded_total_length = ensure_multiple_of(total_length, length_multiple)
+        padding_to_add = padded_total_length - total_length
+
         # Shard the inputs (handles padding to length_multiple internally)
         out = self.batch_shard(
             inputs=inputs,
@@ -469,10 +481,18 @@ class UlyssesLoadBalancer(RingAttentionLoadBalancer):
             length_multiple=length_multiple,
         )
 
-        # Compute max_doc_len from the original (unsharded) cu_doc_lens
+        # Compute max_doc_len from the (potentially padded) cu_doc_lens
         max_doc_len = (cu_doc_lens[1:] - cu_doc_lens[:-1]).max().item()
+        if padding_to_add > 0:
+            cu_doc_lens = torch.cat(
+                [
+                    cu_doc_lens,
+                    (cu_doc_lens[-1] + padding_to_add).unsqueeze(0),
+                ]
+            )
+            max_doc_len = max(max_doc_len, padding_to_add)
 
-        # Pass through the original cu_doc_lens and max_doc_len unchanged
+        # Pass through the (possibly padded) cu_doc_lens and max_doc_len
         # since Ulysses reconstructs full sequences before attention
         return out, dict(cu_doc_lens=cu_doc_lens, max_doc_len=max_doc_len)
 
