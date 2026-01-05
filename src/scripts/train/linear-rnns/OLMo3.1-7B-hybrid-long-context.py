@@ -61,9 +61,6 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
         vocab_size=common.tokenizer.padded_vocab_size(),
         # See README for how to override with flash_3 using CLI.
         attn_backend=AttentionBackendName.flash_2,
-    ).with_rope_scaling(
-        # Yarn scaling for full attention layers only
-        YaRNRoPEScalingConfig(factor=8, beta_fast=32, beta_slow=1, old_context_len=8192)
     )
 
     # Remove heads (and scale down d_model) to compensate for extra params.
@@ -95,7 +92,10 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     # Save memory by using fused linear loss implementation.
     config.lm_head.loss_implementation = LMLossImplementation.fused_linear
 
-    return config
+    return config.with_rope_scaling(
+        # Yarn scaling for full attention layers only
+        YaRNRoPEScalingConfig(factor=8, beta_fast=32, beta_slow=1, old_context_len=8192)
+    )
 
 
 def build_train_module_config(common: CommonComponents) -> TransformerTrainModuleConfig:
@@ -218,7 +218,7 @@ if __name__ == "__main__":
         trainer_config_builder=build_trainer_config,
         include_default_evals=False,
         include_instance_filter=INSTANCE_FILTER,
-        beaker_workspace="ai2/linear-rnns",
+        beaker_workspace="ai2/OLMo_3",
         use_hostname_constraints=True,
         num_execution_units=1,
     )
