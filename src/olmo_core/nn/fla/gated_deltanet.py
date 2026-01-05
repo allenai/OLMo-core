@@ -61,9 +61,10 @@ def _to_channel_parallel(x: torch.Tensor, cp_group: dist.ProcessGroup) -> torch.
     world_size = dist.get_world_size(cp_group)
     B, t_local, C = x.shape
     c_local = C // world_size
-    # Reshape to [B, T/CP, CP, C/CP] to match [B, T/CP, H, D] expected by cp2hp
-    x_4d = x.view(B, t_local, world_size, c_local)
-    # cp2hp: [B, T/CP, H, D] -> [B, T, H/CP, D] = [B, T, 1, C/CP]
+    # Reshape to [B, T/CP, C, 1] to match [B, T/CP, H, D] expected by cp2hp
+    # Here H=C (channels treated as heads) and D=1
+    x_4d = x.view(B, t_local, C, 1)
+    # cp2hp: [B, T/CP, H, D] -> [B, T, H/CP, D] = [B, T, C/CP, 1]
     out_4d = all_to_all_cp2hp(x_4d, cp_group)
     # Flatten back to 3D: [B, T, C/CP]
     return out_4d.reshape(B, t_local * world_size, c_local)
@@ -77,9 +78,10 @@ def _to_seq_parallel(x: torch.Tensor, orig_C: int, cp_group: dist.ProcessGroup) 
     world_size = dist.get_world_size(cp_group)
     B, t_full, c_local = x.shape
     t_local = t_full // world_size
-    # Reshape to [B, T, 1, C/CP] to match [B, T, H/CP, D] expected by hp2cp
-    x_4d = x.view(B, t_full, 1, c_local)
-    # hp2cp: [B, T, H/CP, D] -> [B, T/CP, H, D] = [B, T/CP, CP, C/CP]
+    # Reshape to [B, T, C/CP, 1] to match [B, T, H/CP, D] expected by hp2cp
+    # Here H/CP = C/CP (channel-partitioned) and D=1
+    x_4d = x.view(B, t_full, c_local, 1)
+    # hp2cp: [B, T, H/CP, D] -> [B, T/CP, H, D] = [B, T/CP, C, 1]
     out_4d = all_to_all_hp2cp(x_4d, cp_group)
     # Flatten back to 3D: [B, T/CP, C]
     return out_4d.reshape(B, t_local, orig_C)
