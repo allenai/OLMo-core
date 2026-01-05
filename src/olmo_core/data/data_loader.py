@@ -10,7 +10,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from itertools import islice
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Set, Tuple
 
 import bettermap
 import numpy as np
@@ -394,11 +394,13 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
         target_device_type: str = "cpu",
         shuffle: bool = True,
         ignore_fingerprint_mismatch: bool = False,
+        skip_batches: Optional[List[int]] = None,
     ) -> "NumpyDataLoaderBase":
         """
         Construct the corresponding :class:`NumpyDataLoaderBase` instance for the given :class:`NumpyDatasetBase`.
 
         :param dataset: The dataset to wrap.
+        :param skip_batches: Optional list of batch indices to skip. Only applies to FSL data loaders.
         """
         kwargs = dict(
             global_batch_size=global_batch_size,
@@ -417,7 +419,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
         )
         data_loader: DataLoaderBase
         if isinstance(dataset, NumpyFSLDatasetBase):
-            data_loader = NumpyFSLDataLoader(dataset, **kwargs)  # type: ignore
+            data_loader = NumpyFSLDataLoader(dataset, skip_batches=skip_batches, **kwargs)  # type: ignore
             if dataset.max_target_sequence_length is not None:
                 data_loader.chunk_size = (
                     dataset.max_target_sequence_length // dataset.sequence_length
@@ -618,11 +620,13 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
         dataset: NumpyFSLDatasetBase,
         *,
         chunk_size: int = 1,
+        skip_batches: Optional[List[int]] = None,
         **kwargs,
     ):
         assert chunk_size >= 1
         super().__init__(dataset, **kwargs)
         self.chunk_size = chunk_size
+        self._skip_batches: Set[int] = set(skip_batches) if skip_batches is not None else set()
         assert isinstance(self.dataset, NumpyFSLDatasetBase)
         if self.rank_batch_size % self.dataset.sequence_length != 0:
             raise OLMoConfigurationError(
@@ -643,6 +647,16 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
     def total_batches(self) -> int:
         assert isinstance(self.dataset, NumpyFSLDatasetBase)
         return self.total_size // (self.global_batch_size // self.dataset.sequence_length)
+
+    @property
+    def skip_batches(self) -> Set[int]:
+        """
+        The set of batch indices to skip during iteration.
+
+        Batch indices are 0-based and refer to global batch indices within the current epoch.
+        When a batch index is in this set, that batch will be skipped during iteration.
+        """
+        return self._skip_batches
 
     @property
     def _global_indices_file(self) -> Path:
@@ -726,6 +740,19 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
         if self.batches_processed > 0:
             indices = indices[self.batches_processed :]
 
+        # Filter out skipped batches if any are specified.
+        # skip_batches contains absolute batch indices (0-based within the epoch).
+        # After batches_processed offset, indices[i] corresponds to batch (i + batches_processed).
+        if self._skip_batches:
+            batch_mask = np.array(
+                [
+                    (i + self.batches_processed) not in self._skip_batches
+                    for i in range(indices.shape[0])
+                ],
+                dtype=bool,
+            )
+            indices = indices[batch_mask]
+
         # Slice batches by data loader worker rank to avoid duplicates.
         if (worker_info := self.worker_info) is not None:
             # Note that each data loading worker gathers a whole batch at a time, and the workers
@@ -744,6 +771,7 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
         state_dict["dataset_type"] = "fsl"
         state_dict["sequence_length"] = self.dataset.sequence_length
         state_dict["max_target_sequence_length"] = self.dataset.max_target_sequence_length
+        state_dict["skip_batches"] = sorted(self._skip_batches)
         return state_dict
 
     def load_state_dict(self, state_dict: Dict[str, Any]):
@@ -767,6 +795,10 @@ class NumpyFSLDataLoader(NumpyDataLoaderBase):
                 "Restoring an FSL dataset state with a different 'max_target_sequence_length' "
                 "is not supported"
             )
+
+        # Restore skip_batches if present in state dict.
+        if "skip_batches" in state_dict:
+            self._skip_batches = set(state_dict["skip_batches"])
 
 
 class NumpyVSLDataLoader(NumpyDataLoaderBase):
@@ -1094,6 +1126,7 @@ class NumpyDataLoaderConfig(Config):
     prefetch_factor: Optional[int] = None
     target_device_type: Optional[str] = None
     ignore_fingerprint_mismatch: bool = False
+    skip_batches: Optional[List[int]] = None
 
     def build(
         self,
@@ -1139,5 +1172,6 @@ class NumpyDataLoaderConfig(Config):
             prefetch_factor=self.prefetch_factor,
             target_device_type=self.target_device_type or get_default_device().type,
             ignore_fingerprint_mismatch=self.ignore_fingerprint_mismatch,
+            skip_batches=self.skip_batches,
         )
         return data_loader
