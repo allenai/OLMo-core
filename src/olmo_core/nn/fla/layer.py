@@ -5,215 +5,18 @@ from typing import Optional
 import torch
 from torch import nn
 from torch.distributed import DeviceMesh
-from torch.distributed.tensor import (
-    DTensor,
-    Replicate,
-    Shard,
-    distribute_module,
-    distribute_tensor,
-)
-from torch.distributed.tensor.parallel import ParallelStyle
 from torch.distributed.tensor.placement_types import Placement
 
 from olmo_core.config import Config, DType
 from olmo_core.distributed.parallel import RingContextParallelStyle, UlyssesContextParallelStyle
-from olmo_core.distributed.utils import get_local_tensor
 
 log = logging.getLogger(__name__)
-
-
-class ShardParameters(ParallelStyle):
-    """
-    A ParallelStyle that shards multiple parameters on the module as DTensors.
-
-    This is used for parameters like A_log and dt_bias in GatedDeltaNet that are
-    nn.Parameter attributes directly on the module, not inside submodules like nn.Linear.
-
-    Use with the "" (empty string) key in a parallelize_plan to apply to the current module.
-
-    Args:
-        param_specs: List of (param_name, shard_dim) tuples specifying which parameters
-            to shard and on which dimension.
-
-    Example:
-        plan = {
-            "": ShardParameters([("A_log", 0), ("dt_bias", 0)]),
-            "A_log_id": PrepareModuleOutput(..., use_local_output=True),
-        }
-    """
-
-    def __init__(self, param_specs: list[tuple[str, int]]):
-        super().__init__()
-        self.param_specs = param_specs
-
-    def _apply(self, module: nn.Module, device_mesh: DeviceMesh) -> nn.Module:
-        for param_name, shard_dim in self.param_specs:
-            if hasattr(module, param_name):
-                param = getattr(module, param_name)
-                if param is not None and not isinstance(param, DTensor):
-                    new_param = nn.Parameter(
-                        distribute_tensor(param, device_mesh, [Shard(shard_dim)])
-                    )
-                    setattr(module, param_name, new_param)
-        return module
-
-
-class ShardModule(ParallelStyle):
-    """
-    A ParallelStyle that shards all parameters of a module as DTensors, converting
-    them to local tensors before forward pass for Triton kernel compatibility.
-
-    This is necessary for modules like ShortConvolution whose Triton kernels cannot
-    work with DTensors directly - they bypass PyTorch's dispatch and access raw data.
-
-    The approach:
-    1. Shard or replicate parameters as DTensors via distribute_module (for checkpoint compatibility)
-    2. Register forward hooks to swap DTensor params to local tensors during forward,
-       then restore DTensors after forward for checkpoint compatibility.
-    3. Disable torch.compile on the module to avoid graph tracing issues with the hooks.
-
-    Args:
-        shard_dim: Dimension to shard all parameters on. Default: 0.
-        placements: Optional list of placements to use instead of sharding (e.g., [Replicate()]).
-    """
-
-    def __init__(self, shard_dim: int = 0, placements: Optional[list[Placement]] = None):
-        super().__init__()
-        self.shard_dim = shard_dim
-        self.placements = placements
-
-    def _partition_fn(self, name: str, module: nn.Module, device_mesh: DeviceMesh):
-        # Shard all parameters on the specified dimension
-        for param_name, param in module.named_parameters():
-            if param is not None and not isinstance(param, DTensor):
-                placements = self.placements or [Shard(self.shard_dim)]
-                new_param = nn.Parameter(distribute_tensor(param, device_mesh, placements))
-                module.register_parameter(param_name, new_param)
-
-    def _apply(self, module: nn.Module, device_mesh: DeviceMesh) -> nn.Module:
-        # First, shard parameters as DTensors
-        distribute_module(module, device_mesh, self._partition_fn)
-
-        # Cache DTensor params and their local versions once
-        dtensor_params: dict[str, DTensor] = {}
-        local_params: dict[str, nn.Parameter] = {}
-        for name, param in list(module.named_parameters(recurse=False)):
-            if isinstance(param, DTensor):
-                dtensor_params[name] = param
-                local_params[name] = nn.Parameter(
-                    param.to_local(), requires_grad=param.requires_grad
-                )
-
-        # Wrap the forward method to swap DTensor params to local tensors,
-        original_forward = module.forward
-
-        def wrapped_forward(*args, **kwargs):
-            local_args = tuple(get_local_tensor(arg) for arg in args)
-            local_kwargs = {
-                key: get_local_tensor(value) if isinstance(value, torch.Tensor) else value
-                for key, value in kwargs.items()
-            }
-            # Swap to local params for Triton kernel compatibility
-            for name, local_param in local_params.items():
-                setattr(module, name, local_param)
-            try:
-                return original_forward(*local_args, **local_kwargs)
-            finally:
-                # Restore DTensor params for checkpoint compatibility
-                for name, dtensor_param in dtensor_params.items():
-                    setattr(module, name, dtensor_param)
-
-        for name, local_param in local_params.items():
-            dtensor_param = dtensor_params[name]
-
-            def _copy_grad_to_dtensor(local_grad, *, dtensor_param=dtensor_param):
-                if local_grad is None:
-                    return None
-
-                dtensor_grad = distribute_tensor(
-                    local_grad, dtensor_param.device_mesh, dtensor_param.placements
-                )
-                if dtensor_param.grad is None:
-                    dtensor_param.grad = dtensor_grad
-                else:
-                    dtensor_param.grad += dtensor_grad
-
-                # Avoid keeping grads on the temporary local parameter.
-                return None
-
-            local_param.register_hook(_copy_grad_to_dtensor)
-
-        module.forward = wrapped_forward  # type: ignore[method-assign]
-
-        return module
-
-
-class LocalInputModule(ParallelStyle):
-    """
-    A ParallelStyle that uses distribute_module with input_fn/output_fn to convert DTensor
-    inputs to local tensors for Triton kernel compatibility.
-
-    This is necessary for modules like FusedRMSNormGated whose Triton kernels cannot
-    work with DTensors directly - they bypass PyTorch's dispatch and access raw data.
-
-    Args:
-        output_layout: Optional placement for the output. If None, output remains a local tensor.
-    """
-
-    def __init__(self, output_layout: Optional[Placement] = None):
-        super().__init__()
-        self.output_layout = output_layout
-
-    @staticmethod
-    def _replicate_module_fn(name: str, module: nn.Module, device_mesh: DeviceMesh) -> None:
-        """Replicate all parameters across the mesh (no sharding)."""
-        from torch.distributed.tensor import distribute_tensor
-
-        for param_name, param in module.named_parameters(recurse=False):
-            if param is not None and not isinstance(param, DTensor):
-                new_param = nn.Parameter(distribute_tensor(param, device_mesh, [Replicate()]))
-                module.register_parameter(param_name, new_param)
-
-    @staticmethod
-    def _prepare_input_fn(mod: nn.Module, inputs: tuple, device_mesh: DeviceMesh) -> tuple:
-        """Convert DTensor inputs to local tensors."""
-        del mod, device_mesh
-        from olmo_core.distributed.utils import get_local_tensor
-
-        return tuple(get_local_tensor(arg) if isinstance(arg, DTensor) else arg for arg in inputs)
-
-    @staticmethod
-    def _prepare_output_fn(
-        output_layout: Optional[Placement],
-        mod: nn.Module,
-        outputs: torch.Tensor,
-        device_mesh: DeviceMesh,
-    ) -> torch.Tensor:
-        """Convert output back to DTensor if output_layout is specified."""
-        del mod
-        if output_layout is not None and not isinstance(outputs, DTensor):
-            from torch.distributed.tensor import distribute_tensor
-
-            return distribute_tensor(outputs, device_mesh, [output_layout])
-        return outputs
-
-    def _apply(self, module: nn.Module, device_mesh: DeviceMesh) -> nn.Module:
-        from functools import partial
-
-        return distribute_module(
-            module,
-            device_mesh,
-            partition_fn=self._replicate_module_fn,
-            input_fn=self._prepare_input_fn,  # type: ignore[arg-type]
-            output_fn=partial(self._prepare_output_fn, self.output_layout),  # type: ignore[arg-type]
-        )
 
 
 class FLA(nn.Module):
     def __init__(self, inner: "fla.layers.ABCAttention"):
         super().__init__()
         self.inner = inner
-
         self.kv_cache_manager = None
 
     def init_kv_cache_manager(self, batch_size: int):
@@ -226,7 +29,6 @@ class FLA(nn.Module):
         **_kwargs,
     ) -> torch.Tensor:
         # FIXME: Right now we just ignore the kwargs.
-
         if self.kv_cache_manager is not None and self.kv_cache_manager.current_position() == 0:
             raise NotImplementedError()  # prefill
         elif self.kv_cache_manager is not None:
@@ -242,13 +44,7 @@ class FLA(nn.Module):
         use_local_output: bool = True,
         float8_enabled: bool = False,
     ):
-        self.inner.apply_tp(
-            tp_mesh,
-            input_layout,
-            output_layout,
-            use_local_output,
-            float8_enabled,
-        )
+        raise NotImplementedError()
 
     def apply_cp(
         self,

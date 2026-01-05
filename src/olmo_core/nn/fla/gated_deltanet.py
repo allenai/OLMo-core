@@ -21,12 +21,6 @@ except ImportError:
     causal_conv1d_fn = None
 from fla.ops.gated_delta_rule import chunk_gated_delta_rule, fused_recurrent_gated_delta_rule
 from torch.distributed.device_mesh import DeviceMesh
-from torch.distributed.tensor import Replicate, Shard
-from torch.distributed.tensor.parallel import (
-    PrepareModuleOutput,
-    parallelize_module,
-)
-from torch.distributed.tensor.placement_types import Placement
 from torch.nn import functional as F
 
 from olmo_core.distributed.parallel import RingContextParallelStyle
@@ -35,8 +29,6 @@ from olmo_core.distributed.parallel.context_parallel import (
     all_to_all_cp2hp,
     all_to_all_hp2cp,
 )
-from olmo_core.distributed.utils import get_local_tensor
-from olmo_core.nn.utils import get_tp_wrappers
 
 if TYPE_CHECKING:
     from fla.models.utils import Cache
@@ -209,8 +201,6 @@ class GatedDeltaNet(nn.Module):
         A = torch.empty(self.num_v_heads, dtype=torch.float32).uniform_(0, 16)
         self.A_log = nn.Parameter(torch.log(A))
         self.A_log._no_weight_decay = True
-        self.A_log_id = nn.Identity()
-        self.g_id = nn.Identity()
         # hard coded for now
         dt_min = 0.001
         dt_max = 0.1
@@ -225,7 +215,6 @@ class GatedDeltaNet(nn.Module):
         # Just to be explicit. Without this we already don't put wd on dt_bias because of the check
         # name.endswith("bias") in param_grouping.py
         self.dt_bias._no_weight_decay = True
-        self.dt_bias_id = nn.Identity()
 
         if use_short_conv:
             self.conv_size = conv_size
@@ -279,10 +268,6 @@ class GatedDeltaNet(nn.Module):
                 "Arbitrary attention masks of shape [batch_size, seq_len, seq_len] are not allowed."
             )
 
-        hidden_states = get_local_tensor(hidden_states)
-        if attention_mask is not None:
-            attention_mask = get_local_tensor(attention_mask)
-
         batch_size, q_len, _ = hidden_states.shape
         # change to inference mode.
         mode = "fused_recurrent" if (q_len <= 64 and not self.training) else self.mode
@@ -296,8 +281,6 @@ class GatedDeltaNet(nn.Module):
             last_state = past_key_values[self.layer_idx]
 
         cu_seqlens = kwargs.get("cu_seqlens")
-        if cu_seqlens is not None:
-            cu_seqlens = get_local_tensor(cu_seqlens)
         if self.cp_enabled:
             if batch_size != 1:
                 raise AssertionError("Context parallelism only supports batch_size == 1")
@@ -320,9 +303,9 @@ class GatedDeltaNet(nn.Module):
                 conv_state_q, conv_state_k, conv_state_v = last_state["conv_state"]
 
             # Get projected values
-            q_proj = get_local_tensor(self.q_proj(hidden_states))  # [B, T/CP, key_dim]
-            k_proj = get_local_tensor(self.k_proj(hidden_states))  # [B, T/CP, key_dim]
-            v_proj = get_local_tensor(self.v_proj(hidden_states))  # [B, T/CP, value_dim]
+            q_proj = self.q_proj(hidden_states)  # [B, T/CP, key_dim]
+            k_proj = self.k_proj(hidden_states)  # [B, T/CP, key_dim]
+            v_proj = self.v_proj(hidden_states)  # [B, T/CP, value_dim]
 
             if self.cp_enabled and self.uly is not None:
                 assert self._cp_group is not None
@@ -358,13 +341,9 @@ class GatedDeltaNet(nn.Module):
                 k = _to_seq_parallel(k, self.key_dim, self._cp_group)
                 v = _to_seq_parallel(v, self.value_dim, self._cp_group)
         else:
-            q = get_local_tensor(F.silu(self.q_proj(hidden_states)))
-            k = get_local_tensor(F.silu(self.k_proj(hidden_states)))
-            v = get_local_tensor(F.silu(self.v_proj(hidden_states)))
-
-        q = get_local_tensor(q)
-        k = get_local_tensor(k)
-        v = get_local_tensor(v)
+            q = F.silu(self.q_proj(hidden_states))
+            k = F.silu(self.k_proj(hidden_states))
+            v = F.silu(self.v_proj(hidden_states))
 
         q, k = map(lambda x: rearrange(x, "... (h d) -> ... h d", d=self.head_k_dim), (q, k))
         v = rearrange(v, "... (h d) -> ... h d", d=self.head_v_dim)
@@ -375,15 +354,13 @@ class GatedDeltaNet(nn.Module):
                 (q, k),
             )
 
-        beta = get_local_tensor(self.b_proj(hidden_states)).sigmoid()
+        beta = self.b_proj(hidden_states).sigmoid()
         if self.allow_neg_eigval:
             beta = beta * 2.0
 
-        a = get_local_tensor(self.a_proj(hidden_states))
-        g = -self.A_log_id(self.A_log).float().exp() * F.softplus(
-            a.float() + self.dt_bias_id(self.dt_bias)
+        g = -self.A_log.float().exp() * F.softplus(
+            self.a_proj(hidden_states).float() + self.dt_bias
         )
-        g = self.g_id(get_local_tensor(g))
 
         recurrent_state = last_state["recurrent_state"] if last_state is not None else None
         if self.cp_enabled and self.uly is not None:
@@ -512,68 +489,6 @@ class GatedDeltaNet(nn.Module):
             self.q_conv1d.apply_cp(cp_mesh)
             self.k_conv1d.apply_cp(cp_mesh)
             self.v_conv1d.apply_cp(cp_mesh)
-
-    def apply_tp(
-        self,
-        tp_mesh: DeviceMesh,
-        input_layout: Optional[Placement] = None,
-        output_layout: Optional[Placement] = None,
-        use_local_output: bool = True,
-        float8_enabled: bool = False,
-    ):
-        if float8_enabled:
-            raise NotImplementedError("float8 is not yet supported for GatedDeltaNet")
-
-        rowwise_parallel, colwise_parallel, prepare_module_input = get_tp_wrappers(
-            float8_enabled=float8_enabled
-        )
-        parallelize_module(
-            self,
-            device_mesh=tp_mesh,
-            parallelize_plan=prepare_module_input(
-                input_layouts=None if input_layout is None else (input_layout,),
-                desired_input_layouts=(Replicate(),),
-            ),
-        )
-
-        from olmo_core.nn.fla.layer import LocalInputModule, ShardModule, ShardParameters
-
-        plan = {
-            # Shard A_log and dt_bias as DTensors (for checkpoint compatibility).
-            # "" targets the current module (self).
-            "": ShardParameters([("A_log", 0), ("dt_bias", 0)]),
-            "q_proj": colwise_parallel(),
-            "k_proj": colwise_parallel(),
-            "v_proj": colwise_parallel(),
-            "a_proj": colwise_parallel(),
-            "b_proj": colwise_parallel(),
-            # Convert DTensor inputs to local tensors for Triton kernel compatibility
-            "o_norm": LocalInputModule(),
-            "o_proj": rowwise_parallel(
-                output_layouts=output_layout, use_local_output=use_local_output
-            ),
-            # Convert sharded DTensor parameters to local tensors for FLA's Triton kernels.
-            "A_log_id": PrepareModuleOutput(
-                output_layouts=(Shard(0),),
-                desired_output_layouts=(Shard(0),),
-                use_local_output=True,
-            ),
-            "dt_bias_id": PrepareModuleOutput(
-                output_layouts=(Shard(0),),
-                desired_output_layouts=(Shard(0),),
-                use_local_output=True,
-            ),
-        }
-        if self.use_gate:
-            plan["g_proj"] = colwise_parallel()
-
-        if self.use_short_conv:
-            # Replicate conv weights for checkpointing but use local tensors during forward for Triton.
-            plan["q_conv1d"] = ShardModule(placements=[Replicate()])
-            plan["k_conv1d"] = ShardModule(placements=[Replicate()])
-            plan["v_conv1d"] = ShardModule(placements=[Replicate()])
-
-        parallelize_module(module=self, device_mesh=tp_mesh, parallelize_plan=plan)
 
 
 class ShortConvolution(nn.Conv1d):
@@ -748,8 +663,7 @@ class ShortConvolution(nn.Conv1d):
             if bias is not None:
                 bias = bias[self._cp_channel_start : self._cp_channel_end]
 
-        # Rearrange weight and ensure contiguous for Triton kernel
-        weight = rearrange(weight, "d 1 w -> d w").contiguous()
+        weight = rearrange(weight, "d 1 w -> d w")
 
         # Debug: verify shapes match
         expected_channels = weight.shape[0]
@@ -762,9 +676,9 @@ class ShortConvolution(nn.Conv1d):
         )
 
         return causal_conv1d(
-            x=x.contiguous(),
+            x=x,
             weight=weight,
-            bias=bias.contiguous() if bias is not None else None,
+            bias=bias,
             residual=residual,
             initial_state=cache,
             output_final_state=output_final_state,
