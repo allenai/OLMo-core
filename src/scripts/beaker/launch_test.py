@@ -7,7 +7,11 @@ from typing import List
 
 from rich import print
 
-from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
+from olmo_core.launch.beaker import (
+    BeakerEnvSecret,
+    BeakerLaunchConfig,
+    OLMoCoreBeakerImage,
+)
 from olmo_core.utils import generate_uuid, prepare_cli_environment
 
 
@@ -27,7 +31,9 @@ def build_config(command: List[str], overrides: List[str]) -> BeakerLaunchConfig
         num_nodes=1,
         num_gpus=2,
         shared_filesystem=True,
-        #  host_networking=False,
+        env_secrets=[
+            BeakerEnvSecret(name="HF_TOKEN", secret="HF_TOKEN"),
+        ],
     ).merge(overrides)
 
 

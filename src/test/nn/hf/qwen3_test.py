@@ -1,3 +1,5 @@
+import os
+
 import pytest
 import torch
 
@@ -6,8 +8,9 @@ from olmo_core.nn.transformer import TransformerConfig
 
 
 try:
-    from transformers import Qwen3Config
+    from transformers import AutoModelForCausalLM, Qwen3Config
 except ImportError:
+    AutoModelForCausalLM = None
     Qwen3Config = None
 
 
@@ -62,3 +65,44 @@ def test_qwen3_conversion_mappings():
             converted_state[f"blocks.{i}.feed_forward_norm.weight"],
             hf_state[f"model.layers.{i}.post_attention_layernorm.weight"],
         )
+
+
+@pytest.mark.skipif(
+    AutoModelForCausalLM is None or Qwen3Config is None,
+    reason="transformers not available",
+)
+@pytest.mark.skipif(
+    not os.environ.get("HF_TOKEN"),
+    reason="HF_TOKEN not set",
+)
+def test_qwen3_matches_huggingface():
+    model_name = "Qwen/Qwen3-0.6B"
+
+    hf_model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        torch_dtype=torch.float32,
+        token=os.environ.get("HF_TOKEN"),
+    )
+    hf_model.eval()
+    hf_config = hf_model.config
+
+    olmo_config = TransformerConfig.qwen3_0_6B(
+        vocab_size=hf_config.vocab_size,
+    )
+    olmo_model = olmo_config.build(init_device="cpu")
+
+    converted_state = convert_state_from_hf(
+        hf_config,
+        hf_model.state_dict(),
+        model_type="qwen3",
+    )
+    olmo_model.load_state_dict(converted_state)
+    olmo_model.eval()
+
+    input_ids = torch.randint(0, 1000, (2, 16))
+
+    with torch.no_grad():
+        hf_logits = hf_model(input_ids).logits
+        olmo_logits = olmo_model(input_ids)
+
+    torch.testing.assert_close(hf_logits, olmo_logits, rtol=1e-4, atol=1e-4)
