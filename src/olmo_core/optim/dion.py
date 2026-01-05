@@ -28,15 +28,18 @@ class DionConfig(MatrixAwareOptimConfig):
     """
     Configuration class for building a :class:`Dion` optimizer.
 
-    Dion is a Muon-like optimizer that is designed to be scalable for DP-replicated, DP-shareded,
+    Dion is a Muon-like optimizer that is designed to be scalable for DP-replicated, DP-sharded,
     and TP-sharded models. See https://arxiv.org/abs/2504.05295 for more details.
 
-    Matrix-aware optimizers require a different optimizer for matrix parameters than for vector
-    and embedding parameters. This optimizer is backed by AdamW for vector and embedding parameters.
+    Dion supports FSDP, HSDP, and TP parallelism strategies. Flattened mesh dimensions (eg. "dp_ep"
+    and "dp_cp") can be supported but are currently not implemented.
     """
 
     lr: float = 0.01
-    """Shared lr for Dion and AdamW"""
+    """
+    Base learning rate. For Dion, this will be scaled based on the matrix dimensions. For AdamW,
+    this is the actual learning rate and no additional scaling is done.
+    """
 
     mu: float = 0.95
     """Momentum for Dion"""
@@ -49,6 +52,12 @@ class DionConfig(MatrixAwareOptimConfig):
 
     rank_fraction: float = 1.0
     """Rank fraction for Dion. Set to 1.0 for full-rank optimization."""
+
+    rank_multiple_of: int = 1
+    """
+    Round up the low-rank dimension to a multiple of this number.
+    This may be useful to ensure even sharding.
+    """
 
     @classmethod
     def optimizer(cls) -> Type["Dion"]:
@@ -79,6 +88,7 @@ class DionConfig(MatrixAwareOptimConfig):
             # lr scaled by sqrt(model_dim) for lm_head as suggested in the paper
             opts=dict(algorithm="adamw", lr=self.lr / math.sqrt(model_dim)),
         )
+
         return [matrix_override, vector_override, embed_override, lm_head_override]
 
     def build_parallelism_config(self) -> dict[str, DeviceMesh | None]:
@@ -100,9 +110,9 @@ class DionConfig(MatrixAwareOptimConfig):
             "outer_shard_mesh": None,  # parameter sharding mesh, replicated during orthogonalization
             "inner_shard_mesh": None,  # parameter sharding mesh, remains sharded during orthogonalization
         }
-
         if world_mesh is None:
             return meshes
+
         dim_names = world_mesh.mesh_dim_names
         if dim_names is None:
             raise RuntimeError("world mesh has no dimension names")
@@ -122,6 +132,8 @@ class DionConfig(MatrixAwareOptimConfig):
         if MeshDimName.tp in dim_names:
             # TP configuration
             meshes["inner_shard_mesh"] = get_tp_mesh(world_mesh)
+
+        log.info(f"Dion parallelism_config: {meshes}")
         return meshes
 
     def create_optimizer(self, model: torch.nn.Module, strict: bool = True, **kwargs) -> "Dion":

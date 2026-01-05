@@ -11,13 +11,12 @@ from olmo_core.distributed.parallel import (
 )
 from olmo_core.nn.transformer.config import TransformerConfig
 from olmo_core.nn.transformer.model import Transformer
-from olmo_core.optim.dion import DionConfig
+from olmo_core.optim.muon import MuonConfig
 from olmo_core.testing import DEVICES, requires_multi_gpu, run_distributed_test
 from olmo_core.testing.utils import requires_dion
 from olmo_core.train.train_module.transformer.common import parallelize_model
 from olmo_core.train.train_module.transformer.config import (
     TransformerDataParallelConfig,
-    TransformerTensorParallelConfig,
 )
 from olmo_core.utils import get_default_device, seed_all
 
@@ -29,15 +28,15 @@ def build_transformer_model() -> Transformer:
 
 
 @requires_dion
-def test_dion_config_to_optim():
-    from dion import Dion  # type: ignore[reportMissingImports]
+def test_muon_config_to_optim():
+    from dion import Muon  # type: ignore[reportMissingImports]
 
-    config = DionConfig()
+    config = MuonConfig()
 
     model = build_transformer_model()
     optim = config.build(model)
 
-    assert isinstance(optim, Dion)
+    assert isinstance(optim, Muon)
     assert len(optim.param_groups) == 4  # emb, matrix, vector, lm_head
 
     assert config.merge(["lr=1e-1"]).lr == 0.1
@@ -45,8 +44,8 @@ def test_dion_config_to_optim():
 
 @requires_dion
 @pytest.mark.parametrize("device", DEVICES)
-def test_dion(device: torch.device, tmp_path):
-    config = DionConfig()
+def test_muon(device: torch.device, tmp_path):
+    config = MuonConfig()
 
     model = build_transformer_model().train().to(device)
     optim = config.build(model)
@@ -70,7 +69,7 @@ def test_dion(device: torch.device, tmp_path):
         assert group["initial_lr"] == original_lr
 
 
-def _run_hsdp_dion(shard_degree: int, num_replicas: int):
+def _run_hsdp_muon(shard_degree: int, num_replicas: int):
     device = get_default_device()
 
     # HSDP Transformer
@@ -83,8 +82,8 @@ def _run_hsdp_dion(shard_degree: int, num_replicas: int):
     model.train()
     model = parallelize_model(model, world_mesh=world_mesh, device=device, dp_config=dp_config)
 
-    # Create the Dion optimizer
-    optim_config = DionConfig()
+    # Create the Muon optimizer
+    optim_config = MuonConfig()
     optim = optim_config.create_optimizer(model)
 
     # Fwd-bwd
@@ -93,7 +92,7 @@ def _run_hsdp_dion(shard_degree: int, num_replicas: int):
     logits = model(input_ids)
     logits.sum().backward()
 
-    # Take optimizer step to test Dion with HSDP
+    # Take optimizer step to test Muon with HSDP
     optim.step()
 
 
@@ -106,30 +105,30 @@ def _run_hsdp_dion(shard_degree: int, num_replicas: int):
         pytest.param(1, 2, id="shard1_replica2"),
     ],
 )
-def test_hsdp_dion(shard_degree: int, num_replicas: int):
+def test_hsdp_muon(shard_degree: int, num_replicas: int):
     seed_all(0)
     run_distributed_test(
-        _run_hsdp_dion,
+        _run_hsdp_muon,
         backend="nccl",
+        start_method="spawn",
         world_size=2,
         func_args=(shard_degree, num_replicas),
     )
 
 
-def _run_tensor_parallel_dion():
+def _run_fsdp_muon():
     device = get_default_device()
-    world_size = torch.distributed.get_world_size()
 
-    # Tensor-parallel Transformer
-    tp_config = TransformerTensorParallelConfig(degree=world_size)
-    world_mesh = build_world_mesh(tp=tp_config, device_type=device.type)
+    # FSDP Transformer
+    dp_config = TransformerDataParallelConfig(name=DataParallelType.fsdp)
+    world_mesh = build_world_mesh(dp=dp_config, device_type=device.type)
     config = TransformerConfig.olmo2_30M(vocab_size=1024)
     model = config.build(init_device=device.type)
     model.train()
-    model = parallelize_model(model, world_mesh=world_mesh, device=device, tp_config=tp_config)
+    model = parallelize_model(model, world_mesh=world_mesh, device=device, dp_config=dp_config)
 
-    # Create the Dion optimizer
-    optim_config = DionConfig()
+    # Create the Muon optimizer
+    optim_config = MuonConfig()
     optim = optim_config.create_optimizer(model)
 
     # Fwd-bwd
@@ -138,12 +137,17 @@ def _run_tensor_parallel_dion():
     logits = model(input_ids)
     logits.sum().backward()
 
-    # Take optimizer step to test Dion with tensor parallelism
+    # Take optimizer step to test Muon with FSDP
     optim.step()
 
 
 @requires_dion
 @requires_multi_gpu
-def test_tensor_parallel_dion():
+def test_fsdp_muon():
     seed_all(0)
-    run_distributed_test(_run_tensor_parallel_dion, backend="nccl")
+    run_distributed_test(
+        _run_fsdp_muon,
+        backend="nccl",
+        start_method="spawn",
+        world_size=2,
+    )

@@ -247,6 +247,12 @@ class MatrixAwareOptimConfig(OptimConfig, Generic[Opt]):
             f"lm_head.{n}" for n, p in model.lm_head.named_parameters() if p.ndim >= 2
         ]
 
+        # Assert all parameters are categorized
+        all_model_params = {n for n, p in model.named_parameters() if p.requires_grad}
+        categorized_params = set(embed_params + matrix_params + vector_params + lm_head_params)
+        uncategorized = all_model_params - categorized_params
+        assert not uncategorized, f"Uncategorized parameters: {uncategorized}"
+
         return {
             "embed": embed_params,
             "matrix": matrix_params,
@@ -317,8 +323,12 @@ class MatrixAwareOptimConfig(OptimConfig, Generic[Opt]):
         """
 
         kwargs = self.as_dict(exclude_private_fields=True)
-        kwargs.pop("group_overrides")
-        kwargs.pop("compile")
+        group_overrides = kwargs.pop("group_overrides")
+        if group_overrides is not None:
+            log.warning(f"group_overrides is set but will be ignored for {self.__class__.__name__}")
+        compile_opt = kwargs.pop("compile")
+        if compile_opt:
+            log.warning(f"compile is set to True but will be ignored for {self.__class__.__name__}")
         kwargs.pop("fixed_fields")
 
         optim = self.create_optimizer(model, strict=strict, **kwargs)
