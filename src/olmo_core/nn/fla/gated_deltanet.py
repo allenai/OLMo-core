@@ -377,13 +377,6 @@ class GatedDeltaNet(nn.Module):
         if self.cp_enabled and self.uly is not None:
             assert self._cp_group is not None
 
-            # DEBUG: Check for NaN before all-to-all in GatedDeltaNet
-            if torch.isnan(q).any() or torch.isnan(k).any() or torch.isnan(v).any():
-                raise RuntimeError(
-                    f"NaN in GatedDeltaNet QKV before all-to-all! "
-                    f"q_nan={torch.isnan(q).sum()}, k_nan={torch.isnan(k).sum()}, v_nan={torch.isnan(v).sum()}"
-                )
-
             # Transform from context-parallel to head-parallel partitioning
             # [B, T/CP, H, D] -> [B, T, H/CP, D]
             q = all_to_all_cp2hp(q, self._cp_group)
@@ -391,38 +384,6 @@ class GatedDeltaNet(nn.Module):
             v = all_to_all_cp2hp(v, self._cp_group)
             g = all_to_all_cp2hp(g.unsqueeze(-1), self._cp_group).squeeze(-1)
             beta = all_to_all_cp2hp(beta.unsqueeze(-1), self._cp_group).squeeze(-1)
-
-            # DEBUG: Check for NaN after all-to-all in GatedDeltaNet
-            if torch.isnan(q).any() or torch.isnan(k).any() or torch.isnan(v).any():
-                raise RuntimeError(
-                    f"NaN in GatedDeltaNet QKV after all-to-all! "
-                    f"q.shape={q.shape}, k.shape={k.shape}, v.shape={v.shape}"
-                )
-            # DEBUG: Check g and beta for NaN/Inf
-            if torch.isnan(g).any() or torch.isnan(beta).any():
-                raise RuntimeError(
-                    f"NaN in GatedDeltaNet g or beta! "
-                    f"g_nan={torch.isnan(g).sum()}, beta_nan={torch.isnan(beta).sum()}"
-                )
-            if torch.isinf(g).any() or torch.isinf(beta).any():
-                raise RuntimeError(
-                    f"Inf in GatedDeltaNet g or beta! "
-                    f"g_inf={torch.isinf(g).sum()}, beta_inf={torch.isinf(beta).sum()}"
-                )
-
-            # DEBUG: Print value ranges going into chunk_gated_delta_rule
-            import logging
-
-            _log = logging.getLogger(__name__)
-            _log.warning(
-                f"[DEBUG chunk_gated_delta_rule inputs] "
-                f"q: min={q.min().item():.4f}, max={q.max().item():.4f}, shape={q.shape} | "
-                f"k: min={k.min().item():.4f}, max={k.max().item():.4f} | "
-                f"v: min={v.min().item():.4f}, max={v.max().item():.4f} | "
-                f"g: min={g.min().item():.4f}, max={g.max().item():.4f} | "
-                f"beta: min={beta.min().item():.4f}, max={beta.max().item():.4f} | "
-                f"cu_seqlens={cu_seqlens}"
-            )
 
             o, recurrent_state = chunk_gated_delta_rule(
                 q=q,
@@ -435,13 +396,6 @@ class GatedDeltaNet(nn.Module):
                 cu_seqlens=cu_seqlens,
                 use_qk_l2norm_in_kernel=True,
             )
-
-            # DEBUG: Check for NaN after chunk_gated_delta_rule
-            if torch.isnan(o).any():
-                raise RuntimeError(
-                    f"NaN in GatedDeltaNet after chunk_gated_delta_rule! o.shape={o.shape}, "
-                    f"cu_seqlens={cu_seqlens}, num_heads_local={q.shape[2]}"
-                )
 
             # Transform back from head-parallel to context-parallel partitioning
             # [B, T, H/CP, D] -> [B, T/CP, H, D]
