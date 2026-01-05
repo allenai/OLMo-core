@@ -94,3 +94,26 @@ def test_feed_forward_num_flops_per_token():
         f"Estimated FLOPs ({estimated_flops_per_token}) differs too much from actual ({actual_flops_per_token}), "
         f"{relative_error=:.2%}, {tolerance=:.2%}"
     )
+
+
+@pytest.mark.parametrize("activation", ["silu", "gelu_tanh"])
+def test_feed_forward_activations(activation: str):
+    seed_all(0)
+    d_model = 128
+    hidden_size = 4 * d_model
+    batch_size = 2
+    seq_len = 32
+
+    ff = FeedForward(
+        d_model=d_model, hidden_size=hidden_size, init_device="cpu", activation=activation
+    )
+
+    x = torch.randn(batch_size, seq_len, d_model)
+    y = ff(x)
+
+    assert y.shape == (batch_size, seq_len, d_model)
+    assert not torch.isnan(y).any()
+    assert not torch.isinf(y).any()
+
+    y.sum().backward()
+    assert ff.w1.weight.grad is not None

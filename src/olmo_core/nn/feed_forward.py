@@ -48,6 +48,10 @@ class FeedForwardConfig(ModuleConfig):
     """
     bias: Optional[bool] = None
     dtype: Optional[DType] = None
+    activation: str = "silu"
+    """
+    The activation function to use. Options: "silu" (default, for SwiGLU) or "gelu_tanh" (for GeGLU).
+    """
 
     def num_params(self, d_model: int) -> int:
         """
@@ -90,6 +94,7 @@ class FeedForwardConfig(ModuleConfig):
             if self.name == FeedForwardType.default:
                 return FeedForward(**kwargs)
             elif self.name == FeedForwardType.normalized:
+                kwargs.pop("activation", None)
                 return NormalizedFeedForward(**kwargs)
             else:
                 raise NotImplementedError(self.name)
@@ -101,7 +106,7 @@ class FeedForwardConfig(ModuleConfig):
 
 class FeedForward(nn.Module):
     """
-    Basic feed-forward module with SwiGLU activation.
+    Basic feed-forward module with gated activation (SwiGLU or GeGLU).
     """
 
     def __init__(
@@ -112,10 +117,12 @@ class FeedForward(nn.Module):
         bias: bool = True,
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
+        activation: str = "silu",
     ):
         super().__init__()
         self.d_model = d_model
         self.hidden_size = hidden_size
+        self.activation = activation
         self.w1 = nn.Linear(d_model, hidden_size, bias=bias, dtype=dtype, device=init_device)
         self.w2 = nn.Linear(hidden_size, d_model, bias=bias, dtype=dtype, device=init_device)
         self.w3 = nn.Linear(d_model, hidden_size, bias=bias, dtype=dtype, device=init_device)
@@ -126,6 +133,8 @@ class FeedForward(nn.Module):
 
         :param x: The input of shape ``(*, d_model)``.
         """
+        if self.activation == "gelu_tanh":
+            return self.w2(F.gelu(self.w1(x), approximate="tanh") * self.w3(x))
         return self.w2(F.silu(self.w1(x)) * self.w3(x))
 
     def apply_tp(

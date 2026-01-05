@@ -490,3 +490,52 @@ def test_transformer_num_flops_per_token():
     # Relative checks: increasing sliding window size should increase FLOPs/token.
     bigger_window = _flops_per_token(n_layers=4, swa_pattern=[128, 128, 128, 128])
     assert bigger_window > base
+
+
+def test_gemma3_1B_config_builds():
+    config = TransformerConfig.gemma3_1B(n_layers=6)
+    model = config.build(init_device="cpu")
+
+    assert config.d_model == 2304
+    assert config.n_layers == 6
+    assert config.num_params == model.num_params
+
+    assert config.block.feed_forward is not None
+    assert config.block.feed_forward.activation == "gelu_tanh"
+
+    assert config.block.attention.qk_norm is not None
+    assert config.block.attention.rope is not None
+    assert config.block.attention.rope.theta == 10_000
+
+
+def test_gemma3_block_overrides_rope_theta():
+    config = TransformerConfig.gemma3_1B(n_layers=12)
+
+    assert config.block_overrides is not None
+
+    local_count = 0
+    global_count = 0
+    for layer_idx in range(config.n_layers):
+        if layer_idx in config.block_overrides:
+            global_block = config.block_overrides[layer_idx]
+            assert global_block.attention.rope is not None
+            assert global_block.attention.rope.theta == 1_000_000
+            assert global_block.attention.sliding_window is None
+            global_count += 1
+        else:
+            assert config.block.attention.rope is not None
+            assert config.block.attention.rope.theta == 10_000
+            local_count += 1
+
+    assert global_count == 2
+    assert local_count == 10
+
+
+def test_gemma3_sliding_window_pattern():
+    config = TransformerConfig.gemma3_1B(n_layers=12)
+
+    swa = config.block.attention.sliding_window
+    assert swa is not None
+    assert swa.pattern == [1024, 1024, 1024, 1024, 1024, -1]
+    assert swa.force_full_attention_on_first_layer is False
+    assert swa.force_full_attention_on_last_layer is False

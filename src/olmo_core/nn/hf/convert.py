@@ -1,5 +1,6 @@
 from typing import Any, Dict, List
 
+import torch
 from transformers import PretrainedConfig
 
 from olmo_core.doc_utils import beta_feature
@@ -97,6 +98,11 @@ MODEL_TYPE_SPECIFIC_HF_TO_OLMO_CORE_WEIGHT_MAPPINGS: Dict[str, Dict[str, str]] =
     "llama": {
         f"model.layers.{LAYER}.post_attention_layernorm.weight": f"blocks.{LAYER}.feed_forward_norm.weight"
     },
+    "gemma3_text": {
+        f"model.layers.{LAYER}.post_attention_layernorm.weight": f"blocks.{LAYER}.post_attention_norm.weight",
+        f"model.layers.{LAYER}.pre_feedforward_layernorm.weight": f"blocks.{LAYER}.feed_forward_norm.weight",
+        f"model.layers.{LAYER}.post_feedforward_layernorm.weight": f"blocks.{LAYER}.post_feed_forward_norm.weight",
+    },
 }
 
 #: Map of Hugging Face module keys to OLMo Core module keys. This map captures overrides of the standard
@@ -106,6 +112,11 @@ MODEL_TYPE_SPECIFIC_HF_TO_OLMO_CORE_WEIGHT_MAPPINGS: Dict[str, Dict[str, str]] =
 MODEL_TYPE_SPECIFIC_HF_TO_OLMO_CORE_MODULE_MAPPINGS: Dict[str, Dict[str, str]] = {
     "llama": {
         f"model.layers.{LAYER}.post_attention_layernorm": f"blocks.{LAYER}.feed_forward_norm"
+    },
+    "gemma3_text": {
+        f"model.layers.{LAYER}.post_attention_layernorm": f"blocks.{LAYER}.post_attention_norm",
+        f"model.layers.{LAYER}.pre_feedforward_layernorm": f"blocks.{LAYER}.feed_forward_norm",
+        f"model.layers.{LAYER}.post_feedforward_layernorm": f"blocks.{LAYER}.post_feed_forward_norm",
     },
 }
 
@@ -337,6 +348,33 @@ def get_converter_from_hf(model_type: str | None = None) -> StateConverter:
     return _get_converter_from_hf(model_type=model_type)
 
 
+def _apply_gemma3_norm_transform(state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Transform Gemma 3 norm weights from HF format to OLMo format.
+
+    HF Gemma 3 uses zero-initialized RMSNorm weights with `hidden_states * (1 + weight)`,
+    while OLMo uses ones-initialized weights with `hidden_states * weight`.
+
+    This function adds 1 to all norm weights to convert between the two conventions.
+    """
+    norm_patterns = [
+        "attention_norm.weight",
+        "post_attention_norm.weight",
+        "feed_forward_norm.weight",
+        "post_feed_forward_norm.weight",
+        "lm_head.norm.weight",
+        "q_norm.weight",
+        "k_norm.weight",
+    ]
+
+    for key, value in state.items():
+        if any(pattern in key for pattern in norm_patterns):
+            if isinstance(value, torch.Tensor):
+                state[key] = value + 1.0
+
+    return state
+
+
 def _convert_state(
     config: PretrainedConfig,
     state: Dict[str, Any],
@@ -374,7 +412,12 @@ def convert_state_from_hf(
 
     converter = _get_converter_from_hf(model_type=model_type)
 
-    return _convert_state(config, hf_state, converter)
+    converted_state = _convert_state(config, hf_state, converter)
+
+    if model_type == "gemma3_text":
+        converted_state = _apply_gemma3_norm_transform(converted_state)
+
+    return converted_state
 
 
 def _get_converter_to_hf(model_type: str | None = None) -> StateConverter:
