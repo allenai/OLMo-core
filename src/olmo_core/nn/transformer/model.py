@@ -140,6 +140,7 @@ class Transformer(nn.Module):
         self._compile_enabled = False
         self._device: Optional[torch.device] = None
         self._cp_load_balancer: Optional[RingAttentionLoadBalancer] = None
+        self._cp_is_ulysses: bool = False
         self._tp_enabled = False
         self._tp_mesh: Optional[DeviceMesh] = None
         self._fsdp_enabled = False
@@ -364,7 +365,7 @@ class Transformer(nn.Module):
             max_doc_len = max(max_doc_lens)
             cu_doc_lens = get_cumulative_document_lengths(doc_lens)
 
-        # Shard inputs and RoPE buffers on sequence dimension if using ring context parallelism.
+        # Shard inputs and RoPE buffers on sequence dimension if using context parallelism.
         if (cp_load_balancer := self._cp_load_balancer) is not None:
             inputs = [input_ids]
             seq_dims = [1]
@@ -372,23 +373,28 @@ class Transformer(nn.Module):
             keys = ["input_ids"]
 
             # NOTE: initialize buffer(s) on CPU to avoid possible host-device sync when sharding.
-            for block_idx, rope_buffers in self.get_rope_buffers(S, torch.device("cpu")).items():
-                if rope_buffers is not None:
-                    if rope_buffers.pos_sin is not None:
-                        inputs.append(rope_buffers.pos_sin)
-                        seq_dims.append(0)
-                        pad_values.append(0.0)
-                        keys.append(f"block_{block_idx}.pos_sin")
-                    if rope_buffers.pos_cos is not None:
-                        inputs.append(rope_buffers.pos_cos)
-                        seq_dims.append(0)
-                        pad_values.append(0.0)
-                        keys.append(f"block_{block_idx}.pos_cos")
-                    if rope_buffers.freqs_cis is not None:
-                        inputs.append(rope_buffers.freqs_cis)
-                        seq_dims.append(0)
-                        pad_values.append(0.0)
-                        keys.append(f"block_{block_idx}.freqs_cis")
+            # For Ulysses CP, RoPE buffers are NOT sharded because RoPE is applied after
+            # all-to-all gathers the full sequence. For Ring CP, buffers must be sharded.
+            rope_buffers_dict = self.get_rope_buffers(S, torch.device("cpu"))
+            if not self._cp_is_ulysses:
+                # Ring CP: shard RoPE buffers along with other inputs
+                for block_idx, rope_buffers in rope_buffers_dict.items():
+                    if rope_buffers is not None:
+                        if rope_buffers.pos_sin is not None:
+                            inputs.append(rope_buffers.pos_sin)
+                            seq_dims.append(0)
+                            pad_values.append(0.0)
+                            keys.append(f"block_{block_idx}.pos_sin")
+                        if rope_buffers.pos_cos is not None:
+                            inputs.append(rope_buffers.pos_cos)
+                            seq_dims.append(0)
+                            pad_values.append(0.0)
+                            keys.append(f"block_{block_idx}.pos_cos")
+                        if rope_buffers.freqs_cis is not None:
+                            inputs.append(rope_buffers.freqs_cis)
+                            seq_dims.append(0)
+                            pad_values.append(0.0)
+                            keys.append(f"block_{block_idx}.freqs_cis")
 
             if labels is not None:
                 inputs.append(labels)
@@ -434,6 +440,24 @@ class Transformer(nn.Module):
                     per_block_kwargs[block_idx][key] = move_to_device(value, self.device)
                 else:
                     all_block_kwargs[key] = move_to_device(value, self.device)
+
+            # For Ulysses CP, provide unsharded RoPE buffers since RoPE is applied after
+            # all-to-all gathers the full sequence.
+            if self._cp_is_ulysses:
+                for block_idx, rope_buffers in rope_buffers_dict.items():
+                    if rope_buffers is not None:
+                        if rope_buffers.pos_sin is not None:
+                            per_block_kwargs[block_idx]["pos_sin"] = move_to_device(
+                                rope_buffers.pos_sin, self.device
+                            )
+                        if rope_buffers.pos_cos is not None:
+                            per_block_kwargs[block_idx]["pos_cos"] = move_to_device(
+                                rope_buffers.pos_cos, self.device
+                            )
+                        if rope_buffers.freqs_cis is not None:
+                            per_block_kwargs[block_idx]["freqs_cis"] = move_to_device(
+                                rope_buffers.freqs_cis, self.device
+                            )
 
             input_ids = all_block_kwargs.pop("input_ids")
             labels = all_block_kwargs.pop("labels", None)
@@ -614,6 +638,10 @@ class Transformer(nn.Module):
         """
         if ring is not None:
             self._cp_load_balancer = ring.load_balancer.build(cp_mesh)
+            self._cp_is_ulysses = False
+        elif uly is not None:
+            self._cp_load_balancer = uly.build_load_balancer(cp_mesh)
+            self._cp_is_ulysses = True
 
         for block in self.blocks.values():
             cast(TransformerBlockBase, block).apply_cp(cp_mesh, ring=ring, uly=uly)

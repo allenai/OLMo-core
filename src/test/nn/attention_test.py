@@ -28,6 +28,7 @@ from olmo_core.nn.attention import (
     RingAttentionLoadBalancerType,
     RingAttentionZigZagLoadBalancer,
     SlidingWindowAttentionConfig,
+    UlyssesLoadBalancer,
 )
 from olmo_core.nn.layer_norm import LayerNormConfig
 from olmo_core.nn.rope import RoPEConfig, RoPEType
@@ -1025,6 +1026,64 @@ def test_zig_zag_load_balancer_shard_by_document_with_padding():
             -1,
         ]
     ]
+
+
+def _get_ulysses_lb(rank: int, world_size: int) -> UlyssesLoadBalancer:
+    return UlyssesLoadBalancer(cp_rank=rank, cp_world_size=world_size)
+
+
+def test_ulysses_load_balancer_padding():
+    x, padding_added = _get_ulysses_lb(0, 4).pad(
+        torch.tensor([0, 1, 2, 3, 4, 5]).unsqueeze(0), 1, -1
+    )
+    assert x.tolist() == [[0, 1, 2, 3, 4, 5, -1, -1]]
+    assert padding_added == 2
+
+
+def test_ulysses_load_balancer_shard():
+    x = torch.tensor([0, 1, 2, 3, 4, 5, 6, 7]).unsqueeze(0)
+    # Ulysses uses contiguous sharding, so each rank gets a contiguous chunk
+    assert _get_ulysses_lb(0, 4).batch_shard(inputs=[x], seq_dims=[1])[0].tolist() == [[0, 1]]
+    assert _get_ulysses_lb(1, 4).batch_shard(inputs=[x], seq_dims=[1])[0].tolist() == [[2, 3]]
+    assert _get_ulysses_lb(2, 4).batch_shard(inputs=[x], seq_dims=[1])[0].tolist() == [[4, 5]]
+    assert _get_ulysses_lb(3, 4).batch_shard(inputs=[x], seq_dims=[1])[0].tolist() == [[6, 7]]
+
+
+def test_ulysses_load_balancer_shard_with_padding():
+    x = torch.tensor([0, 1, 2, 3, 4, 5]).unsqueeze(0)
+    # 6 tokens with CP=4 -> pads to 8 tokens, then each rank gets 2
+    assert _get_ulysses_lb(0, 4).batch_shard(inputs=[x], seq_dims=[1], pad_values=[-1])[
+        0
+    ].tolist() == [[0, 1]]
+    assert _get_ulysses_lb(1, 4).batch_shard(inputs=[x], seq_dims=[1], pad_values=[-1])[
+        0
+    ].tolist() == [[2, 3]]
+    assert _get_ulysses_lb(2, 4).batch_shard(inputs=[x], seq_dims=[1], pad_values=[-1])[
+        0
+    ].tolist() == [[4, 5]]
+    assert _get_ulysses_lb(3, 4).batch_shard(inputs=[x], seq_dims=[1], pad_values=[-1])[
+        0
+    ].tolist() == [[-1, -1]]
+
+
+def test_ulysses_load_balancer_shard_by_document():
+    x = torch.tensor(list(range(12))).unsqueeze(0)
+    cu_doc_lens = torch.tensor([0, 8, 12])
+
+    # Ulysses with CP=2: rank 0 gets tokens 0-5, rank 1 gets tokens 6-11
+    res0, opts0 = _get_ulysses_lb(0, 2).batch_shard_by_document(
+        inputs=[x], seq_dims=[1], cu_doc_lens=cu_doc_lens
+    )
+    assert res0[0].tolist() == [[0, 1, 2, 3, 4, 5]]
+    # Rank 0 has tokens 0-5: doc 0 has tokens 0-7, so local doc 0 has 6 tokens
+    assert opts0["cu_doc_lens"].tolist() == [0, 6]
+
+    res1, opts1 = _get_ulysses_lb(1, 2).batch_shard_by_document(
+        inputs=[x], seq_dims=[1], cu_doc_lens=cu_doc_lens
+    )
+    assert res1[0].tolist() == [[6, 7, 8, 9, 10, 11]]
+    # Rank 1 has tokens 6-11: doc 0 has tokens 6-7 (2 tokens), doc 1 has tokens 8-11 (4 tokens)
+    assert opts1["cu_doc_lens"].tolist() == [0, 2, 6]
 
 
 @pytest.mark.parametrize(

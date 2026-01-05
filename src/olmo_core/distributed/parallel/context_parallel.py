@@ -8,7 +8,9 @@ from olmo_core.distributed.autograd import all_to_all
 from olmo_core.distributed.utils import get_world_size
 
 if TYPE_CHECKING:
-    from olmo_core.nn.attention.ring import RingAttentionLoadBalancerType
+    from torch.distributed import DeviceMesh
+
+    from olmo_core.nn.attention.ring import RingAttentionLoadBalancerType, UlyssesLoadBalancer
 
 
 @dataclass
@@ -92,7 +94,18 @@ class UlyssesContextParallelStyle(Config):
     Configuration for Ulysses-style context parallelism.
     """
 
-    pass
+    def build_load_balancer(self, cp_mesh: "DeviceMesh") -> "UlyssesLoadBalancer":
+        """
+        Build the load balancer for Ulysses CP.
+        """
+        from olmo_core.nn.attention.ring import UlyssesLoadBalancer
+
+        pg = cp_mesh.get_group()
+        from olmo_core.distributed.utils import get_rank
+
+        cp_rank = get_rank(pg)
+        cp_world_size = get_world_size(pg)
+        return UlyssesLoadBalancer(cp_rank=cp_rank, cp_world_size=cp_world_size)
 
 
 def _get_zig_zag_load_balancer():
