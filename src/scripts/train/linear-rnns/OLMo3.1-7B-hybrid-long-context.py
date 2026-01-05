@@ -90,7 +90,7 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     )
 
     # Save memory by using fused linear loss implementation.
-    config.lm_head.loss_implementation = LMLossImplementation.fused_linearFS
+    config.lm_head.loss_implementation = LMLossImplementation.fused_linear
 
     return config
 
