@@ -469,8 +469,9 @@ class GatedDeltaNet(nn.Module):
         if uly is None:
             raise ValueError("Ulysses context parallelism is required for GatedDeltaNet CP")
 
-        # Ulysses CP requires the effective head count to be divisible by CP world size.
-        # The effective head count is num_v_heads (since q, k are expanded to match v's head count).
+        # Ulysses CP requires divisibility by CP world size for:
+        # 1. num_v_heads - for head partitioning in the recurrent kernel
+        # 2. key_dim and value_dim - for channel partitioning in the conv layers
         cp_world_size = cp_mesh.size()
         if self.num_v_heads % cp_world_size != 0:
             raise ValueError(
@@ -478,6 +479,19 @@ class GatedDeltaNet(nn.Module):
                 f"to be divisible by CP world size ({cp_world_size}). "
                 f"Consider adjusting num_v_heads or CP degree."
             )
+        if self.use_short_conv:
+            if self.key_dim % cp_world_size != 0:
+                raise ValueError(
+                    f"Ulysses context parallelism requires key_dim ({self.key_dim}) "
+                    f"to be divisible by CP world size ({cp_world_size}). "
+                    f"key_dim = num_heads * head_dim = {self.num_heads} * {self.head_dim}."
+                )
+            if self.value_dim % cp_world_size != 0:
+                raise ValueError(
+                    f"Ulysses context parallelism requires value_dim ({self.value_dim}) "
+                    f"to be divisible by CP world size ({cp_world_size}). "
+                    f"value_dim = num_v_heads * head_v_dim = {self.num_v_heads} * {self.head_v_dim}."
+                )
 
         self.uly = uly
 
@@ -732,10 +746,13 @@ class ShortConvolution(nn.Conv1d):
             if bias is not None:
                 bias = bias[self._cp_channel_start : self._cp_channel_end]
 
+        # Rearrange weight and ensure contiguous for Triton kernel
+        weight = rearrange(weight, "d 1 w -> d w").contiguous()
+
         return causal_conv1d(
-            x=x,
-            weight=rearrange(weight, "d 1 w -> d w"),
-            bias=bias,
+            x=x.contiguous(),
+            weight=weight,
+            bias=bias.contiguous() if bias is not None else None,
             residual=residual,
             initial_state=cache,
             output_final_state=output_final_state,
@@ -767,13 +784,17 @@ class ShortConvolution(nn.Conv1d):
             if bias is not None:
                 bias = bias[self._cp_channel_start : self._cp_channel_end]
 
+        # Rearrange weight and ensure contiguous for Triton/CUDA kernels
+        weight = rearrange(weight, "d 1 w -> d w").contiguous()
+        bias = bias.contiguous() if bias is not None else None
+
         # NOTE: we follow the fast mode that updates the cache in-place
         if self.backend == "triton":
             return causal_conv1d_update(
-                x=x,
+                x=x.contiguous(),
                 cache=cache,
                 residual=residual,
-                weight=rearrange(weight, "d 1 w -> d w"),
+                weight=weight,
                 bias=bias,
                 activation=self.activation,
             )
@@ -785,9 +806,9 @@ class ShortConvolution(nn.Conv1d):
         # cache[:, :, -1] = x
         # y = torch.sum(cache * rearrange(self.weight, "d 1 w -> d w"), dim=-1)
         y = causal_conv1d_update_cuda(
-            x=x,
+            x=x.contiguous(),
             conv_state=cache,
-            weight=rearrange(weight, "d 1 w -> d w"),
+            weight=weight,
             bias=bias,
             activation=self.activation,
         )
