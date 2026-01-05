@@ -66,7 +66,7 @@ def _to_channel_parallel(x: torch.Tensor, cp_group: dist.ProcessGroup) -> torch.
     # cp2hp: [B, T/CP, H, D] -> [B, T, H/CP, D] = [B, T, 1, C/CP]
     out_4d = all_to_all_cp2hp(x_4d, cp_group)
     # Flatten back to 3D: [B, T, C/CP]
-    return out_4d.view(B, t_local * world_size, c_local)
+    return out_4d.reshape(B, t_local * world_size, c_local)
 
 
 def _to_seq_parallel(x: torch.Tensor, orig_C: int, cp_group: dist.ProcessGroup) -> torch.Tensor:
@@ -82,7 +82,7 @@ def _to_seq_parallel(x: torch.Tensor, orig_C: int, cp_group: dist.ProcessGroup) 
     # hp2cp: [B, T, H/CP, D] -> [B, T/CP, H, D] = [B, T/CP, CP, C/CP]
     out_4d = all_to_all_hp2cp(x_4d, cp_group)
     # Flatten back to 3D: [B, T/CP, C]
-    return out_4d.view(B, t_local, orig_C)
+    return out_4d.reshape(B, t_local, orig_C)
 
 
 class GatedDeltaNet(nn.Module):
