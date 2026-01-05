@@ -20,7 +20,7 @@ from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.fla.layer import FLAConfig
 from olmo_core.nn.lm_head import LMLossImplementation
 from olmo_core.nn.rope import YaRNRoPEScalingConfig
-from olmo_core.nn.transformer import TransformerConfig
+from olmo_core.nn.transformer import TransformerActivationCheckpointingMode, TransformerConfig
 from olmo_core.nn.transformer.config import TransformerBlockType
 from olmo_core.optim import (
     LinearWithWarmup,
@@ -31,6 +31,7 @@ from olmo_core.optim import (
 from olmo_core.train import Duration, LoadStrategy, TrainerConfig
 from olmo_core.train.callbacks import CheckpointerCallback, WandBCallback
 from olmo_core.train.train_module import (
+    TransformerActivationCheckpointingConfig,
     TransformerContextParallelConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
@@ -66,7 +67,9 @@ def build_model_config(common: CommonComponents) -> TransformerConfig:
     )
 
     # Remove heads (and scale down d_model) to compensate for extra params.
-    config.d_model -= REMOVE_HEADS * 128
+    config.d_model -= (  # Lets not do this anymore, 32 heads is easier to work with
+        REMOVE_HEADS * 128
+    )
     config.block.attention.n_heads -= REMOVE_HEADS
     assert config.d_model / config.block.attention.n_heads == 128
 
@@ -124,10 +127,10 @@ def build_train_module_config(common: CommonComponents) -> TransformerTrainModul
         ),
         cp_config=TransformerContextParallelConfig.ulysses(degree=2),
         # tp_config=TransformerTensorParallelConfig(degree=8),
-        # ac_config=TransformerActivationCheckpointingConfig(
-        #     mode=TransformerActivationCheckpointingMode.budget,
-        #     activation_memory_budget=0.1,
-        # ),
+        ac_config=TransformerActivationCheckpointingConfig(
+            mode=TransformerActivationCheckpointingMode.budget,
+            activation_memory_budget=0.1,
+        ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=1e-5,
         max_grad_norm=1.0,
